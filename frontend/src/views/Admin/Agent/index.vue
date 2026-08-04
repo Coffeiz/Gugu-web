@@ -810,25 +810,45 @@
         <div class="card-head">
           <div class="card-title-block">
             <h3>IM 群组与成员记忆</h3>
-            <p>只展示作用域摘要；预览和删除必须明确指定 Bot、群组或平台用户。删除先进入后台清理，不影响其他作用域。</p>
+            <p>逐作用域调用维护模型生成只读预览；只展示汇总结果，不展示任何用户、群组或成员标识。确认后才会投递实际整理任务。</p>
           </div>
-          <button class="btn-ghost" :disabled="imScopes.loading" @click="loadImScopes">
-            {{ imScopes.loading ? '加载中…' : '刷新作用域' }}
-          </button>
         </div>
         <div v-if="imScopes.error" class="save-hint error">{{ imScopes.error }}</div>
-        <div v-if="!imScopes.items.length && !imScopes.loading" class="placeholder-panel">暂无已建立的 IM 记忆作用域</div>
-        <div v-for="scope in imScopes.items" :key="scopeKey(scope)" class="behavior-item">
-          <div class="behavior-label">
-            <span>{{ scope.scope_type }} / {{ scope.platform }} / {{ scope.scope_id }}</span>
-            <span class="behavior-desc">Bot {{ scope.bot_id }} · {{ scope.entry_count }} 条记忆{{ scope.tombstone ? ` · ${scope.tombstone}` : '' }}</span>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn-ghost" @click="previewImScope(scope)">预览</button>
-            <button class="btn-ghost" :disabled="!!scope.tombstone" @click="deleteImScope(scope)">删除</button>
+        <div v-if="imScopes.message" class="save-hint">{{ imScopes.message }}</div>
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>生成维护预览</span><span class="behavior-desc">会调用 IM 维护模型，只读分析，后台运行</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="imModelPreview.message" class="behavior-desc">{{ imModelPreview.message }}</span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="imModelPreview.running" @click="startImModelPreview">
+                {{ imModelPreview.running ? `预览中… ${imModelPreview.done}/${imModelPreview.total}` : '生成预览' }}
+              </button>
+            </div>
           </div>
         </div>
-        <pre v-if="imScopes.preview" class="mem-cleanup-detail" style="white-space:pre-wrap;max-height:260px;overflow:auto;">{{ JSON.stringify(imScopes.preview, null, 2) }}</pre>
+        <div v-if="imModelPreview.hasRun && !imModelPreview.running">
+          <div class="im-memory-summary-grid">
+            <div><strong>{{ imScopes.summary.total_scopes }}</strong><span>作用域</span></div>
+            <div><strong>{{ imScopes.summary.groups }}</strong><span>群组</span></div>
+            <div><strong>{{ imScopes.summary.members }}</strong><span>成员</span></div>
+            <div><strong>{{ imScopes.summary.total_entries }}</strong><span>记忆条目</span></div>
+            <div><strong>{{ imModelPreview.needsReview }}</strong><span>模型建议整理</span></div>
+            <div><strong>{{ imScopes.summary.needs_maintenance }}</strong><span>需整理作用域</span></div>
+            <div><strong>{{ imScopes.summary.failed_jobs }}</strong><span>失败任务</span></div>
+          </div>
+          <div v-if="imScopes.summary.platforms.length" class="im-memory-platforms">
+            <span v-for="platform in imScopes.summary.platforms" :key="platform.platform" class="im-memory-platform">
+              {{ platform.platform }}：{{ platform.scopes }} 个作用域 / {{ platform.entries }} 条记忆
+            </span>
+          </div>
+          <div class="im-memory-maintenance-actions">
+            <span class="behavior-desc">只会整理尚未反思的新消息，不会删除已有记忆。</span>
+            <button class="btn-primary" :disabled="imScopes.applying || !imModelPreview.planReady" @click="applyImMemoryMaintenance">
+              {{ imScopes.applying ? '执行中…' : '确认整理全部待处理内容' }}
+            </button>
+          </div>
+          <div v-if="imModelPreview.message" class="im-memory-progress">{{ imModelPreview.message }}</div>
+        </div>
       </section>
 
       <!-- ── 状态命名 ── -->
@@ -1161,7 +1181,7 @@ function switchTab(key: string) {
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
   if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
-  if (key === 'behavior' && imScopes.items.length === 0) loadImScopes()
+  if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
@@ -1886,64 +1906,115 @@ async function applyMemCleanup() {
   }
 }
 
-interface ImScopeSummary {
-  owner_user_id: string
-  platform: string
-  bot_id: string
-  scope_type: string
-  scope_id: string
-  entry_count: number
-  tombstone?: string | null
+interface ImMemoryPlatformSummary { platform: string; scopes: number; groups: number; members: number; entries: number }
+interface ImMemorySummary {
+  total_scopes: number; groups: number; members: number; total_entries: number
+  pending_jobs: number; needs_maintenance: number; failed_jobs: number; platforms: ImMemoryPlatformSummary[]
 }
 const imScopes = reactive({
   loading: false,
   error: '',
-  items: [] as ImScopeSummary[],
-  preview: null as Record<string, unknown> | null,
+  message: '',
+  summary: { total_scopes: 0, groups: 0, members: 0, total_entries: 0, pending_jobs: 0, needs_maintenance: 0, failed_jobs: 0, platforms: [] } as ImMemorySummary,
+  applying: false,
 })
-function scopeKey(scope: ImScopeSummary) {
-  return [scope.owner_user_id, scope.platform, scope.bot_id, scope.scope_type, scope.scope_id].join(':')
+const imModelPreview = reactive({ hasRun: false, running: false, message: '', done: 0, total: 0, needsReview: 0, failed: 0, planReady: false })
+let imModelPreviewTimer: ReturnType<typeof setInterval> | null = null
+function stopImModelPreviewPoll() {
+  if (imModelPreviewTimer !== null) {
+    clearInterval(imModelPreviewTimer)
+    imModelPreviewTimer = null
+  }
+}
+async function pollImModelPreview() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview/status')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '读取模型预览失败')
+    imModelPreview.running = data.status === 'running'
+    imModelPreview.done = Number(data.done || 0)
+    imModelPreview.total = Number(data.total || 0)
+    imModelPreview.needsReview = Number(data.needs_review || 0)
+    imModelPreview.failed = Number(data.failed || 0)
+    imModelPreview.planReady = data.plan_ready === undefined
+      ? data.status === 'done' && imModelPreview.needsReview > 0
+      : Boolean(data.plan_ready)
+    if (imModelPreview.running) {
+      imModelPreview.message = `模型预览中 ${imModelPreview.done}/${imModelPreview.total}`
+    } else if (data.status === 'done') {
+      imModelPreview.hasRun = true
+      imModelPreview.message = `模型预览完成：${imModelPreview.needsReview} 个作用域有可提炼内容${imModelPreview.failed ? `，失败 ${imModelPreview.failed} 个` : ''}`
+      stopImModelPreviewPoll()
+      await loadImScopes()
+    }
+  } catch (error) {
+    imModelPreview.running = false
+    imModelPreview.message = error instanceof Error ? error.message : '读取模型预览失败'
+    stopImModelPreviewPoll()
+  }
+}
+function startImModelPreviewPoll() {
+  stopImModelPreviewPoll()
+  void pollImModelPreview()
+  imModelPreviewTimer = setInterval(() => void pollImModelPreview(), 1500)
+}
+async function startImModelPreview() {
+  imModelPreview.hasRun = false
+  imModelPreview.planReady = false
+  imModelPreview.message = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '启动模型预览失败')
+    if (!data.ok) {
+      imModelPreview.message = data.message || '已有模型预览正在运行'
+      imModelPreview.running = true
+    } else {
+      imModelPreview.running = true
+      imModelPreview.message = `已启动模型预览，共 ${data.total || 0} 个作用域`
+    }
+    startImModelPreviewPoll()
+  } catch (error) {
+    imModelPreview.running = false
+    imModelPreview.message = error instanceof Error ? error.message : '启动模型预览失败'
+  }
 }
 async function loadImScopes() {
-  imScopes.loading = true; imScopes.error = ''
+  imScopes.loading = true; imScopes.error = ''; imScopes.message = ''
   try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes')
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/preview', { method: 'POST' })
     const data = await res.json()
     if (!res.ok) throw new Error(data.detail || data.message || '加载失败')
-    imScopes.items = data.items || []
+    imScopes.summary = {
+      total_scopes: data.total_scopes || 0, groups: data.groups || 0, members: data.members || 0,
+      total_entries: data.total_entries || 0, pending_jobs: data.pending_jobs || 0,
+      needs_maintenance: data.needs_maintenance || 0, failed_jobs: data.failed_jobs || 0, platforms: data.platforms || [],
+    }
   } catch (error) {
     imScopes.error = error instanceof Error ? error.message : '加载失败'
   } finally {
     imScopes.loading = false
   }
 }
-async function previewImScope(scope: ImScopeSummary) {
-  imScopes.error = ''
+async function applyImMemoryMaintenance() {
+  if (!confirm('确定整理全部 IM 记忆中尚未反思的消息吗？不会删除已有记忆。')) return
+  imScopes.applying = true; imScopes.error = ''; imScopes.message = ''
   try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/preview', {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/apply', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(scope),
+      body: JSON.stringify({ confirm: true }),
     })
     const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '预览失败')
-    imScopes.preview = data.memory || {}
-  } catch (error) {
-    imScopes.error = error instanceof Error ? error.message : '预览失败'
-  }
-}
-async function deleteImScope(scope: ImScopeSummary) {
-  if (!confirm(`确定删除 ${scope.scope_type}/${scope.scope_id} 的 IM 记忆吗？`)) return
-  imScopes.error = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/delete', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...scope, confirm: true }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.detail || '删除任务提交失败')
+    if (!res.ok) throw new Error(data.detail || '执行整理失败')
+    imModelPreview.planReady = false
+    const applied = Number(data.applied || 0)
+    imScopes.message = `已应用 ${applied} 个模型预览结果`
+    imScopes.applying = false
     await loadImScopes()
+    imScopes.message = `已应用 ${applied} 个模型预览结果`
   } catch (error) {
-    imScopes.error = error instanceof Error ? error.message : '删除失败'
+    imScopes.error = error instanceof Error ? error.message : '执行整理失败'
+    imScopes.applying = false
   }
 }
 
@@ -2155,7 +2226,7 @@ onMounted(async () => {
   pollMemCleanup()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
 })
 
-onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
+onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewPoll() })
 </script>
 
 <style scoped>
@@ -2820,5 +2891,15 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 .labels-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 18px;
   padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
 .labels-saved-tip { font-size: 12.5px; color: #7fd6a0; }
+.im-memory-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.im-memory-summary-grid > div { min-width: 0; padding: 10px 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; background: rgba(255,255,255,0.035); text-align: center; }
+.im-memory-summary-grid strong { display: block; color: #e6e7f0; font-size: 18px; line-height: 1.2; }
+.im-memory-summary-grid span { display: block; margin-top: 4px; color: rgba(255,255,255,0.45); font-size: 11px; }
+.im-memory-platforms { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.im-memory-platform { padding: 5px 9px; border-radius: 999px; background: rgba(123,127,178,0.14); color: rgba(255,255,255,0.68); font-size: 11px; }
+.im-memory-maintenance-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.im-memory-progress { display: flex; gap: 12px; margin-top: 10px; color: rgba(255,255,255,0.55); font-size: 12px; }
+.im-memory-progress .error { color: #ff9b9b; }
+@media (max-width: 900px) { .im-memory-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .labels-list { grid-template-columns: 1fr; } }
 </style>

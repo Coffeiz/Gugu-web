@@ -82,8 +82,7 @@ async def _run_ffmpeg(data: bytes, ext: str, args: list[str], max_output_bytes: 
 async def _extract_audio(data: bytes, ext: str) -> bytes | None:
     return await _run_ffmpeg(
         data, ext,
-        ["-vn", "-t", str(MEDIA_AUDIO_MAX_SECONDS), "-ar", "16000", "-ac", "1",
-         "-codec:a", "libmp3lame", "-q:a", "4", "-f", "mp3", "pipe:1"],
+        ["-vn", "-t", str(MEDIA_AUDIO_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
         MEDIA_AUDIO_MAX_OUTPUT_BYTES,
     )
 
@@ -138,7 +137,7 @@ async def read_video(file) -> dict:
         data = await get_storage().get(file.storage_key)
         frame = await _extract_frame(data, file.ext.lower())
         audio = await _extract_audio(data, file.ext.lower())
-        transcript = await _transcribe_audio(audio, "audio/mpeg") if audio else ""
+        transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}

@@ -473,6 +473,8 @@ class MemoryReflectionCursor(Base):
     active_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     settled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     scope_version: Mapped[int] = mapped_column(Integer, default=0)
+    pending_passive_count: Mapped[int] = mapped_column(Integer, default=0)
+    pending_agent_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 

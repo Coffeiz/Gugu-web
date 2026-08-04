@@ -400,6 +400,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
+    from agent.im.memory_probe import record_context_assembly
+    record_context_assembly(req, context_data, history, "collect", session_id=session_id)
+
     try:
         text, tin, tout, errored, sent_files, cancelled = await _collect(gen, minimax=is_minimax(model_cfg))
     finally:
@@ -460,6 +463,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 对话后反思（fire-and-forget）。IM 用「工具轮次让 anthr_messages 变长」当「咕咕动作了」代理，
         # 这样「嗯」确认后真建改东西的轮也会反思（openai 路径无此代理、回落到 user_msg 判，可接受）。
+        im_used_tools = False
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
@@ -468,13 +472,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             )
             if reflect_reply:
                 reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
-                                    used_tools=im_used_tools, session_id=session_id)
+                                    used_tools=im_used_tools, session_id=session_id,
+                                    group_mode=bool(req.chat_id and req.source != "web"))
 
 # 对话压缩（fire-and-forget）
     from agent.context import compress_conv
     compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
-    return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout, files=sent_files)
+    return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
+                         files=sent_files, used_tools=im_used_tools)
 
 
 # ── 流式版本（飞书 send_text_stream 用，2026-07-09 接入）──────────────────────
@@ -640,6 +646,9 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
+    from agent.im.memory_probe import record_context_assembly
+    record_context_assembly(req, context_data, history, "stream", session_id=session_id)
+
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
     minimax_stream = is_minimax(model_cfg)
     san = sanitize.StreamSanitizer(minimax=minimax_stream)
@@ -745,6 +754,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         except Exception:
             pass
 
+        im_used_tools = False
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
@@ -753,13 +763,15 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             )
             if reflect_reply:
                 reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
-                                    used_tools=im_used_tools, session_id=session_id)
+                                    used_tools=im_used_tools, session_id=session_id,
+                                    group_mode=bool(req.chat_id and req.source != "web"))
 
         from agent.context import compress_conv as _cc
         _cc.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     yield ("final", AgentResponse(text=text, session_id=session_id, tokens_in=tin,
-                                  tokens_out=tout, files=files, cancelled=False))
+                                  tokens_out=tout, files=files, cancelled=False,
+                                  used_tools=im_used_tools))
 
 
 async def _collect(

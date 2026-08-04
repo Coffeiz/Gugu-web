@@ -19,6 +19,8 @@ ACTIVE_WINDOW = timedelta(hours=1)
 IDLE_WINDOW = timedelta(minutes=15)
 MAX_RETRIES = 5
 RETRY_BACKOFF_MINUTES = (1, 5, 30, 120, 360)
+PASSIVE_MESSAGE_THRESHOLD = 30
+AGENT_MESSAGE_THRESHOLD = 5
 
 
 def _scope_filters(model, scope: MemoryScope) -> List[Any]:
@@ -120,8 +122,14 @@ async def observe_group_message(
     message_at,
     *,
     now=None,
+    trigger_mode: str = "passive",
+    force: bool = False,
 ) -> Optional[int]:
-    """落库一条群消息并推进窗口；满 1 小时才触发一次周期整理。"""
+    """推进群/成员游标。
+
+    group scope 仍按活跃窗口整理；platform-user scope 将被动消息和进入
+    Agent 的回合分开计数，分别按 30/5 条触发。工具调用用 force 立即触发。
+    """
     from app.models import MemoryReflectionCursor
     from agent.memory.scope_lifecycle import is_tombstoned
 
@@ -145,12 +153,19 @@ async def observe_group_message(
                 last_message_at=message_at or now,
                 last_message_id=message_id,
                 scope_version=1,
+                pending_passive_count=1 if scope.scope_type == "platform-user" and trigger_mode == "passive" else 0,
+                pending_agent_count=1 if scope.scope_type == "platform-user" and trigger_mode == "agent" else 0,
                 created_at=now,
                 updated_at=now,
             )
             db.add(cursor)
             try:
                 await db.commit()
+                if scope.scope_type == "platform-user" and force:
+                    await db.close()
+                    return await enqueue_scope(
+                        scope, message_id, message_id, "tool", now=now,
+                    )
                 return None
             except IntegrityError:
                 # 并发首条消息可能同时尝试建 cursor；唯一约束胜出后重新
@@ -172,13 +187,26 @@ async def observe_group_message(
         cursor.last_message_id = message_id
         cursor.last_message_at = message_at or now
         cursor.scope_version += 1
+        if scope.scope_type == "platform-user":
+            if trigger_mode == "agent":
+                cursor.pending_agent_count += 1
+            else:
+                cursor.pending_passive_count += 1
         should_hourly = bool(
             cursor.active_started_at and now - cursor.active_started_at >= ACTIVE_WINDOW
         )
+        should_threshold = scope.scope_type == "platform-user" and (
+            force
+            or cursor.pending_agent_count >= AGENT_MESSAGE_THRESHOLD
+            or cursor.pending_passive_count >= PASSIVE_MESSAGE_THRESHOLD
+        )
         first = (cursor.last_reflected_message_id or 0) + 1
         last = cursor.last_message_id
-        if should_hourly:
+        if should_hourly or should_threshold:
             cursor.active_started_at = message_at or now
+            if should_threshold:
+                cursor.pending_passive_count = 0
+                cursor.pending_agent_count = 0
             cursor.updated_at = now
             await db.commit()
         else:
@@ -300,8 +328,9 @@ async def observe_member_activity(
     platform_user_id: str,
     *,
     now=None,
+    used_tools: bool = False,
 ) -> Optional[int]:
-    """只用当前平台用户的 user 消息推进 member scope。"""
+    """只用当前平台用户的 Agent 回合推进 member scope。"""
     from app.models import ConversationMessage
 
     now = now or now_utc()
@@ -318,4 +347,21 @@ async def observe_member_activity(
         )).scalars().first()
     if message is None:
         return None
-    return await observe_group_message(scope, message.id, message.created_at or now, now=now)
+    return await observe_group_message(
+        scope, message.id, message.created_at or now, now=now,
+        trigger_mode="agent", force=used_tools,
+    )
+
+
+async def observe_member_message(
+    scope: MemoryScope,
+    message_id: int,
+    message_at,
+    *,
+    now=None,
+) -> Optional[int]:
+    """记录未进入 Agent 的成员消息，达到 30 条或空闲时再反思。"""
+    return await observe_group_message(
+        scope, message_id, message_at, now=now,
+        trigger_mode="passive", force=False,
+    )

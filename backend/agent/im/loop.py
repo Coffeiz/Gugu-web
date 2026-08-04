@@ -335,20 +335,45 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         recorded_message_id = message_row.id
     if request.chat_id and recorded_message_id:
         try:
-            from agent.memory.reflection_jobs import observe_group_message
+            from agent.memory.reflection_jobs import observe_group_message, observe_member_message
             from agent.memory.scopes import MemoryScope
 
-            await observe_group_message(
-                MemoryScope(
+            group_scope = MemoryScope(
                     request.user_id,
                     request.source or "qqbot",
                     str(request.platform_bot_id or ""),
                     "group",
                     str(request.chat_id),
-                ),
+                )
+            await observe_group_message(
+                group_scope,
                 recorded_message_id,
                 message_row.created_at,
             )
+            if request.im_role == "member" and request.platform_user_id:
+                await observe_member_message(
+                    MemoryScope(
+                        request.user_id,
+                        request.source or "qqbot",
+                        str(request.platform_bot_id or ""),
+                        "platform-user",
+                        str(request.platform_user_id),
+                    ),
+                    recorded_message_id,
+                    message_row.created_at,
+                )
+            elif request.im_role == "owner":
+                from app.core.config import get_settings
+                from agent.memory import reflection
+
+                reflection.schedule(
+                    request.user_id,
+                    request.user_name,
+                    request.message,
+                    "",
+                    get_settings(),
+                    group_mode=True,
+                )
         except Exception:
             # 记忆调度不能阻断消息落库和网页会话同步。
             pass
@@ -619,6 +644,7 @@ async def dispatch_im_message(payload: dict):
                     ),
                     resp.session_id,
                     str(req.platform_user_id),
+                    used_tools=bool(getattr(resp, "used_tools", False)),
                 )
             except Exception:
                 # 成员记忆是后台增强能力，不影响群聊回复。

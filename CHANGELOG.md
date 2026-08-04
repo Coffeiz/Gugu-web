@@ -12,6 +12,9 @@
 - **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
 - **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
 - **QQ 群聊消息记录**（`backend/agent/adapters/qq.py`、`ProfileImPane.vue`）：可保存未 @ 咕咕的普通群消息供后续上下文读取，同时保留 @ 消息的正常回复。
+- **站内多关键词搜索**（`backend/app/search/`、`agent/tools/{global_search,files,conversations}.py`）：支持组合搜索项目、文件、笔记、会话和群上下文，并保留拼音回退、结果排序与请求取消能力。
+- **群组与成员记忆系统**（`backend/agent/memory/`、`agent/im/`）：为 IM 成员和群组增加独立的资料、行为模式、日常记录与摘要存储，支持按范围触发反思、压缩和生命周期清理。
+- **DashScope 语音模型产品线适配**（`backend/agent/voice.py`、`frontend/src/views/Admin/Agent/`）：支持按百炼产品线选择语音识别模型，并提供配置与连通性测试入口。
 
 ### 改进
 
@@ -28,6 +31,12 @@
 - **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
 - **文件 API service 边界收口**（`backend/app/api/v1/files.py`、`backend/app/services/files/`）：将文件查询、媒体预览、上传校验、下载和响应组装迁入 service 层，路由保留鉴权、事务和 HTTP 响应协调。
 - **文件库入口职责收口**（`frontend/src/views/Files/index.vue`、`frontend/src/composables/files/`）：将存储统计、文件夹展示与动作、单文件下载/删除移入独立 composable，入口继续保留拖拽、回收站和菜单等页面适配协调。
+- **IM 会话与上下文隔离**（`backend/agent/im/`、`agent/runner.py`）：将平台身份、私聊/群聊会话和上下文组装收敛到独立 IM Loop，群消息按发言人保留身份信息，owner 与普通成员使用不同的记忆和工具权限边界。
+- **群聊历史与记忆触发策略**（`backend/agent/im/`、`backend/agent/memory/`）：群消息保存上限提高到 500 条，上下文默认只拼接最近 50 条，并按连续活跃、空闲和恢复聊天场景整理记忆。
+- **定时任务投递目标**（`backend/agent/tools/scheduled_tasks.py`、`backend/app/scheduled_tasks.py`）：支持在当前私聊或群聊上下文中选择投递方式，网页创建的任务继续默认发送到私聊。
+- **记忆维护与召回**（`backend/agent/memory/`）：优化 pattern 的水位触发、合并和输出预算，并稳定群上下文搜索结果顺序。
+- **记忆反思触发节奏**（`backend/agent/memory/`、`agent/im/`）：群内普通消息累计 30 条、进入 Agent 的回合累计 5 条，工具调用立即反思，owner/member 共用节奏但保持记忆作用域隔离。
+- **QQ 群消息与媒体链路**（`backend/agent/gateway/qq.py`、`agent/im/`）：统一群聊消息解析、身份映射、表情/引用媒体和本地附件发送路径，减少群聊与私聊的行为差异。
 
 ### 修复
 
@@ -35,6 +44,10 @@
 - **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
 - **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
 - **拖拽落地玻璃态交接**（`interaction/drag/animation/morphLifecycle.ts`）：恢复隐藏本体路径在目标样式切换前的过渡，避免 landing 过程中毛玻璃、背景和边框瞬间跳变。
+- **QQ 群聊身份与 @ 提及映射**（`backend/agent/gateway/qq.py`、`agent/im/identity.py`）：修复机器人自身 @ 展示、不同 QQ 账号误用 owner 身份、用户名更新和群消息路由混淆问题。
+- **QQ 表情、引用图片与动图展示**（`backend/agent/im/`、`frontend/src/`）：修复表情内容显示为原始标签、引用动图缩略图静止以及临时附件无法下载的问题。
+- **QQ 群聊附件发送**（`backend/agent/im/files.py`、`backend/agent/gateway/qq.py`）：修复群聊附件仍走私聊目标或被硬编码拦截的问题，群聊与私聊统一按会话目标发送图片和文件。
+- **文件查询与目录结果一致性**（`backend/agent/tools/files.py`、`backend/app/api/v1/search.py`）：修复目录过滤、多关键词搜索和文件夹路径展示不一致导致的文件定位错误。
 
 ---
 

@@ -919,6 +919,7 @@ async def embedding_rebuild_status():
 # 不能是"重新掷一次骰子"。画像事件迁移 / daily 迁格式 / legacy 文件清理都是确定性改写，
 # 没有 LLM 参与，但也一起挂进 preview/apply，保持一个入口做完。
 _MEM_CLEANUP_KEY = "mem_cleanup:plan"
+_MEM_CLEANUP_STALE_SECONDS = 600
 
 
 async def _mem_cleanup_worker(user_ids: list[str]) -> None:
@@ -973,7 +974,7 @@ async def memory_cleanup_preview(db: AsyncSession = Depends(get_db)):
     if cur:
         try:
             d = json.loads(cur if isinstance(cur, str) else cur.decode())
-            if d.get("status") == "running":
+            if d.get("status") == "running" and time.time() - float(d.get("ts") or 0) < _MEM_CLEANUP_STALE_SECONDS:
                 return {"ok": False, "message": "已有清理预览在跑", "status": d}
         except Exception:
             pass
@@ -992,7 +993,11 @@ async def memory_cleanup_status():
     if not cur:
         return {"status": "idle"}
     try:
-        return json.loads(cur if isinstance(cur, str) else cur.decode())
+        data = json.loads(cur if isinstance(cur, str) else cur.decode())
+        if data.get("status") == "running" and time.time() - float(data.get("ts") or 0) >= _MEM_CLEANUP_STALE_SECONDS:
+            data = {"status": "stale", "done": data.get("done", 0), "total": data.get("total", 0), "message": "上次预览已超时，请重新生成"}
+            await get_redis().set(_MEM_CLEANUP_KEY, json.dumps(data, ensure_ascii=False), ex=3600)
+        return data
     except Exception:
         return {"status": "idle"}
 

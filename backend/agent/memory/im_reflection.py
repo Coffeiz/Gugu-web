@@ -218,7 +218,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 f"已有群组/用户记忆：\n{json.dumps(current, ensure_ascii=False)}\n\n"
                 f"本批新增消息：\n{payload or '（无消息）'}"
             )
-            out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500)
+            out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500, thinking="disabled")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
             await _apply_output(scope, current, out, messages, settings)
@@ -382,6 +382,7 @@ async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_m
         f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
         settings,
         max_tokens=GROUP_MEMORY_MAX_TOKENS,
+        thinking="disabled",
     )
     memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
     if not memory or not _preserves_group_dates(entries, memory):

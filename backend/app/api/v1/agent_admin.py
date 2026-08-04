@@ -15,7 +15,9 @@ GET    /api/v1/admin/agent/memory/legacy-files          → 扫描已被新文�
 POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧记忆文件
 """
 
+import asyncio
 import json
+import time
 from app.core.tz import now_utc
 import uuid as _uuid
 from datetime import datetime, timedelta
@@ -98,31 +100,74 @@ PLACEHOLDERS = [
 SPECIAL_PROMPTS = ["persona", "skills", "policy", "reflection", "compress"]
 
 
-class ImMemoryScopeRequest(BaseModel):
-    owner_user_id: _uuid.UUID
-    platform: str
-    bot_id: str
-    scope_type: str
-    scope_id: str
-
-
-class ImMemoryScopeDeleteRequest(ImMemoryScopeRequest):
+class ImMemoryMaintenanceRequest(BaseModel):
     confirm: bool = False
 
 
-def _im_memory_scope(body: ImMemoryScopeRequest):
-    from agent.memory.scopes import MemoryScope
+_IM_MODEL_PREVIEW_KEY = "im_memory:maintenance:model_preview"
+_IM_MODEL_PREVIEW_PLAN_KEY = "im_memory:maintenance:model_preview:plan"
 
-    try:
-        return MemoryScope(
-            body.owner_user_id,
-            body.platform,
-            body.bot_id,
-            body.scope_type,
-            body.scope_id,
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+
+async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
+    """逐 scope 调用 IM 反思模型，只保存汇总进度，不保存正文或 scope 标识。"""
+    from types import SimpleNamespace
+
+    from agent.memory._llm import complete_json
+    from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
+    from agent.memory.scoped_store import read_scope
+    from agent.memory.scopes import MemoryScope
+    from app.core.redis import get_redis
+
+    redis = get_redis()
+    done = needs_review = failed = 0
+    total = len(cursors)
+    plans: list[dict] = []
+    for item in cursors:
+        try:
+            scope = MemoryScope(
+                _uuid.UUID(item["owner_user_id"]), item["platform"], item["bot_id"],
+                item["scope_type"], item["scope_id"],
+            )
+            job = SimpleNamespace(
+                owner_user_id=scope.owner_user_id, platform=scope.platform,
+                bot_id=scope.bot_id, scope_type=scope.scope_type, scope_id=scope.scope_id,
+                from_message_id=item["first_message_id"], to_message_id=item["last_message_id"],
+            )
+            async with await _db_session() as db:
+                messages = await _messages_for_job(db, job)
+            current = await read_scope(scope)
+            payload = "\n".join(
+                f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
+                for m in messages
+            )
+            prompt_input = (
+                f"已有群组/用户记忆：\n{json.dumps(current, ensure_ascii=False)}\n\n"
+                f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
+            )
+            output = await complete_json(_scope_prompt(scope), prompt_input, settings, max_tokens=2500, thinking="disabled")
+            if output:
+                needs_review += 1
+                plans.append({
+                    "owner_user_id": str(scope.owner_user_id), "platform": scope.platform,
+                    "bot_id": scope.bot_id, "scope_type": scope.scope_type, "scope_id": scope.scope_id,
+                    "output": output,
+                })
+        except Exception:
+            failed += 1
+        done += 1
+        await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps({
+            "status": "running", "done": done, "total": total,
+            "needs_review": needs_review, "failed": failed,
+            "plan_ready": bool(plans), "ts": time.time(),
+        }, ensure_ascii=False), ex=3600)
+        await redis.set(_IM_MODEL_PREVIEW_PLAN_KEY, json.dumps(plans, ensure_ascii=False), ex=3600)
+    # 先写入完整计划，再发布 done 状态，避免前端看到可执行却读不到计划。
+    await redis.set(_IM_MODEL_PREVIEW_PLAN_KEY, json.dumps(plans, ensure_ascii=False), ex=3600)
+    await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps({
+        "status": "done", "done": done, "total": total,
+        "needs_review": needs_review, "failed": failed,
+        "plan_ready": bool(plans), "ts": time.time(),
+    }, ensure_ascii=False), ex=3600)
 
 
 def _prompt_path(profile: str) -> Path:
@@ -849,31 +894,117 @@ async def cleanup_legacy_memory_files(body: LegacyFilesCleanup):
 
 @router.get("/memory/im-scopes")
 async def list_im_memory_scopes():
-    """列出 group/member scope 摘要；不返回聊天正文。"""
+    """返回 IM 记忆汇总统计；不返回 owner、群组或成员标识。"""
     from agent.memory.scope_lifecycle import list_scopes
 
-    return {"items": await list_scopes()}
+    scopes = await list_scopes(limit=10000)
+    by_platform: dict[str, dict[str, int]] = {}
+    total_entries = pending_jobs = failed_jobs = needs_maintenance = 0
+    for scope in scopes:
+        platform = str(scope.get("platform") or "unknown")
+        stats = by_platform.setdefault(platform, {"scopes": 0, "groups": 0, "members": 0, "entries": 0})
+        stats["scopes"] += 1
+        stats["groups"] += int(scope.get("scope_type") == "group")
+        stats["members"] += int(scope.get("scope_type") == "platform-user")
+        stats["entries"] += int(scope.get("entry_count") or 0)
+        total_entries += int(scope.get("entry_count") or 0)
+        pending_jobs += int(scope.get("pending_jobs") or 0)
+        failed_jobs += int(scope.get("failed_jobs") or 0)
+        last_message_id = scope.get("last_message_id")
+        last_reflected_id = scope.get("last_reflected_message_id") or 0
+        if last_message_id is not None and int(last_message_id) > int(last_reflected_id):
+            needs_maintenance += 1
+    return {
+        "total_scopes": len(scopes),
+        "groups": sum(1 for scope in scopes if scope.get("scope_type") == "group"),
+        "members": sum(1 for scope in scopes if scope.get("scope_type") == "platform-user"),
+        "total_entries": total_entries,
+        "pending_jobs": pending_jobs,
+        "needs_maintenance": needs_maintenance,
+        "failed_jobs": failed_jobs,
+        "platforms": [{"platform": platform, **stats} for platform, stats in sorted(by_platform.items())],
+    }
 
 
-@router.post("/memory/im-scopes/preview")
-async def preview_im_memory_scope(body: ImMemoryScopeRequest):
-    """预览单个 IM scope 的记忆文件，删除中的 scope 不可读取。"""
-    from agent.memory.scope_lifecycle import preview_scope
-
-    scope = _im_memory_scope(body)
-    value = await preview_scope(scope)
-    if value is None:
-        raise HTTPException(410, "该记忆作用域正在删除或已删除")
-    return {"scope": body.model_dump(mode="json"), "memory": value}
+@router.post("/memory/im-scopes/maintenance/preview")
+async def preview_im_memory_maintenance():
+    """生成不含任何 scope 标识的 IM 记忆维护预览。"""
+    return await list_im_memory_scopes()
 
 
-@router.post("/memory/im-scopes/delete")
-async def delete_im_memory_scope(body: ImMemoryScopeDeleteRequest):
-    """写入删除屏障并异步清理；必须显式确认，避免误删群组记忆。"""
+@router.post("/memory/im-scopes/maintenance/model-preview")
+async def start_im_memory_model_preview(db: AsyncSession = Depends(get_db)):
+    """异步调用 IM 维护模型；只保存进度和数量，不保存模型正文。"""
+    from app.core.redis import get_redis
+    from app.models import MemoryReflectionCursor
+
+    redis = get_redis()
+    raw = await redis.get(_IM_MODEL_PREVIEW_KEY)
+    if raw:
+        current = json.loads(raw if isinstance(raw, str) else raw.decode())
+        if current.get("status") == "running":
+            return {"ok": False, "message": "已有模型预览正在运行", "status": current}
+    # 仅在确认没有并发预览后清理旧计划，避免重复点击时删掉正在生成的计划。
+    await redis.delete(_IM_MODEL_PREVIEW_PLAN_KEY)
+    rows = (await db.execute(select(MemoryReflectionCursor))).scalars().all()
+    cursors = []
+    for row in rows:
+        # 模型预览检查已有 scope 的当前记忆；没有新增消息时也要让模型判断
+        # 当前内容是否需要提炼，不能因为没有游标缺口就直接跳过。
+        cursors.append({
+            "owner_user_id": str(row.owner_user_id), "platform": row.platform,
+            "bot_id": row.bot_id, "scope_type": row.scope_type, "scope_id": row.scope_id,
+            "first_message_id": (row.last_reflected_message_id or 0) + 1,
+            "last_message_id": row.last_message_id or 0,
+        })
+    state = {
+        "status": "running", "done": 0, "total": len(cursors),
+        "needs_review": 0, "failed": 0, "plan_ready": False, "ts": time.time(),
+    }
+    await redis.set(_IM_MODEL_PREVIEW_KEY, json.dumps(state, ensure_ascii=False), ex=3600)
+    asyncio.create_task(_im_model_preview_worker(cursors, get_settings()))
+    return {"ok": True, "total": len(cursors)}
+
+
+@router.get("/memory/im-scopes/maintenance/model-preview/status")
+async def im_memory_model_preview_status():
+    from app.core.redis import get_redis
+
+    raw = await get_redis().get(_IM_MODEL_PREVIEW_KEY)
+    if not raw:
+        return {"status": "idle", "done": 0, "total": 0, "needs_review": 0, "failed": 0, "plan_ready": False}
+    return json.loads(raw if isinstance(raw, str) else raw.decode())
+
+
+@router.post("/memory/im-scopes/maintenance/apply")
+async def apply_im_memory_maintenance(
+    body: ImMemoryMaintenanceRequest,
+):
+    """确认后应用最近一次模型预览计划；响应只返回汇总数量。"""
     if not body.confirm:
-        raise HTTPException(400, "删除 IM 记忆作用域需要 confirm=true")
-    from agent.memory.scope_lifecycle import request_scope_deletion
+        raise HTTPException(400, "执行 IM 记忆维护需要 confirm=true")
+    from agent.memory.im_reflection import _apply_output
+    from agent.memory.scoped_store import read_scope
+    from agent.memory.scopes import MemoryScope
+    from app.core.redis import get_redis
 
-    scope = _im_memory_scope(body)
-    tombstone_id = await request_scope_deletion(scope, reason="admin")
-    return {"ok": True, "tombstone_id": tombstone_id, "status": "pending"}
+    raw_state = await get_redis().get(_IM_MODEL_PREVIEW_KEY)
+    raw_plan = await get_redis().get(_IM_MODEL_PREVIEW_PLAN_KEY)
+    if not raw_state or not raw_plan:
+        raise HTTPException(400, "没有可执行的模型预览，请先生成预览")
+    state = json.loads(raw_state if isinstance(raw_state, str) else raw_state.decode())
+    if state.get("status") != "done":
+        raise HTTPException(400, "模型预览尚未完成")
+    plans = json.loads(raw_plan if isinstance(raw_plan, str) else raw_plan.decode())
+    applied = 0
+    settings = get_settings()
+    for item in plans:
+        scope = MemoryScope(
+            _uuid.UUID(item["owner_user_id"]), item["platform"], item["bot_id"],
+            item["scope_type"], item["scope_id"],
+        )
+        current = await read_scope(scope)
+        await _apply_output(scope, current, item.get("output") or {}, [], settings)
+        applied += 1
+    await get_redis().delete(_IM_MODEL_PREVIEW_PLAN_KEY)
+    return {"ok": True, "applied": applied, "queued": applied}

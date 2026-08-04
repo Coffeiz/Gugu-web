@@ -238,7 +238,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     calls = {"n": 0}
     vote_sequences = [{0}, {0, 1}, {0}]   # 索引 0 三次全中；索引 1 只中一次；索引 2 从不中
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, temperature=0.1):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, temperature=0.1, **kwargs):
         idx = calls["n"]
         calls["n"] += 1
         return {"remove": list(vote_sequences[idx])}
@@ -374,7 +374,7 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
 
     captured = {}
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3, **kwargs):
         captured["user"] = user
         captured["max_tokens"] = max_tokens
         return {"memory": "2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}

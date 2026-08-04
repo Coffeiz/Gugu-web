@@ -359,7 +359,6 @@ async def serve():
 async def _reconcile_loop():
     """每 30s 从 DB 对账定时任务（增/删/改/开关即时生效，无需重启）。"""
     from app import scheduled_tasks as schedtasks
-    elapsed = 0
     retry_elapsed = 0
     while not _stop.is_set():
         for _ in range(30):
@@ -373,10 +372,16 @@ async def _reconcile_loop():
         except Exception:
             pass
         try:
+            from agent.memory.reflection import flush_due_group_owner_reflections
+            from app.core.config import get_settings
+
+            await flush_due_group_owner_reflections(get_settings())
+        except Exception as exc:
+            print(f"[worker] owner 群记忆缓冲收束出错: {type(exc).__name__}", flush=True)
+        try:
             await schedtasks.reconcile()
         except Exception as e:
             print(f"[worker] 定时任务 reconcile 出错: {type(e).__name__}: {e}", flush=True)
-        elapsed += 30
         retry_elapsed += 30
         if retry_elapsed >= 30:
             retry_elapsed = 0
@@ -388,14 +393,15 @@ async def _reconcile_loop():
                 await requeue_pending_cleanups()
             except Exception as exc:
                 print(f"[worker] 记忆反思重试补偿出错: {type(exc).__name__}", flush=True)
-        if elapsed >= 3600:
-            elapsed = 0
-            try:
-                from agent.memory.reflection_jobs import settle_idle_scopes
+        # 空闲收束的产品阈值是 15 分钟，不能跟每小时的失败补偿共用调度周期。
+        # settle_idle_scopes() 本身用 last_message_at/settled_at 做幂等闸门，
+        # 每 30 秒扫描一次只会增加及时性，不会重复投递同一段消息。
+        try:
+            from agent.memory.reflection_jobs import settle_idle_scopes
 
-                await settle_idle_scopes()
-            except Exception as exc:
-                print(f"[worker] 记忆反思补偿出错: {type(exc).__name__}", flush=True)
+            await settle_idle_scopes()
+        except Exception as exc:
+            print(f"[worker] 记忆反思空闲收束出错: {type(exc).__name__}", flush=True)
 
 
 def _install_signals(loop):
