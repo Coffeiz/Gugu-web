@@ -52,6 +52,10 @@ def _snippet_for_queries(text: str, queries: list[str]) -> str:
     return _snippet(text, queries[0]) if queries else (text or "")[:60].strip()
 
 
+def _romaji_matches_any(text: str, queries: list[str]) -> bool:
+    return any(romaji_match(text or "", query) for query in queries)
+
+
 def _primary_rank(column, q: str):
     """名称精确/前缀命中优先于纯子串命中；只用标准 SQL，SQLite 测试也保持一致。"""
     normalized = q.lower()
@@ -76,7 +80,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     uid = user_id
     q = search_queries[0]
     groups: list = []
-    use_romaji = is_romaji_query(q)
+    use_romaji = any(is_romaji_query(query) for query in search_queries)
 
     # ── 项目：名/客户/当前阶段 ──
     if wanted is None or "project" in wanted:
@@ -95,7 +99,8 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             )).scalars().all()
             for p in scan:
                 if p.id not in seen and (
-                    romaji_match(p.name, q) or romaji_match(p.client or "", q)
+                    _romaji_matches_any(p.name, search_queries)
+                    or _romaji_matches_any(p.client or "", search_queries)
                 ):
                     rows.append(p); seen.add(p.id)
                     if len(rows) >= per_type:
@@ -123,7 +128,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(File.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for f in scan:
-                if f.id not in seen and romaji_match(f.display_name or "", q):
+                if f.id not in seen and _romaji_matches_any(f.display_name or "", search_queries):
                     rows.append(f); seen.add(f.id)
                     if len(rows) >= per_type:
                         break
@@ -150,7 +155,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(Folder.created_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for fo in scan:
-                if fo.id not in seen and romaji_match(fo.name or "", q):
+                if fo.id not in seen and _romaji_matches_any(fo.name or "", search_queries):
                     rows.append(fo); seen.add(fo.id)
                     if len(rows) >= per_type:
                         break
@@ -178,7 +183,8 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             )).scalars().all()
             for e in scan:
                 if e.id not in seen and (
-                    romaji_match(e.title or "", q) or romaji_match(e.description or "", q)
+                    _romaji_matches_any(e.title or "", search_queries)
+                    or _romaji_matches_any(e.description or "", search_queries)
                 ):
                     rows.append(e); seen.add(e.id)
                     if len(rows) >= per_type:
@@ -209,7 +215,8 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             )).scalars().all()
             for c in scan:
                 if c.id not in seen and (
-                    romaji_match(c.name or "", q) or romaji_match(c.contact or "", q)
+                    _romaji_matches_any(c.name or "", search_queries)
+                    or _romaji_matches_any(c.contact or "", search_queries)
                 ):
                     rows.append(c); seen.add(c.id)
                     if len(rows) >= per_type:
@@ -251,7 +258,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             )).scalars().all()
             for n in scan:
                 # 罗马音只匹标题：正文可能很长，逐字转拼音代价不划算
-                if n.id not in seen and romaji_match(n.title or "", q):
+                if n.id not in seen and _romaji_matches_any(n.title or "", search_queries):
                     rows.append(n); seen.add(n.id)
                     if len(rows) >= per_type:
                         break
@@ -298,7 +305,7 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 .order_by(ConversationSession.updated_at.desc()).limit(ROMAJI_SCAN)
             )).scalars().all()
             for s in sess_scan:
-                if s.id not in conv and romaji_match(s.title or "", q):
+                if s.id not in conv and _romaji_matches_any(s.title or "", search_queries):
                     conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
                     if len(conv) >= per_type:
                         break
