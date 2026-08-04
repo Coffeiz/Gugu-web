@@ -12,7 +12,7 @@
 - IM 附件改为流式读取，限制单附件 50MB、单消息附件 100MB；连接层 DNS resolver 与 SSRF 校验共用内网地址判断，覆盖重定向、混合 DNS 和 IPv4-mapped IPv6。
 - 权限解析显式区分内部 Bot 数据库主键与平台 Bot ID，非法平台 ID 按最小权限处理。
 
-回归验证：后端 `637 passed`，ownership/confirmation guard 通过；前端 typecheck、strict typecheck、246 个单测和 build 通过。Alembic `current` 与 `heads` 均为 `20260804000007`；生产数据库副本升级/回滚和真实 OSS 对象测试仍需在部署环境完成。
+回归验证：后端 `638 passed`，ownership/confirmation guard 通过；前端 typecheck、strict typecheck、246 个单测和 build 通过。Alembic `current` 与 `heads` 均为 `20260804000007`；生产数据库副本升级/回滚和真实 OSS 对象测试仍需在部署环境完成。
 
 > 更新：2026-07-16
 > 状态：早期阶段记录，当前进度见 `product/overview.md`
