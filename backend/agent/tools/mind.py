@@ -9,6 +9,7 @@ from app.core.mind import (
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
 from app.core.ownership import get_owned
 from app.models import MindNode, MindRelation
+from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 10
@@ -192,20 +193,21 @@ def _relation_summary(relation: MindRelation, current_node_id: int, nodes: dict[
 
 async def _mind_search(db, user_id, args: dict):
     q = (args.get("q") or "").strip()
-    if not q:
+    queries = args.get("queries") if isinstance(args.get("queries"), list) else None
+    search_queries = normalize_queries(q, queries)
+    if not search_queries:
         return {"error": "需要提供搜索关键词 q"}
 
     limit = args.get("limit", 5)
     if not isinstance(limit, int):
         limit = 5
     limit = max(1, min(limit, _MAX_RESULTS))
-    pattern = f"%{q}%"
     matches = (await db.execute(
         select(MindNode).where(
             MindNode.user_id == user_id,
             MindNode.kind.in_(("note", "canvas_note")),
             MindNode.deleted_at.is_(None),
-            or_(MindNode.title.ilike(pattern), MindNode.content_plain.ilike(pattern)),
+            keyword_condition([MindNode.title, MindNode.content_plain], search_queries, args.get("mode")),
         ).order_by(MindNode.captured_at.desc()).limit(limit)
     )).scalars().all()
 
@@ -377,7 +379,11 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "要在笔记正文和标题中搜索的关键词"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "最多返回命中数，默认 5，最大 10"},
                     "include_content": {"type": "boolean", "description": "true 时返回命中笔记完整正文；默认只返回预览"},
                 },

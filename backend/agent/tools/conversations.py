@@ -11,6 +11,7 @@ from sqlalchemy import select, desc, or_
 
 from app.models import ConversationMessage, ConversationSession
 from app.core.ownership import get_owned
+from app.search.query import keyword_condition, normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -20,10 +21,13 @@ def _fmt(dt) -> str:
 
 async def _search_conversations(db, user_id, args: dict):
     keyword = (args.get("keyword") or "").strip()
+    queries = args.get("queries") if isinstance(args.get("queries"), list) else None
+    search_queries = normalize_queries(keyword, queries)
+    mode = normalize_mode(args.get("mode"))
     limit = max(1, min(int(args.get("limit", 6) or 6), 20))
 
     # 无关键词 → 列最近的对话（标题 + 时间）
-    if not keyword:
+    if not search_queries:
         rows = (await db.execute(
             select(ConversationSession)
             .where(ConversationSession.user_id == user_id)
@@ -37,16 +41,16 @@ async def _search_conversations(db, user_id, args: dict):
         ]}
 
     # 有关键词 → 搜消息正文 + 标题，按 session 聚合，每条给匹配片段
-    like = f"%{keyword}%"
     rows = (await db.execute(
         select(ConversationMessage, ConversationSession)
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
         .where(
             ConversationSession.user_id == user_id,
             ConversationMessage.content_json.is_(None),   # 跳过工具中间消息
-            or_(ConversationMessage.content.ilike(like),
-                ConversationSession.title.ilike(like),
-                ConversationSession.summary.ilike(like)),
+            keyword_condition(
+                [ConversationMessage.content, ConversationSession.title, ConversationSession.summary],
+                search_queries, mode,
+            ),
         )
         .order_by(desc(ConversationMessage.created_at))
         .limit(limit * 4)
@@ -66,7 +70,7 @@ async def _search_conversations(db, user_id, args: dict):
             break
 
     if not seen:
-        return {"matches": [], "hint": f"没找到提到「{keyword}」的过去对话"}
+        return {"matches": [], "hint": f"没找到提到「{' / '.join(search_queries)}」的过去对话"}
     return {"matches": list(seen.values()),
             "note": "用 read_conversation(session_id) 看某条对话的完整内容"}
 
@@ -135,7 +139,11 @@ class ConversationsSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "关键词（搜消息正文+标题）；不填=列最近对话"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "返回条数，默认 6，最多 20"},
                 },
             },

@@ -1,6 +1,6 @@
 """跨项目/文件/文件夹/日程/客户/对话/思维便签的站内全局搜索，供咕咕定位「东西在哪」用。
 
-复用 `app/api/v1/search.py`（顶栏全局搜索框同一套查询逻辑，ILIKE 子串匹配，
+复用 `app/api/v1/search.py`（顶栏全局搜索框同一套查询逻辑，支持多关键词 OR/AND 的 ILIKE 子串匹配，
 天然不分大小写）。网页下拉框每类只给 6 条方便展示；这里给模型用，每类给更多条
 （20），并支持按 types 缩小范围，减少无关噪音。
 
@@ -16,14 +16,20 @@ _TOOL_PER_TYPE = 20
 
 async def _global_search(db, user_id, args: dict):
     q = (args.get("q") or "").strip()
-    if not q:
-        return {"error": "需要提供搜索关键词 q"}
+    queries = args.get("queries")
+    if not isinstance(queries, list):
+        queries = None
+    mode = str(args.get("mode") or "OR").upper()
+    if not q and not queries:
+        return {"error": "需要提供搜索关键词 q 或 queries"}
     types = args.get("types")
     if isinstance(types, list):
         types = [str(t) for t in types if t in ALL_TYPES] or None
     else:
         types = None
-    result = await run_global_search(db, user_id, q, per_type=_TOOL_PER_TYPE, types=types)
+    result = await run_global_search(
+        db, user_id, q, per_type=_TOOL_PER_TYPE, types=types, queries=queries, mode=mode,
+    )
     if result["total"] == 0:
         result["note"] = ("没搜到任何匹配——除思维便签(note)搜正文外，其余类型只按名称/标题/客户名等"
                           "字段匹配，不搜文件内容；搜不到不代表数据库里真的没有相关内容，"
@@ -36,7 +42,7 @@ class GlobalSearchSkill(BaseSkill):
     tools = [
         Tool(
             name="global_search", label="站内全局搜索",
-            description="按关键词跨项目/文件/文件夹/日程/客户/对话/思维便签**一次性**搜索，用于「有没有 XX」"
+            description="按一个或多个关键词跨项目/文件/文件夹/日程/客户/对话/思维便签**一次性**搜索，默认 OR（任意词命中即可），用于「有没有 XX」"
                         "「XX 在哪」「找一下 XX」这类不确定东西在哪的模糊定位问题——**优先用这个**，"
                         "比分别调 list_files/list_projects 等专用工具挨个试更快更全，天然不区分大小写"
                         "（文件扩展名大小写不一致也能搜到）。"
@@ -52,7 +58,11 @@ class GlobalSearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "搜索关键词"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个关键词或连续短语；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选的多个候选关键词；默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "types": {"type": "array", "items": {"type": "string", "enum": ALL_TYPES},
                               "description": "可选，限定只搜这些类型（project/file/folder/event/"
                                             "client/conversation/note）；不传则全搜"},

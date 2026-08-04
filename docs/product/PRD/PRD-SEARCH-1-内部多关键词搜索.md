@@ -1,6 +1,6 @@
 # 内部多关键词搜索 PRD
 
-> 状态：Phase 1 待实现
+> 状态：Phase 1 已完成，Phase 2 进行中
 > 创建：2026-08-04
 > 最近更新：2026-08-04
 > 关联模块：`backend/app/api/v1/search.py`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/group_context.py`
@@ -10,8 +10,8 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 1：查询输入与统一解析 | 🔲 待实现 | 支持单关键词兼容输入、多关键词数组、去重和长度限制 |
-| Phase 2：站内工具接入 | 🔲 待实现 | 接入全局、项目、文件、文件夹、会话、群上下文等搜索 |
+| Phase 1：查询输入与统一解析 | ✅ 已完成 | 已支持单关键词兼容输入、多关键词数组、去重和长度限制 |
+| Phase 2：站内工具接入 | 🚧 进行中 | 已迁移全局、文件、便签、历史会话、群上下文，仍需完成全量审查 |
 | Phase 3：匹配模式与排序 | 🔲 待实现 | 默认 OR，支持 AND，按命中数量和字段权重排序 |
 | Phase 4：工具 prompt/skills 迁移 | 🔲 待实现 | 更新工具 schema、skill 文档和调用提示，默认引导一次传入多个关键词 |
 | Phase 5：测试与性能验证 | 🔲 待实现 | 覆盖中文多词、隔词匹配、权限隔离和查询耗时 |

@@ -83,7 +83,7 @@ async def test_global_search_ranks_note_title_before_body_only_hit(db, user_a):
 async def test_global_search_tool_requires_query(db, user_a):
     res = await _global_search(db, user_a.id, {})
 
-    assert res == {"error": "需要提供搜索关键词 q"}
+    assert res == {"error": "需要提供搜索关键词 q 或 queries"}
 
 
 async def test_global_search_tool_adds_note_when_nothing_found(db, user_a):
@@ -101,3 +101,28 @@ async def test_global_search_tool_ignores_unknown_types(db, user_a):
 
     assert res["total"] == 1
     assert res["groups"][0]["type"] == "file"
+
+
+async def test_global_search_or_matches_any_keyword_in_one_call(db, user_a):
+    await _mk(db, Project(user_id=user_a.id, name="部署方案"))
+    await _mk(db, Project(user_id=user_a.id, name="上线清单"))
+
+    result = await run_global_search(
+        db, user_a.id, "", queries=["部署", "上线"], types=["project"], mode="OR",
+    )
+
+    assert {item["title"] for item in result["groups"][0]["items"]} == {"部署方案", "上线清单"}
+    assert result["queries"] == ["部署", "上线"]
+    assert result["mode"] == "OR"
+
+
+async def test_global_search_and_requires_every_keyword(db, user_a):
+    await _mk(db, Project(user_id=user_a.id, name="部署方案"))
+    await _mk(db, Project(user_id=user_a.id, name="上线清单"))
+    await _mk(db, Project(user_id=user_a.id, name="部署上线方案"))
+
+    result = await run_global_search(
+        db, user_a.id, "", queries=["部署", "上线"], types=["project"], mode="AND",
+    )
+
+    assert [item["title"] for item in result["groups"][0]["items"]] == ["部署上线方案"]

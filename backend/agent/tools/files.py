@@ -24,6 +24,7 @@ from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
+from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -274,8 +275,11 @@ async def _list_files(db, user_id, args: dict):
         stmt = stmt.where(File.folder_id == folder_id)
     if args.get("ext"):
         stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
-    if args.get("q"):
-        stmt = stmt.where(File.display_name.ilike(f"%{args['q']}%"))
+    file_queries = normalize_queries(
+        args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
+    )
+    if file_queries:
+        stmt = stmt.where(keyword_condition([File.display_name], file_queries, args.get("mode")))
     requested_limit = args.get("limit", 100)
     try:
         limit = max(1, min(int(requested_limit), 200))
@@ -1221,7 +1225,11 @@ class FilesSkill(BaseSkill):
                     "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
                     "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
                     "ext": {"type": "string", "description": "扩展名，如 png/md"},
-                    "q": {"type": "string", "description": "名称模糊匹配"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个名称关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个名称关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200,
                               "description": "最多返回多少条，默认 100；查询大文件夹时可提高到 200"},
                 },

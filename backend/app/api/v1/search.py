@@ -1,17 +1,18 @@
-"""站内全局搜索：一个 q 跨 项目/文件/文件夹/日程/客户/对话 检索（按 user_id 隔离）。
+"""站内全局搜索：一个或多个关键词跨项目/文件/文件夹/日程/客户/对话检索（按 user_id 隔离）。
 
-简单子串匹配（ILIKE %q%），对中文也有效、无需建全文索引。各类型各取前 N 条，
+简单子串匹配（ILIKE %关键词%），对中文也有效、无需建全文索引。各类型各取前 N 条，
 分组返回，供顶栏全局搜索框下拉展示 + 点击跳转。对话同时搜会话标题与消息正文。
 
 `run_global_search` 是查询核心，路由和 agent 工具（`agent/tools/global_search.py`）
 共用——路由给下拉框用小 per_type，工具给模型用更大的 per_type，避免各写一套。
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.core.security import get_current_user
+from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from app.models import (
     User, Project, File, Folder, CalendarEvent, Client,
     ConversationSession, ConversationMessage, MindNode,
@@ -42,6 +43,15 @@ def _snippet(text: str, q: str) -> str:
     return ("…" if start > 0 else "") + seg + ("…" if end < len(text) else "")
 
 
+def _snippet_for_queries(text: str, queries: list[str]) -> str:
+    """从第一个实际命中的关键词截取片段。"""
+    for query in queries:
+        snippet = _snippet(text, query)
+        if query.casefold() in (text or "").casefold():
+            return snippet
+    return _snippet(text, queries[0]) if queries else (text or "")[:60].strip()
+
+
 def _primary_rank(column, q: str):
     """名称精确/前缀命中优先于纯子串命中；只用标准 SQL，SQLite 测试也保持一致。"""
     normalized = q.lower()
@@ -53,15 +63,18 @@ def _primary_rank(column, q: str):
 
 
 async def run_global_search(db: AsyncSession, user_id, q: str, *,
-                            per_type: int = PER_TYPE, types: list[str] | None = None) -> dict:
-    """跨类型子串搜索核心逻辑。`types` 不传则搜全部，传了只搜指定类型
+                            per_type: int = PER_TYPE, types: list[str] | None = None,
+                            queries: list[str] | None = None, mode: str = "OR") -> dict:
+    """跨类型多关键词搜索核心逻辑。`types` 不传则搜全部，传了只搜指定类型
     （值域见 ALL_TYPES：project/file/folder/event/client/conversation）。"""
-    q = (q or "").strip()
-    if not q:
-        return {"query": q, "total": 0, "groups": []}
+    original_query = (q or "").strip()
+    search_queries = normalize_queries(original_query, queries)
+    mode = normalize_mode(mode)
+    if not search_queries:
+        return {"query": original_query, "queries": [], "mode": mode, "total": 0, "groups": []}
     wanted = set(types) if types else None
     uid = user_id
-    like = f"%{q}%"
+    q = search_queries[0]
     groups: list = []
     use_romaji = is_romaji_query(q)
 
@@ -70,9 +83,9 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(Project).where(
                 Project.user_id == uid,
-                or_(Project.name.ilike(like), Project.client.ilike(like),
-                    Project.current_stage.ilike(like)),
-            ).order_by(_primary_rank(Project.name, q), Project.updated_at.desc()).limit(per_type)
+                keyword_condition([Project.name, Project.client, Project.current_stage], search_queries, mode),
+            ).order_by(keyword_score([Project.name, Project.client, Project.current_stage], search_queries).desc(),
+                       _primary_rank(Project.name, q), Project.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {p.id for p in rows}
@@ -99,8 +112,9 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(File).where(
                 File.user_id == uid, File.deleted_at.is_(None),
-                or_(File.display_name.ilike(like), File.ext.ilike(like)),
-            ).order_by(_primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
+                keyword_condition([File.display_name, File.ext], search_queries, mode),
+            ).order_by(keyword_score([File.display_name, File.ext], search_queries).desc(),
+                       _primary_rank(File.display_name, q), File.updated_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {f.id for f in rows}
@@ -124,8 +138,10 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     # ── 文件夹：名 ──
     if wanted is None or "folder" in wanted:
         rows = list((await db.execute(
-            select(Folder).where(Folder.user_id == uid, Folder.name.ilike(like))
-            .order_by(_primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
+            select(Folder).where(Folder.user_id == uid,
+                                 keyword_condition([Folder.name], search_queries, mode))
+            .order_by(keyword_score([Folder.name], search_queries).desc(),
+                      _primary_rank(Folder.name, q), Folder.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {fo.id for fo in rows}
@@ -148,9 +164,11 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(CalendarEvent).where(
                 CalendarEvent.user_id == uid,
-                or_(CalendarEvent.title.ilike(like), CalendarEvent.description.ilike(like),
-                    CalendarEvent.client.ilike(like)),
-            ).order_by(_primary_rank(CalendarEvent.title, q), CalendarEvent.date.desc()).limit(per_type)
+                keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client],
+                                  search_queries, mode),
+            ).order_by(keyword_score([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client],
+                                      search_queries).desc(),
+                       _primary_rank(CalendarEvent.title, q), CalendarEvent.date.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {e.id for e in rows}
@@ -177,10 +195,11 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         rows = list((await db.execute(
             select(Client).where(
                 Client.user_id == uid,
-                or_(Client.name.ilike(like), Client.contact.ilike(like),
-                    Client.email.ilike(like), Client.phone.ilike(like),
-                    Client.notes.ilike(like)),
-            ).order_by(_primary_rank(Client.name, q), Client.created_at.desc()).limit(per_type)
+                keyword_condition([Client.name, Client.contact, Client.email, Client.phone, Client.notes],
+                                  search_queries, mode),
+            ).order_by(keyword_score([Client.name, Client.contact, Client.email, Client.phone, Client.notes],
+                                      search_queries).desc(),
+                       _primary_rank(Client.name, q), Client.created_at.desc()).limit(per_type)
         )).scalars().all())
         if use_romaji and len(rows) < per_type:
             seen = {c.id for c in rows}
@@ -211,12 +230,12 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                 MindNode.user_id == uid,
                 MindNode.kind == "note",
                 MindNode.deleted_at.is_(None),
-                or_(MindNode.title.ilike(like), MindNode.content_plain.ilike(like)),
+                keyword_condition([MindNode.title, MindNode.content_plain], search_queries, mode),
             ).order_by(
                 case(
                     (func.lower(MindNode.title) == q.lower(), 0),
                     (func.lower(MindNode.title).like(f"{q.lower()}%"), 1),
-                    (MindNode.title.ilike(like), 2),
+                    (MindNode.title.ilike(f"%{q}%"), 2),
                     else_=3,  # 只在正文命中：保留，但排在标题命中之后
                 ),
                 MindNode.captured_at.desc(),
@@ -239,8 +258,8 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         if rows:
             groups.append({"type": "note", "label": "便签", "items": [
                 {"id": n.id,
-                 "title": n.title or _snippet(n.content_plain, q) or "无标题便签",
-                 "subtitle": _snippet(n.content_plain, q)}
+                 "title": n.title or _snippet_for_queries(n.content_plain, search_queries) or "无标题便签",
+                 "subtitle": _snippet_for_queries(n.content_plain, search_queries)}
                 for n in rows
             ]})
 
@@ -249,8 +268,10 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         conv: dict = {}   # session_id → {id, title, subtitle}
         title_rows = (await db.execute(
             select(ConversationSession).where(
-                ConversationSession.user_id == uid, ConversationSession.title.ilike(like),
-            ).order_by(_primary_rank(ConversationSession.title, q), ConversationSession.updated_at.desc()).limit(per_type)
+                ConversationSession.user_id == uid,
+                keyword_condition([ConversationSession.title], search_queries, mode),
+            ).order_by(keyword_score([ConversationSession.title], search_queries).desc(),
+                       _primary_rank(ConversationSession.title, q), ConversationSession.updated_at.desc()).limit(per_type)
         )).scalars().all()
         for s in title_rows:
             conv[s.id] = {"id": s.id, "title": s.title, "subtitle": "对话"}
@@ -258,13 +279,14 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
         msg_rows = (await db.execute(
             select(ConversationMessage, ConversationSession.title)
             .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-            .where(ConversationSession.user_id == uid, ConversationMessage.content.ilike(like))
+            .where(ConversationSession.user_id == uid,
+                   keyword_condition([ConversationMessage.content], search_queries, mode))
             .order_by(ConversationMessage.created_at.desc()).limit(MSG_PER_TYPE)
         )).all()
         for m, stitle in msg_rows:
             if m.session_id not in conv:
                 conv[m.session_id] = {"id": m.session_id, "title": stitle,
-                                      "subtitle": _snippet(m.content, q),
+                                      "subtitle": _snippet_for_queries(m.content, search_queries),
                                       "message_id": m.id}
             if len(conv) >= per_type:
                 break
@@ -286,13 +308,16 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
                            "items": list(conv.values())[:per_type]})
 
     total = sum(len(g["items"]) for g in groups)
-    return {"query": q, "total": total, "groups": groups}
+    return {"query": original_query or " ".join(search_queries),
+            "queries": search_queries, "mode": mode, "total": total, "groups": groups}
 
 
 @router.get("")
 async def search(
     q: str = "",
+    queries: list[str] | None = Query(default=None),
+    mode: str = "OR",
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await run_global_search(db, current_user.id, q)
+    return await run_global_search(db, current_user.id, q, queries=queries, mode=mode)

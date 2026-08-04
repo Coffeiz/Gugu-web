@@ -5,6 +5,7 @@ from sqlalchemy import desc, select
 from agent.imctx import get_im
 from agent.tools.base import BaseSkill, Tool
 from app.models import ConversationMessage, ConversationSession
+from app.search.query import keyword_condition, normalize_mode, normalize_queries
 
 
 async def _group_context_search(db, user_id, args: dict):
@@ -12,6 +13,9 @@ async def _group_context_search(db, user_id, args: dict):
     if im.get("chat_type") != "group" or not im.get("chat_id"):
         return {"error": "当前不在群聊上下文中，不能使用群聊搜索"}
     keyword = (args.get("keyword") or "").strip()
+    queries = args.get("queries") if isinstance(args.get("queries"), list) else None
+    search_queries = normalize_queries(keyword, queries)
+    mode = normalize_mode(args.get("mode"))
     limit = max(1, min(int(args.get("limit", 10) or 10), 30))
     query = (
         select(ConversationMessage)
@@ -26,11 +30,13 @@ async def _group_context_search(db, user_id, args: dict):
         .order_by(desc(ConversationMessage.created_at))
         .limit(limit)
     )
-    if keyword:
-        query = query.where(ConversationMessage.content.ilike(f"%{keyword}%"))
+    if search_queries:
+        query = query.where(keyword_condition([ConversationMessage.content], search_queries, mode))
     rows = (await db.execute(query)).scalars().all()
     return {
         "keyword": keyword,
+        "queries": search_queries,
+        "mode": mode,
         "messages": [
             {
                 "role": "用户" if row.role == "user" else "咕咕",
@@ -56,7 +62,11 @@ class GroupContextSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "可选关键词；不填则返回当前群最近消息"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "返回条数，默认 10，最多 30"},
                 },
             },
