@@ -55,8 +55,8 @@ _VISION_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
                 "gif": "image/gif", "webp": "image/webp"}
 VISION_IMG_MAX = 5 * 1024 * 1024   # 单张图喂模型的字节上限（超了自动降采样压缩，不再直接丢）
 VISION_IMG_COUNT = 6               # 单条消息最多带几张图
-VISION_MAX_DIM = 2048              # 喂模型前长边降采样到此像素（插画/照片足够清晰，省 token）
-VISION_TARGET_BYTES = int(4.5 * 1024 * 1024)  # 压缩目标字节（留 API 余量）
+VISION_MAX_DIM = 3840              # 喂模型前长边降采样到此像素，保留高分辨率细节
+VISION_TARGET_BYTES = 8 * 1024 * 1024  # 压缩目标字节（留 API 余量）
 
 
 def _key(user_id, attach_id) -> str:
