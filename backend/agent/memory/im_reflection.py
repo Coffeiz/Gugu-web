@@ -27,6 +27,8 @@ GROUP_DAILY_KEEP_RECENT = 500
 GROUP_DAILY_HARD_CAP = 1200
 GROUP_MEMORY_MAX_TOKENS = 15000
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
+GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference", "note"}
+_GROUP_INTERNAL_ID_RE = re.compile(r"(?:platform_user_id|user_openid|member_openid|group_openid)\s*=", re.I)
 
 
 def _daily_entries(text: str) -> List[tuple[str, str]]:
@@ -267,6 +269,9 @@ async def _apply_output(
     settings,
 ) -> None:
     if scope.scope_type == "group":
+        profile = _merge_group_profile(current.get("profile"), output.get("profile_add"), output.get("profile_remove"))
+        if profile or output.get("profile_add") or output.get("profile_remove"):
+            await write_scope_json(scope, "profile.json", profile)
         entries = _daily_entries(current.get("daily") or "")
         date = (messages[-1].created_at.date().isoformat() if messages and messages[-1].created_at else now_utc().date().isoformat())
         for item in output.get("daily") or []:
@@ -295,6 +300,41 @@ async def _apply_output(
         await write_scope_json(scope, "pattern.json", pattern)
     if summary:
         await write_scope_json(scope, "summary.json", {"text": summary, "ts": now_utc().timestamp()})
+
+
+def _merge_group_profile(current: Any, additions: Any, removals: Any) -> list[dict]:
+    """合并群组公开 profile；只接受群组类型，不保存成员内部 ID。"""
+    values = []
+    for item in current if isinstance(current, list) else []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        item_type = str(item.get("type") or "note").strip()
+        if text and item_type in GROUP_PROFILE_TYPES and not _GROUP_INTERNAL_ID_RE.search(text):
+            values.append({"type": item_type, "text": text, "ts": item.get("ts")})
+
+    for raw in removals if isinstance(removals, list) else []:
+        target = str(raw.get("text") if isinstance(raw, dict) else raw).strip()
+        if target:
+            values = [item for item in values if item["text"] != target]
+
+    seen = {item["text"] for item in values}
+    now = now_utc().timestamp()
+    for raw in additions if isinstance(additions, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        text = str(raw.get("text") or "").strip()
+        item_type = str(raw.get("type") or "note").strip()
+        if not text or item_type not in GROUP_PROFILE_TYPES or _GROUP_INTERNAL_ID_RE.search(text):
+            continue
+        existing = next((item for item in values if item["text"] == text), None)
+        if existing:
+            existing["type"] = item_type
+            existing["ts"] = now
+        else:
+            values.append({"type": item_type, "text": text, "ts": now})
+            seen.add(text)
+    return values
 
 
 def _merge_profile(current: Any, incoming: Any) -> list:

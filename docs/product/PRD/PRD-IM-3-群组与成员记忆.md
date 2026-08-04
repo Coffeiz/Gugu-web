@@ -148,6 +148,8 @@ member、group 或 Bot scope 删除采用两阶段流程：
 
 `summary.json` 必须保留。它和 `daily.md` 的区别是：summary 回答“现在群里处于什么状态”，daily 记录“最近发生了什么”，memory 记录“长期沉淀了什么”。
 
+群组 `profile.json` 使用 `{type,text,ts}` 条目，`type` 只能是 `name`、`nature`、`rule`、`role`、`project`、`preference`、`note`。它只记录群的公开稳定事实；成员个人资料、内部 ID、推断性评价和一次性事件不得写入。群组反思通过 `profile_add/profile_remove` 增量维护，未发生变化时不创建空 profile 文件。
+
 ### 3.2 平台用户记忆
 
 | 文件 | 内容 | 写入规则 |

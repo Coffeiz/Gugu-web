@@ -83,6 +83,29 @@ def test_group_memory_compaction_preserves_dates_and_has_large_budget():
     assert not _preserves_group_dates(entries, "## 决定\n- 新决定")
 
 
+def test_group_profile_accepts_public_types_and_rejects_member_identity():
+    from agent.memory.im_reflection import _merge_group_profile
+
+    profile = _merge_group_profile(
+        [],
+        [
+            {"type": "nature", "text": "这是产品开发讨论群"},
+            {"type": "role", "text": "Coffeiz负责最终确认"},
+            {"type": "member", "text": "platform_user_id=secret"},
+        ],
+        [],
+    )
+    assert [item["type"] for item in profile] == ["nature", "role"]
+    assert all("platform_user_id" not in item["text"] for item in profile)
+
+    updated = _merge_group_profile(
+        profile,
+        [{"type": "rule", "text": "删除操作需要先确认"}],
+        ["这是产品开发讨论群"],
+    )
+    assert [item["text"] for item in updated] == ["Coffeiz负责最终确认", "删除操作需要先确认"]
+
+
 @pytest.mark.asyncio
 async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
     from app.models import MemoryReflectionCursor
