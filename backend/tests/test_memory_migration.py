@@ -207,7 +207,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     import scripts.refresh_memory as rm
 
     patterns = [
-        {"id": "a", "text": "一次性的项目执行细节", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
+        {"id": "a", "text": "一次性的项目执行细节", "kind": "inferred", "conf": 0.6, "imp": 3, "ts": 1.0},
         {"id": "b", "text": "有争议、只有一次被判删的条目", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
         {"id": "c", "text": "该保留的稳定模式", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
     ]
