@@ -85,6 +85,10 @@ async def test_global_search_tool_requires_query(db, user_a):
 
     assert res == {"error": "需要提供搜索关键词 q 或 queries"}
 
+    res = await _global_search(db, user_a.id, {"queries": ["", "  "]})
+
+    assert res == {"error": "需要提供搜索关键词 q 或 queries"}
+
 
 async def test_global_search_tool_adds_note_when_nothing_found(db, user_a):
     res = await _global_search(db, user_a.id, {"q": "找不到的东西"})

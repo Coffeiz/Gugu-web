@@ -9,6 +9,7 @@
 例外：思维便签（note）正文短，直接搜正文（`content_plain`），能按内容召回。
 """
 from app.api.v1.search import ALL_TYPES, run_global_search
+from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _TOOL_PER_TYPE = 20
@@ -20,7 +21,7 @@ async def _global_search(db, user_id, args: dict):
     if not isinstance(queries, list):
         queries = None
     mode = str(args.get("mode") or "OR").upper()
-    if not q and not queries:
+    if not normalize_queries(q, queries):
         return {"error": "需要提供搜索关键词 q 或 queries"}
     types = args.get("types")
     if isinstance(types, list):
