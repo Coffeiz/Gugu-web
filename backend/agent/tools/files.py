@@ -1214,7 +1214,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、名称关键词筛选。"
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、一个或多个名称关键词（默认 OR）筛选。"
                         "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
                         "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
             input_schema={

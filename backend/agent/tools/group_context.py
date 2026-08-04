@@ -58,7 +58,7 @@ class GroupContextSkill(BaseSkill):
         Tool(
             name="group_context_search",
             label="搜当前群上下文",
-            description="只搜索当前 QQ 群最近保存的消息，不会读取其他群、私聊或网页历史对话。",
+            description="只搜索当前 QQ 群最近保存的消息，支持一次传入多个关键词（默认 OR）；不会读取其他群、私聊或网页历史对话。",
             input_schema={
                 "type": "object",
                 "properties": {

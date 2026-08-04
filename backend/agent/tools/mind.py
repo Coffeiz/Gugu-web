@@ -374,7 +374,7 @@ class MindSkill(BaseSkill):
     tools = [
         Tool(
             name="mind_search", label="搜索思维笔记",
-            description="按关键词搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
+            description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
                         "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 mind_get。",
             input_schema={
                 "type": "object",

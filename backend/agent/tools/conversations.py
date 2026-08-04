@@ -135,7 +135,7 @@ class ConversationsSkill(BaseSkill):
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按关键词找。不传 keyword 则列最近对话。只搜当前用户自己的，安全。",
+            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按一个或多个关键词找（默认 OR）。不传 keyword/queries 则列最近对话。只搜当前用户自己的，安全。",
             input_schema={
                 "type": "object",
                 "properties": {
