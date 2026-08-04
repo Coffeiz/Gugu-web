@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import hashlib
 import json
 import random
@@ -50,6 +51,11 @@ _INTENT_SYSTEM = (
     '"need_current":true,"scope":"user|project|conversation|global"}。'
     "需要查找已有内容时用 search_context，明确要执行操作时用 action，普通聊天用 chat。"
 )
+_RERANK_SYSTEM = (
+    "你是检索结果排序器，只负责按用户查询的相关性排序候选文档。"
+    '严格输出 JSON：{"ordered_keys":["候选 key"]}。'
+    "只能使用候选列表中已有的 key，不要补充、删除或解释。"
+)
 _DEFAULT_CACHE = Path(__file__).with_name(".bench_rag_embeddings.json")
 
 
@@ -75,6 +81,11 @@ def _args() -> argparse.Namespace:
     )
     parser.add_argument("--no-cache", action="store_true", help="不读取或写入向量缓存")
     parser.add_argument("--embed-delay", type=float, default=0.25, help="生成文档向量之间的等待秒数")
+    parser.add_argument(
+        "--rerank-models",
+        default="",
+        help="逗号分隔的预设匹配词，例如 deepseek,minimax；为空则不执行 LLM 重排",
+    )
     parser.add_argument("--seed", type=int, default=20260805, help="随机数据种子")
     parser.add_argument("--relevant-every", type=int, default=50, help="每多少条虚拟数据开始一个相关窗口")
     parser.add_argument("--relevant-per-window", type=int, default=3, help="每个相关窗口包含多少条相关数据")
@@ -243,6 +254,93 @@ def _quality(results: list[VirtualDocument], total_relevant: int) -> dict:
     return metrics
 
 
+def _result_details(results: list[VirtualDocument], top_k: int) -> list[dict]:
+    return [
+        {"key": item.key, "source": item.source, "relevant": item.relevant}
+        for item in results[: min(top_k, 20)]
+    ]
+
+
+def _find_model_settings(settings, selector: str):
+    """按 provider/model/name/id 找一个预设，只用于本次压测，不改变运行时激活模型。"""
+    needle = selector.strip().lower()
+    candidates = [settings.ai]
+    presets = getattr(getattr(settings, "ai_presets", None), "items", []) or []
+    candidates.extend(presets)
+    for candidate in candidates:
+        haystack = " ".join(
+            str(getattr(candidate, field, ""))
+            for field in ("provider", "model", "name", "id")
+        ).lower()
+        if needle in haystack:
+            clone = copy.deepcopy(settings)
+            clone.ai = copy.deepcopy(candidate)
+            return clone
+    return None
+
+
+async def _run_rerank_mode(
+    selector: str,
+    query: str,
+    settings,
+    candidates: list[VirtualDocument],
+    top_k: int,
+) -> dict:
+    model_settings = _find_model_settings(settings, selector)
+    if model_settings is None:
+        return {"mode": "llm_rerank", "model_selector": selector, "error": "model_not_found"}
+
+    candidate_payload = [
+        {"key": item.key, "source": item.source, "text": item.text}
+        for item in candidates
+    ]
+    started = time.perf_counter()
+    output = await complete_json(
+        _RERANK_SYSTEM,
+        json.dumps({"query": query, "candidates": candidate_payload}, ensure_ascii=False),
+        model_settings,
+        max_tokens=max(600, len(candidates) * 35),
+        temperature=0.0,
+        thinking="disabled",
+    )
+    rerank_ms = (time.perf_counter() - started) * 1000
+    valid_keys = {item.key for item in candidates}
+    ordered_keys = output.get("ordered_keys") if isinstance(output, dict) else None
+    ordered = []
+    seen = set()
+    if isinstance(ordered_keys, list):
+        by_key = {item.key: item for item in candidates}
+        for key in ordered_keys:
+            item = by_key.get(str(key))
+            if item is not None and item.key not in seen:
+                ordered.append(item)
+                seen.add(item.key)
+    ordered.extend(item for item in candidates if item.key not in seen)
+    started = time.perf_counter()
+    context = "\n".join(f"[{item.source}] {item.text}" for item in ordered[:top_k])
+    inject_ms = (time.perf_counter() - started) * 1000
+    return {
+        "mode": "llm_rerank",
+        "model_selector": selector,
+        "model": model_settings.ai.model,
+        "provider": model_settings.ai.provider,
+        "candidate_count": len(candidates),
+        "valid_returned_keys": (
+            len({str(key) for key in ordered_keys} & valid_keys)
+            if isinstance(ordered_keys, list)
+            else 0
+        ),
+        "quality": _quality(ordered, sum(item.relevant for item in candidates)),
+        "top_results": _result_details(ordered, top_k),
+        "context_chars": len(context),
+        "timing_ms": {
+            "llm_rerank": round(rerank_ms, 1),
+            "context_inject": round(inject_ms, 1),
+            "total": round(rerank_ms + inject_ms, 1),
+        },
+    }
+
+
 async def _run_mode(
     mode: str,
     query: str,
@@ -408,6 +506,22 @@ async def main() -> None:
     for mode, use_llm in (("bm25_without_llm", False), ("bm25_with_llm", True)):
         result = await _run_bm25_mode(mode, args.query, settings, documents, args.top_k, use_llm)
         print(json.dumps(result, ensure_ascii=False))
+
+    if args.rerank_models.strip():
+        candidates = _bm25_rank(documents, args.query, args.top_k)
+        print(
+            json.dumps(
+                {
+                    "event": "rerank-input",
+                    "candidate_count": len(candidates),
+                    "candidates": _result_details(candidates, args.top_k),
+                },
+                ensure_ascii=False,
+            )
+        )
+        for selector in args.rerank_models.split(","):
+            result = await _run_rerank_mode(selector, args.query, settings, candidates, args.top_k)
+            print(json.dumps(result, ensure_ascii=False))
 
     for mode, use_llm in (("without_llm", False), ("with_llm", True)):
         result = await _run_mode(mode, args.query, settings, documents, args.top_k, use_llm)
