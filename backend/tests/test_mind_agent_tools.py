@@ -36,6 +36,15 @@ async def test_mind_search_returns_matches_and_one_hop_neighbors(db, user_a):
     assert result["related"][0]["node"]["node_id"] == neighbor.id
 
 
+async def test_mind_search_accepts_multiple_keywords(db, user_a):
+    await _mk_note(db, user_a, "部署方案", "部署")
+    await _mk_note(db, user_a, "上线清单", "上线")
+
+    result = await _mind_search(db, user_a.id, {"queries": ["部署", "上线"]})
+
+    assert {match["title"] for match in result["matches"]} == {"部署", "上线"}
+
+
 async def test_mind_search_skips_deleted_and_other_users_nodes(db, user_a, user_b):
     deleted = await _mk_note(db, user_a, "秘密计划")
     deleted.deleted_at = deleted.created_at

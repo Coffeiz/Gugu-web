@@ -78,6 +78,28 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
     imctx.clear()
 
 
+async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkeypatch):
+    from agent import imctx
+    from agent.tools.group_context import _group_context_search
+    from app.models import ConversationMessage, ConversationSession
+
+    current = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-a", title="群 A")
+    db.add(current)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(session_id=current.id, role="user", content="部署方案"),
+        ConversationMessage(session_id=current.id, role="user", content="上线清单"),
+    ])
+    await db.commit()
+    imctx.set_im("qqbot", "m1", "bot-1", "group-a", "member", "group")
+
+    result = await _group_context_search(db, user_a.id, {"queries": ["部署", "上线"]})
+
+    assert [row["content"] for row in result["messages"]] == ["部署方案", "上线清单"]
+    assert result["mode"] == "OR"
+    imctx.clear()
+
+
 def test_im_identity_context_is_not_injected_into_webchat():
     from agent.models import AgentRequest
     from agent.runner import _im_identity_block
