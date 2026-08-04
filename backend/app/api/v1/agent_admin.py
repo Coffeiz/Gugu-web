@@ -98,6 +98,33 @@ PLACEHOLDERS = [
 SPECIAL_PROMPTS = ["persona", "skills", "policy", "reflection", "compress"]
 
 
+class ImMemoryScopeRequest(BaseModel):
+    owner_user_id: _uuid.UUID
+    platform: str
+    bot_id: str
+    scope_type: str
+    scope_id: str
+
+
+class ImMemoryScopeDeleteRequest(ImMemoryScopeRequest):
+    confirm: bool = False
+
+
+def _im_memory_scope(body: ImMemoryScopeRequest):
+    from agent.memory.scopes import MemoryScope
+
+    try:
+        return MemoryScope(
+            body.owner_user_id,
+            body.platform,
+            body.bot_id,
+            body.scope_type,
+            body.scope_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 def _prompt_path(profile: str) -> Path:
     if profile not in SPECIAL_PROMPTS and profile not in PROFILES:
         raise HTTPException(400, f"未知 profile: {profile}，可选：{SPECIAL_PROMPTS + PROFILES}")
@@ -818,3 +845,35 @@ async def cleanup_legacy_memory_files(body: LegacyFilesCleanup):
         await storage.delete(key)
         deleted.append(key)
     return {"deleted": deleted, "skipped": skipped}
+
+
+@router.get("/memory/im-scopes")
+async def list_im_memory_scopes():
+    """列出 group/member scope 摘要；不返回聊天正文。"""
+    from agent.memory.scope_lifecycle import list_scopes
+
+    return {"items": await list_scopes()}
+
+
+@router.post("/memory/im-scopes/preview")
+async def preview_im_memory_scope(body: ImMemoryScopeRequest):
+    """预览单个 IM scope 的记忆文件，删除中的 scope 不可读取。"""
+    from agent.memory.scope_lifecycle import preview_scope
+
+    scope = _im_memory_scope(body)
+    value = await preview_scope(scope)
+    if value is None:
+        raise HTTPException(410, "该记忆作用域正在删除或已删除")
+    return {"scope": body.model_dump(mode="json"), "memory": value}
+
+
+@router.post("/memory/im-scopes/delete")
+async def delete_im_memory_scope(body: ImMemoryScopeDeleteRequest):
+    """写入删除屏障并异步清理；必须显式确认，避免误删群组记忆。"""
+    if not body.confirm:
+        raise HTTPException(400, "删除 IM 记忆作用域需要 confirm=true")
+    from agent.memory.scope_lifecycle import request_scope_deletion
+
+    scope = _im_memory_scope(body)
+    tombstone_id = await request_scope_deletion(scope, reason="admin")
+    return {"ok": True, "tombstone_id": tombstone_id, "status": "pending"}

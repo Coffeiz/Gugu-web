@@ -10,8 +10,7 @@ import random
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
-from app.core.redaction import diag_log, redact
-from agent.im.actor import ActorContext
+from agent.im.actor import ActorContext, ActorResolver
 from agent.im.context_policy import IM_SOURCES
 from agent.im.identity import resolve_owner_account
 from agent.im.models import PlatformMessage
@@ -297,7 +296,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             )
             db.add(session)
             await db.flush()
-        db.add(ConversationMessage(
+        message_row = ConversationMessage(
             session_id=session.id,
             role="user",
             content=request.message,
@@ -308,7 +307,8 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             chat_type=("group" if request.chat_id else
                        "c2c" if request.source in IM_SOURCES else None),
             files=attachment_cards or None,
-        ))
+        )
+        db.add(message_row)
         await db.commit()
         await trim_group_messages(session.id)
         # 被动群消息不经过 runner，单独补发会话增量，网页才能实时看到这条已记录消息。
@@ -331,7 +331,28 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             )
         except Exception:
             pass
-        return session.id
+        recorded_session_id = session.id
+        recorded_message_id = message_row.id
+    if request.chat_id and recorded_message_id:
+        try:
+            from agent.memory.reflection_jobs import observe_group_message
+            from agent.memory.scopes import MemoryScope
+
+            await observe_group_message(
+                MemoryScope(
+                    request.user_id,
+                    request.source or "qqbot",
+                    str(request.platform_bot_id or ""),
+                    "group",
+                    str(request.chat_id),
+                ),
+                recorded_message_id,
+                message_row.created_at,
+            )
+        except Exception:
+            # 记忆调度不能阻断消息落库和网页会话同步。
+            pass
+    return recorded_session_id
 
 
 def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
@@ -431,44 +452,15 @@ async def prepare_request(
     权限解析失败时固定降级为 unknown + web_search，绝不因异常把当前发言人
     升级成 owner。显示名仍由 identity 门面按角色裁剪后传入。
     """
-    platform = platform_message.platform or "worker"
     route = session_route or resolve_route(platform_message, payload)
-    platform_user_id = platform_message.sender.id or payload.get("platform_user_id")
-    chat_type = platform_message.chat.type or payload.get("chat_type")
-    role = None
-    allowed_tool_names = None
-    if platform in IM_SOURCES:
-        try:
-            access = await resolve_access(
-                platform,
-                chat_type,
-                payload.get("channel_id") or platform_message.bot_id,
-                owner_user_id,
-                platform_user_id or "",
-            )
-            role = access.role or "unknown"
-            allowed_tool_names = access.allowed_tool_names
-            if role == "unknown" and allowed_tool_names is None:
-                allowed_tool_names = ["web_search"]
-        except Exception as exc:
-            diag_log("im.prepare_access", exc)
-            print(
-                f"[im] {platform} 身份权限解析失败，按最小权限继续: {redact(type(exc).__name__)}",
-                flush=True,
-            )
-            role = "unknown"
-            allowed_tool_names = ["web_search"]
-
-    actor = ActorContext(
-        owner_user_id=owner_user_id,
-        platform=platform,
-        platform_user_id=platform_user_id,
-        platform_user_name=payload.get("platform_user_name") or platform_message.sender.name,
-        role=role,
-        chat_type=chat_type,
-        chat_id=platform_message.chat.id if chat_type == "group" else None,
-        allowed_tool_names=allowed_tool_names,
+    actor = await ActorResolver(access_resolver=resolve_access).resolve(
+        platform_message, payload, owner_user_id
     )
+    platform = actor.platform
+    platform_user_id = actor.platform_user_id
+    chat_type = actor.chat_type
+    role = actor.role
+    allowed_tool_names = actor.allowed_tool_names
     agent_user_name = (
         payload.get("platform_user_name") or platform_message.sender.name or "这位群友"
         if role in {"member", "unknown"}
@@ -585,6 +577,43 @@ async def dispatch_im_message(payload: dict):
         resp.session_id,
         group=bool(payload.get("chat_type") == "group"),
     )
+    if req.chat_id and resp.session_id:
+        try:
+            from agent.memory.reflection_jobs import observe_session_activity
+            from agent.memory.scopes import MemoryScope
+
+            await observe_session_activity(
+                MemoryScope(
+                    req.user_id,
+                    req.source or "qqbot",
+                    str(req.platform_bot_id or ""),
+                    "group",
+                    str(req.chat_id),
+                ),
+                resp.session_id,
+            )
+        except Exception:
+            # 记忆调度失败不影响当前回复已经完成。
+            pass
+        if prepared.actor.role == "member" and req.platform_user_id:
+            try:
+                from agent.memory.reflection_jobs import observe_member_activity
+                from agent.memory.scopes import MemoryScope
+
+                await observe_member_activity(
+                    MemoryScope(
+                        req.user_id,
+                        req.source or "qqbot",
+                        str(req.platform_bot_id or ""),
+                        "platform-user",
+                        str(req.platform_user_id),
+                    ),
+                    resp.session_id,
+                    str(req.platform_user_id),
+                )
+            except Exception:
+                # 成员记忆是后台增强能力，不影响群聊回复。
+                pass
     if resp.cancelled:
         await finalize_im_response(platform, puid, True, "")
         return resp

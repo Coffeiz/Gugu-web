@@ -81,6 +81,25 @@ def _im_identity_block(req: AgentRequest, history: list) -> str:
     return "\n".join(lines)
 
 
+def _reflection_input(req: AgentRequest, messages: list, initial_len: int, reply: str) -> tuple[str, str]:
+    """为 owner 反思隔离群聊内容，只保留 owner 发言和私人工具结果。"""
+    if not req.chat_id:
+        return req.message, reply
+    private_results = []
+    for item in messages[initial_len:]:
+        if item.get("role") != "tool":
+            continue
+        content = item.get("content")
+        if isinstance(content, list):
+            content = "\n".join(
+                str(part.get("text") or part.get("content") or "")
+                for part in content if isinstance(part, dict)
+            )
+        if content:
+            private_results.append(str(content))
+    return req.message, "\n\n".join(private_results) or "（只分析当前 owner 发言，不分析群聊助手回复）"
+
+
 def _schedule_title(user_id, session_id, user_msg: str, reply_text: str, settings, use_anthropic: bool) -> None:
     """后台生成新会话标题——移出关键路径，别让用户多等一次 LLM 调用（闲置后尤其明显）。"""
     task = asyncio.create_task(_gen_title_bg(user_id, session_id, user_msg, reply_text, settings, use_anthropic))
@@ -338,6 +357,11 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         user_tz=user_tz,
     )
     system_prompt += _im_identity_block(req, history)
+    if context_data.im_memory:
+        from agent.im.context_loader import format_im_memory
+        scope_memory = format_im_memory(context_data.im_memory, req.im_role)
+        if scope_memory:
+            system_prompt += "\n\n" + scope_memory
     if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
         system_prompt += im_bridge
     if _proactive_lead:         # 主动推送是会话首条 assistant → sanitize 会剥掉，塞 system 兜底
@@ -439,8 +463,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflection.schedule(user_id, req.user_name, req.message, text, settings,
-                                used_tools=im_used_tools, session_id=session_id)
+            reflect_message, reflect_reply = _reflection_input(
+                req, anthr_messages, anthr_initial_len, text
+            )
+            if reflect_reply:
+                reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
+                                    used_tools=im_used_tools, session_id=session_id)
 
 # 对话压缩（fire-and-forget）
     from agent.context import compress_conv
@@ -572,6 +600,11 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         user_tz=user_tz,
     )
     system_prompt += _im_identity_block(req, history)
+    if context_data.im_memory:
+        from agent.im.context_loader import format_im_memory
+        scope_memory = format_im_memory(context_data.im_memory, req.im_role)
+        if scope_memory:
+            system_prompt += "\n\n" + scope_memory
     if im_bridge:
         system_prompt += im_bridge
     if _proactive_lead:
@@ -715,8 +748,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
-            reflection.schedule(user_id, req.user_name, req.message, text, settings,
-                                used_tools=im_used_tools, session_id=session_id)
+            reflect_message, reflect_reply = _reflection_input(
+                req, anthr_messages, anthr_initial_len, text
+            )
+            if reflect_reply:
+                reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
+                                    used_tools=im_used_tools, session_id=session_id)
 
         from agent.context import compress_conv as _cc
         _cc.schedule(session_id, user_id, settings, model_cfg.context_tokens)

@@ -422,6 +422,131 @@ class ConversationMessage(Base):
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
 
 
+# ── IM 记忆反思 ──────────────────────────────────────────────────────────────
+
+class MemoryReflectionJob(Base):
+    """group/member 记忆反思任务；文件仍是记忆主数据。"""
+    __tablename__ = "memory_reflection_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    from_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    to_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(300), unique=True, index=True)
+    extractor_version: Mapped[str] = mapped_column(String(64), default="im-memory-v1")
+    reason: Mapped[str] = mapped_column(String(32), default="idle")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    dead_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            "from_message_id", "to_message_id", "extractor_version",
+            name="uq_memory_reflection_range",
+        ),
+    )
+
+
+class MemoryReflectionCursor(Base):
+    """每个 IM memory scope 的消息游标和活跃窗口状态。"""
+    __tablename__ = "memory_reflection_cursors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    last_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    active_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    scope_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            name="uq_memory_reflection_cursor_scope",
+        ),
+    )
+
+
+class MemoryEntry(Base):
+    """文件记忆的来源索引；内容文件仍是主数据，条目可重建。"""
+    __tablename__ = "memory_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    entry_key: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(32))
+    content_hash: Mapped[str] = mapped_column(String(128), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id", "entry_key",
+            name="uq_memory_entry_scope_key",
+        ),
+    )
+
+
+class MemorySource(Base):
+    """记忆条目到会话消息来源的可重建关联。"""
+    __tablename__ = "memory_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("memory_entries.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("conversation_messages.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("entry_id", "message_id", name="uq_memory_source_entry_message"),
+    )
+
+
+class MemoryScopeTombstone(Base):
+    """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
+    __tablename__ = "memory_scope_tombstones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    delete_version: Mapped[int] = mapped_column(Integer, default=1)
+    reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            name="uq_memory_scope_tombstone_scope",
+        ),
+    )
+
+
 # ── AgentUsage ───────────────────────────────────────────────────────────────
 
 class AgentUsage(Base):

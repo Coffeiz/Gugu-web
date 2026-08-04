@@ -11,6 +11,8 @@ from typing import Any
 
 from agent.context import loaders
 from agent.im.context_policy import ImContextPolicy, policy_for
+from agent.memory.scope_lifecycle import preview_scope
+from agent.memory.scopes import MemoryScope
 from agent.models import AgentRequest
 
 
@@ -71,6 +73,7 @@ class ContextData:
     style_prefs: dict
     memory: dict
     im_channels: dict
+    im_memory: dict
 
 
 async def load_context_data(
@@ -89,7 +92,8 @@ async def load_context_data(
     context_policy = policy or policy_for(request)
     user_tz = await loaders.load_user_tz(db, user_id)
     if not context_policy.load_owner_context:
-        return ContextData([], user_tz, [], {}, {}, {}, {})
+        im_memory = await load_im_memory(request)
+        return ContextData([], user_tz, [], {}, {}, {}, {}, im_memory)
 
     projects = await loaders.load_projects(db, user_id)
     events = await loaders.load_events(db, user_id, tz=user_tz)
@@ -97,6 +101,7 @@ async def load_context_data(
     style_prefs = await loaders.load_style_prefs(db, user_id)
     memory = await loaders.load_memory(user_id, query) if memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
+    im_memory = await load_im_memory(request)
     return ContextData(
         projects=projects,
         user_tz=user_tz,
@@ -105,4 +110,51 @@ async def load_context_data(
         style_prefs=style_prefs,
         memory=memory,
         im_channels=im_channels,
+        im_memory=im_memory,
     )
+
+
+async def load_im_memory(request: AgentRequest) -> dict:
+    """按角色读取 IM 公开记忆和当前发言人的轻量记忆。
+
+    owner 个人记忆仍由既有 ``load_memory`` 读取；这里永远不读取 owner
+    namespace，也不读取 member 不应看到的群长期 memory。
+    """
+    if request.source not in ("feishu", "qqbot", "wechat") or not request.chat_id:
+        return {}
+    bot_id = str(request.platform_bot_id or "")
+    if not bot_id:
+        return {}
+    group_scope = MemoryScope(
+        request.user_id, request.source, bot_id, "group", str(request.chat_id)
+    )
+    group_memory = await preview_scope(group_scope)
+    if group_memory is None:
+        return {}
+    result = {"group": group_memory}
+    role = request.actor_context.role if request.actor_context else request.im_role
+    if role == "member" and request.platform_user_id:
+        user_scope = MemoryScope(
+            request.user_id, request.source, bot_id, "platform-user", str(request.platform_user_id)
+        )
+        member_memory = await preview_scope(user_scope)
+        if member_memory is not None:
+            result["platform_user"] = member_memory
+    return result
+
+
+def format_im_memory(data: dict, role: str | None) -> str:
+    """把已按权限读取的 IM scope 记忆格式化为模型上下文。"""
+    group = data.get("group") or {}
+    parts = ["## 当前群组记忆（仅限本群公开信息）"]
+    for name in ("profile", "summary"):
+        value = group.get(name)
+        if value:
+            parts.append(f"### 群组 {name}\n{value}")
+    if role == "member":
+        personal = data.get("platform_user") or {}
+        for name in ("profile", "pattern", "summary"):
+            value = personal.get(name)
+            if value:
+                parts.append(f"### 当前发言人的平台记忆 {name}\n{value}")
+    return "\n\n".join(parts) if len(parts) > 1 else ""

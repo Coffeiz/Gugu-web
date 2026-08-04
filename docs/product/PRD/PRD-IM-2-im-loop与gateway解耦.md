@@ -1,6 +1,6 @@
 # IM Loop 与 Gateway 解耦 PRD
 
-> 状态：Phase 5 已完成，Phase 6 由独立 PRD 定义，尚未实现
+> 状态：Phase 5 已完成，Phase 6 的群组与成员记忆已完成代码实现，待 devserver 多平台人工验收
 > 创建：2026-08-03
 > 最近更新：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
@@ -16,7 +16,7 @@
 | Phase 3：建立 IM Loop | ✅ 已完成 | 已完成 Owner/Member Loop 门面、上下文与权限编排、session 路由、显式 Web session 绑定、统一回复和 worker 职责收口。 |
 | Phase 4：收窄 Gateway | ✅ 已完成 | owner 绑定、身份协议、shortcut 和出站能力门禁已收口；三平台收发/引用/附件/群聊身份/重连已人工验收（2026-08-04）；平台媒体 API、即时 ack/reaction/typing 作为纯协议适配仍保留在 Gateway。 |
 | Phase 5：隔离修复与编排清理 | ✅ 已完成 | 已完成 Bot/session scope 隔离、平台身份归一化、owner/member 安全边界、worker 编排收口、统一 Loop 门面和出站能力审查。 |
-| Phase 6：群组与成员记忆 | 🔲 后续 | 具体契约和执行计划见 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)，当前未实现。 |
+| Phase 6：群组与成员记忆 | 🟡 进行中 | PRD-IM-3 的 Phase 1～4 已完成代码实现、自动化测试和职责审查；真实 QQ/飞书/微信消息、空闲窗口、压缩、删除和重建 scope 的人工验收待完成。 |
 
 ## 0.1 当前实现基线与代码审查
 
@@ -563,7 +563,7 @@ Phase 4 收口：owner 绑定、身份协议、shortcut、出站能力门禁和�
 
 ### Phase 6：群组与成员记忆
 
-执行计划、数据格式、文件职责、上下文策略和验收清单已迁移到 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)。本 PRD 只负责在 Phase 5 通过后启动该 PRD 的 Phase 1～4；未完成前不得把 group/member 记忆当作已上线能力。
+执行计划、数据格式、文件职责、上下文策略和验收清单已迁移到 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)。当前已完成该 PRD Phase 1～4 的代码实现，但在人工验收完成前，不把 group/member 记忆视为生产验收完成。
 
 每个阶段单独提交。任一阶段出现 owner 权限、群回复路由或上下文差异时，不进入下一阶段。
 

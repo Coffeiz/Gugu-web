@@ -86,6 +86,13 @@ Vue 对已卸载组件实例调用 `emit()` 会静默不转发给父级监听器
 
 Gugu-web 不是本地起服务调试——本地编辑代码，通过 Mutagen 双向同步（session 名 `gugu-web`）同步到 devserver（`192.168.110.51`），改动生效后在 devserver 上跑 `npm run typecheck`/`npm run build`（前端）或触发进程重载（后端）来验证。改完代码记得先 `mutagen sync flush gugu-web` 再去 devserver 验证，否则测的是旧代码。
 
+### 后端开发热重载
+
+- Web 开发使用 `cd backend && make dev-web`，Uvicorn 会监听 `app/`、`agent/`、`onboarding/` 并自动重载；SSE 长连接使用 `--timeout-graceful-shutdown 1`，避免 reload 长时间等待。
+- Worker 开发首次执行 `cd backend && make deps-dev`，之后运行 `make dev-worker`。它用 `watchfiles` 监听 `app/`、`agent/`、`onboarding/`、`worker.py`，代码变化会自动重启 Worker。
+- `make dev-worker` 只能替代同机的 systemd worker，启动前先停止 `gugu-worker`，结束后再启动；不要让两个 Worker 同时消费同一 Redis 队列。
+- supervisor 暂不启用自动 watcher；改网关适配器时按下方 IM 网关规则单独重启对应子进程。生产环境不使用任何 reload/watcher，仍由 systemd 管理。
+
 ## 验证门禁
 
 - 开发阶段不要每次修改后都跑完整 typecheck，保持快速反馈。

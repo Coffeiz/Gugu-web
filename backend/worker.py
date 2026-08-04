@@ -21,10 +21,14 @@ from agent.im.session import ImConversationKey, conversation_key
 
 STREAM = R.IM_INBOUND_STREAM
 GROUP = "agent-workers"
+REFLECTION_GROUP = "memory-reflection-workers"
+CLEANUP_GROUP = "memory-cleanup-workers"
 # 稳定 consumer 名：重启不换名（原来带 pid，每次重启留个死 consumer 累积，见地基 B）。
 # 多 worker 时给每实例设 GUGU_WORKER_SLOT=0/1/2 区分。
 _slot = os.getenv("GUGU_WORKER_SLOT", "").strip()
 CONSUMER = socket.gethostname() + (f"-{_slot}" if _slot else "")
+REFLECTION_CONSUMER = CONSUMER + "-memory"
+CLEANUP_CONSUMER = CONSUMER + "-cleanup"
 
 _stop = asyncio.Event()
 
@@ -221,6 +225,68 @@ async def run_once(block_ms: int = 5000) -> int:
     return handled
 
 
+async def _reflection_loop():
+    """消费记忆反思任务；业务执行留在 memory executor，不放进 worker 路由层。"""
+    from agent.memory.im_reflection import execute_job
+    from app.core.config import get_settings
+
+    while not _stop.is_set():
+        try:
+            messages = await R.consume(
+                "memory:reflection",
+                REFLECTION_GROUP,
+                REFLECTION_CONSUMER,
+                count=1,
+                block_ms=1000,
+            )
+            for msg_id, payload in messages:
+                job_id = payload.get("job_id")
+                try:
+                    if job_id is not None:
+                        await execute_job(int(job_id), get_settings())
+                except Exception as exc:
+                    print(
+                        f"[worker] 记忆反思任务出错: {type(exc).__name__}",
+                        flush=True,
+                    )
+                finally:
+                    await R.ack("memory:reflection", REFLECTION_GROUP, msg_id)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f"[worker] 记忆反思队列出错: {type(exc).__name__}", flush=True)
+            await asyncio.sleep(2)
+
+
+async def _cleanup_loop():
+    """消费 scope 删除任务；删除业务不进入 IM 路由和反思执行器。"""
+    from agent.memory.scope_lifecycle import CLEANUP_GROUP, CLEANUP_STREAM, execute_scope_deletion
+
+    while not _stop.is_set():
+        try:
+            messages = await R.consume(
+                CLEANUP_STREAM,
+                CLEANUP_GROUP,
+                CLEANUP_CONSUMER,
+                count=1,
+                block_ms=1000,
+            )
+            for msg_id, payload in messages:
+                try:
+                    tombstone_id = payload.get("tombstone_id")
+                    if tombstone_id is not None:
+                        await execute_scope_deletion(int(tombstone_id))
+                except Exception as exc:
+                    print(f"[worker] 记忆 scope 清理出错: {type(exc).__name__}", flush=True)
+                finally:
+                    await R.ack(CLEANUP_STREAM, CLEANUP_GROUP, msg_id)
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            print(f"[worker] 记忆清理队列出错: {type(exc).__name__}", flush=True)
+            await asyncio.sleep(2)
+
+
 async def _heartbeat():
     from app.core import health
     from app.core import scheduler as sched
@@ -238,6 +304,8 @@ async def _heartbeat():
 
 async def serve():
     await R.ensure_group(STREAM, GROUP)
+    await R.ensure_group("memory:reflection", REFLECTION_GROUP)
+    await R.ensure_group("memory:cleanup", CLEANUP_GROUP)
     # worker 启动时预热一次数据库引擎，后续 IM 请求复用同一连接池。
     from app.db import session as db_session
     db_session.ensure_engine()
@@ -259,6 +327,8 @@ async def serve():
     except Exception as e:
         print(f"[worker] 定时任务初始化出错: {type(e).__name__}: {e}", flush=True)
     sched_task = asyncio.create_task(_reconcile_loop())
+    reflection_task = asyncio.create_task(_reflection_loop())
+    cleanup_task = asyncio.create_task(_cleanup_loop())
     while not _stop.is_set():
         try:
             await run_once()
@@ -273,6 +343,10 @@ async def serve():
         await asyncio.gather(*pending, return_exceptions=True)
     hb.cancel()
     sched_task.cancel()
+    reflection_task.cancel()
+    cleanup_task.cancel()
+    await asyncio.gather(reflection_task, return_exceptions=True)
+    await asyncio.gather(cleanup_task, return_exceptions=True)
     sched.shutdown()
     await R.reset()
     print("[worker] stopped", flush=True)
@@ -281,6 +355,8 @@ async def serve():
 async def _reconcile_loop():
     """每 30s 从 DB 对账定时任务（增/删/改/开关即时生效，无需重启）。"""
     from app import scheduled_tasks as schedtasks
+    elapsed = 0
+    retry_elapsed = 0
     while not _stop.is_set():
         for _ in range(30):
             if _stop.is_set():
@@ -296,6 +372,26 @@ async def _reconcile_loop():
             await schedtasks.reconcile()
         except Exception as e:
             print(f"[worker] 定时任务 reconcile 出错: {type(e).__name__}: {e}", flush=True)
+        elapsed += 30
+        retry_elapsed += 30
+        if retry_elapsed >= 30:
+            retry_elapsed = 0
+            try:
+                from agent.memory.reflection_jobs import requeue_due_jobs
+                from agent.memory.scope_lifecycle import requeue_pending_cleanups
+
+                await requeue_due_jobs()
+                await requeue_pending_cleanups()
+            except Exception as exc:
+                print(f"[worker] 记忆反思重试补偿出错: {type(exc).__name__}", flush=True)
+        if elapsed >= 3600:
+            elapsed = 0
+            try:
+                from agent.memory.reflection_jobs import settle_idle_scopes
+
+                await settle_idle_scopes()
+            except Exception as exc:
+                print(f"[worker] 记忆反思补偿出错: {type(exc).__name__}", flush=True)
 
 
 def _install_signals(loop):

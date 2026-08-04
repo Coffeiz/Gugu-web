@@ -129,9 +129,11 @@ cp ../.env.example .env
 # 已有数据库套用后续增量迁移，见下方「常用」
 
 # 启动
-./start.sh dev             # 或：make start
+make dev-web               # Web 热重载（前台运行，Ctrl+C 停止）
+# 接 IM 时另开终端：make dev-worker
 
 # 常用：alembic upgrade head   在已有数据库上套用新迁移（首次建表不需要这步）
+# 首次使用 Worker 热重载：make deps-dev
 ```
 
 #### 前端

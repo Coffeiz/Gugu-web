@@ -78,6 +78,63 @@ owner_user_id + platform + bot_id + scope_type + scope_id
 
 真实存储 key 还要带 `owner_user_id`，上图是逻辑目录。
 
+群组 `daily.md` 不复用 owner daily 的容量参数。群聊消息量更大，且群 daily 是群组反思的近期缓冲，不应因为 owner 的较小保留策略过早丢掉上下文。群组不按 15 条消息频繁触发模型调用，而是以活跃窗口和空闲收束为主要触发条件；文件容量只作为异常保护。首版群组参数固定为：达到 1000 条触发整理，整理成功后保留最近 500 条，整理失败时最多保留 1200 条；这只是文件保留策略，不代表每次 Agent 请求都注入全部 500 条。
+
+### 2.3 Phase 2 冻结决策
+
+进入记忆模型和异步反思实现前，以下决策冻结，后续实现不得在代码中自行改变语义。
+
+#### 2.3.1 文件是长期记忆主数据
+
+`profile.json`、`pattern.json`、`daily.md`、`memory.md` 和群组的 `summary.json` 继续作为长期记忆的主数据。数据库不替代这些文件，也不把文件当成数据库的渲染产物。
+
+数据库只负责 `reflection_job`（任务状态、重试和死信）、`reflection_cursor`（scope 游标和版本）以及 `memory_source` / `memory_entry`（来源索引、派生条目关联和删除追踪）。这些表不作为文件内容的唯一真相。文件写入成功后才推进游标；数据库索引丢失时允许从文件和消息游标重建，不能用空索引覆盖已有记忆文件。向量是可重建的派生数据。
+
+#### 2.3.2 异步反思复用现有 worker 基础设施
+
+群组/member 反思复用现有 Redis Streams 和独立 worker，不另起一套进程或队列执行器：
+
+| 项目 | Phase 2 首版决策 |
+| --- | --- |
+| 入站消息队列 | 继续使用现有 `im:inbound`，由 `agent-workers` 消费；反思任务只在消息已落库后投递 |
+| 反思任务队列 | 新增 `memory:reflection` Stream，消费组 `memory-reflection-workers` |
+| 同 scope 锁 | `memory:scope:lock:{owner_user_id}:{platform}:{bot_id}:{scope_type}:{scope_id}`；反思与删除共用，同一 scope 严格串行，不同 scope 可并行 |
+| 最大重试 | 5 次；达到上限转为 `dead` |
+| 退避 | 1 分钟、5 分钟、30 分钟、2 小时、6 小时；参数、权限等不可重试失败直接进入 `dead` |
+| 死信状态 | 保留 `dead_at`、`attempts`、`last_error_code`；不记录原始聊天正文或上游响应体 |
+| 补偿扫描 | 每小时扫描未完成任务、过期锁和游标滞后的 scope；只投递幂等任务，不直接执行反思 |
+
+`reflection_jobs.py` 是任务、锁、游标、重试和幂等状态的唯一入口，不承载提取 Prompt。执行器必须先确认 scope 未被墓碑标记，再获取锁、读取消息快照、写文件、更新来源索引，最后推进游标。
+
+#### 2.3.3 首版触发参数
+
+首版固定为：
+
+- 回复完成：只推进当前 scope 的消息游标和活跃窗口，不单独因为一次回复触发模型整理；
+- 普通群消息：先正常写入数据库并纳入当前活跃窗口，不按固定消息条数频繁投递；
+- 群聊活跃窗口：从第一条新消息开始计时，窗口最长 1 小时；窗口内每条消息都会顺延 15 分钟空闲截止时间，若连续活跃达到 1 小时，则整理当前未整理消息一次，之后继续等待窗口内的新消息；
+- 群聊空闲收束：以当前 scope 的最后一条已落库消息为基准，连续 15 分钟没有新消息时整理本轮剩余消息一次；收束完成后不主动重复整理，直到下一条新消息开启新的窗口；
+- 补偿扫描：每小时一次；
+- 同一 scope：严格串行，已有 pending/running 任务时合并为同一幂等任务。
+
+普通群消息和回复完成都不因单条或少量累计而单独触发模型调用；它们只推进当前 scope 的消息游标和窗口状态。活跃窗口达到 1 小时的整理和 15 分钟空闲收束都只处理尚未推进游标的消息范围。
+空闲收束完成后，当前窗口标记为 `settled`，没有新消息时不得被补偿扫描重复投递；下一条新消息落库时清除 `settled`，重新开启活跃窗口并计算新的 15 分钟空闲截止时间。窗口以最后一条已落库消息时间为准，不以 worker 轮询时间、回复完成时间或任务创建时间为准。
+
+#### 2.3.4 owner 在群中的个人反思边界
+
+owner 在群里仍可使用个人权限，但 owner 个人长期记忆的反思输入严格限定为 owner 自己在当前群发送的消息，以及本轮 owner 私人工具操作及其结果中明确属于 owner 的内容。群内其他成员的消息、对 owner 的评价、群体讨论和群资料只能进入当前 group scope，不能被提取到 owner 的 `profile.json`、`pattern.json`、`daily.md` 或 `memory.md`。群聊响应可以读取 group context，但响应上下文不等于 owner 个人记忆写入上下文。
+
+#### 2.3.5 删除采用墓碑后异步清理
+
+member、group 或 Bot scope 删除采用两阶段流程：
+
+1. 事务内写入 scope tombstone（`deleted_at`、删除版本和 scope 身份），立即阻止新的上下文读取、任务投递和反思写入；
+2. 取消或标记该 scope 的 pending/running 任务，按 `memory_source` 清理或标记派生条目；
+3. 异步删除对应的记忆文件、向量和来源索引；
+4. 完成文件、向量和索引校验后再物理删除 tombstone 和任务记录。
+
+清理失败保留墓碑并由补偿扫描重试，不能因为进程中断或任务重跑把已删除 scope 重新写回来。owner 个人记忆、其他平台用户和其他群组不受影响。
+
 ## 3. 记忆内容分工
 
 ### 3.1 群组记忆
@@ -186,7 +243,7 @@ unknown 只是身份解析失败时的兜底角色，不代表群外陌生人。
 | owner 在群中发言 | 立即写入 | 异步反思 | 不把 owner 当 member 写入 |
 | 反思失败 | 不影响回复 | 保留数据库消息，下次重试 | 保留数据库消息，下次重试 |
 
-可以按每 10～20 条消息、一次回复完成、群聊空闲一段时间或定时补偿扫描触发反思；具体批量阈值由实现和压测确定。回复完成只负责投递任务，不能阻塞当前回复。低频群也必须通过空闲或定时补偿进入反思。
+首版参数固定为：活跃窗口最长 1 小时、群聊空闲 15 分钟收束且每轮只触发一次、每小时扫描空闲 scope；任务失败按退避时间补偿重投。反思和周期整理都不能阻塞当前回复。低频群通过空闲或定时补偿进入反思。
 
 ### 5.2 反思可靠性协议
 
@@ -212,8 +269,22 @@ reflection_cursor
 - 同一 scope 的反思任务串行执行。
 - 同一消息范围重复投递必须幂等；建议使用 `(scope, from_message_id, to_message_id, extractor_version)` 作为幂等键。
 - 游标更新必须带版本控制，避免并发反思覆盖较新的结果。
-- 失败不影响主回复，任务保留并按重试策略处理；长期失败由补偿扫描再次投递。
+- 任务写入 `memory:reflection` Stream，由 `memory-reflection-workers` 消费组执行；失败不影响主回复，最多重试 5 次并按 1m/5m/30m/2h/6h 退避，超过上限进入 `dead`，长期失败由每小时补偿扫描处理。
 - 同一消息可以分别进入 group 和 platform-user 两个 scope，但两个 scope 的任务、游标和写入必须独立。
+
+### 5.3 群组 daily 容量与压缩
+
+群组 daily 使用独立于 owner memory 的容量策略：
+
+| 参数 | 群组首版值 | 语义 |
+|---|---:|---|
+| 整理阈值 | 1000 条 | 达到后把较早的群 daily 整理进群组长期摘要/记忆；正常情况下优先由 1 小时活跃窗口或 15 分钟空闲收束触发 |
+| 整理后保留 | 500 条 | 整理成功后保留较宽的近期群记录，适应多人群的消息量 |
+| 失败硬上限 | 1200 条 | 整理失败时保留原始 daily，超过上限也不得静默删除；应进入失败告警/补偿流程 |
+
+容量参数只控制群组记忆文件，不改变数据库短期消息保留的 500 条上限，也不等于上下文注入预算。上下文加载器默认使用最近消息和与当前问题相关的群组记忆，不能因为 daily 保留 500 条就把 500 条全文塞入每次 Agent 请求。
+
+反思快照只取已落库且带平台用户身份的 `user` 消息；assistant/tool 消息不作为 group/member 长期记忆来源，避免把 owner 的私人工具结果或系统内部中间结果写入 IM 记忆。需要展示模型回复时，仍由当前会话历史负责，不由长期记忆反思复刻。
 
 ### 5.3 信息类型与目标 scope
 
@@ -308,6 +379,7 @@ backend/agent/
 │   ├── store.py              # 通用底层读写、渲染、向量缓存；保持 owner 行为兼容
 │   ├── scopes.py             # MemoryScope 构造、校验和安全 key
 │   ├── scoped_store.py       # 按 MemoryScope 读写 profile/summary/daily/memory
+│   ├── scope_lifecycle.py    # tombstone、异步删除、scope 管理摘要
 │   ├── reflection.py         # owner 反思，保持现有六层记忆行为
 │   ├── im_reflection.py      # group/member 反思、边界过滤和异步任务入口
 │   ├── reflection_jobs.py    # 反思任务、scope 游标、幂等和重试状态
@@ -317,7 +389,7 @@ backend/agent/
 ├── im/
 │   ├── context_policy.py     # owner/member/unknown 的可读范围
 │   ├── context_loader.py     # 只读装配当前 scope 的上下文
-│   ├── actor_resolver.py     # 根据平台 ID、Bot 绑定和群信息解析角色
+│   ├── actor.py              # ActorContext 与 ActorResolver：根据平台 ID、Bot 绑定和群信息解析角色
 │   ├── session.py            # DB 短期消息和 recent window；不写长期记忆
 │   ├── loop.py               # 选择 Loop、触发异步反思，不实现提取算法
 │   └── models.py             # PlatformMessage、ActorContext 和消息元数据
@@ -337,7 +409,7 @@ backend/agent/
 - `context_policy.py` 只决定能读什么，不直接拼 prompt。
 - `context_loader.py` 只读，不触发反思和压缩。
 - `im_reflection.py` 是唯一的 group/member 长期记忆写入口。
-- `actor_resolver.py` 是唯一的 owner/member/unknown 身份解析入口；模型、昵称和语气不能参与角色判断。
+- `actor.py::ActorResolver` 是唯一的 owner/member/unknown 身份解析入口；模型、昵称和语气不能参与角色判断。
 - `reflection_jobs.py` 是唯一的反思任务与 scope 游标管理入口。
 - `scoped_store.py` 是唯一将逻辑 scope 转成存储 key 的入口。
 - `compress.py` 只实现通用压缩生命周期、写入保护和向量同步，不决定内容取舍。
@@ -354,6 +426,7 @@ backend/agent/
 5. 删除 member、group 或 Bot scope 时，同时按来源追踪清理或标记派生记忆。
 6. 日志只记录 scope、角色、数量、版本和脱敏 ID 指纹，不记录正文、文件名或记忆内容。
 7. 管理员面板未来需要区分 owner memory 与 IM memory，禁止用 owner 的“记忆维护”按钮误操作群记忆。
+8. 删除先写 tombstone，再异步清理文件、向量、来源索引和待执行任务；清理完成并校验后才物理删除 tombstone。
 
 ## 8. 实施阶段
 
@@ -367,43 +440,56 @@ backend/agent/
 
 ### Phase 1：身份、作用域与只读上下文
 
-- [ ] 新增 `ActorResolver`，只根据平台 ID、Bot 绑定和群信息返回 owner/member/unknown。
-- [ ] 新增 `MemoryScope` 和安全 key 构造。
-- [ ] 为 owner 旧 key 增加显式兼容路径，但不改变 owner 数据。
-- [ ] `context_loader` 按角色加载 group profile/summary、member 轻量记忆和消息窗口。
-- [ ] 默认关闭 member 的 group memory 全量读取。
-- [ ] 验证 owner/member/unknown 不会互相注入。
+- [x] 新增 `ActorResolver`，只根据平台 ID、Bot 绑定和群信息返回 owner/member/unknown。
+- [x] 新增 `MemoryScope` 和安全 key 构造。
+- [x] 为 owner 旧 key 保留既有显式兼容路径，不改变 owner 数据。
+- [x] `context_loader` 按角色加载 group profile/summary、member 轻量记忆和消息窗口。
+- [x] 默认关闭 member 的 group memory 全量读取。
+- [x] 验证 owner/member/unknown 不会互相注入。
 
 ### Phase 2：记忆模型与异步反思
 
-- [ ] 新增记忆条目来源追踪模型。
-- [ ] 新增反思任务、scope 游标、幂等键和版本控制。
-- [ ] 新增 scoped store 的读写单测和跨 Bot/跨群隔离测试。
-- [ ] 新增 group/member 专用提取 prompt 和 `im_reflection.py`。
-- [ ] 接入回复完成、批量消息、群聊空闲和定时补偿触发。
-- [ ] 接入 group daily→memory 压缩，失败不影响主流程。
+- [x] 新增记忆条目来源追踪模型。
+- [x] 新增反思任务、scope 游标、幂等键和版本控制。
+- [x] 复用现有 Redis Streams/worker，接入 `memory:reflection` 队列、scope 锁、5 次重试、退避和 dead 状态。
+- [x] 新增 scoped store 的读写单测和跨 Bot/跨群隔离测试。
+- [x] 新增 group/member 专用提取 prompt 和 `im_reflection.py`。
+- [x] 按冻结参数接入 1 小时活跃窗口整理、15 分钟群聊空闲收束且每轮只触发一次，以及每小时补偿触发；普通消息不按固定条数频繁触发。
+- [x] 阻止 owner 群聊整轮响应进入个人反思，避免其他成员内容污染 owner memory；owner 私人工具结果的独立采集仍留在 Phase 4。
+- [x] 接入 group daily→memory 压缩：1000 条容量阈值、成功后保留 500 条、失败硬上限 1200 条；失败不影响主流程。
+
+Phase 2 实现备注：消息落库后只推进 scope 游标，实际反思由 `memory:reflection` worker 异步执行；同一 scope 使用 Redis 锁串行，任务失败按 1m/5m/30m/2h/6h 重试，重试补偿每 30 秒扫描，空闲 scope 每小时扫描。
 
 ### Phase 3：生命周期与管理
 
-- [ ] 成员记忆删除、群解散清理、Bot 解绑清理。
-- [ ] 管理员面板按 scope 展示、预览和删除。
-- [ ] 日志和审计测试，确认不泄露正文。
+- [x] 以 tombstone 先行实现成员记忆删除、群解散清理、Bot 解绑清理，并在异步级联清理完成后硬删除。
+- [x] 管理员面板按 scope 展示、预览和删除。
+- [x] 删除任务失败保留 tombstone，并由 worker 补偿重投；管理接口只记录 scope 和状态，不返回正文到日志。
+- [x] 新增删除屏障、对象存储前缀清理、任务/游标/来源索引清理的回归验证。
+
+### Phase 4：上下文、权限与端到端验收
+
+- [x] owner/member/unknown 使用同一 IM Loop 编排，但通过 `ActorResolver`、`context_policy` 和 `allowed_tool_names` 隔离读取范围与工具白名单。
+- [x] 群组上下文只读取当前 Bot + 当前群的 group scope；member 只读取当前平台用户的轻量 scope。
+- [x] owner 群聊个人反思只接收 owner 当前发言和明确的私人工具结果，不接收群内其他成员或助手整轮回复。
+- [x] 删除中的 scope 不进入上下文、不创建反思任务、不写入记忆文件。
+- [ ] 在 devserver 完成真实 QQ/飞书/微信多平台消息、空闲窗口、压缩、删除和重新建 scope 的人工验收。
 
 ## 9. 验收清单
 
 ### 自动验收
 
-- [ ] 同一群、不同 Bot 的记忆 key 不相同。
-- [ ] 同一 Bot、不同群的 group profile/summary/daily/memory 不互相读取。
-- [ ] 同一 Bot、同一 `platform_user_id` 在不同群可以读取个人 platform-user 记忆。
-- [ ] platform-user 记忆中的群特定称呼、角色、关系和分工不会跨群传播。
-- [ ] 不同 Bot、不同平台和不同 `owner_user_id` 的 platform-user 记忆互相隔离。
-- [ ] owner 在群中主动调用个人工具时，只回复本次请求所需结果，不扩展读取无关私人内容。
-- [ ] member/unknown 不读取或写入 owner memory。
-- [ ] group/member 反思失败不影响当前回复，原始 DB 消息仍保留。
-- [ ] daily 压缩失败不覆盖原 daily 或已有 memory。
-- [ ] 每条群历史上下文带 sender ID、sender name、message ID 和时间。
-- [ ] 删除 member、group、Bot scope 后对应记忆可完整清理，其他 scope 不受影响。
+- [x] 同一群、不同 Bot 的记忆 key 不相同。
+- [x] 同一 Bot、不同群的 group profile/summary/daily/memory 不互相读取。
+- [x] 同一 Bot、同一 `platform_user_id` 在不同群可以读取个人 platform-user 记忆。
+- [x] platform-user 记忆中的群特定称呼、角色、关系和分工不会跨群传播。
+- [x] 不同 Bot、不同平台和不同 `owner_user_id` 的 platform-user 记忆互相隔离。
+- [x] owner 在群中主动调用个人工具时，只回复本次请求所需结果，不扩展读取无关私人内容。
+- [x] member/unknown 不读取或写入 owner memory。
+- [x] group/member 反思失败不影响当前回复，原始 DB 消息仍保留。
+- [x] daily 压缩失败不覆盖原 daily 或已有 memory。
+- [x] 每条群历史上下文带 sender ID、sender name、message ID 和时间。
+- [x] 删除 member、group、Bot scope 后对应记忆可完整清理，其他 scope 不受影响。
 
 ### 手动验收
 

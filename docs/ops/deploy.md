@@ -9,7 +9,7 @@
 
 咕咕不是一个程序，是**好几个程序配合着跑**：一个负责网页和 API（web），一个负责在飞书/QQ 里聊天时"思考"（worker，咕咕的"大脑"其实在这），一个负责管理各平台的连接（supervisor）。三个都要活着，IM 才能正常收发消息；只用网页版，可以只跑 web。
 
-生产服务器上这三个一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。但也有例外：本项目的 dev 机（`192.168.110.51`）**没有用 systemd 管，而是手动用脚本 `scripts/dev-restart.sh` 起停**（web 走脚本手动起，worker/supervisor 也归 systemd 管，具体见 §4.5「dev 机重启」）。这是刻意选择——dev 机上避免 systemd 和手动进程互相打架（同一个端口 8000 不能有两个"主人"）。
+生产服务器上这三个一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。开发机则可以用前台热重载：web 用 Uvicorn reload，worker 用 `watchfiles` 监听代码后自动重启；supervisor 仍按需单独重启。开发热重载与生产 systemd 是两套互斥的启动方式，不能让同一个进程同时跑两份。
 
 日常最容易迷糊的两件事：
 1. **改了代码该重启哪个**——大脑逻辑在 worker，不在 web，改错了重启等于没改，见 §6.1。
@@ -149,7 +149,11 @@ sudo -u postgres psql -c "CREATE DATABASE gugu_web OWNER pm;"
 
 ```bash
 # 开发用前台 + 热重载（改代码自动重启）
-make fg            # = ./start.sh foreground，带 --reload
+make dev-web       # = ./start.sh foreground，监听 app/agent/onboarding
+
+# 接 IM 时另开终端；先停止同机 systemd worker，再启动 watcher
+sudo systemctl stop gugu-worker  # 如果这台开发机由 systemd 管 worker
+make dev-worker    # 监听 app/agent/onboarding/worker.py，Ctrl+C 停止
 
 # 或后台跑
 make start         # 后台 uvicorn :8000，日志 logs/gugu.log
@@ -158,6 +162,8 @@ make logs          # 实时日志
 ```
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok"}`。
+
+> `make dev-worker` 需要先执行一次 `make deps-dev` 安装开发依赖。watcher 只适合开发机；生产仍使用 `systemctl restart gugu-worker`。停止 watcher 后，可执行 `sudo systemctl start gugu-worker` 恢复常驻 worker。
 
 ### 3.6 前端
 
@@ -493,13 +499,13 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 
 ### 6.1 改了什么 → 重启哪个进程（最常踩，先看这张表）
 
-**咕咕的「大脑」跑在 worker，不在 web。** 改了什么、重启谁，对照下表（命令为生产 systemd；开发环境的启停见 §6.2 / §6.3）：
+**咕咕的「大脑」跑在 worker，不在 web。** 改了什么、重启谁，对照下表（命令为生产 systemd；开发环境可用 `make dev-web` / `make dev-worker` 热重载）：
 
 
 | 你改了…                                                              | 要重启                                    | 命令（生产）                            |
 | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
 | API / Admin 接口、`app/`、`main.py`、路由、新接口                            | **backend (web)**                      | `systemctl restart gugu-backend`  |
-| 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | `systemctl restart gugu-worker`   |
+| 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | 开发：`make dev-worker`；生产：`systemctl restart gugu-worker`   |
 | IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
 | 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
@@ -537,6 +543,16 @@ ss -ltnp | grep :8000 || echo "8000 已空闲"
 > ⚠️ **生产别用 `make start/stop/restart` 控制 backend**：生产的 web 是 systemd `gugu-backend.service` 在跑，而 `make start/stop` 管的是 Makefile 另起的「手动 uvicorn」——两者不是同一个进程。曾出现 `make stop` 报「未运行」但 `systemctl status` 显示服务正跑的迷惑现象，还可能两份一起起来抢 8000 端口。**生产一律 `systemctl`，`make` 留给开发机。**
 
 ### 6.3 启停 / 重启 worker / supervisor
+
+**开发机 Worker 热重载：**
+```bash
+make deps-dev       # 首次安装 watchfiles
+sudo systemctl stop gugu-worker  # 若 worker 由 systemd 托管
+make dev-worker     # 前台监听代码，Ctrl+C 停止
+sudo systemctl start gugu-worker # 不再开发时恢复常驻 worker
+```
+
+`make dev-worker` 监听 `app/`、`agent/`、`onboarding/` 和 `worker.py`，每次 Python 文件变化都会重启 Worker。不要在 systemd worker 仍运行时启动它，否则会出现两个消费者同时处理 Redis 队列。
 
 ```bash
 # 生产（systemd）

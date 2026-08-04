@@ -805,6 +805,32 @@
         </div>
       </section>
 
+      <!-- ── IM 群组/member 记忆维护 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-title-block">
+            <h3>IM 群组与成员记忆</h3>
+            <p>只展示作用域摘要；预览和删除必须明确指定 Bot、群组或平台用户。删除先进入后台清理，不影响其他作用域。</p>
+          </div>
+          <button class="btn-ghost" :disabled="imScopes.loading" @click="loadImScopes">
+            {{ imScopes.loading ? '加载中…' : '刷新作用域' }}
+          </button>
+        </div>
+        <div v-if="imScopes.error" class="save-hint error">{{ imScopes.error }}</div>
+        <div v-if="!imScopes.items.length && !imScopes.loading" class="placeholder-panel">暂无已建立的 IM 记忆作用域</div>
+        <div v-for="scope in imScopes.items" :key="scopeKey(scope)" class="behavior-item">
+          <div class="behavior-label">
+            <span>{{ scope.scope_type }} / {{ scope.platform }} / {{ scope.scope_id }}</span>
+            <span class="behavior-desc">Bot {{ scope.bot_id }} · {{ scope.entry_count }} 条记忆{{ scope.tombstone ? ` · ${scope.tombstone}` : '' }}</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn-ghost" @click="previewImScope(scope)">预览</button>
+            <button class="btn-ghost" :disabled="!!scope.tombstone" @click="deleteImScope(scope)">删除</button>
+          </div>
+        </div>
+        <pre v-if="imScopes.preview" class="mem-cleanup-detail" style="white-space:pre-wrap;max-height:260px;overflow:auto;">{{ JSON.stringify(imScopes.preview, null, 2) }}</pre>
+      </section>
+
       <!-- ── 状态命名 ── -->
       <section v-if="activeTab === 'labels'" class="config-card labels-card">
         <div class="card-head">
@@ -1135,6 +1161,7 @@ function switchTab(key: string) {
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
   if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
+  if (key === 'behavior' && imScopes.items.length === 0) loadImScopes()
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
@@ -1854,6 +1881,67 @@ async function applyMemCleanup() {
     memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
     memCleanup.applying = false
+  }
+}
+
+interface ImScopeSummary {
+  owner_user_id: string
+  platform: string
+  bot_id: string
+  scope_type: string
+  scope_id: string
+  entry_count: number
+  tombstone?: string | null
+}
+const imScopes = reactive({
+  loading: false,
+  error: '',
+  items: [] as ImScopeSummary[],
+  preview: null as Record<string, unknown> | null,
+})
+function scopeKey(scope: ImScopeSummary) {
+  return [scope.owner_user_id, scope.platform, scope.bot_id, scope.scope_type, scope.scope_id].join(':')
+}
+async function loadImScopes() {
+  imScopes.loading = true; imScopes.error = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '加载失败')
+    imScopes.items = data.items || []
+  } catch (error) {
+    imScopes.error = error instanceof Error ? error.message : '加载失败'
+  } finally {
+    imScopes.loading = false
+  }
+}
+async function previewImScope(scope: ImScopeSummary) {
+  imScopes.error = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(scope),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '预览失败')
+    imScopes.preview = data.memory || {}
+  } catch (error) {
+    imScopes.error = error instanceof Error ? error.message : '预览失败'
+  }
+}
+async function deleteImScope(scope: ImScopeSummary) {
+  if (!confirm(`确定删除 ${scope.scope_type}/${scope.scope_id} 的 IM 记忆吗？`)) return
+  imScopes.error = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...scope, confirm: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '删除任务提交失败')
+    await loadImScopes()
+  } catch (error) {
+    imScopes.error = error instanceof Error ? error.message : '删除失败'
   }
 }
 

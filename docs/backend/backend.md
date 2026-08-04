@@ -52,7 +52,7 @@
 
 ```
 backend/
-├── Makefile                      # make start / stop / restart
+├── Makefile                      # make dev-web / dev-worker / start / stop / restart
 ├── requirements.txt
 ├── config.override.json          # Admin 写入的配置覆盖（不进 git）
 ├── .env                          # 本地环境变量（不进 git）
@@ -310,7 +310,9 @@ class CamelModel(BaseModel):
 
 ```bash
 cd backend
-make start      # 等价于：source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+make dev-web    # Web 热重载，监听 app/agent/onboarding，前台运行
+make dev-worker # Worker 热重载（先 make deps-dev，并停止同机 systemd worker）
+make start      # 后台 uvicorn，不启用 reload
 make stop       # kill 进程
 make restart
 ```

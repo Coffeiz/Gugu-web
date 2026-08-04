@@ -146,7 +146,11 @@ cmd_foreground() {
     detect_venv
     cd "$APP_DIR"
     exec "$VENV_DIR/bin/uvicorn" app.main:app \
-        --host "$HOST" --port "$PORT" --reload
+        --host "$HOST" --port "$PORT" --reload \
+        --reload-dir "$APP_DIR/app" \
+        --reload-dir "$APP_DIR/agent" \
+        --reload-dir "$APP_DIR/onboarding" \
+        --timeout-graceful-shutdown 1
 }
 
 cmd_install() {

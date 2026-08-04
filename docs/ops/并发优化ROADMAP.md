@@ -206,5 +206,5 @@ P0 部署 ✅ → ① 并发 + user_gate + ⑦ + 埋点 (P1) ─〔埋点触发�
 | Redis `maxlen` | Redis 卡片 | 🟡 加字段 | 新消息起 |
 | AI 多 key/预设、温度、搜索上限 | Agent 配置 | ✅ 已有 | 热 |
 
-**热生效 vs 需重启**：web 每请求 `get_settings`（热）；worker 启动读一次（DB 池/并发度 → 改后需重启）；prompts 每轮现读（热）。
+**热生效 vs 需重启**：web 每请求 `get_settings`（热）；worker 启动读一次（DB 池/并发度 → 生产改后需重启，开发可用 `make dev-worker` 自动重载）；prompts 每轮现读（热）。
 **暂不放**：worker 扩缩容、分片/分布式锁（是代码不是配置）。
