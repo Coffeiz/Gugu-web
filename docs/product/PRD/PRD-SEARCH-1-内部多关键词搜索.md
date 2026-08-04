@@ -1,6 +1,6 @@
 # 内部多关键词搜索 PRD
 
-> 状态：全部 Phase 已完成（待 devserver 手测确认）
+> 状态：全部 Phase 已完成
 > 创建：2026-08-04
 > 最近更新：2026-08-04
 > 关联模块：`backend/app/api/v1/search.py`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/group_context.py`
@@ -14,7 +14,7 @@
 | Phase 2：站内工具接入 | ✅ 已完成 | 已迁移全局、文件、便签、历史会话、群上下文，并清理重复查询分支 |
 | Phase 3：匹配模式与排序 | ✅ 已完成 | 默认 OR，支持 AND，按命中数量、字段命中和原有时间规则排序 |
 | Phase 4：工具 prompt/skills 迁移 | ✅ 已完成 | 已更新工具 schema、skill 文档和调用提示，默认引导一次传入多个关键词 |
-| Phase 5：测试与性能验证 | ✅ 已完成 | 后端 599 项测试通过，前端 typecheck、build 与 246 项测试通过；devserver 已完成 targeted tests、typecheck 和搜索框多词输入冒烟，仍需用有命中数据的账号确认结果展示 |
+| Phase 5：测试与性能验证 | ✅ 已完成 | 后端 599 项测试通过，前端 typecheck、build 与 246 项测试通过；devserver 已完成 targeted tests、typecheck 和真实项目数据的多词 OR 搜索冒烟 |
 
 ## 1. 背景与目标
 
@@ -221,7 +221,17 @@
 
 - [x] 补齐 OR、AND、隔词匹配、排序和空结果测试。
 - [x] 验证用户、bot、群上下文隔离不受影响。
-- [ ] 在 devserver 完成真实数据的前端和后端手测（已完成远端 targeted tests、typecheck，以及搜索框多词输入冒烟；待用有命中数据的账号确认结果展示）。
+- [x] 在 devserver 完成真实数据的前端和后端手测（已验证空格拆词、多个关键词 OR 命中项目、结果分组展示；测试创建的临时项目已清理）。
 - [x] 对比单关键词和多关键词查询耗时边界，保留现有结果上限。
 - [x] 清理无调用的旧搜索函数、旧 schema 示例和临时探针。
 - [x] 更新相关工具文档、schema 和排序实现；CHANGELOG 待随版本发布统一补充。
+
+## 7. 阶段审查与整体审查
+
+- Phase 1 审查：查询解析、模式规范化、SQL 条件和评分集中在 `backend/app/search/query.py`，工具不再各自实现关键词拆分。
+- Phase 2 审查：全局、文件、便签、历史会话和群上下文复用同一查询基础设施；项目/日程/客户等专用名称解析仍保留单值语义，没有误改成模糊搜索。
+- Phase 3 审查：OR/AND 条件、命中数排序、标题优先和同时间稳定排序均有明确实现；群上下文使用消息 ID 作为同时间的稳定次序。
+- Phase 4 审查：schema 已允许只传 `queries`，旧 `q`/`keyword` 仅保留兼容入口；prompt 和 skills 推荐一次传入多个候选词。
+- Phase 5 审查：清理了旧查询分支和临时探针；确认用户、bot、群隔离条件仍在查询链路中。
+
+整体审查结论：当前实现范围与本 PRD 一致，未引入 BM25、向量检索或通用 RAG；联网搜索工具继续保留单个自然语言 `query`，不与站内多关键词语义混用。
