@@ -109,6 +109,8 @@ function onInput() {
   open.value = true
   updatePanelPos()
   clearTimeout(timer ?? undefined)
+  searchAbort?.abort()
+  searchAbort = null
   const text = q.value.trim()
   if (!text) { groups.value = []; total.value = 0; loading.value = false; return }
   loading.value = true
