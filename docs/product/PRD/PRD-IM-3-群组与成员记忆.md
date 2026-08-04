@@ -152,6 +152,29 @@ unknown 只是身份解析失败时的兜底角色，不代表群外陌生人。
 
 真实 ID 只进入内部上下文和权限判断，不进入普通用户可见的诊断日志。昵称只用于称呼，绝不用于身份合并。
 
+### 4.5 ActorResolver 契约
+
+`owner`、`member`、`unknown` 必须由确定性的 `ActorResolver` 产生，不能由模型、昵称、语气或群内评价判断：
+
+```text
+输入：owner_user_id、platform、bot_id、group_id、platform_user_id、平台成员信息、身份绑定信息
+
+输出：
+{
+  "role": "owner | member | unknown",
+  "platform_user_id": "...",
+  "group_id": "...",
+  "bot_id": "...",
+  "resolved_at": "...",
+  "policy_version": 1
+}
+```
+
+- 只根据平台 ID 和绑定关系判断。
+- 无法确认时降级为 `unknown`。
+- 异步反思必须保存消息发生时的角色和 scope 快照，不能在执行时重新猜测。
+- owner 不会因为群昵称变化而失去或获得身份。
+
 ## 5. 写入、反思与压缩
 
 ### 5.1 触发时机
@@ -319,7 +342,7 @@ backend/agent/
 - [ ] 接入回复完成、批量消息、群聊空闲和定时补偿触发。
 - [ ] 接入 group daily→memory 压缩，失败不影响主流程。
 
-### Phase 4：生命周期与管理
+### Phase 3：生命周期与管理
 
 - [ ] 成员记忆删除、群解散清理、Bot 解绑清理。
 - [ ] 管理员面板按 scope 展示、预览和删除。
@@ -330,8 +353,11 @@ backend/agent/
 ### 自动验收
 
 - [ ] 同一群、不同 Bot 的记忆 key 不相同。
-- [ ] 同一 Bot、不同群的 daily/memory 不互相读取。
-- [ ] 同一成员在不同群的个人记忆不互相读取。
+- [ ] 同一 Bot、不同群的 group profile/summary/daily/memory 不互相读取。
+- [ ] 同一 Bot、同一 `platform_user_id` 在不同群可以读取个人 platform-user 记忆。
+- [ ] platform-user 记忆中的群特定称呼、角色、关系和分工不会跨群传播。
+- [ ] 不同 Bot、不同平台和不同 `owner_user_id` 的 platform-user 记忆互相隔离。
+- [ ] owner 在群中主动调用个人工具时，只回复本次请求所需结果，不扩展读取无关私人内容。
 - [ ] member/unknown 不读取或写入 owner memory。
 - [ ] group/member 反思失败不影响当前回复，原始 DB 消息仍保留。
 - [ ] daily 压缩失败不覆盖原 daily 或已有 memory。
@@ -344,7 +370,7 @@ backend/agent/
 2. member 询问 owner 的资料、文件和项目时，不能读到 owner 私人内容。
 3. member 明确介绍自己后，只有该 member 的 platform-user scope 可能产生轻量记忆。
 4. 两个群讨论同名项目时，互相不会召回对方的群 memory。
-5. 同一用户在两个群使用不同称呼时，不发生跨群记忆合并。
+5. 同一用户在两个群使用不同称呼时，各群称呼保留在各自 group scope；个人信息仍可从 platform-user scope 共享。
 6. 普通未 @ 消息只落库；后续 @ 时能读到带发言人的最近窗口。
 7. 反思和压缩在后台运行时，当前回复没有额外等待。
 8. 删除群记忆后重新发言，不会读到已删除的旧群资料。

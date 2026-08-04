@@ -205,9 +205,11 @@ member/unknown 消息进入独立的 `MemberContext`：
 
 本需求的完整存储、读写边界、反思、压缩、生命周期和验收以独立 PRD [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md) 为准。本文件只保留 Loop 层约束：
 
-- 作用域必须包含 `platform + bot_id + group_id` 或 `platform + bot_id + platform_user_id`。
+- 作用域必须包含 `owner_user_id + platform + bot_id + group_id` 或 `owner_user_id + platform + bot_id + platform_user_id`；同一 Bot 下同一 platform-user 的个人记忆可以跨群共享。
 - `MemberLoop` 只接收当前群的公开群记忆、当前发言人的轻量平台用户记忆和带发言人元数据的近期消息窗口。
 - `OwnerAgentLoop` 可以读取 owner 个人记忆，但群内公开内容只写入当前群 scope。
+- 群内称呼、角色、关系、分工、决定和协作事项只能写入当前 group scope，不能借助 platform-user scope 跨群传播。
+- owner 在群内主动调用个人工具即授权将本次请求所需结果回复到当前群，不额外扩展读取无关私人内容。
 - 反思、压缩由 IM Loop 异步投递，不能阻塞当前回复。
 - Gateway、session 和 context loader 不直接实现长期记忆写入。
 
@@ -450,7 +452,7 @@ PlatformMessage
 - `platform_user_id`：当前发言人身份。
 - `platform_user_name`：展示字段，不是身份主键。
 
-非 owner 消息可以落库为群聊上下文，但不能触发 owner 记忆反思或 profile 更新。
+非 owner 消息可以落库为群聊上下文；只有明确的 platform-user 个人自述才可能触发该 platform-user scope 的反思，不能触发 owner 记忆反思或 profile 更新。
 
 ### 6.2 日志边界
 
