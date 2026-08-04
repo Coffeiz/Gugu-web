@@ -13,7 +13,7 @@
 
 daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
 最老的并入 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 compress.py）。
-DAILY_HARD_CAP 是压缩失败时的安全上限，防 daily 无限膨胀。
+DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留数据并等待下次成功压缩。
 """
 from __future__ import annotations
 
@@ -27,8 +27,8 @@ from app.services.storage import get_storage
 
 _DIR = ".agent"
 DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
-DAILY_COMPACT_AT  = 75   # daily 达到此条数触发一次压缩（每约 25 轮一次）
-DAILY_HARD_CAP    = 95   # 压缩失败时的硬安全上限
+DAILY_COMPACT_AT  = 150  # daily 达到此条数触发一次压缩
+DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
 
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
@@ -739,4 +739,6 @@ async def append_daily(user_id, date: str, note: str) -> None:
         return
     lines = await read_daily_lines(user_id)
     lines.insert(0, f"- {date} {note}")
-    await write_daily_lines(user_id, lines[:DAILY_HARD_CAP])
+    # 压缩失败时也不能静默丢掉历史；DAILY_HARD_CAP 只作为运维监测阈值，
+    # 真正的裁剪必须发生在 memory 成功沉淀之后。
+    await write_daily_lines(user_id, lines)

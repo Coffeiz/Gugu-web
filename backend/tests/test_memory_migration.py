@@ -354,7 +354,8 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
 
     async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3):
         captured["user"] = user
-        return {"memory": "保留事件背景，不复写稳定结论"}
+        captured["max_tokens"] = max_tokens
+        return {"memory": "2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}
 
     async def fake_sync_memory_vecs(user_id, memory_text, force=False):
         captured["synced"] = (user_id, memory_text, force)
@@ -369,3 +370,4 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
     assert "已结构化的行为模式" in captured["user"]
     assert "用户做决定前会先核实事实" in captured["user"]
     assert "别在长期记忆里原句复写" in captured["user"]
+    assert captured["max_tokens"] == 10000
