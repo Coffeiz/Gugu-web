@@ -2485,10 +2485,10 @@ async function saveEvent() {
 .wv-aco.today { background: rgba(123,127,178,0.06); }
 .wv-aco.weekend { background: rgba(195,90,90,0.028); }
 /* 全天区多日框选高亮（DOM 在列底之后、chip 之前 → 盖列底、垫 chip 下）；色同月视图 in-range */
-.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; }
+.wv-ad-sel { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.08); pointer-events: none; z-index: 0; }
 .wv-ad-sel.weekend { background: rgba(195,90,90,0.07); }
 /* 全天区悬停高亮：叠加在选区之上（hover 已选列 = 相加），opacity 淡入淡出（见 .cal-fade），色同小时格/月格 hover */
-.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; }
+.wv-ad-hover { position: absolute; top: 0; bottom: 0; width: 14.2857%; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 0; }
 .wv-ad-hover.weekend { background: rgba(195,90,90,0.06); }
 .wv-pbar, .wv-allday-ev { position: absolute; height: 18px; box-sizing: border-box; display: flex; align-items: center; gap: 3px; padding: 0 6px; border: 1px solid; font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; z-index: 1; }
 .wv-allday-ev { padding-right: 8px; border-radius: 99px; }
@@ -2516,8 +2516,8 @@ async function saveEvent() {
 .wv-col.weekend { background-color: rgba(195,90,90,0.028); }
 /* 悬停/周末——与月视图 .month-cell 同一套调色（冷紫；周末转 195,90,90 暖红）。
    选中不落在小时格上，而是落在日期数字上（同月视图选中日）*/
-/* 悬停带提到活动块之上（z-index>事件的 3），否则活动占据/下方的小时格悬停被活动遮住；pointer-events:none 不挡点击 */
-.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 5; }
+/* 悬停带铺在活动块下方，避免变暗层盖住项目/活动胶囊；pointer-events:none 不挡点击 */
+.wv-hover { position: absolute; left: 0; right: 0; background: rgba(123,127,178,0.06); pointer-events: none; z-index: 2; }
 .wv-col.weekend .wv-hover { background: rgba(195,90,90,0.07); }
 /* hover/选中叠层的淡入淡出（opacity，合成层、不引起 cal-main 磨砂重栅格变暗）。
    配合模板里的 <Transition> + key：hover 移动到新格、选中切换到新格都会 crossfade。月视图 hover
