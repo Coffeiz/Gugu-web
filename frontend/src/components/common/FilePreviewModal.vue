@@ -224,7 +224,26 @@ watch(() => props.show, v => {
 async function handleDownload() {
   if (!props.file) return
   try {
-    await filesApi.download(props.file.id!, `${props.file.displayName}.${props.file.ext?.toLowerCase()}`)
+    const file = props.file
+    const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
+    if (file.attach_id) {
+      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+      const token = localStorage.getItem('user_token') ?? ''
+      const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const url = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } else if (file.id != null) {
+      await filesApi.download(file.id, filename)
+    }
   } catch (e) {
     console.error('[Preview] 下载失败:', e)
   }
