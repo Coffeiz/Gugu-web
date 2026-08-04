@@ -158,6 +158,8 @@ member、group 或 Bot scope 删除采用两阶段流程：
 
 平台用户记忆不是 Gugu 用户 profile。即便它们映射到同一个 Gugu owner，也必须通过身份和角色策略明确决定是否可读。
 
+平台用户 `profile.json` 的主数据格式为 `[ {"type": "name|address|pronoun|background|preference|note", "text": "..."} ]`，不含 `id`、`ts` 或置信度字段；它只服务于当前 Bot 作用域下对该平台用户的轻量识别和称呼。owner 的 profile 使用同样的六类 `type`，但保留 `ts` 作为审计字段。旧 profile 缺少 `type` 时统一按 `note` 兼容，并在后续写回时完成结构规范化。
+
 `profile.json` 和 `pattern.json` 只保存稳定或可复用的个人信息；近期状态和个人话题优先进入 `summary.json` 或 daily/recent 层，必须带时间并允许衰减，不能多年后仍被当成稳定身份。
 
 ## 4. 上下文读取策略
@@ -236,14 +238,16 @@ unknown 只是身份解析失败时的兜底角色，不代表群外陌生人。
 
 ### 5.1 触发时机
 
-| 场景 | 数据库短期消息 | 群组记忆 | 平台用户记忆 |
+| 场景 | 数据库短期消息 | 群组记忆 | 发言人记忆 |
 |---|---:|---:|---:|
-| 未 @ 的普通群消息 | 立即写入 | 异步批处理 | 不触发 |
-| @ 咕咕并回复 | 立即写入 | 异步反思 | 仅分析当前发言人 |
-| owner 在群中发言 | 立即写入 | 异步反思 | 不把 owner 当 member 写入 |
+| 未 @、未进入 Agent 的普通群消息 | 立即写入 | 按群窗口异步反思 | 累计 30 条或空闲 15 分钟收束 |
+| @ 咕咕并进入 Agent | 立即写入 | 按群窗口异步反思 | 累计 5 条 Agent 回合收束 |
+| 进入 Agent 且使用工具 | 立即写入 | 按群窗口异步反思 | 当前回合立即反思 |
+| owner 在群中发言 | 立即写入 | 异步反思 | 与 member 使用相同 30/5/工具规则，但写入 owner scope |
+| 私聊 / Web | 立即写入 | 不适用 | 每个 Agent 回合反思 |
 | 反思失败 | 不影响回复 | 保留数据库消息，下次重试 | 保留数据库消息，下次重试 |
 
-首版参数固定为：活跃窗口最长 1 小时、群聊空闲 15 分钟收束且每轮只触发一次、每小时扫描空闲 scope；任务失败按退避时间补偿重投。反思和周期整理都不能阻塞当前回复。低频群通过空闲或定时补偿进入反思。
+首版参数固定为：普通群消息累计 30 条、进入 Agent 的群消息累计 5 条、工具调用立即触发；任一未达到阈值的 scope 在连续 15 分钟无新消息后收束且每轮只触发一次；群组 scope 活跃窗口最长 1 小时，每小时扫描空闲 scope。任务失败按退避时间补偿重投。反思和周期整理都不能阻塞当前回复。
 
 ### 5.2 反思可靠性协议
 
@@ -329,7 +333,7 @@ reflection_cursor
 
 ### 5.6 压缩
 
-复用 `memory/compress.py` 的 daily→memory 思路，但 prompt、scope 和输入字段必须独立：
+复用 `memory/compress.py` 的 daily→memory 思路，但 prompt、scope 和输入字段必须独立。群组长期记忆同样保留重要历史和时间脉络，压缩输出上限为 15000 tokens；普通闲聊可以合并，不要求逐条保留：
 
 ```text
 group daily.md → group memory.md
@@ -458,7 +462,7 @@ backend/agent/
 - [x] 阻止 owner 群聊整轮响应进入个人反思，避免其他成员内容污染 owner memory；owner 私人工具结果的独立采集仍留在 Phase 4。
 - [x] 接入 group daily→memory 压缩：1000 条容量阈值、成功后保留 500 条、失败硬上限 1200 条；失败不影响主流程。
 
-Phase 2 实现备注：消息落库后只推进 scope 游标，实际反思由 `memory:reflection` worker 异步执行；同一 scope 使用 Redis 锁串行，任务失败按 1m/5m/30m/2h/6h 重试，重试补偿每 30 秒扫描，空闲 scope 每小时扫描。
+Phase 2 实现备注：消息落库后只推进 scope 游标，实际反思由 `memory:reflection` worker 异步执行；同一 scope 使用 Redis 锁串行，任务失败按 1m/5m/30m/2h/6h 重试，重试补偿和 15 分钟空闲 scope 均每 30 秒扫描。
 
 ### Phase 3：生命周期与管理
 

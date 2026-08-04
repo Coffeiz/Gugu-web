@@ -1,7 +1,7 @@
 """记忆存储：读写 {user_id}/.agent/ 下的文件，经 StorageBackend（本地/OSS 通吃）。
 
 不进 File 表，是咕咕私有档案。单库，无 DB/物理同步问题。
-- profile.json 用户画像：只回答"这个人是谁"，`{id,text,ts}`——不带 kind/conf，不衰减，不参与
+- profile.json 用户画像：只回答"这个人是谁"，`{type,text,ts}`——不带 id/kind/conf，不衰减，不参与
   周期复核（内容本来就该稳定）。见 docs/agent/11-记忆系统.md §2。
 - pattern.json 行为/决策模式（2b 结构化）：每条带 kind(observed/inferred)/conf/imp/ts，反思增删改、
   注入时按 effective(置信×衰减) 过滤排序；observed=用户亲述不衰减、inferred=推断按半衰期淡出。
@@ -32,6 +32,7 @@ DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢�
 
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
+PROFILE_TYPES = {"name", "address", "pronoun", "background", "preference", "note"}
 
 # ── 当前状态快照（summary.json：{text,ts} 一个文件，取代旧的 summary.md + summary.ts 两文件）──
 SUMMARY_FILE = "summary.json"
@@ -216,23 +217,48 @@ async def write_pattern_maintenance(user_id, state: dict) -> None:
     await _write(_key(user_id, PATTERN_MAINTENANCE_FILE), json.dumps(state, ensure_ascii=False, indent=2))
 
 
-# ── 用户画像（profile.json）：{id,text,ts}，不带 kind/conf，不衰减 ──
+# ── 用户画像（profile.json）：{type,text,ts}，不带 id/kind/conf，不衰减 ──
 async def read_profile_list(user_id) -> list[dict]:
-    """读用户画像列表。全新概念，没有旧文件可迁移，不存在就是空列表。"""
+    """读用户画像列表；兼容旧 id 格式，下一次写回时由 writer 清理。"""
     raw = (await _read(_key(user_id, PROFILE_FILE))).strip()
     if not raw:
         return []
     try:
         data = json.loads(raw)
         if isinstance(data, list):
-            return [p for p in data if isinstance(p, dict) and (p.get("text") or "").strip()]
+            normalized = [_normalize_profile_item(p, keep_ts=True) for p in data]
+            return [item for item in normalized if item]
     except Exception:
         pass
     return []
 
 
 async def write_profile_list(user_id, profile: list[dict]) -> None:
-    await _write(_key(user_id, PROFILE_FILE), json.dumps(profile, ensure_ascii=False, indent=2))
+    normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    normalized = [item for item in normalized if item]
+    await _write(_key(user_id, PROFILE_FILE), json.dumps(normalized, ensure_ascii=False, indent=2))
+
+
+def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
+    """把新旧 profile 条目统一成 type/text，未知类型按 note 兼容。"""
+    if isinstance(item, str):
+        text = item.strip()
+        item_type = "note"
+        ts = None
+    elif isinstance(item, dict):
+        text = str(item.get("text") or "").strip()
+        item_type = str(item.get("type") or "note").strip()
+        ts = item.get("ts")
+    else:
+        return None
+    if not text:
+        return None
+    if item_type not in PROFILE_TYPES:
+        item_type = "note"
+    result = {"type": item_type, "text": text}
+    if keep_ts:
+        result["ts"] = ts
+    return result
 
 
 def render_profile(profile: list[dict]) -> str:
@@ -242,24 +268,27 @@ def render_profile(profile: list[dict]) -> str:
 
 
 def apply_profile_ops(profile: list[dict], add, remove) -> list[dict]:
-    """对用户画像应用一轮增删。比 apply_pattern_ops 简单得多：命中相似条只刷新 ts、采更具体文本，
-    不涉及 conf/kind。add 是字符串数组，remove 同理（按相似匹配删除）。返回新列表，不就地改入参。"""
-    out = [dict(p) for p in (profile or [])]
+    """对用户画像应用一轮增删；add 兼容旧字符串和新 {type,text} 对象。"""
+    out = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    out = [item for item in out if item]
     now = time.time()
-    rem = [r for r in (remove or []) if str(r).strip()]
+    rem = [r.get("text") if isinstance(r, dict) else str(r) for r in (remove or [])]
+    rem = [r.strip() for r in rem if str(r or "").strip()]
     if rem:
         out = [p for p in out if not any(_pattern_similar(p.get("text", ""), r) for r in rem)]
     for a in (add or []):
-        text = str(a).strip()
-        if not text:
+        item = _normalize_profile_item(a, keep_ts=False)
+        if not item:
             continue
+        text, kind = item["text"], item["type"]
         hit = next((p for p in out if _pattern_similar(p.get("text", ""), text)), None)
         if hit:
             hit["ts"] = now
+            hit["type"] = kind
             if len(text) > len(hit.get("text", "")):
                 hit["text"] = text
         else:
-            out.append({"id": _pattern_id(), "text": text, "ts": now})
+            out.append({"type": kind, "text": text, "ts": now})
     return out
 
 

@@ -127,7 +127,8 @@ async def test_apply_profile_ops_add_and_dedupe(storage):
     profile2 = store.apply_profile_ops(profile, ["用户是自由创作者，从事插画和动画"], [])
     assert len(profile2) == 1
     assert "插画" in profile2[0]["text"]   # 采用更具体的文本
-    # profile 没有 kind/conf 字段
+    assert profile2[0]["type"] == "note"
+    assert "id" not in profile2[0]
     assert "kind" not in profile2[0] and "conf" not in profile2[0]
 
 
@@ -138,6 +139,27 @@ async def test_apply_profile_ops_remove(storage):
     profile = store.apply_profile_ops(profile, [], ["用户住南京"])
     assert len(profile) == 1
     assert profile[0]["text"] == "用户是自由创作者"
+
+
+async def test_profile_schema_normalizes_legacy_id_and_type(storage):
+    from agent.memory import store
+
+    await storage.put(
+        f"{UID}/.agent/profile.json",
+        json.dumps([
+            {"id": "legacy", "text": "用户住南京", "ts": 1.0},
+            {"type": "preference", "text": "喜欢简洁回复", "ts": 2.0},
+        ], ensure_ascii=False).encode(),
+    )
+    profile = await store.read_profile_list(UID)
+    assert profile == [
+        {"type": "note", "text": "用户住南京", "ts": 1.0},
+        {"type": "preference", "text": "喜欢简洁回复", "ts": 2.0},
+    ]
+    await store.write_profile_list(UID, profile)
+    persisted = json.loads((await storage.get(f"{UID}/.agent/profile.json")).decode())
+    assert persisted == profile
+    assert all("id" not in item for item in persisted)
 
 
 async def test_render_profile_no_relevance_filtering(storage):
@@ -151,12 +173,12 @@ def test_reflection_splits_temporal_profile_into_daily():
     from agent.memory import reflection
 
     profile_adds, staged = reflection._split_profile_adds([
-        "用户最近刚换了新空调",
-        "用户住南京",
+        {"type": "background", "text": "用户最近刚换了新空调"},
+        {"type": "address", "text": "用户住南京"},
         "用户目前在集中处理引用消息识别",
     ])
 
-    assert profile_adds == ["用户住南京"]
+    assert profile_adds == [{"type": "address", "text": "用户住南京"}]
     assert staged == ["用户最近刚换了新空调", "用户目前在集中处理引用消息识别"]
     assert reflection._merge_daily_note("本轮确认了微信引用能力边界", staged) == (
         "本轮确认了微信引用能力边界；用户最近刚换了新空调；用户目前在集中处理引用消息识别"

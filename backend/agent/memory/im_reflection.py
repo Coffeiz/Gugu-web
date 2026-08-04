@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 
 import hashlib
 import json
+import re
 
 from sqlalchemy import select
 
@@ -24,6 +25,8 @@ from agent.memory.scopes import MemoryScope
 GROUP_DAILY_COMPACT_AT = 1000
 GROUP_DAILY_KEEP_RECENT = 500
 GROUP_DAILY_HARD_CAP = 1200
+GROUP_MEMORY_MAX_TOKENS = 15000
+_DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 
 
 def _daily_entries(text: str) -> List[tuple[str, str]]:
@@ -49,6 +52,12 @@ def _render_daily(entries: List[tuple[str, str]]) -> str:
             current = date
         out.append(f"- {note}")
     return "\n".join(out).strip() + ("\n" if out else "")
+
+
+def _preserves_group_dates(entries: List[tuple[str, str]], memory: str) -> bool:
+    """防止群组长期记忆重写时丢掉本批记录的日期锚点。"""
+    dates = set(_DATE_RE.findall("\n".join(date for date, _ in entries)))
+    return not dates or dates.issubset(set(_DATE_RE.findall(memory)))
 
 
 def _message_text(message) -> str:
@@ -290,10 +299,19 @@ async def _apply_output(
 
 def _merge_profile(current: Any, incoming: Any) -> list:
     values = []
+    seen = set()
+    profile_types = {"name", "address", "pronoun", "background", "preference", "note"}
     for item in (current if isinstance(current, list) else []) + (incoming if isinstance(incoming, list) else []):
-        text = str(item).strip()
-        if text and text not in values:
-            values.append(text)
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+            item_type = str(item.get("type") or "note")
+        else:
+            text, item_type = str(item).strip(), "note"
+        if item_type not in profile_types:
+            item_type = "note"
+        if text and text not in seen:
+            seen.add(text)
+            values.append({"type": item_type, "text": text})
     return values
 
 
@@ -323,10 +341,10 @@ async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_m
         prompt,
         f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
         settings,
-        max_tokens=1800,
+        max_tokens=GROUP_MEMORY_MAX_TOKENS,
     )
     memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
-    if not memory:
+    if not memory or not _preserves_group_dates(entries, memory):
         return
     await write_scope_file(scope, "memory.md", memory + "\n")
     await write_scope_file(scope, "daily.md", _render_daily(entries[:GROUP_DAILY_KEEP_RECENT]))

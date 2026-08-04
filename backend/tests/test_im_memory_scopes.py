@@ -71,6 +71,18 @@ def test_group_daily_policy_and_markdown_roundtrip():
     assert GROUP_DAILY_KEEP_RECENT < GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
 
 
+def test_group_memory_compaction_preserves_dates_and_has_large_budget():
+    from agent.memory.im_reflection import (
+        GROUP_MEMORY_MAX_TOKENS,
+        _preserves_group_dates,
+    )
+
+    entries = [("2026-08-04", "新决定"), ("2026-07-31", "旧决定")]
+    assert GROUP_MEMORY_MAX_TOKENS == 15000
+    assert _preserves_group_dates(entries, "## 决定\n- 2026-08-04 新决定\n- 2026-07-31 旧决定")
+    assert not _preserves_group_dates(entries, "## 决定\n- 新决定")
+
+
 @pytest.mark.asyncio
 async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
     from app.models import MemoryReflectionCursor
@@ -154,6 +166,75 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
     assert cursor.active_started_at == now
     assert cursor.last_message_id == 43
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_member_agent_reflection_threshold_is_five(db, user_a, monkeypatch):
+    from agent.memory import reflection_jobs
+    from agent.memory.scopes import MemoryScope
+
+    now = now_utc()
+    calls = []
+
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
+        return 101
+
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
+    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-1")
+
+    for message_id in range(1, 5):
+        assert await reflection_jobs.observe_group_message(
+            scope, message_id, now, now=now, trigger_mode="agent", force=False,
+        ) is None
+    assert calls == []
+    assert await reflection_jobs.observe_group_message(
+        scope, 5, now, now=now, trigger_mode="agent", force=False,
+    ) == 101
+    assert calls == [(scope, 1, 5, "active-window")]
+
+
+@pytest.mark.asyncio
+async def test_first_member_tool_message_reflects_immediately(db, user_a, monkeypatch):
+    from agent.memory import reflection_jobs
+    from agent.memory.scopes import MemoryScope
+
+    now = now_utc()
+    calls = []
+
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
+        return 103
+
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
+    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-tool")
+
+    assert await reflection_jobs.observe_group_message(
+        scope, 1, now, now=now, trigger_mode="agent", force=True,
+    ) == 103
+    assert calls == [(scope, 1, 1, "tool")]
+
+
+@pytest.mark.asyncio
+async def test_member_passive_reflection_threshold_is_thirty(db, user_a, monkeypatch):
+    from agent.memory import reflection_jobs
+    from agent.memory.scopes import MemoryScope
+
+    now = now_utc()
+    calls = []
+
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
+        return 102
+
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
+    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-2")
+
+    for message_id in range(1, 30):
+        assert await reflection_jobs.observe_member_message(scope, message_id, now, now=now) is None
+    assert calls == []
+    assert await reflection_jobs.observe_member_message(scope, 30, now, now=now) == 102
+    assert calls == [(scope, 1, 30, "active-window")]
 
 
 @pytest.mark.asyncio
@@ -250,7 +331,13 @@ async def test_reflection_snapshot_excludes_assistant_and_tool_messages(db, user
 def test_member_memory_merge_is_stable_and_deduplicated():
     from agent.memory.im_reflection import _merge_pattern, _merge_profile
 
-    assert _merge_profile(["喜欢画画"], ["喜欢画画", "常用中文"]) == ["喜欢画画", "常用中文"]
+    assert _merge_profile(
+        [{"type": "preference", "text": "喜欢画画"}],
+        [{"type": "preference", "text": "喜欢画画"}, "常用中文"],
+    ) == [
+        {"type": "preference", "text": "喜欢画画"},
+        {"type": "note", "text": "常用中文"},
+    ]
     assert _merge_pattern(
         [{"text": "先确认再执行", "kind": "observed", "importance": 1}],
         [{"text": "先确认再执行", "kind": "inferred", "importance": 2}, {"text": "偏好短回复"}],
