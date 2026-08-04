@@ -293,12 +293,23 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
 
 
 def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
-    """判断是否为 QQ 群静默记录模式；该模式对所有消息都不触发回复。"""
+    """判断是否只记录当前群消息而不触发回复。
+
+    网关始终接收 QQ 平台实际投递的群消息；这里仅负责回应方式的业务语义：
+    ``record_only`` 记录全部消息，``reply_mentions`` 记录非 @ 消息，@ 消息
+    继续进入模型回复流程。
+    """
     return bool(
         request.source == "qqbot"
         and request.chat_id
         and payload.get("chat_type") == "group"
-        and payload.get("group_read_enabled")
+        and (
+            payload.get("group_read_enabled")
+            or (
+                payload.get("group_requires_at")
+                and not payload.get("group_mentioned")
+            )
+        )
     )
 
 

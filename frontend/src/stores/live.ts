@@ -18,6 +18,7 @@ interface SessionEvent {
   appended: Array<{
     role?: string; text?: string; files?: unknown[]; quoted_text?: string
     platform_user_id?: string | null; platform_user_name?: string | null
+    platform_bot_user_id?: string | null
   }>
   origin?: string | null
   _t: number

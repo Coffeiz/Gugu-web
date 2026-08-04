@@ -332,7 +332,7 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     assert produced[0]["chat_id"] == "group_1"
 
 
-async def test_qq_raw_group_message_create_drops_when_at_is_required(monkeypatch):
+async def test_qq_raw_group_message_create_is_received_when_at_is_required(monkeypatch):
     produced: list[dict] = []
 
     async def fake_group_settings(bot_id):
@@ -342,11 +342,14 @@ async def test_qq_raw_group_message_create_drops_when_at_is_required(monkeypatch
         produced.append(payload)
 
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
+    monkeypatch.setattr(qq, "_ingest_qq_media", lambda message, owner: [])
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})
 
-    assert produced == []
+    assert len(produced) == 1
+    assert produced[0]["group_requires_at"] is True
+    assert produced[0]["group_mentioned"] is False
 
 
 async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):

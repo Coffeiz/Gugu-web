@@ -279,7 +279,7 @@ async def get_session_messages(
         bot = (await db.execute(bot_query)).scalars().first()
         owner_platform_user_id = bot.owner_platform_user_id if bot else None
         if bot and bot.bot_platform_user_id:
-            mention_names[bot.bot_platform_user_id] = bot.name or "咕咕"
+            mention_names[bot.bot_platform_user_id] = "咕咕"
 
     def render_content(text: str) -> str:
         if session.chat_type != "group":

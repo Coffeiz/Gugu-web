@@ -350,6 +350,7 @@ interface ChatMessage {
   // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；
   // 群里其他成员填 platformUserName，气泡渲染在左侧并显示这个名字。
   speakerLabel?: string
+  platformUserId?: string | null
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
@@ -444,12 +445,25 @@ watch(() => liveStore.sessionEvent, async (e) => {
   for (const m of e.appended) {
     const isAi = m.role === 'assistant'
     const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
+    const latestNames: Record<string, string> = {}
+    for (const existing of messages.value) {
+      if (existing.platformUserId && existing.speakerLabel) {
+        latestNames[existing.platformUserId] = existing.speakerLabel
+      }
+    }
+    if (m.platform_user_id && m.platform_user_name) {
+      latestNames[m.platform_user_id] = m.platform_user_name
+    }
+    if (m.platform_bot_user_id) {
+      latestNames[m.platform_bot_user_id] = '咕咕'
+    }
     messages.value.push({
       id: mkid(),
       role: speaker.role,
       speakerLabel: speaker.speakerLabel,
-      text: m.text || '',
-      html: isAi ? renderMd(m.text || '') : null,
+      platformUserId: m.platform_user_id || null,
+      text: replaceMentionIdsForDisplay(m.text || '', latestNames),
+      html: isAi ? renderMd(replaceMentionIdsForDisplay(m.text || '', latestNames)) : null,
       files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
       quotedText: m.quoted_text || undefined,
       time: now(),
@@ -1521,6 +1535,16 @@ function resolveSpeaker(
   return { role: 'member', speakerLabel: platformUserName || platformUserId }
 }
 
+function replaceMentionIdsForDisplay(text: string, names: Record<string, string>): string {
+  let result = text || ''
+  for (const [platformUserId, name] of Object.entries(names)) {
+    if (!platformUserId || !name) continue
+    const escaped = platformUserId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    result = result.replace(new RegExp(`<@!?${escaped}>|@${escaped}`, 'g'), () => `@${name}`)
+  }
+  return result
+}
+
 async function loadSession(id: number) {
   if (id === sessionId.value) return
   abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
@@ -1540,6 +1564,7 @@ async function loadSession(id: number) {
         dbId: m.id,
         role: speaker.role,
         speakerLabel: speaker.speakerLabel,
+        platformUserId: m.platformUserId || null,
         text: m.content,
         html: null,
         files: m.files && m.files.length ? m.files : undefined,

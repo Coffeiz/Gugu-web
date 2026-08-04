@@ -1,8 +1,8 @@
 """QQ 官方机器人网关（单聊 C2C + 群聊，BYO 每用户自带 bot）。
 
-群聊需要在「接入咕咕」页开启 group_chat_enabled 开关；默认会处理普通群消息，开启
-group_requires_at 后才只响应 @ 机器人的消息。开启
-group_read_enabled 后进入静默记录模式：接收并保存所有群消息，但不触发回复。
+群聊需要在「接入咕咕」页开启 group_chat_enabled 开关。QQ 平台权限决定网关能否收到
+全量群消息；本平台收到的消息都会进入 IM Loop，再按回应方式决定回复或静默记录：
+group_requires_at 表示只回复 @ 消息，group_read_enabled 表示全部静默记录。
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
@@ -434,10 +434,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         mentioned = _qq_message_mentions_bot(data, event_type)
         if not group_enabled:
             return
-        # 只读取模式的目的就是收集群内全部消息；它覆盖“只响应 @”筛选，
-        # 但仍通过 payload 标记让 worker 全链路静默，不向群内发消息。
-        if requires_at and not read_enabled and not mentioned:
-            return
+        # QQ 平台的机器人权限决定网关能否收到全量群消息；平台层不再按回应方式
+        # 过滤事件。非 @ 消息是否只记录、不回复，由 IM Loop 统一决定。
         chat_type = "group"
         author = data.get("author") or {}
         # QQ 群事件在新协议里可能同时提供 user_openid 与 member_openid。
@@ -513,6 +511,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     }
     if chat_type == "group":
         payload["chat_id"] = chat_id
+        payload["group_requires_at"] = requires_at
         payload["group_read_enabled"] = read_enabled
         payload["group_mentioned"] = mentioned
     from agent import logsafe
