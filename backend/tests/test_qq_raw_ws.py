@@ -94,23 +94,6 @@ def test_qq_face_probe_extracts_multiple_faces_in_protocol_order():
     assert [item["face_id"] for item in qq._extract_qq_faces(text)] == ["first", "second"]
 
 
-def test_qq_face_probe_records_payload_shape_without_decoded_text():
-    marker = '<faceType=6,faceId="0",ext="eyJ0ZXh0Ijoi5ZOI5ZOIIn0=">'
-
-    shape = qq._inspect_qq_faces(marker)[0]
-    text_shape = qq._inspect_qq_face_text(marker)
-
-    assert shape["face_type"] == "6"
-    assert shape["face_id_present"] is True
-    assert shape["ext_shape"] == "json-object"
-    assert "text" in shape["ext_keys"]
-    assert shape["ext_text_present"] is True
-    assert shape["ext_text_length"] > 0
-    assert shape["ext_resource_keys"] == []
-    assert "5ZOI" not in str(shape)
-    assert text_shape["hasFaceKeyword"] is True
-
-
 def test_qq_face_marker_is_normalized_without_leaking_protocol_text():
     import base64
     import json

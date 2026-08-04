@@ -74,6 +74,7 @@ async def test_qq_media_ingress_stages_raw_attachment_with_source_message(monkey
         return {"attach_id": "attach-1"}
 
     monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
     monkeypatch.setattr("app.core.chat_attach.stage", fake_stage)
 
     result = await ingest_qq_media(
@@ -102,6 +103,7 @@ async def test_qq_face_media_ingress_persists_face_marker(monkeypatch):
         return {"attach_id": "face-1"}
 
     monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
     monkeypatch.setattr("app.core.chat_attach.stage", fake_stage)
 
     result = await ingest_qq_media(

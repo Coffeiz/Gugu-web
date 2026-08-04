@@ -130,9 +130,6 @@ async def load_im_memory(request: AgentRequest) -> dict:
     )
     group_memory = await preview_scope(group_scope)
     if group_memory is None:
-        from agent.im.memory_probe import record_memory_load
-
-        record_memory_load(request, {})
         return {}
     result = {"group": group_memory}
     role = request.actor_context.role if request.actor_context else request.im_role
@@ -143,9 +140,6 @@ async def load_im_memory(request: AgentRequest) -> dict:
         member_memory = await preview_scope(user_scope)
         if member_memory is not None:
             result["platform_user"] = member_memory
-    from agent.im.memory_probe import record_memory_load
-
-    record_memory_load(request, result)
     return result
 
 

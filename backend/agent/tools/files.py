@@ -1046,34 +1046,9 @@ _SEND_URL_IMAGE_EXT = {
 
 
 def _url_is_safe(url: str) -> str | None:
-    """校验一个外部 URL 能不能拿去下载：只准 http/https，挡掉内网/回环/链路本地/云元数据地址。
-    返回 None=安全；否则返回拒绝原因。"""
-    import ipaddress
-    import socket
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return "URL 格式不合法"
-    if parsed.scheme not in ("http", "https"):
-        return "只支持 http/https 链接"
-    host = parsed.hostname
-    if not host:
-        return "URL 缺少主机名"
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except Exception:
-        return "域名解析失败"
-    for info in infos:
-        ip_str = info[4][0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
-            return "该地址指向内网/本机，出于安全考虑不予下载"
-    return None
+    from app.core.url_security import url_is_safe
+
+    return url_is_safe(url)
 
 
 def _fmt_age(ttl_left: int, total_ttl: int) -> str:

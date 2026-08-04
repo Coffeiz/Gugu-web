@@ -38,6 +38,8 @@
 - **记忆维护与召回**（`backend/agent/memory/`）：优化 pattern 的水位触发、合并和输出预算，并稳定群上下文搜索结果顺序。
 - **记忆反思触发节奏**（`backend/agent/memory/`、`agent/im/`）：群内普通消息累计 30 条、进入 Agent 的回合累计 5 条，工具调用立即反思，owner/member 共用节奏但保持记忆作用域隔离。
 - **QQ 群消息与媒体链路**（`backend/agent/gateway/qq.py`、`agent/im/`）：统一群聊消息解析、身份映射、表情/引用媒体和本地附件发送路径，减少群聊与私聊的行为差异。
+- **IM 媒体下载安全边界**（`backend/app/core/url_security.py`、`agent/im/media_ingress.py`）：统一外部 URL 的 SSRF 校验，并对重定向逐跳校验，避免附件下载绕过网络边界。
+- **IM 网关与解析层职责收口**（`agent/gateway/`、`agent/im/`）：移除临时运行探针，让网关、协议解析、媒体暂存和业务编排保持独立边界。
 - **RAG 召回评估工具**（`backend/scripts/bench_rag_virtual.py`、`docs/product/PRD/report/`）：增加 BM25、真实 Embedding 缓存和 DeepSeek/MiniMax LLM 重排的离线压测，记录召回质量、排序耗时和上下文注入成本；当前结论是 BM25 作为默认路径，LLM 重排按需启用。
 
 ### 修复

@@ -5,10 +5,12 @@ Gateway 只传平台原始附件；下载、转码和暂存由 worker 侧统一�
 """
 from __future__ import annotations
 
+from urllib.parse import urljoin
+
 import aiohttp
-import json
 
 from app.core.redaction import diag_log, redact
+from app.core.url_security import url_is_safe
 
 
 async def ingest_qq_media(
@@ -23,7 +25,6 @@ async def ingest_qq_media(
     if emoji_refs and not raw:
         from agent.im.emoji.qface import resolve_qq_system_face
         from app.core import chat_attach
-        from agent import logsafe
 
         for ref in emoji_refs:
             if not isinstance(ref, dict):
@@ -33,25 +34,8 @@ async def ingest_qq_media(
             cached = await chat_attach.get_qq_face_cached(owner, face_type, face_id)
             if cached:
                 cached_attach_ids.append(cached["attach_id"])
-                print(
-                    "[runtime-qq-face-probe] " + json.dumps({
-                        "phase": "qface-cache-hit",
-                        "faceType": face_type,
-                        "faceId": logsafe.fingerprint(face_id),
-                    }, ensure_ascii=False),
-                    flush=True,
-                )
                 continue
             asset = await resolve_qq_system_face(face_type, face_id)
-            print(
-                "[runtime-qq-face-probe] " + json.dumps({
-                    "phase": "qface-resolve",
-                    "faceType": face_type,
-                    "faceId": logsafe.fingerprint(face_id),
-                    "matched": bool(asset),
-                }, ensure_ascii=False),
-                flush=True,
-            )
             if asset:
                 raw.append({
                     "url": asset.url,
@@ -68,26 +52,9 @@ async def ingest_qq_media(
 
     out: list[str] = list(cached_attach_ids)
     async with aiohttp.ClientSession() as sess:
-        for index, item in enumerate(raw):
+        for item in raw:
             url = item.get("url")
-            print(
-                "[runtime-qq-face-probe] " + json.dumps({
-                    "phase": "ingress-raw",
-                    "index": index,
-                    "keys": sorted(item.keys()),
-                    "hasUrl": bool(url),
-                    "qqFace": bool(item.get("qq_face")),
-                }, ensure_ascii=False),
-                flush=True,
-            )
             if not url:
-                print(
-                    "[runtime-qq-face-probe] " + json.dumps({
-                        "phase": "ingress-skip-no-url",
-                        "qqFace": bool(item.get("qq_face")),
-                    }, ensure_ascii=False),
-                    flush=True,
-                )
                 continue
             if not url.startswith("http"):
                 url = "https://" + url.lstrip("/")
@@ -103,11 +70,31 @@ async def ingest_qq_media(
                 ext = ext or (mime_ext if mime_ext in {"jpeg", "jpg", "png", "gif", "webp"} else "png")
                 name = "QQ表情"
             try:
-                async with sess.get(url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status != 200:
-                        print(f"[qq] 下载附件失败 status={resp.status}", flush=True)
-                        continue
-                    data = await resp.read()
+                data = b""
+                for _ in range(4):
+                    reason = url_is_safe(url)
+                    if reason:
+                        diag_log("agent.im.media_ingress.unsafe_url", ValueError(reason))
+                        break
+                    async with sess.get(
+                        url,
+                        allow_redirects=False,
+                        timeout=aiohttp.ClientTimeout(total=60),
+                    ) as resp:
+                        if resp.status in {301, 302, 303, 307, 308}:
+                            location = resp.headers.get("Location")
+                            if not location:
+                                break
+                            url = urljoin(url, location)
+                            continue
+                        if resp.status != 200:
+                            break
+                        data = await resp.read()
+                        break
+                else:
+                    data = b""
+                if not data:
+                    continue
 
                 from app.core import media_transcode
 
@@ -152,16 +139,6 @@ async def ingest_qq_media(
                         str(item["qq_face_id"]),
                         meta["attach_id"],
                     )
-                print(
-                    "[runtime-qq-face-probe] " + json.dumps({
-                        "phase": "ingress-staged",
-                        "qqFace": is_qq_face,
-                        "kind": "image" if is_qq_face else ("voice" if is_voice else "file"),
-                        "ext": ext,
-                        "hasAttachId": bool(meta.get("attach_id")),
-                    }, ensure_ascii=False),
-                    flush=True,
-                )
             except Exception as exc:
                 diag_log("agent.im.media_ingress.ingest_qq_media", exc)
                 print(

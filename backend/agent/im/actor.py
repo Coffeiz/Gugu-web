@@ -84,11 +84,4 @@ class ActorResolver:
             chat_id=platform_message.chat.id if chat_type == "group" else None,
             allowed_tool_names=allowed_tool_names,
         )
-        from agent.im.memory_probe import record_actor
-
-        record_actor(
-            actor,
-            owner_user_id,
-            payload.get("platform_bot_id") or platform_message.bot_id,
-        )
         return actor

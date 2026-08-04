@@ -400,9 +400,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
-    from agent.im.memory_probe import record_context_assembly
-    record_context_assembly(req, context_data, history, "collect", session_id=session_id)
-
     try:
         text, tin, tout, errored, sent_files, cancelled = await _collect(gen, minimax=is_minimax(model_cfg))
     finally:
@@ -645,9 +642,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             oa_messages.append({"role": h.role, "content": format_history_content(h, req)})
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
-
-    from agent.im.memory_probe import record_context_assembly
-    record_context_assembly(req, context_data, history, "stream", session_id=session_id)
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
     minimax_stream = is_minimax(model_cfg)

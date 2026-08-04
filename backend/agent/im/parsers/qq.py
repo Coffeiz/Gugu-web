@@ -8,7 +8,6 @@ import base64
 import binascii
 import json
 import re
-import unicodedata
 from typing import Any, Dict, List, Optional
 
 
@@ -16,8 +15,6 @@ _QQ_FACE_RE = re.compile(
     r'<faceType=(?P<face_type>[^,>]+),faceId="(?P<face_id>[^"]*)",'
     r'ext="(?P<ext>[^"]*)">'
 )
-_QQ_FACE_LIKE_TAG_RE = re.compile(r"<\s*([A-Za-z][\w:-]*)")
-_QQ_FACE_LIKE_ATTR_RE = re.compile(r"\b(face(?:Type|Id)?|emoji|sticker|market|package|url|ext)\s*=")
 _QQ_FACE_PENDING_TTL = 3.0
 _pending_qq_faces: dict[str, list[float]] = {}
 _pending_qq_face_ids: dict[str, list[list[dict[str, str]]]] = {}
@@ -69,75 +66,6 @@ def _extract_qq_faces(text: str) -> list[dict[str, str]]:
         }
         for match in _QQ_FACE_RE.finditer(text or "")
     ]
-
-
-def _inspect_qq_faces(text: str) -> list[dict[str, object]]:
-    """返回表情协议的非内容结构，供运行时探针区分不同 QQ 表情来源。
-
-    不返回 ext 解码后的文案，也不返回完整 faceId；只保留字段存在性、长度和
-    JSON 顶层键，避免把用户可见内容或协议载荷写入日志。
-    """
-    result: list[dict[str, object]] = []
-    for match in _QQ_FACE_RE.finditer(text or ""):
-        face_id = match.group("face_id")
-        encoded = match.group("ext")
-        ext_keys: list[str] = []
-        ext_resource_keys: list[str] = []
-        ext_text_length = 0
-        ext_text_categories: list[str] = []
-        ext_text_has_url = False
-        ext_shape = "empty"
-        if encoded:
-            ext_shape = "nonempty"
-            try:
-                padding = "=" * (-len(encoded) % 4)
-                decoded = json.loads(base64.b64decode(encoded + padding).decode("utf-8"))
-                if isinstance(decoded, dict):
-                    ext_shape = "json-object"
-                    ext_keys = sorted(str(key) for key in decoded.keys())[:16]
-                    ext_resource_keys = [
-                        key for key in ext_keys
-                        if any(token in key.lower() for token in ("url", "image", "file", "emoji", "sticker", "resource"))
-                    ]
-                    ext_text = decoded.get("text")
-                    if isinstance(ext_text, str):
-                        ext_text_length = len(ext_text)
-                        ext_text_categories = sorted({
-                            unicodedata.category(char)[:1]
-                            for char in ext_text
-                            if char.strip()
-                        })
-                        ext_text_has_url = ext_text.startswith(("http://", "https://"))
-                else:
-                    ext_shape = type(decoded).__name__
-            except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError):
-                ext_shape = "non-json"
-        result.append({
-            "face_type": match.group("face_type"),
-            "face_id_present": bool(face_id),
-            "face_id_length": len(face_id),
-            "ext_present": bool(encoded),
-            "ext_length": len(encoded),
-            "ext_shape": ext_shape,
-            "ext_keys": ext_keys,
-            "ext_resource_keys": ext_resource_keys,
-            "ext_text_present": ext_text_length > 0,
-            "ext_text_length": ext_text_length,
-            "ext_text_categories": ext_text_categories,
-            "ext_text_has_url": ext_text_has_url,
-        })
-    return result
-
-
-def _inspect_qq_face_text(text: str) -> dict[str, object]:
-    """记录未被标准协议正则识别的表情文本形状，不记录文本内容。"""
-    value = text or ""
-    return {
-        "textLength": len(value),
-        "hasFaceKeyword": "face" in value.lower(),
-        "tagNames": sorted(set(_QQ_FACE_LIKE_TAG_RE.findall(value)))[:16],
-        "attributeNames": sorted(set(_QQ_FACE_LIKE_ATTR_RE.findall(value)))[:16],
-    }
 
 
 def _qq_face_pending_key(chat_type: str, chat_id: str, sender_id: str) -> str:
