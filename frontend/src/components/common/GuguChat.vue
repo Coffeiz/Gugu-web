@@ -456,20 +456,6 @@ watch(() => liveStore.sessionEvent, async (e) => {
   if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
   if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
-    if (m.files?.length) {
-      console.info('[runtime-qq-face-probe]', JSON.stringify({
-        phase: 'chat-event-files',
-        count: m.files.length,
-        files: m.files.map((file: any) => ({
-          keys: Object.keys(file || {}).sort(),
-          kind: file?.kind || null,
-          ext: file?.ext || null,
-          qqFace: Boolean(file?.qq_face),
-          hasFileId: Boolean(file?.file_id),
-          hasAttachId: Boolean(file?.attach_id),
-        })),
-      }))
-    }
     const isAi = m.role === 'assistant'
     const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
     const latestNames: Record<string, string> = {}

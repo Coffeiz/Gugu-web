@@ -41,6 +41,7 @@
 - **IM 媒体下载安全边界**（`backend/app/core/url_security.py`、`agent/im/media_ingress.py`）：统一外部 URL 的 SSRF 校验，并对重定向逐跳校验，避免附件下载绕过网络边界。
 - **直传与 IM 故障安全边界**（`backend/app/services/files/upload.py`、`agent/im/loop.py`、`agent/im/media_ingress.py`）：直传确认改用对象真实元数据并在新建/覆盖两条路径重新校验配额，Redis shortcut 故障不再丢消息，媒体下载增加流式大小限制。
 - **IM 网关与解析层职责收口**（`agent/gateway/`、`agent/im/`）：移除临时运行探针，让网关、协议解析、媒体暂存和业务编排保持独立边界。
+- **数据库空库初始化兼容**（`backend/alembic/env.py`）：空 PostgreSQL 可直接升级到当前 head，已有业务库仍沿用正常迁移链。
 - **RAG 召回评估工具**（`backend/scripts/bench_rag_virtual.py`、`docs/product/PRD/report/`）：增加 BM25、真实 Embedding 缓存和 DeepSeek/MiniMax LLM 重排的离线压测，记录召回质量、排序耗时和上下文注入成本；当前结论是 BM25 作为默认路径，LLM 重排按需启用。
 
 ### 修复

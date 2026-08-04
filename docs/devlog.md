@@ -1816,7 +1816,7 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 后端：`644 passed`，ownership/confirmation guard 通过，Python compileall 通过。
 - 前端：typecheck、strict typecheck、246 个 Vitest 测试和 build 全部通过；build 仅保留既有 chunk/import 警告。
 - 迁移：在临时 PostgreSQL 上从项目的现有 schema 基线 `20260804000002` 升级至 `20260804000007`，执行一次 downgrade 到 `20260804000006` 后再次 upgrade，最终为 head。
-- 直接从空 PostgreSQL 执行历史第一条 Alembic revision 不属于当前仓库支持的初始化路径：仓库基础表由 `Base.metadata.create_all()` 创建，历史第一条 revision 假定基础表已存在；该限制已记录在 PR，不将 offline SQL 或空库直升结果误报为通过。
+- 空 PostgreSQL 可直接执行 `alembic upgrade head`：`alembic/env.py` 检测真正空库后用当前 metadata 建立基础表并写入当前 head；已有业务表则仍走正常 revision 链，不会被误判为空库。临时 PostgreSQL 18 空库实测建出 31 张表，版本为 `20260804000007`。
 - devserver 工作树存在其他未归属改动，未在其目录执行迁移。通过只读 `pg_dump --schema-only` 获取远端生产结构副本，在本地 PostgreSQL 18 临时库中从 head 回退到 `20260804000002`，再升级到 `20260804000007`，最终 head 验证通过；未修改远端数据库。
 - 真实 OSS 对象和人工 IM 交互仍需部署后手测，不能由本地单测替代。
 
@@ -1826,3 +1826,5 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 复审时发现并修复 OSS confirm 新建文件分支遗漏实际配额复核的问题，新增“已有占用 + 新对象真实大小”回归测试；覆盖分支原有的替换配额检查保持不变。
 - 在临时 PostgreSQL 18 中执行真实双会话并发 confirm，结果为一条成功、一条配额拒绝，总占用保持 `95`，证明用户行锁和服务端配额复核生效。
 - 生产结构副本迁移复核命令输出：`production_schema_copy_downgrade_upgrade_ok`，最终版本 `20260804000007`。
+- 迁移补充复核：已有业务表路径先 stamp head，再 downgrade 到 `20260804000002` 并 upgrade 回 head，最终版本仍为 `20260804000007`；bootstrap 路径确认提交事务，避免连接关闭时回滚建表结果。
+- 总体清理：移除已完成排查的 QQ 表情前端探针和文件拖拽临时 `debugLabel`，未保留调试输出或无调用的探针模块。
