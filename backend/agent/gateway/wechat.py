@@ -25,6 +25,11 @@ import uuid
 from app.core import redis as R
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log, diag_log_raw, redact
+from agent.im.media_ingress_wechat import (
+    extract_quoted as _extract_quoted,
+    ingest_media as _ingest_wechat_media_impl,
+    media_url as _wechat_media_url,
+)
 from agent.gateway.wechat_client import ILinkClient, DEFAULT_BASE_URL
 from agent.gateway.wechat_config_cache import WeixinConfigManager
 from agent.gateway.wechat_typing import TypingIndicator
@@ -65,117 +70,8 @@ def _aes128_ecb_decrypt(raw: bytes, key: bytes) -> bytes:
     return out
 
 
-def _img_ext_mime(data: bytes) -> tuple[str, str]:
-    """按 magic bytes 判图片类型。"""
-    if data[:3] == b"\xff\xd8\xff":                       return "jpg", "image/jpeg"
-    if data[:8] == b"\x89PNG\r\n\x1a\n":                  return "png", "image/png"
-    if data[:4] == b"GIF8":                               return "gif", "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":     return "webp", "image/webp"
-    return "jpg", "image/jpeg"   # 兜底当 jpg
-
-
-_WECHAT_CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
-
-
-def _wechat_media_url(media: dict) -> str:
-    """解析图片项的下载地址。iLink 媒体有两种形态：
-
-    - 直发的图片消息：`media.full_url` 是可以直接 GET 的完整 CDN 地址。
-    - **引用/回复里带的图片**：没有 `full_url`，只有 `media.encrypt_query_param`——
-      得自己拼 CDN 下载地址（对照 QwenPaw 的 `ILinkClient.download_media` 实现确认，
-      参数名是 `encrypted_query_param`，注意比字段名 `encrypt_query_param` 多一个 d）。
-      之前只认 `full_url`，导致引用图片一律因为「缺 full_url」被跳过、下载不到，
-      引用识别本身没问题、卡在下载这一步。"""
-    full_url = media.get("full_url") or ""
-    if full_url:
-        return full_url
-    encrypt_query_param = media.get("encrypt_query_param") or ""
-    if encrypt_query_param:
-        from urllib.parse import quote
-        return f"{_WECHAT_CDN_BASE}/download?encrypted_query_param={quote(encrypt_query_param, safe='')}"
-    return ""
-
-
 async def _ingest_wechat_media(items: list, owner: str) -> list:
-    """下载并解密微信图片项 → 暂存 → 返回 [attach_id]（照搬 qq `_ingest_qq_media` 模式）。
-    iLink 媒体走 CDN（`image_item.media.full_url` 或引用场景的 `encrypt_query_param`，
-    见 `_wechat_media_url`）+ AES-128-ECB（key=`image_item.aeskey` hex）。
-    语音（type==3）已在 `_handle_msg` 里用自带的 `voice_item.text` 转写文字处理，不会传进这里；
-    file 项格式仍未知 → 留日志待补。"""
-    import httpx
-    from agent.im import files as im_attachments
-    out: list = []
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as cli:
-        for it in items:
-            img = it.get("image_item")
-            if not img:
-                other = [k for k, v in it.items() if k.endswith("_item") and v]
-                if other:
-                    print(f"[wechat] 暂不支持的媒体项（格式待补）: {other}", flush=True)
-                continue
-            aeskey = img.get("aeskey") or ""
-            url = _wechat_media_url(img.get("media") or {})
-            if not aeskey or not url:
-                print("[wechat] 图片项缺 aeskey/可用下载地址，跳过", flush=True)
-                continue
-            try:
-                raw = (await cli.get(url)).content
-                data = _aes128_ecb_decrypt(raw, bytes.fromhex(aeskey))
-                ext, mime = _img_ext_mime(data)
-                meta = await im_attachments.stage(
-                    owner, "微信图片", ext, mime, data, kind="image", platform="wechat"
-                )
-                out.append(meta["attach_id"])
-            except Exception as e:
-                # best-effort：一批消息可能带多张图，单张下载/解密失败（网络抖动/坏数据）不该
-                # 拖垮整批——跳过这一项、继续处理其余项（P2-b §8）。原始异常走受限诊断出口，
-                # 可见日志只留脱敏摘要。
-                diag_log("agent.gateway.wechat.ingest_media", e)
-                print(f"[wechat] 图片下载/解密失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
-    return out
-
-
-def _extract_quoted(ref_msg) -> tuple[str | None, list]:
-    """从 item.ref_msg.message_item 里提取 (引用文字, 引用媒体项列表)。
-
-    微信 iLink 会把被引用消息内嵌在 `ref_msg.message_item`，这里把文字单独抽出来给
-    `quoted_text`，把引用图片等媒体按普通 item 结构返给 `_ingest_wechat_media` 继续下载/
-    解密/暂存。
-
-    `ref_msg.title`：对照 openclaw-weixin（`@tencent-weixin/openclaw-weixin` 发布包）源码
-    确认这是 iLink 协议里的引用摘要字段，`message_item` 拿不到文字时优先兜底用它——但实测
-    过的「type=0 + 空 button_item_list」这种空壳结构里，`ref_msg` 只有 `message_item` 一个
-    key，没有 `title`，说明这种情况下 openclaw 的代码也一样拿不到文字（它会静默丢弃这条引用，
-    不像这里显式给占位符）。加上 `title` 判断是防御性覆盖，不是这次真实案例的解法。"""
-    if not isinstance(ref_msg, dict):
-        return None, []
-    title = (ref_msg.get("title") or "").strip()
-    mi = ref_msg.get("message_item")
-    if not isinstance(mi, dict):
-        if title:
-            return title, []
-        return None, []
-    quoted_type = mi.get("type")
-    txt = (mi.get("text_item") or {}).get("text", "").strip()
-    if txt:
-        return txt, []
-    if quoted_type == 3 or mi.get("voice_item"):
-        voice_text = (mi.get("voice_item") or {}).get("text", "").strip()
-        return (voice_text or "[语音消息]"), []
-    if quoted_type == 2 or mi.get("image_item"):
-        return "[图片消息]", [{"type": 2, "image_item": mi.get("image_item") or {}}]
-    if quoted_type == 4 or mi.get("file_item"):
-        return "[文件消息]", []
-    if quoted_type == 5 or mi.get("video_item"):
-        return "[视频消息]", []
-    if title:
-        return title, []
-    # type=0（外加不少其他拿不到文字的情况）：实测 + 核对 openclaw-weixin 源码确认，iLink
-    # 的 getupdates 接口在这种情况下 message_item 只给 msg_id/时间戳/完成状态等元数据（外加
-    # 空的 button_item_list），压根不带原文，也没有反查接口；官方 issue 里也有人提过同样问题。
-    # 这是平台限制，不是咱解析代码判断错了类型——干脆直说"暂不支持"，别继续用容易让人以为是
-    # bug 的措辞（之前"取不回原文"听起来还像是能修的技术细节，其实修不了）。
-    return "[微信暂不支持消息引用识别]", []
+    return await _ingest_wechat_media_impl(items, owner, _aes128_ecb_decrypt)
 
 
 # ── 接收（网关子进程，long-poll）────────────────────────────────────────────────

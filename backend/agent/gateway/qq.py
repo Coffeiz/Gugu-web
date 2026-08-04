@@ -20,12 +20,10 @@ supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到�
 from __future__ import annotations
 
 from contextlib import suppress
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 import aiohttp
 import asyncio
-import base64
-import binascii
 import json
 import logging
 import os
@@ -60,174 +58,20 @@ _INTENTS = _INTENT_GROUP_AND_C2C
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 
-_QQ_FACE_RE = re.compile(
-    r'<faceType=(?P<face_type>[^,>]+),faceId="(?P<face_id>[^"]*)",'
-    r'ext="(?P<ext>[^"]*)">'
+from agent.im.parsers.qq import (
+    _QQ_FACE_PENDING_TTL,
+    _contains_qq_face,
+    _extract_quoted,
+    _normalize_qq_faces,
+    _pending_qq_faces,
+    _qq_face_pending_key,
+    _strip_qq_face_markers,
 )
-_QQ_FACE_PENDING_TTL = 3.0
-_pending_qq_faces: dict[str, float] = {}
-
-
-def _contains_qq_face(text: str) -> bool:
-    return bool(text and _QQ_FACE_RE.search(text))
-
-
-def _qq_face_pending_key(chat_type: str, chat_id: str, sender_id: str) -> str:
-    return f"qq-face-pending:{chat_type}:{chat_id or sender_id}"
-
-
-def _normalize_qq_faces(text: str) -> str:
-    """将 QQ 内部表情标记转换成可展示文本，避免协议串直接进入会话。"""
-    if not text or "<faceType=" not in text:
-        return text
-
-    def replace(match: re.Match) -> str:
-        encoded = match.group("ext")
-        if encoded:
-            try:
-                padding = "=" * (-len(encoded) % 4)
-                payload = json.loads(base64.b64decode(encoded + padding).decode("utf-8"))
-                label = str(payload.get("text") or "").strip()
-                if label:
-                    return label
-            except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, json.JSONDecodeError):
-                pass
-        return "[QQ表情]"
-
-    return _QQ_FACE_RE.sub(replace, text)
-
-
-def _strip_qq_face_markers(text: str) -> str:
-    """移除协议表情标记，图片附件会作为这条消息的视觉内容单独展示。"""
-    return _QQ_FACE_RE.sub("", text or "").strip()
 
 
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
     """连续超过两个心跳周期未获确认时，认为网关连接已失效。"""
     return now - last_ack_at >= interval * _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER
-
-def _find_quoted_element(raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """从原始 payload 中找到被引用的消息元素。
-
-    QQ 的 msg_elements 列表包含当前会话的上下文消息，其中用户引用的消息
-    通过 message_scene.ext 里的 ref_msg_idx 定位。
-    """
-    msg_elements: List[Dict[str, Any]] = raw_data.get("msg_elements") or []
-    if not msg_elements:
-        return None
-
-    scene_ext = _message_scene_ext(raw_data)
-    ref_idx = _scene_ext_value(scene_ext, "ref_msg_idx")
-    if not ref_idx:
-        ref_idx = _scene_ext_value(scene_ext, "msg_ref_idx")
-
-    if not ref_idx:
-        return None
-
-    for elem in msg_elements:
-        if isinstance(elem, dict):
-            if str(elem.get("msg_idx", "")) == ref_idx:
-                return elem
-
-    # fallback：ref_msg_idx 存在但没精确命中时，取不是当前消息的上下文元素。
-    own_idx = _scene_ext_value(scene_ext, "msg_idx")
-    for elem in msg_elements:
-        if isinstance(elem, dict) and str(elem.get("msg_idx", "")) != own_idx:
-            return elem
-    return None
-
-
-def _message_scene_ext(raw_data: Dict[str, Any]) -> list:
-    scene = raw_data.get("message_scene") or {}
-    if not isinstance(scene, dict):
-        return []
-    ext = scene.get("ext") or []
-    return ext if isinstance(ext, list) else []
-
-
-def _scene_ext_value(scene_ext: list, key: str) -> str:
-    prefix = f"{key}="
-    for entry in scene_ext:
-        if isinstance(entry, str) and entry.startswith(prefix):
-            return entry[len(prefix):].strip()
-        if isinstance(entry, dict):
-            if entry.get("key") == key:
-                return str(entry.get("value") or "").strip()
-            if key in entry:
-                return str(entry.get(key) or "").strip()
-    return ""
-
-
-def _extract_quoted(raw_data: Dict[str, Any]) -> tuple[str, list]:
-    """返回 (引用文本, 引用附件列表)。没有引用时返回 ("", [])。"""
-    elem = _find_quoted_element(raw_data)
-    if not elem:
-        return "", []
-    text = (elem.get("content") or elem.get("text") or "").strip()
-    text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
-    attachments = elem.get("attachments") or []
-    if not isinstance(attachments, list):
-        attachments = []
-    return text, _dedupe_attachments(attachments + _collect_media_attachments(elem))
-
-
-def _collect_media_attachments(value) -> list:
-    """从 QQ 引用元素的嵌套结构里递归找媒体 URL，兼容非 attachments 字段。"""
-    found: list = []
-
-    def _walk(v):
-        if isinstance(v, dict):
-            url = (
-                v.get("url")
-                or v.get("file_url")
-                or v.get("download_url")
-                or v.get("image_url")
-                or v.get("origin_url")
-                or v.get("preview_url")
-            )
-            if isinstance(url, str) and url:
-                found.append({
-                    "url": url,
-                    "filename": (
-                        v.get("filename")
-                        or v.get("file_name")
-                        or v.get("name")
-                        or "引用图片.jpg"
-                    ),
-                    "content_type": v.get("content_type") or v.get("type"),
-                })
-            for child in v.values():
-                _walk(child)
-        elif isinstance(v, list):
-            for child in v:
-                _walk(child)
-
-    _walk(value)
-    # 去重，避免同一个 URL 在多个预览字段里重复暂存。
-    deduped: list = []
-    seen: set[str] = set()
-    for item in found:
-        url = item.get("url")
-        if url and url not in seen:
-            seen.add(url)
-            deduped.append(item)
-    return deduped
-
-
-def _dedupe_attachments(attachments: list) -> list:
-    deduped: list = []
-    seen: set[str] = set()
-    for item in attachments:
-        if not isinstance(item, dict):
-            continue
-        url = item.get("url")
-        if url and url in seen:
-            continue
-        if url:
-            seen.add(url)
-        deduped.append(item)
-    return deduped
-
 
 def _qq_api_base(sandbox: bool) -> str:
     return _QQ_SANDBOX_API_BASE if sandbox else _QQ_API_BASE

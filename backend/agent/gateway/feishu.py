@@ -33,130 +33,19 @@ STREAM = R.IM_INBOUND_STREAM
 _FEISHU_STALE_MSG_THRESHOLD_MS = 20_000
 
 
-# 能被咕咕「读内容」的文本类扩展名（与 chat_attach 同口径）
-_TEXT_EXTS = {"md", "txt", "json", "csv", "yaml", "yml", "log", "py", "js", "ts", "tsx",
-              "jsx", "vue", "html", "css", "scss", "java", "go", "rs", "c", "cpp", "h",
-              "hpp", "sh", "sql", "xml", "toml", "ini", "conf", "env"}
-
-
-def _download_and_stage(client, message_id: str, owner: str, key: str, rtype: str,
-                        fname: str, is_voice: bool) -> tuple[str, str]:
-    """下载单个飞书资源（图片/文件/视频共用）→ 转码（语音）→ 暂存。
-    返回 (fallback 文本, attach_id)；成功时 fallback 为空串，失败时 attach_id 为空串。"""
-    from lark_oapi.api.im.v1 import GetMessageResourceRequest
-    from agent.im import files as im_attachments
-    if not key:
-        noun = "语音" if is_voice else "文件"
-        return (f"[用户发来一个{noun}，但没取到资源]", "")
-    try:
-        req = GetMessageResourceRequest.builder().message_id(message_id).file_key(key).type(rtype).build()
-        resp = client.im.v1.message_resource.get(req)
-        data = resp.file.read() if (resp.success() and resp.file) else b""
-    except Exception as e:
-        diag_log("agent.gateway.feishu.download_resource", e)   # 原始 → 受限诊断出口
-        print(f"[feishu] 下载资源出错: {redact(f'{type(e).__name__}: {e}')}", flush=True)
-        data = b""
-    if not data:
-        return (f"[用户发来文件《{fname}》，但下载失败]", "")
-    name = fname.rsplit(".", 1)[0] if "." in fname else fname
-    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
-    duration = None
-    if is_voice:
-        # opus（mimo 不收）→ ffmpeg 转 mp3；缺 ffmpeg 则原样、退文字提示（resolve 兜底）
-        from app.core import media_transcode
-        conv = media_transcode.to_mimo_mp3(data, ext or "opus", "audio/ogg")
-        if conv is not None:
-            data, ext, name = conv, "mp3", "语音"
-        duration = media_transcode.probe_duration(data, ext)
-    try:
-        if is_voice:
-            aid = im_attachments.stage_voice_sync(
-                owner, name, ext, "audio/mpeg" if ext == "mp3" else None, data,
-                duration=duration, platform="feishu").get("attach_id", "")
-        else:
-            aid = im_attachments.stage_sync(owner, name, ext, None, data, platform="feishu").get("attach_id", "")
-    except Exception as e:
-        diag_log("agent.gateway.feishu.stage_media", e)   # 原始 → 受限诊断出口
-        print(f"[feishu] 暂存失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
-        aid = ""
-    if aid:
-        return ("", aid)   # 文件卡/语音条/视频条内容由 resolve_for_message 据 attach_id 注入
-    if is_voice:
-        return ("[用户发来一条语音，但处理失败]", "")
-    # 暂存失败兜底：文本类至少把内容塞进文本，让咕咕能读
-    if ext in _TEXT_EXTS:
-        return (f"[用户发来文件《{fname}》内容：]\n```\n{data.decode('utf-8', 'replace')[:30000]}\n```", "")
-    return (f"[用户发来文件《{fname}》，但暂存失败]", "")
+from agent.im.media_ingress_feishu import (
+    download_and_stage as _download_and_stage,
+    ingest_media as _ingest_media_impl,
+    ingest_post as _ingest_post_impl,
+)
 
 
 def _ingest_media(client, msg, owner: str) -> tuple[str, list]:
-    """下载用户发来的图片/文件/语音/视频（单附件消息）→ 暂存 → 返回 (干净 caption, [attach_id])。
-
-    内容/卡片由 run_collect 的 resolve_for_message 据 attach_id 统一处理（和网页上传同一套），
-    所以这里 caption 留空、只回 attach_id。暂存失败才退回把内容塞进文本。
-    """
-    mt = msg.message_type
-    try:
-        c = json.loads(msg.content) if msg.content else {}
-    except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
-        c = {}
-    if mt == "image":
-        key, rtype, fname = c.get("image_key", ""), "image", "图片.jpg"
-    elif mt == "audio":
-        # 飞书语音是 opus（资源按 file 下）；当「语音消息」处理 → 转 mp3 喂 mimo + 语音条 + 30 天存储
-        key, rtype, fname = c.get("file_key", ""), "file", "语音.opus"
-    elif mt == "media":
-        # 飞书视频消息：file_key 是视频本体，image_key 是封面缩略图（暂不单独取封面）
-        key, rtype, fname = c.get("file_key", ""), "file", "视频.mp4"
-    else:
-        key, rtype, fname = c.get("file_key", ""), "file", (c.get("file_name") or "文件")
-    fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=(mt == "audio"))
-    if aid:
-        return ("", [aid])
-    return (fallback, [])
+    return _ingest_media_impl(client, msg, owner, _download_and_stage)
 
 
 def _ingest_post(client, msg, owner: str) -> tuple[str, list]:
-    """富文本图文消息（post）：拼接各段落文字，内嵌图片/视频按普通附件下载暂存。"""
-    try:
-        c = json.loads(msg.content) if msg.content else {}
-    except (json.JSONDecodeError, TypeError):   # 只吞「内容不是合法 JSON」这类预期失败，不裸吞未知异常（P2-b §6）
-        c = {}
-    title = (c.get("title") or "").strip()
-    rows = c.get("content") or []
-    lines: list[str] = []
-    media_keys: list[tuple[str, str, str]] = []   # (key, rtype, fname)
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, list):
-            continue
-        parts: list[str] = []
-        for el in row:
-            if not isinstance(el, dict):
-                continue
-            tag = el.get("tag")
-            if tag == "text":
-                parts.append(el.get("text") or "")
-            elif tag == "a":
-                parts.append(el.get("text") or el.get("href") or "")
-            elif tag == "at":
-                parts.append(f"@{el.get('user_name') or el.get('user_id') or ''}")
-            elif tag == "img" and el.get("image_key"):
-                media_keys.append((el["image_key"], "image", "图片.jpg"))
-            elif tag == "media" and el.get("file_key"):
-                media_keys.append((el["file_key"], "file", "视频.mp4"))
-        if parts:
-            lines.append("".join(parts))
-    text = "\n".join(lines).strip()
-    if title:
-        text = f"{title}\n{text}".strip()
-    attachments: list = []
-    for key, rtype, fname in media_keys:
-        fallback, aid = _download_and_stage(client, msg.message_id, owner, key, rtype, fname, is_voice=False)
-        if aid:
-            attachments.append(aid)
-        elif fallback:
-            text = f"{text}\n{fallback}".strip()
-    return (text, attachments)
+    return _ingest_post_impl(client, msg, owner, _download_and_stage)
 
 
 def _extract_card_text(content) -> str:
