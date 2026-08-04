@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -24,6 +25,7 @@ except Exception:
 TTL = 7 * 24 * 3600     # 普通附件暂存 7 天
 TTL_VOICE = 7 * 24 * 3600    # 语音条暂存 7 天（与普通附件统一）
 _PREFIX = "chatfile:"
+_QQ_FACE_CACHE_PREFIX = "chatface:v2:"
 MAX_TEXT_INJECT = 32000  # 注入给模型的文本上限（字符）
 
 # 能被咕咕「读内容」的文本类扩展名
@@ -59,6 +61,30 @@ VISION_TARGET_BYTES = int(4.5 * 1024 * 1024)  # 压缩目标字节（留 API 余
 
 def _key(user_id, attach_id) -> str:
     return f"{_PREFIX}{user_id}:{attach_id}"
+
+
+def _qq_face_cache_key(user_id, face_type: str, face_id: str) -> str:
+    token = hashlib.sha256(f"{face_type}:{face_id}".encode("utf-8")).hexdigest()
+    return f"{_QQ_FACE_CACHE_PREFIX}{user_id}:{token}"
+
+
+async def get_qq_face_cached(user_id, face_type: str, face_id: str) -> dict | None:
+    """返回仍有效的 QQ 表情暂存元数据，避免同一表情重复下载。"""
+    if not str(face_id or "").strip():
+        return None
+    attach_id = await get_redis().get(_qq_face_cache_key(user_id, str(face_type), str(face_id)))
+    if not attach_id:
+        return None
+    return await get_meta(user_id, attach_id.decode() if isinstance(attach_id, bytes) else str(attach_id))
+
+
+async def set_qq_face_cached(user_id, face_type: str, face_id: str, attach_id: str) -> None:
+    if str(face_id or "").strip() and attach_id:
+        await get_redis().set(
+            _qq_face_cache_key(user_id, str(face_type), str(face_id)),
+            attach_id,
+            ex=TTL,
+        )
 
 
 def _kind(ext: str) -> str:

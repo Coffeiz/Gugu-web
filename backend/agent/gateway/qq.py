@@ -58,12 +58,52 @@ _INTENTS = _INTENT_GROUP_AND_C2C
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 
+
+def _qq_probe_shape(value: Any, depth: int = 0) -> Any:
+    """递归提取 QQ 事件的结构特征，不输出字符串值或身份字段。"""
+    if depth > 3:
+        return {"kind": type(value).__name__}
+    if isinstance(value, dict):
+        result: dict[str, Any] = {"kind": "object", "keys": sorted(str(key) for key in value.keys())[:40]}
+        children: dict[str, Any] = {}
+        for key, child in value.items():
+            key_text = str(key)
+            if key_text in {"author", "id", "group_id", "group_openid", "user_openid", "member_openid"}:
+                continue
+            if isinstance(child, (dict, list)):
+                children[key_text] = _qq_probe_shape(child, depth + 1)
+            elif isinstance(child, str):
+                children[key_text] = {
+                    "kind": "string",
+                    "length": len(child),
+                    "hasUrl": child.startswith(("http://", "https://")),
+                }
+            elif child is None or isinstance(child, (bool, int, float)):
+                children[key_text] = {"kind": type(child).__name__}
+        if children:
+            result["children"] = children
+        return result
+    if isinstance(value, list):
+        return {
+            "kind": "array",
+            "length": len(value),
+            "items": [_qq_probe_shape(item, depth + 1) for item in value[:12]],
+        }
+    return {"kind": type(value).__name__}
+
+
+def _qq_message_type(value: Any) -> Any:
+    return value if isinstance(value, (str, int)) and not isinstance(value, bool) else None
+
 from agent.im.parsers.qq import (
-    _QQ_FACE_PENDING_TTL,
     _contains_qq_face,
     _extract_quoted,
+    _extract_qq_faces,
+    _inspect_qq_face_text,
+    _inspect_qq_faces,
     _normalize_qq_faces,
-    _pending_qq_faces,
+    _pop_pending_qq_face,
+    _queue_pending_qq_face,
     _qq_face_pending_key,
     _strip_qq_face_markers,
 )
@@ -211,7 +251,9 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
+    from agent import logsafe
     has_qq_face = _contains_qq_face(raw_text)
+    face_ids = _extract_qq_faces(raw_text)
     # QQ 经常把一个表情拆成「协议文本」和紧随其后的图片事件；协议文本本身不应成为
     # 一条独立聊天消息，也不应和图片同时显示成两个内容块。
     face_only = has_qq_face and not _strip_qq_face_markers(raw_text)
@@ -239,11 +281,29 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     print(
         "[runtime-qq-face-probe] " + json.dumps({
             "phase": "gateway-raw",
+            "eventKeys": sorted(data.keys()),
+            "messageType": _qq_message_type(data.get("message_type")),
+            "eventShape": _qq_probe_shape(data),
+            "textShape": _inspect_qq_face_text(raw_text),
+            "faceShapes": _inspect_qq_faces(raw_text),
             "face": has_qq_face,
+            "faceCount": len(face_ids),
+            "faceIds": [
+                logsafe.fingerprint(item.get("face_id", ""))
+                for item in face_ids
+            ],
             "count": len(raw_attachments),
             "items": [
                 {
                     "keys": sorted(item.keys()) if isinstance(item, dict) else [],
+                    "contentType": item.get("content_type") if isinstance(item, dict) else None,
+                    "filenameExt": (
+                        str(item.get("filename") or item.get("file_name") or "").rsplit(".", 1)[-1].lower()
+                        if "." in str(item.get("filename") or item.get("file_name") or "")
+                        else ""
+                    ) if isinstance(item, dict) else "",
+                    "size": item.get("size") if isinstance(item, dict) and isinstance(item.get("size"), int) else None,
+                    "dimensions": [item.get("width"), item.get("height")] if isinstance(item, dict) else [],
                     "urlKeys": [
                         key for key in (
                             "url", "file_url", "download_url", "image_url",
@@ -270,12 +330,17 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     all_attachments = raw_attachments + quoted_attachments
     face_key = _qq_face_pending_key(chat_type, chat_id, sender_id)
     now = time.monotonic()
-    pending_until = _pending_qq_faces.get(face_key, 0.0)
-    pending_face = not has_qq_face and pending_until > now
+    pending_face_ids = []
+    pending_face = not has_qq_face and bool(raw_attachments)
     if pending_face:
-        _pending_qq_faces.pop(face_key, None)
-    if face_only and not all_attachments and not quoted_text and not quoted_attachments:
-        _pending_qq_faces[face_key] = now + _QQ_FACE_PENDING_TTL
+        pending_face_ids = _pop_pending_qq_face(face_key, now)
+        pending_face = bool(pending_face_ids)
+    # 收藏表情（faceType=6）仍可能先到协议文本、后到图片事件；只对这一类保留
+    # 原有的短暂等待。系统表情/表情商店没有后续图片事件，必须把协议文本入队，
+    # 否则 GuguChat 和群上下文都会丢掉这条消息。
+    wait_for_split_face = bool(face_ids) and all(item.get("face_type") == "6" for item in face_ids)
+    if face_only and not all_attachments and not quoted_text and not quoted_attachments and wait_for_split_face:
+        _queue_pending_qq_face(face_key, face_ids, now)
         # 等下一条图片事件到达，再以一条「图片表情消息」入队。
         return
     if has_qq_face or pending_face:
@@ -289,12 +354,37 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         text = _normalize_qq_faces(_strip_qq_face_markers(raw_text))
     if pending_face:
         text = ""
+    # 资源提供器只负责补图，不能让资源未命中把整条表情消息变成空消息。
+    # 没有附件且 ext.text 为空时，保留稳定的历史占位文本，供 GuguChat 和群上下文展示。
+    if face_only and not all_attachments and not text.strip():
+        text = "[QQ表情]"
     print(
         "[runtime-qq-face-probe] " + json.dumps({
             "phase": "gateway-normalized",
+            "eventKeys": sorted(data.keys()),
+            "messageType": _qq_message_type(data.get("message_type")),
+            "eventShape": _qq_probe_shape(data),
+            "textShape": _inspect_qq_face_text(raw_text),
+            "faceShapes": _inspect_qq_faces(raw_text),
             "face": has_qq_face,
             "pendingFace": pending_face,
+            "faceCount": len(face_ids or pending_face_ids),
+            "faceIds": [
+                logsafe.fingerprint(item.get("face_id", ""))
+                for item in (face_ids or pending_face_ids)
+            ],
             "count": len(all_attachments),
+            "nonQuotedCount": sum(
+                1 for item in all_attachments
+                if isinstance(item, dict) and not item.get("quoted")
+            ),
+            "mapping": (
+                "possible-single"
+                if len(face_ids or pending_face_ids) == 1
+                and sum(1 for item in all_attachments
+                        if isinstance(item, dict) and not item.get("quoted")) == 1
+                else "ambiguous-or-missing"
+            ),
             "items": [
                 {
                     "keys": sorted(item.keys()) if isinstance(item, dict) else [],
@@ -338,6 +428,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "text": text,
         "quoted_text": quoted_text or None,
         "attachments": all_attachments,
+        "emoji_refs": face_ids if face_only else [],
         "qq_face_marker": has_qq_face,
         "trace_id": tid,
     }

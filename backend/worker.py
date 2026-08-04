@@ -89,19 +89,23 @@ def _merge_payloads(payloads: list) -> dict:
     """把同一用户连发的多条消息合并成一条：拼接非空文字、合并所有附件；路由字段（message_id /
     channel_id 等）取**最后一条**——被动回复 / 表情挂在最近那条上。"""
     base = dict(payloads[-1])
-    texts, atts = [], []
+    texts, atts, emoji_refs = [], [], []
     has_face_marker = any(bool(p.get("qq_face_marker")) for p in payloads)
     for p in payloads:
         t = (p.get("text") or "").strip()
         if t:
             if has_face_marker and t == "[QQ表情]" and p.get("qq_face_marker"):
                 t = ""
-            if not t:
-                continue
-            texts.append(t)
+            if t:
+                texts.append(t)
         atts.extend(p.get("attachments") or [])
+        emoji_refs.extend(
+            ref for ref in (p.get("emoji_refs") or [])
+            if isinstance(ref, dict)
+        )
     base["text"] = "\n".join(texts)
     base["attachments"] = atts
+    base["emoji_refs"] = emoji_refs
     base["qq_face_marker"] = has_face_marker
     return base
 

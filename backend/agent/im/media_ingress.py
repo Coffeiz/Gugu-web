@@ -11,15 +11,62 @@ import json
 from app.core.redaction import diag_log, redact
 
 
-async def ingest_qq_media(attachments: list, owner: str, message_id: str = "") -> list:
-    """下载 QQ 附件并返回当前消息专属的 attach_id 列表。"""
+async def ingest_qq_media(
+    attachments: list,
+    owner: str,
+    message_id: str = "",
+    emoji_refs: list[dict] | None = None,
+) -> list:
+    """下载 QQ 附件和可解析的系统表情，并返回当前消息的 attach_id 列表。"""
     raw = [item for item in attachments if isinstance(item, dict)]
-    if not raw or not owner:
+    cached_attach_ids: list[str] = []
+    if emoji_refs and not raw:
+        from agent.im.emoji.qface import resolve_qq_system_face
+        from app.core import chat_attach
+        from agent import logsafe
+
+        for ref in emoji_refs:
+            if not isinstance(ref, dict):
+                continue
+            face_type = str(ref.get("face_type") or "")
+            face_id = str(ref.get("face_id") or "")
+            cached = await chat_attach.get_qq_face_cached(owner, face_type, face_id)
+            if cached:
+                cached_attach_ids.append(cached["attach_id"])
+                print(
+                    "[runtime-qq-face-probe] " + json.dumps({
+                        "phase": "qface-cache-hit",
+                        "faceType": face_type,
+                        "faceId": logsafe.fingerprint(face_id),
+                    }, ensure_ascii=False),
+                    flush=True,
+                )
+                continue
+            asset = await resolve_qq_system_face(face_type, face_id)
+            print(
+                "[runtime-qq-face-probe] " + json.dumps({
+                    "phase": "qface-resolve",
+                    "faceType": face_type,
+                    "faceId": logsafe.fingerprint(face_id),
+                    "matched": bool(asset),
+                }, ensure_ascii=False),
+                flush=True,
+            )
+            if asset:
+                raw.append({
+                    "url": asset.url,
+                    "filename": asset.filename,
+                    "content_type": asset.mime,
+                    "qq_face": True,
+                    "qq_face_type": str(ref.get("face_type") or ""),
+                    "qq_face_id": str(ref.get("face_id") or ""),
+                })
+    if (not raw and not cached_attach_ids) or not owner:
         return []
 
     from agent.im import files as im_attachments
 
-    out: list[str] = []
+    out: list[str] = list(cached_attach_ids)
     async with aiohttp.ClientSession() as sess:
         for index, item in enumerate(raw):
             url = item.get("url")
@@ -78,6 +125,10 @@ async def ingest_qq_media(attachments: list, owner: str, message_id: str = "") -
                 # 一起写入暂存元数据，后续前端才能按图片卡片展示而不显示随机文件名。
                 if is_qq_face:
                     extra["qq_face"] = True
+                    if item.get("qq_face_type"):
+                        extra["qq_face_type"] = item["qq_face_type"]
+                    if item.get("qq_face_id"):
+                        extra["qq_face_id"] = item["qq_face_id"]
                 if item.get("quoted"):
                     extra["quoted"] = True
                 if is_voice:
@@ -93,6 +144,14 @@ async def ingest_qq_media(attachments: list, owner: str, message_id: str = "") -
                         stage_kwargs["kind"] = "image"
                     meta = await chat_attach.stage(owner, name, ext, mime, data, **stage_kwargs)
                 out.append(meta["attach_id"])
+                if is_qq_face and item.get("qq_face_type") and item.get("qq_face_id"):
+                    from app.core import chat_attach
+                    await chat_attach.set_qq_face_cached(
+                        owner,
+                        str(item["qq_face_type"]),
+                        str(item["qq_face_id"]),
+                        meta["attach_id"],
+                    )
                 print(
                     "[runtime-qq-face-probe] " + json.dumps({
                         "phase": "ingress-staged",

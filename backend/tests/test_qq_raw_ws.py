@@ -6,6 +6,24 @@ def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
     assert qq._heartbeat_ack_expired(last_ack_at=100.0, interval=45.0, now=212.5)
 
 
+def test_qq_split_face_pending_is_fifo():
+    from agent.im.parsers.qq import (
+        _pending_qq_face_ids,
+        _pending_qq_faces,
+        _pop_pending_qq_face,
+        _queue_pending_qq_face,
+    )
+
+    key = "test-qq-face-fifo"
+    _pending_qq_faces.pop(key, None)
+    _pending_qq_face_ids.pop(key, None)
+    _queue_pending_qq_face(key, [{"face_type": "6", "face_id": "first"}], 10.0)
+    _queue_pending_qq_face(key, [{"face_type": "6", "face_id": "second"}], 10.1)
+
+    assert _pop_pending_qq_face(key, 10.2)[0]["face_id"] == "first"
+    assert _pop_pending_qq_face(key, 10.3)[0]["face_id"] == "second"
+
+
 def _raw_c2c_event(**overrides):
     data = {
         "id": "msg-1",
@@ -58,6 +76,39 @@ def test_qq_face_marker_is_normalized_without_protocol_text():
     marker = '<faceType=6,faceId="0",ext="eyJ0ZXh0IjoiIn0=">'
     assert qq._contains_qq_face(marker)
     assert qq._normalize_qq_faces(marker) == "[QQ表情]"
+
+
+def test_qq_face_probe_extracts_reusable_identity_without_decoding_payload():
+    marker = '<faceType=6,faceId="same-face",ext="opaque">'
+    assert qq._extract_qq_faces(marker) == [{
+        "face_type": "6",
+        "face_id": "same-face",
+    }]
+
+
+def test_qq_face_probe_extracts_multiple_faces_in_protocol_order():
+    text = (
+        '<faceType=6,faceId="first",ext="a">'
+        '<faceType=4,faceId="second",ext="b">'
+    )
+    assert [item["face_id"] for item in qq._extract_qq_faces(text)] == ["first", "second"]
+
+
+def test_qq_face_probe_records_payload_shape_without_decoded_text():
+    marker = '<faceType=6,faceId="0",ext="eyJ0ZXh0Ijoi5ZOI5ZOIIn0=">'
+
+    shape = qq._inspect_qq_faces(marker)[0]
+    text_shape = qq._inspect_qq_face_text(marker)
+
+    assert shape["face_type"] == "6"
+    assert shape["face_id_present"] is True
+    assert shape["ext_shape"] == "json-object"
+    assert "text" in shape["ext_keys"]
+    assert shape["ext_text_present"] is True
+    assert shape["ext_text_length"] > 0
+    assert shape["ext_resource_keys"] == []
+    assert "5ZOI" not in str(shape)
+    assert text_shape["hasFaceKeyword"] is True
 
 
 def test_qq_face_marker_is_normalized_without_leaking_protocol_text():

@@ -498,7 +498,9 @@ async def dispatch_im_message(payload: dict):
 
     if payload.get("platform") == "qqbot":
         raw_attachments = payload.get("attachments") or []
-        if any(isinstance(item, dict) for item in raw_attachments):
+        # 系统表情可能只有 emoji_refs，没有 QQ 原始附件；两者都要经过媒体入口，
+        # 否则 QFace 无法补图，最终只会保留网关的占位文本。
+        if any(isinstance(item, dict) for item in raw_attachments) or payload.get("emoji_refs"):
             from agent.im.media_ingress import ingest_qq_media
 
             payload = dict(payload)
@@ -506,7 +508,14 @@ async def dispatch_im_message(payload: dict):
                 raw_attachments,
                 str(payload.get("owner_user_id") or ""),
                 str(payload.get("message_id") or ""),
+                payload.get("emoji_refs") or [],
             )
+            # faceType=3 的 ext 可能带一个文字标签；QFace 成功补图后，纯表情消息
+            # 不应同时展示标签和图片。未匹配到资源时保留网关的兜底文字。
+            if payload.get("emoji_refs") and not any(
+                isinstance(item, dict) for item in raw_attachments
+            ) and payload["attachments"]:
+                payload["text"] = ""
         if payload.get("platform_bot_user_id"):
             from agent.im.identity import remember_bot_platform_user_id
 

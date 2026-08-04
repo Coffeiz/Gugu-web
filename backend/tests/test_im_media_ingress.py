@@ -21,6 +21,20 @@ def test_worker_merges_qq_face_marker_into_image_without_placeholder_text():
     assert merged["attachments"][0]["qq_face"] is True
 
 
+def test_worker_merges_qq_emoji_refs_from_all_payloads():
+    from worker import _merge_payloads
+
+    merged = _merge_payloads([
+        {"text": "[QQ表情]", "qq_face_marker": True, "emoji_refs": [{"face_type": "3", "face_id": "1"}]},
+        {"text": "[QQ表情]", "qq_face_marker": True, "emoji_refs": [{"face_type": "3", "face_id": "2"}]},
+    ])
+
+    assert merged["emoji_refs"] == [
+        {"face_type": "3", "face_id": "1"},
+        {"face_type": "3", "face_id": "2"},
+    ]
+
+
 class _FakeResponse:
     status = 200
 
