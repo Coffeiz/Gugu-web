@@ -72,7 +72,8 @@ async def _review_once(patterns: list[dict], settings, temperature: float) -> di
     from agent.memory._llm import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
+    # merge 需要返回合并后的表述；老用户 pattern 可能有上百条，800 token 容易在 JSON 收尾前被截断。
+    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=2000, temperature=temperature)
     if "remove" not in result and "merge" not in result:
         return None
     remove = result.get("remove", [])
