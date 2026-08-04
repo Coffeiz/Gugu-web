@@ -12,6 +12,16 @@ from typing import List, Optional
 DEFAULT_GROUP_TOOLS = ["web_search"]
 
 
+def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
+    """把内部 Bot 数据库主键与平台 Bot 标识明确分开。"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(frozen=True)
 class ImAccess:
     role: Optional[str] = None
@@ -53,8 +63,11 @@ async def resolve_access(
             from app.models import UserBot
             if db_session._engine is None:
                 db_session._build_engine()
+            bot_db_id = _parse_bot_db_id(channel_id)
+            if bot_db_id is None:
+                return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
             async with db_session._SessionLocal() as db:
-                bot = await db.get(UserBot, int(channel_id or 0))
+                bot = await db.get(UserBot, bot_db_id)
             if bot and bot.platform == platform and bot.user_id == owner_user_id:
                 if bot.owner_platform_user_id and bot.owner_platform_user_id == platform_user_id:
                     return ImAccess("owner", None)
@@ -71,10 +84,13 @@ async def resolve_access(
 
     if db_session._engine is None:
         db_session._build_engine()
+    bot_db_id = _parse_bot_db_id(channel_id)
+    if bot_db_id is None:
+        return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
     async with db_session._SessionLocal() as db:
         access = await resolve_qq_group_access(
             db,
-            int(channel_id or 0),
+            bot_db_id,
             owner_user_id,
             platform_user_id,
         )
@@ -88,8 +104,11 @@ async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool]:
 
     if db_session._engine is None:
         db_session._build_engine()
+    bot_db_id = _parse_bot_db_id(bot_id)
+    if bot_db_id is None:
+        return False, True, False
     async with db_session._SessionLocal() as db:
-        bot = await db.get(UserBot, int(bot_id))
+        bot = await db.get(UserBot, bot_db_id)
         if not bot:
             return False, True, False
         return bot.group_chat_enabled, bot.group_requires_at, (

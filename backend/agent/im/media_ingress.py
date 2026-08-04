@@ -5,12 +5,58 @@ Gateway 只传平台原始附件；下载、转码和暂存由 worker 侧统一�
 """
 from __future__ import annotations
 
+import asyncio
+import ipaddress
+import socket
 from urllib.parse import urljoin
 
 import aiohttp
+from aiohttp.abc import AbstractResolver
 
 from app.core.redaction import diag_log, redact
-from app.core.url_security import url_is_safe
+from app.core.url_security import is_blocked_ip, url_is_safe
+
+
+MAX_IM_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_IM_MESSAGE_BYTES = 100 * 1024 * 1024
+_DOWNLOAD_CHUNK_BYTES = 64 * 1024
+
+
+class _SafeResolver(AbstractResolver):
+    """把连接层 DNS 结果也纳入内网校验，缩短校验与实际连接的时间窗。"""
+
+    async def resolve(self, host, port=0, family=socket.AF_UNSPEC):
+        infos = await asyncio.to_thread(
+            socket.getaddrinfo,
+            host,
+            port,
+            family=family,
+            type=socket.SOCK_STREAM,
+        )
+        results = []
+        seen = set()
+        for addr_family, _, proto, _, sockaddr in infos:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if is_blocked_ip(ip):
+                raise OSError("目标地址不允许外连")
+            key = (addr_family, sockaddr[0], sockaddr[1], proto)
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append({
+                "hostname": host,
+                "host": sockaddr[0],
+                "port": sockaddr[1],
+                "family": addr_family,
+                "proto": proto,
+                "flags": 0,
+            })
+        if not results:
+            raise OSError("域名没有可用地址")
+        return results
+
+    async def close(self):
+        return None
 
 
 async def ingest_qq_media(
@@ -51,7 +97,9 @@ async def ingest_qq_media(
     from agent.im import files as im_attachments
 
     out: list[str] = list(cached_attach_ids)
-    async with aiohttp.ClientSession() as sess:
+    message_bytes = 0
+    connector = aiohttp.TCPConnector(resolver=_SafeResolver())
+    async with aiohttp.ClientSession(connector=connector) as sess:
         for item in raw:
             url = item.get("url")
             if not url:
@@ -89,7 +137,18 @@ async def ingest_qq_media(
                             continue
                         if resp.status != 200:
                             break
-                        data = await resp.read()
+                        content_length = resp.headers.get("Content-Length")
+                        if content_length and int(content_length) > MAX_IM_ATTACHMENT_BYTES:
+                            raise ValueError("IM 附件超过单文件大小限制")
+                        chunks = []
+                        total = 0
+                        async for chunk in resp.content.iter_chunked(_DOWNLOAD_CHUNK_BYTES):
+                            total += len(chunk)
+                            message_bytes += len(chunk)
+                            if total > MAX_IM_ATTACHMENT_BYTES or message_bytes > MAX_IM_MESSAGE_BYTES:
+                                raise ValueError("IM 消息附件超过大小限制")
+                            chunks.append(chunk)
+                        data = b"".join(chunks)
                         break
                 else:
                     data = b""

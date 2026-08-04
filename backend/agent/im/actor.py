@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, List, Optional
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.core.redaction import diag_log, redact
 
 
@@ -66,7 +68,7 @@ class ActorResolver:
                 allowed_tool_names = access.allowed_tool_names
                 if role == "unknown" and allowed_tool_names is None:
                     allowed_tool_names = ["web_search"]
-            except Exception as exc:
+            except (ValueError, TypeError, SQLAlchemyError) as exc:
                 diag_log("im.actor_resolver", exc)
                 print(
                     f"[im] {platform} 身份权限解析失败，按最小权限继续: {redact(type(exc).__name__)}",

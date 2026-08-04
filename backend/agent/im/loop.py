@@ -105,11 +105,17 @@ async def decide_im_shortcut(
         return {"action": "run"}
     from agent import router, runtime_state
 
-    return router.decide(
-        text,
-        await runtime_state.get_state(platform, platform_user_id),
-        await runtime_state.is_awaiting(platform, platform_user_id),
-    )
+    try:
+        state = await runtime_state.get_state(platform, platform_user_id)
+        awaiting = await runtime_state.is_awaiting(platform, platform_user_id)
+    except Exception as exc:
+        # shortcut 只是优化，Redis 故障不能阻断消息进入 Stream；worker 会继续按
+        # 完整上下文处理本条消息。
+        from app.core.redaction import diag_log, redact
+        diag_log("agent.im.shortcut.read", exc)
+        print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
+        return {"action": "run"}
+    return router.decide(text, state, awaiting)
 
 
 def decide_im_shortcut_sync(
@@ -124,25 +130,39 @@ def decide_im_shortcut_sync(
         return {"action": "run"}
     from agent import router, runtime_state
 
-    return router.decide(
-        text,
-        runtime_state.get_state_sync(platform, platform_user_id),
-        runtime_state.is_awaiting_sync(platform, platform_user_id),
-    )
+    try:
+        state = runtime_state.get_state_sync(platform, platform_user_id)
+        awaiting = runtime_state.is_awaiting_sync(platform, platform_user_id)
+    except Exception as exc:
+        from app.core.redaction import diag_log, redact
+        diag_log("agent.im.shortcut.read_sync", exc)
+        print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
+        return {"action": "run"}
+    return router.decide(text, state, awaiting)
 
 
 async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decision: dict) -> None:
     """执行短路决策中的取消动作，状态修改仍归 IM Loop。"""
     if decision.get("action") == "cancel":
         from agent import runtime_state
-        await runtime_state.request_cancel(platform, platform_user_id)
+        try:
+            await runtime_state.request_cancel(platform, platform_user_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log, redact
+            diag_log("agent.im.shortcut.cancel", exc)
+            print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
 
 
 def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict) -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
         from agent import runtime_state
-        runtime_state.request_cancel_sync(platform, platform_user_id)
+        try:
+            runtime_state.request_cancel_sync(platform, platform_user_id)
+        except Exception as exc:
+            from app.core.redaction import diag_log, redact
+            diag_log("agent.im.shortcut.cancel_sync", exc)
+            print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
 
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:

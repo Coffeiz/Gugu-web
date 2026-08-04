@@ -97,6 +97,42 @@ async def test_delivery_uses_task_target_instead_of_recent_reach(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db, user_a):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    target = {
+        "qq": {
+            "chat_type": "group",
+            "chat_id": "group-1",
+            "puid": "owner-1",
+            "channel_id": "bot-1",
+        }
+    }
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="群提醒",
+        payload="提醒我检查群消息",
+        cron="0 9 * * *",
+        channels="qq",
+        delivery_targets=target,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    run_agent = AsyncMock(return_value="提醒正文")
+    deliver = AsyncMock(return_value={"QQ": "已发送"})
+    monkeypatch.setattr(scheduled, "_run_agent", run_agent)
+    monkeypatch.setattr(scheduled, "deliver_to_channels", deliver)
+
+    result = await scheduled.execute_task(task.id)
+
+    assert result == {"QQ": "已发送"}
+    assert deliver.await_args.args == (user_a.id, "群提醒", "提醒正文", {"qq"}, target)
+
+
+@pytest.mark.asyncio
 async def test_update_group_target_confirmation_does_not_mutate_task(monkeypatch):
     from agent import imctx
     import agent.tools.scheduled_tasks as skill

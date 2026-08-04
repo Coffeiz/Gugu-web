@@ -132,7 +132,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
         context_config = t.context_config
-        delivery_targets = t.delivery_targets
+        target_map = t.delivery_targets
         chans = {c for c in (t.channels or "").split(",") if c}
         t.last_run_at = now_utc()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
@@ -143,17 +143,17 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         await _notify_tasks_changed([uid])   # 一次性任务触发即删 → 定时面板实时刷
     try:
         now_str = local_now().strftime("%Y-%m-%d %H:%M")
-        delivery_targets = _scheduled_delivery_targets(chans)
+        target_description = _scheduled_delivery_targets(chans)
         prompt = (
             f"[定时任务触发：{name}]\n"
             f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
-            f"本轮消息将由系统投递到：{delivery_targets}。\n"
+            f"本轮消息将由系统投递到：{target_description}。\n"
             "请以咕咕的身份完成这项任务，只生成要发给用户的正文。"
             "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
             "也不要提及渠道、推送、工具不可用或无法发送。"
         )
         text = await _run_agent(uid, prompt, context_config)
-        result = await deliver_to_channels(uid, name, text, chans, delivery_targets)
+        result = await deliver_to_channels(uid, name, text, chans, target_map)
     except Exception as e:
         import traceback
         result["错误"] = f"{type(e).__name__}: {e}"

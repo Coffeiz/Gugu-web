@@ -37,16 +37,19 @@ def test_worker_merges_qq_emoji_refs_from_all_payloads():
 
 class _FakeResponse:
     status = 200
+    headers = {"Content-Length": "11"}
+
+    class _Content:
+        async def iter_chunked(self, _size):
+            yield b"image-bytes"
+
+    content = _Content()
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *args):
         return None
-
-    async def read(self):
-        return b"image-bytes"
-
 
 class _FakeSession:
     def __init__(self, *args, **kwargs):
@@ -127,3 +130,27 @@ async def test_qq_media_ingress_does_not_stage_without_owner(monkeypatch):
     monkeypatch.setattr("aiohttp.ClientSession", _FakeSession)
 
     assert await ingest_qq_media([{"url": "https://example.test/a.png"}], "") == []
+
+
+@pytest.mark.asyncio
+async def test_qq_media_ingress_rejects_attachment_over_limit(monkeypatch):
+    from agent.im import media_ingress
+
+    class _TooLargeResponse(_FakeResponse):
+        headers = {"Content-Length": str(media_ingress.MAX_IM_ATTACHMENT_BYTES + 1)}
+
+    class _TooLargeSession(_FakeSession):
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            return _TooLargeResponse()
+
+    staged = []
+    monkeypatch.setattr("aiohttp.ClientSession", _TooLargeSession)
+    monkeypatch.setattr("agent.im.media_ingress.url_is_safe", lambda _url: None)
+    monkeypatch.setattr("app.core.chat_attach.stage", lambda *a, **k: staged.append(1))
+
+    assert await media_ingress.ingest_qq_media(
+        [{"url": "https://example.test/large.bin", "filename": "large.bin"}],
+        "owner-1",
+    ) == []
+    assert staged == []

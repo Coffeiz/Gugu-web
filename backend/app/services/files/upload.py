@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project
+from app.models import File, Folder, Project, User
 from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path
@@ -29,6 +29,12 @@ class ConfirmUploadResult:
     project: Optional[Project]
     folder_name: Optional[str]
     overwritten_file_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class UploadedObjectInfo:
+    size_bytes: int
+    mime_type: str
 
 
 async def presign_upload_url(storage, target: PresignTarget, mime_type: str) -> str | None:
@@ -63,14 +69,25 @@ class UploadTargetError(ValueError):
         self.detail = detail
 
 
-async def validate_oss_upload(storage, user_id: int, storage_key: str) -> None:
-    """校验 OSS 直传对象的归属、后端类型和上传完成状态。"""
+async def validate_oss_upload(storage, user_id: int, storage_key: str) -> UploadedObjectInfo:
+    """校验 OSS 直传对象归属，并返回服务端读取的真实元数据。"""
     if not isinstance(storage, OSSStorageBackend):
         raise UploadTargetError(400, "当前存储后端不是 OSS，请使用普通上传")
     if not storage_key.startswith(f"{user_id}/"):
         raise UploadTargetError(403, "无权限访问该存储路径")
-    if not await storage.exists(storage_key):
-        raise UploadTargetError(400, "文件尚未上传到 OSS，请先完成直传")
+    try:
+        metadata = await storage.head(storage_key)
+    except Exception as exc:
+        # OSS 的 NoSuchKey 等 4xx 由 API 边界转成统一的上传状态错误；瞬时错误由
+        # storage 层转换为 RetryableError，不继续登记不确定的对象。
+        if getattr(exc, "status", None) == 404:
+            raise UploadTargetError(400, "文件尚未上传到 OSS，请先完成直传") from exc
+        raise
+    size_bytes = int(getattr(metadata, "content_length", 0) or 0)
+    mime_type = str(getattr(metadata, "content_type", None) or "application/octet-stream")
+    if size_bytes <= 0:
+        raise UploadTargetError(400, "OSS 对象为空，无法登记文件")
+    return UploadedObjectInfo(size_bytes=size_bytes, mime_type=mime_type)
 
 
 def parse_upload_filename(filename: str) -> Tuple[str, str]:
@@ -182,15 +199,28 @@ async def confirm_oss_upload(
     storage_key: str,
     display_name: str,
     ext: str,
-    mime_type: str,
     size_bytes: int,
+    actual_mime_type: str,
     space: str,
     project_id: Optional[int],
     folder_id: Optional[int],
     stage_name: str,
     overwrite_file_id: Optional[int],
+    storage_limit_bytes: Optional[int],
+    max_file_bytes: int,
 ) -> ConfirmUploadResult:
     """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。"""
+    if size_bytes > max_file_bytes:
+        raise UploadTargetError(413, "文件超过单文件大小限制")
+    if storage_limit_bytes is not None:
+        # 锁定用户行，避免两个并发 confirm 同时通过配额检查。
+        await db.execute(select(User).where(User.id == user_id).with_for_update())
+        used = (await db.execute(
+            select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+        )).scalar() or 0
+    else:
+        used = 0
+
     project = None
     folder_name = None
     project_name = project_year = project_month = folder_path = ""
@@ -222,9 +252,11 @@ async def confirm_oss_upload(
             raise UploadTargetError(400, "覆盖目标与直传路径不一致")
         if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
             raise UploadTargetError(400, "覆盖目标与上传位置不一致")
+        if storage_limit_bytes is not None and used - existing.size_bytes + size_bytes > storage_limit_bytes:
+            raise UploadTargetError(400, "存储空间已满，无法上传")
         existing.size = _fmt_size(size_bytes)
         existing.size_bytes = size_bytes
-        existing.mime_type = mime_type
+        existing.mime_type = actual_mime_type
         await db.flush()
         return ConfirmUploadResult(existing, project, folder_name, existing.id)
 
@@ -253,7 +285,7 @@ async def confirm_oss_upload(
         storage_key=storage_key,
         size=_fmt_size(size_bytes),
         size_bytes=size_bytes,
-        mime_type=mime_type,
+        mime_type=actual_mime_type,
     )
     db.add(db_file)
     await db.flush()

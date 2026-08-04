@@ -316,20 +316,22 @@ async def confirm_upload(
     """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
     storage = get_storage()
     try:
-        await validate_oss_upload(storage, current_user.id, body.storage_key)
+        object_info = await validate_oss_upload(storage, current_user.id, body.storage_key)
         result = await confirm_oss_upload(
             db,
             current_user.id,
             storage_key=body.storage_key,
             display_name=body.display_name,
             ext=body.ext,
-            mime_type=body.mime_type,
-            size_bytes=body.size_bytes,
+            size_bytes=object_info.size_bytes,
+            actual_mime_type=object_info.mime_type,
             space=body.space,
             project_id=body.project_id,
             folder_id=body.folder_id,
             stage_name=body.stage_name,
             overwrite_file_id=body.overwrite_file_id,
+            storage_limit_bytes=current_user.storage_limit_bytes or get_settings().quota.default_storage_limit_bytes,
+            max_file_bytes=_MAX_UPLOAD_BYTES,
         )
     except UploadTargetError as error:
         raise HTTPException(error.status_code, error.detail) from error

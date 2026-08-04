@@ -379,6 +379,16 @@ class OSSStorageBackend(StorageBackend):
         return await _oss_retry("storage.oss.exists", "oss.exists_timeout", "文件状态查询失败，请稍后重试",
                                  self.bucket.object_exists, self.pfx + key)
 
+    async def head(self, key: str):
+        """读取 OSS 对象元数据，供直传确认阶段校验真实大小和 MIME。"""
+        return await _oss_retry(
+            "storage.oss.head",
+            "oss.head_timeout",
+            "文件状态查询失败，请稍后重试",
+            self.bucket.head_object,
+            self.pfx + key,
+        )
+
     async def list_keys(self) -> list[str]:
         import asyncio, oss2
         def _list():
