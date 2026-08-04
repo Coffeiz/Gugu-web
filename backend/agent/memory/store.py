@@ -38,6 +38,7 @@ SUMMARY_FILE = "summary.json"
 
 # ── 结构化 pattern（2b）参数 ──
 PATTERN_FILE                = "pattern.json"
+PATTERN_MAINTENANCE_FILE   = "pattern_maintenance.json"
 PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
 PATTERN_RETIRE_EFF          = 0.2    # effective 置信低于此 → 不注入（退休淡出）
 PATTERN_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
@@ -197,6 +198,22 @@ async def read_pattern_list(user_id) -> list[dict]:
 
 async def write_pattern_list(user_id, patterns: list[dict]) -> None:
     await _write(_key(user_id, PATTERN_FILE), json.dumps(patterns, ensure_ascii=False, indent=2))
+
+
+async def read_pattern_maintenance(user_id) -> dict:
+    """读取自动维护水位；损坏或不存在时返回空状态。"""
+    raw = (await _read(_key(user_id, PATTERN_MAINTENANCE_FILE))).strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+async def write_pattern_maintenance(user_id, state: dict) -> None:
+    await _write(_key(user_id, PATTERN_MAINTENANCE_FILE), json.dumps(state, ensure_ascii=False, indent=2))
 
 
 # ── 用户画像（profile.json）：{id,text,ts}，不带 kind/conf，不衰减 ──

@@ -345,6 +345,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 关系温度：超 24h 旧才重算（窗口聚合、纯数据侧、自带 DB 会话,见 memory/temperature.py）
         from agent.memory import temperature
         await temperature.maybe_refresh(user_id)
+        # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
+        from agent.memory import periodic
+        await periodic.maybe_schedule(user_id, settings)
     except Exception:
         pass  # 反思是锦上添花，任何失败都不能影响对话
 
