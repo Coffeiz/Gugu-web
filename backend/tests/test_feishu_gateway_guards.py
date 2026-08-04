@@ -73,3 +73,23 @@ def test_feishu_gateway_deduplicates_message_id(monkeypatch):
 
     assert len(produced) == 1
     assert produced[0]["message_id"] == "om_duplicate"
+
+
+def test_feishu_message_still_reaches_stream_when_shortcut_redis_fails(monkeypatch):
+    produced: list[dict] = []
+
+    def fake_produce_sync(_stream, payload):
+        produced.append(payload)
+
+    def fail_state(*_args, **_kwargs):
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(feishu.R, "produce_sync", fake_produce_sync)
+    monkeypatch.setattr(feishu, "_do_react", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("agent.runtime_state.get_state_sync", fail_state)
+
+    handler = feishu._make_on_message("bot-1", "user-1", object(), expected_app_id="cli_expected")
+    handler(_feishu_event(message_id="om_shortcut_redis_failure"))
+
+    assert len(produced) == 1
+    assert produced[0]["platform"] == "feishu"

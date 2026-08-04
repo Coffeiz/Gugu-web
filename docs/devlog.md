@@ -1800,3 +1800,21 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 ### 验证
 
 前端 `typecheck`、`typecheck:strict`、Vitest（26 个测试文件 / 246 passed）和 `git diff --check` 均通过；文件库 Playwright 冒烟此前已在 devserver 验证为 10 passed、1 skipped。剩余工作是 devserver 浏览器手测，不属于静态收口审计范围。
+
+## 2026-08-05 · PR #7 合并前安全审查收尾
+
+### 本轮复审
+
+- OSS 直传确认使用服务端 HEAD 的真实大小和 MIME，在用户行锁之后重新计算配额；回归覆盖虚假客户端大小、单文件超限、覆盖配额和锁语句顺序。
+- Redis shortcut 读取失败时继续走完整 worker；QQ、飞书入口均有回归测试证明消息仍会进入 Stream，取消状态写入失败只记录告警。
+- 定时任务将数据库目标保存为 `target_map`，把提示词展示文本单独命名为 `target_description`，并测试完整执行到群聊/私聊投递的目标不串。
+- IM 媒体下载使用流式读取，限制单附件 50MB、单消息总量 100MB，并在连接层复核 DNS 结果；URL 安全测试覆盖重定向内网、混合 DNS 和 IPv4-mapped IPv6。
+- 定时任务异常日志改为受限诊断出口和脱敏摘要，不再把原始异常文本写入可见日志或执行结果。
+
+### 验证结果
+
+- 后端：`641 passed`，ownership/confirmation guard 通过，Python compileall 通过。
+- 前端：typecheck、strict typecheck、246 个 Vitest 测试和 build 全部通过；build 仅保留既有 chunk/import 警告。
+- 迁移：在临时 PostgreSQL 上从项目的现有 schema 基线 `20260804000002` 升级至 `20260804000007`，执行一次 downgrade 到 `20260804000006` 后再次 upgrade，最终为 head。
+- 直接从空 PostgreSQL 执行历史第一条 Alembic revision 不属于当前仓库支持的初始化路径：仓库基础表由 `Base.metadata.create_all()` 创建，历史第一条 revision 假定基础表已存在；该限制已记录在 PR，不将 offline SQL 或空库直升结果误报为通过。
+- devserver 当前工作树存在其他未归属改动且数据库服务未就绪，因此未覆盖真实生产结构副本、OSS 对象和人工 IM 验收；这些仍是合并前部署验收项。

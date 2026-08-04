@@ -96,3 +96,41 @@ async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a):
             storage_limit_bytes=10,
             max_file_bytes=200 * 1024 * 1024,
         )
+
+
+@pytest.mark.asyncio
+async def test_confirm_locks_user_before_quota_read(db, user_a, monkeypatch):
+    """配额读取前必须锁用户行，覆盖确认不能并发突破配额。"""
+    from app.services.files import upload
+    from app.models import File
+
+    statements = []
+    original_execute = db.execute
+
+    async def tracked_execute(statement, *args, **kwargs):
+        statements.append(statement)
+        return await original_execute(statement, *args, **kwargs)
+
+    db.execute = tracked_execute
+    monkeypatch.setattr(upload, "_build_key", lambda **kwargs: "expected-key")
+
+    result = await upload.confirm_oss_upload(
+        db,
+        user_a.id,
+        storage_key="expected-key",
+        display_name="new",
+        ext="TXT",
+        size_bytes=5,
+        actual_mime_type="text/plain",
+        space="personal",
+        project_id=None,
+        folder_id=None,
+        stage_name="",
+        overwrite_file_id=None,
+        storage_limit_bytes=100,
+        max_file_bytes=200 * 1024 * 1024,
+    )
+
+    assert isinstance(result.file, File)
+    assert statements[0]._for_update_arg is not None
+    assert "sum" in str(statements[1]).lower()

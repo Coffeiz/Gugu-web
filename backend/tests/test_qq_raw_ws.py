@@ -300,6 +300,30 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     assert produced[0]["quoted_text"] == "之前那句"
 
 
+async def test_qq_message_still_reaches_stream_when_shortcut_redis_fails(monkeypatch):
+    produced: list[dict] = []
+
+    async def fake_produce(_stream, payload):
+        produced.append(payload)
+
+    async def fail_state(*_args, **_kwargs):
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr(qq.R, "produce", fake_produce)
+    monkeypatch.setattr("agent.runtime_state.get_state", fail_state)
+
+    await qq._handle_raw_qq_message(
+        "C2C_MESSAGE_CREATE",
+        _raw_c2c_event(),
+        "bot-1",
+        "user-1",
+        {},
+    )
+
+    assert len(produced) == 1
+    assert produced[0]["platform"] == "qqbot"
+
+
 async def test_qq_raw_group_event_to_payload(monkeypatch):
     produced: list[dict] = []
 

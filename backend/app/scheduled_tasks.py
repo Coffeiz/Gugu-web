@@ -6,15 +6,15 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
   ② IM 主动 DM（飞书可主动；QQ best-effort）
 """
 from __future__ import annotations
-from app.core.tz import LOCAL_TZ, now_utc
 
 import json
 import uuid as _uuid
 from datetime import datetime, timedelta
 
-from app.core.tz import local_now
-
 from sqlalchemy import select
+
+from app.core.redaction import diag_log, redact
+from app.core.tz import LOCAL_TZ, local_now, now_utc
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
 
@@ -107,7 +107,8 @@ async def reconcile() -> None:
         try:
             trig = build_trigger(t.cron)
         except Exception as e:
-            print(f"[sched] 任务 {t.id} 触发器非法({t.cron!r})：{e}", flush=True)
+            diag_log("app.scheduled_tasks.build_trigger", e)
+            print(f"[sched] 任务 {t.id} 触发器非法: {redact(type(e).__name__)}", flush=True)
             continue
         s.add_job(execute_task, trig, args=[t.id], id=jid, name=t.name,
                   replace_existing=True, max_instances=1, coalesce=True)
@@ -155,10 +156,9 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         text = await _run_agent(uid, prompt, context_config)
         result = await deliver_to_channels(uid, name, text, chans, target_map)
     except Exception as e:
-        import traceback
-        result["错误"] = f"{type(e).__name__}: {e}"
-        print(f"[sched] 执行任务 {task_id} 出错: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
+        diag_log("app.scheduled_tasks.execute_task", e)
+        result["错误"] = "任务执行失败"
+        print(f"[sched] 执行任务 {task_id} 出错: {redact(type(e).__name__)}", flush=True)
     return result
 
 
@@ -195,10 +195,12 @@ async def deliver_to_channels(
                 try:
                     await _persist_push_im(uid, platform, name, text, target)
                 except Exception as e:
-                    print(f"[sched] {platform} 推送入会话失败: {type(e).__name__}: {e}", flush=True)
+                    diag_log("app.scheduled_tasks.persist_push_im", e)
+                    print(f"[sched] {platform} 推送入会话失败: {redact(type(e).__name__)}", flush=True)
         except Exception as e:
             result[lbl] = f"失败：{type(e).__name__}"
-            print(f"[sched] {platform} 投递失败: {type(e).__name__}: {e}", flush=True)
+            diag_log("app.scheduled_tasks.deliver_to_channels", e)
+            print(f"[sched] {platform} 投递失败: {redact(type(e).__name__)}", flush=True)
     return result
 
 
