@@ -268,6 +268,40 @@ group daily.md → group memory.md
 
 ## 6. 文件与代码职责
 
+### 6.1 复用原则：复用引擎，不复用记忆策略
+
+群组/member 记忆不复制一套完整的 memory 系统，也不能直接调用 owner 的默认反思和压缩行为。采用“共享底层原语 + 独立 scope 策略”的结构：
+
+**可以共享：**
+
+- 文件/对象存储读写、原子写入和 JSON/Markdown 序列化。
+- daily 读取、追加、按日期分组和成功后裁剪。
+- memory 写入、向量缓存同步、模型 tag 失配和重建。
+- LLM 结构化调用、超时、失败保护和结果解析。
+- 反思任务的幂等、游标、重试和并发控制。
+
+**必须独立：**
+
+- owner、group、member 各自的 `MemoryScope` 和安全 key。
+- 反思/压缩 Prompt、输入字段和允许写入的文件白名单。
+- 信息类型到目标 scope 的过滤规则。
+- owner/member/unknown 的可读范围和隐私策略。
+- group/member 的来源追踪和删除边界。
+
+因此不允许让 `im_reflection.py` 直接复用 owner 的完整 `reflection.py` 流程，也不允许让 group daily 直接调用 owner 的默认 `compress.md`。通用压缩引擎接收显式 scope 和策略：
+
+```python
+compact_scope(
+    scope=group_scope,
+    source=daily,
+    target=memory,
+    prompt=group_compress_prompt,
+    policy=group_memory_policy,
+)
+```
+
+owner 压缩重点是个人经历、长期背景和个人行为；group 压缩重点是群性质、公开角色、协作决定、分工和群内时间线；member 压缩重点是该平台用户明确表达的个人资料、偏好和协作习惯。群组/member 压缩不得从昵称、群友评价或语气推断真实身份和敏感属性，也不得把 owner 私人工具结果写入群或成员记忆。
+
 ```text
 backend/agent/
 ├── memory/
@@ -278,6 +312,7 @@ backend/agent/
 │   ├── im_reflection.py      # group/member 反思、边界过滤和异步任务入口
 │   ├── reflection_jobs.py    # 反思任务、scope 游标、幂等和重试状态
 │   ├── compress.py           # 通用 daily→memory 原语；不持有 owner 或 IM 业务判断
+│   ├── compression_policy.py # 各 scope 的字段白名单、保留规则和 Prompt 选择
 │   └── _llm.py               # 记忆专用结构化模型调用
 ├── im/
 │   ├── context_policy.py     # owner/member/unknown 的可读范围
@@ -290,6 +325,9 @@ backend/agent/
     ├── reflection.md         # owner 反思 prompt
     ├── compress.md           # owner 压缩 prompt
     └── im/                   # group/member 专用 prompt（实现阶段新增）
+        ├── group_reflection.md
+        ├── group_compress.md
+        └── member_reflection.md
 ```
 
 职责红线：
@@ -302,6 +340,9 @@ backend/agent/
 - `actor_resolver.py` 是唯一的 owner/member/unknown 身份解析入口；模型、昵称和语气不能参与角色判断。
 - `reflection_jobs.py` 是唯一的反思任务与 scope 游标管理入口。
 - `scoped_store.py` 是唯一将逻辑 scope 转成存储 key 的入口。
+- `compress.py` 只实现通用压缩生命周期、写入保护和向量同步，不决定内容取舍。
+- `compression_policy.py` 负责选择 scope 对应的 Prompt、输入字段、可保留信息和禁止写入的信息。
+- owner 继续由 `reflection.py + prompts/reflection.md + prompts/compress.md` 驱动；group/member 由 `im_reflection.py + prompts/im/*` 驱动，共享底层引擎但不共享业务策略。
 - `loop.py` 只负责编排和投递异步任务，不能复制 owner reflection。
 
 ## 7. 数据生命周期与隐私
