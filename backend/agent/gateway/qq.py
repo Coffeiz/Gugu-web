@@ -187,56 +187,6 @@ def _dedupe_attachments(attachments: list) -> list:
     return deduped
 
 
-def _log_quote_shape_if_needed(channel_id: str, raw_data: Dict[str, Any], found: bool,
-                               attachment_count: int = 0) -> None:
-    """引用没识别到或引用媒体没拿到时打印结构，不打印正文。"""
-    scene_ext = _message_scene_ext(raw_data)
-    msg_elements = raw_data.get("msg_elements") or []
-    if not scene_ext and not msg_elements:
-        return
-    quoted_elem = _find_quoted_element(raw_data)
-    if found and attachment_count:
-        return
-    element_keys = []
-    if isinstance(msg_elements, list):
-        for elem in msg_elements[:3]:
-            if isinstance(elem, dict):
-                element_keys.append(sorted(elem.keys()))
-    quoted_keys = sorted(quoted_elem.keys()) if isinstance(quoted_elem, dict) else []
-    nested_keys = _nested_key_shape(quoted_elem)
-    ext_shape = []
-    for entry in scene_ext[:8]:
-        if isinstance(entry, str):
-            ext_shape.append(entry.split("=", 1)[0])
-        elif isinstance(entry, dict):
-            ext_shape.append(sorted(str(key) for key in entry.keys()))
-        else:
-            ext_shape.append(type(entry).__name__)
-    from agent import logsafe
-    print(f"[qq:{logsafe.fingerprint(channel_id)}] 引用结构未命中: ext_keys={ext_shape} "
-          f"msg_elements={len(msg_elements) if isinstance(msg_elements, list) else 0} "
-          f"found={found} att={attachment_count} element_keys={element_keys} "
-          f"quoted_keys={quoted_keys} nested_keys={nested_keys}", flush=True)
-
-
-def _nested_key_shape(value, limit: int = 8) -> list:
-    keys: list = []
-
-    def _walk(v):
-        if len(keys) >= limit:
-            return
-        if isinstance(v, dict):
-            keys.append(sorted(v.keys()))
-            for child in v.values():
-                _walk(child)
-        elif isinstance(v, list):
-            for child in v:
-                _walk(child)
-
-    _walk(value)
-    return keys
-
-
 def _raw_attachments_to_message(attachments: list):
     """把 QQ raw attachment dict 包成现有 _ingest_qq_media 需要的属性对象。"""
     return SimpleNamespace(
@@ -361,8 +311,12 @@ def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     ``GROUP_AT_MESSAGE_CREATE`` 事件名，不能再只看事件类型。旧测试或旧适配器
     没有 ``mentions`` 字段时保留事件类型回退。
     """
+    # QQ 的 AT 事件类型是协议层对“@机器人”的明确标记，优先于可选的
+    # mentions 数组；部分实际 payload 不带 mentions 或不带 bot 字段。
+    if event_type == "GROUP_AT_MESSAGE_CREATE":
+        return True
     if "mentions" not in data:
-        return event_type == "GROUP_AT_MESSAGE_CREATE"
+        return False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
@@ -479,15 +433,21 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # ConversationMessage.content/网页展示仍是用户自己打的话，别再把引用原文拼进正文
     # （网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog 2026-07-10）。
     quoted_text, quoted_attachments = _extract_quoted(data)
-    _log_quote_shape_if_needed(
-        channel_id, data, bool(quoted_text or quoted_attachments), len(quoted_attachments))
     all_attachments = raw_attachments + quoted_attachments
     if all_attachments:
         ack_target = chat_id if chat_type == "group" else sender_id
         now = time.monotonic()
         ack_key = f"{chat_type}:{ack_target}"
-        if (mentioned or not (chat_type == "group" and read_enabled)) \
-                and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
+        # 附件确认也属于对外回复：只响应 @ 时，非 @ 消息不能发送确认；
+        # 静默记录模式即使被 @ 也不发送确认。
+        should_reply = (
+            chat_type != "group"
+            or (
+                not read_enabled
+                and (not requires_at or mentioned)
+            )
+        )
+        if should_reply and now - last_ack.get(ack_key, 0.0) > _ACK_COOLDOWN:
             last_ack[ack_key] = now
             await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     attachments = await _ingest_qq_media(_raw_attachments_to_message(all_attachments), owner)

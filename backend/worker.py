@@ -48,6 +48,7 @@ DEBOUNCE_ATT_SEC = 1.0     # 纯附件：与文字同 1s（reset 仍能攒连发
 _user_buffers: dict[ImConversationKey, list] = {}   # key -> [(msg_id, payload)] 待处理缓冲
 _user_deadline: dict[ImConversationKey, float] = {} # key -> 防抖截止时刻（loop.time()），每条新消息推后
 _user_flush: dict[ImConversationKey, asyncio.Task] = {}  # key -> 正在跑的 flush loop（每会话至多一个）
+_buffer_lock = asyncio.Lock()                  # 保护缓冲注册，避免并发 _dispatch 重复创建 flush loop
 _flush_tasks: set = set()                       # 所有 flush loop：供优雅 drain 等它们跑完
 _run_sem = asyncio.Semaphore(_max_concurrency)  # flush 阶段真正跑 agent 的全局并发上限
 
@@ -143,17 +144,20 @@ async def _dispatch(msg_id: str, payload: dict):
     if not key.scope_id:
         # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
         key = ImConversationKey(key.platform, key.bot_id, key.chat_type, msg_id)
-    # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）
-    _user_buffers.setdefault(key, []).append((msg_id, payload))
-    has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
-    window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
-    _user_deadline[key] = asyncio.get_event_loop().time() + window
-    t = _user_flush.get(key)
-    if t is None or t.done():
-        nt = asyncio.create_task(_flush_loop(key))
-        _user_flush[key] = nt
-        _flush_tasks.add(nt)
-        nt.add_done_callback(_flush_tasks.discard)
+    # 投缓冲 + 把截止时刻推后；**不在这里 ack**，留到 flush（崩了未 ack → claim_stale 60s 重投兜底）。
+    # _dispatch 由多个消费 task 并发调用，必须把“注册缓冲 + 创建 flush task”作为
+    # 一个临界区，否则两个 task 都可能看到空的 _user_flush，从而把同一群拆成多条 session。
+    async with _buffer_lock:
+        _user_buffers.setdefault(key, []).append((msg_id, payload))
+        has_text = bool((payload.get("text") or "").strip())   # 这条带文字 = 短窗口；纯附件 = 长窗口等指令
+        window = DEBOUNCE_SEC if has_text else DEBOUNCE_ATT_SEC
+        _user_deadline[key] = asyncio.get_event_loop().time() + window
+        t = _user_flush.get(key)
+        if t is None or t.done():
+            nt = asyncio.create_task(_flush_loop(key))
+            _user_flush[key] = nt
+            _flush_tasks.add(nt)
+            nt.add_done_callback(_flush_tasks.discard)
 
 
 async def run_once(block_ms: int = 5000) -> int:

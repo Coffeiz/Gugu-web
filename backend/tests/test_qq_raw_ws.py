@@ -45,13 +45,13 @@ def test_qq_group_sender_prefers_user_openid_for_owner_binding(monkeypatch):
     assert message.sender.id == "owner-openid"
 
 
-def test_qq_message_mentions_bot_prefers_payload_over_event_type():
+def test_qq_message_mentions_bot_uses_at_event_and_payload_fallback():
     assert qq._qq_message_mentions_bot(
         {"mentions": [{"bot": True}]}, "GROUP_AT_MESSAGE_CREATE"
     ) is True
     assert qq._qq_message_mentions_bot(
         {"mentions": []}, "GROUP_AT_MESSAGE_CREATE"
-    ) is False
+    ) is True
 
 
 def test_qq_bot_mention_id_uses_explicit_bot_mention():
@@ -98,7 +98,7 @@ def test_platform_mention_display_keeps_unknown_ids():
     assert replace_mention_ids("@known <@unknown>", {"known": "Coffeiz"}) == "@Coffeiz <@unknown>"
 
 
-async def test_qq_group_at_event_without_bot_mention_is_passive(monkeypatch):
+async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     produced: list[dict] = []
 
     async def fake_group_settings(_bot_id):
@@ -135,7 +135,7 @@ async def test_qq_group_at_event_without_bot_mention_is_passive(monkeypatch):
     )
 
     assert len(produced) == 1
-    assert produced[0]["group_mentioned"] is False
+    assert produced[0]["group_mentioned"] is True
 
 
 def test_qq_extracts_quoted_text_by_ref_msg_idx():
@@ -341,8 +341,11 @@ async def test_qq_raw_group_message_create_is_received_when_at_is_required(monke
     async def fake_produce(stream, payload):
         produced.append(payload)
 
+    async def fake_ingest(message, owner):
+        return []
+
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
-    monkeypatch.setattr(qq, "_ingest_qq_media", lambda message, owner: [])
+    monkeypatch.setattr(qq, "_ingest_qq_media", fake_ingest)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
     await qq._handle_raw_qq_message("GROUP_MESSAGE_CREATE", _raw_group_event(), "bot-1", "user-1", {})

@@ -231,6 +231,7 @@ async def handle_im_command(user_id, message: str) -> Optional[str]:
 async def record_passive_im_message(request: AgentRequest, session_id: Optional[int] = None) -> int:
     """保存未触发回复的群消息，供后续 @ 咕咕时读取同一会话上下文。"""
     import app.db.session as db_session
+    from sqlalchemy import desc, select
     from app.models import ConversationMessage, ConversationSession
 
     if db_session._engine is None:
@@ -245,6 +246,21 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         ):
             # Redis 路由异常或旧 key 不得把消息写进另一个 Bot/群的会话。
             session = None
+        if session is None and request.chat_id:
+            # Redis 只是路由缓存：过期、重启或并发 miss 时，必须按稳定的群作用域
+            # 回查数据库，不能因为缓存缺失给同一个群重复创建会话。
+            session = (await db.execute(
+                select(ConversationSession)
+                .where(
+                    ConversationSession.user_id == request.user_id,
+                    ConversationSession.source == (request.source or "qqbot"),
+                    ConversationSession.bot_id == request.platform_bot_id,
+                    ConversationSession.chat_id == request.chat_id,
+                    ConversationSession.chat_type == "group",
+                )
+                .order_by(desc(ConversationSession.updated_at), desc(ConversationSession.id))
+                .limit(1)
+            )).scalars().first()
         if session is None:
             session = ConversationSession(
                 user_id=request.user_id,

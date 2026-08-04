@@ -46,29 +46,6 @@ def _history_query_limit(request: AgentRequest) -> int:
     return tokens.HISTORY_MAX_MSGS
 
 
-def _log_im_context_probe(event: str, request: AgentRequest, session_id: int,
-                          history: list, policy) -> None:
-    """临时记录当前 IM 上下文归属，只输出指纹和结构。"""
-    from agent import logsafe
-
-    sender_ids = [
-        str(getattr(item, "platform_user_id", ""))
-        for item in history
-        if getattr(item, "role", None) == "user" and getattr(item, "platform_user_id", None)
-    ]
-    data = {
-        "event": event,
-        "role": request.im_role,
-        "chat_type": "group" if request.chat_id else "c2c",
-        "session_id": session_id,
-        "sender_fp": logsafe.fingerprint(str(request.platform_user_id or "")),
-        "name_fp": logsafe.fingerprint(str(request.platform_user_name or "")),
-        "history_sender_fps": [logsafe.fingerprint(value) for value in sender_ids],
-        "history_count": len(history),
-        "load_owner_context": bool(policy.load_owner_context),
-    }
-    print(f"[im-context-probe] {json.dumps(data, ensure_ascii=False, separators=(',', ':'))}", flush=True)
-
 def _im_identity_block(req: AgentRequest, history: list) -> str:
     """把 IM 身份元数据作为内部事实提供给模型，禁止模型凭熟悉感猜身份。"""
     if req.source not in IM_SOURCES:
@@ -274,7 +251,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             .limit(_history_query_limit(req))
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
-        _log_im_context_probe("collect", req, session_id, history, context_policy)
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
@@ -522,7 +498,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             .limit(_history_query_limit(req))
         )
         history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
-        _log_im_context_probe("stream", req, session_id, history, context_policy)
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 

@@ -135,33 +135,6 @@ async def _ingest_wechat_media(items: list, owner: str) -> list:
     return out
 
 
-def _key_shape(value, limit: int = 12, _depth: int = 0):
-    """递归拍平抽取 dict/list 的 key 名（不含值），供结构调试用——同 qq.py `_nested_key_shape`
-    思路，只是这版顺带下钻进 list（第一版只查了 dict，button_item_list 是数组，没查到里面）。"""
-    if _depth > 4:
-        return "…"
-    if isinstance(value, dict):
-        return {k: _key_shape(v, limit, _depth + 1) for k, v in list(value.items())[:limit]}
-    if isinstance(value, list):
-        return [_key_shape(v, limit, _depth + 1) for v in value[:3]]  # 数组只看前 3 项
-    return type(value).__name__   # 叶子只打类型名，不打值本身
-
-
-def _log_quoted_shape_if_needed(ref_msg, found: bool) -> None:
-    """引用识别退化成占位符时打印结构（只打印字段名/类型，不打印正文），同 qq.py 的
-    `_log_quote_shape_if_needed` 思路——真实反馈过"引用咕咕自己发的文字回复却识别成
-    [非文字消息]"，第一版日志显示 message_item 是 `{button_item_list, create_time_ms,
-    is_completed, msg_id, type=0, update_time_ms}`，没有 text_item，但 button_item_list
-    是数组，之前的日志没往数组里钻，这版补上。"""
-    if found:
-        return
-    mi = ref_msg.get("message_item") if isinstance(ref_msg, dict) else None
-    ref_keys = sorted(ref_msg.keys()) if isinstance(ref_msg, dict) else None
-    shape = _key_shape(mi) if isinstance(mi, dict) else None
-    print(f"[wechat] 引用结构未命中: ref_msg_keys={ref_keys} "
-          f"type={mi.get('type') if isinstance(mi, dict) else None} shape={shape}", flush=True)
-
-
 def _extract_quoted(ref_msg) -> tuple[str | None, list]:
     """从 item.ref_msg.message_item 里提取 (引用文字, 引用媒体项列表)。
 
@@ -181,7 +154,6 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
     if not isinstance(mi, dict):
         if title:
             return title, []
-        _log_quoted_shape_if_needed(ref_msg, False)
         return None, []
     quoted_type = mi.get("type")
     txt = (mi.get("text_item") or {}).get("text", "").strip()
@@ -196,7 +168,6 @@ def _extract_quoted(ref_msg) -> tuple[str | None, list]:
         return "[文件消息]", []
     if quoted_type == 5 or mi.get("video_item"):
         return "[视频消息]", []
-    _log_quoted_shape_if_needed(ref_msg, False)
     if title:
         return title, []
     # type=0（外加不少其他拿不到文字的情况）：实测 + 核对 openclaw-weixin 源码确认，iLink

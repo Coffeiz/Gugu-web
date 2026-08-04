@@ -151,3 +151,27 @@ def test_record_only_group_policy_matches_all_qq_messages():
     assert should_record_passive_group(request, {**base, "group_mentioned": True}) is True
     request.source = "feishu"
     assert should_record_passive_group(request, base) is False
+
+
+def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
+    request = AgentRequest(
+        message="群里的普通消息",
+        user_id="owner-1",
+        user_name="owner",
+        chat_id="group-1",
+        source="qqbot",
+    )
+    policy = {
+        "chat_type": "group",
+        "group_requires_at": True,
+        "group_read_enabled": False,
+        "group_mentioned": False,
+    }
+
+    assert should_record_passive_group(request, policy) is True
+    assert should_record_passive_group(
+        request, {**policy, "group_mentioned": True}
+    ) is False
+    assert should_record_passive_group(
+        request, {**policy, "group_requires_at": False}
+    ) is False
