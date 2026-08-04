@@ -88,9 +88,13 @@ async def attachment_thumb(
         return Response(content=raw, media_type="image/svg+xml",
                         headers={"Cache-Control": "private, max-age=3600"})
     # QQ 表情可能是 GIF/动画 WebP；原图端点保留动画帧，普通缩略图则统一转 JPEG。
-    if size == "full" and (meta.get("qq_face") or (meta.get("ext") or "").lower() in {"gif", "webp"}):
-        mime = meta.get("mime") or f"image/{(meta.get('ext') or 'gif').lower()}"
-        return Response(content=raw, media_type=mime,
+    mime = (meta.get("mime") or "").lower()
+    if size == "full" and (
+        meta.get("qq_face")
+        or (meta.get("ext") or "").lower() in {"gif", "webp"}
+        or mime in {"image/gif", "image/webp"}
+    ):
+        return Response(content=raw, media_type=mime or f"image/{(meta.get('ext') or 'gif').lower()}",
                         headers={"Cache-Control": "private, max-age=3600"})
     # 复用文件库的缩略图生成（JPEG 兜底版，按 size 取最大边）
     from app.services.files.previews import generate_thumb_jpeg_fallback

@@ -249,6 +249,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 "ext": meta["ext"],
                 "size_bytes": meta["size"],
                 "kind": meta["kind"],
+                "mime": meta.get("mime"),
                 "qq_face": bool(meta.get("qq_face")),
                 "quoted": bool(meta.get("quoted")),
                 "upload": True,

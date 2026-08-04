@@ -494,6 +494,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
         cards.append({
             "attach_id": meta["attach_id"], "name": meta["name"], "ext": meta["ext"],
             "size_bytes": meta["size"], "kind": meta["kind"], "upload": True,
+            "mime": meta.get("mime"),
             "qq_face": bool(meta.get("qq_face")),
             "quoted": bool(meta.get("quoted")),
             "duration": meta.get("duration"),   # 语音条用：前端显示时长 + 渲染成播放条

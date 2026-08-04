@@ -209,8 +209,8 @@
                 <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || '引用的 QQ 表情'">
                   <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
                   <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
-                    <img v-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
-                    <img v-else-if="f.qq_face" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="引用 QQ 表情" @click.stop="openFileFromChat(f)" />
+                    <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                    <img v-else-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
                     <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
                   </template>
                 </div>
@@ -229,8 +229,7 @@
                     <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
                   </div>
                   <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="openFileFromChat(f)" title="点击查看表情">
-                    <img v-if="f._thumbUrl" class="msg-face-image" :src="f._thumbUrl" draggable="false" alt="QQ表情" />
-                    <img v-else class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="QQ表情" />
+                    <img class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="QQ表情" />
                   </div>
                   <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                     <span class="msg-file-ext">
@@ -377,6 +376,7 @@ interface ChatFile {
   size?: number
   size_bytes?: number
   kind?: string
+  mime?: string
   qq_face?: boolean
   quoted?: boolean
   duration?: number
@@ -1123,6 +1123,12 @@ function isImageFile(f: ChatFile) {
   if (f._thumbUrl) return true
   const isImg = _IMG_EXTS.has((f.ext || '').toLowerCase())
   return isImg && (!!f.file_id || !!f.attach_id)
+}
+
+function isAnimatedImageFile(f: ChatFile) {
+  const mime = (f.mime || '').toLowerCase()
+  return (['gif', 'webp'].includes((f.ext || '').toLowerCase()) || mime === 'image/gif' || mime === 'image/webp')
+    && (!!f.file_id || !!f.attach_id)
 }
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
 // 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
