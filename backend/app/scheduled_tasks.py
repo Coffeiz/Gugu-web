@@ -135,7 +135,8 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         context_config = t.context_config
         target_map = t.delivery_targets
         chans = {c for c in (t.channels or "").split(",") if c}
-        t.last_run_at = now_utc()
+        if not is_trial:
+            t.last_run_at = now_utc()
         once_deleted = not is_trial and (t.cron or "").startswith("@once:")
         if once_deleted:
             await db.delete(t)
@@ -153,7 +154,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
             "也不要提及渠道、推送、工具不可用或无法发送。"
         )
-        text = await _run_agent(uid, prompt, context_config)
+        text = await _run_agent(uid, prompt, context_config, retry=not is_trial)
         result = await deliver_to_channels(uid, name, text, chans, target_map)
     except Exception as e:
         diag_log("app.scheduled_tasks.execute_task", e)
@@ -187,6 +188,10 @@ async def deliver_to_channels(
             platform,
         )
         target = targets.get(channel)
+        if target is None:
+            # 旧任务没有保存 delivery_targets。不能再把最近一次群聊地址当成
+            # 私聊提醒目标，否则用户在群里聊天后，历史任务会误发到该群。
+            target = await _legacy_private_target(uid, platform)
         try:
             sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform, target)
             result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
@@ -248,14 +253,26 @@ async def _persist_push_im(
         pass
 
 
-async def _run_agent(user_id, prompt: str, context_config: dict | None = None) -> str:
+async def _run_agent(
+    user_id,
+    prompt: str,
+    context_config: dict | None = None,
+    *,
+    retry: bool = True,
+) -> str:
     from agent.runner import run_ephemeral
     import app.db.session as ss
     from app.models import User
     async with ss._SessionLocal() as db:
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
-    text = await run_ephemeral(user_id, uname, prompt, context_config=context_config)
+    text = await run_ephemeral(
+        user_id,
+        uname,
+        prompt,
+        context_config=context_config,
+        retry=retry,
+    )
     return text or "（咕咕这次没有产出内容）"
 
 
@@ -326,18 +343,50 @@ async def _has_enabled_bot(user_id, platform: str) -> bool:
     return row is not None
 
 
+async def _legacy_private_target(user_id, platform: str) -> dict | None:
+    """解析没有固定目标的旧任务，只返回 owner 私聊地址。
+
+    早期任务没有 ``delivery_targets``，只能兼容旧的可触达地址。群聊地址
+    不属于安全的兼容目标：它通常只是用户最近一次发言的群，不能代表用户
+    创建任务时的投递意图。
+    """
+    import app.db.session as ss
+    from app.models import UserBot
+
+    async with ss._SessionLocal() as db:
+        row = (await db.execute(
+            select(UserBot).where(
+                UserBot.user_id == _as_uuid(user_id),
+                UserBot.platform == platform,
+                UserBot.enabled.is_(True),
+            ).order_by(UserBot.id.asc())
+        )).scalars().first()
+    if row and row.owner_platform_user_id:
+        return {
+            "chat_type": "c2c",
+            "chat_id": None,
+            "puid": row.owner_platform_user_id,
+            "channel_id": str(row.id),
+        }
+
+    reach = await get_imreach(user_id, platform)
+    if not reach or reach.get("chat_type") == "group" or reach.get("chat_id"):
+        return None
+    return reach
+
+
 async def _deliver_im(
     user_id,
     text: str,
     platform: str | None = None,
     target: dict | None = None,
 ) -> bool:
-    """主动 DM 到指定 IM 平台。platform=None 时发到最近一次可触达平台（兜底）。
+    """主动 DM 到指定 IM 平台。未传目标时只兼容 owner 私聊地址。
     飞书可主动；QQ 主动受限，best-effort。返回是否真的投出（无地址/无活绑定=False）。"""
     # 保险二：必须有该平台的 enabled bot 才发——解绑后绝不发给旧账号
     if platform and not await _has_enabled_bot(user_id, platform):
         return False
-    reach = target or await get_imreach(user_id, platform)
+    reach = target or await _legacy_private_target(user_id, platform)
     if not reach:
         return False   # 该平台没用过/无可触达地址，跳过
     payload = {

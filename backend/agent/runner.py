@@ -902,7 +902,14 @@ async def _run_ephemeral_once(user_id, user_name: str, prompt: str, profile, set
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
 
-async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: dict | None = None) -> str:
+async def run_ephemeral(
+    user_id,
+    user_name: str,
+    prompt: str,
+    context_config: dict | None = None,
+    *,
+    retry: bool = True,
+) -> str:
     """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
 
     context_config（来自 ScheduledTask.context_config，创建/改任务时顺手判断出来的）非空时按需
@@ -910,16 +917,17 @@ async def run_ephemeral(user_id, user_name: str, prompt: str, context_config: di
     没有 prompt 缓存，每次触发都是全价，省下来的是真金白银。None（没判断出结果的旧任务/默认值）
     就走全量，安全优先。
 
-    失败会自动重试一次（延迟 _EPHEMERAL_RETRY_DELAY_S 秒），不是简单重放同一份请求——
+    正式定时任务失败会自动重试一次（延迟 _EPHEMERAL_RETRY_DELAY_S 秒），不是简单重放同一份请求——
     _run_ephemeral_once 每次都重新从 DB 加载上下文、重新拼系统提示词，重试时用户看到的是
     一次带着最新上下文的独立请求。定时任务是异步推送结果的后台流程，没有人盯着转圈等，
     多等一两分钟换来自动挽回一次性误判/供应商侧瞬时状态，比让用户自己发现失败再手动重试划算。
+    交互式试运行传入 ``retry=False``，避免用户点击测试后被固定的 90 秒重试延迟卡住。
     """
     profile = DefaultProfile()
     settings = get_settings()
 
     text, errored = await _run_ephemeral_once(user_id, user_name, prompt, profile, settings, context_config)
-    if errored:
+    if errored and retry:
         # 定时任务排障日志：_collect 判定失败时会把 text 换成错误详情，但调用方（scheduled_tasks.py）
         # 只看得到这里返回的文本，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
         # 排查「科技新闻」任务空产出时，日志里既无 LLM 报错、也无工具调用记录，无从判断）。

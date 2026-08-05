@@ -264,7 +264,13 @@ async def run_now(task_id: int, user: User = Depends(get_current_user), db: Asyn
     # 请求的 DB 连接，避免长事务阻塞迁移和其他登录/业务查询。
     await db.close()
     from app import scheduled_tasks as ST
-    result = await ST.execute_task(task_id, is_trial=True)
+    try:
+        result = await asyncio.wait_for(
+            ST.execute_task(task_id, is_trial=True),
+            timeout=60,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "试运行超过 60 秒仍未完成，请稍后查看投递结果或重试")
     if not result:
         return {"ok": True, "msg": "已执行（该任务未选任何投递渠道）"}
     msg = "试运行结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())

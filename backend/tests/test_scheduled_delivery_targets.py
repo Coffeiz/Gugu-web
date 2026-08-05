@@ -97,6 +97,47 @@ async def test_delivery_uses_task_target_instead_of_recent_reach(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_legacy_task_never_uses_recent_group_reach(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=False)
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_legacy_private_target", AsyncMock(return_value=None))
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "旧任务", "正文", {"qq"}, delivery_targets=None
+    )
+
+    assert result == {"QQ": "无可触达地址（先给该 bot 发条消息）"}
+    send.assert_awaited_once_with("user-1", "⏰ 旧任务\n\n正文", "qqbot", None)
+
+
+@pytest.mark.asyncio
+async def test_legacy_task_uses_owner_private_target(monkeypatch):
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    target = {
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": "owner-1",
+        "channel_id": "bot-1",
+    }
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_legacy_private_target", AsyncMock(return_value=target))
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "旧任务", "正文", {"qq"}, delivery_targets=None
+    )
+
+    assert result == {"QQ": "已发送"}
+    send.assert_awaited_once_with("user-1", "⏰ 旧任务\n\n正文", "qqbot", target)
+    persist.assert_awaited_once_with("user-1", "qqbot", "旧任务", "正文", target)
+
+
+@pytest.mark.asyncio
 async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db, user_a):
     import app.scheduled_tasks as scheduled
     from app.models import ScheduledTask
@@ -170,3 +211,76 @@ async def test_update_group_target_confirmation_does_not_mutate_task(monkeypatch
     assert "确认投递位置" in result
     assert task.payload == "旧指令"
     db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_trial_does_not_wait_for_background_retry(monkeypatch):
+    import agent.runner as runner
+
+    once = AsyncMock(return_value=("模型暂时不可用", True))
+    sleep = AsyncMock()
+    monkeypatch.setattr(runner, "_run_ephemeral_once", once)
+    monkeypatch.setattr(runner.asyncio, "sleep", sleep)
+
+    result = await runner.run_ephemeral(
+        "user-1", "测试用户", "测试任务", retry=False
+    )
+
+    assert result == "模型暂时不可用"
+    once.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_trial_does_not_hold_request_db_session_during_agent(monkeypatch):
+    from types import SimpleNamespace
+
+    import app.api.v1.scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+
+    events = []
+    db = SimpleNamespace(
+        close=AsyncMock(side_effect=lambda: events.append("close")),
+    )
+    user = SimpleNamespace(id="user-1")
+    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock())
+    execute = AsyncMock(
+        side_effect=lambda *args, **kwargs: events.append("execute") or {"网页通知": "已发送"}
+    )
+    monkeypatch.setattr(scheduled, "execute_task", execute)
+
+    result = await scheduled_api.run_now(42, user, db)
+
+    assert result["ok"] is True
+    assert events == ["close", "execute"]
+    execute.assert_awaited_once_with(42, is_trial=True)
+
+
+@pytest.mark.asyncio
+async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id,
+        name="试运行不计入正式执行",
+        payload="只测试一次",
+        cron="0 9 * * *",
+        channels="web",
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value="测试正文"))
+    monkeypatch.setattr(
+        scheduled,
+        "deliver_to_channels",
+        AsyncMock(return_value={"web 通知": "已发送"}),
+    )
+
+    result = await scheduled.execute_task(task.id, is_trial=True)
+
+    assert result == {"web 通知": "已发送"}
+    await db.refresh(task)
+    assert task.last_run_at is None
