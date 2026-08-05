@@ -4,7 +4,7 @@
 > 创建：2026-08-04
 > 最近更新：2026-08-04
 > 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/global_search.py`
-> 关联文档：[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)
+> 关联文档：[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 
 ## 0. 实施状态
 

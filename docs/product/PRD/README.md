@@ -1,6 +1,6 @@
 # PRD 撰写规范
 
-本目录存放咕咕的产品需求文档（PRD）。为保证 AI/人协作时格式一致、便于检索和跨文档比对，新增 PRD 请遵循本规范。参考范例：[PRD-IM-1-im接入稳定性与qq自建websocket.md](./PRD-IM-1-im接入稳定性与qq自建websocket.md)。
+本目录存放咕咕的产品需求文档（PRD）。为保证 AI/人协作时格式一致、便于检索和跨文档比对，新增 PRD 请遵循本规范。参考范例：[【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md)。
 
 ## 文件命名
 
