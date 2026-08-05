@@ -5,7 +5,7 @@
 > 最近更新：2026-08-06
 > 所属层：LLM / Provider 适配层
 > 关联模块：`backend/agent/providers.py`、`backend/agent/llm_select.py`、`backend/agent/loop_drivers.py`、`backend/agent/sanitize.py`、`backend/agent/runner.py`、`backend/agent/gateway/web.py`、`backend/agent/greeting.py`、`backend/agent/memory/_llm.py`、`backend/app/core/chat_attach.py`、`backend/app/core/media_transcode.py`、`backend/app/api/v1/agent_admin.py`、`backend/app/api/v1/agent.py`
-> 关联文档：[[PRD-LLM-1-provider适配层重构与core瘦身.md]]；[[../../reports/TEST-LLM-MiniMax-M3-视频mm_file传输.md]]
+> 关联文档：[[【已完成】PRD-LLM-1-provider适配层重构与core瘦身.md]]；[[../../reports/TEST-LLM-MiniMax-M3-视频mm_file传输.md]]
 
 ---
 

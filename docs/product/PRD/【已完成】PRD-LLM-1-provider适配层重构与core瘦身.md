@@ -164,28 +164,28 @@ Context 里的说明），合并前后各跑了一遍——合并前是"钉死�
 
 **部署前置步骤**：
 
-- [ ] `mutagen sync list` 确认 `gugu-web` 已同步；SSH 上去 `git log -1`/对照关键行确认 devserver 代码是这次改动后的版本。
-- [ ] `sudo systemctl restart gugu-worker gugu-backend`（或按现有发布流程重启），确认两个服务 `systemctl status` 都是 `active (running)`，无启动报错。
+- [x] `mutagen sync list` 确认 `gugu-web` 已同步；SSH 上去 `git log -1`/对照关键行确认 devserver 代码是这次改动后的版本。
+- [x] `sudo systemctl restart gugu-worker gugu-backend`（或按现有发布流程重启），确认两个服务 `systemctl status` 都是 `active (running)`，无启动报错。
 
 **Provider × 渠道 基础可用性矩阵**（每格：发一条普通问答 + 一条会触发工具调用的请求，确认能正常收到回复、无异常报错）：
 
 | Provider | QQ | 飞书 | 网页 | 定时任务（`run_ephemeral`） |
 |---|---|---|---|---|
-| Anthropic 原生 | [ ] | [ ] | [ ] | [ ] |
-| MiniMax | [ ] | [ ] | [ ] | [ ] |
-| 小米 MiMo | [ ] | [ ] | [ ] | [ ] |
-| DeepSeek | [ ] | [ ] | [ ] | [ ] |
+| Anthropic 原生 | [x] | [x] | [x] | [x] |
+| MiniMax | [x] | [x] | [x] | [x] |
+| 小米 MiMo | [x] | [x] | [x] | [x] |
+| DeepSeek | [x] | [x] | [x] | [x] |
 
 **Provider 专属行为回归**（改动前的已知怪癖，改完不能变没）：
 
-- [ ] MiniMax：连续对话中人工翻查一下流式输出，确认没有出现 `]<]minimax`/`[e~[` 这类文本泄漏 marker（`StreamSanitizer` 没被这次改动误伤）。
-- [ ] MiniMax-M2 系列模型：正常对话几轮后翻查请求日志/后台，确认仍在使用 `cache_control` 主动缓存（如果后台有缓存命中率之类的指标，对比改动前后数值持平）。
-- [ ] MiniMax-M3：同上但反过来，确认没有发送 `cache_control`（发了的话第三方接口可能直接报错，属于会立刻暴露的硬失败，不难验证）。
-- [ ] 小米 MiMo：鉴权确认没坏——请求能正常发出去、拿到回复，说明 `api-key` 头（而不是 `Authorization: Bearer`）确实生效了。
-- [ ] 小米 MiMo / DeepSeek：触发一次需要长推理的问题，确认思考过程/思考态展示正常（`supports_thinking_toggle` 没被改动影响）。
-- [ ] 后台「测试连接」入口（`app/api/v1/agent_admin.py` 对应的管理页面功能）：对 Anthropic 原生 + 至少一个第三方 provider 各测一次，确认连接测试仍能正确成功/失败反馈。
+- [x] MiniMax：连续对话中人工翻查一下流式输出，确认没有出现 `]<]minimax`/`[e~[` 这类文本泄漏 marker（`StreamSanitizer` 没被这次改动误伤）。
+- [x] MiniMax-M2 系列模型：正常对话几轮后翻查请求日志/后台，确认仍在使用 `cache_control` 主动缓存（如果后台有缓存命中率之类的指标，对比改动前后数值持平）。
+- [x] MiniMax-M3：同上但反过来，确认没有发送 `cache_control`（发了的话第三方接口可能直接报错，属于会立刻暴露的硬失败，不难验证）。
+- [x] 小米 MiMo：鉴权确认没坏——请求能正常发出去、拿到回复，说明 `api-key` 头（而不是 `Authorization: Bearer`）确实生效了。
+- [x] 小米 MiMo / DeepSeek：触发一次需要长推理的问题，确认思考过程/思考态展示正常（`supports_thinking_toggle` 没被改动影响）。
+- [x] 后台「测试连接」入口（`app/api/v1/agent_admin.py` 对应的管理页面功能）：对 Anthropic 原生 + 至少一个第三方 provider 各测一次，确认连接测试仍能正确成功/失败反馈。
 
 **原故障复现验证**：
 
-- [ ] 在 QQ 上重发一次原触发场景的请求（"重写 PRD README/INDEX" 这类会让 MiniMax 走长流式响应的请求），确认不再收到「咕咕开小差了」。
-- [ ] `ssh coffeiz@192.168.110.51 "tail -f 文档/Workspace/Gugu-web/backend/logs/gugu-diag.log"` 观察 5-10 分钟正常使用期间（覆盖上面矩阵测试的这段时间即可，不用额外空等），确认没有新的 `agent.core.main_loop | AttributeError` 条目；如果又出现，确认 provider 字段能否借这次机会顺手补进 `diag_log` 输出（呼应第 5 节"待确认问题"）。
+- [x] 在 QQ 上重发一次原触发场景的请求（"重写 PRD README/INDEX" 这类会让 MiniMax 走长流式响应的请求），确认不再收到「咕咕开小差了」。
+- [x] `ssh coffeiz@192.168.110.51 "tail -f 文档/Workspace/Gugu-web/backend/logs/gugu-diag.log"` 观察 5-10 分钟正常使用期间（覆盖上面矩阵测试的这段时间即可，不用额外空等），确认没有新的 `agent.core.main_loop | AttributeError` 条目；如果又出现，确认 provider 字段能否借这次机会顺手补进 `diag_log` 输出（呼应第 5 节"待确认问题"）。
