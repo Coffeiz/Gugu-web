@@ -7,6 +7,7 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid as _uuid
@@ -97,6 +98,13 @@ async def reconcile() -> None:
             await db.commit()
             print(f"[sched] GC {len(gc)} 个过期一次性任务: {sorted(gc_ids)}", flush=True)
             await _notify_tasks_changed(gc_uids)   # 自动清 → 定时面板实时刷
+        # 崩溃的一次性任务（跑过、没标失败、锁也没了）不能只等用户凑巧打开面板才
+        # 被修复——这里每轮 reconcile 都顺手扫一遍，转成失败态，让用户能在面板里
+        # 看到并重试，而不是无声无息地卡在"跑过但没结果"的状态里。
+        abandoned = await _reap_abandoned_once_tasks(db, [t for t in all_tasks if t.id not in gc_ids])
+        if abandoned:
+            print(f"[sched] {len(abandoned)} 个一次性任务判定为崩溃，已标记失败: {sorted(t.id for t in abandoned)}", flush=True)
+            await _notify_tasks_changed({t.user_id for t in abandoned})
         tasks = [
             t for t in all_tasks
             if t.enabled
@@ -134,10 +142,24 @@ async def reconcile() -> None:
 # update_file 这类工具的任务可能重复产生副作用和重复消息。timeout 是崩溃兜底
 # （进程死掉忘记 release 时自动过期），不是正常执行时长上限。
 _SCHEDULED_LOCK_TIMEOUT = 600   # 秒
+_SCHEDULED_LOCK_RENEW_INTERVAL = 180   # 秒；须显著小于 timeout，留够网络抖动的余量
 
 
 def _scheduled_lock_key(task_id: int) -> str:
     return f"scheduled:lock:{task_id}"
+
+
+async def _renew_lock_periodically(lock) -> None:
+    """任务执行期间的锁续租心跳：Agent 调用可能远超 timeout（复杂工具链/慢响应），
+    没有续租的话锁会在任务还在跑的时候过期，导致 `_once_task_is_in_flight()` 误判
+    成"已崩溃"，用户点重试后两个正式执行并发跑，产生重复的工具副作用和重复消息。
+    只在自己被取消（finally 释放锁）时停止，异常单次续租失败不致命——下一轮重试。"""
+    while True:
+        await asyncio.sleep(_SCHEDULED_LOCK_RENEW_INTERVAL)
+        try:
+            await lock.extend(_SCHEDULED_LOCK_TIMEOUT, replace_ttl=True)
+        except Exception as e:
+            diag_log("app.scheduled_tasks.renew_lock", e)
 
 
 async def _once_task_is_in_flight(task_id: int, last_run_at) -> bool:
@@ -165,6 +187,30 @@ async def _once_task_is_in_flight(task_id: int, last_run_at) -> bool:
     return (now_utc() - at) < timedelta(seconds=_SCHEDULED_LOCK_TIMEOUT)
 
 
+async def _reap_abandoned_once_tasks(db, tasks) -> list:
+    """把"跑过、没标失败、没在跑（锁也没了）"的一次性任务转成失败态。
+
+    供 list_tasks()（用户开面板时）和 reconcile()（worker 每 ~30s 一轮，不依赖
+    用户主动打开面板）共用——否则崩溃任务只有在用户凑巧点开定时任务面板时才会
+    被修复成可重试状态，reconcile() 本身此前对这批任务视而不见。
+    """
+    abandoned = []
+    now = local_now()
+    for t in tasks:
+        if not (t.cron or "").startswith("@once:"):
+            continue
+        if t.last_run_at is None or t.last_run_failed or not _once_expired(t.cron, now):
+            continue
+        if await _once_task_is_in_flight(t.id, t.last_run_at):
+            continue
+        abandoned.append(t)
+    if abandoned:
+        for t in abandoned:
+            t.last_run_failed = True
+        await db.commit()
+    return abandoned
+
+
 async def execute_task(task_id: int, is_trial: bool = False) -> dict:
     """执行一次任务，返回各渠道投递结果 {渠道: 状态}（试运行据此给用户反馈）。
 
@@ -182,6 +228,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
     if not await lock.acquire(blocking=False):
         return {"错误": "任务正在执行，请稍后再试"}
 
+    renew_task = asyncio.create_task(_renew_lock_periodically(lock))
     try:
         import app.db.session as ss
         from app.models import ScheduledTask
@@ -229,6 +276,11 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 await _mark_once_failed(task_id)
         return result
     finally:
+        renew_task.cancel()
+        try:
+            await renew_task
+        except asyncio.CancelledError:
+            pass
         try:
             await lock.release()
         except LockError:

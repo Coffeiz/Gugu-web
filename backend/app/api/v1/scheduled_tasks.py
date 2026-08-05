@@ -94,26 +94,16 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     # "正在执行中"（last_run_at 已写、Redis 锁还在，或刚释放不久）两类都不能碰：
     # 执行超过 120s 宽限窗口完全可能（Agent 调用本身就慢），不能因为面板恰好在这时
     # 被打开，就把还在跑的任务误判成"过期没跑"或"崩了"。
-    from app.scheduled_tasks import _once_expired, _once_task_is_in_flight
+    from app.scheduled_tasks import _once_expired, _reap_abandoned_once_tasks
     from app.core.tz import local_now
     now = local_now()
     never_ran_expired = [t for t in rows if t.last_run_at is None and _once_expired(t.cron, now)]
-    abandoned = []
-    for t in rows:
-        if t.last_run_at is None or t.last_run_failed or not _once_expired(t.cron, now):
-            continue
-        if await _once_task_is_in_flight(t.id, t.last_run_at):
-            continue
-        abandoned.append(t)
     if never_ran_expired:
         for t in never_ran_expired:
             await db.delete(t)
         await db.commit()
         rows = [t for t in rows if t not in never_ran_expired]
-    if abandoned:
-        for t in abandoned:
-            t.last_run_failed = True
-        await db.commit()
+    await _reap_abandoned_once_tasks(db, rows)
     return {"tasks": [_to_resp(t) for t in rows]}
 
 

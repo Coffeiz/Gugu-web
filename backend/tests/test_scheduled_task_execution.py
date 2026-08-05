@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -260,3 +261,73 @@ async def test_scheduled_report_failure_twice_falls_back_to_execution_text(monke
     assert result == "查询结果"
     execution.assert_awaited_once()
     assert report.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_execute_task_renews_lock_for_long_running_task(monkeypatch, db, user_a):
+    """任务执行时间超过一个续租周期：锁必须被 extend 续期，而不是放任它在任务还在跑
+    的时候自然过期——否则 `_once_task_is_in_flight()` 会把仍在执行的任务误判成崩溃。"""
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="慢任务", payload="占位",
+        cron="0 9 * * *", channels="web", delivery_targets=None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    fake_lock = SimpleNamespace(
+        acquire=AsyncMock(return_value=True),
+        release=AsyncMock(),
+        extend=AsyncMock(),
+    )
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(lock=lambda *a, **kw: fake_lock))
+    monkeypatch.setattr(scheduled, "_SCHEDULED_LOCK_RENEW_INTERVAL", 0.01)
+
+    async def slow_run_agent(*a, **kw):
+        await asyncio.sleep(0.05)   # 跨越多个续租周期
+        return "正文"
+
+    monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
+    monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"网页通知": "已发送"}))
+
+    result = await scheduled.execute_task(task.id, is_trial=True)
+
+    assert result == {"网页通知": "已发送"}
+    assert fake_lock.extend.await_count >= 1
+    fake_lock.extend.assert_awaited_with(scheduled._SCHEDULED_LOCK_TIMEOUT, replace_ttl=True)
+    fake_lock.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_execute_task_stops_renewing_after_completion(monkeypatch, db, user_a):
+    """任务结束后续租协程必须被取消——不能留着一个孤儿协程继续给已释放的锁 extend。"""
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="快任务", payload="占位",
+        cron="0 9 * * *", channels="web", delivery_targets=None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    fake_lock = SimpleNamespace(
+        acquire=AsyncMock(return_value=True),
+        release=AsyncMock(),
+        extend=AsyncMock(),
+    )
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(lock=lambda *a, **kw: fake_lock))
+    monkeypatch.setattr(scheduled, "_SCHEDULED_LOCK_RENEW_INTERVAL", 10)
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value="正文"))
+    monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"网页通知": "已发送"}))
+
+    await scheduled.execute_task(task.id, is_trial=True)
+    await asyncio.sleep(0)   # 让被取消的续租任务有机会真正结束
+
+    running = [t for t in asyncio.all_tasks() if t.get_coro().__qualname__ == "_renew_lock_periodically" and not t.done()]
+    assert running == []
+    fake_lock.extend.assert_not_awaited()
