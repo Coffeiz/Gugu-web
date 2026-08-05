@@ -1,9 +1,10 @@
 # IM 接入稳定性与 QQ 自建 WebSocket PRD
 
-> 状态：✅ 全部完成（Phase 1～7）
+> 状态：✅ 全部完成（Phase 1～7；Phase 3 raw HTTP 发送侧代码已完成，生产环境端到端验证抽出为独立 PRD）
 > 创建：2026-07-09
-> 最近更新：2026-07-10
+> 最近更新：2026-08-06
 > 关联模块：`backend/agent/gateway/feishu.py`、`backend/agent/gateway/qq.py`、`backend/worker.py`
+> 关联文档：[`PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md`](./PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md)
 > 背景参考：QwenPaw `src/qwenpaw/app/channels/{feishu,qq}/channel.py`
 
 ---
@@ -15,7 +16,7 @@
 | Phase 1：飞书稳定性补强 | ✅ 已完成 | 已实现 `app_id` 错投保护、`message_id` LRU 去重、stale retry 丢弃，并补充网关入口测试。 |
 | FR-FS-4：飞书流式收尾 | ✅ 已完成 | 流式卡片最终 patch 成功后调用 CardKit settings 接口关闭 `streaming_mode` 并设置 summary；finalize 失败不触发重复普通文本。收尾另调一次 `_do_update_card`（独立失败域）把标题从「咕咕思考中」改成「咕咕」——**devserver 实测踩坑**：整卡 PUT 起初用了独立的 sequence 计数器，报 `300317 sequence number compare failed`；CardKit 对同一 card_id 的 sequence 是跨端点（element content / settings / 整卡 PUT）共享同一套单调序列，改成复用 `_stream_seq_key` 计数器后修复。QwenPaw 没有这个功能——他们的流式卡片压根不设 `header`，没有"思考中"标题可改。**已在 devserver 用户实测确认标题正确改成「咕咕」。** |
 | Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容。 |
-| Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
+| Phase 3：QQ raw HTTP 发送侧 | ✅ 代码已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。**真实 QQ 环境端到端验证与 `_send_tokens` 并发加锁抽出为独立 PRD**，见 [`PRD-IM-4`](./PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md)。 |
 | 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 群聊 raw event 已在后续联调中继续扩展。 |
 | Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 500 条消息，每次上下文最多取最近 50 条。 |
 | Phase 5：QQ 身份采集与 Bot owner 绑定 | ✅ 已完成 | 每个 Gugu 账号只绑定一个 Bot；网页生成 6 位、10 分钟有效的一次性验证码，用户在 QQ C2C 私聊发送“绑定 6 位验证码”后原子保存 owner `sender_id`。不做跨 Bot QQ 身份自动合并，群消息不能自动抢占 owner。 |
@@ -595,7 +596,7 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 - ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。引用消息 `msg_elements=0` 的已知限制（疑似平台时效窗口）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
 - ✅ Phase 2 原计划保留 botpy 接收路径开关至少一个小版本，实际因功能验证完成、决定直接全部移除（`_GuguQQClient`/monkey patch/`QQ_RAW_WS_ENABLED`/`qq-botpy` 依赖），不再保留回退路径。
-- 🔲 Phase 3 raw HTTP 发送侧（文本/markdown 回退/URL 与 base64 发文件/群消息）尚未在真实 QQ 环境端到端验证，仅本地 mock 测试覆盖；`_send_tokens` 无锁，理论上并发首次请求可能重复取 token（浪费一次调用，不影响正确性）。
+- Phase 3 raw HTTP 发送侧的真实环境端到端验证与 `_send_tokens` 并发加锁已抽出为独立 PRD，见 [`PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md`](./PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md)。
 - ✅ QQ 群聊 raw WebSocket、@ 回复和普通消息读取已在当前 bot 环境验证；仍需补做关闭开关后的真实平台验收，并确认不同 QQ 权限配置下 `GROUP_MESSAGE_CREATE` 的覆盖范围。
 - ✅ 群聊身份权限与工具白名单：当前按 Bot owner 身份、member/unknown 角色和白名单实现；完整 `platform_identities` / `im_chats` / `im_chat_members` 持久化模型及群级覆盖仍是后续事项。具体边界见 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md) 第 6 节。
 - ✅ 群聊短期/长期记忆：PRD-IM-3 的独立 scope、活跃窗口、异步反思、daily 压缩和删除屏障已实现，并已完成真实多平台人工验收。
