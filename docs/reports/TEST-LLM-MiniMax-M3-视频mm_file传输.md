@@ -250,7 +250,7 @@ MiniMax-M3 支持两种视频传输模式：
   2. 分辨率 >1080p 或 码率 >16Mbps → ffmpeg 压成 1080p 5M h264
   3. 压缩后 ≤45MB → base64 内联
   4. 压缩后 >45MB 且 ≤90MB → 上传 Files API，用 mm_file://{file_id} 引用
-  5. >90MB 兜底走 base64（已知会超限，由错误兜底）
+  5. >90MB 明确拒绝，不回退 base64（base64 注定超 MiniMax 上限）
 
 非 MiniMax（mimo 等）：保持旧行为，仅 ≤36MB 走 base64
 ```

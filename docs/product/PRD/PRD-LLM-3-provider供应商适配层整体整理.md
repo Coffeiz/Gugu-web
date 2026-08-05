@@ -174,7 +174,7 @@ backend/agent/providers/
 ### 3.3 数据与日志注意事项
 
 - 视频探测/压缩涉及 ffprobe/ffmpeg 子进程，`prepare_video` 失败时返回 `None`（调用方退文字提示），不抛异常掩盖。
-- mm_file 上传涉及 MiniMax Files API，`_upload_large` 失败时返回 `None`，调用方兜底走 base64。
+- mm_file 上传涉及 MiniMax Files API，`_upload_large` 失败时返回 `None`，调用方明确拒绝（不回退 base64，避免生成注定超限的字符串）。
 - 不新增可见日志；视频内容/文件名不写入日志（沿用 `agent/logsafe.py` 的 `fingerprint()` 约定）。
 - 流式清洗标记（`]<]minimax`/`[e~[`）目前硬编码在 `sanitize.py` 模块级常量，迁进适配器后仍是模块级常量（在 `minimax.py` 顶部），仅是归属模块变了，行为不变。
 

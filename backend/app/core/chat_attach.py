@@ -435,7 +435,7 @@ def _minimax_video_enabled(model_cfg) -> bool:
 #   1) ffprobe 探真实分辨率/码率（ffmpeg 已在 devserver 装好；生产部署需前置依赖）
 #   2) 分辨率 >1080p 或码率 >16Mbps → ffmpeg 转 1080p 5M h264（统一喂模型）
 #   3) 压缩后 ≤45MB → base64 内联；>45MB 且 ≤90MB → 上传 Files API 拿 mm_file://{fid}；
-#      >90MB 兜底仍走 base64（已知会超 MiniMax 上限，由错误兜底）
+#      >90MB 明确拒绝，不回退 base64（base64 注定超 MiniMax 上限，回退只会浪费内存再失败）
 #   4) 非 MiniMax 走 OpenAI 兼容块（mimo 等），与现状一致，不变
 async def _probe_video(raw: bytes) -> dict | None:
     """用 ffprobe 读视频分辨率/码率。返回 {width, height, bit_rate, codec}，失败 None。
