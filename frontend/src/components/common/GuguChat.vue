@@ -330,7 +330,7 @@ import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
-import { getGreeting, greeting, prefetchGreeting } from '@/composables/useGreeting'
+import { getGreeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { playGuguSfx } from '@/services/sfx'
 import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
@@ -661,8 +661,6 @@ function renderMdStream(text: string) {
   _mdStreamCache = { text, html }
   return html
 }
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 
 // ── 窗口状态 ────────────────────────────────────────────
 const open       = ref(false)
@@ -1065,9 +1063,8 @@ async function toggleVoice(f: ChatFile) {
   try {
     let url = _voiceUrls[id]
     if (!url) {
-      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
       const token = localStorage.getItem('user_token') ?? ''
-      const res = await fetch(`${BASE_URL}/agent/attachment/${id}/download`,
+      const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
         { headers: token ? { Authorization: `Bearer ${token}` } : {} })
       if (!res.ok) { _chatTip(res.status === 404 ? '这条语音过期啦（语音保留 30 天）🎤' : '语音加载失败了 😵'); return }
       url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
@@ -1773,6 +1770,7 @@ watch(messagesEl, (el, oldEl) => {
 onUnmounted(() => {
   messagesEl.value?.removeEventListener('scroll', onMsgScroll)
   _stopImPoll()
+  _stopChatBindPoll()
 })
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
@@ -1888,7 +1886,7 @@ async function resumeStream(id: number) {
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
   streaming.value = true; clearStatus(); setStatus(_thinkingItem())
   try {
-    const res = await fetch(`${BASE_URL}/agent/sessions/${id}/stream`, {
+    const res = await fetch(`${API_BASE}/agent/sessions/${id}/stream`, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       signal: abortCtrl.value.signal,
     })
@@ -1941,7 +1939,7 @@ async function send(forcedText?: string) {
   const greetingForSession = (ownerSid == null && _g0?._greeting) ? (_g0._greetFull || _g0.text || '') : ''
 
   try {
-    const res = await fetch(`${BASE_URL}/agent/chat`, {
+    const res = await fetch(`${API_BASE}/agent/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Client-Id': CLIENT_ID, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ message: text, session_id: ownerSid, attachments: atts.map(a => a.attach_id),
