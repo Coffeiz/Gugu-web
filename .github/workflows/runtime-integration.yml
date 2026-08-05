@@ -226,6 +226,30 @@ jobs:
         with:
           persist-credentials: false
 
+      # 前端 src/interaction/runtime/index.ts 用相对路径直接 import 同级仓库
+      # gugu-interaction-runtime 的源码（不是 npm 包），vite dev server 缺这个
+      # 兄弟目录会直接 500，导致整个 SPA 起不来——frontend/runtime 两个 job
+      # 已经这么做，e2e job 同样需要。
+      - name: Verify Runtime repository token
+        env:
+          RUNTIME_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
+        run: test -n "$RUNTIME_TOKEN" || { echo '::error::RUNTIME_REPO_TOKEN 未配置'; exit 1; }
+
+      - name: Read pinned Runtime commit
+        run: echo "RUNTIME_COMMIT=$(tr -d '[:space:]' < .runtime-version)" >> "$GITHUB_ENV"
+
+      - name: Checkout pinned Runtime
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.RUNTIME_REPOSITORY }}
+          ref: ${{ env.RUNTIME_COMMIT }}
+          path: gugu-interaction-runtime
+          token: ${{ secrets.RUNTIME_REPO_TOKEN }}
+          persist-credentials: false
+
+      - name: Recreate local sibling layout
+        run: ln -s "$GITHUB_WORKSPACE/gugu-interaction-runtime" "$GITHUB_WORKSPACE/../gugu-interaction-runtime"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
