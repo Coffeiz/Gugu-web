@@ -2252,7 +2252,7 @@ export interface paths {
         /**
          * Get Active Dimensions
          * @description 周活跃维度（近 7 天，去重用户数）。口径 v1 = 「操作过」（服务器有记录的创建/更新/触发），
-         *     纯浏览（查看）未埋点、不含——见 docs/product/design-admin.md 面板备注。
+         *     纯浏览（查看）未埋点、不含——见 docs/development/design-admin.md 面板备注。
          */
         get: operations["get_active_dimensions_api_v1_admin_analytics_active_dimensions_get"];
         put?: never;

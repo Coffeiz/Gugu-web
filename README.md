@@ -208,7 +208,7 @@ npm run dev                # http://localhost:5173
 | [docs/product/overview.md](docs/product/overview.md) | 项目总览、技术栈、API、进度 |
 | [docs/backend/storage.md](docs/backend/storage.md) | 文件存储结构（权威） |
 | [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
-| [docs/product/design.md](docs/product/design.md) | UI/UX 设计规范 |
+| [docs/development/design.md](docs/development/design.md) | UI/UX 设计规范 |
 | [docs/product/wishlist.md](docs/product/wishlist.md) | 功能规划 |
 | [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
 

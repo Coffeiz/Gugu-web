@@ -208,7 +208,7 @@
 
 - **反思不再把阶段性状态误存进稳定画像**（`agent/memory/reflection.py`）：带「最近 / 这周 / 目前」这类时效措辞的候选，以前会被当成身份画像写进 profile，现在拦下并回 daily；一键记忆维护同步加了把误入 profile 的阶段事件迁去 memory 的步骤（`app/api/v1/config.py`、`scripts/refresh_memory.py`）。
 - **思维面板设计/数据模型/实现方案草案落地**（`docs/product/思维面板/`）：产品设计、schema（全局节点 + 画布视图 + 关系边，含引用代理节点、墓碑删除、乐观锁）与逐阶段逐文件的工程方案成套冻结，待开工。
-- **前台设计规范补齐近期样式约定**（`docs/product/design.md`）：同步记录全局按压反馈、活玻璃圆角裁切、GuguChat 文件链接样式与日历周视图细节等最新 CSS 规则，避免设计文档与实际实现脱节。
+- **前台设计规范补齐近期样式约定**（`docs/development/design.md`）：同步记录全局按压反馈、活玻璃圆角裁切、GuguChat 文件链接样式与日历周视图细节等最新 CSS 规则，避免设计文档与实际实现脱节。
 - **卡片/按钮按压反馈统一**（`frontend/src/assets/styles/global.css`、`frontend/src/views/{Files,Schedules}/index.vue`、`frontend/src/views/Projects/components/{ProjectCard,ProjectModal,KanbanColumn}.vue`、`frontend/src/components/common/GuguChat.vue`）：补出统一的 `hover-card-fx` / `press-fx` 手感，文件卡、项目卡、聊天文件条、定时任务按钮和项目列新增按钮的悬停/按下反馈更一致；顺手修了项目编辑卡待办项长文本被单行截断的问题。
 - **定时任务创建/保存不再等 LLM 分类调用**（`app/api/v1/scheduled_tasks.py`）：点创建/保存立即返回，工具组/上下文精简判断改成后台异步补丁，不影响前端动画和交互。
 - **联网搜索工具组改名 `web_search`**（`agent/tools/search.py`、`agent/profiles/default.py`）：跟新增的站内 `global_search` 撞名太像，改名区分（实测存量定时任务无一命中旧组名，无需数据迁移）。
@@ -304,7 +304,7 @@
 - **文件拖拽两处静默失效**（`composables/useFileDragDrop.ts`、`views/Files/index.vue`）：`data-folder-key` 混用带前缀字符串导致 `Number()` 转出 `NaN`、面包屑落点判定读到被提前清空的拖拽状态，两个独立 bug 都是"看起来有反应、实际没挪窝"。详见 [devlog.md](docs/devlog.md) 2026-07-03 条目。
 - **项目编辑卡文件拖拽统一为 pointer 模式，抽取共享 composable**（新增 `composables/useFileDragDrop.ts`；`views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`）：项目编辑卡此前仍是原生 HTML5 拖拽，跟文件库改造前一样有归位悬停跳变的风险。把拖拽编排抽成共享 composable，文件库和项目编辑卡都改为消费它，差异点（data 属性名、面包屑放置规则、落地后刷新策略）做成配置项。
 - **文件卡拖拽改用 pointer 模式，根治归位悬停跳变**（`composables/usePhysicsDrag.ts`、`views/Files/index.vue`）：perf trace 定位根因——原生 HTML5 拖拽期间浏览器暂停 `mouseover`/`mouseout` 派发，抓起卡片时缓存的 `:hover=true` 直到 `dragend` 才刷新，导致归位揭示时 hover 高亮跳变。改用项目看板已验证的 pointer 模式（`setPointerCapture`）根治，不再在揭示时机上打补丁。
-- **快速重新抓拖拽落地中的卡片会抓到隐形克隆**（`composables/usePhysicsDrag.ts`）：Chrome trace 定位——两次拖拽间隔（约 310ms）可能短于落地动画复位源卡 `display`/`opacity` 的耗时（420~580ms），此时重新抓取量到的尺寸是 0×0，克隆不可见。入口处强制先复位源卡再量尺寸。顺带定版拖拽克隆的白底/毛玻璃比例，详见 [docs/product/design.md](docs/product/design.md)。
+- **快速重新抓拖拽落地中的卡片会抓到隐形克隆**（`composables/usePhysicsDrag.ts`）：Chrome trace 定位——两次拖拽间隔（约 310ms）可能短于落地动画复位源卡 `display`/`opacity` 的耗时（420~580ms），此时重新抓取量到的尺寸是 0×0，克隆不可见。入口处强制先复位源卡再量尺寸。顺带定版拖拽克隆的白底/毛玻璃比例，详见 [docs/development/design.md](docs/development/design.md)。
 
 ## [0.15.2] - 2026-07-02 · 商用就绪安全加固（多用户隔离/删除确认门/全链路可观测/隐私合规）+ 窗口系统 + 后台运维面板
 
@@ -325,7 +325,7 @@
 
 ### 改进
 
-- **毛玻璃三档统一收变量 + 拖拽克隆体毛玻璃**（`variables.css` + `global.css` + 12 个组件）：全站 blur 值此前散写多种数值。统一为三档并全走 CSS 变量（大面板/小弹窗/拖拽克隆，详见 [docs/product/design.md](docs/product/design.md)），拖拽克隆体新增毛玻璃背景，文件库/编辑卡/看板拖拽克隆全站一致。
+- **毛玻璃三档统一收变量 + 拖拽克隆体毛玻璃**（`variables.css` + `global.css` + 12 个组件）：全站 blur 值此前散写多种数值。统一为三档并全走 CSS 变量（大面板/小弹窗/拖拽克隆，详见 [docs/development/design.md](docs/development/design.md)），拖拽克隆体新增毛玻璃背景，文件库/编辑卡/看板拖拽克隆全站一致。
 - **后台刷新按钮全局统一 + 用户管理操作按钮横排**（`AdminApp.vue` + 12 个 Admin 页面）：所有页面刷新按钮统一为方形图标钮样式（抽成 Admin 全局共用），各页删除本地重复定义；用户管理操作列加宽并禁折行，修复加 DEV 按钮后被挤成竖排。
 
 ### 修复

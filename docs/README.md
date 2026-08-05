@@ -60,8 +60,8 @@
 - [`overview.md`](product/overview.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
 - [`mvp.md`](product/mvp.md) —— MVP 功能清单与状态
 - [`wishlist.md`](product/wishlist.md) —— 功能规划
-- [`design.md`](product/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
-- [`design-admin.md`](product/design-admin.md) —— Admin 后台设计规范
+- [`design.md`](development/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
+- [`design-admin.md`](development/design-admin.md) —— Admin 后台设计规范
 - [`file-preview.md`](product/file-preview.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
 - [`思维面板/`](product/思维面板/) —— 日常记录与项目画布、语义关联及咕咕协作。[设计草案](product/思维面板/设计草案.md)（产品）、[数据模型草案](product/思维面板/数据模型草案.md)（schema，权威）、[实现方案](product/思维面板/实现方案.md)（工程清单）
 - [`前端-JS转TS迁移指南.md`](product/前端-JS转TS迁移指南.md) —— JS→TS 渐进迁移的约定与进度
