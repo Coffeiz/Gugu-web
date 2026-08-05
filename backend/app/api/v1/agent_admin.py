@@ -10,7 +10,8 @@ PUT    /api/v1/admin/agent/llm-presets/{id}      → 编辑预设（api_key 留�
 DELETE /api/v1/admin/agent/llm-presets/{id}      → 删除预设
 POST   /api/v1/admin/agent/llm-presets/{id}/activate → 设为当前（同步写入 ai 段）
 POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
-GET    /api/v1/admin/agent/llm-presets/{id}/models   → 获取服务商模型列表
+GET    /api/v1/admin/agent/llm-presets/{id}/models   → 获取服务商模型列表（已保存预设）
+POST   /api/v1/admin/agent/llm-presets/models-preview → 用临时配置获取模型列表（新建时）
 
 GET    /api/v1/admin/agent/memory/legacy-files          → 扫描已被新文件取代的旧记忆文件（迁移遗留）
 POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧记忆文件
@@ -396,9 +397,11 @@ async def set_llm_strategy(body: StrategyUpdate):
 # 同步到 `ai`（当前激活段）的字段 + 默认值——create/update/activate 三处共用，**单一来源**：
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temperature",
-                 "context_tokens", "thinking", "reasoning_effort", "vision", "api_format")
-_AI_DEFAULTS = {"max_tokens": 2000, "temperature": 0.7, "context_tokens": 3000,
-                "thinking": "disabled", "reasoning_effort": "", "vision": False, "api_format": ""}
+                 "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
+                 "vision_audio", "api_format")
+_AI_DEFAULTS = {"max_tokens": 4000, "temperature": 0.7, "context_tokens": 120000,
+                "thinking": "disabled", "reasoning_effort": "", "vision": False,
+                "vision_video": False, "vision_audio": False, "api_format": ""}
 
 
 def _ai_segment(item: dict) -> dict:
@@ -412,12 +415,14 @@ class PresetCreate(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 2000
+    max_tokens: int = 4000
     temperature: float = 0.7
-    context_tokens: int = 3000
+    context_tokens: int = 120000
     thinking: str = "disabled"
     reasoning_effort: str = ""
     vision: bool = False
+    vision_video: bool = False
+    vision_audio: bool = False
     api_format: str = ""
 
 
@@ -439,6 +444,8 @@ async def create_llm_preset(body: PresetCreate):
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
         "vision": body.vision,
+        "vision_video": body.vision_video,
+        "vision_audio": body.vision_audio,
         "api_format": body.api_format,
     }
     presets["items"].append(item)
@@ -461,6 +468,8 @@ class PresetUpdate(BaseModel):
     thinking: str | None = None
     reasoning_effort: str | None = None
     vision: bool | None = None
+    vision_video: bool | None = None
+    vision_audio: bool | None = None
     api_format: str | None = None
     in_pool: bool | None = None
 
@@ -494,6 +503,10 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["reasoning_effort"] = body.reasoning_effort
     if body.vision is not None:
         item["vision"] = body.vision
+    if body.vision_video is not None:
+        item["vision_video"] = body.vision_video
+    if body.vision_audio is not None:
+        item["vision_audio"] = body.vision_audio
     if body.api_format is not None:
         item["api_format"] = body.api_format
     if body.in_pool is not None:
@@ -571,27 +584,25 @@ async def test_llm_preset(preset_id: str):
         return {"ok": False, "status": 0, "detail": str(e)[:300]}
 
 
-@router.get("/llm-presets/{preset_id}/models")
-async def list_llm_preset_models(preset_id: str):
-    """从已保存预设的服务商读取模型列表；API Key 只在后端使用。"""
+async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api_format: str = "") -> list[str]:
+    """向服务商请求模型列表，返回去重排序后的模型 id 列表。
+
+    - Anthropic 兼容端点的模型列表路径是 /v1/models；base_url 可能已含 /v1
+      （如 https://api.anthropic.com/v1），也可能不含（如 MiniMax 的
+      https://api.minimaxi.com/anthropic），统一补成 /v1/models，避免 404。
+    - API Key 只在后端使用，不落日志、不进响应。
+    """
     import httpx
     from app.core.redaction import diag_log
     from types import SimpleNamespace
 
-    override = _read_override()
-    presets = _ensure_presets(override)
-    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
-    if not item:
-        raise HTTPException(404, "预设不存在")
-    base_url = str(item.get("base_url") or "").rstrip("/")
+    base_url = (base_url or "").rstrip("/")
     if not base_url:
         raise HTTPException(400, "请先填写 Base URL")
-    provider = str(item.get("provider") or "openai")
-    api_key = str(item.get("api_key") or "")
     from agent.llm_select import use_anthropic_for
 
     is_anthropic = use_anthropic_for(SimpleNamespace(
-        provider=provider, base_url=base_url, api_format=item.get("api_format", ""),
+        provider=provider, base_url=base_url, api_format=api_format,
     ))
     is_mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()
     headers = {"Accept": "application/json"}
@@ -602,9 +613,10 @@ async def list_llm_preset_models(preset_id: str):
     if is_mimo:
         headers["api-key"] = api_key
         headers.pop("Authorization", None)
+    models_path = "/models" if not is_anthropic or base_url.endswith("/v1") else "/v1/models"
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
-            response = await client.get(f"{base_url}/models", headers=headers)
+            response = await client.get(f"{base_url}{models_path}", headers=headers)
         if response.status_code >= 400:
             diag_log("admin.llm_preset_models.upstream", RuntimeError(
                 f"status={response.status_code} body={response.text[:500]}"))
@@ -613,8 +625,7 @@ async def list_llm_preset_models(preset_id: str):
             raise HTTPException(502, f"服务商暂不支持模型列表（HTTP {response.status_code}）")
         payload = response.json()
         rows = payload.get("data", []) if isinstance(payload, dict) else payload
-        models = sorted({str(row.get("id")) for row in rows if isinstance(row, dict) and row.get("id")})
-        return {"models": models, "source": "provider"}
+        return sorted({str(row.get("id")) for row in rows if isinstance(row, dict) and row.get("id")})
     except HTTPException:
         raise
     except Exception as exc:
@@ -622,13 +633,47 @@ async def list_llm_preset_models(preset_id: str):
         raise HTTPException(502, "获取模型列表失败，请检查地址和网络") from exc
 
 
+@router.get("/llm-presets/{preset_id}/models")
+async def list_llm_preset_models(preset_id: str):
+    """从已保存预设的服务商读取模型列表；API Key 只在后端使用。"""
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    models = await _fetch_provider_models(
+        str(item.get("base_url") or ""),
+        str(item.get("provider") or "openai"),
+        str(item.get("api_key") or ""),
+        str(item.get("api_format") or ""),
+    )
+    return {"models": models, "source": "provider"}
+
+
+class ModelsPreview(BaseModel):
+    provider: str = "openai"
+    base_url: str = ""
+    api_key: str = ""
+    api_format: str = ""
+
+
+@router.post("/llm-presets/models-preview")
+async def preview_llm_preset_models(body: ModelsPreview):
+    """用表单里的临时配置获取模型列表（新建预设时用，无需先保存）。"""
+    models = await _fetch_provider_models(body.base_url, body.provider, body.api_key, body.api_format)
+    return {"models": models, "source": "provider"}
+
+
 def _probe_png_b64() -> str:
-    """纯 stdlib 造一张 8×8 实色 PNG 的 base64，用作多模态探测图（不依赖 Pillow）。"""
+    """纯 stdlib 造一张 64×64 实色 PNG 的 base64，用作多模态探测图（不依赖 Pillow）。
+
+    尺寸选择：百炼 qwen 等 OpenAI 兼容厂商对图片有最小尺寸限制（如百炼要求宽/高 >10px），
+    8×8 会被误判成"模型不支持多模态"。64×64 同时满足各家常见下限，又不增加带宽负担。"""
     import base64
     import struct
     import zlib
-    w = h = 8
-    row = b"\x00" + b"\xe0\x40\x40" * w          # 每行：filter 0 + 8 像素(RGB 暗红)
+    w = h = 64
+    row = b"\x00" + b"\xe0\x40\x40" * w          # 每行：filter 0 + 64 像素(RGB 暗红)
     idat = zlib.compress(row * h)
     def _chunk(typ: bytes, data: bytes) -> bytes:
         body = typ + data
@@ -640,40 +685,160 @@ def _probe_png_b64() -> str:
     return base64.b64encode(png).decode()
 
 
-async def _do_vision_probe(provider, api_key, base_url, model, api_format="") -> tuple:
-    """发一张极小图给模型，看接不接受。用真正的 SDK 客户端（与 runner 同款），
+def _probe_wav_b64() -> str:
+    """纯 stdlib 造一段 0.1s 静音 16bit/8kHz 单声道 WAV 的 base64，用作音频探测（不依赖 ffmpeg）。
+
+    只含 WAV 头 + 静音 PCM，体积极小；用于探测主模型是否接受 input_audio 音频块。"""
+    import base64
+    import struct
+    import wave
+    import io
+    rate = 8000
+    frames = rate // 10                       # 0.1s
+    pcm = b"\x00\x00" * frames                # 静音
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+_PROBE_MP4_B64_CACHE: str | None = None
+
+
+def _probe_mp4_b64() -> str:
+    """用 ffmpeg 生成一段 3 秒 320×240 的动态测试视频（testsrc 彩条）并返回 base64，
+    用作视频探测的真实样本（不依赖 PIL/Pillow）。
+
+    缓存到模块级：同一进程内只生成一次。ffmpeg 不可用时抛 RuntimeError，由探测函数降级。
+    百炼/千问等视频理解模型对「图像列表」形式（4 张 PNG）会返回极慢（80s+）且识别不出内容，
+    必须发真实 mp4 才能正确探测视频能力。"""
+    global _PROBE_MP4_B64_CACHE
+    if _PROBE_MP4_B64_CACHE is not None:
+        return _PROBE_MP4_B64_CACHE
+    import base64
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg 未安装，无法生成视频探测样本")
+    # 3s / 320x240 / 10fps / libx264 / yuv420p / +faststart，约 16KB。
+    # 百炼/千问要求视频 ≥2s，1s 会被拒（"The video file is too short"）；3s 更稳妥。
+    # mp4 muxer 不支持非 seekable 输出，必须写临时文件再读回。
+    fd, tmp = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    try:
+        cmd = [ffmpeg, "-y", "-loglevel", "error",
+               "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p",
+               "-movflags", "+faststart", tmp]
+        proc = subprocess.run(cmd, capture_output=True, timeout=30)
+        if proc.returncode != 0:
+            raise RuntimeError(f"ffmpeg 生成探测视频失败：{proc.stderr.decode(errors='ignore')[:200]}")
+        with open(tmp, "rb") as f:
+            data = f.read()
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    if not data:
+        raise RuntimeError("ffmpeg 生成的探测视频为空")
+    _PROBE_MP4_B64_CACHE = base64.b64encode(data).decode()
+    return _PROBE_MP4_B64_CACHE
+
+
+async def _do_vision_probe(provider, api_key, base_url, model, api_format="", dim="image") -> tuple:
+    """发一个极小媒体给模型，看接不接受。用真正的 SDK 客户端（与 runner 同款），
     路径/鉴权头由 SDK 拼，避免手写 URL 在 minimax 这种 base_url 上猜错。
+
+    `dim`：image | video | audio，决定探测哪种媒体块。
     返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
     import httpx
     from types import SimpleNamespace
     from agent import providers
     from agent.llm_select import use_anthropic_for
-    b64 = _probe_png_b64()
-    q = "这张图是什么颜色？用一个词回答。"
-    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key, api_format=api_format)
+    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
+                          model=model, api_format=api_format)
     # 与 runner 同一判定口（含显式 api_format）
     is_anthropic = use_anthropic_for(_ns)
-    timeout = httpx.Timeout(connect=10.0, read=25.0, write=10.0, pool=5.0)
+    # 视频理解（真实 mp4）耗时明显更长：百炼实测约 40s，图像列表形式甚至 80s+。
+    # 视频探测单独放宽 read 超时，避免 25s 默认值导致前端一直"检测中"。
+    read_timeout = 90.0 if dim == "video" else 25.0
+    timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=5.0)
+    dim_label = {"image": "图片", "video": "视频", "audio": "音频"}.get(dim, dim)
+
+    # 视频在 Anthropic 路（MiniMax M3）是硬编码已知能力，无需探测；其余 Anthropic 路不支持视频块
+    if dim == "video" and is_anthropic:
+        from app.core.chat_attach import _minimax_video_enabled
+        if _minimax_video_enabled(_ns):
+            return True, 200, "MiniMax M3 原生支持视频块 ✅"
+        return False, 200, "Anthropic 路当前仅 MiniMax M3 支持视频块"
+
+    # MiMo 的 OpenAI 扩展块（video_url / input_audio）是已知能力，直接判定，避免探测格式不匹配误判
+    if not is_anthropic and dim in ("video", "audio"):
+        from agent.llm_select import _is_mimo
+        if _is_mimo(_ns):
+            return True, 200, f"MiMo 原生支持{dim_label}输入 ✅"
+
     try:
         if is_anthropic:
             client = providers.build_anthropic_client(_ns, timeout)
-            await client.messages.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
-                {"type": "text", "text": q},
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
-            ]}])
+            if dim == "image":
+                content = [
+                    {"type": "text", "text": "这张图是什么颜色？用一个词回答。"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                 "data": _probe_png_b64()}},
+                ]
+            elif dim == "audio":
+                content = [
+                    {"type": "text", "text": "这段音频说了什么？用一个词回答。"},
+                    {"type": "input_audio", "source": {"type": "base64", "media_type": "audio/wav",
+                                                       "data": _probe_wav_b64()}},
+                ]
+            else:  # video（Anthropic 路已在上方拦截，这里兜底）
+                return False, 200, "Anthropic 路不支持视频探测"
+            await client.messages.create(model=model, max_tokens=16,
+                                         messages=[{"role": "user", "content": content}])
         else:
             client = providers.build_openai_client(_ns, timeout)
-            await client.chat.completions.create(model=model, max_tokens=16, messages=[{"role": "user", "content": [
-                {"type": "text", "text": q},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
-            ]}])
-        return True, 200, "模型接受了图片输入 ✅ 支持多模态"
+            if dim == "image":
+                content = [
+                    {"type": "text", "text": "这张图是什么颜色？用一个词回答。"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_probe_png_b64()}"}},
+                ]
+            elif dim == "video":
+                # 用真实 mp4（video_url 块）探测视频理解。百炼/千问等对「图像列表」形式
+                # （type=video + 4 张 PNG）会返回极慢（80s+）且识别不出内容，必须发真实视频。
+                # ffmpeg 不可用时降级为纯文本判定（返回 None，提示无法生成样本）。
+                try:
+                    mp4_b64 = _probe_mp4_b64()
+                except RuntimeError as e:
+                    return None, 200, f"无法生成视频探测样本：{e}"
+                content = [
+                    {"type": "text", "text": "这段视频里发生了什么？用一个词回答。"},
+                    {"type": "video_url", "video_url": {"url": f"data:video/mp4;base64,{mp4_b64}"},
+                     "fps": 2},
+                ]
+            else:  # audio
+                content = [
+                    {"type": "text", "text": "这段音频说了什么？用一个词回答。"},
+                    {"type": "input_audio", "input_audio": {
+                        "data": f"data:audio/wav;base64,{_probe_wav_b64()}"}},
+                ]
+            await client.chat.completions.create(model=model, max_tokens=16,
+                                                 messages=[{"role": "user", "content": content}])
+        return True, 200, f"模型接受了{dim_label}输入 ✅"
     except Exception as e:
         sc = getattr(e, "status_code", None) or 0
         msg = str(e)[:200]
         if sc in (400, 422):
-            # 鉴权过了、格式也对，却拒了图片块 → 多为纯文本模型不认 image
-            return False, sc, f"模型拒绝了图片输入，应为纯文本模型：{msg}"
+            # 鉴权过了、格式也对，却拒了媒体块 → 多为纯文本模型不认该媒体
+            return False, sc, f"模型拒绝了{dim_label}输入，应为纯文本模型：{msg}"
         if sc in (401, 403):
             return None, sc, f"鉴权失败（{sc}），先确认 Key/连通性再测"
         if sc == 404:
@@ -682,23 +847,48 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="") ->
 
 
 @router.post("/llm-presets/{preset_id}/probe-vision")
-async def probe_vision_preset(preset_id: str):
-    """探测预设模型是否支持多模态，并把明确结论（True/False）写回 vision 字段。"""
+async def probe_vision_preset(preset_id: str, dim: str = ""):
+    """探测预设模型的多模态能力，并把明确结论写回对应字段。
+
+    `dim`：image | video | audio，只测单维度；省略则依次测全部三维度。
+    返回：单维度 → {supported,status,detail,dim}；全维度 → {results:{image:{...},video:{...},audio:{...}}}。"""
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
     if not item:
         raise HTTPException(404, "预设不存在")
-    supported, sc, detail = await _do_vision_probe(
-        item.get("provider", "openai"), item.get("api_key", ""),
-        item.get("base_url", "").rstrip("/"), item.get("model", ""),
-        item.get("api_format", ""))
-    if supported is not None:   # 结论明确才落库
-        item["vision"] = supported
+    dims = [dim] if dim else ["image", "video", "audio"]
+    if any(d not in ("image", "video", "audio") for d in dims):
+        raise HTTPException(400, "dim 仅支持 image/video/audio")
+
+    def _write_back(d: str, supported):
+        field = "vision" if d == "image" else f"vision_{d}"
+        item[field] = supported
         if presets.get("active_id") == preset_id:
-            override.setdefault("ai", {})["vision"] = supported
-        _write_override(override)
-    return {"supported": supported, "status": sc, "detail": detail}
+            override.setdefault("ai", {})[field] = supported
+
+    if len(dims) == 1:
+        d = dims[0]
+        supported, sc, detail = await _do_vision_probe(
+            item.get("provider", "openai"), item.get("api_key", ""),
+            item.get("base_url", "").rstrip("/"), item.get("model", ""),
+            item.get("api_format", ""), dim=d)
+        if supported is not None:   # 结论明确才落库
+            _write_back(d, supported)
+            _write_override(override)
+        return {"supported": supported, "status": sc, "detail": detail, "dim": d}
+
+    results = {}
+    for d in dims:
+        supported, sc, detail = await _do_vision_probe(
+            item.get("provider", "openai"), item.get("api_key", ""),
+            item.get("base_url", "").rstrip("/"), item.get("model", ""),
+            item.get("api_format", ""), dim=d)
+        results[d] = {"supported": supported, "status": sc, "detail": detail}
+        if supported is not None:
+            _write_back(d, supported)
+    _write_override(override)
+    return {"results": results}
 
 
 # IM 机器人接入：飞书 / QQ 都走「用户自带(BYO)」，在用户设置里管理

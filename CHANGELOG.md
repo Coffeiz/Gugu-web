@@ -9,6 +9,8 @@
 
 ### 新增
 
+- **MiniMax M3 大视频 mm_file 传输**（`backend/app/core/chat_attach.py`）：视频分辨率 >1080p 或码率 >16Mbps 时自动压缩成 1080p 5M h264；压缩后 >45MB 的视频上传 Files API 用 `mm_file://` 引用，突破 base64 36MB 限制，可处理到约 90MB 视频。
+
 - **定时任务完整 AgentLoop 执行**（`backend/app/scheduled_tasks.py`、`backend/agent/scheduled_report.py`）：定时任务执行阶段统一使用完整 AgentLoop，按需对有工具调用的结果生成报告，并支持明确的执行/报告重试边界。
 - **LLM 预设模型选择**（`frontend/src/views/Admin/Agent/`）：Admin 支持管理和选择模型预设，减少切换模型时手动修改连接参数的成本。
 

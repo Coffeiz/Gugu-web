@@ -87,11 +87,13 @@
               </div>
               <div class="preset-card-meta">
                 <span class="preset-model">{{ p.model }}</span>
-                <span class="preset-meta-item">out {{ p.max_tokens ?? 2000 }}</span>
-                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 4000 }}</span>
+                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 120000 }}</span>
                 <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><PhBrain :size="11" weight="bold" />思考</span>
-                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />多模态</span>
+                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />图片</span>
+                <span v-if="p.vision_video" class="preset-meta-item preset-meta-vision"><PhVideo :size="11" weight="bold" />视频</span>
+                <span v-if="p.vision_audio" class="preset-meta-item preset-meta-vision"><PhMicrophone :size="11" weight="bold" />音频</span>
                 <span class="preset-key" :title="p.api_key || '未设置 Key'">{{ p.api_key || '未设置 Key' }}</span>
               </div>
             </div>
@@ -159,6 +161,9 @@
             <div class="modal-field">
               <label>Base URL</label>
               <input v-model="editTarget.base_url" placeholder="https://…" class="modal-input" />
+              <div v-if="editTarget.provider === 'qwen'" class="modal-hint">
+                百炼建议使用业务空间专属域名：<code>https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</code>（WorkspaceId 在控制台业务空间详情页查看）；通用域名 dashscope.aliyuncs.com 仍可用
+              </div>
             </div>
 
             <div class="modal-field">
@@ -167,8 +172,8 @@
                 <div class="model-picker-row">
                   <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input"
                     @focus="modelMenuOpen = true" />
-                  <button type="button" class="model-fetch-btn" :disabled="modelListLoading || editIsNew"
-                    :title="editIsNew ? '请先保存预设，再获取模型列表' : '从服务商获取模型列表'"
+                  <button type="button" class="model-fetch-btn" :disabled="modelListLoading"
+                    title="从服务商获取模型列表"
                     @mousedown.prevent @click="fetchModelList">
                     {{ modelListLoading ? '获取中…' : '获取列表' }}
                   </button>
@@ -176,7 +181,7 @@
                 <div v-if="modelMenuOpen" class="model-options" @mousedown.stop>
                   <div v-if="modelListError" class="model-option-hint error">{{ modelListError }}</div>
                   <div v-else-if="!modelOptions.length" class="model-option-hint">
-                    {{ editIsNew ? '保存预设后可自动获取；也可以直接手动输入' : '点击“获取列表”加载可用模型' }}
+                    点击“获取列表”加载可用模型
                   </div>
                   <button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option"
                     @mousedown.prevent="selectModel(model)">{{ model }}</button>
@@ -237,16 +242,33 @@
 
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
-                <span>多模态（看图）</span>
-                <span class="thinking-hint">开启后用户发的图片直接给模型「看」；不确定就用卡片上的「检测多模态」自动判定</span>
+                <span>多模态能力</span>
+                <span class="thinking-hint">图片/视频/音频分别开关；点「检测」自动判定该维度是否支持，成功后自动开启</span>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ on: editTarget.vision }"
-                @click="editTarget.vision = !editTarget.vision"
-              >
-                <span class="toggle-knob" />
-              </button>
+            </div>
+
+            <div class="modal-field modal-field--row" v-for="dim in visionDims" :key="dim.key">
+              <div class="thinking-label">
+                <span>{{ dim.label }}</span>
+                <span class="thinking-hint">{{ dim.hint }}</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <button
+                  type="button"
+                  class="pca-btn pca-btn--sm"
+                  :class="{ 'pca-btn--testing': probingDim === dim.key }"
+                  :disabled="editIsNew || (probingDim !== null && probingDim !== dim.key)"
+                  :title="editIsNew ? '先保存预设再检测' : ''"
+                  @click="probeVision(editTarget.id, dim.key)"
+                >{{ probingDim === dim.key ? '检测中…' : '检测' }}</button>
+                <button
+                  class="toggle-switch"
+                  :class="{ on: editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] }"
+                  @click="editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] = !editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key]"
+                >
+                  <span class="toggle-knob" />
+                </button>
+              </div>
             </div>
 
             <div class="modal-actions">
@@ -1172,7 +1194,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
-import { PhBrain, PhEye } from '@phosphor-icons/vue'
+import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
@@ -1347,10 +1369,10 @@ async function openTrace(id: any) {
 const PROVIDERS = [
   { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
   { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
-  { key: 'qwen',      label: '通义千问',    base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+  { key: 'qwen',      label: 'DashScope(百炼)', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
-  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://token-plan-cn.xiaomimimo.com/v1',            model: 'mimo-v2.5' },
+  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },
 ]
 
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
@@ -1369,6 +1391,14 @@ const llmMsgError    = ref(false)
 const testingId      = ref<any | null>(null)
 const activatingId   = ref<any | null>(null)
 const probingId      = ref<any | null>(null)
+const probingDim     = ref<string | null>(null)   // 弹窗内正在检测的维度（image/video/audio）
+
+// 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
+const visionDims = [
+  { key: 'image', label: '图片', hint: '用户发的图片直接给模型「看」' },
+  { key: 'video', label: '视频', hint: '用户发的视频直接给模型「看」' },
+  { key: 'audio', label: '音频', hint: '用户发的音频直接给模型「听」' },
+]
 
 // edit modal
 const editTarget   = ref<any | null>(null)
@@ -1467,7 +1497,7 @@ async function togglePool(p: any) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', reasoning_effort: '', vision: false, api_format: '' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_video: false, vision_audio: false, api_format: '' }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -1494,12 +1524,27 @@ function selectModel(model: string) {
 }
 
 async function fetchModelList() {
-  if (!editTarget.value || editIsNew.value || modelListLoading.value) return
+  if (!editTarget.value || modelListLoading.value) return
   modelListLoading.value = true
   modelListError.value = ''
   modelMenuOpen.value = true
   try {
-    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${editTarget.value.id}/models`)
+    let res
+    if (editIsNew.value) {
+      // 新建时用表单里的临时配置获取，无需先保存
+      res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/models-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: editTarget.value.provider,
+          base_url: editTarget.value.base_url,
+          api_key: editTarget.value.api_key,
+          api_format: editTarget.value.api_format || '',
+        }),
+      })
+    } else {
+      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${editTarget.value.id}/models`)
+    }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || '获取模型列表失败')
     modelOptions.value = Array.isArray(data.models) ? data.models : []
@@ -1609,20 +1654,51 @@ async function testPreset(id: any) {
   }
 }
 
-// 多模态探测：发一张极小图给该预设模型，按响应判定是否支持看图，结论自动写回 vision
-async function probeVision(id: any) {
-  probingId.value = id
+// 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
+// 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
+async function probeVision(id: any, dim?: string) {
+  if (dim) {
+    probingDim.value = dim
+  } else {
+    probingId.value = id
+  }
   try {
-    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/probe-vision`, { method: 'POST' })
+    const url = `/api/v1/admin/agent/llm-presets/${id}/probe-vision` + (dim ? `?dim=${dim}` : '')
+    const res  = await adminStore.authFetch(url, { method: 'POST' })
     const data = await res.json()
-    if (data.supported === true)       showMsg(`✅ 支持多模态（${data.status}），已开启`)
-    else if (data.supported === false) showMsg(`该模型不支持多模态，已设为关闭：${data.detail}`, true)
-    else                               showMsg(`测不准：${data.detail}`, true)
-    await fetchPresets()   // 刷新「👁 多模态」徽章
+    if (dim) {
+      // 单维度（弹窗内）
+      const label = visionDims.find(d => d.key === dim)?.label || dim
+      if (data.supported === true)       showMsg(`✅ ${label}：支持，已开启`)
+      else if (data.supported === false) showMsg(`${label}：不支持，已设为关闭：${data.detail}`, true)
+      else                               showMsg(`${label}：测不准：${data.detail}`, true)
+      if (data.supported === true) {
+        const field = dim === 'image' ? 'vision' : 'vision_' + dim
+        editTarget.value[field] = true
+      }
+    } else {
+      // 全维度（卡片）
+      const results = data.results || {}
+      const ok: string[] = [], no: string[] = [], unk: string[] = []
+      for (const d of visionDims) {
+        const r = results[d.key]
+        if (!r) continue
+        if (r.supported === true) ok.push(d.label)
+        else if (r.supported === false) no.push(d.label)
+        else unk.push(d.label)
+      }
+      const parts: string[] = []
+      if (ok.length) parts.push(`支持：${ok.join('、')}`)
+      if (no.length) parts.push(`不支持：${no.join('、')}`)
+      if (unk.length) parts.push(`测不准：${unk.join('、')}`)
+      showMsg(parts.length ? `检测完成 — ${parts.join('；')}` : '检测完成，未返回结果')
+    }
+    await fetchPresets()   // 刷新卡片徽章
   } catch (e) {
     showMsg('检测失败：' + (e instanceof Error ? e.message : String(e)), true)
   } finally {
     probingId.value = null
+    probingDim.value = null
   }
 }
 
@@ -2738,6 +2814,8 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
   color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
 }
 .pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
+.pca-btn--sm { padding: 4px 10px; font-size: 11px; }
+.pca-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* ── 频道：飞书回调地址 ── */
 .bots-redirect {
@@ -2863,6 +2941,8 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 }
 .modal-input:focus { border-color: rgba(123,127,178,0.45); }
 .modal-input::placeholder { color: rgba(255,255,255,0.2); }
+.modal-hint { font-size: 11px; line-height: 1.5; color: rgba(255,255,255,0.45); }
+.modal-hint code { color: rgba(123,127,178,0.9); background: rgba(123,127,178,0.12); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }
 .model-picker { position: relative; }
 .model-picker-row { display: flex; gap: 7px; align-items: center; }
 .model-picker-row .modal-input { min-width: 0; flex: 1; }
