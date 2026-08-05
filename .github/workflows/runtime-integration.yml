@@ -170,3 +170,148 @@ jobs:
 
       - name: Confirmation gate guard
         run: python backend/scripts/check_confirm_gate.py
+
+  # 最小 E2E 基线：只保留两条不可 skip 的关键路径（文件上传删除、定时任务立即
+  # 运行），环境全部确定化——真实 Postgres/Redis + 本地存储后端 + 假 LLM
+  # （scripts/mock_llm_server.py 固定回复，不接外部网络/不花钱/不受限流影响）。
+  # 现有 Playwright 用例（filesystem-phases.spec.ts 等）大量依赖长期测试账号的
+  # 既有数据、用 test.skip() 兜底，会出现"全绿但什么都没测"，不接入 CI；
+  # OSS staging key 校验、Redis 锁续租超 TTL、崩溃恢复等后端安全/竞态场景继续
+  # 留在 backend/tests/ 的 pytest 里验证，不强行塞进浏览器测试。
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pm
+          POSTGRES_PASSWORD: pm123
+          POSTGRES_DB: gugu_web
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pm"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    env:
+      DB__HOST: 127.0.0.1
+      DB__PORT: 5432
+      DB__NAME: gugu_web
+      DB__USER: pm
+      DB__PASSWORD: pm123
+      REDIS__HOST: 127.0.0.1
+      REDIS__PORT: 6379
+      STORAGE__BACKEND: local
+      AI__PROVIDER: openai
+      AI__BASE_URL: http://127.0.0.1:8899/v1
+      AI__API_KEY: dummy
+      AI__MODEL: e2e-mock
+      SECRET_KEY: e2e-ci-not-a-real-secret
+      PLAYWRIGHT_USERNAME: e2e_ci_user
+      PLAYWRIGHT_PASSWORD: E2eCiPass!2026
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:5173
+    steps:
+      - name: Checkout Gugu-web
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Start mock LLM server
+        working-directory: backend
+        run: |
+          PYTHONPATH=. nohup python -m uvicorn scripts.mock_llm_server:app --port 8899 \
+            > /tmp/mock-llm.log 2>&1 &
+          for i in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8899/openapi.json > /dev/null && exit 0
+            sleep 1
+          done
+          echo '::error::mock LLM server 未在预期时间内启动'; cat /tmp/mock-llm.log; exit 1
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          PYTHONPATH=. nohup python -m uvicorn app.main:app --port 8000 \
+            > /tmp/backend.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:8000/openapi.json > /dev/null && exit 0
+            sleep 1
+          done
+          echo '::error::backend 未在预期时间内启动'; cat /tmp/backend.log; exit 1
+
+      - name: Seed E2E test user
+        working-directory: backend
+        run: |
+          PYTHONPATH=. python scripts/seed_e2e_user.py \
+            http://127.0.0.1:8000 "$PLAYWRIGHT_USERNAME" "$PLAYWRIGHT_PASSWORD"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Start frontend dev server
+        working-directory: frontend
+        run: |
+          nohup npm run dev -- --port 5173 --strictPort > /tmp/frontend.log 2>&1 &
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:5173 > /dev/null && exit 0
+            sleep 1
+          done
+          echo '::error::frontend dev server 未在预期时间内启动'; cat /tmp/frontend.log; exit 1
+
+      - name: Run E2E (关键路径子集)
+        working-directory: frontend
+        # 按文件而非 --grep 选测试：chromium 项目依赖 setup 项目（登录态），
+        # --grep 会连 setup 项目里那条不带 @ci 的登录用例一起过滤掉，导致
+        # 依赖链断裂；按路径跑则 setup 依赖照常执行，只是被测文件收窄。
+        run: npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts
+
+      - name: Upload backend/frontend logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-server-logs
+          path: |
+            /tmp/backend.log
+            /tmp/frontend.log
+            /tmp/mock-llm.log
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
