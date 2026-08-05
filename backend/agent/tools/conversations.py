@@ -179,6 +179,7 @@ class ConversationsSkill(BaseSkill):
                 "required": ["session_id"],
             },
             handler=_bind_web_session,
+            mutates=True,
         ),
     ]
 

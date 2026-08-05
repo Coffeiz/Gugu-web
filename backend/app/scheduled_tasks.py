@@ -129,44 +129,85 @@ async def reconcile() -> None:
 
 
 # ── 执行 ─────────────────────────────────────────────────────────────────────
+# 跨进程任务锁：调度触发（Worker 进程）和「立即试运行」（Web 进程）都调同一个
+# execute_task()，用户连点两次试运行也会并行。没有锁的话，会调 create_project/
+# update_file 这类工具的任务可能重复产生副作用和重复消息。timeout 是崩溃兜底
+# （进程死掉忘记 release 时自动过期），不是正常执行时长上限。
+_SCHEDULED_LOCK_TIMEOUT = 600   # 秒
+
+
+def _scheduled_lock_key(task_id: int) -> str:
+    return f"scheduled:lock:{task_id}"
+
+
 async def execute_task(task_id: int, is_trial: bool = False) -> dict:
-    """执行一次任务，返回各渠道投递结果 {渠道: 状态}（试运行据此给用户反馈）。"""
-    import app.db.session as ss
-    from app.models import ScheduledTask
-    result: dict = {}
-    async with ss._SessionLocal() as db:
-        t = await db.get(ScheduledTask, task_id)
-        if not t or not t.enabled:
-            return {"错误": "任务不存在或已停用"}
-        payload, uid, name = t.payload or "", t.user_id, t.name
-        target_map = t.delivery_targets
-        chans = {c for c in (t.channels or "").split(",") if c}
-        is_once = (t.cron or "").startswith("@once:")
-        if not is_trial and is_once and t.last_run_at is not None:
-            return {"错误": "一次性任务已经执行过或正在执行"}
-        if not is_trial:
-            t.last_run_at = now_utc()
-        await db.commit()
+    """执行一次任务，返回各渠道投递结果 {渠道: 状态}（试运行据此给用户反馈）。
+
+    同一 task_id 同一时刻只允许一处在跑：试运行和正式触发共用同一把 Redis 锁，
+    拿不到锁直接返回「正在执行」，不排队等待（避免堆积重复触发）。
+    """
+    from app.core.redis import get_redis
+    from redis.exceptions import LockError
+
+    # thread_local=False：asyncio 单线程多协程共享 threading.local()，用默认值会
+    # 让并发的其它协程也读到这把锁的 token，release 时的 token 校验形同虚设。
+    lock = get_redis().lock(
+        _scheduled_lock_key(task_id), timeout=_SCHEDULED_LOCK_TIMEOUT, thread_local=False,
+    )
+    if not await lock.acquire(blocking=False):
+        return {"错误": "任务正在执行，请稍后再试"}
+
     try:
-        now_str = local_now().strftime("%Y-%m-%d %H:%M")
-        target_description = _scheduled_delivery_targets(chans)
-        prompt = (
-            f"[定时任务触发：{name}]\n"
-            f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
-            f"本轮消息将由系统投递到：{target_description}。\n"
-            "请以咕咕的身份完成这项任务，只生成要发给用户的正文。"
-            "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
-            "也不要提及渠道、推送、工具不可用或无法发送。"
-        )
-        text = await _run_agent(uid, prompt, trial=is_trial)
-        result = await deliver_to_channels(uid, name, text, chans, target_map)
-        if not is_trial and is_once and _delivery_succeeded(result):
-            await _delete_completed_once(task_id, uid)
-    except Exception as e:
-        diag_log("app.scheduled_tasks.execute_task", e)
-        result["错误"] = "任务执行失败"
-        print(f"[sched] 执行任务 {task_id} 出错: {redact(type(e).__name__)}", flush=True)
-    return result
+        import app.db.session as ss
+        from app.models import ScheduledTask
+        result: dict = {}
+        async with ss._SessionLocal() as db:
+            t = await db.get(ScheduledTask, task_id)
+            if not t or not t.enabled:
+                return {"错误": "任务不存在或已停用"}
+            payload, uid, name = t.payload or "", t.user_id, t.name
+            target_map = t.delivery_targets
+            chans = {c for c in (t.channels or "").split(",") if c}
+            is_once = (t.cron or "").startswith("@once:")
+            # last_run_failed=True：上次触发过但失败了，允许再触发一次；只有"已经成功"
+            # 或"正在跑"（last_run_at 非空且没标失败）才拒绝。
+            if not is_trial and is_once and t.last_run_at is not None and not t.last_run_failed:
+                return {"错误": "一次性任务已经执行过或正在执行"}
+            if not is_trial:
+                t.last_run_at = now_utc()
+                if is_once:
+                    t.last_run_failed = False   # 先乐观清掉，失败了 except/失败分支会重新标
+            await db.commit()
+        try:
+            now_str = local_now().strftime("%Y-%m-%d %H:%M")
+            target_description = _scheduled_delivery_targets(chans)
+            prompt = (
+                f"[定时任务触发：{name}]\n"
+                f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
+                f"本轮消息将由系统投递到：{target_description}。\n"
+                "请以咕咕的身份完成这项任务，只生成要发给用户的正文。"
+                "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
+                "也不要提及渠道、推送、工具不可用或无法发送。"
+            )
+            text = await _run_agent(uid, prompt, trial=is_trial)
+            result = await deliver_to_channels(uid, name, text, chans, target_map)
+            if not is_trial and is_once:
+                if _delivery_succeeded(result):
+                    await _delete_completed_once(task_id, uid)
+                else:
+                    await _mark_once_failed(task_id)
+        except Exception as e:
+            diag_log("app.scheduled_tasks.execute_task", e)
+            result["错误"] = "任务执行失败"
+            print(f"[sched] 执行任务 {task_id} 出错: {redact(type(e).__name__)}", flush=True)
+            if not is_trial and is_once:
+                await _mark_once_failed(task_id)
+        return result
+    finally:
+        try:
+            await lock.release()
+        except LockError:
+            pass   # 已经因 timeout 自动过期释放，不是错误
 
 
 def _delivery_succeeded(result: dict) -> bool:
@@ -185,6 +226,24 @@ async def _delete_completed_once(task_id: int, user_id) -> None:
             await db.delete(task)
             await db.commit()
     await _notify_tasks_changed([user_id])
+
+
+async def _mark_once_failed(task_id: int) -> None:
+    """一次性任务触发但没有成功投递：标记 last_run_failed，允许再触发一次。
+
+    跟 last_run_at（"触发过"）分开：last_run_at 非空 + last_run_failed=True 才是
+    "触发过但失败了"，reconcile()/execute_task() 据此区分"已成功"（last_run_at
+    非空、行已经被删）、"正在跑或已成功"（last_run_at 非空、没标失败）、
+    "失败待重试"（last_run_at 非空、标了失败）三种状态。
+    """
+    import app.db.session as ss
+    from app.models import ScheduledTask
+
+    async with ss._SessionLocal() as db:
+        task = await db.get(ScheduledTask, task_id)
+        if task:
+            task.last_run_failed = True
+            await db.commit()
 
 
 async def deliver_to_channels(
@@ -383,6 +442,12 @@ async def _run_agent(
             "[scheduled-phase] %s",
             json.dumps({"event": "report-retry-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
         )
+        if report_failed:
+            # report 两次都失败：execution 已经成功产出了内容，report 只是负责把它
+            # 转述成更合适的措辞——report 失败时错误文案通常也非空，`report_text or
+            # execution_text` 这种写法会优先把错误文案发给用户，而不是已经有的
+            # execution 结果。两次都失败就直接用 execution 的产出兜底，不用 report_text。
+            return sanitize.strip_disallowed_emoji(execution_text or last_text)
         return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text)
 
     return sanitize.strip_disallowed_emoji(last_text)

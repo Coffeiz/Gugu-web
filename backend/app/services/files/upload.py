@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,7 @@ class PresignTarget:
     ext: str
     final_key: str
     final_name: str
+    staging_key: str
     overwrite_file_id: Optional[int] = None
 
 
@@ -28,6 +30,9 @@ class ConfirmUploadResult:
     project: Optional[Project]
     folder_name: Optional[str]
     overwritten_file_id: Optional[int] = None
+    # 覆盖上传落地到新 key 后，DB 已经指向新 key；旧物理对象要等路由 commit 成功
+    # 才能删——confirm_oss_upload 只 flush，提前删掉旧对象会在事务回滚时丢数据。
+    old_storage_key: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -36,12 +41,37 @@ class UploadedObjectInfo:
     mime_type: str
 
 
+def _staging_key(user_id: int, ext: str) -> str:
+    """签发直传地址用的临时 key，跟最终落点分离。
+
+    presign 不再直接对最终 key（含覆盖场景下已有文件的 storage_key）签发 PUT——
+    浏览器一 PUT 就会让 OSS 立即覆盖目标对象，早于服务端任何大小/配额/MIME 校验；
+    confirm 校验不通过时，物理对象已经损坏，无法回滚。改为对一个跟最终落点无关的
+    临时 key 签 PUT，confirm 通过后再由服务端把临时对象复制到最终 key，全程真实
+    数据不会被未经校验的直传覆盖。
+    """
+    suffix = f".{ext.lower()}" if ext else ""
+    return f"{user_id}/.upload-staging/{uuid4().hex}{suffix}"
+
+
+def _new_version_key(existing_key: str) -> str:
+    """覆盖上传的新版本 key：在旧 key 的扩展名前插入一段随机 token，不复用旧 key。
+
+    同样是为了不让浏览器直传直接命中现有文件的物理 key；confirm 里 copy 到这个
+    新 key、DB 切换成功后，旧对象才会被删除。"""
+    token = uuid4().hex[:8]
+    if "." in existing_key.rsplit("/", 1)[-1]:
+        base, _, ext = existing_key.rpartition(".")
+        return f"{base}.{token}.{ext}"
+    return f"{existing_key}.{token}"
+
+
 async def presign_upload_url(storage, target: PresignTarget, mime_type: str) -> str | None:
-    """为 OSS 目标签发直传地址；本地存储返回 None，由路由回退到代理上传。"""
+    """为 OSS 临时 key 签发直传地址；本地存储返回 None，由路由回退到代理上传。"""
     if not isinstance(storage, OSSStorageBackend):
         return None
     return await asyncio.to_thread(
-        storage.presign_put, target.final_key, mime_type, 600
+        storage.presign_put, target.staging_key, mime_type, 600
     )
 
 
@@ -187,6 +217,7 @@ async def prepare_presign_target(
         ext=ext,
         final_key=final_key,
         final_name=final_name,
+        staging_key=_staging_key(user_id, ext),
         overwrite_file_id=existing.id if existing else None,
     )
 
@@ -194,8 +225,9 @@ async def prepare_presign_target(
 async def confirm_oss_upload(
     db: AsyncSession,
     user_id: int,
+    storage,
     *,
-    storage_key: str,
+    staging_key: str,
     display_name: str,
     ext: str,
     size_bytes: int,
@@ -208,7 +240,13 @@ async def confirm_oss_upload(
     storage_limit_bytes: Optional[int],
     max_file_bytes: int,
 ) -> ConfirmUploadResult:
-    """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。"""
+    """登记已完成的 OSS 上传，只 flush，不提交事务和发布事件。
+
+    ``staging_key`` 是浏览器实际直传到的临时对象（presign 阶段签的就是这个 key，
+    不是最终落点）；所有校验通过后才把它 copy 到最终 key，校验失败时临时对象
+    留在原地不动，不会碰真实数据。旧物理对象（覆盖场景）不在这里删——那一步要
+    等调用方 commit 成功后才能做，否则事务回滚时数据已经丢了。
+    """
     if size_bytes > max_file_bytes:
         raise UploadTargetError(413, "文件超过单文件大小限制")
     if storage_limit_bytes is not None:
@@ -247,19 +285,21 @@ async def confirm_oss_upload(
         existing = await get_owned(db, File, overwrite_file_id, user_id)
         if not existing or existing.deleted_at is not None:
             raise UploadTargetError(400, "要覆盖的文件不存在")
-        if existing.storage_key != storage_key:
-            raise UploadTargetError(400, "覆盖目标与直传路径不一致")
         if (existing.space, existing.project_id, existing.folder_id) != (space, project_id, folder_id):
             raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         if storage_limit_bytes is not None and used - existing.size_bytes + size_bytes > storage_limit_bytes:
             raise UploadTargetError(400, "存储空间已满，无法上传")
+        old_key = existing.storage_key
+        new_key = _new_version_key(old_key)
+        await storage.rename_file(staging_key, new_key)   # copy 临时对象到新版本 key，再删临时对象
+        existing.storage_key = new_key
         existing.size = _fmt_size(size_bytes)
         existing.size_bytes = size_bytes
         existing.mime_type = actual_mime_type
         await db.flush()
-        return ConfirmUploadResult(existing, project, folder_name, existing.id)
+        return ConfirmUploadResult(existing, project, folder_name, existing.id, old_storage_key=old_key)
 
-    expected_key = _build_key(
+    final_key = _build_key(
         uid=user_id,
         space=space,
         display_name=display_name,
@@ -270,10 +310,10 @@ async def confirm_oss_upload(
         project_month=project_month,
         folder_path=folder_path,
     )
-    if storage_key != expected_key:
-        raise UploadTargetError(400, "上传路径与目标位置不一致，请重新上传")
     if storage_limit_bytes is not None and used + size_bytes > storage_limit_bytes:
         raise UploadTargetError(400, "存储空间已满，无法上传")
+
+    await storage.rename_file(staging_key, final_key)   # copy 临时对象到最终 key，再删临时对象
 
     db_file = File(
         user_id=user_id,
@@ -283,7 +323,7 @@ async def confirm_oss_upload(
         project_id=project_id if space == "project" else None,
         folder_id=folder_id,
         stage_name=stage_name,
-        storage_key=storage_key,
+        storage_key=final_key,
         size=_fmt_size(size_bytes),
         size_bytes=size_bytes,
         mime_type=actual_mime_type,

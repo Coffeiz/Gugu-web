@@ -45,7 +45,8 @@ async def test_confirm_rejects_actual_size_over_single_file_limit(db, user_a):
         await confirm_oss_upload(
             db,
             user_a.id,
-            storage_key="unused",
+            None,   # 单文件超限在碰 storage 之前就会抛，不需要真实 storage
+            staging_key="unused",
             display_name="large",
             ext="BIN",
             size_bytes=201 * 1024 * 1024,
@@ -83,7 +84,8 @@ async def test_confirm_overwrite_rechecks_quota_with_actual_size(db, user_a):
         await confirm_oss_upload(
             db,
             user_a.id,
-            storage_key="existing-key",
+            None,   # 配额超限在碰 storage 之前就会抛，不需要真实 storage
+            staging_key="staging-key",
             display_name="note",
             ext="TXT",
             size_bytes=11,
@@ -122,7 +124,8 @@ async def test_confirm_new_file_rechecks_quota_with_actual_size(db, user_a, monk
         await confirm_oss_upload(
             db,
             user_a.id,
-            storage_key="expected-key",
+            None,   # 配额超限在碰 storage 之前就会抛，不需要真实 storage
+            staging_key="staging-key",
             display_name="new",
             ext="BIN",
             size_bytes=2,
@@ -153,10 +156,16 @@ async def test_confirm_locks_user_before_quota_read(db, user_a, monkeypatch):
     db.execute = tracked_execute
     monkeypatch.setattr(upload, "_build_key", lambda **kwargs: "expected-key")
 
+    class _Storage:
+        async def rename_file(self, old_key, new_key):
+            assert old_key == "staging-key"
+            assert new_key == "expected-key"
+
     result = await upload.confirm_oss_upload(
         db,
         user_a.id,
-        storage_key="expected-key",
+        _Storage(),
+        staging_key="staging-key",
         display_name="new",
         ext="TXT",
         size_bytes=5,
@@ -171,5 +180,92 @@ async def test_confirm_locks_user_before_quota_read(db, user_a, monkeypatch):
     )
 
     assert isinstance(result.file, File)
+    assert result.file.storage_key == "expected-key"
     assert statements[0]._for_update_arg is not None
     assert "sum" in str(statements[1]).lower()
+
+
+@pytest.mark.asyncio
+async def test_presign_signs_staging_key_not_final_or_existing_key(db, user_a, monkeypatch):
+    """presign 不能直接对最终 key（含覆盖场景已有文件的 storage_key）签 PUT——
+    浏览器一 PUT 就会让 OSS 立即覆盖真实数据，早于任何服务端校验。"""
+    from app.models import File
+    from app.services.files.upload import presign_upload_url, prepare_presign_target
+
+    class _Storage:
+        pass
+
+    monkeypatch.setattr("app.services.files.upload.OSSStorageBackend", _Storage)
+
+    existing = File(
+        user_id=user_a.id, display_name="note", ext="TXT", space="personal",
+        storage_key="existing-key", size="5 B", size_bytes=5, mime_type="text/plain",
+    )
+    db.add(existing)
+    await db.commit()
+    await db.refresh(existing)
+
+    target = await prepare_presign_target(
+        db, _Storage(), user_a.id, "note.txt", 11, "personal", None, None,
+        "overwrite", existing.id, None,
+    )
+
+    assert target.final_key == "existing-key"
+    assert target.staging_key != "existing-key"
+    assert target.staging_key.startswith(f"{user_a.id}/.upload-staging/")
+
+    signed = []
+
+    class _SignStorage(_Storage):
+        def presign_put(self, key, mime_type=None, expires=600):
+            signed.append(key)
+            return f"https://signed/{key}"
+
+    url = await presign_upload_url(_SignStorage(), target, "text/plain")
+    assert signed == [target.staging_key]
+    assert url == f"https://signed/{target.staging_key}"
+
+
+@pytest.mark.asyncio
+async def test_confirm_overwrite_copies_to_new_key_and_returns_old_key(db, user_a):
+    """覆盖上传落地到全新的版本 key，不复用旧 key；旧 key 只在返回值里交给调用方，
+    由调用方在 DB commit 成功后再删——confirm 本身不碰旧的物理对象。"""
+    from app.models import File
+    from app.services.files.upload import confirm_oss_upload
+
+    existing = File(
+        user_id=user_a.id, display_name="note", ext="TXT", space="personal",
+        storage_key="existing-key", size="5 B", size_bytes=5, mime_type="text/plain",
+    )
+    db.add(existing)
+    await db.commit()
+    await db.refresh(existing)
+
+    renamed = []
+
+    class _Storage:
+        async def rename_file(self, old_key, new_key):
+            renamed.append((old_key, new_key))
+
+    result = await confirm_oss_upload(
+        db,
+        user_a.id,
+        _Storage(),
+        staging_key="staging-key",
+        display_name="note",
+        ext="TXT",
+        size_bytes=9,
+        actual_mime_type="text/plain",
+        space="personal",
+        project_id=None,
+        folder_id=None,
+        stage_name="",
+        overwrite_file_id=existing.id,
+        storage_limit_bytes=None,
+        max_file_bytes=200 * 1024 * 1024,
+    )
+
+    assert renamed == [("staging-key", result.file.storage_key)]
+    assert result.file.storage_key != "existing-key"
+    assert result.old_storage_key == "existing-key"
+    assert result.file.size_bytes == 9

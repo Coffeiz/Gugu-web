@@ -518,6 +518,7 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_project,
+            mutates=True,
         ),
         Tool(
             name="create_project",
@@ -548,6 +549,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_create_project,
+            mutates=True,
         ),
         Tool(
             name="update_stage",
@@ -573,6 +575,7 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_stage,
+            mutates=True,
         ),
         Tool(
             name="set_color", label="设置项目颜色",
@@ -587,6 +590,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["color"],
             },
             handler=_set_color,
+            mutates=True,
         ),
         Tool(
             name="archive_project",
@@ -602,6 +606,7 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_archive_project,
+            mutates=True,
         ),
         Tool(
             name="delete_project",
@@ -618,6 +623,7 @@ class ProjectsSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_project,
+            mutates=True,
             destructive=True,
         ),
         Tool(
@@ -647,6 +653,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["label"],
             },
             handler=_add_stage,
+            mutates=True,
         ),
         Tool(
             name="remove_stage", label="删除阶段",
@@ -661,6 +668,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stage"],
             },
             handler=_remove_stage,
+            mutates=True,
         ),
         Tool(
             name="rename_stage", label="重命名阶段",
@@ -676,6 +684,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stage", "new_label"],
             },
             handler=_rename_stage,
+            mutates=True,
         ),
         Tool(
             name="add_todo", label="新增待办",
@@ -691,6 +700,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stage", "texts"],
             },
             handler=_add_todo,
+            mutates=True,
         ),
         Tool(
             name="remove_todo", label="删除待办",
@@ -706,6 +716,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stage", "todo"],
             },
             handler=_remove_todo,
+            mutates=True,
         ),
         Tool(
             name="set_stages", label="整体设置阶段",
@@ -730,6 +741,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["stages"],
             },
             handler=_set_stages,
+            mutates=True,
         ),
         Tool(
             name="update_todo", label="修改待办",
@@ -748,6 +760,7 @@ class ProjectsSkill(BaseSkill):
                 "required": ["todo"],
             },
             handler=_update_todo,
+            mutates=True,
         ),
     ]
 

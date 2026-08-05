@@ -285,6 +285,7 @@ class ScheduledTasksSkill(BaseSkill):
                 "required": ["name", "instruction", "cron"],
             },
             handler=_create_scheduled_task,
+            mutates=True,
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
@@ -307,6 +308,7 @@ class ScheduledTasksSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_scheduled_task,
+            mutates=True,
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
@@ -323,6 +325,7 @@ class ScheduledTasksSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_scheduled_task,
+            mutates=True,
             destructive=True,
         ),
     ]

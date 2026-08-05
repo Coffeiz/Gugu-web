@@ -399,3 +399,49 @@ async def test_delivery_distinguishes_target_failure_from_missing_target(monkeyp
     )
 
     assert result == {"QQ": "发送失败（请检查该平台连接）"}
+
+
+@pytest.mark.asyncio
+async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatch, db, user_a):
+    """PRD 要求「获取任务级锁，同一任务运行时跳过重复触发」——试运行（Web 进程）和
+    调度触发（Worker 进程）调的是同一个 execute_task()，用户连点两次试运行、或者
+    试运行跟调度触发撞在一起，都不能并行跑同一个 task_id，否则会重复调
+    create_project/update_file 这类有副作用的工具。这里用一个卡住的 _run_agent
+    模拟"正在执行"，验证第二次调用会立刻拿不到锁、而不是排队等待或并行执行。
+    """
+    import asyncio
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="锁测试", payload="占位", cron="@once:2099-01-01T00:00:00",
+        channels="qq", delivery_targets=None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_run_agent(*args, **kwargs):
+        entered.set()
+        await release.wait()
+        return "正文"
+
+    monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
+    monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"QQ": "已发送"}))
+
+    first = asyncio.create_task(scheduled.execute_task(task.id, is_trial=True))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+
+    second_result = await scheduled.execute_task(task.id, is_trial=True)
+    assert second_result == {"错误": "任务正在执行，请稍后再试"}
+
+    release.set()
+    first_result = await asyncio.wait_for(first, timeout=5)
+    assert first_result == {"QQ": "已发送"}
+
+    # 锁释放后同一个 task_id 应该能再次正常执行，不会被残留的锁永久卡住。
+    third_result = await scheduled.execute_task(task.id, is_trial=True)
+    assert third_result == {"QQ": "已发送"}

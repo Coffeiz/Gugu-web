@@ -1257,6 +1257,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_edit_file,
+            mutates=True,
         ),
         Tool(
             name="create_document", label="生成文档",
@@ -1280,6 +1281,7 @@ class FilesSkill(BaseSkill):
                 "required": ["name", "format", "content"],
             },
             handler=_create_document,
+            mutates=True,
         ),
         Tool(
             name="rename_file", label="重命名文件",
@@ -1311,6 +1313,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_rename_file,
+            mutates=True,
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
@@ -1339,6 +1342,7 @@ class FilesSkill(BaseSkill):
                 "required": ["target"],
             },
             handler=_move_items,
+            mutates=True,
         ),
         Tool(
             name="copy_file", label="复制文件",
@@ -1360,6 +1364,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_copy_file,
+            mutates=True,
         ),
         Tool(
             name="create_folder", label="新建文件夹",
@@ -1374,6 +1379,7 @@ class FilesSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_create_folder,
+            mutates=True,
         ),
         Tool(
             name="delete_file", label="删除文件",
@@ -1387,6 +1393,7 @@ class FilesSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_file,
+            mutates=True,
         ),
         Tool(
             name="list_folders", label="查询文件夹",
@@ -1415,6 +1422,7 @@ class FilesSkill(BaseSkill):
                 "required": ["new_name"],
             },
             handler=_rename_folder,
+            mutates=True,
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
@@ -1428,6 +1436,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_delete_folder,
+            mutates=True,
         ),
         Tool(
             name="send_file", label="发送文件",
@@ -1451,6 +1460,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_send_file,
+            mutates=True,
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
@@ -1484,6 +1494,7 @@ class FilesSkill(BaseSkill):
                 "required": [],
             },
             handler=_save_uploaded_file,
+            mutates=True,
         ),
     ]
 

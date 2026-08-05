@@ -807,9 +807,13 @@ async def _collect(
             name = str(evt.get("name") or "")
             if name and name not in tool_names:
                 tool_names.append(name)
-            if name.startswith(("create_", "update_", "delete_", "add_", "remove_", "edit_",
-                                "rename_", "move_", "copy_", "set_", "archive_", "restore_",
-                                "permanent_delete", "save_")):
+            # 按工具注册时显式声明的 mutates 判断，不再靠名字前缀猜——猜测式前缀匹配
+            # 会漏掉 remember（写长期记忆）、undo_last_gugu_note（删笔记）这类不落在
+            # create_/update_/delete_/... 词表里的写工具，导致失败后重跑整轮时
+            # 重复执行已经生效的写操作。
+            from agent.tools import registry as _tool_registry
+            tool = _tool_registry.get(name)
+            if tool is not None and tool.mutates:
                 mutated = True
         elif t == "_cancelled":
             cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发

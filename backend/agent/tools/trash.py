@@ -117,6 +117,7 @@ class TrashSkill(BaseSkill):
                 "required": ["file_id"],
             },
             handler=_restore_file,
+            mutates=True,
         ),
         Tool(
             name="restore_folder", label="还原文件夹",
@@ -127,6 +128,7 @@ class TrashSkill(BaseSkill):
                 "required": ["folder_id"],
             },
             handler=_restore_folder,
+            mutates=True,
         ),
         Tool(
             name="permanent_delete", label="永久删除",
@@ -142,6 +144,7 @@ class TrashSkill(BaseSkill):
                 "required": [],
             },
             handler=_permanent_delete,
+            mutates=True,
             destructive=True,
         ),
     ]

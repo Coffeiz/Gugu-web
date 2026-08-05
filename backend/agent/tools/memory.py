@@ -70,6 +70,7 @@ class MemorySkill(BaseSkill):
                 "required": ["text"],
             },
             handler=_remember,
+            mutates=True,
         ),
     ]
 

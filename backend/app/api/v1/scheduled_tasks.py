@@ -53,6 +53,7 @@ def _to_resp(t: ScheduledTask) -> dict:
         "enabled": t.enabled,
         "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
+        "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
         "delivery_targets": t.delivery_targets,
     }
 
@@ -84,10 +85,12 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     rows = (await db.execute(stmt.order_by(ScheduledTask.id.desc()))).scalars().all()
     # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
     # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
+    # 触发过但失败的（last_run_failed=True）不在这里删——用户还没看到结果就被清掉，
+    # 既没法知道任务失败了，也没法手动重试；留给用户自己删或以后接重试入口。
     from app.scheduled_tasks import _once_expired
     from app.core.tz import local_now
     now = local_now()
-    expired = [t for t in rows if _once_expired(t.cron, now)]
+    expired = [t for t in rows if _once_expired(t.cron, now) and not t.last_run_failed]
     if expired:
         for t in expired:
             await db.delete(t)

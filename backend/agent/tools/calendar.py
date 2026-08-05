@@ -297,6 +297,7 @@ class CalendarSkill(BaseSkill):
                 "required": ["title", "date"],
             },
             handler=_create_event,
+            mutates=True,
         ),
         Tool(
             name="list_events",
@@ -333,6 +334,7 @@ class CalendarSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_event,
+            mutates=True,
         ),
         Tool(
             name="delete_event",
@@ -350,6 +352,7 @@ class CalendarSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_event,
+            mutates=True,
             destructive=True,
         ),
         Tool(
@@ -376,6 +379,7 @@ class CalendarSkill(BaseSkill):
                 "required": [],
             },
             handler=_add_event_reminder,
+            mutates=True,
         ),
         Tool(
             name="list_event_reminders",
@@ -404,6 +408,7 @@ class CalendarSkill(BaseSkill):
                 "required": ["reminder_id"],
             },
             handler=_remove_event_reminder,
+            mutates=True,
         ),
     ]
 

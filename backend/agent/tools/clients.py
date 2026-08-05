@@ -116,6 +116,7 @@ class ClientsSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_create_client,
+            mutates=True,
         ),
         Tool(
             name="update_client", label="更新客户",
@@ -134,6 +135,7 @@ class ClientsSkill(BaseSkill):
                 "required": [],
             },
             handler=_update_client,
+            mutates=True,
         ),
         Tool(
             name="delete_client", label="删除客户",
@@ -149,6 +151,7 @@ class ClientsSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_client,
+            mutates=True,
             destructive=True,
         ),
     ]

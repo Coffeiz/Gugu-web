@@ -421,6 +421,7 @@ class MindSkill(BaseSkill):
                 "required": ["blocks"],
             },
             handler=_create_note,
+            mutates=True,
         ),
         Tool(
             name="update_note", label="更新思维笔记",
@@ -440,6 +441,7 @@ class MindSkill(BaseSkill):
                 "required": ["node_id", "version"],
             },
             handler=_update_note,
+            mutates=True,
         ),
         Tool(
             name="delete_note", label="删除思维笔记",
@@ -454,6 +456,7 @@ class MindSkill(BaseSkill):
                 "required": ["node_id", "version"],
             },
             handler=_delete_note,
+            mutates=True,
         ),
         Tool(
             name="restore_note", label="恢复思维笔记",
@@ -464,12 +467,14 @@ class MindSkill(BaseSkill):
                 "required": ["node_id"],
             },
             handler=_restore_note,
+            mutates=True,
         ),
         Tool(
             name="undo_last_gugu_note", label="撤销刚才的咕咕记录",
             description="撤销当前用户最近一次由咕咕创建的笔记；绝不会删除用户自己创建的笔记。",
             input_schema={"type": "object", "properties": {}},
             handler=_undo_last_gugu_note,
+            mutates=True,
         ),
     ]
 

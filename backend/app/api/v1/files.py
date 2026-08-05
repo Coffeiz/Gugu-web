@@ -282,7 +282,9 @@ async def presign_upload(
         return {
             "mode": "oss",
             "upload_url": upload_url,
-            "storage_key": target.final_key,
+            # 客户端只是把这个值原样带回 /confirm，不解析它的含义——这里给的是临时
+            # 直传 key，不是最终存储位置，浏览器 PUT 不会碰到任何已有的真实文件。
+            "storage_key": target.staging_key,
             "final_name": target.final_name,
             "ext": target.ext,
             "overwrite_file_id": target.overwrite_file_id,
@@ -313,14 +315,19 @@ async def confirm_upload(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。"""
+    """OSS 直传完成后，注册 DB 记录（或覆盖已有文件时，原地更新那条记录）。
+
+    body.storage_key 是 presign 阶段签发的临时 key，不是最终位置——confirm_oss_upload
+    校验通过后会把它 copy 到最终 key，真实内容全程不经过未经校验的直接覆盖。
+    """
     storage = get_storage()
     try:
         object_info = await validate_oss_upload(storage, current_user.id, body.storage_key)
         result = await confirm_oss_upload(
             db,
             current_user.id,
-            storage_key=body.storage_key,
+            storage,
+            staging_key=body.storage_key,
             display_name=body.display_name,
             ext=body.ext,
             size_bytes=object_info.size_bytes,
@@ -340,6 +347,10 @@ async def confirm_upload(
         delete_thumb_cache(result.overwritten_file_id)
     await db.commit()
     await db.refresh(result.file)
+    # 旧物理对象只在新 key 已经落库并提交成功后才删——confirm 中途失败时，旧文件
+    # 完全没被碰过（copy 是 rename_file 里那一步，早于这里），不会有数据丢失窗口。
+    if result.old_storage_key is not None:
+        await storage.delete(result.old_storage_key)
     await events.publish(current_user.id, "files", origin=origin)
 
     return to_related_file_response(result.file, result.project, result.folder_name)
