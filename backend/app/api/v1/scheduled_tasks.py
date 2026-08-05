@@ -243,6 +243,8 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
     chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
     name = (body.name or "活动提醒").strip()
     text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
+    # 渠道投递可能等待外部 IM 接口，不能让认证用的请求会话跨越整个投递过程。
+    await db.close()
     from app import scheduled_tasks as ST
     result = await ST.deliver_to_channels(user.id, f"{name}（测试）", text, chans)
     if not result:
@@ -258,6 +260,9 @@ async def run_now(task_id: int, user: User = Depends(get_current_user), db: Asyn
     试运行是手动操作、用户在等反馈，所以同步 await（连接池已够，不会像 SSE 那样耗尽）。
     """
     await _owned(task_id, user, db)
+    # _owned 只负责权限校验；Agent 生成和 IM 投递可能持续很久，先释放本次
+    # 请求的 DB 连接，避免长事务阻塞迁移和其他登录/业务查询。
+    await db.close()
     from app import scheduled_tasks as ST
     result = await ST.execute_task(task_id, is_trial=True)
     if not result:
