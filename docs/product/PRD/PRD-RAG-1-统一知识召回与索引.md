@@ -4,7 +4,7 @@
 > 创建：2026-08-04
 > 最近更新：2026-08-05
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
-> 前置文档：[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md)
+> 前置文档：[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 
 ## 0. 实施状态
 
