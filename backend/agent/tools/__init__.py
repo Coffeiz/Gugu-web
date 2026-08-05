@@ -13,6 +13,7 @@ from agent.tools.trash import TrashSkill
 from agent.tools.memory import MemorySkill
 from agent.tools.search import SearchSkill
 from agent.tools.global_search import GlobalSearchSkill
+from agent.tools.group_context import GroupContextSkill
 from agent.tools.mind import MindSkill
 from agent.tools.conversations import ConversationsSkill
 from agent.tools.im import IMSkill

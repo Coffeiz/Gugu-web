@@ -10,7 +10,7 @@ WorkingDirectory=__APP_DIR__
 # venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令时报 FileNotFoundError
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
-ExecStart=__APP_DIR__/.venv/bin/python -m agent.adapters.supervisor
+ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.supervisor
 # 网关管家，死了连带网关一起没，必须自动拉起
 Restart=always
 RestartSec=3

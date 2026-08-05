@@ -17,10 +17,11 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, User
+from app.models import ConversationMessage, ConversationSession, User, UserBot
 
 from agent import genstream
-from agent.adapters import web as web_adapter
+from agent.gateway import web as web_adapter
+from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest
 
 router = APIRouter(prefix="/agent", tags=["agent"])
@@ -61,7 +62,7 @@ async def upload_attachment(
         meta = await chat_attach.stage_voice(current_user.id, name or "语音", ext, mime, data, duration=dur, platform="web")
     else:
         meta = await chat_attach.stage(current_user.id, name, ext, mime, data, platform="web")
-    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height")}
+    return {k: meta.get(k) for k in ("attach_id", "name", "ext", "size", "kind", "duration", "img_width", "img_height", "qq_face")}
 
 
 @router.get("/attachment/{attach_id}/thumb")
@@ -86,9 +87,18 @@ async def attachment_thumb(
     if (meta.get("ext") or "").lower() == "svg":
         return Response(content=raw, media_type="image/svg+xml",
                         headers={"Cache-Control": "private, max-age=3600"})
+    # QQ 表情可能是 GIF/动画 WebP；原图端点保留动画帧，普通缩略图则统一转 JPEG。
+    mime = (meta.get("mime") or "").lower()
+    if size == "full" and (
+        meta.get("qq_face")
+        or (meta.get("ext") or "").lower() in {"gif", "webp"}
+        or mime in {"image/gif", "image/webp"}
+    ):
+        return Response(content=raw, media_type=mime or f"image/{(meta.get('ext') or 'gif').lower()}",
+                        headers={"Cache-Control": "private, max-age=3600"})
     # 复用文件库的缩略图生成（JPEG 兜底版，按 size 取最大边）
-    from app.api.v1.files import _generate_thumb_jpeg_fallback
-    jpeg = await asyncio.to_thread(_generate_thumb_jpeg_fallback, raw, size)
+    from app.services.files.previews import generate_thumb_jpeg_fallback
+    jpeg = await asyncio.to_thread(generate_thumb_jpeg_fallback, raw, size)
     if jpeg:
         return Response(content=jpeg, media_type="image/jpeg",
                         headers={"Cache-Control": "private, max-age=3600"})
@@ -127,7 +137,7 @@ async def attachment_preview_pdf(
 ):
     """将聊天暂存附件（Office 格式）转换为 PDF 供前端预览。"""
     from fastapi.responses import Response
-    from app.api.v1.files import _office_to_pdf
+    from app.services.files.previews import office_to_pdf
 
     meta = await chat_attach.get_meta(current_user.id, attach_id)
     if not meta:
@@ -139,7 +149,7 @@ async def attachment_preview_pdf(
         data = await chat_attach.read_bytes(meta)
     except FileNotFoundError:
         raise HTTPException(404, "附件已过期或物理文件丢失")
-    pdf = await _office_to_pdf(data, meta.get("ext", ""))
+    pdf = await office_to_pdf(data, meta.get("ext", ""))
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Cache-Control": "private, max-age=300"})
 
@@ -201,6 +211,7 @@ async def list_sessions(
             "id": s.id,
             "title": s.title,
             "source": s.source,
+            "chatType": s.chat_type,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
@@ -255,12 +266,48 @@ async def get_session_messages(
         .order_by(ConversationMessage.created_at)
     )
     msgs = res.scalars().all()
+    mention_names = {
+        str(message.platform_user_id): message.platform_user_name
+        for message in msgs
+        if message.platform_user_id and message.platform_user_name
+    }
+    for message in msgs:
+        if message.platform_bot_user_id:
+            mention_names[message.platform_bot_user_id] = "咕咕"
+    # 群聊消息按发言人区分左右气泡：owner 的平台身份挂在该来源的 UserBot 上
+    # （目前只有 QQ 走了绑定流程，其它渠道查不到就是 None，前端据此把消息
+    # 归到左侧、标发言人 username，而不是误判成 owner 自己发的）。
+    owner_platform_user_id = None
+    if session.source:
+        bot_query = select(UserBot).where(
+            UserBot.user_id == current_user.id,
+            UserBot.platform == session.source,
+        )
+        if session.bot_id:
+            bot_query = bot_query.where(UserBot.id == int(session.bot_id))
+        bot = (await db.execute(bot_query)).scalars().first()
+        owner_platform_user_id = bot.owner_platform_user_id if bot else None
+        if bot and bot.bot_platform_user_id:
+            mention_names[bot.bot_platform_user_id] = "咕咕"
+
+    def render_content(text: str) -> str:
+        if session.chat_type != "group":
+            return text
+        # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
+        return replace_mention_ids(text, mention_names)
+
     return {
-        "session": {"id": session.id, "title": session.title},
+        "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
+                    "ownerPlatformUserId": owner_platform_user_id},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "messages": [
-            {"id": m.id, "role": m.role, "content": m.content, "files": m.files or [],
+            {"id": m.id, "role": m.role,
+             "content": render_content(m.content),
+             "files": m.files or [],
              "quotedText": m.quoted_text,
+             "platformUserId": m.platform_user_id,
+             "platformUserName": m.platform_user_name,
+             "platformBotUserId": m.platform_bot_user_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
         ],

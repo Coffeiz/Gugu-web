@@ -1,9 +1,9 @@
 # IM 接入稳定性与 QQ 自建 WebSocket PRD
 
-> 状态：Phase 1 / Phase 2 / Phase 3 已实现
+> 状态：Phase 1 / Phase 2 / Phase 3 / Phase 4 / Phase 6 已实现
 > 创建：2026-07-09
 > 最近更新：2026-07-10
-> 关联模块：`backend/agent/adapters/feishu.py`、`backend/agent/adapters/qq.py`、`backend/worker.py`
+> 关联模块：`backend/agent/gateway/feishu.py`、`backend/agent/gateway/qq.py`、`backend/worker.py`
 > 背景参考：QwenPaw `src/qwenpaw/app/channels/{feishu,qq}/channel.py`
 
 ---
@@ -16,7 +16,11 @@
 | FR-FS-4：飞书流式收尾 | ✅ 已完成 | 流式卡片最终 patch 成功后调用 CardKit settings 接口关闭 `streaming_mode` 并设置 summary；finalize 失败不触发重复普通文本。收尾另调一次 `_do_update_card`（独立失败域）把标题从「咕咕思考中」改成「咕咕」——**devserver 实测踩坑**：整卡 PUT 起初用了独立的 sequence 计数器，报 `300317 sequence number compare failed`；CardKit 对同一 card_id 的 sequence 是跨端点（element content / settings / 整卡 PUT）共享同一套单调序列，改成复用 `_stream_seq_key` 计数器后修复。QwenPaw 没有这个功能——他们的流式卡片压根不设 `header`，没有"思考中"标题可改。**已在 devserver 用户实测确认标题正确改成「咕咕」。** |
 | Phase 2：QQ 自建 WebSocket 接收侧 | ✅ 已完成 | `serve()` 走 raw WebSocket；支持 C2C 与群 @ raw event、引用文本/引用附件解析、现有 worker payload 兼容。 |
 | Phase 3：QQ raw HTTP 发送侧 | ✅ 已完成（未按 3-7 天灰度期提前实施） | `send_c2c`/`send_group`/`send_file`/短路回复/ack 全部改 raw HTTP 直连 QQ Bot API，按 channel_id 缓存 access_token 并在过期前刷新；markdown 无权限回退纯文本、401 清缓存重试逻辑保留。 |
-| 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 目前不开放 aigcbot 群聊功能，群聊代码路径保留但暂无法验证。 |
+| 清理：完全移除 botpy | ✅ 已完成 | `_GuguQQClient`（botpy `Client` 子类）、monkey patch、`QQ_RAW_WS_ENABLED` 回退开关、`qq-botpy` 依赖全部删除；本地已 `pip uninstall qq-botpy` 验证 83 个测试仍全过。QQ 群聊 raw event 已在后续联调中继续扩展。 |
+| Phase 4：QQ 群聊普通消息读取 | ✅ 已完成 | 支持 `GROUP_MESSAGE_CREATE`；未 @ 消息可按 bot 开关只记录、不调用模型、不回复；按群共享会话，数据库每群最多保留最近 500 条消息，每次上下文最多取最近 50 条。 |
+| Phase 5：QQ 身份采集与 Bot owner 绑定 | ✅ 已完成 | 每个 Gugu 账号只绑定一个 Bot；网页生成 6 位、10 分钟有效的一次性验证码，用户在 QQ C2C 私聊发送“绑定 6 位验证码”后原子保存 owner `sender_id`。不做跨 Bot QQ 身份自动合并，群消息不能自动抢占 owner。 |
+| Phase 6：群成员权限隔离与工具白名单 | ✅ 已完成 | 已按当前 Bot 的 `owner_platform_user_id` 解析 `owner/member/unknown`；owner 使用完整工具集，群成员/未知身份只使用 Bot 级白名单，默认开放网页搜索；runner 提供工具集过滤，dispatch 再做服务端拦截；个人设置可切换网页搜索和当前群上下文搜索。当前方案不按群单独绑定 owner，`im_chats` 群级开关作为后续独立需求保留。 |
+| Phase 7：群聊短期/长期记忆 | 🟡 代码完成，待人工验收 | 作用域、活跃窗口、group/member 反思、daily 压缩和删除屏障已按 [`PRD-IM-3-群组与成员记忆.md`](./PRD-IM-3-群组与成员记忆.md) 实现。 |
 | 飞书多媒体入站补齐 post/media/interactive | ✅ 已完成 | `post`（图文）拼接段落文字+下载内嵌图片/视频；`media`（视频消息）复用单附件下载逻辑；`interactive`（用户转发卡片）抽取可读文字，不下载卡片内嵌媒体（组件结构太杂，价值有限）。`_fetch_quoted_text` 引用反查同步支持这三种类型的占位/文字提取。 |
 | 修复：引用咕咕自己的流式卡片回复反查失败 | ✅ 已完成并经用户 devserver 实测确认（两轮踩坑才修好） | **devserver 实测踩坑 #1**：不带 `card_msg_content_type=user_card_content` 查询参数时反查拿到的是飞书兼容性占位文案「请升级至最新版本客户端，以查看内容」，不是卡片真实内容；对照 QwenPaw 同款逻辑补上参数后修复。**踩坑 #2**：补完参数后又变成反查出「[空消息]」——`_extract_card_text` 一直只从 `content["elements"]` 起步找文字，但咕咕流式卡片是 CardKit schema 2.0，elements 实际嵌在 `content["body"]["elements"]` 里一层，旧代码假设的是非流式卡片那种扁平 `{"elements":[...]}` 结构。改成直接从整个 `content` 递归（两种结构都能兼容）后才真正修好。**用户实测确认引用文字和引用图片都恢复正常。** |
 | 修复：只发文件不说话时飞书卡片是空的 | ✅ 已完成 | **devserver 实测踩坑**：用户让咕咕发个 md 文件，模型调 `send_file` 工具没配任何文字说明，`AgentResponse.text` 是空串——流式卡片的 `_patch`/`_do_finalize_streaming_card`/`_do_update_card` 全部拿这个空串去更新，卡片正文真的是空的，用户得追问「发了吗」模型才在下一轮正常说话。worker.py 非流式路径本来就有「有文件配一句给你～」的兜底，但只在 `not (platform == "feishu" and stream_sent)` 时才发送，飞书流式成功时被跳过，所以两边逻辑没对齐。新增 `_stream_fallback_text()`，在流式路径的三处 final 处理（两个 create_card/send_card_message 失败的 fallback 分支 + 主路径）都补上同款兜底文案。 |
@@ -52,7 +56,7 @@
 
 - 用户在飞书里发送消息时，不会因为平台 retry 或连接抖动收到重复回复。
 - 用户在 QQ 里“回复/引用某条历史消息”时，咕咕能理解被引用的原文，而不是只看到用户补充的短句。
-- QQ 现有能力不倒退：C2C 私聊、群聊 @、文字回复、附件暂存、图片/文件发送、群聊开关、忙碌状态短路都继续可用。
+- QQ 现有能力不倒退：C2C 私聊、群聊 @、普通群消息读取、文字回复、附件暂存、图片/文件发送、群聊开关、忙碌状态短路都继续可用。
 
 ### 2.2 业务目标
 
@@ -74,7 +78,7 @@
 - 不重构整体 IM 架构为 QwenPaw 风格的 `BaseChannel + ChannelManager`。
 - 不改变 `worker.py` 当前 Redis Streams 消费模型。
 - 不改变用户接入 QQ / 飞书的 BYO 配置流程。
-- 不承诺 QQ 群聊可接收未 @ 机器人的全量消息；这是 QQ 平台能力限制。
+- 不承诺 QQ 在未取得平台权限时一定能接收未 @ 机器人的全量消息；应用侧开关不能替代 QQ 机器人后台权限。
 - 不在本次解决微信 iLink 群聊回复路由遗留问题。
 
 ---
@@ -102,6 +106,9 @@
 | 引用识别 | ✅ raw event 读取 `msg_elements/message_scene` | raw event 直接读取 `msg_elements/message_scene` | 已支持文本与引用附件 |
 | C2C | 支持 | 支持 | 保持 |
 | 群聊 @ | 支持 `GROUP_AT`，按 per-bot 开关处理 | 支持 `GROUP_AT_MESSAGE_CREATE` | 保持 |
+| 群聊普通消息读取 | ✅ 支持 `GROUP_MESSAGE_CREATE`，未 @ 时只记录不回复 | raw Gateway event | 已完成，按 bot 开关控制 |
+| 群聊上下文 | ✅ 按 `group_openid` 共享近期消息，最多保留 50 条 | 按 channel/session 组织 | 短期窗口已完成，长期记忆代码已完成，待人工验收 |
+| 群成员权限 | ✅ owner/member/unknown 隔离和工具白名单 | 需按平台身份扩展 | 已按当前 Bot owner 绑定实现，群级覆盖仍是后续事项 |
 | 发送文本 | botpy `BotAPI.post_c2c_message/post_group_message` | raw HTTP `/v2/users|groups/.../messages` | 第一阶段可保留 botpy |
 | 发送媒体 | botpy HTTP raw route 混用 | raw HTTP `/files` + `msg_type=7` | 保持现有能力 |
 | 重连 | ✅ 接收侧自管 heartbeat/resume/reconnect，发送侧 botpy 保留 | 自管 heartbeat/resume/reconnect | 接收侧已自管 |
@@ -208,6 +215,7 @@ QQ 网关启动时，不再用 botpy `Client.run()` 接收消息，而是：
 
 - `C2C_MESSAGE_CREATE`
 - `GROUP_AT_MESSAGE_CREATE`
+- `GROUP_MESSAGE_CREATE`（普通群消息读取模式）
 
 可选覆盖：
 
@@ -218,6 +226,8 @@ QQ 网关启动时，不再用 botpy `Client.run()` 接收消息，而是：
 
 - C2C 私聊消息能入队。
 - 群 @ 消息在 `group_chat_enabled=true` 时入队，关闭时丢弃。
+- `group_read_enabled=true` 时，未 @ 的普通群消息只记录、不调用模型、不回复。
+- 普通群消息和 @ 消息使用同一个 `group_openid` 会话，数据库最多保留最近 500 条消息；每次送入模型的上下文最多取最近 50 条，并继续受 token 预算限制。
 - 群消息 payload 中 `chat_id=group_openid`，`platform_user_id=member_openid`。
 
 #### FR-QQ-3：引用消息识别（✅ 已完成）
@@ -272,13 +282,94 @@ QQ 网关启动时，不再用 botpy `Client.run()` 接收消息，而是：
 - `backend/requirements.txt` 移除 `qq-botpy`，新增必要的 WebSocket/HTTP 依赖。
 - 文本、Markdown fallback、图片/文件发送均通过真实平台验证。
 
+### 5.4 QQ 群聊普通消息读取（✅ 已完成）
+
+QQ 群聊增加独立的“普通消息读取”模式。该模式与“群聊回应”分离：
+
+- `group_chat_enabled`：总开关，关闭后群消息丢弃。
+- `group_requires_at`：是否只有 @ 咕咕的消息进入正常回复链路。
+- `group_read_enabled`：是否接收并保存未 @ 咕咕的普通群消息。
+
+当 `group_read_enabled=true` 且消息未 @ 咕咕时：
+
+1. 网关接收 `GROUP_MESSAGE_CREATE`。
+2. payload 带上 `chat_id=group_openid`、`platform_user_id=member_openid`、`group_mentioned=false`。
+3. worker 找到该群共享会话。
+4. 只写入 `ConversationMessage(role="user")`。
+5. 不调用模型、不产生回复、不消耗精力。
+
+当消息 @ 咕咕时，仍进入原有 Agent Loop，并把该群近期消息作为上下文。
+
+数据库保留策略：
+
+- 每个群会话最多保留最近 500 条 `conversation_messages`；模型上下文最多取其中最近 50 条，并继续受 token 预算限制。
+- 普通消息落库后清理一次。
+- 正常 @ 回复完成后再清理一次，防止工具往返和 assistant 回复绕过上限。
+- 这只是数据库短期窗口，不代表已经实现群聊长期记忆。
+
+### 5.5 群聊身份权限与工具白名单（✅ 已完成，Phase 6）
+
+Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保存 owner `sender_id`，但不负责身份绑定本身。具体身份绑定见下方 Phase 5 说明和 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md)。
+
+第一版权限模型：
+
+```text
+绑定 bot 的 QQ 用户
+  → owner，可使用全部工具
+
+其他群成员
+  → non_owner，只能聊天和使用允许的白名单工具
+
+无法校验 QQ 用户身份
+  → identity_error，只能聊天，拒绝所有工具
+```
+
+当前实现按 Bot 级 owner 和白名单执行：每个 Bot 只有一个 owner，owner 身份不因进入不同群而变化；其他成员仍可聊天，但工具集在 runner 进入模型前过滤，并在统一 dispatch 层再次硬拦截。`users.id` 是咕咕账号自身的全局 ID，不用于跨 Bot 自动猜测 QQ 身份。按群单独开关和成员管理的 `im_chats` / `im_chat_members` 仍作为后续独立需求，不属于本阶段。
+
+#### WebChat 与 IM 身份边界
+
+WebChat 和 IM 使用两套不同的身份语义：
+
+- WebChat 只使用 Gugu 的 `users.id` / `user_name`，不设置或注入 `platform_user_id`、`chat_type`、`im_role`。
+- QQ、飞书、微信才使用当前平台的 `platform_user_id`，并在需要时附带私聊/群聊类型、会话 ID 和权限角色。
+- IM 身份上下文只在当前 IM 会话中参与模型判断，不能用 WebChat 历史推断 QQ 发言人，也不能把 Gugu 用户名当作平台昵称。
+- 原始平台 ID 只供内部身份比较和权限判断，默认不直接展示给用户；`platform_user_name` 只用于当前发言人的自然称呼。
+- username 不能参与身份绑定、权限判断或“是否同一个人”的判断；不同 QQ ID 即使属于同一个 Gugu Bot owner，也必须保留为不同发言人。
+- QQ raw WebSocket 当前可从 `author.username` 获取发言人显示名，并映射为 `platform_user_name`；该字段随消息保存。群名不从正文或昵称猜测，查询不到时不填。
+
+#### 当前已知边界：群聊共享会话与用户资料隔离
+
+群聊短期上下文按 `chat_id=group_openid` 共享，这是为了理解群内连续对话；但 `owner_user_id` 只是 Bot 的 Gugu 账号归属，不等于当前 QQ 发言人。当前实现已用 `platform_user_id` 做 owner/member 权限判断，并把当前 username 作为称呼元数据；后续仍需完成非 owner 对 owner profile、记忆、项目和文件的资料范围隔离，避免共享历史让模型误把其他 QQ 号称为 owner。
+
+```text
+网页搜索               chat_safe，固定开放
+当前群聊上下文搜索     chat_safe，由 owner 在设置中选择
+项目/文件/日历/记忆    owner_only
+创建/修改/删除          owner_only + 现有确认门
+```
+
+设置入口已放在 `个人设置 → 接入咕咕 → QQ → 群聊工具权限`，当前允许切换 `web_search` 和 `group_context_search`。群上下文搜索只查询当前群的 `chat_id` 会话，不会读取其他群、私聊或网页历史对话。
+
+已完成：`backend/app/services/im_identity.py` 权限解析、`user_bots.group_allowed_tools` 白名单、runner/dispatch 双层拦截、`group_context_search` 当前群隔离和权限专项测试。后续若需要群级开关，再单独设计 `im_chats`，不改变本阶段的 Bot owner 规则。
+
+### 5.6 群聊短期/长期记忆（🟡 代码完成，待人工验收，Phase 7）
+
+当前按独立 scope 记录群成员的 `platform_user_id` 及其个人信息，并建立：
+
+- 群级短期记忆：近期群聊事实和当前话题。
+- platform-user 个人记忆：同一 Bot 下同一平台用户跨群共享的明确个人身份、偏好和近期状态。
+- 群级长期记忆：当前群的称呼、角色、关系、分工、决定和协作事项；群特定信息不能通过 platform-user scope 跨群传播。
+- 群级/平台用户长期记忆：经过信息分流、压缩和来源追踪后保留的稳定信息。
+
+可见范围、owner 删除权、个人信息提取规则、记忆清理和墓碑流程已在 PRD-IM-3 固定并实现；当前 50 条消息上限仍只解决数据库增长，不替代 daily/memory 文件策略。真实多平台人工验收待完成。
+
 ---
 
 ## 6. 技术方案
 
 ### 6.1 飞书
 
-在 `backend/agent/adapters/feishu.py` 中局部增强：
+在 `backend/agent/gateway/feishu.py` 中局部增强：
 
 - 在 `serve()` 或 `_make_on_message()` 闭包中维护 `_processed_message_ids`。
 - 读取 event header 的 `app_id` / `create_time`。
@@ -290,7 +381,7 @@ QQ 网关启动时，不再用 botpy `Client.run()` 接收消息，而是：
 
 ### 6.2 QQ
 
-建议将 `backend/agent/adapters/qq.py` 分阶段重构，避免一次性替换过大：
+建议将 `backend/agent/gateway/qq.py` 分阶段重构，避免一次性替换过大：
 
 第一阶段：
 
@@ -333,7 +424,7 @@ QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` �
 
 ```json
 {
-  "platform": "qqbot",
+  "platform": "qq",
   "channel_id": "<user_bot.id>",
   "owner_user_id": "<owner user_id>",
   "platform_user_id": "<user_openid/member_openid>",
@@ -343,11 +434,13 @@ QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` �
   "text": "<用户自己打的话，不含引用原文>",
   "quoted_text": "<引用的原消息文字，没有引用则为 null>",
   "attachments": ["<attach_id>"],
+  "group_read_enabled": true,
+  "group_mentioned": false,
   "trace_id": "<trace id>"
 }
 ```
 
-飞书/微信同款（`agent/adapters/feishu.py`/`wechat.py`）也是 `text`+`quoted_text` 分开两个字段；微信 iLink 在这次改动前就已经在 payload 里带 `quoted_text` 了，但 `worker.py` 从没把它读进 `AgentRequest`（`AgentRequest` 之前压根没有这个字段），等于微信引用功能一直没真正喂给模型过，这次顺带修了。
+飞书/微信同款（`agent/gateway/feishu.py`/`wechat.py`）也是 `text`+`quoted_text` 分开两个字段；微信 iLink 在这次改动前就已经在 payload 里带 `quoted_text` 了，但 `worker.py` 从没把它读进 `AgentRequest`（`AgentRequest` 之前压根没有这个字段），等于微信引用功能一直没真正喂给模型过，这次顺带修了。
 
 ### 7.2 日志要求
 
@@ -386,6 +479,8 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 - ✅ C2C raw event 转 payload
 - ✅ 群聊 raw event 转 payload
 - ✅ 群聊关闭时丢弃事件
+- ✅ `group_read_enabled` 开启时普通群消息进入静默记录分支
+- ✅ 群会话消息上限保留最近 50 条
 - ✅ 引用附件进入暂存链路
 - 🔲 日志不含正文的自动断言暂未单独补；当前实现沿用 `len + fingerprint + trace_id` 日志口径，真实联调时继续观察
 
@@ -406,9 +501,10 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 3. ✅ QQ 私聊发送普通文本，回复正常（devserver 日志实测 `att=1`/`att=0` 正常收发）。
 4. ✅ QQ 私聊引用一条历史文本，咕咕理解引用内容（用户最初反馈即确认文字引用可用）。
 5. ✅ QQ 私聊引用图片，附件暂存并进入模型输入（devserver 日志实测 `att=1` 成功下载暂存；用户本人重新测试引用图片确认成功；仅「引用太久的消息」因 QQ 平台自身上下文窗口限制会拿不到附件，见 §12）。
-6. 🔲 QQ 群聊 @ 咕咕，确认群聊回复仍发回群 —— 暂无法验证：QQ 平台目前未对该 bot 开放 aigcbot 群聊功能。
-7. 🔲 QQ 群聊关闭开关后，确认群消息不入队 —— 同上，暂无法验证。
-8. ✅ 飞书连续投递同一 message_id mock 事件，确认只入队一次（单测覆盖）。
+6. ✅ QQ 群聊 @ 咕咕，确认群聊回复仍发回群。
+7. ✅ QQ 群聊开启“读取普通群消息”后，未 @ 消息不触发回复、后续 @ 能读取近期群上下文。
+8. 🔲 QQ 群聊关闭开关后，确认群消息不入队 —— 需在目标 bot 的真实群权限下补测。
+9. ✅ 飞书连续投递同一 message_id mock 事件，确认只入队一次（单测覆盖）。
 
 ### 8.3 回归测试（✅ 已完成）
 
@@ -500,5 +596,7 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
 - ✅ Phase 2 原计划保留 botpy 接收路径开关至少一个小版本，实际因功能验证完成、决定直接全部移除（`_GuguQQClient`/monkey patch/`QQ_RAW_WS_ENABLED`/`qq-botpy` 依赖），不再保留回退路径。
 - 🔲 Phase 3 raw HTTP 发送侧（文本/markdown 回退/URL 与 base64 发文件/群消息）尚未在真实 QQ 环境端到端验证，仅本地 mock 测试覆盖；`_send_tokens` 无锁，理论上并发首次请求可能重复取 token（浪费一次调用，不影响正确性）。
-- 🔲 QQ 群聊（aigcbot 群聊功能）目前平台未开放，`group_chat_enabled`/`GROUP_AT_MESSAGE_CREATE` 相关代码路径无法在真实环境验证，等平台开放后再测。
+- ✅ QQ 群聊 raw WebSocket、@ 回复和普通消息读取已在当前 bot 环境验证；仍需补做关闭开关后的真实平台验收，并确认不同 QQ 权限配置下 `GROUP_MESSAGE_CREATE` 的覆盖范围。
+- ✅ 群聊身份权限与工具白名单：当前按 Bot owner 身份、member/unknown 角色和白名单实现；完整 `platform_identities` / `im_chats` / `im_chat_members` 持久化模型及群级覆盖仍是后续事项。具体边界见 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md) 第 6 节。
+- 🟡 群聊短期/长期记忆：PRD-IM-3 的独立 scope、活跃窗口、异步反思、daily 压缩和删除屏障已实现，真实多平台人工验收待完成。
 - ✅ 微信 iLink 引用消息无法识别原文，已确认是平台/协议限制（`getupdates` 接口本身不回传引用原文，不分发送者），非代码 bug。已核实 `@tencent-weixin/openclaw-weixin` 真实源码同样无法覆盖这一场景。占位文案统一为「[微信暂不支持消息引用识别]」。完整排查过程（含参考实现对比）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。引用图片下载失败已修复（`encrypt_query_param` vs `full_url`）。

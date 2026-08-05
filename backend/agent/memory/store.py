@@ -1,7 +1,7 @@
 """记忆存储：读写 {user_id}/.agent/ 下的文件，经 StorageBackend（本地/OSS 通吃）。
 
 不进 File 表，是咕咕私有档案。单库，无 DB/物理同步问题。
-- profile.json 用户画像：只回答"这个人是谁"，`{id,text,ts}`——不带 kind/conf，不衰减，不参与
+- profile.json 用户画像：只回答"这个人是谁"，`{type,text,ts}`——不带 id/kind/conf，不衰减，不参与
   周期复核（内容本来就该稳定）。见 docs/agent/11-记忆系统.md §2。
 - pattern.json 行为/决策模式（2b 结构化）：每条带 kind(observed/inferred)/conf/imp/ts，反思增删改、
   注入时按 effective(置信×衰减) 过滤排序；observed=用户亲述不衰减、inferred=推断按半衰期淡出。
@@ -13,7 +13,7 @@
 
 daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
 最老的并入 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 compress.py）。
-DAILY_HARD_CAP 是压缩失败时的安全上限，防 daily 无限膨胀。
+DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留数据并等待下次成功压缩。
 """
 from __future__ import annotations
 
@@ -27,17 +27,19 @@ from app.services.storage import get_storage
 
 _DIR = ".agent"
 DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
-DAILY_COMPACT_AT  = 75   # daily 达到此条数触发一次压缩（每约 25 轮一次）
-DAILY_HARD_CAP    = 95   # 压缩失败时的硬安全上限
+DAILY_COMPACT_AT  = 150  # daily 达到此条数触发一次压缩
+DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
 
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
+PROFILE_TYPES = {"name", "address", "pronoun", "background", "preference", "note"}
 
 # ── 当前状态快照（summary.json：{text,ts} 一个文件，取代旧的 summary.md + summary.ts 两文件）──
 SUMMARY_FILE = "summary.json"
 
 # ── 结构化 pattern（2b）参数 ──
 PATTERN_FILE                = "pattern.json"
+PATTERN_MAINTENANCE_FILE   = "pattern_maintenance.json"
 PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
 PATTERN_RETIRE_EFF          = 0.2    # effective 置信低于此 → 不注入（退休淡出）
 PATTERN_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
@@ -199,23 +201,64 @@ async def write_pattern_list(user_id, patterns: list[dict]) -> None:
     await _write(_key(user_id, PATTERN_FILE), json.dumps(patterns, ensure_ascii=False, indent=2))
 
 
-# ── 用户画像（profile.json）：{id,text,ts}，不带 kind/conf，不衰减 ──
+async def read_pattern_maintenance(user_id) -> dict:
+    """读取自动维护水位；损坏或不存在时返回空状态。"""
+    raw = (await _read(_key(user_id, PATTERN_MAINTENANCE_FILE))).strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except (TypeError, ValueError):
+        return {}
+
+
+async def write_pattern_maintenance(user_id, state: dict) -> None:
+    await _write(_key(user_id, PATTERN_MAINTENANCE_FILE), json.dumps(state, ensure_ascii=False, indent=2))
+
+
+# ── 用户画像（profile.json）：{type,text,ts}，不带 id/kind/conf，不衰减 ──
 async def read_profile_list(user_id) -> list[dict]:
-    """读用户画像列表。全新概念，没有旧文件可迁移，不存在就是空列表。"""
+    """读用户画像列表；兼容旧 id 格式，下一次写回时由 writer 清理。"""
     raw = (await _read(_key(user_id, PROFILE_FILE))).strip()
     if not raw:
         return []
     try:
         data = json.loads(raw)
         if isinstance(data, list):
-            return [p for p in data if isinstance(p, dict) and (p.get("text") or "").strip()]
+            normalized = [_normalize_profile_item(p, keep_ts=True) for p in data]
+            return [item for item in normalized if item]
     except Exception:
         pass
     return []
 
 
 async def write_profile_list(user_id, profile: list[dict]) -> None:
-    await _write(_key(user_id, PROFILE_FILE), json.dumps(profile, ensure_ascii=False, indent=2))
+    normalized = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    normalized = [item for item in normalized if item]
+    await _write(_key(user_id, PROFILE_FILE), json.dumps(normalized, ensure_ascii=False, indent=2))
+
+
+def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
+    """把新旧 profile 条目统一成 type/text，未知类型按 note 兼容。"""
+    if isinstance(item, str):
+        text = item.strip()
+        item_type = "note"
+        ts = None
+    elif isinstance(item, dict):
+        text = str(item.get("text") or "").strip()
+        item_type = str(item.get("type") or "note").strip()
+        ts = item.get("ts")
+    else:
+        return None
+    if not text:
+        return None
+    if item_type not in PROFILE_TYPES:
+        item_type = "note"
+    result = {"type": item_type, "text": text}
+    if keep_ts:
+        result["ts"] = ts
+    return result
 
 
 def render_profile(profile: list[dict]) -> str:
@@ -225,24 +268,27 @@ def render_profile(profile: list[dict]) -> str:
 
 
 def apply_profile_ops(profile: list[dict], add, remove) -> list[dict]:
-    """对用户画像应用一轮增删。比 apply_pattern_ops 简单得多：命中相似条只刷新 ts、采更具体文本，
-    不涉及 conf/kind。add 是字符串数组，remove 同理（按相似匹配删除）。返回新列表，不就地改入参。"""
-    out = [dict(p) for p in (profile or [])]
+    """对用户画像应用一轮增删；add 兼容旧字符串和新 {type,text} 对象。"""
+    out = [_normalize_profile_item(item, keep_ts=True) for item in profile or []]
+    out = [item for item in out if item]
     now = time.time()
-    rem = [r for r in (remove or []) if str(r).strip()]
+    rem = [r.get("text") if isinstance(r, dict) else str(r) for r in (remove or [])]
+    rem = [r.strip() for r in rem if str(r or "").strip()]
     if rem:
         out = [p for p in out if not any(_pattern_similar(p.get("text", ""), r) for r in rem)]
     for a in (add or []):
-        text = str(a).strip()
-        if not text:
+        item = _normalize_profile_item(a, keep_ts=False)
+        if not item:
             continue
+        text, kind = item["text"], item["type"]
         hit = next((p for p in out if _pattern_similar(p.get("text", ""), text)), None)
         if hit:
             hit["ts"] = now
+            hit["type"] = kind
             if len(text) > len(hit.get("text", "")):
                 hit["text"] = text
         else:
-            out.append({"id": _pattern_id(), "text": text, "ts": now})
+            out.append({"type": kind, "text": text, "ts": now})
     return out
 
 
@@ -722,4 +768,6 @@ async def append_daily(user_id, date: str, note: str) -> None:
         return
     lines = await read_daily_lines(user_id)
     lines.insert(0, f"- {date} {note}")
-    await write_daily_lines(user_id, lines[:DAILY_HARD_CAP])
+    # 压缩失败时也不能静默丢掉历史；DAILY_HARD_CAP 只作为运维监测阈值，
+    # 真正的裁剪必须发生在 memory 成功沉淀之后。
+    await write_daily_lines(user_id, lines)

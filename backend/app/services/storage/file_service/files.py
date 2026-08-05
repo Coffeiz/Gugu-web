@@ -199,7 +199,8 @@ class FileOps:
         return FileResult(f, project, folder_name or None)
 
     # ── 复制 ───────────────────────────────────────────────────────────────────
-    async def copy_file(self, user_id, fid, *, folder_id, project_id) -> FileResult:
+    async def copy_file(self, user_id, fid, *, folder_id, project_id,
+                        on_conflict="keep_both", overwrite_file_id=None) -> FileResult:
         f = await get_owned(self.db, File, fid, user_id)
         if not f or f.deleted_at:
             raise NotFound("file.not_found", "文件不存在")
@@ -209,6 +210,29 @@ class FileOps:
             folder_msg="目标文件夹不存在，或不属于目标项目/个人空间",
             project_msg="目标项目不存在")
 
+        data = await self.storage.get(f.storage_key)
+
+        if on_conflict == "overwrite" and overwrite_file_id is not None:
+            existing = await get_owned(self.db, File, overwrite_file_id, user_id)
+            if not existing or existing.deleted_at:
+                raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")
+            if existing.id == f.id:
+                return FileResult(existing, project, folder_name or None, was_overwrite=True)
+            if (existing.project_id != project_id or existing.folder_id != folder_id
+                    or existing.space != new_space
+                    or existing.display_name != f.display_name or existing.ext != f.ext):
+                raise Invalid("file.overwrite_target_invalid", "覆盖目标不在当前文件夹")
+            await self.storage.put(existing.storage_key, data, f.mime_type)
+            existing.size = f.size
+            existing.size_bytes = f.size_bytes
+            existing.mime_type = f.mime_type
+            existing.img_width = f.img_width
+            existing.img_height = f.img_height
+            existing.stage_name = f.stage_name
+            existing.updated_at = now_utc()
+            await self.db.flush()
+            return FileResult(existing, project, folder_name or None, was_overwrite=True)
+
         base_key = self._build_key(
             user_id, file_id=None, space=new_space, name=f.display_name, ext=f.ext,
             project=project, project_id=project_id,
@@ -216,7 +240,6 @@ class FileOps:
         resolved = await self.key_strategy.resolve_conflict(self.storage, base_key, f.display_name, f.ext)
         new_key, new_display = resolved.key, resolved.name
 
-        data = await self.storage.get(f.storage_key)
         await self.storage.put(new_key, data, f.mime_type)
         new_file = File(
             user_id=user_id, display_name=new_display, ext=f.ext, storage_key=new_key,

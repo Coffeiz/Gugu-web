@@ -72,6 +72,7 @@ import BaseModal from '@/components/common/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'
 import type { Project } from '@/types/project'
+import { naturalCompare } from '@/utils/textSort'
 
 const props = defineProps({ show: { type: Boolean, default: false } })
 const emit = defineEmits(['close'])
@@ -107,12 +108,12 @@ const groupedByYear = computed(() => {
     mMap.get(m)!.push(p)
   }
   const years = [...yearMap.entries()]
-    .sort(([a], [b]) => b.localeCompare(a))
+    .sort(([a], [b]) => naturalCompare(b, a))
     .map(([year, mMap]) => ({
       year,
       total: [...mMap.values()].reduce((s, arr) => s + arr.length, 0),
       months: [...mMap.entries()]
-        .sort(([a], [b]) => b.localeCompare(a))
+        .sort(([a], [b]) => naturalCompare(b, a))
         .map(([month, items]) => ({ month, items })),
     }))
   return years

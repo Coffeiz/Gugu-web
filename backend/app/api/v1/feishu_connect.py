@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import redis as R
 from app.core.security import get_current_user
+from app.core.tz import now_utc
 from app.db.session import get_db
 from app.models import User, UserBot
 
@@ -123,6 +124,9 @@ async def poll(
         # 连接时存 owner 可触达地址（open_id）→ 选了飞书无需先聊天即可主动投递
         oid = (data.get("user_info") or {}).get("open_id") or data.get("open_id")
         if oid:
+            bot.owner_platform_user_id = str(oid)
+            bot.owner_bound_at = now_utc()
+            await db.commit()
             try:
                 from app import scheduled_tasks as ST
                 await ST.save_imreach(current_user.id, "feishu", str(bot.id), None, oid)

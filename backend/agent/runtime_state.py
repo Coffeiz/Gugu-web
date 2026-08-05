@@ -1,8 +1,8 @@
 """IM 运行时状态机（State Manager）+ 取消标志。
 
-跨进程共享走 Redis：**worker 写状态、网关读状态**。IM 是单 worker 顺序消费队列——
-任务进行中后续消息排在队列里、worker 在忙看不到，所以「还在吗 / 算了」必须由**网关**
-据此状态短路（见 `agent/router.py`），不能进 worker。
+跨进程共享走 Redis：**worker 写状态、网关读状态**。取消是实时控制信号，任务进行中
+后续消息排在队列里、worker 可能暂时看不到，所以「算了」必须由**网关**即时写入；
+普通 intent shortcut 仍由 worker 的 IM Loop 处理。
 
 key（按平台用户隔离）：
   agentstate:{platform}:{puid}  → 状态字符串（带 TTL，worker 崩了自动过期回 IDLE，防卡死）

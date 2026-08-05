@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground deploy install uninstall update migrate backup clean deps
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update migrate backup clean deps deps-dev
 
 # ── venv 路径自动检测 ───────────────────────────────────
 # 优先用 .venv，找不到退到 venv
@@ -24,9 +24,9 @@ endif
 
 # ── 默认目标 ─────────────────────────────────────────────
 help:        ## 显示帮助
-	@./start.sh 2>&1 | head -40 || true
-	@echo ""
-	@echo "常用：make start | stop | restart | status | logs | fg | deploy | install"
+	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
+	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
+	@echo "生产：make install 后用 systemctl 管理 gugu-backend / gugu-worker / gugu-supervisor"
 	@echo "venv 路径：$(VENV_BIN)（自动检测）"
 
 # ── 生命周期 ─────────────────────────────────────────────
@@ -51,6 +51,21 @@ fg:          ## 前台启动（带 --reload，调试用）
 foreground:  ## 同 fg
 	./start.sh foreground
 
+dev-web:     ## 开发 Web 热重载（前台运行，Ctrl+C 停止）
+	./start.sh foreground
+
+dev-worker:  ## 开发 Worker 热重载（需先停掉同机 systemd worker）
+	@if [ -z "$(VENV_BIN)" ]; then \
+		echo "ERROR: 未找到 venv，请先 python3 -m venv .venv"; \
+		exit 1; \
+	fi
+	@if [ ! -x "$(VENV_BIN)/watchfiles" ]; then \
+		echo "ERROR: 未找到 watchfiles，请先执行 make deps-dev"; \
+		exit 1; \
+	fi
+	@echo "监听 app/ agent/ onboarding/ worker.py；Ctrl+C 停止。"
+	@$(VENV_BIN)/watchfiles --filter python "$(VENV_BIN)/python -m worker" app agent onboarding worker.py
+
 # ── 部署 / 维护 ──────────────────────────────────────────
 deploy:      ## 一键部署（备份 + 装依赖 + 跑迁移 + 前端 build + 重启）
 	./deploy.sh
@@ -62,6 +77,14 @@ deps:        ## 装依赖（用 venv 绝对路径，避开系统 pip）
 	fi
 	@echo "  pip install -r requirements.txt ..."
 	@$(VENV_BIN)/pip install -r requirements.txt
+
+deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
+	@if [ -z "$(VENV_BIN)" ]; then \
+		echo "ERROR: 未找到 venv，请先 python3 -m venv .venv"; \
+		exit 1; \
+	fi
+	@echo "  pip install -r requirements-dev.txt ..."
+	@$(VENV_BIN)/pip install -r requirements-dev.txt
 
 update:      ## 装依赖 + 跑迁移（不用 git，适合 scp/rsync 部署）
 	@$(MAKE) deps

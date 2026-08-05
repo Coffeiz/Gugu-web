@@ -18,6 +18,7 @@ from uuid6 import uuid7
 
 from app.core.tz import now_utc
 from app.core.crypto import EncryptedString
+from app.core.project_colors import DEFAULT_PROJECT_COLOR
 from app.db.types import UtcDateTime
 from app.db.base import Base
 
@@ -93,7 +94,7 @@ class Project(Base):
     status:        Mapped[str]           = mapped_column(String(20),  default="pending")
     start_date:    Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
     deadline:      Mapped[Optional[str]] = mapped_column(String(10),  nullable=True)
-    color:         Mapped[str]           = mapped_column(String(300), default="linear-gradient(135deg,#7b7fb2,#c4afc8)")
+    color:         Mapped[str]           = mapped_column(String(300), default=DEFAULT_PROJECT_COLOR)
     progress:      Mapped[int]           = mapped_column(Integer,     default=0)
     stages_json:   Mapped[str]           = mapped_column(Text,        default="[]")
     current_stage: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -382,6 +383,12 @@ class ConversationSession(Base):
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
+    # IM Bot 作用域。Web 会话保持为空；IM 会话必须和 source/chat_id 一起参与查找，
+    # 避免同一账号注册多个同平台 Bot 时串用会话。
+    bot_id:     Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -406,9 +413,140 @@ class ConversationMessage(Base):
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
     # 表格等）原样摊平显示，见 devlog 2026-07-10。
     quoted_text:  Mapped[Optional[str]]    = mapped_column(Text, nullable=True, default=None)
+    platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
+
+
+# ── IM 记忆反思 ──────────────────────────────────────────────────────────────
+
+class MemoryReflectionJob(Base):
+    """group/member 记忆反思任务；文件仍是记忆主数据。"""
+    __tablename__ = "memory_reflection_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    from_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    to_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(300), unique=True, index=True)
+    extractor_version: Mapped[str] = mapped_column(String(64), default="im-memory-v1")
+    reason: Mapped[str] = mapped_column(String(32), default="idle")
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    dead_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            "from_message_id", "to_message_id", "extractor_version",
+            name="uq_memory_reflection_range",
+        ),
+    )
+
+
+class MemoryReflectionCursor(Base):
+    """每个 IM memory scope 的消息游标和活跃窗口状态。"""
+    __tablename__ = "memory_reflection_cursors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    last_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    active_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    settled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    scope_version: Mapped[int] = mapped_column(Integer, default=0)
+    pending_passive_count: Mapped[int] = mapped_column(Integer, default=0)
+    pending_agent_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            name="uq_memory_reflection_cursor_scope",
+        ),
+    )
+
+
+class MemoryEntry(Base):
+    """文件记忆的来源索引；内容文件仍是主数据，条目可重建。"""
+    __tablename__ = "memory_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    entry_key: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(32))
+    content_hash: Mapped[str] = mapped_column(String(128), index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id", "entry_key",
+            name="uq_memory_entry_scope_key",
+        ),
+    )
+
+
+class MemorySource(Base):
+    """记忆条目到会话消息来源的可重建关联。"""
+    __tablename__ = "memory_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("memory_entries.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[int] = mapped_column(ForeignKey("conversation_messages.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("entry_id", "message_id", name="uq_memory_source_entry_message"),
+    )
+
+
+class MemoryScopeTombstone(Base):
+    """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
+    __tablename__ = "memory_scope_tombstones"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(20), index=True)
+    bot_id: Mapped[str] = mapped_column(String(128), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True)
+    scope_id: Mapped[str] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    delete_version: Mapped[int] = mapped_column(Integer, default=1)
+    reason: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
+            name="uq_memory_scope_tombstone_scope",
+        ),
+    )
 
 
 # ── AgentUsage ───────────────────────────────────────────────────────────────
@@ -445,14 +583,14 @@ class SearchUsage(Base):
 class UserBot(Base):
     """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
 
-    目前用于 QQ（platform=qqbot）。消息天然属于该 bot 的 owner（user_id），
-    所以不需要再做平台用户↔咕咕用户的绑定——bot 即归属。
+    目前用于 QQ（platform=qq）。消息归属于该 bot 的咕咕账号；QQ owner 的
+    平台身份另通过一次性验证码绑定，用于群聊权限判断，不作为跨 Bot 的全局身份。
     """
     __tablename__ = "user_bots"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    platform:   Mapped[str]      = mapped_column(String(20), default="qqbot")
+    platform:   Mapped[str]      = mapped_column(String(20), default="qq")
     name:       Mapped[str]      = mapped_column(String(100), default="")
     # app_id 是公开标识符（qq_connect.py/feishu_connect.py 用它做 SQL 等值查询去重），不加密；
     # app_secret 是真正的凭据，落库前 AES-256-GCM 加密（见 app/core/crypto.py）
@@ -460,11 +598,17 @@ class UserBot(Base):
     app_secret: Mapped[str]      = mapped_column(EncryptedString, default="")
     sandbox:    Mapped[bool]     = mapped_column(Boolean, default=False)
     enabled:    Mapped[bool]     = mapped_column(Boolean, default=True)
-    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应。
-    # QQ 官方机器人 SDK 只有群消息 @ 了机器人时才会触发事件（没有"接收全部群消息"的能力），
-    # 所以 group_requires_at 对 QQ 是平台层面硬约束，前端对 QQ 会强制显示为开启且不可关闭。
+    # 群聊：是否处理群消息、群消息是否要求 @ 机器人才响应、是否记录普通群消息。
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=True)
+    group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
+    group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 群成员可用工具白名单；默认只开放联网搜索，不暴露用户私有内容和写操作。
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search"])
+    # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
+    owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
+    owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    # QQ 当前 Bot 的平台身份 ID，用于精确展示 @机器人。
+    bot_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
@@ -548,10 +692,13 @@ class ScheduledTask(Base):
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
-    # 执行时按需精简注入用：{"tool_groups": ["web","meta"], "projects": false, "calendar": false,
-    # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
-    context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
+    # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
+    delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    # 只对一次性任务（cron 形如 "@once:..."）有意义：last_run_at 非空但这个是 True，
+    # 表示"已经触发过、但执行失败"——跟"已经成功"区分开，允许重新触发一次；
+    # None/False 且 last_run_at 非空 = 已成功（成功后本来就会删行，理论上不会读到）。
+    last_run_failed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
     created_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc)
     updated_at:  Mapped[datetime]           = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 

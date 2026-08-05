@@ -91,9 +91,8 @@ def build(profile: str, user_name: str, projects: list, events: list,
           include_projects: bool = True, include_calendar: bool = True,
           include_files: bool = True, include_memory: bool = True,
           user_tz=None) -> str:
-    # include_* 四个开关只给 run_ephemeral（定时任务）按 ScheduledTask.context_config 用——
-    # 交互式对话（web/IM）永远全量传 True，不受影响。跳过时不省 header 文字（便宜），
-    # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆，这才是大头）。
+    # include_* 允许少数轻量阶段关闭业务上下文；跳过时不省 header 文字，
+    # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆）。
     memory = memory if (include_memory and memory) else {}
     # 「今天/现在」按用户时区（user_tz）算——异地用户看到的日期才对；user_tz=None 回退服务器 LOCAL_TZ（零行为变化）。
     _now = datetime.now(user_tz or LOCAL_TZ)
@@ -212,7 +211,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
     return stable_str + CACHE_BREAK + "\n\n---\n\n" + dynamic_str
 
 
-_SOURCE_NAME = {"qqbot": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
+_SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
 
 
 def _source_block(source: str | None, im_channels: dict | None) -> str:
@@ -220,7 +219,7 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
     当前来源平台必然可达（用户正用它说话），强制标记已连，别再让 TA 绑。"""
     name = _SOURCE_NAME.get(source or "")
     ch = im_channels or {}
-    qq_on = bool(ch.get("qq")) or source == "qqbot"
+    qq_on = bool(ch.get("qq")) or source == "qq"
     fs_on = bool(ch.get("feishu")) or source == "feishu"
     wc_on = source == "wechat"
     lines = []
@@ -228,14 +227,14 @@ def _source_block(source: str | None, im_channels: dict | None) -> str:
         lines.append(f"本次对话来自：**{name}**。你当前正在通过{name}与用户实时聊天。")
     lines.append(f"主动通知渠道：站内通知（始终可用）；QQ {'已连 ✅' if qq_on else '未连 ❌'}；"
                  f"飞书 {'已连 ✅' if fs_on else '未连 ❌'}；微信 {'已连 ✅' if wc_on else '未连 ❌'}。")
-    if source in ("qqbot", "feishu", "wechat"):
+    if source in ("qq", "feishu", "wechat"):
         lines.append(f"- 用户**正用 {name} 跟你说话** → {name} 必然已连接：设提醒/通知走 {name} 渠道时"
                      f"**无需再绑定、绝不让 TA 扫码**（说『没绑』就错了）。")
     lines.append("- 设 qq/feishu 通知渠道前看这里：已连(✅)的直接用；只有未连(❌)才提示用户去「设置 → 连接 IM」绑定。")
     return "## 当前对话来源 / 通知渠道\n\n" + "\n".join(lines)
 
 
-# IM 消息（run_collect）/ 定时任务（run_ephemeral）都不流式展示给用户，中间轮次说的话
+# IM 消息（run_collect）/ 定时任务都不流式展示给用户，中间轮次说的话
 # 和最终答案会被一并收进推送文本（见 runner._collect），别在工具调用之间输出「我先查一下 /
 # 再看看」这类过程性旁白——那些话在网页流式场景里用户能看到没问题，这里会被当成正文发出去。
 _NON_STREAMING_BLOCK = (

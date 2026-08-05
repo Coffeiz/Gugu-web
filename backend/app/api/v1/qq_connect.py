@@ -31,7 +31,7 @@ router = APIRouter(prefix="/me/qq/connect", tags=["qq-connect"])
 PORTAL_HOST = os.getenv("QQ_PORTAL_HOST", "q.qq.com")
 CREATE_URL = f"https://{PORTAL_HOST}/lite/create_bind_task"
 POLL_URL = f"https://{PORTAL_HOST}/lite/poll_bind_result"
-FRONTEND = f"https://{PORTAL_HOST}/qqbot/openclaw/connect.html"
+FRONTEND = f"https://{PORTAL_HOST}/qq/openclaw/connect.html"
 SOURCE = "Gugu"
 TASK_TTL = 600  # 10 分钟
 
@@ -128,14 +128,23 @@ async def poll(
     # upsert：同一用户同一 app_id 不重复建
     existing = (await db.execute(
         select(UserBot).where(UserBot.user_id == current_user.id,
-                              UserBot.platform == "qqbot", UserBot.app_id == app_id)
+                              UserBot.platform == "qq", UserBot.app_id == app_id)
     )).scalars().first()
     if existing:
         existing.app_secret = secret
         existing.enabled = True
         bot = existing
     else:
-        bot = UserBot(user_id=current_user.id, platform="qqbot",
+        existing_platform_bot = (await db.execute(
+            select(UserBot).where(
+                UserBot.user_id == current_user.id,
+                UserBot.platform == "qq",
+            )
+        )).scalars().first()
+        if existing_platform_bot:
+            await R.get_redis().delete(_redis_key(task_id))
+            return {"status": "fail", "reason": "每个咕咕账号只能绑定一个 QQ 机器人"}
+        bot = UserBot(user_id=current_user.id, platform="qq",
                       name="我的 QQ 机器人", app_id=app_id, app_secret=secret,
                       sandbox=False, enabled=True)
         db.add(bot)

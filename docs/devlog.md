@@ -1,7 +1,40 @@
 # 咕咕 · 早期开发记录
 
+## 2026-08-06 · 视频链路 PR 审查收尾（P2 后续优化 + P3 文档修正）
+
+PR #7 视频链路审查确认 3 个 P1 已修复（事件循环阻塞、竖屏长边、超限回退），全量 701 测试通过。另有两个非阻塞项：
+
+- **P3（已修）**：统一文档与源码注释里过时的「>90MB 兜底走 base64」描述为「>90MB 明确拒绝，不回退 base64」。涉及 `chat_attach.py` 设计注释、`TEST-LLM-MiniMax-M3-视频mm_file传输.md` 策略、`PRD-LLM-3` 数据注意事项三处。
+- **P2（后续独立优化，不阻塞 PR7）**：大视频仍是全量内存处理——同时持有原始 `raw`、压缩后完整 `bytes`、base64/multipart 数据、ffmpeg 子进程内存；`Semaphore(2)` 仅单进程内限流。对 2C2G 部署，多个 ~90MB 视频并发仍有内存压力。后续改为文件路径式流水线：`Storage → 临时文件 → ffmpeg 输出文件 → 流式上传`，不在 Python 中同时保留原始与压缩后完整字节；机器级并发建议降到 1，或用 Redis 做跨进程限流。
+
+## 2026-08-05 · PR #7 合并前安全审查修复
+
+审查发现三个需要阻断合并的业务问题：OSS 直传确认信任客户端大小、Redis shortcut 故障会阻断 IM 入队、定时任务执行时用展示文本覆盖结构化投递目标。
+
+本次修复：
+
+- OSS confirm 通过 `HEAD` 读取真实对象大小和 MIME，重新执行单文件上限与用户配额校验，并锁定用户行避免并发 confirm 超额。
+- Redis 状态读取失败时 shortcut 默认放行到 worker；取消状态写入失败只记录受限诊断，不阻断消息处理。
+- 定时任务拆分 `target_map` 和 `target_description`，实际投递始终使用任务保存的目标。
+- IM 附件改为流式读取，限制单附件 50MB、单消息附件 100MB；连接层 DNS resolver 与 SSRF 校验共用内网地址判断，覆盖重定向、混合 DNS 和 IPv4-mapped IPv6。
+- 权限解析显式区分内部 Bot 数据库主键与平台 Bot ID，非法平台 ID 按最小权限处理。
+
+回归验证：后端 `638 passed`，ownership/confirmation guard 通过；前端 typecheck、strict typecheck、246 个单测和 build 通过。Alembic `current` 与 `heads` 均为 `20260804000007`；生产数据库副本升级/回滚和真实 OSS 对象测试仍需在部署环境完成。
+
 > 更新：2026-07-16
 > 状态：早期阶段记录，当前进度见 `product/overview.md`
+
+## 2026-08-04 · 开发环境后端热重载收口
+
+之前开发机修改后端代码经常需要手动重启 systemd，主要是 Web、Worker、supervisor 三个进程的职责和启动方式没有对应到开发入口：Uvicorn 只覆盖 Web，Worker 仍然是常驻进程，`onboarding/` 也不在原有 reload 目录中。
+
+现在统一为：
+
+- `cd backend && make dev-web`：前台启动 Uvicorn reload，监听 `app/`、`agent/`、`onboarding/`，并用 1 秒 graceful shutdown 避免 SSE 长连接卡住 reload。
+- `cd backend && make deps-dev && make dev-worker`：用 `watchfiles` 监听 `app/`、`agent/`、`onboarding/`、`worker.py`，Python 文件变化时自动重启 Worker。
+- supervisor 暂不自动 watcher；平台网关代码继续按 IM 网关规则单独重启。
+
+这套 watcher 只用于开发，不能与同机 systemd Worker 并行运行，也不改变生产 systemd 服务配置。生产环境仍按改动所属进程执行 `systemctl restart`，数据库结构变更仍需单独执行迁移。
 
 ---
 
@@ -16,7 +49,7 @@
 
 这些逻辑分别控制父级 transform、子级 height、卡片显隐和滚动位置，导致二次 FLIP、瞬间收缩、滚动顿挫和落地目标变化反复出现。后续不再继续添加局部补偿，改为在主文档的 `DoneLayoutRuntime` 中统一 capture、最终布局计算、滚动和动画收尾。
 
-本次只更新架构结论，没有修改已完成列运行逻辑。详见 [拖拽系统模块化拆分方案.md](docs/refactor/拖拽系统模块化拆分方案.md) 的「FLIP 基础设施与页面适配」章节。
+本次只更新架构结论，没有修改已完成列运行逻辑。详见 [拖拽系统模块化拆分方案.md](docs/refactor/_archive/拖拽系统模块化拆分方案.md)（已归档，被 gugu-interaction-runtime 取代）的「FLIP 基础设施与页面适配」章节。
 
 ## 2026-07-18 · 项目抽屉状态组的两个位移 bug：重叠事务、合成层未重绘
 
@@ -234,6 +267,33 @@ session 接管后自行建立视觉状态，普通取消仍走完整 reveal 收�
 - 探针（读取元素 class / computed style）比反复读代码猜时序有效得多——连续 2-3 轮猜不中就该换实测手段。
 
 ---
+## 2026-07-16 · 文件浏览模块化：选择互斥规则收口
+
+文件库和项目文件区原本各自实现“单选文件时清空文件夹选择、再次点击取消”的逻辑，项目文件区还单独实现了文件夹的 Ctrl/Cmd 切换。现将这些无副作用的集合操作收进 `useFileSelection`，页面仍保留预览、目录进入、框选和 Shift 范围等场景编排，因此没有改变卡片 DOM、样式、拖拽或缓存时序。补充了文件/文件夹互斥选择和重复点击取消的单元测试。
+
+## 2026-07-16 · 文件浏览模块化：单文件删除与批量删除共用回收站边界
+
+单文件删除原先仍在 `files.py` 路由中重复执行归属查询、物理移入回收站和 `deleted_at` 写入，现与批量删除一样收进 `services/files/selection.py`。路由仍负责 404 映射、事务提交和事件发布，软删除语义与回收站规则保持不变。
+
+## 2026-07-16 · 文件浏览模块化：右键菜单内容统一、动作留在页面
+
+文件库和项目文件区的右键菜单内容已收进 `FileBrowserContextMenuContent.vue`，通过能力 props 保留文件夹复制、删除分隔线和空白区操作等场景差异；菜单定位、关闭、缓存、剪贴板和 API 动作仍由页面负责，避免把回收站和项目范围规则塞入通用组件。
+
+## 2026-07-16 · 文件浏览模块化：回收站单文件永久删除下沉
+
+回收站单文件永久删除的归属查询、存储对象删除和数据库删除已收进 `services/files/trash.py`；路由仍负责 404 映射、事务提交、缩略图缓存清理和事件发布。文件夹整树永久删除、清空回收站和批量/文件夹恢复流程暂不合并，等待 devserver 端到端基线后再拆。
+
+单文件和批量文件恢复也已沿用同一边界：service 负责归属查询、父目录仍在回收站的冲突判断和物理恢复，路由只把领域冲突映射为原有 HTTP 409，再负责提交和事件发布。文件夹恢复仍保持原路径。
+
+已确认顶层回收站文件夹的整树永久删除也下沉到同一 service：顶层可删除单元的查询仍由路由负责，service 负责已删子树遍历、文件对象清理、目录物理清理并返回缩略图待清理 ID，避免把“哪些文件夹可删除”的 HTTP/权限判断复制进领域层。
+
+清空当前用户回收站也复用该 service 边界：路由只查询顶层恢复单元并提交事务，service 统一清理文件对象、目录对象和物理存储，仍由路由负责缩略图缓存与事件发布；系统级过期清理暂不混入用户请求路径。
+
+## 2026-07-16 · 文件浏览模块化：上传边界继续下沉但保留页面副作用
+
+文件浏览重构继续按“展示 → 状态 → 操作 → 边界”推进。前端已统一文件库和项目文件区的基础选择 toggle、Shift 范围纯算法、文件操作 API facade，以及上传批次的冲突决策、跳过过滤、顶层文件夹 ghost 分组和生命周期执行；实际网络请求、缓存更新、失败回滚仍由页面回调保留。后端新增批量文件删除/下载服务边界，并把预签名上传的项目/文件夹校验、冲突 key 和配额准备、OSS 确认登记移到 `services/files/upload.py`，路由只负责 HTTP、事务/事件和 OSS URL。
+
+本轮刻意没有把完整 `FileBrowserPanel`、文件夹卡片、ProjectModal 文件区或上传生命周期一次性合并：两边现有卡片 DOM、拖拽克隆、缩略图加载和缓存时序存在真实差异，继续强行抽象会把视觉/交互回归风险藏进通用组件。当前保留这些边界，作为后续需要手动验收后再决定的事项；详见 [【已完成】文件浏览系统模块化重构方案](docs/refactor/【已完成】文件浏览系统模块化重构方案.md)。
 
 ## 2026-07-15 · 抽屉↔画布拖拽收尾：连续几轮"改了又崩"最后靠录屏/trace/探针才收敛
 
@@ -468,7 +528,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 **第一层误判：以为是前端渲染问题。** 用户说"这次没有空格""结尾空格"，咕咕自己也把 `[e~[` 认成"空格"，一度以为是某个不可见字符被前端转义/渲染成了 `[e~[`。查了 `GuguChat.vue` 的流式 token 拼接（`text += evt.content`）、`_revealMessage` 的逐字 slice、marked 渲染管线、Debug 面板的日志展示——全都只是**透传**，没有任何地方会凭空生成或转换字符。这条线索排查完，结论应该是"前端干净，问题在后端数据里"，但**当时没有立刻确定下来**，又在"是不是尾随空格"这个假设上来回绕了几轮。
 
-**第二层误判：探针加了却一直不响，一度怀疑判断方向错了。** 在 `agent/sanitize.py` 加了 `probe_leak_tail`，先后三版：只匹配「结尾是 `[`」→ 不响；扩大到匹配任意 Unicode 控制/格式字符 → 不响；再扩大到「任意尾随空白（含普通空格）」→ **还是不响**。每次不响都会怀疑"是不是判断条件又不对"，但真正的原因始终是同一个、更底层的问题：**探针被加在了 `agent/runner.py` 的 `run_stream`/`run_collect`/`run_ephemeral` 三个函数里，而网页 `/chat` 端点实际走的是 `agent/adapters/web.py::_generate`**——这是一条完全独立的后台任务路径，有自己的 `full_reply` 组装和落库逻辑，跟 runner.py 那几个函数毫无关系。探针挂错文件，加多少版、改多严都不可能触发。
+**第二层误判：探针加了却一直不响，一度怀疑判断方向错了。** 在 `agent/sanitize.py` 加了 `probe_leak_tail`，先后三版：只匹配「结尾是 `[`」→ 不响；扩大到匹配任意 Unicode 控制/格式字符 → 不响；再扩大到「任意尾随空白（含普通空格）」→ **还是不响**。每次不响都会怀疑"是不是判断条件又不对"，但真正的原因始终是同一个、更底层的问题：**探针被加在了 `agent/runner.py` 的 `run_stream`/`run_collect`/`run_ephemeral` 三个函数里，而网页 `/chat` 端点实际走的是 `agent/gateway/web.py::_generate`**——这是一条完全独立的后台任务路径，有自己的 `full_reply` 组装和落库逻辑，跟 runner.py 那几个函数毫无关系。探针挂错文件，加多少版、改多严都不可能触发。
 
 **捅破这层之后，才是真正卡住的地方：探针补到 `web.py` 后，还是隔了两次「重启时间差」才对上一次真实复现。** 每次让用户复现，探针代码虽然在磁盘上改好了，但后端进程还没重启、或者复现发生在重启完成前几秒——`ps -o lstart` 查进程启动时间、`stat` 查文件改动时间，两两对比才确认"这次复现在重启之前，探针没生效"。这提醒了一件容易漏想的事：**改探针代码 ≠ 探针生效，中间隔着一次进程重启，验证时一定要先比对时间戳，不能假设"我改了就该响"。**
 
@@ -521,7 +581,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 目标很朴素：飞书 IM 收到消息后，agent 生成期间实时 patch 同一张卡片内容，模拟 SSE 体感（飞书客户端不支持真流式推送，patch 是唯一可行方案）。最终落地的链路是 `agent.runner.run_stream` 异步生成器逐字 yield → `feishu.send_text_stream` 边累积边 PUT element content，typewriter 效果由飞书服务端在 `streaming_mode=true` 下自动渲染。一路撞上三个坑，**第一个最容易被再撞上**（文档把两条路线写一起，不仔细看就混），后两个属于 SDK/服务端细节但同样会让排错时间翻倍。
 
-**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/adapters/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
+**坑一：`type=template` 跟 `type=card` 是两条不同的路线，混了直接 200380 "template does not exist"。** 飞书 IM 发送 `interactive` 消息时，`content` JSON 长得像 `{"type": "X", "data": {...}}`，但 `X` 取值不同就走完全不同的卡系统：① `type=template` + `data.template_id` 对应**飞书 Card Builder GUI** 创建的"模板"（可视化拖拽那种），走模板管理 API 提前创建、提前分配 id；② `type=card` + `data.card_id` 对应**CardKit v1 card entity**（API 现场 create 出来、可被 streaming update 那种）。两者 id 形态一样（都是 `7660...` 开头的 19 位数字串），飞书拿到的是 `type=card`+`template_id` 时会**按 template 路线找**，找不到就返 `200380`。**官方文档把两种 type 写在同一节里**，第一遍很容易照着「interactive 消息 content 格式」示例直接照抄一个，示例里恰好给的是 template，模板一抄就用——但实际项目要做的是 CardKit 流式，差一步就撞墙。修复明确落在 `backend/agent/gateway/feishu.py:659` 的 `content` 字段，并把"为什么是 card 不是 template"写进了 docstring。教训：飞书 IM 的 `interactive.content.type` 选错不是"功能降级"，是**直接 200380 不可达**——以后给任何新平台接 CardKit 都要先确认走哪条路、写代码前就把 type 选对，不要等撞了再回来查。
 
 **坑二：lark SDK `client.cardkit.v1.card.create()` 同步路径丢 body（200610 body is nil），用 `acreate()` 异步路径绕过。** 排查路径本身就是个反例：① 怀疑 body 构造——`{type: 'card_json', data: '<stringified card 2.0 JSON>'}` 用 `JSON.marshal` 出来格式正确；② 怀疑权限——但用户后台 `cardkit:card:write` 是开过的；③ 同样的 body 直接走 `httpx + 手动取 tenant_access_token` 调 → **200 成功**，拿到真实 card_id（如 `7660280254204284101`），说明 body 没问题、权限没问题；④ 缩到 SDK 内部——`Transport.execute` 同步路径走的是 `requests + data=bytes`，headers 合并用的是 `request.headers` 引用、body 走 `requests` 的 `data` 参数，实际发出去的 body 是空的。**SDK 自己的 `cardkit_create`（`channel/driver.py:266`）就是用 `acreate` 异步路径绕开这个 bug 的**，等于官方代码自己已经踩过。修复：`_do_create_card` / `_do_update_card` 从 `def` 改成 `async def`，内部用 `client.cardkit.v1.card.acreate/aupdate`（走 `httpx + json=` 参数），外层 `send_text_stream` 直接 `await`，去掉 `asyncio.to_thread` 包装。教训：**当 SDK 同步调用报 body 异常、而同样的 body 走直 HTTP 又成功时，第一反应应该是「绕 SDK」而不是「改 body」**——SDK 是飞书官方在维护，但它的 Transport 同步路径在 2.x 确实有 bug（不一定每个版本都修，且不一定在 changelog 里明写），cardkit 这条路官方自己都默认走异步，不要硬刚同步。
 
@@ -606,7 +666,7 @@ description 里补例子完全没用——description 对提示词有帮助，�
 
 **微信** iLink 最省事，引用消息的 `item.ref_msg.message_item` 直接内嵌了被引用消息的完整内容（含 `text_item`），不用额外查询。
 
-两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/adapters/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
+两边实现都只包装送进 LLM 的文本（新增 `llm_text`，不改原始 `text`），router/秒回表情逻辑继续用原始文本判关键词，不受影响。改动：`agent/gateway/{feishu,wechat}.py` 新增 `_fetch_quoted_text`/`_extract_quoted_text`。
 
 ## 2026-07-04 · 全项目安全审计 + 一批修复
 
@@ -1302,7 +1362,7 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ```
 飞书私聊消息
-  → 网关 adapters/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
+  → 网关 gateway/feishu.py（lark-oapi WebSocket 长连，收 im.message.receive_v1）
   → produce_sync 入队 Redis Streams（im:inbound）
   → worker.py 独立进程 consume
   → run_collect(AgentRequest)：复用 loaders/builder/core/sanitize，攒完整回复（人格+记忆+41工具）
@@ -1325,8 +1385,8 @@ Admin 加「服务状态」页：worker/supervisor 每 5s 写 Redis 心跳，面
 
 ### 现状与下一步
 
-- 跑起来 = 两个独立后台进程：`python -m agent.adapters.feishu`（网关）+ `python -m worker`（worker）。
-- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/adapters/feishu.py`（收+发）。
+- 跑起来 = 两个独立后台进程：`python -m agent.gateway.feishu`（网关）+ `python -m worker`（worker）。
+- 已落地骨架：`app/core/redis.py`（Streams + produce_sync）、`agent/runner.py`（非流式）、`worker.py`、`agent/gateway/feishu.py`（收+发）。
 - **下一步**：OAuth 2.0 用户扫码绑定（方案 A 轻绑定）——绑定表 `(platform,open_id)↔user_id` + 后端授权URL/回调 + 设置页二维码 + 网关 open_id 解析，替换临时的 root123 映射，实现"每人各聊各的"。
 
 ---
@@ -1686,3 +1746,92 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 
 - `npm run typecheck` 通过。
 - 用户手测确认：目标在当前视野上方、抽屉需要向上滚动的回收路径已恢复正常。
+## 2026-07-15 · 文件浏览系统渐进式模块化
+
+本轮重构没有直接替换成一个全能 `FileBrowserPanel`，而是按展示、状态、操作和后端边界逐步抽取。`FileBrowserGrid/List/Breadcrumb/ContextMenu` 只承担展示壳，`useFileSelection`、`useFolderNavigation`、`useFileProjection` 和 `useFileActions` 不直接维护页面缓存或 UI 状态。
+
+文件库和项目文件区继续分别负责乐观更新、版本冲突、回滚、ghost 生命周期、项目范围和回收站差异。后端新增的 `services/files/*` 目前只接收响应组装、查询构造、上传冲突/文件名解析和预览转换等低风险边界；鉴权、事务、存储归属、删除和回收站语义仍保留在原有边界。
+
+这条边界是有意保留的兼容策略：文件卡片 DOM、拖拽克隆、缩略图时序和项目文件归属都曾出现过高风险回归，不能仅凭 typecheck 证明安全。完整 `ProjectModal` 区域拆分和后端写操作 service 化需要 devserver 端到端验收后再继续。
+
+## 2026-07-16 · 文件浏览选择范围下沉
+
+文件库与项目文件区原本都各自完成 Shift 范围计算，再把文件和文件夹集合写回响应式状态。本次将“范围解析 + 混合选中集合替换”收进 `useFileSelection`，两个页面只保留可见项目列表、框选 DOM 和锚点生命周期编排；没有改变选择模式、快捷键或框选行为。
+
+框选暂不继续抽象：它依赖页面容器、数据属性和回收站特殊前缀，继续下沉会把页面 DOM 约定带进通用 composable，反而扩大边界。前端测试现为 18 个文件、200 个用例全部通过，typecheck 通过。
+
+## 2026-07-16 · 文件服务迁移后的旧 helper 引用
+
+把响应组装、缩略图和预览逻辑下沉后，隔离运行当前分支的后端全量测试时发现旧调用方仍从 `app.api.v1.files` 导入已删除的 `_to_resp`、`_color`、`_delete_thumb_cache`、`_thumb_dir` 等符号，导致测试收集阶段失败。问题不在业务逻辑，而是迁移边界没有完成调用方收口。
+
+现已将回收站、Agent 文件/回收站工具、账户注销、应用启动清理和 Agent 预览接口统一改为依赖 `services/files/{response,previews}.py`；同时修正 `FileService.move_folder` 直接传入 `target_project_id` 时未识别为显式目标项目的问题。当前分支在 devserver 临时隔离副本中后端全量测试通过，原 devserver 工作树未被覆盖。
+
+同一轮继续把批量上传冲突检查从 `files.py` 下沉到 `services/files/upload.py`；路由仍负责 Pydantic 请求解析和响应投影，上传协议、冲突判断和返回结构保持不变。
+
+## 2026-07-16 · ProjectModal 面板拆分：InfoPanel / StagesPanel 抽取收尾
+
+阶段 6 的剩余工作：抽取 `ProjectInfoPanel`、`ProjectStagesPanel` 和对应的 composable。
+
+`ProjectInfoPanel.vue` 承担项目名称、状态、颜色、日期、客户编辑，`ProjectInfoPanel.vue` 承担阶段展示、排序、编辑和待办增删改查。`useProjectDraft` 统一管理草稿脏状态和保存/取消，`useProjectStages` 提供阶段/待办操作的编排函数。
+
+### 踩坑
+
+1. **`saveTodos` 回调缺失**：`ProjectStagesPanel` 通过 `onSaveTodos` prop 调用父级的保存函数，但抽取时 `ProjectModal` 中没有定义 `saveTodos` 函数，导致待办保存静默失败。补上 `saveTodos` 函数，调用 `projectStore.saveTodos` 并传入进度参数。
+
+2. **CSS 样式未迁移**：`ProjectStagesPanel.vue` 只有 template 和 script，缺少 `<style scoped>` 块。原有的阶段/待办 CSS 全部留在了 `ProjectModal.vue` 中。将样式从 `ProjectModal` 迁移到 `ProjectStagesPanel` 后恢复正常。
+
+3. **文件末尾残留生成标记**：`ProjectStagesPanel.vue` 末尾残留了 `</VUEEOF` 和 `echo "ProjectStagesPanel.vue created"` 两行无效代码，导致 Vue 编译器报 `Invalid end tag`。
+
+### 当前状态
+
+- `ProjectModal.vue` 从 ~2900 行降到 2264 行
+- `ProjectStagesPanel.vue` 314 行（含阶段展示、拖拽排序、待办编辑、待办跨阶段拖拽）
+- `ProjectInfoPanel.vue` 约 120 行
+- 后端 `upload.py` 进度编排状态确认已完成，更新方案文档
+
+## 2026-08-03 · 文件库入口非手测收口审计
+
+### 审计范围
+
+针对文件库模块化重构的 9.5 收尾，检查 `views/Files/index.vue` 是否仍重复实现通用能力，并核对页面级组件与文件能力 composable 的边界。
+
+### 结果
+
+- 存储统计已由 `useFileStorageUsage` 负责。
+- 文件夹图标、强调色和展示映射已由 `useFileLibraryFolderPresentation` 负责。
+- 文件夹创建、下载、删除已由 `useFileLibraryFolderActions` 负责。
+- 单文件下载、删除已由 `useFileLibraryFileActions` 负责。
+- 拖拽目标解析、重命名、右键菜单、回收站动作转发和键盘快捷键仍依赖文件库页面上下文，保留在入口作为适配层，没有发现重复的通用实现。
+- 清理了入口内未使用的重复选择函数。
+
+### 验证
+
+前端 `typecheck`、`typecheck:strict`、Vitest（26 个测试文件 / 246 passed）和 `git diff --check` 均通过；文件库 Playwright 冒烟此前已在 devserver 验证为 10 passed、1 skipped。剩余工作是 devserver 浏览器手测，不属于静态收口审计范围。
+
+## 2026-08-05 · PR #7 合并前安全审查收尾
+
+### 本轮复审
+
+- OSS 直传确认使用服务端 HEAD 的真实大小和 MIME，在用户行锁之后重新计算配额；回归覆盖虚假客户端大小、单文件超限、覆盖配额和锁语句顺序。
+- Redis shortcut 读取失败时继续走完整 worker；QQ、飞书入口均有回归测试证明消息仍会进入 Stream，取消状态写入失败只记录告警。
+- 定时任务将数据库目标保存为 `target_map`，把提示词展示文本单独命名为 `target_description`，并测试完整执行到群聊/私聊投递的目标不串。
+- IM 媒体下载使用流式读取，限制单附件 50MB、单消息总量 100MB，并在连接层复核 DNS 结果；URL 安全测试覆盖重定向内网、混合 DNS 和 IPv4-mapped IPv6。
+- 定时任务异常日志改为受限诊断出口和脱敏摘要，不再把原始异常文本写入可见日志或执行结果。
+
+### 验证结果
+
+- 后端：`644 passed`，ownership/confirmation guard 通过，Python compileall 通过。
+- 前端：typecheck、strict typecheck、246 个 Vitest 测试和 build 全部通过；build 仅保留既有 chunk/import 警告。
+- 迁移：在临时 PostgreSQL 上从项目的现有 schema 基线 `20260804000002` 升级至 `20260804000007`，执行一次 downgrade 到 `20260804000006` 后再次 upgrade，最终为 head。
+- 空 PostgreSQL 可直接执行 `alembic upgrade head`：`alembic/env.py` 检测真正空库后用当前 metadata 建立基础表并写入当前 head；已有业务表则仍走正常 revision 链，不会被误判为空库。临时 PostgreSQL 18 空库实测建出 31 张表，版本为 `20260804000007`。
+- devserver 工作树存在其他未归属改动，未在其目录执行迁移。通过只读 `pg_dump --schema-only` 获取远端生产结构副本，在本地 PostgreSQL 18 临时库中从 head 回退到 `20260804000002`，再升级到 `20260804000007`，最终 head 验证通过；未修改远端数据库。
+- 真实 OSS 对象和人工 IM 交互仍需部署后手测，不能由本地单测替代。
+
+### 复审收尾补充
+
+- 清理了上传服务的导入顺序问题，保持项目统一的标准库导入规范。
+- 复审时发现并修复 OSS confirm 新建文件分支遗漏实际配额复核的问题，新增“已有占用 + 新对象真实大小”回归测试；覆盖分支原有的替换配额检查保持不变。
+- 在临时 PostgreSQL 18 中执行真实双会话并发 confirm，结果为一条成功、一条配额拒绝，总占用保持 `95`，证明用户行锁和服务端配额复核生效。
+- 生产结构副本迁移复核命令输出：`production_schema_copy_downgrade_upgrade_ok`，最终版本 `20260804000007`。
+- 迁移补充复核：已有业务表路径先 stamp head，再 downgrade 到 `20260804000002` 并 upgrade 回 head，最终版本仍为 `20260804000007`；bootstrap 路径确认提交事务，避免连接关闭时回滚建表结果。
+- 总体清理：移除已完成排查的 QQ 表情前端探针和文件拖拽临时 `debugLabel`，未保留调试输出或无调用的探针模块。

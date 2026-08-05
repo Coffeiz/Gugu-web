@@ -48,7 +48,11 @@ def start() -> AsyncIOScheduler:
         _sched.add_job(fn, trig, id=jid, name=name,
                        replace_existing=True, max_instances=1, coalesce=True)
     _sched.start()
-    print(f"[scheduler] started · {len(_pending)} jobs: {[p[2] for p in _pending]}", flush=True)
+    print(
+        f"[scheduler] started · {len(_pending)} builtin jobs: {[p[2] for p in _pending]} "
+        "(DB tasks are attached by scheduled_tasks.reconcile)",
+        flush=True,
+    )
     return _sched
 
 

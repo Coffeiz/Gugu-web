@@ -14,10 +14,10 @@ async def delete_account(db: AsyncSession, user: User) -> int:
     # ① 缩略图缓存（按 file_id 存共享目录，不在用户前缀下，得按文件逐个清）
     from sqlalchemy import select
     from app.models import File
-    from app.api.v1.files import _delete_thumb_cache
+    from app.services.files.previews import delete_thumb_cache
     fids = (await db.execute(select(File.id).where(File.user_id == user.id))).scalars().all()
     for fid in fids:
-        _delete_thumb_cache(fid)
+        delete_thumb_cache(fid)
 
     # ② 存储层：整个 {user_id}/ 前缀（上传文件 + .agent/ 记忆 + .voice/ + .chat_staging/ 全在其下）
     from app.services.storage import get_storage

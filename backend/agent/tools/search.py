@@ -15,6 +15,7 @@ sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 
 """
 from datetime import datetime
 
+import asyncio
 import json
 import random
 
@@ -84,13 +85,20 @@ async def _searxng_image_search(db, user_id, args: dict):
     # 文本引擎列表兜底，管理员实测后可在后台单独配 searxng_image_engines。
     engines = settings.search.searxng_image_engines or settings.search.searxng_engines
     params = {"q": query, "format": "json", "categories": "images", "engines": engines}
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
-        ) as client:
-            resp = await client.get(f"{base}/search", params=params)
-    except Exception as e:
-        return {"error": f"图片搜索暂时失败（{type(e).__name__}）"}
+    resp = None
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
+            ) as client:
+                resp = await client.get(f"{base}/search", params=params)
+            break
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+            if attempt == 1:
+                return {"error": f"图片搜索暂时失败（{type(e).__name__}），请稍后再试"}
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            return {"error": f"图片搜索暂时失败（{type(e).__name__}）"}
     if resp.status_code == 403:
         return {"error": "图片搜索（SearXNG）返回 403：未开启 JSON 输出，需管理员在 settings.yml 加 search.formats: json"}
     if resp.status_code != 200:

@@ -1,6 +1,6 @@
 {
   "name": "gugu-web",
-  "version": "0.19.1",
+  "version": "0.20.0",
   "private": true,
   "license": "Apache-2.0",
   "scripts": {
@@ -12,6 +12,7 @@
     "typecheck:strict": "vue-tsc -p tsconfig.strict.json --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e": "playwright test",
     "gen:types": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts"
   },
   "dependencies": {
@@ -61,6 +62,7 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^5.0.0",
     "esbuild": "^0.28.1",

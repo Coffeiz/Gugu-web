@@ -190,8 +190,7 @@ export function useFileDragDrop(config: FileDragDropConfig) {
 
         // 文件名和元信息是高频阅读内容；后仰会把整张卡送进 3D 合成层，让细字变软。
         // 保留弹簧、平面摆动和阴影，只关闭这条不利于文字清晰度的变换。
-        // TEMP DEBUG（面包屑拖拽排查用，定位后移除 debugLabel）
-        const opts = { pointer: true, tilt: 0, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, debugLabel: 'filedrag', ...(ctx.extraOpts || {}) }
+        const opts = { pointer: true, tilt: 0, onDrop: dispatchDrop, onDragOver: updateDragOverHighlight, resolveAbsorbTarget, ...(ctx.extraOpts || {}) }
         const total = folderIds.length + fileIds.length
         if (total > 1) {
           const extraFolderEls = folderIds.filter(id => id !== (ctx.isFolder ? ctx.itemId : undefined))

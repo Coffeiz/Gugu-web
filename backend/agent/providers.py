@@ -97,7 +97,7 @@ def adapter_for(ai) -> ProviderAdapter:
 # `AsyncAnthropic(api_key=..., base_url=..., http_client=..., default_headers=...)`/
 # `AsyncOpenAI(api_key=..., base_url=..., timeout=..., default_headers=...)` 这套构造
 # 样板原来在 agent/core.py（现 agent/loop_drivers.py）、agent/greeting.py、
-# agent/voice.py、agent/memory/_llm.py、agent/adapters/web.py（4 处）、
+# agent/voice.py、agent/memory/_llm.py、agent/gateway/web.py（4 处）、
 # app/api/v1/agent_admin.py 里各写一份，`default_headers` 那一个参数早就通过
 # `adapter_for(ai).auth_headers(ai)` 收拢了（Phase 1），但"怎么拼这个客户端对象"本身
 # 还没收。这两个函数收拢的只是构造样板，不动各调用点的 timeout 取值——那是每个调用场景

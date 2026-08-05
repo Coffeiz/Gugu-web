@@ -220,6 +220,7 @@ import { nextZ } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
+import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
 const emit  = defineEmits(['close'])
@@ -323,16 +324,7 @@ function weekLaterIso() {
   const d = new Date(); d.setDate(d.getDate() + 7); return toIso(d)
 }
 
-const colorPresets = [
-  { value: 'linear-gradient(135deg,#c8aa72,#b88060)' },
-  { value: 'linear-gradient(135deg,#8fbe8b,#7ab8a8)' },
-  { value: 'linear-gradient(135deg,#7ab8a8,#7ab8c8)' },
-  { value: 'linear-gradient(135deg,#7ab8c8,#7b7fb2)' },
-  { value: 'linear-gradient(135deg,#5e73b2,#7b7fb2)' },
-  { value: 'linear-gradient(135deg,#7b7fb2,#c4afc8)' },
-  { value: 'linear-gradient(135deg,#c4afc8,#b07090)' },
-  { value: 'linear-gradient(135deg,#be8b8f,#c8aa72)' },
-]
+const colorPresets = PROJECT_COLOR_PRESETS.map(value => ({ value }))
 
 const prefsStore = usePreferencesStore()
 

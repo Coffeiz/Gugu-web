@@ -1,13 +1,14 @@
-"""记忆压缩：daily 攒够后，把最老的条目沉淀进 memory.md（长期记忆）。
+"""记忆压缩：daily 攒够后，把最老的条目沉淀进 memory.md（长期记忆主档）。
 
 机制（按累积条数，不按天数，便于直接控住注入 prompt 的体积）：
-- daily 达到 `DAILY_COMPACT_AT`(75) 触发
-- 取最老的 `len - DAILY_KEEP_RECENT`(余 50) 条 → 连同已有 memory.md 交 LLM 融合
+- daily 达到 `DAILY_COMPACT_AT`(150) 触发
+- 取最老的 100 条 → 连同已有 memory.md 交 LLM 整理，保留历史和时间脉络
 - 写回 memory.md，daily 留最近 DAILY_KEEP_RECENT(50) 条
-即约每 25 轮对话压一次。由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
+压缩失败时不裁剪 daily，避免历史丢失。由 reflection 在写完 daily 后顺带触发，失败不影响主流程。
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from agent.memory import store
@@ -15,11 +16,20 @@ from agent.memory._llm import complete_json
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _SYS_FALLBACK = (
-    "你在帮咕咕维护用户的长期记忆。把近期记录里值得长期保留的并入已有长期记忆，"
-    "合并重复、修正矛盾、丢弃琐碎，控制篇幅、越压越精，不评判不推测。"
-    "已经能被用户画像/行为模式清楚表达的稳定结论，不要在长期记忆里原句复写；长期记忆只保留事件背景、时间脉络、变化过程。"
+    "你在帮咕咕维护用户的长期记忆主档。把近期记录并入已有长期记忆，"
+    "合并明确重复、修正矛盾，并保留有价值的历史、日期、事件背景和变化过程。"
+    "不要因为内容较旧、较细或篇幅限制而删除历史；稳定结论可以不重复，但不能因此丢掉事件背景。"
+    "不评判、不推测，日期和时间顺序必须保留。"
     '严格只输出 JSON：{"memory": "更新后的长期记忆全文（没有可沉淀的就原样返回，别清空）"}'
 )
+
+_DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
+
+
+def _preserves_incoming_dates(overflow: list[str], memory: str) -> bool:
+    """新沉淀批次带日期时，防止 LLM 整体重写时把这批历史的时间锚点全丢掉。"""
+    dates = set(_DATE_RE.findall("\n".join(overflow)))
+    return not dates or dates.issubset(set(_DATE_RE.findall(memory)))
 
 
 def _load_sys() -> str:
@@ -50,14 +60,14 @@ async def compact(user_id, settings) -> bool:
             f"{store.render_profile(profile) or '（暂无）'}\n\n"
             f"已结构化的行为模式（这些是可复用规律，别在长期记忆里原句复写）：\n"
             f"{store.render_pattern(pattern) or '（暂无）'}\n\n"
-            f"要沉淀进来的近期记录（旧→可丢琐碎）：\n" + "\n".join(overflow) + "\n\n"
-            f"请输出融合后的长期记忆全文。"
+            f"要沉淀进来的近期记录（按日期保留有价值的历史，不要丢掉日期）：\n" + "\n".join(overflow) + "\n\n"
+            f"请输出整理后的完整长期记忆主档。"
         )
-        out = await complete_json(_load_sys(), user, settings, max_tokens=1200)
+        out = await complete_json(_load_sys(), user, settings, max_tokens=10000)
         new_memory = (out.get("memory") or "").strip()
 
-        # 防误删兜底：原本有长期记忆、模型却返回空 → 不覆盖，且不裁 daily（避免丢数据）
-        if not new_memory and existing_memory:
+        # 防误删兜底：模型返回空或丢掉本批次全部日期 → 不覆盖，也不裁 daily。
+        if (not new_memory and existing_memory) or not _preserves_incoming_dates(overflow, new_memory):
             return False
 
         if new_memory:

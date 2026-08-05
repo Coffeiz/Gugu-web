@@ -16,14 +16,16 @@
 | [`01-架构图.md`](agent/01-架构图.md) | 两张架构全景图：可靠性执行链路、系统模块全景 |
 | [`02-决策环.md`](agent/02-决策环.md) | 一轮「用户说话→咕咕回应」内部到底走了哪些步 |
 | [`03-可靠性.md`](agent/03-可靠性.md) | 可靠性工程：怎么保证「说做了就真做了」 |
-| [`31-多步执行与防停顿.md`](agent/31-多步执行与防停顿.md) | 回复循环终止策略，防止「说了要做却没动手」 |
+| [`33-多步执行与防停顿.md`](agent/33-多步执行与防停顿.md) | 回复循环终止策略，防止「说了要做却没动手」 |
 | [`20-IM接入架构.md`](agent/20-IM接入架构.md) | 飞书 / QQ / 微信接入架构 |
 | [`11-记忆系统.md`](agent/11-记忆系统.md) | 私有 `.agent/` 五层记忆档案 + 反思机制 |
 | [`10-感知系统.md`](agent/10-感知系统.md)（+ 两张 svg） | 相处方式系统：感知 / 反思 / stance 行为模块 / 错读案例收集，体量最大的一篇 |
 | [`12-精力系统.md`](agent/12-精力系统.md) | Token 配额（精力）系统：窗口计算、硬拦、封顶记账 |
-| [`22-LLM支持与适配.md`](agent/22-LLM支持与适配.md) | 支持哪些模型厂商、怎么适配 |
-| [`30-提示词优化指南.md`](agent/30-提示词优化指南.md) | prompt 怎么组织、渐进式披露（`use_skill`）机制 |
-| [`21-飞书接入指南.md`](agent/21-飞书接入指南.md) | 飞书接入操作指南（BYO 扫码自连） |
+| [`21-群聊消息架构.md`](agent/21-群聊消息架构.md) | 群聊消息读取、上下文与 Agent Loop 链路 |
+| [`22-飞书接入指南.md`](agent/22-飞书接入指南.md) | 飞书接入操作指南（BYO 扫码自连） |
+| [`23-IM用户数据结构.md`](agent/23-IM用户数据结构.md) | IM 平台身份、Bot、群组成员和权限数据结构 |
+| [`24-LLM支持与适配.md`](agent/24-LLM支持与适配.md) | 支持哪些模型厂商、怎么适配 |
+| [`32-提示词优化指南.md`](agent/32-提示词优化指南.md) | prompt 怎么组织、渐进式披露（`use_skill`）机制 |
 
 **proposals/ —— 单功能实现方案 / 待评审草案**（跟上面"已落地、持续维护"的架构文档性质不同，这里是"某个具体功能怎么做"的方案记录，有的已实现有的还是提案，每篇开头都标了现状）
 
@@ -58,8 +60,8 @@
 - [`overview.md`](product/overview.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
 - [`mvp.md`](product/mvp.md) —— MVP 功能清单与状态
 - [`wishlist.md`](product/wishlist.md) —— 功能规划
-- [`design.md`](product/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
-- [`design-admin.md`](product/design-admin.md) —— Admin 后台设计规范
+- [`design.md`](development/design.md) —— 前台 UI/UX 设计规范（色彩、组件、交互）
+- [`design-admin.md`](development/design-admin.md) —— Admin 后台设计规范
 - [`file-preview.md`](product/file-preview.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
 - [`思维面板/`](product/思维面板/) —— 日常记录与项目画布、语义关联及咕咕协作。[设计草案](product/思维面板/设计草案.md)（产品）、[数据模型草案](product/思维面板/数据模型草案.md)（schema，权威）、[实现方案](product/思维面板/实现方案.md)（工程清单）
 - [`前端-JS转TS迁移指南.md`](product/前端-JS转TS迁移指南.md) —— JS→TS 渐进迁移的约定与进度

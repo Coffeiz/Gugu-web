@@ -87,11 +87,13 @@
               </div>
               <div class="preset-card-meta">
                 <span class="preset-model">{{ p.model }}</span>
-                <span class="preset-meta-item">out {{ p.max_tokens ?? 2000 }}</span>
-                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 3000 }}</span>
+                <span class="preset-meta-item">out {{ p.max_tokens ?? 4000 }}</span>
+                <span class="preset-meta-item">ctx {{ p.context_tokens ?? 120000 }}</span>
                 <span class="preset-meta-item">temp {{ p.temperature ?? 0.7 }}</span>
                 <span v-if="p.thinking === 'adaptive'" class="preset-meta-item preset-meta-think"><PhBrain :size="11" weight="bold" />思考</span>
-                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />多模态</span>
+                <span v-if="p.vision" class="preset-meta-item preset-meta-vision"><PhEye :size="11" weight="bold" />图片</span>
+                <span v-if="p.vision_video" class="preset-meta-item preset-meta-vision"><PhVideo :size="11" weight="bold" />视频</span>
+                <span v-if="p.vision_audio" class="preset-meta-item preset-meta-vision"><PhMicrophone :size="11" weight="bold" />音频</span>
                 <span class="preset-key" :title="p.api_key || '未设置 Key'">{{ p.api_key || '未设置 Key' }}</span>
               </div>
             </div>
@@ -159,11 +161,32 @@
             <div class="modal-field">
               <label>Base URL</label>
               <input v-model="editTarget.base_url" placeholder="https://…" class="modal-input" />
+              <div v-if="editTarget.provider === 'qwen'" class="modal-hint">
+                百炼建议使用业务空间专属域名：<code>https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</code>（WorkspaceId 在控制台业务空间详情页查看）；通用域名 dashscope.aliyuncs.com 仍可用
+              </div>
             </div>
 
             <div class="modal-field">
               <label>模型名称</label>
-              <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input" />
+              <div class="model-picker" @focusout="closeModelMenuSoon">
+                <div class="model-picker-row">
+                  <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input"
+                    @focus="modelMenuOpen = true" />
+                  <button type="button" class="model-fetch-btn" :disabled="modelListLoading"
+                    title="从服务商获取模型列表"
+                    @mousedown.prevent @click="fetchModelList">
+                    {{ modelListLoading ? '获取中…' : '获取列表' }}
+                  </button>
+                </div>
+                <div v-if="modelMenuOpen" class="model-options" @mousedown.stop>
+                  <div v-if="modelListError" class="model-option-hint error">{{ modelListError }}</div>
+                  <div v-else-if="!modelOptions.length" class="model-option-hint">
+                    点击“获取列表”加载可用模型
+                  </div>
+                  <button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option"
+                    @mousedown.prevent="selectModel(model)">{{ model }}</button>
+                </div>
+              </div>
             </div>
 
             <div class="modal-field" v-if="editTarget.provider === 'mimo'">
@@ -219,16 +242,33 @@
 
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
-                <span>多模态（看图）</span>
-                <span class="thinking-hint">开启后用户发的图片直接给模型「看」；不确定就用卡片上的「检测多模态」自动判定</span>
+                <span>多模态能力</span>
+                <span class="thinking-hint">图片/视频/音频分别开关；点「检测」自动判定该维度是否支持，成功后自动开启</span>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ on: editTarget.vision }"
-                @click="editTarget.vision = !editTarget.vision"
-              >
-                <span class="toggle-knob" />
-              </button>
+            </div>
+
+            <div class="modal-field modal-field--row" v-for="dim in visionDims" :key="dim.key">
+              <div class="thinking-label">
+                <span>{{ dim.label }}</span>
+                <span class="thinking-hint">{{ dim.hint }}</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <button
+                  type="button"
+                  class="pca-btn pca-btn--sm"
+                  :class="{ 'pca-btn--testing': probingDim === dim.key }"
+                  :disabled="editIsNew || (probingDim !== null && probingDim !== dim.key)"
+                  :title="editIsNew ? '先保存预设再检测' : ''"
+                  @click="probeVision(editTarget.id, dim.key)"
+                >{{ probingDim === dim.key ? '检测中…' : '检测' }}</button>
+                <button
+                  class="toggle-switch"
+                  :class="{ on: editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] }"
+                  @click="editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] = !editTarget[dim.key === 'image' ? 'vision' : 'vision_' + dim.key]"
+                >
+                  <span class="toggle-knob" />
+                </button>
+              </div>
             </div>
 
             <div class="modal-actions">
@@ -592,12 +632,18 @@
 
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。MiMo 填 <code>mimo-v2.5-asr</code>；百炼新版填 <code>qwen-audio-3.0-asr-flash</code></span></div>
+            <div class="behavior-label"><span>模型名 model</span><span class="behavior-desc"><b>留空 = 不支持语音</b>。DashScope 会根据下方产品线自动使用对应请求格式；当前支持同步短音频接口，Filetrans 长录音任务暂未接入</span></div>
             <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.model" placeholder="留空=不支持语音" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 兼容端点。百炼如 https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</span></div>
-            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/compatible-mode/v1" />
+            <div class="behavior-label"><span>Base URL</span><span class="behavior-desc">OpenAI 填兼容端点；DashScope 请填写完整的 /api/v1/services/aigc/multimodal-generation/generation 地址</span></div>
+            <input type="text" class="behavior-input" style="width:280px" v-model="voiceDraft.base_url" placeholder="https://…/api/v1/services/aigc/multimodal-generation/generation" />
+          </div>
+          <div v-if="voiceDraft.api_format === 'dashscope'" class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>百炼产品线</span><span class="behavior-desc">选择后会自动填入适合的模型示例和请求适配器</span></div>
+            <AdminSelect :model-value="voiceDraft.dashscope_service || 'qwen3-asr'"
+                         :options="VOICE_DASHSCOPE_SERVICES"
+                         @update:model-value="setDashscopeService" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>API 格式</span><span class="behavior-desc">OpenAI 兼容：chat + input_audio；百炼 DashScope：原生多模态 HTTP</span></div>
@@ -618,8 +664,12 @@
           <span class="save-hint" :class="{ error: !!voiceError }">
             <template v-if="voiceSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
             <template v-else-if="voiceError">{{ voiceError }}</template>
+            <template v-else-if="voiceTestMsg">{{ voiceTestMsg }}</template>
           </span>
           <button class="btn-ghost" @click="resetVoice">撤销修改</button>
+          <button class="btn-ghost" :class="{ loading: voiceTesting }" :disabled="voiceTesting" @click="testVoice">
+            {{ voiceTesting ? '测试中…' : '测试接入' }}
+          </button>
           <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
             <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ voiceSaving ? '保存中…' : '保存' }}
@@ -792,6 +842,52 @@
               </button>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ── IM 群组/member 记忆维护 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-title-block">
+            <h3>IM 群组与成员记忆</h3>
+            <p>逐作用域调用维护模型生成只读预览；只展示汇总结果，不展示任何用户、群组或成员标识。确认后才会投递实际整理任务。</p>
+          </div>
+        </div>
+        <div v-if="imScopes.error" class="save-hint error">{{ imScopes.error }}</div>
+        <div v-if="imScopes.message" class="save-hint">{{ imScopes.message }}</div>
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>生成维护预览</span><span class="behavior-desc">会调用 IM 维护模型，只读分析，后台运行</span></div>
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;min-width:0;">
+              <span v-if="imModelPreview.message" class="behavior-desc">{{ imModelPreview.message }}</span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="imModelPreview.running" @click="startImModelPreview">
+                {{ imModelPreview.running ? `预览中… ${imModelPreview.done}/${imModelPreview.total}` : '生成预览' }}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div v-if="imModelPreview.hasRun && !imModelPreview.running">
+          <div class="im-memory-summary-grid">
+            <div><strong>{{ imScopes.summary.total_scopes }}</strong><span>作用域</span></div>
+            <div><strong>{{ imScopes.summary.groups }}</strong><span>群组</span></div>
+            <div><strong>{{ imScopes.summary.members }}</strong><span>成员</span></div>
+            <div><strong>{{ imScopes.summary.total_entries }}</strong><span>记忆条目</span></div>
+            <div><strong>{{ imModelPreview.needsReview }}</strong><span>模型建议整理</span></div>
+            <div><strong>{{ imScopes.summary.needs_maintenance }}</strong><span>需整理作用域</span></div>
+            <div><strong>{{ imScopes.summary.failed_jobs }}</strong><span>失败任务</span></div>
+          </div>
+          <div v-if="imScopes.summary.platforms.length" class="im-memory-platforms">
+            <span v-for="platform in imScopes.summary.platforms" :key="platform.platform" class="im-memory-platform">
+              {{ platform.platform }}：{{ platform.scopes }} 个作用域 / {{ platform.entries }} 条记忆
+            </span>
+          </div>
+          <div class="im-memory-maintenance-actions">
+            <span class="behavior-desc">只会整理尚未反思的新消息，不会删除已有记忆。</span>
+            <button class="btn-primary" :disabled="imScopes.applying || !imModelPreview.planReady" @click="applyImMemoryMaintenance">
+              {{ imScopes.applying ? '执行中…' : '确认整理全部待处理内容' }}
+            </button>
+          </div>
+          <div v-if="imModelPreview.message" class="im-memory-progress">{{ imModelPreview.message }}</div>
         </div>
       </section>
 
@@ -1098,7 +1194,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
-import { PhBrain, PhEye } from '@phosphor-icons/vue'
+import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
@@ -1125,6 +1221,7 @@ function switchTab(key: string) {
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
   if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
+  if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
@@ -1272,10 +1369,10 @@ async function openTrace(id: any) {
 const PROVIDERS = [
   { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
   { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
-  { key: 'qwen',      label: '通义千问',    base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+  { key: 'qwen',      label: 'DashScope(百炼)', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
-  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://token-plan-cn.xiaomimimo.com/v1',            model: 'mimo-v2.5' },
+  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },
 ]
 
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
@@ -1294,6 +1391,14 @@ const llmMsgError    = ref(false)
 const testingId      = ref<any | null>(null)
 const activatingId   = ref<any | null>(null)
 const probingId      = ref<any | null>(null)
+const probingDim     = ref<string | null>(null)   // 弹窗内正在检测的维度（image/video/audio）
+
+// 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
+const visionDims = [
+  { key: 'image', label: '图片', hint: '用户发的图片直接给模型「看」' },
+  { key: 'video', label: '视频', hint: '用户发的视频直接给模型「看」' },
+  { key: 'audio', label: '音频', hint: '用户发的音频直接给模型「听」' },
+]
 
 // edit modal
 const editTarget   = ref<any | null>(null)
@@ -1301,6 +1406,15 @@ const editIsNew    = ref(false)
 const editSaving   = ref(false)
 const editError    = ref('')
 const editMaskDown = ref(false)
+const modelOptions = ref<string[]>([])
+const modelListLoading = ref(false)
+const modelListError = ref('')
+const modelMenuOpen = ref(false)
+const filteredModelOptions = computed(() => {
+  const query = String(editTarget.value?.model || '').trim().toLowerCase()
+  if (!query) return modelOptions.value
+  return modelOptions.value.filter(model => model.toLowerCase().includes(query))
+})
 
 function showMsg(msg: string, isError = false) {
   llmMsg.value      = msg
@@ -1383,14 +1497,64 @@ async function togglePool(p: any) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', reasoning_effort: '', vision: false, api_format: '' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_video: false, vision_audio: false, api_format: '' }
   editError.value  = ''
+  modelOptions.value = []
+  modelListError.value = ''
+  modelMenuOpen.value = false
 }
 
 function openEditPreset(p: any) {
   editIsNew.value  = false
   editTarget.value = { ...p, api_key: '' }
   editError.value  = ''
+  modelOptions.value = []
+  modelListError.value = ''
+  modelMenuOpen.value = false
+}
+
+function closeModelMenuSoon() {
+  window.setTimeout(() => { modelMenuOpen.value = false }, 120)
+}
+
+function selectModel(model: string) {
+  if (!editTarget.value) return
+  editTarget.value.model = model
+  modelMenuOpen.value = false
+}
+
+async function fetchModelList() {
+  if (!editTarget.value || modelListLoading.value) return
+  modelListLoading.value = true
+  modelListError.value = ''
+  modelMenuOpen.value = true
+  try {
+    let res
+    if (editIsNew.value) {
+      // 新建时用表单里的临时配置获取，无需先保存
+      res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/models-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: editTarget.value.provider,
+          base_url: editTarget.value.base_url,
+          api_key: editTarget.value.api_key,
+          api_format: editTarget.value.api_format || '',
+        }),
+      })
+    } else {
+      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${editTarget.value.id}/models`)
+    }
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || '获取模型列表失败')
+    modelOptions.value = Array.isArray(data.models) ? data.models : []
+    if (!modelOptions.value.length) modelListError.value = '服务商没有返回可用模型，请手动输入'
+  } catch (error) {
+    modelOptions.value = []
+    modelListError.value = error instanceof Error ? error.message : '获取模型列表失败'
+  } finally {
+    modelListLoading.value = false
+  }
 }
 
 function setEditProvider(key: string) {
@@ -1401,6 +1565,8 @@ function setEditProvider(key: string) {
   editTarget.value.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
   editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+  modelOptions.value = []
+  modelListError.value = ''
 }
 
 // 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
@@ -1410,6 +1576,8 @@ function pickApiFormat(fmt: string) {
   if (bu.includes('xiaomimimo')) {
     editTarget.value.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
   }
+  modelOptions.value = []
+  modelListError.value = ''
 }
 
 async function savePreset() {
@@ -1486,20 +1654,51 @@ async function testPreset(id: any) {
   }
 }
 
-// 多模态探测：发一张极小图给该预设模型，按响应判定是否支持看图，结论自动写回 vision
-async function probeVision(id: any) {
-  probingId.value = id
+// 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
+// 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
+async function probeVision(id: any, dim?: string) {
+  if (dim) {
+    probingDim.value = dim
+  } else {
+    probingId.value = id
+  }
   try {
-    const res  = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/probe-vision`, { method: 'POST' })
+    const url = `/api/v1/admin/agent/llm-presets/${id}/probe-vision` + (dim ? `?dim=${dim}` : '')
+    const res  = await adminStore.authFetch(url, { method: 'POST' })
     const data = await res.json()
-    if (data.supported === true)       showMsg(`✅ 支持多模态（${data.status}），已开启`)
-    else if (data.supported === false) showMsg(`该模型不支持多模态，已设为关闭：${data.detail}`, true)
-    else                               showMsg(`测不准：${data.detail}`, true)
-    await fetchPresets()   // 刷新「👁 多模态」徽章
+    if (dim) {
+      // 单维度（弹窗内）
+      const label = visionDims.find(d => d.key === dim)?.label || dim
+      if (data.supported === true)       showMsg(`✅ ${label}：支持，已开启`)
+      else if (data.supported === false) showMsg(`${label}：不支持，已设为关闭：${data.detail}`, true)
+      else                               showMsg(`${label}：测不准：${data.detail}`, true)
+      if (data.supported === true) {
+        const field = dim === 'image' ? 'vision' : 'vision_' + dim
+        editTarget.value[field] = true
+      }
+    } else {
+      // 全维度（卡片）
+      const results = data.results || {}
+      const ok: string[] = [], no: string[] = [], unk: string[] = []
+      for (const d of visionDims) {
+        const r = results[d.key]
+        if (!r) continue
+        if (r.supported === true) ok.push(d.label)
+        else if (r.supported === false) no.push(d.label)
+        else unk.push(d.label)
+      }
+      const parts: string[] = []
+      if (ok.length) parts.push(`支持：${ok.join('、')}`)
+      if (no.length) parts.push(`不支持：${no.join('、')}`)
+      if (unk.length) parts.push(`测不准：${unk.join('、')}`)
+      showMsg(parts.length ? `检测完成 — ${parts.join('；')}` : '检测完成，未返回结果')
+    }
+    await fetchPresets()   // 刷新卡片徽章
   } catch (e) {
     showMsg('检测失败：' + (e instanceof Error ? e.message : String(e)), true)
   } finally {
     probingId.value = null
+    probingDim.value = null
   }
 }
 
@@ -1618,11 +1817,27 @@ const voiceDraft  = reactive({ ...configStore.cfg.voice })
 const voiceSaving = ref(false)
 const voiceSaved  = ref(false)
 const voiceError  = ref('')
+const voiceTesting = ref(false)
+const voiceTestMsg = ref('')
 function resetVoice() { Object.assign(voiceDraft, configStore.cfg.voice) }
 const VOICE_API_FORMATS = [
   { value: 'openai', label: 'OpenAI 兼容' },
   { value: 'dashscope', label: '百炼 DashScope' },
 ]
+const VOICE_DASHSCOPE_SERVICES = [
+  { value: 'qwen3-asr', label: 'Qwen3 ASR · qwen3-asr-flash' },
+  { value: 'qwen-audio', label: 'Qwen-Audio 3.0 · qwen-audio-3.0-asr-flash' },
+  { value: 'fun-asr', label: 'Fun-ASR · fun-asr-flash-2026-06-15' },
+]
+function setDashscopeService(value: string) {
+  voiceDraft.dashscope_service = value
+  const examples: Record<string, string> = {
+    'qwen3-asr': 'qwen3-asr-flash',
+    'qwen-audio': 'qwen-audio-3.0-asr-flash',
+    'fun-asr': 'fun-asr-flash-2026-06-15',
+  }
+  voiceDraft.model = examples[value] || ''
+}
 async function saveVoice() {
   voiceSaving.value = true; voiceSaved.value = false; voiceError.value = ''
   try {
@@ -1634,6 +1849,34 @@ async function saveVoice() {
     voiceError.value = (e instanceof Error ? e.message : String(e)) || '保存失败'
   } finally {
     voiceSaving.value = false
+  }
+}
+
+async function testVoice() {
+  voiceTesting.value = true
+  voiceError.value = ''
+  voiceTestMsg.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/config/test-voice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_format: voiceDraft.api_format,
+        dashscope_service: voiceDraft.dashscope_service,
+        base_url: voiceDraft.base_url,
+        api_key: voiceDraft.api_key,
+        model: voiceDraft.model,
+      }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error(data.message || `测试失败（${res.status}）`)
+    voiceSaved.value = false
+    voiceTestMsg.value = data.message || '语音模型连接正常'
+    setTimeout(() => { voiceTestMsg.value = '' }, 5000)
+  } catch (e) {
+    voiceError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    voiceTesting.value = false
   }
 }
 
@@ -1802,6 +2045,118 @@ async function applyMemCleanup() {
     memCleanup.applyError = true; memCleanup.applyMsg = '请求失败：' + (e instanceof Error ? e.message : String(e))
   } finally {
     memCleanup.applying = false
+  }
+}
+
+interface ImMemoryPlatformSummary { platform: string; scopes: number; groups: number; members: number; entries: number }
+interface ImMemorySummary {
+  total_scopes: number; groups: number; members: number; total_entries: number
+  pending_jobs: number; needs_maintenance: number; failed_jobs: number; platforms: ImMemoryPlatformSummary[]
+}
+const imScopes = reactive({
+  loading: false,
+  error: '',
+  message: '',
+  summary: { total_scopes: 0, groups: 0, members: 0, total_entries: 0, pending_jobs: 0, needs_maintenance: 0, failed_jobs: 0, platforms: [] } as ImMemorySummary,
+  applying: false,
+})
+const imModelPreview = reactive({ hasRun: false, running: false, message: '', done: 0, total: 0, needsReview: 0, failed: 0, planReady: false })
+let imModelPreviewTimer: ReturnType<typeof setInterval> | null = null
+function stopImModelPreviewPoll() {
+  if (imModelPreviewTimer !== null) {
+    clearInterval(imModelPreviewTimer)
+    imModelPreviewTimer = null
+  }
+}
+async function pollImModelPreview() {
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview/status')
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '读取模型预览失败')
+    imModelPreview.running = data.status === 'running'
+    imModelPreview.done = Number(data.done || 0)
+    imModelPreview.total = Number(data.total || 0)
+    imModelPreview.needsReview = Number(data.needs_review || 0)
+    imModelPreview.failed = Number(data.failed || 0)
+    imModelPreview.planReady = data.plan_ready === undefined
+      ? data.status === 'done' && imModelPreview.needsReview > 0
+      : Boolean(data.plan_ready)
+    if (imModelPreview.running) {
+      imModelPreview.message = `模型预览中 ${imModelPreview.done}/${imModelPreview.total}`
+    } else if (data.status === 'done') {
+      imModelPreview.hasRun = true
+      imModelPreview.message = `模型预览完成：${imModelPreview.needsReview} 个作用域有可提炼内容${imModelPreview.failed ? `，失败 ${imModelPreview.failed} 个` : ''}`
+      stopImModelPreviewPoll()
+      await loadImScopes()
+    }
+  } catch (error) {
+    imModelPreview.running = false
+    imModelPreview.message = error instanceof Error ? error.message : '读取模型预览失败'
+    stopImModelPreviewPoll()
+  }
+}
+function startImModelPreviewPoll() {
+  stopImModelPreviewPoll()
+  void pollImModelPreview()
+  imModelPreviewTimer = setInterval(() => void pollImModelPreview(), 1500)
+}
+async function startImModelPreview() {
+  imModelPreview.hasRun = false
+  imModelPreview.planReady = false
+  imModelPreview.message = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/model-preview', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '启动模型预览失败')
+    if (!data.ok) {
+      imModelPreview.message = data.message || '已有模型预览正在运行'
+      imModelPreview.running = true
+    } else {
+      imModelPreview.running = true
+      imModelPreview.message = `已启动模型预览，共 ${data.total || 0} 个作用域`
+    }
+    startImModelPreviewPoll()
+  } catch (error) {
+    imModelPreview.running = false
+    imModelPreview.message = error instanceof Error ? error.message : '启动模型预览失败'
+  }
+}
+async function loadImScopes() {
+  imScopes.loading = true; imScopes.error = ''; imScopes.message = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/preview', { method: 'POST' })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || data.message || '加载失败')
+    imScopes.summary = {
+      total_scopes: data.total_scopes || 0, groups: data.groups || 0, members: data.members || 0,
+      total_entries: data.total_entries || 0, pending_jobs: data.pending_jobs || 0,
+      needs_maintenance: data.needs_maintenance || 0, failed_jobs: data.failed_jobs || 0, platforms: data.platforms || [],
+    }
+  } catch (error) {
+    imScopes.error = error instanceof Error ? error.message : '加载失败'
+  } finally {
+    imScopes.loading = false
+  }
+}
+async function applyImMemoryMaintenance() {
+  if (!confirm('确定整理全部 IM 记忆中尚未反思的消息吗？不会删除已有记忆。')) return
+  imScopes.applying = true; imScopes.error = ''; imScopes.message = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/apply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.detail || '执行整理失败')
+    imModelPreview.planReady = false
+    const applied = Number(data.applied || 0)
+    imScopes.message = `已应用 ${applied} 个模型预览结果`
+    imScopes.applying = false
+    await loadImScopes()
+    imScopes.message = `已应用 ${applied} 个模型预览结果`
+  } catch (error) {
+    imScopes.error = error instanceof Error ? error.message : '执行整理失败'
+    imScopes.applying = false
   }
 }
 
@@ -2013,7 +2368,7 @@ onMounted(async () => {
   pollMemCleanup()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
 })
 
-onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
+onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewPoll() })
 </script>
 
 <style scoped>
@@ -2459,6 +2814,8 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
   color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
 }
 .pca-btn:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.75); }
+.pca-btn--sm { padding: 4px 10px; font-size: 11px; }
+.pca-btn:disabled { opacity: 0.5; cursor: default; }
 
 /* ── 频道：飞书回调地址 ── */
 .bots-redirect {
@@ -2584,6 +2941,24 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 }
 .modal-input:focus { border-color: rgba(123,127,178,0.45); }
 .modal-input::placeholder { color: rgba(255,255,255,0.2); }
+.modal-hint { font-size: 11px; line-height: 1.5; color: rgba(255,255,255,0.45); }
+.modal-hint code { color: rgba(123,127,178,0.9); background: rgba(123,127,178,0.12); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }
+.model-picker { position: relative; }
+.model-picker-row { display: flex; gap: 7px; align-items: center; }
+.model-picker-row .modal-input { min-width: 0; flex: 1; }
+.model-fetch-btn { flex: 0 0 auto; border: 1px solid rgba(123,127,178,0.35); border-radius: 8px;
+  padding: 8px 10px; background: rgba(123,127,178,0.12); color: rgba(226,228,247,0.8);
+  font-size: 11px; cursor: pointer; white-space: nowrap; }
+.model-fetch-btn:hover:not(:disabled) { background: rgba(123,127,178,0.24); }
+.model-fetch-btn:disabled { opacity: 0.45; cursor: default; }
+.model-options { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 5px);
+  max-height: 220px; overflow: auto; padding: 5px; border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 9px; background: #242638; box-shadow: 0 12px 30px rgba(0,0,0,0.35); }
+.model-option { display: block; width: 100%; border: 0; border-radius: 6px; padding: 7px 9px;
+  background: transparent; color: rgba(235,236,248,0.85); text-align: left; font-size: 12px; cursor: pointer; }
+.model-option:hover { background: rgba(123,127,178,0.22); }
+.model-option-hint { padding: 8px 9px; color: rgba(255,255,255,0.45); font-size: 11px; }
+.model-option-hint.error { color: #ffadad; }
 .modal-actions {
   display: flex; align-items: center; gap: 10px;
   margin-top: 20px; padding-top: 16px;
@@ -2620,7 +2995,7 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 .ts-top { display: flex; align-items: center; gap: 6px; }
 .ts-src { flex-shrink: 0; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); }
 .ts-src.src-feishu { background: rgba(80,150,255,0.18); color: #9cc0ff; }
-.ts-src.src-qqbot { background: rgba(90,200,160,0.18); color: #8fe0c0; }
+.ts-src.src-qq { background: rgba(90,200,160,0.18); color: #8fe0c0; }
 .ts-title { font-size: 13px; color: #e8e9f2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-meta { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 3px; }
 .trace-detail { overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; background: rgba(255,255,255,0.02); padding: 16px; }
@@ -2678,5 +3053,15 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll() })
 .labels-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 18px;
   padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
 .labels-saved-tip { font-size: 12.5px; color: #7fd6a0; }
+.im-memory-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.im-memory-summary-grid > div { min-width: 0; padding: 10px 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; background: rgba(255,255,255,0.035); text-align: center; }
+.im-memory-summary-grid strong { display: block; color: #e6e7f0; font-size: 18px; line-height: 1.2; }
+.im-memory-summary-grid span { display: block; margin-top: 4px; color: rgba(255,255,255,0.45); font-size: 11px; }
+.im-memory-platforms { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.im-memory-platform { padding: 5px 9px; border-radius: 999px; background: rgba(123,127,178,0.14); color: rgba(255,255,255,0.68); font-size: 11px; }
+.im-memory-maintenance-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.im-memory-progress { display: flex; gap: 12px; margin-top: 10px; color: rgba(255,255,255,0.55); font-size: 12px; }
+.im-memory-progress .error { color: #ff9b9b; }
+@media (max-width: 900px) { .im-memory-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .labels-list { grid-template-columns: 1fr; } }
 </style>

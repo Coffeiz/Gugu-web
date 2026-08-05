@@ -12,7 +12,7 @@ import { getThumb, getCachedThumb } from '@/composables/useThumbCache'
 
 // 指令挂在 <img> 上，额外记两个私有句柄用于断开/重试
 type LazyThumbEl = HTMLImageElement & { _lazyThumbObs?: IntersectionObserver | null; _lazyThumbRetry?: ReturnType<typeof setTimeout> | null }
-type LazyThumbValue = { id?: number | string; size?: string }
+type LazyThumbValue = { id?: number | string; size?: string; revision?: number }
 
 const ROOT_MARGIN: Record<string, string> = { tiny: '400px', card: '250px' }
 
@@ -43,8 +43,8 @@ export const vLazyThumb = {
   mounted(el: LazyThumbEl, { value: { id, size } }: { value: LazyThumbValue }) {
     if (id) _load(el, id, size)
   },
-  updated(el: LazyThumbEl, { value: { id, size }, oldValue }: { value: LazyThumbValue; oldValue?: LazyThumbValue }) {
-    if (id === oldValue?.id && size === oldValue?.size) return
+  updated(el: LazyThumbEl, { value: { id, size, revision }, oldValue }: { value: LazyThumbValue; oldValue?: LazyThumbValue }) {
+    if (id === oldValue?.id && size === oldValue?.size && revision === oldValue?.revision) return
     el._lazyThumbObs?.disconnect()
     if (el._lazyThumbRetry) { clearTimeout(el._lazyThumbRetry); el._lazyThumbRetry = null }
     if (id) _load(el, id, size)

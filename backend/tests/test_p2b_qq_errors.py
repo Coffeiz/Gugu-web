@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agent.adapters import qq
+from agent.gateway import qq
 
 
 async def _fake_next_seq(msg_id):
@@ -38,6 +38,15 @@ def test_transient_classifies_generic_exception_as_not_retryable():
     assert not qq._qq_is_transient(RuntimeError("some programming error, e.g. KeyError-like"))
 
 
+def test_msg_id_invalid_is_only_classified_for_qq_expiry_error():
+    assert qq._qq_msg_id_invalid(qq.QQAPIError(
+        "POST", "/messages", 400, {"code": 40034024, "message": "请求参数msg_id无效或越权"}
+    ))
+    assert not qq._qq_msg_id_invalid(qq.QQAPIError(
+        "POST", "/messages", 400, {"code": 400, "message": "bad request"}
+    ))
+
+
 # ── QQAPIError 不把原始响应体拼进 str()（P2-b §5）──────────────────────────
 
 def test_qq_api_error_str_does_not_leak_raw_body():
@@ -64,6 +73,23 @@ async def test_send_c2c_does_not_retry_permanent_4xx(monkeypatch):
 
     assert ok is False
     assert len(calls) == 1   # 永久错误只应尝试一次，不做第二次重复发送
+
+
+async def test_send_c2c_falls_back_to_active_message_when_msg_id_expired(monkeypatch):
+    calls = []
+
+    async def fake_post(channel_id, openid, text, msg_id):
+        calls.append(msg_id)
+        if msg_id:
+            raise qq.QQAPIError(
+                "POST", "/messages", 400,
+                {"code": 40034024, "message": "请求参数msg_id无效或越权"},
+            )
+
+    monkeypatch.setattr(qq, "_post", fake_post)
+
+    assert await qq.send_c2c("ou_1", "hi", "expired-msg", "bot-fallback") is True
+    assert calls == ["expired-msg", None]
 
 
 async def test_send_c2c_retries_transient_5xx(monkeypatch):

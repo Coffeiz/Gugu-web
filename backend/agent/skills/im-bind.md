@@ -9,7 +9,7 @@ emoji: 🔗
 用户问怎么绑定飞书 / QQ / 微信、把咕咕接到 IM 时，在回复里用 markdown 链接当**按钮**输出，前端会渲染成按钮、点击就**弹二维码扫一下自动绑定**：
 
 - 飞书 → `[扫码绑定飞书](gugu://bind-im/feishu)`
-- QQ → `[扫码绑定 QQ](gugu://bind-im/qqbot)`
+- QQ → `[扫码绑定 QQ](gugu://bind-im/qq)`
 - 微信 → `[扫码绑定微信](gugu://bind-im/wechat)`
 
 规则：

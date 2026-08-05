@@ -99,6 +99,7 @@ function updatePanelPos() {
 
 let timer: ReturnType<typeof setTimeout> | null = null
 let reqSeq = 0   // 防抖 + 防乱序：只认最后一次请求的结果
+let searchAbort: AbortController | null = null
 let composing = false
 const SEARCH_DEBOUNCE_MS = 120
 
@@ -108,6 +109,8 @@ function onInput() {
   open.value = true
   updatePanelPos()
   clearTimeout(timer ?? undefined)
+  searchAbort?.abort()
+  searchAbort = null
   const text = q.value.trim()
   if (!text) { groups.value = []; total.value = 0; loading.value = false; return }
   loading.value = true
@@ -121,13 +124,17 @@ function onCompositionEnd() {
 
 async function runSearch(text: string) {
   const seq = ++reqSeq
+  searchAbort?.abort()
+  searchAbort = new AbortController()
+  const queries = [...new Set(text.split(/\s+/).map(item => item.trim()).filter(Boolean))]
   try {
-    const r = await searchApi.query(text)
+    const r = await searchApi.query(queries, searchAbort.signal)
     if (seq !== reqSeq) return   // 有更新的请求了，丢弃这次
     groups.value = r.groups || []
     total.value  = r.total || 0
-  } catch {
+  } catch (error: any) {
     if (seq !== reqSeq) return
+    if (error?.name === 'AbortError') return
     groups.value = []; total.value = 0
   } finally {
     if (seq === reqSeq) loading.value = false
@@ -157,6 +164,9 @@ function go(type: string, it: SearchItem) {
 }
 
 function clear() {
+  reqSeq++
+  searchAbort?.abort()
+  searchAbort = null
   q.value = ''; groups.value = []; total.value = 0
   inputEl.value?.focus()
 }

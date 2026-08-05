@@ -8,7 +8,7 @@ WORKDIR /app
 
 # 依赖单独一层：package.json 没变时改代码不用重装。
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN npm install
 
 COPY . .
 

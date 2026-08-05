@@ -23,7 +23,7 @@ from app.core import redis as R
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import User, UserBot
-from agent.adapters.wechat_client import ILinkClient
+from agent.gateway.wechat_client import ILinkClient
 
 router = APIRouter(prefix="/me/wechat/connect", tags=["wechat-connect"])
 

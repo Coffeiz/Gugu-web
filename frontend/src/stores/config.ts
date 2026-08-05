@@ -60,11 +60,11 @@ export const useConfigStore = defineStore('config', () => {
       model: 'qwen-max',
     },
     voice: {
-      provider: '',
       api_key: '',
       base_url: '',
       model: '',
       api_format: 'openai',
+      dashscope_service: 'qwen3-asr',
     },
     embedding: {
       enabled: false,

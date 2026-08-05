@@ -6,6 +6,7 @@ import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus
 import {
   normalizeStages, transitionProjectStage, transitionProjectStatus, transitionProjectTodos,
 } from '@/utils/projectStages'
+import { DEFAULT_PROJECT_COLOR } from '@/utils/projectColors'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -111,7 +112,7 @@ export const useProjectStore = defineStore('projects', () => {
       progress:     0,
       startDate:    fields.startDate || null,
       deadline:     fields.deadline  || null,
-      color:        fields.color || 'linear-gradient(135deg,#7b7fb2,#c4afc8)',
+      color:        fields.color || DEFAULT_PROJECT_COLOR,
     }
     const created = mapProjectResponse(await projectsApi.create(payload))
     projects.value.unshift(created)

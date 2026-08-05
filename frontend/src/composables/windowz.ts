@@ -27,6 +27,18 @@ interface EscLayer { getZ: () => number; close: () => void }
 const _escLayers = new Set<EscLayer>()
 let _escBound = false
 
+// 已打开的 Teleport 弹层。窗口被点击置顶时，弹层也要跟着保持在当前窗口之上。
+const _openPopovers = new Set<(z: number) => void>()
+
+export function registerPopover(setZ: (z: number) => void): () => void {
+  _openPopovers.add(setZ)
+  return () => { _openPopovers.delete(setZ) }
+}
+
+export function raisePopoversAbove(ownerZ: number): void {
+  for (const setZ of _openPopovers) setZ(Math.max(nextZ(), ownerZ + 1))
+}
+
 function _onKeydown(e: KeyboardEvent) {
   if (e.key !== 'Escape' || _escLayers.size === 0) return
   let top: EscLayer | null = null

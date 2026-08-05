@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import select, desc, or_
+from sqlalchemy import desc, select
 
 from app.models import ConversationMessage, ConversationSession
 from app.core.ownership import get_owned
+from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -20,10 +21,13 @@ def _fmt(dt) -> str:
 
 async def _search_conversations(db, user_id, args: dict):
     keyword = (args.get("keyword") or "").strip()
+    queries = args.get("queries") if isinstance(args.get("queries"), list) else None
+    search_queries = normalize_queries(keyword, queries)
+    mode = normalize_mode(args.get("mode"))
     limit = max(1, min(int(args.get("limit", 6) or 6), 20))
 
     # 无关键词 → 列最近的对话（标题 + 时间）
-    if not keyword:
+    if not search_queries:
         rows = (await db.execute(
             select(ConversationSession)
             .where(ConversationSession.user_id == user_id)
@@ -37,18 +41,24 @@ async def _search_conversations(db, user_id, args: dict):
         ]}
 
     # 有关键词 → 搜消息正文 + 标题，按 session 聚合，每条给匹配片段
-    like = f"%{keyword}%"
     rows = (await db.execute(
         select(ConversationMessage, ConversationSession)
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
         .where(
             ConversationSession.user_id == user_id,
             ConversationMessage.content_json.is_(None),   # 跳过工具中间消息
-            or_(ConversationMessage.content.ilike(like),
-                ConversationSession.title.ilike(like),
-                ConversationSession.summary.ilike(like)),
+            keyword_condition(
+                [ConversationMessage.content, ConversationSession.title, ConversationSession.summary],
+                search_queries, mode,
+            ),
         )
-        .order_by(desc(ConversationMessage.created_at))
+        .order_by(
+            keyword_score(
+                [ConversationMessage.content, ConversationSession.title, ConversationSession.summary],
+                search_queries,
+            ).desc(),
+            desc(ConversationMessage.created_at),
+        )
         .limit(limit * 4)
     )).all()
 
@@ -66,7 +76,7 @@ async def _search_conversations(db, user_id, args: dict):
             break
 
     if not seen:
-        return {"matches": [], "hint": f"没找到提到「{keyword}」的过去对话"}
+        return {"matches": [], "hint": f"没找到提到「{' / '.join(search_queries)}」的过去对话"}
     return {"matches": list(seen.values()),
             "note": "用 read_conversation(session_id) 看某条对话的完整内容"}
 
@@ -101,16 +111,45 @@ async def _read_conversation(db, user_id, args: dict):
     }
 
 
+async def _bind_web_session(db, user_id, args: dict):
+    """把当前 owner 私聊绑定到一个已确认属于自己的 Web session。"""
+    from agent import imctx
+    from agent.im.owner_session import bind_session
+
+    context = imctx.get_im()
+    if not context or context.get("im_role") != "owner":
+        return {"error": "只有绑定账号的私聊可以绑定网页会话"}
+    if context.get("chat_type") == "group":
+        return {"error": "群聊不绑定网页会话，请在私聊中操作"}
+    session_id = args.get("session_id")
+    if not session_id:
+        return {"error": "需要提供 session_id"}
+    ok = await bind_session(
+        db,
+        user_id,
+        context.get("platform") or "",
+        context.get("puid") or "",
+        int(session_id),
+    )
+    if not ok:
+        return {"error": "网页会话不存在、不属于你，或不是 Web 会话"}
+    return {"bound": True, "session_id": int(session_id), "message": "已绑定，之后可以在这里继续这段网页对话"}
+
+
 class ConversationsSkill(BaseSkill):
     name = "conversations"
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按关键词找。不传 keyword 则列最近对话。只搜当前用户自己的，安全。",
+            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按一个或多个关键词找（默认 OR）。不传 keyword/queries 则列最近对话。只搜当前用户自己的，安全。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "关键词（搜消息正文+标题）；不填=列最近对话"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "返回条数，默认 6，最多 20"},
                 },
             },
@@ -128,6 +167,19 @@ class ConversationsSkill(BaseSkill):
                 "required": ["session_id"],
             },
             handler=_read_conversation,
+        ),
+        Tool(
+            name="bind_web_session", label="绑定网页会话",
+            description="仅 owner 私聊可用：把当前 IM 私聊绑定到一个属于自己的 Web 对话，之后 IM 会继续该对话。先用 search_conversations 找到 session_id；群聊不能绑定。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "integer", "description": "要继续的 Web 对话 id"},
+                },
+                "required": ["session_id"],
+            },
+            handler=_bind_web_session,
+            mutates=True,
         ),
     ]
 

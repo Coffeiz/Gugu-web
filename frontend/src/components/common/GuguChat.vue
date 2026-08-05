@@ -120,6 +120,7 @@
               <template v-if="botsOf(p.key).length">
                 <div v-for="s in imSessionsOf(p.key)" :key="s.id"
                   class="exp-session-item" :class="{ active: s.id === sessionId }" @click="loadSession(s.id)">
+                  <span v-if="s.chatType === 'group'" class="exp-session-tag" title="群聊">群</span>
                   <span class="exp-session-title">{{ s.title }}</span>
                   <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
                 </div>
@@ -199,14 +200,24 @@
             <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
                  class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
               <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-                   v-memo="[msg.text, msg.html, msg.streaming, msg.files?.length, msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                   v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
+                <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
+                     群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
+                <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? '咕咕' : msg.speakerLabel }}</div>
                 <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
                      （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
-                <div v-if="msg.role !== 'ai' && msg.quotedText" class="msg-quoted" :title="msg.quotedText">{{ msg.quotedText }}</div>
+                <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || '引用的 QQ 表情'">
+                  <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
+                  <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
+                    <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                    <img v-else-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                    <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
+                  </template>
+                </div>
                 <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderMd(msg.text))" :text="msg.text" chat /></div>
-                <div v-else-if="msg.text" class="msg-bubble">{{ msg.text }}</div>
+                <div v-else-if="msg.text" class="msg-bubble">{{ displayQQFaces(msg.text) }}</div>
                 <div v-if="msg.files && msg.files.length" class="msg-files">
-                  <template v-for="f in msg.files" :key="f.file_id || f.attach_id">
+                  <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
                   <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
                   <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
                        @click="toggleVoice(f)" title="点击播放语音">
@@ -217,9 +228,12 @@
                     <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
                     <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
                   </div>
+                  <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="openFileFromChat(f)" title="点击查看表情">
+                    <img class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="QQ表情" />
+                  </div>
                   <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
                     <span class="msg-file-ext">
-                      {{ (f.ext || 'file').toUpperCase().slice(0, 4) }}
+                      <template v-if="!f.qq_face">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</template>
                       <template v-if="isImageFile(f)">
                         <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
                           draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
@@ -228,7 +242,7 @@
                       </template>
                     </span>
                     <span class="msg-file-info">
-                      <span class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
+                      <span v-if="!f.qq_face" class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
                       <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
                     </span>
                     <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
@@ -343,6 +357,10 @@ interface ChatMessage {
   quotedText?: string
   time: string
   streaming?: boolean
+  // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；
+  // 群里其他成员填 platformUserName，气泡渲染在左侧并显示这个名字。
+  speakerLabel?: string
+  platformUserId?: string | null
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
@@ -358,6 +376,9 @@ interface ChatFile {
   size?: number
   size_bytes?: number
   kind?: string
+  mime?: string
+  qq_face?: boolean
+  quoted?: boolean
   duration?: number
   upload?: boolean
   _thumbUrl?: string
@@ -369,6 +390,7 @@ interface ChatSession {
   id: number
   title: string
   source?: string
+  chatType?: string
 }
 
 interface Bot {
@@ -435,11 +457,26 @@ watch(() => liveStore.sessionEvent, async (e) => {
   if (e.origin && e.origin === CLIENT_ID) return
   for (const m of e.appended) {
     const isAi = m.role === 'assistant'
+    const speaker = resolveSpeaker(m.role || 'user', m.platform_user_id, m.platform_user_name)
+    const latestNames: Record<string, string> = {}
+    for (const existing of messages.value) {
+      if (existing.platformUserId && existing.speakerLabel) {
+        latestNames[existing.platformUserId] = existing.speakerLabel
+      }
+    }
+    if (m.platform_user_id && m.platform_user_name) {
+      latestNames[m.platform_user_id] = m.platform_user_name
+    }
+    if (m.platform_bot_user_id) {
+      latestNames[m.platform_bot_user_id] = '咕咕'
+    }
     messages.value.push({
       id: mkid(),
-      role: isAi ? 'ai' : (m.role || 'user'),
-      text: m.text || '',
-      html: isAi ? renderMd(m.text || '') : null,
+      role: speaker.role,
+      speakerLabel: speaker.speakerLabel,
+      platformUserId: m.platform_user_id || null,
+      text: displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames)),
+      html: isAi ? renderMd(displayQQFaces(replaceMentionIdsForDisplay(m.text || '', latestNames))) : null,
       files: (m.files && m.files.length) ? m.files as ChatFile[] : undefined,
       quotedText: m.quoted_text || undefined,
       time: now(),
@@ -882,6 +919,14 @@ function setStatus(item: StatusItem) {
 
 onUnmounted(cancelPendingStatus)
 const sessionId      = ref<number | null>(null)
+// 视图代次：切换/新建会话时立即递增，让尚未完成的旧 SSE 流失去写入当前消息列表的资格。
+let _chatViewGeneration = 0
+// 当前会话所属渠道里「owner」的平台身份（仅群聊/IM 用得上）：消息的
+// platformUserId 等于它才归到右侧气泡，否则是群里其他成员，归左侧并标 username。
+const ownerPlatformUserId = ref<string | null>(null)
+// 当前会话是不是群聊——只有群聊才需要在左侧气泡上方标"咕咕"/群成员 username，
+// 1:1 对话左侧默认就是咕咕，不用额外标注，保持原有视觉不变。
+const isGroupSession = ref(false)
 const abortCtrl      = ref<AbortController | null>(null)
 const pendingQueue   = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
 const pendingAtt   = ref<ChatFile[]>([])     // 待发送的聊天附件（已上传暂存）
@@ -1067,29 +1112,65 @@ function isImageFile(f: ChatFile) {
   const isImg = _IMG_EXTS.has((f.ext || '').toLowerCase())
   return isImg && (!!f.file_id || !!f.attach_id)
 }
+
+function isAnimatedImageFile(f: ChatFile) {
+  const mime = (f.mime || '').toLowerCase()
+  return (['gif', 'webp'].includes((f.ext || '').toLowerCase()) || mime === 'image/gif' || mime === 'image/webp')
+    && (!!f.file_id || !!f.attach_id)
+}
 // IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
 // 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
-interface ThumbEl extends HTMLImageElement { _thumbObs?: IntersectionObserver | null }
-const vLazyThumb = {
-  mounted(el: ThumbEl, { value: id }: { value: number | string | undefined | null }) {
-    if (!id) return
-    const isAttach = typeof id === 'string'
-    const key  = isAttach ? `att:${id}_card` : `${id}_card`
-    const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, 'card')
-    if (cached) { el.src = cached; return }
-    const fetchThumb = () => isAttach
-      ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=card`)
-      : getThumb(id, 'card')
-    const obs = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      obs.disconnect(); el._thumbObs = null
-      fetchThumb().then((url: string | null) => { if (url) el.src = url })
-    }, { rootMargin: '200px' })
-    obs.observe(el)
-    el._thumbObs = obs
-  },
-  unmounted(el: ThumbEl) { el._thumbObs?.disconnect(); el._thumbObs = null },
+interface ThumbEl extends HTMLImageElement {
+  _thumbObs?: IntersectionObserver | null
+  _thumbKey?: string
+  _thumbGeneration?: number
 }
+
+function bindLazyThumb(el: ThumbEl, id: number | string | undefined | null, size = 'card') {
+  el._thumbObs?.disconnect()
+  el._thumbObs = null
+  const generation = (el._thumbGeneration ?? 0) + 1
+  el._thumbGeneration = generation
+  el._thumbKey = id == null || id === '' ? undefined : String(id)
+  // DOM 节点会被虚拟列表复用；切换附件时先清掉旧图，避免旧 blob 在新附件加载前残留。
+  el.removeAttribute('src')
+  if (!id) return
+
+  const isAttach = typeof id === 'string'
+  const key = isAttach ? `att:${id}_${size}` : `${id}_${size}`
+  const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, size)
+  if (cached) { el.src = cached; return }
+  const fetchThumb = () => isAttach
+    ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=${size}`)
+    : getThumb(id, size)
+  const obs = new IntersectionObserver(([entry]) => {
+    if (!entry.isIntersecting) return
+    obs.disconnect(); el._thumbObs = null
+    fetchThumb().then((url: string | null) => {
+      if (url && el._thumbGeneration === generation && el._thumbKey === String(id)) el.src = url
+    })
+  }, { rootMargin: '200px' })
+  obs.observe(el)
+  el._thumbObs = obs
+}
+
+function makeLazyThumbDirective(size: string) {
+  return {
+    mounted(el: ThumbEl, { value }: { value: number | string | undefined | null }) { bindLazyThumb(el, value, size) },
+    updated(el: ThumbEl, { value, oldValue }: { value: number | string | undefined | null; oldValue: number | string | undefined | null }) {
+      if (value !== oldValue) bindLazyThumb(el, value, size)
+    },
+    unmounted(el: ThumbEl) {
+      el._thumbObs?.disconnect(); el._thumbObs = null
+      el._thumbGeneration = (el._thumbGeneration ?? 0) + 1
+      el._thumbKey = undefined
+    },
+  }
+}
+
+const vLazyThumb = makeLazyThumbDirective('card')
+// QQ 表情需要保留 GIF/动画 WebP，不能走会转成 JPEG 的 card 缩略图端点。
+const vLazyFace = makeLazyThumbDirective('full')
 
 async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
@@ -1101,13 +1182,13 @@ async function downloadFile(f: ChatFile) {
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `${f.name}.${f.ext}`
+    a.href = url; a.download = `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`
     document.body.appendChild(a); a.click()
     setTimeout(() => { URL.revokeObjectURL(url); a.remove() }, 1000)
     return
   }
   if (f.file_id == null) return
-  try { await filesApi.download(f.file_id, `${f.name}.${f.ext}`) }
+  try { await filesApi.download(f.file_id, `${f.qq_face ? 'QQ表情' : f.name}.${f.ext}`) }
   catch (e) { console.error('下载失败', e) }
 }
 
@@ -1117,11 +1198,12 @@ function canPreview(f: ChatFile) {
 }
 function openFileFromChat(f: ChatFile) {
   if (canPreview(f)) {
+    const displayName = f.qq_face ? 'QQ表情' : f.name
     previewStore.open({
       id: f.file_id ?? undefined,
       attach_id: f.attach_id ?? null,
       ext: (f.ext || '').toUpperCase(),
-      displayName: f.name,
+      displayName,
       size: fmtSize(f.size_bytes),
       // 真实像素尺寸（有的话）：预览窗口直接按此定尺，不用再靠缩略图猜大小
       imgWidth: f.img_width ?? null,
@@ -1247,16 +1329,16 @@ async function fetchSessions() {
 }
 
 // ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
-type ImPlatformKey = 'feishu' | 'qqbot' | 'wechat'
+type ImPlatformKey = 'feishu' | 'qq' | 'wechat'
 interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
 interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
 const IM_PLATFORMS: ImPlatform[] = [
   { key: 'feishu',  label: '飞书', api: feishuConnectApi },
-  { key: 'qqbot',   label: 'QQ',   api: qqConnectApi },
+  { key: 'qq',   label: 'QQ',   api: qqConnectApi },
   { key: 'wechat',  label: '微信', api: wechatConnectApi },
 ]
 const bots   = ref<Bot[]>([])
-const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qqbot: false, wechat: false })
+const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
 const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
 
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
@@ -1477,29 +1559,92 @@ interface RawSessionMessage {
   content: string
   files?: ChatFile[]
   quotedText?: string
+  platformUserId?: string | null
+  platformUserName?: string | null
   createdAt: string
+}
+
+// role/platformUserId → 气泡归属 + 群成员发言人标注。三态：
+// - 'ai'：assistant，左侧，不比对
+// - 'user'：owner 自己发的，右侧，不署名
+// - 'member'：群里其他成员（platformUserId 存在但跟 owner 对不上），左侧，署 speakerLabel。
+// 单独开一个 role 值而不是复用 'user'，是因为全文件所有 role 判断都只认 'ai'/非 'ai'
+// 两态（没有任何地方显式判断 === 'user'），加第三态不会破坏既有逻辑，但如果借用
+// 'user' 表达"群成员"，气泡会被现有 CSS 判到右侧去，跟需求正好相反。
+//
+// 只有真正的群聊会话才去比对 platformUserId === ownerPlatformUserId——owner 绑定
+// 目前只有 QQ 走了验证码流程，微信/飞书的 ownerPlatformUserId 恒为 null，但它们的
+// IM 消息一样带 platformUserId（不分群聊私聊），如果不看 isGroupSession 直接比对，
+// 微信/飞书自己的私聊消息会因为「真实 id !== null」被误判成群成员、错落左侧。
+// 私聊/网页对话没有"群里其他人"这个概念，直接按 owner 处理。
+function resolveSpeaker(
+  role: string,
+  platformUserId: string | null | undefined,
+  platformUserName: string | null | undefined,
+): { role: string; speakerLabel?: string } {
+  if (role === 'assistant') return { role: 'ai' }
+  if (!isGroupSession.value || !platformUserId || platformUserId === ownerPlatformUserId.value) return { role: 'user' }
+  return { role: 'member', speakerLabel: platformUserName || platformUserId }
+}
+
+function replaceMentionIdsForDisplay(text: string, names: Record<string, string>): string {
+  let result = text || ''
+  for (const [platformUserId, name] of Object.entries(names)) {
+    if (!platformUserId || !name) continue
+    const escaped = platformUserId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    result = result.replace(new RegExp(`<@!?${escaped}>|@${escaped}`, 'g'), () => `@${name}`)
+  }
+  return result
+}
+
+// 兼容历史消息：旧记录可能还保存着 QQ 的内部表情协议串。
+function displayQQFaces(text: string): string {
+  if (!text || !text.includes('<faceType=')) return text || ''
+  return text.replace(
+    /<faceType=[^,>]+,faceId="[^"]*",ext="([^"]*)">/g,
+    (_match, encoded: string) => {
+      if (encoded) {
+        try {
+          const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4)
+          const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0))
+          const payload = JSON.parse(new TextDecoder().decode(bytes))
+          if (typeof payload.text === 'string' && payload.text.trim()) return payload.text
+        } catch { /* 历史协议串不完整时显示统一占位 */ }
+      }
+      return '[QQ表情]'
+    },
+  )
 }
 
 async function loadSession(id: number) {
   if (id === sessionId.value) return
+  const viewGeneration = ++_chatViewGeneration
   abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
   streaming.value = false
   try {
     const data = await agentApi.getMessages(String(id))
+    if (viewGeneration !== _chatViewGeneration) return
     sessionId.value = id
+    ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
+    isGroupSession.value = data.session?.chatType === 'group'
     clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
     // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
     // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-    messages.value = data.messages.map((m: RawSessionMessage) => ({
-      id: mkid(),
-      dbId: m.id,
-      role: m.role === 'assistant' ? 'ai' : m.role,
-      text: m.content,
-      html: null,
-      files: m.files && m.files.length ? m.files : undefined,
-      quotedText: m.quotedText || undefined,
-      time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
-    }))
+    messages.value = data.messages.map((m: RawSessionMessage) => {
+      const speaker = resolveSpeaker(m.role, m.platformUserId, m.platformUserName)
+      return {
+        id: mkid(),
+        dbId: m.id,
+        role: speaker.role,
+        speakerLabel: speaker.speakerLabel,
+        platformUserId: m.platformUserId || null,
+        text: displayQQFaces(m.content),
+        html: null,
+        files: m.files && m.files.length ? m.files : undefined,
+        quotedText: m.quotedText || undefined,
+        time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+      }
+    })
     contentH.value = SMALL_H; _sessionTurn = 0
     await nextTick()
     _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 切入会话的历史高度
@@ -1509,6 +1654,9 @@ async function loadSession(id: number) {
 }
 
 async function newSession() {
+  ++_chatViewGeneration
+  abortCtrl.value?.abort()
+  streaming.value = false
   sessionId.value = null
   messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
   _sessionTurn = 0
@@ -1629,7 +1777,11 @@ onUnmounted(() => {
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
-async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ownerSid: number | null) {
+async function consumeStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ownerSid: number | null,
+  viewGeneration = _chatViewGeneration,
+) {
   const decoder = new TextDecoder()
   let buf = '', aiIdx = -1, aborted = false
   let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
@@ -1637,7 +1789,10 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
   const usedTools = new Set<string>()
   // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
   const live = () => {
-    if (detached) return false
+    if (detached || viewGeneration !== _chatViewGeneration) {
+      detached = true
+      return false
+    }
     if (sessionId.value !== (sid ?? ownerSid)) { detached = true; return false }
     return true
   }
@@ -1657,7 +1812,9 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         if (evt.type === 'session_id') {
           const isNew = sessionId.value !== evt.session_id
           // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话
-          if (sessionId.value === (sid ?? ownerSid)) sessionId.value = evt.session_id
+          if (viewGeneration === _chatViewGeneration && sessionId.value === (sid ?? ownerSid)) {
+            sessionId.value = evt.session_id
+          }
           sid = evt.session_id
           if (isNew) await fetchSessions()
         } else if (evt.type === 'session_title') {
@@ -1711,7 +1868,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
       }
     }
   } finally {
-    if (!detached && aiIdx !== -1 && messages.value[aiIdx]) {
+    if (!detached && viewGeneration === _chatViewGeneration && aiIdx !== -1 && messages.value[aiIdx]) {
       const m = messages.value[aiIdx]
       m.streaming = false
       m.html = renderMd(m.text)
@@ -1726,6 +1883,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
 async function resumeStream(id: number) {
   if (streaming.value) return            // 本地正在发/看，不重复连
+  const viewGeneration = _chatViewGeneration
   const token = localStorage.getItem('user_token') ?? ''
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
   streaming.value = true; clearStatus(); setStatus(_thinkingItem())
@@ -1735,14 +1893,16 @@ async function resumeStream(id: number) {
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) return
-    if (sessionId.value !== id) return   // 期间又切走了，丢弃
+    if (viewGeneration !== _chatViewGeneration || sessionId.value !== id) return   // 期间又切走了，丢弃
     if (!res.body) return
-    const r = await consumeStream(res.body.getReader(), id)
+    const r = await consumeStream(res.body.getReader(), id, viewGeneration)
     refreshAfterTools(r.usedTools)
   } catch { /* 续看失败/被切走中断都不打扰 */ }
   finally {
     // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
-    if (sessionId.value === id) { clearStatus(); streaming.value = false; abortCtrl.value = null }
+    if (viewGeneration === _chatViewGeneration && sessionId.value === id) {
+      clearStatus(); streaming.value = false; abortCtrl.value = null
+    }
   }
 }
 
@@ -1770,6 +1930,7 @@ async function send(forcedText?: string) {
   await scrollBottom()
   const token = localStorage.getItem('user_token') ?? ''
   const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+  const viewGeneration = _chatViewGeneration
   let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
   let aiIdx = -1
   const usedTools = new Set<string>()
@@ -1790,7 +1951,7 @@ async function send(forcedText?: string) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) throw new Error('empty response body')
 
-    const r = await consumeStream(res.body.getReader(), ownerSid)
+    const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration)
     resolvedSid = r.sid
     aiIdx = r.aiIdx
     r.usedTools.forEach(t => usedTools.add(t))
@@ -1808,7 +1969,7 @@ async function send(forcedText?: string) {
     }
   } finally {
     // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
-    const ownsView = sessionId.value === resolvedSid
+    const ownsView = viewGeneration === _chatViewGeneration && sessionId.value === resolvedSid
     if (ownsView) {
       // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
       if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
@@ -2126,8 +2287,14 @@ async function send(forcedText?: string) {
   font-family: var(--font-sans); letter-spacing: 0.01em;
   padding: 2px 5px; border-radius: 4px;
 }
-.exp-session-source.src-qqbot { background: rgba(18,183,245,0.15); color: #0c8fc0; }
+.exp-session-source.src-qq { background: rgba(18,183,245,0.15); color: #0c8fc0; }
 .exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
+.exp-session-tag {
+  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
+  font-family: var(--font-sans);
+  padding: 2px 4px; border-radius: 4px;
+  background: rgba(123,127,178,0.15); color: #6a6ea3;
+}
 
 /* IM 平台抽屉（飞书 / QQ） */
 .im-plat { display: flex; flex-direction: column; }
@@ -2264,6 +2431,9 @@ async function send(forcedText?: string) {
 }
 
 .msg.ai { align-items: flex-start; }
+/* 群成员消息（非 owner、非咕咕）：左侧，跟 ai 同一侧但气泡样式区分开，避免跟
+   咕咕的回复混淆。 */
+.msg.member { align-items: flex-start; }
 .msg-bubble {
   padding: 9px 13px; border-radius: 13px;
   font-size: var(--gugu-body-size); line-height: var(--gugu-body-line); max-width: 88%;
@@ -2273,9 +2443,17 @@ async function send(forcedText?: string) {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
 }
+.msg.member .msg-bubble {
+  background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
+  border-bottom-left-radius: 4px;
+}
 .msg.user .msg-bubble {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
+}
+.msg-speaker {
+  font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
+  font-weight: 600;
 }
 /* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
    截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
@@ -2285,6 +2463,17 @@ async function send(forcedText?: string) {
   background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+}
+.msg-quoted-thumb {
+  display: block; width: 112px; height: 112px; margin-top: 5px; object-fit: cover;
+  border-radius: 8px; cursor: pointer; border: 1px solid rgba(123,127,178,0.18);
+}
+.msg-face-image-wrap {
+  max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
+}
+.msg-face-image {
+  display: block; width: 128px; height: 128px; max-width: 100%; object-fit: contain;
+  border-radius: 12px;
 }
 /* 咕咕发来的文件卡片 */
 .msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
@@ -2299,11 +2488,13 @@ async function send(forcedText?: string) {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
      避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
-  transition: background 0.15s, box-shadow 0.15s, transform 0.15s ease, opacity 0.15s ease;
+  transition: background 0.2s ease, box-shadow 0.25s ease,
+    transform 0.15s ease, opacity 0.15s ease;
 }
-.msg-file:hover {
+.msg-file.press-fx:hover {
   background: rgba(255,255,255,0.7);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14);
+  /* 覆盖全局 .press-fx.press-fx:hover 的按钮阴影，避免文件气泡 hover 瞬间换影。 */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14) !important;
 }
 .msg-file-ext {
   position: relative; overflow: hidden;

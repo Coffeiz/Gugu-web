@@ -107,7 +107,7 @@ async def load_im_channels(user_id) -> dict:
     供 builder 注入「通知渠道连接情况」，让咕咕据实判断能否走某 IM 渠道、别瞎让用户绑。"""
     from app.scheduled_tasks import get_imreach
     out = {}
-    for ch, plat in (("qq", "qqbot"), ("feishu", "feishu")):
+    for ch, plat in (("qq", "qq"), ("feishu", "feishu")):
         try:
             out[ch] = bool(await get_imreach(user_id, plat))
         except Exception:

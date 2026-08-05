@@ -7,7 +7,7 @@ profile 和 pattern 是两个不同问题，判断时分开想，不要用同一
 
 ## 怎么更新 profile（增量：只报这轮的变化）
 对照【已知的用户画像】，看本次对话有没有带出用户本人的稳定信息：
-- 身份/职业/所在地、稳定喜好、长期在意的事 → 放进 `profile_add`，**每条是字符串**（不需要 kind/importance，profile 不衰减、不分观察/推断）
+- 身份/职业/所在地、稳定喜好、长期在意的事 → 放进 `profile_add`，每条是 `{"type":"name|address|pronoun|background|preference|note", "text":"..."}`（不需要 id/kind/importance，profile 不衰减）
 - ⚠️ 凡是明显带着`最近 / 刚 / 这阵子 / 目前 / 本周 / 这几天`这类阶段性时间色彩的描述，默认**不是 profile**，应写进 `daily` / `summary`；只有你能把它再抽象成稳定画像时，才允许改写后放进 `profile_add`
   - 例：`用户最近刚换了新空调` → 不进 profile，可进 daily/summary
   - 例：`用户很在意居住环境舒适度` → 这是稳定画像，可以进 profile
@@ -95,9 +95,9 @@ profile 和 pattern 是两个不同问题，判断时分开想，不要用同一
 
 ## 输出
 严格只输出 JSON：
-{"profile_add": ["本轮新增/修正后的用户画像，一句话、只关于用户本人", ...], "profile_remove": ["本轮要删掉的旧画像（照抄原文字符串）", ...], "pattern_add": [{"text": "本轮新增/修正后的行为模式，一句话、能套到其他情境", "kind": "observed", "importance": 4}, ...], "pattern_remove": ["本轮要删掉的旧模式（照抄原文字符串）", ...], "daily": "一句话总结本次对话（没有就空字符串）", "summary": "更新后的当前状态快照（没有就空字符串）", "lens_hint": "", "correction": {"is_correction": false, "kind": "", "miss": {}}, "feedback": "无信号", "perception": {"intent": "情绪", "ambiguity": 20, "emotion": "疲惫", "emo_strength": 80}}
+{"profile_add": [{"type": "name|address|pronoun|background|preference|note", "text": "本轮新增/修正后的用户画像，一句话、只关于用户本人"}, ...], "profile_remove": ["本轮要删掉的旧画像（照抄原文字符串）", ...], "pattern_add": [{"text": "本轮新增/修正后的行为模式，一句话、能套到其他情境", "kind": "observed", "importance": 4}, ...], "pattern_remove": ["本轮要删掉的旧模式（照抄原文字符串）", ...], "daily": "一句话总结本次对话（没有就空字符串）", "summary": "更新后的当前状态快照（没有就空字符串）", "lens_hint": "", "correction": {"is_correction": false, "kind": "", "miss": {}}, "feedback": "无信号", "perception": {"intent": "情绪", "ambiguity": 20, "emotion": "疲惫", "emo_strength": 80}}
 
-- `profile_add`/`profile_remove`（字符串数组）、`pattern_add`（对象数组，带 kind/importance）/`pattern_remove`（字符串数组）都只装**这轮的增删**；没有就给空数组 `[]`（**别把没变的旧内容重新列出来**）
+- `profile_add`（对象数组，带合法 `type` 和 `text`）/`profile_remove`（字符串数组）、`pattern_add`（对象数组，带 kind/importance）/`pattern_remove`（字符串数组）都只装**这轮的增删**；没有就给空数组 `[]`（**别把没变的旧内容重新列出来**）
 - `summary`：当下没变化就**原样返回原快照**（别清空、别瞎改）
 - `lens_hint`：解读先验规则，**绝大多数轮留空字符串**（只在本轮真暴露了一条可复用解读规则时才写）
 - `perception` 始终给（照本轮用户消息判），它不写进记忆、只用于打点

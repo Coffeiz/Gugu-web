@@ -33,7 +33,7 @@ async def _react(db, user_id, args: dict):
     if not emoji:
         return {"ok": False, "message": f"不认识的 mood「{mood}」，可选：{', '.join(_MOOD_EMOJI)}。"}
 
-    from agent.adapters import feishu
+    from agent.gateway import feishu
     ok = await feishu.react(ctx.get("channel_id"), ctx.get("message_id"), emoji)
     if ok:
         imctx.mark_reacted()
