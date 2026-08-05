@@ -190,7 +190,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U pm"
+          --health-cmd "pg_isready -U pm -d gugu_web"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
