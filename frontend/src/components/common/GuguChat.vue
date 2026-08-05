@@ -126,13 +126,11 @@ import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { useAudioStore } from '@/stores/audio'
 import { nextZ } from '@/composables/windowz'
-import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
 import { getGreeting, prefetchGreeting } from '@/composables/useGreeting'
-import { uploadSignal, calendarSignal } from '@/services/cache'
 import { playGuguSfx } from '@/services/sfx'
 import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
 import GuguChatComposer from './gugu-chat/GuguChatComposer.vue'
@@ -147,9 +145,9 @@ import {
   isImageFile, isAnimatedImageFile, canPreview,
   fmtSize, fmtDur, voiceBar, displayQQFaces,
 } from './gugu-chat/messageDisplay'
-import { useChatAudio } from './gugu-chat/useChatAudio'
-import { useChatAttachments } from './gugu-chat/useChatAttachments'
-import { useChatActions, PROJECT_TOOLS, CALENDAR_TOOLS, FILE_TOOLS } from './gugu-chat/useChatActions'
+import { useChatAudio } from './gugu-chat/composables/useChatAudio'
+import { useChatAttachments } from './gugu-chat/composables/useChatAttachments'
+import { useChatActions, PROJECT_TOOLS, CALENDAR_TOOLS, FILE_TOOLS } from './gugu-chat/composables/useChatActions'
 import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 
 interface Bot {
@@ -172,7 +170,6 @@ interface ImConnectState {
 
 
 const audioStore    = useAudioStore()
-const projectStore  = useProjectStore()
 const liveStore     = useLiveStore()
 const uiStore       = useUiStore()
 const router        = useRouter()

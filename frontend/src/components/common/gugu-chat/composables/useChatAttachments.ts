@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import { agentApi } from '@/services/api'
-import type { ChatFile } from './chatTypes'
-import { IMG_EXTS } from './messageDisplay'
+import type { ChatFile } from '../chatTypes'
+import { IMG_EXTS } from '../messageDisplay'
 
 /**
  * 附件（选择/拖拽/粘贴/暂存上传）+ 语音录制的唯一状态所有权。

@@ -1,7 +1,7 @@
 import { ref, computed, watch } from 'vue'
 import { useAudioStore } from '@/stores/audio'
-import { API_BASE } from './chatConstants'
-import type { ChatFile } from './chatTypes'
+import { API_BASE } from '../chatConstants'
+import type { ChatFile } from '../chatTypes'
 
 /**
  * 迷你播放器（文件库音频）+ 消息语音条播放的唯一状态所有权：<audio> 元素、
