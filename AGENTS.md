@@ -52,6 +52,12 @@
 - `ref(new Set())`/`ref([])` 这类空初始值容易被推断成 `Set<unknown>`/`any[]`，显式标注元素类型（如 `ref(new Set<number>())`）。
 - `frontend/tsconfig.strict.json` 是文件级 strict 棘轮：已在白名单里的文件不得降回宽松类型；新增文件或完成一个稳定边界后，先 strict-clean 再加入白名单。涉及白名单或其依赖闭包时必须跑 `npm run typecheck:strict`。
 
+## Vue 页面入口约定
+
+`views/**/index.vue` 只负责页面布局、组件组合和流程调度。
+
+新功能不要直接堆进入口文件：UI 交互拆到 `components/`，状态和异步流程拆到 `composables/`，请求拆到 `api/` 或 service，纯逻辑拆到 `utils/`。已有大文件逐步收口，新增代码优先模块化。
+
 ## HTML 渲染
 
 - 禁止把不可信字符串直接交给 `v-html`。Markdown/HTML 必须走 `frontend/src/utils/markdown.ts` 的 `sanitizeHtml` / `sanitizeChatHtml` / `renderMarkdown`；预渲染 HTML 也同样不可信。

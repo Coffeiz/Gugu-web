@@ -10,6 +10,7 @@ PUT    /api/v1/admin/agent/llm-presets/{id}      → 编辑预设（api_key 留�
 DELETE /api/v1/admin/agent/llm-presets/{id}      → 删除预设
 POST   /api/v1/admin/agent/llm-presets/{id}/activate → 设为当前（同步写入 ai 段）
 POST   /api/v1/admin/agent/llm-presets/{id}/test     → 连通性测试
+GET    /api/v1/admin/agent/llm-presets/{id}/models   → 获取服务商模型列表
 
 GET    /api/v1/admin/agent/memory/legacy-files          → 扫描已被新文件取代的旧记忆文件（迁移遗留）
 POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧记忆文件
@@ -568,6 +569,57 @@ async def test_llm_preset(preset_id: str):
         return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300]}
     except Exception as e:
         return {"ok": False, "status": 0, "detail": str(e)[:300]}
+
+
+@router.get("/llm-presets/{preset_id}/models")
+async def list_llm_preset_models(preset_id: str):
+    """从已保存预设的服务商读取模型列表；API Key 只在后端使用。"""
+    import httpx
+    from app.core.redaction import diag_log
+    from types import SimpleNamespace
+
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    base_url = str(item.get("base_url") or "").rstrip("/")
+    if not base_url:
+        raise HTTPException(400, "请先填写 Base URL")
+    provider = str(item.get("provider") or "openai")
+    api_key = str(item.get("api_key") or "")
+    from agent.llm_select import use_anthropic_for
+
+    is_anthropic = use_anthropic_for(SimpleNamespace(
+        provider=provider, base_url=base_url, api_format=item.get("api_format", ""),
+    ))
+    is_mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()
+    headers = {"Accept": "application/json"}
+    if is_anthropic:
+        headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+    if is_mimo:
+        headers["api-key"] = api_key
+        headers.pop("Authorization", None)
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
+            response = await client.get(f"{base_url}/models", headers=headers)
+        if response.status_code >= 400:
+            diag_log("admin.llm_preset_models.upstream", RuntimeError(
+                f"status={response.status_code} body={response.text[:500]}"))
+            if response.status_code in (401, 403):
+                raise HTTPException(502, "服务商鉴权失败")
+            raise HTTPException(502, f"服务商暂不支持模型列表（HTTP {response.status_code}）")
+        payload = response.json()
+        rows = payload.get("data", []) if isinstance(payload, dict) else payload
+        models = sorted({str(row.get("id")) for row in rows if isinstance(row, dict) and row.get("id")})
+        return {"models": models, "source": "provider"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        diag_log("admin.llm_preset_models", exc)
+        raise HTTPException(502, "获取模型列表失败，请检查地址和网络") from exc
 
 
 def _probe_png_b64() -> str:

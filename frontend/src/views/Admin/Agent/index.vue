@@ -163,7 +163,25 @@
 
             <div class="modal-field">
               <label>模型名称</label>
-              <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input" />
+              <div class="model-picker" @focusout="closeModelMenuSoon">
+                <div class="model-picker-row">
+                  <input v-model="editTarget.model" placeholder="qwen-max" class="modal-input"
+                    @focus="modelMenuOpen = true" />
+                  <button type="button" class="model-fetch-btn" :disabled="modelListLoading || editIsNew"
+                    :title="editIsNew ? '请先保存预设，再获取模型列表' : '从服务商获取模型列表'"
+                    @mousedown.prevent @click="fetchModelList">
+                    {{ modelListLoading ? '获取中…' : '获取列表' }}
+                  </button>
+                </div>
+                <div v-if="modelMenuOpen" class="model-options" @mousedown.stop>
+                  <div v-if="modelListError" class="model-option-hint error">{{ modelListError }}</div>
+                  <div v-else-if="!modelOptions.length" class="model-option-hint">
+                    {{ editIsNew ? '保存预设后可自动获取；也可以直接手动输入' : '点击“获取列表”加载可用模型' }}
+                  </div>
+                  <button v-for="model in filteredModelOptions" :key="model" type="button" class="model-option"
+                    @mousedown.prevent="selectModel(model)">{{ model }}</button>
+                </div>
+              </div>
             </div>
 
             <div class="modal-field" v-if="editTarget.provider === 'mimo'">
@@ -1358,6 +1376,15 @@ const editIsNew    = ref(false)
 const editSaving   = ref(false)
 const editError    = ref('')
 const editMaskDown = ref(false)
+const modelOptions = ref<string[]>([])
+const modelListLoading = ref(false)
+const modelListError = ref('')
+const modelMenuOpen = ref(false)
+const filteredModelOptions = computed(() => {
+  const query = String(editTarget.value?.model || '').trim().toLowerCase()
+  if (!query) return modelOptions.value
+  return modelOptions.value.filter(model => model.toLowerCase().includes(query))
+})
 
 function showMsg(msg: string, isError = false) {
   llmMsg.value      = msg
@@ -1442,12 +1469,47 @@ function openNewPreset() {
   editIsNew.value  = true
   editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 2000, temperature: 0.7, context_tokens: 3000, thinking: 'disabled', reasoning_effort: '', vision: false, api_format: '' }
   editError.value  = ''
+  modelOptions.value = []
+  modelListError.value = ''
+  modelMenuOpen.value = false
 }
 
 function openEditPreset(p: any) {
   editIsNew.value  = false
   editTarget.value = { ...p, api_key: '' }
   editError.value  = ''
+  modelOptions.value = []
+  modelListError.value = ''
+  modelMenuOpen.value = false
+}
+
+function closeModelMenuSoon() {
+  window.setTimeout(() => { modelMenuOpen.value = false }, 120)
+}
+
+function selectModel(model: string) {
+  if (!editTarget.value) return
+  editTarget.value.model = model
+  modelMenuOpen.value = false
+}
+
+async function fetchModelList() {
+  if (!editTarget.value || editIsNew.value || modelListLoading.value) return
+  modelListLoading.value = true
+  modelListError.value = ''
+  modelMenuOpen.value = true
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${editTarget.value.id}/models`)
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || '获取模型列表失败')
+    modelOptions.value = Array.isArray(data.models) ? data.models : []
+    if (!modelOptions.value.length) modelListError.value = '服务商没有返回可用模型，请手动输入'
+  } catch (error) {
+    modelOptions.value = []
+    modelListError.value = error instanceof Error ? error.message : '获取模型列表失败'
+  } finally {
+    modelListLoading.value = false
+  }
 }
 
 function setEditProvider(key: string) {
@@ -1458,6 +1520,8 @@ function setEditProvider(key: string) {
   editTarget.value.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
   editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+  modelOptions.value = []
+  modelListError.value = ''
 }
 
 // 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
@@ -1467,6 +1531,8 @@ function pickApiFormat(fmt: string) {
   if (bu.includes('xiaomimimo')) {
     editTarget.value.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
   }
+  modelOptions.value = []
+  modelListError.value = ''
 }
 
 async function savePreset() {
@@ -2797,6 +2863,22 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 }
 .modal-input:focus { border-color: rgba(123,127,178,0.45); }
 .modal-input::placeholder { color: rgba(255,255,255,0.2); }
+.model-picker { position: relative; }
+.model-picker-row { display: flex; gap: 7px; align-items: center; }
+.model-picker-row .modal-input { min-width: 0; flex: 1; }
+.model-fetch-btn { flex: 0 0 auto; border: 1px solid rgba(123,127,178,0.35); border-radius: 8px;
+  padding: 8px 10px; background: rgba(123,127,178,0.12); color: rgba(226,228,247,0.8);
+  font-size: 11px; cursor: pointer; white-space: nowrap; }
+.model-fetch-btn:hover:not(:disabled) { background: rgba(123,127,178,0.24); }
+.model-fetch-btn:disabled { opacity: 0.45; cursor: default; }
+.model-options { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 5px);
+  max-height: 220px; overflow: auto; padding: 5px; border: 1px solid rgba(255,255,255,0.13);
+  border-radius: 9px; background: #242638; box-shadow: 0 12px 30px rgba(0,0,0,0.35); }
+.model-option { display: block; width: 100%; border: 0; border-radius: 6px; padding: 7px 9px;
+  background: transparent; color: rgba(235,236,248,0.85); text-align: left; font-size: 12px; cursor: pointer; }
+.model-option:hover { background: rgba(123,127,178,0.22); }
+.model-option-hint { padding: 8px 9px; color: rgba(255,255,255,0.45); font-size: 11px; }
+.model-option-hint.error { color: #ffadad; }
 .modal-actions {
   display: flex; align-items: center; gap: 10px;
   margin-top: 20px; padding-top: 16px;
