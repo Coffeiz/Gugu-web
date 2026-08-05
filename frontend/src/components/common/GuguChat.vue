@@ -52,17 +52,11 @@
       </Transition>
 
       <!-- 扫码绑定 IM 弹窗：咕咕回复里点 [扫码绑定…](gugu://bind-im/<platform>) 按钮触发，复用现有连接 API -->
-      <Transition name="chat-drop-fade">
-        <div v-if="chatBind.open" class="cb-overlay" @click.self="closeChatBind">
-          <div class="cb-modal popup-menu">
-            <div class="cb-title">扫码绑定{{ chatBind.label }}</div>
-            <canvas ref="chatBindCanvas" class="cb-qr"></canvas>
-            <div v-if="chatBind.err" class="cb-err">{{ chatBind.err }}</div>
-            <div v-else class="cb-hint">{{ chatBind.hint || '生成二维码中…' }}</div>
-            <button class="cb-cancel" @click="closeChatBind">取消</button>
-          </div>
-        </div>
-      </Transition>
+      <GuguChatBindDialog
+        ref="bindDialogRef"
+        :open="chatBind.open" :label="chatBind.label" :hint="chatBind.hint" :err="chatBind.err"
+        @close="closeChatBind"
+      />
 
 
       <!-- 侧边栏（仅大窗） -->
@@ -145,6 +139,7 @@ import GuguChatComposer from './gugu-chat/GuguChatComposer.vue'
 import GuguChatFab from './gugu-chat/GuguChatFab.vue'
 import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
+import GuguChatBindDialog from './gugu-chat/GuguChatBindDialog.vue'
 import type { ChatMessage, ChatFile, ChatSession } from './gugu-chat/chatTypes'
 import { API_BASE, SMALL_W, SMALL_H, SIDEBAR_W } from './gugu-chat/chatConstants'
 import { renderMd, renderMdStream } from './gugu-chat/markdown'
@@ -154,6 +149,7 @@ import {
 } from './gugu-chat/messageDisplay'
 import { useChatAudio } from './gugu-chat/useChatAudio'
 import { useChatAttachments } from './gugu-chat/useChatAttachments'
+import { useChatActions, PROJECT_TOOLS, CALENDAR_TOOLS, FILE_TOOLS } from './gugu-chat/useChatActions'
 import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 
 interface Bot {
@@ -245,23 +241,13 @@ watch(() => liveStore.sessionEvent, async (e) => {
   await nextTick(); await scrollBottom()
 })
 
-// 工具名 → 受影响数据域，咕咕操作后据此刷新前端，免手动刷新页面
-// 与后端 RESOURCE_BY_TOOL（app/core/events.py）保持一致——漏了哪个工具，对应视图就不会实时刷新。
-const _PROJECT_TOOLS = new Set(['create_project','update_project','delete_project','archive_project','update_stage','set_priority','set_color','add_stage','remove_stage','rename_stage','add_todo','remove_todo','set_stages','update_todo'])
-const _CALENDAR_TOOLS = new Set(['create_event','update_event','delete_event'])
-const _FILE_TOOLS = new Set(['edit_file','create_document','rename_file','move_items','copy_file','create_folder','delete_file','rename_folder','delete_folder','save_uploaded_file','restore_file','permanent_delete'])
-
-async function refreshAfterTools(usedTools: Set<string>) {
-  if (!usedTools.size) return
-  const has = (set: Set<string>) => [...usedTools].some(t => set.has(t))
-  try {
-    if (has(_PROJECT_TOOLS)) await projectStore.fetchProjects()
-    if (has(_CALENDAR_TOOLS)) { calendarSignal.value++; projectStore.fetchUpcomingCalEvents?.() }
-    // 文件：刷文件管理器（uploadSignal）+ 确定性 bump rev.files 让打开的预览窗重载。
-    // 实时 SSE（live.js）是 best-effort（dev 重启 / pub-sub 竞态会丢事件），靠这条回合末兜底保证稳定刷新。
-    if (has(_FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
-  } catch (e) { /* 刷新失败不影响对话 */ }
-}
+// gugu:// 协议链接（复制代码/绑定 IM/打开文件）+ 工具完成后的前端刷新通知，收在
+// useChatActions；FILE_TOOLS/PROJECT_TOOLS/CALENDAR_TOOLS 同时供下面 consumeStream()
+// 的 tool_done 分支即时 bump 用，从同一处导入避免两份集合定义漂移。
+const { refreshAfterTools, onChatActionClick } = useChatActions({
+  router,
+  onBindPlatform: (platform) => openChatImBind(platform),
+})
 const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
 const miniPlayerRef = ref<InstanceType<typeof GuguChatMiniPlayer> | null>(null)
 const rippleActive  = ref(false)
@@ -848,40 +834,8 @@ function cancelImConnect() { _stopImPoll(); connect.value = null }
 const chatBind = reactive<{ open: boolean; platform: string; label: string; hint: string; err: string; id: string | number | null }>(
   { open: false, platform: '', label: '', hint: '', err: '', id: null }
 )
-const chatBindCanvas = ref<HTMLCanvasElement | null>(null)
+const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
 let chatBindPoll: ReturnType<typeof setInterval> | null = null
-
-function onChatActionClick(e: MouseEvent) {
-  // 代码块「复制」按钮：渲染时不写内联 onclick（DOMPurify 会剥掉 on*），这里事件委托兜住
-  const target = e.target as HTMLElement
-  const btn = target.closest?.('.md-copy-btn') as HTMLElement | null
-  if (btn) {
-    e.preventDefault()
-    const text = (btn.closest('.md-code-block')?.querySelector('code') as HTMLElement | null)?.innerText ?? ''
-    const done = () => { btn.textContent = '已复制 ✓'; setTimeout(() => { btn.textContent = '复制' }, 1200) }
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(text).then(done).catch(done)
-    } else {
-      const a = document.createElement('textarea')
-      a.value = text; a.style.position = 'fixed'; a.style.opacity = '0'
-      document.body.appendChild(a); a.select()
-      try { document.execCommand('copy') } catch {}
-      a.remove(); done()
-    }
-    return
-  }
-  const a = target.closest?.('a[href^="gugu://"]') as HTMLAnchorElement | null
-  if (!a) return
-  e.preventDefault()
-  const href = a.getAttribute('href') || ''
-  const mBind = href.match(/^gugu:\/\/bind-im\/([a-z]+)/i)
-  if (mBind) { openChatImBind(mBind[1]); return }
-  const mFile = href.match(/^gugu:\/\/open-file\/(\d+)/i)
-  if (mFile) {
-    uiStore.pendingFileTarget = { kind: 'file', id: parseInt(mFile[1]) }
-    router.push('/files')
-  }
-}
 
 async function openChatImBind(platform: string) {
   const p = IM_PLATFORMS.find(x => x.key === platform)
@@ -899,7 +853,7 @@ async function openChatImBind(platform: string) {
         ? '手机微信扫码 → 授权后自动连接'
         : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
     await nextTick()
-    await QRCode.toCanvas(chatBindCanvas.value, r.scan_url, { width: 168, margin: 1 })
+    await QRCode.toCanvas(bindDialogRef.value?.canvasEl, r.scan_url, { width: 168, margin: 1 })
     _startChatBindPoll(p)
   } catch (e: any) {
     chatBind.err = e?.message || '生成二维码失败'
@@ -1171,9 +1125,9 @@ async function consumeStream(
           // 改动类工具一完成就即时 bump 对应资源（走已连好的对话流，不等回合末、不靠 best-effort
           // 的 events SSE）→ 文件预览 / 项目卡 / 日历当场刷新。视图是全局的，切走也该刷，故不受 live() 限制。
           if (evt.name) {
-            if (_FILE_TOOLS.has(evt.name)) liveStore.bump('files')
-            else if (_PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
-            else if (_CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
+            if (FILE_TOOLS.has(evt.name)) liveStore.bump('files')
+            else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
+            else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
           }
           // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
           if (live()) setStatus(_thinkingItem())
@@ -1502,39 +1456,7 @@ async function send(forcedText?: string) {
 }
 :deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 
-/* 扫码绑定弹窗（聊天上弹小窗）*/
-.cb-overlay {
-  position: absolute; inset: 0; z-index: 50;
-  display: flex; align-items: center; justify-content: center;
-  /* 极轻遮罩、不压暗（仅用于点外面关闭 + 一点聚焦）——避免把弹窗玻璃衬得发灰发透，
-     让它和右键菜单一样浮在亮内容上、显得更实 */
-  background: rgba(0,0,0,0.04);
-}
-.cb-modal {
-  /* 玻璃外观复用全局 .popup-menu（与右键菜单完全一致）；这里只管布局 + 固定宽度（防止加载前后变宽）*/
-  display: flex; flex-direction: column; align-items: center; gap: 9px;
-  width: 230px; box-sizing: border-box;
-  padding: 18px 20px 14px;
-}
-.cb-title { font-size: 13.5px; font-weight: 700; color: var(--text-primary); }
-.cb-qr {
-  width: 168px; height: 168px; border-radius: 10px;
-  background: #fff; padding: 6px; box-sizing: border-box;
-  box-shadow: 0 2px 10px rgba(123,127,178,0.18);
-}
-.cb-hint, .cb-err {
-  font-size: 11.5px; text-align: center; line-height: 1.5; max-width: 190px;
-  min-height: 33px;          /* 预留 ~2 行：二维码/提示加载前后弹窗高度不跳 */
-  display: flex; align-items: center; justify-content: center;
-}
-.cb-hint { color: var(--text-secondary); }
-.cb-err  { color: rgba(200,80,80,0.9); }
-.cb-cancel {
-  margin-top: 2px; padding: 5px 16px; font-size: 12px;
-  color: var(--text-secondary); background: rgba(123,127,178,0.1);
-  border: none; border-radius: 999px; cursor: pointer;
-}
-.cb-cancel:hover { background: rgba(123,127,178,0.18); }
+/* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
 /* .im-qr-cancel 已随 GuguChatSidebar.vue 迁移 */
 
 /* .exp-send-btn/.send-btn 已随 GuguChatComposer.vue 迁移 */
