@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import httpx
 
-from agent.adapters import wechat
+from agent.gateway import wechat
 
 
 def _wechat_text_msg(**overrides):
@@ -119,8 +119,8 @@ async def test_wechat_ingest_media_uses_encrypt_query_param_download_url(monkeyp
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: _FakeClient())
     monkeypatch.setattr(wechat, "_aes128_ecb_decrypt", lambda raw, key: b"decrypted")
-    import app.core.chat_attach as chat_attach
-    monkeypatch.setattr(chat_attach, "stage", fake_stage)
+    from agent.im import files
+    monkeypatch.setattr(files, "stage", fake_stage)
 
     out = await wechat._ingest_wechat_media([{
         "type": 2,

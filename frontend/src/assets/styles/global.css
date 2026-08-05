@@ -332,6 +332,16 @@ body {
   padding: 4px;
   user-select: none;
 }
+/* 菜单统一沿用文件详细信息弹窗的缩放淡入淡出（.info-pop）：
+   ContextMenu、排序菜单和各页面右键菜单共用同一时长与曲线。 */
+.menu-pop-enter-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.menu-pop-leave-active {
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.menu-pop-enter-from,
+.menu-pop-leave-to { opacity: 0; transform: scale(0.95); }
 .popup-close-btn {
   width: 22px; height: 22px; border-radius: 6px; border: none; padding: 0;
   background: none; color: var(--text-secondary);

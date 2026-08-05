@@ -9,7 +9,7 @@
 
 咕咕不是一个程序，是**好几个程序配合着跑**：一个负责网页和 API（web），一个负责在飞书/QQ 里聊天时"思考"（worker，咕咕的"大脑"其实在这），一个负责管理各平台的连接（supervisor）。三个都要活着，IM 才能正常收发消息；只用网页版，可以只跑 web。
 
-生产服务器上这三个一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。但也有例外：本项目的 dev 机（`192.168.110.51`）**没有用 systemd 管，而是手动用脚本 `scripts/dev-restart.sh` 起停**（web 走脚本手动起，worker/supervisor 也归 systemd 管，具体见 §4.5「dev 机重启」）。这是刻意选择——dev 机上避免 systemd 和手动进程互相打架（同一个端口 8000 不能有两个"主人"）。
+生产服务器上这三个一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。开发机则可以用前台热重载：web 用 Uvicorn reload，worker 用 `watchfiles` 监听代码后自动重启；supervisor 仍按需单独重启。开发热重载与生产 systemd 是两套互斥的启动方式，不能让同一个进程同时跑两份。
 
 日常最容易迷糊的两件事：
 1. **改了代码该重启哪个**——大脑逻辑在 worker，不在 web，改错了重启等于没改，见 §6.1。
@@ -50,7 +50,7 @@
 | -------------- | ---------------------------------- | ----------------------------------------------- | ------ |
 | **web**        | FastAPI（API + Admin），uvicorn :8000 | `make start` / `./start.sh start`               | 必须     |
 | **worker**     | 消费 IM 队列 → 跑咕咕大脑 → 发回平台            | `.venv/bin/python -m worker`                    | 接 IM 时 |
-| **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.adapters.supervisor` | 接 IM 时 |
+| **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.gateway.supervisor` | 接 IM 时 |
 | PostgreSQL     | 主数据库                               | 系统服务 / Docker                                   | 必须     |
 | Redis          | IM 消息队列（Streams）                   | 系统服务 / Docker                                   | 接 IM 时 |
 | SearXNG        | 自建通用搜索（`web_search`，省 Tavily 配额）   | Docker / 1Panel                                 | 可选     |
@@ -149,7 +149,11 @@ sudo -u postgres psql -c "CREATE DATABASE gugu_web OWNER pm;"
 
 ```bash
 # 开发用前台 + 热重载（改代码自动重启）
-make fg            # = ./start.sh foreground，带 --reload
+make dev-web       # = ./start.sh foreground，监听 app/agent/onboarding
+
+# 接 IM 时另开终端；先停止同机 systemd worker，再启动 watcher
+sudo systemctl stop gugu-worker  # 如果这台开发机由 systemd 管 worker
+make dev-worker    # 监听 app/agent/onboarding/worker.py，Ctrl+C 停止
 
 # 或后台跑
 make start         # 后台 uvicorn :8000，日志 logs/gugu.log
@@ -158,6 +162,8 @@ make logs          # 实时日志
 ```
 
 健康检查：`curl http://127.0.0.1:8000/health` → `{"status":"ok"}`。
+
+> `make dev-worker` 需要先执行一次 `make deps-dev` 安装开发依赖。watcher 只适合开发机；生产仍使用 `systemctl restart gugu-worker`。停止 watcher 后，可执行 `sudo systemctl start gugu-worker` 恢复常驻 worker。
 
 ### 3.6 前端
 
@@ -175,11 +181,11 @@ npm run dev        # Vite :5173，已设 host:true 可局域网访问
 
 ```bash
 cd backend
-.venv/bin/python -m agent.adapters.supervisor   # 频道管家
+.venv/bin/python -m agent.gateway.supervisor   # 频道管家
 .venv/bin/python -m worker                        # 队列消费 worker
 ```
 
-频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`）。
+频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`）。
 
 > ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
@@ -442,7 +448,7 @@ sudo systemctl status gugu-backend gugu-worker gugu-supervisor
 
 ### 5.1 接入步骤
 
-飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[21-飞书接入指南.md](../agent/21-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
+飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
 
 生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
 
@@ -466,7 +472,7 @@ DB__HOST=<共享 DB IP>            DB__PASSWORD=...
 ```bash
 ./start.sh install                         # 装 systemd 三单元
 sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
-# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.adapters.supervisor
+# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.gateway.supervisor
 ```
 
 起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
@@ -493,14 +499,14 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 
 ### 6.1 改了什么 → 重启哪个进程（最常踩，先看这张表）
 
-**咕咕的「大脑」跑在 worker，不在 web。** 改了什么、重启谁，对照下表（命令为生产 systemd；开发环境的启停见 §6.2 / §6.3）：
+**咕咕的「大脑」跑在 worker，不在 web。** 改了什么、重启谁，对照下表（命令为生产 systemd；开发环境可用 `make dev-web` / `make dev-worker` 热重载）：
 
 
 | 你改了…                                                              | 要重启                                    | 命令（生产）                            |
 | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
 | API / Admin 接口、`app/`、`main.py`、路由、新接口                            | **backend (web)**                      | `systemctl restart gugu-backend`  |
-| 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | `systemctl restart gugu-worker`   |
-| IM 网关代码：`agent/adapters/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
+| 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | 开发：`make dev-worker`；生产：`systemctl restart gugu-worker`   |
+| IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
 | 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
 | **新增了模型字段 / 数据库列**                                                | **不是重启，是迁移！**                          | `make migrate`（见 §7）              |
@@ -538,6 +544,16 @@ ss -ltnp | grep :8000 || echo "8000 已空闲"
 
 ### 6.3 启停 / 重启 worker / supervisor
 
+**开发机 Worker 热重载：**
+```bash
+make deps-dev       # 首次安装 watchfiles
+sudo systemctl stop gugu-worker  # 若 worker 由 systemd 托管
+make dev-worker     # 前台监听代码，Ctrl+C 停止
+sudo systemctl start gugu-worker # 不再开发时恢复常驻 worker
+```
+
+`make dev-worker` 监听 `app/`、`agent/`、`onboarding/` 和 `worker.py`，每次 Python 文件变化都会重启 Worker。不要在 systemd worker 仍运行时启动它，否则会出现两个消费者同时处理 Redis 队列。
+
 ```bash
 # 生产（systemd）
 sudo systemctl restart gugu-worker       # 改了 agent/ 大脑代码后
@@ -547,7 +563,7 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 
 # 开发（无 systemd）
 .venv/bin/python -m worker                       # 前台 worker
-.venv/bin/python -m agent.adapters.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
+.venv/bin/python -m agent.gateway.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
 ```
 
 也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
@@ -557,7 +573,7 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 > ```bash
 > # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
 > ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
-> pkill -TERM -f "agent.adapters.supervisor"
+> pkill -TERM -f "agent.gateway.supervisor"
 > pkill -TERM -f "python -m worker"
 > # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
 > cd backend && RUN_USER=youruser make install

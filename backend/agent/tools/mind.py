@@ -9,6 +9,7 @@ from app.core.mind import (
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
 from app.core.ownership import get_owned
 from app.models import MindNode, MindRelation
+from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 10
@@ -192,20 +193,21 @@ def _relation_summary(relation: MindRelation, current_node_id: int, nodes: dict[
 
 async def _mind_search(db, user_id, args: dict):
     q = (args.get("q") or "").strip()
-    if not q:
+    queries = args.get("queries") if isinstance(args.get("queries"), list) else None
+    search_queries = normalize_queries(q, queries)
+    if not search_queries:
         return {"error": "需要提供搜索关键词 q"}
 
     limit = args.get("limit", 5)
     if not isinstance(limit, int):
         limit = 5
     limit = max(1, min(limit, _MAX_RESULTS))
-    pattern = f"%{q}%"
     matches = (await db.execute(
         select(MindNode).where(
             MindNode.user_id == user_id,
             MindNode.kind.in_(("note", "canvas_note")),
             MindNode.deleted_at.is_(None),
-            or_(MindNode.title.ilike(pattern), MindNode.content_plain.ilike(pattern)),
+            keyword_condition([MindNode.title, MindNode.content_plain], search_queries, args.get("mode")),
         ).order_by(MindNode.captured_at.desc()).limit(limit)
     )).scalars().all()
 
@@ -372,16 +374,21 @@ class MindSkill(BaseSkill):
     tools = [
         Tool(
             name="mind_search", label="搜索思维笔记",
-            description="按关键词搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
+            description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
                         "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 mind_get。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "要在笔记正文和标题中搜索的关键词"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个候选关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "最多返回命中数，默认 5，最大 10"},
                     "include_content": {"type": "boolean", "description": "true 时返回命中笔记完整正文；默认只返回预览"},
                 },
-                "required": ["q"],
+                # q / queries 至少传一个；具体校验由 handler 统一完成，兼容 queries-only 调用。
+                "required": [],
             },
             handler=_mind_search,
         ),
@@ -414,6 +421,7 @@ class MindSkill(BaseSkill):
                 "required": ["blocks"],
             },
             handler=_create_note,
+            mutates=True,
         ),
         Tool(
             name="update_note", label="更新思维笔记",
@@ -433,6 +441,7 @@ class MindSkill(BaseSkill):
                 "required": ["node_id", "version"],
             },
             handler=_update_note,
+            mutates=True,
         ),
         Tool(
             name="delete_note", label="删除思维笔记",
@@ -447,6 +456,7 @@ class MindSkill(BaseSkill):
                 "required": ["node_id", "version"],
             },
             handler=_delete_note,
+            mutates=True,
         ),
         Tool(
             name="restore_note", label="恢复思维笔记",
@@ -457,12 +467,14 @@ class MindSkill(BaseSkill):
                 "required": ["node_id"],
             },
             handler=_restore_note,
+            mutates=True,
         ),
         Tool(
             name="undo_last_gugu_note", label="撤销刚才的咕咕记录",
             description="撤销当前用户最近一次由咕咕创建的笔记；绝不会删除用户自己创建的笔记。",
             input_schema={"type": "object", "properties": {}},
             handler=_undo_last_gugu_note,
+            mutates=True,
         ),
     ]
 

@@ -7,6 +7,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from agent.im.actor import ActorContext
+
 
 @dataclass
 class AgentRequest:
@@ -14,7 +16,12 @@ class AgentRequest:
     user_id: object               # UUID
     user_name: str
     session_id: Optional[int] = None
-    source: str = "web"           # "web" | "qqbot" | "openclaw"
+    chat_id: Optional[str] = None       # IM 群会话标识；网页/私聊为空
+    platform_bot_id: Optional[str] = None  # 当前 IM Bot/频道标识（ConversationSession 的作用域）
+    platform_user_id: Optional[str] = None  # 当前 IM 发言人的平台身份标识
+    platform_user_name: Optional[str] = None  # 当前 IM 发言人的平台显示名，仅用于称呼
+    platform_bot_user_id: Optional[str] = None  # 当前 IM Bot 的平台身份标识，用于 mention 展示
+    source: str = "web"           # "web" | "qq" | "openclaw"
     attachments: list = field(default_factory=list)   # 聊天附件 attach_id（仅 web）
     greeting: Optional[str] = None   # 新会话首条用户消息携带的「已显示默认问候」，落为本会话首条 assistant 消息（仅 web）
     origin: Optional[str] = None   # 发起请求的浏览器标签页 client-id（仅 web，来自 X-Client-Id）：
@@ -24,6 +31,9 @@ class AgentRequest:
                                         # 用户自己打的话，quoted_text 单独存单独展示，别再把引用原文
                                         # 拼进用户消息正文（网页气泡是纯文本渲染，拼进去会把 markdown
                                         # 原文摊平显示得很难看，见 devlog 2026-07-10）。
+    im_role: Optional[str] = None       # IM 身份：owner/member/unknown；网页为空
+    allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
+    actor_context: Optional[ActorContext] = None    # IM 统一身份快照；Web 为空
 
 
 @dataclass
@@ -35,3 +45,4 @@ class AgentResponse:
     tokens_out: int = 0
     files: list = field(default_factory=list)   # 咕咕要发的文件卡片（file_id/name/ext…），平台 adapter 据此发文件
     cancelled: bool = False                      # 用户中途「算了」→ 工具循环被取消，worker 据此不再补发回复
+    used_tools: bool = False                     # 本轮是否实际经过工具调用，供 IM 记忆触发策略使用

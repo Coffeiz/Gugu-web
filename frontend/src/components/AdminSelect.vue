@@ -9,14 +9,16 @@
     </div>
 
     <Teleport to="body">
-      <div v-if="show" class="asel-popup popup-menu-dark" :style="popupStyle">
-        <button
-          v-for="opt in options" :key="opt.value"
-          class="popup-menu-item"
-          :class="{ active: modelValue === opt.value }"
-          @click="select(opt.value)"
-        >{{ opt.label }}</button>
-      </div>
+      <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+        <div v-if="show" class="asel-popup popup-menu-dark" :style="popupStyle">
+          <button
+            v-for="opt in options" :key="opt.value"
+            class="popup-menu-item"
+            :class="{ active: modelValue === opt.value }"
+            @click="select(opt.value)"
+          >{{ opt.label }}</button>
+        </div>
+      </Transition>
     </Teleport>
   </div>
 </template>

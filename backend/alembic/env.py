@@ -1,9 +1,13 @@
-import asyncio
 from logging.config import fileConfig
-from sqlalchemy import pool
+import asyncio
+import os
+import sys
+
+from alembic import context
+from alembic.script import ScriptDirectory
+from sqlalchemy import inspect, pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-from alembic import context
 
 # Alembic Config 对象
 config = context.config
@@ -12,7 +16,6 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # 导入所有模型，让 Base.metadata 知道所有表
-import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app.db.base import Base
@@ -34,7 +37,40 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _bootstrap_empty_database(connection: Connection) -> bool:
+    """让真正空库可以直接执行 ``alembic upgrade head``。
+
+    应用历史上由 ``create_all`` 初始化基础表，旧首条 revision 因而默认旧表
+    已存在。空库走当前模型建表并记录 head；已有任何业务表的数据库仍走正常
+    revision 链，避免把生产结构误判成空库。
+    """
+    tables = set(inspect(connection).get_table_names())
+    version_table = context.config.get_main_option("version_table") or "alembic_version"
+    if tables - {version_table}:
+        # inspect() 会开启一个隐式事务；交给 Alembic 前先结束它，避免
+        # context.begin_transaction() 被误判为嵌套事务。
+        connection.commit()
+        return False
+
+    Base.metadata.create_all(connection)
+    script = ScriptDirectory.from_config(config)
+    head = script.get_current_head()
+    connection.execute(text(
+        "CREATE TABLE IF NOT EXISTS alembic_version "
+        "(version_num VARCHAR(32) NOT NULL)"
+    ))
+    connection.execute(text("DELETE FROM alembic_version"))
+    connection.execute(
+        text("INSERT INTO alembic_version (version_num) VALUES (:version_num)"),
+        {"version_num": head},
+    )
+    connection.commit()
+    return True
+
+
 def do_run_migrations(connection: Connection) -> None:
+    if _bootstrap_empty_database(connection):
+        return
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():
         context.run_migrations()

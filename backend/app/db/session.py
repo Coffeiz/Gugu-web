@@ -5,10 +5,13 @@ from app.core.config import get_settings
 
 _engine = None
 _SessionLocal = None
+_MIGRATION_LOCK_KEY = 834271
 
 
 def _build_engine():
     global _engine, _SessionLocal
+    if _engine is not None and _SessionLocal is not None:
+        return
     settings = get_settings()
     _engine = create_async_engine(
         settings.db.url,
@@ -20,6 +23,13 @@ def _build_engine():
         pool_recycle=1800,
     )
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+
+
+def ensure_engine():
+    """确保当前进程只初始化一次数据库引擎和连接池。"""
+    if _engine is None or _SessionLocal is None:
+        _build_engine()
+    return _engine
 
 
 def reset_engine():
@@ -57,6 +67,17 @@ async def create_all_tables():
     from app.db.base import Base
     import app.models  # noqa: F401 — 导入模型让 Base 发现所有 table
     async with _engine.begin() as conn:
+        # Web 多 worker、worker 进程和 Admin 初始化入口都可能同时触发这里。
+        # DDL 会锁表，不能让并发初始化无限等待业务查询；只允许一个初始化者，
+        # 其他调用直接跳过，下一次启动/重试再检查即可。
+        await conn.execute(text("SET LOCAL lock_timeout = '3s'"))
+        await conn.execute(text("SET LOCAL statement_timeout = '15s'"))
+        locked = (await conn.execute(
+            text("SELECT pg_try_advisory_xact_lock(:key)"),
+            {"key": _MIGRATION_LOCK_KEY},
+        )).scalar()
+        if not locked:
+            return
         await conn.run_sync(Base.metadata.create_all)
         for sql in _MIGRATIONS:
             await conn.execute(text(sql))

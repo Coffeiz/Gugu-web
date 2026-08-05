@@ -22,7 +22,14 @@ async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) ->
         return ""
 
 
-async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500, temperature: float = 0.3) -> dict:
+async def complete_json(
+    sys: str,
+    user: str,
+    settings,
+    max_tokens: int = 1500,
+    temperature: float = 0.3,
+    thinking: str | None = None,
+) -> dict:
     """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。
     ⚠️ max_tokens 太小会把 JSON 截断 → 解析失败静默返回 {}；要回显大内容（如反思回显整份
     pattern）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。
@@ -31,30 +38,48 @@ async def complete_json(sys: str, user: str, settings, max_tokens: int = 1500, t
     from agent.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
     text = (
-        await _anthropic(sys, user, settings, max_tokens, temperature)
+        await _anthropic(sys, user, settings, max_tokens, temperature, thinking=thinking)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens, temperature, json_mode=True)
+        else await _openai(sys, user, settings, max_tokens, temperature, json_mode=True, thinking=thinking)
     )
     return _parse_json(text)
 
 
-async def _anthropic(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3) -> str:
+async def _anthropic(
+    sys: str,
+    user: str,
+    settings,
+    max_tokens: int,
+    temperature: float = 0.3,
+    thinking: str | None = None,
+) -> str:
     import httpx
     from agent import providers
 
     client = providers.build_anthropic_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
-    resp = await client.messages.create(
+    kwargs = dict(
         model=settings.ai.model,
         system=sys,
         messages=[{"role": "user", "content": user}],
         max_tokens=max_tokens,
         temperature=temperature,
     )
+    if thinking is not None:
+        kwargs["thinking"] = {"type": thinking}
+    resp = await client.messages.create(**kwargs)
     return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
 
-async def _openai(sys: str, user: str, settings, max_tokens: int, temperature: float = 0.3, json_mode: bool = False) -> str:
+async def _openai(
+    sys: str,
+    user: str,
+    settings,
+    max_tokens: int,
+    temperature: float = 0.3,
+    json_mode: bool = False,
+    thinking: str | None = None,
+) -> str:
     import httpx
     from agent import providers
     from agent.llm_select import supports_thinking_toggle
@@ -71,9 +96,11 @@ async def _openai(sys: str, user: str, settings, max_tokens: int, temperature: f
     # 比纯靠 prompt + _parse_json 抠更稳。并显式关思考（thinking:disabled，两家同一参数）——否则 reasoning 与正文
     # 共用 max_completion_tokens 预算，反思这种大 JSON 容易被推理挤到截断。仅这两家开（别的 openai 兼容厂商
     # 支持度不一，避免误伤）；其余仍走 prompt + _parse_json 容错。
-    if json_mode and supports_thinking_toggle(settings.ai):
-        kwargs["response_format"] = {"type": "json_object"}
-        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    if supports_thinking_toggle(settings.ai):
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        if json_mode or thinking is not None:
+            kwargs["extra_body"] = {"thinking": {"type": thinking or "disabled"}}
     resp = await client.chat.completions.create(**kwargs)
     return resp.choices[0].message.content or ""
 

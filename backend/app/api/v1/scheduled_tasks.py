@@ -20,76 +20,10 @@ from app.db.session import get_db
 from app.models import ScheduledTask, User
 
 router = APIRouter(prefix="/scheduled-tasks", tags=["scheduled-tasks"])
+_TRIAL_WAIT_SECONDS = 180
+_trial_tasks: set[asyncio.Task] = set()
 
 _CHANNELS = {"web", "feishu", "qq", "wechat", "im", "chat"}   # web=站内通知、feishu/qq/wechat=各 IM；chat=web、im=全部 IM（历史别名）
-
-# 定时任务执行（run_ephemeral）按需精简注入用的工具组清单——直接引用 DefaultProfile.tools
-# 本身（不抄一份重复列表），以后加/删工具组只用改那一处，这里自动跟着变，不用两边同步维护
-# （踩过教训：devlog.md 2026-07-03「抽共享拖拽 composable」那次两份『该刷哪些』的清单分散在
-# 前后端，迟早漂移）。放在这层（而非 agent/tools/scheduled_tasks.py）供两边共用：agent 那边
-# 已经反向 import 这个文件的 _validate_cron/_norm_channels，这里再定义一遍会兜圈子循环 import。
-from agent.profiles.default import DefaultProfile
-TOOL_GROUPS = DefaultProfile.tools
-
-
-async def classify_context_config(instruction: str) -> dict | None:
-    """网页表单创建/改指令时没有 agent 在场顺手判断，补一次轻量分类调用（复用记忆/反思共用的
-    complete_json，prompt 和输出都很小）。判断不出来就返回 None——退回全量，安全优先于省钱。"""
-    instruction = (instruction or "").strip()
-    if not instruction:
-        return None
-    from app.core.config import get_settings
-    from agent.memory._llm import complete_json
-    sys = (
-        "你要判断一个定时任务到点执行时实际需要哪些工具/上下文，用来精简注入、省 token。"
-        "只输出 JSON，不要任何解释文字。字段：\n"
-        f"- tool_groups：数组，从这些里选（判断不出来就给空数组）：{TOOL_GROUPS}\n"
-        "- projects/calendar/files/memory：布尔，是否需要项目列表/日历事件/文件概览/长期记忆作为参考\n"
-        "meta 工具组（use_skill，用来拉取天气等技能）通常都该带上。"
-    )
-    result = await complete_json(sys, instruction, get_settings(), max_tokens=300)
-    groups = result.get("tool_groups")
-    if not isinstance(groups, list):
-        return None
-    return {
-        "tool_groups": [g for g in groups if g in TOOL_GROUPS],
-        "projects": bool(result.get("projects")),
-        "calendar": bool(result.get("calendar")),
-        "files":    bool(result.get("files")),
-        "memory":   bool(result.get("memory")),
-    }
-
-
-# 后台任务引用，防止被 GC（fire-and-forget 的 context_config 分类，同 agent/runner.py 的 _bg_tasks 手法）
-_bg_tasks: set = set()
-
-
-def _schedule_context_config(task_id: int, instruction: str) -> None:
-    """创建/改指令后台判断 tool_groups 等精简配置——别让用户等这次 LLM 调用，点创建/保存要秒回。
-    分类完成前 context_config 保持 None（全量注入，安全默认），完成后再补丁进去。"""
-    task = asyncio.create_task(_apply_context_config_bg(task_id, instruction))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _apply_context_config_bg(task_id: int, instruction: str) -> None:
-    try:
-        cfg = await classify_context_config(instruction)
-        if cfg is None:
-            return   # 判断不出来就保持 None（全量），不用写回
-        import app.db.session as _sess
-        async with _sess._SessionLocal() as db:
-            # task_id 是 create_task/update_task 已按 user.id 校验过归属后自己生成/持有的行 id，
-            # 不是用户在这个调用点重新传入、需要当场校验的输入。
-            t = await db.get(ScheduledTask, task_id)   # ownership-exempt: 见上，非用户直接输入的 id
-            # 任务可能在这期间被删了，或指令又被改了一次（那次改动会自己再触发一轮分类）——
-            # 两种情况都不该用这次基于旧指令算出来的结果覆盖，找不到/指令对不上就算了。
-            if t and t.payload == instruction:
-                t.context_config = cfg
-                await db.commit()
-    except Exception as e:
-        print(f"[scheduled_tasks] 后台分类 context_config 失败: {type(e).__name__}: {e}", flush=True)
-
 
 def _validate_cron(cron: str) -> None:
     if (cron or "").startswith("@once:"):
@@ -119,7 +53,8 @@ def _to_resp(t: ScheduledTask) -> dict:
         "enabled": t.enabled,
         "event_id": t.event_id,   # 绑定的日历事件（活动面板加的提醒）；null=独立任务
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,   # 原始 UTC ISO，前端按浏览器 tz 显示
-        "context_config": t.context_config,   # null=全量注入；非空=按需精简（见 agent/runner.py run_ephemeral）
+        "last_run_failed": bool(t.last_run_failed),   # 一次性任务触发过但没成功；前端可用来提示重试
+        "delivery_targets": t.delivery_targets,
     }
 
 
@@ -148,17 +83,27 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     else:                      # 定时任务面板：排除日程提醒（与日历解耦，作为活动的提醒单独存在）
         stmt = stmt.where(ScheduledTask.event_id.is_(None))
     rows = (await db.execute(stmt.order_by(ScheduledTask.id.desc()))).scalars().all()
-    # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
-    # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
-    from app.scheduled_tasks import _once_expired
+    # 读时顺手处理过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
+    # 面板自己也要能收拾。两类过期分开处理，不能用同一条规则：
+    #
+    # 1) 从没跑过（last_run_at 为空）且已经过点：调度大概率没触发（misfire/进程当时没起），
+    #    真的没意义了，直接删——跟 reconcile() 的 GC 判据一致（过点超 120s 宽限）。
+    # 2) 跑过、但既没标成功（行会被删掉）也没标失败、也查不到还在跑的 Redis 锁：
+    #    大概率是执行中途进程崩了，没来得及写结果。这种不能删——用户压根没看到失败
+    #    原因、也没法重试；转成"失败"状态，留给用户在面板里看到并手动重新触发。
+    # "正在执行中"（last_run_at 已写、Redis 锁还在，或刚释放不久）两类都不能碰：
+    # 执行超过 120s 宽限窗口完全可能（Agent 调用本身就慢），不能因为面板恰好在这时
+    # 被打开，就把还在跑的任务误判成"过期没跑"或"崩了"。
+    from app.scheduled_tasks import _once_expired, _reap_abandoned_once_tasks
     from app.core.tz import local_now
     now = local_now()
-    expired = [t for t in rows if _once_expired(t.cron, now)]
-    if expired:
-        for t in expired:
+    never_ran_expired = [t for t in rows if t.last_run_at is None and _once_expired(t.cron, now)]
+    if never_ran_expired:
+        for t in never_ran_expired:
             await db.delete(t)
         await db.commit()
-        rows = [t for t in rows if t not in expired]
+        rows = [t for t in rows if t not in never_ran_expired]
+    await _reap_abandoned_once_tasks(db, rows)
     return {"tasks": [_to_resp(t) for t in rows]}
 
 
@@ -176,12 +121,12 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
         payload=body.payload or "", cron=body.cron,
         channels=_norm_channels(body.channels), enabled=body.enabled,
         event_id=body.event_id,
-        context_config=None,   # 先给安全默认（全量），分类结果后台补丁进来，别让创建等 LLM 调用
     )
+    from app.scheduled_tasks import owner_private_targets
+    t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     db.add(t)
     await db.commit()
     await db.refresh(t)
-    _schedule_context_config(t.id, body.payload or "")
     return _to_resp(t)
 
 
@@ -202,18 +147,14 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.name = body.name
     if body.payload is not None:
         t.payload = body.payload
-        # 指令变了，旧的 context_config 是按旧指令判断的，可能不再适用——先重置为安全默认
-        # （全量），再后台重新分类一次补丁进来，别让保存等 LLM 调用。
-        t.context_config = None
     if body.channels is not None:
         t.channels = _norm_channels(body.channels)
+        from app.scheduled_tasks import owner_private_targets
+        t.delivery_targets = await owner_private_targets(db, user.id, body.channels)
     if body.enabled is not None:
         t.enabled = body.enabled
-    payload_changed = body.payload is not None
     await db.commit()
     await db.refresh(t)
-    if payload_changed:
-        _schedule_context_config(t.id, t.payload)
     return _to_resp(t)
 
 
@@ -238,6 +179,8 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
     chans = {c for c in (body.channels or []) if c in _CHANNELS} or {"web"}
     name = (body.name or "活动提醒").strip()
     text = f"这是一条测试提醒——「{name}」。如果你收到了这条消息，说明提醒渠道工作正常。"
+    # 渠道投递可能等待外部 IM 接口，不能让认证用的请求会话跨越整个投递过程。
+    await db.close()
     from app import scheduled_tasks as ST
     result = await ST.deliver_to_channels(user.id, f"{name}（测试）", text, chans)
     if not result:
@@ -248,13 +191,40 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
 
 @router.post("/{task_id}/run")
 async def run_now(task_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """立即试运行一次并等结果，返回各渠道投递状态（成功 / 无地址 / 失败）给用户看。
+    """立即运行一次并等结果，返回各渠道投递状态（成功 / 无地址 / 失败）给用户看。
+
+    普通任务/还没跑过的一次性任务：走试运行（is_trial=True），不写 last_run_at、
+    不会因为这次点击就让任务被标记完成或删除，纯粹是"看看这次会说什么"。
+    已经失败过的一次性任务：这是目前唯一暴露给用户的"重试"入口，必须走正式执行
+    （is_trial=False）——试运行不会清 last_run_failed、不会在成功后删除任务，
+    用户点了"立即运行"却发现任务列表毫无变化，等于这个失败任务永远卡在失败态、
+    没有真正能收尾的路径。
 
     试运行是手动操作、用户在等反馈，所以同步 await（连接池已够，不会像 SSE 那样耗尽）。
     """
-    await _owned(task_id, user, db)
+    t = await _owned(task_id, user, db)
+    is_once = (t.cron or "").startswith("@once:")
+    retry_failed_once = is_once and bool(t.last_run_failed)
+    # _owned 只负责权限校验；Agent 生成和 IM 投递可能持续很久，先释放本次
+    # 请求的 DB 连接，避免长事务阻塞迁移和其他登录/业务查询。
+    await db.close()
     from app import scheduled_tasks as ST
-    result = await ST.execute_task(task_id, is_trial=True)
+    task = asyncio.create_task(ST.execute_task(task_id, is_trial=not retry_failed_once))
+    _trial_tasks.add(task)
+    task.add_done_callback(_trial_tasks.discard)
+    try:
+        # 请求超时只结束 HTTP 等待，不能取消实际任务；否则 Agent 尚未完成时，后续
+        # deliver_to_channels 永远不会执行，QQ/飞书等渠道就会表现成“试运行没发送”。
+        result = await asyncio.wait_for(
+            asyncio.shield(task),
+            timeout=_TRIAL_WAIT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        return {
+            "ok": True,
+            "pending": True,
+            "msg": f"试运行仍在执行，完成后会按任务渠道投递（已等待 {_TRIAL_WAIT_SECONDS} 秒）。",
+        }
     if not result:
         return {"ok": True, "msg": "已执行（该任务未选任何投递渠道）"}
     msg = "试运行结果：\n" + "\n".join(f"· {k}：{v}" for k, v in result.items())

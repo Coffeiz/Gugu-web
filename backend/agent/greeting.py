@@ -1,6 +1,6 @@
 """对话默认问候生成：组装记忆上下文（fact + 近 7 天项目活动/提醒 + 近 7 天 daily）+ 轻量 LLM 直连。
 
-不走完整 agent 循环（参照 adapters/web._generate_title）；模型用默认 `settings.ai`。
+不走完整 agent 循环（参照 gateway/web._generate_title）；模型用默认 `settings.ai`。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
 失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。问候**不自我介绍、不报功能菜单、emoji 极简**。
 """

@@ -229,13 +229,186 @@ async def test_voice_transcribe_qwen_audio_30_uses_dashscope_native_api():
         out = await voice.transcribe(_media(), SimpleNamespace(voice={
             "model": "qwen-audio-3.0-asr-flash",
             "api_key": "k",
-            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
             "api_format": "dashscope",
+            "dashscope_service": "qwen-audio",
         }))
 
     assert out == "这是 QQ 语音"
     assert calls[0][0].endswith("/api/v1/services/aigc/multimodal-generation/generation")
-    assert calls[0][2]["input"]["messages"][0]["content"][0]["audio"].startswith("data:audio/wav;base64,")
+    content = calls[0][2]["input"]["messages"][0]["content"][0]
+    assert content["type"] == "input_audio"
+    assert content["input_audio"]["data"].startswith("data:audio/wav;base64,")
+    assert calls[0][2]["parameters"] == {"format": "wav", "sample_rate": 16000}
+
+
+def test_dashscope_transcript_reads_qwen_audio_output_text():
+    from agent.voice import _dashscope_transcript
+
+    assert _dashscope_transcript({"output": {"text": "Qwen-Audio 结果"}}) == "Qwen-Audio 结果"
+
+
+async def test_voice_transcribe_qwen3_asr_uses_native_asr_payload():
+    from agent import voice
+
+    import httpx
+
+    calls = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"output": {"choices": [{"message": {
+                "content": [{"text": "这是 qwen3 ASR 语音"}]
+            }}]}}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append((url, headers, json))
+            return _FakeResponse()
+
+    with patch.object(httpx, "AsyncClient", _FakeClient):
+        out = await voice.transcribe(_media(), SimpleNamespace(voice={
+            "model": "qwen3-asr-flash",
+            "api_key": "k",
+            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            "api_format": "dashscope",
+            "dashscope_service": "qwen3-asr",
+        }))
+
+    assert out == "这是 qwen3 ASR 语音"
+    content = calls[0][2]["input"]["messages"][0]["content"][0]
+    assert content["audio"].startswith("data:audio/wav;base64,")
+    assert calls[0][2]["parameters"] == {"asr_options": {"enable_itn": False}}
+
+
+async def test_voice_transcribe_fun_asr_uses_dashscope_audio_payload():
+    """Fun-ASR 与 Qwen-Audio 共用 DashScope 原生 input_audio 协议。"""
+    from agent import voice
+    import httpx
+
+    calls = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"output": {"choices": [{"message": {
+                "content": [{"text": "这是 Fun-ASR 语音"}]
+            }}]}}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append((url, headers, json))
+            return _FakeResponse()
+
+    with patch.object(httpx, "AsyncClient", _FakeClient):
+        out = await voice.transcribe(_media(), SimpleNamespace(voice={
+            "model": "fun-asr-flash-2026-06-15",
+            "api_key": "k",
+            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            "api_format": "dashscope",
+            "dashscope_service": "fun-asr",
+        }))
+
+    assert out == "这是 Fun-ASR 语音"
+    assert calls[0][0].endswith("/api/v1/services/aigc/multimodal-generation/generation")
+    content = calls[0][2]["input"]["messages"][0]["content"][0]
+    assert content["type"] == "input_audio"
+    assert content["input_audio"]["data"].startswith("data:audio/wav;base64,")
+    assert calls[0][2]["parameters"] == {"format": "wav", "sample_rate": 16000}
+
+
+async def test_voice_transcribe_uses_explicit_dashscope_service_not_model_prefix():
+    """产品线字段是协议选择的唯一来源，模型名相似也不能改变请求体。"""
+    from agent import voice
+    import httpx
+
+    calls = []
+
+    class _FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"output": {"choices": [{"message": {"content": [{"text": "ok"}]}}]}}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append(json)
+            return _FakeResponse()
+
+    with patch.object(httpx, "AsyncClient", _FakeClient):
+        out = await voice.transcribe(_media(), SimpleNamespace(voice={
+            "model": "qwen3-asr-flash-custom",
+            "api_key": "k",
+            "base_url": "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+            "api_format": "dashscope",
+            "dashscope_service": "qwen-audio",
+        }))
+
+    assert out == "ok"
+    assert calls[0]["input"]["messages"][0]["content"][0]["type"] == "input_audio"
+    assert calls[0]["parameters"] == {"format": "wav", "sample_rate": 16000}
+
+
+async def test_voice_transcribe_accepts_dict_settings():
+    from agent import voice
+
+    import openai as _openai
+
+    class _FakeCompletions:
+        async def create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(
+                message=SimpleNamespace(content="测试成功")
+            )])
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            self.chat = SimpleNamespace(completions=_FakeCompletions())
+
+    with patch("openai.AsyncOpenAI", _FakeClient):
+        out = await voice.transcribe(_media(), {
+            "voice": {"model": "asr-model", "api_key": "k", "base_url": "http://x",
+                      "api_format": "openai"}
+        })
+    assert out == "测试成功"
 
 
 # ── web: http_get 工具 ───────────────────────────────────────────────────────

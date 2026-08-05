@@ -99,7 +99,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
-import FileCard from '@/components/common/FileCard.vue'
+import FileCard from '@/components/common/file-browser/FileCard.vue'
 import { useCardDrag } from '@/composables/useCardDrag'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { getThumb, cardBlobReadyIds } from '@/composables/useThumbCache'

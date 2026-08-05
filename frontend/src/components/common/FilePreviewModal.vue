@@ -1,6 +1,7 @@
 <template>
   <Teleport to="body">
-    <Transition name="fp" :duration="{ enter: 240, leave: 180 }">
+    <!-- 时长必须覆盖面板本身的滑动动画（入场 420ms、退场 260ms），否则 Vue 会提前卸载抽屉。 -->
+    <Transition name="fp" :duration="{ enter: 420, leave: 260 }">
       <div v-if="show && !!file" class="fp-root" :style="{ zIndex: myZ }" @mousedown.capture="raise">
         <div class="fp-overlay" @click="$emit('close')" />
         <div class="fp-panel">
@@ -223,7 +224,26 @@ watch(() => props.show, v => {
 async function handleDownload() {
   if (!props.file) return
   try {
-    await filesApi.download(props.file.id!, `${props.file.displayName}.${props.file.ext?.toLowerCase()}`)
+    const file = props.file
+    const filename = `${file.displayName}.${file.ext?.toLowerCase()}`
+    if (file.attach_id) {
+      const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
+      const token = localStorage.getItem('user_token') ?? ''
+      const res = await fetch(`${BASE_URL}/agent/attachment/${file.attach_id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const url = URL.createObjectURL(await res.blob())
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } else if (file.id != null) {
+      await filesApi.download(file.id, filename)
+    }
   } catch (e) {
     console.error('[Preview] 下载失败:', e)
   }
@@ -389,24 +409,24 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
 
 /* ── 动画 ── */
 .fp-enter-active .fp-overlay {
-  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+  transition: opacity 0.32s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .fp-leave-active .fp-overlay {
-  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
+  transition: opacity 0.22s cubic-bezier(0.4, 0, 1, 1);
 }
 .fp-enter-from .fp-overlay,
 .fp-leave-to   .fp-overlay { opacity: 0; }
 
-/* 入场：先快后慢，带轻微弹性感 */
+/* 入场：从右侧滑入，先快后慢，带轻微弹性感 */
 .fp-enter-active .fp-panel {
-  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing);
+  transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
-/* 退场：先慢后快，加速收回 */
+/* 退场：向右侧滑出，先慢后快，加速收回 */
 .fp-leave-active .fp-panel {
-  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing);
+  transition: transform 0.26s cubic-bezier(0.4, 0, 0.8, 0.6);
 }
 .fp-enter-from .fp-panel,
-.fp-leave-to   .fp-panel { opacity: 0; }
+.fp-leave-to   .fp-panel { transform: translateX(100%); }
 
 /* ── info 按钮激活态 ── */
 .fp-action-btn.active { background: rgba(123,127,178,0.15); color: var(--color-primary, #7b7fb2); }

@@ -1,7 +1,7 @@
 """对话后反思：提炼画像、行为模式与近期记忆的增量。
 
 复用 settings.ai 的 provider 做一次廉价非流式调用，产出 JSON：
-  {"profile_add": [...], "pattern_add": [...], "daily": "...", "summary": "..."}
+  {"profile_add": [{"type": "...", "text": "..."}], "pattern_add": [...], "daily": "...", "summary": "..."}
 profile=稳定身份/偏好，pattern=可复用行为习惯，daily=本次流水，summary=当下状态快照。
 perception=本轮观察（感知遥测，只打点 `agent.perc` 日志，不写记忆、不影响回复）。
 由 web/IM 在对话结束后 fire-and-forget 调用，不阻塞、失败不影响主流程。
@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -28,7 +29,7 @@ _memdiff_log = logging.getLogger("agent.memdiff")
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 # 文件缺失时的兜底（正常走 prompts/reflection.md，可热编辑 / Admin 在线改）
 _SYS_FALLBACK = (
-    "你在帮咕咕维护对用户的长期记忆。稳定身份/喜好进 profile_add（字符串数组），"
+    "你在帮咕咕维护对用户的长期记忆。稳定身份/喜好进 profile_add（对象数组，每条含 type 和 text），"
     "可复用的行为/决策习惯进 pattern_add（每条对象 {text, kind: observed=亲述/inferred=推断, importance: 1-5}）。"
     "阶段性事件不进两者，应写 daily 或 summary；不记世界常识、不评判用户，宁少勿多。"
     "被推翻/过时/被替换的旧条分别进 profile_remove 或 pattern_remove（字符串、尽量照抄原文）；"
@@ -43,7 +44,7 @@ _SYS_FALLBACK = (
     "lens_hint：仅当本轮**确实暴露了一条「怎么读懂这个用户」的可复用规则**才写、绝大多数轮留空字符串"
     "（一次性误会、具体事实都不算）。固定格式『「触发语」→ 真实含义/应对』，触发语放「」里写关键几字"
     "（如『「随便」→ 其实有偏好要追问』），便于复现识别。"
-    '严格只输出 JSON：{"profile_add": ["..."], "profile_remove": ["..."], '
+    '严格只输出 JSON：{"profile_add": [{"type":"name|address|pronoun|background|preference|note", "text":"..."}], "profile_remove": ["..."], '
     '"pattern_add": [{"text": "...", "kind": "observed", "importance": 4}], "pattern_remove": ["..."], '
     '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"correction": {"is_correction": false, "kind": ""}, '
@@ -70,6 +71,10 @@ _PERC_KEY = "perc:events"    # Redis capped list:给 Admin 聚合面板（/admin
 _PERC_CAP = 20000
 _MISREAD_KEY = "perc:misread_cases"   # 错读需求案例收集（带脱敏 miss 诊断，便于翻「具体原因」）
 _MISREAD_CAP = 500
+GROUP_OWNER_BATCH_SIZE = 5
+GROUP_OWNER_IDLE_SECONDS = 15 * 60
+_GROUP_OWNER_BUFFER_PREFIX = "memory:owner-group-reflection:"
+_GROUP_OWNER_IDLE_KEY = "memory:owner-group-reflection-idle"
 
 
 def _now_ts() -> float:
@@ -225,18 +230,24 @@ def _worth_reflecting(user_msg: str) -> bool:
     return cleaned not in _TRIVIAL
 
 
-def _split_profile_adds(items: list[str]) -> tuple[list[str], list[str]]:
+def _split_profile_adds(items: list) -> tuple[list[dict], list[str]]:
     """把明显阶段性的 profile 候选拦下，转去 daily/memory 侧。"""
-    profile_adds: list[str] = []
+    profile_adds: list[dict] = []
     staged_events: list[str] = []
     for raw in items or []:
-        text = str(raw or "").strip()
+        if isinstance(raw, dict):
+            text = str(raw.get("text") or "").strip()
+            item_type = str(raw.get("type") or "note")
+        else:
+            text, item_type = str(raw or "").strip(), "note"
         if not text:
             continue
+        if item_type not in store.PROFILE_TYPES:
+            item_type = "note"
         if _PROFILE_TEMPORAL_RE.search(text):
             staged_events.append(text)
             continue
-        profile_adds.append(text)
+        profile_adds.append({"type": item_type, "text": text})
     return profile_adds, staged_events
 
 
@@ -250,12 +261,80 @@ def _merge_daily_note(daily_note: str, staged_events: list[str]) -> str:
     return "；".join(events)
 
 
-def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None) -> None:
+def _owner_group_buffer_key(user_id) -> str:
+    return f"{_GROUP_OWNER_BUFFER_PREFIX}{user_id}"
+
+
+async def _drain_group_owner_buffer(user_id, settings) -> None:
+    """原子取走一批 owner 群聊反思，失败时把消息放回 Redis。"""
+    from app.core import redis as R
+
+    redis = R.get_redis()
+    lock = redis.lock(f"{_GROUP_OWNER_BUFFER_PREFIX}lock:{user_id}", timeout=180)
+    if not await lock.acquire(blocking=False):
+        return
+    rows = []
+    try:
+        raw_rows = await redis.lrange(_owner_group_buffer_key(user_id), 0, -1)
+        if not raw_rows:
+            await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
+            return
+        rows = [json.loads(raw) for raw in raw_rows]
+        await redis.delete(_owner_group_buffer_key(user_id))
+        await redis.zrem(_GROUP_OWNER_IDLE_KEY, str(user_id))
+        ok = await reflect(
+            user_id,
+            rows[-1].get("user_name", ""),
+            "\n".join(row.get("user_msg", "") for row in rows),
+            "\n".join(row.get("assistant_reply", "") for row in rows),
+            settings,
+            session_id=rows[-1].get("session_id"),
+            turns=rows,
+        )
+        if not ok:
+            raise RuntimeError("owner_group_reflection_failed")
+    except Exception:
+        if rows:
+            await redis.rpush(
+                _owner_group_buffer_key(user_id),
+                *[json.dumps(row, ensure_ascii=False) for row in rows],
+            )
+            await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
+    finally:
+        try:
+            await lock.release()
+        except Exception:
+            pass
+
+
+async def flush_due_group_owner_reflections(settings, *, now: float | None = None, limit: int = 50) -> int:
+    """收束连续 15 分钟没有新群消息的 owner 反思缓冲。"""
+    from app.core import redis as R
+
+    cutoff = (now if now is not None else time.time()) - GROUP_OWNER_IDLE_SECONDS
+    users = await R.get_redis().zrangebyscore(_GROUP_OWNER_IDLE_KEY, 0, cutoff, start=0, num=limit)
+    for user_id in users:
+        task = asyncio.create_task(_drain_group_owner_buffer(user_id, settings))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
+    return len(users)
+
+
+def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools=None, session_id=None,
+             group_mode: bool = False) -> None:
     """非阻塞触发一次反思。琐碎应答（嗯/好的/谢谢…）默认跳过省调用——
     但若这轮咕咕**用了工具**（如「要建项目吗？」→「嗯」→真建了），即便用户只说「嗯」也反思，
     以记下这轮做了啥（daily/summary）。used_tools 传列表(web)或 bool(IM 代理)皆可，truthy 即视为有动作。
     session_id 供 feedback 判「是否延续同一对话」（换会话不跨比，见 _read_last_turn）。"""
-    if not _worth_reflecting(user_msg) and not used_tools:
+    if not group_mode and not _worth_reflecting(user_msg) and not used_tools:
+        return
+    if group_mode:
+        task = asyncio.create_task(_schedule_group_owner(
+            user_id, user_name, user_msg, assistant_reply, settings,
+            bool(used_tools), session_id,
+        ))
+        _bg_tasks.add(task)
+        task.add_done_callback(_bg_tasks.discard)
         return
     task = asyncio.create_task(
         reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=session_id)
@@ -264,8 +343,34 @@ def schedule(user_id, user_name, user_msg, assistant_reply, settings, used_tools
     task.add_done_callback(_bg_tasks.discard)
 
 
-async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None) -> None:
+async def _schedule_group_owner(user_id, user_name, user_msg, assistant_reply, settings,
+                                used_tools: bool, session_id=None) -> None:
+    from app.core import redis as R
+
+    redis = R.get_redis()
+    key = _owner_group_buffer_key(user_id)
+    row = {
+        "user_name": user_name,
+        "user_msg": user_msg,
+        "assistant_reply": assistant_reply,
+        "session_id": session_id,
+    }
+    await redis.rpush(key, json.dumps(row, ensure_ascii=False))
+    await redis.zadd(_GROUP_OWNER_IDLE_KEY, {str(user_id): time.time()})
+    count = await redis.llen(key)
+    if used_tools or count >= GROUP_OWNER_BATCH_SIZE:
+        await _drain_group_owner_buffer(user_id, settings)
+
+
+async def reflect(user_id, user_name, user_msg, assistant_reply, settings, session_id=None,
+                  turns=None) -> bool:
     out = None
+    turns = turns or [{
+        "user_msg": user_msg,
+        "assistant_reply": assistant_reply,
+        "user_name": user_name,
+        "session_id": session_id,
+    }]
     prev_turn = await _read_last_turn(user_id, session_id)   # 上一轮（判 feedback），换会话/过期 → None
     try:
         mem = await store.read_memory(user_id)
@@ -275,7 +380,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
     except Exception:
         out = None
     # 无论 extract 成败，都把本轮存为「上一轮」缓存（带 session_id，下轮据此判是否延续）
-    await _write_last_turn(user_id, user_msg, assistant_reply, session_id)
+    last = turns[-1]
+    await _write_last_turn(user_id, last.get("user_msg", ""), last.get("assistant_reply", ""), last.get("session_id"))
 
     # 误判捕获:优先信反思 LLM 判的 correction（能分「感知误读 vs 数据/执行错」，正则做不到）；
     # extract 没成（{} / 异常）才退回正则兜底（高精度、漏召回）。二选一，不重复计。
@@ -283,7 +389,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         await _emit_perc(_misperc_llm(user_id, out.get("correction")))
     else:
         await _emit_perc(_misperc_regex(user_id, user_msg))
-        return  # extract 没结果，记忆增量/summary 无从写
+        return False  # extract 没结果，记忆增量/summary 无从写
 
     try:
         # 感知遥测:把本轮 perception 打日志 + 推 Redis（不写记忆）
@@ -295,7 +401,7 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         daily_note = (out.get("daily") or "").strip()
         summary = (out.get("summary") or "").strip()
 
-        # profile 更新：身份/稳定喜好，字符串数组、无 kind/importance。apply_profile_ops 命中相似条只刷新 ts。
+        # profile 更新：身份/稳定喜好，按 type/text/ts 保存，不保留机器 id。
         p_add, p_rem = out.get("profile_add"), out.get("profile_remove")
         if p_add is not None or p_rem is not None:
             p_add, staged_profile_events = _split_profile_adds(p_add or [])
@@ -345,8 +451,12 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 关系温度：超 24h 旧才重算（窗口聚合、纯数据侧、自带 DB 会话,见 memory/temperature.py）
         from agent.memory import temperature
         await temperature.maybe_refresh(user_id)
+        # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
+        from agent.memory import periodic
+        await periodic.maybe_schedule(user_id, settings)
     except Exception:
-        pass  # 反思是锦上添花，任何失败都不能影响对话
+        return False  # 反思是锦上添花，任何失败都不能影响对话
+    return True
 
 
 async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
@@ -367,7 +477,7 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
         f"当前状态快照：\n{existing_summary or '（暂无）'}\n\n"
         f"{prev_part}"
         f"本次对话：\n用户({user_name})：{user_msg}\n咕咕：{assistant_reply}\n\n"
-        f"请只报本轮 profile 的增删（profile_add / profile_remove，字符串数组）"
+        f"请只报本轮 profile 的增删（profile_add 对象数组，type 只能是 name/address/pronoun/background/preference/note；profile_remove 字符串数组）"
         f"+ 本轮 pattern 的增删（pattern_add / pattern_remove，pattern_add 带 kind/importance）"
         f"——没变动就都给空数组、别重列旧内容"
         f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"

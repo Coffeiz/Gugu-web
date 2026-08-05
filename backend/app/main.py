@@ -67,8 +67,8 @@ _last_thumb_cleanup: float = 0.0
 def _evict_old_thumbs() -> int:
     """删除超过 TTL 天未被访问的缩略图（同步，在线程中调用）。"""
     import time
-    from app.api.v1.files import _thumb_dir
-    td = _thumb_dir()
+    from app.services.files.previews import thumb_dir
+    td = thumb_dir()
     if not td.exists():
         return 0
     cutoff = time.time() - _THUMB_TTL_DAYS * 86400
@@ -146,8 +146,8 @@ async def lifespan(app: FastAPI):
         logger.warning("数据库连接失败，跳过建表：%s", e)
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
     try:
-        from app.api.v1.files import _thumb_dir
-        td = _thumb_dir()
+        from app.services.files.previews import thumb_dir
+        td = thumb_dir()
         if td.exists():
             old = list(td.glob("*.jpg"))
             for p in old:

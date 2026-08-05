@@ -90,7 +90,7 @@ import { useProjectStore } from '@/stores/projects'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
-import FileCard from '@/components/common/FileCard.vue'
+import FileCard from '@/components/common/file-browser/FileCard.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
 import {
   PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,

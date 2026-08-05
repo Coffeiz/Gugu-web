@@ -3,6 +3,7 @@ import pytest
 from starlette.requests import Request
 
 from app.api.v1 import projects
+from app.core.project_colors import PROJECT_COLOR_PRESETS
 from app.models import Project
 from app.schemas import ProjectUpdate
 
@@ -32,7 +33,7 @@ async def test_project_update_publishes_projects_event_for_other_tabs(db, user_a
     await projects.update_project(
         project.id,
         _request("tab-a"),
-        ProjectUpdate(color="#778899", version=1),
+        ProjectUpdate(color=PROJECT_COLOR_PRESETS[0], version=1),
         user_a,
         db,
     )

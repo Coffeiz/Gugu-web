@@ -22,6 +22,7 @@ def _storage_and_events(tmp_path, monkeypatch):
     storage = LocalStorageBackend(Path(tmp_path))
     # FileService(db) 默认 get_storage()（在 file_service 命名空间导入），指向临时本地后端
     monkeypatch.setattr("app.services.storage.file_service.get_storage", lambda: storage)
+    monkeypatch.setattr(files_api, "get_storage", lambda: storage)
 
     async def _noop(*a, **k):
         pass
@@ -53,6 +54,16 @@ async def test_upload_keep_both_conflict(db, user_a):
     await _do_upload(db, user_a, b"1", "a.txt")
     r2 = await _do_upload(db, user_a, b"2", "a.txt")
     assert r2.display_name == "a(1)"
+
+
+async def test_check_conflicts_keeps_batch_response_shape(db, user_a):
+    await _do_upload(db, user_a, b"1", "a.txt")
+    body = files_api.ConflictCheckRequest(items=[
+        files_api.ConflictCheckItem(filename="a.txt"),
+        files_api.ConflictCheckItem(filename="b.txt"),
+    ])
+    result = await files_api.check_conflicts(body, current_user=user_a, db=db)
+    assert [item["conflict"] for item in result] == [True, False]
 
 
 async def test_upload_overwrite(db, user_a):
@@ -100,3 +111,10 @@ async def test_copy_not_found(db, user_a):
     with pytest.raises(NotFound):
         await files_api.copy_file(999, FileCopyBody(folder_id=None, project_id=None),
                                   current_user=user_a, origin=None, db=db)
+
+
+async def test_download_endpoint_reads_owned_file(db, user_a):
+    uploaded = await _do_upload(db, user_a, b"download-body", "report.txt")
+    response = await files_api.download_file(uploaded.id, current_user=user_a, db=db)
+    assert response.body == b"download-body"
+    assert response.media_type == "text/plain"

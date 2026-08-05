@@ -15,7 +15,11 @@ import { useUiStore } from '@/stores/ui'
 // 细粒度会话事件：后端 SSE 推送的会话追加，供 GuguChat 增量追加消息
 interface SessionEvent {
   session_id: number | string
-  appended: Array<{ role?: string; text?: string; files?: unknown[]; quoted_text?: string }>
+  appended: Array<{
+    role?: string; text?: string; files?: unknown[]; quoted_text?: string
+    platform_user_id?: string | null; platform_user_name?: string | null
+    platform_bot_user_id?: string | null
+  }>
   origin?: string | null
   _t: number
 }

@@ -23,12 +23,13 @@ export const CLIENT_ID: string =
 
 // 泛型默认 any：未显式标注返回类型的调用方拿到 any（不给存量代码添堵）；
 // 标注了 <T> 的端点拿到精确类型。逐步把更多端点标上类型即可收紧。
-async function request<T = any>(method: string, path: string, body: any = null, isForm = false): Promise<T> {
+async function request<T = any>(method: string, path: string, body: any = null, isForm = false,
+                                signal?: AbortSignal): Promise<T> {
   const token = getToken()
   const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const opts: RequestInit = { method, headers }
+  const opts: RequestInit = { method, headers, signal }
   if (body !== null) {
     if (isForm) {
       opts.body = body
@@ -456,7 +457,11 @@ export const trackApi = {
 
 // 站内全局搜索（顶栏搜索框）
 export const searchApi = {
-  query: (q: string) => request('GET', `/search?q=${encodeURIComponent(q)}`),
+  query: (queries: string[], signal?: AbortSignal) => {
+    const params = new URLSearchParams({ mode: 'OR' })
+    for (const query of queries) params.append('queries', query)
+    return request('GET', `/search?${params.toString()}`, null, false, signal)
+  },
 }
 
 export const authApi = {
@@ -477,6 +482,7 @@ export const userBotsApi = {
   create: (body: any)            => request('POST',   '/me/bots', body),
   update: (id: number, body: any) => request('PUT',    `/me/bots/${id}`, body),
   remove: (id: number)           => request('DELETE', `/me/bots/${id}`),
+  createQqBindingCode: (id: number) => request('POST', `/me/bots/${id}/qq-binding-code`),
 }
 
 // QQ 扫码自动连接（建 task → 轮询 → 自动填 key）

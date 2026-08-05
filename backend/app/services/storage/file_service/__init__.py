@@ -40,6 +40,9 @@ class FileService:
 
     async def move_folder(self, user_id, folder_id, new_parent_id, *, client_version,
                           target_project_id=None, target_project_set=False):
+        # 直接调用门面时，非 None 的目标项目就是显式跨项目移动；REST 仍用
+        # target_project_set 区分“未传 project_id”和“明确移动到个人空间”。
+        target_project_set = target_project_set or target_project_id is not None
         return await self._folders.move(
             user_id, folder_id, new_parent_id, client_version=client_version,
             target_project_id=target_project_id,

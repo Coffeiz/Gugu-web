@@ -1,7 +1,7 @@
 """文件领域技能：查 / 读 / 改 / 整理 / 生成。
 
-复用 `app.api.v1.files` 的现成 helper（`_build_key`/`_resolve_conflict`/
-`_fmt_size`/`_color`）、`app.services.storage.trash`（`move_file_to_trash`）与
+复用文件服务层的现成 helper（`_build_key`/`_resolve_conflict`/
+`_fmt_size`/`color_value`）、`app.services.storage.trash`（`move_file_to_trash`）与
 存储层 `get_storage()`，整理类工具复刻 `update_file` 的 key 重建逻辑，不自己拼路径。
 
 读/改仅限文本类（白名单 ext）且 ≤256KB，避免把二进制当文本、撑爆上下文。
@@ -19,12 +19,12 @@ from app.core.ownership import get_owned
 from app.core.redaction import redact
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
-from app.api.v1.files import (
-    _fmt_size, _color,
-)
+from app.services.files.response import color_value
+from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.trash import move_file_to_trash
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
+from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -255,12 +255,31 @@ async def _list_files(db, user_id, args: dict):
         stmt = stmt.where(File.space == args["space"])
     if args.get("project_id") is not None:
         stmt = stmt.where(File.project_id == args["project_id"])
-    if args.get("folder_id") is not None:
-        stmt = stmt.where(File.folder_id == args["folder_id"])
+    folder_value = args.get("folder_id")
+    if folder_value in (None, ""):
+        folder_value = args.get("folder")
+    if folder_value not in (None, ""):
+        try:
+            folder_id = int(str(folder_value).strip().lstrip("#"))
+        except (TypeError, ValueError):
+            folder, error = await _folder_by_name(
+                db,
+                user_id,
+                folder_value,
+                args.get("space"),
+                args.get("project_id"),
+            )
+            if error:
+                return error
+            folder_id = folder.id
+        stmt = stmt.where(File.folder_id == folder_id)
     if args.get("ext"):
         stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
-    if args.get("q"):
-        stmt = stmt.where(File.display_name.ilike(f"%{args['q']}%"))
+    file_queries = normalize_queries(
+        args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
+    )
+    if file_queries:
+        stmt = stmt.where(keyword_condition([File.display_name], file_queries, args.get("mode")))
     requested_limit = args.get("limit", 100)
     try:
         limit = max(1, min(int(requested_limit), 200))
@@ -1027,34 +1046,9 @@ _SEND_URL_IMAGE_EXT = {
 
 
 def _url_is_safe(url: str) -> str | None:
-    """校验一个外部 URL 能不能拿去下载：只准 http/https，挡掉内网/回环/链路本地/云元数据地址。
-    返回 None=安全；否则返回拒绝原因。"""
-    import ipaddress
-    import socket
-    from urllib.parse import urlparse
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return "URL 格式不合法"
-    if parsed.scheme not in ("http", "https"):
-        return "只支持 http/https 链接"
-    host = parsed.hostname
-    if not host:
-        return "URL 缺少主机名"
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except Exception:
-        return "域名解析失败"
-    for info in infos:
-        ip_str = info[4][0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_multicast or ip.is_reserved or ip.is_unspecified):
-            return "该地址指向内网/本机，出于安全考虑不予下载"
-    return None
+    from app.core.url_security import url_is_safe
+
+    return url_is_safe(url)
 
 
 def _fmt_age(ttl_left: int, total_ttl: int) -> str:
@@ -1195,7 +1189,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、名称关键词筛选。"
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、一个或多个名称关键词（默认 OR）筛选。"
                         "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
                         "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
             input_schema={
@@ -1204,8 +1198,13 @@ class FilesSkill(BaseSkill):
                     "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
                     "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
+                    "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
                     "ext": {"type": "string", "description": "扩展名，如 png/md"},
-                    "q": {"type": "string", "description": "名称模糊匹配"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个名称关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个名称关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200,
                               "description": "最多返回多少条，默认 100；查询大文件夹时可提高到 200"},
                 },
@@ -1258,6 +1257,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_edit_file,
+            mutates=True,
         ),
         Tool(
             name="create_document", label="生成文档",
@@ -1281,6 +1281,7 @@ class FilesSkill(BaseSkill):
                 "required": ["name", "format", "content"],
             },
             handler=_create_document,
+            mutates=True,
         ),
         Tool(
             name="rename_file", label="重命名文件",
@@ -1312,6 +1313,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_rename_file,
+            mutates=True,
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
@@ -1340,6 +1342,7 @@ class FilesSkill(BaseSkill):
                 "required": ["target"],
             },
             handler=_move_items,
+            mutates=True,
         ),
         Tool(
             name="copy_file", label="复制文件",
@@ -1361,6 +1364,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_copy_file,
+            mutates=True,
         ),
         Tool(
             name="create_folder", label="新建文件夹",
@@ -1375,6 +1379,7 @@ class FilesSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_create_folder,
+            mutates=True,
         ),
         Tool(
             name="delete_file", label="删除文件",
@@ -1388,6 +1393,7 @@ class FilesSkill(BaseSkill):
                 "required": [],
             },
             handler=_delete_file,
+            mutates=True,
         ),
         Tool(
             name="list_folders", label="查询文件夹",
@@ -1416,6 +1422,7 @@ class FilesSkill(BaseSkill):
                 "required": ["new_name"],
             },
             handler=_rename_folder,
+            mutates=True,
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
@@ -1429,6 +1436,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_delete_folder,
+            mutates=True,
         ),
         Tool(
             name="send_file", label="发送文件",
@@ -1452,6 +1460,7 @@ class FilesSkill(BaseSkill):
                 },
             },
             handler=_send_file,
+            mutates=True,
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
@@ -1485,6 +1494,7 @@ class FilesSkill(BaseSkill):
                 "required": [],
             },
             handler=_save_uploaded_file,
+            mutates=True,
         ),
     ]
 

@@ -7,7 +7,7 @@
 - 模型列类型全部方言无关（Uuid/JSON/Text…），SQLite 可直接建表；若未来引入
   JSONB/ARRAY 等 PG 专属类型，这里会在 create_all 时立刻报错——那时再迁真 PG。
 - `db` fixture 顺带把 `app.db.session._engine/_SessionLocal` 接到同一个内存库：
-  后台任务（fire-and-forget，比如 _apply_context_config_bg 那类）自己开
+  后台任务（fire-and-forget）自己开
   `_sess._SessionLocal()` 新 session，不这样接的话会摸到未初始化/真实配置的引擎。
 """
 from __future__ import annotations
@@ -17,9 +17,26 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.pool import StaticPool
 from uuid6 import uuid7
 
+import app.core.redis as _redis
 import app.db.session as _sess
 from app.db.base import Base
 from app.models import User
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_redis_client():
+    """每个测试结束后重置全局 Redis 客户端单例。
+
+    ``app.core.redis.get_redis()`` 懒加载缓存一个模块级客户端，一旦在某个
+    测试里被真正用到（不是靠 monkeypatch 绕过的），底层连接就绑死在那个
+    测试的事件循环上。pytest-asyncio 默认每个测试函数一个新事件循环，下一个
+    测试如果也真的调用 get_redis()，复用到的是上一个已关闭循环上的连接，
+    报 "Future attached to a different loop"。测试之间彼此不感知，只在特定
+    组合顺序下才触发，表现为跟顺序有关的 flaky。这里在每个测试后主动清空，
+    保证下个测试首次调用 get_redis() 时懒加载出一个绑在自己事件循环上的新连接。
+    """
+    yield
+    await _redis.reset()
 
 
 @pytest_asyncio.fixture

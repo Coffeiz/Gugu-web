@@ -13,6 +13,7 @@ import re
 
 from sqlalchemy import func, update
 
+from app.core.project_colors import PROJECT_COLOR_PRESETS
 from app.core.tz import now_utc
 from app.models import Project
 
@@ -22,6 +23,7 @@ _PROJECT_FIELDS = {
 }
 _PROJECT_STATUSES = {"pending", "active", "done"}
 _PROJECT_PRIORITIES = {"high", "medium", "low"}
+_PROJECT_COLORS = set(PROJECT_COLOR_PRESETS)
 _INVALID_NAME_RE = re.compile(r'[\\/:*?"<>|]')
 
 
@@ -262,6 +264,8 @@ def prepare_project_update(fields: Dict[str, Any], existing_project: Project | N
         raise ValueError("项目状态必须是 pending、active 或 done")
     if "priority" in values and values["priority"] not in _PROJECT_PRIORITIES | {None}:
         raise ValueError("优先级必须是 high、medium、low 或空")
+    if "color" in values and values["color"] not in _PROJECT_COLORS:
+        raise ValueError("颜色必须是预设色板中的值")
     if "progress" in values and (not isinstance(values["progress"], int) or not 0 <= values["progress"] <= 100):
         raise ValueError("项目进度必须是 0 到 100 的整数")
     _validate_date(values.get("start_date"), "开始日期")

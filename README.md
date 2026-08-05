@@ -129,9 +129,11 @@ cp ../.env.example .env
 # 已有数据库套用后续增量迁移，见下方「常用」
 
 # 启动
-./start.sh dev             # 或：make start
+make dev-web               # Web 热重载（前台运行，Ctrl+C 停止）
+# 接 IM 时另开终端：make dev-worker
 
 # 常用：alembic upgrade head   在已有数据库上套用新迁移（首次建表不需要这步）
+# 首次使用 Worker 热重载：make deps-dev
 ```
 
 #### 前端
@@ -206,7 +208,7 @@ npm run dev                # http://localhost:5173
 | [docs/product/overview.md](docs/product/overview.md) | 项目总览、技术栈、API、进度 |
 | [docs/backend/storage.md](docs/backend/storage.md) | 文件存储结构（权威） |
 | [docs/backend/backend.md](docs/backend/backend.md) | 后端开发参考 |
-| [docs/product/design.md](docs/product/design.md) | UI/UX 设计规范 |
+| [docs/development/design.md](docs/development/design.md) | UI/UX 设计规范 |
 | [docs/product/wishlist.md](docs/product/wishlist.md) | 功能规划 |
 | [docs/devlog.md](docs/devlog.md) | 早期开发记录 |
 

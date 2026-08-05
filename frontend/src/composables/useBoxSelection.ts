@@ -11,6 +11,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   parseFileId     = Number,
   parseFolderId   = ((v: string) => v as F),
   onBoxSelect     = null,
+  onClear         = null,
 }: {
   fileAttr?: string
   folderAttr?: string
@@ -19,6 +20,12 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   parseFileId?: (v: string) => number
   parseFolderId?: (v: string) => F
   onBoxSelect?: ((sel: { fileIds: Set<number>; folderIds: Set<F> }, e: MouseEvent) => void) | null
+  // 点击空白区域（非拖框选、非 ctrl/shift）时的兜底清空只知道本组合式函数自己管的
+  // selectedFileIds/selectedFolderIds；调用方如果在组合式函数之外还维护了别的选择态
+  // （比如 Files/index.vue 的回收站文件夹用独立的 selectedTrashFolderIds，box 拖选时靠
+  // extraFolderAttrs+onBoxSelect 能覆盖到，但点击清空这条路径够不着），要一并清掉就传这个
+  // 钩子——2026-07-17 复现：回收站多选文件+文件夹后点空白，文件夹选中态没跟着清掉。
+  onClear?: (() => void) | null
 } = {}) {
   const selectedFileIds   = shallowRef(new Set<number>())
   const selectedFolderIds = shallowRef(new Set<F>())
@@ -42,6 +49,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
   function clearSelection() {
     selectedFileIds.value   = new Set()
     selectedFolderIds.value = new Set()
+    onClear?.()
   }
 
   function toggleFileSelect(id: number) {

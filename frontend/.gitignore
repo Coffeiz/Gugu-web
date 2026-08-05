@@ -4,3 +4,8 @@ components.d.ts
 
 # TS 构建信息
 *.tsbuildinfo
+
+# Playwright 登录态和运行产物
+playwright/.auth/
+test-results/
+playwright-report/

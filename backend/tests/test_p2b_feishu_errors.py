@@ -9,7 +9,7 @@ import json
 import httpx
 import pytest
 
-from agent.adapters import feishu
+from agent.gateway import feishu
 
 
 class _FakeResp:

@@ -52,7 +52,7 @@
 
 ```
 backend/
-├── Makefile                      # make start / stop / restart
+├── Makefile                      # make dev-web / dev-worker / start / stop / restart
 ├── requirements.txt
 ├── config.override.json          # Admin 写入的配置覆盖（不进 git）
 ├── .env                          # 本地环境变量（不进 git）
@@ -63,7 +63,7 @@ backend/
 │   ├── llm_select.py             # 模型选择（pool/router 分流、mimo 识别等）
 │   ├── memory/                   # 记忆系统（store / lens / reflection / compress）
 │   ├── context/                  # 上下文构建、token 预算、对话压缩
-│   ├── adapters/                 # web / qq / wechat / supervisor 等渠道适配器
+│   ├── gateway/                 # web / qq / wechat / supervisor 等渠道适配器
 │   └── tools/                    # 工具集，15 个文件，约 60 个工具（见下）
 └── app/
     ├── main.py                   # FastAPI 入口，路由注册（约 30 个 router），lifespan
@@ -168,7 +168,7 @@ backend/
 |------|------|
 | `AgentUsage` | 每次 Agent 调用记一行：`tokens_in/out`、`model`、`provider`、`tools_used`（JSON），配额统计用 |
 | `SearchUsage` | 深度研究（Tavily）用量计数，`web_search`（自建 SearXNG）不计配额 |
-| `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qqbot`） |
+| `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qq`） |
 | `InviteCode` | 邀请码，注册走邀请制 |
 | `AuditLog` | 管理员操作审计 |
 | `SystemLog` | 系统级错误/警告日志 |
@@ -310,7 +310,9 @@ class CamelModel(BaseModel):
 
 ```bash
 cd backend
-make start      # 等价于：source .venv/bin/activate && uvicorn app.main:app --reload --port 8000
+make dev-web    # Web 热重载，监听 app/agent/onboarding，前台运行
+make dev-worker # Worker 热重载（先 make deps-dev，并停止同机 systemd worker）
+make start      # 后台 uvicorn，不启用 reload
 make stop       # kill 进程
 make restart
 ```

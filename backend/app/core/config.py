@@ -11,11 +11,21 @@ import asyncio
 import json
 from pathlib import Path
 from functools import lru_cache
-from typing import Optional
+from typing import Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(__file__).parent.parent.parent / "config.override.json"
+
+
+def normalize_dimensions(value: Any) -> int:
+    """把后台配置中的空维度统一为 0，避免空字符串进入整数配置模型。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 class DatabaseSettings(BaseModel):
@@ -59,12 +69,14 @@ class AISettings(BaseModel):
         description="API Base URL",
     )
     model: str = Field("qwen-max", description="使用模型")
-    max_tokens: int = Field(8000, description="最大输出 token 数")
+    max_tokens: int = Field(4000, description="最大输出 token 数")
     temperature: float = Field(0.7, description="发散度 0~2")
-    context_tokens: int = Field(3000, description="历史上下文 token 预算")
+    context_tokens: int = Field(120000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
     reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
+    vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
+    vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
 
 
@@ -76,6 +88,10 @@ class VoiceSettings(BaseModel):
     base_url: str = Field("", description="语音模型 Base URL")
     model: str = Field("", description="语音/识别模型名（空=未配置→收到语音回不支持）")
     api_format: str = Field("openai", description="语音接口格式: openai | dashscope")
+    dashscope_service: str = Field(
+        "qwen3-asr",
+        description="DashScope 产品线: qwen3-asr | qwen-audio | fun-asr",
+    )
 
 
 class AIPresetItem(BaseModel):
@@ -85,12 +101,14 @@ class AIPresetItem(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
-    max_tokens: int = 8000
+    max_tokens: int = 4000
     temperature: float = 0.7
-    context_tokens: int = 3000
+    context_tokens: int = 120000
     thinking: str = "disabled"
     reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | high | max
     vision: bool = False
+    vision_video: bool = False
+    vision_audio: bool = False
     api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
@@ -240,6 +258,7 @@ class AppSettings(BaseSettings):
                     k: v for k, v in override["embedding"].items()
                     if k in EmbeddingSettings.model_fields
                 }}
+                merged["dimensions"] = normalize_dimensions(merged.get("dimensions"))
                 updates["embedding"] = EmbeddingSettings.model_construct(**merged)
 
             if "quota" in override:
@@ -316,6 +335,11 @@ def get_settings() -> AppSettings:
 
 
 async def save_override(patch: dict) -> AppSettings:
+    if isinstance(patch.get("embedding"), dict) and "dimensions" in patch["embedding"]:
+        patch = {**patch, "embedding": {
+            **patch["embedding"],
+            "dimensions": normalize_dimensions(patch["embedding"].get("dimensions")),
+        }}
     existing = {}
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))

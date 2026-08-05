@@ -5,10 +5,11 @@ compress.py 之类的算法，照着 OPS 里的样子加一个新函数、注册
 
 现有操作：
 - patterns：拿现有 pattern.json（行为/决策模式，2026-07-08 从 facts.json 更名，见
-  docs/agent/11-记忆系统.md §3）整份，对照 reflection.md 现行「抽象测试」标准复核，删掉不该在
-  这的（常见于旧版 facts.md/facts.json 迁移批次——那批没经过现在这套更细的筛选标准，见 devlog）。
+  docs/agent/11-记忆系统.md §3）整份，对照 reflection.md 现行「抽象测试」标准维护：优先合并
+  重复/近义条目，只删除明确不该在这里的内容（常见于旧版 facts.md/facts.json 迁移批次——那批
+  没经过现在这套更细的筛选标准，见 devlog）。
   ⚠️ 同一份输入模型判断可能不稳定（同一 prompt 两次调用删除比例差过一倍，包括该保护的条目
-  被误删），所以对每个用户跑 --trials 次独立判断、只删多数次都判定该删的条目，不信单次结果。
+  被误删），所以对每个用户跑 --trials 次独立判断，合并和删除都只采纳多数票，不信单次结果。
 - cleanup-legacy：pattern.json 已存在（说明该用户已经迁移过）时，删掉不再被读写的旧
   facts.json / facts.md / facts_vec.json（向量缓存改名前的旧文件），纯粹清死重量，
   不影响任何记忆内容（向量缓存本身可重建）
@@ -45,7 +46,8 @@ _PROFILE_TEMPORAL_RE = re.compile(r"(最近|刚|刚刚|这阵子|这几天|这�
 
 
 _REVIEW_SYS_PROMPT = (
-    "你在复核一个 AI 助理已经记住的、关于某用户的「行为/决策模式」列表(pattern)，挑出不该留在这里的条目。\n"
+    "你在维护一个 AI 助理已经记住的、关于某用户的「行为/决策模式」列表(pattern)。维护目标是"
+    "让列表更精炼，但优先合并重复/近义条目，尽量保留高置信度内容，不要轻易删除。\n"
     "这份列表只回答「这个人做事/做决定的可复用习惯是什么」，跟具体项目、具体时间点都无关——"
     "项目/事件的具体来龙去脉另有 memory.md 的叙事记录着，不用这里重复存；具体项目/日程条目"
     "本来就在数据库里，查得到就不用记。\n"
@@ -56,30 +58,66 @@ _REVIEW_SYS_PROMPT = (
     "可复用的模式）。\n"
     "- 也不留：一次性的日程/事务提醒(\"某服务到期了、明天要续费\")、推测性且已经过时/被现实"
     "推翻的信息、活动本身的信息（不是关于用户的）\n"
-    "- 拿不准就留着，宁可漏删也别误删\n"
-    "只输出 JSON：{\"remove\": [编号, ...]}（不该留的条目编号数组，没有就给空数组）"
+    "- 重复/近义条目不要删除，放进 merge；高置信度（尤其 observed）条目只能作为合并保留项，"
+    "除非明确已经被事实推翻\n"
+    "- 拿不准就原样保留，宁可漏合并/漏删也别误删\n"
+    "只输出 JSON：{\"merge\":[{\"keep\":主条目编号,\"merge\":[需合并的其它编号],"
+    "\"text\":\"合并后的通用表述\"}],\"remove\":[明确不该保留的编号]}。"
+    "没有合并或删除时使用空数组。merge 中的 keep 不要重复出现在 remove。"
 )
 
 
-async def _review_once(patterns: list[dict], settings, temperature: float) -> set[int] | None:
-    """单次调用，返回本次判定要删的下标集合；解析失败返回 None（不计入投票）。"""
+async def _review_once(patterns: list[dict], settings, temperature: float) -> dict | None:
+    """单次调用，返回合并/删除建议；解析失败返回 None（不计入投票）。"""
     from agent.memory._llm import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
-    idxs = result.get("remove")
-    if not isinstance(idxs, list):
+    # merge 需要返回合并后的表述；老用户 pattern 可能有上百条，800 token 容易在 JSON 收尾前被截断。
+    result = await complete_json(_REVIEW_SYS_PROMPT, lines, settings, max_tokens=2000, temperature=temperature, thinking="disabled")
+    if "remove" not in result and "merge" not in result:
         return None
-    return {i for i in idxs if isinstance(i, int) and 0 <= i < len(patterns)}
+    remove = result.get("remove", [])
+    merge = result.get("merge", [])
+    if not isinstance(remove, list) or not isinstance(merge, list):
+        return None
+    valid_remove = {i for i in remove if isinstance(i, int) and 0 <= i < len(patterns)}
+    valid_merge = []
+    for group in merge:
+        if not isinstance(group, dict) or not isinstance(group.get("keep"), int):
+            continue
+        keep = group["keep"]
+        members = group.get("merge", [])
+        if not (0 <= keep < len(patterns)) or not isinstance(members, list):
+            continue
+        members = sorted({i for i in members if isinstance(i, int) and 0 <= i < len(patterns) and i != keep})
+        if members:
+            valid_merge.append({"keep": keep, "merge": members, "text": str(group.get("text") or "").strip()})
+    return {"remove": valid_remove, "merge": valid_merge}
+
+
+def _pattern_strength(pattern: dict) -> tuple[int, float, int, float]:
+    """合并时优先保留 observed、高置信度、高重要度、较新的条目。"""
+    return (
+        1 if pattern.get("kind") == "observed" else 0,
+        float(pattern.get("conf", 0.0) or 0.0),
+        int(pattern.get("imp", 0) or 0),
+        float(pattern.get("ts", 0.0) or 0.0),
+    )
+
+
+def _protected_pattern(pattern: dict) -> bool:
+    """高置信模式默认只允许被合并，不允许被维护投票单独删除。"""
+    conf = float(pattern.get("conf", 0.0) or 0.0)
+    return conf >= 0.85 or (pattern.get("kind") == "observed" and conf >= 0.8)
 
 
 async def _review_patterns(user_id: str, settings, dry_run: bool,
                          trials: int = 3, temperature: float = 0.1) -> dict:
     """复核一个用户的 pattern.json，挑出不符合现行「只记什么」标准的条目并删除。
 
-    同一份输入、同一份 prompt，模型两次调用的判断可能差很多（踩过：87%→94% 的删除比例大幅波动，
-    包括本该保护的条目被反复误删）——不能信单次调用的结果。这里对同一批 pattern 跑 `trials` 次
-    独立判断，只删「多数次都判定该删」的条目（过半才算数），单次的分歧判断视为不确定、保留。
+    同一份输入、同一份 prompt，模型两次调用的判断可能差很多——不能信单次调用的结果。
+    这里对同一批 pattern 跑 `trials` 次独立判断，合并组和删除项都只采纳多数票；高置信条目
+    由代码额外保护，避免模型把高价值内容误删。
     """
     from agent.memory import store
 
@@ -87,36 +125,71 @@ async def _review_patterns(user_id: str, settings, dry_run: bool,
     if not patterns:
         return {"total": 0, "removed": 0}
 
-    votes: dict[int, int] = {}
+    remove_votes: dict[int, int] = {}
+    merge_votes: dict[tuple[int, ...], dict] = {}
     ok_trials = 0
     for _ in range(trials):
         r = await _review_once(patterns, settings, temperature)
         if r is None:
             continue
         ok_trials += 1
-        for i in r:
-            votes[i] = votes.get(i, 0) + 1
+        for i in r["remove"]:
+            remove_votes[i] = remove_votes.get(i, 0) + 1
+        for group in r["merge"]:
+            key = tuple(sorted({group["keep"], *group["merge"]}))
+            entry = merge_votes.setdefault(key, {"votes": 0, "texts": []})
+            entry["votes"] += 1
+            if group["text"]:
+                entry["texts"].append(group["text"])
     if ok_trials == 0:
         return {"total": len(patterns), "removed": 0, "error": "所有轮次模型输出都解析失败，本用户跳过"}
 
     majority = ok_trials / 2
-    valid = sorted(i for i, v in votes.items() if v > majority)
-    if not valid:
+    valid_remove = sorted(
+        i for i, v in remove_votes.items()
+        if v > majority and not _protected_pattern(patterns[i])
+    )
+    valid_merges = {
+        key: value for key, value in merge_votes.items() if value["votes"] > majority
+    }
+    if not valid_remove and not valid_merges:
         return {"total": len(patterns), "removed": 0, "trials_ok": ok_trials,
-                "unstable": {i: v for i, v in votes.items() if v <= majority}}
+                "merged": 0,
+                "unstable": {i: v for i, v in remove_votes.items() if v <= majority}}
 
-    removed_texts = [patterns[i]["text"] for i in valid]
-    removed_ids = [patterns[i]["id"] for i in valid]
+    remove_set = {patterns[i]["id"] for i in valid_remove}
+    merged_ids: set[str] = set()
+    merged_records: list[dict] = []
+    for key, value in valid_merges.items():
+        members = [patterns[i] for i in key]
+        canonical = max(members, key=_pattern_strength)
+        merged = dict(canonical)
+        merged["kind"] = "observed" if any(item.get("kind") == "observed" for item in members) else canonical.get("kind", "inferred")
+        merged["conf"] = min(0.97, max(float(item.get("conf", 0.6) or 0.6) for item in members))
+        merged["imp"] = max(int(item.get("imp", 0) or 0) for item in members)
+        merged["ts"] = max(float(item.get("ts", 0.0) or 0.0) for item in members)
+        if value["texts"]:
+            merged["text"] = max(value["texts"], key=len)
+        merged_records.append(merged)
+        merged_ids.update(item["id"] for item in members if item["id"] != canonical["id"])
+    remove_set.update(merged_ids)
     if not dry_run:
-        remove_set = set(removed_ids)
-        new_patterns = [pattern for pattern in patterns if pattern["id"] not in remove_set]
+        replacement = {item["id"]: item for item in merged_records}
+        new_patterns = []
+        for pattern in patterns:
+            if pattern["id"] in replacement:
+                new_patterns.append(replacement[pattern["id"]])
+            elif pattern["id"] not in remove_set:
+                new_patterns.append(pattern)
         await store.write_pattern_list(user_id, new_patterns)
         await store.sync_pattern_vecs(user_id, new_patterns)
     return {
-        "total": len(patterns), "removed": len(valid),
-        "removed_texts": removed_texts, "removed_ids": removed_ids,
+        "total": len(patterns), "removed": len(valid_remove), "merged": len(valid_merges),
+        "removed_texts": [patterns[i]["text"] for i in valid_remove],
+        "removed_ids": [patterns[i]["id"] for i in valid_remove],
+        "merged_ids": sorted(merged_ids),
         "trials_ok": ok_trials,
-        "unstable": {i: v for i, v in votes.items() if v <= majority and v > 0},
+        "unstable": {i: v for i, v in remove_votes.items() if v <= majority and v > 0},
     }
 
 
@@ -158,7 +231,7 @@ async def _split_once(patterns: list[dict], settings, temperature: float) -> set
     from agent.memory._llm import complete_json
 
     lines = "\n".join(f"[{i}] ({f.get('kind')}) {f.get('text', '')}" for i, f in enumerate(patterns))
-    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature)
+    result = await complete_json(_SPLIT_SYS_PROMPT, lines, settings, max_tokens=800, temperature=temperature, thinking="disabled")
     idxs = result.get("move")
     if not isinstance(idxs, list):
         return None

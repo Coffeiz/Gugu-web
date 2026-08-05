@@ -1,8 +1,6 @@
 from agent.models import AgentResponse
 
-import worker
-
-from agent.adapters import feishu
+from agent.gateway import feishu
 
 
 async def _empty_stream():
@@ -231,13 +229,14 @@ async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):
 async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
     sent_texts: list[str] = []
 
-    async def fake_resolve_user(payload):
-        return 1, "测试用户"
+    async def fake_resolve_owner(payload):
+        from agent.im.identity import ImIdentity
+        return ImIdentity(1, "测试用户")
 
-    async def fake_get_session(platform, puid):
+    async def fake_get_session(platform, bot_id, puid):
         return None
 
-    async def fake_set_session(platform, puid, session_id):
+    async def fake_set_session(platform, bot_id, puid, session_id, *, group=False):
         return None
 
     async def fake_send(payload, text):
@@ -265,15 +264,18 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
     async def fake_async_noop(*args, **kwargs):
         return None
 
-    monkeypatch.setattr(worker, "_resolve_user", fake_resolve_user)
-    monkeypatch.setattr(worker, "_im_session_get", fake_get_session)
-    monkeypatch.setattr(worker, "_im_session_set", fake_set_session)
-    monkeypatch.setattr(worker, "_send", fake_send)
-    monkeypatch.setattr(worker, "_send_files", fake_send_files)
+    import agent.im.loop as im_loop
+    monkeypatch.setattr(im_loop, "resolve_owner_account", fake_resolve_owner)
+    monkeypatch.setattr(im_loop, "get_session", fake_get_session)
+    monkeypatch.setattr(im_loop, "persist_im_session", fake_set_session)
+    import agent.im.replies as replies
+    monkeypatch.setattr(replies, "send_text", fake_send)
+    import agent.im.files as im_files
+    monkeypatch.setattr(im_files, "send_files", fake_send_files)
 
     from agent import commands, runtime_state
-    from agent.adapters import feishu as feishu_mod
-    from agent.adapters import wechat
+    from agent.gateway import feishu as feishu_mod
+    from agent.gateway import wechat
     from agent.runner import run_stream as real_run_stream
     import agent.runner as runner_mod
     import app.scheduled_tasks as schedtasks
@@ -288,6 +290,10 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
     monkeypatch.setattr(schedtasks, "save_imreach", fake_async_noop)
     monkeypatch.setattr(runner_mod, "run_stream", fake_run_stream)
     monkeypatch.setattr(feishu_mod, "send_text_stream", fake_send_text_stream)
+    monkeypatch.setattr(im_loop, "remember_im_reach", fake_async_noop)
+    monkeypatch.setattr(im_loop, "start_im_activity", lambda *args, **kwargs: fake_async_noop())
+    monkeypatch.setattr(im_loop, "finish_im_activity", fake_async_noop)
+    monkeypatch.setattr(im_loop, "finalize_im_response", fake_async_noop)
 
     payload = {
         "platform": "feishu",
@@ -297,7 +303,7 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
         "message_id": "msg-1",
         "text": "你好",
     }
-    resp = await worker.handle("1-0", payload)
+    resp = await im_loop.dispatch_im_message(payload)
 
     assert resp.text == "最终文本"
     assert sent_texts == ["最终文本"]

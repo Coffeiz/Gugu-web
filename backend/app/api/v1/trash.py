@@ -17,13 +17,20 @@ from app.schemas import (
     TrashFolderResponse,
 )
 from app.core.security import get_current_user, get_client_id
-from app.core.ownership import get_owned
 from app.core import events
+from app.services.files.trash import (
+    RestoreParentTrashError,
+    permanently_delete_file,
+    permanently_delete_folder,
+    empty_trash as empty_trash_service,
+    restore_file_by_id,
+    restore_files_by_ids,
+)
+from app.services.files.previews import delete_thumb_cache
+from app.services.files.response import color_value, to_file_response
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.folders import folder_dir_key
-from app.api.v1.files import _to_resp, _color, _delete_thumb_cache
-from app.services.storage.trash import restore_file_storage
 
 router = APIRouter(prefix="/trash", tags=["trash"])
 
@@ -70,16 +77,7 @@ async def list_trash(
         .order_by(File.deleted_at.desc())
     )
     result = await db.execute(stmt)
-    return [_to_resp(f, pname, _color(pcolor), fname) for f, pname, pcolor, fname in result.all()]
-
-
-async def _ensure_file_parent_is_live(f: File, db: AsyncSession) -> None:
-    """拒绝把仍归属回收站文件夹的文件单独恢复。"""
-    if f.folder_id is None:
-        return
-    folder = await get_owned(db, Folder, f.folder_id, f.user_id)
-    if not folder or folder.deleted_at is not None:
-        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
+    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
 
 
 # ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
@@ -153,7 +151,7 @@ async def list_trash_folder_contents(
             file_count=count_map.get(f.id, 0), version=f.version,
             deleted_at=f.deleted_at.strftime("%Y-%m-%dT%H:%M:%S"),
         ) for f in child_folders],
-        files=[_to_resp(f, pname, _color(pcolor), fname)
+        files=[to_file_response(f, pname, color_value(pcolor), fname)
                for f, pname, pcolor, fname in direct_files],
     )
 
@@ -176,23 +174,6 @@ async def restore_folder(
                           version=folder.version)
 
 
-async def _deleted_folder_subtree_ids(folder: Folder, db: AsyncSession) -> list[int]:
-    """返回回收站文件夹的整棵已删子树，供永久删除一次性清理。"""
-    ids = [folder.id]
-    frontier = [folder.id]
-    while frontier:
-        children = (await db.execute(
-            select(Folder.id).where(
-                Folder.user_id == folder.user_id,
-                Folder.parent_id.in_(frontier),
-                Folder.deleted_at.isnot(None),
-            )
-        )).scalars().all()
-        ids.extend(children)
-        frontier = children
-    return ids
-
-
 # ── DELETE /trash/folders/{fid} （永久删除顶层文件夹）──────────────────────────
 
 @router.delete("/folders/{fid}", status_code=204)
@@ -209,33 +190,10 @@ async def hard_delete_folder(
     if not folder:
         raise HTTPException(404, "文件夹不存在")
 
-    folder_ids = await _deleted_folder_subtree_ids(folder, db)
-    files = (await db.execute(
-        select(File).where(
-            File.user_id == current_user.id,
-            File.folder_id.in_(folder_ids),
-            File.deleted_at.isnot(None),
-        )
-    )).scalars().all()
-    storage = get_storage()
-    file_ids = [f.id for f in files]
-    for f in files:
-        try:
-            await storage.delete(f.storage_key)
-        except Exception:
-            pass
-        await db.delete(f)
-
-    dir_key = await folder_dir_key(db, folder.user_id, folder)
-    await db.delete(folder)
-    if dir_key:
-        try:
-            await storage.remove_folder(dir_key)
-        except Exception:
-            pass
+    file_ids = await permanently_delete_folder(db, get_storage(), folder)
     await db.commit()
     for file_id in file_ids:
-        _delete_thumb_cache(file_id)
+        delete_thumb_cache(file_id)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -248,12 +206,13 @@ async def restore_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is None:
+    try:
+        restored = await restore_file_by_id(
+            db, get_storage(), current_user.id, fid)
+    except RestoreParentTrashError:
+        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
+    if not restored:
         raise HTTPException(404, "文件不存在")
-    await _ensure_file_parent_is_live(f, db)
-    await restore_file_storage(f, get_storage(), db)
-    f.deleted_at = None
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin)
 
@@ -269,18 +228,10 @@ async def batch_restore(
 ):
     if not body.ids:
         return
-    stmt = select(File).where(
-        File.id.in_(body.ids),
-        File.user_id == current_user.id,
-        File.deleted_at.isnot(None),
-    )
-    files = (await db.execute(stmt)).scalars().all()
-    for f in files:
-        await _ensure_file_parent_is_live(f, db)
-    storage = get_storage()
-    for f in files:
-        await restore_file_storage(f, storage, db)
-        f.deleted_at = None
+    try:
+        await restore_files_by_ids(db, get_storage(), current_user.id, body.ids)
+    except RestoreParentTrashError:
+        raise HTTPException(409, "所属文件夹仍在回收站，请先恢复文件夹")
     await db.commit()
     await events.publish(current_user.id, "files", origin=origin)
 
@@ -294,17 +245,12 @@ async def hard_delete_file(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    f = await get_owned(db, File, fid, current_user.id)
-    if not f or f.deleted_at is None:
+    deleted_id = await permanently_delete_file(
+        db, get_storage(), current_user.id, fid)
+    if deleted_id is None:
         raise HTTPException(404, "文件不存在")
-    fid = f.id
-    try:
-        await get_storage().delete(f.storage_key)
-    except Exception:
-        pass
-    await db.delete(f)
     await db.commit()
-    _delete_thumb_cache(fid)
+    delete_thumb_cache(deleted_id)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -316,28 +262,11 @@ async def empty_trash(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(File).where(File.user_id == current_user.id, File.deleted_at.isnot(None))
-    files = (await db.execute(stmt)).scalars().all()
-    storage = get_storage()
-    fids = [f.id for f in files]
-    for f in files:
-        try:
-            await storage.delete(f.storage_key)
-        except Exception:
-            pass
-        await db.delete(f)
     roots = (await db.execute(_top_level_deleted_folders_stmt(current_user.id))).scalars().all()
-    for root in roots:
-        dir_key = await folder_dir_key(db, root.user_id, root)
-        await db.delete(root)
-        if dir_key:
-            try:
-                await storage.remove_folder(dir_key)
-            except Exception:
-                pass
+    fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
     await db.commit()
     for fid in fids:
-        _delete_thumb_cache(fid)
+        delete_thumb_cache(fid)
     await events.publish(current_user.id, "files", origin=origin)
 
 
@@ -361,7 +290,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
     if files:
         await db.commit()
         for fid in fids:
-            _delete_thumb_cache(fid)
+            delete_thumb_cache(fid)
 
     # 过期文件夹（顶层已删、deleted_at 超过 30 天）：硬删 Folder 行——ORM cascade
     # （Folder.children，`all, delete-orphan`）连带删掉整棵子树；子树内文件已由上面那段按

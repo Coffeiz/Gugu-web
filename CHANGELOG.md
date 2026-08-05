@@ -5,15 +5,28 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.20.0] - 2026-08-05
 
 ### 新增
 
+- **MiniMax M3 大视频 mm_file 传输**（`backend/app/core/chat_attach.py`）：视频分辨率 >1080p 或码率 >16Mbps 时自动压缩成 1080p 5M h264；压缩后 >45MB 的视频上传 Files API 用 `mm_file://` 引用，突破 base64 36MB 限制，可处理到约 90MB 视频。
+
+- **定时任务完整 AgentLoop 执行**（`backend/app/scheduled_tasks.py`、`backend/agent/scheduled_report.py`）：定时任务执行阶段统一使用完整 AgentLoop，按需对有工具调用的结果生成报告，并支持明确的执行/报告重试边界。
+- **LLM 预设模型选择**（`frontend/src/views/Admin/Agent/`）：Admin 支持管理和选择模型预设，减少切换模型时手动修改连接参数的成本。
+
 - **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
 - **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
+- **QQ 群聊消息记录**（`backend/agent/adapters/qq.py`、`ProfileImPane.vue`）：可保存未 @ 咕咕的普通群消息供后续上下文读取，同时保留 @ 消息的正常回复。
+- **站内多关键词搜索**（`backend/app/search/`、`agent/tools/{global_search,files,conversations}.py`）：支持组合搜索项目、文件、笔记、会话和群上下文，并保留拼音回退、结果排序与请求取消能力。
+- **群组与成员记忆系统**（`backend/agent/memory/`、`agent/im/`）：为 IM 成员和群组增加独立的资料、行为模式、日常记录与摘要存储，支持按范围触发反思、压缩和生命周期清理。
+- **画像结构规范化**（`backend/agent/memory/`、`agent/tools/`）：统一 owner、平台用户和群组画像的类型化字段，并让 `remember` 按统一结构写入 profile 与 pattern，减少不同记忆范围之间的格式漂移。
+- **DashScope 语音模型产品线适配**（`backend/agent/voice.py`、`frontend/src/views/Admin/Agent/`）：支持按百炼产品线选择语音识别模型，并提供配置与连通性测试入口。
 
 ### 改进
 
+- **定时任务试运行与投递稳定性**（`backend/app/api/v1/scheduled_tasks.py`、`backend/app/scheduled_tasks.py`）：试运行超时后不再取消后台执行，任务仍可完成并投递结果；执行、报告和重试职责分离，避免重复调用和数据库事务占用。
+- **QQ 平台字段迁移**（`backend/alembic/versions/`、`backend/scripts/`）：将运行时、定时任务和活动投递配置中的 `qqbot` 统一迁移为 `qq`，并提供幂等迁移脚本。
+- **安全审查回归覆盖**（`backend/tests/`、`backend/app/services/files/`）：补齐直传配额、媒体下载、文件归属和错误边界的回归测试，确保安全修复在后续重构中持续生效。
 - **画布与媒体读取安全边界**（`views/Mind/`、`backend/agent/tools/file_readers.py`）：画布切换改为成功后原子提交，重命名增加保存闸门，音视频读取改用物理对象大小校验，避免重复写入、失败状态残留和历史大小字段绕过内存上限。
 - **音视频转码资源上限**（`backend/agent/tools/file_readers.py`）：限制音频时长、ffmpeg 输出字节数和视频帧宽度，超限时终止子进程，避免媒体解码膨胀造成内存峰值。
 - **路径迁移对账安全边界**（`backend/app/api/v1/config.py`）：按文件 identity 聚合数据库记录与物理孤儿对象，歧义项不再自动修复，并拒绝跨空间/跨项目迁移，原子更新完整归属字段。
@@ -25,12 +38,32 @@
 - **项目页 Owner 更新收口**（`views/Projects/components/`）：将 Runtime 接管状态的响应式更新从页面级收敛到列/列表范围，降低拖拽释放时的 Vue 更新量。
 - **项目看板 Runtime 性能基线**（`views/Projects/`）：保留 7.2 的对象引用稳定、Owner 订阅收口和 Runtime 布局测量优化；经过 4× CPU 降速 trace 对比，pointerup 平均处理时间较优化前减少约 42ms，端到端 EventTiming 平均减少约 31ms。
 - **CI 依赖安装可复现**（`frontend/package.json`、`frontend/package-lock.json`）：补齐 Vite/Vitest 所需的 esbuild 0.28.1 及平台包，使严格的 `npm ci` 能完成安装。
+- **文件 API service 边界收口**（`backend/app/api/v1/files.py`、`backend/app/services/files/`）：将文件查询、媒体预览、上传校验、下载和响应组装迁入 service 层，路由保留鉴权、事务和 HTTP 响应协调。
+- **文件库入口职责收口**（`frontend/src/views/Files/index.vue`、`frontend/src/composables/files/`）：将存储统计、文件夹展示与动作、单文件下载/删除移入独立 composable，入口继续保留拖拽、回收站和菜单等页面适配协调。
+- **IM 会话与上下文隔离**（`backend/agent/im/`、`agent/runner.py`）：将平台身份、私聊/群聊会话和上下文组装收敛到独立 IM Loop，群消息按发言人保留身份信息，owner 与普通成员使用不同的记忆和工具权限边界。
+- **群聊历史与记忆触发策略**（`backend/agent/im/`、`backend/agent/memory/`）：群消息保存上限提高到 500 条，上下文默认只拼接最近 50 条，并按连续活跃、空闲和恢复聊天场景整理记忆。
+- **定时任务投递目标**（`backend/agent/tools/scheduled_tasks.py`、`backend/app/scheduled_tasks.py`）：支持在当前私聊或群聊上下文中选择投递方式，网页创建的任务继续默认发送到私聊。
+- **记忆维护与召回**（`backend/agent/memory/`）：优化 pattern 的水位触发、合并和输出预算，并稳定群上下文搜索结果顺序。
+- **记忆反思触发节奏**（`backend/agent/memory/`、`agent/im/`）：群内普通消息累计 30 条、进入 Agent 的回合累计 5 条，工具调用立即反思，owner/member 共用节奏但保持记忆作用域隔离。
+- **QQ 群消息与媒体链路**（`backend/agent/gateway/qq.py`、`agent/im/`）：统一群聊消息解析、身份映射、表情/引用媒体和本地附件发送路径，减少群聊与私聊的行为差异。
+- **IM 媒体下载安全边界**（`backend/app/core/url_security.py`、`agent/im/media_ingress.py`）：统一外部 URL 的 SSRF 校验，并对重定向逐跳校验，避免附件下载绕过网络边界。
+- **直传与 IM 故障安全边界**（`backend/app/services/files/upload.py`、`agent/im/loop.py`、`agent/im/media_ingress.py`）：直传确认改用对象真实元数据并在新建/覆盖两条路径重新校验配额，Redis shortcut 故障不再丢消息，媒体下载增加流式大小限制。
+- **IM 网关与解析层职责收口**（`agent/gateway/`、`agent/im/`）：移除临时运行探针，让网关、协议解析、媒体暂存和业务编排保持独立边界。
+- **数据库空库初始化兼容**（`backend/alembic/env.py`）：空 PostgreSQL 可直接升级到当前 head，已有业务库仍沿用正常迁移链。
+- **RAG 召回评估工具**（`backend/scripts/bench_rag_virtual.py`、`docs/product/PRD/report/`）：增加 BM25、真实 Embedding 缓存和 DeepSeek/MiniMax LLM 重排的离线压测，记录召回质量、排序耗时和上下文注入成本；当前结论是 BM25 作为默认路径，LLM 重排按需启用。
 
 ### 修复
 
+- **空库迁移与旧定时任务字段清理**（`backend/alembic/`、`backend/app/models/`）：修复空数据库升级链路，并移除已停用的定时任务上下文配置字段。
+- **直传新建文件配额校验**（`backend/app/services/files/upload.py`）：修复新建文件路径未执行完整配额校验的问题，统一新建与覆盖上传的资源限制。
+- **项目编辑卡添加待办按钮动画**（`views/Projects/components/ProjectTodosPanel.vue`）：将添加按钮移出待办 FLIP 过渡组，避免新增第一个待办时按钮被错误地带入位移动画。
 - **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
 - **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。
 - **拖拽落地玻璃态交接**（`interaction/drag/animation/morphLifecycle.ts`）：恢复隐藏本体路径在目标样式切换前的过渡，避免 landing 过程中毛玻璃、背景和边框瞬间跳变。
+- **QQ 群聊身份与 @ 提及映射**（`backend/agent/gateway/qq.py`、`agent/im/identity.py`）：修复机器人自身 @ 展示、不同 QQ 账号误用 owner 身份、用户名更新和群消息路由混淆问题。
+- **QQ 表情、引用图片与动图展示**（`backend/agent/im/`、`frontend/src/`）：修复表情内容显示为原始标签、引用动图缩略图静止以及临时附件无法下载的问题。
+- **QQ 群聊附件发送**（`backend/agent/im/files.py`、`backend/agent/gateway/qq.py`）：修复群聊附件仍走私聊目标或被硬编码拦截的问题，群聊与私聊统一按会话目标发送图片和文件。
+- **文件查询与目录结果一致性**（`backend/agent/tools/files.py`、`backend/app/api/v1/search.py`）：修复目录过滤、多关键词搜索和文件夹路径展示不一致导致的文件定位错误。
 
 ---
 
@@ -70,6 +103,19 @@
 - **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
 - **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-16 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
+
+
+## [0.19.2] - 2026-07-16 · 项目编辑面板模块化拆分 & 后端 service 边界收尾
+
+### 改进
+
+- **ProjectModal 面板拆分**（`views/Projects/components/ProjectInfoPanel.vue`、`ProjectStagesPanel.vue`、`composables/projects/useProjectDraft.ts`、`useProjectStages.ts`）：抽取项目基础信息面板和阶段/待办面板为独立组件，新增草稿状态管理和阶段/待办操作编排 composable。`ProjectModal.vue` 从约 2900 行降至 2264 行，收缩为布局协调层。
+- **后端 service 边界收尾**（`services/files/upload.py`）：确认上传进度编排边界已清晰分离，预签名/冲突/确认入口全部下沉到 `upload.py`，路由仅保留 FastAPI 传输、图片解码和缩略图调度。
+
+### 修复
+
+- **阶段/待办 CSS 样式缺失**（`ProjectStagesPanel.vue`）：抽取时样式未随模板和脚本迁移，补回完整的阶段节点、待办列表和拖拽交互样式。
+- **待办保存回调缺失**（`ProjectModal.vue`）：`saveTodos` 函数在抽取过程中被遗漏，导致待办编辑后无法持久化。
 
 ## [0.19.0] - 2026-07-14 · 思维画布收尾、连接线体验统一与存储/LLM 架构重构
 
@@ -139,6 +185,8 @@
 
 ### 重构
 
+- **文件浏览层渐进式模块化**（`components/common/{FileBrowserGrid,FileBrowserList,FileBrowserBreadcrumb,FileBrowserContextMenu,FileBrowserContextMenuContent}.vue`、`composables/files/`）：文件库和项目文件区共享展示外壳、选择状态、目录导航、排序投影、操作 facade、上传生命周期和右键菜单内容；保留页面级缓存副作用、全局导航、回收站和现有拖拽卡片结构，用户界面与文件 API 不变。详细边界见 [【已完成】文件浏览系统模块化重构方案](docs/refactor/【已完成】文件浏览系统模块化重构方案.md)。
+
 - **文件缓存三套并存收敛为单一 `filesCache` store（Tier 3-A）+ 一批 ProjectModal bug**（`views/Dashboard/{index.vue,components/FilePanel.vue}`、`views/Projects/components/ProjectModal.vue`、`composables/useFileUpload.ts`、`services/cache.ts`、后端 `agent/tools/files.py`）：此前文件列表有三套并行缓存（全局 `filesCache` store / ProjectModal 本地 refs / Dashboard 的 `services/cache` sessionStorage），一处改动另两套要靠全量重拉或重进页面才对齐。现全部收敛到单一全局 `filesCache` store——Dashboard/FilePanel 与 ProjectModal 的文件/文件夹列表都从 store 派生（computed），删除各自本地并行缓存，所有增删改走 store 增量 API，单一数据源。顺带修 Phase B 暴露的 4 个问题：① 项目卡里拖文件/文件夹进另一文件夹误跳回项目根（去掉多余的 `_pmResetNav`，改按被删文件夹精确 prune 历史）；② 文件夹拖不进面包屑（`resolveBcTarget` 对 `idx>=0` 也 `acceptsFolders:true`）；③ 上传同名文件夹静默合并（`checkUploadConflicts` 解析每个文件的目标文件夹后再查冲突，嵌套同名文件也弹覆盖/保留两者，共享给文件库）；④ 咕咕删文件夹后文件回到上层目录（`_delete_folder` 对齐 REST：BFS 整棵子树，文件软删进回收站、子文件夹硬删，不再把文件移到根）。
 - **文件库实时同步细粒度化 + client-id 回声抑制（Tier 3-B）**（后端 `app/core/{events,security}.py`、`app/api/v1/{files,folders,trash}.py`、`agent/tools/{base,files}.py`；前端 `services/api.ts`、`stores/{live,filesCache}.ts`、`views/Files/index.vue`；文档 `docs/backend/storage.md` §2.8.8）：把「任意改动 → 全库重拉」升级为三档处理。每标签页生成 `CLIENT_ID`，写操作带 `X-Client-Id` 头；后端 `get_client_id` 依赖读头 → `events.publish` 带 `origin`，删除类端点再带 `file_op={op:remove,kind,id/ids}`（咕咕删除工具经结果 `_file_op` 字段带；agent 无 client-id → `origin=None` 不抑制，所有端刷新）。前端 `live.ts` 暴露 `fileEvent` 细粒度通道（`rev.files` 仍照旧 bump 供预览窗/回收站/计数等粗信号消费），`filesCache` 独家消费：① `origin===自己` → 跳过（**回声抑制**，本页已乐观更新，零重拉）；② `remove` → 本地直接剔除（**零网络**，文件夹级联）；③ 其余 → 防抖合并全量刷新。`Files/index.vue` 的 `contents` 快照改由 `watch([allFiles,allFolders])` 重投影；还原（回收站→库）是唯一不乐观更新的写操作、回声被抑制拉不回 → 显式 `cacheStore.refresh()`；断线重连 `_catchUp` 对 files 额外 poke 一次 refresh 补漏。效果：发起页零重拉、其它端删除零网络、增改合并刷新，消除大文件量下的重拉性能天花板，并顺带解决 Tier 2 的回声成本（需重启后端生效）。
 - **拖拽落地并发场景修复 + 跟手调快**（`frontend/src/composables/usePhysicsDrag.ts`）：先拖 B 松手、快速抓 A、再松开 A 让 B 归位时，B 的克隆会「过度移动再归位/瞬移」——并发 FLIP 让位时 B 的隐形真卡（`opacity:0`）挂着没跑完的 `translate`，`getBoundingClientRect` 量出的落点被残留 transform 污染；且旧动画的 `opacity` 完成事件 + 旧超时会提前撤掉克隆、真卡直接出现在终点。改为重定目标时临时把 transform 归零量干净布局落点、以同一套函数式表示冻结当前位置、只以 `transform` 到位作为落地完成条件、每次重定目标重启完整 0.55s 缓出。顺带把弹簧刚度 190→360（≈2.2Hz→3.0Hz）、阻尼 0.82→0.85，克隆跟手从约 0.35s 追平缩到约 0.23s。
@@ -170,7 +218,7 @@
 
 - **反思不再把阶段性状态误存进稳定画像**（`agent/memory/reflection.py`）：带「最近 / 这周 / 目前」这类时效措辞的候选，以前会被当成身份画像写进 profile，现在拦下并回 daily；一键记忆维护同步加了把误入 profile 的阶段事件迁去 memory 的步骤（`app/api/v1/config.py`、`scripts/refresh_memory.py`）。
 - **思维面板设计/数据模型/实现方案草案落地**（`docs/product/思维面板/`）：产品设计、schema（全局节点 + 画布视图 + 关系边，含引用代理节点、墓碑删除、乐观锁）与逐阶段逐文件的工程方案成套冻结，待开工。
-- **前台设计规范补齐近期样式约定**（`docs/product/design.md`）：同步记录全局按压反馈、活玻璃圆角裁切、GuguChat 文件链接样式与日历周视图细节等最新 CSS 规则，避免设计文档与实际实现脱节。
+- **前台设计规范补齐近期样式约定**（`docs/development/design.md`）：同步记录全局按压反馈、活玻璃圆角裁切、GuguChat 文件链接样式与日历周视图细节等最新 CSS 规则，避免设计文档与实际实现脱节。
 - **卡片/按钮按压反馈统一**（`frontend/src/assets/styles/global.css`、`frontend/src/views/{Files,Schedules}/index.vue`、`frontend/src/views/Projects/components/{ProjectCard,ProjectModal,KanbanColumn}.vue`、`frontend/src/components/common/GuguChat.vue`）：补出统一的 `hover-card-fx` / `press-fx` 手感，文件卡、项目卡、聊天文件条、定时任务按钮和项目列新增按钮的悬停/按下反馈更一致；顺手修了项目编辑卡待办项长文本被单行截断的问题。
 - **定时任务创建/保存不再等 LLM 分类调用**（`app/api/v1/scheduled_tasks.py`）：点创建/保存立即返回，工具组/上下文精简判断改成后台异步补丁，不影响前端动画和交互。
 - **联网搜索工具组改名 `web_search`**（`agent/tools/search.py`、`agent/profiles/default.py`）：跟新增的站内 `global_search` 撞名太像，改名区分（实测存量定时任务无一命中旧组名，无需数据迁移）。
@@ -266,7 +314,7 @@
 - **文件拖拽两处静默失效**（`composables/useFileDragDrop.ts`、`views/Files/index.vue`）：`data-folder-key` 混用带前缀字符串导致 `Number()` 转出 `NaN`、面包屑落点判定读到被提前清空的拖拽状态，两个独立 bug 都是"看起来有反应、实际没挪窝"。详见 [devlog.md](docs/devlog.md) 2026-07-03 条目。
 - **项目编辑卡文件拖拽统一为 pointer 模式，抽取共享 composable**（新增 `composables/useFileDragDrop.ts`；`views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`）：项目编辑卡此前仍是原生 HTML5 拖拽，跟文件库改造前一样有归位悬停跳变的风险。把拖拽编排抽成共享 composable，文件库和项目编辑卡都改为消费它，差异点（data 属性名、面包屑放置规则、落地后刷新策略）做成配置项。
 - **文件卡拖拽改用 pointer 模式，根治归位悬停跳变**（`composables/usePhysicsDrag.ts`、`views/Files/index.vue`）：perf trace 定位根因——原生 HTML5 拖拽期间浏览器暂停 `mouseover`/`mouseout` 派发，抓起卡片时缓存的 `:hover=true` 直到 `dragend` 才刷新，导致归位揭示时 hover 高亮跳变。改用项目看板已验证的 pointer 模式（`setPointerCapture`）根治，不再在揭示时机上打补丁。
-- **快速重新抓拖拽落地中的卡片会抓到隐形克隆**（`composables/usePhysicsDrag.ts`）：Chrome trace 定位——两次拖拽间隔（约 310ms）可能短于落地动画复位源卡 `display`/`opacity` 的耗时（420~580ms），此时重新抓取量到的尺寸是 0×0，克隆不可见。入口处强制先复位源卡再量尺寸。顺带定版拖拽克隆的白底/毛玻璃比例，详见 [docs/product/design.md](docs/product/design.md)。
+- **快速重新抓拖拽落地中的卡片会抓到隐形克隆**（`composables/usePhysicsDrag.ts`）：Chrome trace 定位——两次拖拽间隔（约 310ms）可能短于落地动画复位源卡 `display`/`opacity` 的耗时（420~580ms），此时重新抓取量到的尺寸是 0×0，克隆不可见。入口处强制先复位源卡再量尺寸。顺带定版拖拽克隆的白底/毛玻璃比例，详见 [docs/development/design.md](docs/development/design.md)。
 
 ## [0.15.2] - 2026-07-02 · 商用就绪安全加固（多用户隔离/删除确认门/全链路可观测/隐私合规）+ 窗口系统 + 后台运维面板
 
@@ -287,7 +335,7 @@
 
 ### 改进
 
-- **毛玻璃三档统一收变量 + 拖拽克隆体毛玻璃**（`variables.css` + `global.css` + 12 个组件）：全站 blur 值此前散写多种数值。统一为三档并全走 CSS 变量（大面板/小弹窗/拖拽克隆，详见 [docs/product/design.md](docs/product/design.md)），拖拽克隆体新增毛玻璃背景，文件库/编辑卡/看板拖拽克隆全站一致。
+- **毛玻璃三档统一收变量 + 拖拽克隆体毛玻璃**（`variables.css` + `global.css` + 12 个组件）：全站 blur 值此前散写多种数值。统一为三档并全走 CSS 变量（大面板/小弹窗/拖拽克隆，详见 [docs/development/design.md](docs/development/design.md)），拖拽克隆体新增毛玻璃背景，文件库/编辑卡/看板拖拽克隆全站一致。
 - **后台刷新按钮全局统一 + 用户管理操作按钮横排**（`AdminApp.vue` + 12 个 Admin 页面）：所有页面刷新按钮统一为方形图标钮样式（抽成 Admin 全局共用），各页删除本地重复定义；用户管理操作列加宽并禁折行，修复加 DEV 按钮后被挤成竖排。
 
 ### 修复

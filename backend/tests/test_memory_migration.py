@@ -127,7 +127,8 @@ async def test_apply_profile_ops_add_and_dedupe(storage):
     profile2 = store.apply_profile_ops(profile, ["用户是自由创作者，从事插画和动画"], [])
     assert len(profile2) == 1
     assert "插画" in profile2[0]["text"]   # 采用更具体的文本
-    # profile 没有 kind/conf 字段
+    assert profile2[0]["type"] == "note"
+    assert "id" not in profile2[0]
     assert "kind" not in profile2[0] and "conf" not in profile2[0]
 
 
@@ -138,6 +139,27 @@ async def test_apply_profile_ops_remove(storage):
     profile = store.apply_profile_ops(profile, [], ["用户住南京"])
     assert len(profile) == 1
     assert profile[0]["text"] == "用户是自由创作者"
+
+
+async def test_profile_schema_normalizes_legacy_id_and_type(storage):
+    from agent.memory import store
+
+    await storage.put(
+        f"{UID}/.agent/profile.json",
+        json.dumps([
+            {"id": "legacy", "text": "用户住南京", "ts": 1.0},
+            {"type": "preference", "text": "喜欢简洁回复", "ts": 2.0},
+        ], ensure_ascii=False).encode(),
+    )
+    profile = await store.read_profile_list(UID)
+    assert profile == [
+        {"type": "note", "text": "用户住南京", "ts": 1.0},
+        {"type": "preference", "text": "喜欢简洁回复", "ts": 2.0},
+    ]
+    await store.write_profile_list(UID, profile)
+    persisted = json.loads((await storage.get(f"{UID}/.agent/profile.json")).decode())
+    assert persisted == profile
+    assert all("id" not in item for item in persisted)
 
 
 async def test_render_profile_no_relevance_filtering(storage):
@@ -151,12 +173,12 @@ def test_reflection_splits_temporal_profile_into_daily():
     from agent.memory import reflection
 
     profile_adds, staged = reflection._split_profile_adds([
-        "用户最近刚换了新空调",
-        "用户住南京",
+        {"type": "background", "text": "用户最近刚换了新空调"},
+        {"type": "address", "text": "用户住南京"},
         "用户目前在集中处理引用消息识别",
     ])
 
-    assert profile_adds == ["用户住南京"]
+    assert profile_adds == [{"type": "address", "text": "用户住南京"}]
     assert staged == ["用户最近刚换了新空调", "用户目前在集中处理引用消息识别"]
     assert reflection._merge_daily_note("本轮确认了微信引用能力边界", staged) == (
         "本轮确认了微信引用能力边界；用户最近刚换了新空调；用户目前在集中处理引用消息识别"
@@ -207,7 +229,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     import scripts.refresh_memory as rm
 
     patterns = [
-        {"id": "a", "text": "一次性的项目执行细节", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
+        {"id": "a", "text": "一次性的项目执行细节", "kind": "inferred", "conf": 0.6, "imp": 3, "ts": 1.0},
         {"id": "b", "text": "有争议、只有一次被判删的条目", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
         {"id": "c", "text": "该保留的稳定模式", "kind": "observed", "conf": 0.9, "imp": 3, "ts": 1.0},
     ]
@@ -216,7 +238,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
     calls = {"n": 0}
     vote_sequences = [{0}, {0, 1}, {0}]   # 索引 0 三次全中；索引 1 只中一次；索引 2 从不中
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, temperature=0.1):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=800, temperature=0.1, **kwargs):
         idx = calls["n"]
         calls["n"] += 1
         return {"remove": list(vote_sequences[idx])}
@@ -352,9 +374,10 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
 
     captured = {}
 
-    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3):
+    async def fake_complete_json(sys_prompt, user, settings, max_tokens=1500, temperature=0.3, **kwargs):
         captured["user"] = user
-        return {"memory": "保留事件背景，不复写稳定结论"}
+        captured["max_tokens"] = max_tokens
+        return {"memory": "2026-07-09\n2026-07-10\n保留事件背景，不复写稳定结论"}
 
     async def fake_sync_memory_vecs(user_id, memory_text, force=False):
         captured["synced"] = (user_id, memory_text, force)
@@ -369,3 +392,4 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
     assert "已结构化的行为模式" in captured["user"]
     assert "用户做决定前会先核实事实" in captured["user"]
     assert "别在长期记忆里原句复写" in captured["user"]
+    assert captured["max_tokens"] == 10000

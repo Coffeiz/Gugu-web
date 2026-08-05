@@ -131,8 +131,8 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         if not text:
             return
         imctx.mark_announced()   # 先标记再发送：即便发送失败也别在本 session 里反复重试打扰用户
-        import worker
-        await worker._send(payload, text)
+        from agent.im.replies import send_text
+        await send_text(payload, text)
     except Exception as e:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
@@ -142,6 +142,7 @@ class Tool:
 
     def __init__(self, name: str, description: str, input_schema: dict,
                  handler, label: str | None = None, destructive: bool = False,
+                 mutates: bool = False,
                  start_message: str | Callable[[dict], str] | None = None):
         self.name = name
         self.description = description
@@ -149,6 +150,14 @@ class Tool:
         self.handler = handler          # async (db, user_id, args) -> dict | list
         self.label = label or name
         self.destructive = destructive  # 不可逆操作，handler 内走 confirm.gate
+        # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
+        # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
+        # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），
+        # remember、undo_last_gugu_note 这类不在前缀表里的写工具会被漏判，导致
+        # 报错后重跑整轮、重复执行已经生效的写操作。destructive 管的是要不要走
+        # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
+        # 但只要写了就不能自动重放（mutates）。
+        self.mutates = mutates
         # IM 慢工具进度声明用（仅 IM、每个 Busy Session 最多发一次，见 dispatch）：固定文案或
         # 按调用参数变化措辞的函数——只能读 dispatch 时已知的参数，不能猜返回结果（见设计文档 §2.3
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
@@ -253,6 +262,14 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
+        from agent import imctx
+        from agent.im.permissions import can_use_tool
+        current_im = imctx.get_im()
+        allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
+        if not can_use_tool(name, allowed_tool_names):
+            _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
+            return json.dumps({"error": "当前群聊身份没有使用该工具的权限"}, ensure_ascii=False), None
+
         tool = self._tools.get(name)
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
