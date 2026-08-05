@@ -199,43 +199,17 @@
         />
 
         <!-- 输入框 -->
-        <div v-if="pendingAtt.length || attUploading" class="chat-att-row">
-          <div v-for="a in pendingAtt" :key="a.attach_id" class="chat-att-chip">
-            <span class="chat-att-name">{{ a.name }}.{{ a.ext }}</span>
-            <button class="chat-att-x" @click="removeAtt(a)" title="移除">×</button>
-          </div>
-          <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
-        </div>
-        <div class="chat-input-row">
-          <button v-if="!recording" class="att-btn" @click="pickFile" title="添加附件">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
-          </button>
-          <button v-if="!recording" class="att-btn" @click="startRecord" title="语音输入">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="1.5" width="4" height="8" rx="2"/><path d="M3.5 7a4.5 4.5 0 0 0 9 0M8 11.5V14M5.5 14h5"/></svg>
-          </button>
-          <input ref="fileInput" type="file" multiple style="display:none" @change="onFilePicked" />
-          <textarea
-            v-if="!recording"
-            v-model="inputText"
-            ref="expInputEl"
-            placeholder="问问项目进度、截止日期…"
-            rows="1"
-            v-enter.exact.prevent="() => send()"
-            @input="autoResize"
-            @paste="onPaste"
-          />
-          <div v-else class="rec-bar">
-            <span class="rec-dot"></span>
-            <span class="rec-time">{{ recordSecs }}″</span>
-            <span class="rec-hint">录音中… 点 ✓ 发送</span>
-            <button class="rec-cancel" @click="cancelRecord">取消</button>
-          </div>
-          <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? stopRecord() : (streaming ? stopStreaming() : send())">
-            <PhCheck      v-if="recording"  weight="bold" :size="expanded ? 14 : 13" />
-            <PhArrowRight v-else-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
-            <PhStop       v-else            weight="fill"  :size="expanded ? 14 : 13" />
-          </button>
-        </div>
+        <GuguChatComposer
+          ref="composerRef"
+          v-model="inputText"
+          :pending-att="pendingAtt" :att-uploading="attUploading"
+          :recording="recording" :record-secs="recordSecs"
+          :expanded="expanded" :streaming="streaming" :vw="vw"
+          :on-remove-att="removeAtt" :on-pick-file="pickFile"
+          :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
+          :on-file-picked="onFilePicked" :on-paste="onPaste"
+          :on-send="() => send()" :on-stop-streaming="stopStreaming"
+        />
       </div>
 
     </div>
@@ -257,13 +231,16 @@ import { getGreeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { playGuguSfx } from '@/services/sfx'
 import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
+import GuguChatComposer from './gugu-chat/GuguChatComposer.vue'
 import type { ChatMessage, ChatFile, ChatSession } from './gugu-chat/chatTypes'
-import { API_BASE } from './gugu-chat/chatConstants'
+import { API_BASE, SMALL_W, SMALL_H, SIDEBAR_W } from './gugu-chat/chatConstants'
 import { renderMd, renderMdStream } from './gugu-chat/markdown'
 import {
-  IMG_EXTS, isImageFile, isAnimatedImageFile, canPreview,
+  isImageFile, isAnimatedImageFile, canPreview,
   fmtSize, fmtDur, voiceBar, displayQQFaces,
 } from './gugu-chat/messageDisplay'
+import { useChatAudio } from './gugu-chat/useChatAudio'
+import { useChatAttachments } from './gugu-chat/useChatAttachments'
 import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
   PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
@@ -289,9 +266,6 @@ interface ImConnectState {
   id: string | number
 }
 
-const SMALL_W   = 360
-const SMALL_H   = 360
-const SIDEBAR_W = 220
 
 const audioStore    = useAudioStore()
 const projectStore  = useProjectStore()
@@ -380,38 +354,38 @@ async function refreshAfterTools(usedTools: Set<string>) {
     if (has(_FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
   } catch (e) { /* 刷新失败不影响对话 */ }
 }
-const audioEl       = ref<HTMLAudioElement | null>(null)
-const audioPlaying  = ref(false)
-const audioCurrent  = ref(0)
-const audioDuration = ref(0)
-
-function progKey() { return audioStore.file ? `audio_prog_${audioStore.file.id}` : null }
-function saveProgress() {
-  const key = progKey()
-  if (!key || !audioEl.value?.duration) return
-  const t = audioEl.value.currentTime, d = audioEl.value.duration
-  if (t < d - 3) localStorage.setItem(key, String(t))
-  else localStorage.removeItem(key)
-}
-function restoreProgress() {
-  const key = progKey()
-  if (!key || !audioEl.value) return
-  const saved = localStorage.getItem(key)
-  localStorage.removeItem(key)
-  if (saved && +saved > 0) audioEl.value.currentTime = +saved
-}
-
-const needsRestore = ref(false)
-watch(() => audioStore.file?.id, () => { needsRestore.value = true })
-
-const audioSeekPct = computed(() =>
-  audioDuration.value ? (audioCurrent.value / audioDuration.value) * 100 : 0
-)
-
 const fabSvgRef    = ref<SVGSVGElement | null>(null)
 const rippleActive = ref(false)
 const barsRef      = ref<HTMLElement | null>(null)
 const barsPlaying  = ref(false)
+const spinningBack = ref(false)
+let rippleTimeout: ReturnType<typeof setTimeout> | null = null
+
+// 悬浮球转场动画在 audioStore.file 清空前触发（拿最后角度做转回归位动画）；
+// 播放器机制（暂停/进度/音量/语音条播放）全部收在 useChatAudio。
+const {
+  audioEl, audioPlaying, audioCurrent, audioDuration, audioSeekPct,
+  saveProgress, onCanPlay, onAudioPause, onAudioEnded, audioToggle, audioStop,
+  audioVolume, audioMuted, audioSetVolume, audioToggleMute, audioSeek, audioStartDrag, fmtTime,
+  voicePlayingId, toggleVoice,
+} = useChatAudio({
+  onTip: (text) => _chatTip(text),
+  onBeforeStop: () => {
+    const svgEl = fabSvgRef.value
+    if (!svgEl || !audioStore.file) return
+    const matrix = new DOMMatrix(getComputedStyle(svgEl).transform)
+    const angle = Math.atan2(matrix.b, matrix.a) * (180 / Math.PI)
+    const normalized = Math.round(((angle % 360) + 360) % 360)
+    spinningBack.value = true
+    svgEl.style.transform = `rotate(${normalized}deg)`
+    svgEl.style.transition = 'none'
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      svgEl.style.transition = 'transform 0.65s ease-out'
+      svgEl.style.transform = 'rotate(360deg)'
+    }))
+    setTimeout(() => { svgEl.style.transform = ''; svgEl.style.transition = ''; spinningBack.value = false }, 750)
+  },
+})
 
 watch(audioPlaying, (playing) => {
   if (playing) {
@@ -428,76 +402,10 @@ watch(audioPlaying, (playing) => {
   }
 })
 
-const spinningBack = ref(false)
-let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 watch(audioPlaying, (playing) => {
   if (playing) { if (rippleTimeout) clearTimeout(rippleTimeout); rippleActive.value = true }
   else { rippleTimeout = setTimeout(() => { rippleActive.value = false }, 3600) }
 })
-
-function onCanPlay() {
-  if (!audioEl.value) return
-  audioEl.value.volume = audioVolume.value
-  if (needsRestore.value) { needsRestore.value = false; restoreProgress() }
-  audioEl.value.play()
-}
-function onAudioPause() { audioPlaying.value = false }
-function onAudioEnded() {
-  audioPlaying.value = false
-  const key = progKey(); if (key) localStorage.removeItem(key)
-}
-function audioToggle() {
-  if (!audioEl.value) return
-  audioPlaying.value ? audioEl.value.pause() : audioEl.value.play()
-}
-function audioStop() {
-  audioEl.value?.pause()
-  const svgEl = fabSvgRef.value
-  if (svgEl && audioStore.file) {
-    const matrix = new DOMMatrix(getComputedStyle(svgEl).transform)
-    const angle = Math.atan2(matrix.b, matrix.a) * (180 / Math.PI)
-    const normalized = Math.round(((angle % 360) + 360) % 360)
-    spinningBack.value = true
-    svgEl.style.transform = `rotate(${normalized}deg)`
-    svgEl.style.transition = 'none'
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      svgEl.style.transition = 'transform 0.65s ease-out'
-      svgEl.style.transform = 'rotate(360deg)'
-    }))
-    setTimeout(() => { svgEl.style.transform = ''; svgEl.style.transition = ''; spinningBack.value = false }, 750)
-  }
-  audioPlaying.value = false; audioCurrent.value = 0; audioDuration.value = 0
-  audioStore.stop()
-}
-
-const VOL_KEY    = 'gugu_audio_volume'
-const audioVolume = ref(+(localStorage.getItem(VOL_KEY) ?? 0.5))
-const audioMuted  = ref(false)
-function audioSetVolume(e: Event) {
-  audioVolume.value = +(e.target as HTMLInputElement).value
-  localStorage.setItem(VOL_KEY, String(audioVolume.value))
-  if (audioEl.value) { audioEl.value.volume = audioVolume.value; audioEl.value.muted = false }
-  audioMuted.value = false
-}
-function audioToggleMute() {
-  audioMuted.value = !audioMuted.value
-  if (audioEl.value) audioEl.value.muted = audioMuted.value
-}
-function audioSeek(e: MouseEvent) {
-  if (!audioEl.value || !audioDuration.value) return
-  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  audioEl.value.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration.value
-}
-function audioStartDrag(e: MouseEvent) {
-  audioSeek(e)
-  const move = (ev: MouseEvent) => audioSeek(ev)
-  const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-  window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
-}
-function fmtTime(s: number) {
-  if (!s || isNaN(s)) return '0:00'
-  return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
-}
 
 // ── 窗口状态 ────────────────────────────────────────────
 const open       = ref(false)
@@ -524,10 +432,10 @@ function _markResizing() {
     if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
     if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
     resizing.value = false
-    fitTextarea()   // 过渡结束后做一次无视觉差的最终校准，处理浏览器的子像素取整
+    composerRef.value?.fitTextarea()   // 过渡结束后做一次无视觉差的最终校准，处理浏览器的子像素取整
   }
   windowRef.value?.addEventListener('transitionend', _onResizeTransitionEnd)
-  _resizeTimer = setTimeout(() => { resizing.value = false; fitTextarea() }, 600)
+  _resizeTimer = setTimeout(() => { resizing.value = false; composerRef.value?.fitTextarea() }, 600)
 }
 const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
 watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
@@ -539,11 +447,12 @@ const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
 const fabRef      = ref<HTMLElement | null>(null)
 const windowRef   = ref<HTMLElement | null>(null)
 const playerRef   = ref<HTMLElement | null>(null)
-const expInputEl  = ref<HTMLTextAreaElement | null>(null)
 // 真实可滚动的消息容器和虚拟列表由 GuguChatMessageList 内部持有；这里通过组件
 // 实例暴露的 el/scrollToIndex 访问，不在父组件里重新拿一份 DOM 引用。
 const messageListRef = ref<InstanceType<typeof GuguChatMessageList> | null>(null)
 const messagesEl = computed(() => messageListRef.value?.el ?? null)
+// 输入框的 focus/宽度重量高/清空后收起高度同理，通过 GuguChatComposer 暴露的方法操作。
+const composerRef = ref<InstanceType<typeof GuguChatComposer> | null>(null)
 
 // 视口尺寸，用于计算小窗绝对坐标
 const vw = ref(window.innerWidth)
@@ -767,146 +676,19 @@ const ownerPlatformUserId = ref<string | null>(null)
 const isGroupSession = ref(false)
 const abortCtrl      = ref<AbortController | null>(null)
 const pendingQueue   = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
-const pendingAtt   = ref<ChatFile[]>([])     // 待发送的聊天附件（已上传暂存）
-const attUploading = ref(false)
-const fileInput    = ref<HTMLInputElement | null>(null)
-function pickFile() { fileInput.value && fileInput.value.click() }
-async function uploadAttachFiles(files: File[], opts: { voice?: boolean } = {}) {
-  if (!files.length) return
-  attUploading.value = true
-  try {
-    for (const file of files) {
-      try {
-        const meta: ChatFile = await agentApi.uploadAttachment(file, opts.voice)
-        // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
-        if (IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
-        pendingAtt.value.push(meta)
-      } catch (err: any) {
-        messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
-      }
-    }
-  } finally { attUploading.value = false }
-}
-async function onFilePicked(e: Event) {
-  const target = e.target as HTMLInputElement
-  const files = [...(target.files || [])]
-  target.value = ''
-  await uploadAttachFiles(files)
-}
-
-// ── 拖入文件添加附件（大小窗都支持）──
-const chatDrag = ref(0)
-const isChatDragging = computed(() => chatDrag.value > 0)
-function _dragHasFiles(e: DragEvent) { return [...(e.dataTransfer?.types || [])].includes('Files') }
-function onChatDragEnter(e: DragEvent) { if (_dragHasFiles(e)) { e.preventDefault(); chatDrag.value++ } }
-function onChatDragOver(e: DragEvent)  { if (_dragHasFiles(e)) e.preventDefault() }
-function onChatDragLeave()  { if (chatDrag.value > 0) chatDrag.value-- }
-function onChatDrop(e: DragEvent) {
-  if (!_dragHasFiles(e)) return
-  e.preventDefault()
-  chatDrag.value = 0
-  uploadAttachFiles([...(e.dataTransfer?.files || [])])
-}
-// ── 粘贴文件/图片添加附件（截图直接 Ctrl+V，纯文本粘贴不受影响）──
-function onPaste(e: ClipboardEvent) {
-  const files = [...(e.clipboardData?.items || [])]
-    .filter(it => it.kind === 'file')
-    .map(it => it.getAsFile())
-    .filter((f): f is File => !!f)
-  if (!files.length) return
-  e.preventDefault()
-  uploadAttachFiles(files)
-}
-function removeAtt(a: ChatFile) {
-  if (a._thumbUrl) URL.revokeObjectURL(a._thumbUrl)   // 未发送即移除，回收 objectURL
-  pendingAtt.value = pendingAtt.value.filter(x => x.attach_id !== a.attach_id)
-}
-
-// ── 语音输入：录音 → 上传成附件 → 录完即发（咕咕用 mimo 听懂内容）──
-// 浏览器多录成 webm/opus（mimo 不收）→ 后端 /agent/upload 转 mp3；Safari m4a/Firefox ogg 原生免转。
-const recording  = ref(false)
-const recordSecs = ref(0)
-let _recorder: MediaRecorder | null = null
-let _recChunks: Blob[] = []
-let _recStream: MediaStream | null = null
-let _recTimer: ReturnType<typeof setInterval> | null = null
-let _recMime = ''
-let _recCancelled = false
-function _pickRecMime() {
-  const cands = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/ogg', 'audio/webm']  // 优先 mimo 原生(m4a/ogg)
-  if (window.MediaRecorder)
-    for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m } catch {} }
-  return ''
-}
-function _recExt(m: string) {
-  if (m.includes('mp4')) return 'm4a'
-  if (m.includes('ogg')) return 'ogg'
-  if (m.includes('wav')) return 'wav'
-  return 'webm'
-}
 function _chatTip(text: string) { messages.value.push({ id: mkid(), role: 'ai', text, time: now() }) }
-async function startRecord() {
-  if (recording.value) return
-  // getUserMedia 只在安全环境（HTTPS / localhost）可用——http 访问时 navigator.mediaDevices 直接是 undefined、连权限都不弹
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    _chatTip('录音需要 HTTPS 或 localhost 安全环境 🎤 当前是 http 访问（如局域网 IP），浏览器不给开麦克风。线上 https 域名可以用～'); return
-  }
-  if (!window.MediaRecorder) { _chatTip('这个浏览器不支持录音 🎤'); return }
-  try {
-    _recStream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    const mime = _pickRecMime()
-    _recorder = mime ? new MediaRecorder(_recStream, { mimeType: mime }) : new MediaRecorder(_recStream)
-    _recMime = _recorder.mimeType || mime || 'audio/webm'
-    _recChunks = []; _recCancelled = false
-    _recorder.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data) }
-    _recorder.onstop = _onRecStop
-    _recorder.start()
-    recording.value = true; recordSecs.value = 0
-    _recTimer = setInterval(() => { recordSecs.value++; if (recordSecs.value >= 60) stopRecord() }, 1000)
-  } catch (e: any) {
-    _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
-    messages.value.push({ id: mkid(), role: 'ai',
-      text: '没法录音 🎤 ' + (e?.name === 'NotAllowedError' ? '麦克风权限被拒了，去浏览器设置允许一下' : (e?.message || '')), time: now() })
-  }
-}
-function stopRecord()   { if (recording.value && _recorder) { _recCancelled = false; _recorder.stop() } }   // 结束并发送
-function cancelRecord() { if (recording.value && _recorder) { _recCancelled = true;  _recorder.stop() } }   // 丢弃
-async function _onRecStop() {
-  recording.value = false
-  if (_recTimer) { clearInterval(_recTimer); _recTimer = null }
-  _recStream?.getTracks().forEach(t => t.stop()); _recStream = null
-  const chunks = _recChunks, mime = _recMime, cancelled = _recCancelled
-  _recChunks = []; _recorder = null
-  if (cancelled || !chunks.length) return
-  const blob = new Blob(chunks, { type: mime })
-  if (!blob.size) return
-  const file = new File([blob], `语音_${Date.now()}.${_recExt(mime)}`, { type: mime })
-  await uploadAttachFiles([file], { voice: true })   // 标记为语音 → 语音条 + 30 天存储 + 「让我听听」
-  if (pendingAtt.value.length) send()   // 录完即发（含可能已输入的文字）
-}
-// ── 语音条播放：点击拉鉴权 blob（download 端点带 Bearer），单实例播放，再点暂停 ──
-const voicePlayingId = ref<string | null>(null)
-let _voiceAudio: HTMLAudioElement | null = null
-const _voiceUrls: Record<string, string> = {}            // attach_id → objectURL 缓存（同条重播不重拉）
-async function toggleVoice(f: ChatFile) {
-  const id = f.attach_id
-  if (!id) return
-  if (voicePlayingId.value === id && _voiceAudio) { _voiceAudio.pause(); return }  // 再点＝暂停
-  if (_voiceAudio) { _voiceAudio.pause(); _voiceAudio = null }                     // 切换：停掉上一条
-  try {
-    let url = _voiceUrls[id]
-    if (!url) {
-      const token = localStorage.getItem('user_token') ?? ''
-      const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} })
-      if (!res.ok) { _chatTip(res.status === 404 ? '这条语音过期啦（语音保留 30 天）🎤' : '语音加载失败了 😵'); return }
-      url = URL.createObjectURL(await res.blob()); _voiceUrls[id] = url
-    }
-    const a = new Audio(url); _voiceAudio = a; voicePlayingId.value = id
-    a.onended = a.onpause = () => { if (voicePlayingId.value === id) voicePlayingId.value = null }
-    await a.play()
-  } catch (e) { voicePlayingId.value = null; _chatTip('语音播放失败 🎤') }
-}
+
+// 附件（选择/拖拽/粘贴/暂存上传）与语音录制的唯一状态所有权在 useChatAttachments；
+// 这里单次实例化，因为 send() 仍需要直接读 pendingAtt 来拼发送 payload。
+const {
+  pendingAtt, attUploading, fileInput, pickFile, uploadAttachFiles, onFilePicked,
+  chatDrag, isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
+  removeAtt,
+  recording, recordSecs, startRecord, stopRecord, cancelRecord,
+} = useChatAttachments({
+  onError: (text) => _chatTip(text),
+  onVoiceSent: () => { send() },   // 录完即发（含可能已输入的文字）
+})
 
 let _sessionTurn = 0             // 当前 session 已发消息轮次（埋点用，切换 session 重置）
 
@@ -1238,11 +1020,11 @@ async function enterExpanded() {
   // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
   // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
   await nextTick()
-  fitTextarea(true)
+  composerRef.value?.fitTextarea(true)
   trackApi.track('chat_expanded').catch(() => {})
   await fetchSessions()
   await nextTick()
-  expInputEl.value?.focus()
+  composerRef.value?.focus()
   stick.value = true
   const el = messagesEl.value
   if (!el) return
@@ -1260,7 +1042,7 @@ async function exitExpanded() {
   expanded.value = false
   _markResizing()
   await nextTick()
-  fitTextarea(false)
+  composerRef.value?.fitTextarea(false)
   const el = messagesEl.value
   if (!el) return
   stick.value = true
@@ -1365,7 +1147,7 @@ async function newSession() {
   messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
   _sessionTurn = 0
   await nextTick()
-  expInputEl.value?.focus()
+  composerRef.value?.focus()
 }
 
 async function deleteSession(id: number) {
@@ -1374,61 +1156,6 @@ async function deleteSession(id: number) {
     sessions.value = sessions.value.filter(s => s.id !== id)
     if (sessionId.value === id) await newSession()
   } catch {}
-}
-
-function textareaWidthForMode(isExpanded: boolean) {
-  if (!isExpanded) {
-    // 小窗：左右内边距 13px、两个 16px 附件按钮、28px 发送按钮和三段 8px 间距。
-    return SMALL_W - 26 - 16 - 16 - 28 - 24
-  }
-  const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
-  const mainWidth = vw.value - left - 12 - 210
-  // 大窗：左右内边距 20px、两个 16px 附件按钮、32px 发送按钮和三段 10px 间距。
-  return Math.max(0, mainWidth - 40 - 16 - 16 - 32 - 30)
-}
-
-function fitTextarea(isExpanded = expanded.value) {
-  // 切换时 chat-window 的四条边都在过渡，直接读真实 textarea 只能拿到“当前帧”的宽度。
-  // 克隆到离屏节点按目标宽度量 scrollHeight，点击瞬间就能得到目标模式的正确行数。
-  const el = expInputEl.value
-  if (!el) return
-  const width = textareaWidthForMode(isExpanded)
-  if (!width) return
-  const style = getComputedStyle(el)
-  const sizer = document.createElement('textarea')
-  sizer.value = el.value
-  sizer.rows = 1
-  sizer.setAttribute('aria-hidden', 'true')
-  Object.assign(sizer.style, {
-    position: 'fixed',
-    visibility: 'hidden',
-    pointerEvents: 'none',
-    left: '-9999px',
-    top: '0',
-    width: `${width}px`,
-    height: 'auto',
-    minHeight: '0',
-    maxHeight: 'none',
-    overflow: 'hidden',
-    boxSizing: style.boxSizing,
-    padding: style.padding,
-    border: style.border,
-    font: style.font,
-    letterSpacing: style.letterSpacing,
-    lineHeight: style.lineHeight,
-    whiteSpace: style.whiteSpace,
-    wordBreak: style.wordBreak,
-    overflowWrap: style.overflowWrap,
-    tabSize: style.tabSize,
-  })
-  document.body.appendChild(sizer)
-  const height = Math.min(sizer.scrollHeight, 120)
-  sizer.remove()
-  el.style.height = `${height}px`
-}
-function autoResize(e: Event) {
-  const el = e.target as HTMLTextAreaElement; el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px'
 }
 
 // streaming 跟随意图：只有用户主动上翻才取消，回到底部附近恢复。
@@ -1623,7 +1350,7 @@ async function send(forcedText?: string) {
       files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
     inputText.value = ''
     pendingAtt.value = []
-    if (expInputEl.value) expInputEl.value.style.height = 'auto'
+    composerRef.value?.resetHeight()
     trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
     await scrollBottom(true)
   }
@@ -1840,73 +1567,33 @@ async function send(forcedText?: string) {
 .popup-close-btn svg { display: block; }
 .popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
 
-.chat-messages {
+/* .chat-messages 及其内部结构现在整体渲染于 GuguChatMessageList.vue（子组件），
+   同样需要 :deep() 才能穿透组件边界匹配。 */
+:deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
-.chat-main.is-expanded .chat-messages .msg-bubble { max-width: 72%; font-size: 14px; }
-.chat-main.is-expanded .chat-messages .msg-quoted { max-width: 72%; font-size: 13.5px; }
+.chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
+.chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 /* 虚拟列表占位容器：高度由 JS 撑出来（虚拟内容高度 + 顶部留白），撑出的空间给绝对定位的消息行腾地方 */
-.msg-virtual-spacer { position: relative; width: 100%; }
+:deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 /* 绝对定位的行不认祖先的 padding（top:0/left:0 是相对边框盒，不是内容盒），
    横向留白（原来 .chat-messages 的左右 padding）和「gap」只能各自摆在每一行自己身上，
    用 box-sizing:border-box 保证不溢出 100% 宽度。 */
-.msg-virtual-row { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
-.chat-main.is-expanded .msg-virtual-row { padding: 0 24px 12px; }
+:deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
+.chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px 12px; }
 /* 状态指示气泡不在虚拟列表里，是紧跟在占位容器后面的普通流内元素，补回同款左右留白 + gap */
-.chat-messages > .msg { margin: 8px 13px 12px; }
-.chat-main.is-expanded .chat-messages > .msg { margin: 12px 24px 20px; }
+:deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
+.chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
 
-.chat-att-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 6px; }
-.chat-att-chip { display: flex; align-items: center; gap: 5px; max-width: 180px;
-  padding: 3px 8px; border-radius: 8px; font-size: 11px; color: var(--color-primary);
-  background: rgba(123,127,178,0.1); border: 1px solid rgba(123,127,178,0.2); }
-.chat-att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-att-x { background: none; border: none; cursor: pointer; color: var(--color-primary);
-  font-size: 13px; line-height: 1; padding: 0; opacity: 0.6; }
-.chat-att-x:hover { opacity: 1; }
-.chat-att-chip.att-up { color: var(--text-secondary); background: rgba(0,0,0,0.04); border-color: rgba(0,0,0,0.08); }
-.att-btn { flex-shrink: 0; background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center; height: 28px; padding: 0;
-  opacity: 0.7; transition: opacity 0.15s, color 0.15s; }   /* 与发送按钮(28)等高，底对齐时中心也对齐 */
-.chat-main.is-expanded .att-btn { height: 32px; }   /* 放大态对齐放大发送按钮(32) */
-.att-btn:hover { opacity: 1; color: var(--color-primary); }
-.chat-input-row {
-  display: flex; align-items: flex-end; gap: 8px;   /* 输入框多行增高时，附件/发送按钮贴底对齐 */
-  padding: 10px 13px;
-  border-top: 1px solid rgba(255,255,255,0.65);
-  background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
-  flex-shrink: 0;
-}
-.chat-main.is-expanded .chat-input-row { padding: 14px 20px; gap: 10px; }
-/* 录音条：录音时替换输入框 */
-.rec-bar { flex: 1; display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-primary); height: 28px; min-width: 0; }   /* 与按钮(28)等高 → flex-end 底对齐时内容也居中对齐，不再偏低 */
-.chat-main.is-expanded .rec-bar { height: 32px; }   /* 放大态对齐 32 */
-.rec-dot { width: 8px; height: 8px; border-radius: 50%; background: #e15c5c; flex-shrink: 0; animation: rec-pulse 1s ease-in-out infinite; }
-@keyframes rec-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-.rec-time { font-variant-numeric: tabular-nums; font-weight: 600; color: #e15c5c; }
-.rec-hint { color: var(--text-secondary); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rec-cancel { margin-left: auto; flex-shrink: 0; border: none; background: rgba(123,127,178,0.12); color: var(--text-secondary); font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer; }
-.rec-cancel:hover { background: rgba(123,127,178,0.2); }
-.chat-input-row input {
-  flex: 1; border: none; background: none;
-  font-size: 13px; color: var(--text-primary);
-  outline: none; font-family: var(--font-sans);
-  line-height: 1.5; padding: 2px 0;
-}
-.chat-input-row textarea {
-  flex: 1; border: none; background: none;
-  font-size: 14px; color: var(--text-primary);
-  outline: none; font-family: var(--font-sans);
-  resize: none; line-height: 1.5; max-height: 120px; overflow-y: auto;
-  display: block; padding: 4px 0; vertical-align: middle;
-}
+/* chat-att-row/chat-input-row/rec-bar/att-btn 自身样式已随 GuguChatComposer.vue 迁移；
+   这里只留跨组件的祖先态覆盖（大窗态放大按钮/输入区），用 :deep() 穿透子组件 scope。 */
+.chat-main.is-expanded :deep(.att-btn) { height: 32px; }   /* 放大态对齐放大发送按钮(32) */
+.chat-main.is-expanded :deep(.chat-input-row) { padding: 14px 20px; gap: 10px; }
+.chat-main.is-expanded :deep(.rec-bar) { height: 32px; }   /* 放大态对齐 32 */
 /* 大窗的附件/发送按钮为 32px；单行输入也占满同一高度，图标和文字的视觉中线才一致。 */
-.chat-main.is-expanded .chat-input-row textarea { padding: 5.5px 0; }
+.chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
 /* 小窗输入字号略小，与小窗整体一致 */
-.chat-main:not(.is-expanded) .chat-input-row textarea { font-size: 13px; }
+.chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
 
 .exp-sidebar {
   width: 210px; flex-shrink: 0;
@@ -2060,7 +1747,10 @@ async function send(forcedText?: string) {
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
    没法在模板里挂 class，数值直接写这里（hover/active 与全局 .press-fx 保持一致） */
-.msg-bubble.md-body :deep(a[href^="gugu://"]) {
+/* .msg-bubble.md-body 本体现在渲染于 GuguChatMessageRow.vue（子组件，无 data-v-GuguChat
+   属性），这里必须整条选择器都用 :deep() 才能穿透组件边界匹配到，光把内层 a 包 :deep()
+   不够——外层 class 名同样带着父组件的 scope 校验。 */
+:deep(.msg-bubble.md-body a[href^="gugu://"]) {
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
@@ -2068,10 +1758,10 @@ async function send(forcedText?: string) {
   border-radius: 999px; box-shadow: 0 2px 8px rgba(123,127,178,0.28);
   cursor: pointer; transition: box-shadow 0.12s, transform 0.15s ease, opacity 0.15s ease; user-select: none;
 }
-.msg-bubble.md-body :deep(a[href^="gugu://"]:hover) {
+:deep(.msg-bubble.md-body a[href^="gugu://"]:hover) {
   box-shadow: 0 4px 14px rgba(80,90,110,0.3); opacity: 1;
 }
-.msg-bubble.md-body :deep(a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
+:deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 
 /* 扫码绑定弹窗（聊天上弹小窗）*/
 .cb-overlay {
@@ -2112,79 +1802,71 @@ async function send(forcedText?: string) {
 }
 .im-qr-cancel:hover { background: rgba(123,127,178,0.12); color: var(--text-primary); }
 
-.exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
+/* .exp-send-btn/.send-btn 已随 GuguChatComposer.vue 迁移 */
 
-/* ── 通用发送按钮 ── */
-.send-btn {
-  width: 28px; height: 28px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: transform 0.15s; flex-shrink: 0;
-}
-.send-btn svg { display: block; }
-.send-btn:hover:not(:disabled) { transform: scale(1.1); }
-.send-btn:disabled { opacity: 0.55; cursor: default; }
-
-/* ── 消息气泡 ── */
-.msg { display: flex; flex-direction: column; min-width: 0; }
-.msg.user { align-items: flex-end; }
-.msg-search-flash { animation: msg-search-flash 1.8s ease forwards; border-radius: 12px; }
+/* ── 消息气泡 ──
+   .msg 本体在 GuguChatMessageList.vue 渲染，.msg-bubble/.msg-files/.msg-footer 等
+   在 GuguChatMessageRow.vue 渲染——都是子组件，没有本文件的 data-v-GuguChat 属性，
+   整条选择器必须用 :deep() 才能跨组件边界匹配，否则样式全部失效（只剩默认 HTML 样式）。 */
+:deep(.msg) { display: flex; flex-direction: column; min-width: 0; }
+:deep(.msg.user) { align-items: flex-end; }
+:deep(.msg-search-flash) { animation: msg-search-flash 1.8s ease forwards; border-radius: 12px; }
 @keyframes msg-search-flash {
   0%   { background: rgba(123,127,178,0.18); }
   35%  { background: rgba(123,127,178,0.18); }
   100% { background: transparent; }
 }
 
-.msg.ai { align-items: flex-start; }
+:deep(.msg.ai) { align-items: flex-start; }
 /* 群成员消息（非 owner、非咕咕）：左侧，跟 ai 同一侧但气泡样式区分开，避免跟
    咕咕的回复混淆。 */
-.msg.member { align-items: flex-start; }
-.msg-bubble {
+:deep(.msg.member) { align-items: flex-start; }
+:deep(.msg-bubble) {
   padding: 9px 13px; border-radius: 13px;
   font-size: var(--gugu-body-size); line-height: var(--gugu-body-line); max-width: 88%;
   word-break: break-word; overflow-wrap: break-word;
 }
-.msg.ai .msg-bubble {
+:deep(.msg.ai .msg-bubble) {
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
   border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
 }
-.msg.member .msg-bubble {
+:deep(.msg.member .msg-bubble) {
   background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
   border-bottom-left-radius: 4px;
 }
-.msg.user .msg-bubble {
+:deep(.msg.user .msg-bubble) {
   background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
   border-bottom-right-radius: 4px;
 }
-.msg-speaker {
+:deep(.msg-speaker) {
   font-size: 11px; color: var(--text-secondary); margin: 0 2px 3px;
   font-weight: 600;
 }
 /* 引用/回复预览条：浅色小字，跟正文气泡区分开——只是提示"引用了什么"，不是正文。
    截到 8 行，超出部分靠 hover 的原生 title 提示看全文，避免长引用只剩一小段看不出内容。 */
-.msg-quoted {
+:deep(.msg-quoted) {
   max-width: 88%; margin-bottom: 4px; padding: 6px 10px;
   font-size: 12.5px; line-height: 1.5; color: var(--text-secondary);
   background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
 }
-.msg-quoted-thumb {
+:deep(.msg-quoted-thumb) {
   display: block; width: 112px; height: 112px; margin-top: 5px; object-fit: cover;
   border-radius: 8px; cursor: pointer; border: 1px solid rgba(123,127,178,0.18);
 }
-.msg-face-image-wrap {
+:deep(.msg-face-image-wrap) {
   max-width: 150px; margin-top: 5px; cursor: pointer; line-height: 0;
 }
-.msg-face-image {
+:deep(.msg-face-image) {
   display: block; width: 128px; height: 128px; max-width: 100%; object-fit: contain;
   border-radius: 12px;
 }
 /* 咕咕发来的文件卡片 */
-.msg-files { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
+:deep(.msg-files) { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; max-width: 88%; min-width: 0; }
 /* 按下反馈来自全局 .press-fx（模板里已加）——只要点击下沉，不要悬停抬起：
    这条挤在其它消息气泡中间，抬起会显得跟旁边气泡割裂 */
-.msg-file {
+:deep(.msg-file) {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
   max-width: 100%; box-sizing: border-box;
   /* 和 AI 气泡同款：半透明白 + 左下角小尾巴 + 内高光，营造气泡感 */
@@ -2196,12 +1878,12 @@ async function send(forcedText?: string) {
   transition: background 0.2s ease, box-shadow 0.25s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
-.msg-file.press-fx:hover {
+:deep(.msg-file.press-fx:hover) {
   background: rgba(255,255,255,0.7);
   /* 覆盖全局 .press-fx.press-fx:hover 的按钮阴影，避免文件气泡 hover 瞬间换影。 */
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14) !important;
 }
-.msg-file-ext {
+:deep(.msg-file-ext) {
   position: relative; overflow: hidden;
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
@@ -2209,16 +1891,16 @@ async function send(forcedText?: string) {
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
 }
 /* 图片附件：缩略图覆盖 ext 角标；加载失败时 @error 移除自身，露出底下角标 */
-.msg-file-thumb {
+:deep(.msg-file-thumb) {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover; display: block;
 }
-.msg-file-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.msg-file-name { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.msg-file-meta { font-size: 12px; color: #9296ad; }
-.msg-file-dl { flex-shrink: 0; color: #7b7fb2; }
+:deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+:deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.msg-file-meta) { font-size: 12px; color: #9296ad; }
+:deep(.msg-file-dl) { flex-shrink: 0; color: #7b7fb2; }
 /* 语音条：迷你播放条（播放钮 + 波形 + 时长），和文件卡同款气泡质感 */
-.msg-voice {
+:deep(.msg-voice) {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
   max-width: 100%; box-sizing: border-box; user-select: none;
   background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
@@ -2226,65 +1908,66 @@ async function send(forcedText?: string) {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
   transition: background 0.15s, box-shadow 0.15s;
 }
-.msg-voice:hover { background: rgba(255,255,255,0.72); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14); }
-.msg-voice .mv-btn {
+:deep(.msg-voice:hover) { background: rgba(255,255,255,0.72); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14); }
+:deep(.msg-voice .mv-btn) {
   flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: #fff;
   background: linear-gradient(135deg, #7b7fb2, #9590c4); box-shadow: 0 1px 3px rgba(110,110,170,0.3);
 }
-.msg-voice .mv-wave { display: flex; align-items: center; gap: 2px; height: 18px; }
-.msg-voice .mv-wave i { width: 2.5px; border-radius: 2px; background: #b0b2cc; transition: background 0.2s; }
-.msg-voice.playing .mv-wave i { background: #8186bd; animation: mv-pulse 0.9s ease-in-out infinite; }
-.msg-voice .mv-wave i:nth-child(even) { animation-delay: 0.15s; }
-.msg-voice .mv-wave i:nth-child(3n) { animation-delay: 0.3s; }
+:deep(.msg-voice .mv-wave) { display: flex; align-items: center; gap: 2px; height: 18px; }
+:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: #b0b2cc; transition: background 0.2s; }
+:deep(.msg-voice.playing .mv-wave i) { background: #8186bd; animation: mv-pulse 0.9s ease-in-out infinite; }
+:deep(.msg-voice .mv-wave i:nth-child(even)) { animation-delay: 0.15s; }
+:deep(.msg-voice .mv-wave i:nth-child(3n)) { animation-delay: 0.3s; }
 @keyframes mv-pulse { 0%,100% { transform: scaleY(0.6); } 50% { transform: scaleY(1); } }
-.msg-voice .mv-dur { font-size: 12.5px; color: #7e82a6; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+:deep(.msg-voice .mv-dur) { font-size: 12.5px; color: #7e82a6; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
-.msg.user .msg-files { align-items: flex-end; }
-.msg.user .msg-file { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
-.msg.user .msg-voice { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
-.msg-footer {
+:deep(.msg.user .msg-files) { align-items: flex-end; }
+:deep(.msg.user .msg-file) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
+:deep(.msg.user .msg-voice) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
+:deep(.msg-footer) {
   display: flex; align-items: center; gap: 4px;
   margin-top: 3px; padding: 0 3px;
 }
-.msg-time { font-size: 10px; color: var(--text-secondary); }
-.msg-copy-btn {
+:deep(.msg-time) { font-size: 10px; color: var(--text-secondary); }
+:deep(.msg-copy-btn) {
   width: 18px; height: 18px; border-radius: 4px; border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; padding: 0; opacity: 0;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
-.msg:hover .msg-copy-btn { opacity: 1; }
-.msg-copy-btn:hover { background: rgba(0,0,0,0.07); color: var(--color-primary); }
-.msg-copy-btn svg { display: block; }
+:deep(.msg:hover .msg-copy-btn) { opacity: 1; }
+:deep(.msg-copy-btn:hover) { background: rgba(0,0,0,0.07); color: var(--color-primary); }
+:deep(.msg-copy-btn svg) { display: block; }
 
-/* ── 思考/工具动画 ── */
-.thinking { display: flex; gap: 4px; align-items: center; padding: 16px 13px; }
-.thinking span {
+/* ── 思考/工具动画（状态气泡渲染于 GuguChatMessageList.vue，同样需要 :deep()） ── */
+:deep(.thinking) { display: flex; gap: 4px; align-items: center; padding: 16px 13px; }
+:deep(.thinking span) {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   background: var(--color-primary); animation: bounce 1.2s infinite; opacity: 0.6;
 }
-.thinking span:nth-child(2) { animation-delay: 0.2s; }
-.thinking span:nth-child(3) { animation-delay: 0.4s; }
+:deep(.thinking span:nth-child(2)) { animation-delay: 0.2s; }
+:deep(.thinking span:nth-child(3)) { animation-delay: 0.4s; }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-5px); } }
 
 /* 状态气泡只在生成开始时入场，后续状态切换只更新文字。 */
-.status-pop { animation: statusPop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+:deep(.status-pop) { animation: statusPop 0.3s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
 @keyframes statusPop { from { opacity: 0; transform: translateY(7px) scale(0.96); } to { opacity: 1; transform: none; } }
 
-.tool-bubble { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
-.tool-spinner {
+:deep(.tool-bubble) { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
+:deep(.tool-spinner) {
   width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
   border: 2px solid rgba(123,127,178,0.25); border-top-color: var(--color-primary);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.tool-label { font-weight: 600; }
+:deep(.tool-label) { font-weight: 600; }
 
 /* ── Markdown ── */
-/* md 排版由通用组件 MarkdownView 提供；这里只保留聊天气泡的内边距 */
-.md-body { padding: 10px 13px; }
+/* md 排版由通用组件 MarkdownView 提供；这里只保留聊天气泡的内边距（渲染于
+   GuguChatMessageRow.vue，同样需要 :deep()） */
+:deep(.md-body) { padding: 10px 13px; }
 
 /* ── 迷你播放器 ── */
 .mini-player {
