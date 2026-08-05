@@ -122,6 +122,20 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    # 定时任务的跨进程锁（scheduled:lock:<task_id>）需要真实 Redis，不能 mock——
+    # 之前 CI 一直没配 Redis，是因为在这之前没有测试真正需要一个可用连接；
+    # RedisSettings 默认就是 localhost:6379，这里起个服务容器占住这个端口，
+    # 不需要额外传 REDIS__HOST/PORT。
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - name: Checkout Gugu-web
         uses: actions/checkout@v4
