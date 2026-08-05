@@ -815,8 +815,9 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
                 # 用真实 mp4（video_url 块）探测视频理解。百炼/千问等对「图像列表」形式
                 # （type=video + 4 张 PNG）会返回极慢（80s+）且识别不出内容，必须发真实视频。
                 # ffmpeg 不可用时降级为纯文本判定（返回 None，提示无法生成样本）。
+                # 首次生成会同步跑 ffmpeg（最长 30s），丢线程池避免阻塞事件循环。
                 try:
-                    mp4_b64 = _probe_mp4_b64()
+                    mp4_b64 = await asyncio.to_thread(_probe_mp4_b64)
                 except RuntimeError as e:
                     return None, 200, f"无法生成视频探测样本：{e}"
                 content = [
@@ -837,8 +838,20 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
         sc = getattr(e, "status_code", None) or 0
         msg = str(e)[:200]
         if sc in (400, 422):
-            # 鉴权过了、格式也对，却拒了媒体块 → 多为纯文本模型不认该媒体
-            return False, sc, f"模型拒绝了{dim_label}输入，应为纯文本模型：{msg}"
+            # 400/422 不一定是「不支持媒体」——也可能来自块格式差异、参数名不兼容、视频长度/格式
+            # 问题、模型服务临时校验错误。只有错误文本明确表达「不支持这种媒体」才判定为纯文本模型；
+            # 无法确定时返回 None（测不准），**不写回配置**，避免把本来支持视频的模型误标成不支持。
+            low = msg.lower()
+            unsupported_hints = (
+                "not support", "unsupported", "does not support", "don't support",
+                "invalid image", "invalid video", "invalid audio",
+                "image not", "video not", "audio not",
+                "media type", "content type", "unrecognized", "unknown field",
+                "image_url", "video_url", "input_audio", "image_urls",
+            )
+            if any(h in low for h in unsupported_hints):
+                return False, sc, f"模型拒绝了{dim_label}输入，应为纯文本模型：{msg}"
+            return None, sc, f"未能判定（{sc}）：{msg}"
         if sc in (401, 403):
             return None, sc, f"鉴权失败（{sc}），先确认 Key/连通性再测"
         if sc == 404:

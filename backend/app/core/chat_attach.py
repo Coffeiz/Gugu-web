@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -14,6 +15,9 @@ import uuid
 
 from app.core.redis import get_redis, get_redis_sync
 from app.services.storage import get_storage
+
+# 视频转码并发上限：ffmpeg CPU/内存密集，避免多人同时上传视频打满机器
+VIDEO_TRANSCODE_SEMAPHORE = asyncio.Semaphore(2)
 
 # 让 Pillow 能解码 iPhone 的 HEIC/HEIF（缺包则静默跳过，heic 退回不可读）
 try:
@@ -434,7 +438,9 @@ def _minimax_video_enabled(model_cfg) -> bool:
 #      >90MB 兜底仍走 base64（已知会超 MiniMax 上限，由错误兜底）
 #   4) 非 MiniMax 走 OpenAI 兼容块（mimo 等），与现状一致，不变
 async def _probe_video(raw: bytes) -> dict | None:
-    """用 ffprobe 读视频分辨率/码率。返回 {width, height, bit_rate, codec}，失败 None。"""
+    """用 ffprobe 读视频分辨率/码率。返回 {width, height, bit_rate, codec}，失败 None。
+
+    ffprobe 是同步子进程，用 `asyncio.to_thread` 丢到线程池跑，避免阻塞事件循环。"""
     import json as _json
     import subprocess
     import tempfile as _tf
@@ -442,7 +448,8 @@ async def _probe_video(raw: bytes) -> dict | None:
         f.write(raw)
         tmp = f.name
     try:
-        proc = subprocess.run(
+        proc = await asyncio.to_thread(
+            subprocess.run,
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=codec_name,width,height,bit_rate",
              "-of", "json", tmp],
@@ -468,7 +475,10 @@ async def _probe_video(raw: bytes) -> dict | None:
 
 
 async def _compress_video(raw: bytes) -> bytes | None:
-    """用 ffmpeg 压成 1080p 5M h264，返回新字节；失败 None。音频保留 aac 96k。"""
+    """用 ffmpeg 压成 1080p 5M h264，返回新字节；失败 None。音频保留 aac 96k。
+
+    ffmpeg 是同步子进程且 CPU/内存密集，用 `asyncio.to_thread` 丢线程池 + 全局 semaphore
+    限制并发，避免阻塞事件循环、避免多人同时转码打满机器。"""
     import subprocess
     import tempfile as _tf
     with _tf.NamedTemporaryFile(suffix=".bin", delete=False) as inp:
@@ -476,15 +486,20 @@ async def _compress_video(raw: bytes) -> bytes | None:
         inp_path = inp.name
     out_path = inp_path + ".out.mp4"
     try:
-        # scale：长边压到 1080p（-2 保证偶数）；-b:v 5M 控制平均码率；不显式 -maxrate，留点高峰
-        proc = subprocess.run(
-            ["ffmpeg", "-y", "-i", inp_path,
-             "-vf", f"scale='min({VIDEO_COMPRESS_MAX_DIM},iw)':-2",
-             "-c:v", "libx264", "-preset", "fast",
-             "-b:v", VIDEO_COMPRESS_BITRATE, "-c:a", "aac", "-b:a", "96k",
-             "-movflags", "+faststart", out_path],
-            capture_output=True, timeout=180,
-        )
+        async with VIDEO_TRANSCODE_SEMAPHORE:
+            # scale：长边压到 1080p（force_original_aspect_ratio=decrease 保证竖屏也压长边，
+            # 输出宽高取偶数）；-b:v 5M 控制平均码率；不显式 -maxrate，留点高峰
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                ["ffmpeg", "-y", "-i", inp_path,
+                 "-vf", f"scale={VIDEO_COMPRESS_MAX_DIM}:{VIDEO_COMPRESS_MAX_DIM}:"
+                        f"force_original_aspect_ratio=decrease,"
+                        f"scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                 "-c:v", "libx264", "-preset", "fast",
+                 "-b:v", VIDEO_COMPRESS_BITRATE, "-c:a", "aac", "-b:a", "96k",
+                 "-movflags", "+faststart", out_path],
+                capture_output=True, timeout=180,
+            )
         if proc.returncode != 0:
             return None
         with open(out_path, "rb") as f:
@@ -517,11 +532,14 @@ async def _upload_video_mmfile(raw: bytes, name: str, model_cfg) -> str | None:
     """把视频上传到 MiniMax Files API，返回 file_id；失败 None。
 
     上传端点从 model_cfg.base_url 推 host（https://host/v1/files/upload），
-    仅 MiniMax 走这条路；其它 provider 上游不识别 mm_file://，调用方需先判 _minimax_video_enabled。"""
+    仅 MiniMax 走这条路；其它 provider 上游不识别 mm_file://，调用方需先判 _minimax_video_enabled。
+    失败时用 `diag_log` 记录脱敏信息（HTTP 状态码 / 异常类型），不写文件名/内容。"""
     import httpx
+    from app.core.redaction import diag_log_raw
     api_key = (getattr(model_cfg, "api_key", "") or "").strip()
     base_url = (getattr(model_cfg, "base_url", "") or "").rstrip("/")
     if not api_key or not base_url:
+        diag_log_raw("chat_attach.upload_mmfile", "缺少 api_key 或 base_url，跳过上传")
         return None
     # https://api.minimaxi.com/anthropic → https://api.minimaxi.com
     from urllib.parse import urlparse
@@ -537,13 +555,17 @@ async def _upload_video_mmfile(raw: bytes, name: str, model_cfg) -> str | None:
                 data={"purpose": VIDEO_MMFILE_PURPOSE},
             )
         if r.status_code != 200:
+            diag_log_raw("chat_attach.upload_mmfile", f"上传失败 status={r.status_code}")
             return None
         import json as _json
         data = r.json()
         file_obj = data.get("file") or {}
         fid = file_obj.get("file_id")
+        if not fid:
+            diag_log_raw("chat_attach.upload_mmfile", "上传成功但响应缺 file_id")
         return str(fid) if fid else None
-    except Exception:
+    except Exception as e:
+        diag_log_raw("chat_attach.upload_mmfile", f"上传异常 type={type(e).__name__}")
         return None
 
 
@@ -729,6 +751,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
             # 格式：配了语音识别模型时音频/语音**不必原生**——voice.transcribe 会用 ffmpeg 把任意格式
             # （webm/amr/mp4…）转 wav 再送。网页 Chrome 录的就是 webm，过去卡在这。视频无转写仍需原生交 mimo。
             fmt_ok = native or (voice_ok and not is_video)
+            why = None
             if can_feed and fmt_ok:
                 try:
                     import base64
@@ -738,6 +761,8 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                         # 视频：探测规格 → 超 1080p/16M 先压成 1080p 5M h264 → 压缩后 ≤45MB 走 base64，
                         # >45MB 且 ≤90MB 走 mm_file（MiniMax M3 上传 Files API 用 mm_file:// 引用）。
                         # 非 MiniMax（mimo 等 OpenAI 兼容块）不识别 mm_file://，仍走 base64（受 36MB 上限）。
+                        # 超限（>90MB）或 mm_file 上传失败 → 明确拒绝，**不回退 base64**（base64 注定超
+                        # MiniMax 上限，回退只会生成超大字符串浪费内存再失败）。
                         minimax_cfg = model_cfg
                         if minimax_cfg is None:
                             try:
@@ -755,27 +780,30 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                                 if compressed:
                                     payload = compressed
                                     payload_mime = "video/mp4"
-                            if len(payload) > VIDEO_BASE64_MAX and len(payload) <= VIDEO_MMFILE_MAX:
+                            if len(payload) <= VIDEO_BASE64_MAX:
+                                # ≤45MB：base64 内联
+                                media.append({"type": "video", "mode": "base64", "mime": payload_mime,
+                                              "b64": base64.b64encode(payload).decode()})
+                            elif len(payload) <= VIDEO_MMFILE_MAX:
+                                # 45–90MB：走 mm_file；上传失败明确拒绝，不回退 base64
                                 fid = await _upload_video_mmfile(payload, meta.get("name") or "video.mp4", minimax_cfg)
-                                if fid:
-                                    media.append({"type": "video", "mode": "mm_file",
-                                                  "mime": payload_mime, "file_id": fid})
-                                    parts.append(f"\n\n📎 用户上传了{noun}{tag}（已随附{noun}，你可直接看内容）；"
-                                                 f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
-                                    continue
-                            # 走 base64（≤45MB，或 mm_file 上传失败兜底）
-                            media.append({"type": "video", "mode": "base64", "mime": payload_mime,
-                                          "b64": base64.b64encode(payload).decode()})
+                                if not fid:
+                                    raise ValueError("这条视频上传失败（服务端暂不可用），没法直接看")
+                                media.append({"type": "video", "mode": "mm_file",
+                                              "mime": payload_mime, "file_id": fid})
+                            else:
+                                # >90MB：明确拒绝，不生成注定失败的 base64
+                                raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
                         else:
                             # 非 MiniMax：保持旧行为，仅 ≤36MB 走 base64
                             if meta["size"] > MEDIA_RAW_MAX:
-                                raise ValueError("too large")
+                                raise ValueError("这条视频太大（超过上限），没法直接看")
                             media.append({"type": "video", "mode": "base64", "mime": mime,
                                           "b64": base64.b64encode(raw).decode()})
                     else:
                         # 音频/语音：保持旧行为，仅 ≤36MB 走 base64
                         if meta["size"] > MEDIA_RAW_MAX:
-                            raise ValueError("too large")
+                            raise ValueError("这条音频太大（超过上限），没法直接听")
                         media.append({"type": "audio", "mode": "base64", "mime": mime,
                                       "b64": base64.b64encode(raw).decode()})
                     if is_voice:
@@ -786,13 +814,16 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                         parts.append(f"\n\n📎 用户上传了{noun}{tag}（已随附{noun}，你可直接听/看内容）；"
                                      f"若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。")
                     continue
+                except ValueError as e:
+                    # 视频超限 / mm_file 上传失败：明确拒绝，给出具体原因
+                    why = str(e)
                 except Exception:
                     pass   # 读取/编码失败 → 退文字提示
             if not can_feed:
                 why = f"没法处理{noun}（需主模型开启对应多模态维度，或在后台配「语音识别模型」）"
             elif not fmt_ok:
                 why = f"这条{noun}是 {ext or '未知'} 格式、得先转成 mp3 才能听——服务器没装 ffmpeg 转不了（装上 ffmpeg 即可听内容）"
-            else:
+            elif why is None:
                 why = f"这条{noun}太大（超过上限），没法直接听/看"
             tail = "" if is_voice else "；若用户要保存，调用 save_uploaded_file(attach_id) 存进文件库。"
             parts.append(f"\n\n📎 用户发来{noun}{tag}。{why}。{tail}")

@@ -114,3 +114,262 @@ def test_minimax_video_enabled_other_provider():
     from app.core.chat_attach import _minimax_video_enabled
     cfg = SimpleNamespace(provider="mimo", base_url="https://token-plan-cn.xiaomimimo.com/v1", model="mimo-v2.5-pro")
     assert _minimax_video_enabled(cfg) is False
+
+
+# ── _compress_video：竖屏长边限制 + 不阻塞事件循环 ───────────────────────────
+def test_compress_video_uses_portrait_scale_filter(monkeypatch):
+    """竖屏视频的 ffmpeg 滤镜必须限制长边（force_original_aspect_ratio=decrease），
+    而不是只限制宽度（旧实现 scale='min(1920,iw)':-2 会让 1440×2560 保持超高高度）。"""
+    import asyncio
+    import subprocess
+    from app.core import chat_attach
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        # 模拟 ffmpeg 成功，并生成一个假输出文件
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b"FAKE_MP4")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    async def fake_to_thread(fn, *a, **k):
+        return fn(*a, **k)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    result = asyncio.run(chat_attach._compress_video(b"RAW_VIDEO"))
+    assert result == b"FAKE_MP4"
+    vf = None
+    for i, arg in enumerate(captured["cmd"]):
+        if arg == "-vf":
+            vf = captured["cmd"][i + 1]
+            break
+    assert vf is not None
+    # 必须用 force_original_aspect_ratio=decrease 限制长边，且输出宽高取偶数
+    assert "force_original_aspect_ratio=decrease" in vf
+    assert "trunc(iw/2)*2" in vf
+    # 旧实现只限制宽度的 min(1920,iw) 不应再出现
+    assert "min(1920,iw)" not in vf
+
+
+def test_compress_video_uses_to_thread(monkeypatch):
+    """ffmpeg 必须通过 asyncio.to_thread 跑，不能直接同步 subprocess.run 阻塞事件循环。"""
+    import asyncio
+    import subprocess
+    from app.core import chat_attach
+
+    called_to_thread = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b"FAKE_MP4")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    async def fake_to_thread(fn, *a, **k):
+        called_to_thread["n"] += 1
+        return fn(*a, **k)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    asyncio.run(chat_attach._compress_video(b"RAW_VIDEO"))
+    assert called_to_thread["n"] == 1, "ffmpeg 必须经 asyncio.to_thread 执行"
+
+
+def test_probe_video_uses_to_thread(monkeypatch):
+    """ffprobe 必须通过 asyncio.to_thread 跑，不能直接同步 subprocess.run 阻塞事件循环。"""
+    import asyncio
+    import json
+    import subprocess
+    from app.core import chat_attach
+
+    called_to_thread = {"n": 0}
+
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            cmd, 0,
+            stdout=json.dumps({"streams": [{"codec_name": "h264", "width": 1920, "height": 1080, "bit_rate": 5000000}]}),
+        )
+
+    async def fake_to_thread(fn, *a, **k):
+        called_to_thread["n"] += 1
+        return fn(*a, **k)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    result = asyncio.run(chat_attach._probe_video(b"RAW_VIDEO"))
+    assert called_to_thread["n"] == 1, "ffprobe 必须经 asyncio.to_thread 执行"
+    assert result["width"] == 1920
+
+
+# ── _upload_video_mmfile：成功 / 失败 ────────────────────────────────────────
+def test_upload_video_mmfile_success(monkeypatch):
+    """mm_file 上传成功返回 file_id。"""
+    import asyncio
+    import httpx
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"file": {"file_id": 12345}, "base_resp": {"status_code": 0}}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    cfg = SimpleNamespace(api_key="k", base_url="https://api.minimaxi.com/anthropic")
+    fid = asyncio.run(chat_attach._upload_video_mmfile(b"DATA", "v.mp4", cfg))
+    assert fid == "12345"
+
+
+def test_upload_video_mmfile_failure_status(monkeypatch):
+    """mm_file 上传非 200 返回 None（不抛异常）。"""
+    import asyncio
+    import httpx
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    class FakeResp:
+        status_code = 500
+        def json(self):
+            return {}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def post(self, *a, **k):
+            return FakeResp()
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
+    cfg = SimpleNamespace(api_key="k", base_url="https://api.minimaxi.com/anthropic")
+    fid = asyncio.run(chat_attach._upload_video_mmfile(b"DATA", "v.mp4", cfg))
+    assert fid is None
+
+
+# ── resolve_for_message：mm_file 失败不回退 base64、超限拒绝 ─────────────────
+def _make_video_meta(size):
+    return {
+        "attach_id": "a1", "name": "v.mp4", "ext": "mp4", "size": size,
+        "kind": "video", "mime": "video/mp4", "qq_face": False, "quoted": False,
+    }
+
+
+def test_resolve_mmfile_failure_does_not_fallback_base64(monkeypatch):
+    """45–90MB 视频 mm_file 上传失败 → 明确拒绝，**不生成 base64**（base64 注定超 MiniMax 上限）。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 60 * 1024 * 1024  # 60MB
+    meta = _make_video_meta(size)
+
+    async def fake_get_meta(uid, aid):
+        return meta
+
+    async def fake_read_bytes(meta):
+        return b"x" * size
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    async def fake_upload(raw, name, cfg):
+        return None  # 上传失败
+
+    monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
+
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
+                          model="MiniMax-M3", vision_video=True)
+    text, cards, images, media = asyncio.run(
+        chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
+    # 不应生成任何 base64 视频块
+    assert media == []
+    # 提示里应说明上传失败
+    assert "上传失败" in text
+
+
+def test_resolve_video_over_90mb_rejected(monkeypatch):
+    """>90MB 视频 → 明确拒绝，不生成注定失败的 base64。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 95 * 1024 * 1024  # 95MB
+    meta = _make_video_meta(size)
+
+    async def fake_get_meta(uid, aid):
+        return meta
+
+    async def fake_read_bytes(meta):
+        return b"x" * size
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
+
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
+                          model="MiniMax-M3", vision_video=True)
+    text, cards, images, media = asyncio.run(
+        chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
+    assert media == []
+    assert "90MB" in text
+
+
+def test_resolve_video_under_45mb_base64(monkeypatch):
+    """≤45MB 视频 → 走 base64 内联。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 10 * 1024 * 1024  # 10MB
+    meta = _make_video_meta(size)
+
+    async def fake_get_meta(uid, aid):
+        return meta
+
+    async def fake_read_bytes(meta):
+        return b"x" * size
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
+
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
+                          model="MiniMax-M3", vision_video=True)
+    text, cards, images, media = asyncio.run(
+        chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
+    assert len(media) == 1
+    assert media[0]["mode"] == "base64"
+    assert media[0]["type"] == "video"
