@@ -99,10 +99,16 @@ class UploadTargetError(ValueError):
 
 
 async def validate_oss_upload(storage, user_id: int, storage_key: str) -> UploadedObjectInfo:
-    """校验 OSS 直传对象归属，并返回服务端读取的真实元数据。"""
+    """校验 OSS 直传对象归属，并返回服务端读取的真实元数据。
+
+    storage_key 必须落在本用户的 ``.upload-staging/`` 目录下——只检查
+    ``{user_id}/`` 前缀不够：客户端可以把自己名下任意一个正式文件的 storage_key
+    当成 confirm 请求体传回来，confirm 里的 rename_file 会把那个真实对象 copy
+    到新 key、删掉原 key，原文件的旧 DB 记录就会指向一个已经不存在的对象。
+    """
     if not isinstance(storage, OSSStorageBackend):
         raise UploadTargetError(400, "当前存储后端不是 OSS，请使用普通上传")
-    if not storage_key.startswith(f"{user_id}/"):
+    if not storage_key.startswith(f"{user_id}/.upload-staging/"):
         raise UploadTargetError(403, "无权限访问该存储路径")
     try:
         metadata = await storage.head(storage_key)
@@ -246,7 +252,14 @@ async def confirm_oss_upload(
     不是最终落点）；所有校验通过后才把它 copy 到最终 key，校验失败时临时对象
     留在原地不动，不会碰真实数据。旧物理对象（覆盖场景）不在这里删——那一步要
     等调用方 commit 成功后才能做，否则事务回滚时数据已经丢了。
+
+    调用方（当前只有 files.py 的 /confirm 路由）应该已经用 validate_oss_upload
+    校验过 staging_key 的归属和真实存在；这里再校验一次前缀是防御性冗余，避免
+    未来新增调用方漏做那一步——传入不在 .upload-staging/ 下的 key（比如用户自己
+    另一个正式文件的 storage_key）必须直接拒绝，不能让 rename_file 把它移走。
     """
+    if not staging_key.startswith(f"{user_id}/.upload-staging/"):
+        raise UploadTargetError(403, "无权限访问该存储路径")
     if size_bytes > max_file_bytes:
         raise UploadTargetError(413, "文件超过单文件大小限制")
     if storage_limit_bytes is not None:

@@ -140,6 +140,31 @@ def _scheduled_lock_key(task_id: int) -> str:
     return f"scheduled:lock:{task_id}"
 
 
+async def _once_task_is_in_flight(task_id: int, last_run_at) -> bool:
+    """判断一次性任务是不是"正在执行、还没写完结果"，而不是真的已经完结（成功/失败）。
+
+    只看 last_run_at/last_run_failed 区分不出"还在跑"和"跑崩了没收尾"——两者都是
+    last_run_at 非空、last_run_failed=False。这里额外查 Redis 锁：锁还在，就是真的
+    正在跑；锁没了但离 last_run_at 还没超过锁的 timeout，给一段宽限（避免执行刚结束、
+    锁刚释放，DB 还没来得及写 last_run_failed 的那一瞬间被误判成"已经完结"）；
+    过了这段宽限锁还没了，说明进程大概率是崩了——不再当成"正在跑"，允许被当作
+    失败对待（不再挡列表清理/重新触发）。
+    """
+    if last_run_at is None:
+        return False
+    from app.core.redis import get_redis
+    try:
+        if await get_redis().exists(_scheduled_lock_key(task_id)):
+            return True
+    except Exception:
+        # Redis 查不到就保守当作"可能还在跑"，不能因为 Redis 抖动就把正在执行的
+        # 任务当成崩溃清理掉。
+        return True
+    from datetime import timezone as _tz
+    at = last_run_at if last_run_at.tzinfo else last_run_at.replace(tzinfo=_tz.utc)
+    return (now_utc() - at) < timedelta(seconds=_SCHEDULED_LOCK_TIMEOUT)
+
+
 async def execute_task(task_id: int, is_trial: bool = False) -> dict:
     """执行一次任务，返回各渠道投递结果 {渠道: 状态}（试运行据此给用户反馈）。
 

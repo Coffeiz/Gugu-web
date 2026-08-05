@@ -83,19 +83,37 @@ async def list_tasks(event_id: int | None = None, user: User = Depends(get_curre
     else:                      # 定时任务面板：排除日程提醒（与日历解耦，作为活动的提醒单独存在）
         stmt = stmt.where(ScheduledTask.event_id.is_(None))
     rows = (await db.execute(stmt.order_by(ScheduledTask.id.desc()))).scalars().all()
-    # 读时顺手清过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
-    # 面板自己也不显（也不留）过点的 @once。判据与 GC 同（过点超 120s 宽限，见 app/scheduled_tasks）。
-    # 触发过但失败的（last_run_failed=True）不在这里删——用户还没看到结果就被清掉，
-    # 既没法知道任务失败了，也没法手动重试；留给用户自己删或以后接重试入口。
-    from app.scheduled_tasks import _once_expired
+    # 读时顺手处理过期一次性任务：不只靠 worker 的 reconcile GC——万一 worker 滞后/没跑，
+    # 面板自己也要能收拾。两类过期分开处理，不能用同一条规则：
+    #
+    # 1) 从没跑过（last_run_at 为空）且已经过点：调度大概率没触发（misfire/进程当时没起），
+    #    真的没意义了，直接删——跟 reconcile() 的 GC 判据一致（过点超 120s 宽限）。
+    # 2) 跑过、但既没标成功（行会被删掉）也没标失败、也查不到还在跑的 Redis 锁：
+    #    大概率是执行中途进程崩了，没来得及写结果。这种不能删——用户压根没看到失败
+    #    原因、也没法重试；转成"失败"状态，留给用户在面板里看到并手动重新触发。
+    # "正在执行中"（last_run_at 已写、Redis 锁还在，或刚释放不久）两类都不能碰：
+    # 执行超过 120s 宽限窗口完全可能（Agent 调用本身就慢），不能因为面板恰好在这时
+    # 被打开，就把还在跑的任务误判成"过期没跑"或"崩了"。
+    from app.scheduled_tasks import _once_expired, _once_task_is_in_flight
     from app.core.tz import local_now
     now = local_now()
-    expired = [t for t in rows if _once_expired(t.cron, now) and not t.last_run_failed]
-    if expired:
-        for t in expired:
+    never_ran_expired = [t for t in rows if t.last_run_at is None and _once_expired(t.cron, now)]
+    abandoned = []
+    for t in rows:
+        if t.last_run_at is None or t.last_run_failed or not _once_expired(t.cron, now):
+            continue
+        if await _once_task_is_in_flight(t.id, t.last_run_at):
+            continue
+        abandoned.append(t)
+    if never_ran_expired:
+        for t in never_ran_expired:
             await db.delete(t)
         await db.commit()
-        rows = [t for t in rows if t not in expired]
+        rows = [t for t in rows if t not in never_ran_expired]
+    if abandoned:
+        for t in abandoned:
+            t.last_run_failed = True
+        await db.commit()
     return {"tasks": [_to_resp(t) for t in rows]}
 
 
@@ -183,16 +201,25 @@ async def test_notify(body: TestNotify, user: User = Depends(get_current_user), 
 
 @router.post("/{task_id}/run")
 async def run_now(task_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """立即试运行一次并等结果，返回各渠道投递状态（成功 / 无地址 / 失败）给用户看。
+    """立即运行一次并等结果，返回各渠道投递状态（成功 / 无地址 / 失败）给用户看。
+
+    普通任务/还没跑过的一次性任务：走试运行（is_trial=True），不写 last_run_at、
+    不会因为这次点击就让任务被标记完成或删除，纯粹是"看看这次会说什么"。
+    已经失败过的一次性任务：这是目前唯一暴露给用户的"重试"入口，必须走正式执行
+    （is_trial=False）——试运行不会清 last_run_failed、不会在成功后删除任务，
+    用户点了"立即运行"却发现任务列表毫无变化，等于这个失败任务永远卡在失败态、
+    没有真正能收尾的路径。
 
     试运行是手动操作、用户在等反馈，所以同步 await（连接池已够，不会像 SSE 那样耗尽）。
     """
-    await _owned(task_id, user, db)
+    t = await _owned(task_id, user, db)
+    is_once = (t.cron or "").startswith("@once:")
+    retry_failed_once = is_once and bool(t.last_run_failed)
     # _owned 只负责权限校验；Agent 生成和 IM 投递可能持续很久，先释放本次
     # 请求的 DB 连接，避免长事务阻塞迁移和其他登录/业务查询。
     await db.close()
     from app import scheduled_tasks as ST
-    task = asyncio.create_task(ST.execute_task(task_id, is_trial=True))
+    task = asyncio.create_task(ST.execute_task(task_id, is_trial=not retry_failed_once))
     _trial_tasks.add(task)
     task.add_done_callback(_trial_tasks.discard)
     try:

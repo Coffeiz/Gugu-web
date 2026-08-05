@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -139,6 +140,107 @@ async def test_execute_task_still_blocks_when_last_run_succeeded_state(db, user_
 
     result = await scheduled.execute_task(task.id, is_trial=False)
     assert result == {"错误": "一次性任务已经执行过或正在执行"}
+
+
+@pytest.mark.asyncio
+async def test_once_task_in_flight_when_redis_lock_held(db, user_a, monkeypatch):
+    """Redis 锁还在 = 真的正在跑，不能被列表清理/GC 当成"过期没跑"或"崩了"清掉。"""
+    import app.scheduled_tasks as scheduled
+    from app.core.tz import now_utc
+
+    async def fake_exists(key):
+        assert key == scheduled._scheduled_lock_key(999)
+        return True
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(exists=fake_exists))
+
+    in_flight = await scheduled._once_task_is_in_flight(999, now_utc())
+    assert in_flight is True
+
+
+@pytest.mark.asyncio
+async def test_once_task_not_in_flight_after_lock_expires_and_grace_passes(monkeypatch):
+    """锁没了、last_run_at 也早就超过锁的 timeout：判定为不在跑（大概率是崩了），
+    不再挡列表清理——调用方据此把它转成失败态，而不是当成"还在跑"一直悬着。"""
+    import app.scheduled_tasks as scheduled
+    from datetime import timedelta
+    from app.core.tz import now_utc
+
+    async def fake_exists(key):
+        return False
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(exists=fake_exists))
+
+    long_ago = now_utc() - timedelta(seconds=scheduled._SCHEDULED_LOCK_TIMEOUT + 30)
+    in_flight = await scheduled._once_task_is_in_flight(999, long_ago)
+    assert in_flight is False
+
+
+@pytest.mark.asyncio
+async def test_once_task_in_flight_grace_window_after_lock_release(monkeypatch):
+    """锁刚释放（执行刚结束），但还在锁 timeout 的宽限窗口内：不能立刻判定"不在跑"，
+    避免执行结果还没来得及写 last_run_failed 的这一瞬间被误判成崩溃。"""
+    import app.scheduled_tasks as scheduled
+    from app.core.tz import now_utc
+
+    async def fake_exists(key):
+        return False
+
+    monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(exists=fake_exists))
+
+    just_now = now_utc()
+    in_flight = await scheduled._once_task_is_in_flight(999, just_now)
+    assert in_flight is True
+
+
+@pytest.mark.asyncio
+async def test_run_now_uses_formal_execution_to_retry_failed_once_task(monkeypatch, db, user_a):
+    """"立即运行"对已经失败过的一次性任务，必须走正式执行（is_trial=False），
+    不然点了也不会清 last_run_failed、成功了也不会删任务——用户看起来毫无反应。"""
+    import app.api.v1.scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+    from app.core.tz import now_utc
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="失败过的一次性任务", payload="占位",
+        cron="@once:2099-01-01T00:00:00", channels="qq", delivery_targets=None,
+        last_run_at=now_utc(), last_run_failed=True,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    execute = AsyncMock(return_value={"QQ": "已发送"})
+    monkeypatch.setattr(scheduled, "execute_task", execute)
+
+    await scheduled_api.run_now(task.id, user_a, db)
+
+    execute.assert_awaited_once_with(task.id, is_trial=False)
+
+
+@pytest.mark.asyncio
+async def test_run_now_uses_trial_for_normal_task(monkeypatch, db, user_a):
+    """普通任务（没失败过/还没跑过）"立即运行"仍然是试运行，不写 last_run_at、
+    不会因为这次点击就让任务被标记完成或删除。"""
+    import app.api.v1.scheduled_tasks as scheduled_api
+    import app.scheduled_tasks as scheduled
+    from app.models import ScheduledTask
+
+    task = ScheduledTask(
+        user_id=user_a.id, name="普通任务", payload="占位",
+        cron="0 9 * * *", channels="web", delivery_targets=None,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+
+    execute = AsyncMock(return_value={"网页通知": "已发送"})
+    monkeypatch.setattr(scheduled, "execute_task", execute)
+
+    await scheduled_api.run_now(task.id, user_a, db)
+
+    execute.assert_awaited_once_with(task.id, is_trial=True)
 
 
 @pytest.mark.asyncio

@@ -225,7 +225,8 @@ async def test_trial_does_not_hold_request_db_session_during_agent(monkeypatch):
         close=AsyncMock(side_effect=lambda: events.append("close")),
     )
     user = SimpleNamespace(id="user-1")
-    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock())
+    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     execute = AsyncMock(
         side_effect=lambda *args, **kwargs: events.append("execute") or {"网页通知": "已发送"}
     )
@@ -246,7 +247,8 @@ async def test_trial_timeout_does_not_cancel_delivery_task(monkeypatch):
     events = []
     db = SimpleNamespace(close=AsyncMock())
     user = SimpleNamespace(id="user-1")
-    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock())
+    owned_task = SimpleNamespace(cron="0 9 * * *", last_run_failed=False)
+    monkeypatch.setattr(scheduled_api, "_owned", AsyncMock(return_value=owned_task))
     monkeypatch.setattr(scheduled_api, "_TRIAL_WAIT_SECONDS", 0)
 
     async def execute(*args, **kwargs):
