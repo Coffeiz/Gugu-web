@@ -189,88 +189,14 @@
           </div>
         </div>
 
-        <!-- 单一消息列表：真虚拟列表（@tanstack/vue-virtual），任何时刻只挂载视口 ± overscan
-             内的消息 DOM，其余用下面这段按测量/估算高度撑出来的占位空间代替，滚动条始终代表
-             整个会话的真实长度。messagesEl 是真实可滚动容器，虚拟列表只管它内部挂多少 DOM。 -->
-        <div class="chat-messages" ref="messagesEl">
-          <div class="msg-virtual-spacer" :style="{ height: virtualTotalSize + 'px' }">
-            <!-- v-memo：同一帧内其它消息在变（比如正在流式输出的那条）时，跳过这一行没变的
-                 子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
-                 但仍能省掉一趟不必要的 vnode diff。 -->
-            <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
-                 class="msg-virtual-row" :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
-              <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
-                   v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">
-                <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
-                     群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
-                <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? '咕咕' : msg.speakerLabel }}</div>
-                <!-- IM 引用/回复：单独一条浅色预览条，跟真正打的话分开显示，别把引用原文
-                     （可能带 markdown 表格等）直接摊平混进正文气泡（devlog 2026-07-10）。 -->
-                <div v-if="msg.role !== 'ai' && (msg.quotedText || msg.files?.some(f => f.quoted))" class="msg-quoted" :title="msg.quotedText || '引用的 QQ 表情'">
-                  <span v-if="msg.quotedText">{{ displayQQFaces(msg.quotedText) }}</span>
-                  <template v-for="f in (msg.files || []).filter(f => f.quoted)" :key="`quoted:${f.file_id || f.attach_id}`">
-                    <img v-if="f.qq_face || isAnimatedImageFile(f)" class="msg-quoted-thumb msg-face-gif" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
-                    <img v-else-if="f._thumbUrl" class="msg-quoted-thumb" :src="f._thumbUrl" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
-                    <img v-else-if="isImageFile(f)" class="msg-quoted-thumb" v-lazy-thumb="f.file_id || f.attach_id" draggable="false" alt="引用图片" @click.stop="openFileFromChat(f)" />
-                  </template>
-                </div>
-                <div v-if="msg.role === 'ai' && (msg.text?.trim() || msg.streaming)" class="msg-bubble md-body" @click="onChatActionClick"><MarkdownView :html="msg.streaming ? renderMdStream(msg.text) : (msg.html ?? renderMd(msg.text))" :text="msg.text" chat /></div>
-                <div v-else-if="msg.text" class="msg-bubble">{{ displayQQFaces(msg.text) }}</div>
-                <div v-if="msg.files && msg.files.length" class="msg-files">
-                  <template v-for="f in msg.files.filter(f => !f.quoted)" :key="f.file_id || f.attach_id">
-                  <!-- 语音条：点一下播放（带鉴权拉 blob），不是文件卡 -->
-                  <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
-                       @click="toggleVoice(f)" title="点击播放语音">
-                    <span class="mv-btn">
-                      <PhPause v-if="voicePlayingId === f.attach_id" weight="fill" :size="13" />
-                      <PhPlay  v-else weight="fill" :size="13" />
-                    </span>
-                    <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
-                    <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
-                  </div>
-                  <div v-else-if="f.qq_face" class="msg-face-image-wrap" @click="openFileFromChat(f)" title="点击查看表情">
-                    <img class="msg-face-image" v-lazy-face="f.file_id || f.attach_id" draggable="false" alt="QQ表情" />
-                  </div>
-                  <div v-else class="msg-file press-fx" @click="openFileFromChat(f)" :title="canPreview(f) ? '点击预览' : '点击下载'">
-                    <span class="msg-file-ext">
-                      <template v-if="!f.qq_face">{{ (f.ext || 'file').toUpperCase().slice(0, 4) }}</template>
-                      <template v-if="isImageFile(f)">
-                        <img v-if="f._thumbUrl" class="msg-file-thumb" :src="f._thumbUrl"
-                          draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
-                        <img v-else class="msg-file-thumb" v-lazy-thumb="f.file_id || f.attach_id"
-                          decoding="async" draggable="false" alt="" @error="($event.target as HTMLElement).remove()" />
-                      </template>
-                    </span>
-                    <span class="msg-file-info">
-                      <span v-if="!f.qq_face" class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
-                      <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
-                    </span>
-                    <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
-                  </div>
-                  </template>
-                </div>
-                <div class="msg-footer">
-                  <span class="msg-time">{{ msg.time }}</span>
-                  <button class="msg-copy-btn" @click="copyMsg(msg)" title="复制">
-                    <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
-                    <PhCopy  v-else :size="11" />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-          <!-- 整个生成期只维持一枚状态气泡：状态切换时替换内容，不让气泡闪退重建。 -->
-          <div v-if="statusKind" class="msg ai">
-            <div class="msg-bubble status-pop"
-                 :class="statusKind === 'dots' ? 'thinking' : 'tool-bubble'">
-              <template v-if="statusKind === 'dots'"><span /><span /><span /></template>
-              <template v-else>
-                <span class="tool-spinner" />
-                <span class="tool-label">{{ statusTyped }}</span>
-              </template>
-            </div>
-          </div>
-        </div>
+        <GuguChatMessageList
+          ref="messageListRef"
+          :messages="messages" :is-group-session="isGroupSession"
+          :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+          :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
+          @copy="copyMsg" @toggle-voice="toggleVoice"
+          @open-file="openFileFromChat" @action-click="onChatActionClick"
+        />
 
         <!-- 输入框 -->
         <div v-if="pendingAtt.length || attUploading" class="chat-att-row">
@@ -319,79 +245,31 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
-import { useVirtualizer } from '@tanstack/vue-virtual'
 import QRCode from 'qrcode'
-import { marked, type Tokens } from 'marked'
-import hljs from 'highlight.js'
 import { useAudioStore } from '@/stores/audio'
 import { nextZ } from '@/composables/windowz'
 import { useProjectStore } from '@/stores/projects'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
-import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
 import { getGreeting, prefetchGreeting } from '@/composables/useGreeting'
 import { uploadSignal, calendarSignal } from '@/services/cache'
 import { playGuguSfx } from '@/services/sfx'
-import { getThumb, getCachedThumb, getThumbUrl, getCachedThumbUrl } from '@/composables/useThumbCache'
-import MarkdownView from '@/components/common/MarkdownView.vue'
-
-const API_BASE = import.meta.env.VITE_API_URL ?? '/api/v1'
+import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
+import type { ChatMessage, ChatFile, ChatSession } from './gugu-chat/chatTypes'
+import { API_BASE } from './gugu-chat/chatConstants'
+import { renderMd, renderMdStream } from './gugu-chat/markdown'
+import {
+  IMG_EXTS, isImageFile, isAnimatedImageFile, canPreview,
+  fmtSize, fmtDur, voiceBar, displayQQFaces,
+} from './gugu-chat/messageDisplay'
 import {
   PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
   PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
   PhArrowRight, PhStop, PhArrowsOut, PhArrowsIn,
-  PhPencilSimple, PhTrash, PhCopy, PhCheck,
+  PhPencilSimple, PhTrash, PhCheck,
 } from '@phosphor-icons/vue'
-
-// 聊天气泡的完整字段集合（TS 转换新增）：字段来自不同代码路径按需附加（默认问候/流式回复/
-// 历史消息回填/用户发送各自只带自己用得上的那几个），松散 interface 如实反映这个既有形状，
-// 不强行收紧成必填。
-interface ChatMessage {
-  id: number
-  dbId?: number
-  role: string
-  text: string
-  html?: string | null
-  files?: ChatFile[]
-  quotedText?: string
-  time: string
-  streaming?: boolean
-  // 群聊消息的发言人标注：ai 不用管；owner 自己发的不用管（右侧气泡不署名）；
-  // 群里其他成员填 platformUserName，气泡渲染在左侧并显示这个名字。
-  speakerLabel?: string
-  platformUserId?: string | null
-  _greeting?: boolean
-  _greetAnimated?: boolean
-  _greetFull?: string
-}
-
-// 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同
-// 代码路径按需附加，参见 ChatMessage 顶部注释同理）
-interface ChatFile {
-  file_id?: number
-  attach_id?: string
-  name?: string
-  ext?: string
-  size?: number
-  size_bytes?: number
-  kind?: string
-  mime?: string
-  qq_face?: boolean
-  quoted?: boolean
-  duration?: number
-  upload?: boolean
-  _thumbUrl?: string
-  img_width?: number
-  img_height?: number
-}
-
-interface ChatSession {
-  id: number
-  title: string
-  source?: string
-  chatType?: string
-}
 
 interface Bot {
   id?: number
@@ -621,47 +499,6 @@ function fmtTime(s: number) {
   return `${Math.floor(s / 60)}:${Math.floor(s % 60).toString().padStart(2, '0')}`
 }
 
-marked.use({
-  breaks: true, gfm: true,
-  renderer: (() => {
-    const r = new marked.Renderer()
-    // 关掉删除线渲染：口语里 ~ 很常见（好的~、稍等~），~~ 叠出来会被 GFM 当删除线；
-    // 伙伴语气几乎不需要真删除线，把 ~~x~~ 直接渲染成纯文本 x（保留表格等其它 GFM 能力）。
-    r.del = (t: Tokens.Del) => (t && t.text) || ''
-    r.code = ({ text, lang }: Tokens.Code) => {
-      const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-      const highlighted = hljs.highlight(text, { language }).value
-      const label = lang || 'code'
-      // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
-      return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
-    }
-    return r
-  })(),
-})
-// 兜底：模型有时把加粗小标题写成 `** 标题**`（** 后带空格 = 无效 md，不渲染加粗）。
-// 在代码块/行内代码之外，把成对 ** 内侧紧邻的空格去掉，让它正常加粗（不碰代码里的 `x ** 2`）。
-function fixLooseBold(text: string) {
-  return text.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((seg, i) =>
-    i % 2 ? seg
-      : seg.replace(/\*\*[ \t]+([^*\n]+?)\*\*/g, '**$1**')
-           .replace(/\*\*([^*\n]+?)[ \t]+\*\*/g, '**$1**')
-  ).join('')
-}
-function renderMd(text: string) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
-
-// 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
-// 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
-let _mdStreamCache: { text: string; html: string } | null = null
-function renderMdStream(text: string) {
-  if (!text) return ''
-  if (_mdStreamCache?.text === text) return _mdStreamCache.html
-  const fences = (text.match(/^```/gm) || []).length
-  const patched = fences % 2 === 1 ? text + '\n```' : text
-  const html = marked.parse(patched) as string
-  _mdStreamCache = { text, html }
-  return html
-}
-
 // ── 窗口状态 ────────────────────────────────────────────
 const open       = ref(false)
 const expanded   = ref(false)
@@ -703,7 +540,10 @@ const fabRef      = ref<HTMLElement | null>(null)
 const windowRef   = ref<HTMLElement | null>(null)
 const playerRef   = ref<HTMLElement | null>(null)
 const expInputEl  = ref<HTMLTextAreaElement | null>(null)
-const messagesEl  = ref<HTMLElement | null>(null)
+// 真实可滚动的消息容器和虚拟列表由 GuguChatMessageList 内部持有；这里通过组件
+// 实例暴露的 el/scrollToIndex 访问，不在父组件里重新拿一份 DOM 引用。
+const messageListRef = ref<InstanceType<typeof GuguChatMessageList> | null>(null)
+const messagesEl = computed(() => messageListRef.value?.el ?? null)
 
 // 视口尺寸，用于计算小窗绝对坐标
 const vw = ref(window.innerWidth)
@@ -939,7 +779,7 @@ async function uploadAttachFiles(files: File[], opts: { voice?: boolean } = {}) 
       try {
         const meta: ChatFile = await agentApi.uploadAttachment(file, opts.voice)
         // 图片附件：本地 objectURL 立即出预览（暂存附件无 file_id，取不到服务端缩略图）
-        if (_IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
+        if (IMG_EXTS.has((meta.ext || '').toLowerCase())) meta._thumbUrl = URL.createObjectURL(file)
         pendingAtt.value.push(meta)
       } catch (err: any) {
         messages.value.push({ id: mkid(), role: 'ai', text: '附件上传失败 😵 ' + (err && err.message || ''), time: now() })
@@ -1048,13 +888,6 @@ async function _onRecStop() {
 const voicePlayingId = ref<string | null>(null)
 let _voiceAudio: HTMLAudioElement | null = null
 const _voiceUrls: Record<string, string> = {}            // attach_id → objectURL 缓存（同条重播不重拉）
-const _WAVE = [50, 80, 38, 95, 60, 72, 44, 88, 56, 68, 42, 84, 52]   // 装饰性波形高度
-function voiceBar(n: number) { return _WAVE[(n - 1) % _WAVE.length] + '%' }
-function fmtDur(sec?: number) {
-  const s = Math.round(sec || 0)
-  if (!s) return '语音'
-  return s < 60 ? s + '″' : Math.floor(s / 60) + "'" + String(s % 60).padStart(2, '0')
-}
 async function toggleVoice(f: ChatFile) {
   const id = f.attach_id
   if (!id) return
@@ -1093,81 +926,6 @@ function stopStreaming() {
 }
 
 const copiedId = ref<number | null>(null)
-function fmtSize(b?: number) {
-  if (!b) return ''
-  if (b < 1024) return b + ' B'
-  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
-  return (b / 1048576).toFixed(1) + ' MB'
-}
-
-// ── 图片附件缩略图（与文件库共用 useThumbCache）──
-const _IMG_EXTS = new Set(['jpg','jpeg','png','gif','webp','avif','bmp','svg','heic','heif'])
-// 缩略图来源优先级：本地 _thumbUrl（刚发的，即时）> file_id（已落库，服务端图）
-// > attach_id（刷新后历史里的暂存图，走 /agent/attachment 端点，6h 内有效）；都没有则 ext 角标
-function isImageFile(f: ChatFile) {
-  if (f._thumbUrl) return true
-  const isImg = _IMG_EXTS.has((f.ext || '').toLowerCase())
-  return isImg && (!!f.file_id || !!f.attach_id)
-}
-
-function isAnimatedImageFile(f: ChatFile) {
-  const mime = (f.mime || '').toLowerCase()
-  return (['gif', 'webp'].includes((f.ext || '').toLowerCase()) || mime === 'image/gif' || mime === 'image/webp')
-    && (!!f.file_id || !!f.attach_id)
-}
-// IntersectionObserver 懒加载指令：进视口附近才取 card 尺寸缩略图。
-// 值为数字 file_id → 文件库缩略图；为字符串 attach_id → 暂存附件缩略图端点。
-interface ThumbEl extends HTMLImageElement {
-  _thumbObs?: IntersectionObserver | null
-  _thumbKey?: string
-  _thumbGeneration?: number
-}
-
-function bindLazyThumb(el: ThumbEl, id: number | string | undefined | null, size = 'card') {
-  el._thumbObs?.disconnect()
-  el._thumbObs = null
-  const generation = (el._thumbGeneration ?? 0) + 1
-  el._thumbGeneration = generation
-  el._thumbKey = id == null || id === '' ? undefined : String(id)
-  // DOM 节点会被虚拟列表复用；切换附件时先清掉旧图，避免旧 blob 在新附件加载前残留。
-  el.removeAttribute('src')
-  if (!id) return
-
-  const isAttach = typeof id === 'string'
-  const key = isAttach ? `att:${id}_${size}` : `${id}_${size}`
-  const cached = isAttach ? getCachedThumbUrl(key) : getCachedThumb(id, size)
-  if (cached) { el.src = cached; return }
-  const fetchThumb = () => isAttach
-    ? getThumbUrl(key, `${API_BASE}/agent/attachment/${id}/thumb?size=${size}`)
-    : getThumb(id, size)
-  const obs = new IntersectionObserver(([entry]) => {
-    if (!entry.isIntersecting) return
-    obs.disconnect(); el._thumbObs = null
-    fetchThumb().then((url: string | null) => {
-      if (url && el._thumbGeneration === generation && el._thumbKey === String(id)) el.src = url
-    })
-  }, { rootMargin: '200px' })
-  obs.observe(el)
-  el._thumbObs = obs
-}
-
-function makeLazyThumbDirective(size: string) {
-  return {
-    mounted(el: ThumbEl, { value }: { value: number | string | undefined | null }) { bindLazyThumb(el, value, size) },
-    updated(el: ThumbEl, { value, oldValue }: { value: number | string | undefined | null; oldValue: number | string | undefined | null }) {
-      if (value !== oldValue) bindLazyThumb(el, value, size)
-    },
-    unmounted(el: ThumbEl) {
-      el._thumbObs?.disconnect(); el._thumbObs = null
-      el._thumbGeneration = (el._thumbGeneration ?? 0) + 1
-      el._thumbKey = undefined
-    },
-  }
-}
-
-const vLazyThumb = makeLazyThumbDirective('card')
-// QQ 表情需要保留 GIF/动画 WebP，不能走会转成 JPEG 的 card 缩略图端点。
-const vLazyFace = makeLazyThumbDirective('full')
 
 async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
@@ -1190,9 +948,6 @@ async function downloadFile(f: ChatFile) {
 }
 
 const previewStore = usePreviewStore()
-function canPreview(f: ChatFile) {
-  return (!!f.file_id || !!f.attach_id) && isPreviewable(f.ext)
-}
 function openFileFromChat(f: ChatFile) {
   if (canPreview(f)) {
     const displayName = f.qq_face ? 'QQ表情' : f.name
@@ -1248,38 +1003,9 @@ const messages = ref<ChatMessage[]>([
 
 // ── 长会话虚拟列表 ────────────────────────────────────────────────────────────
 // 网络层不变，仍一次性把整条会话历史拉回来（messages 是完整数据，搜索跳转靠它按 dbId
-// 定位）。DOM 层交给 @tanstack/vue-virtual：任何时刻只挂载视口 ± overscan 内的消息，
-// 其余用一段按「已测量高度 / 估算高度」撑出来的占位空间代替，滚动条因此始终代表整个
-// 会话的真实长度（顶部滚到底也准），而不是只随「挂了多少条」变化。
-// 消息高度不定长（纯文本/代码块/文件卡片/语音条差异很大），measureElement 首次挂载
-// 后用真实高度回填、并自带 ResizeObserver 持续纠偏（图片/缩略图迟一拍加载导致变高也能跟上）。
-const virtualizer = useVirtualizer({
-  get count() { return messages.value.length },
-  getScrollElement: () => messagesEl.value,
-  estimateSize: () => 96,
-  overscan: 6,
-})
-const virtualRows = computed(() => virtualizer.value.getVirtualItems())
-// 绝对定位的子元素不会跟着祖先的 padding 走（top:0/left:0 是相对祖先的边框盒，不是内容盒），
-// 所以顶部留白只能自己在 translateY 里加、不能指望 .msg-virtual-spacer 的 padding-top 生效；
-// 水平方向的留白则放在每一行自己的左右 padding 上（CSS，见下）。
-const msgsPadTop = computed(() => expanded.value ? 20 : 12)
-// 占位容器总高度 = 虚拟列表算出的内容高度 + 顶部留白（底部留白由最后一行自带的 padding-bottom 覆盖）
-const virtualTotalSize = computed(() => virtualizer.value.getTotalSize() + msgsPadTop.value)
-// v-for 需要同时拿到虚拟行的定位信息（row）和它对应的消息（msg），zip 成一个数组，
-// 这样消息行内部的模板完全不用改，照样按 msg.xxx 取值。
-const rowsWithMsg = computed(() => virtualRows.value.map(row => ({ row, msg: messages.value[row.index] })))
-function measureRow(el: Element | ComponentPublicInstance | null) { if (el) virtualizer.value.measureElement(el as Element) }
-
-// 只有真正挂进视口 ± overscan 的消息才需要解析 markdown——不在 loadSession 时就把
-// 整个历史一次性跑一遍 marked.parse，等消息第一次进虚拟窗口再补，减轻长会话打开时的
-// 一次性 CPU 尖峰；已经解析过的（html 非空）不重复解析。
-watch(virtualRows, (rows) => {
-  for (const row of rows) {
-    const m = messages.value[row.index]
-    if (m && m.role === 'ai' && !m.streaming && m.html == null) m.html = renderMd(m.text)
-  }
-})
+// 定位）。DOM 层（真实可滚动容器 + @tanstack/vue-virtual 实例 + 逐行测量 + html 懒渲染
+// 回填）收在 GuguChatMessageList.vue 里，这里只通过 messageListRef 暴露的
+// scrollToIndex 驱动滚动，不重新持有一份 virtualizer。
 
 // 会话内定位到某条历史消息（全局搜索跳转用）：先按 dbId 找到下标，用虚拟列表的
 // scrollToIndex 滚过去（数据本来就在 messages 里，不用管它当前有没有挂 DOM），
@@ -1288,7 +1014,7 @@ async function _revealMessage(dbId: number) {
   const idx = messages.value.findIndex(m => m.dbId === dbId)
   if (idx === -1) return
   stick.value = false   // 跳去的多半是历史消息，不该被当成「回到底部」处理
-  virtualizer.value.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
+  messageListRef.value?.scrollToIndex(idx, { align: 'center', behavior: 'auto' })
   await nextTick()
 }
 
@@ -1594,25 +1320,6 @@ function replaceMentionIdsForDisplay(text: string, names: Record<string, string>
   return result
 }
 
-// 兼容历史消息：旧记录可能还保存着 QQ 的内部表情协议串。
-function displayQQFaces(text: string): string {
-  if (!text || !text.includes('<faceType=')) return text || ''
-  return text.replace(
-    /<faceType=[^,>]+,faceId="[^"]*",ext="([^"]*)">/g,
-    (_match, encoded: string) => {
-      if (encoded) {
-        try {
-          const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4)
-          const bytes = Uint8Array.from(atob(padded), char => char.charCodeAt(0))
-          const payload = JSON.parse(new TextDecoder().decode(bytes))
-          if (typeof payload.text === 'string' && payload.text.trim()) return payload.text
-        } catch { /* 历史协议串不完整时显示统一占位 */ }
-      }
-      return '[QQ表情]'
-    },
-  )
-}
-
 async function loadSession(id: number) {
   if (id === sessionId.value) return
   const viewGeneration = ++_chatViewGeneration
@@ -1734,7 +1441,7 @@ let _lastTop  = 0     // 上次（多为程序化）滚动后的 scrollTop，用
 function scrollToBottom(smooth = false) {
   const idx = messages.value.length - 1
   if (idx < 0) return
-  virtualizer.value.scrollToIndex(idx, { align: 'end', behavior: smooth ? 'smooth' : 'auto' })
+  messageListRef.value?.scrollToIndex(idx, { align: 'end', behavior: smooth ? 'smooth' : 'auto' })
   _lastTop = messagesEl.value?.scrollTop ?? 0   // 记录落点：程序化滚动产生的 scroll 事件不会误判为上翻
 }
 
