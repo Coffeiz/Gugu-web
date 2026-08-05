@@ -1,46 +1,16 @@
 <template>
   <!-- 迷你播放器 -->
-  <Transition name="mini-player">
-    <div v-if="audioStore.file && (miniPinned || open)" class="mini-player" :style="miniPlayerStyle" ref="playerRef">
-      <div class="mp-info">
-        <span class="mp-bars" :class="{ 'mp-bars--playing': barsPlaying }" ref="barsRef"><i v-for="n in 4" :key="n" /></span>
-        <span class="mp-name">{{ audioStore.file.displayName }}.{{ audioStore.file.ext?.toLowerCase() }}</span>
-        <div class="btn-group">
-          <button class="mp-btn mp-btn--pin" :class="{ 'mp-btn--pinned': miniPinned }"
-                  @click="miniPinned = !miniPinned" :title="miniPinned ? '取消固定' : '固定'">
-            <PhPushPin v-if="miniPinned" :size="14" weight="fill" />
-            <PhPushPinSlash v-else :size="14" weight="regular" />
-          </button>
-          <button class="mp-btn mp-btn--close popup-close-btn" @click="audioStop" title="关闭">
-            <PhX weight="bold" :size="13" />
-          </button>
-        </div>
-      </div>
-      <div class="mp-seek-row">
-        <span class="mp-time">{{ fmtTime(audioCurrent) }}</span>
-        <div class="mp-track" @click="audioSeek" @mousedown="audioStartDrag">
-          <div class="mp-fill" :style="{ width: audioSeekPct + '%' }" />
-          <div class="mp-thumb" :style="{ left: audioSeekPct + '%' }" />
-        </div>
-        <span class="mp-time">{{ fmtTime(audioDuration) }}</span>
-      </div>
-      <div class="mp-controls">
-        <div class="mp-vol-spacer" />
-        <button class="mp-btn mp-btn--play" @click="audioToggle">
-          <PhPlay  v-if="!audioPlaying" weight="fill" :size="16" />
-          <PhPause v-else               weight="fill" :size="16" />
-        </button>
-        <div class="mp-vol-group">
-          <button class="mp-vol-btn" @click="audioToggleMute">
-            <PhSpeakerHigh  v-if="!audioMuted && audioVolume > 0.5" weight="fill" :size="14" />
-            <PhSpeakerLow   v-else-if="!audioMuted && audioVolume > 0" weight="fill" :size="14" />
-            <PhSpeakerSlash v-else weight="fill" :size="14" />
-          </button>
-          <input class="mp-vol-slider" type="range" min="0" max="1" step="0.02" :value="audioVolume" @input="audioSetVolume" />
-        </div>
-      </div>
-    </div>
-  </Transition>
+  <GuguChatMiniPlayer
+    ref="miniPlayerRef"
+    :visible="!!audioStore.file && (miniPinned || open)"
+    :style="miniPlayerStyle" :bars-playing="barsPlaying"
+    :file-name="audioStore.file ? `${audioStore.file.displayName}.${audioStore.file.ext?.toLowerCase()}` : ''"
+    :pinned="miniPinned" @update:pinned="miniPinned = $event"
+    :current="audioCurrent" :duration="audioDuration" :seek-pct="audioSeekPct"
+    :playing="audioPlaying" :muted="audioMuted" :volume="audioVolume"
+    :fmt-time="fmtTime" :on-stop="audioStop" :on-seek="audioSeek" :on-start-drag="audioStartDrag"
+    :on-toggle="audioToggle" :on-toggle-mute="audioToggleMute" :on-set-volume="audioSetVolume"
+  />
 
   <audio
     ref="audioEl"
@@ -54,18 +24,13 @@
   />
 
   <!-- 悬浮球 -->
-  <button class="ai-fab" :class="{ 'ai-fab--playing': rippleActive }" :style="{ zIndex: fabZ }" ref="fabRef" @click="toggleOpen" title="咕咕">
-    <svg ref="fabSvgRef"
-         :class="{ 'ai-fab-spin': audioStore.file && !spinningBack, 'ai-fab--typing': fabJumping }"
-         :style="audioStore.file && !spinningBack ? { animationPlayState: audioPlaying ? 'running' : 'paused' } : {}"
-         width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M16 7h.01"/>
-      <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-      <path d="M20 7l2 .5-2 .5"/>
-      <path d="M10 18v3"/>
-      <path d="M14 17.75V21"/>
-    </svg>
-  </button>
+  <GuguChatFab
+    ref="fabRef"
+    :ripple-active="rippleActive" :fab-z="fabZ"
+    :has-audio-file="!!audioStore.file" :spinning-back="spinningBack"
+    :fab-jumping="fabJumping" :audio-playing="audioPlaying"
+    @click="toggleOpen"
+  />
 
   <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
   <Transition name="chat-open" @after-leave="chatClosing = false">
@@ -101,71 +66,16 @@
 
 
       <!-- 侧边栏（仅大窗） -->
-      <div v-if="expanded" class="exp-sidebar panel-left">
-        <div class="exp-sidebar-header">
-          <span class="exp-sidebar-title">咕咕</span>
-        </div>
-        <div class="exp-sidebar-divider"></div>
-        <div class="exp-session-list">
-          <!-- IM 平台：飞书 / QQ / 微信，可展开抽屉。未接入 → 扫码连接；接入后 → 该平台会话 -->
-          <div class="im-plat-group" ref="imGroupEl" :class="{ 'im-flash': imHighlight }">
-          <div v-for="p in IM_PLATFORMS" :key="p.key" class="im-plat">
-            <button class="im-plat-head" :class="{ open: imOpen[p.key] }" @click="toggleImPlatform(p.key)">
-              <svg class="im-plat-chev" :class="{ open: imOpen[p.key] }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
-              <span class="im-plat-name">{{ p.label }}</span>
-              <span class="im-plat-badge" :class="{ on: botsOf(p.key).length }">{{ botsOf(p.key).length ? '已接入' : '未接入' }}</span>
-            </button>
-            <div v-show="imOpen[p.key]" class="im-plat-body">
-              <!-- 已接入 → 该平台会话抽屉 -->
-              <template v-if="botsOf(p.key).length">
-                <div v-for="s in imSessionsOf(p.key)" :key="s.id"
-                  class="exp-session-item" :class="{ active: s.id === sessionId }" @click="loadSession(s.id)">
-                  <span v-if="s.chatType === 'group'" class="exp-session-tag" title="群聊">群</span>
-                  <span class="exp-session-title">{{ s.title }}</span>
-                  <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
-                </div>
-                <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">暂无对话</div>
-              </template>
-              <!-- 未接入 → 扫码连接 + 二维码抽屉 -->
-              <template v-else>
-                <div v-if="connect && connect.platform === p.key" class="im-qr-box">
-                  <canvas :ref="setConnectCanvas" class="im-qr-canvas"></canvas>
-                  <div class="im-qr-hint">{{ connectHint }}</div>
-                  <button class="im-qr-cancel" @click="cancelImConnect">取消</button>
-                </div>
-                <template v-else>
-                  <button class="im-connect-btn" :disabled="connecting === p.key" @click="startImConnect(p.key)">
-                    {{ connecting === p.key ? '生成中…' : '扫码连接' }}
-                  </button>
-                  <div v-if="connectErr && connecting !== p.key" class="im-qr-err">{{ connectErr }}</div>
-                </template>
-              </template>
-            </div>
-          </div>
-          </div><!-- /im-plat-group -->
-
-          <!-- 网页对话 -->
-          <div v-if="webSessions.length" class="exp-group-divider"></div>
-          <div
-            v-for="s in webSessions" :key="s.id"
-            class="exp-session-item"
-            :class="{ active: s.id === sessionId }"
-            @click="loadSession(s.id)"
-          >
-            <span class="exp-session-title">{{ s.title }}</span>
-            <button class="exp-session-del" @click.stop="deleteSession(s.id)" title="删除">
-              <PhTrash :size="12" weight="bold" />
-            </button>
-          </div>
-        </div>
-        <div class="exp-sidebar-divider" style="margin: 0 12px"></div>
-        <div class="exp-new-session-wrap">
-          <button class="exp-new-session-btn" @click="newSession">
-            <PhPencilSimple weight="bold" :size="13" />
-            新对话
-          </button>
-        </div>
-      </div>
+      <GuguChatSidebar
+        v-if="expanded" ref="sidebarRef"
+        :im-platforms="imPlatformOptions" :im-open="imOpen" :im-highlight="imHighlight"
+        :bots-of="botsOf" :im-sessions-of="imSessionsOf"
+        :web-sessions="webSessions" :session-id="sessionId"
+        :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
+        :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
+        :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
+        :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
+      />
 
       <!-- 主区域（始终存在，消息列表永不销毁） -->
       <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
@@ -232,6 +142,9 @@ import { uploadSignal, calendarSignal } from '@/services/cache'
 import { playGuguSfx } from '@/services/sfx'
 import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
 import GuguChatComposer from './gugu-chat/GuguChatComposer.vue'
+import GuguChatFab from './gugu-chat/GuguChatFab.vue'
+import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
+import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
 import type { ChatMessage, ChatFile, ChatSession } from './gugu-chat/chatTypes'
 import { API_BASE, SMALL_W, SMALL_H, SIDEBAR_W } from './gugu-chat/chatConstants'
 import { renderMd, renderMdStream } from './gugu-chat/markdown'
@@ -241,12 +154,7 @@ import {
 } from './gugu-chat/messageDisplay'
 import { useChatAudio } from './gugu-chat/useChatAudio'
 import { useChatAttachments } from './gugu-chat/useChatAttachments'
-import {
-  PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
-  PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
-  PhArrowRight, PhStop, PhArrowsOut, PhArrowsIn,
-  PhPencilSimple, PhTrash, PhCheck,
-} from '@phosphor-icons/vue'
+import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 
 interface Bot {
   id?: number
@@ -354,10 +262,10 @@ async function refreshAfterTools(usedTools: Set<string>) {
     if (has(_FILE_TOOLS)) { uploadSignal.value++; liveStore.bump('files') }
   } catch (e) { /* 刷新失败不影响对话 */ }
 }
-const fabSvgRef    = ref<SVGSVGElement | null>(null)
-const rippleActive = ref(false)
-const barsRef      = ref<HTMLElement | null>(null)
-const barsPlaying  = ref(false)
+const fabRef        = ref<InstanceType<typeof GuguChatFab> | null>(null)
+const miniPlayerRef = ref<InstanceType<typeof GuguChatMiniPlayer> | null>(null)
+const rippleActive  = ref(false)
+const barsPlaying   = ref(false)
 const spinningBack = ref(false)
 let rippleTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -371,7 +279,7 @@ const {
 } = useChatAudio({
   onTip: (text) => _chatTip(text),
   onBeforeStop: () => {
-    const svgEl = fabSvgRef.value
+    const svgEl = fabRef.value?.svgEl
     if (!svgEl || !audioStore.file) return
     const matrix = new DOMMatrix(getComputedStyle(svgEl).transform)
     const angle = Math.atan2(matrix.b, matrix.a) * (180 / Math.PI)
@@ -389,10 +297,10 @@ const {
 
 watch(audioPlaying, (playing) => {
   if (playing) {
-    barsRef.value?.querySelectorAll('i').forEach((b) => { (b as HTMLElement).style.cssText = '' })
+    miniPlayerRef.value?.barsEl?.querySelectorAll('i').forEach((b) => { (b as HTMLElement).style.cssText = '' })
     barsPlaying.value = true
   } else {
-    const bars = barsRef.value?.querySelectorAll('i') ?? []
+    const bars = miniPlayerRef.value?.barsEl?.querySelectorAll('i') ?? []
     bars.forEach((b) => { (b as HTMLElement).style.height = getComputedStyle(b).height; (b as HTMLElement).style.transition = 'none' })
     barsPlaying.value = false
     requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -444,9 +352,7 @@ watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
 // 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
 const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
 
-const fabRef      = ref<HTMLElement | null>(null)
 const windowRef   = ref<HTMLElement | null>(null)
-const playerRef   = ref<HTMLElement | null>(null)
 // 真实可滚动的消息容器和虚拟列表由 GuguChatMessageList 内部持有；这里通过组件
 // 实例暴露的 el/scrollToIndex 访问，不在父组件里重新拿一份 DOM 引用。
 const messageListRef = ref<InstanceType<typeof GuguChatMessageList> | null>(null)
@@ -844,6 +750,9 @@ const IM_PLATFORMS: ImPlatform[] = [
 ]
 const bots   = ref<Bot[]>([])
 const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
+// Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
+// startImConnect/openChatImBind 仍按 IM_PLATFORMS.find(...) 查找。
+const imPlatformOptions = computed(() => IM_PLATFORMS.map(p => ({ key: p.key, label: p.label })))
 const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
 
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
@@ -866,7 +775,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
                                    : presenceKind.value === 'online'  ? '咕咕在线'
                                    : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
 const imHighlight = ref(false)
-const imGroupEl   = ref<HTMLElement | null>(null)
+const sidebarRef  = ref<InstanceType<typeof GuguChatSidebar> | null>(null)
 const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
 const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s.source === platform)
 
@@ -881,7 +790,7 @@ async function promptConnectIM() {
   else loadBots()
   IM_PLATFORMS.forEach(p => { imOpen[p.key] = true })
   await nextTick()
-  imGroupEl.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  sidebarRef.value?.imGroupEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
   imHighlight.value = false   // 重置以便点第二次也能重放动画
   await nextTick()
   imHighlight.value = true
@@ -1420,33 +1329,7 @@ async function send(forcedText?: string) {
 </script>
 
 <style scoped>
-/* ── 悬浮球 ── */
-.ai-fab {
-  position: fixed; bottom: var(--floating-edge); right: var(--floating-edge);
-  isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下，见 script */
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-.ai-fab:hover { transform: scale(1.08); box-shadow: 0 7px 24px rgba(123,127,178,0.42), inset 0 1px 0 rgba(255,255,255,0.5); }
-.ai-fab svg { position: relative; z-index: 1; }
-.ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
-@keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.ai-fab--playing::before, .ai-fab--playing::after {
-  content: ''; position: absolute; inset: 0; border-radius: 50%;
-  border: 1.5px solid rgba(123,127,178,0.75); pointer-events: none;
-  animation: fab-ripple 3.6s ease-out infinite;
-}
-.ai-fab--playing::after { animation-delay: 1.8s; }
-@keyframes fab-ripple { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(1.55); opacity: 0; } }
-@keyframes fab-typing {
-  0%   { transform: translateY(0); }
-  50%  { transform: translateY(-2px); }
-  100% { transform: translateY(0); }
-}
-.ai-fab--typing { animation: fab-typing 0.2s linear 1; }
+/* .ai-fab* 已随 GuguChatFab.vue 迁移 */
 
 /* ── 单一聊天窗口 ── */
 .chat-window {
@@ -1540,14 +1423,7 @@ async function send(forcedText?: string) {
 .popup-status.is-resting { color: var(--color-warning); cursor: default; }
 .popup-status.is-resting .status-dot { background: var(--color-warning); animation: restPulse 1.8s ease-in-out infinite; }
 @keyframes restPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-/* 点击离线后，IM 区短暂高亮一下引导视线（不留痕） */
-.im-plat-group { border-radius: 10px; }
-.im-plat-group.im-flash { animation: imFlash 2.4s ease-out 1; }
-@keyframes imFlash {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 127, 178, 0); }
-  14%      { box-shadow: 0 0 0 2px rgba(123, 127, 178, 0.55); }
-  60%      { box-shadow: 0 0 0 2px rgba(123, 127, 178, 0.28); }
-}
+/* .im-plat-group/.im-flash 已随 GuguChatSidebar.vue 迁移 */
 .btn-group { display: flex; align-items: center; gap: 2px; }
 
 .popup-icon-btn {
@@ -1595,49 +1471,9 @@ async function send(forcedText?: string) {
 /* 小窗输入字号略小，与小窗整体一致 */
 .chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
 
-.exp-sidebar {
-  width: 210px; flex-shrink: 0;
-  display: flex; flex-direction: column;
-}
-.exp-sidebar-header {
-  display: flex; align-items: center;
-  padding: 16px 14px 12px;
-  flex-shrink: 0;
-}
-.exp-sidebar-divider {
-  height: 1px; flex-shrink: 0; margin: 0 4px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
-}
-.exp-group-divider {
-  height: 1px; flex-shrink: 0; margin: 4px 2px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
-}
-.exp-sidebar-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text-primary); text-align: center; }
-
-.exp-new-session-wrap {
-  padding: 10px 10px 12px;
-  flex-shrink: 0;
-}
-.exp-new-session-btn {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 9px 14px; border-radius: var(--radius-sm); cursor: pointer;
-  font-size: 12.5px; font-weight: 700; font-family: var(--font-sans);
-  color: var(--color-primary);
-  background: rgba(255,255,255,0.82);
-  border: 1px solid rgba(255,255,255,0.95);
-  box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
-  transition: background 0.15s, box-shadow 0.15s;
-}
-.exp-new-session-btn:hover {
-  background: rgba(255,255,255,0.95);
-  box-shadow: 0 5px 16px rgba(123,127,178,0.22), inset 0 1px 0 rgba(255,255,255,1);
-}
-.exp-new-session-btn:active {
-  transform: translateY(1px);
-  box-shadow: 0 1px 4px rgba(123,127,178,0.1), inset 0 1px 0 rgba(255,255,255,1);
-  transition: transform 0.05s, box-shadow 0.05s;
-}
-.exp-new-session-btn svg { display: block; }
+/* 侧栏相关样式（会话列表、新建会话、IM 平台抽屉、扫码连接框）已随
+   GuguChatSidebar.vue 迁移。.exp-icon-btn 仍留着——窗口头部「收起」按钮
+   （不在侧栏里）还在用。 */
 .exp-icon-btn {
   width: 28px; height: 28px; border-radius: 8px; border: none;
   background: none; color: var(--text-secondary);
@@ -1646,103 +1482,6 @@ async function send(forcedText?: string) {
 }
 .exp-icon-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
 .exp-icon-btn svg { display: block; }
-
-.exp-session-list {
-  flex: 1; overflow-y: auto;
-  padding: 8px;
-  display: flex; flex-direction: column; gap: 2px;
-}
-.exp-session-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 8px 10px; border-radius: 9px; cursor: pointer;
-  transition: background 0.12s;
-}
-.exp-session-item:hover { background: rgba(255,255,255,0.55); }
-.exp-session-item.active { background: rgba(123,127,178,0.12); }
-.exp-session-item.active .exp-session-title { font-weight: 700; }
-.exp-session-title {
-  flex: 1; font-size: 12.5px; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.exp-session-del {
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.12s, background 0.12s; flex-shrink: 0;
-}
-.exp-session-item:hover .exp-session-del { opacity: 1; }
-.exp-session-del:hover { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
-.exp-session-del svg { display: block; }
-.exp-session-empty { font-size: 12px; color: var(--text-secondary); padding: 12px 10px; }
-.exp-session-source {
-  flex-shrink: 0; font-size: 11px; font-weight: 600; line-height: 1;
-  font-family: var(--font-sans); letter-spacing: 0.01em;
-  padding: 2px 5px; border-radius: 4px;
-}
-.exp-session-source.src-qq { background: rgba(18,183,245,0.15); color: #0c8fc0; }
-.exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
-.exp-session-tag {
-  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
-  font-family: var(--font-sans);
-  padding: 2px 4px; border-radius: 4px;
-  background: rgba(123,127,178,0.15); color: #6a6ea3;
-}
-
-/* IM 平台抽屉（飞书 / QQ） */
-.im-plat { display: flex; flex-direction: column; }
-.im-plat-head {
-  display: flex; align-items: center; gap: 7px;
-  padding: 8px 10px; border-radius: 9px; border: none; cursor: pointer;
-  background: none; font-family: var(--font-sans);
-  transition: background 0.12s;
-}
-.im-plat-head:hover { background: rgba(255,255,255,0.55); }
-.im-plat-head.open { background: rgba(123,127,178,0.08); }
-.im-plat-chev { color: var(--text-secondary); transition: transform 0.18s ease; flex-shrink: 0; }
-.im-plat-chev.open { transform: rotate(-180deg); }
-.im-plat-name { flex: 1; text-align: left; font-size: 12.5px; font-weight: 700; color: var(--text-primary); }
-.im-plat-badge {
-  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
-  padding: 2px 6px; border-radius: 4px;
-  background: rgba(123,127,178,0.12); color: var(--text-secondary);
-}
-.im-plat-badge.on { background: rgba(74,180,120,0.16); color: #2f9e63; }
-.im-plat-body {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 2px 0 6px;
-}
-.im-connect-btn {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
-  margin: 4px 0 2px;
-  padding: 9px 14px; border-radius: var(--radius-sm); cursor: pointer;
-  font-size: 12.5px; font-weight: 700; font-family: var(--font-sans);
-  color: var(--color-primary);
-  background: rgba(255,255,255,0.82);
-  border: 1px solid rgba(255,255,255,0.95);
-  box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
-  transition: background 0.15s, box-shadow 0.15s;
-}
-.im-connect-btn:hover:not(:disabled) {
-  background: rgba(255,255,255,0.95);
-  box-shadow: 0 5px 16px rgba(123,127,178,0.22), inset 0 1px 0 rgba(255,255,255,1);
-}
-.im-connect-btn:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: 0 1px 4px rgba(123,127,178,0.1), inset 0 1px 0 rgba(255,255,255,1);
-  transition: transform 0.05s, box-shadow 0.05s;
-}
-.im-connect-btn:disabled { opacity: 0.6; cursor: default; }
-.im-qr-box {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 12px 8px 10px;
-}
-.im-qr-canvas {
-  width: 160px; height: 160px; border-radius: 10px;
-  background: #fff; padding: 6px; box-sizing: border-box;
-  box-shadow: 0 2px 10px rgba(123,127,178,0.18);
-}
-.im-qr-hint { font-size: 11.5px; color: var(--text-secondary); text-align: center; line-height: 1.5; }
-.im-qr-err { font-size: 11.5px; color: rgba(200,80,80,0.9); padding: 4px 0; }
 
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
@@ -1796,11 +1535,7 @@ async function send(forcedText?: string) {
   border: none; border-radius: 999px; cursor: pointer;
 }
 .cb-cancel:hover { background: rgba(123,127,178,0.18); }
-.im-qr-cancel {
-  font-size: 11.5px; color: var(--text-secondary); background: none; border: none;
-  cursor: pointer; padding: 3px 10px; border-radius: 6px; transition: background 0.12s;
-}
-.im-qr-cancel:hover { background: rgba(123,127,178,0.12); color: var(--text-primary); }
+/* .im-qr-cancel 已随 GuguChatSidebar.vue 迁移 */
 
 /* .exp-send-btn/.send-btn 已随 GuguChatComposer.vue 迁移 */
 
@@ -1969,53 +1704,5 @@ async function send(forcedText?: string) {
    GuguChatMessageRow.vue，同样需要 :deep()） */
 :deep(.md-body) { padding: 10px 13px; }
 
-/* ── 迷你播放器 ── */
-.mini-player {
-  position: fixed; right: 28px; box-sizing: border-box; width: 360px;   /* border-box 外宽 360，与小窗/气泡严格对齐 */
-  transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1);
-  background: var(--panel-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.65); border-radius: 20px;
-  box-shadow: var(--glass-shadow-lg); padding: 12px 14px 10px;
-  display: flex; flex-direction: column; gap: 7px;   /* z-index 由 :style 动态(跟随聊天窗 ±1) */
-}
-.mp-info { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.mp-name { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-.mp-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; flex-shrink: 0; }
-.mp-bars i { display: block; width: 2.5px; border-radius: 99px; background: rgba(100,110,200,0.55); height: 4px; }
-.mp-bars--playing i { animation: mp-eq 0.55s ease-in-out infinite alternate; }
-.mp-bars--playing i:nth-child(1) { animation-duration: 0.55s; }
-.mp-bars--playing i:nth-child(2) { animation-duration: 0.42s; animation-delay: 0.1s; }
-.mp-bars--playing i:nth-child(3) { animation-duration: 0.65s; animation-delay: 0.05s; }
-.mp-bars--playing i:nth-child(4) { animation-duration: 0.48s; animation-delay: 0.15s; }
-@keyframes mp-eq { from { height: 3px; } to { height: 13px; } }
-.mp-seek-row { display: flex; align-items: center; gap: 6px; }
-.mp-time { font-size: 10px; color: var(--text-secondary); font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.mp-track { flex: 1; height: 3px; border-radius: 99px; background: rgba(100,110,200,0.12); position: relative; cursor: pointer; }
-.mp-track:hover .mp-thumb { opacity: 1; }
-.mp-fill { height: 100%; border-radius: 99px; background: linear-gradient(to right, rgba(100,110,200,0.65), rgba(140,120,210,0.75)); pointer-events: none; }
-.mp-thumb { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 10px; height: 10px; border-radius: 50%; background: rgba(100,110,200,0.9); pointer-events: none; opacity: 0; transition: opacity 0.15s; }
-.mp-btn--pin { width: 24px; height: 24px; border-radius: 6px; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: none; color: var(--text-secondary); transition: background 0.12s, color 0.12s; }
-.mp-btn--pin svg { display: block; }
-.mp-btn--pin:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,0.9); }
-.mp-btn--pinned { color: rgba(100,110,200,0.8); }
-.mp-btn--pinned:hover { background: rgba(100,110,200,0.12); color: rgba(100,110,200,1); }
-.mp-btn--close { width: 24px; height: 24px; border-radius: 6px; border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; background: none; color: var(--text-secondary); transition: background 0.12s, color 0.12s; }
-.mp-btn--close:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
-.mp-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
-.mp-btn { border: none; cursor: pointer; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: transform 0.15s, background 0.12s; }
-.mp-btn--play { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, rgba(110,115,190,0.85), rgba(140,120,200,0.9)); color: white; justify-self: center; box-shadow: 0 3px 10px rgba(100,110,200,0.28), inset 0 1px 0 rgba(255,255,255,0.32); }
-.mp-btn--play svg { display: block; }
-.mp-btn--play:hover { transform: scale(1.08); }
-.mp-btn--play:active { transform: scale(0.93); }
-.mp-vol-group { display: flex; align-items: center; gap: 4px; justify-self: end; }
-.mp-vol-btn { width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: var(--text-secondary); display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: background 0.12s, color 0.12s; }
-.mp-vol-btn:hover { background: rgba(0,0,0,0.07); color: var(--text-primary); }
-.mp-vol-btn svg { display: block; }
-.mp-vol-slider { width: 60px; height: 3px; cursor: pointer; accent-color: rgba(100,110,200,0.75); }
-/* 时长/曲线跟 .chat-open-enter-active/.chat-open-leave-active 严格对齐——播放器跟聊天
-   窗口经常联动出现（比如小窗打开顶起播放器），用不同的时长/曲线会让两者一个先到位、
-   一个还在动，看着不同步（2026-07-17 复现：播放器隐藏后再打开跟 guguchat 动画对不上）。 */
-.mini-player-enter-active { transition: opacity 0.22s ease, transform 0.36s cubic-bezier(0.16, 1, 0.3, 1); }
-.mini-player-leave-active { transition: opacity 0.18s ease-in, transform 0.22s cubic-bezier(0.7, 0, 0.84, 0); }
-.mini-player-enter-from, .mini-player-leave-to { opacity: 0; transform: scale(0.05); }
+/* .mini-player 与 .mp-开头的样式已随 GuguChatMiniPlayer.vue 迁移 */
 </style>
