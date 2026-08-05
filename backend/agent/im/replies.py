@@ -24,50 +24,51 @@ _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
 
 
-async def send_text(payload: dict, text: str) -> None:
+async def send_text(payload: dict, text: str) -> bool:
     """构造并发送一条平台无关的文本回复。"""
-    await send_reply(payload, PlatformReply.from_text(payload, text))
+    return await send_reply(payload, PlatformReply.from_text(payload, text))
 
 
-async def send_reply(payload: dict, reply: PlatformReply) -> None:
+async def send_reply(payload: dict, reply: PlatformReply) -> bool:
     """将统一回复交给对应 Gateway。"""
     platform = payload.get("platform")
     unsupported = reply.unsupported_capabilities(platform or "")
-    if unsupported and platform in {"qqbot", "feishu", "wechat"}:
+    if unsupported and platform in {"qq", "feishu", "wechat"}:
         from agent import logsafe
         print(
             f"[im] {platform} 不支持回复能力: {','.join(unsupported)} "
             f"fp={logsafe.fingerprint(reply.text)}",
             flush=True,
         )
-        return
+        return False
     if platform == "feishu" and reply.target.id:
         from agent.gateway import feishu
-        await feishu.send_text(reply.target.id, reply.text, payload.get("channel_id"))
-    elif platform == "qqbot" and reply.target.id:
+        result = await feishu.send_text(reply.target.id, reply.text, payload.get("channel_id"))
+        return result is not False
+    elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
         if reply.target.type == "group":
-            await qq.send_group(
+            return await qq.send_group(
                 reply.target.id,
                 reply.text,
                 reply.reply_to_message_id,
                 payload.get("channel_id"),
             )
-        else:
-            await qq.send_c2c(
-                reply.target.id,
-                reply.text,
-                reply.reply_to_message_id,
-                payload.get("channel_id"),
-            )
+        return await qq.send_c2c(
+            reply.target.id,
+            reply.text,
+            reply.reply_to_message_id,
+            payload.get("channel_id"),
+        )
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat
-        await wechat.send_text(
+        result = await wechat.send_text(
             reply.target.id,
             reply.text,
             payload.get("channel_id"),
             payload.get("context_token", ""),
         )
+        return result is not False
     else:
         from agent import logsafe
         print(
@@ -75,6 +76,7 @@ async def send_reply(payload: dict, reply: PlatformReply) -> None:
             f"fp={logsafe.fingerprint(reply.text)}",
             flush=True,
         )
+        return False
 
 
 async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: str, fname: str) -> bool:
@@ -90,7 +92,7 @@ async def send_file(payload: dict, *, storage_key: str, ext: str, display_name: 
         from app.services.storage import get_storage
         data = await get_storage().get(storage_key)
         return await _send_file_feishu(payload, ext, data, fname)
-    if platform == "qqbot":
+    if platform == "qq":
         return await _send_file_qq(payload, storage_key, ext, display_name, fname)
     return False
 

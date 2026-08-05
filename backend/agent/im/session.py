@@ -90,7 +90,7 @@ def session_scope_filters(
     bot_id: Optional[str] = None,
 ) -> list:
     """生成 IM 会话归属条件；Web 调用方不应使用此过滤器。"""
-    if source not in {"feishu", "qqbot", "wechat"}:
+    if source not in {"feishu", "qq", "wechat"}:
         return []
     return [
         model.source == source,

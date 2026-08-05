@@ -50,7 +50,7 @@ def test_dedup_duplicate_returns_false():
     """同一 (platform, message_id) 第二次：SETNX=False（key 已存在）→ return False（不入队）。"""
     r = _redis_with_set_returns(False)
     with patch.object(R, "get_redis_sync", return_value=r):
-        assert _dedup_check({"platform": "qqbot", "message_id": "msg_xyz"}) is False
+        assert _dedup_check({"platform": "qq", "message_id": "msg_xyz"}) is False
 
 
 def test_dedup_namespace_isolates_channels():
@@ -60,9 +60,9 @@ def test_dedup_namespace_isolates_channels():
     with patch.object(R, "get_redis_sync") as g:
         g.side_effect = [feishu, qq]
         assert _dedup_check({"platform": "feishu", "message_id": "m1"}) is True
-        assert _dedup_check({"platform": "qqbot", "message_id": "m1"}) is True
+        assert _dedup_check({"platform": "qq", "message_id": "m1"}) is True
     feishu.set.assert_called_once_with("im:seen:feishu:m1", "1", ex=_DEDUP_TTL_SECONDS, nx=True)
-    qq.set.assert_called_once_with("im:seen:qqbot:m1", "1", ex=_DEDUP_TTL_SECONDS, nx=True)
+    qq.set.assert_called_once_with("im:seen:qq:m1", "1", ex=_DEDUP_TTL_SECONDS, nx=True)
 
 
 def test_dedup_no_message_id_skips_check():

@@ -18,7 +18,7 @@ async def test_qq_group_reply_uses_group_target(monkeypatch):
     monkeypatch.setattr(qq, "send_c2c", fake_c2c)
 
     await send_text({
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "group",
         "chat_id": "group-1",
         "platform_user_id": "member-1",
@@ -41,7 +41,7 @@ async def test_qq_private_reply_uses_sender_target(monkeypatch):
     monkeypatch.setattr(qq, "send_c2c", fake_c2c)
 
     await send_text({
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "c2c",
         "platform_user_id": "user-1",
         "message_id": "message-2",
@@ -68,14 +68,14 @@ def test_platform_reply_declares_text_and_reply_capabilities():
     )
 
     reply = PlatformReply.from_text({
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "c2c",
         "platform_user_id": "user-1",
         "message_id": "message-1",
     }, "回复")
 
     assert reply.capabilities == (REPLY_CAPABILITY_TEXT, REPLY_CAPABILITY_REPLY)
-    assert reply.unsupported_capabilities("qqbot") == ()
+    assert reply.unsupported_capabilities("qq") == ()
     assert reply.unsupported_capabilities("unknown") == (
         REPLY_CAPABILITY_TEXT,
         REPLY_CAPABILITY_REPLY,
@@ -96,7 +96,7 @@ def test_platform_reply_infers_keyboard_capability_from_parts():
 
     assert REPLY_CAPABILITY_KEYBOARD in reply.required_capabilities
     assert reply.unsupported_capabilities("feishu") == ()
-    assert REPLY_CAPABILITY_KEYBOARD in reply.unsupported_capabilities("qqbot")
+    assert REPLY_CAPABILITY_KEYBOARD in reply.unsupported_capabilities("qq")
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_qq_group_file_result_is_returned_to_worker(monkeypatch):
     monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
     result = await replies._send_file_qq({
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "group",
         "chat_id": "group-1",
         "message_id": "msg-1",
@@ -143,7 +143,7 @@ async def test_qq_group_file_reads_local_storage_bytes(monkeypatch):
     monkeypatch.setattr("agent.gateway.qq.send_file", fake_send_file)
     result = await replies._send_file_qq(
         {
-            "platform": "qqbot",
+            "platform": "qq",
             "chat_type": "group",
             "chat_id": "group-1",
             "message_id": "msg-1",
@@ -218,7 +218,7 @@ async def test_send_file_dispatches_by_platform(monkeypatch):
     monkeypatch.setattr(replies, "_send_file_wechat", fake_wechat)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: FakeStorage())
 
-    for platform in ("qqbot", "feishu", "wechat"):
+    for platform in ("qq", "feishu", "wechat"):
         ok = await replies.send_file(
             {"platform": platform}, storage_key="k", ext="png", display_name="n", fname="n.png",
         )
@@ -250,7 +250,7 @@ async def test_unsupported_stream_capability_falls_back_before_gateway(monkeypat
 
     monkeypatch.setattr(replies, "send_text", fake_text)
     ok, response = await replies.send_stream(
-        {"platform": "qqbot", "platform_user_id": "user-1"},
+        {"platform": "qq", "platform_user_id": "user-1"},
         iter(()),
     )
 

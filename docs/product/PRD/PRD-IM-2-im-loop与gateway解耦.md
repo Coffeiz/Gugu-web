@@ -130,7 +130,7 @@ Platform Gateway
 
 ```python
 PlatformMessage(
-    platform="qqbot",
+    platform="qq",
     bot_id="...",
     message_id="...",
     chat=ChatTarget(id="...", type="group"),

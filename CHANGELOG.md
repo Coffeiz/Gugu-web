@@ -9,6 +9,9 @@
 
 ### 新增
 
+- **定时任务完整 AgentLoop 执行**（`backend/app/scheduled_tasks.py`、`backend/agent/scheduled_report.py`）：定时任务执行阶段统一使用完整 AgentLoop，按需对有工具调用的结果生成报告，并支持明确的执行/报告重试边界。
+- **LLM 预设模型选择**（`frontend/src/views/Admin/Agent/`）：Admin 支持管理和选择模型预设，减少切换模型时手动修改连接参数的成本。
+
 - **项目看板 Runtime 接入**（`views/Projects/`、`interaction/runtime/`）：项目卡、Surface、组展开收起和完成列生命周期统一通过 Runtime API 编排，业务页移除旧拖拽事务入口。
 - **可选的抓取视觉配置**（`interaction/runtime/setup.ts`）：支持配置卡片抓取对齐方式和毛玻璃视觉效果，默认行为保持原有样式。
 - **QQ 群聊消息记录**（`backend/agent/adapters/qq.py`、`ProfileImPane.vue`）：可保存未 @ 咕咕的普通群消息供后续上下文读取，同时保留 @ 消息的正常回复。
@@ -19,6 +22,9 @@
 
 ### 改进
 
+- **定时任务试运行与投递稳定性**（`backend/app/api/v1/scheduled_tasks.py`、`backend/app/scheduled_tasks.py`）：试运行超时后不再取消后台执行，任务仍可完成并投递结果；执行、报告和重试职责分离，避免重复调用和数据库事务占用。
+- **QQ 平台字段迁移**（`backend/alembic/versions/`、`backend/scripts/`）：将运行时、定时任务和活动投递配置中的 `qqbot` 统一迁移为 `qq`，并提供幂等迁移脚本。
+- **安全审查回归覆盖**（`backend/tests/`、`backend/app/services/files/`）：补齐直传配额、媒体下载、文件归属和错误边界的回归测试，确保安全修复在后续重构中持续生效。
 - **画布与媒体读取安全边界**（`views/Mind/`、`backend/agent/tools/file_readers.py`）：画布切换改为成功后原子提交，重命名增加保存闸门，音视频读取改用物理对象大小校验，避免重复写入、失败状态残留和历史大小字段绕过内存上限。
 - **音视频转码资源上限**（`backend/agent/tools/file_readers.py`）：限制音频时长、ffmpeg 输出字节数和视频帧宽度，超限时终止子进程，避免媒体解码膨胀造成内存峰值。
 - **路径迁移对账安全边界**（`backend/app/api/v1/config.py`）：按文件 identity 聚合数据库记录与物理孤儿对象，歧义项不再自动修复，并拒绝跨空间/跨项目迁移，原子更新完整归属字段。
@@ -46,6 +52,8 @@
 
 ### 修复
 
+- **空库迁移与旧定时任务字段清理**（`backend/alembic/`、`backend/app/models/`）：修复空数据库升级链路，并移除已停用的定时任务上下文配置字段。
+- **直传新建文件配额校验**（`backend/app/services/files/upload.py`）：修复新建文件路径未执行完整配额校验的问题，统一新建与覆盖上传的资源限制。
 - **项目编辑卡添加待办按钮动画**（`views/Projects/components/ProjectTodosPanel.vue`）：将添加按钮移出待办 FLIP 过渡组，避免新增第一个待办时按钮被错误地带入位移动画。
 - **完成列年月组展开收起**（`views/Projects/components/done/`）：修复组容器高度、卡片让位和底部内容在 FLIP 过程中被提前裁切的问题。
 - **音视频文件读取提示**（`backend/agent/prompts/`）：补充音视频文件读取能力说明，避免文件处理时遗漏对应工具路径。

@@ -71,14 +71,14 @@ async def test_scenario_mind_search_uses_multiple_terms_once(db, user_a):
 
 async def test_scenario_group_search_stays_in_current_group(db, user_a):
     current = await _add(db, ConversationSession(
-        user_id=user_a.id, source="qqbot", bot_id="scenario-bot", chat_id="scenario-group-a", title="群 A",
+        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_id="scenario-group-a", title="群 A",
     ))
     other = await _add(db, ConversationSession(
-        user_id=user_a.id, source="qqbot", bot_id="scenario-bot", chat_id="scenario-group-b", title="群 B",
+        user_id=user_a.id, source="qq", bot_id="scenario-bot", chat_id="scenario-group-b", title="群 B",
     ))
     await _add(db, ConversationMessage(session_id=current.id, role="user", content="部署方案"))
     await _add(db, ConversationMessage(session_id=other.id, role="user", content="部署方案"))
-    imctx.set_im("qqbot", "scenario-member", "scenario-bot", "scenario-group-a", "member", "group")
+    imctx.set_im("qq", "scenario-member", "scenario-bot", "scenario-group-a", "member", "group")
 
     try:
         result = await _group_context_search(db, user_a.id, {"queries": ["部署", "方案"]})

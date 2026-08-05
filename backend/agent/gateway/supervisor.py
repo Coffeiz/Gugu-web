@@ -23,7 +23,7 @@ POLL_SEC = 5
 # 平台 → 网关模块
 PLATFORM_MODULE = {
     "feishu": "agent.gateway.feishu",
-    "qqbot":  "agent.gateway.qq",
+    "qq":  "agent.gateway.qq",
     "wechat": "agent.gateway.wechat",
 }
 _procs: dict[str, subprocess.Popen] = {}
@@ -85,7 +85,7 @@ def _spawn(key: str, spec: dict) -> subprocess.Popen:
             "WECHAT_BOT_ID": spec["id"], "WECHAT_BOT_TOKEN": spec["app_secret"],
             "WECHAT_BASE_URL": spec["app_id"], "WECHAT_OWNER": spec["owner"],
         })
-    else:  # qqbot
+    else:  # qq
         env.update({
             "QQ_BOT_ID": spec["id"], "QQ_APP_ID": spec["app_id"],
             "QQ_APP_SECRET": spec["app_secret"],

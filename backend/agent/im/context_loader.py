@@ -120,7 +120,7 @@ async def load_im_memory(request: AgentRequest) -> dict:
     owner 个人记忆仍由既有 ``load_memory`` 读取；这里永远不读取 owner
     namespace，也不读取 member 不应看到的群长期 memory。
     """
-    if request.source not in ("feishu", "qqbot", "wechat") or not request.chat_id:
+    if request.source not in ("feishu", "qq", "wechat") or not request.chat_id:
         return {}
     bot_id = str(request.platform_bot_id or "")
     if not bot_id:

@@ -91,7 +91,7 @@ async def consume_qq_binding_code(
             .where(
                 UserBot.id == bot_id,
                 UserBot.user_id == owner_user_id,
-                UserBot.platform == "qqbot",
+                UserBot.platform == "qq",
                 UserBot.owner_platform_user_id.is_(None),
             )
             .values(
@@ -127,7 +127,7 @@ async def resolve_qq_group_access(db: AsyncSession, bot_id: int,
         select(UserBot).where(
             UserBot.id == bot_id,
             UserBot.user_id == owner_user_id,
-            UserBot.platform == "qqbot",
+            UserBot.platform == "qq",
         )
     )).scalars().first()
     if not bot or not bot.owner_platform_user_id:

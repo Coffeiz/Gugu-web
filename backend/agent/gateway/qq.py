@@ -298,7 +298,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     from agent import trace
     tid = trace.new_trace()
     payload = {
-        "platform": "qqbot",
+        "platform": "qq",
         "channel_id": channel_id,
         "owner_user_id": owner,
         "platform_user_id": sender_id,
@@ -332,9 +332,9 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not all_attachments:
         from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
-        dec = await decide_im_shortcut("qqbot", sender_id, text)
+        dec = await decide_im_shortcut("qq", sender_id, text)
         if dec["action"] == "cancel":
-            await apply_im_shortcut_cancel("qqbot", sender_id, dec)
+            await apply_im_shortcut_cancel("qq", sender_id, dec)
             target = chat_id if chat_type == "group" else sender_id
             await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
             return
@@ -648,11 +648,27 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
     """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
     时重试一次；4xx 等永久错误直接失败——发消息不是幂等操作，重试会造成重复推送，
     对不会成功的永久错误重试只有坏处没有好处（P2-b §1/§4-A 幂等前提）。"""
+    print(json.dumps({
+        "event": "send-c2c-start",
+        "has_openid": bool(openid),
+        "has_channel_id": bool(channel_id),
+        "has_msg_id": bool(msg_id),
+    }, ensure_ascii=False), flush=True)
     for attempt in (1, 2):
         try:
             await _post(channel_id, openid, text, msg_id)
+            print(json.dumps({
+                "event": "send-c2c-ok",
+                "attempt": attempt,
+            }, ensure_ascii=False), flush=True)
             return True
         except Exception as e:
+            print(json.dumps({
+                "event": "send-c2c-error",
+                "attempt": attempt,
+                "error": type(e).__name__,
+                "transient": _qq_is_transient(e),
+            }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
                 try:
@@ -676,11 +692,27 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                      channel_id: str | None = None) -> bool:
     """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
     4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
+    print(json.dumps({
+        "event": "send-group-start",
+        "has_group_openid": bool(group_openid),
+        "has_channel_id": bool(channel_id),
+        "has_msg_id": bool(msg_id),
+    }, ensure_ascii=False), flush=True)
     for attempt in (1, 2):
         try:
             await _post_group(channel_id, group_openid, text, msg_id)
+            print(json.dumps({
+                "event": "send-group-ok",
+                "attempt": attempt,
+            }, ensure_ascii=False), flush=True)
             return True
         except Exception as e:
+            print(json.dumps({
+                "event": "send-group-error",
+                "attempt": attempt,
+                "error": type(e).__name__,
+                "transient": _qq_is_transient(e),
+            }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")
                 try:

@@ -2915,7 +2915,7 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .ts-top { display: flex; align-items: center; gap: 6px; }
 .ts-src { flex-shrink: 0; font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); }
 .ts-src.src-feishu { background: rgba(80,150,255,0.18); color: #9cc0ff; }
-.ts-src.src-qqbot { background: rgba(90,200,160,0.18); color: #8fe0c0; }
+.ts-src.src-qq { background: rgba(90,200,160,0.18); color: #8fe0c0; }
 .ts-title { font-size: 13px; color: #e8e9f2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-meta { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 3px; }
 .trace-detail { overflow-y: auto; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; background: rgba(255,255,255,0.02); padding: 16px; }

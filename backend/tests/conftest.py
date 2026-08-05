@@ -7,7 +7,7 @@
 - 模型列类型全部方言无关（Uuid/JSON/Text…），SQLite 可直接建表；若未来引入
   JSONB/ARRAY 等 PG 专属类型，这里会在 create_all 时立刻报错——那时再迁真 PG。
 - `db` fixture 顺带把 `app.db.session._engine/_SessionLocal` 接到同一个内存库：
-  后台任务（fire-and-forget，比如 _apply_context_config_bg 那类）自己开
+  后台任务（fire-and-forget）自己开
   `_sess._SessionLocal()` 新 session，不这样接的话会摸到未初始化/真实配置的引擎。
 """
 from __future__ import annotations

@@ -117,7 +117,7 @@ def _is_passive_group_payload(payload: dict) -> bool:
     读取数据库；这样被动消息才能在同一群的主动模型任务期间实时落库并推送前端。
     """
     return bool(
-        payload.get("platform") == "qqbot"
+        payload.get("platform") == "qq"
         and payload.get("chat_type") == "group"
         and payload.get("chat_id")
         and (

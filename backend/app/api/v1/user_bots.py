@@ -83,13 +83,13 @@ async def create_my_bot(
     existing = (await db.execute(
         select(UserBot).where(
             UserBot.user_id == current_user.id,
-            UserBot.platform == "qqbot",
+            UserBot.platform == "qq",
         )
     )).scalars().first()
     if existing:
         raise HTTPException(409, "每个咕咕账号只能绑定一个 QQ 机器人")
     bot = UserBot(
-        user_id=current_user.id, platform="qqbot",
+        user_id=current_user.id, platform="qq",
         name=body.name or "我的 QQ 机器人",
         app_id=body.app_id.strip(), app_secret=body.app_secret.strip(),
         sandbox=body.sandbox, enabled=body.enabled,
@@ -109,7 +109,7 @@ async def create_qq_binding_code(
 ):
     """为尚未绑定 QQ 身份的 Bot 生成一次性绑定码。"""
     bot = await get_owned(db, UserBot, bot_id, current_user.id)
-    if not bot or bot.platform != "qqbot":
+    if not bot or bot.platform != "qq":
         raise HTTPException(404, "机器人不存在")
     if bot.owner_platform_user_id:
         raise HTTPException(409, "QQ 身份已经绑定")

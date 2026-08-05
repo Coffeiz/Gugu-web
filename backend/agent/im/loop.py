@@ -283,7 +283,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         session = await db.get(ConversationSession, session_id) if session_id else None
         if session is not None and (
             session.user_id != request.user_id
-            or session.source != (request.source or "qqbot")
+            or session.source != (request.source or "qq")
             or session.bot_id != request.platform_bot_id
             or session.chat_id != request.chat_id
         ):
@@ -296,7 +296,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 select(ConversationSession)
                 .where(
                     ConversationSession.user_id == request.user_id,
-                    ConversationSession.source == (request.source or "qqbot"),
+                    ConversationSession.source == (request.source or "qq"),
                     ConversationSession.bot_id == request.platform_bot_id,
                     ConversationSession.chat_id == request.chat_id,
                     ConversationSession.chat_type == "group",
@@ -308,7 +308,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             session = ConversationSession(
                 user_id=request.user_id,
                 title=(request.message[:50] or "群聊记录"),
-                source=request.source or "qqbot",
+                source=request.source or "qq",
                 bot_id=request.platform_bot_id,
                 chat_id=request.chat_id,
                 chat_type=("group" if request.chat_id else
@@ -360,7 +360,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
 
             group_scope = MemoryScope(
                     request.user_id,
-                    request.source or "qqbot",
+                    request.source or "qq",
                     str(request.platform_bot_id or ""),
                     "group",
                     str(request.chat_id),
@@ -374,7 +374,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                 await observe_member_message(
                     MemoryScope(
                         request.user_id,
-                        request.source or "qqbot",
+                        request.source or "qq",
                         str(request.platform_bot_id or ""),
                         "platform-user",
                         str(request.platform_user_id),
@@ -408,7 +408,7 @@ def should_record_passive_group(request: AgentRequest, payload: dict) -> bool:
     继续进入模型回复流程。
     """
     return bool(
-        request.source == "qqbot"
+        request.source == "qq"
         and request.chat_id
         and payload.get("chat_type") == "group"
         and (
@@ -541,7 +541,7 @@ async def dispatch_im_message(payload: dict):
     from agent import logsafe, trace
     from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
 
-    if payload.get("platform") == "qqbot":
+    if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
         # 系统表情可能只有 emoji_refs，没有 QQ 原始附件；两者都要经过媒体入口，
         # 否则 QFace 无法补图，最终只会保留网关的占位文本。
@@ -639,7 +639,7 @@ async def dispatch_im_message(payload: dict):
             await observe_session_activity(
                 MemoryScope(
                     req.user_id,
-                    req.source or "qqbot",
+                    req.source or "qq",
                     str(req.platform_bot_id or ""),
                     "group",
                     str(req.chat_id),
@@ -657,7 +657,7 @@ async def dispatch_im_message(payload: dict):
                 await observe_member_activity(
                     MemoryScope(
                         req.user_id,
-                        req.source or "qqbot",
+                        req.source or "qq",
                         str(req.platform_bot_id or ""),
                         "platform-user",
                         str(req.platform_user_id),

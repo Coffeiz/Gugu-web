@@ -8,6 +8,7 @@ worker 进程每 ~30s 调 `reconcile()`：从 `scheduled_tasks` 表读启用任�
 from __future__ import annotations
 
 import json
+import logging
 import uuid as _uuid
 from datetime import datetime, timedelta
 
@@ -17,6 +18,7 @@ from app.core.redaction import diag_log, redact
 from app.core.tz import LOCAL_TZ, local_now, now_utc
 
 _synced: dict[str, str] = {}   # job_id -> 上次同步用的 updated_at，变了才重挂
+logger = logging.getLogger(__name__)
 
 
 def _as_uuid(v):
@@ -86,7 +88,7 @@ async def reconcile() -> None:
         # GC 过期的一次性任务：一次性任务过点就「用完了」——正常触发的已被 execute_task 即时删，
         # 这里兜底清理漏网的（misfire 没触发、被停用、或残留），否则它们永远僵在面板里。
         now = local_now()
-        gc = [t for t in all_tasks if _once_expired(t.cron, now)]
+        gc = [t for t in all_tasks if t.last_run_at is None and _once_expired(t.cron, now)]
         gc_ids = {t.id for t in gc}
         if gc:
             gc_uids = {t.user_id for t in gc}
@@ -95,7 +97,12 @@ async def reconcile() -> None:
             await db.commit()
             print(f"[sched] GC {len(gc)} 个过期一次性任务: {sorted(gc_ids)}", flush=True)
             await _notify_tasks_changed(gc_uids)   # 自动清 → 定时面板实时刷
-        tasks = [t for t in all_tasks if t.enabled and t.id not in gc_ids]
+        tasks = [
+            t for t in all_tasks
+            if t.enabled
+            and t.id not in gc_ids
+            and not ((t.cron or "").startswith("@once:") and t.last_run_at is not None)
+        ]
 
     desired: dict[str, str] = {}
     for t in tasks:
@@ -132,17 +139,14 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
         if not t or not t.enabled:
             return {"错误": "任务不存在或已停用"}
         payload, uid, name = t.payload or "", t.user_id, t.name
-        context_config = t.context_config
         target_map = t.delivery_targets
         chans = {c for c in (t.channels or "").split(",") if c}
+        is_once = (t.cron or "").startswith("@once:")
+        if not is_trial and is_once and t.last_run_at is not None:
+            return {"错误": "一次性任务已经执行过或正在执行"}
         if not is_trial:
             t.last_run_at = now_utc()
-        once_deleted = not is_trial and (t.cron or "").startswith("@once:")
-        if once_deleted:
-            await db.delete(t)
         await db.commit()
-    if once_deleted:
-        await _notify_tasks_changed([uid])   # 一次性任务触发即删 → 定时面板实时刷
     try:
         now_str = local_now().strftime("%Y-%m-%d %H:%M")
         target_description = _scheduled_delivery_targets(chans)
@@ -154,13 +158,33 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
             "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
             "也不要提及渠道、推送、工具不可用或无法发送。"
         )
-        text = await _run_agent(uid, prompt, context_config, retry=not is_trial)
+        text = await _run_agent(uid, prompt, trial=is_trial)
         result = await deliver_to_channels(uid, name, text, chans, target_map)
+        if not is_trial and is_once and _delivery_succeeded(result):
+            await _delete_completed_once(task_id, uid)
     except Exception as e:
         diag_log("app.scheduled_tasks.execute_task", e)
         result["错误"] = "任务执行失败"
         print(f"[sched] 执行任务 {task_id} 出错: {redact(type(e).__name__)}", flush=True)
     return result
+
+
+def _delivery_succeeded(result: dict) -> bool:
+    """一次性任务只有在所有选定渠道确认发送后才删除。"""
+    return not result or all(value == "已发送" for value in result.values())
+
+
+async def _delete_completed_once(task_id: int, user_id) -> None:
+    """成功投递后删除一次性任务；失败/进程中断时保留，便于手动重试。"""
+    import app.db.session as ss
+    from app.models import ScheduledTask
+
+    async with ss._SessionLocal() as db:
+        task = await db.get(ScheduledTask, task_id)
+        if task and (task.cron or "").startswith("@once:"):
+            await db.delete(task)
+            await db.commit()
+    await _notify_tasks_changed([user_id])
 
 
 async def deliver_to_channels(
@@ -192,9 +216,29 @@ async def deliver_to_channels(
             # 旧任务没有保存 delivery_targets。不能再把最近一次群聊地址当成
             # 私聊提醒目标，否则用户在群里聊天后，历史任务会误发到该群。
             target = await _legacy_private_target(uid, platform)
+        print(json.dumps({
+            "event": "before-send",
+            "platform": platform,
+            "chat_type": (target or {}).get("chat_type"),
+            "has_target": bool(target),
+            "has_puid": bool((target or {}).get("puid")),
+            "has_chat_id": bool((target or {}).get("chat_id")),
+            "has_channel_id": bool((target or {}).get("channel_id")),
+        }, ensure_ascii=False), flush=True)
         try:
             sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform, target)
-            result[lbl] = "已发送" if sent else "无可触达地址（先给该 bot 发条消息）"
+            print(json.dumps({
+                "event": "after-send",
+                "platform": platform,
+                "chat_type": (target or {}).get("chat_type"),
+                "ok": sent,
+            }, ensure_ascii=False), flush=True)
+            if sent:
+                result[lbl] = "已发送"
+            elif target:
+                result[lbl] = "发送失败（请检查该平台连接）"
+            else:
+                result[lbl] = "无可触达地址（先给该 bot 发条消息）"
             if sent:
                 # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）
                 try:
@@ -256,35 +300,103 @@ async def _persist_push_im(
 async def _run_agent(
     user_id,
     prompt: str,
-    context_config: dict | None = None,
     *,
-    retry: bool = True,
+    trial: bool = False,
 ) -> str:
-    from agent.runner import run_ephemeral
+    """编排定时任务的 execution/report，runner 只负责单阶段 AgentLoop。"""
     import app.db.session as ss
     from app.models import User
+
     async with ss._SessionLocal() as db:
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
-    text = await run_ephemeral(
-        user_id,
-        uname,
-        prompt,
-        context_config=context_config,
-        retry=retry,
-    )
-    return text or "（咕咕这次没有产出内容）"
+
+    from agent import sanitize
+    from agent.runner import run_scheduled_execution, run_scheduled_report
+
+    max_rounds = 2
+    last_text = "咕咕这次没有产出内容"
+    for round_index in range(max_rounds):
+        round_no = round_index + 1
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps({"event": "execution-start", "round": round_no, "trial": trial}, ensure_ascii=False),
+        )
+        execution_text, execution_failed, meta = await run_scheduled_execution(
+            user_id, uname, prompt
+        )
+        meta = meta or {}
+        last_text = execution_text or last_text
+        mutated = bool(meta.get("mutated"))
+        tool_count = len(meta.get("tool_names", []))
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps(
+                {
+                    "event": "execution-finish",
+                    "round": round_no,
+                    "ok": not execution_failed,
+                    "tool_count": tool_count,
+                    "mutated": mutated,
+                },
+                ensure_ascii=False,
+            ),
+        )
+        if execution_failed:
+            if mutated or round_no >= max_rounds:
+                return sanitize.strip_disallowed_emoji(last_text)
+            logger.info(
+                "[scheduled-phase] %s",
+                json.dumps({"event": "execution-retry", "next_round": round_no + 1}, ensure_ascii=False),
+            )
+            continue
+
+        if not meta.get("tool_names"):
+            logger.info(
+                "[scheduled-phase] %s",
+                json.dumps({"event": "report-skipped", "round": round_no, "reason": "no-tools"}, ensure_ascii=False),
+            )
+            return sanitize.strip_disallowed_emoji(execution_text or last_text)
+
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps({"event": "report-start", "round": round_no}, ensure_ascii=False),
+        )
+        report_text, report_failed = await run_scheduled_report(
+            user_id, uname, prompt, execution_text
+        )
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps({"event": "report-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
+        )
+        if not report_failed:
+            return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text)
+
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps({"event": "report-retry-start", "round": round_no}, ensure_ascii=False),
+        )
+        report_text, report_failed = await run_scheduled_report(
+            user_id, uname, prompt, execution_text
+        )
+        logger.info(
+            "[scheduled-phase] %s",
+            json.dumps({"event": "report-retry-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
+        )
+        return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text)
+
+    return sanitize.strip_disallowed_emoji(last_text)
 
 
-# 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qqbot"）
-_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qqbot", "wechat": "wechat"}
-_PLAT_LABEL = {"feishu": "飞书", "qqbot": "QQ", "wechat": "微信"}
+# 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qq"）
+_CHAN_PLATFORM = {"feishu": "feishu", "qq": "qq", "wechat": "wechat"}
+_PLAT_LABEL = {"feishu": "飞书", "qq": "QQ", "wechat": "微信"}
 
 
 async def owner_private_targets(db, user_id, channels: set | list[str] | None) -> dict | None:
     """为网页创建的任务解析固定私聊目标，不依赖最近一次 IM 会话。"""
     channels = set(channels or [])
-    wanted = {"qq": "qqbot", "feishu": "feishu", "wechat": "wechat"}
+    wanted = {"qq": "qq", "feishu": "feishu", "wechat": "wechat"}
     selected = {channel: platform for channel, platform in wanted.items() if channel in channels}
     if not selected:
         return None
@@ -305,6 +417,7 @@ async def owner_private_targets(db, user_id, channels: set | list[str] | None) -
             )
         ).scalars().first()
         targets[channel] = {
+            "platform": platform,
             "chat_type": "c2c",
             "chat_id": None,
             "puid": row.owner_platform_user_id if row else None,
@@ -363,6 +476,7 @@ async def _legacy_private_target(user_id, platform: str) -> dict | None:
         )).scalars().first()
     if row and row.owner_platform_user_id:
         return {
+            "platform": platform,
             "chat_type": "c2c",
             "chat_id": None,
             "puid": row.owner_platform_user_id,
@@ -398,8 +512,7 @@ async def _deliver_im(
         "context_token": reach.get("context_token", ""),   # 微信 iLink 必需，其他平台为空
     }
     from agent.im.replies import send_text
-    await send_text(payload, text)
-    return True
+    return await send_text(payload, text)
 
 
 # ── IM 可触达地址（worker 收到消息时记一份，主动推送时用）──────────────────────

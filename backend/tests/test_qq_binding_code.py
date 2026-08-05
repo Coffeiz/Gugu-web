@@ -41,7 +41,7 @@ class FakeRedis:
 async def _create_bot(db, user_id):
     bot = UserBot(
         user_id=user_id,
-        platform="qqbot",
+        platform="qq",
         app_id="app-1",
         app_secret="secret",
     )

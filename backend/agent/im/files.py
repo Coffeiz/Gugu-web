@@ -89,7 +89,7 @@ async def send_files(payload: dict, files: list) -> FileSendResult:
     if not files:
         return result
     platform = payload.get("platform")
-    if platform not in ("feishu", "qqbot", "wechat"):
+    if platform not in ("feishu", "qq", "wechat"):
         print(f"[im] {platform} 暂不支持发文件（{len(files)} 个）", flush=True)
         result.failed = len(files)
         result.reason = "这个平台暂时不能接收文件。"

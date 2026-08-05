@@ -10,7 +10,7 @@ from agent.im.session import conversation_key
 
 def _payload(**overrides) -> dict:
     base = {
-        "platform": "qqbot",
+        "platform": "qq",
         "bot_id": "bot-1",
         "chat_type": "group",
         "chat_id": "group-1",
@@ -51,6 +51,6 @@ def test_private_chat_uses_sender_as_scope_id():
 
 
 def test_missing_routing_fields_still_produces_a_key_without_raising():
-    key = conversation_key({"platform": "qqbot"})
-    assert key.platform == "qqbot"
+    key = conversation_key({"platform": "qq"})
+    assert key.platform == "qq"
     assert key.scope_id == ""

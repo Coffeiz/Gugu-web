@@ -22,7 +22,7 @@ async def _group_context_search(db, user_id, args: dict):
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
         .where(
             ConversationSession.user_id == user_id,
-            ConversationSession.source == "qqbot",
+            ConversationSession.source == "qq",
             ConversationSession.bot_id == im.get("channel_id"),
             ConversationSession.chat_id == im["chat_id"],
             ConversationMessage.content_json.is_(None),

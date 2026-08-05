@@ -79,7 +79,7 @@ router = APIRouter(prefix="/admin/agent", tags=["admin"])
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "agent" / "prompts"
 
-PROFILES = ["default"]   # qqbot/mini 是早期占位、从未接线（运行时只用 default），已移除以免空 tab 误导
+PROFILES = ["default"]   # qq/mini 是早期占位、从未接线（运行时只用 default），已移除以免空 tab 误导
 
 PLACEHOLDERS = [
     {"key": "{today}",       "desc": "今天日期"},

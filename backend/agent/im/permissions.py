@@ -52,7 +52,7 @@ async def resolve_access(
     当前只有 QQ 的 C2C/群聊接入了 Bot owner 权限；其他平台保留中性结果，
     不在这里擅自把平台身份升级成 owner。
     """
-    if platform != "qqbot":
+    if platform != "qq":
         # 飞书连接时会保存 owner open_id；群聊也必须按 Bot 作用域比较，不能
         # 因为 payload 带有 owner_user_id 就把任意群成员升级为 owner。微信当前
         # 只提供个人 Bot 私聊入口，群聊没有可验证 owner 身份时固定降级 unknown。

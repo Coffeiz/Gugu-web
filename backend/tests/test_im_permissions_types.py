@@ -6,7 +6,7 @@ async def test_non_numeric_platform_bot_id_fails_closed(monkeypatch):
     from agent.im.permissions import resolve_access
 
     result = await resolve_access(
-        "qqbot",
+        "qq",
         "group",
         "platform-bot-id",
         "owner-1",

@@ -11,9 +11,9 @@ from app.core.tz import now_utc
 def test_memory_scope_separates_bot_group_and_user():
     from agent.memory.scopes import MemoryScope
 
-    group_a = MemoryScope(7, "qqbot", "bot-a", "group", "group one")
-    group_b = MemoryScope(7, "qqbot", "bot-b", "group", "group one")
-    user = MemoryScope(7, "qqbot", "bot-a", "platform-user", "user-1")
+    group_a = MemoryScope(7, "qq", "bot-a", "group", "group one")
+    group_b = MemoryScope(7, "qq", "bot-b", "group", "group one")
+    user = MemoryScope(7, "qq", "bot-a", "platform-user", "user-1")
 
     assert group_a.prefix != group_b.prefix
     assert group_a.prefix != user.prefix
@@ -25,11 +25,11 @@ def test_memory_scope_rejects_path_traversal():
     from agent.memory.scopes import MemoryScope
 
     with pytest.raises(ValueError):
-        MemoryScope(7, "qqbot", "bot", "group", "../other")
+        MemoryScope(7, "qq", "bot", "group", "../other")
     with pytest.raises(ValueError):
-        MemoryScope(7, "qqbot", "bot", "unknown", "x")
+        MemoryScope(7, "qq", "bot", "unknown", "x")
     with pytest.raises(ValueError):
-        MemoryScope(7, "qqbot", "bot", "group", "x").key("pattern.json")
+        MemoryScope(7, "qq", "bot", "group", "x").key("pattern.json")
 
 
 def test_format_im_memory_keeps_member_scope_separate():
@@ -115,7 +115,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
     now = now_utc()
     cursor = MemoryReflectionCursor(
         owner_user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         bot_id="bot-a",
         scope_type="group",
         scope_id="group-1",
@@ -142,7 +142,7 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
     assert await reflection_jobs.settle_idle_scopes(now=now) == 1
     assert len(calls) == 1
     scope, first, last, reason = calls[0]
-    assert scope == MemoryScope(user_a.id, "qqbot", "bot-a", "group", "group-1")
+    assert scope == MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
     assert (first, last, reason) == (41, 42, "idle")
 
     await db.refresh(cursor)
@@ -158,7 +158,7 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
     now = now_utc()
     cursor = MemoryReflectionCursor(
         owner_user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         bot_id="bot-a",
         scope_type="group",
         scope_id="group-1",
@@ -181,7 +181,7 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
         return 100
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "group", "group-1")
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
 
     assert await reflection_jobs.observe_group_message(scope, 43, now, now=now) is None
     await db.refresh(cursor)
@@ -204,7 +204,7 @@ async def test_member_agent_reflection_threshold_is_five(db, user_a, monkeypatch
         return 101
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-1")
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-1")
 
     for message_id in range(1, 5):
         assert await reflection_jobs.observe_group_message(
@@ -230,7 +230,7 @@ async def test_first_member_tool_message_reflects_immediately(db, user_a, monkey
         return 103
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-tool")
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-tool")
 
     assert await reflection_jobs.observe_group_message(
         scope, 1, now, now=now, trigger_mode="agent", force=True,
@@ -251,7 +251,7 @@ async def test_member_passive_reflection_threshold_is_thirty(db, user_a, monkeyp
         return 102
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "platform-user", "member-2")
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-2")
 
     for message_id in range(1, 30):
         assert await reflection_jobs.observe_member_message(scope, message_id, now, now=now) is None
@@ -268,7 +268,7 @@ async def test_idle_tombstoned_scope_is_not_marked_settled(db, user_a, monkeypat
     now = now_utc()
     cursor = MemoryReflectionCursor(
         owner_user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         bot_id="bot-a",
         scope_type="group",
         scope_id="group-deleted",
@@ -300,7 +300,7 @@ async def test_reflection_snapshot_excludes_assistant_and_tool_messages(db, user
 
     session = ConversationSession(
         user_id=user_a.id,
-        source="qqbot",
+        source="qq",
         bot_id="bot-a",
         chat_id="group-1",
         chat_type="group",
@@ -338,7 +338,7 @@ async def test_reflection_snapshot_excludes_assistant_and_tool_messages(db, user
     await db.flush()
     job = MemoryReflectionJob(
         owner_user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         bot_id="bot-a",
         scope_type="group",
         scope_id="group-1",
@@ -374,8 +374,8 @@ def test_reflection_prompts_are_separated_by_scope():
     from agent.memory.im_reflection import _scope_prompt
     from agent.memory.scopes import MemoryScope
 
-    group = MemoryScope("owner", "qqbot", "bot", "group", "group-1")
-    member = MemoryScope("owner", "qqbot", "bot", "platform-user", "member-1")
+    group = MemoryScope("owner", "qq", "bot", "group", "group-1")
+    member = MemoryScope("owner", "qq", "bot", "platform-user", "member-1")
     assert "群组" in _scope_prompt(group)
     assert "平台用户" in _scope_prompt(member)
 
@@ -385,7 +385,7 @@ async def test_deleted_scope_is_not_previewed(monkeypatch):
     from agent.memory import scope_lifecycle
     from agent.memory.scopes import MemoryScope
 
-    scope = MemoryScope("owner", "qqbot", "bot", "group", "group-1")
+    scope = MemoryScope("owner", "qq", "bot", "group", "group-1")
     monkeypatch.setattr(scope_lifecycle, "is_tombstoned", lambda _scope: _async_true())
     assert await scope_lifecycle.preview_scope(scope) is None
 
@@ -424,7 +424,7 @@ async def test_scope_deletion_uses_tombstone_and_cleans_storage(db, user_a, monk
     monkeypatch.setattr(scope_lifecycle.R, "produce", _noop)
     monkeypatch.setattr("app.services.storage.get_storage", lambda: fake_storage)
 
-    scope = MemoryScope(user_a.id, "qqbot", "bot-a", "group", "group-1")
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
     tombstone_id = await scope_lifecycle.request_scope_deletion(scope)
     assert await scope_lifecycle.is_tombstoned(scope)
 
@@ -442,7 +442,7 @@ async def _async_true():
 def test_owner_group_reflection_excludes_assistant_reply_and_other_members():
     from agent.runner import _reflection_input
 
-    request = SimpleNamespace(chat_id="group-1", message="我喜欢简短一点", source="qqbot")
+    request = SimpleNamespace(chat_id="group-1", message="我喜欢简短一点", source="qq")
     messages = [
         {"role": "assistant", "content": "群友说了不应进入 owner memory"},
         {"role": "tool", "content": "查询到 owner 的项目结果"},

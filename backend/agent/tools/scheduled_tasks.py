@@ -13,30 +13,12 @@ from sqlalchemy import select
 from fastapi import HTTPException
 
 from app.models import ScheduledTask
-from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels, TOOL_GROUPS
+from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
 from app.core.ownership import get_owned
 from agent import confirm
 from agent.tools.base import BaseSkill, Tool
 
 _WEEK = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六", "7": "周日"}
-
-# 到点执行（run_ephemeral）不流式展示给用户、也不建 session，享受不到 prompt 缓存——全量工具集
-# + 项目/日历/文件/记忆每次都是全价。这里让创建/修改任务的这一轮顺手判断这个任务实际用得上什么，
-# 存进 context_config，执行时按需精简注入（见 agent/runner.py run_ephemeral）。
-# 不确定就别传（None）——退回全量，安全优先于省钱。
-_CONTEXT_CONFIG_SCHEMA = {
-    "type": "object",
-    "description": ("这个任务到点执行时实际需要什么，用来精简注入、省 token（不流式展示给用户，"
-                    "浪费的都是白花的）。**不确定就整个不传**，退回全量最安全。"),
-    "properties": {
-        "tool_groups": {"type": "array", "items": {"type": "string", "enum": TOOL_GROUPS},
-                        "description": "执行这个任务需要用到的工具组，按需选、少而准；meta（use_skill）通常都该带上，天气等技能靠它拉取"},
-        "projects": {"type": "boolean", "description": "是否需要项目列表作为参考（默认 false）"},
-        "calendar": {"type": "boolean", "description": "是否需要日历事件作为参考（默认 false）"},
-        "files":    {"type": "boolean", "description": "是否需要文件概览作为参考（默认 false）"},
-        "memory":   {"type": "boolean", "description": "是否需要长期记忆作为参考（默认 false）"},
-    },
-}
 
 
 def _humanize_cron(cron: str) -> str:
@@ -74,7 +56,6 @@ def _to_dict(t: ScheduledTask) -> dict:
         "channels": [c for c in (t.channels or "").split(",") if c],
         "enabled": t.enabled,
         "last_run_at": t.last_run_at.isoformat() if t.last_run_at else None,
-        "context_config": t.context_config,
         "delivery_targets": t.delivery_targets,
     }
 
@@ -94,7 +75,7 @@ async def _resolve_delivery_targets(db, user_id, channels, mode: str = "owner_pr
     from agent import imctx
 
     current = imctx.get_im()
-    if not current or current.get("platform") != "qqbot" or current.get("chat_type") != "group":
+    if not current or current.get("platform") != "qq" or current.get("chat_type") != "group":
         return None, json.dumps({"error": "只有在 QQ 群聊中才能把定时任务绑定到当前群"}, ensure_ascii=False)
     group_id = current.get("chat_id")
     if not group_id:
@@ -121,7 +102,7 @@ def _group_delivery_mode_required(channels, delivery_mode) -> bool:
     current = imctx.get_im()
     return bool(
         current
-        and current.get("platform") == "qqbot"
+        and current.get("platform") == "qq"
         and current.get("chat_type") == "group"
     )
 
@@ -202,7 +183,6 @@ async def _create_scheduled_task(db, user_id, args: dict):
         cron=cron,
         channels=channels,
         enabled=args.get("enabled", True),
-        context_config=args.get("context_config"),
         delivery_targets=delivery_targets,
     )
     db.add(t)
@@ -216,8 +196,8 @@ async def _update_scheduled_task(db, user_id, args: dict):
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
-    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "context_config", "delivery_mode")):
-        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled/context_config），未改动。"})
+    if not any(args.get(fld) is not None for fld in ("cron", "name", "instruction", "channels", "enabled", "delivery_mode")):
+        return json.dumps({"error": "没提供要修改的字段（cron/name/instruction/channels/enabled），未改动。"})
     delivery_targets = None
     next_channels = t.channels
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
@@ -244,13 +224,6 @@ async def _update_scheduled_task(db, user_id, args: dict):
         t.name = str(args["name"]).strip()
     if args.get("instruction") is not None:
         t.payload = str(args["instruction"]).strip()
-        # 指令变了，旧的 context_config（工具组/上下文开关）是按旧指令判断的，可能不再适用；
-        # 这次调用若没有顺带给出新的 context_config，就退回全量，避免「指令改了但工具集没跟上」
-        # 导致新指令要用的工具/上下文被裁掉、任务悄悄跑不动。
-        if args.get("context_config") is None:
-            t.context_config = None
-    if args.get("context_config") is not None:
-        t.context_config = args["context_config"]
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
         if args.get("channels") is not None:
             t.channels = next_channels
@@ -308,7 +281,6 @@ class ScheduledTasksSkill(BaseSkill):
                     "enabled":     {"type": "boolean", "description": "是否启用，默认 true"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
                                       "description": "QQ 投递模式：owner_private=私聊提醒我；current_group=发送到当前 QQ 群，仅群聊中可用。QQ 群聊创建任务前必须先确认"},
-                    "context_config": _CONTEXT_CONFIG_SCHEMA,
                 },
                 "required": ["name", "instruction", "cron"],
             },
@@ -331,8 +303,6 @@ class ScheduledTasksSkill(BaseSkill):
                     "enabled":     {"type": "boolean", "description": "启用/停用（可选）"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
                                       "description": "QQ 投递模式：owner_private=私聊；current_group=当前群（可选）"},
-                    "context_config": {**_CONTEXT_CONFIG_SCHEMA,
-                        "description": _CONTEXT_CONFIG_SCHEMA["description"] + "改了 instruction 又没传这个字段，会自动退回全量，避免指令和工具集脱节。"},
                 },
                 "required": [],
             },

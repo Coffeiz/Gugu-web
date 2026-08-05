@@ -188,7 +188,7 @@ async def run(args: argparse.Namespace) -> None:
                     except (TypeError, ValueError):
                         continue
                     if (
-                        payload.get("platform") == "qqbot"
+                        payload.get("platform") == "qq"
                         and payload.get("channel_id") == args.channel_id
                         and payload.get("chat_type") == "group"
                         and payload.get("chat_id") == args.target_id

@@ -54,7 +54,7 @@ def test_qq_group_sender_prefers_user_openid_for_owner_binding(monkeypatch):
     from agent.im.models import PlatformMessage
 
     payload = {
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "group",
         "chat_id": "group-1",
         "author": {"user_openid": "owner-openid", "member_openid": "member-openid"},
@@ -293,7 +293,7 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
     await qq._handle_raw_qq_message("C2C_MESSAGE_CREATE", _raw_c2c_event(), "bot-1", "user-1", {})
 
     assert len(produced) == 1
-    assert produced[0]["platform"] == "qqbot"
+    assert produced[0]["platform"] == "qq"
     assert produced[0]["platform_user_id"] == "ou_1"
     assert produced[0]["chat_type"] == "c2c"
     assert produced[0]["text"] == "现在呢"
@@ -321,7 +321,7 @@ async def test_qq_message_still_reaches_stream_when_shortcut_redis_fails(monkeyp
     )
 
     assert len(produced) == 1
-    assert produced[0]["platform"] == "qqbot"
+    assert produced[0]["platform"] == "qq"
 
 
 async def test_qq_raw_group_event_to_payload(monkeypatch):

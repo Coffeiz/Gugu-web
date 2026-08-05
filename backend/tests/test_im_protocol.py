@@ -6,7 +6,7 @@ from worker import _is_passive_group_payload
 
 def test_platform_message_normalizes_group_payload_without_losing_metadata():
     payload = {
-        "platform": "qqbot",
+        "platform": "qq",
         "channel_id": "bot-1",
         "message_id": "msg-1",
         "chat_id": "group-1",
@@ -32,7 +32,7 @@ def test_platform_message_normalizes_group_payload_without_losing_metadata():
 
 def test_platform_message_preserves_bot_identity_for_session_messages():
     payload = {
-        "platform": "qqbot",
+        "platform": "qq",
         "bot_id": "42",
         "platform_bot_user_id": "bot-openid-42",
         "chat_type": "group",
@@ -126,7 +126,7 @@ def test_platform_reply_keeps_platform_neutral_parts():
 
 def test_platform_reply_from_text_preserves_group_reply_route():
     reply = PlatformReply.from_text({
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "group",
         "chat_id": "group-1",
         "platform_user_id": "user-1",
@@ -144,7 +144,7 @@ def test_record_only_group_policy_matches_all_qq_messages():
         user_id="owner-1",
         user_name="owner",
         chat_id="group-1",
-        source="qqbot",
+        source="qq",
     )
     base = {"chat_type": "group", "group_read_enabled": True}
 
@@ -160,7 +160,7 @@ def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
         user_id="owner-1",
         user_name="owner",
         chat_id="group-1",
-        source="qqbot",
+        source="qq",
     )
     policy = {
         "chat_type": "group",
@@ -180,7 +180,7 @@ def test_reply_mentions_records_unmentioned_qq_messages_without_replying():
 
 def test_passive_group_payload_can_bypass_active_agent_task():
     base = {
-        "platform": "qqbot",
+        "platform": "qq",
         "chat_type": "group",
         "chat_id": "group-1",
     }

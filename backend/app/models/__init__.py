@@ -583,14 +583,14 @@ class SearchUsage(Base):
 class UserBot(Base):
     """用户自带机器人（Bring-Your-Own）：每用户存自己的 bot 凭据，咕咕为其起独立网关。
 
-    目前用于 QQ（platform=qqbot）。消息归属于该 bot 的咕咕账号；QQ owner 的
+    目前用于 QQ（platform=qq）。消息归属于该 bot 的咕咕账号；QQ owner 的
     平台身份另通过一次性验证码绑定，用于群聊权限判断，不作为跨 Bot 的全局身份。
     """
     __tablename__ = "user_bots"
 
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    platform:   Mapped[str]      = mapped_column(String(20), default="qqbot")
+    platform:   Mapped[str]      = mapped_column(String(20), default="qq")
     name:       Mapped[str]      = mapped_column(String(100), default="")
     # app_id 是公开标识符（qq_connect.py/feishu_connect.py 用它做 SQL 等值查询去重），不加密；
     # app_secret 是真正的凭据，落库前 AES-256-GCM 加密（见 app/core/crypto.py）
@@ -692,9 +692,6 @@ class ScheduledTask(Base):
     cron:        Mapped[str]                = mapped_column(String(60))    # crontab "m h dom mon dow"
     channels:    Mapped[str]                = mapped_column(String(40), default="chat,im")   # chat / im 逗号分隔
     enabled:     Mapped[bool]               = mapped_column(Boolean, default=True)
-    # 执行时按需精简注入用：{"tool_groups": ["web","meta"], "projects": false, "calendar": false,
-    # "files": false, "memory": false}。null = 不裁剪，走全量（兼容旧任务/未判断出结果时的安全默认）。
-    context_config: Mapped[Optional[dict]]  = mapped_column(JSON, nullable=True, default=None)
     # 任务自己的 IM 投递目标；null = 旧任务兼容，执行时仅沿用 owner 私聊地址，拒绝群聊最近地址。
     delivery_targets: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     last_run_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

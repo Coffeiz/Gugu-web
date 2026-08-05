@@ -181,7 +181,7 @@ async def me(current_user: User = Depends(get_current_user), db: AsyncSession = 
         im_channels.append("feishu")
     qq_bot = await db.scalar(_select(UserBot).where(
         UserBot.user_id == current_user.id,
-        UserBot.platform == "qqbot",
+        UserBot.platform == "qq",
         UserBot.enabled == True,
     ))
     if qq_bot:

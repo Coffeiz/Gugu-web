@@ -168,7 +168,7 @@ backend/
 |------|------|
 | `AgentUsage` | 每次 Agent 调用记一行：`tokens_in/out`、`model`、`provider`、`tools_used`（JSON），配额统计用 |
 | `SearchUsage` | 深度研究（Tavily）用量计数，`web_search`（自建 SearXNG）不计配额 |
-| `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qqbot`） |
+| `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qq`） |
 | `InviteCode` | 邀请码，注册走邀请制 |
 | `AuditLog` | 管理员操作审计 |
 | `SystemLog` | 系统级错误/警告日志 |

@@ -10,7 +10,7 @@ from typing import Tuple
 
 from agent.models import AgentRequest
 
-IM_SOURCES: Tuple[str, ...] = ("feishu", "qqbot", "wechat")
+IM_SOURCES: Tuple[str, ...] = ("feishu", "qq", "wechat")
 
 
 @dataclass(frozen=True)

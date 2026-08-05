@@ -28,7 +28,7 @@ class ActorContext:
 
     @property
     def is_im(self) -> bool:
-        return self.platform in {"feishu", "qqbot", "wechat"}
+        return self.platform in {"feishu", "qq", "wechat"}
 
     @property
     def is_owner(self) -> bool:
@@ -51,7 +51,7 @@ class ActorResolver:
         chat_type = platform_message.chat.type or payload.get("chat_type")
         role = None
         allowed_tool_names = None
-        if platform in {"feishu", "qqbot", "wechat"}:
+        if platform in {"feishu", "qq", "wechat"}:
             try:
                 resolver = self._access_resolver
                 if resolver is None:

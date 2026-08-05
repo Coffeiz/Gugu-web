@@ -18,7 +18,7 @@ REPLY_CAPABILITY_KEYBOARD = "keyboard"
 REPLY_CAPABILITY_STREAM = "stream"
 
 _PLATFORM_REPLY_CAPABILITIES = {
-    "qqbot": frozenset({
+    "qq": frozenset({
         REPLY_CAPABILITY_TEXT,
         REPLY_CAPABILITY_FILE,
         REPLY_CAPABILITY_IMAGE,

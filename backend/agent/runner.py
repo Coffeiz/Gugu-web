@@ -10,15 +10,11 @@ from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
-import logging
 from typing import AsyncGenerator, AsyncIterator, List, Tuple
-
-logger = logging.getLogger(__name__)
 
 from sqlalchemy import delete, desc, func, select
 
 from app.core.config import get_settings
-from app.core.redaction import redact
 from agent import sanitize, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
@@ -769,12 +765,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
 
 async def _collect(
-    gen: AsyncGenerator[str, None], minimax: bool = False,
-) -> Tuple[str, int, int, bool, List, bool]:
+    gen: AsyncGenerator[str, None], minimax: bool = False, include_meta: bool = False,
+) -> Tuple:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
-    文本**按轮分段收集，只取最后一轮**：这条路径（run_collect/run_ephemeral）不流式展示给
+    文本**按轮分段收集，只取最后一轮**：这条路径（run_collect/定时任务）不流式展示给
     用户，工具调用之间模型说的过渡性旁白（"我先查一下""这条数据不对我再试试"）不该被当成
     正文发出去——之前拼接所有轮次+简单去重，会把这些旁白原样推给用户（真实翻车案例：定时
     任务查天气时反复重试，旁白被整段推送）。配合 builder._NON_STREAMING_BLOCK 提示模型把
@@ -786,6 +782,8 @@ async def _collect(
     cur = ""
     tin = tout = 0
     files: list = []
+    tool_names: list[str] = []
+    mutated = False
     cancelled = False
     async for evt_str in gen:
         try:
@@ -805,12 +803,21 @@ async def _collect(
             cur += san.feed(evt.get("content", ""))
         elif t == "file" and evt.get("file"):
             files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
+        elif t == "tool_call":
+            name = str(evt.get("name") or "")
+            if name and name not in tool_names:
+                tool_names.append(name)
+            if name.startswith(("create_", "update_", "delete_", "add_", "remove_", "edit_",
+                                "rename_", "move_", "copy_", "set_", "archive_", "restore_",
+                                "permanent_delete", "save_")):
+                mutated = True
         elif t == "_cancelled":
             cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
             break
         elif t == "error":
             detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-            return (detail, tin, tout, True, files, False)
+            result = (detail, tin, tout, True, files, False)
+            return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
 
@@ -820,120 +827,135 @@ async def _collect(
         if r:
             text = r
             break
-    return (text, tin, tout, False, files, cancelled)
+    result = (text, tin, tout, False, files, cancelled)
+    return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
 
 
-def _resolve_ephemeral_tool_names(tool_groups: list[str] | None, profile_tool_names: list[str]) -> list[str]:
-    """按 context_config.tool_groups 精简工具集；组名有不认识的（改名/拼写错误/枚举漂移）
-    就不信这份结果，退回全量，安全优先于省 token（同 run_ephemeral 里"判断不出来就走全量"
-    是同一个原则）。"""
-    if not tool_groups:
-        return profile_tool_names
-    from agent.tools import registry
-    unknown = [g for g in tool_groups if g not in registry.known_skill_names()]
-    if unknown:
-        print(f"[runner] tool_groups 里有未知组名 {unknown}，退回全量工具集", flush=True)
-        return profile_tool_names
-    # meta（use_skill）恒带上，不管分类判断有没有选它——漏了这一组，天气等按需 skill 就彻底
-    # 拉不到，属于「功能直接坏掉」而不是「多花点 token」，安全代价不对等，不能只信分类结果。
-    return registry.tools_of(list(set(tool_groups) | {"meta"}))
-
-
-# 定时任务失败后延迟重试的等待时长（秒）。排查记录（2026-07-12/13 连续两天「科技新闻」
-# 任务撞上 MiniMax `input new_sensitive` 内容审核拒绝）：同一次执行内部几秒间隔的 3 次
-# 自动重试全部同样失败，但用户手动隔几分钟再触发一次相同任务总能成功——不是审核系统本身
-# 随机，而是这条路径每次都会带着当下最新的动态上下文（当前时间、项目/日历/记忆快照，见
-# _run_ephemeral_once 里的 loaders 调用）重新拼一次系统提示词，隔几分钟后这份上下文本来
-# 就已经不一样了，构成一次真正意义上不同的请求，不是对同一次审核判定的重放。所以这里选了
-# 一个"足够让上下文有机会变化"的分钟级延迟，不是随手挑的秒数；短于这个值意义不大（跟当次
-# 执行内部那 3 次秒级重试没区别，验证过全部同样失败）。
-_EPHEMERAL_RETRY_DELAY_S = 90
-
-
-async def _run_ephemeral_once(user_id, user_name: str, prompt: str, profile, settings,
-                              context_config: dict | None) -> tuple[str, bool]:
-    """单次真正执行一趟 run_ephemeral（加载上下文→拼提示词→跑 LLM→收集结果），
-    被 run_ephemeral 调用一到两次（首次 + 失败后的延迟重试）。返回 (文本, 是否出错)。"""
-    model_cfg = pick_model(settings, None)   # 解析层：active/pool/router 选一个模型配置
+async def _run_scheduled_once(
+    user_id,
+    user_name: str,
+    prompt: str,
+    profile,
+    settings,
+    *,
+    include_meta: bool = False,
+    tool_names_override: list[str] | None = None,
+    minimal_context: bool = False,
+):
+    """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
+    model_cfg = pick_model(settings, None)
     try:
-        cfg = context_config or {}
-        inc_projects = bool(cfg.get("projects")) if context_config else True
-        inc_calendar = bool(cfg.get("calendar")) if context_config else True
-        inc_files    = bool(cfg.get("files"))    if context_config else True
-        inc_memory   = bool(cfg.get("memory"))   if context_config else True
-
         import app.db.session as _sess
+
         if _sess._engine is None:
             _sess._build_engine()
 
         async with _sess._SessionLocal() as db:
-            projects = await loaders.load_projects(db, user_id) if inc_projects else []
-            user_tz = await loaders.load_user_tz(db, user_id)   # 「今天」按用户时区算（Phase 3）
-            set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-            events = await loaders.load_events(db, user_id, tz=user_tz) if inc_calendar else []
-            files_overview = await loaders.load_files_overview(db, user_id) if inc_files else None
+            user_tz = await loaders.load_user_tz(db, user_id)
+            set_ctx_tz(user_tz)
+            if minimal_context:
+                projects, events, files_overview, memory, im_channels = [], [], None, {}, []
+            else:
+                projects = await loaders.load_projects(db, user_id)
+                events = await loaders.load_events(db, user_id, tz=user_tz)
+                files_overview = await loaders.load_files_overview(db, user_id)
+                memory = await loaders.load_memory(user_id) if profile.memory_enabled else {}
+                im_channels = await loaders.load_im_channels(user_id)
 
-        memory = await loaders.load_memory(user_id) if (profile.memory_enabled and inc_memory) else {}
-        im_channels = await loaders.load_im_channels(user_id)
         prompt_name = profile.prompt_file.removesuffix(".md")
-        system_prompt = builder.build(prompt_name, user_name, projects, events, memory, files_overview,
-                                      skills=profile.skills, im_channels=im_channels, non_streaming=True,
-                                      include_projects=inc_projects, include_calendar=inc_calendar,
-                                      include_files=inc_files, include_memory=inc_memory,
-                                      user_tz=user_tz)
+        system_prompt = builder.build(
+            prompt_name,
+            user_name,
+            projects,
+            events,
+            memory,
+            files_overview,
+            skills=profile.skills,
+            im_channels=im_channels,
+            non_streaming=True,
+            include_projects=not minimal_context,
+            include_calendar=not minimal_context,
+            include_files=not minimal_context,
+            include_memory=not minimal_context,
+            user_tz=user_tz,
+        )
 
         from agent.llm_select import use_anthropic_for
+
         use_anthropic = use_anthropic_for(model_cfg)
-        tool_groups = context_config.get("tool_groups") if context_config else None
-        tool_names = _resolve_ephemeral_tool_names(tool_groups, profile.tool_names)
+        tool_names = (
+            tool_names_override
+            if tool_names_override is not None
+            else profile.tool_names
+        )
         runner = LLMRunner(tool_names, settings)
 
         from app.core.chat_attach import build_user_content
+
         if use_anthropic:
             messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
-            gen = runner.run(user_id, system_prompt, messages, use_anthropic=True, model_cfg=model_cfg)
+            gen = runner.run(
+                user_id,
+                system_prompt,
+                messages,
+                use_anthropic=True,
+                model_cfg=model_cfg,
+            )
         else:
-            messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}]
-            gen = runner.run(user_id, None, messages, use_anthropic=False, model_cfg=model_cfg)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ]
+            gen = runner.run(
+                user_id,
+                None,
+                messages,
+                use_anthropic=False,
+                model_cfg=model_cfg,
+            )
 
-        text, _, _, errored, _, _ = await _collect(gen, minimax=is_minimax(model_cfg))
-        return text, errored
+        collected = await _collect(
+            gen,
+            minimax=is_minimax(model_cfg),
+            include_meta=include_meta,
+        )
+        text, _, _, errored, _, _, *meta = collected
+        return (
+            (text, errored, meta[0] if meta else {})
+            if include_meta
+            else (text, errored)
+        )
     finally:
-        _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
+        _release_model(model_cfg)
 
 
-async def run_ephemeral(
+async def run_scheduled_execution(user_id, user_name: str, prompt: str):
+    """执行阶段适配器，始终使用完整 AgentLoop 上下文和工具集。"""
+    return await _run_scheduled_once(
+        user_id,
+        user_name,
+        prompt,
+        DefaultProfile(),
+        get_settings(),
+        include_meta=True,
+    )
+
+
+async def run_scheduled_report(
     user_id,
     user_name: str,
-    prompt: str,
-    context_config: dict | None = None,
-    *,
-    retry: bool = True,
-) -> str:
-    """定时任务专用：跑 agent 拿结果，不建 session、不存 DB、不推 SSE。
+    task_prompt: str,
+    execution_text: str,
+):
+    """报告阶段适配器，只整理执行结果，不携带工具。"""
+    from agent.scheduled_report import build_prompt
 
-    context_config（来自 ScheduledTask.context_config，创建/改任务时顺手判断出来的）非空时按需
-    精简：只加载/注入这个任务真正用得上的工具组和项目/日历/文件/记忆——这条路径不建 session、
-    没有 prompt 缓存，每次触发都是全价，省下来的是真金白银。None（没判断出结果的旧任务/默认值）
-    就走全量，安全优先。
-
-    正式定时任务失败会自动重试一次（延迟 _EPHEMERAL_RETRY_DELAY_S 秒），不是简单重放同一份请求——
-    _run_ephemeral_once 每次都重新从 DB 加载上下文、重新拼系统提示词，重试时用户看到的是
-    一次带着最新上下文的独立请求。定时任务是异步推送结果的后台流程，没有人盯着转圈等，
-    多等一两分钟换来自动挽回一次性误判/供应商侧瞬时状态，比让用户自己发现失败再手动重试划算。
-    交互式试运行传入 ``retry=False``，避免用户点击测试后被固定的 90 秒重试延迟卡住。
-    """
-    profile = DefaultProfile()
-    settings = get_settings()
-
-    text, errored = await _run_ephemeral_once(user_id, user_name, prompt, profile, settings, context_config)
-    if errored and retry:
-        # 定时任务排障日志：_collect 判定失败时会把 text 换成错误详情，但调用方（scheduled_tasks.py）
-        # 只看得到这里返回的文本，兜成通用「没有产出内容」——真实原因此前完全没留痕（2026-07-11
-        # 排查「科技新闻」任务空产出时，日志里既无 LLM 报错、也无工具调用记录，无从判断）。
-        logger.warning("[定时任务] run_ephemeral 首次失败，%s 秒后重试一次: %s", _EPHEMERAL_RETRY_DELAY_S, redact(text))
-        await asyncio.sleep(_EPHEMERAL_RETRY_DELAY_S)
-        text, errored = await _run_ephemeral_once(user_id, user_name, prompt, profile, settings, context_config)
-        if errored:
-            logger.warning("[定时任务] run_ephemeral 重试后仍失败: %s", redact(text))
-    return sanitize.strip_disallowed_emoji(text)
+    return await _run_scheduled_once(
+        user_id,
+        user_name,
+        build_prompt(task_prompt, execution_text),
+        DefaultProfile(),
+        get_settings(),
+        tool_names_override=[],
+        minimal_context=True,
+    )

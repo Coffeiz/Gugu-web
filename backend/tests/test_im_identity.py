@@ -5,7 +5,7 @@ from app.services.im_identity import resolve_qq_group_access
 async def test_qq_group_owner_gets_full_tool_set(db, user_a):
     bot = UserBot(
         user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         app_id="app-1",
         app_secret="secret",
         owner_platform_user_id="owner-1",
@@ -23,7 +23,7 @@ async def test_qq_group_owner_gets_full_tool_set(db, user_a):
 async def test_qq_group_member_only_gets_configured_allowlist(db, user_a):
     bot = UserBot(
         user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         app_id="app-1",
         app_secret="secret",
         owner_platform_user_id="owner-1",
@@ -42,7 +42,7 @@ async def test_qq_group_member_only_gets_configured_allowlist(db, user_a):
 async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     bot = UserBot(
         user_id=user_a.id,
-        platform="qqbot",
+        platform="qq",
         app_id="app-1",
         app_secret="secret",
     )
@@ -61,8 +61,8 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
-    current = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-a", title="群 A")
-    other = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-b", title="群 B")
+    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-a", title="群 A")
+    other = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-b", title="群 B")
     db.add_all([current, other])
     await db.flush()
     db.add_all([
@@ -70,7 +70,7 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
         ConversationMessage(session_id=other.id, role="user", content="群 B 的消息"),
     ])
     await db.commit()
-    imctx.set_im("qqbot", "m1", "bot-1", "group-a", "member", "group")
+    imctx.set_im("qq", "m1", "bot-1", "group-a", "member", "group")
 
     result = await _group_context_search(db, user_a.id, {})
 
@@ -83,7 +83,7 @@ async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkey
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
-    current = ConversationSession(user_id=user_a.id, source="qqbot", bot_id="bot-1", chat_id="group-a", title="群 A")
+    current = ConversationSession(user_id=user_a.id, source="qq", bot_id="bot-1", chat_id="group-a", title="群 A")
     db.add(current)
     await db.flush()
     db.add_all([
@@ -91,7 +91,7 @@ async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkey
         ConversationMessage(session_id=current.id, role="user", content="上线清单"),
     ])
     await db.commit()
-    imctx.set_im("qqbot", "m1", "bot-1", "group-a", "member", "group")
+    imctx.set_im("qq", "m1", "bot-1", "group-a", "member", "group")
 
     result = await _group_context_search(db, user_a.id, {"queries": ["部署", "上线"]})
 
@@ -117,7 +117,7 @@ def test_member_context_policy_does_not_load_owner_context():
         message="你好",
         user_id="u1",
         user_name="群友",
-        source="qqbot",
+        source="qq",
         platform_user_id="member-1",
         im_role="member",
     ))
@@ -162,7 +162,7 @@ def test_actor_context_keeps_owner_and_platform_identity_separate():
 
     actor = ActorContext(
         owner_user_id="gugu-user",
-        platform="qqbot",
+        platform="qq",
         platform_user_id="qq-member",
         role="member",
         chat_type="group",
@@ -186,7 +186,7 @@ async def test_im_loop_prepares_actor_and_agent_request(monkeypatch):
 
     monkeypatch.setattr("agent.im.loop.resolve_access", fake_access)
     message = PlatformMessage(
-        platform="qqbot",
+        platform="qq",
         bot_id="bot-1",
         message_id="message-1",
         chat=ChatTarget("group-1", "group"),
@@ -322,7 +322,7 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
         message="现在呢",
         user_id="owner",
         user_name="coffeiz",
-        source="qqbot",
+        source="qq",
         chat_id="group-1",
     )
     message = SimpleNamespace(
@@ -348,7 +348,7 @@ def test_current_group_message_has_priority_sender_anchor():
         message="我喜欢什么",
         user_id="owner",
         user_name="coffeiz",
-        source="qqbot",
+        source="qq",
         chat_id="group-1",
         platform_user_id="owner-1",
         platform_user_name="Coffeiz",
@@ -369,11 +369,11 @@ def test_session_route_uses_group_id_for_group_and_sender_id_for_private_chat():
     from agent.im.session import resolve_route
 
     group = PlatformMessage(
-        platform="qqbot", bot_id="bot", message_id="m1",
+        platform="qq", bot_id="bot", message_id="m1",
         chat=ChatTarget("group-1", "group"), sender=PlatformSender("member-1"),
     )
     private = PlatformMessage(
-        platform="qqbot", bot_id="bot", message_id="m2",
+        platform="qq", bot_id="bot", message_id="m2",
         chat=ChatTarget("member-1", "c2c"), sender=PlatformSender("member-1"),
     )
 
@@ -389,8 +389,8 @@ def test_im_session_scope_filters_isolate_group_and_private_sessions():
     # 用真实 SQLAlchemy 模型验证会生成两条归属条件，不在这里执行 SQL。
     from app.models import ConversationSession
 
-    group_filters = session_scope_filters(ConversationSession, "qqbot", "group-1")
-    private_filters = session_scope_filters(ConversationSession, "qqbot", None)
+    group_filters = session_scope_filters(ConversationSession, "qq", "group-1")
+    private_filters = session_scope_filters(ConversationSession, "qq", None)
     assert len(group_filters) == 3
     assert len(private_filters) == 3
     assert "chat_id IS NULL" in str(private_filters[2])
@@ -400,7 +400,7 @@ def test_im_session_scope_filters_include_bot_id():
     from agent.im.session import session_scope_filters
     from app.models import ConversationSession
 
-    filters = session_scope_filters(ConversationSession, "qqbot", "group-1", "bot-a")
+    filters = session_scope_filters(ConversationSession, "qq", "group-1", "bot-a")
     assert "conversation_sessions.bot_id = :bot_id_1" in str(filters[1])
 
 
@@ -414,7 +414,7 @@ async def test_im_sessions_are_isolated_by_bot_id(db, user_a):
             message="bot A",
             user_id=user_a.id,
             user_name="群友",
-            source="qqbot",
+            source="qq",
             platform_bot_id="bot-a",
             chat_id="group-1",
         ),
@@ -426,7 +426,7 @@ async def test_im_sessions_are_isolated_by_bot_id(db, user_a):
             message="bot B",
             user_id=user_a.id,
             user_name="群友",
-            source="qqbot",
+            source="qq",
             platform_bot_id="bot-b",
             chat_id="group-1",
         ),
@@ -444,12 +444,12 @@ def test_im_loop_selects_member_or_owner_facade_without_duplicate_runtime():
     from agent.models import AgentRequest
 
     member = AgentRequest(
-        message="你好", user_id="owner", user_name="群友", source="qqbot",
-        actor_context=ActorContext("owner", "qqbot", role="member"),
+        message="你好", user_id="owner", user_name="群友", source="qq",
+        actor_context=ActorContext("owner", "qq", role="member"),
     )
     owner = AgentRequest(
-        message="你好", user_id="owner", user_name="coffeiz", source="qqbot",
-        actor_context=ActorContext("owner", "qqbot", role="owner"),
+        message="你好", user_id="owner", user_name="coffeiz", source="qq",
+        actor_context=ActorContext("owner", "qq", role="owner"),
     )
 
     assert isinstance(select_loop(member), MemberAgentLoop)
@@ -481,7 +481,7 @@ def test_im_identity_context_marks_group_and_compares_history():
         message="我是谁",
         user_id="u1",
         user_name="coffeiz",
-        source="qqbot",
+        source="qq",
         chat_id="group-a",
         platform_user_id="member-a",
         im_role="member",

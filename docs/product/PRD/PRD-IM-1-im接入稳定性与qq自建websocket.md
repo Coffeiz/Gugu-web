@@ -424,7 +424,7 @@ QQ raw event 转咕咕 payload 时保持现有字段；**2026-07-10 起 `text` �
 
 ```json
 {
-  "platform": "qqbot",
+  "platform": "qq",
   "channel_id": "<user_bot.id>",
   "owner_user_id": "<owner user_id>",
   "platform_user_id": "<user_openid/member_openid>",

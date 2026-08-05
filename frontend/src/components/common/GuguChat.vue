@@ -919,6 +919,8 @@ function setStatus(item: StatusItem) {
 
 onUnmounted(cancelPendingStatus)
 const sessionId      = ref<number | null>(null)
+// 视图代次：切换/新建会话时立即递增，让尚未完成的旧 SSE 流失去写入当前消息列表的资格。
+let _chatViewGeneration = 0
 // 当前会话所属渠道里「owner」的平台身份（仅群聊/IM 用得上）：消息的
 // platformUserId 等于它才归到右侧气泡，否则是群里其他成员，归左侧并标 username。
 const ownerPlatformUserId = ref<string | null>(null)
@@ -1327,16 +1329,16 @@ async function fetchSessions() {
 }
 
 // ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
-type ImPlatformKey = 'feishu' | 'qqbot' | 'wechat'
+type ImPlatformKey = 'feishu' | 'qq' | 'wechat'
 interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
 interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
 const IM_PLATFORMS: ImPlatform[] = [
   { key: 'feishu',  label: '飞书', api: feishuConnectApi },
-  { key: 'qqbot',   label: 'QQ',   api: qqConnectApi },
+  { key: 'qq',   label: 'QQ',   api: qqConnectApi },
   { key: 'wechat',  label: '微信', api: wechatConnectApi },
 ]
 const bots   = ref<Bot[]>([])
-const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qqbot: false, wechat: false })
+const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
 const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
 
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
@@ -1616,10 +1618,12 @@ function displayQQFaces(text: string): string {
 
 async function loadSession(id: number) {
   if (id === sessionId.value) return
+  const viewGeneration = ++_chatViewGeneration
   abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
   streaming.value = false
   try {
     const data = await agentApi.getMessages(String(id))
+    if (viewGeneration !== _chatViewGeneration) return
     sessionId.value = id
     ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
     isGroupSession.value = data.session?.chatType === 'group'
@@ -1650,6 +1654,9 @@ async function loadSession(id: number) {
 }
 
 async function newSession() {
+  ++_chatViewGeneration
+  abortCtrl.value?.abort()
+  streaming.value = false
   sessionId.value = null
   messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
   _sessionTurn = 0
@@ -1770,7 +1777,11 @@ onUnmounted(() => {
 
 // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
 // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
-async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ownerSid: number | null) {
+async function consumeStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  ownerSid: number | null,
+  viewGeneration = _chatViewGeneration,
+) {
   const decoder = new TextDecoder()
   let buf = '', aiIdx = -1, aborted = false
   let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
@@ -1778,7 +1789,10 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
   const usedTools = new Set<string>()
   // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
   const live = () => {
-    if (detached) return false
+    if (detached || viewGeneration !== _chatViewGeneration) {
+      detached = true
+      return false
+    }
     if (sessionId.value !== (sid ?? ownerSid)) { detached = true; return false }
     return true
   }
@@ -1798,7 +1812,9 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
         if (evt.type === 'session_id') {
           const isNew = sessionId.value !== evt.session_id
           // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话
-          if (sessionId.value === (sid ?? ownerSid)) sessionId.value = evt.session_id
+          if (viewGeneration === _chatViewGeneration && sessionId.value === (sid ?? ownerSid)) {
+            sessionId.value = evt.session_id
+          }
           sid = evt.session_id
           if (isNew) await fetchSessions()
         } else if (evt.type === 'session_title') {
@@ -1852,7 +1868,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
       }
     }
   } finally {
-    if (!detached && aiIdx !== -1 && messages.value[aiIdx]) {
+    if (!detached && viewGeneration === _chatViewGeneration && aiIdx !== -1 && messages.value[aiIdx]) {
       const m = messages.value[aiIdx]
       m.streaming = false
       m.html = renderMd(m.text)
@@ -1867,6 +1883,7 @@ async function consumeStream(reader: ReadableStreamDefaultReader<Uint8Array>, ow
 // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
 async function resumeStream(id: number) {
   if (streaming.value) return            // 本地正在发/看，不重复连
+  const viewGeneration = _chatViewGeneration
   const token = localStorage.getItem('user_token') ?? ''
   abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
   streaming.value = true; clearStatus(); setStatus(_thinkingItem())
@@ -1876,14 +1893,16 @@ async function resumeStream(id: number) {
       signal: abortCtrl.value.signal,
     })
     if (!res.ok) return
-    if (sessionId.value !== id) return   // 期间又切走了，丢弃
+    if (viewGeneration !== _chatViewGeneration || sessionId.value !== id) return   // 期间又切走了，丢弃
     if (!res.body) return
-    const r = await consumeStream(res.body.getReader(), id)
+    const r = await consumeStream(res.body.getReader(), id, viewGeneration)
     refreshAfterTools(r.usedTools)
   } catch { /* 续看失败/被切走中断都不打扰 */ }
   finally {
     // 仍停在本会话才收尾全局指示，避免切走后清掉新会话续看的状态
-    if (sessionId.value === id) { clearStatus(); streaming.value = false; abortCtrl.value = null }
+    if (viewGeneration === _chatViewGeneration && sessionId.value === id) {
+      clearStatus(); streaming.value = false; abortCtrl.value = null
+    }
   }
 }
 
@@ -1911,6 +1930,7 @@ async function send(forcedText?: string) {
   await scrollBottom()
   const token = localStorage.getItem('user_token') ?? ''
   const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+  const viewGeneration = _chatViewGeneration
   let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
   let aiIdx = -1
   const usedTools = new Set<string>()
@@ -1931,7 +1951,7 @@ async function send(forcedText?: string) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     if (!res.body) throw new Error('empty response body')
 
-    const r = await consumeStream(res.body.getReader(), ownerSid)
+    const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration)
     resolvedSid = r.sid
     aiIdx = r.aiIdx
     r.usedTools.forEach(t => usedTools.add(t))
@@ -1949,7 +1969,7 @@ async function send(forcedText?: string) {
     }
   } finally {
     // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
-    const ownsView = sessionId.value === resolvedSid
+    const ownsView = viewGeneration === _chatViewGeneration && sessionId.value === resolvedSid
     if (ownsView) {
       // 流式结束：把该条 AI 消息标记为非流式，触发 markdown 渲染（流式中按纯文本显示，避免半截表格/代码块闪烁）
       if (aiIdx !== -1 && messages.value[aiIdx]) messages.value[aiIdx].streaming = false
@@ -2267,7 +2287,7 @@ async function send(forcedText?: string) {
   font-family: var(--font-sans); letter-spacing: 0.01em;
   padding: 2px 5px; border-radius: 4px;
 }
-.exp-session-source.src-qqbot { background: rgba(18,183,245,0.15); color: #0c8fc0; }
+.exp-session-source.src-qq { background: rgba(18,183,245,0.15); color: #0c8fc0; }
 .exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
 .exp-session-tag {
   flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;

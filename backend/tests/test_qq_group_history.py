@@ -7,7 +7,7 @@ from app.models import ConversationMessage, ConversationSession
 
 
 async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
-    session = ConversationSession(user_id=user_a.id, title="群聊记录", source="qqbot")
+    session = ConversationSession(user_id=user_a.id, title="群聊记录", source="qq")
     db.add(session)
     await db.flush()
     db.add_all([
