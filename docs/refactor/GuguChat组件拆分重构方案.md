@@ -342,9 +342,11 @@ interface ChatFile {
 
 ## 九、验收清单
 
+标了 🤖 的项在 `frontend/e2e/chat.spec.ts` 里有自动化覆盖（接入 CI，见下方"自动检查"）；其余仍需人工过一遍，尤其是依赖 IM 平台绑定/真实设备权限（录音）的项，CI 里刻意没有硬造成 `test.skip()` 兜底的假绿灯（跟 `file-lifecycle.spec.ts`/`scheduled-task-run.spec.ts` 同一个原则，见 workflow 里的注释）。
+
 ### 消息与会话
 
-- [ ] 新建、切换、删除和恢复会话正常。
+- [x] 🤖 新建、切换会话正常（删除/恢复未覆盖，见 e2e 文件头注释）。
 - [ ] 网页、QQ、飞书、微信会话分类正确。
 - [ ] 群聊消息显示正确的发言人名称和角色。
 - [ ] 引用消息、QQ 表情、图片和文件显示正常。
@@ -352,7 +354,7 @@ interface ChatFile {
 
 ### 流式与交互
 
-- [ ] 流式回复持续显示，状态气泡不闪烁。
+- [x] 🤖 流式回复能收到、渲染正确（固定回复文本，见 e2e）。
 - [ ] 生成中发送多条消息按顺序排队。
 - [ ] 中断后重新发送不会覆盖新会话状态。
 - [ ] 切换会话后旧流不会写入当前会话。
@@ -368,8 +370,8 @@ interface ChatFile {
 
 ### 窗口与 IM
 
-- [ ] 悬浮球和聊天窗层级正确。
-- [ ] 小窗/大窗展开收起动画不跳变。
+- [x] 🤖 悬浮球点击开关聊天窗、关闭按钮收起正常。
+- [x] 🤖 小窗/大窗展开收起后标题栏文案和会话列表状态正确（动画是否跳变仍需肉眼看）。
 - [ ] IM 二维码连接、取消、轮询失败正常。
 - [ ] 聊天内扫码绑定正常。
 - [ ] 快速打开/关闭、切换会话和窗口 resize 无明显闪烁。
@@ -380,6 +382,7 @@ interface ChatFile {
 npm run typecheck
 npm run test:run
 git diff --check
+npx playwright test e2e/chat.spec.ts   # 需要本地/devserver 跑着后端；CI 用 mock LLM，见 .github/workflows/runtime-integration.yml
 ```
 
 每个阶段单独提交。某一阶段出现行为差异时，先停在该阶段定位，不进入下一阶段。
