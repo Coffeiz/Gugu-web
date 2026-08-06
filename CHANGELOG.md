@@ -5,6 +5,26 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.20.1] - 2026-08-06
+
+### 改进
+
+- **定时任务投递附件同步落库**（`backend/agent/tools/scheduled_tasks.py`）：投递到 IM 的附件同步写入会话历史，web 端打开对应会话也能看到图片，避免「群里收到图但 web 历史里只有文字」的不一致。
+
+### 修复
+
+- **全新会话首轮排队消息被静默丢弃**（`frontend/src/components/common/gugu-chat/composables/useChatStream.ts`）：新对话首条消息时 `sessionId` 仍为 `null`，期间发送的第二条进入 pending 队列后按 `sessionId` 严格比对被误判为已离开会话而丢弃，用户气泡已渲染但刷新后消失；现在 `session_id` 事件到达时回填真实 id，消费队列放宽比对条件。
+- **文件卡下载图标无独立点击区域**（`frontend/src/components/common/gugu-chat/`）：整张文件卡只有一个 `openFile` 点击事件，可预览文件点下载图标也会打开预览；现在下载图标单独触发下载并补上 hover 反馈。
+- **迷你播放器拖拽进度条报错**（`frontend/src/components/common/gugu-chat/`）：`mousemove/mouseup` 在 `window` 上触发时取不到进度条 `rect`，改为 `mousedown` 时量好复用。
+- **上传附件按钮点击无反应**（`frontend/src/components/common/gugu-chat/`）：`<input type="file">` 移入 Composer 后按钮仍指向另一个从未绑定真实 DOM 的 `fileInput` ref，改为直接点击 Composer 持有的输入框。
+- **新建会话残留思考气泡**（`frontend/src/components/common/gugu-chat/`）：`newSession()` 补上 `clearStatus`，避免切换会话后旧思考气泡残留。
+- **群聊定时任务投递必现失败**（`backend/agent/tools/scheduled_tasks.py`）：绑定当前群的定时任务 `delivery_targets` 漏存 `platform` 字段导致投递必然失败，现在优先用调用方传入的平台并补上该字段。
+- **Admin 联网搜索配置刷新后被重置**（`frontend/src/views/Admin/Agent/index.vue`）：`fetchConfig()` 异步拉取晚于 `searchDraft` 默认值初始化，刷新页面后 SearXNG 地址、返回结果数等被清空，补上拉取后的重新同步。
+- **飞书连接任务 429 限流友好提示**（`backend/app/api/v1/`）：单独捕获 `httpx.HTTPStatusError`，遇到 429 返回「飞书接口限流了，过一会儿再试～」而不是被泛化成 502。
+- **画布卡片悬停重绘闪烁**（`frontend/src/views/Mind/`）：`.hover-card-fx` 加 `will-change: transform` 走 GPU 合成层；修复 RelationLayer 悬停心跳 300ms 截断导致连接线瞬间掉回静止公式、与仍抬起的卡片错位闪烁。
+
+---
+
 ## [0.20.0] - 2026-08-05
 
 ### 新增
