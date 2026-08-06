@@ -258,11 +258,14 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 f"现在是 {now_str}，用户设置了一条定时任务：{payload}\n"
                 f"本轮消息将由系统投递到：{target_description}。\n"
                 "请以咕咕的身份完成这项任务，只生成要发给用户的正文。"
-                "消息会由定时任务系统自动投递到已配置的渠道，不需要你调用发送工具，"
+                "文字部分不需要你自己调用 IM 发送/推送工具（系统会自动把正文投递到已配置的渠道），"
                 "也不要提及渠道、推送、工具不可用或无法发送。"
+                "如果任务需要配图/发图，正常调用 image_search 和 send_file 把图发出来，"
+                "不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，"
+                "图片必须靠 send_file 实际发送。"
             )
-            text = await _run_agent(uid, prompt, trial=is_trial)
-            result = await deliver_to_channels(uid, name, text, chans, target_map)
+            text, files = await _run_agent(uid, prompt, trial=is_trial)
+            result = await deliver_to_channels(uid, name, text, chans, target_map, files=files)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
                     await _delete_completed_once(task_id, uid)
@@ -329,8 +332,10 @@ async def deliver_to_channels(
     text: str,
     chans: set,
     delivery_targets: dict | None = None,
+    files: list | None = None,
 ) -> dict:
-    """把 text 投递到选定渠道，返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
+    """把 text（+ 可选 files，execution 阶段 send_file 产出的 _artifact 列表）投递到选定渠道，
+    返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
     chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。"""
     result: dict = {}
     if {"web", "chat"} & chans:
@@ -376,12 +381,16 @@ async def deliver_to_channels(
             else:
                 result[lbl] = "无可触达地址（先给该 bot 发条消息）"
             if sent:
-                # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）
+                # 把推送写进 IM 会话历史，用户回复时咕咕才有上下文（隐藏临时会话，回复即转正）；
+                # files 一起带进去，web 端打开这个 session 也能看到图片，不会出现「群里收到图但
+                # web 历史里只有文字」的不一致。
                 try:
-                    await _persist_push_im(uid, platform, name, text, target)
+                    await _persist_push_im(uid, platform, name, text, target, files=files)
                 except Exception as e:
                     diag_log("app.scheduled_tasks.persist_push_im", e)
                     print(f"[sched] {platform} 推送入会话失败: {redact(type(e).__name__)}", flush=True)
+                if sent and files:
+                    await _deliver_im_files(uid, platform, target, files)
         except Exception as e:
             result[lbl] = f"失败：{type(e).__name__}"
             diag_log("app.scheduled_tasks.deliver_to_channels", e)
@@ -395,10 +404,15 @@ async def _persist_push_im(
     title: str,
     text: str,
     target: dict | None = None,
+    files: list | None = None,
 ) -> None:
     """把一条主动推送 append 到该用户在 IM 的最近会话（imsession 指向的那个），使下次回复带上上下文。
     无 imsession（如隔夜冷启）→ 建一个普通会话并把 imsession 指过去。刷新 imsession 12h TTL，
-    保证「推送后 12h 内回复」能路由回此会话。"""
+    保证「推送后 12h 内回复」能路由回此会话。
+
+    files：execution 阶段 send_file 产出的 _artifact 列表（含 attach_id/name/ext）。一起写进
+    ConversationMessage.files，这样 web 端打开该 session 时也能看到图片——只发到 IM 群、不
+    落库的话，web 历史里这条推送只有文字、没有附件。"""
     from app.core import redis as R
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
@@ -422,7 +436,8 @@ async def _persist_push_im(
             session = ConversationSession(user_id=uid_u, title=(title[:50] or "主动消息"), source=platform)
             db.add(session)
             await db.flush()
-        db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}"))
+        db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}",
+                                    files=files or None))
         session.updated_at = now_utc()
         await db.commit()
         new_sid = session.id
@@ -438,8 +453,13 @@ async def _run_agent(
     prompt: str,
     *,
     trial: bool = False,
-) -> str:
-    """编排定时任务的 execution/report，runner 只负责单阶段 AgentLoop。"""
+) -> tuple[str, list]:
+    """编排定时任务的 execution/report，runner 只负责单阶段 AgentLoop。
+
+    返回 (文本, files)：files 是 execution 阶段（唯一带工具的阶段）里模型调
+    send_file 产出的附件列表（_artifact 结构，含 attach_id），report 阶段
+    不带工具、不会再产出文件，所以全程沿用 execution 阶段收集到的这一份。
+    """
     import app.db.session as ss
     from app.models import User
 
@@ -452,6 +472,7 @@ async def _run_agent(
 
     max_rounds = 2
     last_text = "咕咕这次没有产出内容"
+    files: list = []
     for round_index in range(max_rounds):
         round_no = round_index + 1
         logger.info(
@@ -463,6 +484,7 @@ async def _run_agent(
         )
         meta = meta or {}
         last_text = execution_text or last_text
+        files = meta.get("files") or files
         mutated = bool(meta.get("mutated"))
         tool_count = len(meta.get("tool_names", []))
         logger.info(
@@ -480,7 +502,7 @@ async def _run_agent(
         )
         if execution_failed:
             if mutated or round_no >= max_rounds:
-                return sanitize.strip_disallowed_emoji(last_text)
+                return sanitize.strip_disallowed_emoji(last_text), files
             logger.info(
                 "[scheduled-phase] %s",
                 json.dumps({"event": "execution-retry", "next_round": round_no + 1}, ensure_ascii=False),
@@ -492,28 +514,28 @@ async def _run_agent(
                 "[scheduled-phase] %s",
                 json.dumps({"event": "report-skipped", "round": round_no, "reason": "no-tools"}, ensure_ascii=False),
             )
-            return sanitize.strip_disallowed_emoji(execution_text or last_text)
+            return sanitize.strip_disallowed_emoji(execution_text or last_text), files
 
         logger.info(
             "[scheduled-phase] %s",
             json.dumps({"event": "report-start", "round": round_no}, ensure_ascii=False),
         )
         report_text, report_failed = await run_scheduled_report(
-            user_id, uname, prompt, execution_text
+            user_id, uname, prompt, execution_text, files=files
         )
         logger.info(
             "[scheduled-phase] %s",
             json.dumps({"event": "report-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
         )
         if not report_failed:
-            return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text)
+            return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text), files
 
         logger.info(
             "[scheduled-phase] %s",
             json.dumps({"event": "report-retry-start", "round": round_no}, ensure_ascii=False),
         )
         report_text, report_failed = await run_scheduled_report(
-            user_id, uname, prompt, execution_text
+            user_id, uname, prompt, execution_text, files=files
         )
         logger.info(
             "[scheduled-phase] %s",
@@ -524,10 +546,10 @@ async def _run_agent(
             # 转述成更合适的措辞——report 失败时错误文案通常也非空，`report_text or
             # execution_text` 这种写法会优先把错误文案发给用户，而不是已经有的
             # execution 结果。两次都失败就直接用 execution 的产出兜底，不用 report_text。
-            return sanitize.strip_disallowed_emoji(execution_text or last_text)
-        return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text)
+            return sanitize.strip_disallowed_emoji(execution_text or last_text), files
+        return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text), files
 
-    return sanitize.strip_disallowed_emoji(last_text)
+    return sanitize.strip_disallowed_emoji(last_text), files
 
 
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qq"）
@@ -655,6 +677,44 @@ async def _deliver_im(
     }
     from agent.im.replies import send_text
     return await send_text(payload, text)
+
+
+async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> None:
+    """把 execution 阶段 send_file 暂存下来的附件（_artifact，含 attach_id）依次发到指定 IM 平台。
+    每张独立 best-effort：单张失败不影响其它张，也不影响文字部分已经发出去这个事实。"""
+    reach = target or await _legacy_private_target(user_id, platform)
+    if not reach:
+        return
+    payload = {
+        "platform": platform,
+        "channel_id": reach.get("channel_id"),
+        "chat_id": reach.get("chat_id"),
+        "platform_user_id": reach.get("puid"),
+        "chat_type": reach.get("chat_type") or ("group" if reach.get("chat_id") else "c2c"),
+        "context_token": reach.get("context_token", ""),
+    }
+    from app.core import chat_attach
+    from agent.im.replies import send_file
+
+    for f in files:
+        attach_id = (f or {}).get("attach_id")
+        if not attach_id:
+            continue
+        try:
+            meta = await chat_attach.get_meta(user_id, attach_id)
+            if not meta:
+                continue
+            name = f.get("name") or meta.get("name") or "图片"
+            ext = f.get("ext") or meta.get("ext") or ""
+            fname = f"{name}.{ext}" if ext else name
+            ok = await send_file(
+                payload,
+                storage_key=meta["storage_key"], ext=ext, display_name=name, fname=fname,
+            )
+            print(f"[sched] {platform} 发附件 {redact(name)}: {'ok' if ok else '失败'}", flush=True)
+        except Exception as e:
+            diag_log("app.scheduled_tasks.deliver_im_files", e)
+            print(f"[sched] {platform} 发附件出错: {redact(type(e).__name__)}", flush=True)
 
 
 # ── IM 可触达地址（worker 收到消息时记一份，主动推送时用）──────────────────────
