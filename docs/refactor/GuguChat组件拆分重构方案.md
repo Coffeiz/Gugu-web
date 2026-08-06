@@ -1,7 +1,7 @@
 # GuguChat 组件拆分重构方案
 
-> 状态更新（2026-08-06）：Phase 0~3、Phase 5~6 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4 部分偏离原方案。
-> 主文件 `GuguChat.vue` 当前 701 行（目标 300~500 行，差距 201~401 行）——Phase 6 的清理项已做完，行数差距的根因是 `useChatConversation` 拆不拆的待评估决定，详见 Phase 6 小节。
+> 状态更新（2026-08-06）：Phase 0~6 全部完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾、Phase 4 的 useChatStream、Phase 5 的 GuguChatImConnect 均已补齐；`useChatConversation` 也已拆出 `useChatStream`/`useChatSessions`，见 4.3 节）。
+> 主文件 `GuguChat.vue` 当前 701 行（目标 300~500 行，差距 201~401 行）——差距不是清理不干净，是 `GuguChat.vue` 自身的编排函数（`enterExpanded`/`exitExpanded` 等）本身就横跨窗口/会话/流式三方，详见 Phase 6 小节。
 
 ## 一、背景与目标
 
@@ -78,7 +78,7 @@ frontend/src/components/common/gugu-chat/
 
 | 类别 | 计划 | 实际 | 差异说明 |
 | --- | --- | --- | --- |
-| 组件 | `GuguChat.vue` | `GuguChat.vue`（706 行，窗口状态已迁出） | 兼容入口+主控，未到 300~500 行目标 |
+| 组件 | `GuguChat.vue` | `GuguChat.vue`（701 行，窗口状态已迁出、死代码已清） | 兼容入口+主控，未到 300~500 行目标 |
 | 组件 | `GuguChatWindow.vue` | `GuguChatWindow.vue` (292 行) | ✅ 窗口 DOM、标题栏、展开/收起按钮已迁出 |
 | 组件 | `GuguChatFab.vue` | `GuguChatFab.vue` (70 行) | ✅ |
 | 组件 | `GuguChatMiniPlayer.vue` | `GuguChatMiniPlayer.vue` (146 行) | ✅ |
@@ -91,12 +91,12 @@ frontend/src/components/common/gugu-chat/
 | 类型/常量 | `chatTypes.ts` | `chatTypes.ts` (52 行) | ✅ |
 | 类型/常量 | `chatConstants.ts` | `chatConstants.ts` (16 行) | ✅ `API_BASE`、3 个尺寸常量 + 4 个本地存储 key（`SESSION_KEY` 等，原先硬编码在 `useChatWindow.ts` 里）已收拢；平台类型见 `chatTypes.ts` 的 `ImPlatformKey`，工具集合已在 `useChatActions.ts` 里按职责导出，均不需要再迁入本文件 |
 | Composable | `useChatWindow.ts` | `useChatWindow.ts` (199 行) | ✅ 窗口状态已迁出主组件 |
-| Composable | `useChatSessions.ts` | ❌ 未拆 | 被 `useChatConversation` 内聚（见下文偏离说明） |
-| Composable | `useChatStream.ts` | ❌ 未拆 | 被 `useChatConversation` 内聚（见下文偏离说明） |
+| Composable | `useChatSessions.ts` | `useChatSessions.ts` (123 行，2026-08-06 拆出) | ✅ |
+| Composable | `useChatStream.ts` | `useChatStream.ts` (274 行，2026-08-06 拆出) | ✅ |
 | Composable | `useChatAttachments.ts` | `useChatAttachments.ts` (140 行) | ✅ |
 | Composable | `useChatAudio.ts` | `useChatAudio.ts` (130 行) | ✅ |
 | Composable | `useChatActions.ts` | `useChatActions.ts` (72 行) | ✅ |
-| Composable | — | `useChatConversation.ts` (607 行) | **设计偏离**（见 4.3 节） |
+| Composable | — | `useChatConversation.ts` (346 行，原 607 行拆出 useChatStream/useChatSessions 后) | 编排层，非完美的零共享状态拆分（见 4.3 节） |
 | Composable | — | `useChatImConnect.ts` (170 行) | 原方案没列；从 Sidebar 抽出的 IM 连接 composable |
 | 工具 | — | `markdown.ts`、`messageDisplay.ts`、`lazyThumbDirective.ts` | 原方案没列；合理拆分 |
 
@@ -140,34 +140,23 @@ frontend/src/components/common/gugu-chat/
 | Composable | 唯一状态所有权 | 实际状态 |
 | --- | --- | --- |
 | `useChatWindow` | open、expanded、resizing、窗口坐标、z-index、尺寸过渡 | ✅ 已实现（199 行） |
-| `useChatSessions` | sessions、sessionId、加载/新建/删除/恢复会话 | 🟡 被 `useChatConversation` 内聚；外部可拿到 `fetchSessions`/`loadSession`/`newSession`/`deleteSession` |
-| `useChatStream` | streaming、AbortController、流式读取、状态气泡、发送队列 | 🟡 被 `useChatConversation` 内聚；外部可拿到 `streaming`/`send`/`stopStreaming`/`resumeStream` |
+| `useChatSessions` | `loadSession`/`newSession`/`deleteSession`、`webSessions`/`imSessions`/`currentSessionTitle` | ✅ 已拆出（123 行，2026-08-06） |
+| `useChatStream` | streaming、AbortController、`send`/`stopStreaming`/`resumeStream`/`consumeStream`、发送队列 | ✅ 已拆出（274 行，2026-08-06） |
 | `useChatAttachments` | pendingAtt、上传状态、拖拽/粘贴、录音状态 | ✅ |
 | `useChatAudio` | 播放器、音量、进度、语音 Object URL 生命周期 | ✅ |
 | `useChatActions` | gugu 协议链接、文件打开、工具完成后的刷新通知 | ✅ |
-| `useChatConversation` | — | ➕ 实际新增（见下方"设计偏离"） |
+| `useChatConversation` | messages、状态气泡、滚动跟随、当前会话身份（sessionId/sessions 等共享状态）、live 监听 | ✅ 编排层（346 行，2026-08-06 由 607 行拆分而来） |
 | `useChatImConnect` | — | ➕ 实际新增（IM Bot 加载、二维码轮询、连接状态；从 Sidebar 抽出） |
 
-**设计偏离：`useChatConversation` 替代 `useChatStream` + `useChatSessions`**
+**`useChatStream` + `useChatSessions` 已按原方案拆出（2026-08-06），但不是"零共享状态"的干净拆分**
 
-`useChatConversation.ts` 的 docstring 已写明偏离理由：
+拆分前 `useChatConversation.ts` 607 行的 docstring 曾写过"硬拆会制造双向回调"的顾虑，实际操刀后发现顾虑基本成立，但可以用一种折中方式化解：
 
-> 这是全组件耦合最深的一块——发送/续看/切会话/滚动/窗口高度互相牵扯，硬拆成 doc 里设想的多个更细粒度 composable 反而会制造出一堆双向回调，不如作为一个内聚单元收在一起，对外只暴露窗口尺寸计算需要的三个钩子（`onContentReset`/`onCaptureBaseScrollH`/`onSyncSmallH`），由 `GuguChat.vue` 组合时接到窗口尺寸那部分状态上。
+- `send`/`stopStreaming`/`resumeStream`/`consumeStream` 这几个**操作**已经完整搬进 `useChatStream.ts`（274 行）；`loadSession`/`newSession`/`deleteSession` 已经完整搬进 `useChatSessions.ts`（123 行）——两边各自的核心逻辑不再和对方的函数体混在一起，这是拆分真正想要的收益。
+- 但 `sessionId`/`sessions`/`ownerPlatformUserId`/`isGroupSession` 这几个"当前会话身份"状态**没有归属给某一侧独占**：`useChatStream` 收到 `session_id`/`session_title` 事件时要直接改 `sessionId`/`sessions`（新对话落地成真实 id、标题生成出来），`useChatSessions` 的 `loadSession`/`newSession` 也要改它们——这是真正意义上的双向读写，不是"谁调用谁"的单向依赖。处理方式：这几个状态和 view-generation 计数器（`getViewGeneration`/`bumpViewGeneration`）留在 `useChatConversation.ts` 创建，两个子 composable 都只拿到引用（`Ref`/函数），谁都不独占、谁都不需要通过回调"通知"对方——比硬塞给一侧再让另一侧靠回调同步要简单，也不产生真正的双向回调环。
+- `resolveSpeaker`/`fetchSessions` 这两个纯函数同样因为"两边都要用、且只依赖上面那几个共享状态"，留在了编排层，没有拆进 `useChatSessions`（跟原方案设想的位置不同，但没有额外的状态耦合代价）。
 
-偏离的代价：
-
-- `useChatConversation.ts` 607 行，承担消息数据/会话列表/流式收发/状态气泡/滚动跟随五类职责，单文件偏大
-- 未来若要把"流式收发"独立成可复用的 `useChatStream`（给非聊天场景用），需要先解开耦合
-
-偏离的理由：
-
-- 发送、续看、切会话、滚动、窗口高度互相牵制：比如切会话时要 abort 旧流、清空消息队列、重置滚动基线、通知窗口重算高度——这些操作在多个 composable 之间跳会形成回调环
-- 三个窗口尺寸钩子（`onContentReset`/`onCaptureBaseScrollH`/`onSyncSmallH`）作为唯一外部接口，让 `useChatConversation` 对窗口逻辑保持单向依赖
-
-维护指引：
-
-- 若未来需要把流式收发独立复用，可先把 `send`/`stopStreaming`/`resumeStream`/`streaming` 抽成 `useChatStream`，把 `fetchSessions`/`loadSession`/`newSession`/`deleteSession` 抽成 `useChatSessions`，保留 `useChatConversation` 作为编排层（消息/滚动基线/状态气泡等仍内聚）
-- 拆的时候优先把"对外暴露的 API"先独立，内部耦合的部分（abort 时清空消息队列等）保留在 `useChatConversation`
+拆分结果：`useChatConversation.ts` 607→346 行，三个文件总行数 743 行（比拆分前单文件多出的 136 行主要是每个文件各自的 interface 声明和函数级注释，不是逻辑变多）。这次拆分**没有测试覆盖**（这块逻辑本身没有单元测试），验证方式是 `typecheck`/`typecheck:strict`/现有 246 个测试全过 + 需要人工过一遍验收清单里"流式与交互""消息与会话"两节（尤其是快速切换会话、生成中切会话、断线续看这几个高风险场景）。
 
 ## 五、消息数据约定
 
@@ -263,7 +252,7 @@ interface ChatFile {
 - ✅ `GuguChatFab.vue` / `GuguChatMiniPlayer.vue` / `GuguChatSidebar.vue` 已拆出
 - ✅ `GuguChatWindow.vue` 已拆（292 行）：窗口外壳、标题栏、展开/收起按钮、消息列表与输入框挂载点；`GuguChatBindDialog` / `GuguChatSidebar` 通过插槽由父组件填充
 - ✅ `useChatWindow.ts` 已建（199 行）：open / expanded / resizing / windowStyle / miniPlayerStyle / notifyAnchor / notifyOrigin / chatZ / contentH / _baseScrollH / syncSmallH 全部收进 composable
-- 🟡 `useChatSessions.ts` 未独立成 composable，被 `useChatConversation` 内聚（沿用既有偏离）
+- ✅ `useChatSessions.ts` 已独立成 composable（2026-08-06，见 4.3 节）
 
 **主组件瘦身效果**：`GuguChat.vue` 从 969 行降至 **702 行**（减 267 行），符合预期（预计 700~750 行）。
 
@@ -286,10 +275,10 @@ interface ChatFile {
 
 验收：流式输出、中断、快速连续发送、切换会话、跨标签页增量和工具后刷新不回归。
 
-实际状态（2026-08-06）：🟡 **部分完成，有设计偏离**。
+实际状态（2026-08-06）：✅ **已完成**。
 
 - ✅ `useChatActions.ts` 拆出，工具完成后的项目/日历/文件刷新逻辑已迁
-- 🟡 流式收发（SSE 消费、Abort、状态气泡、消息排队）**没有按方案拆成独立的 `useChatStream`**，而是和会话管理一起内聚在 `useChatConversation.ts`（607 行）。详见 4.3 节"设计偏离"说明
+- ✅ 流式收发（SSE 消费、Abort、发送队列）拆进独立的 `useChatStream.ts`（274 行）；状态气泡（`statusKind`/`setStatus`/`clearStatus` 等）留在 `useChatConversation.ts`，因为它同时被流式收发和会话切换共用，属于编排层职责，不是"没拆完"。详见 4.3 节的拆分说明（有取舍，不是零共享状态的干净拆分）
 
 ### Phase 5：IM 连接与绑定弹窗
 
@@ -322,7 +311,7 @@ interface ChatFile {
 - ✅ 调用方统一：全仓库只有 `@/components/common/GuguChat.vue` 这一个 import 入口，无遗留旧路径
 - ✅ 删除死代码：`isImageFile`/`isAnimatedImageFile`/`fmtDur`/`voiceBar`/`renderMdStream`/`CLIENT_ID`/`ChatSession` 这 7 个导入以及 `useLiveStore()` 实例化（`useChatConversation.ts` 内部已经自己调用了一份，这里是重复的死代码）全部移除；修正了一处指向已经过时路径的迁移注释（`.im-qr-cancel` 早已进一步迁到 `GuguChatImConnect.vue`，注释还写着 `GuguChatSidebar.vue`）
 - ✅ 定时器/监听器/AbortController 清理：抽出的几个 composable（`useChatWindow`/`useChatAudio`/`useChatConversation` 等）都有对应的清理路径，本轮拆分没有引入新的泄漏
-- 🟡 **行数目标未达成**：706→701 行（只降了 5 行），离 300~500 行还差 201~401 行。**根因不是清理不干净，是行数目标本身依赖 4.3 节那个还没做的决定**——`useChatConversation.ts`（607 行，消息/会话/流式/滚动/状态气泡五合一）如果不拆成独立的 `useChatStream`/`useChatSessions`，主组件里组合它、传参、解构给它的那部分代码就没法再往下减。这是一个范围/成本决策，不是清理疏漏，留给下一步单独评估。
+- 🟡 **行数目标未达成**：706→701 行（只降了 5 行），离 300~500 行还差 201~401 行。根因不是清理不干净——`GuguChat.vue` 本身接的还是 `useChatConversation` 同一套公开 API，`useChatConversation.ts` 内部后续拆成 `useChatStream`+`useChatSessions`（见 4.3 节）不会让 `GuguChat.vue` 变短，因为它一直只持有编排层的返回值，没有直接铺开过 607 行那些实现细节。`GuguChat.vue` 想再往下减，得看 `enterExpanded`/`exitExpanded`/`toggleOpen` 这类真正混着"窗口状态+会话+流式"三方调用的编排函数还能不能进一步收敛，不在本轮范围内。
 
 ## 八、风险控制
 
@@ -408,7 +397,7 @@ git diff --check
 | 完成标准 | 状态 |
 | --- | --- |
 | `GuguChat.vue` 只保留页面级编排 | 🟡 部分达成（701 行，窗口状态已迁出、死代码已清；会话切换/部分流式仍在主组件） |
-| 状态所有权清晰 | 🟡 大部分清晰；`useChatConversation` 内聚五类职责偏大 |
+| 状态所有权清晰 | 🟢 `useChatStream`/`useChatSessions` 已拆出各自的操作逻辑；`useChatConversation` 仍持有共享的会话身份状态（非完美的零共享拆分，见 4.3 节说明），但不再是单文件五类职责 |
 | 现有聊天/IM/附件/音频/窗口验收项通过 | 🟢 拆分阶段未改变行为（无回归） |
 | import 路径统一 | ✅ 所有调用方走 `@/components/common/GuguChat.vue` 入口 |
 | 主组件 300~500 行 | 🟡 当前 701 行（Phase 3 后从 969 降至 702，Phase 1 收尾 + bug 修复后 706，Phase 6 清理后 701），差距 201~401 行——差距根因见 Phase 6 |
@@ -421,4 +410,4 @@ git diff --check
 2. **Phase 1 收尾已完成**（2026-08-06）：本地存储 key 收拢进 `chatConstants.ts`，`user_token` 重复读取改用 `getToken()`。✅
 3. **Phase 5 收尾已完成**（2026-08-06）：拆出 `GuguChatImConnect.vue`（154 行），`GuguChatSidebar.vue` 回归纯列表展示（274→186 行）。✅
 4. **Phase 6 收口已完成**（2026-08-06）：清掉 7 个死导入 + 1 处重复的 `useLiveStore()` 实例化，修正一处过时的迁移注释；调用方 import 路径本就统一，无需改动。✅
-5. **评估 `useChatConversation` 拆分（唯一剩余项）**：607 行偏大，但 docstring 已说明不拆的理由；主组件卡在 701 行而不是 300~500 行，根因就是这个——按需评估是否要把流式收发独立成 `useChatStream`、会话管理独立成 `useChatSessions` 供其他场景复用。这不是"没做完的收口"，是一个需要单独决策的范围问题。
+5. **`useChatConversation` 拆分已完成**（2026-08-06）：拆出 `useChatStream.ts`（274 行）+ `useChatSessions.ts`（123 行），`useChatConversation.ts` 从 607 行降到 346 行。共享的会话身份状态（`sessionId`/`sessions` 等）留在编排层，见 4.3 节说明——不是零共享状态的完美拆分，但两边核心操作逻辑已经分离。✅ 至此整个拆分方案的已知项全部处理完，剩下的都是"未来如果……可以再……"级别的可选项，不再是待办。
