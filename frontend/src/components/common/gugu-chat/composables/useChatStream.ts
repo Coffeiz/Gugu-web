@@ -70,6 +70,17 @@ export function useChatStream(options: {
     pendingQueue.value = []
   }
 
+  // 新对话第一轮发送时 sessionId 还是 null——后端稍后通过 session_id 事件回传真实 id。
+  // 把这个真实 id 回填到所有「入队时 sessionId == null 且属于当前 viewGeneration」的排队项上，
+  // 否则下一轮消费时 null !== realId 会被当作"已经离开的会话"丢弃（PR #8 复查的 P1）。
+  // 消费条件也放宽：sessionId == null 表示"入队时还没拿到"，允许在同 viewGeneration 内消费。
+  function resolvePendingSession(realId: number) {
+    const curView = options.getViewGeneration()
+    pendingQueue.value = pendingQueue.value.map(it =>
+      it.sessionId == null && it.viewGeneration === curView ? { ...it, sessionId: realId } : it
+    )
+  }
+
   // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
   // 返回 { aiIdx, usedTools }，供调用方做收尾（首条空回复兜底、刷新视图）。
   async function consumeStream(
@@ -109,6 +120,12 @@ export function useChatStream(options: {
             // 仅当用户仍停在本流视图（旧会话或新对话）才把视图切到新 id，否则别抢走用户当前会话
             if (viewGeneration === options.getViewGeneration() && sessionId.value === (sid ?? ownerSid)) {
               sessionId.value = evt.session_id
+            }
+            // 真实 id 到位后立即回填排队项：上面分支只在视图未切换时才更新 sessionId.value，
+            // 但排队项仍可能在视图已切换的情况下属于旧视图——这里只看"是否本流视图"，
+            // 不强求 sessionId.value 已同步。否则新会话首轮排队的第二条消息仍会被丢弃。
+            if (viewGeneration === options.getViewGeneration()) {
+              resolvePendingSession(evt.session_id)
             }
             sid = evt.session_id
             if (isNew) await options.fetchSessions()
@@ -287,10 +304,15 @@ export function useChatStream(options: {
       // 正常情况下 loadSession/newSession 已经在切换那一刻清空过 pendingQueue，这里的
       // 身份核对是竞态兜底——万一切换和这次消费之间有空子可钻，也不能把排队消息发进
       // 已经不是它所属的那个会话。
+      // sessionId == null 是"入队时还没拿到真实 id"（新对话第一轮），只要还在同一个
+      // viewGeneration 里就允许消费——真实 id 已在收到 session_id 事件时由
+      // resolvePendingSession 回填。
       if (ownsView) {
         while (pendingQueue.value.length) {
           const next = pendingQueue.value[0]
-          if (next.sessionId === sessionId.value && next.viewGeneration === options.getViewGeneration()) {
+          const sameView = next.viewGeneration === options.getViewGeneration()
+          const sameSession = next.sessionId == null || next.sessionId === sessionId.value
+          if (sameView && sameSession) {
             pendingQueue.value.shift()
             send(next.text, next.attachments)
             break
@@ -303,7 +325,7 @@ export function useChatStream(options: {
 
   return {
     streaming, abortCtrl, pendingQueue,
-    resetSessionTurn, clearPendingQueue,
+    resetSessionTurn, clearPendingQueue, resolvePendingSession,
     send, stopStreaming, resumeStream,
   }
 }

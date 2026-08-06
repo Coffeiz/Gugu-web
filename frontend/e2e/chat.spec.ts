@@ -14,7 +14,7 @@ import { test, expect } from '@playwright/test'
  * 不覆盖附件/语音/IM 扫码连接——这些要么需要真实文件系统之外的设备权限
  * （录音），要么依赖 IM 平台绑定（测试账号没有），硬造出来的用例大概率
  * 靠 test.skip() 兜底、又是一条"全绿但没测什么"的假绿灯，不接入 CI。
- * 这几项仍按 docs/refactor/GuguChat组件拆分重构方案.md 第九节的验收清单
+ * 这几项仍按 docs/refactor/【已完成】GuguChat组件拆分重构方案.md 第九节的验收清单
  * 人工过一遍。
  *
  * 选择器注意：不能直接用 `.msg.ai .msg-bubble` 断言"收到 AI 回复"——生成中的
@@ -129,5 +129,51 @@ test.describe('GuguChat 悬浮窗', () => {
     await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(1)
     await expect(chatWindow.locator('.msg.user .msg-bubble').first()).toHaveText(newSessionText)
     await expect(chatWindow.locator('.msg', { hasText: queuedText })).toHaveCount(0)
+  })
+
+  test('全新会话第一轮排队，session_id 到达后两条都进同一个会话', async ({ page }) => {
+    // 覆盖 PR #8 复查的 P1 边界：
+    // 新对话发送第一条时 sessionId 还是 null（后端稍后才回传 session_id 事件），
+    // 排队项入队时记录的也是 null。如果消费条件仍用 strict ===
+    // "next.sessionId === sessionId.value"，session_id 事件把 sessionId.value
+    // 变成 123 后，null !== 123 会让排队项被当作"已经离开的会话"丢弃。
+    // 修复：消费时允许 sessionId == null 在同 viewGeneration 内消费；session_id
+    // 事件到达时再回填真实 id。两条消息应该都进入同一个全新会话并各自收到回复。
+    await page.goto('/')
+    await page.locator('.ai-fab').click()
+    const chatWindow = page.locator('.chat-window')
+    await expect(chatWindow).toBeVisible()
+
+    // 强制从全新会话开始——切到新会话并确认消息区为空
+    await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
+    const sidebar = page.locator('.exp-sidebar')
+    await expect(sidebar).toBeVisible()
+    await sidebar.locator('.exp-new-session-btn').click()
+    await expect(chatWindow.locator('.msg')).toHaveCount(0)
+
+    const textarea = chatWindow.locator('.chat-input-row textarea')
+    const sendBtn = chatWindow.locator('.send-btn')
+
+    // 第一条：必然触发 session_id 事件回传真实 id
+    const firstText = `e2e-newqueue-first-${Date.now()}`
+    await textarea.fill(firstText)
+    await sendBtn.click()
+
+    // 第二条：立刻排队——入队时 sessionId 还是 null（session_id 事件尚未到达或正在途中）
+    const queuedText = `e2e-newqueue-second-${Date.now()}`
+    await textarea.fill(queuedText)
+    await textarea.press('Enter')
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: queuedText })).toBeVisible()
+
+    // 关键断言：不切会话，等两条都收到回复
+    // （如果 P1 仍存在，secondText 的 user 气泡会显示但永远没有 AI 回复——
+    //  因为消费时 null !== realId 把它丢弃了）
+    await expect(chatWindow.locator('.msg.user .msg-bubble')).toHaveCount(2, { timeout: 15000 })
+    const aiBubbles = chatWindow.locator(AI_REPLY)
+    await expect(aiBubbles).toHaveCount(2, { timeout: 30000 })
+    await expect(aiBubbles.nth(0)).not.toBeEmpty()
+    await expect(aiBubbles.nth(1)).not.toBeEmpty()
+    await expect(chatWindow.locator('.msg', { hasText: firstText })).toHaveCount(1)
+    await expect(chatWindow.locator('.msg', { hasText: queuedText })).toHaveCount(1)
   })
 })

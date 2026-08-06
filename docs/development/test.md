@@ -33,7 +33,7 @@ npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2
 
 - 不依赖测试账号的既有数据（每轮 CI 都是全新数据库）。
 - 不接真实模型/真实第三方服务——CI 里 `AI__BASE_URL` 指向 `backend/scripts/mock_llm_server.py`（固定文本回复、不带 `tool_calls`），避免真实模型的不确定性/限流/花钱。写断言时不要死抠这个固定回复的具体文字（那样测试就只能在 CI 有效）——只断言"确实收到了一条新的 AI 回复"（比如消息数量变化），这样同一条用例在本地/devserver 接真实模型跑也有意义，见 `frontend/e2e/chat.spec.ts` 的写法。
-- 不需要真实设备权限（录音）或第三方账号绑定（IM 扫码连接）——这类场景硬做用例，大概率靠 `test.skip()` 兜底，会出现"全绿但什么都没测"的假象，宁可不接 CI，留给人工验收清单（例如 `docs/refactor/GuguChat组件拆分重构方案.md` 第九节）过一遍。
+- 不需要真实设备权限（录音）或第三方账号绑定（IM 扫码连接）——这类场景硬做用例，大概率靠 `test.skip()` 兜底，会出现"全绿但什么都没测"的假象，宁可不接 CI，留给人工验收清单（例如 `docs/refactor/【已完成】GuguChat组件拆分重构方案.md` 第九节）过一遍。
 - 现有的 `filesystem-phases.spec.ts` 等用例大量依赖长期测试账号的既有数据，属于历史遗留、不接 CI，新用例不要照抄这个模式。
 
 新增一条要接 CI 的用例，两处都要改：加 `.spec.ts` 文件本身，以及上面 workflow 里那行 `npx playwright test` 的文件列表（不加的话 CI 不会跑它，会出现"写了但没生效"的假象）。
