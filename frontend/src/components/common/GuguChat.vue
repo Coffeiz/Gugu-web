@@ -109,7 +109,7 @@
           :pending-att="pendingAtt" :att-uploading="attUploading"
           :recording="recording" :record-secs="recordSecs"
           :expanded="expanded" :streaming="streaming" :vw="vw"
-          :on-remove-att="removeAtt" :on-pick-file="pickFile"
+          :on-remove-att="removeAtt"
           :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
           :on-file-picked="onFilePicked" :on-paste="onPaste"
           :on-send="() => send()" :on-stop-streaming="stopStreaming"
@@ -570,7 +570,7 @@ function _chatTip(text: string) { messages.value.push({ id: mkid(), role: 'ai', 
 // 附件（选择/拖拽/粘贴/暂存上传）与语音录制的唯一状态所有权在 useChatAttachments；
 // 这里单次实例化，因为 send() 仍需要直接读 pendingAtt 来拼发送 payload。
 const {
-  pendingAtt, attUploading, fileInput, pickFile, uploadAttachFiles, onFilePicked,
+  pendingAtt, attUploading, uploadAttachFiles, onFilePicked,
   chatDrag, isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
   removeAtt,
   recording, recordSecs, startRecord, stopRecord, cancelRecord,

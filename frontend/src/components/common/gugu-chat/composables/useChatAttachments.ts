@@ -17,9 +17,6 @@ export function useChatAttachments(options: {
 }) {
   const pendingAtt   = ref<ChatFile[]>([])     // 待发送的聊天附件（已上传暂存）
   const attUploading = ref(false)
-  const fileInput    = ref<HTMLInputElement | null>(null)
-
-  function pickFile() { fileInput.value && fileInput.value.click() }
 
   async function uploadAttachFiles(files: File[], opts: { voice?: boolean } = {}) {
     if (!files.length) return
@@ -135,7 +132,7 @@ export function useChatAttachments(options: {
   }
 
   return {
-    pendingAtt, attUploading, fileInput, pickFile, uploadAttachFiles, onFilePicked,
+    pendingAtt, attUploading, uploadAttachFiles, onFilePicked,
     chatDrag, isChatDragging, onChatDragEnter, onChatDragOver, onChatDragLeave, onChatDrop, onPaste,
     removeAtt,
     recording, recordSecs, startRecord, stopRecord, cancelRecord,

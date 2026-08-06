@@ -7,7 +7,7 @@
     <span v-if="attUploading" class="chat-att-chip att-up">上传中…</span>
   </div>
   <div class="chat-input-row">
-    <button v-if="!recording" class="att-btn" @click="onPickFile" title="添加附件">
+    <button v-if="!recording" class="att-btn" @click="fileInput?.click()" title="添加附件">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7l-5.5 5.5a2.5 2.5 0 0 1-3.5-3.5L9 3.5a1.5 1.5 0 0 1 2 2L5.5 11"/></svg>
     </button>
     <button v-if="!recording" class="att-btn" @click="onStartRecord" title="语音输入">
@@ -62,7 +62,6 @@ const props = defineProps<{
   streaming: boolean
   vw: number
   onRemoveAtt: (a: ChatFile) => void
-  onPickFile: () => void
   onStartRecord: () => void
   onCancelRecord: () => void
   onStopRecord: () => void
