@@ -142,7 +142,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
    重复一份，样式只维护一处（跟 GuguChat.vue 用 :deep() 覆盖 MessageRow
    的做法一致）。 */
 :deep(.exp-session-item) {
-  display: flex; align-items: center; gap: 3px;
+  display: flex; align-items: center; gap: 1px;
   padding: 8px 10px; border-radius: 9px; cursor: pointer;
   transition: background 0.12s;
   flex-shrink: 0;  /* 防止 line-height 调整后被外层 flex column 压扁 */
