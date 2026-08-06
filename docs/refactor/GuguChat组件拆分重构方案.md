@@ -1,6 +1,6 @@
 # GuguChat 组件拆分重构方案
 
-> 状态更新（2026-08-06）：Phase 0~3 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4~5 部分偏离原方案，Phase 6 未收口。
+> 状态更新（2026-08-06）：Phase 0~3、Phase 5 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4 部分偏离原方案，Phase 6 未收口。
 > 主文件 `GuguChat.vue` 当前 706 行（目标 300~500 行，差距 206~406 行）。详见各 Phase 进度小节。
 
 ## 一、背景与目标
@@ -82,12 +82,12 @@ frontend/src/components/common/gugu-chat/
 | 组件 | `GuguChatWindow.vue` | `GuguChatWindow.vue` (292 行) | ✅ 窗口 DOM、标题栏、展开/收起按钮已迁出 |
 | 组件 | `GuguChatFab.vue` | `GuguChatFab.vue` (70 行) | ✅ |
 | 组件 | `GuguChatMiniPlayer.vue` | `GuguChatMiniPlayer.vue` (146 行) | ✅ |
-| 组件 | `GuguChatSidebar.vue` | `GuguChatSidebar.vue` (267 行) | ✅，但同时承担了 `GuguChatImConnect` 的职责（未拆） |
+| 组件 | `GuguChatSidebar.vue` | `GuguChatSidebar.vue` (186 行，2026-08-06 起回归纯列表展示) | ✅ |
 | 组件 | `GuguChatMessageList.vue` | `GuguChatMessageList.vue` (108 行) | ✅ |
 | 组件 | `GuguChatMessageRow.vue` | `GuguChatMessageRow.vue` (93 行) | ✅ |
 | 组件 | `GuguChatComposer.vue` | `GuguChatComposer.vue` (202 行) | ✅ |
 | 组件 | `GuguChatBindDialog.vue` | `GuguChatBindDialog.vue` (75 行) | ✅ |
-| 组件 | `GuguChatImConnect.vue` | ❌ 未拆 | IM 平台二维码连接视图写在 `GuguChatSidebar.vue` 里 |
+| 组件 | `GuguChatImConnect.vue` | `GuguChatImConnect.vue` (154 行，2026-08-06 拆出) | ✅ |
 | 类型/常量 | `chatTypes.ts` | `chatTypes.ts` (52 行) | ✅ |
 | 类型/常量 | `chatConstants.ts` | `chatConstants.ts` (16 行) | ✅ `API_BASE`、3 个尺寸常量 + 4 个本地存储 key（`SESSION_KEY` 等，原先硬编码在 `useChatWindow.ts` 里）已收拢；平台类型见 `chatTypes.ts` 的 `ImPlatformKey`，工具集合已在 `useChatActions.ts` 里按职责导出，均不需要再迁入本文件 |
 | Composable | `useChatWindow.ts` | `useChatWindow.ts` (199 行) | ✅ 窗口状态已迁出主组件 |
@@ -300,13 +300,13 @@ interface ChatFile {
 
 验收：飞书、QQ、微信连接入口，二维码轮询、取消、失败提示和聊天内绑定均正常。
 
-实际状态（2026-08-06）：🟡 **部分完成**。
+实际状态（2026-08-06）：✅ **已完成**。
 
 - ✅ `GuguChatBindDialog.vue` (75 行) 已拆
 - ✅ `useChatImConnect.ts` (170 行) 已拆（IM Bot 加载、二维码轮询、连接状态）
-- ❌ `GuguChatImConnect.vue` 未拆：IM 平台二维码连接视图直接写在 `GuguChatSidebar.vue` 里
-
-如果后续要支持 Sidebar 之外的入口（比如设置页里直接展示 IM 连接），需要补拆这个组件。
+- ✅ `GuguChatImConnect.vue` (154 行) 已拆：IM 平台二维码连接视图（分组头/已接入会话列表/扫码二维码）从 `GuguChatSidebar.vue` 迁出，`Sidebar` 从 274 行降到 186 行，回归纯网页会话列表展示
+- `imGroupEl`（offline 点击后滚入视口+高亮用）原本直接挂在 Sidebar 自己的 DOM 上，现在改成 `GuguChatImConnect` 自己 `defineExpose`，`Sidebar` 转发一层——`useChatImConnect.ts` 的调用方无感知，`sidebarRef.value?.imGroupEl` 用法不变
+- `exp-session-item`/`exp-session-tag`/`exp-session-del`/`exp-session-empty` 这几个网页会话列表和 IM 会话列表共用的类名，`Sidebar` 用 `:deep()` 统一覆盖到子组件里，没有跨组件复制一份样式（跟 `GuguChat.vue` 用 `:deep()` 覆盖 `MessageRow` 的既有做法一致）
 
 ### Phase 6：收口与删除兼容代码
 
@@ -317,7 +317,7 @@ interface ChatFile {
 
 验收：导入路径统一，主组件行数达标。
 
-实际状态（2026-08-06）：🔴 **未开始**。当前 `GuguChat.vue` 是 706 行（目标 300~500 行），差距 206~406 行。Phase 3 的 `useChatWindow` + `GuguChatWindow.vue` 已落地、Phase 1 收尾已完成，两个前置依赖都已解除；只差 Phase 5 收尾（拆 ImConnect）即可启动收口。
+实际状态（2026-08-06）：🔴 **未开始，但前置依赖已全部解除**。当前 `GuguChat.vue` 是 706 行（目标 300~500 行），差距 206~406 行。Phase 3（`useChatWindow`+`GuguChatWindow.vue`）、Phase 1 收尾（chatConstants）、Phase 5 收尾（拆 `GuguChatImConnect.vue`）均已完成，可以启动收口了；剩下的行数差距主要在 `useChatConversation` 内聚的会话切换/流式逻辑，收口前建议先决定是否要按 4.3 节的路径拆 `useChatStream`。
 
 ## 八、风险控制
 
@@ -414,6 +414,6 @@ git diff --check
 
 1. **Phase 3 已完成**（2026-08-06）：`useChatWindow.ts` + `GuguChatWindow.vue` 落地，主组件从 969 降至 702 行。✅
 2. **Phase 1 收尾已完成**（2026-08-06）：本地存储 key 收拢进 `chatConstants.ts`，`user_token` 重复读取改用 `getToken()`。✅
-3. **Phase 5 收尾（下一步）**：拆 `GuguChatImConnect.vue`，让 `GuguChatSidebar.vue` 回归纯列表展示
-4. **评估 `useChatConversation` 拆分**：607 行偏大，但 docstring 已说明不拆的理由；按需评估是否要把流式收发独立成 `useChatStream` 供其他场景复用
-5. **Phase 6 收口**：上述完成后做最终清理（删除主组件里的重复函数/状态/样式、统一导出路径）
+3. **Phase 5 收尾已完成**（2026-08-06）：拆出 `GuguChatImConnect.vue`（154 行），`GuguChatSidebar.vue` 回归纯列表展示（274→186 行）。✅
+4. **评估 `useChatConversation` 拆分（下一步）**：607 行偏大，但 docstring 已说明不拆的理由；按需评估是否要把流式收发独立成 `useChatStream` 供其他场景复用
+5. **Phase 6 收口**：上述完成后做最终清理（删除主组件里的重复函数/状态/样式、统一导出路径）——目前前置依赖已全部解除，可以直接启动
