@@ -103,6 +103,7 @@ export function useChatSessions(options: {
     options.streaming.value = false
     sessionId.value = null
     messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
+    options.clearStatus()      // 旧会话残留的思考/工具状态气泡不属于这个空会话，清掉（loadSession 早就有这步，这里之前漏了）
     options.resetSessionTurn()
     await nextTick()
     options.composerRef.value?.focus()
