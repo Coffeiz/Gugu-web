@@ -1,7 +1,7 @@
 # GuguChat 组件拆分重构方案
 
-> 状态更新（2026-08-06）：Phase 0~6 全部完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾、Phase 4 的 useChatStream、Phase 5 的 GuguChatImConnect 均已补齐；`useChatConversation` 也已拆出 `useChatStream`/`useChatSessions`，见 4.3 节）。
-> 主文件 `GuguChat.vue` 当前 701 行（目标 300~500 行，差距 201~401 行）——差距不是清理不干净，是 `GuguChat.vue` 自身的编排函数（`enterExpanded`/`exitExpanded` 等）本身就横跨窗口/会话/流式三方，详见 Phase 6 小节。
+> ✅ **已完成**（2026-08-06）：Phase 0~6 全部落地（Phase 3 含 useChatWindow + GuguChatWindow，Phase 1 收尾、Phase 4 的 useChatStream、Phase 5 的 GuguChatImConnect 均已补齐；`useChatConversation` 也已拆出 `useChatStream`/`useChatSessions`，见 4.3 节）。devserver 用真实模型跑通 e2e（`frontend/e2e/chat.spec.ts`，已接入 CI）过程中顺带修了一个既有 bug（`newSession()` 漏调 `clearStatus()`）。
+> 主文件 `GuguChat.vue` 最终 701 行（原方案目标 300~500 行，差距 201~401 行）——差距不是清理不干净，是 `GuguChat.vue` 自身的编排函数（`enterExpanded`/`exitExpanded` 等）本身就横跨窗口/会话/流式三方，详见 Phase 6 小节；`useChatConversation` 若要进一步拆分成零共享状态的形态，代价大于收益（见 4.3 节），本方案到此收尾，不作为遗留待办。
 
 ## 一、背景与目标
 
