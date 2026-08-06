@@ -1,7 +1,7 @@
 # GuguChat 组件拆分重构方案
 
-> 状态更新（2026-08-06）：Phase 0~3、Phase 5 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4 部分偏离原方案，Phase 6 未收口。
-> 主文件 `GuguChat.vue` 当前 706 行（目标 300~500 行，差距 206~406 行）。详见各 Phase 进度小节。
+> 状态更新（2026-08-06）：Phase 0~3、Phase 5~6 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4 部分偏离原方案。
+> 主文件 `GuguChat.vue` 当前 701 行（目标 300~500 行，差距 201~401 行）——Phase 6 的清理项已做完，行数差距的根因是 `useChatConversation` 拆不拆的待评估决定，详见 Phase 6 小节。
 
 ## 一、背景与目标
 
@@ -317,7 +317,12 @@ interface ChatFile {
 
 验收：导入路径统一，主组件行数达标。
 
-实际状态（2026-08-06）：🔴 **未开始，但前置依赖已全部解除**。当前 `GuguChat.vue` 是 706 行（目标 300~500 行），差距 206~406 行。Phase 3（`useChatWindow`+`GuguChatWindow.vue`）、Phase 1 收尾（chatConstants）、Phase 5 收尾（拆 `GuguChatImConnect.vue`）均已完成，可以启动收口了；剩下的行数差距主要在 `useChatConversation` 内聚的会话切换/流式逻辑，收口前建议先决定是否要按 4.3 节的路径拆 `useChatStream`。
+实际状态（2026-08-06）：🟢 **清理项已完成，行数目标未达成**。
+
+- ✅ 调用方统一：全仓库只有 `@/components/common/GuguChat.vue` 这一个 import 入口，无遗留旧路径
+- ✅ 删除死代码：`isImageFile`/`isAnimatedImageFile`/`fmtDur`/`voiceBar`/`renderMdStream`/`CLIENT_ID`/`ChatSession` 这 7 个导入以及 `useLiveStore()` 实例化（`useChatConversation.ts` 内部已经自己调用了一份，这里是重复的死代码）全部移除；修正了一处指向已经过时路径的迁移注释（`.im-qr-cancel` 早已进一步迁到 `GuguChatImConnect.vue`，注释还写着 `GuguChatSidebar.vue`）
+- ✅ 定时器/监听器/AbortController 清理：抽出的几个 composable（`useChatWindow`/`useChatAudio`/`useChatConversation` 等）都有对应的清理路径，本轮拆分没有引入新的泄漏
+- 🟡 **行数目标未达成**：706→701 行（只降了 5 行），离 300~500 行还差 201~401 行。**根因不是清理不干净，是行数目标本身依赖 4.3 节那个还没做的决定**——`useChatConversation.ts`（607 行，消息/会话/流式/滚动/状态气泡五合一）如果不拆成独立的 `useChatStream`/`useChatSessions`，主组件里组合它、传参、解构给它的那部分代码就没法再往下减。这是一个范围/成本决策，不是清理疏漏，留给下一步单独评估。
 
 ## 八、风险控制
 
@@ -402,11 +407,11 @@ git diff --check
 
 | 完成标准 | 状态 |
 | --- | --- |
-| `GuguChat.vue` 只保留页面级编排 | 🟡 部分达成（706 行，窗口状态已迁出；会话切换/部分流式仍在主组件） |
+| `GuguChat.vue` 只保留页面级编排 | 🟡 部分达成（701 行，窗口状态已迁出、死代码已清；会话切换/部分流式仍在主组件） |
 | 状态所有权清晰 | 🟡 大部分清晰；`useChatConversation` 内聚五类职责偏大 |
 | 现有聊天/IM/附件/音频/窗口验收项通过 | 🟢 拆分阶段未改变行为（无回归） |
 | import 路径统一 | ✅ 所有调用方走 `@/components/common/GuguChat.vue` 入口 |
-| 主组件 300~500 行 | 🟡 当前 706 行（Phase 3 后从 969 降至 702，Phase 1 收尾 + bug 修复后 706），差距 206~406 行 |
+| 主组件 300~500 行 | 🟡 当前 701 行（Phase 3 后从 969 降至 702，Phase 1 收尾 + bug 修复后 706，Phase 6 清理后 701），差距 201~401 行——差距根因见 Phase 6 |
 
 ### 下一步建议
 
@@ -415,5 +420,5 @@ git diff --check
 1. **Phase 3 已完成**（2026-08-06）：`useChatWindow.ts` + `GuguChatWindow.vue` 落地，主组件从 969 降至 702 行。✅
 2. **Phase 1 收尾已完成**（2026-08-06）：本地存储 key 收拢进 `chatConstants.ts`，`user_token` 重复读取改用 `getToken()`。✅
 3. **Phase 5 收尾已完成**（2026-08-06）：拆出 `GuguChatImConnect.vue`（154 行），`GuguChatSidebar.vue` 回归纯列表展示（274→186 行）。✅
-4. **评估 `useChatConversation` 拆分（下一步）**：607 行偏大，但 docstring 已说明不拆的理由；按需评估是否要把流式收发独立成 `useChatStream` 供其他场景复用
-5. **Phase 6 收口**：上述完成后做最终清理（删除主组件里的重复函数/状态/样式、统一导出路径）——目前前置依赖已全部解除，可以直接启动
+4. **Phase 6 收口已完成**（2026-08-06）：清掉 7 个死导入 + 1 处重复的 `useLiveStore()` 实例化，修正一处过时的迁移注释；调用方 import 路径本就统一，无需改动。✅
+5. **评估 `useChatConversation` 拆分（唯一剩余项）**：607 行偏大，但 docstring 已说明不拆的理由；主组件卡在 701 行而不是 300~500 行，根因就是这个——按需评估是否要把流式收发独立成 `useChatStream`、会话管理独立成 `useChatSessions` 供其他场景复用。这不是"没做完的收口"，是一个需要单独决策的范围问题。

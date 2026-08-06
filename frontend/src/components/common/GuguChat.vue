@@ -88,26 +88,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
-import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, authApi, CLIENT_ID, getToken } from '@/services/api'
+import { agentApi, filesApi, trackApi, authApi, getToken } from '@/services/api'
 import { prefetchGreeting } from '@/composables/useGreeting'
 import GuguChatFab from './gugu-chat/GuguChatFab.vue'
 import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
 import GuguChatBindDialog from './gugu-chat/GuguChatBindDialog.vue'
 import GuguChatWindow from './gugu-chat/GuguChatWindow.vue'
-import type { ChatMessage, ChatFile, ChatSession, ImPlatformKey } from './gugu-chat/chatTypes'
+import type { ChatMessage, ChatFile, ImPlatformKey } from './gugu-chat/chatTypes'
 import { API_BASE } from './gugu-chat/chatConstants'
-import { renderMd, renderMdStream } from './gugu-chat/markdown'
-import {
-  isImageFile, isAnimatedImageFile, canPreview,
-  fmtSize, fmtDur, voiceBar,
-} from './gugu-chat/messageDisplay'
+import { renderMd } from './gugu-chat/markdown'
+import { canPreview, fmtSize } from './gugu-chat/messageDisplay'
 import { useChatAudio } from './gugu-chat/composables/useChatAudio'
 import { useChatAttachments } from './gugu-chat/composables/useChatAttachments'
 import { useChatActions } from './gugu-chat/composables/useChatActions'
@@ -123,7 +119,6 @@ interface QuotaInfo {
 }
 
 const audioStore    = useAudioStore()
-const liveStore     = useLiveStore()
 const uiStore       = useUiStore()
 const router        = useRouter()
 
@@ -529,7 +524,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 
 /* .cb-* 扫码绑定弹窗样式已随 GuguChatBindDialog.vue 迁移 */
-/* .im-qr-cancel 已随 GuguChatSidebar.vue 迁移 */
+/* .im-qr-cancel 已随 GuguChatImConnect.vue 迁移 */
 
 /* .exp-send-btn/.send-btn 已随 GuguChatComposer.vue 迁移 */
 
