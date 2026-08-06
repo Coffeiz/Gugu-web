@@ -64,6 +64,10 @@ async def start(current_user: User = Depends(get_current_user)):
         )
     except HTTPException:
         raise
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            raise HTTPException(429, "飞书接口限流了，过一会儿再试～")
+        raise HTTPException(502, f"创建飞书连接任务失败：{e}")
     except Exception as e:
         raise HTTPException(502, f"创建飞书连接任务失败：{e}")
 

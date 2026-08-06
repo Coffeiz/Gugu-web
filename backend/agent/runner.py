@@ -923,9 +923,9 @@ async def _run_scheduled_once(
             minimax=is_minimax(model_cfg),
             include_meta=include_meta,
         )
-        text, _, _, errored, _, _, *meta = collected
+        text, _, _, errored, files, _, *meta = collected
         return (
-            (text, errored, meta[0] if meta else {})
+            (text, errored, {**(meta[0] if meta else {}), "files": files})
             if include_meta
             else (text, errored)
         )
@@ -950,14 +950,18 @@ async def run_scheduled_report(
     user_name: str,
     task_prompt: str,
     execution_text: str,
+    files: list | None = None,
 ):
-    """报告阶段适配器，只整理执行结果，不携带工具。"""
+    """报告阶段适配器，只整理执行结果，不携带工具。
+
+    files：execution 阶段 send_file 暂存下来的附件列表（_artifact）。传给 build_prompt
+    让咕咕在报告阶段知道有附件待投递，回执里不会再问图片是否真的附上去。"""
     from agent.scheduled_report import build_prompt
 
     return await _run_scheduled_once(
         user_id,
         user_name,
-        build_prompt(task_prompt, execution_text),
+        build_prompt(task_prompt, execution_text, files=files),
         DefaultProfile(),
         get_settings(),
         tool_names_override=[],

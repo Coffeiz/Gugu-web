@@ -2361,6 +2361,7 @@ const tooltipStyle = computed(() => {
 onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
+  Object.assign(searchDraft, configStore.cfg.search)
   Object.assign(voiceDraft, configStore.cfg.voice)
   Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
