@@ -1,10 +1,20 @@
 # IM 会话复用与消息窗口裁剪 PRD
 
-> 状态：📝 待评审
+> 状态：✅ 已实施（Phase 1～5 代码完成，测试通过，待评审合并）
 > 创建：2026-08-06
 > 最近更新：2026-08-06
 > 关联模块：`backend/agent/im/session.py`、`backend/agent/im/loop.py`、`backend/agent/im/owner_session.py`、`backend/agent/runner.py`、`backend/app/scheduled_tasks.py`、`backend/app/models/__init__.py`
 > 关联文档：[`【已完成】PRD-IM-2-im-loop与gateway解耦.md`](./【已完成】PRD-IM-2-im-loop与gateway解耦.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)
+
+## 0. 实施状态
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 1：会话复用 | ✅ 已完成 | `session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 作用域复用；新建 session 补写 `platform_user_id`；`_im_continuity_bridge` 传 `platform_user_id` |
+| Phase 2：消息窗口裁剪 | ✅ 已完成 | `trim_group_messages` 泛化为 `trim_session_messages`（600 阈值裁到 500）；私聊/群聊/被动记录统一触发 |
+| Phase 3：读取窗口统一 | ✅ 已完成 | `_history_query_limit` 私聊从 40 提到 50 |
+| Phase 4：定时任务归并 | ✅ 已完成 | `_persist_push_im` 修 Redis key 格式 + 复用所属 session + 推送后裁剪 |
+| Phase 5：测试 | ✅ 已完成 | 新增 `test_im_session_reuse.py`（9 用例）；更新群聊裁剪测试；完整后端套件 714 通过 |
 
 ## 0. 背景与问题
 
