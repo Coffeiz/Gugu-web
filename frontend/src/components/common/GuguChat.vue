@@ -777,6 +777,14 @@ async function exitExpanded() {
   -webkit-backdrop-filter: var(--glass-blur);
   transform: translateZ(0);
 }
+/* 展开/收起动画期间关掉 backdrop-filter：窗口尺寸在 0.38~0.42s 内连续变化时，
+   backdrop-filter 要跟着重算模糊采样区域，是导致过渡途中闪一下的主因。resizing
+   由 _markResizing() 在动画开始时置位、过渡结束（transitionend）/兜底定时器解除，
+   见 JS 里 const resizing 定义处的注释。 */
+.chat-main.is-resizing {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 
 /* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
 .chat-window {
