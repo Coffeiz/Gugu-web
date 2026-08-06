@@ -163,12 +163,19 @@ defineExpose({ imGroupEl: computed(() => imGroupElRef.value) })
   display: flex; align-items: center; gap: 6px;
   padding: 8px 10px; border-radius: 9px; cursor: pointer;
   transition: background 0.12s;
+  flex-shrink: 0;  /* 防止 line-height 调整后被外层 flex column 压扁 */
 }
 .exp-session-item:hover { background: rgba(255,255,255,0.55); }
 .exp-session-item.active { background: rgba(123,127,178,0.12); }
 .exp-session-item.active .exp-session-title { font-weight: 700; }
+/* 根除中文字体在 line box 内偏上的问题：
+   font-size 12.5px + line-height: normal (1.5 = 18.75px) 时，line box 远大于字形
+   实际占用，line-edge 规则把字形顶到 line box 顶部，视觉上比 20px 高的删除按钮高 0.7px。
+   把 line-height 锁成 17px（≈ 中文字形 ascent+descent 实际占用），line box 装下字形
+   不再溢出，字形在 line box 内自然居中。删除按钮 20px 固定居中，line box 17px 居中
+   （顶部偏移 9.5px，底部偏移 9.5px），两者中心都对齐到 content area 中心 18px。 */
 .exp-session-title {
-  flex: 1; font-size: 12.5px; color: var(--text-primary);
+  flex: 1; font-size: 12.5px; line-height: 17px; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .exp-session-del {

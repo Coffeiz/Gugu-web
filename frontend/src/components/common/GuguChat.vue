@@ -32,91 +32,58 @@
     @click="toggleOpen"
   />
 
-  <!-- 聊天窗口（单一元素，小/大状态通过位置过渡） -->
+  <!-- 聊天窗口（单一元素，小/大状态通过位置过渡）。窗口外壳/标题栏/消息列表/输入框
+       收在 GuguChatWindow.vue；扫码绑定弹窗与侧边栏通过插槽填充（ref 由本组件持有，
+       供 useChatImConnect 使用）。 -->
   <Transition name="chat-open" @after-leave="chatClosing = false">
-    <!-- win-grow 排除 resizing：大/小窗位形切换的瞬间 .chat-window 的 top 还需要 0.42s 缓动做纵向过渡，
-         一旦带上 win-grow 会把 top 的 transition 撤掉，窗口会瞬间从大窗高跳到小窗高（横轴仍走缓动，纵轴跳一下）。
-         resizing 在 _markResizing() / 过渡结束 / 600ms 兜底 时机清掉，回归流式 top 即时跟随。 -->
-    <div v-if="open" class="chat-window" :class="{ 'win-grow': streaming && !expanded && !resizing }" :style="windowStyle" ref="windowRef"
-      @mousedown.capture="raiseChat"
-      @dragenter="onChatDragEnter" @dragover="onChatDragOver" @dragleave="onChatDragLeave" @drop="onChatDrop">
-
-      <!-- 拖入遮罩（覆盖整个窗口，大小窗通用）-->
-      <Transition name="chat-drop-fade">
-        <div v-if="isChatDragging" class="chat-drop-overlay">
-          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 16V6M8 10l4-4 4 4"/><path d="M5 19h14"/>
-          </svg>
-          <span>松开以添加附件</span>
-        </div>
-      </Transition>
-
+    <GuguChatWindow
+      v-if="open"
+      ref="windowRef"
+      :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
+      :streaming="streaming" :is-chat-dragging="isChatDragging"
+      :current-session-title="currentSessionTitle"
+      :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
+      :messages="messages" :is-group-session="isGroupSession"
+      :copied-id="copiedId" :voice-playing-id="voicePlayingId"
+      :status-kind="statusKind" :status-typed="statusTyped"
+      v-model:input-text="inputText"
+      :pending-att="pendingAtt" :att-uploading="attUploading"
+      :recording="recording" :record-secs="recordSecs" :vw="vw"
+      :on-remove-att="removeAtt"
+      :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
+      :on-file-picked="onFilePicked" :on-paste="onPaste"
+      :on-send="() => send()" :on-stop-streaming="stopStreaming"
+      :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
+      :on-open-file="openFileFromChat" :on-action-click="onChatActionClick"
+      :on-prompt-connect="promptConnectIM"
+      :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
+      :on-close="closeChat" :on-raise-chat="raiseChat"
+      :on-drag-enter="onChatDragEnter" :on-drag-over="onChatDragOver"
+      :on-drag-leave="onChatDragLeave" :on-drop="onChatDrop"
+    >
       <!-- 扫码绑定 IM 弹窗：咕咕回复里点 [扫码绑定…](gugu://bind-im/<platform>) 按钮触发，复用现有连接 API -->
-      <GuguChatBindDialog
-        ref="bindDialogRef"
-        :open="chatBind.open" :label="chatBind.label" :hint="chatBind.hint" :err="chatBind.err"
-        @close="closeChatBind"
-      />
-
+      <template #bind-dialog>
+        <GuguChatBindDialog
+          ref="bindDialogRef"
+          :open="chatBind.open" :label="chatBind.label" :hint="chatBind.hint" :err="chatBind.err"
+          @close="closeChatBind"
+        />
+      </template>
 
       <!-- 侧边栏（仅大窗） -->
-      <GuguChatSidebar
-        v-if="expanded" ref="sidebarRef"
-        :im-platforms="imPlatformOptions" :im-open="imOpen" :im-highlight="imHighlight"
-        :bots-of="botsOf" :im-sessions-of="imSessionsOf"
-        :web-sessions="webSessions" :session-id="sessionId"
-        :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
-        :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
-        :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
-        :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
-      />
-
-      <!-- 主区域（始终存在，消息列表永不销毁） -->
-      <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
-        <div class="chat-header">
-          <span class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
-          <span class="popup-status" :class="'is-' + presenceKind"
-                @click="presenceKind === 'offline' && promptConnectIM()"
-                :title="presenceTitle">
-            <em class="status-dot" />{{ presenceText }}
-          </span>
-          <div class="btn-group">
-            <button v-if="!expanded" class="popup-icon-btn" @click="enterExpanded" title="展开">
-              <PhArrowsOut weight="bold" :size="13" />
-            </button>
-            <button v-if="expanded" class="exp-icon-btn" @click="exitExpanded" title="收起">
-              <PhArrowsIn weight="bold" :size="14" />
-            </button>
-            <button class="popup-close-btn" @click="closeChat">
-              <PhX weight="bold" :size="13" />
-            </button>
-          </div>
-        </div>
-
-        <GuguChatMessageList
-          ref="messageListRef"
-          :messages="messages" :is-group-session="isGroupSession"
-          :copied-id="copiedId" :voice-playing-id="voicePlayingId"
-          :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
-          @copy="copyMsg" @toggle-voice="toggleVoice"
-          @open-file="openFileFromChat" @action-click="onChatActionClick"
+      <template #sidebar>
+        <GuguChatSidebar
+          v-if="expanded" ref="sidebarRef"
+          :im-platforms="imPlatformOptions" :im-open="imOpen" :im-highlight="imHighlight"
+          :bots-of="botsOf" :im-sessions-of="imSessionsOf"
+          :web-sessions="webSessions" :session-id="sessionId"
+          :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
+          :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
+          :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
+          :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
         />
-
-        <!-- 输入框 -->
-        <GuguChatComposer
-          ref="composerRef"
-          v-model="inputText"
-          :pending-att="pendingAtt" :att-uploading="attUploading"
-          :recording="recording" :record-secs="recordSecs"
-          :expanded="expanded" :streaming="streaming" :vw="vw"
-          :on-remove-att="removeAtt"
-          :on-start-record="startRecord" :on-cancel-record="cancelRecord" :on-stop-record="stopRecord"
-          :on-file-picked="onFilePicked" :on-paste="onPaste"
-          :on-send="() => send()" :on-stop-streaming="stopStreaming"
-        />
-      </div>
-
-    </div>
+      </template>
+    </GuguChatWindow>
   </Transition>
 </template>
 
@@ -124,21 +91,18 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAudioStore } from '@/stores/audio'
-import { nextZ } from '@/composables/windowz'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
 import { agentApi, filesApi, trackApi, authApi, CLIENT_ID } from '@/services/api'
 import { prefetchGreeting } from '@/composables/useGreeting'
-import { playGuguSfx } from '@/services/sfx'
-import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
-import GuguChatComposer from './gugu-chat/GuguChatComposer.vue'
 import GuguChatFab from './gugu-chat/GuguChatFab.vue'
 import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
 import GuguChatBindDialog from './gugu-chat/GuguChatBindDialog.vue'
+import GuguChatWindow from './gugu-chat/GuguChatWindow.vue'
 import type { ChatMessage, ChatFile, ChatSession, ImPlatformKey } from './gugu-chat/chatTypes'
-import { API_BASE, SMALL_W, SMALL_H, SIDEBAR_W } from './gugu-chat/chatConstants'
+import { API_BASE } from './gugu-chat/chatConstants'
 import { renderMd, renderMdStream } from './gugu-chat/markdown'
 import {
   isImageFile, isAnimatedImageFile, canPreview,
@@ -149,7 +113,7 @@ import { useChatAttachments } from './gugu-chat/composables/useChatAttachments'
 import { useChatActions } from './gugu-chat/composables/useChatActions'
 import { useChatConversation } from './gugu-chat/composables/useChatConversation'
 import { useChatImConnect } from './gugu-chat/composables/useChatImConnect'
-import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
+import { useChatWindow } from './gugu-chat/composables/useChatWindow'
 
 interface QuotaInfo {
   limit_6h?: number | null
@@ -235,167 +199,96 @@ watch(audioPlaying, (playing) => {
   else { rippleTimeout = setTimeout(() => { rippleActive.value = false }, 3600) }
 })
 
-// ── 窗口状态 ────────────────────────────────────────────
-const open       = ref(false)
-const expanded   = ref(false)
-const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
-let _resizeTimer: ReturnType<typeof setTimeout> | null = null
-let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
-function playIncomingMessageSfx() {
-  // 聊天窗正在被用户看着时不打断；切到别的标签页或收起聊天窗才提示。
-  if (!open.value || document.hidden) playGuguSfx('message')
-}
-function _markResizing() {
-  resizing.value = true
-  if (_resizeTimer) clearTimeout(_resizeTimer)
-  if (windowRef.value && _onResizeTransitionEnd) {
-    windowRef.value.removeEventListener('transitionend', _onResizeTransitionEnd)
-  }
-  // 用真实 transitionend 结束 resizing，而不是硬编码 420ms 定时器——.chat-window 的位移过渡
-  // 也是 0.42s，正常情况下两者前后脚触发看不出差别；但性能不足时（掉帧/主线程繁忙）CSS 过渡
-  // 的视觉完成时间会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡
-  // 还没走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一没有属性真正变化、不会
-  // 触发 transitionend），加了缓冲、不再和过渡时长完全对齐。
-  _onResizeTransitionEnd = (e: TransitionEvent) => {
-    if (e.target !== windowRef.value) return   // 只认窗口自己的位移过渡，冒泡上来的子元素过渡不算
-    if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
-    resizing.value = false
-    composerRef.value?.fitTextarea()   // 过渡结束后做一次无视觉差的最终校准，处理浏览器的子像素取整
-  }
-  windowRef.value?.addEventListener('transitionend', _onResizeTransitionEnd)
-  _resizeTimer = setTimeout(() => { resizing.value = false; composerRef.value?.fitTextarea() }, 600)
-}
-const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
-watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
+// ── 窗口状态 / 位置 / 尺寸 / 层级 / 通知锚点 / 小窗高度跟随：见 useChatWindow.ts。
+// 该 composable 拥有 chat-window / expanded / resizing / windowStyle / miniPlayerStyle
+// / notifyAnchor / notifyOrigin / chatZ / contentH / _baseScrollH / syncSmallH 等。
+// 三个钩子（onContentReset / onCaptureBaseScrollH / onSyncSmallH）由它内部定义并
+// 暴露，本组件把它们传给 useChatConversation，把「内容变化 → 窗口尺寸跟随」这条
+// 链收在 useChatWindow 内闭环，不在本组件里写半透半遮的中间层。
+const windowRef = ref<InstanceType<typeof GuguChatWindow> | null>(null)
+// 把 GuguChatWindow 暴露的 DOM/组件引用包装成 useChatConversation / useChatWindow 需要的形态。
+const messageListRef = computed(() => windowRef.value?.messageListRef ?? null)
+const composerRef   = computed(() => windowRef.value?.composerRef ?? null)
+const messagesEl    = computed(() => windowRef.value?.messageListRef?.el ?? null)
+const windowElRef   = computed(() => windowRef.value?.el ?? null)
 
-// 设置：重开浏览器时是否接续上次对话（默认关＝开新对话）。开关在个人设置→咕咕设置里，
-// 写 localStorage『gugu_reopen_resume』；这里 onMounted 时读一次决定要不要接续。
-const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
-// 会话 id 存储 key：与 useChatConversation.ts 内部 watch(sessionId,...) 写入的 key 一致，
-// 那份是私有实现细节不对外导出，这里恢复上次会话时单独需要，字面量各自持有一份。
-const SESSION_KEY = 'gugu_session_id'
-const LAST_SESSION_KEY = 'gugu_last_session_id'
-
-const windowRef   = ref<HTMLElement | null>(null)
-// 真实可滚动的消息容器和虚拟列表由 GuguChatMessageList 内部持有；这里通过组件
-// 实例暴露的 el/scrollToIndex 访问，不在父组件里重新拿一份 DOM 引用。
-const messageListRef = ref<InstanceType<typeof GuguChatMessageList> | null>(null)
-const messagesEl = computed(() => messageListRef.value?.el ?? null)
-// 输入框的 focus/宽度重量高/清空后收起高度同理，通过 GuguChatComposer 暴露的方法操作。
-const composerRef = ref<InstanceType<typeof GuguChatComposer> | null>(null)
-
-// 视口尺寸，用于计算小窗绝对坐标
-const vw = ref(window.innerWidth)
-const vh = ref(window.innerHeight)
-function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeight }
-
-// 小窗高度跟随内容：直接用 messages 内容真实高度（scrollHeight，天然含所有气泡 + gap + padding）
-//   算窗口该多高，到 maxH 封顶后内部滚动。比旧的「按滚动位移反推」稳——旧法窗口一增高、内容
-//   不再溢出，位移 delta 就归零、停止增长（表现为生成到一半窗口不再长高）。
-const contentH = ref(SMALL_H)   // 窗口高度（= SMALL_H + 相对基线的新增内容高度），驱动 smallH
-let _baseScrollH = 0            // 打开/切会话时的内容高度基线：窗口只随「相对基线新增的内容」长高，
-                               // 不一次跳到全部历史高度（否则历史多时一发消息就瞬间全高）
-
-const smallH = computed(() => {
-  const maxH = Math.min(vh.value * 0.75, vh.value - 88 - 16)
-  return Math.min(maxH, Math.max(SMALL_H, contentH.value))
+const {
+  open, expanded, resizing, chatClosing, fabZ,
+  vw, vh,
+  windowStyle, miniPlayerStyle,
+  miniPinned, reopenResume,
+  raiseChat, closeChat, markResizing, playIncomingMessageSfx,
+  resetContentH, captureBaseScrollH, setBaseScrollH, syncSmallH,
+  onContentReset, onCaptureBaseScrollH, onSyncSmallH,
+  SESSION_KEY, LAST_SESSION_KEY,
+} = useChatWindow({
+  windowRef: windowElRef,
+  composerRef,
+  messagesEl,
 })
 
-// 内容相对基线增高多少，窗口就增高多少（含用户气泡 + AI 气泡）；到 maxH 封顶后内部滚动
-function syncSmallH() {
-  const el = messagesEl.value
-  if (!el || expanded.value || resizing.value) return
-  contentH.value = SMALL_H + Math.max(0, el.scrollHeight - _baseScrollH)
-}
-
-// 单一窗口的位置样式：小状态与大状态都用 top/left/right/bottom 像素值，保证过渡正常
-// transition 放在 CSS 而非 inline style，避免覆盖 Vue Transition 的 opacity/transform 动画
-// 窗口层级：进统一窗口带（点谁谁上，见 composables/windowz.ts）；打开时置顶
-const chatZ = ref(nextZ())
-function raiseChat() { chatZ.value = nextZ() }
-watch(open, v => { if (v) raiseChat() })
-
-// 离场动画尚未结束时窗口仍缩回悬浮球，不能提前把球提到窗口前面。
-// after-leave 后才恢复常驻最高层，避免关闭瞬间球盖住窗口。
-const chatClosing = ref(false)
-const fabZ = computed(() => (open.value || chatClosing.value) ? chatZ.value - 1 : 99999)
-
-const windowStyle = computed(() => {
-  if (expanded.value) {
-    // 右锚 720px，遇到窄屏时不超过导航栏右边界
-    const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
-    return { top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value }
-  }
-  return {
-    top:    `${vh.value - 88 - smallH.value}px`,
-    left:   `${vw.value - parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--floating-edge')) - SMALL_W}px`,
-    right:  'var(--floating-edge)',
-    bottom: '88px',
-    zIndex: chatZ.value,
-  }
-})
-
-// 播放器联动：小窗打开时顶到窗口上方，其余情况悬在 fab 上方
-const miniPlayerStyle = computed(() => {
-  const bottom = (open.value && !expanded.value) ? 88 + smallH.value + 8 : 88
-  // 小窗展开时播放器远离 FAB，从自身中心缩放；其他状态从 FAB 圆心缩放
-  const origin = (open.value && !expanded.value)
-    ? '50% 50%'
-    : `calc(100% - 25px) calc(100% + ${bottom - 53}px)`
-  // 跟随聊天窗相对层级：展开态在窗后（-1）、小窗态顶在窗前（+1）
-  const zIndex = expanded.value ? chatZ.value - 1 : chatZ.value + 1
-  return { bottom: `${bottom}px`, transformOrigin: origin, zIndex }
-})
-
-// 通知气泡锚点：让通知始终浮在「小窗 / 音乐播放器」上方，不与之重叠。
-// 关闭态：浮在 fab（或其上的播放器）上方；小窗态：浮在小窗（及其上播放器）上方；
-// 放大态：窗口几乎占满，播放器已缩回 fab，通知仍回到 fab 上方默认位。
-const MP_EST_H = 112   // 播放器外高估值（含 padding，用于堆叠避让）
-const notifyAnchor = computed(() => {
-  const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
-  if (open.value && !expanded.value) {
-    const winTop = 88 + smallH.value                          // 小窗顶沿（距视口底）
-    return (hasPlayer ? winTop + 8 + MP_EST_H : winTop) + 12
-  }
-  return hasPlayer ? 88 + MP_EST_H + 12 : 90
-})
-watch(notifyAnchor, v => { uiStore.chatNotifyAnchor = v }, { immediate: true })
-
-// 通知气泡开合的缩放原点（与音乐播放器同逻辑）：
-// 直接浮在咕咕球上方（聊天关闭且无播放器）→ 从球圆心缩放；被小窗/播放器顶高 → 从自身中心缩放。
-const notifyOrigin = computed(() => {
-  const hasPlayer = !!audioStore.file && (miniPinned.value || open.value)
-  if (!open.value && !hasPlayer) {
-    return `calc(100% - 25px) calc(100% + ${notifyAnchor.value - 53}px)`
-  }
-  return '50% 50%'
-})
-watch(notifyOrigin, v => { uiStore.chatNotifyOrigin = v }, { immediate: true })
+// 通知锚点 / 缩放原点变化已经由 useChatWindow 内 watch 写入 uiStore，这里只读
 
 async function toggleOpen() {
-  if (open.value) {
-    closeChat()
-    return
-  }
+  if (open.value) { closeChat(); return }
   open.value = true
-  if (open.value) {
-    if (!expanded.value) contentH.value = SMALL_H
-    trackApi.track('chat_open').catch(() => {})
-    await nextTick()
-    stick.value = true
-    _baseScrollH = messagesEl.value?.scrollHeight || 0   // 基线 = 打开时的历史内容高度
-    await scrollBottom(true)
-  }
+  if (!expanded.value) resetContentH()
+  trackApi.track('chat_open').catch(() => {})
+  await nextTick()
+  stick.value = true
+  captureBaseScrollH()   // 基线 = 打开时的历史内容高度
+  await scrollBottom(true)
 }
 
-function closeChat() {
-  chatClosing.value = true
-  open.value = false
+// 展开：调大窗布局 + 加载会话列表 + 滚到底 + 校准输入框
+async function enterExpanded() {
+  expanded.value = true
+  loadBots()
+  markResizing()
+  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
+  // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
+  await nextTick()
+  composerRef.value?.fitTextarea?.(true)
+  trackApi.track('chat_expanded').catch(() => {})
+  await fetchSessions()
+  await nextTick()
+  composerRef.value?.focus?.()
+  stick.value = true
+  const el = messagesEl.value
+  if (!el) return
+  el.scrollTop = 999999; lastTop.value = el.scrollTop
+  // 展开动画期间容器高度持续变化，用 ResizeObserver 跟底，420ms 动画结束后断开
+  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
+  ro.observe(el)
+  setTimeout(() => { ro.disconnect() }, 450)
+}
+
+// 收起：重置 contentH / 冻结基线 / 切回小窗 / 滚到底 / 动画结束后重测基线
+async function exitExpanded() {
+  resetContentH()   // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
+  // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
+  // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
+  setBaseScrollH(Infinity)
   expanded.value = false
+  markResizing()
+  await nextTick()
+  composerRef.value?.fitTextarea?.(false)
+  const el = messagesEl.value
+  if (!el) return
+  stick.value = true
+  el.scrollTop = 999999; lastTop.value = el.scrollTop
+  // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
+  // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
+  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
+  ro.observe(el)
+  setTimeout(() => {
+    ro.disconnect()
+    captureBaseScrollH()
+    syncSmallH()
+  }, 450)
 }
 
 onMounted(() => {
-  window.addEventListener('resize', onResize)
   window.addEventListener('beforeunload', saveProgress)
   // 拉一次状态显示名（目前只用到「思考中」候选文案；失败就保持默认三个点）
   agentApi.getUiLabels?.().then(r => {
@@ -421,7 +314,6 @@ onMounted(() => {
   }
 })
 onUnmounted(() => {
-  window.removeEventListener('resize', onResize)
   window.removeEventListener('beforeunload', saveProgress)
 })
 
@@ -442,14 +334,13 @@ const {
 })
 
 // 对话引擎（消息/会话/SSE 流式收发/状态气泡/滚动跟随）唯一状态所有权，见该文件头注释。
-// 三个钩子回调把它跟窗口尺寸计算（contentH/_baseScrollH/syncSmallH，仍留在本文件）接起来。
+// 三个钩子回调由 useChatWindow 内部定义并通过本组件解构传进来，把「内容变化 → 窗口尺寸跟随」
+// 这条链收在 useChatWindow 内闭环，本组件不写中间层。
 const conversation = useChatConversation({
   composerRef, messageListRef, pendingAtt,
   refreshAfterTools, loadQuota: () => loadQuota(),
   playIncomingMessageSfx: () => playIncomingMessageSfx(),
-  onContentReset: () => { contentH.value = SMALL_H },
-  onCaptureBaseScrollH: () => { _baseScrollH = messagesEl.value?.scrollHeight || 0 },
-  onSyncSmallH: () => syncSmallH(),
+  onContentReset, onCaptureBaseScrollH, onSyncSmallH,
 })
 const {
   messages, mkid, now,
@@ -572,103 +463,14 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
                                    : presenceKind.value === 'online'  ? '咕咕在线'
                                    : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
 
-async function enterExpanded() {
-  expanded.value = true
-  loadBots()
-  _markResizing()
-  // 真实输入框此时仍在从小窗宽度过渡到大窗宽度；用目标宽度离屏测量，避免把旧宽度的行数
-  // 带到动画结束才纠正，也不需要为了兜底提前撑高窗口。
-  await nextTick()
-  composerRef.value?.fitTextarea(true)
-  trackApi.track('chat_expanded').catch(() => {})
-  await fetchSessions()
-  await nextTick()
-  composerRef.value?.focus()
-  stick.value = true
-  const el = messagesEl.value
-  if (!el) return
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // 展开动画期间容器高度持续变化，用 ResizeObserver 跟底，420ms 动画结束后断开
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
-  setTimeout(() => { ro.disconnect() }, 450)
-}
-
-async function exitExpanded() {
-  contentH.value = SMALL_H  // 先重置，小窗 DOM 以 SMALL_H 直接创建，不产生二次缩小
-  _baseScrollH = Infinity   // 缩小动画期间冻结增长（grown 恒 0、窗口稳在 SMALL_H）：大窗换行少、
-                            // scrollHeight 偏小，拿它当基线会让小窗重新换行后的高度全被算成新增 → 顶满
-  expanded.value = false
-  _markResizing()
-  await nextTick()
-  composerRef.value?.fitTextarea(false)
-  const el = messagesEl.value
-  if (!el) return
-  stick.value = true
-  el.scrollTop = 999999; lastTop.value = el.scrollTop
-  // CSS transition 让窗口从大尺寸平滑缩小（0.38s），期间 clientHeight 持续变化
-  // ResizeObserver 跟着一直滚底，过渡结束后断开；动画结束、小窗布局稳定后再测真实基线
-  const ro = new ResizeObserver(() => { el.scrollTop = 999999; lastTop.value = el.scrollTop })
-  ro.observe(el)
-  setTimeout(() => {
-    ro.disconnect()
-    _baseScrollH = messagesEl.value?.scrollHeight || 0
-    syncSmallH()
-  }, 450)
-}
-
 </script>
 
 <style scoped>
 /* .ai-fab* 已随 GuguChatFab.vue 迁移 */
 
-/* ── 单一聊天窗口 ── */
-.chat-window {
-  position: fixed;
-  /* z-index 由 :style 动态(统一窗口带,点谁谁上) */
-  border: 1px solid rgba(255,255,255,0.7);
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow: 0 24px 64px rgba(20,25,50,0.18);
-  will-change: top, left, right, bottom;
-  isolation: isolate;   /* 独立层叠上下文：z-index/合成跟页面其余部分互不干扰，展开/收起动画时不牵连外部重绘 */
-}
-.chat-window::after {
-  content: '';
-  position: absolute; inset: 0;
-  border-radius: 20px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55), inset 0 -1px 0 rgba(255,255,255,0.3);
-  pointer-events: none;
-  z-index: 100;
-}
-
-/* 主区域负责背景 blur */
-.chat-main {
-  background: var(--panel-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  transform: translateZ(0);
-  will-change: backdrop-filter;   /* 提示浏览器单独准备合成层，容器随窗口变尺寸时少一点现算的突兀感 */
-}
-
-/* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
-.chat-window {
-  transition: top 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-}
-/* 小窗流式增高：top 即时跟随内容（去掉 0.42s 缓动，否则窗口高度滞后于出字、一跳一跳）。
-   left/right/bottom 保留缓动用于开关/位移动画；流式中它们不变，无副作用。 */
-.chat-window.win-grow {
-  transition: left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-
-/* 窗口开/关动画（从右下角 fab 原点缩放），!important 覆盖上方位移 transition */
-/* 入场：极快启动、平滑减速（无过冲）；出场：平滑加速收缩 */
+/* 窗口开/关动画（从右下角 fab 原点缩放），!important 覆盖 .chat-window 的位移 transition。
+   Transition 在本组件，class 加在 GuguChatWindow 根元素上（根元素带本组件 scope 属性，
+   这里能匹配）。窗口外壳/标题栏/遮罩样式已随 GuguChatWindow.vue 迁移。 */
 .chat-open-enter-active {
   transition: opacity 0.22s ease, transform 0.36s cubic-bezier(0.16, 1, 0.3, 1) !important;
   transform-origin: right bottom;
@@ -679,65 +481,8 @@ async function exitExpanded() {
 }
 .chat-open-enter-from, .chat-open-leave-to { opacity: 0; transform: scale(0.78); }
 
-/* ── 拖入附件遮罩 ── */
-.chat-drop-overlay {
-  position: absolute; inset: 0; z-index: 120;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
-  pointer-events: none;   /* 让拖拽事件穿透到 .chat-window，drop/dragleave 才能正常触发 */
-  background: rgba(123,127,178,0.16);
-  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
-  border: 2px dashed rgba(123,127,178,0.6); border-radius: 20px;
-  color: var(--color-primary); font-size: 14px; font-weight: 600;
-}
-.chat-drop-fade-enter-active, .chat-drop-fade-leave-active { transition: opacity 0.15s ease; }
-.chat-drop-fade-enter-from, .chat-drop-fade-leave-to { opacity: 0; }
-
-/* ── 单一布局 ── */
-.chat-window { display: flex; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-
-.chat-header {
-  display: flex; align-items: center; gap: 9px;
-  padding: 13px 14px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.5);
-  flex-shrink: 0;
-}
-.chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
-.chat-title { font-size: 13px; font-weight: 700; flex: 1; }
-.chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
-.popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
-.status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
-/* 离线：克制的暗示——灰点、弱化文字、可点；只在 hover 才微微亮起（点用暖色 + 细光环），平时不抢眼 */
-.popup-status.is-offline { color: var(--text-secondary); cursor: pointer; opacity: .85; transition: color .15s, opacity .15s; }
-.popup-status.is-offline .status-dot { background: var(--text-secondary); }
-.popup-status.is-offline:hover { opacity: 1; color: var(--text-primary); }
-.popup-status.is-offline:hover .status-dot { background: var(--color-warning); box-shadow: 0 0 0 3px rgba(176, 120, 88, 0.22); }
-/* 休息中（精力耗尽）：暖色、点轻微呼吸，不可点 */
-.popup-status.is-resting { color: var(--color-warning); cursor: default; }
-.popup-status.is-resting .status-dot { background: var(--color-warning); animation: restPulse 1.8s ease-in-out infinite; }
-@keyframes restPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-/* .im-plat-group/.im-flash 已随 GuguChatSidebar.vue 迁移 */
-.btn-group { display: flex; align-items: center; gap: 2px; }
-
-.popup-icon-btn {
-  width: 26px; height: 26px; border-radius: 7px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s;
-}
-.popup-icon-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
-.popup-icon-btn svg { display: block; }
-.popup-close-btn {
-  width: 26px; height: 26px; border-radius: 7px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s;
-}
-.popup-close-btn svg { display: block; }
-.popup-close-btn:hover { background: rgba(200,80,80,0.1) !important; color: rgba(200,80,80,0.8) !important; }
-
-/* .chat-messages 及其内部结构现在整体渲染于 GuguChatMessageList.vue（子组件），
-   同样需要 :deep() 才能穿透组件边界匹配。 */
+/* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue（GuguChatWindow 的子组件），
+   需要 :deep() 穿透组件边界匹配。 */
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
@@ -763,18 +508,6 @@ async function exitExpanded() {
 .chat-main.is-expanded :deep(.chat-input-row textarea) { padding: 5.5px 0; }
 /* 小窗输入字号略小，与小窗整体一致 */
 .chat-main:not(.is-expanded) :deep(.chat-input-row textarea) { font-size: 13px; }
-
-/* 侧栏相关样式（会话列表、新建会话、IM 平台抽屉、扫码连接框）已随
-   GuguChatSidebar.vue 迁移。.exp-icon-btn 仍留着——窗口头部「收起」按钮
-   （不在侧栏里）还在用。 */
-.exp-icon-btn {
-  width: 28px; height: 28px; border-radius: 8px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s; flex-shrink: 0;
-}
-.exp-icon-btn:hover { background: rgba(123,127,178,0.12); color: var(--color-primary); }
-.exp-icon-btn svg { display: block; }
 
 /* 咕咕回复里的动作按钮：md 里的 gugu:// 链接渲染成按钮（onChatActionClick 拦截点击）——
    跟全局 .press-fx 一套手感（悬停不上浮，只在按下时下沉），这些 <a> 是 markdown 渲染出来的、
