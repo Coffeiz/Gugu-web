@@ -264,7 +264,7 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 "不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，"
                 "图片必须靠 send_file 实际发送。"
             )
-            text, files = await _run_agent(uid, prompt, trial=is_trial)
+            text, files = await _run_agent(uid, prompt, target_map=target_map, trial=is_trial)
             result = await deliver_to_channels(uid, name, text, chans, target_map, files=files)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
@@ -518,18 +518,94 @@ async def _persist_push_im(
         pass
 
 
+def _detect_group_target(target_map: dict | None) -> dict | None:
+    """从 delivery_targets 抽群目标（chat_type=="group" 且有 chat_id）。
+
+    单群假设：与 create_scheduled_task 工具的 delivery_mode="current_group" 一致
+    （tools/scheduled_tasks.py:_resolve_delivery_targets），delivery_targets 至多一个
+    群目标。找到第一个群目标就返回；找不到返回 None。
+    """
+    if not isinstance(target_map, dict):
+        return None
+    for tgt in target_map.values():
+        if (
+            isinstance(tgt, dict)
+            and tgt.get("chat_type") == "group"
+            and tgt.get("chat_id")
+        ):
+            return tgt
+    return None
+
+
+async def _inject_group_context(user_id, target_map, prompt: str) -> tuple[str | None, str]:
+    """群定时任务：set_im + 拼群 memory 到 user prompt 开头。
+
+    返回 (group_target, new_prompt)：
+    - group_target=None：未命中群目标，调用方按原逻辑继续（不动 imctx、不动 prompt）
+    - group_target!=None：已 set_im，并把群 memory 拼到 prompt 开头
+
+    imctx 用 ContextVar，作用域只在「本轮 execution」任务内；asyncio task 销毁时
+    ContextVar 自然释放，不污染其他任务。set_im 无 reset API（agent/imctx.py 不暴露），
+    不引入新接口。
+
+    report 阶段不重复注入：见 PRD-IM-7 §1.3-4 决策。
+    """
+    group = _detect_group_target(target_map)
+    if not group:
+        return None, prompt
+    from agent.imctx import set_im
+    set_im(
+        platform=group["platform"],
+        message_id=None,            # 定时任务无具体触发的 IM 消息
+        channel_id=group.get("channel_id"),
+        chat_id=group["chat_id"],
+        puid=group.get("puid"),
+        chat_type="group",
+    )
+    bot_id = str(group.get("channel_id") or "")
+    if not bot_id:
+        return group, prompt   # 没 bot_id 没法构 MemoryScope，跳过群 memory 注入
+    from agent.memory.scopes import MemoryScope
+    from agent.memory.scope_lifecycle import preview_scope
+    from agent.im.context_loader import format_im_memory
+    try:
+        scope = MemoryScope(
+            owner_user_id=_as_uuid(user_id),
+            platform=group["platform"],
+            bot_id=bot_id,
+            scope_type="group",
+            scope_id=str(group["chat_id"]),
+        )
+        group_memory = await preview_scope(scope) or {}
+    except Exception as e:
+        diag_log("app.scheduled_tasks.inject_group_context", e)
+        return group, prompt
+    scope_block = format_im_memory({"group": group_memory}, role="owner")
+    if scope_block:
+        prompt = scope_block + "\n\n" + prompt
+    return group, prompt
+
+
 async def _run_agent(
     user_id,
     prompt: str,
     *,
+    target_map: dict | None = None,
     trial: bool = False,
 ) -> tuple[str, list]:
     """编排定时任务的 execution/report，runner 只负责单阶段 AgentLoop。
+
+    target_map：任务的 delivery_targets（dict）。如果命中群目标，先 set_im +
+    拼群 memory 到 user prompt 开头（_inject_group_context）。私聊/Web 任务不传或
+    不命中群目标 → 完全跳过，行为与改动前一致。
 
     返回 (文本, files)：files 是 execution 阶段（唯一带工具的阶段）里模型调
     send_file 产出的附件列表（_artifact 结构，含 attach_id），report 阶段
     不带工具、不会再产出文件，所以全程沿用 execution 阶段收集到的这一份。
     """
+    # 群定时任务：set_im + 拼群 memory（PRD-IM-7）
+    _, prompt = await _inject_group_context(user_id, target_map, prompt)
+
     import app.db.session as ss
     from app.models import User
 
