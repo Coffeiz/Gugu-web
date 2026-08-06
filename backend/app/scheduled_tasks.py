@@ -646,7 +646,7 @@ async def _deliver_im(
     if not reach:
         return False   # 该平台没用过/无可触达地址，跳过
     payload = {
-        "platform": reach.get("platform"),
+        "platform": platform or reach.get("platform"),
         "channel_id": reach.get("channel_id"),
         "chat_id": reach.get("chat_id"),
         "platform_user_id": reach.get("puid"),

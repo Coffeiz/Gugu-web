@@ -82,6 +82,7 @@ async def _resolve_delivery_targets(db, user_id, channels, mode: str = "owner_pr
         return None, json.dumps({"error": "当前 QQ 群没有可用的 group_openid，任务未创建"}, ensure_ascii=False)
     return {
         "qq": {
+            "platform": "qq",
             "chat_type": "group",
             "chat_id": group_id,
             "puid": current.get("puid"),
