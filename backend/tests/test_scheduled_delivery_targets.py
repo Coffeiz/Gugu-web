@@ -27,6 +27,7 @@ async def test_group_delivery_mode_captures_current_qq_group():
     assert error is None
     assert targets == {
         "qq": {
+            "platform": "qq",
             "chat_type": "group",
             "chat_id": "group-1",
             "puid": "owner-1",
@@ -93,7 +94,99 @@ async def test_delivery_uses_task_target_instead_of_recent_reach(monkeypatch):
 
     assert result == {"QQ": "已发送"}
     assert send.await_args.args == ("user-1", "⏰ 任务\n\n正文", "qq", target)
-    persist.assert_awaited_once_with("user-1", "qq", "任务", "正文", target)
+    persist.assert_awaited_once_with("user-1", "qq", "任务", "正文", target, files=None)
+
+
+@pytest.mark.asyncio
+async def test_delivery_with_all_attachments_sent_stays_success(monkeypatch):
+    """图片全部发出去了，结果照旧是「已发送」——不能因为多了 files 参数就把
+    原本就成功的场景也判错。"""
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    deliver_files = AsyncMock(return_value=(2, 2))
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+    monkeypatch.setattr(scheduled, "_deliver_im_files", deliver_files)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [{"attach_id": "a1", "name": "图1"}, {"attach_id": "a2", "name": "图2"}]
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, {"qq": target}, files=files
+    )
+
+    assert result == {"QQ": "已发送"}
+    deliver_files.assert_awaited_once_with("user-1", "qq", target, files)
+
+
+@pytest.mark.asyncio
+async def test_delivery_with_failed_attachments_is_not_reported_success(monkeypatch):
+    """图片没全发出去：即使文字发成功了，也不能报「已发送」——这是 P1 bug 的
+    核心场景：附件失败必须能让 _delivery_succeeded() 判定失败，一次性任务
+    才不会被静默删除。"""
+    import app.scheduled_tasks as scheduled
+
+    send = AsyncMock(return_value=True)
+    persist = AsyncMock()
+    deliver_files = AsyncMock(return_value=(0, 2))   # 两张全挂
+    monkeypatch.setattr(scheduled, "_deliver_im", send)
+    monkeypatch.setattr(scheduled, "_persist_push_im", persist)
+    monkeypatch.setattr(scheduled, "_deliver_im_files", deliver_files)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [{"attach_id": "a1"}, {"attach_id": "a2"}]
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"qq"}, {"qq": target}, files=files
+    )
+
+    assert result == {"QQ": "文字已发送，附件发送失败（0/2）"}
+    assert not scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_web_only_delivery_with_files_reports_no_attachment_support(monkeypatch):
+    """网页通知目前不支持带图——选了带图任务但只勾了网页渠道时，结果必须如实
+    说明图片没有随通知显示，不能跟没有 files 时一样报「已发送」（否则用户会
+    以为图已经推过去了，实际网页通知里什么都没有）。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import events as _ev
+
+    monkeypatch.setattr(_ev, "publish", AsyncMock())
+
+    result = await scheduled.deliver_to_channels(
+        "user-1", "任务", "正文", {"web"}, files=[{"attach_id": "a1"}]
+    )
+
+    assert result == {"web 通知": "已发送（网页通知不支持附件，图片未随通知显示）"}
+    assert not scheduled._delivery_succeeded(result)
+
+
+@pytest.mark.asyncio
+async def test_deliver_im_files_counts_missing_attach_id_and_metadata_as_failures(monkeypatch):
+    """_deliver_im_files 本身的统计要如实：缺 attach_id、附件 metadata 查不到（过期/
+    从没存过）都要计入失败，不能被 continue 悄悄跳过导致总数和成功数一起漏记。"""
+    import app.scheduled_tasks as scheduled
+    from app.core import chat_attach
+
+    monkeypatch.setattr(chat_attach, "get_meta", AsyncMock(side_effect=[
+        {"storage_key": "k1", "name": "图1", "ext": "png"},   # a1: 有 meta
+        None,                                                  # a2: 查不到 meta（过期）
+    ]))
+    send_file = AsyncMock(return_value=True)
+    monkeypatch.setattr("agent.im.replies.send_file", send_file)
+
+    target = {"chat_type": "group", "chat_id": "group-1", "puid": "owner-1", "channel_id": "bot-1"}
+    files = [
+        {"attach_id": "a1", "name": "图1", "ext": "png"},
+        {"attach_id": "a2", "name": "图2", "ext": "png"},
+        {"name": "没有 attach_id 的附件"},
+    ]
+    ok_count, total = await scheduled._deliver_im_files("user-1", "qq", target, files)
+
+    assert total == 3
+    assert ok_count == 1   # 只有 a1 真的发出去了
+    send_file.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -135,7 +228,7 @@ async def test_legacy_task_uses_owner_private_target(monkeypatch):
 
     assert result == {"QQ": "已发送"}
     send.assert_awaited_once_with("user-1", "⏰ 旧任务\n\n正文", "qq", target)
-    persist.assert_awaited_once_with("user-1", "qq", "旧任务", "正文", target)
+    persist.assert_awaited_once_with("user-1", "qq", "旧任务", "正文", target, files=None)
 
 
 @pytest.mark.asyncio
@@ -163,7 +256,7 @@ async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db
     await db.commit()
     await db.refresh(task)
 
-    run_agent = AsyncMock(return_value="提醒正文")
+    run_agent = AsyncMock(return_value=("提醒正文", []))
     deliver = AsyncMock(return_value={"QQ": "已发送"})
     monkeypatch.setattr(scheduled, "_run_agent", run_agent)
     monkeypatch.setattr(scheduled, "deliver_to_channels", deliver)
@@ -282,7 +375,7 @@ async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
     await db.commit()
     await db.refresh(task)
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value="测试正文"))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("测试正文", [])))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -312,7 +405,7 @@ async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, d
     await db.commit()
     await db.refresh(task)
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value="正文"))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -344,7 +437,7 @@ async def test_once_task_is_deleted_only_after_successful_delivery(monkeypatch, 
     await db.refresh(task)
     task_id = task.id
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value="正文"))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -429,7 +522,7 @@ async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatc
     async def slow_run_agent(*args, **kwargs):
         entered.set()
         await release.wait()
-        return "正文"
+        return "正文", []
 
     monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
     monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"QQ": "已发送"}))

@@ -6,8 +6,9 @@
 - 后端：[backend.md](docs/development/backend.md)
 - 前台设计：[design.md](docs/development/design.md)
 - Admin 设计：[design-admin.md](docs/development/design-admin.md)
+- 测试：[test.md](docs/development/test.md)
 
-修改前端、后端或视觉交互前，先阅读对应文档。本文件只保留跨项目的基础规则。
+修改前端、后端或视觉交互前，先阅读对应文档；写/改测试前先看测试约定。本文件只保留跨项目的基础规则。
 
 ## 调试原则
 
@@ -30,6 +31,7 @@
 - 前端 UI 修改优先在 devserver 浏览器验证；类型或接口修改运行 typecheck。
 - 完成功能或提交前运行完整前端 typecheck；行为/纯逻辑修改运行测试。
 - 后端变更在 devserver 运行 `PYTHONPATH=. .venv/bin/pytest`。
+- pytest 测试基座、E2E 该不该接 CI 的判断标准、本地跑 E2E 的方式，见 [test.md](docs/development/test.md)。
 - 修改网关适配器时只重启对应平台子进程，不重启整个 supervisor。
 
 ## 语言与提交

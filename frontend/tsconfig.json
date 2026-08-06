@@ -22,10 +22,9 @@
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": false,
 
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "vue": ["node_modules/vue"]
+      "@/*": ["./src/*"],
+      "vue": ["./node_modules/vue"]
     },
     "types": ["vite/client"]
   },

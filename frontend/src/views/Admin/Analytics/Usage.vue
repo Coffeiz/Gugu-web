@@ -221,7 +221,7 @@
             </div>
             <div v-for="(m, i) in usage.by_model" :key="m.model" class="model-row">
               <span class="m-name">
-                <span class="m-dot" :style="{ background: donutColors[i % donutColors.length] }"></span>
+                <span class="m-dot" :style="{ background: donutColors[Number(i) % donutColors.length] }"></span>
                 {{ m.model }}
                 <span class="m-provider">{{ m.provider }}</span>
               </span>

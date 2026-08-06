@@ -51,6 +51,10 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
    在同一块画布上并排出现（贴纸 vs 文件/项目引用卡）时，0.05s 的差距肉眼可辨，抬起速度
    看着不一致。 */
 .hover-card-fx {
+  /* will-change: transform 提示浏览器把 transform 提升到合成层，抬起动画走 GPU 合成、
+     不触发主线程重绘（配合 box-shadow 的 paint 属性，能显著降低 hover 时的重绘闪烁）。
+     只影响渲染路径，不改变任何显示效果。 */
+  will-change: transform;
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.25s ease;
 }
 .hover-card-fx:hover {
