@@ -364,3 +364,28 @@ async def delete_session(
         raise HTTPException(404, "对话不存在")
     await db.delete(session)
     await db.commit()
+
+
+class RenameSessionRequest(BaseModel):
+    title: str
+
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(
+    session_id: int,
+    body: RenameSessionRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """重命名会话标题，方便用户区分不同对话。"""
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(422, "标题不能为空")
+    if len(title) > 300:
+        raise HTTPException(422, "标题过长")
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
+        raise HTTPException(404, "对话不存在")
+    session.title = title
+    await db.commit()
+    return {"id": session.id, "title": session.title}

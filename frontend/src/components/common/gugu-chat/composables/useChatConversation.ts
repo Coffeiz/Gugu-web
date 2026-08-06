@@ -288,7 +288,7 @@ export function useChatConversation(options: {
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
   })
-  const { webSessions, imSessions, currentSessionTitle, loadSession, newSession, deleteSession } = sessionsApi
+  const { webSessions, imSessions, currentSessionTitle, loadSession, newSession, deleteSession, renameSession } = sessionsApi
 
   // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
   watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -337,7 +337,7 @@ export function useChatConversation(options: {
     sessionId, ownerPlatformUserId, isGroupSession,
     sessions, webSessions, imSessions, currentSessionTitle,
     stick, lastTop: _lastTop,
-    fetchSessions, loadSession, newSession, deleteSession, resolveSpeaker,
+    fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,
     scrollBottom, onMsgScroll,
     animateGreeting, _revealMessage, _flashChatMessage,

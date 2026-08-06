@@ -42,6 +42,7 @@
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
       :current-session-title="currentSessionTitle"
+      :session-id="sessionId"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
@@ -56,6 +57,7 @@
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-prompt-connect="promptConnectIM"
+      :on-rename-session="renameSession"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
       :on-close="closeChat" :on-raise-chat="raiseChat"
       :on-drag-enter="onChatDragEnter" :on-drag-over="onChatDragOver"
@@ -81,6 +83,7 @@
           :on-toggle-platform="toggleImPlatform" :on-set-connect-canvas="setConnectCanvas"
           :on-start-im-connect="startImConnect" :on-cancel-im-connect="cancelImConnect"
           :on-load-session="loadSession" :on-delete-session="deleteSession" :on-new-session="newSession"
+          :on-rename-session="renameSession"
         />
       </template>
     </GuguChatWindow>
@@ -343,7 +346,7 @@ const {
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle,
   stick, lastTop,
-  fetchSessions, loadSession, newSession, deleteSession,
+  fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming, resumeStream,
   scrollBottom, onMsgScroll,
   animateGreeting, clearStatus,

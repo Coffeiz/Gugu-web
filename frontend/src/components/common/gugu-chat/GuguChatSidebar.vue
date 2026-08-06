@@ -13,7 +13,7 @@
         :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
         :on-toggle-platform="onTogglePlatform" :on-set-connect-canvas="onSetConnectCanvas"
         :on-start-im-connect="onStartImConnect" :on-cancel-im-connect="onCancelImConnect"
-        :on-load-session="onLoadSession" :on-delete-session="onDeleteSession"
+        :on-load-session="onLoadSession" :on-delete-session="onDeleteSession" :on-rename-session="onRenameSession"
       />
 
       <!-- 网页对话 -->
@@ -24,7 +24,7 @@
         :class="{ active: s.id === sessionId }"
         @click="onLoadSession(s.id)"
       >
-        <span class="exp-session-title">{{ s.title }}</span>
+        <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
         <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除">
           <PhTrash :size="12" weight="bold" />
         </button>
@@ -55,6 +55,7 @@
 import { ref, computed, type ComponentPublicInstance } from 'vue'
 import { PhTrash, PhPencilSimple } from '@phosphor-icons/vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
+import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
 
 interface ImPlatformOption { key: ImPlatformKey; label: string }
@@ -78,6 +79,7 @@ defineProps<{
   onCancelImConnect: () => void
   onLoadSession: (id: number) => void
   onDeleteSession: (id: number) => void
+  onRenameSession: (id: number, title: string) => void
   onNewSession: () => void
 }>()
 
@@ -140,7 +142,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
    重复一份，样式只维护一处（跟 GuguChat.vue 用 :deep() 覆盖 MessageRow
    的做法一致）。 */
 :deep(.exp-session-item) {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 3px;
   padding: 8px 10px; border-radius: 9px; cursor: pointer;
   transition: background 0.12s;
   flex-shrink: 0;  /* 防止 line-height 调整后被外层 flex column 压扁 */
@@ -148,22 +150,14 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 :deep(.exp-session-item:hover) { background: rgba(255,255,255,0.55); }
 :deep(.exp-session-item.active) { background: rgba(123,127,178,0.12); }
 :deep(.exp-session-item.active .exp-session-title) { font-weight: 700; }
-/* 根除中文字体在 line box 内偏上的问题：
-   font-size 12.5px + line-height: normal (1.5 = 18.75px) 时，line box 远大于字形
-   实际占用，line-edge 规则把字形顶到 line box 顶部，视觉上比 20px 高的删除按钮高 0.7px。
-   把 line-height 锁成 17px（≈ 中文字形 ascent+descent 实际占用），line box 装下字形
-   不再溢出，字形在 line box 内自然居中。删除按钮 20px 固定居中，line box 17px 居中
-   （顶部偏移 9.5px，底部偏移 9.5px），两者中心都对齐到 content area 中心 18px。 */
-:deep(.exp-session-title) {
-  flex: 1; font-size: 12.5px; line-height: 17px; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 :deep(.exp-session-del) {
   width: 20px; height: 20px; border-radius: 5px; border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.12s, background 0.12s; flex-shrink: 0;
+  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; flex-shrink: 0;
 }
+/* 重命名按钮与删除按钮：整个会话项 hover 时一起浮现（判定区域一致，动画同文件卡 0.15s） */
+:deep(.exp-session-item:hover .exp-session-rename-btn),
 :deep(.exp-session-item:hover .exp-session-del) { opacity: 1; }
 :deep(.exp-session-del:hover) { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
 :deep(.exp-session-del svg) { display: block; }

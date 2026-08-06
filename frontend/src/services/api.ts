@@ -431,6 +431,7 @@ export const agentApi = {
   // 知道属于哪个会话才能 loadSession + 定位滚动
   getMessageLocation: (messageId: number) => get<{ id: number; sessionId: number }>(`/agent/messages/${messageId}`),
   deleteSession:   (sessionId: string) => del(`/agent/sessions/${sessionId}`),
+  renameSession:   (sessionId: string, title: string) => patch(`/agent/sessions/${sessionId}`, { title }),
   clearMemory:       ()         => del('/agent/memory'),
   clearAttachments:  ()         => del('/agent/attachments'),
   uploadAttachment: (file: File, voice = false) => {   // 聊天附件暂存，返回 { attach_id, name, ext, size, kind, duration }
