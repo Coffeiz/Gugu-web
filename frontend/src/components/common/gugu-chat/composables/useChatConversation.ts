@@ -275,14 +275,14 @@ export function useChatConversation(options: {
     loadQuota: options.loadQuota,
     playIncomingMessageSfx: options.playIncomingMessageSfx,
   })
-  const { streaming, abortCtrl, resetSessionTurn, send, stopStreaming, resumeStream } = streamApi
+  const { streaming, abortCtrl, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
 
   // ── 会话切换（loadSession/newSession/deleteSession），见 useChatSessions.ts ──
   const sessionsApi = useChatSessions({
     messages, mkid, sessionId, sessions, ownerPlatformUserId, isGroupSession,
     resolveSpeaker, bumpViewGeneration, getViewGeneration,
     composerRef: options.composerRef,
-    abortCtrl, streaming, resumeStream, resetSessionTurn,
+    abortCtrl, streaming, resumeStream, resetSessionTurn, clearPendingQueue,
     clearStatus,
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,

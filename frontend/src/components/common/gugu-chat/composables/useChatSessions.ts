@@ -47,6 +47,7 @@ export function useChatSessions(options: {
   streaming: Ref<boolean>
   resumeStream: (id: number) => Promise<void>
   resetSessionTurn: () => void
+  clearPendingQueue: () => void
   clearStatus: () => void
   onContentReset: () => void
   onCaptureBaseScrollH: () => void
@@ -65,6 +66,10 @@ export function useChatSessions(options: {
     const viewGeneration = options.bumpViewGeneration()
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
+    // 旧会话排队等着接力发送的消息不属于要切进去的这个会话，清掉——不清的话，等新会话
+    // 这边某次 send() 结束时会把它们当成"这个会话排队的消息"接着发出去（真实复现过的
+    // bug：A 会话生成中发消息进队列，切到 C 会话，C 的回复一结束，A 排队的那条被发进 C）。
+    options.clearPendingQueue()
     try {
       const data = await agentApi.getMessages(String(id))
       if (viewGeneration !== options.getViewGeneration()) return   // 等待期间又切换/新建了会话，丢弃这次结果
@@ -101,6 +106,7 @@ export function useChatSessions(options: {
     options.bumpViewGeneration()
     options.abortCtrl.value?.abort()
     options.streaming.value = false
+    options.clearPendingQueue()   // 同 loadSession：旧会话排队的消息不属于新对话，清掉
     sessionId.value = null
     messages.value = []        // 大窗「新对话」是干净起手——不放默认问候（问候只在打开小窗时出现）
     options.clearStatus()      // 旧会话残留的思考/工具状态气泡不属于这个空会话，清掉（loadSession 早就有这步，这里之前漏了）

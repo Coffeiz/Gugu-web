@@ -341,7 +341,9 @@ async def deliver_to_channels(
     if {"web", "chat"} & chans:
         from app.core import events as _ev
         await _ev.publish(uid, notification={"title": name, "content": text})
-        result["web 通知"] = "已发送"
+        # 网页通知目前只是纯文字气泡，不支持带图——files 非空时如实告知，不能跟 IM 那边
+        # 一样标"已发送"，否则「配图任务只选了网页渠道」会静默丢图却显示成功。
+        result["web 通知"] = "已发送" if not files else "已发送（网页通知不支持附件，图片未随通知显示）"
     im_targets = {_CHAN_PLATFORM[c] for c in chans if c in _CHAN_PLATFORM}
     if "im" in chans:
         im_targets.update(_CHAN_PLATFORM.values())
@@ -389,8 +391,13 @@ async def deliver_to_channels(
                 except Exception as e:
                     diag_log("app.scheduled_tasks.persist_push_im", e)
                     print(f"[sched] {platform} 推送入会话失败: {redact(type(e).__name__)}", flush=True)
-                if sent and files:
-                    await _deliver_im_files(uid, platform, target, files)
+                if files:
+                    ok_count, total = await _deliver_im_files(uid, platform, target, files)
+                    # 文字发出去了不代表任务真的完成——图片没全发出去也要如实反映，
+                    # 否则 _delivery_succeeded() 会把「图全挂了」判定成"已发送"，
+                    # 一次性任务被当成功删掉，用户再也没机会重试。
+                    if ok_count < total:
+                        result[lbl] = f"文字已发送，附件发送失败（{ok_count}/{total}）"
         except Exception as e:
             result[lbl] = f"失败：{type(e).__name__}"
             diag_log("app.scheduled_tasks.deliver_to_channels", e)
@@ -679,12 +686,14 @@ async def _deliver_im(
     return await send_text(payload, text)
 
 
-async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> None:
+async def _deliver_im_files(user_id, platform: str, target: dict | None, files: list) -> tuple[int, int]:
     """把 execution 阶段 send_file 暂存下来的附件（_artifact，含 attach_id）依次发到指定 IM 平台。
-    每张独立 best-effort：单张失败不影响其它张，也不影响文字部分已经发出去这个事实。"""
+    返回 (成功张数, 总张数)——调用方据此判断是否要把渠道结果从"已发送"降级，不能像以前
+    那样只看文字发没发，图片全挂了也照样标"已发送"（一次性任务因此被当成功删掉）。
+    每张独立 best-effort：单张失败不影响其它张继续尝试，但最终统计必须如实反映失败。"""
     reach = target or await _legacy_private_target(user_id, platform)
     if not reach:
-        return
+        return 0, len(files)
     payload = {
         "platform": platform,
         "channel_id": reach.get("channel_id"),
@@ -696,13 +705,18 @@ async def _deliver_im_files(user_id, platform: str, target: dict | None, files: 
     from app.core import chat_attach
     from agent.im.replies import send_file
 
+    ok_count = 0
+    total = 0
     for f in files:
         attach_id = (f or {}).get("attach_id")
+        total += 1
         if not attach_id:
+            print(f"[sched] {platform} 发附件失败: _artifact 缺 attach_id", flush=True)
             continue
         try:
             meta = await chat_attach.get_meta(user_id, attach_id)
             if not meta:
+                print(f"[sched] {platform} 发附件失败: 找不到 attach_id 对应的 meta（可能已过期）", flush=True)
                 continue
             name = f.get("name") or meta.get("name") or "图片"
             ext = f.get("ext") or meta.get("ext") or ""
@@ -711,10 +725,13 @@ async def _deliver_im_files(user_id, platform: str, target: dict | None, files: 
                 payload,
                 storage_key=meta["storage_key"], ext=ext, display_name=name, fname=fname,
             )
+            if ok:
+                ok_count += 1
             print(f"[sched] {platform} 发附件 {redact(name)}: {'ok' if ok else '失败'}", flush=True)
         except Exception as e:
             diag_log("app.scheduled_tasks.deliver_im_files", e)
             print(f"[sched] {platform} 发附件出错: {redact(type(e).__name__)}", flush=True)
+    return ok_count, total
 
 
 # ── IM 可触达地址（worker 收到消息时记一份，主动推送时用）──────────────────────

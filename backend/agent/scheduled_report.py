@@ -6,17 +6,18 @@ def build_prompt(task_prompt: str, execution_text: str, files: list | None = Non
     """把完整执行结果交给报告阶段整理，不重新推断或执行任务。
 
     files：execution 阶段 send_file 暂存下来的附件列表（_artifact 结构，含 attach_id/
-    name/ext）。系统会在投递阶段随文字一起发到 IM 群，报告阶段不需要担心图片是否真的
-    发出——有了 files 参数后，咕咕能看到「N 张附件会在投递阶段随文字一起发出」，回执里
-    不会再问图片有没有真的附上去。"""
+    name/ext）。系统会在投递阶段尝试随文字一起发到 IM 群——是否真的送达以投递结果为准
+    （网络问题、附件过期等都可能导致失败），report 阶段生成的这段文字不需要纠结这件事，
+    正常写就行，不用在正文里替系统打包票说"图片已发送"。"""
     files_section = ""
     if files:
         names = [f.get("name") or f.get("attach_id") or "附件" for f in files]
         files_section = (
             f"\n\n附件：execution 阶段已通过 send_file 暂存了 {len(files)} 张附件"
-            f"（{', '.join(str(n) for n in names)}），系统会在投递阶段随这段文字一起发到 IM 群。"
-            "你不需要在正文里描述「图片已发送」，也不需要担心图片是否真的发出——"
-            "已确认会在投递阶段由系统自动投出。"
+            f"（{', '.join(str(n) for n in names)}），系统会在投递阶段尝试随这段文字一起发到 IM 群"
+            "（网页通知渠道不支持附件，图片只会出现在 IM 群里）。"
+            "你不需要在正文里描述「图片已发送」或做任何承诺——是否真的送达系统会另外记录，"
+            "不是这段回执文字要负责的事。"
         )
     return (
         "[定时任务报告阶段]\n"

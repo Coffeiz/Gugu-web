@@ -10,6 +10,13 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 
 interface StatusItem { kind: 'text' | 'dots' | 'hide'; label?: string }
 
+interface QueuedMessage {
+  text: string
+  attachments: ChatFile[]
+  sessionId: number | null
+  viewGeneration: number
+}
+
 /**
  * SSE 收发的唯一状态所有权：streaming、AbortController、生成中消息排队、
  * 当前会话已发轮次（埋点用）。send（POST /chat）和续看 resumeStream
@@ -46,13 +53,21 @@ export function useChatStream(options: {
 
   const streaming = ref(false)
   const abortCtrl = ref<AbortController | null>(null)
-  const pendingQueue = ref<string[]>([])   // 生成中发的消息，排队等流式结束后接着发
+  // 生成中发的消息，排队等流式结束后接着发。每条都带上入队那一刻的 sessionId/
+  // viewGeneration——切会话/新建会话时 useChatSessions 会调 clearPendingQueue()
+  // 清空，但万一切换和这里的消费之间有竞态，消费前再核对一次身份，防止把
+  // A 会话排队的消息发进已经切到的 B 会话（真实复现过的 bug，见 PR review）。
+  const pendingQueue = ref<QueuedMessage[]>([])
   let _sessionTurn = 0                      // 当前 session 已发消息轮次（埋点用），切会话由 useChatSessions 调 resetSessionTurn 重置
   function resetSessionTurn() { _sessionTurn = 0 }
 
   function stopStreaming() {
     pendingQueue.value = []   // 停止=放弃排队中的消息
     abortCtrl.value?.abort()
+  }
+
+  function clearPendingQueue() {
+    pendingQueue.value = []
   }
 
   // 消费一条 SSE 流，把事件渲染进消息列表。send（POST /chat）和续看（GET .../stream）共用。
@@ -186,11 +201,11 @@ export function useChatStream(options: {
     }
   }
 
-  async function send(forcedText?: string) {
+  async function send(forcedText?: string, forcedAttachments?: ChatFile[]) {
     // forcedText 来自"排队接力"（队首消息）：此时用户气泡已在入队时显示过，不重复推
     const fromInput = forcedText === undefined
     const text = (fromInput ? options.inputText.value : (forcedText ?? '')).trim()
-    const atts = fromInput ? options.pendingAtt.value.slice() : []   // 本次随消息发的附件
+    const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     if (!text && !atts.length) return
     if (fromInput) {
       _sessionTurn++
@@ -202,8 +217,15 @@ export function useChatStream(options: {
       trackApi.track('chat_message', { turn: _sessionTurn }).catch(() => {})
       await options.scrollBottom(true)
     }
-    // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）
-    if (streaming.value) { pendingQueue.value.push(text); return }
+    // 生成中：把这条排队，等当前流式结束后在 finally 里接着发（气泡已显示）。
+    // 带上此刻的会话身份——真正发出去之前会再核对一次，身份对不上就丢弃，不发进别的会话。
+    if (streaming.value) {
+      pendingQueue.value.push({
+        text, attachments: atts,
+        sessionId: sessionId.value, viewGeneration: options.getViewGeneration(),
+      })
+      return
+    }
 
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
     abortCtrl.value = new AbortController()
@@ -261,14 +283,27 @@ export function useChatStream(options: {
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)
-      // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）
-      if (ownsView && pendingQueue.value.length) send(pendingQueue.value.shift())
+      // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）。
+      // 正常情况下 loadSession/newSession 已经在切换那一刻清空过 pendingQueue，这里的
+      // 身份核对是竞态兜底——万一切换和这次消费之间有空子可钻，也不能把排队消息发进
+      // 已经不是它所属的那个会话。
+      if (ownsView) {
+        while (pendingQueue.value.length) {
+          const next = pendingQueue.value[0]
+          if (next.sessionId === sessionId.value && next.viewGeneration === options.getViewGeneration()) {
+            pendingQueue.value.shift()
+            send(next.text, next.attachments)
+            break
+          }
+          pendingQueue.value.shift()   // 属于已经离开的会话，丢弃不发
+        }
+      }
     }
   }
 
   return {
     streaming, abortCtrl, pendingQueue,
-    resetSessionTurn,
+    resetSessionTurn, clearPendingQueue,
     send, stopStreaming, resumeStream,
   }
 }
