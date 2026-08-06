@@ -25,7 +25,6 @@ from agent.im.session import (
     GROUP_CONTEXT_LIMIT,
     get_or_create_session,
     session_scope_filters,
-    trim_group_messages,
 )
 from agent.llm_select import is_minimax, pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
@@ -36,8 +35,8 @@ _bg_tasks: set = set()
 
 
 def _history_query_limit(request: AgentRequest) -> int:
-    """群聊从较大的保留池中取最近 50 条，Web 会话沿用原窗口。"""
-    if request.source in IM_SOURCES and request.chat_id:
+    """IM 会话（私聊/群聊）从保留池取最近 50 条，Web 会话沿用原窗口。"""
+    if request.source in IM_SOURCES:
         return GROUP_CONTEXT_LIMIT
     return tokens.HISTORY_MAX_MSGS
 
@@ -181,7 +180,8 @@ def _with_quoted_context(message: str, quoted_text: str | None) -> str:
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
                                 source: str, chat_id: str | None,
-                                bot_id: str | None = None) -> str:
+                                bot_id: str | None = None,
+                                platform_user_id: str | None = None) -> str:
     """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
     上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
       A 档（总给）：一行「上一条对话」指针，带 session id —— 让模型（尤其 mimo）知道去
@@ -194,7 +194,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     query = select(ConversationSession).where(
         ConversationSession.user_id == user_id,
         ConversationSession.id != current_session_id,
-        *session_scope_filters(ConversationSession, source, chat_id, bot_id),
+        *session_scope_filters(ConversationSession, source, chat_id, bot_id, platform_user_id),
     )
     prev = (await db.execute(
         query
@@ -309,6 +309,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                     req.source,
                     req.chat_id,
                     req.platform_bot_id,
+                    req.platform_user_id,
                 )
             except Exception:
                 im_bridge = ""
@@ -556,6 +557,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                     req.source,
                     req.chat_id,
                     req.platform_bot_id,
+                    req.platform_user_id,
                 )
             except Exception:
                 im_bridge = ""

@@ -12,7 +12,7 @@ async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
     await db.flush()
     db.add_all([
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
-        for index in range(505)
+        for index in range(605)
     ])
     await db.commit()
 
@@ -30,4 +30,4 @@ async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
         .limit(1)
     )
     assert count == 500
-    assert latest == "消息 504"
+    assert latest == "消息 604"

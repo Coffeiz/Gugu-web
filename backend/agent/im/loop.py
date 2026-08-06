@@ -25,7 +25,7 @@ from agent.im.session import (
     resolve_route,
     resolve_session_id,
     set_session,
-    trim_group_messages,
+    trim_session_messages,
 )
 from agent.models import AgentRequest
 
@@ -330,7 +330,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         )
         db.add(message_row)
         await db.commit()
-        await trim_group_messages(session.id)
+        await trim_session_messages(session.id)
         # 被动群消息不经过 runner，单独补发会话增量，网页才能实时看到这条已记录消息。
         try:
             from app.core import events
@@ -429,19 +429,21 @@ async def persist_im_session(
     *,
     group: bool = False,
 ) -> None:
-    """写回 IM 路由 session，并在群聊路径统一执行消息窗口裁剪。"""
+    """写回 IM 路由 session，并在私聊/群聊路径统一执行消息窗口裁剪。"""
     if group:
         await set_session(platform, bot_id, scope_id, session_id)
         if session_id:
-            await trim_group_messages(session_id)
+            await trim_session_messages(session_id)
         return
     # 私聊读取的是 owner-session 绑定，不能再写入旧的通用 imsession key。
     # 这里由 session 记录反查其用户归属，避免从平台字段重新推断 owner。
     await bind_session_by_id(platform, scope_id, session_id, bot_id)
+    if session_id:
+        await trim_session_messages(session_id)
 
 
 # 旧测试和外部诊断脚本使用的名称，实际实现归属 IM Loop。
-trim_group_session_messages = trim_group_messages
+trim_group_session_messages = trim_session_messages
 
 
 def select_loop(request: AgentRequest) -> OwnerAgentLoop:

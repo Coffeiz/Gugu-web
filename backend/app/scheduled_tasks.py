@@ -423,13 +423,18 @@ async def _persist_push_im(
     from app.core import redis as R
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
+    from agent.im.session import session_key, trim_session_messages
 
     reach = target or await get_imreach(uid, platform)
     puid = (reach or {}).get("puid")
     if not puid:
         return
+    # 作用域：群聊用 chat_id，私聊用 puid；bot_id 即 channel_id（UserBot.id）。
+    # 与 agent/im/session.py 的 session_key() 保持一致（imsession:{platform}:{bot_id}:{scope_id}）。
+    bot_id = (reach or {}).get("channel_id")
+    scope_id = (reach or {}).get("chat_id") or puid
     r = R.get_redis()
-    sess_key = f"imsession:{platform}:{puid}"   # 与 worker._im_sess_key 同格式
+    sess_key = session_key(platform, bot_id or "", scope_id)
     try:
         raw = await r.get(sess_key)
         sid = int(raw) if raw else None
@@ -440,7 +445,35 @@ async def _persist_push_im(
     async with ss._SessionLocal() as db:
         session = await db.get(ConversationSession, sid) if sid else None
         if session is None or session.user_id != uid_u:
-            session = ConversationSession(user_id=uid_u, title=(title[:50] or "主动消息"), source=platform)
+            # 复用所属 peer 的已有 session（私聊按 platform_user_id，群聊按 chat_id），
+            # 而不是新建临时会话，保证定时任务推送与用户对话共享同一上下文。
+            from sqlalchemy import select as _select
+            from agent.im.session import session_scope_filters
+
+            session = (await db.execute(
+                _select(ConversationSession).where(
+                    ConversationSession.user_id == uid_u,
+                    *session_scope_filters(
+                        ConversationSession,
+                        platform,
+                        (reach or {}).get("chat_id"),
+                        bot_id,
+                        puid if not (reach or {}).get("chat_id") else None,
+                    ),
+                ).order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+                .limit(1)
+            )).scalars().first()
+        if session is None:
+            session = ConversationSession(
+                user_id=uid_u,
+                title=(title[:50] or "主动消息"),
+                source=platform,
+                bot_id=bot_id,
+                chat_id=(reach or {}).get("chat_id"),
+                platform_user_id=puid if not (reach or {}).get("chat_id") else None,
+                chat_type=((reach or {}).get("chat_type") or
+                           ("group" if (reach or {}).get("chat_id") else "c2c")),
+            )
             db.add(session)
             await db.flush()
         db.add(ConversationMessage(session_id=session.id, role="assistant", content=f"⏰ {title}\n\n{text}",
@@ -451,6 +484,11 @@ async def _persist_push_im(
 
     try:
         await r.set(sess_key, str(new_sid), ex=12 * 3600)
+    except Exception:
+        pass
+    # 推送后裁剪，避免长会话里定时任务消息无限累积。
+    try:
+        await trim_session_messages(new_sid)
     except Exception:
         pass
 

@@ -10,8 +10,13 @@ from app.core import redis as R
 from agent.im.context_policy import IM_SOURCES
 
 IM_SESSION_TTL = 12 * 3600  # 12 小时滑动 TTL
-GROUP_MESSAGE_RETENTION_LIMIT = 500
+# 每个 IM 会话（私聊/群聊）物理保留的消息上限；超过 MESSAGE_TRIM_THRESHOLD 才裁剪到该值。
+MESSAGE_RETENTION_LIMIT = 500
+# 触发裁剪的条数阈值：消息数超过该值才执行 DELETE，避免每轮都做裁剪。
+MESSAGE_TRIM_THRESHOLD = 600
 GROUP_CONTEXT_LIMIT = 50
+# 兼容别名：旧名仍指向同一保留上限，避免破坏外部引用。
+GROUP_MESSAGE_RETENTION_LIMIT = MESSAGE_RETENTION_LIMIT
 
 
 @dataclass(frozen=True)
@@ -88,15 +93,26 @@ def session_scope_filters(
     source: str,
     chat_id: Optional[str],
     bot_id: Optional[str] = None,
+    platform_user_id: Optional[str] = None,
 ) -> list:
-    """生成 IM 会话归属条件；Web 调用方不应使用此过滤器。"""
+    """生成 IM 会话归属条件；Web 调用方不应使用此过滤器。
+
+    群聊按 ``chat_id`` 隔离，私聊按 ``platform_user_id`` 隔离（私聊 ``chat_id``
+    为空，若只按 ``chat_id.is_(None)`` 会把同一用户的所有私聊对象串到一起）。
+    """
     if source not in {"feishu", "qq", "wechat"}:
         return []
-    return [
+    filters = [
         model.source == source,
         model.bot_id == bot_id if bot_id else model.bot_id.is_(None),
-        model.chat_id == chat_id if chat_id else model.chat_id.is_(None),
     ]
+    if chat_id:
+        filters.append(model.chat_id == chat_id)
+    elif platform_user_id:
+        filters.append(model.platform_user_id == platform_user_id)
+    else:
+        filters.append(model.chat_id.is_(None))
+    return filters
 
 
 async def get_session(platform: str, bot_id: str, scope_id: str):
@@ -135,7 +151,13 @@ class SessionState:
 
 
 async def get_or_create_session(db, request, user_id, max_sessions: int = 50) -> SessionState:
-    """按请求作用域查找或创建会话，并限制用户会话数量。"""
+    """按请求作用域查找或创建会话，并限制用户会话数量。
+
+    IM 会话按作用域复用：私聊按 ``(source, bot_id, platform_user_id)``、群聊按
+    ``(source, bot_id, chat_id)`` 命中已有 session 则复用，不再每次新对话都新建，
+    保证同一 peer 的上下文连续。Web 会话（``source="web"``）不参与作用域复用，
+    仍按显式 ``session_id`` 查找。
+    """
     from app.models import ConversationSession
 
     session = None
@@ -149,8 +171,25 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
                     request.source,
                     request.chat_id,
                     getattr(request, "platform_bot_id", None),
+                    getattr(request, "platform_user_id", None),
                 ),
             )
+        )).scalars().first()
+    if session is None and request.source in IM_SOURCES:
+        # 新增：Redis 路由 miss（私聊未绑定 / 群聊 key 过期）时，按稳定作用域回查
+        # 数据库复用已有 session，避免给同一 peer 重复创建会话。
+        session = (await db.execute(
+            select(ConversationSession).where(
+                ConversationSession.user_id == user_id,
+                *session_scope_filters(
+                    ConversationSession,
+                    request.source,
+                    request.chat_id,
+                    getattr(request, "platform_bot_id", None),
+                    getattr(request, "platform_user_id", None),
+                ),
+            ).order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+            .limit(1)
         )).scalars().first()
     if session:
         return SessionState(session, False)
@@ -175,6 +214,7 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
         source=source,
         bot_id=getattr(request, "platform_bot_id", None),
         chat_id=request.chat_id,
+        platform_user_id=getattr(request, "platform_user_id", None),
         chat_type=("group" if request.chat_id else "c2c" if source in IM_SOURCES else None),
     )
     db.add(session)
@@ -182,11 +222,16 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
     return SessionState(session, True)
 
 
-async def trim_group_messages(
+async def trim_session_messages(
     session_id: int,
-    limit: int = GROUP_MESSAGE_RETENTION_LIMIT,
+    limit: int = MESSAGE_RETENTION_LIMIT,
+    threshold: int = MESSAGE_TRIM_THRESHOLD,
 ) -> None:
-    """只保留群会话最近的消息记录，避免普通群消息无限增长。"""
+    """只保留会话最近的消息记录，避免私聊/群聊消息无限增长。
+
+    先统计条数，超过 ``threshold`` 才执行 DELETE 裁剪到最近 ``limit`` 条，
+    避免每轮都做删除（长会话里消息数稳定在阈值附近，裁剪频率很低）。
+    """
     if limit < 1:
         return
     import app.db.session as db_session
@@ -194,13 +239,19 @@ async def trim_group_messages(
 
     if db_session._engine is None:
         db_session._build_engine()
-    keep_ids = (
-        select(ConversationMessage.id)
-        .where(ConversationMessage.session_id == session_id)
-        .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
-        .limit(limit)
-    )
     async with db_session._SessionLocal() as db:
+        count = (await db.execute(
+            select(func.count()).select_from(ConversationMessage)
+            .where(ConversationMessage.session_id == session_id)
+        )).scalar_one()
+        if count <= threshold:
+            return
+        keep_ids = (
+            select(ConversationMessage.id)
+            .where(ConversationMessage.session_id == session_id)
+            .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
+            .limit(limit)
+        )
         await db.execute(
             delete(ConversationMessage).where(
                 ConversationMessage.session_id == session_id,
@@ -208,3 +259,7 @@ async def trim_group_messages(
             )
         )
         await db.commit()
+
+
+# 兼容别名：旧名仍指向同一裁剪实现，避免破坏外部引用和测试。
+trim_group_messages = trim_session_messages
