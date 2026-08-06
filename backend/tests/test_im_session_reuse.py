@@ -98,13 +98,13 @@ async def test_web_session_not_reused_by_scope(db, user_a):
 
 
 def test_session_scope_filters_private_uses_platform_user_id():
-    """私聊过滤器按 platform_user_id 隔离，而非 chat_id IS NULL。"""
+    """私聊过滤器按 platform_user_id 隔离，并排除群聊 session。"""
     filters = session_scope_filters(
         ConversationSession, "qq", None, "bot-a", "puid-1"
     )
-    assert len(filters) == 3
-    assert "platform_user_id" in str(filters[2])
-    assert "chat_id IS NULL" not in str(filters[2])
+    assert len(filters) == 4
+    assert "platform_user_id" in str(filters[3])
+    assert "chat_id IS NULL" in str(filters[2])
 
 
 def test_session_scope_filters_group_uses_chat_id():
@@ -154,3 +154,27 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
         )
     )
     assert count == 500
+
+
+async def test_group_session_platform_user_id_is_null(db, user_a):
+    """群聊 session 的 platform_user_id 应为 NULL（群聊用 chat_id 隔离）。"""
+    group = await get_or_create_session(
+        db, _group_request(user_a.id, "group-1"), user_a.id
+    )
+    assert group.session.chat_id == "group-1"
+    assert group.session.platform_user_id is None
+
+
+async def test_private_does_not_reuse_group_session(db, user_a):
+    """群成员私聊时，不匹配到群聊 session（回归：私聊被并入群消息）。"""
+    # 先建一个群聊 session，群成员 puid 为 "member-1"
+    group = await get_or_create_session(
+        db, _group_request(user_a.id, "group-1"), user_a.id
+    )
+    # 同一群成员私聊咕咕，puid 相同
+    private = await get_or_create_session(
+        db, _private_request(user_a.id, "member-1"), user_a.id
+    )
+    assert private.session.id != group.session.id
+    assert private.session.chat_id is None
+    assert private.session.platform_user_id == "member-1"

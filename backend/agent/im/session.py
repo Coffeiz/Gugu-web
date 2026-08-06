@@ -107,6 +107,9 @@ def session_scope_filters(
     if chat_id:
         filters.append(model.chat_id == chat_id)
     elif platform_user_id:
+        # 私聊：chat_id 必为 NULL，且 platform_user_id 匹配。显式加 chat_id.is_(None)
+        # 排除群聊 session（群聊 session 的 platform_user_id 可能非空，若不排除会误匹配）。
+        filters.append(model.chat_id.is_(None))
         filters.append(model.platform_user_id == platform_user_id)
     else:
         filters.append(model.chat_id.is_(None))
@@ -212,7 +215,8 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
         source=source,
         bot_id=getattr(request, "platform_bot_id", None),
         chat_id=request.chat_id,
-        platform_user_id=getattr(request, "platform_user_id", None),
+        # 群聊用 chat_id 隔离，platform_user_id 应为 NULL；只有私聊才写 platform_user_id。
+        platform_user_id=(None if request.chat_id else getattr(request, "platform_user_id", None)),
         chat_type=("group" if request.chat_id else "c2c" if source in IM_SOURCES else None),
     )
     db.add(session)
