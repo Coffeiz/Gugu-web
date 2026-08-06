@@ -138,7 +138,7 @@ import GuguChatFab from './gugu-chat/GuguChatFab.vue'
 import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
 import GuguChatSidebar from './gugu-chat/GuguChatSidebar.vue'
 import GuguChatBindDialog from './gugu-chat/GuguChatBindDialog.vue'
-import type { ChatMessage, ChatFile, ChatSession } from './gugu-chat/chatTypes'
+import type { ChatMessage, ChatFile, ChatSession, ImPlatformKey } from './gugu-chat/chatTypes'
 import { API_BASE, SMALL_W, SMALL_H, SIDEBAR_W } from './gugu-chat/chatConstants'
 import { renderMd, renderMdStream } from './gugu-chat/markdown'
 import {
@@ -723,7 +723,8 @@ async function fetchSessions() {
 }
 
 // ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
-type ImPlatformKey = 'feishu' | 'qq' | 'wechat'
+// ImPlatformKey 从 chatTypes.ts 引入（GuguChatSidebar.vue 的函数类型 props 也要用同一个
+// 类型别名，strictFunctionTypes 下两边收窄成不同类型会报参数逆变错误）。
 interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
 interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
 const IM_PLATFORMS: ImPlatform[] = [

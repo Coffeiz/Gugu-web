@@ -46,3 +46,7 @@ export interface ChatSession {
   source?: string
   chatType?: string
 }
+
+// 共享给 GuguChat.vue 和 GuguChatSidebar.vue：函数类型 props 在 strictFunctionTypes 下
+// 是逆变检查，两边必须用同一个类型别名，不能一边 ImPlatformKey 一边收窄成 string。
+export type ImPlatformKey = 'feishu' | 'qq' | 'wechat'

@@ -77,28 +77,28 @@
  * （promptConnectIM）要展开侧栏、把这个 IM 分组滚入视口并高亮，
  * 这段一次性的滚动+高亮编排仍由父组件持有。
  */
-import { ref, computed } from 'vue'
+import { ref, computed, type ComponentPublicInstance } from 'vue'
 import { PhTrash, PhPencilSimple } from '@phosphor-icons/vue'
-import type { ChatSession } from './chatTypes'
+import type { ChatSession, ImPlatformKey } from './chatTypes'
 
-interface ImPlatformOption { key: string; label: string }
+interface ImPlatformOption { key: ImPlatformKey; label: string }
 interface ImConnectState { platform: string; id: string | number }
 
 defineProps<{
   imPlatforms: ImPlatformOption[]
-  imOpen: Record<string, boolean>
+  imOpen: Record<ImPlatformKey, boolean>
   imHighlight: boolean
-  botsOf: (platform: string) => unknown[]
-  imSessionsOf: (platform: string) => ChatSession[]
+  botsOf: (platform: ImPlatformKey) => unknown[]
+  imSessionsOf: (platform: ImPlatformKey) => ChatSession[]
   webSessions: ChatSession[]
   sessionId: number | null
   connect: ImConnectState | null
   connectHint: string
   connectErr: string
   connecting: string
-  onTogglePlatform: (key: string) => void
-  onSetConnectCanvas: (el: Element | { $el: Element } | null) => void
-  onStartImConnect: (key: string) => void
+  onTogglePlatform: (key: ImPlatformKey) => void
+  onSetConnectCanvas: (el: Element | ComponentPublicInstance | null) => void
+  onStartImConnect: (key: ImPlatformKey) => void
   onCancelImConnect: () => void
   onLoadSession: (id: number) => void
   onDeleteSession: (id: number) => void
