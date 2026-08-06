@@ -139,6 +139,24 @@ test.describe('GuguChat 悬浮窗', () => {
     // 变成 123 后，null !== 123 会让排队项被当作"已经离开的会话"丢弃。
     // 修复：消费时允许 sessionId == null 在同 viewGeneration 内消费；session_id
     // 事件到达时再回填真实 id。两条消息应该都进入同一个全新会话并各自收到回复。
+    //
+    // 确定性策略：拦截首个 POST /api/v1/agent/chat（"firstText" 那一条）延迟 800ms
+    // 放行。这 800ms 是我们故意打开的"竞态窗口"——保证排队项入队时 session_id 事件
+    // 一定还没到达（如果直接放行，本地网络太快，session_id 可能在第二条入队前就回来了，
+    // 测试就退化为"两条消息顺序发送"，不再覆盖 P1）。修复前会丢消息；修复后两条都进
+    // 同一会话并各自收到 AI 回复。
+    let firstRequestDelayed = false
+    await page.route('**/api/v1/agent/chat', async (route) => {
+      // 只延迟首次请求；后续请求（含接力发送的"secondText"）直接放行
+      if (firstRequestDelayed) {
+        await route.continue()
+      } else {
+        firstRequestDelayed = true
+        await new Promise((r) => setTimeout(r, 800))
+        await route.continue()
+      }
+    })
+
     await page.goto('/')
     await page.locator('.ai-fab').click()
     const chatWindow = page.locator('.chat-window')
@@ -154,12 +172,13 @@ test.describe('GuguChat 悬浮窗', () => {
     const textarea = chatWindow.locator('.chat-input-row textarea')
     const sendBtn = chatWindow.locator('.send-btn')
 
-    // 第一条：必然触发 session_id 事件回传真实 id
+    // 第一条：必然触发 session_id 事件回传真实 id；请求被延迟 800ms，给第二条的入队留出确定的窗口
     const firstText = `e2e-newqueue-first-${Date.now()}`
     await textarea.fill(firstText)
     await sendBtn.click()
 
-    // 第二条：立刻排队——入队时 sessionId 还是 null（session_id 事件尚未到达或正在途中）
+    // 第二条：立刻排队——入队时 sessionId 还是 null（firstText 的请求仍在 800ms 延迟中，
+    // session_id 事件一定还没回来；这是一条确定性的"先排队、后拿到 id"路径）
     const queuedText = `e2e-newqueue-second-${Date.now()}`
     await textarea.fill(queuedText)
     await textarea.press('Enter')
