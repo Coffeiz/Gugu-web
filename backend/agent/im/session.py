@@ -15,8 +15,6 @@ MESSAGE_RETENTION_LIMIT = 500
 # 触发裁剪的条数阈值：消息数超过该值才执行 DELETE，避免每轮都做裁剪。
 MESSAGE_TRIM_THRESHOLD = 600
 GROUP_CONTEXT_LIMIT = 50
-# 兼容别名：旧名仍指向同一保留上限，避免破坏外部引用。
-GROUP_MESSAGE_RETENTION_LIMIT = MESSAGE_RETENTION_LIMIT
 
 
 @dataclass(frozen=True)
@@ -259,7 +257,3 @@ async def trim_session_messages(
             )
         )
         await db.commit()
-
-
-# 兼容别名：旧名仍指向同一裁剪实现，避免破坏外部引用和测试。
-trim_group_messages = trim_session_messages

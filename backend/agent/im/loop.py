@@ -442,8 +442,7 @@ async def persist_im_session(
         await trim_session_messages(session_id)
 
 
-# 旧测试和外部诊断脚本使用的名称，实际实现归属 IM Loop。
-trim_group_session_messages = trim_session_messages
+
 
 
 def select_loop(request: AgentRequest) -> OwnerAgentLoop:

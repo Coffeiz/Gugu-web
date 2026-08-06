@@ -2,7 +2,7 @@
 
 from sqlalchemy import func, select
 
-from agent.im.loop import trim_group_session_messages
+from agent.im.session import trim_session_messages
 from app.models import ConversationMessage, ConversationSession
 
 
@@ -16,7 +16,7 @@ async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
     ])
     await db.commit()
 
-    await trim_group_session_messages(session.id)
+    await trim_session_messages(session.id)
 
     count = await db.scalar(
         select(func.count()).select_from(ConversationMessage).where(
