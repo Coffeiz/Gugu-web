@@ -108,22 +108,33 @@ let hoverRaf = 0
 let hoverRafUntil = 0
 // 悬停结算期内允许真实测量的节点集合：不能只认「当前悬浮的那张」——鼠标移出的瞬间
 // hoveredNodeId 立刻变成别的值/null，但刚失焦的卡片自己的 0.25s 收回过渡才刚开始，这段
-// 时间里连接线仍需要跟着它的真实 DOM 位置走，不能一移出就直接跳到静止态终点。所以窗口期
-// 内同时放行"新悬浮的"和"刚失焦的"两张卡；窗口一过清空，静止卡片不再为了这两张卡常年
-// 多付一次 DOM 测量成本（回到"只有真在拖/真在悬浮才测量"的开销模型）。
+// 时间里连接线仍需要跟着它的真实 DOM 位置走，不能一移出就直接跳到静止态终点。所以这里
+// 只放「刚失焦的那张」（prev）；「当前悬浮的」由 measuredAnchor 里的
+// item.nodeId === props.hoveredNodeId 直接判断，不放进这个集合（否则心跳停止时清空会把
+// 还在悬浮的卡也清掉）。窗口一过（收回过渡完成）清空，静止卡片不再为了这两张卡常年多付
+// 一次 DOM 测量成本（回到"只有真在拖/真在悬浮才测量"的开销模型）。
 const hoverSettleIds = ref<Set<number>>(new Set())
 function pumpHoverFrames() {
   renderTick.value++
-  if (performance.now() < hoverRafUntil) {
+  const now = performance.now()
+  // 刚失焦的卡收回过渡窗口（300ms）到期后清空 hoverSettleIds，无论心跳是否还在跑。
+  if (now >= hoverRafUntil) hoverSettleIds.value = new Set()
+  // 心跳持续条件：只要还有卡在悬浮（抬起是稳态，不是一次性动画，鼠标停留多久就测多久），
+  // 或还有刚失焦的卡在收回过渡（hoverSettleIds 非空），心跳就一直跑；两者都空才停。
+  // 之前用固定 300ms 截断，鼠标停留超过 300ms 后心跳停了，线会瞬间掉回静止公式、而卡片
+  // 本体还抬着 2px，造成对不齐闪烁（devlog 2026-08-06）。
+  const stillActive = props.hoveredNodeId != null || hoverSettleIds.value.size > 0
+  if (stillActive) {
     hoverRaf = requestAnimationFrame(pumpHoverFrames)
   } else {
     hoverRaf = 0
-    hoverSettleIds.value = new Set()
   }
 }
 watch(() => props.hoveredNodeId, (next, prev) => {
+  // 刚失焦的卡（prev）需要 300ms 收回过渡窗口；当前悬浮的卡（next）由 hoveredNodeId 持续
+  // 判断，不放进 hoverSettleIds。
   hoverRafUntil = performance.now() + 300   // 略盖过 0.25s 的过渡时长
-  hoverSettleIds.value = new Set([next, prev].filter((id): id is number => id != null))
+  hoverSettleIds.value = new Set(prev != null ? [prev] : [])
   if (!hoverRaf) hoverRaf = requestAnimationFrame(pumpHoverFrames)
 })
 onBeforeUnmount(() => { if (hoverRaf) cancelAnimationFrame(hoverRaf) })
