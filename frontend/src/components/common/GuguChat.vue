@@ -123,13 +123,12 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
-import QRCode from 'qrcode'
 import { useAudioStore } from '@/stores/audio'
 import { nextZ } from '@/composables/windowz'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, userBotsApi, qqConnectApi, feishuConnectApi, wechatConnectApi, authApi, CLIENT_ID } from '@/services/api'
+import { agentApi, filesApi, trackApi, authApi, CLIENT_ID } from '@/services/api'
 import { prefetchGreeting } from '@/composables/useGreeting'
 import { playGuguSfx } from '@/services/sfx'
 import GuguChatMessageList from './gugu-chat/GuguChatMessageList.vue'
@@ -149,13 +148,8 @@ import { useChatAudio } from './gugu-chat/composables/useChatAudio'
 import { useChatAttachments } from './gugu-chat/composables/useChatAttachments'
 import { useChatActions } from './gugu-chat/composables/useChatActions'
 import { useChatConversation } from './gugu-chat/composables/useChatConversation'
+import { useChatImConnect } from './gugu-chat/composables/useChatImConnect'
 import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
-
-interface Bot {
-  id?: number
-  platform: string
-  enabled: boolean
-}
 
 interface QuotaInfo {
   limit_6h?: number | null
@@ -163,12 +157,6 @@ interface QuotaInfo {
   limit_weekly?: number | null
   used_weekly?: number
 }
-
-interface ImConnectState {
-  platform: string
-  id: string | number
-}
-
 
 const audioStore    = useAudioStore()
 const liveStore     = useLiveStore()
@@ -435,8 +423,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
   window.removeEventListener('beforeunload', saveProgress)
-  _stopImPoll()
-  _stopChatBindPoll()
 })
 
 // ── 对话状态：见 useChatConversation.ts（消息/会话/流式/状态气泡机制全部收在那）──
@@ -549,22 +535,22 @@ function copyMsg(msg: ChatMessage) {
 watch(open, (v) => { if (v) { animateGreeting(); loadBots(); loadQuota(); pickOfflineLabel() } })
 
 // ── 展开/收起 ────────────────────────────────────────────
-// ── 侧栏 IM 接入（飞书 / QQ / 微信）：未接入显示扫码连接抽屉，接入后变成该平台会话抽屉 ──
-// ImPlatformKey 从 chatTypes.ts 引入（GuguChatSidebar.vue 的函数类型 props 也要用同一个
-// 类型别名，strictFunctionTypes 下两边收窄成不同类型会报参数逆变错误）。
-interface ImPlatformApi { start: () => Promise<any>; poll: (id: any) => Promise<any> }
-interface ImPlatform { key: ImPlatformKey; label: string; api: ImPlatformApi }
-const IM_PLATFORMS: ImPlatform[] = [
-  { key: 'feishu',  label: '飞书', api: feishuConnectApi },
-  { key: 'qq',   label: 'QQ',   api: qqConnectApi },
-  { key: 'wechat',  label: '微信', api: wechatConnectApi },
-]
-const bots   = ref<Bot[]>([])
-const imOpen = reactive<Record<ImPlatformKey, boolean>>({ feishu: false, qq: false, wechat: false })
-// Sidebar 只需要 key/label 展示，api 对象（feishuConnectApi 等）留在这里，
-// startImConnect/openChatImBind 仍按 IM_PLATFORMS.find(...) 查找。
-const imPlatformOptions = computed(() => IM_PLATFORMS.map(p => ({ key: p.key, label: p.label })))
-const imOnline    = computed(() => bots.value.some(b => b.enabled))   // 有「启用中」的 IM bot 才算在线（停用/残留不算）
+// ── 侧栏 IM 接入（飞书 / QQ / 微信）：Bot 列表、侧栏扫码连接、聊天内扫码绑定的唯一
+// 状态所有权在 useChatImConnect；这里只持有它要操作的两个子组件 DOM 引用。
+const sidebarRef    = ref<InstanceType<typeof GuguChatSidebar> | null>(null)
+const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
+const {
+  bots, imOpen, imPlatformOptions, imOnline, botsOf, imHighlight,
+  loadBots, toggleImPlatform, promptConnectIM,
+  connecting, connect, connectHint, connectErr, setConnectCanvas,
+  startImConnect, cancelImConnect,
+  chatBind, openChatImBind, closeChatBind,
+} = useChatImConnect({
+  sidebarRef, bindDialogRef,
+  expanded, enterExpanded: () => enterExpanded(),
+  fetchSessions: () => fetchSessions(),
+})
+const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s.source === platform)
 
 // ── 顶部状态：休息中（精力耗尽）> 在线（任意 IM 启用）> 随机离线 ──
 const quota = ref<QuotaInfo | null>(null)
@@ -585,121 +571,6 @@ const presenceText  = computed(() => presenceKind.value === 'resting' ? '休息�
 const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕精力用完了，歇会儿就回来～'
                                    : presenceKind.value === 'online'  ? '咕咕在线'
                                    : '咕咕还没接到你的微信 / QQ / 飞书——点一下接上，随时随地找它')
-const imHighlight = ref(false)
-const sidebarRef  = ref<InstanceType<typeof GuguChatSidebar> | null>(null)
-const botsOf = (platform: ImPlatformKey) => bots.value.filter(b => b.platform === platform)
-const imSessionsOf = (platform: ImPlatformKey) => imSessions.value.filter(s => s.source === platform)
-
-async function loadBots() {
-  try { const r = await userBotsApi.list(); bots.value = r.items || [] } catch {}
-}
-function toggleImPlatform(key: ImPlatformKey) { imOpen[key] = !imOpen[key] }
-
-// 离线状态被点击：展开大窗 → 摊开各 IM 抽屉露出「扫码连接」→ 高亮 IM 区一下（暗示式引导，不强推）
-async function promptConnectIM() {
-  if (!expanded.value) await enterExpanded()
-  else loadBots()
-  IM_PLATFORMS.forEach(p => { imOpen[p.key] = true })
-  await nextTick()
-  sidebarRef.value?.imGroupEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
-  imHighlight.value = false   // 重置以便点第二次也能重放动画
-  await nextTick()
-  imHighlight.value = true
-  setTimeout(() => { imHighlight.value = false }, 2600)
-}
-
-// 通用扫码连接（建任务 → 渲染二维码 → 轮询 → 自动写 user_bot，与 ProfileModal 同一套 API）
-const connecting    = ref('')        // 正在生成二维码的平台 key
-const connect       = ref<ImConnectState | null>(null)      // { platform, id } 连接进行中
-const connectHint   = ref('')
-const connectErr    = ref('')
-const connectCanvas = ref<HTMLCanvasElement | null>(null)
-let   connectPoll: ReturnType<typeof setInterval> | null = null
-function setConnectCanvas(el: Element | ComponentPublicInstance | null) { if (el) connectCanvas.value = el as HTMLCanvasElement }   // v-for 内函数 ref，避免数组 ref
-
-async function startImConnect(platform: ImPlatformKey) {
-  const p = IM_PLATFORMS.find(x => x.key === platform)
-  if (!p) return
-  connecting.value = platform; connectErr.value = ''
-  try {
-    const r = await p.api.start()
-    connect.value = { platform, id: r.poll_id || r.task_id }   // 飞书 poll_id / QQ & 微信 task_id
-    connectHint.value = platform === 'feishu'
-      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
-      : platform === 'wechat'
-        ? '手机微信扫码 → 授权后自动连接'
-        : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
-    await nextTick()
-    await QRCode.toCanvas(connectCanvas.value, r.scan_url, { width: 160, margin: 1 })
-    _startImPoll(p)
-  } catch (e: any) {
-    connectErr.value = e?.message || '生成二维码失败'
-    connect.value = null
-  } finally { connecting.value = '' }
-}
-function _startImPoll(p: ImPlatform) {
-  _stopImPoll()
-  let tries = 0
-  connectPoll = setInterval(async () => {
-    tries++
-    try {
-      const r = await p.api.poll(connect.value?.id)
-      if (r.status === 'success') { cancelImConnect(); await loadBots(); await fetchSessions() }
-      else if (r.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码'; cancelImConnect() }
-      else if (r.status === 'fail') { connectErr.value = '连接失败：' + (r.reason || '未知'); cancelImConnect() }
-    } catch {}
-    if (tries > 100) cancelImConnect()   // ~5 分钟超时
-  }, 3000)
-}
-function _stopImPoll() { if (connectPoll) { clearInterval(connectPoll); connectPoll = null } }
-function cancelImConnect() { _stopImPoll(); connect.value = null }
-
-// ── 聊天内「扫码绑定 IM」：咕咕回复里输出 [文案](gugu://bind-im/<platform>) 当按钮，
-//    点击 → 这里弹小窗扫码（复用 IM_PLATFORMS 的 start/poll，与侧栏同一套后端，互不干扰）──
-const chatBind = reactive<{ open: boolean; platform: string; label: string; hint: string; err: string; id: string | number | null }>(
-  { open: false, platform: '', label: '', hint: '', err: '', id: null }
-)
-const bindDialogRef = ref<InstanceType<typeof GuguChatBindDialog> | null>(null)
-let chatBindPoll: ReturnType<typeof setInterval> | null = null
-
-async function openChatImBind(platform: string) {
-  const p = IM_PLATFORMS.find(x => x.key === platform)
-  if (!p) return
-  _stopChatBindPoll()
-  chatBind.platform = platform; chatBind.label = p.label
-  chatBind.err = ''; chatBind.hint = ''; chatBind.id = null; chatBind.open = true
-  await nextTick()
-  try {
-    const r = await p.api.start()
-    chatBind.id = r.poll_id || r.task_id
-    chatBind.hint = platform === 'feishu'
-      ? '手机飞书扫码 → 授权创建机器人，授权后自动连接'
-      : platform === 'wechat'
-        ? '手机微信扫码 → 授权后自动连接'
-        : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'
-    await nextTick()
-    await QRCode.toCanvas(bindDialogRef.value?.canvasEl, r.scan_url, { width: 168, margin: 1 })
-    _startChatBindPoll(p)
-  } catch (e: any) {
-    chatBind.err = e?.message || '生成二维码失败'
-  }
-}
-function _startChatBindPoll(p: ImPlatform) {
-  _stopChatBindPoll()
-  let tries = 0
-  chatBindPoll = setInterval(async () => {
-    tries++
-    try {
-      const r = await p.api.poll(chatBind.id)
-      if (r.status === 'success') { closeChatBind(); await loadBots(); await fetchSessions() }
-      else if (r.status === 'expired') { chatBind.err = '二维码已过期，关掉再点一次按钮'; _stopChatBindPoll() }
-      else if (r.status === 'fail') { chatBind.err = '连接失败：' + (r.reason || '未知'); _stopChatBindPoll() }
-    } catch {}
-    if (tries > 100) closeChatBind()
-  }, 3000)
-}
-function _stopChatBindPoll() { if (chatBindPoll) { clearInterval(chatBindPoll); chatBindPoll = null } }
-function closeChatBind() { _stopChatBindPoll(); chatBind.open = false }
 
 async function enterExpanded() {
   expanded.value = true
@@ -760,6 +631,7 @@ async function exitExpanded() {
   overflow: hidden;
   box-shadow: 0 24px 64px rgba(20,25,50,0.18);
   will-change: top, left, right, bottom;
+  isolation: isolate;   /* 独立层叠上下文：z-index/合成跟页面其余部分互不干扰，展开/收起动画时不牵连外部重绘 */
 }
 .chat-window::after {
   content: '';
@@ -776,6 +648,7 @@ async function exitExpanded() {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   transform: translateZ(0);
+  will-change: backdrop-filter;   /* 提示浏览器单独准备合成层，容器随窗口变尺寸时少一点现算的突兀感 */
 }
 
 /* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
