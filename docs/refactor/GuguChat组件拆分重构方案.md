@@ -1,7 +1,7 @@
 # GuguChat 组件拆分重构方案
 
-> 状态更新（2026-08-06）：Phase 0~3 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地），Phase 4~5 部分偏离原方案，Phase 6 未收口。
-> 主文件 `GuguChat.vue` 当前 702 行（目标 300~500 行，差距 202~402 行）。详见各 Phase 进度小节。
+> 状态更新（2026-08-06）：Phase 0~3 已完成（Phase 3 含 useChatWindow + GuguChatWindow 落地，Phase 1 收尾已完成），Phase 4~5 部分偏离原方案，Phase 6 未收口。
+> 主文件 `GuguChat.vue` 当前 706 行（目标 300~500 行，差距 206~406 行）。详见各 Phase 进度小节。
 
 ## 一、背景与目标
 
@@ -78,7 +78,7 @@ frontend/src/components/common/gugu-chat/
 
 | 类别 | 计划 | 实际 | 差异说明 |
 | --- | --- | --- | --- |
-| 组件 | `GuguChat.vue` | `GuguChat.vue`（702 行，窗口状态已迁出） | 兼容入口+主控，未到 300~500 行目标 |
+| 组件 | `GuguChat.vue` | `GuguChat.vue`（706 行，窗口状态已迁出） | 兼容入口+主控，未到 300~500 行目标 |
 | 组件 | `GuguChatWindow.vue` | `GuguChatWindow.vue` (292 行) | ✅ 窗口 DOM、标题栏、展开/收起按钮已迁出 |
 | 组件 | `GuguChatFab.vue` | `GuguChatFab.vue` (70 行) | ✅ |
 | 组件 | `GuguChatMiniPlayer.vue` | `GuguChatMiniPlayer.vue` (146 行) | ✅ |
@@ -233,6 +233,11 @@ interface ChatFile {
 
 实际状态（2026-08-06）：✅ **已完成**（含 Phase 1 收尾）。`chatTypes.ts` / `chatConstants.ts` / `MessageRow` / `MessageList` 都已落地。收尾内容：`gugu_session_id` / `gugu_last_session_id` / `gugu_mini_pinned` / `gugu_reopen_resume` 这 4 个本地存储 key 从 `useChatWindow.ts` 内联字面量收拢进 `chatConstants.ts`；`GuguChat.vue`/`useChatAudio.ts`/`useChatConversation.ts` 里 4 处重复的 `localStorage.getItem('user_token')` 改为复用 `@/services/api` 已有的 `getToken()`（不新增聊天专属常量——`user_token` 是全局登录态，本就该走全局的 token 读取入口，不该在 chat 模块里再存一份字面量）。
 
+**收尾期间顺带修复的 2 个历史 bug**（devserver 实测验证）：
+
+1. **文件卡下载按钮一直没用**：`GuguChatMessageRow.vue` 里下载 SVG 只是装饰，没有自己的点击事件，整张卡只绑了一个 `openFile` 点击——可预览的文件（图片等）点下载图标实际会打开预览，而不是下载。修复：下载图标单独 `@click.stop` 发 `download` 事件，一路经 `GuguChatMessageList.vue` → `GuguChatWindow.vue`（新增 `onDownload` prop）→ `GuguChat.vue` 的 `downloadFile()`（这个函数本身早就实现完整，只是没人在"可预览"场景下调用过），并补上独立的 hover 视觉反馈。
+2. **迷你播放器拖拽进度条报错**：`useChatAudio.ts` 的 `audioStartDrag` 用 `window.addEventListener('mousemove'/'mouseup', ...)` 让拖拽跟手，但这两个事件的 `e.currentTarget` 是 `window` 本身，取不到进度条的 `getBoundingClientRect()`，一拖就抛 `TypeError`。修复：`mousedown` 那一下先量好 rect 存住，`mousemove`/`mouseup` 阶段复用这个 rect，不再依赖 `currentTarget`。
+
 ### Phase 2：输入与媒体能力
 
 - 抽出 `GuguChatComposer.vue`。
@@ -312,7 +317,7 @@ interface ChatFile {
 
 验收：导入路径统一，主组件行数达标。
 
-实际状态（2026-08-06）：🔴 **未开始**。当前 `GuguChat.vue` 是 702 行（目标 300~500 行），差距 202~402 行。Phase 3 的 `useChatWindow` + `GuguChatWindow.vue` 已落地，前置依赖解除；后续 Phase 1 收尾（chatConstants 迁移）、Phase 5 收尾（拆 ImConnect）完成后可启动收口。
+实际状态（2026-08-06）：🔴 **未开始**。当前 `GuguChat.vue` 是 706 行（目标 300~500 行），差距 206~406 行。Phase 3 的 `useChatWindow` + `GuguChatWindow.vue` 已落地、Phase 1 收尾已完成，两个前置依赖都已解除；只差 Phase 5 收尾（拆 ImConnect）即可启动收口。
 
 ## 八、风险控制
 
@@ -397,11 +402,11 @@ git diff --check
 
 | 完成标准 | 状态 |
 | --- | --- |
-| `GuguChat.vue` 只保留页面级编排 | � 部分达成（702 行，窗口状态已迁出；会话切换/部分流式仍在主组件） |
+| `GuguChat.vue` 只保留页面级编排 | 🟡 部分达成（706 行，窗口状态已迁出；会话切换/部分流式仍在主组件） |
 | 状态所有权清晰 | 🟡 大部分清晰；`useChatConversation` 内聚五类职责偏大 |
 | 现有聊天/IM/附件/音频/窗口验收项通过 | 🟢 拆分阶段未改变行为（无回归） |
 | import 路径统一 | ✅ 所有调用方走 `@/components/common/GuguChat.vue` 入口 |
-| 主组件 300~500 行 | 🟡 当前 702 行（Phase 3 后从 969 降至 702），差距 202~402 行 |
+| 主组件 300~500 行 | 🟡 当前 706 行（Phase 3 后从 969 降至 702，Phase 1 收尾 + bug 修复后 706），差距 206~406 行 |
 
 ### 下一步建议
 
