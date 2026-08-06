@@ -54,7 +54,7 @@
       :on-file-picked="onFilePicked" :on-paste="onPaste"
       :on-send="() => send()" :on-stop-streaming="stopStreaming"
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
-      :on-open-file="openFileFromChat" :on-action-click="onChatActionClick"
+      :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
       :on-prompt-connect="promptConnectIM"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
       :on-close="closeChat" :on-raise-chat="raiseChat"
@@ -94,7 +94,7 @@ import { useAudioStore } from '@/stores/audio'
 import { useLiveStore } from '@/stores/live'
 import { useUiStore } from '@/stores/ui'
 import { usePreviewStore } from '@/stores/preview'
-import { agentApi, filesApi, trackApi, authApi, CLIENT_ID } from '@/services/api'
+import { agentApi, filesApi, trackApi, authApi, CLIENT_ID, getToken } from '@/services/api'
 import { prefetchGreeting } from '@/composables/useGreeting'
 import GuguChatFab from './gugu-chat/GuguChatFab.vue'
 import GuguChatMiniPlayer from './gugu-chat/GuguChatMiniPlayer.vue'
@@ -363,7 +363,7 @@ const copiedId = ref<number | null>(null)
 async function downloadFile(f: ChatFile) {
   if (f.attach_id) {
     // 聊天上传的暂存附件：走 /agent/attachment/{id}/download
-    const token = localStorage.getItem('user_token') ?? ''
+    const token = getToken()
     const res = await fetch(`${API_BASE}/agent/attachment/${f.attach_id}/download`,
       { headers: token ? { Authorization: `Bearer ${token}` } : {} })
     if (!res.ok) { console.error('附件下载失败', res.status); return }
@@ -627,7 +627,11 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 :deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :deep(.msg-file-meta) { font-size: 12px; color: #9296ad; }
-:deep(.msg-file-dl) { flex-shrink: 0; color: #7b7fb2; }
+:deep(.msg-file-dl) {
+  flex-shrink: 0; color: #7b7fb2; cursor: pointer; border-radius: 4px; padding: 3px;
+  margin: -3px; box-sizing: content-box; transition: background 0.12s, color 0.12s;
+}
+:deep(.msg-file-dl:hover) { background: rgba(0,0,0,0.07); color: var(--color-primary); }
 /* 语音条：迷你播放条（播放钮 + 波形 + 时长），和文件卡同款气泡质感 */
 :deep(.msg-voice) {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;

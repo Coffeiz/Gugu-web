@@ -15,7 +15,7 @@
             :msg="msg" :is-group-session="isGroupSession"
             :copied-id="copiedId" :voice-playing-id="voicePlayingId"
             @copy="$emit('copy', $event)" @toggle-voice="$emit('toggleVoice', $event)"
-            @open-file="$emit('openFile', $event)" @action-click="$emit('actionClick', $event)"
+            @open-file="$emit('openFile', $event)" @download="$emit('download', $event)" @action-click="$emit('actionClick', $event)"
           />
         </div>
       </div>
@@ -65,6 +65,7 @@ defineEmits<{
   copy: [msg: ChatMessage]
   toggleVoice: [file: ChatFile]
   openFile: [file: ChatFile]
+  download: [file: ChatFile]
   actionClick: [e: MouseEvent]
 }>()
 

@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import { useAudioStore } from '@/stores/audio'
+import { getToken } from '@/services/api'
 import { API_BASE } from '../chatConstants'
 import type { ChatFile } from '../chatTypes'
 
@@ -81,14 +82,20 @@ export function useChatAudio(options: {
     audioMuted.value = !audioMuted.value
     if (audioEl.value) audioEl.value.muted = audioMuted.value
   }
-  function audioSeek(e: MouseEvent) {
+  function seekTo(clientX: number, rect: DOMRect) {
     if (!audioEl.value || !audioDuration.value) return
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    audioEl.value.currentTime = ((e.clientX - rect.left) / rect.width) * audioDuration.value
+    audioEl.value.currentTime = ((clientX - rect.left) / rect.width) * audioDuration.value
+  }
+  function audioSeek(e: MouseEvent) {
+    seekTo(e.clientX, (e.currentTarget as HTMLElement).getBoundingClientRect())
   }
   function audioStartDrag(e: MouseEvent) {
-    audioSeek(e)
-    const move = (ev: MouseEvent) => audioSeek(ev)
+    // 拖拽期间用 window 级 mousemove/mouseup 跟手（鼠标移出进度条也要继续跟）；
+    // 这两个事件的 currentTarget 是 window 本身，取不到进度条的 rect，必须在
+    // mousedown 这一下先把 rect 量出来存住，move 阶段复用同一个 rect。
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    seekTo(e.clientX, rect)
+    const move = (ev: MouseEvent) => seekTo(ev.clientX, rect)
     const up = () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up)
   }
@@ -109,7 +116,7 @@ export function useChatAudio(options: {
     try {
       let url = _voiceUrls[id]
       if (!url) {
-        const token = localStorage.getItem('user_token') ?? ''
+        const token = getToken()
         const res = await fetch(`${API_BASE}/agent/attachment/${id}/download`,
           { headers: token ? { Authorization: `Bearer ${token}` } : {} })
         if (!res.ok) { options.onTip(res.status === 404 ? '这条语音过期啦（语音保留 30 天）🎤' : '语音加载失败了 😵'); return }

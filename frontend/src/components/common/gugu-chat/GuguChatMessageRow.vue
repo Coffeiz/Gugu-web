@@ -43,7 +43,7 @@
         <span v-if="!f.qq_face" class="msg-file-name">{{ f.name }}.{{ f.ext }}</span>
         <span class="msg-file-meta">{{ fmtSize(f.size_bytes) }} · {{ canPreview(f) ? '预览' : '下载' }}</span>
       </span>
-      <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
+      <svg class="msg-file-dl" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" title="下载" @click.stop="$emit('download', f)"><path d="M8 2v8M5 7l3 3 3-3M3 13h10"/></svg>
     </div>
     </template>
   </div>
@@ -84,6 +84,7 @@ defineEmits<{
   copy: [msg: ChatMessage]
   toggleVoice: [file: ChatFile]
   openFile: [file: ChatFile]
+  download: [file: ChatFile]
   actionClick: [e: MouseEvent]
 }>()
 

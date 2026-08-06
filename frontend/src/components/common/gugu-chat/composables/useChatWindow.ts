@@ -18,10 +18,8 @@ import { useAudioStore } from '@/stores/audio'
 import { useUiStore } from '@/stores/ui'
 import { nextZ } from '@/composables/windowz'
 import { playGuguSfx } from '@/services/sfx'
-import { SMALL_W, SMALL_H, SIDEBAR_W } from '../chatConstants'
+import { SMALL_W, SMALL_H, SIDEBAR_W, SESSION_KEY, LAST_SESSION_KEY, MINI_PINNED_KEY, REOPEN_RESUME_KEY } from '../chatConstants'
 
-const SESSION_KEY = 'gugu_session_id'
-const LAST_SESSION_KEY = 'gugu_last_session_id'
 const MP_EST_H = 112   // 播放器外高估值（含 padding，用于通知锚点堆叠避让）
 
 export interface UseChatWindowOptions {
@@ -40,8 +38,8 @@ export function useChatWindow(options: UseChatWindowOptions) {
   const resizing   = ref(false)   // 展开/缩小动画期间：关 backdrop-filter、停跟随，降卡顿
   const chatClosing = ref(false)
   const chatZ      = ref(nextZ())
-  const miniPinned = ref(localStorage.getItem('gugu_mini_pinned') !== 'false')
-  const reopenResume = ref(localStorage.getItem('gugu_reopen_resume') === '1')
+  const miniPinned = ref(localStorage.getItem(MINI_PINNED_KEY) !== 'false')
+  const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) === '1')
 
   // 视口尺寸
   const vw = ref(window.innerWidth)
@@ -163,7 +161,7 @@ export function useChatWindow(options: UseChatWindowOptions) {
   }
 
   // ── 持久化 ────────────────────────────────────────────
-  watch(miniPinned, v => localStorage.setItem('gugu_mini_pinned', String(v)))
+  watch(miniPinned, v => localStorage.setItem(MINI_PINNED_KEY, String(v)))
 
   // ── 视口监听 ────────────────────────────────────────────
   onMounted(() => {

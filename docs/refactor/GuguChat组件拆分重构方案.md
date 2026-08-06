@@ -89,7 +89,7 @@ frontend/src/components/common/gugu-chat/
 | 组件 | `GuguChatBindDialog.vue` | `GuguChatBindDialog.vue` (75 行) | ✅ |
 | 组件 | `GuguChatImConnect.vue` | ❌ 未拆 | IM 平台二维码连接视图写在 `GuguChatSidebar.vue` 里 |
 | 类型/常量 | `chatTypes.ts` | `chatTypes.ts` (52 行) | ✅ |
-| 类型/常量 | `chatConstants.ts` | `chatConstants.ts` (7 行) | 🟡 只有 `API_BASE` + 3 个尺寸常量；平台、工具集合、本地存储 key 未迁 |
+| 类型/常量 | `chatConstants.ts` | `chatConstants.ts` (16 行) | ✅ `API_BASE`、3 个尺寸常量 + 4 个本地存储 key（`SESSION_KEY` 等，原先硬编码在 `useChatWindow.ts` 里）已收拢；平台类型见 `chatTypes.ts` 的 `ImPlatformKey`，工具集合已在 `useChatActions.ts` 里按职责导出，均不需要再迁入本文件 |
 | Composable | `useChatWindow.ts` | `useChatWindow.ts` (199 行) | ✅ 窗口状态已迁出主组件 |
 | Composable | `useChatSessions.ts` | ❌ 未拆 | 被 `useChatConversation` 内聚（见下文偏离说明） |
 | Composable | `useChatStream.ts` | ❌ 未拆 | 被 `useChatConversation` 内聚（见下文偏离说明） |
@@ -231,7 +231,7 @@ interface ChatFile {
 
 验收：历史消息、群聊用户名、QQ 表情、引用、Markdown、文件卡和滚动定位一致。
 
-实际状态（2026-08-06）：🟢 **接近完成**。`chatTypes.ts` / `chatConstants.ts` / `MessageRow` / `MessageList` 都已落地。**遗留**：`chatConstants.ts` 缺平台列表、工具集合、本地存储 key（`gugu_mini_pinned` / `gugu_reopen_resume` / `gugu_session_id` / `gugu_last_session_id` / `user_token` 等仍在主组件硬编码）。
+实际状态（2026-08-06）：✅ **已完成**（含 Phase 1 收尾）。`chatTypes.ts` / `chatConstants.ts` / `MessageRow` / `MessageList` 都已落地。收尾内容：`gugu_session_id` / `gugu_last_session_id` / `gugu_mini_pinned` / `gugu_reopen_resume` 这 4 个本地存储 key 从 `useChatWindow.ts` 内联字面量收拢进 `chatConstants.ts`；`GuguChat.vue`/`useChatAudio.ts`/`useChatConversation.ts` 里 4 处重复的 `localStorage.getItem('user_token')` 改为复用 `@/services/api` 已有的 `getToken()`（不新增聊天专属常量——`user_token` 是全局登录态，本就该走全局的 token 读取入口，不该在 chat 模块里再存一份字面量）。
 
 ### Phase 2：输入与媒体能力
 
@@ -408,7 +408,7 @@ git diff --check
 按"先解决最大缺口"原则：
 
 1. **Phase 3 已完成**（2026-08-06）：`useChatWindow.ts` + `GuguChatWindow.vue` 落地，主组件从 969 降至 702 行。✅
-2. **Phase 1 收尾**：补齐 `chatConstants.ts`（平台列表、工具集合、本地存储 key），迁移主组件里硬编码的 `SESSION_KEY` / `LAST_SESSION_KEY` / `gugu_mini_pinned` / `gugu_reopen_resume` 等
-3. **Phase 5 收尾**：拆 `GuguChatImConnect.vue`，让 `GuguChatSidebar.vue` 回归纯列表展示
+2. **Phase 1 收尾已完成**（2026-08-06）：本地存储 key 收拢进 `chatConstants.ts`，`user_token` 重复读取改用 `getToken()`。✅
+3. **Phase 5 收尾（下一步）**：拆 `GuguChatImConnect.vue`，让 `GuguChatSidebar.vue` 回归纯列表展示
 4. **评估 `useChatConversation` 拆分**：607 行偏大，但 docstring 已说明不拆的理由；按需评估是否要把流式收发独立成 `useChatStream` 供其他场景复用
 5. **Phase 6 收口**：上述完成后做最终清理（删除主组件里的重复函数/状态/样式、统一导出路径）

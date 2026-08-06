@@ -52,7 +52,7 @@
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
         :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
         @copy="onCopy" @toggle-voice="onToggleVoice"
-        @open-file="onOpenFile" @action-click="onActionClick"
+        @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
       />
 
       <!-- 输入框 -->
@@ -125,6 +125,7 @@ const props = defineProps<{
   onCopy: (msg: ChatMessage) => void
   onToggleVoice: (file: ChatFile) => void
   onOpenFile: (file: ChatFile) => void
+  onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onPromptConnect: () => void
   onEnterExpanded: () => void

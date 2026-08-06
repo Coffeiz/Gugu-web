@@ -1,5 +1,5 @@
 import { ref, computed, nextTick, onUnmounted, watch, type Ref } from 'vue'
-import { agentApi, trackApi, CLIENT_ID } from '@/services/api'
+import { agentApi, trackApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { getGreeting } from '@/composables/useGreeting'
 import { playGuguSfx } from '@/services/sfx'
@@ -450,7 +450,7 @@ export function useChatConversation(options: {
   async function resumeStream(id: number) {
     if (streaming.value) return            // 本地正在发/看，不重复连
     const viewGeneration = _chatViewGeneration
-    const token = localStorage.getItem('user_token') ?? ''
+    const token = getToken()
     abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
     streaming.value = true; clearStatus(); setStatus(_thinkingItem())
     try {
@@ -494,7 +494,7 @@ export function useChatConversation(options: {
     streaming.value = true; clearStatus(); setStatus(_thinkingItem())
     abortCtrl.value = new AbortController()
     await scrollBottom()
-    const token = localStorage.getItem('user_token') ?? ''
+    const token = getToken()
     const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
     const viewGeneration = _chatViewGeneration
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
