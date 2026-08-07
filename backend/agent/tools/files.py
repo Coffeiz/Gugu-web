@@ -1144,10 +1144,22 @@ async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
     网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
     之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
-    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
+    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。
+
+    群成员（member/unknown）只能用 url 发网络图片（搜图配图），不能发文件库文件
+    （file/file_id）或重发暂存附件（attach_id）——后两者会读取 Bot 所属账号的私有文件。
+    """
+    from agent import imctx
+    im = imctx.get_im()
+    is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
+
     url = (args.get("url") or "").strip()
     if url:
         return await _send_file_from_url(user_id, url, args.get("title") or "")
+
+    if is_restricted:
+        # 群成员只允许发网络图片（url 分支）；file/file_id/attach_id 涉及 owner 私有文件，禁止。
+        return json.dumps({"error": "群聊里只能发网络图片（用 url 传图片直链），不能发文件库文件或重发附件"}, ensure_ascii=False)
 
     attach_id = (args.get("attach_id") or "").strip()
     if attach_id:

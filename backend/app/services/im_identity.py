@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS = ["web_search", "image_search"]
+DEFAULT_GROUP_ALLOWED_TOOLS = ["web_search", "image_search", "send_file"]
 QQ_BINDING_CODE_TTL = 600
 QQ_BINDING_CODE_MAX_ATTEMPTS = 5
 

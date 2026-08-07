@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
-DEFAULT_GROUP_TOOLS = ["web_search", "image_search"]
+DEFAULT_GROUP_TOOLS = ["web_search", "image_search", "send_file"]
 
 
 def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
