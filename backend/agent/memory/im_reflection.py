@@ -221,7 +221,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500, thinking="disabled")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
-            await _apply_output(scope, current, out, messages, settings)
+            await _apply_output(db, scope, current, out, messages, settings)
 
             cursor = (await db.execute(
                 select(MemoryReflectionCursor).where(
@@ -261,7 +261,93 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             return False
 
 
+async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
+    """按 chat_id 全量聚合群成员：platform_user_id → {name, last_seen_at, message_count}。
+
+    数据源是 ConversationMessage 表按 (chat_id, platform_user_id) 聚合。群聊消息受
+    MESSAGE_RETENTION_LIMIT（500）/MESSAGE_TRIM_THRESHOLD（600）限制，message_count
+    天然是"保留窗口内"的计数而非全量历史，语义上贴近"近期活跃度"。
+    这里刻意不用 execute_job 本批 messages 累加——会漏掉窗口内、不在本批范围的历史，
+    也没法正确反映消息裁剪后的实际计数；全量聚合成本很低，每次都查一遍。
+    """
+    from app.models import ConversationMessage, ConversationSession
+    from sqlalchemy import func
+
+    rows = (await db.execute(
+        select(
+            ConversationMessage.platform_user_id,
+            ConversationMessage.platform_user_name,
+            func.count(ConversationMessage.id),
+            func.max(ConversationMessage.created_at),
+        )
+        .join(ConversationSession, ConversationSession.id == ConversationMessage.session_id)
+        .where(
+            ConversationSession.user_id == scope.owner_user_id,
+            ConversationSession.source == scope.platform,
+            ConversationSession.bot_id == scope.bot_id,
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == scope.scope_id,
+            ConversationMessage.role == "user",
+            ConversationMessage.platform_user_id.is_not(None),
+        )
+        .group_by(ConversationMessage.platform_user_id, ConversationMessage.platform_user_name)
+    )).all()
+    members: dict[str, dict] = {}
+    for pid, name, count, last_seen in rows:
+        if not pid:
+            continue
+        members[pid] = {
+            "name": name or "",
+            "last_seen_at": last_seen.timestamp() if last_seen else None,
+            "message_count": int(count or 0),
+        }
+    return members
+
+
+def _merge_members(
+    current: Any,
+    aggregated: dict[str, dict],
+    nicknames_add: Any,
+) -> dict[str, dict]:
+    """合并 DB 聚合结果与 LLM 提炼的群友称呼，写回 members.json。
+
+    - name/aliases/last_seen_at/message_count 来自 DB 聚合；name 变了把旧值追加进 aliases（去重）。
+    - nicknames 来自 LLM 提炼（nicknames_add），只记录"群友对某成员的称呼"。
+    - 注意：members.json 刻意不适用 _GROUP_INTERNAL_ID_RE 过滤——profile.json 不落地任何
+      platform_user_id，而 members.json 每条必须挂在具体 platform_user_id 下才有意义，
+      这是两个文件唯一但关键的设计分歧点，不要"修正"掉。
+    """
+    now = now_utc().timestamp()
+    out: dict[str, dict] = {}
+    for pid, agg in aggregated.items():
+        prev = (current or {}).get(pid) if isinstance(current, dict) else None
+        aliases = list(prev.get("aliases") or []) if isinstance(prev, dict) else []
+        if isinstance(prev, dict) and prev.get("name") and prev["name"] != agg["name"]:
+            if prev["name"] not in aliases:
+                aliases.append(prev["name"])
+        nicknames = list(prev.get("nicknames") or []) if isinstance(prev, dict) else []
+        out[pid] = {
+            "name": agg["name"],
+            "aliases": aliases,
+            "nicknames": nicknames,
+            "last_seen_at": agg["last_seen_at"],
+            "message_count": agg["message_count"],
+        }
+    # 合并 LLM 提炼的群友称呼（nicknames_add），去重追加。
+    for raw in nicknames_add if isinstance(nicknames_add, list) else []:
+        if not isinstance(raw, dict):
+            continue
+        pid = str(raw.get("platform_user_id") or "").strip()
+        nickname = str(raw.get("nickname") or "").strip()
+        if not pid or not nickname or pid not in out:
+            continue
+        if nickname not in out[pid]["nicknames"]:
+            out[pid]["nicknames"].append(nickname)
+    return {"updated_at": now, "members": out}
+
+
 async def _apply_output(
+    db,
     scope: MemoryScope,
     current: Dict[str, Any],
     output: Dict[str, Any],
@@ -272,6 +358,10 @@ async def _apply_output(
         profile = _merge_group_profile(current.get("profile"), output.get("profile_add"), output.get("profile_remove"))
         if profile or output.get("profile_add") or output.get("profile_remove"):
             await write_scope_json(scope, "profile.json", profile)
+        # members.json：DB 聚合 + LLM nicknames 一起算一起写，跟 profile/summary 同一节奏。
+        aggregated = await _aggregate_members(db, scope)
+        members = _merge_members(current.get("members"), aggregated, output.get("nicknames_add"))
+        await write_scope_json(scope, "members.json", members)
         entries = _daily_entries(current.get("daily") or "")
         date = (messages[-1].created_at.date().isoformat() if messages and messages[-1].created_at else now_utc().date().isoformat())
         for item in output.get("daily") or []:
@@ -303,7 +393,15 @@ async def _apply_output(
 
 
 def _merge_group_profile(current: Any, additions: Any, removals: Any) -> list[dict]:
-    """合并群组公开 profile；只接受群组类型，不保存成员内部 ID。"""
+    """合并群组公开 profile；只接受群组类型，不保存成员内部 ID。
+
+    复用 store._pattern_similar 做相似度去重（与 owner 记忆一致），但保留 group 特有
+    类型（nature/rule/role/project）——store.apply_profile_ops 的类型 normalize 会把
+    它们降级为 note（store.PROFILE_TYPES 不含这些类型），故不直接调用 apply_profile_ops，
+    而是复用其相似度判断函数，避免破坏 group 类型白名单。
+    """
+    from agent.memory.store import _pattern_similar
+
     values = []
     for item in current if isinstance(current, list) else []:
         if not isinstance(item, dict):
@@ -316,9 +414,8 @@ def _merge_group_profile(current: Any, additions: Any, removals: Any) -> list[di
     for raw in removals if isinstance(removals, list) else []:
         target = str(raw.get("text") if isinstance(raw, dict) else raw).strip()
         if target:
-            values = [item for item in values if item["text"] != target]
+            values = [item for item in values if not _pattern_similar(item["text"], target)]
 
-    seen = {item["text"] for item in values}
     now = now_utc().timestamp()
     for raw in additions if isinstance(additions, list) else []:
         if not isinstance(raw, dict):
@@ -327,32 +424,31 @@ def _merge_group_profile(current: Any, additions: Any, removals: Any) -> list[di
         item_type = str(raw.get("type") or "note").strip()
         if not text or item_type not in GROUP_PROFILE_TYPES or _GROUP_INTERNAL_ID_RE.search(text):
             continue
-        existing = next((item for item in values if item["text"] == text), None)
-        if existing:
-            existing["type"] = item_type
-            existing["ts"] = now
+        hit = next((item for item in values if _pattern_similar(item["text"], text)), None)
+        if hit:
+            hit["type"] = item_type
+            hit["ts"] = now
+            if len(text) > len(hit.get("text", "")):
+                hit["text"] = text
         else:
             values.append({"type": item_type, "text": text, "ts": now})
-            seen.add(text)
     return values
 
 
 def _merge_profile(current: Any, incoming: Any) -> list:
-    values = []
-    seen = set()
-    profile_types = {"name", "address", "pronoun", "background", "preference", "note"}
-    for item in (current if isinstance(current, list) else []) + (incoming if isinstance(incoming, list) else []):
-        if isinstance(item, dict):
-            text = str(item.get("text") or "").strip()
-            item_type = str(item.get("type") or "note")
-        else:
-            text, item_type = str(item).strip(), "note"
-        if item_type not in profile_types:
-            item_type = "note"
-        if text and text not in seen:
-            seen.add(text)
-            values.append({"type": item_type, "text": text})
-    return values
+    """合并成员 profile；复用 store.apply_profile_ops 的相似度去重。
+
+    member 路径现状是每次输出整份 profile 列表，当作 add 传入，remove 传空数组
+    （member 暂不支持主动删除，见 PRD-IM-8 FR-IM-8-3）。member 的 profile 类型集合
+    与 store.PROFILE_TYPES 一致，直接调用 apply_profile_ops 不会破坏类型。
+    """
+    from agent.memory.store import apply_profile_ops
+
+    return apply_profile_ops(
+        current if isinstance(current, list) else [],
+        incoming if isinstance(incoming, list) else [],
+        [],
+    )
 
 
 def _merge_pattern(current: Any, incoming: Any) -> list:
