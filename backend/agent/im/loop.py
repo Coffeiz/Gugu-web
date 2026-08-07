@@ -196,7 +196,7 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
     if decision.get("action") == "cancel":
         from agent import runtime_state
         try:
-            await runtime_state.request_cancel(
+            written = await runtime_state.request_cancel(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
             )
         except Exception as exc:
@@ -204,13 +204,22 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
             diag_log("agent.im.shortcut.cancel", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
             return
-        # 取消标志已写入 Redis，记录确认（puid 指纹脱敏），供排查「取消是否真的置上了」。
+        # 只有真的 SET 成功才记"取消已生效"——request_cancel 在 bot_id/scope_id 缺失时
+        # 会静默 no-op 返回 False，之前这里不检查返回值，会打出「写成功」的假日志
+        # （code review 发现：调用方漏传 scope 时，日志会撒谎）。
         from agent.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
-        diag_log_raw(
-            "agent.im.shortcut.cancel_written",
-            f"platform={platform} puid={fingerprint(platform_user_id)}",
-        )
+        if written:
+            diag_log_raw(
+                "agent.im.shortcut.cancel_written",
+                f"platform={platform} puid={fingerprint(platform_user_id)}",
+            )
+        else:
+            diag_log_raw(
+                "agent.im.shortcut.cancel_noop_missing_scope",
+                f"platform={platform} puid={fingerprint(platform_user_id)} "
+                f"has_bot_id={bool(bot_id)} has_scope_id={bool(scope_id)}",
+            )
 
 
 def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict,
@@ -219,7 +228,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
     if decision.get("action") == "cancel":
         from agent import runtime_state
         try:
-            runtime_state.request_cancel_sync(
+            written = runtime_state.request_cancel_sync(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
             )
         except Exception as exc:
@@ -229,10 +238,17 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
             return
         from agent.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
-        diag_log_raw(
-            "agent.im.shortcut.cancel_written_sync",
-            f"platform={platform} puid={fingerprint(platform_user_id)}",
-        )
+        if written:
+            diag_log_raw(
+                "agent.im.shortcut.cancel_written_sync",
+                f"platform={platform} puid={fingerprint(platform_user_id)}",
+            )
+        else:
+            diag_log_raw(
+                "agent.im.shortcut.cancel_noop_missing_scope_sync",
+                f"platform={platform} puid={fingerprint(platform_user_id)} "
+                f"has_bot_id={bool(bot_id)} has_scope_id={bool(scope_id)}",
+            )
 
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:
@@ -243,14 +259,20 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
     # 会话作用域：bot_id=channel_id、scope_id=chat_id（私聊回退到 puid），与活跃集合同 key。
     bot_id = payload.get("channel_id") or ""
     scope_id = payload.get("chat_id") or platform_user_id
-    await runtime_state.set_state(
-        platform, bot_id, scope_id, platform_user_id, runtime_state.THINKING
-    )
-    # 清掉可能残留的取消标志：现在「取消」无条件写标志（即使空闲也会写），
-    # 若不清，上一个 loop 的取消标志会误取消本次新 loop。
+    # 初始化顺序很关键，跟网关判断"是否在忙"的时机有竞态（code review 发现）：
+    # 旧顺序是 set_state → clear_cancel → mark_active——但网关从 set_state 落地那一刻起
+    # 就认为这个会话"正在忙"，如果用户恰好在 set_state 之后、clear_cancel 之前发"取消"，
+    # 网关会写入取消标志并回复"取消了"，紧接着这里的 clear_cancel 又把刚写进去的标志删掉，
+    # 任务却继续跑——ACK 说取消成功，实际没取消。
+    # 改成 clear_cancel → mark_active → set_state：state 只有在清残留、注册活跃者都做完后
+    # 才落地为 THINKING，网关最早也要等到这一刻才会认为"在忙"，此时 clear_cancel 早已执行
+    # 完毕，不会再把用户这之后发的取消标志清掉。
     await runtime_state.clear_cancel(platform, bot_id, scope_id, platform_user_id)
     # 记录活跃 loop 的发起者 puid，供网关判断「其他用户取消」的权限。
     await runtime_state.mark_active(platform, bot_id, scope_id, platform_user_id)
+    await runtime_state.set_state(
+        platform, bot_id, scope_id, platform_user_id, runtime_state.THINKING
+    )
     typing_indicator = await wechat.start_typing(payload)
     return ImActivity(platform, platform_user_id, typing_indicator, bot_id, scope_id)
 
@@ -690,7 +712,10 @@ async def dispatch_im_message(payload: dict):
     if shortcut["action"] == "drop":
         return None
     if shortcut["action"] in ("reply", "cancel"):
-        await apply_im_shortcut_cancel(platform, puid or "", shortcut)
+        # bot_id/scope_id 必须一起传——request_cancel() 要求 platform+bot_id+scope_id+puid
+        # 全部非空才会真正写标志，否则静默 no-op（code review 发现：这里漏传导致 fallback
+        # 路径的取消从来没真正生效过，QQ 主路径因为走了另一条已正确传 scope 的路径掩盖了这个问题）。
+        await apply_im_shortcut_cancel(platform, puid or "", shortcut, bot_id=route.bot_id, scope_id=session_scope)
         await send_text(payload, shortcut["reply"])
         await finalize_im_response(platform, puid or "", shortcut["action"] == "cancel", shortcut["reply"])
         return None
