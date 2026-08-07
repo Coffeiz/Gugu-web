@@ -390,10 +390,38 @@ def test_im_session_scope_filters_isolate_group_and_private_sessions():
     from app.models import ConversationSession
 
     group_filters = session_scope_filters(ConversationSession, "qq", "group-1")
-    private_filters = session_scope_filters(ConversationSession, "qq", None)
+    private_filters = session_scope_filters(ConversationSession, "qq", None, platform_user_id="sender-1")
+    # 群聊：source + bot_id + chat_id = 3 条
     assert len(group_filters) == 3
-    assert len(private_filters) == 3
+    # 私聊：source + bot_id + chat_id IS NULL + platform_user_id = 4 条
+    assert len(private_filters) == 4
     assert "chat_id IS NULL" in str(private_filters[2])
+    assert "platform_user_id" in str(private_filters[3])
+
+
+def test_im_session_scope_filters_private_missing_puid_fails_closed():
+    """P1-2 fail closed：私聊缺 platform_user_id 时返回空过滤（不参与复用），
+    由上游 get_or_create_session / _persist_push_im 在调用方拒绝进入 Agent。
+    绝不允许退化成"同 user 同平台所有私聊串一起"。
+    """
+    from agent.im.session import session_scope_filters
+    from app.models import ConversationSession
+
+    # 缺 platform_user_id（私聊）→ 空过滤（不参与复用）
+    filters = session_scope_filters(ConversationSession, "qq", None)
+    assert filters == []
+
+    # 显式传 None 也算缺
+    filters = session_scope_filters(ConversationSession, "qq", None, platform_user_id=None)
+    assert filters == []
+
+    # 群聊不受影响：有 chat_id 时正常返回 3 条
+    filters = session_scope_filters(ConversationSession, "qq", "group-1")
+    assert len(filters) == 3
+
+    # web 源：返回空（不参与 IM 作用域复用）
+    filters = session_scope_filters(ConversationSession, "web", None, platform_user_id="sender-1")
+    assert filters == []
 
 
 def test_im_session_scope_filters_include_bot_id():

@@ -97,6 +97,11 @@ def session_scope_filters(
 
     群聊按 ``chat_id`` 隔离，私聊按 ``platform_user_id`` 隔离（私聊 ``chat_id``
     为空，若只按 ``chat_id.is_(None)`` 会把同一用户的所有私聊对象串到一起）。
+
+    P1-2 fail closed：私聊（IM 源 + 无 chat_id）但缺 ``platform_user_id`` 时返回空列表
+    —— 等同"无过滤"（不要复用任何已有 session），由上游入口（``get_or_create_session``
+    / ``_persist_push_im``）在调用方 fail closed，**禁止**退化成"同 user 同平台所有
+    私聊串一起"。这是上下文隔离边界，不依赖"网关一定会传 sender id"的隐式假设。
     """
     if source not in {"feishu", "qq", "wechat"}:
         return []
@@ -112,7 +117,8 @@ def session_scope_filters(
         filters.append(model.chat_id.is_(None))
         filters.append(model.platform_user_id == platform_user_id)
     else:
-        filters.append(model.chat_id.is_(None))
+        # 私聊缺 platform_user_id：返回空过滤（不参与复用），由调用方 fail closed。
+        return []
     return filters
 
 
@@ -158,8 +164,22 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
     ``(source, bot_id, chat_id)`` 命中已有 session 则复用，不再每次新对话都新建，
     保证同一 peer 的上下文连续。Web 会话（``source="web"``）不参与作用域复用，
     仍按显式 ``session_id`` 查找。
+
+    P1-2 fail closed：IM 私聊（``source`` 是 feishu/qq/wechat + ``chat_id`` 为空）但
+    ``platform_user_id`` 也为空时，**直接拒绝**——不允许退化成"同 user 同平台所有
+    私聊串一起"或新建无主的 session。这条规则不依赖"网关一定会传 sender id"假设，
+    一旦 sender 解析失败就让 IM 消息直接丢弃（不进入 Agent）。
     """
     from app.models import ConversationSession
+
+    # P1-2 fail closed：IM 私聊缺 platform_user_id 时直接拒绝
+    if request.source in {"feishu", "qq", "wechat"} and not request.chat_id:
+        puid = getattr(request, "platform_user_id", None)
+        if not puid:
+            raise ValueError(
+                f"IM 私聊消息缺少 platform_user_id（sender id），拒绝进入 Agent："
+                f"source={request.source}, chat_id={request.chat_id!r}, puid={puid!r}"
+            )
 
     session = None
     if request.session_id:

@@ -413,9 +413,15 @@ async def _persist_push_im(
     target: dict | None = None,
     files: list | None = None,
 ) -> None:
-    """把一条主动推送 append 到该用户在 IM 的最近会话（imsession 指向的那个），使下次回复带上上下文。
-    无 imsession（如隔夜冷启）→ 建一个普通会话并把 imsession 指过去。刷新 imsession 12h TTL，
-    保证「推送后 12h 内回复」能路由回此会话。
+    """把一条主动推送 append 到该用户在 IM 的最近会话，使下次回复带上上下文。
+
+    私聊和群聊走不同 Redis 路由（P1-1 修复）：
+    - 群聊（reach.chat_id 非空）：`imsession:{platform}:{bot_id}:{chat_id}`，与群聊主路径一致
+    - 私聊（reach.puid 非空）：`im:owner-session:{user_id}:{platform}:{puid}:{bot_id}`，
+      与 owner_session 主路径一致——之前误用群聊 key 导致私聊推送路由不到真实 session
+
+    无 Redis 路由命中（隔夜冷启 / 第一次推送）→ 按 scope 回查数据库复用所属 peer 的
+    session；都查不到再新建。Redis TTL 12h，保证「推送后 12h 内回复」能路由回此会话。
 
     files：execution 阶段 send_file 产出的 _artifact 列表（含 attach_id/name/ext）。一起写进
     ConversationMessage.files，这样 web 端打开该 session 时也能看到图片——只发到 IM 群、不
@@ -423,32 +429,47 @@ async def _persist_push_im(
     from app.core import redis as R
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
-    from agent.im.session import session_key, trim_session_messages
+    from agent.im.session import (
+        session_key,
+        session_scope_filters,
+        trim_session_messages,
+    )
+    from agent.im.owner_session import get_bound_session, bind_session_by_id
 
     reach = target or await get_imreach(uid, platform)
     puid = (reach or {}).get("puid")
     if not puid:
+        # 私聊缺 puid 直接 return：fail closed，避免用空 sender id 撞到任何 session
+        # （P1-2 fail closed）。
         return
-    # 作用域：群聊用 chat_id，私聊用 puid；bot_id 即 channel_id（UserBot.id）。
-    # 与 agent/im/session.py 的 session_key() 保持一致（imsession:{platform}:{bot_id}:{scope_id}）。
     bot_id = (reach or {}).get("channel_id")
-    scope_id = (reach or {}).get("chat_id") or puid
-    r = R.get_redis()
-    sess_key = session_key(platform, bot_id or "", scope_id)
-    try:
-        raw = await r.get(sess_key)
-        sid = int(raw) if raw else None
-    except (TypeError, ValueError):
-        sid = None
-
+    chat_id = (reach or {}).get("chat_id")
+    is_group = bool(chat_id)
     uid_u = _as_uuid(uid)
+    r = R.get_redis()
+
+    # P1-1 修复：私聊走 owner_session key（im:owner-session:{uid}:...），群聊走群聊 key。
+    # 私聊的 owner_session key 必须在 (user_id, platform, puid) 三元组内寻址，缺一不可，
+    # 不能与群聊 imsession key 混用。
+    if is_group:
+        scope_id = chat_id
+        sess_key = session_key(platform, bot_id or "", scope_id)
+        try:
+            raw = await r.get(sess_key)
+            sid = int(raw) if raw else None
+        except (TypeError, ValueError):
+            sid = None
+    else:
+        sid = await get_bound_session(uid_u, platform, puid, bot_id or None)
+
     async with ss._SessionLocal() as db:
         session = await db.get(ConversationSession, sid) if sid else None
         if session is None or session.user_id != uid_u:
-            # 复用所属 peer 的已有 session（私聊按 platform_user_id，群聊按 chat_id），
-            # 而不是新建临时会话，保证定时任务推送与用户对话共享同一上下文。
+            # 复用所属 peer 的已有 session：群聊按 (source, bot_id, chat_id)，
+            # 私聊按 (source, bot_id, platform_user_id)；两者都传 platform_user_id
+            # = None / chat_id = None 时由 session_scope_filters 自动加 chat_id.is_(None)
+            # 兜底（见 P1-2 修复，私聊缺 puid 已在上方 return）。
             from sqlalchemy import select as _select
-            from agent.im.session import session_scope_filters
 
             session = (await db.execute(
                 _select(ConversationSession).where(
@@ -456,9 +477,9 @@ async def _persist_push_im(
                     *session_scope_filters(
                         ConversationSession,
                         platform,
-                        (reach or {}).get("chat_id"),
+                        chat_id,
                         bot_id,
-                        puid if not (reach or {}).get("chat_id") else None,
+                        puid if not is_group else None,
                     ),
                 ).order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
                 .limit(1)
@@ -469,10 +490,9 @@ async def _persist_push_im(
                 title=(title[:50] or "主动消息"),
                 source=platform,
                 bot_id=bot_id,
-                chat_id=(reach or {}).get("chat_id"),
-                platform_user_id=puid if not (reach or {}).get("chat_id") else None,
-                chat_type=((reach or {}).get("chat_type") or
-                           ("group" if (reach or {}).get("chat_id") else "c2c")),
+                chat_id=chat_id,
+                platform_user_id=(None if is_group else puid),
+                chat_type=("group" if is_group else "c2c"),
             )
             db.add(session)
             await db.flush()
@@ -482,8 +502,13 @@ async def _persist_push_im(
         await db.commit()
         new_sid = session.id
 
+    # 写回 Redis 路由：群聊用 imsession key（12h TTL），私聊用 owner_session key
+    # （bind_session_by_id 内部 TTL 也是 12h，与主路径一致）。
     try:
-        await r.set(sess_key, str(new_sid), ex=12 * 3600)
+        if is_group:
+            await r.set(sess_key, str(new_sid), ex=12 * 3600)
+        else:
+            await bind_session_by_id(platform, puid, new_sid, bot_id or None)
     except Exception:
         pass
     # 推送后裁剪，避免长会话里定时任务消息无限累积。

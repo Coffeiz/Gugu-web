@@ -112,9 +112,14 @@ async def _gen_title_bg(user_id, session_id, user_msg: str, reply_text: str, set
         from app.models import ConversationSession
         async with _sess._SessionLocal() as db:
             s = await db.get(ConversationSession, session_id)
-            if s:
-                s.title = new_title
-                await db.commit()
+            if not s:
+                return
+            # P1-3：手动改名后 title_locked=True，自动标题任务直接跳过本 session。
+            # 一劳永逸地解决「用户手动改名被异步自动标题覆盖」的竞态。
+            if s.title_locked:
+                return
+            s.title = new_title
+            await db.commit()
         from app.core import events
         await events.publish(user_id, "sessions", session_id=session_id, title=new_title)  # 标题好了再推一次
     except Exception:

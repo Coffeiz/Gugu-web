@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -331,3 +331,119 @@ async def test_execute_task_stops_renewing_after_completion(monkeypatch, db, use
     running = [t for t in asyncio.all_tasks() if t.get_coro().__qualname__ == "_renew_lock_periodically" and not t.done()]
     assert running == []
     fake_lock.extend.assert_not_awaited()
+
+
+# ── PR #9 复审 P1-3 回归：自动标题 vs 手动改名竞态 ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
+    """P1-3：手动改名后 title_locked=True，_gen_title_bg 跳过——手动标题永远赢。
+
+    复现：用户首轮消息触发 _schedule_title（异步启动 _gen_title_bg）→ 异步任务
+    还没拿到 LLM 返回 → 用户手动 rename → 自动标题生成完成 → 若无 title_locked
+    会无条件覆盖手动标题。
+    """
+    from app.models import ConversationSession
+    from agent import runner
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="临时标题", source="web",
+        bot_id=None, chat_id=None, platform_user_id=None, chat_type=None,
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    # mock LLM：返回会自动覆盖的标题
+    async def fake_generate_title(user_msg, ai_reply, settings, use_anthropic):
+        return "自动生成的标题"
+
+    # 模拟"先生成标题，但 LLM 还在跑"：suspend 生成以确保 rename 先完成
+    title_started = Mock()
+    generated_title = "LLM_自动生成标题"
+    async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
+        title_started()
+        return generated_title
+    monkeypatch.setattr("agent.gateway.web._generate_title", slow_generate)
+
+    # 先模拟用户手动 rename（title_locked=True）
+    sess.title = "用户手动改的标题"
+    sess.title_locked = True
+    await db.commit()
+
+    # 然后 _gen_title_bg 跑
+    from app.core.config import get_settings
+    settings = get_settings()
+    await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+
+    # 验证：自动标题没覆盖手动标题
+    await db.refresh(sess)
+    assert sess.title == "用户手动改的标题", f"自动标题覆盖了手动标题：{sess.title!r}"
+    assert sess.title_locked is True
+
+    # 再跑一次也仍不覆盖（title_locked 永久生效）
+    await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+    await db.refresh(sess)
+    assert sess.title == "用户手动改的标题"
+
+
+@pytest.mark.asyncio
+async def test_rename_session_api_sets_title_locked(monkeypatch, db, user_a):
+    """P1-3：PATCH /sessions/{id} rename API 写 title_locked=True。"""
+    from app.models import ConversationSession
+    from app.api.v1.agent import rename_session
+    from app.api.v1.agent import RenameSessionRequest
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="旧标题", source="web",
+        bot_id=None, chat_id=None, platform_user_id=None, chat_type=None,
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    result = await rename_session(
+        session_id=sess.id,
+        body=RenameSessionRequest(title="用户改名"),
+        current_user=user_a,
+        db=db,
+    )
+    assert result["title"] == "用户改名"
+    assert result["title_locked"] is True
+
+    await db.refresh(sess)
+    assert sess.title == "用户改名"
+    assert sess.title_locked is True
+
+
+@pytest.mark.asyncio
+async def test_rename_session_rejects_empty_and_overlong(monkeypatch, db, user_a):
+    """P1-3 + 基础校验：rename API 必须拒绝空标题和超长标题（之前已有，顺带回归）。"""
+    import pytest
+    from fastapi import HTTPException
+    from app.models import ConversationSession
+    from app.api.v1.agent import rename_session
+    from app.api.v1.agent import RenameSessionRequest
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="原", source="web",
+        bot_id=None, chat_id=None, platform_user_id=None, chat_type=None,
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    # 空
+    with pytest.raises(HTTPException) as exc:
+        await rename_session(sess.id, RenameSessionRequest(title=""), user_a, db)
+    assert exc.value.status_code == 422
+
+    # 纯空白
+    with pytest.raises(HTTPException) as exc:
+        await rename_session(sess.id, RenameSessionRequest(title="   "), user_a, db)
+    assert exc.value.status_code == 422
+
+    # 超长
+    with pytest.raises(HTTPException) as exc:
+        await rename_session(sess.id, RenameSessionRequest(title="x" * 301), user_a, db)
+    assert exc.value.status_code == 422

@@ -377,7 +377,12 @@ async def rename_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """重命名会话标题，方便用户区分不同对话。"""
+    """重命名会话标题，方便用户区分不同对话。
+
+    P1-3：手动改名后置 ``title_locked=True``，永久禁止自动标题任务覆盖。后续
+    ``_gen_title_bg`` 在写 title 前会查这个标志，是 True 直接跳过——手动改名
+    一劳永逸地赢下与异步自动标题生成的竞态。
+    """
     title = (body.title or "").strip()
     if not title:
         raise HTTPException(422, "标题不能为空")
@@ -387,5 +392,6 @@ async def rename_session(
     if not session:
         raise HTTPException(404, "对话不存在")
     session.title = title
+    session.title_locked = True   # P1-3：手动改名后禁止自动标题覆盖
     await db.commit()
-    return {"id": session.id, "title": session.title}
+    return {"id": session.id, "title": session.title, "title_locked": session.title_locked}
