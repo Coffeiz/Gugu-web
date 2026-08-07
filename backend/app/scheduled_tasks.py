@@ -682,9 +682,6 @@ async def _run_agent(
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
 
-    from agent import sanitize
-    from agent.runner import run_scheduled_execution
-
     try:
         return await _run_agent_execution(user_id, uname, prompt, trial)
     finally:
