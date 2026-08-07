@@ -43,8 +43,10 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
     三层匹配优先级，只有最后一层（nicknames 模糊匹配）出现多个候选才触发澄清；
     只有这一层会读 members.json，其余两层直接查消息表，实时、不受反思任务节奏影响：
       ① speaker 本身就是 platform_user_id → 直接精确匹配；
-      ② 实时查询：speaker 精确等于该群里某个 platform_user_id 历史上用过的任意一个
-         platform_user_name（当前显示名或曾用名都算），唯一命中直接用；
+      ② 实时查询：speaker 跟该群里某个 platform_user_id 历史上用过的任意一个
+         platform_user_name（当前显示名或曾用名都算）互为包含关系（谁包含谁都算，
+         天然覆盖精确相等）——群里喊人常用全名的一部分（"小北"称呼"moon_小北"），
+         只做精确匹配会漏掉这种最常见的场景，唯一命中直接用；
       ③ 前两层都未命中，才读 members.json，只在 nicknames 里模糊/包含匹配——这层信息
          只能来自 LLM 提炼，无法实时化，多候选才返回候选列表（load_members 是个
          async 回调，避免大多数命中①②的调用也白读一次 members.json 文件）。
@@ -74,8 +76,12 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
     # ① speaker 本身就是 platform_user_id
     if speaker in live_ids:
         return {"platform_user_id": speaker}
-    # ② 实时按名字/曾用名精确匹配
-    name_hits = name_to_pids.get(speaker) or set()
+    # ② 实时按名字/曾用名互为包含匹配（精确相等是包含关系的特例，天然覆盖）
+    name_hits: dict[str, str] = {}   # pid → 命中时对应的那个 platform_user_name
+    for name, pids in name_to_pids.items():
+        if speaker in name or name in speaker:
+            for pid in pids:
+                name_hits.setdefault(pid, name)
     if len(name_hits) == 1:
         return {"platform_user_id": next(iter(name_hits))}
     if len(name_hits) > 1:
@@ -85,10 +91,10 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
                     "platform_user_id": pid,
                     "matched_by": "name",
                     "matched_text": speaker,
-                    "name": speaker,
+                    "name": matched_name,
                     "last_seen_at": last_seen.get(pid),
                 }
-                for pid in name_hits
+                for pid, matched_name in name_hits.items()
             ),
             key=lambda c: c.get("last_seen_at") or 0,
             reverse=True,

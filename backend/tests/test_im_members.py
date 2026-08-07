@@ -99,6 +99,31 @@ async def test_resolve_speaker_by_name_live_ambiguous(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_resolve_speaker_by_name_substring(db, user_a):
+    """②层需要支持包含匹配，不能只做精确相等——这是本次故障的真实复现场景：
+    群友喊"小北"，本人平台显示名是"moon_小北"，精确匹配会漏掉这种最常见的称呼方式。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "小北", _load_members_stub({}),
+    )
+    assert result == {"platform_user_id": "pid-1"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_by_name_substring_reverse_direction(db, user_a):
+    """反方向包含也要覆盖：speaker 比实际名字更长（比如带了称呼后缀）。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "小北", 0)])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "小北哥", _load_members_stub({}),
+    )
+    assert result == {"platform_user_id": "pid-1"}
+
+
+@pytest.mark.asyncio
 async def test_resolve_speaker_nickname_unique(db, user_a):
     """③层：①②都未命中，才读 members.json 的 nicknames。"""
     from agent.tools.group_context import _resolve_speaker
