@@ -1,7 +1,8 @@
 # 群定时任务完整 loop（imctx + 群记忆注入） PRD
 
-> 状态：📝 草案，待评审
+> 状态：✅ 已实施（代码完成，测试通过，待评审合并）
 > 创建：2026-08-07
+> 最近更新：2026-08-08
 > 关联模块：`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`、`backend/agent/imctx.py`、`backend/agent/im/context_loader.py`
 > 关联文档：[`PRD-IM-6-IM会话复用与消息窗口裁剪.md`](./PRD-IM-6-IM会话复用与消息窗口裁剪.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md)
 
@@ -26,7 +27,7 @@
 
 1. **imctx 注入**：`_run_agent` 检测到 `delivery_targets` 含群目标时，调 `set_im(chat_type="group", chat_id, channel_id, puid)`，让群路径的工具（`group_context_search`）可用。
 2. **群记忆注入**：复用 `agent.im.context_loader.load_im_memory` 的群记忆读取路径，把 `format_im_memory(...)` 拼到 system prompt 末尾，**不破坏** owner 记忆的注入（owner 记忆合理加载，用户接受）。
-3. **作用域隔离**：imctx 用 ContextVar，作用域只在「本轮 execution」任务内；`set_im` 后必须保证同 task 内 execution → report 阶段可见，task 销毁后自然释放，不污染其他任务。
+3. **作用域隔离**：imctx 用 ContextVar，作用域只在「本轮 execution」任务内；`set_im` 后必须保证同 task 内 execution → report 阶段可见，任务结束时用 `finally: imctx.clear()` 显式清理，不污染其他任务。
 4. **不影响私聊/网页任务**：群目标才走这条路径，私聊/Web 任务的现有行为零变化。
 5. **最小化改动**：不重写 `_run_scheduled_once`、不动 `builder.build` 签名、不动 `agent/tools/` 任何工具实现。
 
@@ -72,15 +73,16 @@ try:
     # 现有 execution + report 流程
     ...
 finally:
-    # ContextVar 没有显式 reset API（看 agent/imctx.py），
-    # 但 asyncio task 销毁后 ContextVar 自动释放；同一 task 内的
-    # execution → report 阶段共享 set。
-    pass
+    # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
+    # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
+    if group:
+        from agent import imctx
+        imctx.clear()
 ```
 
-**为什么 finally 里不调 reset**：
-- `agent/imctx.set_im` 内部用 `ContextVar.set`（看 `imctx.py`），返回 token，但 `imctx.py` 没暴露 `reset(token)` 接口。
-- 不引入新接口：保持 imctx 现有 API 不变。asyncio task 销毁时 ContextVar 自然释放，**不污染其他任务**。
+**为什么 finally 里用 `clear()` 而不是不清理**：
+- `agent/imctx.set_im` 内部用 `ContextVar.set`（看 `imctx.py`），`imctx.py` 暴露了 `clear()`（`_im.set(None)`），用它显式清理，避免 ContextVar 残留到 `execute_task` 协程结束（P2 生命周期债务）。
+- 不新增 `reset(token)` 接口：保持 imctx 现有 API 不变（`clear()` 是既有方法，非新增）。
 - 在同一 task 内的 execution + report 阶段共享同一 set 是**期望行为**——report 阶段不调工具，但 imctx 残留不影响 report 文本产出。
 
 **为什么 `message_id=None`**：
@@ -172,7 +174,7 @@ if group_target:
 
 **不动**：
 - `backend/agent/runner.py`（保持 `_run_scheduled_once` 通用性）
-- `backend/agent/imctx.py`（不引入 reset API）
+- `backend/agent/imctx.py`（不引入 reset API；清理用既有 `clear()`，见 §1.2）
 - `backend/agent/tools/`（工具实现零变化，群工具自己从 imctx 读）
 - `backend/agent/im/context_loader.py`（直接复用 `load_im_memory` / `format_im_memory`，不改实现）
 - `backend/agent/context/builder.py`（builder.build 签名不变，群记忆走末尾追加）
@@ -214,7 +216,7 @@ devserver 端到端：
 
 | 风险 | 缓解 |
 |---|---|
-| imctx 残留污染其他任务 | ContextVar 跨 asyncio task 不继承，task 销毁自然释放；不引入 reset |
+| imctx 残留污染其他任务 | `_run_agent` 用 `try/finally` 在任务结束时 `imctx.clear()`，显式清理；私聊/Web 未 set_im 无需清理 |
 | 群 memory 注入让 token 成本上升 | `preview_scope` 返回的内容通常几十~几百 token，低于 owner memory；不调就不注入 |
 | 群 memory 里 owner-only 字段泄漏到群 | `preview_scope` 已经按角色裁剪，role="owner" 看的就是公开 group memory；与 IM 群聊主路径口径一致 |
 | `set_im` 在定时任务路径引入后影响其他 agent 行为 | set_im 只让 `get_im()` 不再为 None；IM 工具内部的 None 兜底（`im or {}`）依然安全 |
