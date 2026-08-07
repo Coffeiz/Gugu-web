@@ -259,18 +259,12 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
     # 会话作用域：bot_id=channel_id、scope_id=chat_id（私聊回退到 puid），与活跃集合同 key。
     bot_id = payload.get("channel_id") or ""
     scope_id = payload.get("chat_id") or platform_user_id
-    # 初始化顺序很关键，跟网关判断"是否在忙"的时机有竞态（code review 发现）：
-    # 旧顺序是 set_state → clear_cancel → mark_active——但网关从 set_state 落地那一刻起
-    # 就认为这个会话"正在忙"，如果用户恰好在 set_state 之后、clear_cancel 之前发"取消"，
-    # 网关会写入取消标志并回复"取消了"，紧接着这里的 clear_cancel 又把刚写进去的标志删掉，
-    # 任务却继续跑——ACK 说取消成功，实际没取消。
-    # 改成 clear_cancel → mark_active → set_state：state 只有在清残留、注册活跃者都做完后
-    # 才落地为 THINKING，网关最早也要等到这一刻才会认为"在忙"，此时 clear_cancel 早已执行
-    # 完毕，不会再把用户这之后发的取消标志清掉。
-    await runtime_state.clear_cancel(platform, bot_id, scope_id, platform_user_id)
-    # 记录活跃 loop 的发起者 puid，供网关判断「其他用户取消」的权限。
-    await runtime_state.mark_active(platform, bot_id, scope_id, platform_user_id)
-    await runtime_state.set_state(
+    # clear_cancel + mark_active + set_state 三步用一次 Redis 端原子操作完成
+    # （runtime_state.init_activity），外部不会观察到"取消已清、但状态还没变成
+    # THINKING"的中间态——见该函数文档，这是 code review 复审指出的残留竞态窗口：
+    # 顺序调用三条独立命令即使顺序正确，命令之间仍有极小间隙，用户此时发"取消"会
+    # 因为网关读到的 state 还是 IDLE（判断依据是 state != IDLE）而被当成普通消息。
+    await runtime_state.init_activity(
         platform, bot_id, scope_id, platform_user_id, runtime_state.THINKING
     )
     typing_indicator = await wechat.start_typing(payload)

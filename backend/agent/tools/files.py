@@ -1071,7 +1071,10 @@ def _build_pinned_request(client, method: str, url: str):
     netloc = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
     pinned_url = parsed._replace(netloc=netloc).geturl()
     extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
-    req = client.build_request(method, pinned_url, headers={"Host": parsed.hostname}, extensions=extensions)
+    # Host 头带端口：非默认端口时（如 :8443）省略端口会让部分虚拟主机/CDN 按错误的
+    # 站点路由（code review 发现）；有 parsed.port 时原样带上，用默认端口时留纯域名。
+    host_header = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+    req = client.build_request(method, pinned_url, headers={"Host": host_header}, extensions=extensions)
     return req, None
 
 
@@ -1124,6 +1127,13 @@ async def _send_file_from_url(user_id, url: str, title: str):
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
             follow_redirects=False,
+            # 禁用连接池 keep-alive：pin 到 IP 后，重定向多跳可能解析到同一个 IP（CDN
+            # 场景很常见），httpcore 按 origin（这里全是同一个 IP:port）复用连接池——
+            # 但 sni_hostname 只在新建 TLS 连接时生效，复用已有连接不会重新握手，会
+            # 出现"握手时验证了 A 的证书，之后却拿这条连接发 Host: B 的请求"这种
+            # TLS hostname 隔离缺口（code review 发现）。这个下载器最多才 4 跳，
+            # 完全没必要为了 keep-alive 收益承担这个风险，禁掉最简单也最彻底。
+            limits=httpx.Limits(max_keepalive_connections=0),
         ) as client:
             cur = url
             req, reason = _build_pinned_request(client, "GET", cur)
