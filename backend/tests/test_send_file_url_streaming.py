@@ -17,6 +17,11 @@ MAX_BYTES = im_files._SEND_URL_MAX_BYTES
 CHUNK = 1024 * 1024   # 1MB
 
 
+def _fake_build_pinned_request(client, method, url):
+    """绕过真实 DNS 解析/IP pinning，测试只关心 streaming 限流逻辑本身。"""
+    return client.build_request(method, url), None
+
+
 class _FakeResp:
     """流式响应：连续吐 chunk，记录被消费的字节数。
 
@@ -79,7 +84,7 @@ def _run(url: str, resp: _FakeResp):
 ])
 def test_streaming_aborts_near_limit_not_full_body(monkeypatch, total_bytes):
     """chunked 响应连续吐 >15MB：读取到上限附近就中止，不消费完整响应。"""
-    monkeypatch.setattr(im_files, "_url_is_safe", lambda url: None)
+    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
     resp = _FakeResp(total_bytes)
     client = _FakeClient(resp)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client)
@@ -97,7 +102,7 @@ def test_streaming_aborts_near_limit_not_full_body(monkeypatch, total_bytes):
 
 def test_streaming_accepts_under_limit(monkeypatch):
     """小于上限的图片正常下载成功。"""
-    monkeypatch.setattr(im_files, "_url_is_safe", lambda url: None)
+    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
     resp = _FakeResp(CHUNK)   # 1MB
     client = _FakeClient(resp)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client)
@@ -111,7 +116,7 @@ def test_streaming_accepts_under_limit(monkeypatch):
 
 def test_content_length_over_limit_rejected_before_read(monkeypatch):
     """Content-Length 声明就超限：不读 body 直接拒绝。"""
-    monkeypatch.setattr(im_files, "_url_is_safe", lambda url: None)
+    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
     resp = _FakeResp(0)   # body 为空，但声明 Content-Length 超限
     resp.headers["content-length"] = str(MAX_BYTES * 2)
     client = _FakeClient(resp)

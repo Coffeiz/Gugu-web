@@ -72,14 +72,21 @@ def get_state_sync(platform, bot_id, scope_id, puid) -> str:
 
 
 # ── 取消标志：网关置（sync/async）、core 协作检查并清 ────────────────────
-async def request_cancel(platform, bot_id, scope_id, puid) -> None:
+async def request_cancel(platform, bot_id, scope_id, puid) -> bool:
+    """写取消标志；四个 key 有一个缺失就静默 no-op（返回 False），调用方必须检查
+    返回值再决定要不要记"取消已生效"——否则会出现日志说写成功、实际什么都没发生
+    的假阳性（code review 发现的真实 bug：fallback 路径漏传 bot_id/scope_id）。"""
     if platform and bot_id and scope_id and puid:
         await get_redis().set(_ckey(platform, bot_id, scope_id, puid), "1", ex=STATE_TTL)
+        return True
+    return False
 
 
-def request_cancel_sync(platform, bot_id, scope_id, puid) -> None:
+def request_cancel_sync(platform, bot_id, scope_id, puid) -> bool:
     if platform and bot_id and scope_id and puid:
         get_redis_sync().set(_ckey(platform, bot_id, scope_id, puid), "1", ex=STATE_TTL)
+        return True
+    return False
 
 
 async def is_cancelled(platform, bot_id, scope_id, puid) -> bool:

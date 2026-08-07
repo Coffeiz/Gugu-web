@@ -1051,6 +1051,30 @@ def _url_is_safe(url: str) -> str | None:
     return url_is_safe(url)
 
 
+def _build_pinned_request(client, method: str, url: str):
+    """校验 host 并把连接 pin 到校验时解析到的那个 IP，返回 (request, error)。
+
+    单纯"校验一次、httpx 连接时再 resolve 一次"堵不住 DNS rebinding（攻击者控制的域名
+    可以在两次解析之间把 A 记录从公网 IP 换成内网 IP，见 url_security.resolve_pinned_ip
+    文档）。这里改成用解析到的 IP 直接建连，Host 头 / TLS SNI 仍用原始域名，保证证书
+    校验和路由都不受影响，只是"连去哪"这件事不再交给 httpx 自己二次决定。
+    """
+    from urllib.parse import urlparse
+
+    from app.core.url_security import resolve_pinned_ip
+
+    ip, error = resolve_pinned_ip(url)
+    if error:
+        return None, error
+    parsed = urlparse(url)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    netloc = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
+    pinned_url = parsed._replace(netloc=netloc).geturl()
+    extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
+    req = client.build_request(method, pinned_url, headers={"Host": parsed.hostname}, extensions=extensions)
+    return req, None
+
+
 def _fmt_age(ttl_left: int, total_ttl: int) -> str:
     """按剩余 TTL 反推大致存了多久（暂存无绝对时间戳，只能这样估）。"""
     if ttl_left is None or ttl_left < 0:
@@ -1090,21 +1114,21 @@ async def _send_file_from_url(user_id, url: str, title: str):
     才读 body，连接已关会抛 ReadError。原则：创建 client → 获取 streaming response →
     完整消费/主动中止 → close response → 最后才 close client。
     """
-    reason = _url_is_safe(url)
-    if reason:
-        return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-
     import httpx
     from urllib.parse import urljoin
     try:
-        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过上面的 _url_is_safe（SSRF）。
+        # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过校验（SSRF）。
         # stream=True 只读响应头不读 body，避免 redirect 探测阶段就把大 body 读进内存。
+        # 每一跳都用 _build_pinned_request 把"校验的地址"和"实际连接的地址"锁定成同一个 IP，
+        # 防 DNS rebinding（见该函数文档）。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
             follow_redirects=False,
         ) as client:
             cur = url
-            req = client.build_request("GET", cur)
+            req, reason = _build_pinned_request(client, "GET", cur)
+            if reason:
+                return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
             resp = await client.send(req, stream=True)
             for _ in range(3):   # 最多跟 3 跳
                 if resp.status_code not in (301, 302, 303, 307, 308):
@@ -1114,10 +1138,9 @@ async def _send_file_from_url(user_id, url: str, title: str):
                 if not loc:
                     break
                 cur = urljoin(cur, loc)
-                reason = _url_is_safe(cur)   # 每一跳的目标都重新过内网校验
+                req, reason = _build_pinned_request(client, "GET", cur)   # 每一跳的目标都重新解析+校验+pin
                 if reason:
                     return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-                req = client.build_request("GET", cur)
                 resp = await client.send(req, stream=True)
 
             # 最终 response 的完整消费留在 client 生命周期内（见 docstring）。
