@@ -134,6 +134,16 @@ class StorageBackend(ABC):
             return None
         return StorageObjectInfo(size=len(await self.get(key)))
 
+    def local_path(self, key: str) -> "Path | None":
+        """若本后端就是本地文件系统，返回真实路径供外部工具（ffmpeg 等）直接读取，
+        避免先整个读进内存再落一份临时文件。远程后端（OSS）返回 None。"""
+        return None
+
+    async def download_to_file(self, key: str, dest: "Path") -> None:
+        """把对象下载到本地文件 dest。默认实现整个读进内存再落盘——小文件够用；
+        大文件（如视频）应走各后端的流式覆盖版本，避免内存里缓冲整个对象。"""
+        dest.write_bytes(await self.get(key))
+
     # ── 文件夹生命周期钩子（P1.1）──────────────────────────────────────────────
     # Local 真 mkdir/mv/rm/清祖先；**对象存储无「空目录」概念、目录由 key 隐含 → 默认 no-op**，
     # 因此 FileService 直接调这些钩子、不写 `if isinstance(storage, Local)`（物理动作由 backend 自决）。
@@ -259,6 +269,10 @@ class LocalStorageBackend(StorageBackend):
             s = p.stat()
             return StorageObjectInfo(size=s.st_size, mtime=s.st_mtime)
         return await asyncio.to_thread(_st)
+
+    def local_path(self, key: str) -> Path | None:
+        p = self.root / key
+        return p if p.is_file() else None
 
     async def ensure_folder(self, path: str) -> None:
         def _mk():
@@ -388,6 +402,32 @@ class OSSStorageBackend(StorageBackend):
             self.bucket.head_object,
             self.pfx + key,
         )
+
+    async def stat(self, key: str) -> StorageObjectInfo | None:
+        """用 head_object 查元信息，不下载对象本体（P1.1 默认实现是 exists+get，
+        大文件光是查大小就要整个下载一遍——真实故障：200MB 视频光 stat 就拉 200MB）。"""
+        import oss2.exceptions as oss_exc
+
+        try:
+            head = await self.head(key)
+        except oss_exc.NoSuchKey:
+            return None
+        if head.content_length is None:
+            return None
+        return StorageObjectInfo(size=head.content_length, mtime=head.last_modified, checksum=head.etag)
+
+    async def download_to_file(self, key: str, dest: Path) -> None:
+        """流式下载到本地文件，不把整个对象缓冲进内存（大文件如视频用；配合
+        stat() 用 head_object，一次 get_video 只产生一次真正的数据传输，
+        而不是旧实现里「先整个 get() 探大小、再整个 get() 一遍读内容」的两倍流量）。"""
+        import shutil
+
+        def _dl():
+            result = self.bucket.get_object(self.pfx + key)
+            with open(dest, "wb") as f:
+                shutil.copyfileobj(result, f, length=1024 * 1024)
+
+        await _oss_retry("storage.oss.download_to_file", "oss.get_timeout", "文件读取失败，请稍后重试", _dl)
 
     async def list_keys(self) -> list[str]:
         import asyncio, oss2

@@ -115,6 +115,80 @@ async def test_oss_get_does_not_retry_on_unrelated_exception():
     assert calls["n"] == 1
 
 
+# ── storage: OSSStorageBackend.stat/download_to_file/local_path（PRD-LLM-3 Phase 5 复审修复）──
+
+def _fake_head_result(size, mtime=1700000000, etag="abc"):
+    return SimpleNamespace(content_length=size, last_modified=mtime, etag=etag)
+
+
+async def test_oss_stat_uses_head_object_not_full_download():
+    """stat() 必须走 head_object 元信息查询，不能像默认实现那样整个 get() 下来只为量大小
+    （真实故障：200MB 视频光 stat 一次就要拉 200MB）。"""
+    backend = _make_oss_backend()
+    get_calls = {"n": 0}
+
+    def fake_head(key):
+        return _fake_head_result(12345)
+
+    def fake_get(key):
+        get_calls["n"] += 1
+        raise AssertionError("stat() 不应该调用 get_object")
+
+    backend.bucket.head_object = fake_head
+    backend.bucket.get_object = fake_get
+    info = await backend.stat("k")
+    assert info.size == 12345
+    assert info.mtime == 1700000000
+    assert get_calls["n"] == 0
+
+
+async def test_oss_stat_returns_none_when_missing():
+    import oss2.exceptions as oss_exc
+    backend = _make_oss_backend()
+
+    def fake_head(key):
+        raise oss_exc.NoSuchKey(404, {}, b"", {"Code": "NoSuchKey"})
+
+    backend.bucket.head_object = fake_head
+    assert await backend.stat("missing") is None
+
+
+async def test_oss_download_to_file_streams_without_full_buffer(tmp_path):
+    """download_to_file 用 shutil.copyfileobj 分块写盘，不应该整个读进一个 bytes 变量。"""
+    backend = _make_oss_backend()
+
+    class _FakeStream:
+        def __init__(self, data):
+            self._chunks = [data[i:i + 4] for i in range(0, len(data), 4)]
+
+        def read(self, size=-1):
+            return self._chunks.pop(0) if self._chunks else b""
+
+    payload = b"0123456789abcdef"
+
+    def fake_get(key):
+        return _FakeStream(payload)
+
+    backend.bucket.get_object = fake_get
+    dest = tmp_path / "out.mp4"
+    await backend.download_to_file("k", dest)
+    assert dest.read_bytes() == payload
+
+
+def test_local_storage_local_path_returns_real_path(tmp_path):
+    from app.services.storage import LocalStorageBackend
+    backend = LocalStorageBackend(tmp_path)
+    (tmp_path / "u").mkdir()
+    (tmp_path / "u" / "a.mp4").write_bytes(b"x")
+    assert backend.local_path("u/a.mp4") == tmp_path / "u" / "a.mp4"
+    assert backend.local_path("u/missing.mp4") is None
+
+
+def test_oss_storage_local_path_is_none():
+    backend = _make_oss_backend()
+    assert backend.local_path("k") is None
+
+
 # ── voice: transcribe() ASR 调用 ────────────────────────────────────────────────
 
 def _voice_settings():

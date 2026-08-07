@@ -1,6 +1,6 @@
 # Provider 供应商适配层整体整理 PRD
 
-> 状态：🔲 待评估（主体重构仅完成现状摸底与方案设计，未开始实现；Phase 5 独立追加项已完成，见下）
+> 状态：🔲 待评估（主体重构仅完成现状摸底与方案设计，未开始实现；Phase 5/6 独立追加项已完成，见下）
 > 创建：2026-08-06
 > 最近更新：2026-08-08
 > 所属层：LLM / Provider 适配层
@@ -19,7 +19,8 @@
 | Phase 2：媒体层迁入适配器（纯重构） | 🔲 待评估 | 把 `chat_attach.py` 的视频探测/压缩/mm_file 上传迁进适配器，`chat_attach.py` 改调用 `adapter_for(ai)`。 |
 | Phase 3：流式清洗/音频转码/鉴权等能力位收拢（纯重构） | 🔲 待评估 | 把 `sanitize.py` 的 MiniMax 清洗、`media_transcode.py` 的 mimo 音频白名单、`agent_admin.py` 的 `_mimo` 鉴权判断等收拢进适配器能力位。 |
 | Phase 4：视频时长限制（行为变化） | 🔲 待评估 | 在 `MediaLimits` 加 `max_duration_s=120`，ffprobe 读 duration，超 2 分钟拒绝。 |
-| Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成 | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
+| Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成（Phase 6 已重做） | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
+| Phase 6（独立追加）：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩 | ✅ 已完成 | 外部 code review 指出 Phase 5 实现有 3 个问题：①超大视频整个读进内存，OSS 后端因 `stat()` 默认实现是 exists+get 还要多下载一遍；②复用的 `_compress_video` 目标码率是给"发送给 MiniMax"设计的（1080p 5Mbps），跟"读取只需要 1 帧画面+前 5 分钟音频"的真实需求不匹配，长视频低码率反而可能越压越大；③新增测试没有真正断言 `read_video` 的最终结果。修复方案见 FR-LLM-3-6。 |
 
 ---
 
@@ -64,6 +65,8 @@ Gugu 后端接入了多家 LLM 供应商（Anthropic 原生、MiniMax、小米 M
 用户反馈"想让咕咕读文件库里的一个视频，太大读不了"，排查发现视频压缩逻辑（`chat_attach.py` 的 `_probe_video`/`_compress_video`/`_should_compress_video`）只在**用户发视频给咕咕**这条路径接了进去；`agent/tools/file_readers.py` 的 `read_video`（`read_file` 工具读文件库已有视频时走这里）只做硬性大小检查（`MEDIA_READ_MAX_BYTES = 36MB`），超过直接拒绝，从未调用过压缩函数。查了本 PRD 全文，只讨论"发送"场景，没有提到"读取已有视频"这个场景——不是有意排除在范围外的产品决策，是技术遗漏。
 
 这个修复不依赖 Phase 1-4 的 `providers/` 目录化重构（`_compress_video` 等函数当前就是不带 provider 参数的纯 ffmpeg 操作，可以直接被 `file_readers.py` 调用），所以单独作为 Phase 5 先落地，不用等大重构。详见 FR-LLM-3-5。
+
+Phase 5 的实现（复用 `_compress_video` 整段压缩）被外部 code review 指出跟真实需求不匹配，已在 Phase 6 重做为直接 ffmpeg 抽取，详见 FR-LLM-3-6。
 
 ### 非目标
 
@@ -151,13 +154,28 @@ Gugu 后端接入了多家 LLM 供应商（Anthropic 原生、MiniMax、小米 M
 - 压缩不解决时长问题（MiniMax 对超长视频照样拒），所以超时长的视频**不压缩直接拒绝**。
 - 验收标准：新增测试覆盖「超 2 分钟拒绝」「≤2 分钟正常处理」「模型配置覆盖默认值」。
 
-### FR-LLM-3-5：`read_file` 读取视频复用压缩（✅ 已完成，独立于 Phase 1-4）
+### FR-LLM-3-5：`read_file` 读取视频复用压缩（✅ 已完成，独立于 Phase 1-4；实现已被 Phase 6 取代，见 FR-LLM-3-6）
 
 - `file_readers.py` 新增 `_load_video_bytes(file)`：物理大小 ≤ `MEDIA_READ_MAX_BYTES` 直接返回原始字节；超过则下载后调用 `chat_attach._compress_video` 压缩一次，压完仍超限才报错（"压缩后仍超出读取上限"）。
 - 压缩产物固定是 mp4 容器（`_compress_video` 内部输出 `.out.mp4`），传给后续 `_extract_frame`/`_extract_audio` 的扩展名统一改成 `"mp4"`，不沿用原始扩展名（比如 `.mov`），避免 ffmpeg 按错误容器格式解析。
 - 压缩产物不写回文件库、不落盘存储——只在这次 `read_file` 调用的生命周期内使用（提取一帧画面 + 转写音频），不改变存储里的原文件。
 - `read_video` 改用 `_load_video_bytes`；`read_audio` 不受影响，继续用原来的 `_media_size_error`（音频没有类似的压缩手段，体积检查逻辑不变）。
 - 不判断是否"值得压"（不调用 `_should_compress_video`）——进这条分支时已经确定超过读取上限，直接压缩，没有"超限但不需要压"的中间状态。
+
+### FR-LLM-3-6：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩（✅ 已完成）
+
+外部 code review 对 Phase 5 实现提出 3 个问题，逐条对应修复：
+
+1. **P1/P2 大视频整段进内存 + OSS 双下载**：`_load_video_bytes()` 无论多大都先 `get()` 整个对象；`OSSStorageBackend` 没覆写 `stat()`，继承的默认实现是 `exists→整个 get()→len(...)`，等于一次读取要从 OSS 拉两遍。
+   修复：
+   - `OSSStorageBackend` 新增 `stat()` 覆写，改用已有的 `head_object`（`head()` 方法）查真实大小，不下载对象本体。
+   - `StorageBackend` 新增 `local_path(key) -> Path | None`（默认 `None`）和 `download_to_file(key, dest)`（默认整读整写，小文件兜底）两个接口；`LocalStorageBackend.local_path` 返回真实路径（零拷贝）；`OSSStorageBackend.download_to_file` 用 `shutil.copyfileobj` 流式下载到临时文件，不在内存里缓冲整个对象。
+2. **P2 复用的压缩参数不是为读取设计的**：`_compress_video` 固定压 1080p 5Mbps h264（目标是给 MiniMax 上传用，边界是 45MB base64/90MB mm_file），而 `read_video` 实际只需要第 1 秒附近一帧画面 + 前 300 秒音频；长视频低码率场景下反而可能压完更大，且要等一次完整转码（最长 180 秒 timeout）才知道白等。
+   修复：彻底不再走"整段压缩"这条路。新增 `_materialize_video(file)`：本地存储直接用 `local_path()` 给的真实路径；远程存储用 `download_to_file()` 流式落一份临时文件。`_extract_frame`/`_extract_audio`/`_run_ffmpeg` 改成直接对这个磁盘文件跑 ffmpeg（`-ss 1s` 截一帧 + 前 300 秒转 wav），不再需要先生成一份完整的压缩视频。`MEDIA_READ_MAX_BYTES` 不再是视频读取的门禁（改用于 `read_audio`，音频转写仍需整段进内存）——视频大小上限交给 ffmpeg 处理磁盘文件，真正进 Python 内存的只有 ≤8MB 的画面帧和 ≤16MB 的音频。
+3. **P2 测试没有真正验证 `read_video` 的最终结果**：原测试 mock 压缩产物后只断言 `_extract_frame`/`_extract_audio` 收到了参数，没检查 `read_video` 的返回值——而 fake audio 返回 `None` 加 `vision_ready=False` 时，真实代码路径其实会返回 `{"error": ...}`，测试没揭穿这一点。
+   修复：`tests/test_file_readers.py` 重写为 `test_read_video_succeeds_via_direct_ffmpeg_extraction`（mock 音频转写返回真实文本，断言 `result["content"]` 真的包含转写结果）+ `test_read_video_downloads_remote_storage_to_temp_file`（断言远程存储走了 `download_to_file` 而不是 `get()`，且临时文件用完即删）。
+
+未在本次范围内改动：`chat_attach._compress_video`（发送给 MiniMax 用，目标是"生成一份可用于上传的压缩视频"，跟 `read_video` "只抽取有限画面/音频"是不同目标，不适合共用同一段压缩逻辑；`read_video` 改造后不再依赖它，两条路径不再有代码重叠，也就没有需要维护的重复实现）。
 
 ---
 
@@ -202,7 +220,8 @@ backend/agent/providers/
 - 新增：`tests/test_providers_media.py`（覆盖 `supports_video`/`supports_audio`/`video_limits`/`audio_native_exts`/`media_raw_max`/`prepare_video` 模板方法/`build_video_block`/`build_audio_block`）、`tests/test_video_duration_limit.py`（覆盖时长限制）、`tests/test_providers_sanitize.py`（覆盖 `stream_sanitize_markers` 各适配器返回值）。
 - 回归：`tests/test_providers.py`、`tests/test_stream_round_retry.py`、`tests/test_chat_attach_video.py`、`tests/test_stream_sanitize.py`、`tests/test_llm_cache_capability.py` 全部应零改动通过（或仅改 import 路径）。
 - 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest` 兜底跑一遍。
-- **Phase 5（已完成）**：`tests/test_file_readers.py` 新增/改造 3 个用例——超限视频下载后走压缩（`test_read_video_compresses_oversized_file`）、压缩后仍超限报错（`test_read_video_rejects_when_still_too_large_after_compress`）、`read_audio` 的原有行为不受影响（`test_media_reader_uses_physical_size_before_get` 改成测 `read_audio`）。后端全量测试 773 passed。
+- **Phase 5（已完成，实现已被 Phase 6 取代）**：`tests/test_file_readers.py` 新增/改造 3 个用例——超限视频下载后走压缩（`test_read_video_compresses_oversized_file`）、压缩后仍超限报错（`test_read_video_rejects_when_still_too_large_after_compress`）、`read_audio` 的原有行为不受影响（`test_media_reader_uses_physical_size_before_get` 改成测 `read_audio`）。后端全量测试 773 passed。
+- **Phase 6（已完成）**：`tests/test_file_readers.py` 重写为直接断言 `read_video` 最终结果（`test_read_video_succeeds_via_direct_ffmpeg_extraction`）+ 远程存储走流式下载临时文件（`test_read_video_downloads_remote_storage_to_temp_file`），`_run_ffmpeg`/`_extract_frame`/`_extract_audio` 相关用例改为传入 `Path` 而非 `bytes`。`tests/test_p2b_io_retry.py` 新增 6 个用例覆盖 `OSSStorageBackend.stat()`（走 `head_object` 不下载）/`download_to_file()`（流式写盘）/`local_path()`（OSS 恒 `None`）与 `LocalStorageBackend.local_path()`（零拷贝真实路径）。后端全量测试 754 passed。
 
 ### 部署与灰度
 
