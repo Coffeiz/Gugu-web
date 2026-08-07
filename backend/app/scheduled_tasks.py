@@ -264,8 +264,8 @@ async def execute_task(task_id: int, is_trial: bool = False) -> dict:
                 "不要在正文里用 ![]() 这类 markdown 图片语法或「[图片]」占位符——那样发不出真图，"
                 "图片必须靠 send_file 实际发送。"
             )
-            text, files = await _run_agent(uid, prompt, target_map=target_map, trial=is_trial)
-            result = await deliver_to_channels(uid, name, text, chans, target_map, files=files)
+            text, files, status = await _run_agent(uid, prompt, target_map=target_map, trial=is_trial)
+            result = await deliver_to_channels(uid, name, text, chans, target_map, files=files, status=status)
             if not is_trial and is_once:
                 if _delivery_succeeded(result):
                     await _delete_completed_once(task_id, uid)
@@ -333,14 +333,19 @@ async def deliver_to_channels(
     chans: set,
     delivery_targets: dict | None = None,
     files: list | None = None,
+    status: str = "success",
 ) -> dict:
     """把 text（+ 可选 files，execution 阶段 send_file 产出的 _artifact 列表）投递到选定渠道，
     返回 {渠道: 状态}。供定时任务执行 / 提醒测试复用。
-    chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。"""
+    chat=web 历史别名；im=发到用过的所有 IM 平台（旧任务兼容）。
+
+    status：execution 的 report status（success/partial/failed），决定顶部 title 后缀
+    （⏰ 任务名（部分完成）），正文保持干净。"""
     result: dict = {}
+    title = f"{name}{_STATUS_PREFIX.get(status, '')}"
     if {"web", "chat"} & chans:
         from app.core import events as _ev
-        await _ev.publish(uid, notification={"title": name, "content": text})
+        await _ev.publish(uid, notification={"title": title, "content": text})
         # 网页通知目前只是纯文字气泡，不支持带图——files 非空时如实告知，不能跟 IM 那边
         # 一样标"已发送"，否则「配图任务只选了网页渠道」会静默丢图却显示成功。
         result["web 通知"] = "已发送" if not files else "已发送（网页通知不支持附件，图片未随通知显示）"
@@ -369,7 +374,7 @@ async def deliver_to_channels(
             "has_channel_id": bool((target or {}).get("channel_id")),
         }, ensure_ascii=False), flush=True)
         try:
-            sent = await _deliver_im(uid, f"⏰ {name}\n\n{text}", platform, target)
+            sent = await _deliver_im(uid, f"⏰ {title}\n\n{text}", platform, target)
             print(json.dumps({
                 "event": "after-send",
                 "platform": platform,
@@ -387,7 +392,7 @@ async def deliver_to_channels(
                 # files 一起带进去，web 端打开这个 session 也能看到图片，不会出现「群里收到图但
                 # web 历史里只有文字」的不一致。
                 try:
-                    await _persist_push_im(uid, platform, name, text, target, files=files)
+                    await _persist_push_im(uid, platform, title, text, target, files=files)
                 except Exception as e:
                     diag_log("app.scheduled_tasks.persist_push_im", e)
                     print(f"[sched] {platform} 推送入会话失败: {redact(type(e).__name__)}", flush=True)
@@ -599,7 +604,8 @@ _REPORT_SCHEMA_INSTRUCTION = (
     "}"
 )
 
-# status 决定投递正文前缀（PRD-SCHEDULE-2 FR-SCHED-3）
+# status 决定投递 title 后缀（PRD-SCHEDULE-2 FR-SCHED-3）。
+# 前缀并入顶部 title（⏰ 任务名（部分完成）），正文保持干净，避免与 title 重复。
 _STATUS_PREFIX = {
     "success": "",
     "partial": "（部分完成）",
@@ -616,17 +622,21 @@ def _parse_report_schema(execution_text: str) -> dict:
     return _parse_json(execution_text or "")
 
 
-def _render_report_summary(schema: dict, fallback: str) -> str:
-    """根据 schema 渲染投递正文。status 决定前缀，summary 为空时 fallback 到原始文本。
+def _render_report_summary(schema: dict, fallback: str) -> tuple[str, str]:
+    """根据 schema 渲染投递正文，返回 (summary, status)。
+
+    summary 为空时 fallback 到原始文本；status 缺失或未知按 success 处理。
+    status 前缀由投递层并入顶部 title（见 deliver_to_channels），正文不带前缀。
 
     PRD-SCHEDULE-2 FR-SCHED-2/FR-SCHED-3。files 不在 schema 里，由调用方从
     _collect 收集的工具事件拼出。"""
     summary = (schema.get("summary") or "").strip()
     if not summary:
-        return fallback
+        return fallback, "success"
     status = str(schema.get("status") or "success").lower()
-    prefix = _STATUS_PREFIX.get(status, "")
-    return f"{prefix}{summary}" if prefix else summary
+    if status not in _STATUS_PREFIX:
+        status = "success"
+    return summary, status
 
 
 async def _run_agent(
@@ -635,7 +645,7 @@ async def _run_agent(
     *,
     target_map: dict | None = None,
     trial: bool = False,
-) -> tuple[str, list]:
+) -> tuple[str, list, str]:
     """编排定时任务的 execution + report schema 解析（PRD-SCHEDULE-2）。
 
     流程：
@@ -643,10 +653,10 @@ async def _run_agent(
     2. execution 阶段（run_scheduled_execution）：完整 AgentLoop + 工具，prompt 末尾
        追加 _REPORT_SCHEMA_INSTRUCTION 要求模型最后一轮输出 report schema JSON。
     3. execution 成功后用 _parse_report_schema 解析 schema，_render_report_summary 渲染
-       投递正文（status 决定前缀）。schema 解析失败：重试一次 execution，仍失败 fallback
-       到 execution 原文——不再调独立 report LLM。
-    4. 返回 (投递正文, files)：files 由 _collect 从 send_file 工具事件收集（不在 schema
-       里），投递层负责把附件发到 IM 群。
+       投递正文（返回 summary + status）。schema 解析失败：重试一次 execution，仍失败
+       fallback 到 execution 原文——不再调独立 report LLM。
+    4. 返回 (投递正文, files, status)：files 由 _collect 从 send_file 工具事件收集（不在
+       schema 里），投递层负责把附件发到 IM 群；status 由投递层并入顶部 title。
 
     target_map：任务的 delivery_targets（dict）。如果命中群目标，先 set_im +
     拼群 memory 到 user prompt 开头（_inject_group_context）。私聊/Web 任务不传或
@@ -700,7 +710,7 @@ async def _run_agent(
         )
         if execution_failed:
             if mutated or round_no >= max_rounds:
-                return sanitize.strip_disallowed_emoji(last_text), files
+                return sanitize.strip_disallowed_emoji(last_text), files, "failed"
             logger.info(
                 "[scheduled-phase] %s",
                 json.dumps({"event": "execution-retry", "next_round": round_no + 1}, ensure_ascii=False),
@@ -716,17 +726,17 @@ async def _run_agent(
                     "[scheduled-phase] %s",
                     json.dumps({"event": "schema-fallback", "round": round_no, "reason": "parse-failed"}, ensure_ascii=False),
                 )
-                return sanitize.strip_disallowed_emoji(execution_text or last_text), files
+                return sanitize.strip_disallowed_emoji(execution_text or last_text), files, "failed"
             logger.info(
                 "[scheduled-phase] %s",
                 json.dumps({"event": "schema-parse-retry", "next_round": round_no + 1}, ensure_ascii=False),
             )
             continue
 
-        summary = _render_report_summary(schema, execution_text or last_text)
-        return sanitize.strip_disallowed_emoji(summary), files
+        summary, status = _render_report_summary(schema, execution_text or last_text)
+        return sanitize.strip_disallowed_emoji(summary), files, status
 
-    return sanitize.strip_disallowed_emoji(last_text), files
+    return sanitize.strip_disallowed_emoji(last_text), files, "failed"
 
 
 # 渠道 → IM 平台标识（worker 里 QQ 的 platform 是 "qq"）

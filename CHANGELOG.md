@@ -9,10 +9,11 @@
 
 ### 改进
 
-- **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」前缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
+- **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」title 后缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
 
 ### 修复
 
+- **定时任务 status 前缀并入顶部 title**（`backend/app/scheduled_tasks.py`）：`status` 的「（部分完成）/（执行失败）」提示从正文开头移到顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与已有的任务 title 重复。
 - **群定时任务误发慢工具进度声明**（`backend/agent/tools/base.py`）：群定时任务为取群 memory 也会 `set_im`（但 `message_id=None`），导致工具执行前的「我去找张图。」这类进度声明被误发到群里；现在仅对「用户主动发起的 IM 消息」（`message_id` 非空）发进度声明，定时任务无具体触发消息则跳过，过渡话术统一收进最终报告。
 
 ---

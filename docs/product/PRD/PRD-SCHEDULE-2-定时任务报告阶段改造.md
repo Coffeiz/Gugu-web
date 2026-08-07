@@ -63,16 +63,16 @@ report 阶段当初的设计理由（PRD-SCHEDULE-1 §1）：把 execution 的�
 ### FR-SCHED-2：report 模块纯代码渲染（🔲 待评估）
 
 - **触发条件**：execution 成功后。
-- **预期行为**：`_run_agent` 用 `_parse_json` 解析 execution 最后一轮文本为 schema，取 `summary` 作为投递正文，`status` 决定措辞，`files` 由工具事件收集。
+- **预期行为**：`_run_agent` 用 `_parse_json` 解析 execution 最后一轮文本为 schema，取 `summary` 作为投递正文，`status` 决定顶部 title 后缀，`files` 由工具事件收集。
 - **边界情况**：解析失败 → 重试一次 execution，再失败 fallback 到原始文本。
 
-### FR-SCHED-3：status 决定投递措辞（🔲 待评估）
+### FR-SCHED-3：status 决定投递 title 后缀（🔲 待评估）
 
 - **触发条件**：execution 产出 schema 含 `status` 字段。
-- **预期行为**：
-  - `success`：正常投递 `summary`。
-  - `partial`：在 `summary` 前加「部分完成」提示。
-  - `failed`：在 `summary` 前加失败说明。
+- **预期行为**：status 前缀并入顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与 title 重复。
+  - `success`：title 无后缀，正常投递 `summary`。
+  - `partial`：title 加「（部分完成）」后缀。
+  - `failed`：title 加「（执行失败）」后缀。
 - **边界情况**：`status` 缺失或未知 → 按 `success` 处理。
 
 ### FR-SCHED-4：附件随正文投递（🔲 待评估）
