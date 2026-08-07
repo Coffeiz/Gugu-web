@@ -115,7 +115,18 @@ async def decide_im_shortcut(
         diag_log("agent.im.shortcut.read", exc)
         print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
         return {"action": "run"}
-    return router.decide(text, state, awaiting)
+    dec = router.decide(text, state, awaiting)
+    if dec.get("action") == "cancel":
+        # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
+        # （busy=False 时 router 不会返回 cancel，会当普通消息入队）。puid 用指纹脱敏。
+        from agent.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.im.shortcut.cancel_decided",
+            f"platform={platform} puid={fingerprint(platform_user_id)} "
+            f"state={state} awaiting={awaiting}",
+        )
+    return dec
 
 
 def decide_im_shortcut_sync(
@@ -138,7 +149,16 @@ def decide_im_shortcut_sync(
         diag_log("agent.im.shortcut.read_sync", exc)
         print(f"[im] shortcut 状态读取失败，继续入队: {redact(type(exc).__name__)}", flush=True)
         return {"action": "run"}
-    return router.decide(text, state, awaiting)
+    dec = router.decide(text, state, awaiting)
+    if dec.get("action") == "cancel":
+        from agent.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.im.shortcut.cancel_decided_sync",
+            f"platform={platform} puid={fingerprint(platform_user_id)} "
+            f"state={state} awaiting={awaiting}",
+        )
+    return dec
 
 
 async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decision: dict) -> None:
@@ -151,6 +171,14 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
+            return
+        # 取消标志已写入 Redis，记录确认（puid 指纹脱敏），供排查「取消是否真的置上了」。
+        from agent.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.im.shortcut.cancel_written",
+            f"platform={platform} puid={fingerprint(platform_user_id)}",
+        )
 
 
 def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict) -> None:
@@ -163,6 +191,13 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel_sync", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
+            return
+        from agent.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.im.shortcut.cancel_written_sync",
+            f"platform={platform} puid={fingerprint(platform_user_id)}",
+        )
 
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:

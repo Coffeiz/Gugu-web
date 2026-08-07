@@ -185,7 +185,17 @@ async def _im_cancelled() -> bool:
     if not im or not im.get("puid"):
         return False
     from agent import runtime_state as rt
-    return await rt.is_cancelled(im["platform"], im["puid"])
+    cancelled = await rt.is_cancelled(im["platform"], im["puid"])
+    if cancelled:
+        # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
+        # 中断了生成」。只在真正命中时打，不会刷屏。
+        from agent.logsafe import fingerprint
+        from app.core.redaction import diag_log_raw
+        diag_log_raw(
+            "agent.core.im_cancelled_hit",
+            f"platform={im['platform']} puid={fingerprint(im['puid'])}",
+        )
+    return cancelled
 
 
 async def _im_set_tool_state(tool_name: str) -> None:
@@ -415,4 +425,4 @@ class LLMRunner:
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完 😅 前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完，前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"

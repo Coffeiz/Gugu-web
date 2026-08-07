@@ -11,6 +11,7 @@
 
 - **群定时任务解锁群上下文 + 群记忆注入**（`backend/app/scheduled_tasks.py`）：群定时任务到点触发时，`_run_agent` 命中群目标后 `set_im(chat_type='group')` 并注入群长期记忆，让 execution 阶段能正常用 `group_context_search` 等群工具、看到群记忆，与「任务要发到 X 群」的语义一致；私聊/Web 任务零行为变化。
 - **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」title 后缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
+- **IM 取消链路补脱敏诊断日志**（`backend/agent/im/loop.py`、`backend/agent/core.py`）：取消链路此前只在异常路径（Redis 故障）留日志，正常路径完全无痕，遇到「发取消没中断 loop」无法定位断点；现在在三个关键决策点补 `diag_log_raw` 受限诊断日志——`router.decide` 判定为 cancel（记录 platform/puid 指纹/state/awaiting）、取消标志写入 Redis 成功、core 侧取消标志命中掐断 loop，puid 一律用 `fingerprint()` 脱敏，便于排查取消未生效是「busy=False 没短路」还是「标志没写入」还是「没掐断」。
 
 ### 修复
 
