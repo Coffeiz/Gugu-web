@@ -4,9 +4,12 @@
 后续消息排在队列里、worker 可能暂时看不到，所以「算了」必须由**网关**即时写入；
 普通 intent shortcut 仍由 worker 的 IM Loop 处理。
 
-key（按平台用户隔离）：
-  agentstate:{platform}:{puid}  → 状态字符串（带 TTL，worker 崩了自动过期回 IDLE，防卡死）
-  agentcancel:{platform}:{puid} → "1"（网关检测到取消意图时置，core 工具循环协作检查后清）
+key 统一按「会话」隔离（platform:bot_id:scope_id:puid），与活跃集合 agentactive 同作用域：
+  agentstate:{platform}:{bot_id}:{scope_id}:{puid}  → 状态字符串（带 TTL，worker 崩了自动过期回 IDLE，防卡死）
+  agentcancel:{platform}:{bot_id}:{scope_id}:{puid} → "1"（网关检测到取消意图时置，core 工具循环协作检查后清）
+
+作用域隔离的意义：同一用户在不同群（不同 scope_id）各自独立状态与取消标志，互不串扰——
+用户在群 B 发「取消」只取消群 B 自己的 loop，不会误取消群 A 正在跑的任务（P1 跨群取消回归）。
 """
 from app.core.redis import get_redis, get_redis_sync
 
@@ -28,12 +31,12 @@ TOOL_STATE = {
 }
 
 
-def _skey(platform, puid) -> str:
-    return f"agentstate:{platform}:{puid}"
+def _skey(platform, bot_id, scope_id, puid) -> str:
+    return f"agentstate:{platform}:{bot_id}:{scope_id}:{puid}"
 
 
-def _ckey(platform, puid) -> str:
-    return f"agentcancel:{platform}:{puid}"
+def _ckey(platform, bot_id, scope_id, puid) -> str:
+    return f"agentcancel:{platform}:{bot_id}:{scope_id}:{puid}"
 
 
 def _norm(v) -> str:
@@ -43,49 +46,51 @@ def _norm(v) -> str:
 
 
 # ── 状态：worker 写（async）──────────────────────────────────────────────
-async def set_state(platform, puid, state: str) -> None:
-    if platform and puid:
-        await get_redis().set(_skey(platform, puid), state, ex=STATE_TTL)
+async def set_state(platform, bot_id, scope_id, puid, state: str) -> None:
+    if platform and bot_id and scope_id and puid:
+        await get_redis().set(_skey(platform, bot_id, scope_id, puid), state, ex=STATE_TTL)
+        # heartbeat：loop 活跃期间刷新活跃集合 TTL，避免长任务跑超 ACTIVE_TTL 被误判空闲。
+        await _refresh_active_ttl(platform, bot_id, scope_id)
 
 
-async def clear_state(platform, puid) -> None:
-    if platform and puid:
-        await get_redis().delete(_skey(platform, puid))
+async def clear_state(platform, bot_id, scope_id, puid) -> None:
+    if platform and bot_id and scope_id and puid:
+        await get_redis().delete(_skey(platform, bot_id, scope_id, puid))
 
 
 # ── 状态：网关读（QQ async / 飞书 sync）─────────────────────────────────
-async def get_state(platform, puid) -> str:
-    if not platform or not puid:
+async def get_state(platform, bot_id, scope_id, puid) -> str:
+    if not (platform and bot_id and scope_id and puid):
         return IDLE
-    return _norm(await get_redis().get(_skey(platform, puid)))
+    return _norm(await get_redis().get(_skey(platform, bot_id, scope_id, puid)))
 
 
-def get_state_sync(platform, puid) -> str:
-    if not platform or not puid:
+def get_state_sync(platform, bot_id, scope_id, puid) -> str:
+    if not (platform and bot_id and scope_id and puid):
         return IDLE
-    return _norm(get_redis_sync().get(_skey(platform, puid)))
+    return _norm(get_redis_sync().get(_skey(platform, bot_id, scope_id, puid)))
 
 
 # ── 取消标志：网关置（sync/async）、core 协作检查并清 ────────────────────
-async def request_cancel(platform, puid) -> None:
-    if platform and puid:
-        await get_redis().set(_ckey(platform, puid), "1", ex=STATE_TTL)
+async def request_cancel(platform, bot_id, scope_id, puid) -> None:
+    if platform and bot_id and scope_id and puid:
+        await get_redis().set(_ckey(platform, bot_id, scope_id, puid), "1", ex=STATE_TTL)
 
 
-def request_cancel_sync(platform, puid) -> None:
-    if platform and puid:
-        get_redis_sync().set(_ckey(platform, puid), "1", ex=STATE_TTL)
+def request_cancel_sync(platform, bot_id, scope_id, puid) -> None:
+    if platform and bot_id and scope_id and puid:
+        get_redis_sync().set(_ckey(platform, bot_id, scope_id, puid), "1", ex=STATE_TTL)
 
 
-async def is_cancelled(platform, puid) -> bool:
-    if not platform or not puid:
+async def is_cancelled(platform, bot_id, scope_id, puid) -> bool:
+    if not (platform and bot_id and scope_id and puid):
         return False
-    return bool(await get_redis().get(_ckey(platform, puid)))
+    return bool(await get_redis().get(_ckey(platform, bot_id, scope_id, puid)))
 
 
-async def clear_cancel(platform, puid) -> None:
-    if platform and puid:
-        await get_redis().delete(_ckey(platform, puid))
+async def clear_cancel(platform, bot_id, scope_id, puid) -> None:
+    if platform and bot_id and scope_id and puid:
+        await get_redis().delete(_ckey(platform, bot_id, scope_id, puid))
 
 
 # ── 活跃 loop 集合：记录「当前正在跑 loop 的发起者 puid」，供网关判断取消权限 ──
@@ -98,10 +103,24 @@ def _active_key(platform, bot_id, scope_id) -> str:
     return f"agentactive:{platform}:{bot_id}:{scope_id}"
 
 
+# 活跃集合 TTL：worker 崩溃（kill -9/OOM/断电）时 finally 不执行，SREM 不会发生，
+# 集合会残留「幽灵活跃 puid」，导致网关误判「咕咕还在忙」拒绝取消。给集合加 TTL，
+# 并在 loop 活跃期间（set_state 频繁调用）刷新，崩溃后自动过期清空。
+ACTIVE_TTL = 600   # 10min 兜底
+
+
+async def _refresh_active_ttl(platform, bot_id, scope_id) -> None:
+    """刷新活跃集合 TTL（heartbeat）。loop 正常运行会周期性调用，崩溃后不再刷新而过期。"""
+    if platform and bot_id and scope_id:
+        await get_redis().expire(_active_key(platform, bot_id, scope_id), ACTIVE_TTL)
+
+
 async def mark_active(platform, bot_id, scope_id, puid) -> None:
-    """loop 启动时记录发起者 puid 到活跃集合。"""
+    """loop 启动时记录发起者 puid 到活跃集合，并设置 TTL 兜底。"""
     if platform and bot_id and scope_id and puid:
-        await get_redis().sadd(_active_key(platform, bot_id, scope_id), puid)
+        key = _active_key(platform, bot_id, scope_id)
+        await get_redis().sadd(key, puid)
+        await get_redis().expire(key, ACTIVE_TTL)
 
 
 async def unmark_active(platform, bot_id, scope_id, puid) -> None:

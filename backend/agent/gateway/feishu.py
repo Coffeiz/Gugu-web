@@ -262,7 +262,11 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
                 scope_id=msg.chat_id or open_id,
             )
             if dec["action"] == "cancel":
-                apply_im_shortcut_cancel_sync("feishu", open_id, dec)
+                apply_im_shortcut_cancel_sync(
+                    "feishu", open_id, dec,
+                    bot_id=channel_id,
+                    scope_id=msg.chat_id or open_id,
+                )
                 try:
                     _do_send(api_client, msg.chat_id, dec["reply"])
                 except Exception as e:

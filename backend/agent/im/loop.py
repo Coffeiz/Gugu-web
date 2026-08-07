@@ -110,7 +110,9 @@ async def decide_im_shortcut(
     from agent import router, runtime_state
 
     try:
-        state = await runtime_state.get_state(platform, platform_user_id)
+        state = await runtime_state.get_state(
+            platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+        )
         awaiting = await runtime_state.is_awaiting(platform, platform_user_id)
         # 查询当前会话活跃 loop 的发起者 puid 集合，供 router 判断「其他用户取消」的权限。
         active_puid = await runtime_state.get_active(
@@ -156,7 +158,9 @@ def decide_im_shortcut_sync(
     from agent import router, runtime_state
 
     try:
-        state = runtime_state.get_state_sync(platform, platform_user_id)
+        state = runtime_state.get_state_sync(
+            platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+        )
         awaiting = runtime_state.is_awaiting_sync(platform, platform_user_id)
         # 查询当前会话活跃 loop 的发起者 puid 集合，供 router 判断「其他用户取消」的权限。
         active_puid = runtime_state.get_active_sync(
@@ -183,12 +187,18 @@ def decide_im_shortcut_sync(
     return dec
 
 
-async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decision: dict) -> None:
-    """执行短路决策中的取消动作，状态修改仍归 IM Loop。"""
+async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decision: dict,
+                                   *, bot_id: str = "", scope_id: str = "") -> None:
+    """执行短路决策中的取消动作，状态修改仍归 IM Loop。
+
+    bot_id/scope_id 与活跃集合同作用域：取消标志按会话隔离，避免跨群误取消。
+    """
     if decision.get("action") == "cancel":
         from agent import runtime_state
         try:
-            await runtime_state.request_cancel(platform, platform_user_id)
+            await runtime_state.request_cancel(
+                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            )
         except Exception as exc:
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel", exc)
@@ -203,12 +213,15 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
         )
 
 
-def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict) -> None:
+def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision: dict,
+                                  *, bot_id: str = "", scope_id: str = "") -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
         from agent import runtime_state
         try:
-            runtime_state.request_cancel_sync(platform, platform_user_id)
+            runtime_state.request_cancel_sync(
+                platform, bot_id or "", scope_id or platform_user_id, platform_user_id
+            )
         except Exception as exc:
             from app.core.redaction import diag_log, redact
             diag_log("agent.im.shortcut.cancel_sync", exc)
@@ -227,13 +240,16 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
     from agent import runtime_state
     from agent.gateway import wechat
 
-    await runtime_state.set_state(platform, platform_user_id, runtime_state.THINKING)
-    # 清掉可能残留的取消标志：现在「取消」无条件写标志（即使空闲也会写），
-    # 若不清，上一个 loop 的取消标志会误取消本次新 loop。
-    await runtime_state.clear_cancel(platform, platform_user_id)
-    # 记录活跃 loop 的发起者 puid，供网关判断「其他用户取消」的权限。
+    # 会话作用域：bot_id=channel_id、scope_id=chat_id（私聊回退到 puid），与活跃集合同 key。
     bot_id = payload.get("channel_id") or ""
     scope_id = payload.get("chat_id") or platform_user_id
+    await runtime_state.set_state(
+        platform, bot_id, scope_id, platform_user_id, runtime_state.THINKING
+    )
+    # 清掉可能残留的取消标志：现在「取消」无条件写标志（即使空闲也会写），
+    # 若不清，上一个 loop 的取消标志会误取消本次新 loop。
+    await runtime_state.clear_cancel(platform, bot_id, scope_id, platform_user_id)
+    # 记录活跃 loop 的发起者 puid，供网关判断「其他用户取消」的权限。
     await runtime_state.mark_active(platform, bot_id, scope_id, platform_user_id)
     typing_indicator = await wechat.start_typing(payload)
     return ImActivity(platform, platform_user_id, typing_indicator, bot_id, scope_id)
@@ -244,8 +260,12 @@ async def finish_im_activity(activity: ImActivity) -> None:
     from agent import runtime_state
     from agent.gateway import wechat
 
-    await runtime_state.clear_state(activity.platform, activity.platform_user_id)
-    await runtime_state.clear_cancel(activity.platform, activity.platform_user_id)
+    await runtime_state.clear_state(
+        activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
+    )
+    await runtime_state.clear_cancel(
+        activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
+    )
     await runtime_state.unmark_active(
         activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
     )

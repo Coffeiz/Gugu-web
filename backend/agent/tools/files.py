@@ -1079,7 +1079,12 @@ async def _list_recent_attachments(db, user_id, args: dict):
 
 
 async def _send_file_from_url(user_id, url: str, title: str):
-    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
+    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
+
+    下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
+    Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
+    有 Content-Length 提前拒绝；chunked/无 Content-Length 在读取过程中累计，超限立即中止。
+    """
     reason = _url_is_safe(url)
     if reason:
         return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
@@ -1088,37 +1093,59 @@ async def _send_file_from_url(user_id, url: str, title: str):
     from urllib.parse import urljoin
     try:
         # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过上面的 _url_is_safe（SSRF）。
+        # stream=True 只读响应头不读 body，避免 redirect 探测阶段就把大 body 读进内存。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
             follow_redirects=False,
         ) as client:
             cur = url
-            resp = await client.get(cur)
+            req = client.build_request("GET", cur)
+            resp = await client.send(req, stream=True)
             for _ in range(3):   # 最多跟 3 跳
                 if resp.status_code not in (301, 302, 303, 307, 308):
                     break
                 loc = resp.headers.get("location")
+                await resp.aclose()   # 关闭 3xx 响应连接，再发下一跳
                 if not loc:
                     break
                 cur = urljoin(cur, loc)
                 reason = _url_is_safe(cur)   # 每一跳的目标都重新过内网校验
                 if reason:
                     return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-                resp = await client.get(cur)
+                req = client.build_request("GET", cur)
+                resp = await client.send(req, stream=True)
     except Exception as e:
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
     if resp.status_code != 200:
+        await resp.aclose()
         return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
 
     ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-    data = resp.content
     ext = _SEND_URL_IMAGE_EXT.get(ctype)
     if not ext:
+        await resp.aclose()
         return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+    # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
+    clen = resp.headers.get("content-length")
+    if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
+        await resp.aclose()
+        return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+
+    # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
+    # 不把整个响应消费完（防 DoS）。
+    total = 0
+    chunks: list[bytes] = []
+    try:
+        async for chunk in resp.aiter_bytes():
+            total += len(chunk)
+            if total > _SEND_URL_MAX_BYTES:
+                return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
+            chunks.append(chunk)
+    finally:
+        await resp.aclose()
+    data = b"".join(chunks)
     if not data:
         return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
-    if len(data) > _SEND_URL_MAX_BYTES:
-        return json.dumps({"error": f"图片过大（{len(data) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
 
     from app.core import chat_attach
     name = (title or "").strip()[:80] or "图片"

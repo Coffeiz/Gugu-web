@@ -338,7 +338,11 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             scope_id=chat_id or sender_id,
         )
         if dec["action"] == "cancel":
-            await apply_im_shortcut_cancel("qq", sender_id, dec)
+            await apply_im_shortcut_cancel(
+                "qq", sender_id, dec,
+                bot_id=channel_id,
+                scope_id=chat_id or sender_id,
+            )
             target = chat_id if chat_type == "group" else sender_id
             await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
             return

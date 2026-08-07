@@ -185,7 +185,9 @@ async def _im_cancelled() -> bool:
     if not im or not im.get("puid"):
         return False
     from agent import runtime_state as rt
-    cancelled = await rt.is_cancelled(im["platform"], im["puid"])
+    cancelled = await rt.is_cancelled(
+        im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+    )
     if cancelled:
         # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
         # 中断了生成」。只在真正命中时打，不会刷屏。
@@ -208,7 +210,10 @@ async def _im_set_tool_state(tool_name: str) -> None:
     from agent import runtime_state as rt
     fine = rt.TOOL_STATE.get(tool_name)
     if fine:
-        await rt.set_state(im["platform"], im["puid"], fine)
+        await rt.set_state(
+            im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"],
+            im["puid"], fine,
+        )
 
 
 class LLMRunner:

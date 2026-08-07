@@ -138,7 +138,9 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         im = imctx.get_im()
         if im and im.get("puid"):
             from agent import runtime_state as rt
-            if await rt.is_cancelled(im["platform"], im["puid"]):
+            if await rt.is_cancelled(
+                im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+            ):
                 return
         text = tool.start_message(args) if callable(tool.start_message) else tool.start_message
         if not text:
