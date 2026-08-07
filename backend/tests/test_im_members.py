@@ -174,8 +174,10 @@ def test_merge_group_profile_keeps_distinct_items():
 def test_merge_group_profile_does_not_merge_low_similarity():
     from agent.memory.im_reflection import _merge_group_profile
 
-    # 文档 4 节提到的真实案例（"酒店与…为同一家" vs "酒店为…"）bigram Jaccard 仅 0.33，
-    # 低于 _pattern_similar 的保守阈值 0.7，不会被合并——这是预期行为，不是 bug。
+    # 用简化占位句子验证"低相似度不合并"：这两句 bigram Jaccard 仅 0.33，低于
+    # _pattern_similar 的保守阈值 0.7，不会被合并——这是预期行为，不是 bug。
+    # （注：文档 4 节提到的真实案例文本本身 Jaccard 约 0.667，同样 <0.7 不合并，
+    # 但数值比这条占位句子高得多，不要拿 0.33 当真实案例的相似度参考。）
     profile = _merge_group_profile(
         [],
         [{"type": "nature", "text": "酒店与隔壁餐厅为同一家"}],
@@ -238,6 +240,48 @@ async def test_aggregate_members_counts_and_last_seen(db, user_a):
     assert members["pid-2"]["name"] == "另一个人"
     # last_seen_at 取该成员最新一条消息的时间。
     assert members["pid-1"]["last_seen_at"] == pytest.approx((base + timedelta(minutes=1)).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_aggregate_members_rename_within_window_does_not_split_count(db, user_a):
+    """同一 platform_user_id 在保留窗口内改过昵称，count/name 不能被拆成两份。
+
+    回归用例：曾经按 (platform_user_id, platform_user_name) 联合 GROUP BY，改名后
+    同一个人的消息被拆成两行，逐行覆盖写只留下其中一行，message_count 被腰斩、
+    name 也可能停留在旧昵称上。
+    """
+    from app.models import ConversationMessage, ConversationSession
+    from agent.memory.im_reflection import _aggregate_members
+    from agent.memory.scopes import MemoryScope
+
+    session = ConversationSession(
+        user_id=user_a.id,
+        source="qq",
+        bot_id="bot-a",
+        chat_id="group-1",
+        chat_type="group",
+    )
+    db.add(session)
+    await db.flush()
+
+    base = now_utc()
+    names = ["旧名字"] * 3 + ["新名字"] * 2
+    for i, name in enumerate(names):
+        db.add(ConversationMessage(
+            session_id=session.id,
+            role="user",
+            content=f"消息{i}",
+            platform_user_id="pid-1",
+            platform_user_name=name,
+            created_at=base + timedelta(minutes=i),
+        ))
+    await db.commit()
+
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
+    members = await _aggregate_members(db, scope)
+    assert members["pid-1"]["message_count"] == len(names)
+    assert members["pid-1"]["name"] == "新名字"
+    assert members["pid-1"]["last_seen_at"] == pytest.approx((base + timedelta(minutes=len(names) - 1)).timestamp())
 
 
 @pytest.mark.asyncio
