@@ -209,6 +209,18 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     cursor.last_reflected_message_id + 1,
                 )
             messages = await _messages_for_job(db, job)
+            if scope.scope_type == "group":
+                # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
+                try:
+                    aggregated = await _aggregate_members(db, scope)
+                    prior_doc = (await read_scope(scope)).get("members") or {}
+                    prior_members = prior_doc.get("members") if isinstance(prior_doc, dict) else {}
+                    await write_scope_json(
+                        scope, "members.json",
+                        _merge_members(prior_members if isinstance(prior_members, dict) else {}, aggregated),
+                    )
+                except Exception:
+                    pass   # 不影响本轮反思；下次任务执行时会重新聚合一次，不是丢失、只是晚一轮
             current = await read_scope(scope)
             payload = "\n".join(
                 f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
@@ -221,7 +233,7 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500, thinking="disabled")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
-            await _apply_output(db, scope, current, out, messages, settings)
+            await _apply_output(scope, current, out, messages, settings)
 
             cursor = (await db.execute(
                 select(MemoryReflectionCursor).where(
@@ -311,18 +323,20 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     return members
 
 
-def _merge_members(
-    current: Any,
-    aggregated: dict[str, dict],
-    nicknames_add: Any,
-) -> dict[str, dict]:
-    """合并 DB 聚合结果与 LLM 提炼的群友称呼，写回 members.json。
+def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]:
+    """合并 DB 聚合结果，写回 members.json。只处理 name/aliases/last_seen_at/message_count
+    这几个纯 DB 字段，不碰 nicknames——nicknames 的合并见 _apply_nicknames()。
 
-    - name/aliases/last_seen_at/message_count 来自 DB 聚合；name 变了把旧值追加进 aliases（去重）。
-    - nicknames 来自 LLM 提炼（nicknames_add），只记录"群友对某成员的称呼"。
-    - 注意：members.json 刻意不适用 _GROUP_INTERNAL_ID_RE 过滤——profile.json 不落地任何
-      platform_user_id，而 members.json 每条必须挂在具体 platform_user_id 下才有意义，
-      这是两个文件唯一但关键的设计分歧点，不要"修正"掉。
+    这个函数只依赖 ConversationMessage 表，不依赖任何 LLM 调用结果，因此在
+    execute_job 里独立于 complete_json() 是否成功执行、独立写入（见 PRD-IM-8
+    Phase 4：曾经把这一步跟 LLM 反思结果绑在同一段 try 里，LLM 那次调用失败
+    ——即便是跟这几个字段完全无关的原因，比如内容审核拦截——就会连带这几个
+    本该实时的字段也一起卡住不更新，这是明确要避免的耦合）。
+
+    name 变了把旧值追加进 aliases（去重）。注意：members.json 刻意不适用
+    _GROUP_INTERNAL_ID_RE 过滤——profile.json 不落地任何 platform_user_id，而
+    members.json 每条必须挂在具体 platform_user_id 下才有意义，这是两个文件
+    唯一但关键的设计分歧点，不要"修正"掉。
     """
     now = now_utc().timestamp()
     out: dict[str, dict] = {}
@@ -340,21 +354,31 @@ def _merge_members(
             "last_seen_at": agg["last_seen_at"],
             "message_count": agg["message_count"],
         }
-    # 合并 LLM 提炼的群友称呼（nicknames_add），去重追加。
+    return {"updated_at": now, "members": out}
+
+
+def _apply_nicknames(members: dict[str, dict], nicknames_add: Any) -> dict[str, dict]:
+    """把 LLM 提炼的群友称呼（nicknames_add）追加进已有的 members 字典。
+
+    只在反思调用成功、真的拿到 nicknames_add 时才调用——跟 _merge_members()
+    分开是因为这是唯一还需要 LLM 结果的字段，其余字段不该等它。只处理已存在
+    于 members 里的 pid（DB 聚合已经写过一次，这里不该凭空新增成员），去重追加。
+    """
     for raw in nicknames_add if isinstance(nicknames_add, list) else []:
         if not isinstance(raw, dict):
             continue
         pid = str(raw.get("platform_user_id") or "").strip()
         nickname = str(raw.get("nickname") or "").strip()
-        if not pid or not nickname or pid not in out:
+        if not pid or not nickname or pid not in members:
             continue
-        if nickname not in out[pid]["nicknames"]:
-            out[pid]["nicknames"].append(nickname)
-    return {"updated_at": now, "members": out}
+        nicknames = list(members[pid].get("nicknames") or [])
+        if nickname not in nicknames:
+            nicknames.append(nickname)
+            members[pid]["nicknames"] = nicknames
+    return members
 
 
 async def _apply_output(
-    db,
     scope: MemoryScope,
     current: Dict[str, Any],
     output: Dict[str, Any],
@@ -365,10 +389,16 @@ async def _apply_output(
         profile = _merge_group_profile(current.get("profile"), output.get("profile_add"), output.get("profile_remove"))
         if profile or output.get("profile_add") or output.get("profile_remove"):
             await write_scope_json(scope, "profile.json", profile)
-        # members.json：DB 聚合 + LLM nicknames 一起算一起写，跟 profile/summary 同一节奏。
-        aggregated = await _aggregate_members(db, scope)
-        members = _merge_members(current.get("members"), aggregated, output.get("nicknames_add"))
-        await write_scope_json(scope, "members.json", members)
+        # members.json 的 DB 字段（name/aliases/last_seen_at/message_count）已经在
+        # _execute_job_locked 里、调用 LLM 之前独立写过一次；这里只补 nicknames——
+        # 唯一依赖本轮 LLM 结果的字段，只有 output 里真有内容才需要再写一次文件。
+        nicknames_add = output.get("nicknames_add")
+        if nicknames_add:
+            doc = (await read_scope(scope)).get("members") or {}
+            members = doc.get("members") if isinstance(doc, dict) else {}
+            if isinstance(members, dict) and members:
+                updated = _apply_nicknames(members, nicknames_add)
+                await write_scope_json(scope, "members.json", {"updated_at": now_utc().timestamp(), "members": updated})
         entries = _daily_entries(current.get("daily") or "")
         date = (messages[-1].created_at.date().isoformat() if messages and messages[-1].created_at else now_utc().date().isoformat())
         for item in output.get("daily") or []:

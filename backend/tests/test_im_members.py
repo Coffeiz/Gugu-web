@@ -193,7 +193,10 @@ async def test_resolve_speaker_does_not_read_members_when_live_hit(db, user_a):
     assert called is False
 
 
-# ── _merge_members：DB 聚合 + LLM nicknames 合并 ────────────────────────────
+# ── _merge_members：纯 DB 字段合并，不碰 LLM 结果 ───────────────────────────
+# Phase 4 修订：_merge_members 只处理 name/aliases/last_seen_at/message_count，
+# 独立于 LLM 反思调用是否成功；nicknames 合并拆到单独的 _apply_nicknames，
+# 只在反思真的成功、拿到 nicknames_add 时才调用。分开测试。
 
 
 def test_merge_members_first_appearance():
@@ -202,7 +205,7 @@ def test_merge_members_first_appearance():
     aggregated = {
         "pid-1": {"name": "moon_小北", "last_seen_at": 100.0, "message_count": 3},
     }
-    result = _merge_members({}, aggregated, [])
+    result = _merge_members({}, aggregated)
     assert result["members"]["pid-1"]["name"] == "moon_小北"
     assert result["members"]["pid-1"]["aliases"] == []
     assert result["members"]["pid-1"]["nicknames"] == []
@@ -224,32 +227,56 @@ def test_merge_members_rename_appends_alias():
     aggregated = {
         "pid-1": {"name": "新名字", "last_seen_at": 100.0, "message_count": 5},
     }
-    result = _merge_members(current, aggregated, [])
+    result = _merge_members(current, aggregated)
     member = result["members"]["pid-1"]
     assert member["name"] == "新名字"
     assert member["aliases"] == ["旧名字"]
     assert member["message_count"] == 5
 
 
-def test_merge_members_merges_llm_nicknames():
+def test_merge_members_preserves_existing_nicknames():
+    """_merge_members 不碰 nicknames，只原样保留已有值——不因为 DB 字段刷新就丢掉。"""
     from agent.memory.im_reflection import _merge_members
 
-    aggregated = {
-        "pid-1": {"name": "moon_小北", "last_seen_at": 100.0, "message_count": 3},
+    current = {
+        "pid-1": {
+            "name": "moon_小北", "aliases": [], "nicknames": ["北神"],
+            "last_seen_at": 50.0, "message_count": 1,
+        }
     }
-    result = _merge_members({}, aggregated, [{"platform_user_id": "pid-1", "nickname": "北神"}])
+    aggregated = {
+        "pid-1": {"name": "moon_小北", "last_seen_at": 100.0, "message_count": 5},
+    }
+    result = _merge_members(current, aggregated)
     assert result["members"]["pid-1"]["nicknames"] == ["北神"]
 
 
-def test_merge_members_ignores_nickname_for_unknown_member():
-    from agent.memory.im_reflection import _merge_members
+# ── _apply_nicknames：LLM 提炼的群友称呼合并，只在反思成功时才调用 ──────────
 
-    aggregated = {
-        "pid-1": {"name": "moon_小北", "last_seen_at": 100.0, "message_count": 3},
-    }
-    # pid-999 不在聚合结果里（消息已被裁剪出窗口），称呼被丢弃。
-    result = _merge_members({}, aggregated, [{"platform_user_id": "pid-999", "nickname": "幽灵"}])
-    assert "pid-999" not in result["members"]
+
+def test_apply_nicknames_appends_for_known_member():
+    from agent.memory.im_reflection import _apply_nicknames
+
+    members = {"pid-1": {"name": "moon_小北", "aliases": [], "nicknames": [], "last_seen_at": 100.0, "message_count": 3}}
+    result = _apply_nicknames(members, [{"platform_user_id": "pid-1", "nickname": "北神"}])
+    assert result["pid-1"]["nicknames"] == ["北神"]
+
+
+def test_apply_nicknames_ignores_unknown_member():
+    from agent.memory.im_reflection import _apply_nicknames
+
+    members = {"pid-1": {"name": "moon_小北", "aliases": [], "nicknames": [], "last_seen_at": 100.0, "message_count": 3}}
+    # pid-999 不在 members 里（消息已被裁剪出窗口，DB 聚合阶段就没有这个人），称呼被丢弃。
+    result = _apply_nicknames(members, [{"platform_user_id": "pid-999", "nickname": "幽灵"}])
+    assert "pid-999" not in result
+
+
+def test_apply_nicknames_dedup():
+    from agent.memory.im_reflection import _apply_nicknames
+
+    members = {"pid-1": {"name": "moon_小北", "aliases": [], "nicknames": ["北神"], "last_seen_at": 100.0, "message_count": 3}}
+    result = _apply_nicknames(members, [{"platform_user_id": "pid-1", "nickname": "北神"}])
+    assert result["pid-1"]["nicknames"] == ["北神"]
 
 
 # ── _merge_group_profile / _merge_profile：近义重复合并 ─────────────────────
