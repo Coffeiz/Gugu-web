@@ -6,6 +6,7 @@
 覆盖：
   · 没有 start_message 的工具：任何路径都不发声明
   · web 路径（imctx 未 set）：不发声明
+  · 定时任务路径（set_im 但 message_id=None）：不发声明
   · IM 路径首次调用慢工具：发声明，且用的是工具 metadata 里的固定/回调文案
   · 同一 Busy Session 内重复调用：只发一次，不重复打扰
   · 新 Busy Session（重新 set_im）：announced 状态重置，可以再发一次
@@ -82,6 +83,12 @@ async def main():
     _fake_worker.calls.clear()
     await _maybe_announce_progress(tool_with_msg, {})
     check("web 路径 → 不发", len(_fake_worker.calls) == 0)
+
+    print("【2b】定时任务路径（set_im 但 message_id=None）：不发声明")
+    imctx.set_im("qq", None, "c1", "g1", "u1", chat_type="group")   # 群定时任务：无具体触发消息
+    _fake_worker.calls.clear()
+    await _maybe_announce_progress(tool_with_msg, {})
+    check("message_id=None → 不发", len(_fake_worker.calls) == 0)
 
     print("【3】IM 路径首次调用：发声明，文案来自工具 metadata")
     imctx.set_im("qq", "m1", "c1", "g1", "u1")

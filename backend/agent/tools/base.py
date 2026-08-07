@@ -114,12 +114,18 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     时，若登记了 start_message 就发一条声明给用户，让 IM 非流式的长时间沉默有个"人在动手"的信号。
     文案 100% 来自工具自己的 metadata，绝不是模型现场生成——只在「工具确定要执行」这一刻触发，
     不存在"说了没做"的风险。仅 IM 生效（imctx 只有 IM 路径会 set）、每个 Busy Session（THINKING
-    状态期间）最多发一次、失败不影响工具本身执行（fire-and-forget）。"""
+    状态期间）最多发一次、失败不影响工具本身执行（fire-and-forget）。
+
+    边界：只对「用户主动发起的 IM 消息」发声明。定时任务（群定时任务为取群 memory 也会
+    set_im，但 message_id=None，见 app/scheduled_tasks.py::_inject_group_context）没有具体
+    触发的 IM 消息，用户并不在等这句过渡话术——它应包含在最终报告里，不能单独发一条，故跳过。"""
     if not tool.start_message:
         return
     from agent import imctx
     payload = imctx.to_send_payload()
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
+        return
+    if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return
     if imctx.was_announced():  # 本 Busy Session 已经发过声明，不重复发
         return
