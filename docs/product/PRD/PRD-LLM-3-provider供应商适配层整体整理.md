@@ -1,8 +1,8 @@
 # Provider 供应商适配层整体整理 PRD
 
-> 状态：🔲 待评估（仅完成现状摸底与方案设计，未开始实现）
+> 状态：🔲 待评估（主体重构仅完成现状摸底与方案设计，未开始实现；Phase 5 独立追加项已完成，见下）
 > 创建：2026-08-06
-> 最近更新：2026-08-06
+> 最近更新：2026-08-08
 > 所属层：LLM / Provider 适配层
 > 关联模块：`backend/agent/providers.py`、`backend/agent/llm_select.py`、`backend/agent/loop_drivers.py`、`backend/agent/sanitize.py`、`backend/agent/runner.py`、`backend/agent/gateway/web.py`、`backend/agent/greeting.py`、`backend/agent/memory/_llm.py`、`backend/app/core/chat_attach.py`、`backend/app/core/media_transcode.py`、`backend/app/api/v1/agent_admin.py`、`backend/app/api/v1/agent.py`
 > 关联文档：[[【已完成】PRD-LLM-1-provider适配层重构与core瘦身.md]]；[[../../reports/TEST-LLM-MiniMax-M3-视频mm_file传输.md]]
@@ -19,6 +19,7 @@
 | Phase 2：媒体层迁入适配器（纯重构） | 🔲 待评估 | 把 `chat_attach.py` 的视频探测/压缩/mm_file 上传迁进适配器，`chat_attach.py` 改调用 `adapter_for(ai)`。 |
 | Phase 3：流式清洗/音频转码/鉴权等能力位收拢（纯重构） | 🔲 待评估 | 把 `sanitize.py` 的 MiniMax 清洗、`media_transcode.py` 的 mimo 音频白名单、`agent_admin.py` 的 `_mimo` 鉴权判断等收拢进适配器能力位。 |
 | Phase 4：视频时长限制（行为变化） | 🔲 待评估 | 在 `MediaLimits` 加 `max_duration_s=120`，ffprobe 读 duration，超 2 分钟拒绝。 |
+| Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成 | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
 
 ---
 
@@ -57,6 +58,12 @@ Gugu 后端接入了多家 LLM 供应商（Anthropic 原生、MiniMax、小米 M
 - 新增视频时长限制：视频长度 >2 分钟直接拒绝（不压缩、不上传），时长限制按模型配置（有则用，无则兜底默认 2 分钟）。
 - 压缩策略统一：分辨率 >1080p 或码率 >16Mbps → 压缩成 1080p 5M h264；最大视频大小 90MB。
 - 保持 `llm_select.py` 的薄包装签名不变，12 个调用点一行不改。
+
+### 1.1 追加项：`read_file` 读取视频复用压缩（Phase 5，独立于本 PRD 主体重构）
+
+用户反馈"想让咕咕读文件库里的一个视频，太大读不了"，排查发现视频压缩逻辑（`chat_attach.py` 的 `_probe_video`/`_compress_video`/`_should_compress_video`）只在**用户发视频给咕咕**这条路径接了进去；`agent/tools/file_readers.py` 的 `read_video`（`read_file` 工具读文件库已有视频时走这里）只做硬性大小检查（`MEDIA_READ_MAX_BYTES = 36MB`），超过直接拒绝，从未调用过压缩函数。查了本 PRD 全文，只讨论"发送"场景，没有提到"读取已有视频"这个场景——不是有意排除在范围外的产品决策，是技术遗漏。
+
+这个修复不依赖 Phase 1-4 的 `providers/` 目录化重构（`_compress_video` 等函数当前就是不带 provider 参数的纯 ffmpeg 操作，可以直接被 `file_readers.py` 调用），所以单独作为 Phase 5 先落地，不用等大重构。详见 FR-LLM-3-5。
 
 ### 非目标
 
@@ -144,6 +151,14 @@ Gugu 后端接入了多家 LLM 供应商（Anthropic 原生、MiniMax、小米 M
 - 压缩不解决时长问题（MiniMax 对超长视频照样拒），所以超时长的视频**不压缩直接拒绝**。
 - 验收标准：新增测试覆盖「超 2 分钟拒绝」「≤2 分钟正常处理」「模型配置覆盖默认值」。
 
+### FR-LLM-3-5：`read_file` 读取视频复用压缩（✅ 已完成，独立于 Phase 1-4）
+
+- `file_readers.py` 新增 `_load_video_bytes(file)`：物理大小 ≤ `MEDIA_READ_MAX_BYTES` 直接返回原始字节；超过则下载后调用 `chat_attach._compress_video` 压缩一次，压完仍超限才报错（"压缩后仍超出读取上限"）。
+- 压缩产物固定是 mp4 容器（`_compress_video` 内部输出 `.out.mp4`），传给后续 `_extract_frame`/`_extract_audio` 的扩展名统一改成 `"mp4"`，不沿用原始扩展名（比如 `.mov`），避免 ffmpeg 按错误容器格式解析。
+- 压缩产物不写回文件库、不落盘存储——只在这次 `read_file` 调用的生命周期内使用（提取一帧画面 + 转写音频），不改变存储里的原文件。
+- `read_video` 改用 `_load_video_bytes`；`read_audio` 不受影响，继续用原来的 `_media_size_error`（音频没有类似的压缩手段，体积检查逻辑不变）。
+- 不判断是否"值得压"（不调用 `_should_compress_video`）——进这条分支时已经确定超过读取上限，直接压缩，没有"超限但不需要压"的中间状态。
+
 ---
 
 ## 3. 技术方案
@@ -187,6 +202,7 @@ backend/agent/providers/
 - 新增：`tests/test_providers_media.py`（覆盖 `supports_video`/`supports_audio`/`video_limits`/`audio_native_exts`/`media_raw_max`/`prepare_video` 模板方法/`build_video_block`/`build_audio_block`）、`tests/test_video_duration_limit.py`（覆盖时长限制）、`tests/test_providers_sanitize.py`（覆盖 `stream_sanitize_markers` 各适配器返回值）。
 - 回归：`tests/test_providers.py`、`tests/test_stream_round_retry.py`、`tests/test_chat_attach_video.py`、`tests/test_stream_sanitize.py`、`tests/test_llm_cache_capability.py` 全部应零改动通过（或仅改 import 路径）。
 - 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest` 兜底跑一遍。
+- **Phase 5（已完成）**：`tests/test_file_readers.py` 新增/改造 3 个用例——超限视频下载后走压缩（`test_read_video_compresses_oversized_file`）、压缩后仍超限报错（`test_read_video_rejects_when_still_too_large_after_compress`）、`read_audio` 的原有行为不受影响（`test_media_reader_uses_physical_size_before_get` 改成测 `read_audio`）。后端全量测试 773 passed。
 
 ### 部署与灰度
 

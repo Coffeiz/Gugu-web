@@ -114,6 +114,27 @@ async def _media_size_error(file) -> dict | None:
     return None
 
 
+async def _load_video_bytes(file) -> tuple[bytes | None, str, dict | None]:
+    """取视频原始字节；超过读取上限时先尝试压缩一次，压完仍超限才报错。
+
+    发送路径（chat_attach.py）早就有探测/压缩逻辑，但只用于「用户发视频给咕咕」，
+    read_file 读文件库里已有的视频完全没走过——超过 MEDIA_READ_MAX_BYTES 一律直接
+    拒绝，即使内容很简单也读不了（PRD-LLM-3 追加项）。这里读取只是截一帧画面+
+    转写音频，用不上原始高清画质，压缩产物也不需要写回文件库，只在这次读取的
+    生命周期内使用，成功与否都不影响存储里的原文件。
+    """
+    info = await get_storage().stat(file.storage_key)
+    if info is None:
+        return None, "", {"error": "媒体文件不存在，无法读取"}
+    data = await get_storage().get(file.storage_key)
+    if info.size <= MEDIA_READ_MAX_BYTES:
+        return data, file.ext.lower(), None
+    compressed = await chat_attach._compress_video(data)
+    if not compressed or len(compressed) > MEDIA_READ_MAX_BYTES:
+        return None, "", {"error": f"媒体过大（{info.size} bytes），压缩后仍超出读取上限"}
+    return compressed, "mp4", None   # _compress_video 固定输出 mp4 容器，不沿用原始扩展名
+
+
 async def read_audio(file) -> dict:
     try:
         error = await _media_size_error(file)
@@ -131,12 +152,11 @@ async def read_audio(file) -> dict:
 
 async def read_video(file) -> dict:
     try:
-        error = await _media_size_error(file)
+        data, ext, error = await _load_video_bytes(file)
         if error:
             return error
-        data = await get_storage().get(file.storage_key)
-        frame = await _extract_frame(data, file.ext.lower())
-        audio = await _extract_audio(data, file.ext.lower())
+        frame = await _extract_frame(data, ext)
+        audio = await _extract_audio(data, ext)
         transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
