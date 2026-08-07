@@ -65,7 +65,7 @@ class MemoryScope:
     @property
     def files(self) -> Tuple[str, ...]:
         if self.scope_type == "group":
-            return ("profile.json", "summary.json", "daily.md", "memory.md")
+            return ("profile.json", "summary.json", "daily.md", "memory.md", "members.json")
         return ("profile.json", "pattern.json", "summary.json")
 
     def key(self, filename: str) -> str:

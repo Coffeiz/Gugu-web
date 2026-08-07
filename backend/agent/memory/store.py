@@ -14,6 +14,11 @@
 daily 不再"满了直接丢"，而是**按累积条数压缩**：攒到 DAILY_COMPACT_AT 触发，
 最老的并入 memory.md、daily 留回最近 DAILY_KEEP_RECENT 条（见 compress.py）。
 DAILY_HARD_CAP 是压缩失败时的安全上限，但达到上限时仍保留数据并等待下次成功压缩。
+
+本模块是 owner（Web）与 IM group/member 记忆共用的"通用共享层"：IM 记忆合并逻辑
+（`im_reflection.py` 的 `_merge_group_profile`/`_merge_profile`）同样复用这里的
+`apply_profile_ops`/`apply_pattern_ops`（以及 `_pattern_similar` 相似度判断），
+不要误以为本模块是 owner 专属。
 """
 from __future__ import annotations
 
