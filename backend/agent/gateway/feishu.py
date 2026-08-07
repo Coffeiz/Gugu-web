@@ -256,7 +256,11 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         # 由 worker 的 IM Loop 统一处理，避免 Gateway 再承担业务回复编排。
         if not attachments:
             from agent.im.loop import apply_im_shortcut_cancel_sync, decide_im_shortcut_sync
-            dec = decide_im_shortcut_sync("feishu", open_id, text)
+            dec = decide_im_shortcut_sync(
+                "feishu", open_id, text,
+                bot_id=channel_id,
+                scope_id=msg.chat_id or open_id,
+            )
             if dec["action"] == "cancel":
                 apply_im_shortcut_cancel_sync("feishu", open_id, dec)
                 try:
@@ -264,6 +268,14 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
                 except Exception as e:
                     diag_log("agent.gateway.feishu.cancel_reply", e)
                     print(f"[feishu] 取消回复失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
+                return
+            if dec["action"] == "no_permission":
+                # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
+                try:
+                    _do_send(api_client, msg.chat_id, dec["reply"])
+                except Exception as e:
+                    diag_log("agent.gateway.feishu.no_permission_reply", e)
+                    print(f"[feishu] 无权取消回复失败: {redact(f'{type(e).__name__}: {e}')}", flush=True)
                 return
         try:
             from agent.im.models import normalize_payload

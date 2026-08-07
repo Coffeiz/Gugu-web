@@ -133,6 +133,13 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         from app.core.config import get_settings
         if not get_settings().agent.im_progress_announce_enabled:
             return
+        # 用户已取消：不再发进度声明。取消是实时控制信号，声明会误导用户以为还在执行
+        # （实测：取消后仍看到「我搜搜看有没有合适的图」这类 start_message）。
+        im = imctx.get_im()
+        if im and im.get("puid"):
+            from agent import runtime_state as rt
+            if await rt.is_cancelled(im["platform"], im["puid"]):
+                return
         text = tool.start_message(args) if callable(tool.start_message) else tool.start_message
         if not text:
             return

@@ -88,6 +88,42 @@ async def clear_cancel(platform, puid) -> None:
         await get_redis().delete(_ckey(platform, puid))
 
 
+# ── 活跃 loop 集合：记录「当前正在跑 loop 的发起者 puid」，供网关判断取消权限 ──
+#    key 按会话隔离（platform:bot_id:scope_id）：群聊 scope_id=chat_id、私聊 scope_id=sender.id。
+#    咕咕并发跑多个 loop 时集合里有多个 puid。用户发「取消」时，网关据此判断：
+#    · 当前用户是发起者 → 取消自己的 loop
+#    · 当前用户不是发起者（咕咕在忙别人的 loop）→ 提示「无权取消」
+#    · 集合为空（咕咕空闲）→ 不触发「无权取消」，走正常逻辑
+def _active_key(platform, bot_id, scope_id) -> str:
+    return f"agentactive:{platform}:{bot_id}:{scope_id}"
+
+
+async def mark_active(platform, bot_id, scope_id, puid) -> None:
+    """loop 启动时记录发起者 puid 到活跃集合。"""
+    if platform and bot_id and scope_id and puid:
+        await get_redis().sadd(_active_key(platform, bot_id, scope_id), puid)
+
+
+async def unmark_active(platform, bot_id, scope_id, puid) -> None:
+    """loop 结束时从活跃集合移除发起者 puid。"""
+    if platform and bot_id and scope_id and puid:
+        await get_redis().srem(_active_key(platform, bot_id, scope_id), puid)
+
+
+async def get_active(platform, bot_id, scope_id) -> set:
+    """返回当前活跃 loop 的发起者 puid 集合（空集合 = 咕咕空闲）。"""
+    if not (platform and bot_id and scope_id):
+        return set()
+    return set(await get_redis().smembers(_active_key(platform, bot_id, scope_id)))
+
+
+def get_active_sync(platform, bot_id, scope_id) -> set:
+    """同步版 get_active（飞书网关用）。"""
+    if not (platform and bot_id and scope_id):
+        return set()
+    return set(get_redis_sync().smembers(_active_key(platform, bot_id, scope_id)))
+
+
 # ── 等回话标志：咕咕回复以提问/确认收尾时 worker 置；网关读到 → 让「嗯/好/算了」放行进 agent ──
 #    （否则确认被当闲聊 drop/秒回吞掉，主模型永远收不到。20min 窗口，超时自动失效）
 AWAIT_TTL = 1200

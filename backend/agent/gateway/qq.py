@@ -332,9 +332,18 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not all_attachments:
         from agent.im.loop import apply_im_shortcut_cancel, decide_im_shortcut
-        dec = await decide_im_shortcut("qq", sender_id, text)
+        dec = await decide_im_shortcut(
+            "qq", sender_id, text,
+            bot_id=channel_id,
+            scope_id=chat_id or sender_id,
+        )
         if dec["action"] == "cancel":
             await apply_im_shortcut_cancel("qq", sender_id, dec)
+            target = chat_id if chat_type == "group" else sender_id
+            await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
+            return
+        if dec["action"] == "no_permission":
+            # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不写取消标志、不入队。
             target = chat_id if chat_type == "group" else sender_id
             await _qq_ack(channel_id, chat_type, target, dec["reply"], msg_id)
             return
