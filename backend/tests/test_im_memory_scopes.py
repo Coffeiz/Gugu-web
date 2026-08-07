@@ -354,13 +354,16 @@ async def test_reflection_snapshot_excludes_assistant_and_tool_messages(db, user
 def test_member_memory_merge_is_stable_and_deduplicated():
     from agent.memory.im_reflection import _merge_pattern, _merge_profile
 
-    assert _merge_profile(
+    # _merge_profile 复用 store.apply_profile_ops，条目带 ts（owner 路径既有行为）。
+    merged = _merge_profile(
         [{"type": "preference", "text": "喜欢画画"}],
         [{"type": "preference", "text": "喜欢画画"}, "常用中文"],
-    ) == [
+    )
+    assert [{"type": m["type"], "text": m["text"]} for m in merged] == [
         {"type": "preference", "text": "喜欢画画"},
         {"type": "note", "text": "常用中文"},
     ]
+    assert all("ts" in m for m in merged)
     assert _merge_pattern(
         [{"text": "先确认再执行", "kind": "observed", "importance": 1}],
         [{"text": "先确认再执行", "kind": "inferred", "importance": 2}, {"text": "偏好短回复"}],

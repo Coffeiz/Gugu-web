@@ -34,5 +34,11 @@ profile 类型只能是：
 - preference：群体沟通或协作偏好
 - note：其他稳定公开事实
 
+nicknames_add 只记录"群友对某个成员的称呼"：
+- 只在聊天内容里明确出现"某人被别人称呼为 XX"这类信号时才输出，例如"小北，你上次说的那个方案"。
+- 不要记录成员自称、网名、平台显示名，也不要根据语气或他人评价推断称呼。
+- 每条格式：{"platform_user_id": "该成员的 platform_user_id", "nickname": "群友对他的称呼"}。
+- 没有明确信号时返回空数组。
+
 严格只输出 JSON，不要输出解释：
-{"profile_add": [{"type": "name|nature|rule|role|project|preference|note", "text": "一条稳定的群组事实"}], "profile_remove": ["需要删除的旧 profile 原文"], "daily": ["带绝对日期的近期记录"], "summary": "不超过150字的当前群状态；没有变化时保留原 summary"}
+{"profile_add": [{"type": "name|nature|rule|role|project|preference|note", "text": "一条稳定的群组事实"}], "profile_remove": ["需要删除的旧 profile 原文"], "daily": ["带绝对日期的近期记录"], "summary": "不超过150字的当前群状态；没有变化时保留原 summary", "nicknames_add": [{"platform_user_id": "...", "nickname": "群友称呼"}]}
