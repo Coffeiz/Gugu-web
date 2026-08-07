@@ -11,8 +11,8 @@
 
 ⚠️ 约定：**每新增一个 skill，记得在 `prompts/skills.md` 补一条「主动指针」**
 （「用户什么场景 → `use_skill X`」）——别只靠 builder 自动注入的索引；指针写在常驻准则里
-能强化触发（尤其需要主动留意的场景）。现有 5 个：weather / project-planning /
-scheduled-tasks / im-bind / web-search，skills.md 都有对应指针。
+能强化触发（尤其需要主动留意的场景）。现有 7 个：weather / project-planning /
+scheduled-tasks / im-bind / web-search / file-ops / note-writing，skills.md 都有对应指针。
 """
 from __future__ import annotations
 
