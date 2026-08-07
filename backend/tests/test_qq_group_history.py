@@ -2,7 +2,7 @@
 
 from sqlalchemy import func, select
 
-from agent.im.loop import trim_group_session_messages
+from agent.im.session import trim_session_messages
 from app.models import ConversationMessage, ConversationSession
 
 
@@ -12,11 +12,11 @@ async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
     await db.flush()
     db.add_all([
         ConversationMessage(session_id=session.id, role="user", content=f"消息 {index}")
-        for index in range(505)
+        for index in range(605)
     ])
     await db.commit()
 
-    await trim_group_session_messages(session.id)
+    await trim_session_messages(session.id)
 
     count = await db.scalar(
         select(func.count()).select_from(ConversationMessage).where(
@@ -30,4 +30,4 @@ async def test_qq_group_session_keeps_only_latest_500_messages(db, user_a):
         .limit(1)
     )
     assert count == 500
-    assert latest == "消息 504"
+    assert latest == "消息 604"

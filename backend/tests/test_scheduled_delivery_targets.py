@@ -540,3 +540,122 @@ async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatc
     # 锁释放后同一个 task_id 应该能再次正常执行，不会被残留的锁永久卡住。
     third_result = await scheduled.execute_task(task.id, is_trial=True)
     assert third_result == {"QQ": "已发送"}
+
+
+# ── PR #9 复审 P1 回归测试 ──────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_persist_push_im_private_uses_owner_session_key(monkeypatch, db, user_a):
+    """P1-1：定时任务私聊推送走 owner_session key（im:owner-session:{uid}:...），
+    不再用群聊 imsession key。
+
+    复现场景：owner binding 指向 session A（真实私聊 session），DB 里存在一个
+    同 peer 重复的 session B（updated_at 更新）；推送必须写到 A（owner binding
+    路由目标），不能误用群聊 key 撞到 B。
+    """
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession
+
+    # 制造两个同 peer 的 session：A 是 owner binding 指向的真实私聊；B 是 updated_at
+    # 较新的"噪声" session（PR #9 背景：存量同 peer 重复 session）。
+    # A 是 owner binding 指向的真实私聊 session（source="web"，bind_session 只接受
+    # web/None 源）；B 是 source="qq" 的同 peer 噪声 session。
+    sess_a = ConversationSession(
+        user_id=user_a.id, title="真实私聊", source="web", bot_id="bot-1",
+        chat_id=None, platform_user_id="owner-puid", chat_type="c2c",
+    )
+    sess_b = ConversationSession(
+        user_id=user_a.id, title="噪声 session", source="qq", bot_id="bot-1",
+        chat_id=None, platform_user_id="owner-puid", chat_type="c2c",
+    )
+    db.add_all([sess_a, sess_b])
+    await db.commit()
+    await db.refresh(sess_a); await db.refresh(sess_b)
+
+    # owner binding 指向 A
+    from app.core import redis as R
+    from agent.im.owner_session import bind_session
+    from app.models import ConversationMessage
+    from sqlalchemy import select
+    await bind_session(db, user_a.id, "qq", "owner-puid", sess_a.id, "bot-1")
+
+    target = {
+        "platform": "qq",
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": "owner-puid",
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "测试任务", "推送正文", target=target)
+
+    # 推送应写入 owner binding 指向的 A
+    msgs_a = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess_a.id)
+    )).scalars().all()
+    msgs_b = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess_b.id)
+    )).scalars().all()
+    assert any("推送正文" in (m.content or "") for m in msgs_a), \
+        f"推送应写入 owner binding 指向的 A，实际 A 消息={[(m.content or '')[:50] for m in msgs_a]}"
+    assert not any("推送正文" in (m.content or "") for m in msgs_b), \
+        f"推送不应误入噪声 session B，实际 B 消息={[(m.content or '')[:50] for m in msgs_b]}"
+
+
+@pytest.mark.asyncio
+async def test_persist_push_im_group_uses_imsession_key(monkeypatch, db, user_a):
+    """P1-1 群聊侧：定时任务群聊推送仍走 imsession key（与群聊主路径一致）。"""
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession, ConversationMessage
+    from sqlalchemy import select
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="群聊", source="qq", bot_id="bot-1",
+        chat_id="group-1", platform_user_id=None, chat_type="group",
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    target = {
+        "platform": "qq",
+        "chat_type": "group",
+        "chat_id": "group-1",
+        "puid": "owner-puid",
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "群任务", "群聊正文", target=target)
+
+    msgs = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == sess.id)
+    )).scalars().all()
+    assert any("群聊正文" in (m.content or "") for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_persist_push_im_private_missing_puid_returns_early(monkeypatch, db, user_a):
+    """P1-2 fail closed：_persist_push_im 私聊缺 puid 时直接 return，
+    不创建 session、不写库——避免用空 sender id 撞到任何已有私聊 session。
+    """
+    import app.scheduled_tasks as scheduled
+    from app.models import ConversationSession, ConversationMessage
+    from sqlalchemy import select, func
+
+    target = {
+        "platform": "qq",
+        "chat_type": "c2c",
+        "chat_id": None,
+        "puid": None,   # 缺
+        "channel_id": "bot-1",
+    }
+    await scheduled._persist_push_im(user_a.id, "qq", "任务", "正文", target=target)
+
+    # 不应创建任何 session 或 message
+    sess_count = (await db.execute(
+        select(func.count()).select_from(ConversationSession)
+        .where(ConversationSession.user_id == user_a.id)
+    )).scalar_one()
+    msg_count = (await db.execute(
+        select(func.count()).select_from(ConversationMessage)
+    )).scalar_one()
+    assert sess_count == 0
+    assert msg_count == 0

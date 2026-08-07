@@ -381,6 +381,10 @@ class ConversationSession(Base):
     id:         Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id:    Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title:      Mapped[str]      = mapped_column(String(300), default="新对话")
+    # P1-3：手动重命名后置 True，永久禁止自动标题覆盖（与 generated_at 配合，
+    # 任何后续自动标题任务直接跳过本 session）。rename_session API 写入 True，
+    # _gen_title_bg 在改 title 前查并跳过。
+    title_locked: Mapped[bool]   = mapped_column(Boolean, default=False)
     summary:    Mapped[str]      = mapped_column(Text, default="")   # 一句话「这段对话聊了啥」，供跨 session 查找/续接（随会话刷新；绑 session、删则同删）
     source:     Mapped[str]      = mapped_column(String(20), default="web")
     # IM Bot 作用域。Web 会话保持为空；IM 会话必须和 source/chat_id 一起参与查找，

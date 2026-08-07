@@ -123,8 +123,18 @@ export function useChatSessions(options: {
     } catch {}
   }
 
+  async function renameSession(id: number, title: string) {
+    const trimmed = title.trim()
+    if (!trimmed) return
+    try {
+      await agentApi.renameSession(String(id), trimmed)
+      const target = sessions.value.find(s => s.id === id)
+      if (target) target.title = trimmed
+    } catch {}
+  }
+
   return {
     webSessions, imSessions, currentSessionTitle,
-    loadSession, newSession, deleteSession,
+    loadSession, newSession, deleteSession, renameSession,
   }
 }
