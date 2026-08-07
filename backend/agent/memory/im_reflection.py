@@ -219,15 +219,24 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                         scope, "members.json",
                         _merge_members(prior_members if isinstance(prior_members, dict) else {}, aggregated),
                     )
-                except Exception:
-                    pass   # 不影响本轮反思；下次任务执行时会重新聚合一次，不是丢失、只是晚一轮
+                except Exception as exc:
+                    # 不让本轮反思跟着失败；临时性错误下次任务会重新聚合一次，不是丢失只是晚一轮。
+                    # 但完全不留痕的话，schema/SQL/OSS 权限这类持续性故障会永久停更且无法排查
+                    # ——这正是本 PRD 最初诞生的原因（真实故障排查困难），不能在这里重蹈覆辙。
+                    from app.core.redaction import diag_log
+                    diag_log("agent.memory.im_members.aggregate", exc)
             current = await read_scope(scope)
             payload = "\n".join(
                 f"[{m.created_at.isoformat() if m.created_at else '未知时间'}] {_message_text(m)}"
                 for m in messages
             )
+            # members.json 不进反思 prompt——它是 execute_job 里独立聚合写入的持久化文件
+            # （见上面的 members.json 写入块），不该被当成"已有记忆"整份塞给 LLM：群成员
+            # 越多，prompt 越大，纯粹是无意义的 token 开销；nicknames_add 判断用的是本批
+            # 消息自带的 sender id，也不需要旧 members 全量做参照。
+            reflection_current = {k: v for k, v in current.items() if k != "members"}
             user = (
-                f"已有群组/用户记忆：\n{json.dumps(current, ensure_ascii=False)}\n\n"
+                f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
                 f"本批新增消息：\n{payload or '（无消息）'}"
             )
             out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500, thinking="disabled")
@@ -306,7 +315,7 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
             ConversationMessage.role == "user",
             ConversationMessage.platform_user_id.is_not(None),
         )
-        .order_by(ConversationMessage.created_at)
+        .order_by(ConversationMessage.created_at, ConversationMessage.id)
     )).all()
     members: dict[str, dict] = {}
     for pid, name, created_at in rows:

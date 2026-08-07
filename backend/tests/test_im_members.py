@@ -124,8 +124,45 @@ async def test_resolve_speaker_by_name_substring_reverse_direction(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_resolve_speaker_alias_after_name_left_retention_window(db, user_a):
+    """③层的存在意义：旧名字对应的消息已经被保留窗口裁掉，②层查不到了，
+    但 members.json.aliases 还记着这个曾用名，改名很久之后依然要能查到人
+    （code review 发现的真实场景：不补这层，"上线几天后才坏"）。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    # 数据库里只剩新名字的消息——模拟旧名字的消息已经被 MESSAGE_RETENTION_LIMIT 裁剪出窗口。
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "新名字", 0)])
+    members = {"pid-1": {"name": "新名字", "aliases": ["旧名字"], "nicknames": [], "last_seen_at": 100.0}}
+
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "旧名字", _load_members_stub(members),
+    )
+    assert result == {"platform_user_id": "pid-1"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_alias_ambiguous_returns_candidates(db, user_a):
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-1", "新名字1", 0),
+        ("pid-2", "新名字2", 5),
+    ])
+    members = {
+        "pid-1": {"name": "新名字1", "aliases": ["撞车曾用名"], "nicknames": [], "last_seen_at": 100.0},
+        "pid-2": {"name": "新名字2", "aliases": ["撞车曾用名"], "nicknames": [], "last_seen_at": 200.0},
+    }
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "撞车曾用名", _load_members_stub(members),
+    )
+    assert result["ambiguous"] is True
+    assert [c["platform_user_id"] for c in result["candidates"]] == ["pid-2", "pid-1"]
+    assert result["candidates"][0]["matched_by"] == "aliases"
+
+
+@pytest.mark.asyncio
 async def test_resolve_speaker_nickname_unique(db, user_a):
-    """③层：①②都未命中，才读 members.json 的 nicknames。"""
+    """④层：①②③都未命中，才读 members.json 的 nicknames。"""
     from agent.tools.group_context import _resolve_speaker
 
     await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
