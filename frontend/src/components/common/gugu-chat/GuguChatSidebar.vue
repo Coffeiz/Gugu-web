@@ -21,6 +21,7 @@
       <div
         v-for="s in webSessions" :key="s.id"
         class="exp-session-item"
+        :data-session-id="s.id"
         :class="{ active: s.id === sessionId }"
         @click="onLoadSession(s.id)"
       >

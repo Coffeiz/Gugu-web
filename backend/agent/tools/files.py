@@ -1079,7 +1079,17 @@ async def _list_recent_attachments(db, user_id, args: dict):
 
 
 async def _send_file_from_url(user_id, url: str, title: str):
-    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。"""
+    """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
+
+    下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
+    Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
+    有 Content-Length 提前拒绝；chunked/无 Content-Length 在读取过程中累计，超限立即中止。
+
+    生命周期：**最终 response 的完整消费（含 aiter_bytes）必须留在 AsyncClient 的
+    async with 块内**——真实 httpx 的 transport 随 client 关闭，若在 __aexit__ 之后
+    才读 body，连接已关会抛 ReadError。原则：创建 client → 获取 streaming response →
+    完整消费/主动中止 → close response → 最后才 close client。
+    """
     reason = _url_is_safe(url)
     if reason:
         return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
@@ -1088,37 +1098,61 @@ async def _send_file_from_url(user_id, url: str, title: str):
     from urllib.parse import urljoin
     try:
         # 手动跟随重定向 + 逐跳重新校验：自动 follow 会让公网页 302 跳内网/云元数据绕过上面的 _url_is_safe（SSRF）。
+        # stream=True 只读响应头不读 body，避免 redirect 探测阶段就把大 body 读进内存。
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=20.0, write=10.0, pool=5.0),
             follow_redirects=False,
         ) as client:
             cur = url
-            resp = await client.get(cur)
+            req = client.build_request("GET", cur)
+            resp = await client.send(req, stream=True)
             for _ in range(3):   # 最多跟 3 跳
                 if resp.status_code not in (301, 302, 303, 307, 308):
                     break
                 loc = resp.headers.get("location")
+                await resp.aclose()   # 关闭 3xx 响应连接，再发下一跳
                 if not loc:
                     break
                 cur = urljoin(cur, loc)
                 reason = _url_is_safe(cur)   # 每一跳的目标都重新过内网校验
                 if reason:
                     return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
-                resp = await client.get(cur)
+                req = client.build_request("GET", cur)
+                resp = await client.send(req, stream=True)
+
+            # 最终 response 的完整消费留在 client 生命周期内（见 docstring）。
+            if resp.status_code != 200:
+                await resp.aclose()
+                return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+
+            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            ext = _SEND_URL_IMAGE_EXT.get(ctype)
+            if not ext:
+                await resp.aclose()
+                return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+            # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
+            clen = resp.headers.get("content-length")
+            if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
+                await resp.aclose()
+                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+
+            # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
+            # 不把整个响应消费完（防 DoS）。
+            total = 0
+            chunks: list[bytes] = []
+            try:
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > _SEND_URL_MAX_BYTES:
+                        return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
+                    chunks.append(chunk)
+            finally:
+                await resp.aclose()
+            data = b"".join(chunks)
     except Exception as e:
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
-    if resp.status_code != 200:
-        return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
-
-    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-    data = resp.content
-    ext = _SEND_URL_IMAGE_EXT.get(ctype)
-    if not ext:
-        return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
     if not data:
         return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
-    if len(data) > _SEND_URL_MAX_BYTES:
-        return json.dumps({"error": f"图片过大（{len(data) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
 
     from app.core import chat_attach
     name = (title or "").strip()[:80] or "图片"
@@ -1144,10 +1178,22 @@ async def _send_file(db, user_id, args: dict):
     """把文件发到对话窗口（前端渲染可下载卡片）：文件库里的文件用 file_id/file；
     网络图片（如 image_search 搜到的）用 url——下载后暂存成聊天附件，同一套 _artifact 机制；
     之前收到/发过、还在暂存区的附件用 attach_id——直接重发，不重新下载、不进文件库。
-    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。"""
+    返回 _artifact，core 据此推一个 file 事件给前端；普通字段回给 LLM。
+
+    群成员（member/unknown）只能用 url 发网络图片（搜图配图），不能发文件库文件
+    （file/file_id）或重发暂存附件（attach_id）——后两者会读取 Bot 所属账号的私有文件。
+    """
+    from agent import imctx
+    im = imctx.get_im()
+    is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
+
     url = (args.get("url") or "").strip()
     if url:
         return await _send_file_from_url(user_id, url, args.get("title") or "")
+
+    if is_restricted:
+        # 群成员只允许发网络图片（url 分支）；file/file_id/attach_id 涉及 owner 私有文件，禁止。
+        return json.dumps({"error": "群聊里只能发网络图片（用 url 传图片直链），不能发文件库文件或重发附件"}, ensure_ascii=False)
 
     attach_id = (args.get("attach_id") or "").strip()
     if attach_id:

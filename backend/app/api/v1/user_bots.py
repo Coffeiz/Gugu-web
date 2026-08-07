@@ -40,7 +40,7 @@ def _out(b: UserBot) -> dict:
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
         "group_response_mode": response_mode,
-        "group_allowed_tools": b.group_allowed_tools or ["web_search"],
+        "group_allowed_tools": b.group_allowed_tools or ["web_search", "image_search", "send_file"],
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -168,9 +168,9 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"web_search", "image_search", "send_file", "group_context_search"}
         if unsupported:
-            raise HTTPException(400, "当前群成员只支持网页搜索和当前群上下文搜索")
+            raise HTTPException(400, "当前群成员只支持网页搜索、图片搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
     await db.commit()
     await db.refresh(bot)

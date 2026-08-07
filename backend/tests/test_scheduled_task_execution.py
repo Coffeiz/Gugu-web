@@ -7,37 +7,41 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_scheduled_execution_always_uses_full_loop(monkeypatch, db, user_a):
-    """创建任务不再调用 LLM 选择工具，执行阶段直接使用完整工具集。"""
+    """创建任务不再调用 LLM 选择工具，执行阶段直接使用完整工具集。
+
+    PRD-SCHEDULE-2：execution 最后一轮输出 report schema JSON，report 模块纯代码渲染。
+    无工具时 execution 返回合法 schema，解析成功直接返回 summary。"""
     import app.scheduled_tasks as scheduled
 
-    execution = AsyncMock(return_value=("执行结果", False, {"tool_names": [], "mutated": False}))
-    report = AsyncMock()
+    execution = AsyncMock(return_value=(
+        '{"summary":"执行结果","context":"","status":"success"}',
+        False, {"tool_names": [], "mutated": False},
+    ))
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
-    monkeypatch.setattr("agent.runner.run_scheduled_report", report)
 
-    result, _files = await scheduled._run_agent(user_a.id, "测试任务", trial=True)
+    result, _files, _status = await scheduled._run_agent(user_a.id, "测试任务", trial=True)
 
     assert result == "执行结果"
     execution.assert_awaited_once()
-    report.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_scheduled_tools_run_report_without_reexecuting(monkeypatch, db, user_a):
+async def test_scheduled_tools_run_schema_parse_without_reexecuting(monkeypatch, db, user_a):
+    """PRD-SCHEDULE-2：有工具时 execution 返回 report schema，report 模块纯代码解析 summary。
+
+    execution 只调一次（不再调 report LLM），summary 直接作为投递正文。"""
     import app.scheduled_tasks as scheduled
 
-    execution = AsyncMock(return_value=("工具执行结果", False, {"tool_names": ["web_search"], "mutated": False}))
-    report = AsyncMock(return_value=("整理后的报告", False))
+    execution = AsyncMock(return_value=(
+        '{"summary":"整理后的报告","context":"调了 web_search","status":"success"}',
+        False, {"tool_names": ["web_search"], "mutated": False},
+    ))
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
-    monkeypatch.setattr("agent.runner.run_scheduled_report", report)
 
-    result, _files = await scheduled._run_agent(user_a.id, "查资料", trial=True)
+    result, _files, _status = await scheduled._run_agent(user_a.id, "查资料", trial=True)
 
     assert result == "整理后的报告"
     execution.assert_awaited_once()
-    report.assert_awaited_once()
-    assert report.await_args.args[0] == user_a.id
-    assert report.await_args.args[2:] == ("查资料", "工具执行结果")
 
 
 @pytest.mark.asyncio
@@ -47,26 +51,53 @@ async def test_scheduled_execution_failure_after_mutation_is_not_replayed(monkey
     execution = AsyncMock(return_value=("写入后模型失败", True, {"tool_names": ["update_file"], "mutated": True}))
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
 
-    result, _files = await scheduled._run_agent(user_a.id, "修改文件", trial=False)
+    result, _files, _status = await scheduled._run_agent(user_a.id, "修改文件", trial=False)
 
     assert result == "写入后模型失败"
     execution.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_scheduled_report_failure_retries_report_only(monkeypatch, db, user_a):
+async def test_scheduled_schema_parse_failure_retries_execution(monkeypatch, db, user_a):
+    """PRD-SCHEDULE-2：execution 最后一轮不是合法 JSON → 重试一次 execution。
+
+    第一次返回非 JSON 文本，第二次返回合法 schema。execution 应被调用 2 次，
+    最终返回第二次的 summary。"""
     import app.scheduled_tasks as scheduled
 
-    execution = AsyncMock(return_value=("查询结果", False, {"tool_names": ["web_search"], "mutated": False}))
-    report = AsyncMock(side_effect=[("报告暂时失败", True), ("整理后的报告", False)])
+    execution = AsyncMock(side_effect=[
+        ("查询结果（不是 JSON）", False, {"tool_names": ["web_search"], "mutated": False}),
+        ('{"summary":"整理后的报告","context":"","status":"success"}',
+         False, {"tool_names": ["web_search"], "mutated": False}),
+    ])
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
-    monkeypatch.setattr("agent.runner.run_scheduled_report", report)
 
-    result, _files = await scheduled._run_agent(user_a.id, "查天气", trial=False)
+    result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
 
     assert result == "整理后的报告"
-    execution.assert_awaited_once()
-    assert report.await_count == 2
+    assert execution.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_scheduled_schema_parse_failure_mutated_never_reruns(monkeypatch, db, user_a):
+    """P1：execution 成功但 schema 解析失败，且已产生写副作用（mutated=True）时，
+    绝不重跑 execution——否则 create_project/update_file 等业务操作会被重复执行。
+
+    此时直接 fallback 到 execution 原文，execution 只应被调用 1 次。"""
+    import app.scheduled_tasks as scheduled
+
+    execution = AsyncMock(return_value=(
+        "不是 JSON",
+        False,
+        {"tool_names": ["create_project"], "mutated": True},
+    ))
+    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+
+    result, _files, status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
+
+    assert result == "不是 JSON"
+    assert status == "success"
+    assert execution.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -111,7 +142,7 @@ async def test_execute_task_allows_retry_after_previous_failure(monkeypatch, db,
     await db.commit()
     await db.refresh(task)
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
     monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"QQ": "已发送"}))
 
     result = await scheduled.execute_task(task.id, is_trial=False)
@@ -245,22 +276,19 @@ async def test_run_now_uses_trial_for_normal_task(monkeypatch, db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_scheduled_report_failure_twice_falls_back_to_execution_text(monkeypatch, db, user_a):
-    """report 重试后仍然失败：必须回退到已经成功的 execution 结果，不能把 report 的
-    错误文案当正文发出去——`report_text or execution_text` 这种写法在 report_text 是
-    错误提示（非空字符串）时会误判成"有内容"，优先把错误文案发给用户。"""
+async def test_scheduled_schema_parse_failure_twice_falls_back_to_execution_text(monkeypatch, db, user_a):
+    """PRD-SCHEDULE-2：execution 重试后仍解析失败 → fallback 到 execution 原文。
+
+    防止把空 schema 的兜底内容发出去——execution_text 是真实产出，比 `schema.get('summary')` 兜底更可靠。"""
     import app.scheduled_tasks as scheduled
 
     execution = AsyncMock(return_value=("查询结果", False, {"tool_names": ["web_search"], "mutated": False}))
-    report = AsyncMock(side_effect=[("报告生成失败，请稍后重试", True), ("报告生成失败，请稍后重试", True)])
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
-    monkeypatch.setattr("agent.runner.run_scheduled_report", report)
 
-    result, _files = await scheduled._run_agent(user_a.id, "查天气", trial=False)
+    result, _files, _status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
 
     assert result == "查询结果"
-    execution.assert_awaited_once()
-    assert report.await_count == 2
+    assert execution.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -288,7 +316,7 @@ async def test_execute_task_renews_lock_for_long_running_task(monkeypatch, db, u
 
     async def slow_run_agent(*a, **kw):
         await asyncio.sleep(0.05)   # 跨越多个续租周期
-        return "正文", []
+        return "正文", [], "success"
 
     monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
     monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"网页通知": "已发送"}))
@@ -322,7 +350,7 @@ async def test_execute_task_stops_renewing_after_completion(monkeypatch, db, use
     )
     monkeypatch.setattr("app.core.redis.get_redis", lambda: SimpleNamespace(lock=lambda *a, **kw: fake_lock))
     monkeypatch.setattr(scheduled, "_SCHEDULED_LOCK_RENEW_INTERVAL", 10)
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
     monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"网页通知": "已发送"}))
 
     await scheduled.execute_task(task.id, is_trial=True)
