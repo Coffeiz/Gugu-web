@@ -46,6 +46,18 @@ class _FakeRedis:
     async def expire(self, key, ttl):
         self.ttls[key] = ttl
 
+    async def eval(self, script, numkeys, *rest):
+        """只解释 runtime_state._INIT_ACTIVITY_LUA 用到的三条命令，够测试用即可。"""
+        keys = rest[:numkeys]
+        argv = rest[numkeys:]
+        cancel_key, active_key, state_key = keys
+        puid, active_ttl, state, state_ttl = argv
+        await self.delete(cancel_key)
+        await self.sadd(active_key, puid)
+        await self.expire(active_key, int(active_ttl))
+        await self.set(state_key, state, ex=int(state_ttl))
+        return 1
+
 
 @pytest.fixture
 def fake_redis(monkeypatch):
@@ -124,3 +136,41 @@ async def test_set_state_refreshes_active_ttl(fake_redis):
     fake_redis.ttls[key] = 1   # 模拟 TTL 快耗尽
     await rt.set_state("qq", "bot-a", "group-a", "P", rt.THINKING)
     assert fake_redis.ttls[key] == rt.ACTIVE_TTL
+
+
+# ── init_activity：原子合并 clear_cancel + mark_active + set_state（PR13 复审）──
+
+@pytest.mark.asyncio
+async def test_init_activity_performs_all_three_effects(fake_redis):
+    """一次调用应该同时产生 clear_cancel + mark_active + set_state 的效果。"""
+    await rt.request_cancel("qq", "bot-a", "group-a", "P")   # 模拟残留的旧取消标志
+    assert await rt.is_cancelled("qq", "bot-a", "group-a", "P")
+
+    await rt.init_activity("qq", "bot-a", "group-a", "P", rt.THINKING)
+
+    assert not await rt.is_cancelled("qq", "bot-a", "group-a", "P")
+    assert "P" in await rt.get_active("qq", "bot-a", "group-a")
+    assert await rt.get_state("qq", "bot-a", "group-a", "P") == rt.THINKING
+
+
+@pytest.mark.asyncio
+async def test_init_activity_noop_when_scope_incomplete(fake_redis):
+    """四个 key 有缺失时静默 no-op，跟其他 runtime_state 函数的约定一致。"""
+    await rt.init_activity("qq", "", "group-a", "P", rt.THINKING)
+    assert await rt.get_state("qq", "", "group-a", "P") == rt.IDLE
+
+
+@pytest.mark.asyncio
+async def test_init_activity_is_a_single_atomic_call(monkeypatch, fake_redis):
+    """必须通过一次 Redis eval 完成，而不是三条独立命令——这是本次修复要解决的
+    问题本身：三条独立命令之间存在外部可观察的中间态窗口，单次 eval 才能消灭它。"""
+    calls = []
+    original_eval = fake_redis.eval
+
+    async def counting_eval(*args, **kwargs):
+        calls.append(args)
+        return await original_eval(*args, **kwargs)
+
+    monkeypatch.setattr(fake_redis, "eval", counting_eval)
+    await rt.init_activity("qq", "bot-a", "group-a", "P", rt.THINKING)
+    assert len(calls) == 1

@@ -128,3 +128,52 @@ def test_content_length_over_limit_rejected_before_read(monkeypatch):
     payload = json.loads(result)
     assert "图片过大" in payload["error"]
     assert resp.consumed == 0, "Content-Length 超限不应读 body"
+
+
+def test_send_file_disables_keepalive_to_prevent_cross_hop_tls_reuse(monkeypatch):
+    """PR13 复审发现的问题：pin 到 IP 后，重定向多跳可能解析到同一个 IP（CDN 场景），
+    httpcore 按 origin 复用连接池；但 sni_hostname 只在新建 TLS 连接时生效，复用连接
+    不会重新握手，会出现"握手验证了 A 的证书，之后却拿这条连接发 Host: B"的 TLS
+    hostname 隔离缺口。最简单的堵法是禁用 keep-alive，逼每一跳都新建连接/握手。"""
+    monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    resp = _FakeResp(CHUNK)
+    client = _FakeClient(resp)
+    captured_kwargs = {}
+
+    def fake_async_client(**kwargs):
+        captured_kwargs.update(kwargs)
+        return client
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake_async_client)
+
+    _run("https://example.com/small.jpg", resp)
+
+    limits = captured_kwargs.get("limits")
+    assert limits is not None
+    assert limits.max_keepalive_connections == 0
+
+
+def test_build_pinned_request_host_header_keeps_non_default_port(monkeypatch):
+    """非默认端口（如 :8443）的 Host 头必须带端口，否则部分虚拟主机/CDN 会路由错误
+    （PR13 复审发现：之前只用 parsed.hostname，端口信息被丢掉了）。"""
+    import socket
+
+    from agent.tools.files import _build_pinned_request
+
+    def safe_result(*_args, **_kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
+
+    captured = {}
+
+    class _FakeClientForHost:
+        def build_request(self, method, url, headers=None, extensions=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return "request-object"
+
+    req, error = _build_pinned_request(_FakeClientForHost(), "GET", "https://example.com:8443/a.png")
+    assert error is None
+    assert captured["headers"]["Host"] == "example.com:8443"
+    assert "93.184.216.34:8443" in captured["url"]
