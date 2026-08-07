@@ -18,7 +18,11 @@ CHUNK = 1024 * 1024   # 1MB
 
 
 class _FakeResp:
-    """流式响应：连续吐 chunk，记录被消费的字节数。"""
+    """流式响应：连续吐 chunk，记录被消费的字节数。
+
+    模拟真实 httpx 生命周期：client 关闭（__aexit__）后 response 的连接随之关闭，
+    此时再 aiter_bytes() 会抛 ReadError——用于断言 body 必须在 AsyncClient 生命周期内消费。
+    """
 
     def __init__(self, total_bytes: int, content_type: str = "image/jpeg"):
         self.status_code = 200
@@ -26,8 +30,11 @@ class _FakeResp:
         self._total = total_bytes
         self.consumed = 0
         self.closed = False
+        self.client_closed = False
 
     async def aiter_bytes(self):
+        if self.client_closed:
+            raise httpx.ReadError("stream closed: client exited before body consumed")
         while self.consumed < self._total:
             n = min(CHUNK, self._total - self.consumed)
             self.consumed += n
@@ -45,6 +52,8 @@ class _FakeClient:
         return self
 
     async def __aexit__(self, *a):
+        # 模拟真实 AsyncClient：退出时关闭 transport，response 连接随之失效。
+        self._resp.client_closed = True
         return False
 
     def build_request(self, method, url):

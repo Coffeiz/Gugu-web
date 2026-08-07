@@ -1084,6 +1084,11 @@ async def _send_file_from_url(user_id, url: str, title: str):
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
     Content-Length 2GB 的 URL 会先把 2GB 全读进 RAM 才触发 15MB 检查，是 DoS 面）。
     有 Content-Length 提前拒绝；chunked/无 Content-Length 在读取过程中累计，超限立即中止。
+
+    生命周期：**最终 response 的完整消费（含 aiter_bytes）必须留在 AsyncClient 的
+    async with 块内**——真实 httpx 的 transport 随 client 关闭，若在 __aexit__ 之后
+    才读 body，连接已关会抛 ReadError。原则：创建 client → 获取 streaming response →
+    完整消费/主动中止 → close response → 最后才 close client。
     """
     reason = _url_is_safe(url)
     if reason:
@@ -1114,36 +1119,38 @@ async def _send_file_from_url(user_id, url: str, title: str):
                     return json.dumps({"error": f"这个链接发不了：{reason}"}, ensure_ascii=False)
                 req = client.build_request("GET", cur)
                 resp = await client.send(req, stream=True)
+
+            # 最终 response 的完整消费留在 client 生命周期内（见 docstring）。
+            if resp.status_code != 200:
+                await resp.aclose()
+                return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
+
+            ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+            ext = _SEND_URL_IMAGE_EXT.get(ctype)
+            if not ext:
+                await resp.aclose()
+                return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
+            # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
+            clen = resp.headers.get("content-length")
+            if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
+                await resp.aclose()
+                return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
+
+            # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
+            # 不把整个响应消费完（防 DoS）。
+            total = 0
+            chunks: list[bytes] = []
+            try:
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > _SEND_URL_MAX_BYTES:
+                        return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
+                    chunks.append(chunk)
+            finally:
+                await resp.aclose()
+            data = b"".join(chunks)
     except Exception as e:
         return json.dumps({"error": f"图片下载失败（{type(e).__name__}），换一张或换个来源试试"}, ensure_ascii=False)
-    if resp.status_code != 200:
-        await resp.aclose()
-        return json.dumps({"error": f"图片下载失败（HTTP {resp.status_code}）"}, ensure_ascii=False)
-
-    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-    ext = _SEND_URL_IMAGE_EXT.get(ctype)
-    if not ext:
-        await resp.aclose()
-        return json.dumps({"error": f"这个链接返回的不是支持的图片格式（{ctype or '未知类型'}）"}, ensure_ascii=False)
-    # Content-Length 提前拒绝：声明体积就超限的，不用读 body。
-    clen = resp.headers.get("content-length")
-    if clen and clen.isdigit() and int(clen) > _SEND_URL_MAX_BYTES:
-        await resp.aclose()
-        return json.dumps({"error": f"图片过大（{int(clen) / 1048576:.1f}MB），超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限"}, ensure_ascii=False)
-
-    # 流式读取 + 累计限流：chunked/无 Content-Length 时在读取过程中累计，超限立即中止，
-    # 不把整个响应消费完（防 DoS）。
-    total = 0
-    chunks: list[bytes] = []
-    try:
-        async for chunk in resp.aiter_bytes():
-            total += len(chunk)
-            if total > _SEND_URL_MAX_BYTES:
-                return json.dumps({"error": f"图片过大（超过 {_SEND_URL_MAX_BYTES // 1048576}MB 上限）"}, ensure_ascii=False)
-            chunks.append(chunk)
-    finally:
-        await resp.aclose()
-    data = b"".join(chunks)
     if not data:
         return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
 
