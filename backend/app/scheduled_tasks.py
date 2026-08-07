@@ -586,6 +586,49 @@ async def _inject_group_context(user_id, target_map, prompt: str) -> tuple[str |
     return group, prompt
 
 
+# PRD-SCHEDULE-2：execution 阶段最后一轮输出 report schema JSON，report 模块纯代码
+# 解析渲染，去掉独立 report LLM 调用。schema 不含 files（附件由 _collect 从 send_file
+# 工具事件收集，不依赖模型填写）。
+_REPORT_SCHEMA_INSTRUCTION = (
+    "\n\n[定时任务报告 schema]\n"
+    "你的最后一轮输出必须是如下合法 JSON（不要输出其他内容、不要用围栏包裹）：\n"
+    "{\n"
+    '  "summary": "面向用户的最终正文，直接给出用户关心的结论、数据或操作结果",\n'
+    '  "context": "执行过程说明（内部记录，不投递）",\n'
+    '  "status": "success" 或 "partial" 或 "failed"\n'
+    "}"
+)
+
+# status 决定投递正文前缀（PRD-SCHEDULE-2 FR-SCHED-3）
+_STATUS_PREFIX = {
+    "success": "",
+    "partial": "（部分完成）",
+    "failed": "（执行失败）",
+}
+
+
+def _parse_report_schema(execution_text: str) -> dict:
+    """从 execution 最后一轮文本里抠出 report schema。
+
+    复用 agent/memory/_llm.py 的 _parse_json（容忍 ```json 围栏与前后杂字）。
+    解析失败返回 {}，由调用方决定 fallback。"""
+    from agent.memory._llm import _parse_json
+    return _parse_json(execution_text or "")
+
+
+def _render_report_summary(schema: dict, fallback: str) -> str:
+    """根据 schema 渲染投递正文。status 决定前缀，summary 为空时 fallback 到原始文本。
+
+    PRD-SCHEDULE-2 FR-SCHED-2/FR-SCHED-3。files 不在 schema 里，由调用方从
+    _collect 收集的工具事件拼出。"""
+    summary = (schema.get("summary") or "").strip()
+    if not summary:
+        return fallback
+    status = str(schema.get("status") or "success").lower()
+    prefix = _STATUS_PREFIX.get(status, "")
+    return f"{prefix}{summary}" if prefix else summary
+
+
 async def _run_agent(
     user_id,
     prompt: str,
@@ -593,18 +636,27 @@ async def _run_agent(
     target_map: dict | None = None,
     trial: bool = False,
 ) -> tuple[str, list]:
-    """编排定时任务的 execution/report，runner 只负责单阶段 AgentLoop。
+    """编排定时任务的 execution + report schema 解析（PRD-SCHEDULE-2）。
+
+    流程：
+    1. 群目标：set_im + 拼群 memory 到 user prompt 开头（_inject_group_context）。
+    2. execution 阶段（run_scheduled_execution）：完整 AgentLoop + 工具，prompt 末尾
+       追加 _REPORT_SCHEMA_INSTRUCTION 要求模型最后一轮输出 report schema JSON。
+    3. execution 成功后用 _parse_report_schema 解析 schema，_render_report_summary 渲染
+       投递正文（status 决定前缀）。schema 解析失败：重试一次 execution，仍失败 fallback
+       到 execution 原文——不再调独立 report LLM。
+    4. 返回 (投递正文, files)：files 由 _collect 从 send_file 工具事件收集（不在 schema
+       里），投递层负责把附件发到 IM 群。
 
     target_map：任务的 delivery_targets（dict）。如果命中群目标，先 set_im +
     拼群 memory 到 user prompt 开头（_inject_group_context）。私聊/Web 任务不传或
     不命中群目标 → 完全跳过，行为与改动前一致。
-
-    返回 (文本, files)：files 是 execution 阶段（唯一带工具的阶段）里模型调
-    send_file 产出的附件列表（_artifact 结构，含 attach_id），report 阶段
-    不带工具、不会再产出文件，所以全程沿用 execution 阶段收集到的这一份。
     """
     # 群定时任务：set_im + 拼群 memory（PRD-IM-7）
     _, prompt = await _inject_group_context(user_id, target_map, prompt)
+
+    # PRD-SCHEDULE-2：execution 最后一轮输出 report schema，report 模块纯代码渲染。
+    prompt = prompt + _REPORT_SCHEMA_INSTRUCTION
 
     import app.db.session as ss
     from app.models import User
@@ -614,7 +666,7 @@ async def _run_agent(
         uname = (u.display_name or u.username) if u else ""
 
     from agent import sanitize
-    from agent.runner import run_scheduled_execution, run_scheduled_report
+    from agent.runner import run_scheduled_execution
 
     max_rounds = 2
     last_text = "咕咕这次没有产出内容"
@@ -655,45 +707,24 @@ async def _run_agent(
             )
             continue
 
-        if not meta.get("tool_names"):
+        # PRD-SCHEDULE-2：execution 成功 → 解析最后一轮的 report schema。
+        # 解析失败：重试一次 execution；仍失败 fallback 到 execution 原文（不再调 report LLM）。
+        schema = _parse_report_schema(execution_text)
+        if not schema:
+            if round_no >= max_rounds:
+                logger.info(
+                    "[scheduled-phase] %s",
+                    json.dumps({"event": "schema-fallback", "round": round_no, "reason": "parse-failed"}, ensure_ascii=False),
+                )
+                return sanitize.strip_disallowed_emoji(execution_text or last_text), files
             logger.info(
                 "[scheduled-phase] %s",
-                json.dumps({"event": "report-skipped", "round": round_no, "reason": "no-tools"}, ensure_ascii=False),
+                json.dumps({"event": "schema-parse-retry", "next_round": round_no + 1}, ensure_ascii=False),
             )
-            return sanitize.strip_disallowed_emoji(execution_text or last_text), files
+            continue
 
-        logger.info(
-            "[scheduled-phase] %s",
-            json.dumps({"event": "report-start", "round": round_no}, ensure_ascii=False),
-        )
-        report_text, report_failed = await run_scheduled_report(
-            user_id, uname, prompt, execution_text, files=files
-        )
-        logger.info(
-            "[scheduled-phase] %s",
-            json.dumps({"event": "report-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
-        )
-        if not report_failed:
-            return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text), files
-
-        logger.info(
-            "[scheduled-phase] %s",
-            json.dumps({"event": "report-retry-start", "round": round_no}, ensure_ascii=False),
-        )
-        report_text, report_failed = await run_scheduled_report(
-            user_id, uname, prompt, execution_text, files=files
-        )
-        logger.info(
-            "[scheduled-phase] %s",
-            json.dumps({"event": "report-retry-finish", "round": round_no, "ok": not report_failed}, ensure_ascii=False),
-        )
-        if report_failed:
-            # report 两次都失败：execution 已经成功产出了内容，report 只是负责把它
-            # 转述成更合适的措辞——report 失败时错误文案通常也非空，`report_text or
-            # execution_text` 这种写法会优先把错误文案发给用户，而不是已经有的
-            # execution 结果。两次都失败就直接用 execution 的产出兜底，不用 report_text。
-            return sanitize.strip_disallowed_emoji(execution_text or last_text), files
-        return sanitize.strip_disallowed_emoji(report_text or execution_text or last_text), files
+        summary = _render_report_summary(schema, execution_text or last_text)
+        return sanitize.strip_disallowed_emoji(summary), files
 
     return sanitize.strip_disallowed_emoji(last_text), files
 
