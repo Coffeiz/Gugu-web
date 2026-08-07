@@ -100,6 +100,49 @@ async def clear_cancel(platform, bot_id, scope_id, puid) -> None:
         await get_redis().delete(_ckey(platform, bot_id, scope_id, puid))
 
 
+# Lua 脚本把「清残留取消标志 + 注册活跃发起者 + 置忙状态」合成一次 Redis 端原子操作。
+# KEYS: 1=cancel key, 2=active set key, 3=state key
+# ARGV: 1=puid, 2=active_ttl, 3=state, 4=state_ttl
+_INIT_ACTIVITY_LUA = """
+redis.call('DEL', KEYS[1])
+redis.call('SADD', KEYS[2], ARGV[1])
+redis.call('EXPIRE', KEYS[2], ARGV[2])
+redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4])
+return 1
+"""
+
+
+async def init_activity(platform, bot_id, scope_id, puid, state: str) -> None:
+    """原子地完成 clear_cancel + mark_active + set_state，消灭三者之间任何可观察窗口。
+
+    把三步顺序改成 clear_cancel → mark_active → set_state（而不是旧的
+    set_state → clear_cancel → mark_active）已经堵住了最糟糕的假成功 ACK：网关
+    落地"忙"状态之后才误清用户随后发来的取消标志。但这三步仍是三条独立的 Redis
+    命令，之间存在极小窗口——用户如果恰好在 clear_cancel 执行完、set_state(THINKING)
+    还没落地之前发"取消"，网关此时读到的 state 依然是上一轮结束后的值（通常是
+    IDLE），而网关判断"能不能取消"的依据正是 `state != IDLE`；state 还没变成
+    THINKING 就意味着这句"取消"会被当成普通消息排队处理，而不是被识别成取消意图
+    （code review 复审指出的残留窗口：不会误清标志，但也没能被识别成取消）。
+    用 Lua 脚本把三步在 Redis 端合成单次原子操作，外部永远不会观察到"cancel 已清、
+    但 state 还没变成 THINKING"的中间态——state 要么还是上一轮的旧值（这次初始化
+    尚未发生），要么已经是 THINKING（三步已经全部完成），二者之间没有可被外部读到
+    的过渡态，这条竞态窗口从时间上被彻底消灭，而不是缩短。
+    """
+    if not (platform and bot_id and scope_id and puid):
+        return
+    await get_redis().eval(
+        _INIT_ACTIVITY_LUA,
+        3,
+        _ckey(platform, bot_id, scope_id, puid),
+        _active_key(platform, bot_id, scope_id),
+        _skey(platform, bot_id, scope_id, puid),
+        puid,
+        ACTIVE_TTL,
+        state,
+        STATE_TTL,
+    )
+
+
 # ── 活跃 loop 集合：记录「当前正在跑 loop 的发起者 puid」，供网关判断取消权限 ──
 #    key 按会话隔离（platform:bot_id:scope_id）：群聊 scope_id=chat_id、私聊 scope_id=sender.id。
 #    咕咕并发跑多个 loop 时集合里有多个 puid。用户发「取消」时，网关据此判断：
