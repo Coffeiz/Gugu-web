@@ -53,7 +53,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["web_search"]
+    assert access.allowed_tool_names == ["web_search", "image_search"]
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
@@ -224,7 +224,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
     assert prepared.actor.role == "unknown"
     assert prepared.request.im_role == "unknown"
-    assert prepared.request.allowed_tool_names == ["web_search"]
+    assert prepared.request.allowed_tool_names == ["web_search", "image_search"]
     assert prepared.request.user_name == "群友"
     assert prepared.request.chat_id == "wx-group-1"
 

@@ -30,6 +30,7 @@ const groupResponseOptions = [
 ] as const
 const groupToolOptions = [
   { key: 'web_search', label: '网页搜索' },
+  { key: 'image_search', label: '图片搜索' },
   { key: 'group_context_search', label: '群上下文搜索' },
 ] as const
 const platforms = [
@@ -56,7 +57,15 @@ function groupResponseMode(bot: Bot): string { return bot.group_response_mode ??
 async function setGroupResponseMode(bot: Bot, mode: string) { try { await userBotsApi.update(bot.id, { group_response_mode: mode }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊回应方式设置失败' } }
 function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search'] }
 function hasGroupTool(bot: Bot, key: string): boolean { return groupTools(bot).includes(key) }
-async function toggleGroupTool(bot: Bot, key: string) { try { const tools = new Set(groupTools(bot)); if (tools.has(key)) tools.delete(key); else tools.add(key); await userBotsApi.update(bot.id, { group_allowed_tools: [...tools] }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊工具设置失败' } }
+async function toggleGroupTool(bot: Bot, key: string) {
+  try {
+    const tools = new Set(groupTools(bot)); if (tools.has(key)) tools.delete(key); else tools.add(key)
+    await userBotsApi.update(bot.id, { group_allowed_tools: [...tools] })
+    await loadBots()
+  } catch (error) {
+    connectErr.value = error instanceof Error ? error.message : '群聊工具设置失败'
+  }
+}
 async function removeBot(bot: Bot) { if (!confirm(`删除「${bot.name}」？删除后这个机器人不再连咕咕。`)) return; try { await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
 onMounted(loadBots)
 onDeactivated(stopPoll)

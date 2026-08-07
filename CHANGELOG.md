@@ -12,11 +12,17 @@
 - **群定时任务解锁群上下文 + 群记忆注入**（`backend/app/scheduled_tasks.py`）：群定时任务到点触发时，`_run_agent` 命中群目标后 `set_im(chat_type='group')` 并注入群长期记忆，让 execution 阶段能正常用 `group_context_search` 等群工具、看到群记忆，与「任务要发到 X 群」的语义一致；私聊/Web 任务零行为变化。
 - **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」title 后缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
 - **IM 取消链路补脱敏诊断日志**（`backend/agent/im/loop.py`、`backend/agent/core.py`）：取消链路此前只在异常路径（Redis 故障）留日志，正常路径完全无痕，遇到「发取消没中断 loop」无法定位断点；现在在三个关键决策点补 `diag_log_raw` 受限诊断日志——`router.decide` 判定为 cancel（记录 platform/puid 指纹/state/awaiting）、取消标志写入 Redis 成功、core 侧取消标志命中掐断 loop，puid 一律用 `fingerprint()` 脱敏，便于排查取消未生效是「busy=False 没短路」还是「标志没写入」还是「没掐断」。
+- **IM 取消权限隔离 + 无权取消提示**（`backend/agent/runtime_state.py`、`backend/agent/im/loop.py`、`backend/agent/router.py`、`backend/agent/gateway/qq.py`）：新增「活跃 loop 集合」（`agentactive:{platform}:{bot_id}:{scope_id}`，群聊按 chat_id、私聊按 sender.id 隔离），loop 启动时记录发起者 puid、结束时移除。用户发「取消」时，若当前会话有活跃 loop 但当前用户不是发起者（咕咕在跑别人的任务），回「这个不是你的任务哦，咕咕还在忙～」提示无权取消，不写取消标志、不入队；发起者本人取消则正常中断。并发多 loop 时集合含多个 puid，各自只能取消自己的任务。
+- **群成员开放图片搜索权限**（`backend/agent/im/permissions.py`、`backend/agent/im/actor.py`、`backend/app/services/im_identity.py`、`backend/app/models/__init__.py`、`frontend/src/components/common/ProfileModal/ProfileImPane.vue`）：群成员工具白名单默认从 `web_search` 扩展为 `web_search` + `image_search`（图片搜索走自建 SearXNG images 分类，免费无配额、只读安全）；前端「群成员可用工具」新增「图片搜索」选项，可单独开关。搜图后发图仍走 `send_file`，该工具未对群成员开放（其 `file`/`file_id` 参数会读取 Bot 所属账号的私有文件库，存在越权风险）。
 
 ### 修复
 
 - **定时任务 status 前缀并入顶部 title**（`backend/app/scheduled_tasks.py`）：`status` 的「（部分完成）/（执行失败）」提示从正文开头移到顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与已有的任务 title 重复。
 - **群定时任务误发慢工具进度声明**（`backend/agent/tools/base.py`）：群定时任务为取群 memory 也会 `set_im`（但 `message_id=None`），导致工具执行前的「我去找张图。」这类进度声明被误发到群里；现在仅对「用户主动发起的 IM 消息」（`message_id` 非空）发进度声明，定时任务无具体触发消息则跳过，过渡话术统一收进最终报告。
+- **取消后仍发工具进度声明**（`backend/agent/tools/base.py`）：`image_search` 等工具的 `start_message`（「我搜搜看有没有合适的图。」）在工具执行前发送，此前不检查取消标志，用户取消后仍会看到这句过渡话术，误以为取消没生效；现在发送前检查 `agentcancel` 标志，已取消则不再发。
+- **「取消」带前缀长消息漏判**（`backend/agent/router.py`）：取消意图原只在 `len(t) <= 12` 的短消息上判，用户发「@咕咕 取消」这类带前缀的长消息（>12 字）会被当成普通消息入队，取消永远不生效；现在「取消」无条件识别（只要消息包含「取消」即判 CANCEL），不再受长度限制。
+- **空闲时发「取消」误触发 ACK**（`backend/agent/router.py`）：「取消」原无条件返回 cancel，咕咕空闲时发「取消」也会收到「好的，那这个先不继续啦～」的确认（没有任务可取消，体验很怪）；现在「取消」只在真在忙时取消任务，空闲时交主模型、不触发 ACK。
+- **残留取消标志误取消下一个 loop**（`backend/agent/im/loop.py`）：「取消」无条件写 `agentcancel` 标志（即使空闲也会写），残留标志会误取消下一个 loop；现在 `start_im_activity` 启动新 loop 时先 `clear_cancel` 清掉残留标志。
 - **侧栏会话标题区域可点击切换**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`）：侧栏会话标题的 `@click.stop` 阻断了会话切换，改为仅编辑态拦截点击，非编辑态点击标题区域可正常切换会话。
 - **定时任务 schema 解析失败重跑可能重复写操作**（`backend/app/scheduled_tasks.py`）：execution 成功但 report schema 解析失败时，原来无条件重跑整个 execution，若上一轮已产生写副作用（`mutated=True`，如 create_project/update_file）会重复执行业务操作；现在 `mutated` 时绝不重跑，直接 fallback 到 execution 原文，且 execution 成功即按 `success` 处理（不再误标 `failed`）。
 - **定时任务 imctx 生命周期泄漏**（`backend/app/scheduled_tasks.py`）：群定时任务 `_run_agent` 命中群目标后 `set_im` 但从未 `clear()`，跨任务残留群上下文；现在用 `try/finally` 在任务结束时 `imctx.clear()`。
