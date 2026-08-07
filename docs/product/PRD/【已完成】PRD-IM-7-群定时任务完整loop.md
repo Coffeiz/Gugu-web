@@ -4,7 +4,7 @@
 > 创建：2026-08-07
 > 最近更新：2026-08-08
 > 关联模块：`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`、`backend/agent/imctx.py`、`backend/agent/im/context_loader.py`
-> 关联文档：[`PRD-IM-6-IM会话复用与消息窗口裁剪.md`](./PRD-IM-6-IM会话复用与消息窗口裁剪.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md)
+> 关联文档：[`【已完成】PRD-IM-6-IM会话复用与消息窗口裁剪.md`](./【已完成】PRD-IM-6-IM会话复用与消息窗口裁剪.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md)
 
 ## 0. 背景与问题
 
@@ -232,7 +232,7 @@ devserver 端到端：
 
 ## 6. 关联
 
-- 上游：`PRD-IM-6-IM会话复用与消息窗口裁剪.md`（`delivery_targets` 字段落地）
+- 上游：`【已完成】PRD-IM-6-IM会话复用与消息窗口裁剪.md`（`delivery_targets` 字段落地）
 - 上游：`PRD-IM-3-群组与成员记忆.md`（群 memory 体系 + `format_im_memory` 实现）
 - 上游：`PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`（`_run_agent` 两阶段架构）
 - 上游：`agent/imctx.py`（IM 上下文透传机制）

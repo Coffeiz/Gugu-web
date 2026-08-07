@@ -1,7 +1,8 @@
 # PRD-SCHEDULE-2：定时任务报告阶段改造（execution 产出 report schema，report 纯代码渲染）
 
-> 状态：📝 草案，待评审
+> 状态：✅ 已实施（代码完成，测试通过，待评审合并）
 > 创建：2026-08-07
+> 最近更新：2026-08-08
 > 关联模块：`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`、`backend/agent/scheduled_report.py`
 > 关联文档：[`【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md)、[`【已完成】PRD-IM-7-群定时任务完整loop.md`](./【已完成】PRD-IM-7-群定时任务完整loop.md)
 
@@ -10,11 +11,11 @@
 | 阶段 | 状态 | 说明 |
 |------|------|------|
 | PRD 撰写 | ✅ 已完成 | 本文档 |
-| execution 阶段 prompt 追加 report schema 指令 | 🔲 待评估 | 让模型最后一轮输出 JSON schema |
-| report 模块纯代码渲染 | 🔲 待评估 | 解析 schema，取 summary 投递，去掉 report LLM |
-| 删除 report LLM 调用与相关代码 | 🔲 待评估 | 删除 `run_scheduled_report` / `build_prompt` / `scheduled_report.py` |
-| 更新测试 | 🔲 待评估 | 更新 mock report 的用例 |
-| 完整 pytest + 提交 | 🔲 待评估 | — |
+| execution 阶段 prompt 追加 report schema 指令 | ✅ 已完成 | `_REPORT_SCHEMA_INSTRUCTION` 追加到 execution prompt 末尾，要求模型最后一轮输出 report schema JSON |
+| report 模块纯代码渲染 | ✅ 已完成 | `_parse_report_schema` 解析 schema，`_render_report_summary` 纯代码渲染投递正文，去掉 report LLM |
+| 删除 report LLM 调用与相关代码 | ✅ 已完成 | 删除 `run_scheduled_report` / `build_prompt` / `scheduled_report.py` 模块 |
+| 更新测试 | ✅ 已完成 | 更新 `test_scheduled_task_execution.py` / `test_scheduled_delivery_targets.py` 适配 report schema 与 3 元组返回 |
+| 完整 pytest + 提交 | ✅ 已完成 | 完整后端套件 747 passed |
 
 ## 1. 背景与问题
 
@@ -47,7 +48,7 @@ report 阶段当初的设计理由（PRD-SCHEDULE-1 §1）：把 execution 的�
 
 ## 2. 功能需求
 
-### FR-SCHED-1：execution 阶段产出 report schema（🔲 待评估）
+### FR-SCHED-1：execution 阶段产出 report schema（✅ 已完成）
 
 - **触发条件**：任何定时任务（私聊/网页/群）进入 `_run_agent` 执行。
 - **预期行为**：execution 阶段模型在收到追加指令后，最后一轮输出 JSON schema：
@@ -58,15 +59,15 @@ report 阶段当初的设计理由（PRD-SCHEDULE-1 §1）：把 execution 的�
     "status": "success" | "partial" | "failed"
   }
   ```
-- **边界情况**：模型不遵守指令、最后一轮不是合法 JSON → 重试一次 execution，再失败则把原始文本当 `summary` 投递。
+- **边界情况**：模型不遵守指令、最后一轮不是合法 JSON → 若本轮已产生写副作用（`mutated=True`）则**绝不重跑**（避免重复执行 create/update/delete 等业务操作），直接 fallback 到 execution 原文；未 mutated 时重试一次无副作用风险，可提升 schema 解析成功率。execution 成功即按 `success` 处理（不再误标 `failed`）。
 
-### FR-SCHED-2：report 模块纯代码渲染（🔲 待评估）
+### FR-SCHED-2：report 模块纯代码渲染（✅ 已完成）
 
 - **触发条件**：execution 成功后。
 - **预期行为**：`_run_agent` 用 `_parse_json` 解析 execution 最后一轮文本为 schema，取 `summary` 作为投递正文，`status` 决定顶部 title 后缀，`files` 由工具事件收集。
-- **边界情况**：解析失败 → 重试一次 execution，再失败 fallback 到原始文本。
+- **边界情况**：解析失败 → `mutated` 时不重跑直接 fallback 到 execution 原文；未 mutated 时重试一次，仍失败 fallback 到原始文本。
 
-### FR-SCHED-3：status 决定投递 title 后缀（🔲 待评估）
+### FR-SCHED-3：status 决定投递 title 后缀（✅ 已完成）
 
 - **触发条件**：execution 产出 schema 含 `status` 字段。
 - **预期行为**：status 前缀并入顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与 title 重复。
@@ -75,7 +76,7 @@ report 阶段当初的设计理由（PRD-SCHEDULE-1 §1）：把 execution 的�
   - `failed`：title 加「（执行失败）」后缀。
 - **边界情况**：`status` 缺失或未知 → 按 `success` 处理。
 
-### FR-SCHED-4：附件随正文投递（🔲 待评估）
+### FR-SCHED-4：附件随正文投递（✅ 已完成）
 
 - **触发条件**：execution 阶段通过 `send_file` 工具产出 `files` 附件。
 - **预期行为**：`files` 由 `_collect` 从工具事件收集（不依赖模型在 schema 里填），`_run_agent` 返回 `(summary, files)` 后投递层把附件发到 IM 群。
@@ -119,7 +120,7 @@ summary = schema.get("summary") or execution_text  # 解析失败 fallback 到�
 status = schema.get("status", "success")
 ```
 
-- 解析失败 → 重试一次 execution，再失败 fallback 到原始文本。
+- 解析失败 → `mutated` 时不重跑直接 fallback 到 execution 原文；未 mutated 时重试一次，仍失败 fallback 到原始文本。
 - `summary` 为空 → fallback 到原始文本。
 - `status` 决定措辞（success 正常 / partial 加前缀 / failed 加失败说明）。
 
@@ -143,7 +144,7 @@ status = schema.get("status", "success")
 2. **单次 LLM 调用**：日志确认每次定时任务只出现一次 `execution-start` / `execution-finish`，不再有 `report-start`。
 3. **附件投递**：确认 `files` 仍能随正文发到 IM 群。
 4. **status 措辞**：确认 `partial` / `failed` 时投递正文带对应前缀。
-5. **解析失败 fallback**：确认模型不遵守指令时，重试一次后 fallback 到原始文本。
+5. **解析失败 fallback**：确认模型不遵守指令时，`mutated` 不重跑直接 fallback，未 mutated 重试一次后 fallback 到原始文本。
 6. **完整 pytest**：更新 mock report 的用例后全绿。
 
 ### 4.1 测试改动
@@ -152,14 +153,14 @@ status = schema.get("status", "success")
   - `test_scheduled_tools_run_report_without_reexecuting`：改为验证 execution 成功后直接解析 schema 返回，不再调 report。
   - `test_scheduled_report_failure_retries_report_only`：删除（report 不再存在）。
   - `test_scheduled_report_failure_twice_falls_back_to_execution_text`：删除（report 不再存在）。
-  - 新增：execution 产出合法 schema 时取 `summary` 投递；产出非法 JSON 时重试一次再 fallback。
+  - 新增：execution 产出合法 schema 时取 `summary` 投递；产出非法 JSON 时 `mutated` 不重跑直接 fallback，未 mutated 重试一次再 fallback。
 - `backend/tests/test_scheduled_group_imctx.py`：更新 mock report 的用例（`run_scheduled_report` 不再被调用）。
 
 ## 5. 风险与待确认问题
 
 | 风险 | 影响 | 对策 |
 |------|------|------|
-| execution 阶段模型不遵守「最后一轮输出 JSON schema」指令，产出自由文本 | 解析失败，投递正文质量下降 | 重试一次 execution，再失败 fallback 到原始文本；必要时调整指令措辞 |
+| execution 阶段模型不遵守「最后一轮输出 JSON schema」指令，产出自由文本 | 解析失败，投递正文质量下降 | `mutated` 不重跑直接 fallback，未 mutated 重试一次，再失败 fallback 到原始文本；必要时调整指令措辞 |
 | `_parse_json` 解析失败（JSON 被截断/混入杂字） | 无法提取 summary | 复用 `_llm.py` 的 `_parse_json` 容错解析（容忍围栏与前后杂字） |
 | `status` 字段缺失或未知 | 措辞异常 | 缺失/未知按 `success` 处理 |
 | 附件投递逻辑依赖 report 阶段告知模型 | 附件投递异常 | 附件由 `_collect` 工具事件收集，不依赖模型；`_run_agent` 返回 `(summary, files)` 后投递层负责 |
