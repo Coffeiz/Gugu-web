@@ -346,11 +346,21 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
     _GROUP_INTERNAL_ID_RE 过滤——profile.json 不落地任何 platform_user_id，而
     members.json 每条必须挂在具体 platform_user_id 下才有意义，这是两个文件
     唯一但关键的设计分歧点，不要"修正"掉。
+
+    `aggregated` 只覆盖 ConversationMessage **保留窗口**（500~600 条）内还能看到的
+    成员——不活跃太久的成员会整个从这次聚合结果里消失。早期实现直接 `out = {}` 只填
+    aggregated 里的 pid，等于把这些沉默成员的 aliases/nicknames 也一起从 members.json
+    删掉了（code review 发现的真实数据生命周期问题：这些字段本来就是为了在成员长期
+    不活跃、消息被裁出窗口后依然能被找到而设计的，结果反而在成员本身被裁出窗口时先丢了）。
+    现在改成：本轮聚合看不到的旧成员原样保留（name/aliases/nicknames/last_seen_at 不变），
+    只把 message_count 归零（跟 docstring 开头说的"近期活跃度"语义一致——不在窗口内
+    就是没有近期活跃度，但人和曾用名/称呼依然存在，不该被删）。
     """
     now = now_utc().timestamp()
     out: dict[str, dict] = {}
+    prev_map = current if isinstance(current, dict) else {}
     for pid, agg in aggregated.items():
-        prev = (current or {}).get(pid) if isinstance(current, dict) else None
+        prev = prev_map.get(pid)
         aliases = list(prev.get("aliases") or []) if isinstance(prev, dict) else []
         if isinstance(prev, dict) and prev.get("name") and prev["name"] != agg["name"]:
             if prev["name"] not in aliases:
@@ -362,6 +372,16 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
             "nicknames": nicknames,
             "last_seen_at": agg["last_seen_at"],
             "message_count": agg["message_count"],
+        }
+    for pid, prev in prev_map.items():
+        if pid in out or not isinstance(prev, dict):
+            continue
+        out[pid] = {
+            "name": prev.get("name") or "",
+            "aliases": list(prev.get("aliases") or []),
+            "nicknames": list(prev.get("nicknames") or []),
+            "last_seen_at": prev.get("last_seen_at"),
+            "message_count": 0,
         }
     return {"updated_at": now, "members": out}
 

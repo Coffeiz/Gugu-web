@@ -213,8 +213,29 @@ async def test_resolve_speaker_empty(db, user_a):
 
 
 @pytest.mark.asyncio
-async def test_resolve_speaker_does_not_read_members_when_live_hit(db, user_a):
-    """①②命中时不应该调用 load_members——避免大多数情况下白读一次 members.json。"""
+async def test_resolve_speaker_does_not_read_members_when_id_hit(db, user_a):
+    """①层（speaker 本身就是 platform_user_id）不应该调用 load_members——唯一能跳过
+    读 members.json 的情况。②③层（哪怕是精确的实时名字匹配）都必须先加载 members.json
+    才能判断是否存在更强的精确 alias/nickname 匹配，见 _resolve_speaker 顶部注释。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    called = False
+
+    async def _load_members():
+        nonlocal called
+        called = True
+        return {}
+
+    result = await _resolve_speaker(db, user_a.id, "qq", "bot-a", "chat-1", "pid-1", _load_members)
+    assert result == {"platform_user_id": "pid-1"}
+    assert called is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_reads_members_even_on_exact_live_name_hit(db, user_a):
+    """②层即使实时名字精确唯一命中，也必须先加载 members.json——否则无法判断是否存在
+    更强的精确 alias/nickname 匹配（这正是 code review 发现的静默查错人漏洞的根因）。"""
     from agent.tools.group_context import _resolve_speaker
 
     await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
@@ -227,7 +248,49 @@ async def test_resolve_speaker_does_not_read_members_when_live_hit(db, user_a):
 
     result = await _resolve_speaker(db, user_a.id, "qq", "bot-a", "chat-1", "moon_小北", _load_members)
     assert result == {"platform_user_id": "pid-1"}
-    assert called is False
+    assert called is True
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_exact_alias_beats_fuzzy_live_name(db, user_a):
+    """回归 code review 发现的真实漏洞：A 的曾用名精确等于"小北"，B 的当前群昵称是
+    "小北哥"（只是模糊包含"小北"）。旧实现只看②层实时名字、唯一命中就直接 return，
+    根本不会去看 A 的精确 alias，会把这次查询静默判给 B。修复后必须优先命中 A。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-a", "Moon", 0),
+        ("pid-b", "小北哥", 5),
+    ])
+    members = {
+        "pid-a": {"name": "Moon", "aliases": ["小北"], "nicknames": [], "last_seen_at": 100.0},
+        "pid-b": {"name": "小北哥", "aliases": [], "nicknames": [], "last_seen_at": 200.0},
+    }
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "小北", _load_members_stub(members),
+    )
+    assert result == {"platform_user_id": "pid-a"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_multiple_exact_matches_are_ambiguous_not_silent(db, user_a):
+    """两个精确匹配（一个来自实时名字，一个来自另一人的精确 alias）应该走 ambiguous，
+    而不是任选其一静默返回——精确匹配内部平级，不分「来源优先级」。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-a", "小北", 0),
+        ("pid-b", "另一个人", 5),
+    ])
+    members = {
+        "pid-a": {"name": "小北", "aliases": [], "nicknames": [], "last_seen_at": 100.0},
+        "pid-b": {"name": "另一个人", "aliases": ["小北"], "nicknames": [], "last_seen_at": 200.0},
+    }
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "小北", _load_members_stub(members),
+    )
+    assert result["ambiguous"] is True
+    assert {c["platform_user_id"] for c in result["candidates"]} == {"pid-a", "pid-b"}
 
 
 # ── _merge_members：纯 DB 字段合并，不碰 LLM 结果 ───────────────────────────
@@ -286,6 +349,52 @@ def test_merge_members_preserves_existing_nicknames():
     }
     result = _merge_members(current, aggregated)
     assert result["members"]["pid-1"]["nicknames"] == ["北神"]
+
+
+def test_merge_members_keeps_stale_member_out_of_aggregation_window():
+    """code review 发现的真实数据生命周期 bug：aggregated 只覆盖 ConversationMessage
+    保留窗口（500~600 条）内还能看到的成员，早期实现是 `out = {}` 只填 aggregated 里
+    的 pid，等于成员一旦沉默太久、消息被裁出窗口，就连他的 aliases/nicknames 也被
+    一起删掉了——这些字段本来就是为了在成员长期不活跃后依然能被找到而设计的，结果
+    反而在成员本身被裁出窗口时先丢了。修复后：本轮聚合看不到的旧成员应该原样保留
+    name/aliases/nicknames/last_seen_at，只有 message_count 归零（不在窗口内 = 没有
+    近期活跃度，但人和曾用名/称呼依然存在）。"""
+    from agent.memory.im_reflection import _merge_members
+
+    current = {
+        "pid-1": {
+            "name": "moon_小北", "aliases": ["旧名字"], "nicknames": ["北神"],
+            "last_seen_at": 50.0, "message_count": 20,
+        }
+    }
+    # 本轮聚合看不到 pid-1——群里刷了新一批消息，pid-1 的历史已经被裁出保留窗口。
+    aggregated: dict = {}
+    result = _merge_members(current, aggregated)
+    member = result["members"]["pid-1"]
+    assert member["name"] == "moon_小北"
+    assert member["aliases"] == ["旧名字"]
+    assert member["nicknames"] == ["北神"]
+    assert member["last_seen_at"] == 50.0
+    assert member["message_count"] == 0
+
+
+def test_merge_members_stale_member_reappears_next_round_keeps_history():
+    """pid-1 沉默一轮后（message_count 归零但字段保留），下一轮重新出现在聚合结果里，
+    旧的 aliases/nicknames 依然要能延续下去（不能因为中间空窗一轮就彻底丢失）。"""
+    from agent.memory.im_reflection import _merge_members
+
+    stale = _merge_members(
+        {"pid-1": {"name": "moon_小北", "aliases": ["旧名字"], "nicknames": ["北神"],
+                    "last_seen_at": 50.0, "message_count": 20}},
+        {},
+    )["members"]
+    aggregated = {"pid-1": {"name": "moon_小北", "last_seen_at": 300.0, "message_count": 4}}
+    result = _merge_members(stale, aggregated)
+    member = result["members"]["pid-1"]
+    assert member["aliases"] == ["旧名字"]
+    assert member["nicknames"] == ["北神"]
+    assert member["message_count"] == 4
+    assert member["last_seen_at"] == 300.0
 
 
 # ── _apply_nicknames：LLM 提炼的群友称呼合并，只在反思成功时才调用 ──────────

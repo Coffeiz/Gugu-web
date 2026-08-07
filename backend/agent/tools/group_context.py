@@ -40,19 +40,22 @@ async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> li
 async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker: str, load_members) -> dict:
     """把 speaker（platform_user_id 或名字/曾用名/群友称呼）解析成 platform_user_id。
 
-    四层匹配优先级，只有③④层（都读 members.json）出现多个候选才触发澄清；①②直接
-    查消息表，实时、不受反思任务节奏影响：
-      ① speaker 本身就是 platform_user_id → 直接精确匹配；
-      ② 实时查询：speaker 跟该群里某个 platform_user_id **保留窗口内**用过的任意一个
-         platform_user_name（当前显示名或曾用名都算）互为包含关系（谁包含谁都算，
-         天然覆盖精确相等）——群里喊人常用全名的一部分（"小北"称呼"moon_小北"），
-         只做精确匹配会漏掉这种最常见的场景，唯一命中直接用；
-      ③ ②层查不到才读 members.json 的 aliases（曾用名）——改名很久之后，旧名字对应
-         的消息已经被 500~600 条保留窗口裁掉，②层的实时查询看不到了，但反思任务沉淀
-         下来的 aliases 还记得，专门补这个"退出窗口"的缺口，同样用互为包含匹配；
-      ④ ③层也查不到才读 nicknames（群友称呼）——这层信息只能来自 LLM 提炼，无法
-         实时化，是最后一道防线（load_members 是个 async 回调，避免大多数命中①②
-         的调用也白读一次 members.json 文件，③④ 共用同一次加载）。
+    匹配按「强度」分两级，强度内部再按来源排优先级；这跟早期"按来源分层、层内不分
+    强度"的设计不同——code review 发现旧设计有个静默查错人的洞：②层（实时名字）只要
+    唯一命中就直接 return，根本不会往下看 members.json 里是否有更强的精确 alias/nickname
+    匹配。真实场景：A 的曾用名精确等于"小北"，B 的当前群昵称是"小北哥"；用户问"小北说了
+    什么"，"小北" in "小北哥" 是模糊命中且唯一，旧代码直接把这次查询判给 B，A 的精确
+    alias 根本没机会参与判断——不是 ambiguous（好歹会问用户），而是更危险的静默查错人。
+
+    ① speaker 本身就是 platform_user_id → 直接精确匹配，最高优先级，不需要加载
+       members.json；
+    ② 精确匹配（相等）——同时看实时名字（当前群昵称，查消息表，不受反思节奏影响）+
+       members.json 的 aliases（曾用名）+ nicknames（群友称呼），三个来源合并判断：
+       唯一命中直接用，多个精确命中（同一个词被多个人精确用过）才算 ambiguous；
+    ③ ②层没有任何精确命中，才退回模糊匹配（互为包含，"小北"能命中"moon_小北"）——
+       同样合并实时名字 + aliases + nicknames 三个来源一起判断唯一性/ambiguous。
+    除①外都需要 members.json（load_members 是 async 回调，仅在①未命中时调用一次，
+    ②③ 共用同一份数据，避免多读文件）。
     返回：
       {"platform_user_id": pid}          唯一命中
       {"ambiguous": True, "candidates": [...]}  多候选（按 last_seen_at 倒序，最多 5 个）
@@ -79,56 +82,39 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
     # ① speaker 本身就是 platform_user_id
     if speaker in live_ids:
         return {"platform_user_id": speaker}
-    # ② 实时按名字/曾用名互为包含匹配（精确相等是包含关系的特例，天然覆盖）
-    name_hits: dict[str, str] = {}   # pid → 命中时对应的那个 platform_user_name
-    for name, pids in name_to_pids.items():
-        if speaker in name or name in speaker:
-            for pid in pids:
-                name_hits.setdefault(pid, name)
-    if len(name_hits) == 1:
-        return {"platform_user_id": next(iter(name_hits))}
-    if len(name_hits) > 1:
-        candidates = sorted(
-            (
-                {
-                    "platform_user_id": pid,
-                    "matched_by": "name",
-                    "matched_text": speaker,
-                    "name": matched_name,
-                    "last_seen_at": last_seen.get(pid),
-                }
-                for pid, matched_name in name_hits.items()
-            ),
-            key=lambda c: c.get("last_seen_at") or 0,
-            reverse=True,
-        )[:5]
-        return {"ambiguous": True, "candidates": candidates}
 
-    # 前两层都未命中，才读 members.json——一次性加载，下面 ③④ 两层共用同一份数据。
+    # ②③ 都可能需要 aliases/nicknames，且精确匹配必须先于模糊匹配判断，所以无条件
+    # 加载一次（唯一的例外是①已经命中、提前 return 掉的情况）。
     members = await load_members()
 
-    # ③ members.json 的 aliases（曾用名）：②层的实时查询只能看到"保留窗口内"的历史消息，
-    # 老名字对应的消息一旦被 500~600 条的窗口裁剪掉，②层就再也找不到；aliases 是反思任务
-    # 沉淀下来的持久记录，专门补这个缺口——改名很久之后，用旧名字依然要能找到人。
-    # 用跟②层一样的互为包含匹配，标准保持一致。
-    def _hits_by(field: str) -> dict[str, str]:
+    def _field_matches(field: str, *, exact: bool) -> dict[str, str]:
         found: dict[str, str] = {}
         for pid, m in members.items():
             for value in (m.get(field) or []):
-                if value and (speaker in value or value in speaker):
+                if not value:
+                    continue
+                hit = (value == speaker) if exact else (speaker in value or value in speaker)
+                if hit:
                     found.setdefault(pid, value)
                     break
         return found
 
-    def _ambiguous(hits: dict[str, str], matched_by: str) -> dict:
+    def _candidate_last_seen(pid: str) -> float:
+        # members.json 的 last_seen_at 由反思任务全量聚合得出，比这里临时查出的实时
+        # last_seen 更权威（多个候选可能在同一批种子消息里时间戳完全相同，全靠实时
+        # last_seen 排不出稳定顺序）；优先用它，只有 members 里没有这个人时才退回实时值。
+        return (members.get(pid, {}).get("last_seen_at")) or last_seen.get(pid) or 0
+
+    def _ambiguous(hits: dict[str, str], matched_by: dict[str, str]) -> dict:
         candidates = sorted(
             (
                 {
                     "platform_user_id": pid,
-                    "matched_by": matched_by,
-                    "matched_text": speaker,
-                    "name": members.get(pid, {}).get("name") or "",
-                    "last_seen_at": members.get(pid, {}).get("last_seen_at"),
+                    "matched_by": matched_by.get(pid, "name"),
+                    "matched_text": hits.get(pid, speaker),
+                    "name": members.get(pid, {}).get("name")
+                        or (hits.get(pid) if matched_by.get(pid) == "name" else "") or "",
+                    "last_seen_at": _candidate_last_seen(pid) or None,
                 }
                 for pid in hits
             ),
@@ -137,18 +123,42 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
         )[:5]
         return {"ambiguous": True, "candidates": candidates}
 
-    alias_hits = _hits_by("aliases")
-    if len(alias_hits) == 1:
-        return {"platform_user_id": next(iter(alias_hits))}
-    if len(alias_hits) > 1:
-        return _ambiguous(alias_hits, "aliases")
+    # ── ② 精确匹配：实时名字 + aliases + nicknames 三个来源合并，谁先出现在 dict
+    # 里谁的 matched_by 生效，仅用于候选展示，不影响是否命中/ambiguous 的判断。
+    exact_hits: dict[str, str] = {}
+    exact_by: dict[str, str] = {}
+    for pid in name_to_pids.get(speaker, set()):
+        exact_hits.setdefault(pid, speaker)
+        exact_by.setdefault(pid, "name")
+    for pid, value in _field_matches("aliases", exact=True).items():
+        exact_hits.setdefault(pid, value)
+        exact_by.setdefault(pid, "aliases")
+    for pid, value in _field_matches("nicknames", exact=True).items():
+        exact_hits.setdefault(pid, value)
+        exact_by.setdefault(pid, "nicknames")
+    if len(exact_hits) == 1:
+        return {"platform_user_id": next(iter(exact_hits))}
+    if len(exact_hits) > 1:
+        return _ambiguous(exact_hits, exact_by)
 
-    # ④ members.json 的 nicknames（群友称呼，只能来自 LLM 提炼，全 PRD 最后一道防线）。
-    nick_hits = _hits_by("nicknames")
-    if len(nick_hits) == 1:
-        return {"platform_user_id": next(iter(nick_hits))}
-    if len(nick_hits) > 1:
-        return _ambiguous(nick_hits, "nicknames")
+    # ── ③ 精确匹配全都没有命中，才退回模糊包含匹配，同样三个来源合并判断。
+    fuzzy_hits: dict[str, str] = {}
+    fuzzy_by: dict[str, str] = {}
+    for name, pids in name_to_pids.items():
+        if speaker in name or name in speaker:
+            for pid in pids:
+                fuzzy_hits.setdefault(pid, name)
+                fuzzy_by.setdefault(pid, "name")
+    for pid, value in _field_matches("aliases", exact=False).items():
+        fuzzy_hits.setdefault(pid, value)
+        fuzzy_by.setdefault(pid, "aliases")
+    for pid, value in _field_matches("nicknames", exact=False).items():
+        fuzzy_hits.setdefault(pid, value)
+        fuzzy_by.setdefault(pid, "nicknames")
+    if len(fuzzy_hits) == 1:
+        return {"platform_user_id": next(iter(fuzzy_hits))}
+    if len(fuzzy_hits) > 1:
+        return _ambiguous(fuzzy_hits, fuzzy_by)
     return {"error": f"没有找到叫 {speaker} 的群成员"}
 
 
@@ -171,7 +181,7 @@ async def _group_context_search(db, user_id, args: dict):
     speaker_id = None
     if speaker:
         async def _load_members() -> dict:
-            # 只有 _resolve_speaker 第③④层（aliases/nicknames）才会调用，①②命中时不产生这次文件读。
+            # speaker 不是 platform_user_id 精确命中时都会调用一次（供精确/模糊两级匹配共用）。
             scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
             members_data = (await read_scope(scope)).get("members") or {}
             members = members_data.get("members") if isinstance(members_data, dict) else {}
