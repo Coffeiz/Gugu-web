@@ -40,16 +40,19 @@ async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> li
 async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker: str, load_members) -> dict:
     """把 speaker（platform_user_id 或名字/曾用名/群友称呼）解析成 platform_user_id。
 
-    三层匹配优先级，只有最后一层（nicknames 模糊匹配）出现多个候选才触发澄清；
-    只有这一层会读 members.json，其余两层直接查消息表，实时、不受反思任务节奏影响：
+    四层匹配优先级，只有③④层（都读 members.json）出现多个候选才触发澄清；①②直接
+    查消息表，实时、不受反思任务节奏影响：
       ① speaker 本身就是 platform_user_id → 直接精确匹配；
-      ② 实时查询：speaker 跟该群里某个 platform_user_id 历史上用过的任意一个
+      ② 实时查询：speaker 跟该群里某个 platform_user_id **保留窗口内**用过的任意一个
          platform_user_name（当前显示名或曾用名都算）互为包含关系（谁包含谁都算，
          天然覆盖精确相等）——群里喊人常用全名的一部分（"小北"称呼"moon_小北"），
          只做精确匹配会漏掉这种最常见的场景，唯一命中直接用；
-      ③ 前两层都未命中，才读 members.json，只在 nicknames 里模糊/包含匹配——这层信息
-         只能来自 LLM 提炼，无法实时化，多候选才返回候选列表（load_members 是个
-         async 回调，避免大多数命中①②的调用也白读一次 members.json 文件）。
+      ③ ②层查不到才读 members.json 的 aliases（曾用名）——改名很久之后，旧名字对应
+         的消息已经被 500~600 条保留窗口裁掉，②层的实时查询看不到了，但反思任务沉淀
+         下来的 aliases 还记得，专门补这个"退出窗口"的缺口，同样用互为包含匹配；
+      ④ ③层也查不到才读 nicknames（群友称呼）——这层信息只能来自 LLM 提炼，无法
+         实时化，是最后一道防线（load_members 是个 async 回调，避免大多数命中①②
+         的调用也白读一次 members.json 文件，③④ 共用同一次加载）。
     返回：
       {"platform_user_id": pid}          唯一命中
       {"ambiguous": True, "candidates": [...]}  多候选（按 last_seen_at 倒序，最多 5 个）
@@ -101,31 +104,51 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
         )[:5]
         return {"ambiguous": True, "candidates": candidates}
 
-    # ③ members.json 的 nicknames（唯一还依赖反思任务产物、因而唯一会滞后的一层）
+    # 前两层都未命中，才读 members.json——一次性加载，下面 ③④ 两层共用同一份数据。
     members = await load_members()
-    nick_hits = [
-        (pid, m)
-        for pid, m in members.items()
-        if any(speaker in (nick or "") for nick in (m.get("nicknames") or []))
-    ]
-    if len(nick_hits) == 1:
-        return {"platform_user_id": nick_hits[0][0]}
-    if len(nick_hits) > 1:
+
+    # ③ members.json 的 aliases（曾用名）：②层的实时查询只能看到"保留窗口内"的历史消息，
+    # 老名字对应的消息一旦被 500~600 条的窗口裁剪掉，②层就再也找不到；aliases 是反思任务
+    # 沉淀下来的持久记录，专门补这个缺口——改名很久之后，用旧名字依然要能找到人。
+    # 用跟②层一样的互为包含匹配，标准保持一致。
+    def _hits_by(field: str) -> dict[str, str]:
+        found: dict[str, str] = {}
+        for pid, m in members.items():
+            for value in (m.get(field) or []):
+                if value and (speaker in value or value in speaker):
+                    found.setdefault(pid, value)
+                    break
+        return found
+
+    def _ambiguous(hits: dict[str, str], matched_by: str) -> dict:
         candidates = sorted(
             (
                 {
                     "platform_user_id": pid,
-                    "matched_by": "nicknames",
+                    "matched_by": matched_by,
                     "matched_text": speaker,
-                    "name": m.get("name") or "",
-                    "last_seen_at": m.get("last_seen_at"),
+                    "name": members.get(pid, {}).get("name") or "",
+                    "last_seen_at": members.get(pid, {}).get("last_seen_at"),
                 }
-                for pid, m in nick_hits
+                for pid in hits
             ),
             key=lambda c: c.get("last_seen_at") or 0,
             reverse=True,
         )[:5]
         return {"ambiguous": True, "candidates": candidates}
+
+    alias_hits = _hits_by("aliases")
+    if len(alias_hits) == 1:
+        return {"platform_user_id": next(iter(alias_hits))}
+    if len(alias_hits) > 1:
+        return _ambiguous(alias_hits, "aliases")
+
+    # ④ members.json 的 nicknames（群友称呼，只能来自 LLM 提炼，全 PRD 最后一道防线）。
+    nick_hits = _hits_by("nicknames")
+    if len(nick_hits) == 1:
+        return {"platform_user_id": next(iter(nick_hits))}
+    if len(nick_hits) > 1:
+        return _ambiguous(nick_hits, "nicknames")
     return {"error": f"没有找到叫 {speaker} 的群成员"}
 
 
@@ -148,7 +171,7 @@ async def _group_context_search(db, user_id, args: dict):
     speaker_id = None
     if speaker:
         async def _load_members() -> dict:
-            # 只有 _resolve_speaker 第③层（nicknames）才会调用，前两层命中时不产生这次文件读。
+            # 只有 _resolve_speaker 第③④层（aliases/nicknames）才会调用，①②命中时不产生这次文件读。
             scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
             members_data = (await read_scope(scope)).get("members") or {}
             members = members_data.get("members") if isinstance(members_data, dict) else {}
