@@ -256,7 +256,7 @@ async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db
     await db.commit()
     await db.refresh(task)
 
-    run_agent = AsyncMock(return_value=("提醒正文", []))
+    run_agent = AsyncMock(return_value=("提醒正文", [], "success"))
     deliver = AsyncMock(return_value={"QQ": "已发送"})
     monkeypatch.setattr(scheduled, "_run_agent", run_agent)
     monkeypatch.setattr(scheduled, "deliver_to_channels", deliver)
@@ -375,7 +375,7 @@ async def test_trial_does_not_update_last_run_at(monkeypatch, db, user_a):
     await db.commit()
     await db.refresh(task)
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("测试正文", [])))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("测试正文", [], "success")))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -405,7 +405,7 @@ async def test_once_task_is_kept_when_execution_or_delivery_fails(monkeypatch, d
     await db.commit()
     await db.refresh(task)
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -437,7 +437,7 @@ async def test_once_task_is_deleted_only_after_successful_delivery(monkeypatch, 
     await db.refresh(task)
     task_id = task.id
 
-    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [])))
+    monkeypatch.setattr(scheduled, "_run_agent", AsyncMock(return_value=("正文", [], "success")))
     monkeypatch.setattr(
         scheduled,
         "deliver_to_channels",
@@ -522,7 +522,7 @@ async def test_execute_task_rejects_concurrent_execution_of_same_task(monkeypatc
     async def slow_run_agent(*args, **kwargs):
         entered.set()
         await release.wait()
-        return "正文", []
+        return "正文", [], "success"
 
     monkeypatch.setattr(scheduled, "_run_agent", slow_run_agent)
     monkeypatch.setattr(scheduled, "deliver_to_channels", AsyncMock(return_value={"QQ": "已发送"}))

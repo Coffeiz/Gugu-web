@@ -10,7 +10,13 @@ from app.search.query import keyword_condition, normalize_mode, normalize_querie
 
 async def _group_context_search(db, user_id, args: dict):
     im = get_im() or {}
-    if im.get("chat_type") != "group" or not im.get("chat_id"):
+    # 缺 channel_id（bot_id）时查询会退化成 bot_id IS NULL，基本搜不到——明确报不可用，
+    # 不给「可用但搜不到」的假信心（P2）。
+    if (
+        im.get("chat_type") != "group"
+        or not im.get("chat_id")
+        or not im.get("channel_id")
+    ):
         return {"error": "当前不在群聊上下文中，不能使用群聊搜索"}
     keyword = (args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None

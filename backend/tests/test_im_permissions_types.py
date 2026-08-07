@@ -13,7 +13,7 @@ async def test_non_numeric_platform_bot_id_fails_closed(monkeypatch):
         "member-1",
     )
     assert result.role == "unknown"
-    assert result.allowed_tool_names == ["web_search"]
+    assert result.allowed_tool_names == ["web_search", "image_search", "send_file"]
 
 
 @pytest.mark.asyncio

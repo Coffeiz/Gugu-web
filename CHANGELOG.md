@@ -5,14 +5,47 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.20.2] - 2026-08-07
+
+### 改进
+
+- **群定时任务解锁群上下文 + 群记忆注入**（`backend/app/scheduled_tasks.py`）：群定时任务到点触发时，`_run_agent` 命中群目标后 `set_im(chat_type='group')` 并注入群长期记忆，让 execution 阶段能正常用 `group_context_search` 等群工具、看到群记忆，与「任务要发到 X 群」的语义一致；私聊/Web 任务零行为变化。
+- **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」title 后缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
+- **IM 取消链路补脱敏诊断日志**（`backend/agent/im/loop.py`、`backend/agent/core.py`）：取消链路此前只在异常路径（Redis 故障）留日志，正常路径完全无痕，遇到「发取消没中断 loop」无法定位断点；现在在三个关键决策点补 `diag_log_raw` 受限诊断日志——`router.decide` 判定为 cancel（记录 platform/puid 指纹/state/awaiting）、取消标志写入 Redis 成功、core 侧取消标志命中掐断 loop，puid 一律用 `fingerprint()` 脱敏，便于排查取消未生效是「busy=False 没短路」还是「标志没写入」还是「没掐断」。
+- **IM 取消权限隔离 + 无权取消提示**（`backend/agent/runtime_state.py`、`backend/agent/im/loop.py`、`backend/agent/router.py`、`backend/agent/gateway/qq.py`）：新增「活跃 loop 集合」（`agentactive:{platform}:{bot_id}:{scope_id}`，群聊按 chat_id、私聊按 sender.id 隔离），loop 启动时记录发起者 puid、结束时移除。用户发「取消」时，若当前会话有活跃 loop 但当前用户不是发起者（咕咕在跑别人的任务），回「这个不是你的任务哦，咕咕还在忙～」提示无权取消，不写取消标志、不入队；发起者本人取消则正常中断。并发多 loop 时集合含多个 puid，各自只能取消自己的任务。
+- **群成员开放图片搜索 + 发网络图片权限**（`backend/agent/im/permissions.py`、`backend/agent/im/actor.py`、`backend/app/services/im_identity.py`、`backend/app/models/__init__.py`、`backend/app/api/v1/user_bots.py`、`backend/agent/tools/files.py`、`frontend/src/components/common/ProfileModal/ProfileImPane.vue`）：群成员工具白名单默认从 `web_search` 扩展为 `web_search` + `image_search` + `send_file`（图片搜索走自建 SearXNG images 分类，免费无配额、只读安全）；前端「群成员可用工具」把「网页搜索」「图片搜索」「发网络图片」**合并为一个「联网搜索 + 搜图发图」选项**（勾选即同时开放三个工具，避免漏配导致搜到图发不出去），`group_context_search` 保持独立。`send_file` 对群成员开放但**只允许 url 分支**（发网络图片，如搜图结果），`file`/`file_id`/`attach_id` 分支仍禁止——后两者会读取 Bot 所属账号的私有文件库/暂存附件，存在越权风险。
+
+### 修复
+
+- **定时任务 status 前缀并入顶部 title**（`backend/app/scheduled_tasks.py`）：`status` 的「（部分完成）/（执行失败）」提示从正文开头移到顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与已有的任务 title 重复。
+- **群定时任务误发慢工具进度声明**（`backend/agent/tools/base.py`）：群定时任务为取群 memory 也会 `set_im`（但 `message_id=None`），导致工具执行前的「我去找张图。」这类进度声明被误发到群里；现在仅对「用户主动发起的 IM 消息」（`message_id` 非空）发进度声明，定时任务无具体触发消息则跳过，过渡话术统一收进最终报告。
+- **取消后仍发工具进度声明**（`backend/agent/tools/base.py`）：`image_search` 等工具的 `start_message`（「我搜搜看有没有合适的图。」）在工具执行前发送，此前不检查取消标志，用户取消后仍会看到这句过渡话术，误以为取消没生效；现在发送前检查 `agentcancel` 标志，已取消则不再发。
+- **「取消」带前缀长消息漏判**（`backend/agent/router.py`）：取消意图原只在 `len(t) <= 12` 的短消息上判，用户发「@咕咕 取消」这类带前缀的长消息（>12 字）会被当成普通消息入队，取消永远不生效；现在「取消」无条件识别（只要消息包含「取消」即判 CANCEL），不再受长度限制。
+- **空闲时发「取消」误触发 ACK**（`backend/agent/router.py`）：「取消」原无条件返回 cancel，咕咕空闲时发「取消」也会收到「好的，那这个先不继续啦～」的确认（没有任务可取消，体验很怪）；现在「取消」只在真在忙时取消任务，空闲时交主模型、不触发 ACK。
+- **残留取消标志误取消下一个 loop**（`backend/agent/im/loop.py`）：「取消」无条件写 `agentcancel` 标志（即使空闲也会写），残留标志会误取消下一个 loop；现在 `start_im_activity` 启动新 loop 时先 `clear_cancel` 清掉残留标志。
+- **侧栏会话标题区域可点击切换**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`）：侧栏会话标题的 `@click.stop` 阻断了会话切换，改为仅编辑态拦截点击，非编辑态点击标题区域可正常切换会话。
+- **定时任务 schema 解析失败重跑可能重复写操作**（`backend/app/scheduled_tasks.py`）：execution 成功但 report schema 解析失败时，原来无条件重跑整个 execution，若上一轮已产生写副作用（`mutated=True`，如 create_project/update_file）会重复执行业务操作；现在 `mutated` 时绝不重跑，直接 fallback 到 execution 原文，且 execution 成功即按 `success` 处理（不再误标 `failed`）。
+- **定时任务 imctx 生命周期泄漏**（`backend/app/scheduled_tasks.py`）：群定时任务 `_run_agent` 命中群目标后 `set_im` 但从未 `clear()`，跨任务残留群上下文；现在用 `try/finally` 在任务结束时 `imctx.clear()`。
+- **畸形群目标缺 platform 触发 KeyError**（`backend/app/scheduled_tasks.py`）：`_detect_group_target` 只校验 `chat_type`/`chat_id`，命中后 `set_im(platform=group["platform"])` 对缺 `platform` 的旧数据/畸形数据直接 KeyError；现在缺省时回退用 map key 作为 platform。
+- **群聊搜索工具缺 channel_id 时误报可用**（`backend/agent/tools/group_context.py`）：`group_context_search` 只校验 `chat_type`/`chat_id`，缺 `channel_id` 时仍提示可用但实际查不到（`bot_id IS NULL` 查询落空），给模型错误信心；现在可用性校验补上 `channel_id`，缺省时明确返回「当前不在群聊上下文中」。
+- **E2E 会话切换用例依赖会话数量假设**（`frontend/e2e/chat.spec.ts`、`frontend/src/components/common/gugu-chat/GuguChatSidebar.vue`）：原用例用 `toHaveCount(2)`/`nth(1)` 假设恰好两个会话，共享测试用户状态下不稳定；改为通过 `page.request` 记录真实会话 id，侧栏会话项加 `data-session-id` 属性精确点击目标会话。
+
+---
+
 ## [0.20.1] - 2026-08-06
 
 ### 改进
 
+- **IM 会话按 peer 复用 + 消息窗口统一裁剪**（`backend/agent/im/session.py`、`backend/agent/runner.py`）：私聊按 `(source, bot_id, platform_user_id)`、群聊按 `(source, bot_id, chat_id)` 命中已有会话复用，不再每次新对话都新建；消息窗口统一按 600 条阈值裁剪（超过才裁到 500），私聊/群聊/被动记录/定时任务推送统一触发。
+- **会话标题支持重命名**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`、`backend/app/api/v1/agent.py`）：侧栏用铅笔按钮进入编辑（与文件重命名同款交互），顶部标题栏单击进入编辑；后端新增 `PATCH /sessions/{id}` 重命名接口。
 - **定时任务投递附件同步落库**（`backend/agent/tools/scheduled_tasks.py`）：投递到 IM 的附件同步写入会话历史，web 端打开对应会话也能看到图片，避免「群里收到图但 web 历史里只有文字」的不一致。
 
 ### 修复
 
+- **私聊对话被并入群消息**（`backend/agent/im/session.py`）：群聊 session 新建时把 `platform_user_id` 写成了群成员 puid，导致群成员私聊时误匹配到群聊 session；现在群聊 session 的 `platform_user_id` 置 None（群聊用 chat_id 隔离），私聊复用查找显式排除群聊 session。
+- **私聊推送路由 / fail closed / 标题竞态**（`backend/agent/im/session.py`、`backend/agent/runner.py`、`backend/app/scheduled_tasks.py`）：私聊推送改走 owner_session key 不再误用群聊 key；私聊缺 `platform_user_id` 时 fail closed 禁止串会话；手动改名写 `title_locked` 防止被异步自动标题覆盖，并用数据库原子条件 UPDATE 彻底消除 TOCTOU 竞态。
+- **定时任务附件失败仍被判定成功**（`backend/app/scheduled_tasks.py`）：`_deliver_im_files` 原来发完就扔不返回结果，附件全挂时任务仍被标「已发送」，一次性任务被静默删除；现在返回成功/总张数，附件失败时降级为「文字已发送，附件发送失败（x/y）」，`@once` 任务不会被提前删掉。
+- **排队消息没有绑定会话可能串会话**（`frontend/src/components/common/gugu-chat/composables/useChatStream.ts`）：pendingQueue 从 `string[]` 改成携带 `{ text, attachments, sessionId, viewGeneration }` 的对象数组，切换会话时清理旧队列，消费前核对身份，避免排队消息被发进另一段对话。
 - **全新会话首轮排队消息被静默丢弃**（`frontend/src/components/common/gugu-chat/composables/useChatStream.ts`）：新对话首条消息时 `sessionId` 仍为 `null`，期间发送的第二条进入 pending 队列后按 `sessionId` 严格比对被误判为已离开会话而丢弃，用户气泡已渲染但刷新后消失；现在 `session_id` 事件到达时回填真实 id，消费队列放宽比对条件。
 - **文件卡下载图标无独立点击区域**（`frontend/src/components/common/gugu-chat/`）：整张文件卡只有一个 `openFile` 点击事件，可预览文件点下载图标也会打开预览；现在下载图标单独触发下载并补上 hover 反馈。
 - **迷你播放器拖拽进度条报错**（`frontend/src/components/common/gugu-chat/`）：`mousemove/mouseup` 在 `window` 上触发时取不到进度条 `rect`，改为 `mousedown` 时量好复用。

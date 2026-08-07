@@ -13,8 +13,11 @@
     @keydown.enter.prevent="commit"
     @keydown.esc.prevent="cancel"
   >{{ title }}</span>
-  <!-- 侧边栏模式：编辑态用文件重命名样式（.rename-input-inline），按钮原地变勾选确认 -->
-  <span v-else class="exp-session-title-wrap" :class="{ 'is-editing': editing }" @click.stop>
+  <!-- 侧边栏模式：编辑态用文件重命名样式（.rename-input-inline），按钮原地变勾选确认。
+       侧栏改名只通过铅笔按钮触发（下方 @click.stop），标题区域点击不进入编辑、也不阻止冒泡，
+       让点击标题能冒泡到父级 session item 的 onLoadSession 切换会话；仅编辑态阻止冒泡，
+       避免点击输入框意外切换会话。 -->
+  <span v-else class="exp-session-title-wrap" :class="{ 'is-editing': editing }" @click="editing && $event.stopPropagation()">
     <span v-if="editing" class="rename-sizer">
       <span class="rename-ghost">{{ draft || ' ' }}</span>
       <input
@@ -128,7 +131,8 @@ function cancel() {
 .exp-session-title.is-header:hover,
 .exp-session-title.is-header.is-editing {
   border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
+/* 内阴影去 1px 纵向偏移，否则编辑态会把内容下推 1px、跟非编辑态对不齐 */
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08);
 }
 .exp-session-title.is-header:focus { outline: none; }
 /* 侧边栏编辑态：字号与标题一致，占满剩余宽度（覆盖 global.css 的 .rename-sizer） */

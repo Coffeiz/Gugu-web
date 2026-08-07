@@ -195,4 +195,60 @@ test.describe('GuguChat 悬浮窗', () => {
     await expect(chatWindow.locator('.msg', { hasText: firstText })).toHaveCount(1)
     await expect(chatWindow.locator('.msg', { hasText: queuedText })).toHaveCount(1)
   })
+
+  test('点击侧栏会话标题区域能切换会话', async ({ page }) => {
+    // 回归 PR #9 引入的 bug：SessionTitleEdit 侧边栏模式外层曾用 @click.stop 阻止冒泡，
+    // 导致点击会话标题区域（占 session item 大部分宽度）无法触发 onLoadSession 切换会话，
+    // 只有点标题外的空白边缘才能切。修复后点击标题区域应正常切换。
+    //
+    // 不假设账号此时正好只有两个 session（同文件前面的测试已创建并持久化多个会话，
+    // 后端测试用户状态共享）——发完消息后当前激活的 session 就在侧栏，直接取 active item
+    // 的 data-session-id 定向点击，避免 toHaveCount(2)/nth(1) 在并行或重跑时不稳定。
+    await page.goto('/')
+    await page.locator('.ai-fab').click()
+    const chatWindow = page.locator('.chat-window')
+    await expect(chatWindow).toBeVisible()
+
+    // 展开大窗，进入侧栏会话列表
+    await chatWindow.locator('.popup-icon-btn[title="展开"]').click()
+    const sidebar = page.locator('.exp-sidebar')
+    await expect(sidebar).toBeVisible()
+
+    const textarea = chatWindow.locator('.chat-input-row textarea')
+    const sendBtn = chatWindow.locator('.send-btn')
+
+    // 会话 A：新建 + 发消息 + 等回复，记录 A 的 session id
+    const textA = `e2e-switch-a-${Date.now()}`
+    await sidebar.locator('.exp-new-session-btn').click()
+    await expect(chatWindow.locator('.msg')).toHaveCount(0)
+    await textarea.fill(textA)
+    await sendBtn.click()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    // 发完 A 后当前激活的就是 A，直接从侧栏 active item 取 session id（不依赖后端 API）
+    const sessionAId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
+
+    // 会话 B：新建 + 发消息 + 等回复，记录 B 的 session id
+    const textB = `e2e-switch-b-${Date.now()}`
+    await sidebar.locator('.exp-new-session-btn').click()
+    await expect(chatWindow.locator('.msg')).toHaveCount(0)
+    await textarea.fill(textB)
+    await sendBtn.click()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toBeVisible()
+    await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    // 发完 B 后当前激活的就是 B
+    const sessionBId = await sidebar.locator('.exp-session-item.active').getAttribute('data-session-id')
+
+    // 当前激活的是 B（后端按 updated_at 倒序，B 最新在前）
+    const sessionAItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionAId}"]`)
+    const sessionBItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionBId}"]`)
+    await expect(sessionBItem).toHaveClass(/active/)
+
+    // 点击会话 A 的标题区域（.exp-session-title，占 item 大部分宽度）——修复前这里被
+    // @click.stop 拦截无法切换；修复后应切回 A，消息区显示 A 的消息。
+    await sessionAItem.locator('.exp-session-title').click()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
+    await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toHaveCount(0)
+    await expect(sessionAItem).toHaveClass(/active/)
+  })
 })

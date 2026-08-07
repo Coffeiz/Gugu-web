@@ -1,10 +1,10 @@
 """轻量 Intent Router（关键词 + 状态机）。
 
-网关在**入队前**调用 `decide(text, state)`，据当前状态决定：
+网关在**入队前**调用 `decide(text, state, *, current_puid, active_puid)`，据当前状态决定：
 - 斜杠命令 `/stop` `/status` `/help`。
 - 进度追问（还在吗/查了吗/好了吗/进度）→ **仅咕咕真在忙时**回当前状态话术，别打断；空闲交主 Agent。
 - 催促（急/快点）→ 咕咕真在忙时回一句状态安抚；空闲交主 Agent。
-- 取消（算了/停一下）→ 真在忙时置取消标志中断。
+- 取消（算了/停一下）→ 真在忙时置取消标志中断；空闲时没有任务可取消，交主 Agent、不触发 ACK。
 - 其余（含 **「嗯/好/谢谢」这类 ACK**）→ 交主 Agent。
 
 ⚠️ **ACK 不再短路**：原先把『好/嗯』回「嗯嗋～」或 drop，会吞掉用户真实意图（如咕咕说「我去查」
@@ -16,6 +16,11 @@
 空闲时交主 Agent，让它看着对话历史自己判断该不该真去查。
 以上两处是相对原版的改动。其余（催促/取消）保留。
 原则：**短词歧义大，宁可漏判进主模型、不误判短路**——整条消息匹配，取消/催促只在短消息上判。
+例外：**「取消」无条件识别**——只要消息包含「取消」即判 CANCEL（不受长度限制，解决「@咕咕 取消」
+这类带前缀长消息漏判）；其余取消词（算了/不用）仍只在短消息上判。
+**取消权限隔离**：`current_puid`（当前用户）+ `active_puid`（当前会话活跃 loop 的发起者集合）——
+咕咕在跑别人的 loop 时，当前用户发「取消」返回 `no_permission`（「这个不是你的任务哦，咕咕还在忙～」），
+不真的取消；发起者本人取消则正常中断。
 """
 from agent import runtime_state as st
 
@@ -93,6 +98,10 @@ def classify(text: str) -> str:
         return ACK
     if t in _PROGRESS:
         return PROGRESS
+    # 「取消」无条件识别：用户要求「只要输入取消就取消」，不管消息多长
+    # （如「@咕咕 取消」这类带前缀的长消息，len>12 时原逻辑会漏判成普通消息）。
+    if "取消" in t:
+        return CANCEL
     if len(t) <= 12:
         if any(k in t for k in _CANCEL_KW):
             return CANCEL
@@ -130,8 +139,15 @@ def reply_awaits_answer(text: str) -> bool:
     return any(m in t[-24:] for m in _AWAIT_MARKERS)
 
 
-def decide(text: str, state: str, awaiting: bool = False) -> dict:
-    """返回 {action, reply?}。action：'reply'(短路直接回) / 'cancel'(置取消标志+回) / 'agent'(入队给主 Agent)。
+def decide(text: str, state: str, awaiting: bool = False,
+           *, current_puid: str | None = None, active_puid: set | None = None) -> dict:
+    """返回 {action, reply?}。action：'reply'(短路直接回) / 'cancel'(置取消标志+回) /
+    'no_permission'(无权取消，回一句提示) / 'agent'(入队给主 Agent)。
+
+    `current_puid`：当前发消息的用户；`active_puid`：当前会话活跃 loop 的发起者 puid 集合
+    （来自 runtime_state.get_active）。两者用于判断「其他用户取消」的权限：咕咕在跑 A 的
+    loop 时，B 发「取消」→ B 不在 active_puid 里 → 返回 no_permission（提示无权取消），
+    而不是真的取消 A 的任务。
 
     **去掉了两类短路**：① 「嗯/好/谢谢」这类 ACK——曾被回「嗯嗋～」或 drop、吞掉用户真实意图
     （如咕咕说「我去查」后用户回「好」被吞、搜索没接上）；② 空闲时的进度追问（查到了吗/还在吗）
@@ -165,7 +181,17 @@ def decide(text: str, state: str, awaiting: bool = False) -> dict:
                 else {"action": "agent"})
     # ACK（嗯/好/谢谢）：**不再短路**，一律交主模型（这就是本次唯一去掉的）
     if intent == CANCEL:
-        # 咕咕在等确认时「算了/不用」是回答（否）→ 交 agent 收场；只有真在忙才当取消任务
+        # 「取消」无条件识别（不管消息多长，如「@咕咕 取消」），但只在真在忙时取消任务；
+        # 空闲时没有任务可取消，不触发「好的，那先不继续啦～」的 ACK（否则用户 B 空闲时
+        # 发「取消」会莫名收到一句确认，体验很怪）。
+        if "取消" in text:
+            # 咕咕在跑别人的 loop（当前会话有活跃 loop，但当前用户不是发起者）→ 无权取消，
+            # 回一句提示，不真的取消（也不触发「好的，那先不继续啦～」）。
+            if active_puid and current_puid and current_puid not in active_puid:
+                return {"action": "no_permission", "reply": "这个不是你的任务哦，咕咕还在忙～"}
+            return {"action": "cancel", "reply": _CANCEL_REPLY} if busy else {"action": "agent"}
+        # 其他取消词（算了/不用）：咕咕在等确认时「算了/不用」是回答（否）→ 交 agent 收场；
+        # 只有真在忙才当取消任务
         if awaiting and not busy:
             return {"action": "agent"}
         return {"action": "cancel", "reply": _CANCEL_REPLY} if busy else {"action": "agent"}
