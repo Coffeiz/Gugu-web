@@ -15,7 +15,7 @@
 | Phase 0：问题排查 | ✅ 已完成 | 定位到根因是搜索工具只能匹配消息正文关键词，没有按发言人过滤的维度；顺带排查了群 profile.json 疑似"没生成"的问题，确认是设计使然（见第 5 节澄清记录），不在本 PRD 修复范围。 |
 | Phase 1：功能需求与格式设计 | ✅ 已完成 | `members.json` 格式、生成时机、`group_context_search` 新增参数已在会话中对齐，见第 2、3 节。 |
 | Phase 1.5：记忆合并去重问题排查与方案 | ✅ 已完成 | 发现 IM 侧 `_merge_group_profile`/`_merge_profile` 只做精确字符串去重，同一事实换种措辞会被记成两条；owner 侧 `store.apply_profile_ops`/`apply_pattern_ops` 已有基于 `_pattern_similar`（bigram Jaccard ≥0.7）的相似度合并，确定复用该实现而不是各写一份，见 FR-IM-8-3、3.3 节。 |
-| Phase 2：实施 | 🔲 待评估 | 尚未动代码。 |
+| Phase 2：实施 | 🔲 待评估 | 方案已细化，第 5 节待确认问题已全部确认，尚未动代码。 |
 
 ---
 
@@ -60,18 +60,20 @@
 
   ```json
   {
-    "updated_at": "2026-08-08T01:00:00Z",
+    "updated_at": 1786157722.239018,
     "members": {
       "<platform_user_id>": {
         "name": "moon_小北",
         "aliases": ["小北"],
         "nicknames": ["北神", "队长"],
-        "last_seen_at": "2026-08-07T18:55:00Z",
+        "last_seen_at": 1786121722.239018,
         "message_count": 42
       }
     }
   }
   ```
+
+  时间字段统一用 `now_utc().timestamp()`（epoch 秒，浮点），跟 `profile.json`/`summary.json` 现有风格一致，不用 ISO 字符串——同一 scope 目录下的文件混用两种时间格式，后续读取/展示时容易漏转换。
 
 - 字段来源与更新机制分两类（详见第 3 节）：
   - `name`/`aliases`/`last_seen_at`/`message_count`：纯 DB 聚合，不涉及 LLM。
@@ -98,6 +100,8 @@
 - 群聊消息受 `backend/agent/im/session.py` 的 `MESSAGE_RETENTION_LIMIT = 500` 限制（超过 `MESSAGE_TRIM_THRESHOLD = 600` 才裁剪到 500 条），`message_count` 因此天然是"保留窗口内"的计数而非全量历史，语义上正好贴近"近期活跃度"，不需要额外做时间窗口限定。
 - `aliases`：对比本次聚合结果里的 `name` 与 `members.json` 现存的 `name`，如果变了，把旧值追加进 `aliases`（去重）。
 - 更新时机：不实时（每条消息）写，避免高频读改写 JSON 文件的并发/锁开销；也不单独开一条调度——直接挂在 `execute_job` 反思任务执行时一起算：`execute_job` 本来就要把这批消息读一遍给 LLM 用，顺手在同一次执行里把 DB 聚合字段和 LLM `nicknames` 一起写进 `members.json`，避免多开一次消息表读取和一次文件锁。
+- **聚合数据源范围**：`_apply_output` 拿到的 `messages` 是 `execute_job` 本批消息（`from_message_id`~`to_message_id`），不是当前保留窗口的全量。要得到准确的"保留窗口内" `message_count`/`last_seen_at`，不能用本批 `messages` 累加（会漏掉窗口内、但不在本批范围的历史消息，也没法正确反映消息裁剪后的实际计数）。改为在同一次 `execute_job` 执行里，**额外按 `chat_id` 单独查一次全量聚合**（`SELECT platform_user_id, platform_user_name, COUNT(*), MAX(created_at) ... GROUP BY platform_user_id`）。这张表天然受 500～600 条的保留上限限制，全量聚合成本很低，可以放心每次都查一遍，不用基于批次增量累加去凑近似值。
+- **`updated_at`/`last_seen_at` 时间格式**：统一用 `now_utc().timestamp()`（epoch 秒），不用 ISO 字符串，跟 `profile.json`/`summary.json` 现有风格保持一致（示例见上）。
 
 **LLM 提炼部分**（`nicknames`）：
 
@@ -118,8 +122,8 @@
 {
   "ambiguous": true,
   "candidates": [
-    {"platform_user_id": "...", "matched_by": "nicknames", "matched_text": "北神", "name": "moon_小北", "last_seen_at": "2026-08-07T18:55:00Z"},
-    {"platform_user_id": "...", "matched_by": "nicknames", "matched_text": "北神", "name": "另一个人", "last_seen_at": "2026-08-05T10:00:00Z"}
+    {"platform_user_id": "...", "matched_by": "nicknames", "matched_text": "北神", "name": "moon_小北", "last_seen_at": 1786209300.0},
+    {"platform_user_id": "...", "matched_by": "nicknames", "matched_text": "北神", "name": "另一个人", "last_seen_at": 1786010400.0}
   ]
 }
 ```
@@ -164,3 +168,5 @@
 - ✅ 已确认：IM 记忆合并去重复用 owner 已有的 `store.apply_profile_ops`/`apply_pattern_ops`（`_pattern_similar` 相似度判断），不再各自维护一份精确字符串去重。
 - ✅ 已确认：member 路径本次只做到"当作纯 add 调用 `apply_profile_ops`"，不新增 `profile_remove` 能力，这个结构性改动留到后续。
 - ✅ 已确认：多候选匹配返回 `{"ambiguous": true, "candidates": [...]}`，不带提示文案；"看到 ambiguous 该怎么办"写进工具 description，由模型自己组织澄清话术，不在后端硬编码。
+- ✅ 已确认：`members.json` 的 `message_count`/`last_seen_at` 不用 `execute_job` 本批 `messages` 累加（会漏掉窗口内、不在本批范围的历史），改为在同一次执行里额外按 `chat_id` 单独查一次全量聚合；这张表受 500～600 条保留上限限制，全量聚合成本很低。
+- ✅ 已确认：`members.json` 的 `updated_at`/`last_seen_at` 统一用 `now_utc().timestamp()`（epoch 秒），不用 ISO 字符串，跟 `profile.json`/`summary.json` 现有风格一致。
