@@ -10,34 +10,93 @@ from app.models import ConversationMessage, ConversationSession
 from app.search.query import keyword_condition, normalize_mode, normalize_queries
 
 
-def _resolve_speaker(members: dict, speaker: str) -> dict:
-    """把 speaker（platform_user_id 或名字/别名/称呼）解析成 platform_user_id。
+async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> list[tuple]:
+    """实时读当前群所有历史 (platform_user_id, platform_user_name, created_at)。
 
-    四层匹配优先级，只有最低置信度那层（nicknames 模糊匹配）出现多个候选才触发澄清：
+    不经 members.json——这里要的是"跟 Web 会话列表一样实时"的 id/曾用名信息，
+    不能被反思任务的更新节奏拖慢（见 PRD-IM-8 Phase 2.5）。表本身受
+    MESSAGE_RETENTION_LIMIT（500~600 条）限制，全量查一遍成本很低。
+    """
+    rows = (await db.execute(
+        select(
+            ConversationMessage.platform_user_id,
+            ConversationMessage.platform_user_name,
+            ConversationMessage.created_at,
+        )
+        .join(ConversationSession, ConversationSession.id == ConversationMessage.session_id)
+        .where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.source == platform,
+            ConversationSession.bot_id == bot_id,
+            ConversationSession.chat_type == "group",
+            ConversationSession.chat_id == chat_id,
+            ConversationMessage.role == "user",
+            ConversationMessage.platform_user_id.is_not(None),
+        )
+    )).all()
+    return rows
+
+
+async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker: str, load_members) -> dict:
+    """把 speaker（platform_user_id 或名字/曾用名/群友称呼）解析成 platform_user_id。
+
+    三层匹配优先级，只有最后一层（nicknames 模糊匹配）出现多个候选才触发澄清；
+    只有这一层会读 members.json，其余两层直接查消息表，实时、不受反思任务节奏影响：
       ① speaker 本身就是 platform_user_id → 直接精确匹配；
-      ② 精确匹配 name，唯一命中直接用；
-      ③ 精确匹配 aliases，唯一命中直接用；
-      ④ 只在 nicknames 里模糊/包含匹配到——置信度最低，多候选才返回候选列表。
+      ② 实时查询：speaker 精确等于该群里某个 platform_user_id 历史上用过的任意一个
+         platform_user_name（当前显示名或曾用名都算），唯一命中直接用；
+      ③ 前两层都未命中，才读 members.json，只在 nicknames 里模糊/包含匹配——这层信息
+         只能来自 LLM 提炼，无法实时化，多候选才返回候选列表（load_members 是个
+         async 回调，避免大多数命中①②的调用也白读一次 members.json 文件）。
     返回：
       {"platform_user_id": pid}          唯一命中
-      {"ambiguous": True, "candidates": [...]}  第④层多候选（按 last_seen_at 倒序，最多 5 个）
+      {"ambiguous": True, "candidates": [...]}  多候选（按 last_seen_at 倒序，最多 5 个）
       {"error": "没有找到叫 XX 的群成员"}  未命中
     """
     speaker = (speaker or "").strip()
     if not speaker:
         return {"error": "speaker 不能为空"}
-    # ① 直接当 platform_user_id 精确匹配
-    if speaker in members:
+
+    rows = await _live_speaker_index(db, user_id, platform, bot_id, chat_id)
+    live_ids: set = set()
+    name_to_pids: dict[str, set] = {}
+    last_seen: dict[str, float] = {}
+    for pid, name, created_at in rows:
+        if not pid:
+            continue
+        live_ids.add(pid)
+        if name:
+            name_to_pids.setdefault(name, set()).add(pid)
+        ts = created_at.timestamp() if created_at else None
+        if ts is not None and ts > last_seen.get(pid, 0):
+            last_seen[pid] = ts
+
+    # ① speaker 本身就是 platform_user_id
+    if speaker in live_ids:
         return {"platform_user_id": speaker}
-    # ② 精确匹配 name
-    name_hits = [pid for pid, m in members.items() if (m.get("name") or "") == speaker]
+    # ② 实时按名字/曾用名精确匹配
+    name_hits = name_to_pids.get(speaker) or set()
     if len(name_hits) == 1:
-        return {"platform_user_id": name_hits[0]}
-    # ③ 精确匹配 aliases
-    alias_hits = [pid for pid, m in members.items() if speaker in (m.get("aliases") or [])]
-    if len(alias_hits) == 1:
-        return {"platform_user_id": alias_hits[0]}
-    # ④ nicknames 模糊/包含匹配（置信度最低，多候选才澄清）
+        return {"platform_user_id": next(iter(name_hits))}
+    if len(name_hits) > 1:
+        candidates = sorted(
+            (
+                {
+                    "platform_user_id": pid,
+                    "matched_by": "name",
+                    "matched_text": speaker,
+                    "name": speaker,
+                    "last_seen_at": last_seen.get(pid),
+                }
+                for pid in name_hits
+            ),
+            key=lambda c: c.get("last_seen_at") or 0,
+            reverse=True,
+        )[:5]
+        return {"ambiguous": True, "candidates": candidates}
+
+    # ③ members.json 的 nicknames（唯一还依赖反思任务产物、因而唯一会滞后的一层）
+    members = await load_members()
     nick_hits = [
         (pid, m)
         for pid, m in members.items()
@@ -82,11 +141,16 @@ async def _group_context_search(db, user_id, args: dict):
     speaker = (args.get("speaker") or "").strip()
     speaker_id = None
     if speaker:
-        # 读取当前群 members.json，把 speaker 解析成 platform_user_id。
-        scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
-        members_data = (await read_scope(scope)).get("members") or {}
-        members = members_data.get("members") if isinstance(members_data, dict) else {}
-        resolved = _resolve_speaker(members if isinstance(members, dict) else {}, speaker)
+        async def _load_members() -> dict:
+            # 只有 _resolve_speaker 第③层（nicknames）才会调用，前两层命中时不产生这次文件读。
+            scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
+            members_data = (await read_scope(scope)).get("members") or {}
+            members = members_data.get("members") if isinstance(members_data, dict) else {}
+            return members if isinstance(members, dict) else {}
+
+        resolved = await _resolve_speaker(
+            db, user_id, "qq", im.get("channel_id"), im["chat_id"], speaker, _load_members,
+        )
         if resolved.get("ambiguous"):
             return resolved
         if resolved.get("error"):

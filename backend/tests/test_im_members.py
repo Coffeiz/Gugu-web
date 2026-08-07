@@ -6,75 +6,166 @@ import pytest
 from app.core.tz import now_utc
 
 
-# ── _resolve_speaker：四层匹配优先级 ────────────────────────────────────────
+# ── _resolve_speaker：三层匹配优先级（Phase 2.5 修订：①②实时查表，③才读 members.json）──
 
 
-def _members():
+def _members_nicknames_only():
+    """只保留 nicknames——name/aliases 已经改成实时查 ConversationMessage，不再从这里读。"""
     return {
-        "pid-1": {
-            "name": "moon_小北",
-            "aliases": ["小北"],
-            "nicknames": ["北神", "队长"],
-            "last_seen_at": 100.0,
-            "message_count": 42,
-        },
-        "pid-2": {
-            "name": "另一个人",
-            "aliases": [],
-            "nicknames": ["北神"],
-            "last_seen_at": 200.0,
-            "message_count": 10,
-        },
+        "pid-1": {"name": "moon_小北", "nicknames": ["北神", "队长"], "last_seen_at": 100.0},
+        "pid-2": {"name": "另一个人", "nicknames": ["北神"], "last_seen_at": 200.0},
     }
 
 
-def test_resolve_speaker_by_platform_user_id():
+def _load_members_stub(members: dict):
+    async def _load():
+        return members
+    return _load
+
+
+async def _seed_group_messages(db, user, chat_id, entries):
+    """entries: [(pid, name, minutes_offset), ...]，按 offset 生成递增 created_at。"""
+    from app.models import ConversationMessage, ConversationSession
+
+    session = ConversationSession(
+        user_id=user.id, source="qq", bot_id="bot-a", chat_id=chat_id, chat_type="group",
+    )
+    db.add(session)
+    await db.flush()
+    base = now_utc()
+    for i, (pid, name, offset) in enumerate(entries):
+        db.add(ConversationMessage(
+            session_id=session.id, role="user", content=f"消息{i}",
+            platform_user_id=pid, platform_user_name=name,
+            created_at=base + timedelta(minutes=offset),
+        ))
+    await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_by_platform_user_id(db, user_a):
     from agent.tools.group_context import _resolve_speaker
 
-    assert _resolve_speaker(_members(), "pid-1") == {"platform_user_id": "pid-1"}
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "pid-1", _load_members_stub({}),
+    )
+    assert result == {"platform_user_id": "pid-1"}
 
 
-def test_resolve_speaker_by_name_unique():
+@pytest.mark.asyncio
+async def test_resolve_speaker_by_name_live_unique(db, user_a):
+    """②层：直接查 ConversationMessage 里实时的 platform_user_name，不依赖 members.json。"""
     from agent.tools.group_context import _resolve_speaker
 
-    assert _resolve_speaker(_members(), "moon_小北") == {"platform_user_id": "pid-1"}
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    # members.json 传空字典（模拟反思任务还没跑过），②层照样能命中。
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "moon_小北", _load_members_stub({}),
+    )
+    assert result == {"platform_user_id": "pid-1"}
 
 
-def test_resolve_speaker_by_alias_unique():
+@pytest.mark.asyncio
+async def test_resolve_speaker_by_former_name_live(db, user_a):
+    """②层覆盖曾用名：改名后旧名字依然能查到人，不需要等 members.json 的 aliases 更新。"""
     from agent.tools.group_context import _resolve_speaker
 
-    assert _resolve_speaker(_members(), "小北") == {"platform_user_id": "pid-1"}
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-1", "旧名字", 0),
+        ("pid-1", "新名字", 1),
+    ])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "旧名字", _load_members_stub({}),
+    )
+    assert result == {"platform_user_id": "pid-1"}
 
 
-def test_resolve_speaker_nickname_unique():
+@pytest.mark.asyncio
+async def test_resolve_speaker_by_name_live_ambiguous(db, user_a):
+    """②层多候选：两个人历史上用过同一个名字，按 last_seen_at 倒序返回候选。"""
     from agent.tools.group_context import _resolve_speaker
 
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-1", "重名", 0),
+        ("pid-2", "重名", 5),
+    ])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "重名", _load_members_stub({}),
+    )
+    assert result["ambiguous"] is True
+    assert [c["platform_user_id"] for c in result["candidates"]] == ["pid-2", "pid-1"]
+    assert result["candidates"][0]["matched_by"] == "name"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_nickname_unique(db, user_a):
+    """③层：①②都未命中，才读 members.json 的 nicknames。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
     # "队长" 只在 pid-1 的 nicknames 里，唯一命中。
-    assert _resolve_speaker(_members(), "队长") == {"platform_user_id": "pid-1"}
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "队长", _load_members_stub(_members_nicknames_only()),
+    )
+    assert result == {"platform_user_id": "pid-1"}
 
 
-def test_resolve_speaker_nickname_ambiguous_returns_candidates():
+@pytest.mark.asyncio
+async def test_resolve_speaker_nickname_ambiguous_returns_candidates(db, user_a):
     from agent.tools.group_context import _resolve_speaker
 
-    # "北神" 同时出现在 pid-1 和 pid-2 的 nicknames，触发澄清，按 last_seen_at 倒序。
-    result = _resolve_speaker(_members(), "北神")
+    await _seed_group_messages(db, user_a, "chat-1", [
+        ("pid-1", "moon_小北", 0),
+        ("pid-2", "另一个人", 0),
+    ])
+    # "北神" 同时出现在 pid-1 和 pid-2 的 nicknames，触发澄清，按 last_seen_at 倒序（来自 members.json）。
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "北神", _load_members_stub(_members_nicknames_only()),
+    )
     assert result["ambiguous"] is True
     assert [c["platform_user_id"] for c in result["candidates"]] == ["pid-2", "pid-1"]
     assert result["candidates"][0]["matched_by"] == "nicknames"
     assert result["candidates"][0]["matched_text"] == "北神"
 
 
-def test_resolve_speaker_not_found():
+@pytest.mark.asyncio
+async def test_resolve_speaker_not_found(db, user_a):
     from agent.tools.group_context import _resolve_speaker
 
-    result = _resolve_speaker(_members(), "不存在的人")
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "不存在的人", _load_members_stub({}),
+    )
     assert result["error"] == "没有找到叫 不存在的人 的群成员"
 
 
-def test_resolve_speaker_empty():
+@pytest.mark.asyncio
+async def test_resolve_speaker_empty(db, user_a):
     from agent.tools.group_context import _resolve_speaker
 
-    assert _resolve_speaker(_members(), "")["error"] == "speaker 不能为空"
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "", _load_members_stub({}),
+    )
+    assert result["error"] == "speaker 不能为空"
+
+
+@pytest.mark.asyncio
+async def test_resolve_speaker_does_not_read_members_when_live_hit(db, user_a):
+    """①②命中时不应该调用 load_members——避免大多数情况下白读一次 members.json。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-1", "moon_小北", 0)])
+    called = False
+
+    async def _load_members():
+        nonlocal called
+        called = True
+        return {}
+
+    result = await _resolve_speaker(db, user_a.id, "qq", "bot-a", "chat-1", "moon_小北", _load_members)
+    assert result == {"platform_user_id": "pid-1"}
+    assert called is False
 
 
 # ── _merge_members：DB 聚合 + LLM nicknames 合并 ────────────────────────────
