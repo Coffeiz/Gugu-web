@@ -12,7 +12,7 @@
           <div v-for="s in imSessionsOf(p.key)" :key="s.id"
             class="exp-session-item" :class="{ active: s.id === sessionId }" @click="onLoadSession(s.id)">
             <span v-if="s.chatType === 'group'" class="exp-session-tag" title="群聊">群</span>
-            <span class="exp-session-title">{{ s.title }}</span>
+            <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
             <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
           </div>
           <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">暂无对话</div>
@@ -53,6 +53,7 @@
  */
 import { ref, computed } from 'vue'
 import { PhTrash } from '@phosphor-icons/vue'
+import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
 
 interface ImPlatformOption { key: ImPlatformKey; label: string }
@@ -75,6 +76,7 @@ defineProps<{
   onCancelImConnect: () => void
   onLoadSession: (id: number) => void
   onDeleteSession: (id: number) => void
+  onRenameSession: (id: number, title: string) => void
 }>()
 
 const rootRef = ref<HTMLElement | null>(null)

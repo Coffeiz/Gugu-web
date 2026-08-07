@@ -27,7 +27,14 @@
     <!-- 主区域（始终存在，消息列表永不销毁） -->
     <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
       <div class="chat-header">
-        <span class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
+        <SessionTitleEdit
+          v-if="expanded && sessionId"
+          class="chat-title"
+          header
+          :title="currentSessionTitle"
+          :on-rename="(t) => onRenameSession(sessionId!, t)"
+        />
+        <span v-else class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
@@ -86,6 +93,7 @@ import { ref, computed } from 'vue'
 import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
+import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatMessage, ChatFile } from './chatTypes'
 
 const props = defineProps<{
@@ -96,6 +104,7 @@ const props = defineProps<{
   streaming: boolean
   isChatDragging: boolean
   currentSessionTitle: string
+  sessionId: number | null
   presenceKind: string
   presenceText: string
   presenceTitle: string
@@ -128,6 +137,7 @@ const props = defineProps<{
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
   onPromptConnect: () => void
+  onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
   onExitExpanded: () => void
   onClose: () => void
@@ -230,8 +240,10 @@ defineExpose({
   flex-shrink: 0;
 }
 .chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
-.chat-title { font-size: 13px; font-weight: 700; flex: 1; }
+.chat-title { font-size: 13px; font-weight: 700; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
+/* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
+.popup-status { margin-left: auto; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
 .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); transition: background .15s, box-shadow .15s; }
 /* 离线：克制的暗示——灰点、弱化文字、可点；只在 hover 才微微亮起（点用暖色 + 细光环），平时不抢眼 */

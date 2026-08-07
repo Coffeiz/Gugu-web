@@ -25,7 +25,6 @@ from agent.im.session import (
     GROUP_CONTEXT_LIMIT,
     get_or_create_session,
     session_scope_filters,
-    trim_group_messages,
 )
 from agent.llm_select import is_minimax, pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
@@ -36,8 +35,8 @@ _bg_tasks: set = set()
 
 
 def _history_query_limit(request: AgentRequest) -> int:
-    """群聊从较大的保留池中取最近 50 条，Web 会话沿用原窗口。"""
-    if request.source in IM_SOURCES and request.chat_id:
+    """IM 会话（私聊/群聊）从保留池取最近 50 条，Web 会话沿用原窗口。"""
+    if request.source in IM_SOURCES:
         return GROUP_CONTEXT_LIMIT
     return tokens.HISTORY_MAX_MSGS
 
@@ -111,11 +110,25 @@ async def _gen_title_bg(user_id, session_id, user_msg: str, reply_text: str, set
             return
         import app.db.session as _sess
         from app.models import ConversationSession
+        from sqlalchemy import update as _update
         async with _sess._SessionLocal() as db:
-            s = await db.get(ConversationSession, session_id)
-            if s:
-                s.title = new_title
-                await db.commit()
+            # P1-3：用数据库原子条件 UPDATE 写标题，彻底消除 TOCTOU 竞态。
+            # 手动改名（rename_session）会置 title_locked=True；这里只在
+            # title_locked=false 时才更新，且 UPDATE 与 rename 的 commit 是
+            # 原子串行化的——无论 rename 在哪个时序提交，自动标题都不会覆盖
+            # 用户刚改的标题。rowcount==1 才说明本次确实写入了标题。
+            result = await db.execute(
+                _update(ConversationSession)
+                .where(
+                    ConversationSession.id == session_id,
+                    ConversationSession.title_locked.is_(False),
+                )
+                .values(title=new_title)
+            )
+            if result.rowcount != 1:
+                # 会话不存在或已被手动改名锁定：不覆盖，也不推送标题事件。
+                return
+            await db.commit()
         from app.core import events
         await events.publish(user_id, "sessions", session_id=session_id, title=new_title)  # 标题好了再推一次
     except Exception:
@@ -181,7 +194,8 @@ def _with_quoted_context(message: str, quoted_text: str | None) -> str:
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
                                 source: str, chat_id: str | None,
-                                bot_id: str | None = None) -> str:
+                                bot_id: str | None = None,
+                                platform_user_id: str | None = None) -> str:
     """IM 新会话开场的「续接桥」：IM 会话是 12h 滑动 TTL，过期会起一条新空会话，咕咕会丢掉
     上一条的上下文（「没续上之前的聊天」根因）。这里趁 db 还开着补两档：
       A 档（总给）：一行「上一条对话」指针，带 session id —— 让模型（尤其 mimo）知道去
@@ -194,7 +208,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     query = select(ConversationSession).where(
         ConversationSession.user_id == user_id,
         ConversationSession.id != current_session_id,
-        *session_scope_filters(ConversationSession, source, chat_id, bot_id),
+        *session_scope_filters(ConversationSession, source, chat_id, bot_id, platform_user_id),
     )
     prev = (await db.execute(
         query
@@ -309,6 +323,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                     req.source,
                     req.chat_id,
                     req.platform_bot_id,
+                    req.platform_user_id,
                 )
             except Exception:
                 im_bridge = ""
@@ -556,6 +571,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                     req.source,
                     req.chat_id,
                     req.platform_bot_id,
+                    req.platform_user_id,
                 )
             except Exception:
                 im_bridge = ""
