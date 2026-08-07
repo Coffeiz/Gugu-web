@@ -264,21 +264,25 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
 async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     """按 chat_id 全量聚合群成员：platform_user_id → {name, last_seen_at, message_count}。
 
-    数据源是 ConversationMessage 表按 (chat_id, platform_user_id) 聚合。群聊消息受
-    MESSAGE_RETENTION_LIMIT（500）/MESSAGE_TRIM_THRESHOLD（600）限制，message_count
-    天然是"保留窗口内"的计数而非全量历史，语义上贴近"近期活跃度"。
+    数据源是 ConversationMessage 表按 chat_id 聚合。群聊消息受 MESSAGE_RETENTION_LIMIT
+    （500）/MESSAGE_TRIM_THRESHOLD（600）限制，message_count 天然是"保留窗口内"的计数
+    而非全量历史，语义上贴近"近期活跃度"。
     这里刻意不用 execute_job 本批 messages 累加——会漏掉窗口内、不在本批范围的历史，
     也没法正确反映消息裁剪后的实际计数；全量聚合成本很低，每次都查一遍。
+
+    不按 (platform_user_id, platform_user_name) 联合 GROUP BY——同一个人在保留窗口内改过
+    群昵称时，联合分组会把他的消息拆成两行，逐行覆盖写只会留下其中一行，导致 message_count
+    被低估、name/last_seen_at 也可能取到过期值（曾经复现过：窗口内改名一次，message_count
+    从 5 条被腰斩成 3 条）。改成只取原始行按时间顺序在 Python 里聚合：count 累加所有行，
+    name/last_seen_at 始终跟随时间最新的那一行，不受改名次数影响。
     """
     from app.models import ConversationMessage, ConversationSession
-    from sqlalchemy import func
 
     rows = (await db.execute(
         select(
             ConversationMessage.platform_user_id,
             ConversationMessage.platform_user_name,
-            func.count(ConversationMessage.id),
-            func.max(ConversationMessage.created_at),
+            ConversationMessage.created_at,
         )
         .join(ConversationSession, ConversationSession.id == ConversationMessage.session_id)
         .where(
@@ -290,17 +294,20 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
             ConversationMessage.role == "user",
             ConversationMessage.platform_user_id.is_not(None),
         )
-        .group_by(ConversationMessage.platform_user_id, ConversationMessage.platform_user_name)
+        .order_by(ConversationMessage.created_at)
     )).all()
     members: dict[str, dict] = {}
-    for pid, name, count, last_seen in rows:
+    for pid, name, created_at in rows:
         if not pid:
             continue
-        members[pid] = {
-            "name": name or "",
-            "last_seen_at": last_seen.timestamp() if last_seen else None,
-            "message_count": int(count or 0),
-        }
+        member = members.setdefault(pid, {"name": "", "last_seen_at": None, "message_count": 0})
+        member["message_count"] += 1
+        ts = created_at.timestamp() if created_at else None
+        # 行按 created_at 升序处理，靠 >= 保证同一时刻多条也以最后处理的为准，
+        # 天然拿到时间最新的 name（改名后的消息排在后面，自然覆盖旧名字）。
+        if ts is not None and (member["last_seen_at"] is None or ts >= member["last_seen_at"]):
+            member["last_seen_at"] = ts
+            member["name"] = name or member["name"]
     return members
 
 
