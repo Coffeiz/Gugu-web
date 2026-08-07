@@ -660,8 +660,10 @@ async def _run_agent(
     2. execution 阶段（run_scheduled_execution）：完整 AgentLoop + 工具，prompt 末尾
        追加 _REPORT_SCHEMA_INSTRUCTION 要求模型最后一轮输出 report schema JSON。
     3. execution 成功后用 _parse_report_schema 解析 schema，_render_report_summary 渲染
-       投递正文（返回 summary + status）。schema 解析失败：重试一次 execution，仍失败
-       fallback 到 execution 原文——不再调独立 report LLM。
+       投递正文（返回 summary + status）。schema 解析失败：若本轮已产生写副作用（mutated）
+       则绝不重跑（避免重复执行 create/update/delete 等业务操作），直接 fallback 到 execution
+       原文；未 mutated 时重跑一次无副作用风险，可提升 schema 解析成功率。仍失败 fallback
+       到 execution 原文——不再调独立 report LLM。
     4. 返回 (投递正文, files, status)：files 由 _collect 从 send_file 工具事件收集（不在
        schema 里），投递层负责把附件发到 IM 群；status 由投递层并入顶部 title。
 
