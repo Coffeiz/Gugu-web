@@ -9,12 +9,14 @@
 
 ### 改进
 
+- **群定时任务解锁群上下文 + 群记忆注入**（`backend/app/scheduled_tasks.py`）：群定时任务到点触发时，`_run_agent` 命中群目标后 `set_im(chat_type='group')` 并注入群长期记忆，让 execution 阶段能正常用 `group_context_search` 等群工具、看到群记忆，与「任务要发到 X 群」的语义一致；私聊/Web 任务零行为变化。
 - **定时任务报告阶段改造**（`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`）：定时任务执行阶段直接要求模型最后一轮输出结构化 report schema（`summary`/`context`/`status`），投递正文由纯代码渲染（`status` 决定「部分完成/执行失败」title 后缀），移除独立的报告 LLM 阶段与 `scheduled_report.py` 模块，减少一次额外模型调用、缩短任务耗时。
 
 ### 修复
 
 - **定时任务 status 前缀并入顶部 title**（`backend/app/scheduled_tasks.py`）：`status` 的「（部分完成）/（执行失败）」提示从正文开头移到顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与已有的任务 title 重复。
 - **群定时任务误发慢工具进度声明**（`backend/agent/tools/base.py`）：群定时任务为取群 memory 也会 `set_im`（但 `message_id=None`），导致工具执行前的「我去找张图。」这类进度声明被误发到群里；现在仅对「用户主动发起的 IM 消息」（`message_id` 非空）发进度声明，定时任务无具体触发消息则跳过，过渡话术统一收进最终报告。
+- **侧栏会话标题区域可点击切换**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`）：侧栏会话标题的 `@click.stop` 阻断了会话切换，改为仅编辑态拦截点击，非编辑态点击标题区域可正常切换会话。
 
 ---
 
@@ -22,10 +24,16 @@
 
 ### 改进
 
+- **IM 会话按 peer 复用 + 消息窗口统一裁剪**（`backend/agent/im/session.py`、`backend/agent/runner.py`）：私聊按 `(source, bot_id, platform_user_id)`、群聊按 `(source, bot_id, chat_id)` 命中已有会话复用，不再每次新对话都新建；消息窗口统一按 600 条阈值裁剪（超过才裁到 500），私聊/群聊/被动记录/定时任务推送统一触发。
+- **会话标题支持重命名**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`、`backend/app/api/v1/agent.py`）：侧栏用铅笔按钮进入编辑（与文件重命名同款交互），顶部标题栏单击进入编辑；后端新增 `PATCH /sessions/{id}` 重命名接口。
 - **定时任务投递附件同步落库**（`backend/agent/tools/scheduled_tasks.py`）：投递到 IM 的附件同步写入会话历史，web 端打开对应会话也能看到图片，避免「群里收到图但 web 历史里只有文字」的不一致。
 
 ### 修复
 
+- **私聊对话被并入群消息**（`backend/agent/im/session.py`）：群聊 session 新建时把 `platform_user_id` 写成了群成员 puid，导致群成员私聊时误匹配到群聊 session；现在群聊 session 的 `platform_user_id` 置 None（群聊用 chat_id 隔离），私聊复用查找显式排除群聊 session。
+- **私聊推送路由 / fail closed / 标题竞态**（`backend/agent/im/session.py`、`backend/agent/runner.py`、`backend/app/scheduled_tasks.py`）：私聊推送改走 owner_session key 不再误用群聊 key；私聊缺 `platform_user_id` 时 fail closed 禁止串会话；手动改名写 `title_locked` 防止被异步自动标题覆盖，并用数据库原子条件 UPDATE 彻底消除 TOCTOU 竞态。
+- **定时任务附件失败仍被判定成功**（`backend/app/scheduled_tasks.py`）：`_deliver_im_files` 原来发完就扔不返回结果，附件全挂时任务仍被标「已发送」，一次性任务被静默删除；现在返回成功/总张数，附件失败时降级为「文字已发送，附件发送失败（x/y）」，`@once` 任务不会被提前删掉。
+- **排队消息没有绑定会话可能串会话**（`frontend/src/components/common/gugu-chat/composables/useChatStream.ts`）：pendingQueue 从 `string[]` 改成携带 `{ text, attachments, sessionId, viewGeneration }` 的对象数组，切换会话时清理旧队列，消费前核对身份，避免排队消息被发进另一段对话。
 - **全新会话首轮排队消息被静默丢弃**（`frontend/src/components/common/gugu-chat/composables/useChatStream.ts`）：新对话首条消息时 `sessionId` 仍为 `null`，期间发送的第二条进入 pending 队列后按 `sessionId` 严格比对被误判为已离开会话而丢弃，用户气泡已渲染但刷新后消失；现在 `session_id` 事件到达时回填真实 id，消费队列放宽比对条件。
 - **文件卡下载图标无独立点击区域**（`frontend/src/components/common/gugu-chat/`）：整张文件卡只有一个 `openFile` 点击事件，可预览文件点下载图标也会打开预览；现在下载图标单独触发下载并补上 hover 反馈。
 - **迷你播放器拖拽进度条报错**（`frontend/src/components/common/gugu-chat/`）：`mousemove/mouseup` 在 `window` 上触发时取不到进度条 `rect`，改为 `mousedown` 时量好复用。
