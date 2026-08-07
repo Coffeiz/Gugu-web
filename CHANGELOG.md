@@ -17,6 +17,11 @@
 - **定时任务 status 前缀并入顶部 title**（`backend/app/scheduled_tasks.py`）：`status` 的「（部分完成）/（执行失败）」提示从正文开头移到顶部 title（`⏰ 任务名（部分完成）`），正文保持干净，避免与已有的任务 title 重复。
 - **群定时任务误发慢工具进度声明**（`backend/agent/tools/base.py`）：群定时任务为取群 memory 也会 `set_im`（但 `message_id=None`），导致工具执行前的「我去找张图。」这类进度声明被误发到群里；现在仅对「用户主动发起的 IM 消息」（`message_id` 非空）发进度声明，定时任务无具体触发消息则跳过，过渡话术统一收进最终报告。
 - **侧栏会话标题区域可点击切换**（`frontend/src/components/common/gugu-chat/SessionTitleEdit.vue`）：侧栏会话标题的 `@click.stop` 阻断了会话切换，改为仅编辑态拦截点击，非编辑态点击标题区域可正常切换会话。
+- **定时任务 schema 解析失败重跑可能重复写操作**（`backend/app/scheduled_tasks.py`）：execution 成功但 report schema 解析失败时，原来无条件重跑整个 execution，若上一轮已产生写副作用（`mutated=True`，如 create_project/update_file）会重复执行业务操作；现在 `mutated` 时绝不重跑，直接 fallback 到 execution 原文，且 execution 成功即按 `success` 处理（不再误标 `failed`）。
+- **定时任务 imctx 生命周期泄漏**（`backend/app/scheduled_tasks.py`）：群定时任务 `_run_agent` 命中群目标后 `set_im` 但从未 `clear()`，跨任务残留群上下文；现在用 `try/finally` 在任务结束时 `imctx.clear()`。
+- **畸形群目标缺 platform 触发 KeyError**（`backend/app/scheduled_tasks.py`）：`_detect_group_target` 只校验 `chat_type`/`chat_id`，命中后 `set_im(platform=group["platform"])` 对缺 `platform` 的旧数据/畸形数据直接 KeyError；现在缺省时回退用 map key 作为 platform。
+- **群聊搜索工具缺 channel_id 时误报可用**（`backend/agent/tools/group_context.py`）：`group_context_search` 只校验 `chat_type`/`chat_id`，缺 `channel_id` 时仍提示可用但实际查不到（`bot_id IS NULL` 查询落空），给模型错误信心；现在可用性校验补上 `channel_id`，缺省时明确返回「当前不在群聊上下文中」。
+- **E2E 会话切换用例依赖会话数量假设**（`frontend/e2e/chat.spec.ts`、`frontend/src/components/common/gugu-chat/GuguChatSidebar.vue`）：原用例用 `toHaveCount(2)`/`nth(1)` 假设恰好两个会话，共享测试用户状态下不稳定；改为通过 `page.request` 记录真实会话 id，侧栏会话项加 `data-session-id` 属性精确点击目标会话。
 
 ---
 

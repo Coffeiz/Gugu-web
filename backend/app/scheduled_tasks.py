@@ -529,15 +529,20 @@ def _detect_group_target(target_map: dict | None) -> dict | None:
     单群假设：与 create_scheduled_task 工具的 delivery_mode="current_group" 一致
     （tools/scheduled_tasks.py:_resolve_delivery_targets），delivery_targets 至多一个
     群目标。找到第一个群目标就返回；找不到返回 None。
+
+    容错：历史/畸形数据可能缺 platform 字段，用 map key（渠道名，如 "qq"）兜底，
+    避免下游 set_im(platform=...) 直接 KeyError 炸掉整个任务（P2）。
     """
     if not isinstance(target_map, dict):
         return None
-    for tgt in target_map.values():
+    for channel, tgt in target_map.items():
         if (
             isinstance(tgt, dict)
             and tgt.get("chat_type") == "group"
             and tgt.get("chat_id")
         ):
+            if not tgt.get("platform"):
+                tgt = {**tgt, "platform": channel}
             return tgt
     return None
 
@@ -631,11 +636,13 @@ def _render_report_summary(schema: dict, fallback: str) -> tuple[str, str]:
     PRD-SCHEDULE-2 FR-SCHED-2/FR-SCHED-3。files 不在 schema 里，由调用方从
     _collect 收集的工具事件拼出。"""
     summary = (schema.get("summary") or "").strip()
-    if not summary:
-        return fallback, "success"
     status = str(schema.get("status") or "success").lower()
     if status not in _STATUS_PREFIX:
         status = "success"
+    if not summary:
+        # summary 为空时 fallback 到原始文本，但保留模型声明的 status（不强制 success，
+        # 否则「权限不足 status=failed」会被误标成成功）。
+        return fallback, status
     return summary, status
 
 
@@ -663,7 +670,7 @@ async def _run_agent(
     不命中群目标 → 完全跳过，行为与改动前一致。
     """
     # 群定时任务：set_im + 拼群 memory（PRD-IM-7）
-    _, prompt = await _inject_group_context(user_id, target_map, prompt)
+    group, prompt = await _inject_group_context(user_id, target_map, prompt)
 
     # PRD-SCHEDULE-2：execution 最后一轮输出 report schema，report 模块纯代码渲染。
     prompt = prompt + _REPORT_SCHEMA_INSTRUCTION
@@ -675,6 +682,21 @@ async def _run_agent(
         u = await db.get(User, _as_uuid(user_id))
         uname = (u.display_name or u.username) if u else ""
 
+    from agent import sanitize
+    from agent.runner import run_scheduled_execution
+
+    try:
+        return await _run_agent_execution(user_id, uname, prompt, trial)
+    finally:
+        # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
+        # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
+        if group:
+            from agent import imctx
+            imctx.clear()
+
+
+async def _run_agent_execution(user_id, uname, prompt, trial) -> tuple[str, list, str]:
+    """_run_agent 的 execution + schema 解析主体（独立函数便于 try/finally 清理 imctx）。"""
     from agent import sanitize
     from agent.runner import run_scheduled_execution
 
@@ -718,15 +740,27 @@ async def _run_agent(
             continue
 
         # PRD-SCHEDULE-2：execution 成功 → 解析最后一轮的 report schema。
-        # 解析失败：重试一次 execution；仍失败 fallback 到 execution 原文（不再调 report LLM）。
+        # 解析失败：若已产生写副作用（mutated）则绝不重跑（避免重复执行 create/update/delete
+        # 等业务操作），直接 fallback 到 execution 原文；未 mutated 时重跑一次无副作用风险，
+        # 可提升 schema 解析成功率。仍失败 fallback 到 execution 原文（不再调 report LLM）。
         schema = _parse_report_schema(execution_text)
         if not schema:
-            if round_no >= max_rounds:
+            if mutated or round_no >= max_rounds:
                 logger.info(
                     "[scheduled-phase] %s",
-                    json.dumps({"event": "schema-fallback", "round": round_no, "reason": "parse-failed"}, ensure_ascii=False),
+                    json.dumps(
+                        {
+                            "event": "schema-fallback",
+                            "round": round_no,
+                            "reason": "parse-failed",
+                            "mutated": mutated,
+                        },
+                        ensure_ascii=False,
+                    ),
                 )
-                return sanitize.strip_disallowed_emoji(execution_text or last_text), files, "failed"
+                # execution 本身成功，只是报告 JSON 格式坏了拿不到 status → 按 success 处理，
+                # 不标 failed（failed 只表示任务执行失败，不是报告格式问题）。
+                return sanitize.strip_disallowed_emoji(execution_text or last_text), files, "success"
             logger.info(
                 "[scheduled-phase] %s",
                 json.dumps({"event": "schema-parse-retry", "next_round": round_no + 1}, ensure_ascii=False),

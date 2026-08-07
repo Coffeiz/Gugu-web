@@ -79,6 +79,28 @@ async def test_scheduled_schema_parse_failure_retries_execution(monkeypatch, db,
 
 
 @pytest.mark.asyncio
+async def test_scheduled_schema_parse_failure_mutated_never_reruns(monkeypatch, db, user_a):
+    """P1：execution 成功但 schema 解析失败，且已产生写副作用（mutated=True）时，
+    绝不重跑 execution——否则 create_project/update_file 等业务操作会被重复执行。
+
+    此时直接 fallback 到 execution 原文，execution 只应被调用 1 次。"""
+    import app.scheduled_tasks as scheduled
+
+    execution = AsyncMock(return_value=(
+        "不是 JSON",
+        False,
+        {"tool_names": ["create_project"], "mutated": True},
+    ))
+    monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
+
+    result, _files, status = await scheduled._run_agent(user_a.id, "查天气", trial=False)
+
+    assert result == "不是 JSON"
+    assert status == "success"
+    assert execution.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_execute_task_marks_last_run_failed_on_exception(monkeypatch, db, user_a):
     """一次性任务执行抛异常：last_run_at 已经被写了，但不能就这么在"失败"状态里
     永远卡住——必须标 last_run_failed，且不能被当成"已经跑过"删掉或永久拒绝重试。"""

@@ -200,6 +200,10 @@ test.describe('GuguChat 悬浮窗', () => {
     // 回归 PR #9 引入的 bug：SessionTitleEdit 侧边栏模式外层曾用 @click.stop 阻止冒泡，
     // 导致点击会话标题区域（占 session item 大部分宽度）无法触发 onLoadSession 切换会话，
     // 只有点标题外的空白边缘才能切。修复后点击标题区域应正常切换。
+    //
+    // 不假设账号此时正好只有两个 session（同文件前面的测试已创建并持久化多个会话，
+    // 后端测试用户状态共享）——用 page.request 记录本测试新建会话的 id，再定向点击，
+    // 避免 toHaveCount(2)/nth(1) 在并行或重跑时不稳定。
     await page.goto('/')
     await page.locator('.ai-fab').click()
     const chatWindow = page.locator('.chat-window')
@@ -213,7 +217,7 @@ test.describe('GuguChat 悬浮窗', () => {
     const textarea = chatWindow.locator('.chat-input-row textarea')
     const sendBtn = chatWindow.locator('.send-btn')
 
-    // 会话 A：新建 + 发消息 + 等回复
+    // 会话 A：新建 + 发消息 + 等回复，记录 A 的 session id
     const textA = `e2e-switch-a-${Date.now()}`
     await sidebar.locator('.exp-new-session-btn').click()
     await expect(chatWindow.locator('.msg')).toHaveCount(0)
@@ -221,8 +225,10 @@ test.describe('GuguChat 悬浮窗', () => {
     await sendBtn.click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
     await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    const sessionsAfterA = await (await page.request.get('/agent/sessions')).json()
+    const sessionAId = sessionsAfterA[0].id   // 最新的是 A
 
-    // 会话 B：新建 + 发消息 + 等回复
+    // 会话 B：新建 + 发消息 + 等回复，记录 B 的 session id
     const textB = `e2e-switch-b-${Date.now()}`
     await sidebar.locator('.exp-new-session-btn').click()
     await expect(chatWindow.locator('.msg')).toHaveCount(0)
@@ -230,17 +236,19 @@ test.describe('GuguChat 悬浮窗', () => {
     await sendBtn.click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toBeVisible()
     await expect(chatWindow.locator(AI_REPLY)).toHaveCount(1, { timeout: 15000 })
+    const sessionsAfterB = await (await page.request.get('/agent/sessions')).json()
+    const sessionBId = sessionsAfterB[0].id   // 最新的是 B
 
-    // 侧栏现在有两个会话，当前激活的是 B（后端按 updated_at 倒序，B 最新在前）
-    const sessionItems = sidebar.locator('.exp-session-item')
-    await expect(sessionItems).toHaveCount(2)
-    await expect(sessionItems.nth(0)).toHaveClass(/active/)
+    // 当前激活的是 B（后端按 updated_at 倒序，B 最新在前）
+    const sessionAItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionAId}"]`)
+    const sessionBItem = sidebar.locator(`.exp-session-item[data-session-id="${sessionBId}"]`)
+    await expect(sessionBItem).toHaveClass(/active/)
 
     // 点击会话 A 的标题区域（.exp-session-title，占 item 大部分宽度）——修复前这里被
     // @click.stop 拦截无法切换；修复后应切回 A，消息区显示 A 的消息。
-    await sessionItems.nth(1).locator('.exp-session-title').click()
+    await sessionAItem.locator('.exp-session-title').click()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textA })).toBeVisible()
     await expect(chatWindow.locator('.msg.user .msg-bubble', { hasText: textB })).toHaveCount(0)
-    await expect(sessionItems.nth(1)).toHaveClass(/active/)
+    await expect(sessionAItem).toHaveClass(/active/)
   })
 })

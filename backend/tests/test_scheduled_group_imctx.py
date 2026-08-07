@@ -250,7 +250,10 @@ async def test_run_agent_no_group_memory_when_no_target(monkeypatch, db, user_a)
 
 @pytest.mark.asyncio
 async def test_run_agent_group_missing_bot_id_skips_memory(monkeypatch, db, user_a):
-    """群目标但缺 channel_id（bot_id）：set_im 仍调（让 group_context_search 可用），但 preview_scope 跳过。"""
+    """群目标但缺 channel_id（bot_id）：set_im 仍调（让群工具上下文存在），但 preview_scope 跳过。
+
+    注意：缺 channel_id 时 group_context_search 明确报「不可用」（见 group_context.py 的
+    channel_id 检查），不会出现「可用但 bot_id IS NULL 搜不到」的假信心。"""
     import app.scheduled_tasks as scheduled
 
     set_im_called = {"count": 0}
@@ -291,3 +294,73 @@ async def test_run_agent_group_missing_bot_id_skips_memory(monkeypatch, db, user
     assert preview_called["count"] == 0
     # prompt 不含群 memory 段
     assert "## 当前群组记忆" not in captured_prompts["execution"]
+
+
+# ── 群定时任务能搜群历史（DB integration，PRD-IM-7 核心目标）──────────────────
+
+@pytest.mark.asyncio
+async def test_scheduled_group_context_search_recalls_group_history(db, user_a):
+    """定时任务 set_im 后，真实 group_context_search 能召回当前群历史（PRD-IM-7 核心目标）。
+
+    创建 QQ 群 session + 消息，通过 _inject_group_context 命中群目标 set_im，
+    再调真实 _group_context_search，断言能搜到该群消息。"""
+    import app.scheduled_tasks as scheduled
+    from agent import imctx
+    from agent.tools.group_context import _group_context_search
+    from app.models import ConversationMessage, ConversationSession
+
+    # 建群 session + 消息
+    group = ConversationSession(
+        user_id=user_a.id, source="qq", bot_id="bot42", chat_id="g1", title="测试群",
+    )
+    db.add(group)
+    await db.flush()
+    db.add_all([
+        ConversationMessage(session_id=group.id, role="user", content="部署方案"),
+        ConversationMessage(session_id=group.id, role="user", content="上线清单"),
+    ])
+    await db.commit()
+
+    target_map = {
+        "qq": {
+            "platform": "qq",
+            "chat_type": "group",
+            "chat_id": "g1",
+            "channel_id": "bot42",
+            "puid": "p1",
+        }
+    }
+    # 命中群目标 → set_im
+    group_target, _ = await scheduled._inject_group_context(user_a.id, target_map, "原 prompt")
+    assert group_target is not None
+
+    # 真实 group_context_search 能召回该群消息
+    result = await _group_context_search(db, user_a.id, {"queries": ["部署", "上线"]})
+    assert [row["content"] for row in result["messages"]] == ["部署方案", "上线清单"]
+
+    imctx.clear()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_group_context_search_unavailable_without_channel_id(db, user_a):
+    """缺 channel_id（bot_id）时 group_context_search 明确报不可用，不出现假信心。"""
+    import app.scheduled_tasks as scheduled
+    from agent import imctx
+    from agent.tools.group_context import _group_context_search
+
+    target_map = {
+        "qq": {
+            "platform": "qq",
+            "chat_type": "group",
+            "chat_id": "g1",
+            "channel_id": None,   # 缺
+            "puid": "p1",
+        }
+    }
+    group_target, _ = await scheduled._inject_group_context(user_a.id, target_map, "原 prompt")
+    assert group_target is not None
+
+    result = await _group_context_search(db, user_a.id, {})
+    assert "error" in result
+
+    imctx.clear()
