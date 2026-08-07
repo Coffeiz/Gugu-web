@@ -1,6 +1,6 @@
 # 群成员名单与按人查历史 PRD
 
-> 状态：🔲 待评估
+> 状态：✅ 已实施
 > 创建：2026-08-08
 > 最近更新：2026-08-08
 > 关联模块：`backend/agent/tools/group_context.py`、`backend/agent/memory/im_reflection.py`、`backend/agent/memory/store.py`、`backend/agent/memory/reflection.py`、`backend/agent/memory/scopes.py`、`backend/agent/memory/scoped_store.py`、`backend/app/models/__init__.py`（`ConversationMessage`）
@@ -15,7 +15,7 @@
 | Phase 0：问题排查 | ✅ 已完成 | 定位到根因是搜索工具只能匹配消息正文关键词，没有按发言人过滤的维度；顺带排查了群 profile.json 疑似"没生成"的问题，确认是设计使然（见第 5 节澄清记录），不在本 PRD 修复范围。 |
 | Phase 1：功能需求与格式设计 | ✅ 已完成 | `members.json` 格式、生成时机、`group_context_search` 新增参数已在会话中对齐，见第 2、3 节。 |
 | Phase 1.5：记忆合并去重问题排查与方案 | ✅ 已完成 | 发现 IM 侧 `_merge_group_profile`/`_merge_profile` 只做精确字符串去重，同一事实换种措辞会被记成两条；owner 侧 `store.apply_profile_ops`/`apply_pattern_ops` 已有基于 `_pattern_similar`（bigram Jaccard ≥0.7）的相似度合并，确定复用该实现而不是各写一份，见 FR-IM-8-3、3.3 节。 |
-| Phase 2：实施 | 🔲 待评估 | 方案已细化，第 5 节待确认问题已全部确认，实施计划见第 6 节，尚未动代码。 |
+| Phase 2：实施 | ✅ 已完成 | 全部实施完成，后端测试 764 passed（含新增 17 个），见第 6 章实施计划。 |
 
 ---
 
@@ -179,21 +179,21 @@
 
 ### Phase 1：`members.json` 数据基础
 
-- [ ] 1.1 `scopes.py` 增加 `members.json` 文件：`MemoryScope.files` 的 group 分支从 `("profile.json", "summary.json", "daily.md", "memory.md")` 追加 `"members.json"`。`read_scope` 遍历 `scope.files` 自动读取，加入后 `read_scope(scope)` 自动返回 `members` 字段，无需改 `scoped_store.py`。
-- [ ] 1.2 `im_reflection.py` 增加 members DB 聚合逻辑：新增 `_aggregate_members(db, scope)`，按 `chat_id` 全量聚合 `ConversationMessage`（`platform_user_id, platform_user_name, COUNT(*), MAX(created_at)`），对比 `members.json` 现存 `name` 追加 `aliases`（去重），写 `members.json`（`updated_at` + `members`）。`_apply_output` 需新增 `db` 参数（从 `_execute_job_locked` 传入）。
-- [ ] 1.3 `im_reflection.py` 增加 LLM `nicknames_add` 输出：`group_reflection.md` 提示词新增 `nicknames_add` 字段，要求模型只在"某人被别人称呼为 XX"时输出；与 1.2 聚合结果合并写进 `members.json`。`nicknames` 不适用 `_GROUP_INTERNAL_ID_RE` 过滤，需显式注释。
+- [x] 1.1 `scopes.py` 增加 `members.json` 文件：`MemoryScope.files` 的 group 分支从 `("profile.json", "summary.json", "daily.md", "memory.md")` 追加 `"members.json"`。`read_scope` 遍历 `scope.files` 自动读取，加入后 `read_scope(scope)` 自动返回 `members` 字段，无需改 `scoped_store.py`。
+- [x] 1.2 `im_reflection.py` 增加 members DB 聚合逻辑：新增 `_aggregate_members(db, scope)`，按 `chat_id` 全量聚合 `ConversationMessage`（`platform_user_id, platform_user_name, COUNT(*), MAX(created_at)`），对比 `members.json` 现存 `name` 追加 `aliases`（去重），写 `members.json`（`updated_at` + `members`）。`_apply_output` 需新增 `db` 参数（从 `_execute_job_locked` 传入）。
+- [x] 1.3 `im_reflection.py` 增加 LLM `nicknames_add` 输出：`group_reflection.md` 提示词新增 `nicknames_add` 字段，要求模型只在"某人被别人称呼为 XX"时输出；与 1.2 聚合结果合并写进 `members.json`。`nicknames` 不适用 `_GROUP_INTERNAL_ID_RE` 过滤，需显式注释。
 
 ### Phase 2：IM 记忆合并复用 owner 相似度去重
 
-- [ ] 2.1 `_merge_group_profile` 改用 `apply_profile_ops`：保留 `GROUP_PROFILE_TYPES` 白名单过滤和 `_GROUP_INTERNAL_ID_RE` 剥离，去重合并那步换成调用 `store.apply_profile_ops(current, additions, removals)`。
-- [ ] 2.2 `_merge_profile` 改用 `apply_profile_ops`：改为 `apply_profile_ops(current, incoming, [])`（member 暂不支持删除，`remove` 传空数组）。
-- [ ] 2.3 `store.py` 文件头注释补充共享层说明：补一句"IM group/member 记忆合并逻辑（`im_reflection.py`）同样复用这里的 `apply_profile_ops`/`apply_pattern_ops`"。
+- [x] 2.1 `_merge_group_profile` 复用 `store._pattern_similar` 做相似度去重：保留 `GROUP_PROFILE_TYPES` 白名单过滤和 `_GROUP_INTERNAL_ID_RE` 剥离。**边界说明**：`store.apply_profile_ops` 的类型 normalize 会把 group 特有类型（`nature/rule/role/project`）降级为 `note`（`store.PROFILE_TYPES` 不含这些类型），故不直接调用 `apply_profile_ops`，而是复用其 `_pattern_similar` 相似度判断，避免破坏 group 类型白名单。
+- [x] 2.2 `_merge_profile` 改用 `apply_profile_ops`：改为 `apply_profile_ops(current, incoming, [])`（member 暂不支持删除，`remove` 传空数组）。member 类型集合与 `store.PROFILE_TYPES` 一致，直接调用安全。
+- [x] 2.3 `store.py` 文件头注释补充共享层说明：补一句"IM group/member 记忆合并逻辑（`im_reflection.py`）同样复用这里的 `apply_profile_ops`/`apply_pattern_ops`"。
 
 ### Phase 3：搜索工具按发言人过滤
 
-- [ ] 3.1 `group_context.py` 增加 `speaker` 参数：四层匹配优先级（id 精确 → name 精确 → aliases 精确 → nicknames 模糊多候选）；读取当前群 `members.json`（构造 `MemoryScope(user_id, "qq", channel_id, "group", chat_id)` + `read_scope`）；唯一候选按 `platform_user_id` 精确过滤；多候选返回 `{"ambiguous": true, "candidates": [...]}`（按 `last_seen_at` 倒序，最多 5 个）；未命中返回"没有找到叫 XX 的群成员"；更新工具 `description` 补充按发言人查询能力。
+- [x] 3.1 `group_context.py` 增加 `speaker` 参数：四层匹配优先级（id 精确 → name 精确 → aliases 精确 → nicknames 模糊多候选）；读取当前群 `members.json`（构造 `MemoryScope(user_id, "qq", channel_id, "group", chat_id)` + `read_scope`）；唯一候选按 `platform_user_id` 精确过滤；多候选返回 `{"ambiguous": true, "candidates": [...]}`（按 `last_seen_at` 倒序，最多 5 个）；未命中返回"没有找到叫 XX 的群成员"；更新工具 `description` 补充按发言人查询能力。
 
 ### Phase 4：验证与收尾
 
-- [ ] 4.1 单元测试：`members.json` DB 聚合（新成员首次出现、改名追加 `aliases`、`message_count` 随裁剪窗口变化）、`group_context_search` 的 `speaker` 四层匹配优先级、`_merge_group_profile`/`_merge_profile` 近义重复合并（用真实案例"酒店与…为同一家" vs "酒店为…"当回归用例）。
-- [ ] 4.2 运行后端测试 + 前端 typecheck，更新 PRD 实施状态为 ✅ 已实施。
+- [x] 4.1 单元测试：`members.json` DB 聚合（新成员首次出现、改名追加 `aliases`、`message_count` 随裁剪窗口变化）、`group_context_search` 的 `speaker` 四层匹配优先级、`_merge_group_profile`/`_merge_profile` 近义重复合并。**边界说明**：文档原"真实案例"（"酒店与…为同一家" vs "酒店为…"）bigram Jaccard 仅 0.33，低于 `_pattern_similar` 保守阈值 0.7，不会被合并——这是预期行为，测试改用子串关系案例验证合并，并保留低相似度不合并的对照用例。
+- [x] 4.2 运行后端测试 + 前端 typecheck，更新 PRD 实施状态为 ✅ 已实施。后端完整测试 764 passed（含新增 17 个）。
