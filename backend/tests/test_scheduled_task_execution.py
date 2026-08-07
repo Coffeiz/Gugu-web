@@ -388,6 +388,53 @@ async def test_auto_title_skipped_when_title_locked(monkeypatch, db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_auto_title_never_overwrites_manual_rename_concurrent(monkeypatch, db, user_a):
+    """P1-3 TOCTOU：并发跑 rename 与 _gen_title_bg，手动标题永远赢。
+
+    旧实现是「先读 title_locked 再写 title」，存在窗口：auto 读到 False →
+    rename 提交 → auto 覆盖。新实现用数据库原子条件 UPDATE
+    （WHERE id=? AND title_locked=false），rename 无论哪个时序提交，auto 的
+    UPDATE 都会因 title_locked=true 而 rowcount=0，绝不覆盖手动标题。
+
+    这里用 asyncio.gather 并发触发 rename 与 auto title，验证最终 title 一定是
+    用户改的（原子 UPDATE 保证，与执行顺序无关）。
+    """
+    import asyncio
+    from app.models import ConversationSession
+    from app.api.v1.agent import rename_session, RenameSessionRequest
+    from agent import runner
+    from app.core.config import get_settings
+
+    sess = ConversationSession(
+        user_id=user_a.id, title="临时标题", source="web",
+        bot_id=None, chat_id=None, platform_user_id=None, chat_type=None,
+    )
+    db.add(sess)
+    await db.commit()
+    await db.refresh(sess)
+
+    # mock LLM：返回会自动覆盖的标题
+    async def slow_generate(user_msg, ai_reply, settings, use_anthropic):
+        return "LLM_自动生成标题"
+    monkeypatch.setattr("agent.gateway.web._generate_title", slow_generate)
+
+    settings = get_settings()
+
+    async def do_rename():
+        await rename_session(sess.id, RenameSessionRequest(title="用户并发改名"), user_a, db)
+
+    async def do_auto():
+        await runner._gen_title_bg(user_a.id, sess.id, "用户首轮", "咕咕首轮回复", settings, use_anthropic=False)
+
+    # 并发跑：无论谁先谁后，最终 title 都必须是用户改的
+    await asyncio.gather(do_rename(), do_auto())
+
+    await db.refresh(sess)
+    assert sess.title == "用户并发改名", f"自动标题覆盖了手动标题：{sess.title!r}"
+    assert sess.title_locked is True
+
+
+@pytest.mark.asyncio
 async def test_rename_session_api_sets_title_locked(monkeypatch, db, user_a):
     """P1-3：PATCH /sessions/{id} rename API 写 title_locked=True。"""
     from app.models import ConversationSession

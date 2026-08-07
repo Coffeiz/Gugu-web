@@ -110,15 +110,24 @@ async def _gen_title_bg(user_id, session_id, user_msg: str, reply_text: str, set
             return
         import app.db.session as _sess
         from app.models import ConversationSession
+        from sqlalchemy import update as _update
         async with _sess._SessionLocal() as db:
-            s = await db.get(ConversationSession, session_id)
-            if not s:
+            # P1-3：用数据库原子条件 UPDATE 写标题，彻底消除 TOCTOU 竞态。
+            # 手动改名（rename_session）会置 title_locked=True；这里只在
+            # title_locked=false 时才更新，且 UPDATE 与 rename 的 commit 是
+            # 原子串行化的——无论 rename 在哪个时序提交，自动标题都不会覆盖
+            # 用户刚改的标题。rowcount==1 才说明本次确实写入了标题。
+            result = await db.execute(
+                _update(ConversationSession)
+                .where(
+                    ConversationSession.id == session_id,
+                    ConversationSession.title_locked.is_(False),
+                )
+                .values(title=new_title)
+            )
+            if result.rowcount != 1:
+                # 会话不存在或已被手动改名锁定：不覆盖，也不推送标题事件。
                 return
-            # P1-3：手动改名后 title_locked=True，自动标题任务直接跳过本 session。
-            # 一劳永逸地解决「用户手动改名被异步自动标题覆盖」的竞态。
-            if s.title_locked:
-                return
-            s.title = new_title
             await db.commit()
         from app.core import events
         await events.publish(user_id, "sessions", session_id=session_id, title=new_title)  # 标题好了再推一次
