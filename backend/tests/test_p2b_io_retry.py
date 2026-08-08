@@ -115,7 +115,7 @@ async def test_oss_get_does_not_retry_on_unrelated_exception():
     assert calls["n"] == 1
 
 
-# ── storage: OSSStorageBackend.stat/download_to_file/local_path（PRD-LLM-3 Phase 5/6 复审修复）──
+# ── storage: OSSStorageBackend.stat（用于 read_audio 的物理大小检查）─────────────
 
 def _fake_meta_result(size, mtime=1700000000, etag="abc"):
     return SimpleNamespace(content_length=size, last_modified=mtime, etag=etag)
@@ -158,91 +158,6 @@ async def test_oss_stat_returns_none_when_missing():
 
     backend.bucket.get_object_meta = fake_meta
     assert await backend.stat("missing") is None
-
-
-async def test_oss_download_to_file_uses_sdk_get_object_to_file(tmp_path):
-    """download_to_file 必须委托给 oss2 自带的 get_object_to_file，不要自己手写
-    get_object + shutil.copyfileobj——SDK 原生实现在已知 Content-Length 时会校验
-    实际读到的字节数与声明长度是否一致，不一致抛 InconsistentError；手写版本没有
-    这层保护，网络异常若没有以异常形式冒出来，会静默留下被截断的文件（code review
-    复审发现的真实风险：表现为下游 ffmpeg 莫名其妙"读取失败"而非"下载失败"）。"""
-    backend = _make_oss_backend()
-    calls = {}
-
-    def fake_get_object_to_file(key, filename):
-        calls["key"] = key
-        calls["filename"] = filename
-        with open(filename, "wb") as f:
-            f.write(b"0123456789abcdef")
-
-    backend.bucket.get_object_to_file = fake_get_object_to_file
-    dest = tmp_path / "out.mp4"
-    await backend.download_to_file("k", dest)
-    assert calls["key"] == "k"
-    assert calls["filename"] == str(dest)
-    assert dest.read_bytes() == b"0123456789abcdef"
-
-
-async def test_oss_download_to_file_retries_on_transient_error(tmp_path):
-    """download_to_file 复用 _oss_retry，瞬时故障应该退避重试（不是自己另起一套）。"""
-    import oss2.exceptions as oss_exc
-    backend = _make_oss_backend()
-    calls = {"n": 0}
-
-    def flaky(key, filename):
-        calls["n"] += 1
-        if calls["n"] < 2:
-            raise oss_exc.RequestError(ConnectionError("conn reset"))
-        with open(filename, "wb") as f:
-            f.write(b"ok")
-
-    backend.bucket.get_object_to_file = flaky
-    dest = tmp_path / "out.mp4"
-    await backend.download_to_file("k", dest)
-    assert calls["n"] == 2
-    assert dest.read_bytes() == b"ok"
-
-
-async def test_oss_download_to_file_retries_on_inconsistent_error(tmp_path):
-    """get_object_to_file 内部用 copyfileobj_and_verify 校验实际读到的字节数是否等于
-    声明的 Content-Length，"服务器说有 200MB、连接却提前 EOF 到 150MB"这种场景会抛
-    InconsistentError（status=-3，不属于 RequestError 也不 >=500）——这类瞬时故障
-    必须能重试，否则用 get_object_to_file 换来的检测能力就白白浪费了（code review
-    复审发现：_oss_is_transient 最初漏了这一条，检测到了却按"永久失败"直接放弃）。"""
-    import oss2.exceptions as oss_exc
-    backend = _make_oss_backend()
-    calls = {"n": 0}
-
-    def flaky(key, filename):
-        calls["n"] += 1
-        if calls["n"] < 2:
-            # 模拟第一次下载提前 EOF：SDK 已经写了部分内容才发现长度不对。
-            with open(filename, "wb") as f:
-                f.write(b"partial")
-            raise oss_exc.InconsistentError("IncompleteRead from source", "req-id-1")
-        with open(filename, "wb") as f:
-            f.write(b"complete")
-
-    backend.bucket.get_object_to_file = flaky
-    dest = tmp_path / "out.mp4"
-    await backend.download_to_file("k", dest)
-    assert calls["n"] == 2
-    # 重试用 wb 重新打开目标文件，第一次的半截内容不会残留/被追加。
-    assert dest.read_bytes() == b"complete"
-
-
-def test_local_storage_local_path_returns_real_path(tmp_path):
-    from app.services.storage import LocalStorageBackend
-    backend = LocalStorageBackend(tmp_path)
-    (tmp_path / "u").mkdir()
-    (tmp_path / "u" / "a.mp4").write_bytes(b"x")
-    assert backend.local_path("u/a.mp4") == tmp_path / "u" / "a.mp4"
-    assert backend.local_path("u/missing.mp4") is None
-
-
-def test_oss_storage_local_path_is_none():
-    backend = _make_oss_backend()
-    assert backend.local_path("k") is None
 
 
 # ── voice: transcribe() ASR 调用 ────────────────────────────────────────────────

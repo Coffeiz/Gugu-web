@@ -1,6 +1,6 @@
 # Provider 供应商适配层整体整理 PRD
 
-> 状态：🔲 待评估（主体重构仅完成现状摸底与方案设计，未开始实现；Phase 5/6 独立追加项已完成，见下）
+> 状态：🔲 待评估（主体重构仅完成现状摸底与方案设计，未开始实现；Phase 5 独立追加项已完成，见下）
 > 创建：2026-08-06
 > 最近更新：2026-08-08
 > 所属层：LLM / Provider 适配层
@@ -19,10 +19,7 @@
 | Phase 2：媒体层迁入适配器（纯重构） | 🔲 待评估 | 把 `chat_attach.py` 的视频探测/压缩/mm_file 上传迁进适配器，`chat_attach.py` 改调用 `adapter_for(ai)`。 |
 | Phase 3：流式清洗/音频转码/鉴权等能力位收拢（纯重构） | 🔲 待评估 | 把 `sanitize.py` 的 MiniMax 清洗、`media_transcode.py` 的 mimo 音频白名单、`agent_admin.py` 的 `_mimo` 鉴权判断等收拢进适配器能力位。 |
 | Phase 4：视频时长限制（行为变化） | 🔲 待评估 | 在 `MediaLimits` 加 `max_duration_s=120`，ffprobe 读 duration，超 2 分钟拒绝。 |
-| Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成（Phase 6 已重做） | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
-| Phase 6（独立追加）：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩 | ✅ 已完成（Phase 8 已复审修复） | 外部 code review 指出 Phase 5 实现有 3 个问题：①超大视频整个读进内存，OSS 后端因 `stat()` 默认实现是 exists+get 还要多下载一遍；②复用的 `_compress_video` 目标码率是给"发送给 MiniMax"设计的（1080p 5Mbps），跟"读取只需要 1 帧画面+前 5 分钟音频"的真实需求不匹配，长视频低码率反而可能越压越大；③新增测试没有真正断言 `read_video` 的最终结果。修复方案见 FR-LLM-3-6。 |
-| Phase 8（独立追加）：Code Review 复审发现的 1 个 P1 + 2 个 P2 | ✅ 已完成 | 复审 Phase 6 修复后发现：① P1 `OSSStorageBackend.stat()` 捕获的异常类型是错的——`head_object` 对象不存在时抛的是 `NotFound`，不是代码里 `except` 的 `NoSuchKey`，`stat()` 在真实 OSS 上会直接抛未处理异常，"不存在→None"的契约名不副实（测试自己 mock 的异常类型跟真实 SDK 行为不一致，测试全绿但语义是错的）；② P2 `download_to_file` 手写 `get_object` + `shutil.copyfileobj`，丢了 oss2 官方 `get_object_to_file` 自带的 `Content-Length` 一致性校验，网络异常若未以异常形式冒出来会静默留下截断文件；③ P2 视频"物化到磁盘"这一步没有独立的并发限制，`_FFMPEG_SEMAPHORE` 只限制 ffmpeg 子进程数，挡不住高并发时磁盘上堆积大量完整临时视频文件。三个都已修复，见 FR-LLM-3-6 Phase 8 小节。 |
-| Phase 9（独立追加）：Code Review 三审发现的 1 个 P2 reliability | ✅ 已完成 | 复审 Phase 8 修复（改用 `get_object_to_file`）后指出：`get_object_to_file` 检测到"服务器声明 200MB、连接却提前 EOF 到 150MB"时抛的 `InconsistentError`（`status=-3`）没有被 `_oss_is_transient()` 的白名单覆盖（既不是 `RequestError` 也不 `>=500`），这类瞬时故障检测到了却不会走 `_oss_retry` 重试，白白浪费了这次改用 SDK 原生下载函数才具备的检测能力。已修复，见 FR-LLM-3-6 Phase 9 小节。 |
+| Phase 5（独立追加）：`read_file` 读取视频复用聊天附件的原生视频理解能力 | ✅ 已完成（重新设计，见下） | 用户反馈"文件库里的视频太大读不了"排查发现：`read_file` 读文件库已有视频（`file_readers.py`）从未接入 `chat_attach.py` 已有的原生视频理解链路（探测→压缩→base64/mm_file→真正的 video content block），只做硬性大小检查，超过 36MB 直接拒绝。**Phase 6~9 曾走过一条错误路线**（把视频物化到磁盘、ffmpeg 截一帧代表画面 + 抽音频转写，用"图片+文字"近似替代原生视频理解）——产品目标一直是让支持视频理解的 LLM 直接看视频本身，不是把视频降级成单帧图片。该路线已被完整撤销，重新设计为抽取 `chat_attach.prepare_video_media()` 公共 helper，`read_file` 和聊天附件路径复用同一份压缩/大小判断/传输方式选择逻辑，视频最终仍以真正的 `video` content block 进入模型（详见第 1.1、FR-LLM-3-5 节）。 |
 
 ---
 
@@ -62,13 +59,13 @@ Gugu 后端接入了多家 LLM 供应商（Anthropic 原生、MiniMax、小米 M
 - 压缩策略统一：分辨率 >1080p 或码率 >16Mbps → 压缩成 1080p 5M h264；最大视频大小 90MB。
 - 保持 `llm_select.py` 的薄包装签名不变，12 个调用点一行不改。
 
-### 1.1 追加项：`read_file` 读取视频复用压缩（Phase 5，独立于本 PRD 主体重构）
+### 1.1 追加项：`read_file` 读取视频复用聊天附件的原生视频理解能力（Phase 5，独立于本 PRD 主体重构）
 
-用户反馈"想让咕咕读文件库里的一个视频，太大读不了"，排查发现视频压缩逻辑（`chat_attach.py` 的 `_probe_video`/`_compress_video`/`_should_compress_video`）只在**用户发视频给咕咕**这条路径接了进去；`agent/tools/file_readers.py` 的 `read_video`（`read_file` 工具读文件库已有视频时走这里）只做硬性大小检查（`MEDIA_READ_MAX_BYTES = 36MB`），超过直接拒绝，从未调用过压缩函数。查了本 PRD 全文，只讨论"发送"场景，没有提到"读取已有视频"这个场景——不是有意排除在范围外的产品决策，是技术遗漏。
+用户反馈"想让咕咕读文件库里的一个视频，太大读不了"，排查发现视频理解能力（`chat_attach.py` 的探测/压缩/base64/mm_file 上传全链路）只在**用户发视频给咕咕**这条路径接了进去；`agent/tools/file_readers.py` 的 `read_video`（`read_file` 工具读文件库已有视频时走这里）只做硬性大小检查（`MEDIA_READ_MAX_BYTES = 36MB`），超过直接拒绝，从未接入过这条链路。查了本 PRD 全文，只讨论"发送"场景，没有提到"读取已有视频"这个场景——不是有意排除在范围外的产品决策，是技术遗漏。
 
-这个修复不依赖 Phase 1-4 的 `providers/` 目录化重构（`_compress_video` 等函数当前就是不带 provider 参数的纯 ffmpeg 操作，可以直接被 `file_readers.py` 调用），所以单独作为 Phase 5 先落地，不用等大重构。详见 FR-LLM-3-5。
+**产品目标始终是**：让支持视频理解的 LLM 直接理解视频本身（真正的 `video` content block），不是把视频降级成单帧代表画面 + 音频转写这种近似方案。`read_file` 复用 `chat_attach.py` 已有的、经过实测验证的视频处理能力（ffprobe 探测 → 超 1080p/16Mbps 压缩 → 按大小选择 base64/Files API(mm_file)/拒绝），而不是重新设计一套。
 
-Phase 5 的实现（复用 `_compress_video` 整段压缩）被外部 code review 指出跟真实需求不匹配，已在 Phase 6 重做为直接 ffmpeg 抽取，详见 FR-LLM-3-6。
+**实施过程中的一段弯路（Phase 6~9，已完整撤销）**：最初实现（Phase 6）把这次修复理解成了"视频太大读不进内存"的纯工程问题，改成把视频物化到本地磁盘、用 ffmpeg 截一帧代表画面 + 抽前 5 分钟音频转写，经过 code review 三轮复审逐步修好了内存占用、OSS 双下载、并发磁盘堆积、重试可靠性等一系列工程问题（Phase 7/8/9），但这条路线本身背离了产品目标——"读到了内容"不等于"模型在原生理解视频"，代表帧漏掉时间线信息、音频转写漏掉画面信息，都不是可接受的替代品。经过明确指正后，Phase 6~9 新增的 `_materialize_video`/`_VIDEO_READ_SEMAPHORE`/`_extract_frame`/`_extract_audio`/`_run_ffmpeg` 等实现连同专门为它们新增的 `StorageBackend.local_path()`/`download_to_file()` 一并删除，`read_video` 重新设计为抽取 `chat_attach.prepare_video_media()` 公共 helper 并复用（详见 FR-LLM-3-5）。`OSSStorageBackend.stat()` 改用 `get_object_meta` 这一处优化被保留——它服务于仍然存在的 `read_audio` 物理大小检查，不是只为已删除的视频物化路径存在。
 
 ### 非目标
 
@@ -156,47 +153,24 @@ Phase 5 的实现（复用 `_compress_video` 整段压缩）被外部 code revie
 - 压缩不解决时长问题（MiniMax 对超长视频照样拒），所以超时长的视频**不压缩直接拒绝**。
 - 验收标准：新增测试覆盖「超 2 分钟拒绝」「≤2 分钟正常处理」「模型配置覆盖默认值」。
 
-### FR-LLM-3-5：`read_file` 读取视频复用压缩（✅ 已完成，独立于 Phase 1-4；实现已被 Phase 6 取代，见 FR-LLM-3-6）
+### FR-LLM-3-5：`read_file` 读取视频复用聊天附件的原生视频理解能力（✅ 已完成，独立于 Phase 1-4）
 
-- `file_readers.py` 新增 `_load_video_bytes(file)`：物理大小 ≤ `MEDIA_READ_MAX_BYTES` 直接返回原始字节；超过则下载后调用 `chat_attach._compress_video` 压缩一次，压完仍超限才报错（"压缩后仍超出读取上限"）。
-- 压缩产物固定是 mp4 容器（`_compress_video` 内部输出 `.out.mp4`），传给后续 `_extract_frame`/`_extract_audio` 的扩展名统一改成 `"mp4"`，不沿用原始扩展名（比如 `.mov`），避免 ffmpeg 按错误容器格式解析。
-- 压缩产物不写回文件库、不落盘存储——只在这次 `read_file` 调用的生命周期内使用（提取一帧画面 + 转写音频），不改变存储里的原文件。
-- `read_video` 改用 `_load_video_bytes`；`read_audio` 不受影响，继续用原来的 `_media_size_error`（音频没有类似的压缩手段，体积检查逻辑不变）。
-- 不判断是否"值得压"（不调用 `_should_compress_video`）——进这条分支时已经确定超过读取上限，直接压缩，没有"超限但不需要压"的中间状态。
+**正确描述**（替换掉 Phase 6~9 走过的弯路描述）：`read_file` 读取视频时复用聊天附件已有的原生视频理解能力。视频仍作为完整的 `video` content block 提交给支持视频的 LLM；必要时先压缩，并按照 provider 的输入限制选择 base64、Files API（`mm_file://`）或明确拒绝。视频大小并不是"越大越能读"——超出当前 provider 支持范围时，`read_file` 应该明确告诉用户"这个视频超过当前模型支持的上限"，而不是想办法把任意大小的视频都"读出点什么"。
 
-### FR-LLM-3-6：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩（✅ 已完成，Phase 8 复审再修 3 处）
+- **公共 helper**：`app/core/chat_attach.py` 新增 `prepare_video_media(raw, mime, name, model_cfg) -> dict`，把原来内联在 `resolve_for_message` 视频分支里的决策逻辑（MiniMax M3：探测→超限压缩→按大小选 base64/mm_file/拒绝；非 MiniMax：仅 ≤`MEDIA_RAW_MAX` 走 base64）抽成独立函数，返回值结构不变（`{"type":"video","mode":"base64"|"mm_file",...}`），失败统一抛 `ValueError`。同时新增 `video_media_to_anthropic_block(m) -> dict | None`，把该结构转成 Anthropic 原生 video content block，供 `build_user_content` 和 `read_video` 共用。
+- **`resolve_for_message`**（聊天附件路径）视频分支改为直接调用 `prepare_video_media`，行为字节级不变（`tests/test_chat_attach_video.py` 里已有的 mm_file 成功/失败/超限/≤45MB 用例全部原样通过，因为它们本来就是通过 mock 模块级函数——`_probe_video`/`_should_compress_video`/`_compress_video`/`_upload_video_mmfile`/`_minimax_video_enabled`——间接验证的，这些函数原样保留，只是决策逻辑挪了个位置）；`build_user_content` 的 Anthropic 视频分支改为调用 `video_media_to_anthropic_block`。
+- **`agent/tools/file_readers.py` 的 `read_video(file)`** 重新实现：
+  1. 用 `agent.llm_select.use_anthropic_for(ai) and chat_attach._minimax_video_enabled(ai)` 判断当前模型是否具备"能在 tool_result 里塞原生 video block"的能力——目前只有 MiniMax M3 满足（OpenAI 格式的 tool_result 只能是纯文本，见下）。不满足直接返回"当前模型不支持通过文件库直接看视频"的明确错误，不读取文件、不做任何近似处理。
+  2. 满足则用现有 `stat()` 判断文件是否存在，`get()` 读取完整原始字节（跟 `chat_attach.resolve_for_message` 读聊天附件视频时的做法一致——视频决策本身需要看到完整字节做探测/压缩，不是这次要解决的问题），调用 `chat_attach.prepare_video_media()` 得到媒体项，再用 `chat_attach.video_media_to_anthropic_block()` 转成真正的 video content block。
+  3. `prepare_video_media` 抛出的 `ValueError`（超限/上传失败）原样把消息返回给用户；其余异常记 `diag_log` 后返回通用"视频读取失败"。
+  4. 返回 `{"_video_media": block, "note": "已读取视频《...》。"}`——`_video_media` 是新增的 tool-result 特殊键，跟已有的 `_vision_image`（看图）走同一套机制。
+- **`agent/tools/base.py` 的 `SkillRegistry.dispatch()`** 新增 `_video_media` 键处理，紧跟在已有的 `_vision_image` 分支之后：把 `note` 和 video block 拼成 `content` 列表原样塞进 `tool_result.content`，核心循环（`agent/loop_drivers.py` 的 `AnthropicDriver.append_tool_round`）不需要改动——它已经把 `res`（`dispatch()` 的返回值）直接放进 `tool_result.content`，Anthropic API 本来就接受字符串或内容块列表，video block 天然能塞进去。OpenAI 格式驱动的 tool 结果是纯文本，走不到这个分支。
+- **不引入新协议扩展**：没有改 `tool_result` 的顶层结构，只是复用已有的"工具返回 dict 里的特殊键 → 转换成富内容块"机制（`_vision_image` 已经是先例），`_video_media` 是这个机制的第二个实例，不是新设计。
+- `read_audio` 不受影响，继续用原来的 `_media_size_error`（`MEDIA_READ_MAX_BYTES = 36MB`）；音频理解和视频理解是两套完全独立的限制，不要混在一起判断。
 
-外部 code review 对 Phase 5 实现提出 3 个问题，逐条对应修复：
+**已删除的错误路线（Phase 6~9，完整撤销）**：最初把这次修复理解成"视频太大读不进内存"的纯工程问题，实现为把视频物化到磁盘（`_materialize_video`）、ffmpeg 截一帧代表画面（`_extract_frame`）+ 抽前 5 分钟音频转写（`_extract_audio`/`_run_ffmpeg`），用"图片 + ASR 文字"近似替代原生视频理解，返回给模型的是 `_vision_image`（单帧图片）或纯文字转写，从未是真正的 video block。经过三轮 code review 复审，这条路线在工程层面（内存占用、OSS 双下载、并发磁盘堆积、下载重试可靠性）被逐步修到很扎实，但产品语义从一开始就错了——已被明确指正并要求撤销。删除的代码：`_materialize_video`、`_VIDEO_READ_SEMAPHORE`、`_extract_frame`、`_extract_audio`、`_run_ffmpeg`、`_read_limited`、`_ffmpeg()`（`file_readers.py` 本地的 ffmpeg 查找，跟 `media_transcode.py` 的 `_ffmpeg_bin` 是两回事，后者仍在用于音频转码，未受影响）；`StorageBackend`/`LocalStorageBackend`/`OSSStorageBackend` 的 `local_path()`/`download_to_file()`（专为这条路线新增，全代码库无其他调用点）；`_oss_is_transient()` 里为 `download_to_file` 配套加的 `InconsistentError` 白名单分支（`download_to_file` 删了，这条也没有意义了）。**保留**：`OSSStorageBackend.stat()` 改用 `get_object_meta`（而非默认的 `exists+get`）这一处优化——它服务于仍然存在的 `read_audio` 物理大小检查（`_media_size_error`），不是只为已删除的视频路线存在，符合"已被其他明确需求使用就保留"的原则。
 
-1. **P1/P2 大视频整段进内存 + OSS 双下载**：`_load_video_bytes()` 无论多大都先 `get()` 整个对象；`OSSStorageBackend` 没覆写 `stat()`，继承的默认实现是 `exists→整个 get()→len(...)`，等于一次读取要从 OSS 拉两遍。
-   修复：
-   - `OSSStorageBackend` 新增 `stat()` 覆写，改用元信息查询接口，不下载对象本体（Phase 8 修订：最初用的 `head_object`，复审发现这个方法抛的异常类型跟代码里 `except` 的对不上，改用 `get_object_meta`，见下）。
-   - `StorageBackend` 新增 `local_path(key) -> Path | None`（默认 `None`）和 `download_to_file(key, dest)`（默认整读整写，小文件兜底）两个接口；`LocalStorageBackend.local_path` 返回真实路径（零拷贝）；`OSSStorageBackend.download_to_file` 流式下载到临时文件，不在内存里缓冲整个对象（Phase 8 修订：最初手写 `get_object` + `shutil.copyfileobj`，复审发现丢了 SDK 自带的一致性校验，改用 `get_object_to_file`，见下）。
-2. **P2 复用的压缩参数不是为读取设计的**：`_compress_video` 固定压 1080p 5Mbps h264（目标是给 MiniMax 上传用，边界是 45MB base64/90MB mm_file），而 `read_video` 实际只需要第 1 秒附近一帧画面 + 前 300 秒音频；长视频低码率场景下反而可能压完更大，且要等一次完整转码（最长 180 秒 timeout）才知道白等。
-   修复：彻底不再走"整段压缩"这条路。新增 `_materialize_video(file)`：本地存储直接用 `local_path()` 给的真实路径；远程存储用 `download_to_file()` 流式落一份临时文件。`_extract_frame`/`_extract_audio`/`_run_ffmpeg` 改成直接对这个磁盘文件跑 ffmpeg（`-ss 1s` 截一帧 + 前 300 秒转 wav），不再需要先生成一份完整的压缩视频。`MEDIA_READ_MAX_BYTES` 不再是视频读取的门禁（改用于 `read_audio`，音频转写仍需整段进内存）——视频大小上限交给 ffmpeg 处理磁盘文件，真正进 Python 内存的只有 ≤8MB 的画面帧和 ≤16MB 的音频。
-3. **P2 测试没有真正验证 `read_video` 的最终结果**：原测试 mock 压缩产物后只断言 `_extract_frame`/`_extract_audio` 收到了参数，没检查 `read_video` 的返回值——而 fake audio 返回 `None` 加 `vision_ready=False` 时，真实代码路径其实会返回 `{"error": ...}`，测试没揭穿这一点。
-   修复：`tests/test_file_readers.py` 重写为 `test_read_video_succeeds_via_direct_ffmpeg_extraction`（mock 音频转写返回真实文本，断言 `result["content"]` 真的包含转写结果）+ `test_read_video_downloads_remote_storage_to_temp_file`（断言远程存储走了 `download_to_file` 而不是 `get()`，且临时文件用完即删）。
-
-未在本次范围内改动：`chat_attach._compress_video`（发送给 MiniMax 用，目标是"生成一份可用于上传的压缩视频"，跟 `read_video` "只抽取有限画面/音频"是不同目标，不适合共用同一段压缩逻辑；`read_video` 改造后不再依赖它，两条路径不再有代码重叠，也就没有需要维护的重复实现）。
-
-**Phase 8 修订（外部 code review 复审又发现 1 个 P1 + 2 个 P2）**：
-
-1. **P1 `OSSStorageBackend.stat()` 捕获了错误的异常类型**：`head_object` 是 HEAD 请求，oss2 官方文档写明对象不存在时抛 `NotFound`——而且 HEAD 返回 404 时 SDK 层面区分不了"对象不存在"还是"bucket 配错/不存在"；代码里却 `except oss_exc.NoSuchKey`（`NotFound` 的子类），根本捕获不到父类异常，真实 OSS 上对象不存在时 `stat()` 会直接抛出未处理异常，违反"不存在→None"的契约。测试之所以全绿，是因为测试自己手动 mock 成了 `raise NoSuchKey(...)`，模拟的不是 `head_object` 的真实行为——这正是"mock 测试全绿，但 mock 模拟的底层库语义本身错了"这类问题的典型案例。
-   修复：改用 `bucket.get_object_meta(key)`（`GET ?objectMeta`）而不是 `head_object`——同样只取元信息不下载本体，但官方文档明确保证对象不存在时抛更精确的 `NoSuchKey`，跟这里的异常处理正好对上。
-2. **P2 `download_to_file` 手写流式下载丢了长度一致性校验**：`get_object()` + `shutil.copyfileobj()` 确实解决了"整个读进内存"的问题，但 oss2 官方 `get_object_to_file()` 内部在已知 `Content-Length` 时会调用 `copyfileobj_and_verify()`，下载完成后校验实际字节数与声明长度是否一致，不一致抛 `InconsistentError`；手写版本没有这层保护——网络中断多数情况会抛异常触发 `_oss_retry` 重试，但如果底层出现"提前 EOF、没有以异常形式冒出来"的情况，会静默留下一份被截断的视频文件，表现为下游 ffmpeg 莫名其妙"读取失败"，而不是能被立刻定位的"存储下载失败"。
-   修复：`download_to_file` 直接委托给 `bucket.get_object_to_file(key, filename)`，外面继续包 `_oss_retry` 复用现有的重试策略，不用自己另起一套。
-3. **P2 视频"物化到磁盘"这一步没有独立的并发限制**：`_FFMPEG_SEMAPHORE=2` 只限制"同时跑的 ffmpeg 子进程数"，而 `_materialize_video` 对远程存储的下载发生在进 `_run_ffmpeg` 之前——20 个用户同时读 OSS 视频，可以先并发下载出 20 份完整临时视频（当时已经取消了视频读取的大小上限，一批 200MB 视频 10 个并发就是 2GB 临时盘），才轮到 2 个排队跑 ffmpeg。
-   修复：新增独立的 `_VIDEO_READ_SEMAPHORE`，把"物化（含下载）+ 抽取"整个生命周期当一个临界区；刻意不复用 `_FFMPEG_SEMAPHORE` 包最外层——那样 `read_video` 先 acquire 一次、`_run_ffmpeg` 内部又对同一个 Semaphore 再 acquire 一次，等于嵌套等待同一把锁，反而抬高有效并发下限，必须用独立的 Semaphore 对象。
-
-Phase 8 测试：`tests/test_p2b_io_retry.py` 的 OSS stat/download 测试改成 mock `get_object_meta`/`get_object_to_file`（而不是 `head_object`/`get_object`），新增 `test_oss_download_to_file_retries_on_transient_error` 验证复用了 `_oss_retry`；`tests/test_file_readers.py` 新增 `test_read_video_limits_concurrent_materialize_lifecycle`，用 6 个并发 `read_video` 调用 + 计数器验证同时处于"物化+抽取"临界区内的调用数不超过 2。全量测试 756 passed。
-
-**Phase 9 修订（外部 code review 三审又发现 1 个 P2 reliability）**：
-
-Phase 8 改用 `get_object_to_file` 的一个重要收益就是它能检测"服务器声明 200MB、连接却提前正常 EOF 到 150MB"这种此前手写实现完全无感的场景——但 `_oss_is_transient()` 的白名单没有覆盖这类故障对应的异常：`get_object_to_file` 内部 `copyfileobj_and_verify()` 发现实际读到的字节数与声明的 `Content-Length` 不一致时，抛的是 `oss2.exceptions.InconsistentError`，这个异常的 `status` 是特殊值 `-3`——既不是 `RequestError`（连接级错误），也不满足 `status >= 500`（HTTP 5xx），会被现有两条判断规则漏判为"不重试"。等于说 Phase 8 好不容易换来的检测能力，检测到故障后却直接放弃、不走 `_oss_retry` 的退避重试，而这类"提前 EOF"往往正是最适合自动恢复的瞬时故障（下一次请求很可能就正常了）。
-
-修复：`_oss_is_transient()` 新增 `isinstance(e, oss_exc.InconsistentError)` 分支，视为瞬时故障纳入重试白名单。安全性上没有新增顾虑——`_oss_retry()` 的重试前提本来就是"幂等操作"，`get_object_to_file` 每次调用都以 `wb` 模式重新打开目标文件（覆盖写，不是追加），重试不会把上一次的半截内容和这一次的内容拼在一起。
-
-测试：`tests/test_p2b_io_retry.py` 新增 `test_oss_download_to_file_retries_on_inconsistent_error`——第一次调用模拟"写入部分内容后抛 `InconsistentError`"，第二次成功，断言重试后最终文件内容是完整版本、不含第一次的残留数据。全量测试 757 passed。
+测试：`tests/test_file_readers.py` 整体重写——删除所有代表帧/ASR/物化生命周期/并发信号量相关用例，新增覆盖：MiniMax M3 返回真正的 `_video_media` block（`test_read_video_returns_native_video_block_for_minimax_m3`）、非 MiniMax M3 明确拒绝（`test_read_video_rejects_when_provider_not_minimax_m3`）、文件不存在、`prepare_video_media` 的 `ValueError` 原样透传、通用异常兜底。`tests/test_chat_attach_video.py` 新增 `prepare_video_media`/`video_media_to_anthropic_block` 的直接单测（MiniMax 小视频 base64、45~90MB mm_file 成功、mm_file 上传失败拒绝、>90MB 拒绝、非 MiniMax ≤36MB base64、非 MiniMax >36MB 拒绝），以及 `resolve_for_message` 的 mm_file 成功路径回归（此前只有失败路径有测试）；已有的 `resolve_for_message`/`build_user_content` 视频用例全部原样通过，验证聊天附件路径行为没有被这次重构改变。新增 `tests/test_p2b_io_retry.py` 的 `OSSStorageBackend.stat()` 用例保留（`get_object_meta`），删除 `download_to_file`/`local_path` 相关用例（对应实现已删除）。新增 `tests/test_tool_video_media_dispatch.py` 直接验证 `SkillRegistry.dispatch()` 对 `_video_media` 键的处理。全量测试 779 passed。
 
 ---
 
@@ -241,8 +215,7 @@ backend/agent/providers/
 - 新增：`tests/test_providers_media.py`（覆盖 `supports_video`/`supports_audio`/`video_limits`/`audio_native_exts`/`media_raw_max`/`prepare_video` 模板方法/`build_video_block`/`build_audio_block`）、`tests/test_video_duration_limit.py`（覆盖时长限制）、`tests/test_providers_sanitize.py`（覆盖 `stream_sanitize_markers` 各适配器返回值）。
 - 回归：`tests/test_providers.py`、`tests/test_stream_round_retry.py`、`tests/test_chat_attach_video.py`、`tests/test_stream_sanitize.py`、`tests/test_llm_cache_capability.py` 全部应零改动通过（或仅改 import 路径）。
 - 全量 `cd backend && PYTHONPATH=. .venv/bin/pytest` 兜底跑一遍。
-- **Phase 5（已完成，实现已被 Phase 6 取代）**：`tests/test_file_readers.py` 新增/改造 3 个用例——超限视频下载后走压缩（`test_read_video_compresses_oversized_file`）、压缩后仍超限报错（`test_read_video_rejects_when_still_too_large_after_compress`）、`read_audio` 的原有行为不受影响（`test_media_reader_uses_physical_size_before_get` 改成测 `read_audio`）。后端全量测试 773 passed。
-- **Phase 6（已完成）**：`tests/test_file_readers.py` 重写为直接断言 `read_video` 最终结果（`test_read_video_succeeds_via_direct_ffmpeg_extraction`）+ 远程存储走流式下载临时文件（`test_read_video_downloads_remote_storage_to_temp_file`），`_run_ffmpeg`/`_extract_frame`/`_extract_audio` 相关用例改为传入 `Path` 而非 `bytes`。`tests/test_p2b_io_retry.py` 新增 6 个用例覆盖 `OSSStorageBackend.stat()`（走 `head_object` 不下载）/`download_to_file()`（流式写盘）/`local_path()`（OSS 恒 `None`）与 `LocalStorageBackend.local_path()`（零拷贝真实路径）。后端全量测试 754 passed。
+- **Phase 5（已完成，最终设计，详见 FR-LLM-3-5）**：`read_file` 复用 `chat_attach.prepare_video_media()`，`read_video` 最终产出真正的 video content block（`_video_media` tool-result 特殊键），不是代表帧/ASR 转写。`tests/test_file_readers.py` 整体重写、`tests/test_chat_attach_video.py` 新增 `prepare_video_media`/`video_media_to_anthropic_block` 单测 + mm_file 成功路径回归、`tests/test_tool_video_media_dispatch.py` 新增验证 dispatch 层 `_video_media` 处理。后端全量测试 779 passed。（此前 Phase 6~9 走过一条"物化到磁盘+代表帧+ASR"的错误路线，已完整撤销，不再赘述其测试记录。）
 
 ### 部署与灰度
 

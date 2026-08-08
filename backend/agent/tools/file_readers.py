@@ -1,16 +1,11 @@
 """read_file 的媒体读取处理器。
 
 文本和 Office 文档仍由 files.py 负责；这里集中处理需要外部媒体工具的音频/视频，
-避免把 ffmpeg、ASR 和视觉模型分支继续堆进 read_file。
+避免把 ASR 和视频理解分支继续堆进 read_file。
 """
 from __future__ import annotations
 
-import asyncio
 import base64
-import os
-import tempfile
-from contextlib import asynccontextmanager
-from pathlib import Path
 
 from app.core.config import get_settings
 from app.core import chat_attach
@@ -19,91 +14,7 @@ from app.services.storage import get_storage
 
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
-MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024   # 仅 read_audio 用：转写要整段音频进内存，视频走 _materialize_video 不受此限
-MEDIA_AUDIO_MAX_SECONDS = 300
-MEDIA_AUDIO_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
-MEDIA_FRAME_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
-MEDIA_FRAME_MAX_WIDTH = 1920
-_FFMPEG_SEMAPHORE = asyncio.Semaphore(2)
-# 独立于 _FFMPEG_SEMAPHORE：限制"物化到磁盘"这个阶段本身的并发数，而不是 ffmpeg 子进程数。
-# _materialize_video 对远程存储会先把整段视频下载到本地临时文件，这一步发生在进
-# _run_ffmpeg 之前——单靠 _FFMPEG_SEMAPHORE=2 只能保证"同时最多 2 个 ffmpeg 进程"，
-# 挡不住"20 个用户同时读 OSS 视频，先并发下载出 20 份完整临时文件、才轮到 2 个排队
-# 跑 ffmpeg"这种磁盘堆积（视频读取已经不设大小上限，10 个并发 200MB 视频就是 2GB
-# 临时盘，见 code review 复审）。这里必须用独立的 Semaphore 对象，不能直接复用
-# _FFMPEG_SEMAPHORE 包最外层——那样 read_video 先 acquire 一次，_run_ffmpeg 内部又
-# 对同一个 Semaphore 再 acquire 一次，等于嵌套等待同一把锁，白白抬高并发下限。
-_VIDEO_READ_SEMAPHORE = asyncio.Semaphore(2)
-
-
-def _ffmpeg() -> str | None:
-    from app.core.media_transcode import _ffmpeg_bin
-    return _ffmpeg_bin()
-
-
-async def _read_limited(stream, max_bytes: int) -> bytes | None:
-    """分块读取 ffmpeg 输出，超过上限时返回 None，让调用方终止子进程。"""
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await stream.read(min(64 * 1024, max_bytes - total + 1))
-        if not chunk:
-            return b"".join(chunks)
-        total += len(chunk)
-        if total > max_bytes:
-            return None
-        chunks.append(chunk)
-
-
-async def _run_ffmpeg(source: Path, args: list[str], max_output_bytes: int) -> bytes | None:
-    """对已经落在磁盘上的 source 文件跑 ffmpeg，只把 <=max_output_bytes 的输出读进内存。
-
-    source 由调用方（_materialize_video）负责物化和清理——这里不再自己把整段视频
-    写一份临时文件，避免「读视频要先整段进内存、再整段落一次临时文件」的双重开销。
-    """
-    ffmpeg = _ffmpeg()
-    if not ffmpeg:
-        return None
-    try:
-        async with _FFMPEG_SEMAPHORE:
-            proc = await asyncio.create_subprocess_exec(
-                ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", str(source), *args,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stderr_task = asyncio.create_task(proc.stderr.read())
-            try:
-                output = await asyncio.wait_for(_read_limited(proc.stdout, max_output_bytes), timeout=60)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                raise
-            finally:
-                if proc.returncode is None:
-                    proc.kill()
-                await proc.wait()
-                await stderr_task
-        return output if proc.returncode == 0 and output else None
-    except (OSError, asyncio.TimeoutError):
-        return None
-
-
-async def _extract_audio(source: Path) -> bytes | None:
-    return await _run_ffmpeg(
-        source,
-        ["-vn", "-t", str(MEDIA_AUDIO_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
-        MEDIA_AUDIO_MAX_OUTPUT_BYTES,
-    )
-
-
-async def _extract_frame(source: Path) -> bytes | None:
-    # 取中前段画面，避免只取首帧时遇到黑场或片头；短视频由 ffmpeg 自动退回可用帧。
-    return await _run_ffmpeg(
-        source,
-        ["-ss", "00:00:01", "-frames:v", "1", "-vf",
-         f"scale={MEDIA_FRAME_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease",
-         "-f", "image2", "pipe:1"],
-        MEDIA_FRAME_MAX_OUTPUT_BYTES,
-    )
+MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
 
 
 async def _transcribe_audio(raw: bytes, mime: str) -> str:
@@ -122,35 +33,6 @@ async def _media_size_error(file) -> dict | None:
     return None
 
 
-@asynccontextmanager
-async def _materialize_video(file):
-    """把视频物化成本地磁盘文件，供 ffmpeg 直接按需读取（不整段读进 Python 内存）。
-
-    read_video 只需要第 1 秒附近一帧画面 + 前 300 秒音频，压根不需要把整段视频过一遍
-    内存——旧实现（PRD-LLM-3 追加项）反而是「超限就整段下载 + 整段压成新视频」，OSS 后端
-    因为 stat() 默认实现是 exists+get，等于每次读取都要把大文件从 OSS 拉两遍。
-    现在本地存储直接用真实路径（零拷贝）；远程后端流式下载到临时文件，只多落一份磁盘
-    文件（磁盘不像内存那么金贵），用完即删。视频本身大小不再是这里的门禁——ffmpeg 处理
-    的是磁盘文件，真正进 Python 内存的只有下面 <=8MB 的画面帧和 <=16MB 的音频。
-    """
-    storage = get_storage()
-    local = storage.local_path(file.storage_key)
-    if local is not None:
-        yield local
-        return
-    fd, tmp_path = tempfile.mkstemp(suffix=f".{file.ext.lower()}", prefix="gugu_video_")
-    os.close(fd)
-    tmp = Path(tmp_path)
-    try:
-        await storage.download_to_file(file.storage_key, tmp)
-        yield tmp
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
-
-
 async def read_audio(file) -> dict:
     try:
         error = await _media_size_error(file)
@@ -167,33 +49,45 @@ async def read_audio(file) -> dict:
 
 
 async def read_video(file) -> dict:
+    """把文件库里的视频作为真正的视频内容交给模型看，复用 chat_attach 的聊天附件
+    视频理解能力（压缩阈值/base64 vs mm_file/大小上限全部在
+    `chat_attach.prepare_video_media` 里，这里不重新实现一套）。
+
+    视频 tool_result 里的 content block 只有 Anthropic 通道（MiniMax M3）能承载——
+    OpenAI 路的 tool 结果只能是纯文本（见 agent/tools/base.py dispatch 的
+    `_video_media` 处理），所以这里先判 provider 能力，不满足直接返回明确的
+    "当前模型不支持"错误，而不是退化成代表帧/转写这类近似方案。
+    """
+    from agent.llm_select import use_anthropic_for
+
+    try:
+        ai = get_settings().ai
+    except Exception as error:
+        diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
+        return {"error": "视频读取失败"}
+    if not (use_anthropic_for(ai) and chat_attach._minimax_video_enabled(ai)):
+        return {"error": "当前模型不支持通过文件库直接看视频（视频理解目前仅 MiniMax M3 支持）"}
+
+    ext = file.ext.lower()
     try:
         info = await get_storage().stat(file.storage_key)
         if info is None:
             return {"error": "媒体文件不存在，无法读取"}
-        # 物化（含远程下载到临时文件）+ 抽取全程持有同一个槽位，槽位释放后临时文件
-        # 已经在 _materialize_video 的 finally 里删掉了——不会出现"槽位放开但磁盘
-        # 文件还占着"的窗口。
-        async with _VIDEO_READ_SEMAPHORE:
-            async with _materialize_video(file) as source:
-                frame = await _extract_frame(source)
-                audio = await _extract_audio(source)
-        transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
+        raw = await get_storage().get(file.storage_key)
+        mime = chat_attach._MEDIA_MIME.get(ext) or f"video/{ext}"
+        media_item = await chat_attach.prepare_video_media(
+            raw, mime, f"{file.display_name}.{file.ext}", ai,
+        )
+    except ValueError as error:
+        return {"error": str(error)}
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}
 
-    if frame and chat_attach.vision_ready():
-        block = chat_attach.vision_block(frame, "png")
-        if block:
-            note = f"已读取视频《{file.display_name}.{file.ext}》的代表画面。"
-            if transcript:
-                note += f"音频转写：{transcript}"
-            return {"_vision_image": block, "note": note}
-    if transcript:
-        return {"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
-                "content": f"视频音频转写：\n{transcript}"}
-    return {"error": "视频无法读取：当前未配置可用的视觉模型或语音模型"}
+    block = chat_attach.video_media_to_anthropic_block(media_item)
+    if not block:
+        return {"error": "视频读取失败"}
+    return {"_video_media": block, "note": f"已读取视频《{file.display_name}.{file.ext}》。"}
 
 
 async def read_media(file) -> dict:

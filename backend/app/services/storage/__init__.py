@@ -33,17 +33,10 @@ def _oss_is_transient(e: BaseException) -> bool:
     - `oss2.exceptions.OssError`（含 `ServerError` 等子类）：已经拿到 HTTP 响应，只有
       **5xx**（OSS 服务端故障）算瞬时；4xx（鉴权失败/参数错/NoSuchKey/NoSuchBucket 等）
       是可预期或永久失败，不在白名单内、直接原样上抛。
-    - `oss2.exceptions.InconsistentError`：`get_object_to_file()` 内部用
-      `copyfileobj_and_verify()` 校验实际读到的字节数是否等于声明的 `Content-Length`，
-      不一致时抛这个异常（`status` 是特殊值 `-3`，既不是 `RequestError` 也不 `>=500`，
-      不加这一条会被上面两条规则漏判为"不重试"——见 code review 复审：这类"服务器说
-      有 200MB、连接却提前正常 EOF 到 150MB"的场景本来就是这次改用 SDK 原生下载函数
-      要开始能检测的瞬时故障，检测到了却不重试等于没有获得应有的收益）。`_oss_retry()`
-      本身只包幂等操作，`get_object_to_file()` 每次都以 `wb` 重写目标文件，重试安全。
     """
     import oss2.exceptions as oss_exc
 
-    if isinstance(e, (oss_exc.RequestError, oss_exc.InconsistentError)):
+    if isinstance(e, oss_exc.RequestError):
         return True
     if isinstance(e, oss_exc.OssError):
         return getattr(e, "status", 0) >= 500
@@ -140,16 +133,6 @@ class StorageBackend(ABC):
         if not await self.exists(key):
             return None
         return StorageObjectInfo(size=len(await self.get(key)))
-
-    def local_path(self, key: str) -> "Path | None":
-        """若本后端就是本地文件系统，返回真实路径供外部工具（ffmpeg 等）直接读取，
-        避免先整个读进内存再落一份临时文件。远程后端（OSS）返回 None。"""
-        return None
-
-    async def download_to_file(self, key: str, dest: "Path") -> None:
-        """把对象下载到本地文件 dest。默认实现整个读进内存再落盘——小文件够用；
-        大文件（如视频）应走各后端的流式覆盖版本，避免内存里缓冲整个对象。"""
-        dest.write_bytes(await self.get(key))
 
     # ── 文件夹生命周期钩子（P1.1）──────────────────────────────────────────────
     # Local 真 mkdir/mv/rm/清祖先；**对象存储无「空目录」概念、目录由 key 隐含 → 默认 no-op**，
@@ -276,10 +259,6 @@ class LocalStorageBackend(StorageBackend):
             s = p.stat()
             return StorageObjectInfo(size=s.st_size, mtime=s.st_mtime)
         return await asyncio.to_thread(_st)
-
-    def local_path(self, key: str) -> Path | None:
-        p = self.root / key
-        return p if p.is_file() else None
 
     async def ensure_folder(self, path: str) -> None:
         def _mk():
@@ -412,7 +391,9 @@ class OSSStorageBackend(StorageBackend):
 
     async def stat(self, key: str) -> StorageObjectInfo | None:
         """查元信息，不下载对象本体（P1.1 默认实现是 exists+get，大文件光是查大小
-        就要整个下载一遍——真实故障：200MB 视频光 stat 就拉 200MB）。
+        就要整个下载一遍——`read_audio`（`agent/tools/file_readers.py` 的
+        `_media_size_error`）在读取前先 `stat()` 一次判断是否超限，默认实现会让
+        这次判断本身就要拉一次完整对象）。
 
         ⚠️ 用 `get_object_meta`（`GET ?objectMeta`），不是 `head_object`（`HEAD`）：
         两者都只取元信息、都不下载对象本体，但 oss2 官方文档明确写的是 `head_object`
@@ -439,28 +420,6 @@ class OSSStorageBackend(StorageBackend):
         if meta.content_length is None:
             return None
         return StorageObjectInfo(size=meta.content_length, mtime=meta.last_modified, checksum=meta.etag)
-
-    async def download_to_file(self, key: str, dest: Path) -> None:
-        """流式下载到本地文件，不把整个对象缓冲进内存（大文件如视频用；配合
-        stat() 用 get_object_meta，一次 get_video 只产生一次真正的数据传输，
-        而不是旧实现里「先整个 get() 探大小、再整个 get() 一遍读内容」的两倍流量）。
-
-        用 oss2 自带的 `get_object_to_file`，不要自己手写 `get_object` +
-        `shutil.copyfileobj`：SDK 原生实现在已知 `Content-Length` 时会用
-        `copyfileobj_and_verify` 校验实际读到的字节数与声明长度是否一致，不一致会抛
-        `InconsistentError`（自己手写的 `copyfileobj` 没有这层保护——网络中断多数会
-        抛异常触发 `_oss_retry`，但如果底层出现"提前 EOF、没有以异常形式冒出来"的
-        情况，会静默留下一个被截断的视频文件，表现为下游 ffmpeg 莫名其妙"读取失败"，
-        而不是能被立刻定位的"存储下载失败"，见 code review 复审）。
-        """
-        await _oss_retry(
-            "storage.oss.download_to_file",
-            "oss.get_timeout",
-            "文件读取失败，请稍后重试",
-            self.bucket.get_object_to_file,
-            self.pfx + key,
-            str(dest),
-        )
 
     async def list_keys(self) -> list[str]:
         import asyncio, oss2

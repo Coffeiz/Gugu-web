@@ -372,4 +372,165 @@ def test_resolve_video_under_45mb_base64(monkeypatch):
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert len(media) == 1
     assert media[0]["mode"] == "base64"
-    assert media[0]["type"] == "video"
+
+
+def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
+    """45–90MB 视频、mm_file 上传成功 → 走 mm_file，不是 base64。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 60 * 1024 * 1024  # 60MB
+    meta = _make_video_meta(size)
+
+    async def fake_get_meta(uid, aid):
+        return meta
+
+    async def fake_read_bytes(meta):
+        return b"x" * size
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    async def fake_upload(raw, name, cfg):
+        return "file-123"
+
+    monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
+
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
+                          model="MiniMax-M3", vision_video=True)
+    text, cards, images, media = asyncio.run(
+        chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
+    assert len(media) == 1
+    assert media[0]["mode"] == "mm_file"
+    assert media[0]["file_id"] == "file-123"
+
+
+# ── prepare_video_media / video_media_to_anthropic_block：read_file 复用的公共入口 ──
+# 这是 resolve_for_message（聊天附件）和 file_readers.read_video（文件库 read_file）
+# 唯一共用的一份视频决策逻辑，直接单测覆盖，不要求每个调用方各自重复验证阈值。
+
+
+def test_prepare_video_media_minimax_small_uses_base64(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", cfg))
+    assert result["mode"] == "base64"
+    assert result["type"] == "video"
+
+
+def test_prepare_video_media_minimax_between_45_and_90mb_uses_mmfile(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 60 * 1024 * 1024
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    async def fake_upload(raw, name, cfg):
+        assert name == "v.mp4"
+        return "file-abc"
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+    assert result == {"type": "video", "mode": "mm_file", "mime": "video/mp4", "file_id": "file-abc"}
+
+
+def test_prepare_video_media_minimax_mmfile_upload_failure_raises(monkeypatch):
+    """上传失败必须抛异常，不能悄悄回退成注定超限的 base64。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 60 * 1024 * 1024
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    async def fake_upload(raw, name, cfg):
+        return None
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+
+    with pytest.raises(ValueError, match="上传失败"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+
+
+def test_prepare_video_media_minimax_over_90mb_rejected(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 95 * 1024 * 1024
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+
+    with pytest.raises(ValueError, match="90MB"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+
+
+def test_prepare_video_media_non_minimax_under_36mb_uses_base64():
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    cfg = SimpleNamespace(provider="mimo", base_url="https://api.xiaomimimo.com/v1", model="mimo-vl")
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", cfg))
+    assert result["mode"] == "base64"
+
+
+def test_prepare_video_media_non_minimax_over_36mb_rejected():
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 40 * 1024 * 1024
+    cfg = SimpleNamespace(provider="mimo", base_url="https://api.xiaomimimo.com/v1", model="mimo-vl")
+    with pytest.raises(ValueError, match="超过上限"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+
+
+def test_video_media_to_anthropic_block_mm_file():
+    from app.core import chat_attach
+
+    block = chat_attach.video_media_to_anthropic_block(
+        {"type": "video", "mode": "mm_file", "mime": "video/mp4", "file_id": "fid-1"})
+    assert block == {"type": "video", "source": {"type": "url", "url": "mm_file://fid-1"}, "fps": 1}
+
+
+def test_video_media_to_anthropic_block_base64():
+    from app.core import chat_attach
+
+    block = chat_attach.video_media_to_anthropic_block(
+        {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "QUJD"})
+    assert block == {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "QUJD"}}
+
+
+def test_video_media_to_anthropic_block_missing_data_returns_none():
+    from app.core import chat_attach
+
+    assert chat_attach.video_media_to_anthropic_block({"type": "video", "mode": "mm_file"}) is None

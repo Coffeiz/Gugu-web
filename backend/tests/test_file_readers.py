@@ -1,4 +1,3 @@
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -6,39 +5,10 @@ import pytest
 from agent.tools import file_readers
 
 
-class _OutputStream:
-    def __init__(self, chunks):
-        self.chunks = list(chunks)
-
-    async def read(self, _size=-1):
-        return self.chunks.pop(0) if self.chunks else b""
-
-
-class _Process:
-    def __init__(self, stdout_chunks):
-        self.stdout = _OutputStream(stdout_chunks)
-        self.stderr = _OutputStream([])
-        self.returncode = None
-        self.killed = False
-
-    def kill(self):
-        self.killed = True
-        self.returncode = -9
-
-    async def wait(self):
-        if self.returncode is None:
-            self.returncode = 0
-        return self.returncode
-
-
 class _Storage:
-    """默认模拟本地存储：local_path 直接给一个假路径（不落盘、不流式下载）。"""
-
-    def __init__(self, size, *, local=True):
+    def __init__(self, size):
         self.size = size
         self.get_called = False
-        self.download_called = False
-        self._local = local
 
     async def stat(self, key):
         return None if self.size is None else SimpleNamespace(size=self.size)
@@ -47,12 +17,13 @@ class _Storage:
         self.get_called = True
         return b"media"
 
-    def local_path(self, key):
-        return Path("/tmp/fake-local-video.mp4") if self._local else None
 
-    async def download_to_file(self, key, dest):
-        self.download_called = True
-        dest.write_bytes(b"media")
+def _minimax_m3_ai():
+    return SimpleNamespace(provider="minimax", model="abab-m3", base_url="https://api.minimaxi.com/anthropic")
+
+
+def _mimo_ai():
+    return SimpleNamespace(provider="mimo", model="mimo-vl", base_url="https://api.xiaomimimo.com/v1")
 
 
 @pytest.mark.asyncio
@@ -69,117 +40,6 @@ async def test_media_reader_uses_physical_size_before_get(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_read_video_succeeds_via_direct_ffmpeg_extraction(monkeypatch):
-    """核心回归：超过 MEDIA_READ_MAX_BYTES 的视频不再被拒绝——不压缩、不整段进内存，
-    直接对物化后的磁盘文件跑 ffmpeg 提取画面+音频，最终返回真正可用的读取结果。"""
-    storage = _Storage(file_readers.MEDIA_READ_MAX_BYTES + 1, local=True)
-    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
-
-    extract_calls = []
-
-    async def fake_extract_frame(source):
-        extract_calls.append(("frame", source))
-        return b"frame-bytes"
-
-    async def fake_extract_audio(source):
-        extract_calls.append(("audio", source))
-        return b"audio-bytes"
-
-    async def fake_transcribe(raw, mime):
-        assert raw == b"audio-bytes"
-        return "音频转写文本"
-
-    monkeypatch.setattr(file_readers, "_extract_frame", fake_extract_frame)
-    monkeypatch.setattr(file_readers, "_extract_audio", fake_extract_audio)
-    monkeypatch.setattr(file_readers, "_transcribe_audio", fake_transcribe)
-    monkeypatch.setattr(file_readers.chat_attach, "vision_ready", lambda: False)
-
-    file = SimpleNamespace(storage_key="u/media.mov", size_bytes=0, size="0 B", ext="mov", id=1, display_name="clip")
-    result = await file_readers.read_video(file)
-
-    # 视频本身超过 MEDIA_READ_MAX_BYTES 也不再报错——真正验证了用户报告的场景已修复。
-    assert "content" in result
-    assert "音频转写文本" in result["content"]
-    assert extract_calls[0][0] == "frame"
-    assert extract_calls[1][0] == "audio"
-    # 本地存储走零拷贝路径，没有下载到临时文件。
-    assert storage.download_called is False
-
-
-@pytest.mark.asyncio
-async def test_read_video_downloads_remote_storage_to_temp_file(monkeypatch, tmp_path):
-    """OSS 等远程后端没有 local_path，必须流式下载到临时文件，而不是整段读进内存。"""
-    storage = _Storage(file_readers.MEDIA_READ_MAX_BYTES + 1, local=False)
-    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
-
-    seen_paths = []
-
-    async def fake_extract_frame(source):
-        seen_paths.append(source)
-        assert source.exists()
-        return b"frame-bytes"
-
-    async def fake_extract_audio(source):
-        seen_paths.append(source)
-        return None
-
-    monkeypatch.setattr(file_readers, "_extract_frame", fake_extract_frame)
-    monkeypatch.setattr(file_readers, "_extract_audio", fake_extract_audio)
-    monkeypatch.setattr(file_readers.chat_attach, "vision_ready", lambda: False)
-
-    file = SimpleNamespace(storage_key="u/media.mp4", size_bytes=0, size="0 B", ext="mp4", id=2, display_name="clip2")
-    await file_readers.read_video(file)
-
-    assert storage.download_called is True
-    assert storage.get_called is False, "不应该再走整段 get() 读进内存"
-    # 提取完成后临时文件应已清理。
-    assert not seen_paths[0].exists()
-
-
-@pytest.mark.asyncio
-async def test_read_video_limits_concurrent_materialize_lifecycle(monkeypatch):
-    """code review 复审发现：_FFMPEG_SEMAPHORE 只限制同时跑的 ffmpeg 子进程数，
-    挡不住"物化到磁盘"这一步本身的并发——远程存储在进 ffmpeg 之前就要把整段视频
-    下载到本地临时文件，20 个并发读取会先在磁盘上堆出 20 份完整视频，才轮到 2 个
-    排队跑 ffmpeg。_VIDEO_READ_SEMAPHORE 必须把"下载 + 抽取"整个生命周期当一个
-    临界区，同一时刻在临界区内的调用数不能超过信号量容量（这里验证容量为 2）。"""
-    import asyncio
-
-    storage = _Storage(file_readers.MEDIA_READ_MAX_BYTES + 1, local=False)
-    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
-    monkeypatch.setattr(file_readers.chat_attach, "vision_ready", lambda: False)
-
-    in_flight = 0
-    max_in_flight = 0
-    lock = asyncio.Lock()
-
-    async def fake_extract_frame(source):
-        nonlocal in_flight, max_in_flight
-        async with lock:
-            in_flight += 1
-            max_in_flight = max(max_in_flight, in_flight)
-        await asyncio.sleep(0.02)
-        async with lock:
-            in_flight -= 1
-        return None
-
-    async def fake_extract_audio(source):
-        return None
-
-    monkeypatch.setattr(file_readers, "_extract_frame", fake_extract_frame)
-    monkeypatch.setattr(file_readers, "_extract_audio", fake_extract_audio)
-
-    files = [
-        SimpleNamespace(storage_key=f"u/media{i}.mp4", size_bytes=0, size="0 B",
-                         ext="mp4", id=i, display_name=f"clip{i}")
-        for i in range(6)
-    ]
-    await asyncio.gather(*(file_readers.read_video(f) for f in files))
-
-    assert max_in_flight == 2
-
-
-@pytest.mark.asyncio
 async def test_media_reader_rejects_missing_physical_object(monkeypatch):
     storage = _Storage(None)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
@@ -191,39 +51,100 @@ async def test_media_reader_rejects_missing_physical_object(monkeypatch):
     assert storage.get_called is False
 
 
-@pytest.mark.asyncio
-async def test_ffmpeg_output_limit_kills_process(monkeypatch, tmp_path):
-    process = _Process([b"1234", b"5678"])
-
-    async def create_process(*_args, **_kwargs):
-        return process
-
-    monkeypatch.setattr(file_readers, "_ffmpeg", lambda: "ffmpeg")
-    monkeypatch.setattr(file_readers.asyncio, "create_subprocess_exec", create_process)
-
-    result = await file_readers._run_ffmpeg(tmp_path / "input.mp4", [], max_output_bytes=5)
-
-    assert result is None
-    assert process.killed is True
+# ── read_video：复用 chat_attach 的原生视频理解能力，不再降级成代表帧+ASR ────────
 
 
 @pytest.mark.asyncio
-async def test_media_extractors_apply_decode_limits(monkeypatch, tmp_path):
-    calls = []
+async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch):
+    """核心验收：read_file 读视频最终必须产出真正的 video content block（走
+    `_video_media` 特殊键，由 agent/tools/base.py dispatch 转成 tool_result 里的
+    video block），而不是代表帧图片或 ASR 转写文本。"""
+    storage = _Storage(90 * 1024 * 1024)  # 故意超过旧的 36MB 门禁，验证视频不再受它限制
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
 
-    async def run_ffmpeg(source, args, max_output_bytes):
-        calls.append((source, args, max_output_bytes))
-        return b"output"
+    captured_args = {}
 
-    monkeypatch.setattr(file_readers, "_run_ffmpeg", run_ffmpeg)
+    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+        captured_args["raw"] = raw
+        captured_args["mime"] = mime
+        captured_args["name"] = name
+        captured_args["model_cfg"] = model_cfg
+        return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
 
-    source = tmp_path / "input.mp4"
-    await file_readers._extract_audio(source)
-    await file_readers._extract_frame(source)
+    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
 
-    audio_args = calls[0][1]
-    frame_args = calls[1][1]
-    assert ["-t", str(file_readers.MEDIA_AUDIO_MAX_SECONDS)] <= audio_args
-    assert f"scale={file_readers.MEDIA_FRAME_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease" in frame_args
-    assert calls[0][2] == file_readers.MEDIA_AUDIO_MAX_OUTPUT_BYTES
-    assert calls[1][2] == file_readers.MEDIA_FRAME_MAX_OUTPUT_BYTES
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert "_video_media" in result
+    block = result["_video_media"]
+    assert block == {"type": "video", "source": {"type": "base64", "media_type": "video/mp4", "data": "ZmFrZQ=="}}
+    assert "_vision_image" not in result
+    assert "content" not in result
+    assert captured_args["raw"] == b"media"
+    assert captured_args["mime"] == "video/mp4"
+    assert captured_args["model_cfg"] is not None
+
+
+@pytest.mark.asyncio
+async def test_read_video_rejects_when_provider_not_minimax_m3(monkeypatch):
+    """视频 tool_result 只有 Anthropic 通道（MiniMax M3）能承载原生 video block——
+    其它 provider 明确返回不支持，而不是退化成代表帧/ASR 这类近似方案。"""
+    storage = _Storage(1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_mimo_ai()))
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert "不支持" in result["error"]
+    assert storage.get_called is False   # 能力不够时不该白读一次文件
+
+
+@pytest.mark.asyncio
+async def test_read_video_missing_file(monkeypatch):
+    storage = _Storage(None)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    file = SimpleNamespace(storage_key="u/missing.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert "不存在" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_read_video_propagates_prepare_video_media_rejection(monkeypatch):
+    """>90MB / mm_file 上传失败等场景，prepare_video_media 抛 ValueError——
+    read_video 必须原样把这个明确的拒绝理由返回给用户，而不是吞掉改成通用错误。"""
+    storage = _Storage(95 * 1024 * 1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+        raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
+
+    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert result == {"error": "这条视频太大（超过 90MB 上限），没法直接看"}
+
+
+@pytest.mark.asyncio
+async def test_read_video_generic_failure_returns_generic_error(monkeypatch):
+    storage = _Storage(1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    async def boom(raw, mime, name, model_cfg):
+        raise RuntimeError("ffmpeg 挂了")
+
+    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", boom)
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert result == {"error": "视频读取失败"}

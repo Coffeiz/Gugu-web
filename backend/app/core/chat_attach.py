@@ -569,6 +569,64 @@ async def _upload_video_mmfile(raw: bytes, name: str, model_cfg) -> str | None:
         return None
 
 
+async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> dict:
+    """把视频原始字节按 provider 能力转成可以直接塞进 `media` 列表的视频块描述
+    （交给 `build_user_content`/`video_media_to_anthropic_block` 再转成各 provider
+    的最终 content block）。
+
+    这是视频理解能力唯一的一份决策逻辑：`resolve_for_message`（聊天附件）和
+    `agent/tools/file_readers.py` 的 `read_video`（文件库 read_file 读视频）都必须
+    调用这里，不能各自维护一份阈值判断——「视频怎么才算能被模型看到」只应该有
+    一处真相来源。
+
+    MiniMax M3：探测规格 → 超 1080p/16Mbps 先压成 1080p 5Mbps h264 → 压缩后
+    ≤`VIDEO_BASE64_MAX` 走 base64，(`VIDEO_BASE64_MAX`, `VIDEO_MMFILE_MAX`] 走
+    mm_file（Files API 上传），超过 `VIDEO_MMFILE_MAX` 拒绝；mm_file 上传失败也
+    明确拒绝——**不回退 base64**（base64 注定超过 MiniMax 上限，回退只会生成
+    超大字符串浪费内存再失败）。
+    非 MiniMax（OpenAI 兼容媒体块，如 mimo）：不压缩，仅 ≤`MEDIA_RAW_MAX` 走
+    base64，否则拒绝。
+
+    失败（超限/上传失败）统一抛 `ValueError`，消息可以直接展示给用户；调用方
+    负责捕获并决定怎么呈现（聊天附件退化成文字提示，read_file 直接把消息当
+    工具错误返回）。
+    """
+    minimax = _minimax_video_enabled(model_cfg) if model_cfg is not None else False
+    if minimax:
+        payload, payload_mime = raw, mime
+        probe = await _probe_video(raw)
+        if _should_compress_video(probe):
+            compressed = await _compress_video(raw)
+            if compressed:
+                payload, payload_mime = compressed, "video/mp4"
+        if len(payload) <= VIDEO_BASE64_MAX:
+            import base64
+            return {"type": "video", "mode": "base64", "mime": payload_mime,
+                    "b64": base64.b64encode(payload).decode()}
+        if len(payload) <= VIDEO_MMFILE_MAX:
+            fid = await _upload_video_mmfile(payload, name, model_cfg)
+            if not fid:
+                raise ValueError("这条视频上传失败（服务端暂不可用），没法直接看")
+            return {"type": "video", "mode": "mm_file", "mime": payload_mime, "file_id": fid}
+        raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
+    if len(raw) > MEDIA_RAW_MAX:
+        raise ValueError("这条视频太大（超过上限），没法直接看")
+    import base64
+    return {"type": "video", "mode": "base64", "mime": mime, "b64": base64.b64encode(raw).decode()}
+
+
+def video_media_to_anthropic_block(m: dict) -> dict | None:
+    """把 `prepare_video_media()` 返回的视频媒体项转成 Anthropic 原生 video content
+    block；数据缺失（mm_file 没有 file_id、base64 没有 b64）返回 None，调用方按
+    各自场景决定跳过还是报错——这里跟 `build_user_content` 的 Anthropic 视频分支
+    是同一份转换逻辑，只有这一处，不重复实现。"""
+    if m.get("mode") == "mm_file" and m.get("file_id"):
+        return {"type": "video", "source": {"type": "url", "url": f"mm_file://{m['file_id']}"}, "fps": 1}
+    if m.get("b64"):
+        return {"type": "video", "source": {"type": "base64", "media_type": m["mime"], "data": m["b64"]}}
+    return None
+
+
 def _voice_recognition_enabled() -> bool:
     """是否配了独立「语音识别模型」（settings.voice）。配了就该为音频/语音构建 media base64
     交给 agent.voice.transcribe 转写——**不管主模型支不支持音视频**（解耦的关键）。"""
@@ -758,48 +816,19 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
                     raw = await read_bytes(meta)
                     mime = _MEDIA_MIME.get(ext, meta.get("mime") or "application/octet-stream")
                     if is_video:
-                        # 视频：探测规格 → 超 1080p/16M 先压成 1080p 5M h264 → 压缩后 ≤45MB 走 base64，
-                        # >45MB 且 ≤90MB 走 mm_file（MiniMax M3 上传 Files API 用 mm_file:// 引用）。
-                        # 非 MiniMax（mimo 等 OpenAI 兼容块）不识别 mm_file://，仍走 base64（受 36MB 上限）。
-                        # 超限（>90MB）或 mm_file 上传失败 → 明确拒绝，**不回退 base64**（base64 注定超
-                        # MiniMax 上限，回退只会生成超大字符串浪费内存再失败）。
-                        minimax_cfg = model_cfg
-                        if minimax_cfg is None:
+                        # 视频决策（压缩阈值/base64 vs mm_file/大小上限）全部在 prepare_video_media
+                        # 里——read_file 读文件库视频（file_readers.py 的 read_video）复用同一份逻辑，
+                        # 这里不重复维护一套阈值判断。
+                        video_cfg = model_cfg
+                        if video_cfg is None:
                             try:
                                 from app.core.config import get_settings
-                                minimax_cfg = get_settings().ai
+                                video_cfg = get_settings().ai
                             except Exception:
-                                minimax_cfg = None
-                        minimax = _minimax_video_enabled(minimax_cfg) if minimax_cfg is not None else False
-                        payload = raw
-                        payload_mime = mime
-                        if minimax:
-                            probe = await _probe_video(raw)
-                            if _should_compress_video(probe):
-                                compressed = await _compress_video(raw)
-                                if compressed:
-                                    payload = compressed
-                                    payload_mime = "video/mp4"
-                            if len(payload) <= VIDEO_BASE64_MAX:
-                                # ≤45MB：base64 内联
-                                media.append({"type": "video", "mode": "base64", "mime": payload_mime,
-                                              "b64": base64.b64encode(payload).decode()})
-                            elif len(payload) <= VIDEO_MMFILE_MAX:
-                                # 45–90MB：走 mm_file；上传失败明确拒绝，不回退 base64
-                                fid = await _upload_video_mmfile(payload, meta.get("name") or "video.mp4", minimax_cfg)
-                                if not fid:
-                                    raise ValueError("这条视频上传失败（服务端暂不可用），没法直接看")
-                                media.append({"type": "video", "mode": "mm_file",
-                                              "mime": payload_mime, "file_id": fid})
-                            else:
-                                # >90MB：明确拒绝，不生成注定失败的 base64
-                                raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
-                        else:
-                            # 非 MiniMax：保持旧行为，仅 ≤36MB 走 base64
-                            if meta["size"] > MEDIA_RAW_MAX:
-                                raise ValueError("这条视频太大（超过上限），没法直接看")
-                            media.append({"type": "video", "mode": "base64", "mime": mime,
-                                          "b64": base64.b64encode(raw).decode()})
+                                video_cfg = None
+                        media.append(await prepare_video_media(
+                            raw, mime, meta.get("name") or "video.mp4", video_cfg,
+                        ))
                     else:
                         # 音频/语音：保持旧行为，仅 ≤36MB 走 base64
                         if meta["size"] > MEDIA_RAW_MAX:
@@ -847,13 +876,9 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
                 "type": "base64", "media_type": im["media_type"], "data": im["b64"]}})
         for m in media:
             if m["type"] == "video":
-                if m.get("mode") == "mm_file" and m.get("file_id"):
-                    # MiniMax M3 大视频：先上传 Files API，用 mm_file://{file_id} 引用
-                    parts.append({"type": "video", "source": {
-                        "type": "url", "url": f"mm_file://{m['file_id']}"}, "fps": 1})
-                elif m.get("b64"):
-                    parts.append({"type": "video", "source": {
-                        "type": "base64", "media_type": m["mime"], "data": m["b64"]}})
+                block = video_media_to_anthropic_block(m)
+                if block:
+                    parts.append(block)
                 # 两者都缺（数据异常）→ 跳过该块，不崩
         return parts
     parts = [{"type": "text", "text": text}] if text else []
