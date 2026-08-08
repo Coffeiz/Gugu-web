@@ -1,6 +1,6 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待实现（Phase A 方案 v3 已跟第 5 节实施计划同步：去掉 DELETING 中间状态，物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`（对应 PRD-IM-6 的共享 storage_key 场景，已声明"检查后又插入新引用"的竞态需要 PRD-IM-6 配合解决）、消息创建与附件 claim 同一事务、GC 遵守"DB 先变化再碰 storage"、Redis 只做 legacy fallback 不再是新数据快路径；Phase B 修了 alive marker 用 EXPIRE 而非 SET 的 bug；均未开始实现）
+> 状态：🔲 待实现（Phase A 方案 v3 已跟第 5 节实施计划同步：去掉 DELETING 中间状态，物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`（对应 PRD-IM-9 的共享 storage_key 场景，已声明"检查后又插入新引用"的竞态需要 PRD-IM-9 配合解决）、消息创建与附件 claim 同一事务、GC 遵守"DB 先变化再碰 storage"、Redis 只做 legacy fallback 不再是新数据快路径；Phase B 修了 alive marker 用 EXPIRE 而非 SET 的 bug；均未开始实现）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/api/v1/agent.py`（`delete_session`、附件相关接口）、消息/会话数据模型
@@ -14,7 +14,7 @@
 |---|---|---|
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 v1（已推翻） | ❌ 已废弃 | 曾实现"定时扫存储、按物理 mtime 判断年龄，固定 7 天 TTL"的清理任务（commit `dece7584`），已 revert（commit `e63014a9`）。废弃原因见第 1.4 节：固定 TTL 会让长周期项目里、没有显式存进文件库的历史消息附件"失效"，这不是清理任务的 bug，是这个方案本身的产品语义就不对。 |
-| Phase 1'：方案设计 v3（已定稿，可开工） | 🔲 待实施 | 核心是"**DB 是所有权真相来源**"：`chat_attachments` 只有 `draft`/`attached` 两态（无 `DELETING` 中间态），Redis 完全降级为 legacy fallback/lock/cache，不承担任何"这个对象还有没有主人"的判断责任。物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`，删除前按 `storage_key` 检查引用（对应 PRD-IM-6 的共享 storage_key 场景）；消息创建与所有附件 claim 是同一个 DB 事务；GC/安全网一律"DB 先变化、再碰 storage"。经三轮外部评审收敛，第 2、5 节实施计划已完全同步。见第 1.3、2、5 节。 |
+| Phase 1'：方案设计 v3（已定稿，可开工） | 🔲 待实施 | 核心是"**DB 是所有权真相来源**"：`chat_attachments` 只有 `draft`/`attached` 两态（无 `DELETING` 中间态），Redis 完全降级为 legacy fallback/lock/cache，不承担任何"这个对象还有没有主人"的判断责任。物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`，删除前按 `storage_key` 检查引用（对应 PRD-IM-9 的共享 storage_key 场景）；消息创建与所有附件 claim 是同一个 DB 事务；GC/安全网一律"DB 先变化、再碰 storage"。经三轮外部评审收敛，第 2、5 节实施计划已完全同步。见第 1.3、2、5 节。 |
 | Phase 2：视频转码缓存实施 | 🔲 待评估 | 缓存路径由 `cache_key` 确定性推导，Redis 只存一个"存活标记"（`alive marker`，命中时 `SET ... EX` 重建/续期，不是 `EXPIRE`），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
 
 ---
@@ -62,7 +62,7 @@ v1 把 `.chat_staging/`/`.voice/` 当成纯粹的、发送后即可按固定期�
 
 **结论**：坚持简单的 `chat_attachments.message_id` 外键（一条附件属于一条消息），不引入 `message_attachments` 多对多关系表——没有已确认的复用需求，不为假设的未来场景（转发/消息复制/多消息引用）提前设计。
 
-**后续更新（2026-08-09）**：针对"引用回复历史媒体会重新下载"这个观察做了可行性验证（实测 QQ，探针已删除），确认可以用平台给的稳定消息标识（QQ 的 `msg_idx`）避免重复下载，详见 [PRD-IM-6-引用消息附件复用](./PRD-IM-6-引用消息附件复用.md)。**这不推翻上面"不做 M:N"的结论**——复用方式是"新消息拿到自己独立的 `chat_attachments` 行，只是 `storage_key` 跟原消息那行相同"，不是让两条消息共享同一条附件记录；但代价是安全网清理逻辑需要按 `storage_key` 做引用计数（是否还有其他存活行指着同一个 `storage_key`），不能再只看单条记录自己的归属，这一点需要同步进第 2 节 FR-STORAGE-1-1 的安全网扫描设计。
+**后续更新（2026-08-09）**：针对"引用回复历史媒体会重新下载"这个观察做了可行性验证（实测 QQ，探针已删除），确认可以用平台给的稳定消息标识（QQ 的 `msg_idx`）避免重复下载，详见 [PRD-IM-9-引用消息附件复用](./PRD-IM-9-引用消息附件复用.md)。**这不推翻上面"不做 M:N"的结论**——复用方式是"新消息拿到自己独立的 `chat_attachments` 行，只是 `storage_key` 跟原消息那行相同"，不是让两条消息共享同一条附件记录；但代价是安全网清理逻辑需要按 `storage_key` 做引用计数（是否还有其他存活行指着同一个 `storage_key`），不能再只看单条记录自己的归属，这一点需要同步进第 2 节 FR-STORAGE-1-1 的安全网扫描设计。
 
 ### 1.5 视频转码缓存（新增能力，非 bug）
 
@@ -93,13 +93,13 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 
 **四条不变量，贯穿整个 Phase A，实施时不能违反**：
 1. **DB 所有权变化必须先发生，storage 清理永远在 DB commit 之后**——不管是正常删除还是 GC，都是"先在 DB 里让这一行不再存在/不再是 draft，commit 成功，再碰物理字节"，反过来（先删 storage 再改 DB）会在 DB 操作失败时产生"消息还在、字节没了"这种真正的数据损坏，比孤儿泄漏严重得多。
-2. **物理删除之前必须确认没有其他存活的 `chat_attachments` 行指着同一个 `storage_key`**——因为 PRD-IM-6（引用消息附件复用，已验证可行、不是假设需求）会让两条独立的消息各自持有一条 `chat_attachments` 行、但共享同一个 `storage_key`。不做这个检查，正常的 `delete_session` 就会删掉另一条还存活消息正在用的字节，安全网完全兜不住（字节已经真的没了）。
+2. **物理删除之前必须确认没有其他存活的 `chat_attachments` 行指着同一个 `storage_key`**——因为 PRD-IM-9（引用消息附件复用，已验证可行、不是假设需求）会让两条独立的消息各自持有一条 `chat_attachments` 行、但共享同一个 `storage_key`。不做这个检查，正常的 `delete_session` 就会删掉另一条还存活消息正在用的字节，安全网完全兜不住（字节已经真的没了）。
 3. **消息创建和它所有附件的 claim 必须是同一个 DB 事务**——任何一个附件 claim 失败（`affected_rows != 1`，比如已经被其他请求 claim 走、或者已经被草稿 GC 删除），整条消息事务回滚，不允许出现"消息已存在但只有部分附件被 claim 成功"的半完整状态。
-4. **"确认没有其他引用"和"真正删除物理字节"之间，不能有新的共享引用悄悄插进来**——不变量 2 的检查（`SELECT EXISTS ...`）和之后的 `storage.delete()` 本身不是原子的两步。如果 PRD-IM-6 那种"复用已有 `storage_key` 创建一条新附件行"的操作恰好插在这两步中间：先检查时确实没有别的引用了，但检查完、删除前，一个新请求刚好把这个 `storage_key` 复用出了一条新记录——物理字节被删的时候，新记录已经指向了一份不存在的文件。**这条不变量本身不由本 PRD 实现，但本 PRD 必须声明它，作为对 PRD-IM-6 的约束**：任何"读取一条已有 `chat_attachments` 行、复用它的 `storage_key` 建一条新行"的操作，必须保证从"读到源那一刻"到"新行成功 commit"之间，源那一行不会被并发删除掉——具体手段（`SELECT ... FOR UPDATE` 锁住源行、advisory lock、或者别的机制）留给 PRD-IM-6 实施时决定，不在本 PRD 展开；本 PRD 这边的责任是"不会在还有存活引用时删字节"，PRD-IM-6 那边的责任是"新增共享引用时不会让源引用在关键窗口内被删掉"，两边配合才能真正堵住。
+4. **"确认没有其他引用"和"真正删除物理字节"之间，不能有新的共享引用悄悄插进来**——不变量 2 的检查（`SELECT EXISTS ...`）和之后的 `storage.delete()` 本身不是原子的两步。如果 PRD-IM-9 那种"复用已有 `storage_key` 创建一条新附件行"的操作恰好插在这两步中间：先检查时确实没有别的引用了，但检查完、删除前，一个新请求刚好把这个 `storage_key` 复用出了一条新记录——物理字节被删的时候，新记录已经指向了一份不存在的文件。**这条不变量本身不由本 PRD 实现，但本 PRD 必须声明它，作为对 PRD-IM-9 的约束**：任何"读取一条已有 `chat_attachments` 行、复用它的 `storage_key` 建一条新行"的操作，必须保证从"读到源那一刻"到"新行成功 commit"之间，源那一行不会被并发删除掉——具体手段（`SELECT ... FOR UPDATE` 锁住源行、advisory lock、或者别的机制）留给 PRD-IM-9 实施时决定，不在本 PRD 展开；本 PRD 这边的责任是"不会在还有存活引用时删字节"，PRD-IM-9 那边的责任是"新增共享引用时不会让源引用在关键窗口内被删掉"，两边配合才能真正堵住。
 
 **没有 `DELETING` 中间状态（初版草稿曾经设想过，评审后去掉）**：模型只有 `DRAFT`/`ATTACHED` 两态，不引入第三个状态。原因：如果保留 `DELETING`，安全网扫描要额外处理"DB 是 DELETING + storage 还在"（物理删除还没做/失败，需要重试）和"DB 是 DELETING + storage 没了"（物理删除成功但行清理没跑完，该 finalize）这两种新组合，状态机复杂度上升但咕咕现在的体量不需要这种精细的重试队列。改成更直接的语义：删除就是"DB 事务里直接删掉这一行，commit 成功即视为逻辑删除生效"，物理字节清理是 commit 之后的 best-effort 动作，失败了安全网自然能发现（DB 无记录 + storage 有 = 孤儿候选），不需要专门的中间状态来标记"正在删"。
 
-1. **数据模型**：新建 `chat_attachments` 表（`id`/`attach_id`/`user_id`/`message_id`（可空，DRAFT 阶段为空）/`storage_key`/`name`/`ext`/`mime`/`kind`/`size`/`duration`/`img_width`/`img_height`/`state`（仅 `draft`/`attached`）/`created_at`/`attached_at`）。`message_id` 用简单外键，不做多对多关系表——理由见第 1.4 节的 `quoted` 排查结论；`storage_key` 可以被多条 `chat_attachments` 行共享（PRD-IM-6 场景），所以不能给 `storage_key` 加唯一约束。把现在已经确定的业务不变量压进 DB 约束，让实现 bug 尽量在写入时就被挡住，而不是等 GC/安全网才发现：
+1. **数据模型**：新建 `chat_attachments` 表（`id`/`attach_id`/`user_id`/`message_id`（可空，DRAFT 阶段为空）/`storage_key`/`name`/`ext`/`mime`/`kind`/`size`/`duration`/`img_width`/`img_height`/`state`（仅 `draft`/`attached`）/`created_at`/`attached_at`）。`message_id` 用简单外键，不做多对多关系表——理由见第 1.4 节的 `quoted` 排查结论；`storage_key` 可以被多条 `chat_attachments` 行共享（PRD-IM-9 场景），所以不能给 `storage_key` 加唯一约束。把现在已经确定的业务不变量压进 DB 约束，让实现 bug 尽量在写入时就被挡住，而不是等 GC/安全网才发现：
    - `UNIQUE(user_id, attach_id)`
    - `INDEX(state, created_at)`（草稿 GC 按状态+时间扫描用）
    - `INDEX(user_id, storage_key)`（不变量 2 的引用检查用）
@@ -108,13 +108,13 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 2. **上传写 storage 再写 DB，插入失败要回滚 storage**：`stage()` 改为 `storage.put()` 成功后立刻 `INSERT chat_attachments(state=draft)`；**新的 `stage()` 调用不再写旧的 Redis meta key**（这是跟"Redis 命中直接用"的旧快路径配套的改动，见步骤 4）。这一步移除了"Redis 丢失导致草稿附件失去所有权凭证"这条路径（之前的 v2 草案只解决了"已发送"半场，这里补齐"草稿"半场），但 `storage.put()` 和 `db.insert()` 仍然是两个系统、不是一个事务——如果 `insert` 失败（DB 异常/连接问题），要 best-effort 把刚写的字节删掉；**这是"物理删除只能走统一入口"这条规则唯一的例外**——此时 DB ownership 从未成功建立过，没有行可查、也没有其他引用需要担心，直接删就是安全的，不需要（也没法）套 `try_delete_storage_if_unreferenced()`。这个回滚本身也可能失败，届时留给安全网按"孤儿候选"兜底（DB 无记录 + storage 有 + 非最近写入）。措辞上不说"彻底堵住"，只说"消除了 Redis 丢失这条路径，跨系统提交的窗口仍然存在，靠尽力回滚 + 安全网兜底"。
 3. **发送成功 = claim，整条消息一个事务**：消息真正持久化时，一个 DB 事务内，对每个关联 `attach_id` 执行条件更新 `UPDATE chat_attachments SET state='attached', message_id=? WHERE attach_id=? AND user_id=? AND state='draft'`；**任意一次更新的 `affected_rows != 1`，整个事务回滚**（消息本身也不落库）——不允许消息存在但只有部分附件 claim 成功的半完整状态。转成 `ATTACHED` 之后不再有 TTL，永久保留直到所属消息/会话被删除。
 4. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）永远先查 DB，不走"Redis 命中就直接用"的快路径**：`WHERE attach_id=? AND user_id=?`（不能只按 `attach_id` 查，否则是 IDOR）。DB 是所有权真相来源，如果查询顺序反过来（先信 Redis），会出现"DB 里这条附件已经被删除、但 Redis 里的旧 meta 还没过期"时继续把已经不该存在的内容返回给用户的 stale-cache 问题。**Redis 只在 DB 查不到时，作为过渡期的 legacy fallback**——服务上线前用旧 `stage()` 写过的 Redis meta key，仍然可能在过渡期内有效，DB 无记录时兜底查一次 Redis；因为步骤 2 已经改成新数据不再写这种旧格式的 key，这条 fallback 路径会随着旧 Redis key 自然过期而自动消失，不需要专门下线。
-5. **物理删除统一收口成一个函数，不允许任何调用方直接 `storage.delete()`**（步骤 2 的插入失败回滚除外，见上）：`try_delete_storage_if_unreferenced(user_id, storage_key)`——先 `SELECT EXISTS(SELECT 1 FROM chat_attachments WHERE user_id=? AND storage_key=?)`（此时 DB 里那条要删的行已经不在了，只看"是否还有别的行存在"），存在就跳过物理删除（还有别的消息在用），不存在才真正 `storage.delete()`。`delete_session`、草稿 GC、单附件删除、安全网清理孤儿候选，全部必须通过这一个函数碰物理字节。**这个"检查再删除"本身不是原子的**，见上面第 4 条不变量——本 PRD 只保证这个函数自己的检查逻辑正确，"检查完之后、真正删除之前不会冒出新引用"这件事依赖调用方（尤其是 PRD-IM-6 那种创建共享引用的操作）配合。
+5. **物理删除统一收口成一个函数，不允许任何调用方直接 `storage.delete()`**（步骤 2 的插入失败回滚除外，见上）：`try_delete_storage_if_unreferenced(user_id, storage_key)`——先 `SELECT EXISTS(SELECT 1 FROM chat_attachments WHERE user_id=? AND storage_key=?)`（此时 DB 里那条要删的行已经不在了，只看"是否还有别的行存在"），存在就跳过物理删除（还有别的消息在用），不存在才真正 `storage.delete()`。`delete_session`、草稿 GC、单附件删除、安全网清理孤儿候选，全部必须通过这一个函数碰物理字节。**这个"检查再删除"本身不是原子的**，见上面第 4 条不变量——本 PRD 只保证这个函数自己的检查逻辑正确，"检查完之后、真正删除之前不会冒出新引用"这件事依赖调用方（尤其是 PRD-IM-9 那种创建共享引用的操作）配合。
 6. **会话/消息删除：DB commit 优先于 storage 删除**：`delete_session`（`app/api/v1/agent.py:356`）目前只 `db.delete(session)`。改造后：① 一个 DB 事务内，删除 session 的同时**直接删除**关联的 `chat_attachments` 行（不标记中间状态，见上面"没有 DELETING"的说明）；② **DB 事务 commit 成功之后**，对每个涉及的 `storage_key` 调步骤 5 的 `try_delete_storage_if_unreferenced(user_id, storage_key)`；③ storage 删除失败只记日志，不回滚 DB、不重试阻塞主流程——**原则：宁可临时泄漏，不可误删**。步骤 9 的安全网负责兜住失败留下的孤儿。
 7. **草稿孤儿定时清理，同样遵守"DB 先变化"**：不是"先 `storage.delete()` 再删 DB 行"，而是先用条件删除赢得 DB 所有权——`DELETE FROM chat_attachments WHERE attach_id=? AND state='draft' AND created_at < now() - 48h` 返回 `affected_rows=1` 才说明这一行真的被 GC 拿下了（如果这行此时已经被并发的发送请求 claim 成 `attached`，条件里的 `state='draft'` 不匹配，`affected_rows=0`，GC 直接跳过这一行，不会跟 claim 抢——这就是 GC-vs-claim 竞态的解法：谁先在 DB 层面改变这一行的状态，谁赢，另一方的操作天然是 no-op）；删除成功（`affected_rows=1`）之后才调 `try_delete_storage_if_unreferenced(user_id, storage_key)` 处理物理字节。TTL 定为 48 小时。
 8. **发送失败/放弃时的及时清理（状态守卫，不是"失败就删"）**：新增按 `attach_id` 删除单个草稿附件的接口，**删除前必须校验 `state == 'draft'`，非 DRAFT 一律拒绝**（同样走"条件删除、`affected_rows` 判断成败"的模式，不是先查再删的两步）——这是必须的安全条件：HTTP 响应丢失/超时不等于请求真的失败，消息可能已经在服务端提交成功、附件已经被 claim 成 `ATTACHED`。前端在发送请求失败时调用；覆盖不了"上传后直接关标签页/崩溃/断网"这类无信号场景，仍需要步骤 7 的定时兜底，这里只是降低草稿孤儿产生速度的锦上添花，不是主机制。
 9. **安全网：低频全量一致性扫描**，DB 与 storage 交叉检查，**两种不一致必须区别处理，不能用同一套"清理"逻辑**：
    - **DB 有记录 + storage 对象缺失** → **完整性异常（integrity violation）**，记录到受限诊断出口，**并补一条 `SystemLog`**（后台「系统日志」页可见，写入前必须过 `redact()`，不能把 `storage_key`/路径等原始信息直接暴露到这个用户可达的出口），**不做自动修复、不删除 DB 记录**——这种情况意味着 storage 被误删/损坏/人工误操作/删除顺序出错，是真实的数据丢失，自动"顺手清理掉 DB 记录"等于把这个事故悄悄掩盖掉。
-   - **DB 无记录 + storage 对象存在（非最近写入）** → **孤儿候选**，清理前同样要走步骤 5 的 `try_delete_storage_if_unreferenced(user_id, storage_key)`（按 `storage_key` 查，不是按单条记录判断"有没有 DB 记录"——PRD-IM-6 落地后，同一个 `storage_key` 可能有其他存活行还在用，"这条记录没了"不等于"这个 storage_key 没人用了"）。
+   - **DB 无记录 + storage 对象存在（非最近写入）** → **孤儿候选**，清理前同样要走步骤 5 的 `try_delete_storage_if_unreferenced(user_id, storage_key)`（按 `storage_key` 查，不是按单条记录判断"有没有 DB 记录"——PRD-IM-9 落地后，同一个 `storage_key` 可能有其他存活行还在用，"这条记录没了"不等于"这个 storage_key 没人用了"）。
    - 频率：每天一次；阈值：90 天。扫描本身只是按索引查询，成本低，选择更高频率是为了更快发现 integrity violation（真实数据丢失信号），本质是 eventual consistency 的最后一道防线，不是主清理路径。
 - **组织方式（约束，不规定具体文件）**：草稿清理、安全网扫描、（Phase B 的）视频缓存清理是三种不同生命周期策略（状态驱动 / 消息生命周期驱动 / 租约驱动），清理逻辑应按语义独立组织，不应该塞进一个按路径前缀 if-elif 堆叠多套判断的扫描函数里；可以共享底层 `list_keys`/`stat`/`delete`/锁/调度基础设施，以及步骤 5 的 `try_delete_storage_if_unreferenced()`。
 - 并发保护：沿用 `agent/memory` scope 锁的模式（Redis 分布式锁），防止 backend/worker 同时触发同一扫描。
@@ -168,7 +168,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 > v1（定时按物理 mtime 扫描 + 固定 TTL）已实现过一次并 revert（commit `dece7584` → `e63014a9`），原因见第 1.3 节。以下步骤跟第 2 节 FR-STORAGE-1-1 的 v3 描述（去掉 `DELETING`、统一 `try_delete_storage_if_unreferenced(user_id, storage_key)`、Redis 只做 legacy fallback）保持一致——**这里不重复列出完整的四条不变量和每一步的详细理由，实施前请以第 2 节为准，这里只是对应到具体改动点的清单**。
 
 1. ~~先确认现状~~ **已确认**：`ConversationMessage.files` 只存卡片展示信息、缺 `storage_key`，必须新建独立表，不能靠扩展现有字段，见第 4 节。
-2. **新增 `chat_attachments` 表**（字段、索引、约束见第 2 节步骤 1；`state` 只有 `draft`/`attached` 两个值，**没有 `deleting`**）。简单 `message_id` 外键，不做多对多（见第 1.4 节）；`storage_key` 无唯一约束（PRD-IM-6 场景下会被多行共享）。
+2. **新增 `chat_attachments` 表**（字段、索引、约束见第 2 节步骤 1；`state` 只有 `draft`/`attached` 两个值，**没有 `deleting`**）。简单 `message_id` 外键，不做多对多（见第 1.4 节）；`storage_key` 无唯一约束（PRD-IM-9 场景下会被多行共享）。
 3. **`stage()` 改为直接写 DB，且不再写旧的 Redis meta key**：`storage.put()` 成功后立刻 `INSERT chat_attachments(state=draft)`；insert 失败 best-effort 回滚刚写的 storage 字节（这是物理删除唯一不走统一入口的例外）。
 4. **发送成功时原子 claim，整条消息一个事务**：`resolve_for_message` 产生的消息真正持久化时，对每个关联 `attach_id` 执行条件更新，任意一次 `affected_rows != 1` 整个事务回滚（消息本身也不落库），claim 之后不再有任何 TTL。
 5. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）永远先查 DB**：`WHERE attach_id=? AND user_id=?`（禁止只按 `attach_id` 查，避免 IDOR）；DB 查不到才回退查 Redis 的 legacy meta（只覆盖新方案上线前写入的旧数据，会随 TTL 自然消失，不专门下线）。
@@ -215,9 +215,9 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 - [ ] **Claim all-or-nothing**：一条消息带 3 个附件，模拟其中 1 个 claim 失败（比如已经被并发请求 claim 走，`affected_rows=0`）——断言整个事务回滚：消息本身不落库，另外 2 个附件也仍然是 `draft` 状态，不会出现"消息存在但只有部分附件是 attached"的半完整结果。
 - [ ] `/thumb`、`/download`、`/preview-pdf`：Redis 未命中/不存在时，能从 DB 正确回退拿到 meta 并返回内容（模拟"7 天后再打开历史消息"场景）；查询必须带 `user_id` 过滤——用另一个用户的身份查同一个 `attach_id` 应该拿不到（IDOR 回归测试）。
 - [ ] `delete_session`：会话下有 2 条消息各引用 1 个附件，删除会话后，两个附件的存储对象和 `chat_attachments` 行都应该消失；不属于这个会话的附件不受影响。
-- [ ] **共享 `storage_key` 时的删除隔离（P0，对应 PRD-IM-6 的复用场景）**：两条独立消息（分属不同会话）的 `chat_attachments` 行指向同一个 `storage_key`；删除其中一个会话后，断言：① 那条消息的 `chat_attachments` 行被删；② 物理 `storage_key` **没有**被删除（因为另一条还活着）；③ 另一条消息仍能正常通过 `/thumb`/`/download` 访问附件。再删除第二条消息所在会话后，这次断言物理字节才真正被删除。
+- [ ] **共享 `storage_key` 时的删除隔离（P0，对应 PRD-IM-9 的复用场景）**：两条独立消息（分属不同会话）的 `chat_attachments` 行指向同一个 `storage_key`；删除其中一个会话后，断言：① 那条消息的 `chat_attachments` 行被删；② 物理 `storage_key` **没有**被删除（因为另一条还活着）；③ 另一条消息仍能正常通过 `/thumb`/`/download` 访问附件。再删除第二条消息所在会话后，这次断言物理字节才真正被删除。
 - [ ] `try_delete_storage_if_unreferenced()` 单测：`storage_key` 还有其他存活 `chat_attachments` 行时不删物理对象，返回"跳过"；没有任何存活行时才真正删除，返回"已删除"。
-- [ ] **不变量 4（检查-删除竞态，本 PRD 侧的边界测试）**：这个竞态的根本解法在 PRD-IM-6（复用时锁住源行），但本 PRD 至少要测"检查那一刻"的正确性——mock `SELECT EXISTS` 返回结果与实际 `storage.delete()` 执行之间插入一次并发 `INSERT`（模拟新引用出现），断言 `try_delete_storage_if_unreferenced()` 自身的检查逻辑没有 bug（比如没有用陈旧的检查结果做二次判断）；同时在测试注释里明确标注"这个测试不能证明整体竞态已解决，完整解决依赖 PRD-IM-6 落地时对源行加锁"，避免以后有人误以为这一条测试通过就代表问题已经解决。
+- [ ] **不变量 4（检查-删除竞态，本 PRD 侧的边界测试）**：这个竞态的根本解法在 PRD-IM-9（复用时锁住源行），但本 PRD 至少要测"检查那一刻"的正确性——mock `SELECT EXISTS` 返回结果与实际 `storage.delete()` 执行之间插入一次并发 `INSERT`（模拟新引用出现），断言 `try_delete_storage_if_unreferenced()` 自身的检查逻辑没有 bug（比如没有用陈旧的检查结果做二次判断）；同时在测试注释里明确标注"这个测试不能证明整体竞态已解决，完整解决依赖 PRD-IM-9 落地时对源行加锁"，避免以后有人误以为这一条测试通过就代表问题已经解决。
 - [ ] 草稿孤儿清理：`state='draft'` 且超过草稿 TTL 的行会被清理（含存储对象）；`state='attached'` 的行即使物理 mtime 同样很老也**不会**被草稿清理碰到。
 - [ ] 单个附件删除接口的状态守卫：`state='draft'` 时删除成功，对应存储对象和 DB 行都消失；`state='attached'` 时删除请求应该被拒绝（不能因为前端误判"发送失败"就删掉已生效的附件）；删除一个不存在或不属于当前用户的 `attach_id` 应该返回明确错误而不是静默成功。
 - [ ] **发送成功但 HTTP 响应丢失/超时的竞态**：模拟消息已经在服务端提交成功（附件已 claim 成 `attached`）之后，客户端仍然发出单附件删除请求——断言删除被拒绝，附件和存储对象都还在。
@@ -248,7 +248,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 
 - [ ] 发一张图片给咕咕（正常发送，非草稿），刷新页面，确认气泡里的图片正常显示（走的是 DB 查询路径，不是靠 objectURL）。
 - [ ] 手动把 Redis 整个 flush 掉（模拟容器重建/数据丢失），再刷新这条历史消息，确认图片依然正常显示（证明真的从 DB 拿到了 meta，跟 Redis 状态无关——包括草稿阶段刚上传、还没发送成功的附件也应该在 DB 里能查到）。
-- [ ] 删除这条消息所在的整个会话，检查存储里对应的 storage_key 确实被删除了（不再残留孤儿字节），`chat_attachments` 表里对应行也应该消失。（`storage_key` 共享场景——两条消息共用同一份字节、删一条不影响另一条——目前只有自动化测试覆盖；PRD-IM-6 落地前没有可以手动触发共享场景的入口，等 IM-6 上线后再补一条手动验证。）
+- [ ] 删除这条消息所在的整个会话，检查存储里对应的 storage_key 确实被删除了（不再残留孤儿字节），`chat_attachments` 表里对应行也应该消失。（`storage_key` 共享场景——两条消息共用同一份字节、删一条不影响另一条——目前只有自动化测试覆盖；PRD-IM-9 落地前没有可以手动触发共享场景的入口，等 IM-6 上线后再补一条手动验证。）
 - [ ] 上传一张图片但**不发送**（只调用暂存接口），等草稿 TTL 过期后跑一次清理任务，确认这个从未发送的草稿被清理掉了；再上传一张、正常发送、发送成功后手动改数据库把这张图的 mtime/created_at 改到 TTL 之外，确认它**不会**被草稿清理误删（因为已经是 `attached` 状态）。
 - [ ] 挂上定时任务后，观察 `app/core/scheduler.py` 的启动日志确认相关 job 被正确注册。
 - [ ] 观察一次真实的低峰自动运行（不手动触发），确认定时触发本身工作正常，不只是手动调用路径可用。
