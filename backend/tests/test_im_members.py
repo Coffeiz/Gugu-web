@@ -54,6 +54,28 @@ async def test_resolve_speaker_by_platform_user_id(db, user_a):
 
 
 @pytest.mark.asyncio
+async def test_resolve_speaker_by_stale_platform_user_id_from_members(db, user_a):
+    """①层的契约是"platform_user_id 精确匹配最高优先级"，不应该只查实时表——
+    沉默成员的消息已经被保留窗口裁掉，live_ids 里查不到了，但 _merge_members()
+    明确保证沉默成员会继续留在 members.json 里、不会被删除。直接传这个人的
+    platform_user_id 必须还能命中，否则跟①层"最高优先级"的契约矛盾
+    （code review 复审发现：members.json 保留了这个人，但按 id 查却返回
+    "没有找到"）。"""
+    from agent.tools.group_context import _resolve_speaker
+
+    # 数据库里没有 pid-stale 的任何消息——模拟这个人的历史已经完全被裁出保留窗口。
+    await _seed_group_messages(db, user_a, "chat-1", [("pid-active", "在线成员", 0)])
+    members = {
+        "pid-stale": {"name": "沉默的人", "aliases": [], "nicknames": [],
+                      "last_seen_at": 10.0, "message_count": 0},
+    }
+    result = await _resolve_speaker(
+        db, user_a.id, "qq", "bot-a", "chat-1", "pid-stale", _load_members_stub(members),
+    )
+    assert result == {"platform_user_id": "pid-stale"}
+
+
+@pytest.mark.asyncio
 async def test_resolve_speaker_by_name_live_unique(db, user_a):
     """②层：直接查 ConversationMessage 里实时的 platform_user_name，不依赖 members.json。"""
     from agent.tools.group_context import _resolve_speaker
@@ -334,6 +356,36 @@ def test_merge_members_rename_appends_alias():
     assert member["message_count"] == 5
 
 
+def test_merge_members_appends_intermediate_names_from_multi_rename_batch():
+    """同一批反思消息里连续改名两次以上（A→B→C）：中间名字 B 既不等于上一轮
+    members.json 记录的 name（A），也不等于这一轮的最终 name（C），单靠
+    "上一轮 name vs 这一轮最终 name"的比较会漏记 B——必须靠 _aggregate_members
+    的 names_seen 补齐（code review 复审发现的真实场景）。"""
+    from agent.memory.im_reflection import _merge_members
+
+    current = {
+        "pid-1": {"name": "A", "aliases": [], "nicknames": [], "last_seen_at": 50.0, "message_count": 1},
+    }
+    aggregated = {
+        "pid-1": {"name": "C", "last_seen_at": 100.0, "message_count": 4, "names_seen": ["A", "B", "C"]},
+    }
+    result = _merge_members(current, aggregated)
+    member = result["members"]["pid-1"]
+    assert member["name"] == "C"
+    assert set(member["aliases"]) == {"A", "B"}
+
+
+def test_merge_members_names_seen_missing_does_not_break():
+    """aggregated 缺少 names_seen 键（比如旧调用点没传）时不应该报错，退化成
+    只靠"上一轮 name vs 这一轮最终 name"的原有比较。"""
+    from agent.memory.im_reflection import _merge_members
+
+    current = {"pid-1": {"name": "旧", "aliases": [], "nicknames": [], "last_seen_at": 1.0, "message_count": 1}}
+    aggregated = {"pid-1": {"name": "新", "last_seen_at": 2.0, "message_count": 2}}
+    result = _merge_members(current, aggregated)
+    assert result["members"]["pid-1"]["aliases"] == ["旧"]
+
+
 def test_merge_members_preserves_existing_nicknames():
     """_merge_members 不碰 nicknames，只原样保留已有值——不因为 DB 字段刷新就丢掉。"""
     from agent.memory.im_reflection import _merge_members
@@ -571,6 +623,39 @@ async def test_aggregate_members_rename_within_window_does_not_split_count(db, u
     assert members["pid-1"]["message_count"] == len(names)
     assert members["pid-1"]["name"] == "新名字"
     assert members["pid-1"]["last_seen_at"] == pytest.approx((base + timedelta(minutes=len(names) - 1)).timestamp())
+
+
+@pytest.mark.asyncio
+async def test_aggregate_members_collects_all_distinct_names_seen(db, user_a):
+    """_merge_members 只能拿到"上一轮记录的 name"和"这一轮最终 name"两个点；如果
+    同一批消息内部连续改名两次以上（A→B→C），中间名字 B 不会被单纯的名字比较捕获
+    到（code review 复审发现）。_aggregate_members 需要顺带记下本批内出现过的全部
+    不同名字，交给 _merge_members 决定是否补进 aliases。"""
+    from app.models import ConversationMessage, ConversationSession
+    from agent.memory.im_reflection import _aggregate_members
+    from agent.memory.scopes import MemoryScope
+
+    session = ConversationSession(
+        user_id=user_a.id, source="qq", bot_id="bot-a", chat_id="group-1", chat_type="group",
+    )
+    db.add(session)
+    await db.flush()
+
+    base = now_utc()
+    names = ["A", "A", "B", "C"]
+    for i, name in enumerate(names):
+        db.add(ConversationMessage(
+            session_id=session.id, role="user", content=f"消息{i}",
+            platform_user_id="pid-1", platform_user_name=name,
+            created_at=base + timedelta(minutes=i),
+        ))
+    await db.commit()
+
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
+    members = await _aggregate_members(db, scope)
+    assert members["pid-1"]["name"] == "C"
+    # 相邻重复（连续两条都是 "A"）去重，但完整的改名链路 A→B→C 都要记下来。
+    assert members["pid-1"]["names_seen"] == ["A", "B", "C"]
 
 
 @pytest.mark.asyncio
