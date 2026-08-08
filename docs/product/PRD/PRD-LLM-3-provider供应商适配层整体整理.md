@@ -22,6 +22,7 @@
 | Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成（Phase 6 已重做） | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
 | Phase 6（独立追加）：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩 | ✅ 已完成（Phase 8 已复审修复） | 外部 code review 指出 Phase 5 实现有 3 个问题：①超大视频整个读进内存，OSS 后端因 `stat()` 默认实现是 exists+get 还要多下载一遍；②复用的 `_compress_video` 目标码率是给"发送给 MiniMax"设计的（1080p 5Mbps），跟"读取只需要 1 帧画面+前 5 分钟音频"的真实需求不匹配，长视频低码率反而可能越压越大；③新增测试没有真正断言 `read_video` 的最终结果。修复方案见 FR-LLM-3-6。 |
 | Phase 8（独立追加）：Code Review 复审发现的 1 个 P1 + 2 个 P2 | ✅ 已完成 | 复审 Phase 6 修复后发现：① P1 `OSSStorageBackend.stat()` 捕获的异常类型是错的——`head_object` 对象不存在时抛的是 `NotFound`，不是代码里 `except` 的 `NoSuchKey`，`stat()` 在真实 OSS 上会直接抛未处理异常，"不存在→None"的契约名不副实（测试自己 mock 的异常类型跟真实 SDK 行为不一致，测试全绿但语义是错的）；② P2 `download_to_file` 手写 `get_object` + `shutil.copyfileobj`，丢了 oss2 官方 `get_object_to_file` 自带的 `Content-Length` 一致性校验，网络异常若未以异常形式冒出来会静默留下截断文件；③ P2 视频"物化到磁盘"这一步没有独立的并发限制，`_FFMPEG_SEMAPHORE` 只限制 ffmpeg 子进程数，挡不住高并发时磁盘上堆积大量完整临时视频文件。三个都已修复，见 FR-LLM-3-6 Phase 8 小节。 |
+| Phase 9（独立追加）：Code Review 三审发现的 1 个 P2 reliability | ✅ 已完成 | 复审 Phase 8 修复（改用 `get_object_to_file`）后指出：`get_object_to_file` 检测到"服务器声明 200MB、连接却提前 EOF 到 150MB"时抛的 `InconsistentError`（`status=-3`）没有被 `_oss_is_transient()` 的白名单覆盖（既不是 `RequestError` 也不 `>=500`），这类瞬时故障检测到了却不会走 `_oss_retry` 重试，白白浪费了这次改用 SDK 原生下载函数才具备的检测能力。已修复，见 FR-LLM-3-6 Phase 9 小节。 |
 
 ---
 
@@ -188,6 +189,14 @@ Phase 5 的实现（复用 `_compress_video` 整段压缩）被外部 code revie
    修复：新增独立的 `_VIDEO_READ_SEMAPHORE`，把"物化（含下载）+ 抽取"整个生命周期当一个临界区；刻意不复用 `_FFMPEG_SEMAPHORE` 包最外层——那样 `read_video` 先 acquire 一次、`_run_ffmpeg` 内部又对同一个 Semaphore 再 acquire 一次，等于嵌套等待同一把锁，反而抬高有效并发下限，必须用独立的 Semaphore 对象。
 
 Phase 8 测试：`tests/test_p2b_io_retry.py` 的 OSS stat/download 测试改成 mock `get_object_meta`/`get_object_to_file`（而不是 `head_object`/`get_object`），新增 `test_oss_download_to_file_retries_on_transient_error` 验证复用了 `_oss_retry`；`tests/test_file_readers.py` 新增 `test_read_video_limits_concurrent_materialize_lifecycle`，用 6 个并发 `read_video` 调用 + 计数器验证同时处于"物化+抽取"临界区内的调用数不超过 2。全量测试 756 passed。
+
+**Phase 9 修订（外部 code review 三审又发现 1 个 P2 reliability）**：
+
+Phase 8 改用 `get_object_to_file` 的一个重要收益就是它能检测"服务器声明 200MB、连接却提前正常 EOF 到 150MB"这种此前手写实现完全无感的场景——但 `_oss_is_transient()` 的白名单没有覆盖这类故障对应的异常：`get_object_to_file` 内部 `copyfileobj_and_verify()` 发现实际读到的字节数与声明的 `Content-Length` 不一致时，抛的是 `oss2.exceptions.InconsistentError`，这个异常的 `status` 是特殊值 `-3`——既不是 `RequestError`（连接级错误），也不满足 `status >= 500`（HTTP 5xx），会被现有两条判断规则漏判为"不重试"。等于说 Phase 8 好不容易换来的检测能力，检测到故障后却直接放弃、不走 `_oss_retry` 的退避重试，而这类"提前 EOF"往往正是最适合自动恢复的瞬时故障（下一次请求很可能就正常了）。
+
+修复：`_oss_is_transient()` 新增 `isinstance(e, oss_exc.InconsistentError)` 分支，视为瞬时故障纳入重试白名单。安全性上没有新增顾虑——`_oss_retry()` 的重试前提本来就是"幂等操作"，`get_object_to_file` 每次调用都以 `wb` 模式重新打开目标文件（覆盖写，不是追加），重试不会把上一次的半截内容和这一次的内容拼在一起。
+
+测试：`tests/test_p2b_io_retry.py` 新增 `test_oss_download_to_file_retries_on_inconsistent_error`——第一次调用模拟"写入部分内容后抛 `InconsistentError`"，第二次成功，断言重试后最终文件内容是完整版本、不含第一次的残留数据。全量测试 757 passed。
 
 ---
 

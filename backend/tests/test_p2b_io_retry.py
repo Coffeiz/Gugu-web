@@ -203,6 +203,34 @@ async def test_oss_download_to_file_retries_on_transient_error(tmp_path):
     assert dest.read_bytes() == b"ok"
 
 
+async def test_oss_download_to_file_retries_on_inconsistent_error(tmp_path):
+    """get_object_to_file 内部用 copyfileobj_and_verify 校验实际读到的字节数是否等于
+    声明的 Content-Length，"服务器说有 200MB、连接却提前 EOF 到 150MB"这种场景会抛
+    InconsistentError（status=-3，不属于 RequestError 也不 >=500）——这类瞬时故障
+    必须能重试，否则用 get_object_to_file 换来的检测能力就白白浪费了（code review
+    复审发现：_oss_is_transient 最初漏了这一条，检测到了却按"永久失败"直接放弃）。"""
+    import oss2.exceptions as oss_exc
+    backend = _make_oss_backend()
+    calls = {"n": 0}
+
+    def flaky(key, filename):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            # 模拟第一次下载提前 EOF：SDK 已经写了部分内容才发现长度不对。
+            with open(filename, "wb") as f:
+                f.write(b"partial")
+            raise oss_exc.InconsistentError("IncompleteRead from source", "req-id-1")
+        with open(filename, "wb") as f:
+            f.write(b"complete")
+
+    backend.bucket.get_object_to_file = flaky
+    dest = tmp_path / "out.mp4"
+    await backend.download_to_file("k", dest)
+    assert calls["n"] == 2
+    # 重试用 wb 重新打开目标文件，第一次的半截内容不会残留/被追加。
+    assert dest.read_bytes() == b"complete"
+
+
 def test_local_storage_local_path_returns_real_path(tmp_path):
     from app.services.storage import LocalStorageBackend
     backend = LocalStorageBackend(tmp_path)

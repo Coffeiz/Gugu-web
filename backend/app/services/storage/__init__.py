@@ -33,10 +33,17 @@ def _oss_is_transient(e: BaseException) -> bool:
     - `oss2.exceptions.OssError`（含 `ServerError` 等子类）：已经拿到 HTTP 响应，只有
       **5xx**（OSS 服务端故障）算瞬时；4xx（鉴权失败/参数错/NoSuchKey/NoSuchBucket 等）
       是可预期或永久失败，不在白名单内、直接原样上抛。
+    - `oss2.exceptions.InconsistentError`：`get_object_to_file()` 内部用
+      `copyfileobj_and_verify()` 校验实际读到的字节数是否等于声明的 `Content-Length`，
+      不一致时抛这个异常（`status` 是特殊值 `-3`，既不是 `RequestError` 也不 `>=500`，
+      不加这一条会被上面两条规则漏判为"不重试"——见 code review 复审：这类"服务器说
+      有 200MB、连接却提前正常 EOF 到 150MB"的场景本来就是这次改用 SDK 原生下载函数
+      要开始能检测的瞬时故障，检测到了却不重试等于没有获得应有的收益）。`_oss_retry()`
+      本身只包幂等操作，`get_object_to_file()` 每次都以 `wb` 重写目标文件，重试安全。
     """
     import oss2.exceptions as oss_exc
 
-    if isinstance(e, oss_exc.RequestError):
+    if isinstance(e, (oss_exc.RequestError, oss_exc.InconsistentError)):
         return True
     if isinstance(e, oss_exc.OssError):
         return getattr(e, "status", 0) >= 500
