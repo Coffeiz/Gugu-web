@@ -452,13 +452,14 @@ async def _probe_video(raw: bytes) -> dict | None:
     """用 ffprobe 读视频分辨率/码率/时长。返回 {width, height, bit_rate, duration, codec}，失败 None。
 
     ffprobe 是同步子进程，用 `asyncio.to_thread` 丢到线程池跑，避免阻塞事件循环。
-    `duration`：优先取视频流本身的 `duration`，但不少容器（尤其某些 mov/mp4 变体）
-    只把 `duration` 记在 format 层、流层压根没有这个字段——只读 stream 会让这些
-    视频的探测结果变成 0 秒，`>=120 秒直接拒绝`这条规则形同虚设（code review
-    发现）。所以 ffprobe 命令同时问 `format=duration` 和 `stream=...,duration`，
-    流层缺失时退回 format 层；两层都缺失才是真的 0（调用方按"探测不到就不因为
-    时长拒绝"处理，不因为 ffprobe 偶发失败误伤正常视频——但两个数据源都问过了，
-    不是只信一个容易漏读的字段）。"""
+    `duration`：不少容器（尤其某些 mov/mp4 变体）把它记在 format 层、流层压根没有
+    这个字段，反过来也有流层带、format 层缺失的情况——只信任其中一层都可能漏读。
+    所以 ffprobe 命令同时问 `format=duration` 和 `stream=...,duration`，取两者中
+    **较大**的那个（`max`，不是 `or`）：`>=120 秒直接拒绝`是硬限制，应该按更长
+    的估计值判断，用 `or`（谁先非零就用谁）会在某一层数据不完整、另一层是真实
+    更长时长时误判成"没超"，放过一个实际超限的视频（code review 指出）。两层
+    都缺失时返回 `duration=0`——调用方（`prepare_video_media`）对"确认不了时长"
+    按 fail-closed 处理（直接拒绝，不当成"没超限"放行）。"""
     import json as _json
     import subprocess
     import tempfile as _tf
@@ -484,7 +485,11 @@ async def _probe_video(raw: bytes) -> dict | None:
             "width": int(info.get("width") or 0),
             "height": int(info.get("height") or 0),
             "bit_rate": int(info.get("bit_rate") or 0),  # 0 = 容器未带（如 mov 有时）
-            "duration": stream_duration or format_duration,  # 秒；流层缺失退回 format 层
+            # 秒；两层都问过，取较长的那个——"整段视频不能超过 2 分钟"这条硬限制
+            # 应该按更长的估计值判断，用 or（谁先非零就用谁）会在 stream 层元数据
+            # 不完整（比如只有 10 秒）而 format 层是真实的 125 秒时误判成"没超"，
+            # 放过一个实际超限的视频（code review 指出）。
+            "duration": max(stream_duration, format_duration),
         }
     except Exception:
         return None
@@ -664,6 +669,12 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> di
         raise ValueError("这条视频太大（超过 500MB 处理上限），没法直接看")
     probe = await _probe_video(raw)
     duration = (probe or {}).get("duration") or 0
+    # 时长上限是硬限制（>=120 秒直接拒绝），"确认不了时长"不能当成"没超限"放行——
+    # ffprobe 失败、或者 stream/format 两层都没带 duration 字段时，duration 会是 0，
+    # 如果直接拿 0 去跟 120 比较就会误判成"远没超限"而放行，等于让硬限制在探测
+    # 失败时变成开着口子（code review 指出：fail-open 的方向错了，应该 fail-closed）。
+    if not duration:
+        raise ValueError("无法确认视频时长，没法直接看")
     if duration >= VIDEO_DURATION_MAX_SECONDS:
         raise ValueError("这条视频太长（超过 120 秒上限），没法直接看")
 

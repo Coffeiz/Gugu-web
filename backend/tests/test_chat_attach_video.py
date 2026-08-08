@@ -237,8 +237,11 @@ def test_probe_video_falls_back_to_format_duration_when_stream_missing(monkeypat
     assert result["duration"] == 125.5
 
 
-def test_probe_video_prefers_stream_duration_over_format(monkeypatch):
-    """流层有 duration 时优先用流层的值，不是无条件取 format 层。"""
+def test_probe_video_duration_takes_the_longer_of_stream_and_format(monkeypatch):
+    """stream/format 两层都有 duration 时取较大值，不是无条件信任某一层——
+    "整段视频不能超过 2 分钟"这条硬限制应该按更长的估计值判断，用 max 而不是
+    "谁先非零用谁"（or），否则某一层元数据不完整（比如只有 10 秒）而另一层是
+    真实的 125 秒时会误判成"没超"，放过一个实际超限的视频（code review 指出）。"""
     import asyncio
     import json
     import subprocess
@@ -261,7 +264,7 @@ def test_probe_video_prefers_stream_duration_over_format(monkeypatch):
     monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
 
     result = asyncio.run(chat_attach._probe_video(b"RAW_VIDEO"))
-    assert result["duration"] == 10.0
+    assert result["duration"] == 125.5
 
 
 # ── _upload_video_mmfile：成功 / 失败 ────────────────────────────────────────
@@ -345,7 +348,7 @@ def test_resolve_mmfile_failure_does_not_fallback_base64(monkeypatch):
         return b"x" * size
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 60.0}
 
     async def fake_upload(raw, name, cfg):
         return None  # 上传失败
@@ -423,7 +426,7 @@ def test_resolve_video_under_45mb_base64(monkeypatch):
         return b"x" * size
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 60.0}
 
     monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
@@ -494,7 +497,7 @@ def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
         return b"x" * size
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 60.0}
 
     async def fake_upload(raw, name, cfg):
         return "file-123"
@@ -716,6 +719,21 @@ def test_prepare_video_media_final_payload_boundaries(monkeypatch):
     monkeypatch.setattr(chat_attach, "_compress_video", _compress_to(100))
     with pytest.raises(ValueError, match="90MB"):
         asyncio.run(chat_attach.prepare_video_media(b"x" * 200, "video/mp4", "v.mp4", _minimax_cfg()))
+
+
+def test_prepare_video_media_rejects_when_duration_cannot_be_determined(monkeypatch):
+    """时长上限是硬限制——ffprobe 失败/两层都拿不到 duration 时不能 fail-open
+    放行，必须 fail-closed 拒绝（code review 指出：确认不了时长不等于没超限）。"""
+    import asyncio
+    from app.core import chat_attach
+
+    async def fake_probe(raw):
+        return None   # 模拟 ffprobe 彻底失败
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+
+    with pytest.raises(ValueError, match="无法确认视频时长"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", _minimax_cfg()))
 
 
 def test_prepare_video_media_rejects_duration_over_120s_without_transcoding(monkeypatch):
