@@ -325,6 +325,7 @@ async def serve():
     # 定时任务引擎：worker 是单实例进程，唯一 owner（web 多 worker 不会重复跑）
     from app.core import scheduler as sched
     from app import scheduled_tasks as schedtasks
+    from app.core import attachment_gc as _attachment_gc  # noqa: F401  # 触发内置任务 @scheduler.register（草稿 GC + 安全网），须在 sched.start() 之前 import
     sched.start()
     try:
         await schedtasks.reconcile()             # 立即从 DB 加载一遍

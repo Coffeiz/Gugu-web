@@ -14,8 +14,9 @@
 |---|---|---|
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 v1（已推翻） | ❌ 已废弃 | 曾实现"定时扫存储、按物理 mtime 判断年龄，固定 7 天 TTL"的清理任务（commit `dece7584`），已 revert（commit `e63014a9`）。废弃原因见第 1.4 节：固定 TTL 会让长周期项目里、没有显式存进文件库的历史消息附件"失效"，这不是清理任务的 bug，是这个方案本身的产品语义就不对。 |
-| Phase 1'：方案设计 v3（已定稿，可开工） | 🔲 待实施 | 核心是"**DB 是所有权真相来源**"：`chat_attachments` 只有 `draft`/`attached` 两态（无 `DELETING` 中间态），Redis 完全降级为 legacy fallback/lock/cache，不承担任何"这个对象还有没有主人"的判断责任。物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`，删除前按 `storage_key` 检查引用（对应 PRD-IM-9 的共享 storage_key 场景）；消息创建与所有附件 claim 是同一个 DB 事务；GC/安全网一律"DB 先变化、再碰 storage"。经三轮外部评审收敛，第 2、5 节实施计划已完全同步。见第 1.3、2、5 节。 |
-| Phase 2：视频转码缓存实施 | 🔲 待评估 | 缓存路径由 `cache_key` 确定性推导，Redis 只存一个"存活标记"（`alive marker`，命中时 `SET ... EX` 重建/续期，不是 `EXPIRE`），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
+| Phase 1'：方案设计 v3（已定稿） | ✅ 已完成 | 核心是"**DB 是所有权真相来源**"：`chat_attachments` 只有 `draft`/`attached` 两态（无 `DELETING` 中间态），Redis 完全降级为 legacy fallback/lock/cache，不承担任何"这个对象还有没有主人"的判断责任。物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`，删除前按 `storage_key` 检查引用（对应 PRD-IM-9 的共享 storage_key 场景）；消息创建与所有附件 claim 是同一个 DB 事务；GC/安全网一律"DB 先变化、再碰 storage"。经三轮外部评审收敛，第 2、5 节实施计划已完全同步。见第 1.3、2、5 节。 |
+| Phase 2a：Phase A 实施 | ✅ 已完成 | `chat_attachments` 表 + migration；`try_delete_storage_if_unreferenced()`；`stage()`/`stage_sync()` 写 DB（插入失败回滚 storage）；`get_meta*`/`list_staged`/`clear_staged` 改 DB 优先 + Redis legacy fallback；`claim_attachments()` 接进网页/IM 全部三个消息落库入口（同事务、all-or-nothing）；`/thumb`/`download`/`preview-pdf` 走 DB 查询（IDOR 已由 `user_id` 过滤挡住）；`delete_session` 两阶段（DB 优先、显式删附件行不依赖 FK 级联、按引用计数删物理字节，含共享 storage_key 隔离）；新增单附件删除接口（状态守卫）；草稿 GC + 安全网两个定时任务（`app/core/attachment_gc.py`）；前端发送失败时调用清理。过程中顺手修了一个真实的跨事件循环 asyncpg bug（`app/db/session.py` 的 `ensure_engine()` 加了循环检测）。新增 27 个测试，后端全量测试 864 passed。Phase B（视频缓存）尚未开始。 |
+| Phase 2b：Phase B 实施（视频转码缓存） | 🔲 待评估 | 缓存路径由 `cache_key` 确定性推导，Redis 只存一个"存活标记"（`alive marker`，命中时 `SET ... EX` 重建/续期，不是 `EXPIRE`），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
 
 ---
 

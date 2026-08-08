@@ -3,7 +3,14 @@
 - 咕咕能「看」：文本类读内容注入上下文；图片给提示（看内容需 vision 模型）。
 - 咕咕能「存」：用户说存时，`save_uploaded_file` 工具把暂存字节落成正式文件库记录。
 
-字节走 StorageBackend（key 放 `.chat_staging/` 下），元数据走 Redis（TTL 7天，过期自动失效）。
+字节走 StorageBackend（key 放 `.chat_staging/` 下）；**元数据以 `chat_attachments`
+表为所有权真相来源**（PRD-STORAGE-1 Phase A）——附件只有 `draft`/`attached` 两态，
+Redis 完全不参与"这个对象是否有主人"的判断，只在 DB 查不到时作为 v3 上线前遗留
+数据的 legacy fallback（会随旧 Redis key 自然过期消失，不专门下线）。
+
+物理删除的唯一入口是 `try_delete_storage_if_unreferenced()`（stage()/stage_sync()
+insert 失败时的补偿删除除外）——删除前检查是否还有其他存活行引用同一个
+`storage_key`（PRD-IM-9 的引用复用场景会让多条附件行共享一份物理字节）。
 """
 from __future__ import annotations
 
@@ -14,7 +21,14 @@ import re
 import uuid
 
 from app.core.redis import get_redis, get_redis_sync
+from app.core.tz import now_utc
 from app.services.storage import get_storage
+
+DRAFT_TTL = 48 * 3600   # 草稿（未发送）暂存 TTL，见 PRD-STORAGE-1 §4；草稿孤儿清理按这个值扫
+
+
+class AttachmentClaimError(Exception):
+    """消息发送时至少一个附件 claim 失败——已被其他请求 claim 走，或已被草稿 GC 清理。"""
 
 # 视频转码并发上限：ffmpeg CPU/内存密集，避免多人同时上传视频打满机器
 VIDEO_TRANSCODE_SEMAPHORE = asyncio.Semaphore(2)
@@ -179,14 +193,137 @@ def _current_platform(explicit: str | None) -> str | None:
         return None
 
 
+_ROW_META_FIELDS = {"attach_id", "name", "ext", "mime", "size", "storage_key",
+                    "kind", "duration", "img_width", "img_height"}
+
+
+def _extra_from_meta(meta: dict) -> dict | None:
+    """meta 里除了 chat_attachments 专门列之外的其余字段（platform/qq_face/quoted 等
+    stage() 的 extra= 参数塞进来的展示用字段），塞进 DB 行的 extra JSON 列。"""
+    extra = {k: v for k, v in meta.items() if k not in _ROW_META_FIELDS and v is not None}
+    return extra or None
+
+
+async def _record_draft(user_id, attach_id: str, storage_key: str, meta: dict) -> None:
+    """插入一条 draft 状态的 chat_attachments 行——调用方（stage()）在这一步失败时
+    要 best-effort 回滚刚写的 storage 字节，这是"物理删除只能走统一入口"这条规则
+    唯一的例外（此时 DB ownership 从未成功建立过，没有行可查、也没有其他引用需要
+    担心，直接删就是安全的）。"""
+    from app.models import ChatAttachment
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        db.add(ChatAttachment(
+            attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+            name=meta.get("name") or "", ext=meta.get("ext") or "",
+            mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
+            size=meta.get("size") or 0, duration=meta.get("duration"),
+            img_width=meta.get("img_width"), img_height=meta.get("img_height"),
+            state="draft", extra=_extra_from_meta(meta),
+        ))
+        await db.commit()
+
+
+async def _record_draft_isolated(user_id, attach_id: str, storage_key: str, meta: dict) -> None:
+    """`_record_draft` 的独立引擎版本，给 `stage_sync()` 的线程内 `asyncio.run()` 用。
+
+    `stage_sync()` 跑在一次性新开的事件循环里（调用方本来就没有运行中的 loop，
+    见该函数文档字符串）——不能复用主进程共享的 async 引擎连接池：asyncpg 连接
+    绑定创建它的事件循环，跨循环复用会直接报错。这里现开一个只用一次的独立引擎，
+    插入完就 `dispose()`，避免碰共享连接池。IM 语音/图片入库频率不高，这点额外
+    建连开销可以接受。"""
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+    from app.core.config import get_settings
+    from app.models import ChatAttachment
+    engine = create_async_engine(get_settings().db.url, pool_size=1, max_overflow=0)
+    try:
+        Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        async with Session() as db:
+            db.add(ChatAttachment(
+                attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+                name=meta.get("name") or "", ext=meta.get("ext") or "",
+                mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
+                size=meta.get("size") or 0, duration=meta.get("duration"),
+                img_width=meta.get("img_width"), img_height=meta.get("img_height"),
+                state="draft", extra=_extra_from_meta(meta),
+            ))
+            await db.commit()
+    finally:
+        await engine.dispose()
+
+
+async def try_delete_storage_if_unreferenced(user_id, storage_key: str) -> str:
+    """物理删除的唯一入口（`_record_draft`/`_record_draft_isolated` 的 insert 失败
+    回滚除外）。删除前检查是否还有其他存活的 `chat_attachments` 行指着同一个
+    `storage_key`（PRD-IM-9 的引用复用场景会让多条附件行共享一份物理字节，
+    不做这个检查会误删还在被别的消息使用的字节）。
+
+    返回 `"deleted"`（真的删了物理字节）或 `"skipped"`（还有其他存活引用，跳过）。
+    **这个"检查再删除"本身不是原子操作**（PRD-STORAGE-1 FR-STORAGE-1-1 第 4 条
+    不变量）——这里只保证检查逻辑本身正确，"检查完之后不会冒出新引用"依赖调用方
+    配合（尤其 PRD-IM-9 的复用逻辑要在创建共享引用期间锁住源行）。"""
+    from app.models import ChatAttachment
+    from sqlalchemy import select
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        still_referenced = (await db.execute(
+            select(ChatAttachment.id).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.storage_key == storage_key,
+            ).limit(1)
+        )).scalar_one_or_none() is not None
+    if still_referenced:
+        return "skipped"
+    try:
+        await get_storage().delete(storage_key)
+    except Exception:
+        pass
+    return "deleted"
+
+
+async def claim_attachments(db, user_id, message_id: int, attach_ids: list[str]) -> None:
+    """把消息引用的附件从 `draft` 原子转成 `attached`，写 `message_id`。
+
+    必须在调用方已经 `db.flush()` 拿到 `message_id`、且仍处于同一个未提交事务的
+    `db` 上调用——任何一次 claim 的 `affected_rows != 1` 都会抛 `AttachmentClaimError`，
+    调用方必须让整个事务连同消息一起回滚（PRD-STORAGE-1 不变量 3：不允许"消息存在
+    但只有部分附件 claim 成功"的半完整状态）。
+
+    `attach_ids` 只应该传 `resolve_for_message` 已经确认存在的那些 id（即
+    `cards` 里出现的 `attach_id`），不要传用户原始输入——不存在/输错的 attach_id
+    在 `resolve_for_message` 阶段就已经被忽略、不会出现在 cards 里，不该在这里
+    变成 claim 失败去炸掉整条消息。"""
+    if not attach_ids:
+        return
+    from sqlalchemy import update
+    from app.models import ChatAttachment
+    for aid in dict.fromkeys(str(a) for a in attach_ids if a):
+        result = await db.execute(
+            update(ChatAttachment)
+            .where(
+                ChatAttachment.attach_id == aid,
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state == "draft",
+            )
+            .values(state="attached", message_id=message_id, attached_at=now_utc())
+        )
+        if result.rowcount != 1:
+            raise AttachmentClaimError(aid)
+
+
 async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
                 *, kind: str | None = None, ttl: int = TTL,
                 subdir: str = ".chat_staging", extra: dict | None = None,
                 platform: str | None = None) -> dict:
     """暂存一个上传文件，返回元数据（含 attach_id）。
-    语音条走 kind='voice' / ttl=TTL_VOICE / subdir='.voice'（见 stage_voice）。
+    语音条走 kind='voice' / subdir='.voice'（见 stage_voice）。
     图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。
-    `platform`：附件来自哪个渠道（qq/feishu/wechat/web），不传则按 imctx 自动识别，见 _current_platform。"""
+    `platform`：附件来自哪个渠道（qq/feishu/wechat/web），不传则按 imctx 自动识别，见 _current_platform。
+
+    `ttl` 参数保留只为兼容旧调用签名（`stage_voice` 等仍会传），**不再控制任何行为**——
+    草稿的存活期统一由 `DRAFT_TTL` 常量 + 草稿 GC 任务管理，不区分 `.chat_staging`/`.voice`；
+    这里不再写 Redis 元数据（DB 是所有权真相来源，见模块顶部说明）。"""
     attach_id = uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
@@ -201,7 +338,14 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
         meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
-    await get_redis().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
+    try:
+        await _record_draft(user_id, attach_id, storage_key, meta)
+    except Exception:
+        try:
+            await get_storage().delete(storage_key)
+        except Exception:
+            pass
+        raise
     return meta
 
 
@@ -227,9 +371,13 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
     """同步暂存（给 IM 网关用）。
 
     网关 handler 跑在一个**已运行的 asyncio loop** 里（lark SDK），所以不能在当前线程
-    new_event_loop().run_until_complete。改为把 async 的 storage.put 丢到**独立线程**用
-    asyncio.run 跑（新线程无运行中的 loop，storage 后端不绑定 loop）；元数据用同步 redis
-    （避免复用 async 客户端的跨 loop 问题）。
+    new_event_loop().run_until_complete。改为把 storage.put + DB insert 一起丢到
+    **独立线程**用 asyncio.run 跑（新线程无运行中的 loop，storage 后端不绑定 loop）。
+
+    DB 插入用 `_record_draft_isolated()`（独立引擎，不复用主进程共享连接池）——
+    asyncpg 连接绑定创建它的事件循环，这里每次调用都是一次性新开的 loop，不能像
+    `async with db_session._SessionLocal()` 那样直接复用全局共享的连接池，否则会
+    在跨循环复用连接时报错；不再写 Redis 元数据（DB 是所有权真相来源）。
     `platform`：附件来自哪个渠道，网关调用时必须显式传（此时 imctx 还没 set，见 _current_platform）。
     """
     import asyncio
@@ -238,12 +386,6 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
     attach_id = _uuid.uuid4().hex[:16]
     ext_l = (ext or "").lower()[:10]
     storage_key = f"{user_id}/{subdir}/{attach_id}.{ext_l or 'bin'}"
-
-    def _put():
-        asyncio.run(get_storage().put(storage_key, data, mime or "application/octet-stream"))
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        ex.submit(_put).result()
 
     meta = {
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
@@ -255,11 +397,69 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
         meta["img_width"], meta["img_height"] = img_w, img_h
     if extra:
         meta.update(extra)
-    get_redis_sync().set(_key(user_id, attach_id), json.dumps(meta, ensure_ascii=False), ex=ttl)
+
+    async def _put_and_record():
+        await get_storage().put(storage_key, data, mime or "application/octet-stream")
+        try:
+            await _record_draft_isolated(user_id, attach_id, storage_key, meta)
+        except Exception:
+            try:
+                await get_storage().delete(storage_key)
+            except Exception:
+                pass
+            raise
+
+    def _run():
+        asyncio.run(_put_and_record())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        ex.submit(_run).result()
+
     return meta
 
 
+def _row_to_meta(row) -> dict:
+    """把 `ChatAttachment` 行转成跟旧 Redis meta 兼容的字典（下游一大批代码按这个
+    dict 形状读字段，不改动它们，只换数据来源）。"""
+    meta = {
+        "attach_id": row.attach_id, "name": row.name, "ext": row.ext,
+        "mime": row.mime or "", "size": row.size, "storage_key": row.storage_key,
+        "kind": row.kind, "duration": row.duration,
+        "img_width": row.img_width, "img_height": row.img_height,
+    }
+    if row.extra:
+        meta.update(row.extra)
+    if row.state == "draft":
+        # `_ttl`：给 `_fmt_age()`（agent/tools/files.py）估算"大约存了多久"用，
+        # 语义从"Redis 剩余 TTL"改成"按 DRAFT_TTL 倒推的剩余额度"，效果一致。
+        elapsed = max(0.0, (now_utc() - row.created_at).total_seconds())
+        meta["_ttl"] = max(0, int(DRAFT_TTL - elapsed))
+    return meta
+
+
+async def _get_attachment_row(user_id, attach_id: str):
+    from app.models import ChatAttachment
+    from sqlalchemy import select
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        return (await db.execute(
+            select(ChatAttachment).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.attach_id == str(attach_id),
+            )
+        )).scalars().first()
+
+
 async def get_meta(user_id, attach_id: str) -> dict | None:
+    """先查 DB（所有权真相来源），DB 没有才回退查 Redis 的 legacy 元数据——只覆盖
+    v3 上线前写入的旧数据，会随 Redis key 自然过期消失，不专门下线这条路径。"""
+    try:
+        row = await _get_attachment_row(user_id, attach_id)
+        if row is not None:
+            return _row_to_meta(row)
+    except Exception:
+        pass
     try:
         raw = await get_redis().get(_key(user_id, attach_id))
         return json.loads(raw) if raw else None
@@ -268,56 +468,99 @@ async def get_meta(user_id, attach_id: str) -> dict | None:
 
 
 async def get_meta_many(user_id, attach_ids: list[str]) -> dict[str, dict]:
-    """一次读取多个暂存附件的元数据，返回 attach_id 到 meta 的映射。"""
+    """一次读取多个暂存附件的元数据，返回 attach_id 到 meta 的映射。DB 优先，
+    DB 没有的再回退查 Redis legacy（同 get_meta 的策略）。"""
     if not user_id or not attach_ids:
         return {}
     unique_ids = list(dict.fromkeys(str(attach_id) for attach_id in attach_ids if attach_id))
     if not unique_ids:
         return {}
+    result: dict[str, dict] = {}
     try:
-        raw_items = await get_redis().mget([_key(user_id, attach_id) for attach_id in unique_ids])
-        result = {}
-        for attach_id, raw in zip(unique_ids, raw_items):
-            if not raw:
-                continue
-            if isinstance(raw, bytes):
-                raw = raw.decode()
-            result[attach_id] = json.loads(raw)
-        return result
+        from app.models import ChatAttachment
+        from sqlalchemy import select
+        import app.db.session as db_session
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            rows = (await db.execute(
+                select(ChatAttachment).where(
+                    ChatAttachment.user_id == user_id,
+                    ChatAttachment.attach_id.in_(unique_ids),
+                )
+            )).scalars().all()
+        for row in rows:
+            result[row.attach_id] = _row_to_meta(row)
     except Exception:
-        return {}
+        pass
+    missing = [aid for aid in unique_ids if aid not in result]
+    if missing:
+        try:
+            raw_items = await get_redis().mget([_key(user_id, aid) for aid in missing])
+            for aid, raw in zip(missing, raw_items):
+                if not raw:
+                    continue
+                if isinstance(raw, bytes):
+                    raw = raw.decode()
+                result[aid] = json.loads(raw)
+        except Exception:
+            pass
+    return result
 
 
 async def list_staged(user_id) -> list[dict]:
-    """该用户当前所有未过期的暂存附件 meta，按剩余 TTL 降序（越新越靠前）。"""
-    r = get_redis()
-    prefix = f"{_PREFIX}{user_id}:"
-    out = []
-    async for k in r.scan_iter(match=f"{prefix}*", count=200):
-        ks = k if isinstance(k, str) else k.decode()
-        try:
-            raw = await r.get(ks)
-            if not raw:
-                continue
-            meta = json.loads(raw)
-            meta["_ttl"] = await r.ttl(ks)
-            out.append(meta)
-        except Exception:
-            continue
-    out.sort(key=lambda m: m.get("_ttl", 0), reverse=True)
-    return out
+    """该用户当前所有草稿态（未发送）暂存附件 meta，按创建时间降序（越新越靠前）。
+
+    只查 DB（所有权真相来源）——v3 上线前遗留、只存在 Redis 里的旧草稿不会出现在
+    这里，`resolve_attach` 的模糊匹配范围因此在过渡期内略微收窄，是可接受的边界
+    行为（这些旧草稿本来也会在 Redis TTL 到期后自然消失）。"""
+    from app.models import ChatAttachment
+    from sqlalchemy import select
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        rows = (await db.execute(
+            select(ChatAttachment).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state == "draft",
+            ).order_by(ChatAttachment.created_at.desc())
+        )).scalars().all()
+    return [_row_to_meta(r) for r in rows]
 
 
 async def clear_staged(user_id) -> int:
-    """删除该用户所有未过期的暂存附件（字节 + Redis 元数据），返回删除数量。"""
-    from app.services.storage import get_storage
+    """删除该用户所有草稿态暂存附件（字节 + DB 行），返回删除数量；同时尽力清一遍
+    v3 上线前遗留、只存在 Redis 里的旧暂存记录（DB 里查不到但 Redis 还有）。"""
+    from app.models import ChatAttachment
+    from sqlalchemy import select, delete as sa_delete
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    deleted = 0
+    async with db_session._SessionLocal() as db:
+        rows = (await db.execute(
+            select(ChatAttachment).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state == "draft",
+            )
+        )).scalars().all()
+        storage_keys = list(dict.fromkeys(r.storage_key for r in rows))
+        await db.execute(
+            sa_delete(ChatAttachment).where(
+                ChatAttachment.user_id == user_id,
+                ChatAttachment.state == "draft",
+            )
+        )
+        await db.commit()
+    for sk in storage_keys:
+        if await try_delete_storage_if_unreferenced(user_id, sk) == "deleted":
+            deleted += 1
+    # legacy：v3 上线前只存在 Redis 里、DB 查不到的旧暂存记录
     r = get_redis()
-    storage = get_storage()
     prefix = f"{_PREFIX}{user_id}:"
-    keys, deleted = [], 0
+    legacy_keys = []
     async for k in r.scan_iter(match=f"{prefix}*", count=200):
-        keys.append(k if isinstance(k, str) else k.decode())
-    for k in keys:
+        legacy_keys.append(k if isinstance(k, str) else k.decode())
+    storage = get_storage()
+    for k in legacy_keys:
         try:
             raw = await r.get(k)
             if raw:

@@ -297,12 +297,21 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 len(req.attachments or []), len(aug_media or []),
                 [c.get("kind") for c in (attach_cards or [])],
                 [c.get("ext") for c in (attach_cards or [])])
-        db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
-                                   platform_user_id=req.platform_user_id,
-                                   platform_user_name=req.platform_user_name,
-                                   platform_bot_user_id=req.platform_bot_user_id,
-                                   chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None))
+        user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
+                                           files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
+                                           platform_user_id=req.platform_user_id,
+                                           platform_user_name=req.platform_user_name,
+                                           platform_bot_user_id=req.platform_bot_user_id,
+                                           chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
+        db.add(user_message)
+        await db.flush()
+        # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3），同网页路
+        try:
+            await chat_attach.claim_attachments(
+                db, user_id, user_message.id, [c["attach_id"] for c in (attach_cards or [])])
+        except chat_attach.AttachmentClaimError:
+            await db.rollback()
+            return AgentResponse(text="附件已失效（可能已被使用或清理），请重新发送", session_id=session_id)
         await db.commit()
 
         # 精力耗尽 → 硬拦（IM / 定时任务，与网页 web.stream 同口径）：用户消息已记，不再生成，直接回一句
@@ -547,12 +556,22 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         llm_text = _with_quoted_context(req.message, getattr(req, "quoted_text", None))
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, getattr(req, "attachments", None) or [], llm_text, model_cfg=model_cfg)
-        db.add(ConversationMessage(session_id=session_id, role="user", content=req.message,
-                                   files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
-                                   platform_user_id=req.platform_user_id,
-                                   platform_user_name=req.platform_user_name,
-                                   platform_bot_user_id=req.platform_bot_user_id,
-                                   chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None))
+        user_message = ConversationMessage(session_id=session_id, role="user", content=req.message,
+                                           files=attach_cards or None, quoted_text=getattr(req, "quoted_text", None),
+                                           platform_user_id=req.platform_user_id,
+                                           platform_user_name=req.platform_user_name,
+                                           platform_bot_user_id=req.platform_bot_user_id,
+                                           chat_type="group" if req.chat_id else "c2c" if req.source in IM_SOURCES else None)
+        db.add(user_message)
+        await db.flush()
+        try:
+            await chat_attach.claim_attachments(
+                db, user_id, user_message.id, [c["attach_id"] for c in (attach_cards or [])])
+        except chat_attach.AttachmentClaimError:
+            await db.rollback()
+            yield ("final", AgentResponse(text="附件已失效（可能已被使用或清理），请重新发送", session_id=session_id,
+                                          tokens_in=0, tokens_out=0))
+            return
         await db.commit()
 
         if await quota.is_exhausted(db, user_id, settings):
