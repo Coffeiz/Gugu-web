@@ -208,3 +208,27 @@ async def test_safety_net_noop_when_lock_held(db, user_a, storage, monkeypatch):
 
     assert result == {"integrity_violations": 0, "orphans_deleted": 0}
     assert fake_redis.lock_calls == [attachment_gc._SAFETY_NET_LOCK_KEY]
+
+
+@pytest.mark.asyncio
+async def test_safety_net_skips_orphan_candidate_with_missing_mtime(db, user_a, storage, monkeypatch):
+    """orphan 候选对象 `stat()` 拿不到 mtime（比如对象在扫描和 stat 之间被删掉）时
+    跳过、不当成"该删"处理——保守，避免误删。"""
+    from sqlalchemy import delete as sa_delete
+    monkeypatch.setattr(attachment_gc.R, "get_redis", lambda: _FakeRedis())
+    meta = await chat_attach.stage(user_a.id, "a.png", "png", "image/png", b"hello")
+    await db.execute(sa_delete(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"]))
+    await db.commit()
+
+    class _NoMtimeInfo:
+        mtime = None
+
+    async def fake_stat(key):
+        return _NoMtimeInfo()
+
+    monkeypatch.setattr(storage, "stat", fake_stat)
+
+    result = await attachment_gc.sweep_orphans_and_report_integrity()
+
+    assert result["orphans_deleted"] == 0
+    assert await storage.exists(meta["storage_key"])

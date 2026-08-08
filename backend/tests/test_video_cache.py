@@ -344,3 +344,62 @@ async def test_video_cache_gc_noop_when_lock_held(storage, monkeypatch):
     assert n == 0
     assert await storage.exists(path)
     assert fake_redis.lock_calls == [video_cache_gc._LOCK_KEY]
+
+
+# ── 补充：首次写缓存真的落存储 + marker 存在但物理文件已丢的自愈 ───────────────
+
+@pytest.mark.asyncio
+async def test_first_call_writes_cache_file_and_marker(storage, monkeypatch):
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+
+    async def fake_compress(raw, probe=None):
+        return b"compressed-bytes"
+
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+
+    storage_key, user_id = "u1/lib/video.mp4", "u1"
+    profile = chat_attach._video_transcode_profile(MODEL_CFG)
+    cache_key = chat_attach._video_cache_key(storage_key, profile)
+    cache_path = chat_attach._video_cache_path(user_id, cache_key)
+    alive_key = chat_attach._video_cache_alive_key(user_id, cache_key)
+
+    await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+
+    assert await storage.exists(cache_path)
+    assert await storage.get(cache_path) == b"compressed-bytes"
+    assert fake_redis.store.get(alive_key) == "1"
+
+
+@pytest.mark.asyncio
+async def test_alive_marker_present_but_cache_file_missing_retranscodes(storage, monkeypatch):
+    """alive marker 还在（比如被外部/安全网误删了物理文件，但 Redis marker 还没
+    过期），`prepare_video_media`/`_compress_video_cached` 应该自动判定未命中、
+    重新转码，而不是报错或返回损坏内容；成功后重建 marker + 缓存文件。"""
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    call_count = 0
+
+    async def fake_compress(raw, probe=None):
+        nonlocal call_count
+        call_count += 1
+        return b"fresh-compressed-bytes"
+
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+
+    storage_key, user_id = "u1/lib/video.mp4", "u1"
+    profile = chat_attach._video_transcode_profile(MODEL_CFG)
+    cache_key = chat_attach._video_cache_key(storage_key, profile)
+    cache_path = chat_attach._video_cache_path(user_id, cache_key)
+    alive_key = chat_attach._video_cache_alive_key(user_id, cache_key)
+
+    # 手动伪造"marker 存在，但物理文件不存在"的不一致状态
+    fake_redis.store[alive_key] = "1"
+    assert not await storage.exists(cache_path)
+
+    result = await chat_attach._compress_video_cached(b"raw", _probe(), storage_key, user_id, MODEL_CFG)
+
+    assert result == b"fresh-compressed-bytes"
+    assert call_count == 1, "marker 存在但文件缺失时应该重新转码，不能报错/返回空"
+    assert await storage.exists(cache_path), "重新转码后应该重建缓存文件"
+    assert fake_redis.store.get(alive_key) == "1"

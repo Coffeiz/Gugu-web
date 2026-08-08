@@ -332,3 +332,95 @@ async def test_gc_conditional_delete_loses_to_concurrent_claim(db, user_a, stora
     assert row.state == "attached"
     assert row.message_id == msg.id
     assert await storage.exists(meta["storage_key"]), "已经被消息引用的附件不该被 GC 碰"
+
+
+# ── 不变量 4：检查-删除竞态（边界测试，非完整解） ────────────────────────────
+
+@pytest.mark.asyncio
+async def test_try_delete_check_logic_does_not_use_stale_result(db, user_a, storage, monkeypatch):
+    """这个测试**不能证明"检查完成到真正删除之间不会冒出新引用"这个竞态已经
+    整体解决**——完整解决依赖 PRD-IM-9 落地时对源行加锁（见 PRD-STORAGE-1 第 4
+    条不变量）。这里只测 `try_delete_storage_if_unreferenced()` 自身的检查逻辑：
+    每次调用都应该重新查一次 DB，不能缓存/复用上一次的检查结果——模拟"检查时
+    确实没有引用，但在 storage.delete() 真正执行前又插入了一条新引用"，如果
+    实现里有陈旧结果被复用的 bug，这里会先删后发现新引用已经存在，暴露问题。"""
+    meta = await _stage(user_a, storage)
+    from sqlalchemy import delete as sa_delete
+    await db.execute(sa_delete(ChatAttachment).where(ChatAttachment.attach_id == meta["attach_id"]))
+    await db.commit()
+
+    original_delete = storage.delete
+    inserted = {}
+
+    async def delete_with_race(key):
+        # 在真正物理删除之前，模拟一个并发请求插入了新的共享引用
+        session = await _mk_session(db, user_a)
+        msg = await _mk_message(db, session)
+        db.add(ChatAttachment(
+            attach_id="race-new-ref", user_id=user_a.id, storage_key=meta["storage_key"],
+            name="dup.png", ext="png", kind="image", state="attached", message_id=msg.id,
+        ))
+        await db.commit()
+        inserted["done"] = True
+        return await original_delete(key)
+
+    monkeypatch.setattr(storage, "delete", delete_with_race)
+
+    # try_delete_storage_if_unreferenced 内部会重新开一个 db session 做检查，
+    # 不会看到我们在 delete_with_race 里刚插入的行（检查发生在删除之前，不是
+    # 之后）——这条测试如实反映了检查和删除本身不是原子操作的现状。
+    result = await chat_attach.try_delete_storage_if_unreferenced(user_a.id, meta["storage_key"])
+
+    assert result == "deleted"
+    assert inserted.get("done") is True
+    # 暴露真实后果：新插入的共享引用现在指向一个已经被删除的物理对象——
+    # 这正是不变量 4 描述的问题，完整解决依赖 PRD-IM-9 的源行加锁，这条测试
+    # 只是把这个已知边界用代码固定下来，不是"已解决"的证明。
+    assert not await storage.exists(meta["storage_key"])
+    dangling = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == "race-new-ref"))).scalars().first()
+    assert dangling is not None, "这条新引用会指向一个不存在的物理对象——已知边界，见 PRD-IM-9"
+
+
+# ── stage() 插入失败：回滚也失败时不掩盖原始异常 ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_stage_insert_failure_with_rollback_failure_still_raises_original(db, user_a, storage, monkeypatch):
+    async def _boom_insert(*a, **kw):
+        raise RuntimeError("original db insert error")
+    monkeypatch.setattr(chat_attach, "_record_draft", _boom_insert)
+
+    async def _boom_rollback(key):
+        raise RuntimeError("storage delete also failed")
+    monkeypatch.setattr(storage, "delete", _boom_rollback)
+
+    with pytest.raises(RuntimeError, match="original db insert error"):
+        await chat_attach.stage(user_a.id, "a.png", "png", "image/png", b"hello")
+
+
+# ── DB commit 失败：不能提前删 storage ───────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delete_session_db_failure_prevents_storage_delete(db, user_a, storage, monkeypatch):
+    from app.api.v1.agent import delete_session
+
+    session = await _mk_session(db, user_a)
+    msg = await _mk_message(db, session)
+    meta = await _stage(user_a, storage)
+    await chat_attach.claim_attachments(db, user_a.id, msg.id, [meta["attach_id"]])
+    await db.commit()
+
+    delete_called = {"n": 0}
+
+    async def _tracking_delete(key):
+        delete_called["n"] += 1
+
+    monkeypatch.setattr(storage, "delete", _tracking_delete)
+
+    async def _boom_commit():
+        raise RuntimeError("db commit failed")
+    monkeypatch.setattr(db, "commit", _boom_commit)
+
+    with pytest.raises(RuntimeError, match="db commit failed"):
+        await delete_session(session.id, current_user=user_a, db=db)
+
+    assert delete_called["n"] == 0, "DB commit 失败时不应该有任何 storage.delete() 被调用"
