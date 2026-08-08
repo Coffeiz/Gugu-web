@@ -148,3 +148,39 @@ async def test_read_video_generic_failure_returns_generic_error(monkeypatch):
     result = await file_readers.read_video(file)
 
     assert result == {"error": "视频读取失败"}
+
+
+@pytest.mark.asyncio
+async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch):
+    """pool/router 场景下，settings.ai（顶层静态配置）可能和这轮真正执行的模型不是
+    同一个——read_video 判断能力/生成 video block 必须用 agent.modelctx 里这轮真正
+    在跑的 model_cfg，不能重新读 get_settings().ai（否则会出现"顶层配 MiniMax、这轮
+    实际跑 mimo，却按 MiniMax 生成 Anthropic video block"这类错配）。这里反过来验证：
+    settings.ai 是不支持视频的 mimo，但本轮 modelctx 里真正跑的是 MiniMax M3，
+    read_video 必须按 modelctx 判断为"支持"，而不是被 settings.ai 误判为"不支持"。"""
+    from agent import modelctx
+
+    storage = _Storage(1024)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    # 顶层静态配置指向不支持视频的 provider——如果 read_video 错误地读了这个就会
+    # 判定"不支持"，测试会失败。
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_mimo_ai()))
+
+    captured = {}
+
+    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+        captured["model_cfg"] = model_cfg
+        return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
+
+    monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
+
+    real_ai = _minimax_m3_ai()
+    token = modelctx._model_cfg.set(real_ai)
+    try:
+        file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+        result = await file_readers.read_video(file)
+    finally:
+        modelctx._model_cfg.reset(token)
+
+    assert "_video_media" in result
+    assert captured["model_cfg"] is real_ai

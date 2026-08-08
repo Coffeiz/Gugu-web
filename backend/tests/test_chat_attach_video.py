@@ -311,7 +311,11 @@ def test_resolve_mmfile_failure_does_not_fallback_base64(monkeypatch):
 
 
 def test_resolve_video_over_90mb_rejected(monkeypatch):
-    """>90MB 视频 → 明确拒绝，不生成注定失败的 base64。"""
+    """>90MB 源文件，转码后仍 >90MB → 明确拒绝，不生成注定失败的 base64。
+
+    95MB 源文件本身就超过 VIDEO_MMFILE_MAX，会触发转码尝试（见
+    test_prepare_video_media_source_over_90mb_still_tries_transcode_first）；
+    这里 mock 转码"压完还是太大"，验证最终仍然正确拒绝。"""
     import asyncio
     from types import SimpleNamespace
     from app.core import chat_attach
@@ -326,11 +330,15 @@ def test_resolve_video_over_90mb_rejected(monkeypatch):
         return b"x" * size
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 60.0}
+
+    async def fake_compress(raw):
+        return b"x" * (95 * 1024 * 1024)   # 压完还是太大
 
     monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
     monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
     monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
     monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
     monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
 
@@ -372,6 +380,45 @@ def test_resolve_video_under_45mb_base64(monkeypatch):
         chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
     assert len(media) == 1
     assert media[0]["mode"] == "base64"
+
+
+def test_resolve_for_message_calls_shared_prepare_video_media(monkeypatch):
+    """聊天附件视频路径必须调用公共的 prepare_video_media，不能自己另外维护一套
+    决策逻辑——跟 read_file 的 read_video 是唯一共用的一处真相来源。"""
+    import asyncio
+    from types import SimpleNamespace
+    from app.core import chat_attach
+
+    size = 1024
+    meta = _make_video_meta(size)
+    calls = {"n": 0}
+
+    async def fake_get_meta(uid, aid):
+        return meta
+
+    async def fake_read_bytes(meta):
+        return b"x" * size
+
+    real_prepare = chat_attach.prepare_video_media
+
+    async def spy_prepare(raw, mime, name, model_cfg):
+        calls["n"] += 1
+        return await real_prepare(raw, mime, name, model_cfg)
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 5.0}
+
+    monkeypatch.setattr(chat_attach, "get_meta", fake_get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", fake_read_bytes)
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "prepare_video_media", spy_prepare)
+    monkeypatch.setattr(chat_attach, "_minimax_video_enabled", lambda cfg: True)
+    monkeypatch.setattr(chat_attach, "_video_enabled", lambda cfg=None: True)
+
+    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic",
+                          model="MiniMax-M3", vision_video=True)
+    asyncio.run(chat_attach.resolve_for_message("u1", ["a1"], "hi", model_cfg=cfg))
+    assert calls["n"] == 1
 
 
 def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
@@ -416,31 +463,35 @@ def test_resolve_video_45_to_90mb_uses_mmfile_on_success(monkeypatch):
 # 唯一共用的一份视频决策逻辑，直接单测覆盖，不要求每个调用方各自重复验证阈值。
 
 
+def _minimax_cfg():
+    from types import SimpleNamespace
+    return SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+
+
 def test_prepare_video_media_minimax_small_uses_base64(monkeypatch):
     import asyncio
-    from types import SimpleNamespace
     from app.core import chat_attach
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 10.0}
 
     monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
-    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
 
-    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", cfg))
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", _minimax_cfg()))
     assert result["mode"] == "base64"
     assert result["type"] == "video"
 
 
 def test_prepare_video_media_minimax_between_45_and_90mb_uses_mmfile(monkeypatch):
+    """转码后落在 (45MB, 90MB] 区间 → mm_file（阈值 monkeypatch 成 KB 级，不构造真实大 bytes）。"""
     import asyncio
-    from types import SimpleNamespace
     from app.core import chat_attach
 
-    size = 60 * 1024 * 1024
+    monkeypatch.setattr(chat_attach, "VIDEO_BASE64_MAX", 10)
+    monkeypatch.setattr(chat_attach, "VIDEO_MMFILE_MAX", 100)
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 10.0}
 
     async def fake_upload(raw, name, cfg):
         assert name == "v.mp4"
@@ -448,49 +499,233 @@ def test_prepare_video_media_minimax_between_45_and_90mb_uses_mmfile(monkeypatch
 
     monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
     monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
-    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
 
-    result = asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 50, "video/mp4", "v.mp4", _minimax_cfg()))
     assert result == {"type": "video", "mode": "mm_file", "mime": "video/mp4", "file_id": "file-abc"}
 
 
 def test_prepare_video_media_minimax_mmfile_upload_failure_raises(monkeypatch):
     """上传失败必须抛异常，不能悄悄回退成注定超限的 base64。"""
     import asyncio
-    from types import SimpleNamespace
     from app.core import chat_attach
 
-    size = 60 * 1024 * 1024
+    monkeypatch.setattr(chat_attach, "VIDEO_BASE64_MAX", 10)
+    monkeypatch.setattr(chat_attach, "VIDEO_MMFILE_MAX", 100)
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 10.0}
 
     async def fake_upload(raw, name, cfg):
         return None
 
     monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
     monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
-    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
 
     with pytest.raises(ValueError, match="上传失败"):
-        asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 50, "video/mp4", "v.mp4", _minimax_cfg()))
 
 
-def test_prepare_video_media_minimax_over_90mb_rejected(monkeypatch):
+def test_prepare_video_media_over_mmfile_max_still_tries_transcode_first(monkeypatch):
+    """核心行为：源文件超过 VIDEO_MMFILE_MAX 不能直接拒绝——90MB 是最终 payload 上限，
+    不是源文件上限，压缩可能把体积压下来，必须先尝试转码。这里模拟 186MB/90s/1080p/12Mbps
+    的源视频（分辨率码率都不超阈值，只有文件大小超），压缩成 70MB 后走 mm_file。"""
     import asyncio
-    from types import SimpleNamespace
     from app.core import chat_attach
 
-    size = 95 * 1024 * 1024
+    monkeypatch.setattr(chat_attach, "VIDEO_SOURCE_MAX", 1000)
+    monkeypatch.setattr(chat_attach, "VIDEO_MMFILE_MAX", 100)   # "源文件" 186 单位 > 100
+    monkeypatch.setattr(chat_attach, "VIDEO_BASE64_MAX", 50)    # "压缩后" 70 单位 > 50 → mm_file
+
+    calls = {"compress": 0}
 
     async def fake_probe(raw):
-        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000}
+        # 分辨率/码率都不超阈值——只有文件大小超，验证 size 本身也能触发转码。
+        return {"width": 1920, "height": 1080, "bit_rate": 12_000_000, "duration": 90.0}
+
+    async def fake_compress(raw):
+        calls["compress"] += 1
+        return b"x" * 70   # 压缩后 70 单位，落在 (50, 100] 区间
+
+    async def fake_upload(raw, name, cfg):
+        return "file-compressed"
 
     monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
-    cfg = SimpleNamespace(provider="minimax", base_url="https://api.minimaxi.com/anthropic", model="MiniMax-M3")
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 186, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert calls["compress"] == 1, "源文件超过 VIDEO_MMFILE_MAX 必须尝试转码，不能直接拒绝"
+    assert result == {"type": "video", "mode": "mm_file", "mime": "video/mp4", "file_id": "file-compressed"}
+
+
+def test_prepare_video_media_transcode_still_over_limit_rejected(monkeypatch):
+    """转码后仍然超过最终 payload 上限，才允许拒绝——186MB 压缩到 100（monkeypatch 后的
+    单位）仍 >90（VIDEO_MMFILE_MAX），最终拒绝，不生成注定失败的 base64/mm_file。"""
+    import asyncio
+    from app.core import chat_attach
+
+    monkeypatch.setattr(chat_attach, "VIDEO_SOURCE_MAX", 1000)
+    monkeypatch.setattr(chat_attach, "VIDEO_MMFILE_MAX", 90)
+    monkeypatch.setattr(chat_attach, "VIDEO_BASE64_MAX", 45)
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 12_000_000, "duration": 90.0}
+
+    async def fake_compress(raw):
+        return b"x" * 100   # 压完还是超过 VIDEO_MMFILE_MAX(90)
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
 
     with pytest.raises(ValueError, match="90MB"):
-        asyncio.run(chat_attach.prepare_video_media(b"x" * size, "video/mp4", "v.mp4", cfg))
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 186, "video/mp4", "v.mp4", _minimax_cfg()))
+
+
+def test_prepare_video_media_final_payload_boundaries(monkeypatch):
+    """转码后按最终 payload 大小三分：≤45MB base64 / (45MB,90MB] mm_file / >90MB 拒绝
+    （用 monkeypatch 阈值 + 转码产物大小直接命中三个区间，不构造真实大 bytes）。"""
+    import asyncio
+    from app.core import chat_attach
+
+    monkeypatch.setattr(chat_attach, "VIDEO_SOURCE_MAX", 1000)
+    monkeypatch.setattr(chat_attach, "VIDEO_MMFILE_MAX", 90)
+    monkeypatch.setattr(chat_attach, "VIDEO_BASE64_MAX", 45)
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 12_000_000, "duration": 10.0}
+
+    async def fake_upload(raw, name, cfg):
+        return "fid"
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_upload_video_mmfile", fake_upload)
+
+    def _compress_to(n):
+        async def _f(raw):
+            return b"x" * n
+        return _f
+
+    # 40（monkeypatch 单位）→ base64
+    monkeypatch.setattr(chat_attach, "_compress_video", _compress_to(40))
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 200, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert result["mode"] == "base64"
+
+    # 70（monkeypatch 单位）→ mm_file
+    monkeypatch.setattr(chat_attach, "_compress_video", _compress_to(70))
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 200, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert result["mode"] == "mm_file"
+
+    # 100（monkeypatch 单位）→ 拒绝
+    monkeypatch.setattr(chat_attach, "_compress_video", _compress_to(100))
+    with pytest.raises(ValueError, match="90MB"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 200, "video/mp4", "v.mp4", _minimax_cfg()))
+
+
+def test_prepare_video_media_rejects_duration_over_120s_without_transcoding(monkeypatch):
+    """时长 >=120 秒直接拒绝，不跑转码——服务器不该为明显超出产品范围的长视频跑 ffmpeg。"""
+    import asyncio
+    from app.core import chat_attach
+
+    calls = {"compress": 0}
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 120.0}
+
+    async def fake_compress(raw):
+        calls["compress"] += 1
+        return b"small"
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+
+    with pytest.raises(ValueError, match="120"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert calls["compress"] == 0, "超时长应该在转码之前就拒绝"
+
+
+def test_prepare_video_media_allows_119_seconds(monkeypatch):
+    """119 秒（刚好低于上限）应该正常继续处理，不因时长被拒绝。"""
+    import asyncio
+    from app.core import chat_attach
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 119.0}
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 1024, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert result["mode"] == "base64"
+
+
+def test_prepare_video_media_rejects_source_over_500mb_without_probing(monkeypatch):
+    """源文件 >500MB（VIDEO_SOURCE_MAX，monkeypatch 成 KB 级）直接拒绝，连 ffprobe 都不跑——
+    服务器不该为明显超出产品范围的超大文件做任何昂贵处理。"""
+    import asyncio
+    from app.core import chat_attach
+
+    monkeypatch.setattr(chat_attach, "VIDEO_SOURCE_MAX", 100)
+
+    calls = {"probe": 0}
+
+    async def fake_probe(raw):
+        calls["probe"] += 1
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 10.0}
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+
+    with pytest.raises(ValueError, match="500MB"):
+        asyncio.run(chat_attach.prepare_video_media(b"x" * 200, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert calls["probe"] == 0, "超源文件上限应该在探测之前就拒绝"
+
+
+def test_prepare_video_media_allows_under_500mb(monkeypatch):
+    """刚好低于 VIDEO_SOURCE_MAX 应该正常继续处理。"""
+    import asyncio
+    from app.core import chat_attach
+
+    monkeypatch.setattr(chat_attach, "VIDEO_SOURCE_MAX", 100)
+
+    async def fake_probe(raw):
+        return {"width": 1920, "height": 1080, "bit_rate": 5_000_000, "duration": 10.0}
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+
+    result = asyncio.run(chat_attach.prepare_video_media(b"x" * 99, "video/mp4", "v.mp4", _minimax_cfg()))
+    assert result["mode"] == "base64"
+
+
+def test_compress_video_scale_filter_never_upscales(monkeypatch):
+    """720p（≤1080p）视频触发转码时，输出分辨率不允许被放大成 1920x1080——
+    ffmpeg 的 `scale=1920:1920:force_original_aspect_ratio=decrease` 语义本身保证
+    "decrease" 模式只会缩小、不会放大：输入已经小于目标框时原样通过。这里直接断言
+    ffmpeg 命令用的是 decrease 模式而不是强制到固定尺寸，防止以后有人改成
+    `scale=1920:1080`（会强制拉伸/放大到目标尺寸）这种破坏性修改。"""
+    import asyncio
+    import subprocess
+    from app.core import chat_attach
+
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_path = cmd[-1]
+        with open(out_path, "wb") as f:
+            f.write(b"FAKE_MP4")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    async def fake_to_thread(fn, *a, **k):
+        return fn(*a, **k)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    asyncio.run(chat_attach._compress_video(b"RAW_720P_VIDEO"))
+    vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    # decrease：目标框只用来限制"最大不超过多少"，小于目标的视频（如 720p）原样通过，
+    # 不会被拉伸/放大到 1920——如果改成不带 force_original_aspect_ratio 的固定 scale，
+    # 720p 会被强制放大到 1920，这个断言就会失败。
+    assert "force_original_aspect_ratio=decrease" in vf
+    assert "scale=1920:1080" not in vf.replace(" ", "")
 
 
 def test_prepare_video_media_non_minimax_under_36mb_uses_base64():

@@ -52,15 +52,26 @@ _MEDIA_MIME = {
 }
 
 # ── 视频压缩 / mm_file 传输（MiniMax M3 大视频）──────────────────────────────
-# 策略：分辨率 >1080p 或码率 >16Mbps → 压缩成 1080p 5M h264；压缩后仍 >45MB → 走 mm_file
-# （上传 Files API 用 mm_file:// 引用），否则 base64 内联。实测边界：
-#   base64 硬限制 = 原始 ≤50MB（52,428,800 字节）；mm_file 约 100MB（98MB 稳成、99MB 稳败）。
-# 45MB 对 base64 留 5MB 余量；mm_file 上限取 90MB 留安全余量避开 100MB 附近非确定性。
-VIDEO_COMPRESS_MAX_DIM = 1920          # 压缩目标长边（1080p）
+# 三个不同的"上限"概念，容易混：
+#   ① 源视频处理上限（VIDEO_SOURCE_MAX/VIDEO_DURATION_MAX_SECONDS）：服务器愿不愿意
+#      尝试处理——超过直接拒绝，连 ffprobe/转码都不跑，避免对明显超出产品范围的
+#      视频（几 GB、10 分钟）做无意义的昂贵转码。
+#   ② 自动转码触发条件（VIDEO_MMFILE_MAX/VIDEO_COMPRESS_TRIGGER_BITRATE/
+#      VIDEO_COMPRESS_MAX_DIM 任一超出）：原始文件 >90MB 时**不能直接拒绝**，
+#      因为压缩可能把体积压下来——90MB 在这里的含义是"最终交给模型的 payload
+#      上限"，不是"源文件上限"，两者是两回事。
+#   ③ 最终 payload 大小规则（VIDEO_BASE64_MAX/VIDEO_MMFILE_MAX）：转码（或未触发
+#      转码时的原始字节）之后，≤45MB base64、(45MB,90MB] mm_file、>90MB 才真正拒绝。
+# 实测边界：base64 硬限制 = 原始 ≤50MB（52,428,800 字节）；mm_file 约 100MB
+# （98MB 稳成、99MB 稳败）。45MB 对 base64 留 5MB 余量；mm_file 上限取 90MB
+# 留安全余量避开 100MB 附近非确定性。
+VIDEO_SOURCE_MAX = 500 * 1024 * 1024        # ① 源文件处理上限：超过直接拒绝，不转码
+VIDEO_DURATION_MAX_SECONDS = 120            # ① 源视频时长上限：超过直接拒绝，不转码
+VIDEO_COMPRESS_MAX_DIM = 1920          # 压缩目标长边（1080p）——只降不升，见 _compress_video
 VIDEO_COMPRESS_BITRATE = "5M"          # 压缩目标码率
-VIDEO_COMPRESS_TRIGGER_BITRATE = 16 * 1024 * 1024   # 触发压缩的码率阈值（16Mbps）
-VIDEO_BASE64_MAX = 45 * 1024 * 1024    # 走 base64 的原始字节上限（留 5MB 余量）
-VIDEO_MMFILE_MAX = 90 * 1024 * 1024    # 走 mm_file 的原始字节上限（留安全余量）
+VIDEO_COMPRESS_TRIGGER_BITRATE = 16 * 1024 * 1024   # ② 触发转码的码率阈值（16Mbps）
+VIDEO_BASE64_MAX = 45 * 1024 * 1024    # ③ 走 base64 的最终 payload 上限（留 5MB 余量）
+VIDEO_MMFILE_MAX = 90 * 1024 * 1024    # ②③ 触发转码的源文件大小阈值，同时也是③走 mm_file 的最终 payload 上限（留安全余量）
 VIDEO_MMFILE_PURPOSE = "video_understanding"   # Files API 上传 purpose
 
 # 能喂给 vision 模型的扩展名。png/jpeg/gif/webp 是 API 原生格式（达标即原样发）；
@@ -438,9 +449,12 @@ def _minimax_video_enabled(model_cfg) -> bool:
 #      >90MB 明确拒绝，不回退 base64（base64 注定超 MiniMax 上限，回退只会浪费内存再失败）
 #   4) 非 MiniMax 走 OpenAI 兼容块（mimo 等），与现状一致，不变
 async def _probe_video(raw: bytes) -> dict | None:
-    """用 ffprobe 读视频分辨率/码率。返回 {width, height, bit_rate, codec}，失败 None。
+    """用 ffprobe 读视频分辨率/码率/时长。返回 {width, height, bit_rate, duration, codec}，失败 None。
 
-    ffprobe 是同步子进程，用 `asyncio.to_thread` 丢到线程池跑，避免阻塞事件循环。"""
+    ffprobe 是同步子进程，用 `asyncio.to_thread` 丢到线程池跑，避免阻塞事件循环。
+    `duration` 取自视频流本身（部分容器码率放在 format 而非 stream 里、这里不管，
+    只用 `duration` 判断是否超过 `VIDEO_DURATION_MAX_SECONDS`）；读不到时为 0，
+    调用方按"探测不到就不因为时长拒绝"处理，不因为 ffprobe 偶发失败误伤正常视频。"""
     import json as _json
     import subprocess
     import tempfile as _tf
@@ -451,7 +465,7 @@ async def _probe_video(raw: bytes) -> dict | None:
         proc = await asyncio.to_thread(
             subprocess.run,
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=codec_name,width,height,bit_rate",
+             "-show_entries", "stream=codec_name,width,height,bit_rate,duration",
              "-of", "json", tmp],
             capture_output=True, text=True, timeout=10,
         )
@@ -463,6 +477,7 @@ async def _probe_video(raw: bytes) -> dict | None:
             "width": int(info.get("width") or 0),
             "height": int(info.get("height") or 0),
             "bit_rate": int(info.get("bit_rate") or 0),  # 0 = 容器未带（如 mov 有时）
+            "duration": float(info.get("duration") or 0),  # 秒；0 = 容器未带
         }
     except Exception:
         return None
@@ -515,8 +530,17 @@ async def _compress_video(raw: bytes) -> bytes | None:
                 pass
 
 
-def _should_compress_video(probe: dict | None) -> bool:
-    """是否需要压：分辨率 >1080p 或 码率 >16Mbps（任一满足即压）。"""
+def _should_compress_video(probe: dict | None, size: int = 0) -> bool:
+    """是否需要转码：源文件 >90MB（`VIDEO_MMFILE_MAX`，最终 payload 上限，压缩可能把
+    体积压下来，所以超过它不能直接拒绝，得先试一次转码）、分辨率 >1080p、码率
+    >16Mbps，任一满足即转码。
+
+    `size` 检查跟 `probe` 是否可用无关——即使 ffprobe 失败拿不到分辨率/码率，只要
+    原始文件超过 `VIDEO_MMFILE_MAX`，仍然必须尝试转码（不转码这个视频最终注定会
+    因为 payload 超限被拒绝，转码不试白不试）。`size` 默认 0 保持向后兼容（旧调用点
+    不传时只看 probe，行为不变）。"""
+    if size > VIDEO_MMFILE_MAX:
+        return True
     if not probe:
         return False
     w, h = probe.get("width") or 0, probe.get("height") or 0
@@ -579,13 +603,25 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> di
     调用这里，不能各自维护一份阈值判断——「视频怎么才算能被模型看到」只应该有
     一处真相来源。
 
-    MiniMax M3：探测规格 → 超 1080p/16Mbps 先压成 1080p 5Mbps h264 → 压缩后
-    ≤`VIDEO_BASE64_MAX` 走 base64，(`VIDEO_BASE64_MAX`, `VIDEO_MMFILE_MAX`] 走
-    mm_file（Files API 上传），超过 `VIDEO_MMFILE_MAX` 拒绝；mm_file 上传失败也
-    明确拒绝——**不回退 base64**（base64 注定超过 MiniMax 上限，回退只会生成
-    超大字符串浪费内存再失败）。
-    非 MiniMax（OpenAI 兼容媒体块，如 mimo）：不压缩，仅 ≤`MEDIA_RAW_MAX` 走
-    base64，否则拒绝。
+    MiniMax M3（三段判断，见文件头常量注释①②③）：
+    ① 源文件处理上限——原始字节 >`VIDEO_SOURCE_MAX`（500MB）或时长 >=
+       `VIDEO_DURATION_MAX_SECONDS`（120 秒）直接拒绝，不跑 ffprobe/转码，避免
+       对明显超出产品范围的视频做无意义的昂贵转码。
+    ② 自动转码触发——源文件 >`VIDEO_MMFILE_MAX`（90MB）或分辨率 >1080p 或码率
+       >16Mbps，任一满足就转码（`_should_compress_video`）；**源文件 >90MB
+       不能直接拒绝**——90MB 是最终 payload 上限不是源文件上限，压缩可能把
+       体积压下来（比如 186MB/1080p/12Mbps 因为文件本身 >90MB 仍要转码一次，
+       压完可能只有 70MB）。转码目标分辨率只降不升（`_compress_video` 用
+       `force_original_aspect_ratio=decrease`，ffmpeg 语义保证不会把 720p
+       这类已经 ≤1080p 的视频放大，只重新编码降码率）。
+    ③ 最终 payload 判断——转码后（或未触发转码时的原始字节）≤`VIDEO_BASE64_MAX`
+       走 base64，(`VIDEO_BASE64_MAX`, `VIDEO_MMFILE_MAX`] 走 mm_file（Files API
+       上传），超过 `VIDEO_MMFILE_MAX` 才真正拒绝；mm_file 上传失败也明确
+       拒绝——**不回退 base64**（base64 注定超过 MiniMax 上限，回退只会生成
+       超大字符串浪费内存再失败）。
+    非 MiniMax（OpenAI 兼容媒体块，如 mimo）：不做①②的探测/转码，仅 ≤`MEDIA_RAW_MAX`
+    走 base64，否则拒绝——这条路径体积上限本来就远低于 500MB/120s 能有意义卡到的
+    范围，不需要重复这两层判断。
 
     失败（超限/上传失败）统一抛 `ValueError`，消息可以直接展示给用户；调用方
     负责捕获并决定怎么呈现（聊天附件退化成文字提示，read_file 直接把消息当
@@ -593,9 +629,15 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> di
     """
     minimax = _minimax_video_enabled(model_cfg) if model_cfg is not None else False
     if minimax:
-        payload, payload_mime = raw, mime
+        size = len(raw)
+        if size > VIDEO_SOURCE_MAX:
+            raise ValueError("这条视频太大（超过 500MB 处理上限），没法直接看")
         probe = await _probe_video(raw)
-        if _should_compress_video(probe):
+        duration = (probe or {}).get("duration") or 0
+        if duration >= VIDEO_DURATION_MAX_SECONDS:
+            raise ValueError("这条视频太长（超过 120 秒上限），没法直接看")
+        payload, payload_mime = raw, mime
+        if _should_compress_video(probe, size):
             compressed = await _compress_video(raw)
             if compressed:
                 payload, payload_mime = compressed, "video/mp4"
