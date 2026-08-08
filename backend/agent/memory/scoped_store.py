@@ -49,6 +49,29 @@ async def read_scope(scope: MemoryScope) -> Dict[str, Any]:
     return result
 
 
+async def read_scope_json(scope: MemoryScope, filename: str) -> Any:
+    """只读 scope 下的单个 JSON 文件，不像 read_scope() 那样把整个 scope.files 都读一遍。
+
+    群 scope 现在有 profile.json/summary.json/daily.md/memory.md/members.json 五个
+    文件；一些调用方（比如按发言人查询）只关心其中一个文件，如果为此调用
+    read_scope()，会把另外几个完全用不到的文件也一起从存储拉一遍、decode、parse
+    一遍——OSS 后端等于每次都多打几次网络请求，而且这条路径命中率还不低（code
+    review 发现：PRD-IM-8 Phase 2.9 把 speaker 精确匹配的判断也接进了 aliases/
+    nicknames，导致按发言人查询几乎每次都要读一次 members.json，已经进了热路径）。
+    不存在 → 与 read_scope() 一致，JSON 返回 {}。
+    """
+    if not filename.endswith(".json"):
+        raise ValueError(f"不是 JSON 作用域文件: {filename}")
+    text = await _read(scope, filename)
+    if not text:
+        return {}
+    try:
+        value = json.loads(text)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, (dict, list)) else {}
+
+
 async def write_scope_file(scope: MemoryScope, filename: str, text: str) -> None:
     """写入已校验 scope 的单个文件；调用方负责业务策略和成功后游标。"""
     from agent.memory.scope_lifecycle import is_tombstoned
