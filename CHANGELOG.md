@@ -5,6 +5,18 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.20.3] - 2026-08-08
+
+### 改进
+
+- **群聊支持按发言人查历史**（`backend/agent/tools/group_context.py`、`backend/agent/memory/im_reflection.py`）：`group_context_search` 新增按发言人过滤，可以传群成员的名字、曾用名或群友称呼定位到具体人，找不到唯一对应人时会列出候选交模型/用户澄清；群成员名单随反思任务持续沉淀，改名或长期不发言也不会丢失曾用名和称呼记录。
+- **文件库读取视频改为真正的视频理解**（`backend/agent/tools/file_readers.py`、`backend/app/core/chat_attach.py`）：`read_file` 读取文件库里的视频不再受旧的体积限制直接拒绝，改为复用聊天附件已有的视频理解能力——必要时自动压缩，让模型直接看视频内容本身（目前限 MiniMax M3 模型）。
+
+### 修复
+
+- **IM 取消偶发不生效**（`backend/agent/im/loop.py`、`backend/agent/runtime_state.py`）：修复几处竞态和参数遗漏，之前个别情况下发送「取消」会收到确认回复但任务其实还在继续跑。
+- **外部链接下载安全加固**（`backend/app/core/url_security.py`、`backend/agent/tools/files.py`）：修复图片/文件下载功能里的几个 SSRF 相关漏洞（DNS 重绑定、内网地址段遗漏、IPv6 链接处理）。
+
 ## [0.20.2] - 2026-08-07
 
 ### 改进
