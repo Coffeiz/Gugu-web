@@ -36,7 +36,7 @@ async def test_qq_group_member_only_gets_configured_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "member"
-    assert access.allowed_tool_names == ["web_search"]
+    assert access.allowed_tool_names == ["web_search", "http_get"]
 
 
 async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
@@ -53,7 +53,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["web_search", "image_search", "send_file"]
+    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "send_file"]
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
@@ -224,7 +224,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
     assert prepared.actor.role == "unknown"
     assert prepared.request.im_role == "unknown"
-    assert prepared.request.allowed_tool_names == ["web_search", "image_search", "send_file"]
+    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "image_search", "send_file"]
     assert prepared.request.user_name == "群友"
     assert prepared.request.chat_id == "wx-group-1"
 
@@ -269,7 +269,7 @@ async def test_feishu_group_uses_bound_owner_open_id(db, user_a):
     assert owner.request.im_role == "owner"
     assert owner.request.allowed_tool_names is None
     assert member.request.im_role == "member"
-    assert member.request.allowed_tool_names == ["web_search"]
+    assert member.request.allowed_tool_names == ["web_search", "http_get"]
 
 
 async def test_non_qq_private_message_keeps_owner_access():
