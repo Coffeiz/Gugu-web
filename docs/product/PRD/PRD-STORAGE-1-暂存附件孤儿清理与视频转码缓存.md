@@ -1,6 +1,6 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待实现（Phase A 方案 v2 已定稿：DB 状态机为所有权真相来源，`chat_attachments` 表关联方式已确认，草稿 TTL/安全网频率/异常响应/视频缓存 TTL 均已定数值；Phase B 补充了 cache_key 正确性修复与并发锁；均未开始实现）
+> 状态：🔲 待实现（Phase A 方案 v3：去掉 DELETING 中间状态，物理删除统一收口成 `try_delete_storage_if_unreferenced()` 并按 storage_key 引用计数（对应 PRD-IM-6 的共享 storage_key 场景）、消息创建与附件 claim 同一事务、GC 遵守"DB 先变化再碰 storage"；Phase B 修了 alive marker 用 EXPIRE 而非 SET 的 bug；均未开始实现）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/api/v1/agent.py`（`delete_session`、附件相关接口）、消息/会话数据模型
@@ -15,7 +15,7 @@
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 v1（已推翻） | ❌ 已废弃 | 曾实现"定时扫存储、按物理 mtime 判断年龄，固定 7 天 TTL"的清理任务（commit `dece7584`），已 revert（commit `e63014a9`）。废弃原因见第 1.4 节：固定 TTL 会让长周期项目里、没有显式存进文件库的历史消息附件"失效"，这不是清理任务的 bug，是这个方案本身的产品语义就不对。 |
 | Phase 1'：方案设计 v2（外部评审已定稿） | 🔲 设计中，待实施 | 核心从"附件生命周期绑定消息/会话"进一步收敛为"**DB 是所有权真相来源**"：附件在 DB 里走 `draft → attached → deleting` 状态机，Redis 完全降级为 cache/lock/加速，不再承担任何"这个对象还有没有主人"的判断责任——彻底堵住 Redis 丢失导致孤儿的路径（草稿阶段也不例外，之前 v2 草案漏了这一半）。经过两轮外部评审（含一次关键修正：安全网扫描的两种不一致要分开处理，不能互相当成同一种"清理"）。见第 1.3、2、5 节。 |
-| Phase 2：视频转码缓存实施 | 🔲 待评估 | 方案不变（Redis 指针 + 命中续 TTL），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
+| Phase 2：视频转码缓存实施 | 🔲 待评估 | 缓存路径由 `cache_key` 确定性推导，Redis 只存一个"存活标记"（`alive marker`，命中时 `SET ... EX` 重建/续期，不是 `EXPIRE`），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
 
 ---
 
@@ -74,46 +74,45 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 ### FR-STORAGE-1-1：附件所有权状态机（DB 为真相来源），Redis 降级为 cache/lock（🔲 设计中，v2 定稿）
 
-**核心模型**：附件在 DB 里有一个显式状态机，DB 记录决定"这个存储对象是否还有主人"；Redis 完全不参与所有权判断，只用来加速查找/命中缓存/加分布式锁。
+**核心模型**：附件在 DB 里只有两个状态，DB 记录决定"这个存储对象是否还有主人"；Redis 完全不参与所有权判断，只用来加速查找/命中缓存/加分布式锁。
 
 ```
 UPLOAD ──▶ chat_attachment(state=DRAFT)
               │
-       消息发送成功 / claim
+       消息发送成功 / claim（整条消息 + 所有附件同一个 DB 事务）
               │
               ▼
           ATTACHED ──（消息/会话所在，永久保留，不设 TTL）
               │
-       消息/会话被删除
+       消息/会话被删除：DB 事务内删除 chat_attachments 行 → commit
               │
               ▼
-          DELETING（DB 事务内标记）
-              │
-       DB commit 成功
-              │
-              ▼
-       best-effort storage.delete()（失败不影响 DB 状态，留给安全网兜底）
-              │
-              ▼
-       元数据行清理
+       commit 成功后，对每个 storage_key 尝试物理删除
+       （先查是否还有其他存活行指着同一个 storage_key，见步骤 5）
 ```
 
-DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
+**三条不变量，贯穿整个 Phase A，实施时不能违反**：
+1. **DB 所有权变化必须先发生，storage 清理永远在 DB commit 之后**——不管是正常删除还是 GC，都是"先在 DB 里让这一行不再存在/不再是 draft，commit 成功，再碰物理字节"，反过来（先删 storage 再改 DB）会在 DB 操作失败时产生"消息还在、字节没了"这种真正的数据损坏，比孤儿泄漏严重得多。
+2. **物理删除之前必须确认没有其他存活的 `chat_attachments` 行指着同一个 `storage_key`**——因为 PRD-IM-6（引用消息附件复用，已验证可行、不是假设需求）会让两条独立的消息各自持有一条 `chat_attachments` 行、但共享同一个 `storage_key`。不做这个检查，正常的 `delete_session` 就会删掉另一条还存活消息正在用的字节，安全网完全兜不住（字节已经真的没了）。
+3. **消息创建和它所有附件的 claim 必须是同一个 DB 事务**——任何一个附件 claim 失败（`affected_rows != 1`，比如已经被其他请求 claim 走、或者已经被草稿 GC 删除），整条消息事务回滚，不允许出现"消息已存在但只有部分附件被 claim 成功"的半完整状态。
 
-1. **数据模型**：新建 `chat_attachments` 表（`id`/`attach_id`/`user_id`/`message_id`（可空，DRAFT 阶段为空）/`storage_key`/`name`/`ext`/`mime`/`kind`/`size`/`duration`/`img_width`/`img_height`/`state`/`created_at`/`attached_at`）。`message_id` 用简单外键，不做多对多关系表——理由见第 1.4 节的 `quoted` 排查结论（现状不存在附件跨消息复用）。
-2. **上传即写 DB，不再只写 Redis**：`stage()` 时机改为 `storage.put()` 成功后立刻 `INSERT chat_attachments(state=DRAFT)`，Redis 只作为可选的快速查找缓存（可以直接不设，DB 查询本来就够快）。这一步彻底堵住"storage.put 成功、Redis 还没写/丢了"这个窗口——之前的 v2 草案只解决了"已发送"半场，这里补齐"草稿"半场。
-3. **发送成功 = claim**：消息真正持久化时，把关联的 `chat_attachments` 行从 `DRAFT` 原子地转成 `ATTACHED`（`WHERE state='draft' AND attach_id=... AND user_id=...`，带条件更新防止竞态），同时写 `message_id`。转成 `ATTACHED` 之后，这条附件不再有任何 TTL，永久保留直到所属消息/会话被删除。
-4. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）改为直接查 DB**，**查询必须带 `user_id`**（`WHERE attach_id=? AND user_id=?`，不能只按 `attach_id` 查——否则是新引入的 IDOR，之前设计里漏了这条）。Redis 命中时可以走缓存快路径，未命中一律回退 DB，不存在"彻底找不到"的情况（只要 DB 记录还在）。
-5. **会话/消息删除：DB commit 优先于 storage 删除，不假装成一个事务**：`delete_session`（`app/api/v1/agent.py:356`）目前只 `db.delete(session)`。改造后：① 一个 DB 事务内，删除 session 的同时把关联 `chat_attachments` 标记 `DELETING`（或直接级联删除行，取决于要不要保留审计痕迹）；② **DB 事务 commit 成功之后**，再 best-effort 对每个 `storage_key` 调 `storage.delete()`；③ storage 删除失败只记日志，不回滚 DB、不重试阻塞主流程——**原则：宁可临时泄漏，不可误删**（storage 先删、DB 后失败回滚，会导致"消息还在、附件没了"，这是真正的数据丢失，比孤儿字节严重得多）。步骤 7 的安全网负责兜住 storage 删除失败留下的孤儿。
-6. **草稿孤儿定时清理**：扫描 `chat_attachments WHERE state='draft' AND created_at < now() - 48h`（**DB 驱动，不再需要"扫 storage → 反查 DB"这种绕路**），对每条命中记录做 `storage.delete()` + 删 DB 行。TTL 定为 48 小时（草稿本来就是"发出去之前"的中间态，见第 4 节）。
-7. **发送失败/放弃时的及时清理（状态守卫，不是"失败就删"）**：新增按 `attach_id` 删除单个草稿附件的接口，**删除前必须校验 `state == 'draft'`，非 DRAFT 一律拒绝**——这是必须的安全条件：HTTP 响应丢失/超时不等于请求真的失败，消息可能已经在服务端提交成功、附件已经被 claim 成 `ATTACHED`；如果没有这层状态守卫，客户端一次误判的"发送失败"会把已经生效的正常附件删掉。前端在发送请求失败时调用；覆盖不了"上传后直接关标签页/崩溃/断网"这类无信号场景，仍需要步骤 6 的定时兜底，这里只是降低草稿孤儿产生速度的锦上添花，不是主机制。
-8. **安全网：低频全量一致性扫描**，DB 与 storage 交叉检查，**两种不一致必须区别处理，不能用同一套"清理"逻辑**：
-   - **DB 有记录（非 DRAFT）+ storage 对象缺失** → **完整性异常（integrity violation）**，记录到受限诊断出口，**并补一条 `SystemLog`**（后台「系统日志」页可见，不用登服务器就能发现；写入前必须过 `redact()`，不能把 `storage_key`/路径等原始信息直接暴露到这个用户可达的出口），**不做自动修复、不删除 DB 记录**——这种情况意味着 storage 被误删/损坏/人工误操作/删除顺序出错，是真实的数据丢失，自动"顺手清理掉 DB 记录"等于把这个事故悄悄掩盖掉。
-   - **DB 无记录（或已删除）+ storage 对象存在** → **孤儿候选**，满足年龄/路径前缀等安全条件后允许清理（这是步骤 5 storage 删除失败、或早期历史数据的兜底路径）。**注意**：如果 PRD-IM-6（引用消息附件复用）之后落地，"DB 无记录"不能再简单等于"可以删物理字节"——需要改成"没有任何存活的 `chat_attachments` 行还指着这个 `storage_key`"（按 storage_key 引用计数，不是按单条记录），否则会把还在被另一条消息引用的字节误删。当前 Phase A 落地时 IM-6 还没实现，可以先按"单行判断"来，落地 IM-6 时需要回来改这一步。
+**没有 `DELETING` 中间状态（初版草稿曾经设想过，评审后去掉）**：模型只有 `DRAFT`/`ATTACHED` 两态，不引入第三个状态。原因：如果保留 `DELETING`，安全网扫描要额外处理"DB 是 DELETING + storage 还在"（物理删除还没做/失败，需要重试）和"DB 是 DELETING + storage 没了"（物理删除成功但行清理没跑完，该 finalize）这两种新组合，状态机复杂度上升但咕咕现在的体量不需要这种精细的重试队列。改成更直接的语义：删除就是"DB 事务里直接删掉这一行，commit 成功即视为逻辑删除生效"，物理字节清理是 commit 之后的 best-effort 动作，失败了安全网自然能发现（DB 无记录 + storage 有 = 孤儿候选），不需要专门的中间状态来标记"正在删"。
+
+1. **数据模型**：新建 `chat_attachments` 表（`id`/`attach_id`/`user_id`/`message_id`（可空，DRAFT 阶段为空）/`storage_key`/`name`/`ext`/`mime`/`kind`/`size`/`duration`/`img_width`/`img_height`/`state`（仅 `draft`/`attached`）/`created_at`/`attached_at`）。`message_id` 用简单外键，不做多对多关系表——理由见第 1.4 节的 `quoted` 排查结论；`storage_key` 可以被多条 `chat_attachments` 行共享（PRD-IM-6 场景），所以不能给 `storage_key` 加唯一约束。
+2. **上传写 storage 再写 DB，插入失败要回滚 storage**：`stage()` 改为 `storage.put()` 成功后立刻 `INSERT chat_attachments(state=draft)`；Redis 只作为可选的快速查找缓存。这一步移除了"Redis 丢失导致草稿附件失去所有权凭证"这条路径（之前的 v2 草案只解决了"已发送"半场，这里补齐"草稿"半场），但 `storage.put()` 和 `db.insert()` 仍然是两个系统、不是一个事务——如果 `insert` 失败（DB 异常/连接问题），要 `try/except` 里 best-effort 调 `storage.delete()` 把刚写的字节回滚掉；这个回滚本身也可能失败，届时留给安全网按"孤儿候选"兜底（DB 无记录 + storage 有 + 非最近写入）。措辞上不说"彻底堵住"，只说"消除了 Redis 丢失这条路径，跨系统提交的窗口仍然存在，靠尽力回滚 + 安全网兜底"。
+3. **发送成功 = claim，整条消息一个事务**：消息真正持久化时，一个 DB 事务内，对每个关联 `attach_id` 执行条件更新 `UPDATE chat_attachments SET state='attached', message_id=? WHERE attach_id=? AND user_id=? AND state='draft'`；**任意一次更新的 `affected_rows != 1`，整个事务回滚**（消息本身也不落库）——不允许消息存在但只有部分附件 claim 成功的半完整状态。转成 `ATTACHED` 之后不再有 TTL，永久保留直到所属消息/会话被删除。
+4. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）改为直接查 DB**，**查询必须带 `user_id`**（`WHERE attach_id=? AND user_id=?`，不能只按 `attach_id` 查——否则是新引入的 IDOR）。Redis 命中时可以走缓存快路径，未命中一律回退 DB。
+5. **物理删除统一收口成一个函数，不允许任何调用方直接 `storage.delete()`**：`try_delete_storage_if_unreferenced(storage_key)`——先 `SELECT EXISTS(SELECT 1 FROM chat_attachments WHERE storage_key=? AND user_id=?)`（此时 DB 里那条要删的行已经不在了，只看"是否还有别的行存在"），存在就跳过物理删除（还有别的消息在用），不存在才真正 `storage.delete()`。`delete_session`、草稿 GC、单附件删除、安全网清理孤儿候选，全部必须通过这一个函数碰物理字节，不允许任何路径绕过去直接调 `storage.delete()`。
+6. **会话/消息删除：DB commit 优先于 storage 删除**：`delete_session`（`app/api/v1/agent.py:356`）目前只 `db.delete(session)`。改造后：① 一个 DB 事务内，删除 session 的同时**直接删除**关联的 `chat_attachments` 行（不标记中间状态，见上面"没有 DELETING"的说明）；② **DB 事务 commit 成功之后**，对每个涉及的 `storage_key` 调步骤 5 的 `try_delete_storage_if_unreferenced()`；③ storage 删除失败只记日志，不回滚 DB、不重试阻塞主流程——**原则：宁可临时泄漏，不可误删**。步骤 8 的安全网负责兜住失败留下的孤儿。
+7. **草稿孤儿定时清理，同样遵守"DB 先变化"**：不是"先 `storage.delete()` 再删 DB 行"，而是先用条件删除赢得 DB 所有权——`DELETE FROM chat_attachments WHERE attach_id=? AND state='draft' AND created_at < now() - 48h` 返回 `affected_rows=1` 才说明这一行真的被 GC 拿下了（如果这行此时已经被并发的发送请求 claim 成 `attached`，条件里的 `state='draft'` 不匹配，`affected_rows=0`，GC 直接跳过这一行，不会跟 claim 抢——这就是 GC-vs-claim 竞态的解法：谁先在 DB 层面改变这一行的状态，谁赢，另一方的操作天然是 no-op）；删除成功（`affected_rows=1`）之后才调 `try_delete_storage_if_unreferenced()` 处理物理字节。TTL 定为 48 小时。
+8. **发送失败/放弃时的及时清理（状态守卫，不是"失败就删"）**：新增按 `attach_id` 删除单个草稿附件的接口，**删除前必须校验 `state == 'draft'`，非 DRAFT 一律拒绝**（同样走"条件删除、`affected_rows` 判断成败"的模式，不是先查再删的两步）——这是必须的安全条件：HTTP 响应丢失/超时不等于请求真的失败，消息可能已经在服务端提交成功、附件已经被 claim 成 `ATTACHED`。前端在发送请求失败时调用；覆盖不了"上传后直接关标签页/崩溃/断网"这类无信号场景，仍需要步骤 7 的定时兜底，这里只是降低草稿孤儿产生速度的锦上添花，不是主机制。
+9. **安全网：低频全量一致性扫描**，DB 与 storage 交叉检查，**两种不一致必须区别处理，不能用同一套"清理"逻辑**：
+   - **DB 有记录 + storage 对象缺失** → **完整性异常（integrity violation）**，记录到受限诊断出口，**并补一条 `SystemLog`**（后台「系统日志」页可见，写入前必须过 `redact()`，不能把 `storage_key`/路径等原始信息直接暴露到这个用户可达的出口），**不做自动修复、不删除 DB 记录**——这种情况意味着 storage 被误删/损坏/人工误操作/删除顺序出错，是真实的数据丢失，自动"顺手清理掉 DB 记录"等于把这个事故悄悄掩盖掉。
+   - **DB 无记录 + storage 对象存在（非最近写入）** → **孤儿候选**，清理前同样要走步骤 5 的 `try_delete_storage_if_unreferenced()`（按 `storage_key` 查，不是按单条记录判断"有没有 DB 记录"——PRD-IM-6 落地后，同一个 `storage_key` 可能有其他存活行还在用，"这条记录没了"不等于"这个 storage_key 没人用了"）。
    - 频率：每天一次；阈值：90 天。扫描本身只是按索引查询，成本低，选择更高频率是为了更快发现 integrity violation（真实数据丢失信号），本质是 eventual consistency 的最后一道防线，不是主清理路径。
-- **组织方式（约束，不规定具体文件）**：草稿清理、安全网扫描、（Phase B 的）视频缓存清理是三种不同生命周期策略（状态驱动 / 消息生命周期驱动 / 租约驱动），清理逻辑应按语义独立组织，不应该塞进一个按路径前缀 if-elif 堆叠多套判断的扫描函数里；可以共享底层 `list_keys`/`stat`/`delete`/锁/调度基础设施。
+- **组织方式（约束，不规定具体文件）**：草稿清理、安全网扫描、（Phase B 的）视频缓存清理是三种不同生命周期策略（状态驱动 / 消息生命周期驱动 / 租约驱动），清理逻辑应按语义独立组织，不应该塞进一个按路径前缀 if-elif 堆叠多套判断的扫描函数里；可以共享底层 `list_keys`/`stat`/`delete`/锁/调度基础设施，以及步骤 5 的 `try_delete_storage_if_unreferenced()`。
 - 并发保护：沿用 `agent/memory` scope 锁的模式（Redis 分布式锁），防止 backend/worker 同时触发同一扫描。
-- 验收标准：一条 30 天前发送、且没有被 `save_uploaded_file` 存进文件库的消息，只要所属会话没被删除，历史气泡里的图片/文件仍能正常加载（哪怕 Redis 整体清空）；会话被删除后，DB commit 成功即视为删除生效，对应存储字节尽力清理，清理失败由安全网兜底，不阻塞会话删除本身。
+- 验收标准：一条 30 天前发送、且没有被 `save_uploaded_file` 存进文件库的消息，只要所属会话没被删除，历史气泡里的图片/文件仍能正常加载（哪怕 Redis 整体清空）；会话被删除后，DB commit 成功即视为删除生效，对应存储字节按引用计数尽力清理，清理失败由安全网兜底，不阻塞会话删除本身；两条消息共享同一个 `storage_key` 时，删除其中一条不影响另一条仍能正常访问附件。
 
 ### FR-STORAGE-1-2：视频转码结果缓存，读时刷新 TTL（🔲 待评估）
 
@@ -123,7 +122,7 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
   ```
   `transcode_profile` 是从 `model_cfg` 派生的、影响转码结果的关键字段（如目标分辨率上限/码率上限/编码器），`CACHE_VERSION`（如 `"video-v1"`）是一个硬编码常量，以后升级转码算法/参数时改这个常量即可让所有旧缓存自然失效（不需要手动清），等安全网/租约过期自动回收。
 - 转码产物写入存储的路径由 `cache_key` 确定性推导（如 `{uid}/.video_cache/{cache_key}.mp4`），**不需要经过 Redis 指针查找**——路径本身就是可计算的。
-- **Redis 只承担"最近是否仍活跃"这一个语义，不承担查找职责**：`video_cache_alive:{uid}:{cache_key} = 1`，`ex=7d`（对齐旧的 `chat_attach.TTL`，不新增一个自定义常量），命中时 `EXPIRE` 刷新。`prepare_video_media()` 先按公式算出 `cache_key`，直接尝试 `storage.get(cached_path)`；能读到就是缓存命中（同时刷新 alive marker 的 TTL），读不到（文件不存在，或者存在但 alive marker 已经过期被安全网清理）就重新转码、覆盖写入、重置 alive marker。这样即使 Redis 整体丢失，最多导致"缓存被安全网提前当孤儿清理、下次多转码一次"，不会影响正确性——这正是缓存该有的性质：随时全部丢掉也不影响业务正确性，跟 FR-STORAGE-1-1 里"DB 是所有权真相来源、绝不能丢"的附件语义形成对比。
+- **Redis 只承担"最近是否仍活跃"这一个语义，不承担查找职责**：`video_cache_alive:{uid}:{cache_key} = 1`，`ex=7d`（对齐旧的 `chat_attach.TTL`，不新增一个自定义常量）。**命中时必须用 `SET video_cache_alive:{uid}:{cache_key} 1 EX 7d` 重新整体设置，不能用 `EXPIRE`**——如果 Redis 整体丢失过（本 PRD 明确允许的场景），alive marker 这个 key 根本不存在，对不存在的 key 调 `EXPIRE` 是空操作、不会创建 key；如果只刷新 TTL，会出现"缓存文件明明刚被命中读取，但 marker 依然不存在，下一轮安全网还是会把它当不活跃孤儿清掉"这种违背自愈设计初衷的 bug。`prepare_video_media()` 先按公式算出 `cache_key`，直接尝试 `storage.get(cached_path)`；能读到就是缓存命中（同时 `SET` 重建/续期 alive marker），读不到（文件不存在，或者存在但 marker 已经过期被安全网清理）就重新转码、覆盖写入、重置 alive marker。这样即使 Redis 整体丢失，最多导致"缓存被安全网提前当孤儿清理、下次多转码一次"，不会影响正确性——这正是缓存该有的性质：随时全部丢掉也不影响业务正确性，跟 FR-STORAGE-1-1 里"DB 是所有权真相来源、绝不能丢"的附件语义形成对比。
 - **并发多个请求命中同一视频同一 cache_key 时需要 single-flight 锁**：真实场景（同一会话里连续问同一个视频的问题）会触发多个并发请求同时未命中缓存，各自起一个 ffmpeg 转码同一个大文件，浪费 CPU/内存。改为：查缓存未命中 → 用 `video_cache_lock:{cache_key}`（同 `agent/memory` scope 锁模式）尝试加锁 → 加锁成功后**再查一次缓存**（double-check，防止等锁的时候前一个请求已经转码完）→ 仍未命中才真正转码 → 写缓存 → 释放锁；等锁的请求锁释放后同样先查缓存命中就直接用。
 - 缓存产物本身的清理复用第 2 节 FR-STORAGE-1-1 里的组织约束，作为独立的"租约驱动"清理策略：物理年龄扫描 `.video_cache/`，删除前检查对应 alive marker 是否存在且未过期，存在则跳过（marker 不存在 或 已过期，正常按物理年龄清理）。
 - 验收标准：同一视频、同一 `model_cfg`（`storage_key` 不变）第二次 `read_file` 应命中缓存、不重新调用 `_probe_video`/`_compress_video`；`storage_key` 变化或 `model_cfg` 对应的 transcode profile 变化都不会命中旧缓存；并发多个请求读同一视频时 `_compress_video` 只应该被真正调用一次。
@@ -133,12 +132,13 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 ## 3. 非目标
 
 - **不做"重启时清理"**：backend/worker 重启是正常运维操作（发布、扩缩容、崩溃自动拉起），绝大多数情况下 Redis 数据是好的、暂存附件仍然有效；如果重启触发无条件清理，会把用户几分钟前刚发、还没来得及保存的正常附件误删，是比现有孤儿泄漏更严重的数据丢失。清理必须是时间驱动（定时任务），不能跟进程生命周期绑定。
-- **不做真正的"双向校验"**（反向检查 Redis 元数据指向的存储对象是否还在）：这种不一致（Redis 说有、存储没有）概率低，且现有代码已经优雅处理——`read_bytes` 读不到会抛异常，调用方已包 try/except 返回友好错误，不构成资源泄漏，不值得为此新增校验逻辑。FR-STORAGE-1-2 里视频缓存的"检查 Redis 指针是否存在"是例外，因为那里的 Redis 指针本身会被主动续期，需要靠它判断"是否仍在使用"，跟这里说的"双向校验"目的不同。
+- **不做真正的"双向校验"**（反向检查 Redis 元数据指向的存储对象是否还在）：这种不一致（Redis 说有、存储没有）概率低，且现有代码已经优雅处理——`read_bytes` 读不到会抛异常，调用方已包 try/except 返回友好错误，不构成资源泄漏，不值得为此新增校验逻辑。FR-STORAGE-1-2 里视频缓存的"检查 alive marker 是否存在"是例外，因为那里的 marker 本身会被主动续期，需要靠它判断"是否仍在使用"，跟这里说的"双向校验"目的不同。
 - **不做"访问延寿"**：附件生死跟消息/会话是否存在绑定，不跟"最近有没有被读取/查看"绑定——一条附件哪怕从没被再打开过，只要所属消息/会话还在，就应该一直可用；这跟视频转码缓存"常访问就续命"是完全不同的语义，不要混淆（缓存的目的是省计算，附件的目的是让历史消息保持可用）。
 - **不做上下文窗口驱动的清理**：附件生命周期不跟模型上下文窗口（滑动窗口/摘要裁剪）绑定——上下文裁剪是"喂给模型看什么"的问题，不代表这条历史消息对用户不重要了；如果按上下文窗口清理，附件失效速度会比现在的固定 7 天还快，是明确要避免的方向。
 - **不搭建 Redis 持久化**（AOF/RDB volume 挂载）：这属于基础设施配置变更，超出本 PRD 范围；即使做了 Redis 持久化，FR-STORAGE-1-1 的清理任务仍然需要（自然过期这条路径始终存在，跟 Redis 是否持久化无关）。
 - **不引入 `message_attachments` 多对多关系表**：见第 1.4 节排查结论，现状不存在附件跨消息复用的场景，`chat_attachments.message_id` 简单外键足够表达当前的产品事实；转发/消息复制/多消息引用等假设中的未来需求不在本 PRD 设计范围内，出现真实需求时再评估。
-- **不假装 DB 和 storage 之间存在事务**：`delete_session` 的级联清理明确是"DB commit 优先、storage 删除是尽力而为的 eventual consistency"，不会去做分布式事务/两阶段提交这类基础设施；storage 删除失败只留给安全网扫描兜底，不阻塞、不重试、不回滚 DB。
+- **不假装 DB 和 storage 之间存在事务**：`delete_session` 的级联清理明确是"DB commit 优先、storage 删除是尽力而为的 eventual consistency"，不会去做分布式事务/两阶段提交这类基础设施；storage 删除失败只留给安全网扫描兜底，不阻塞、不重试、不回滚 DB。`storage.put()` 和 `db.insert(draft)` 之间同理，不做分布式事务，只做"insert 失败时 best-effort 回滚 put"。
+- **不引入 `DELETING` 中间状态**：`chat_attachments.state` 只有 `draft`/`attached` 两个值，删除是"DB 事务里直接删行、commit 成功即生效"，不设专门的"正在删除中"状态——理由见 FR-STORAGE-1-1 开头的说明，避免安全网扫描要处理"DELETING + storage 还在"（该重试）和"DELETING + storage 没了"（该 finalize）这类新增的状态组合，现在体量不需要这种精细的删除重试队列。
 
 ---
 
@@ -155,7 +155,7 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 
 ## 5. 实施计划
 
-拆两个独立 PR：Phase A（清理任务）不依赖 Phase B（转码缓存），可以先落地、单独上线验证；Phase B 落地时复用 Phase A 已经跑通的清理任务，只是把 `.video_cache/` 加进扫描前缀。
+拆两个独立 PR：Phase A（清理任务）不依赖 Phase B（转码缓存），可以先落地、单独上线验证；Phase B 落地时复用 Phase A 已经跑通的存储枚举/锁/scheduler 基础设施，新增一段独立组织的视频缓存租约清理逻辑（不是把 `.video_cache/` 塞进 Phase A 那个统一扫描函数）。
 
 ### Phase A：附件所有权状态机（对应 FR-STORAGE-1-1 v2 定稿）
 
@@ -182,18 +182,19 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
    - `_video_cache_key(storage_key: str, profile: dict) -> str`：`hashlib.sha256((storage_key + json.dumps(profile, sort_keys=True) + CACHE_VERSION).encode()).hexdigest()`，`CACHE_VERSION` 定义成模块级常量（如 `"video-v1"`）。
    - `_video_cache_alive_key(uid, cache_key) -> str`：如 `f"video_cache_alive:{uid}:{cache_key}"`。
 2. **`prepare_video_media()` 改造**（新增可选参数 `storage_key: str | None = None`、`user_id: str | None = None`，两者都传才启用缓存；`resolve_for_message`/`read_video` 两个调用方都能传，聊天附件路径 `attach_id` 每次不同、天然没有稳定 key，可以先只给 `read_video` 接）：
-   - 算出 `cache_key`，直接尝试 `storage.get({uid}/.video_cache/{cache_key}.mp4)`；能读到就是命中，跳过探测+转码，同时 `EXPIRE` 刷新 alive marker TTL。
-   - 未命中（文件不存在，包括被安全网清理的情况）→ 先用 `video_cache_lock:{cache_key}` 加锁（`agent/memory` scope 锁模式）→ 加锁后 **double-check 再读一次缓存**（防止等锁期间前一个请求已经转码完）→ 仍未命中才真正探测+转码 → 转码成功后 `put` 到缓存路径、`SET` alive marker（`ex=ttl`）→ 释放锁。
+   - 算出 `cache_key`，直接尝试 `storage.get({uid}/.video_cache/{cache_key}.mp4)`；能读到就是命中，跳过探测+转码，同时 **`SET video_cache_alive:{uid}:{cache_key} 1 EX 7d`**（不是 `EXPIRE`——marker 可能因为 Redis 整体丢失而不存在，`EXPIRE` 对不存在的 key 是空操作，必须用 `SET` 无条件重建/续期）。
+   - 未命中（文件不存在，包括被安全网清理的情况）→ 先用 `video_cache_lock:{cache_key}` 加锁（`agent/memory` scope 锁模式）→ 加锁后 **double-check 再读一次缓存**（防止等锁期间前一个请求已经转码完）→ 仍未命中才真正探测+转码 → 转码成功后 `put` 到缓存路径、`SET` alive marker（`ex=7d`）→ 释放锁。
 3. **`agent/tools/file_readers.py` 的 `read_video`**：调用 `prepare_video_media` 时补上 `storage_key=file.storage_key, user_id=file.user_id`。
-4. **Phase A 组织约束下的视频缓存清理**（独立的租约驱动清理逻辑，不塞进草稿/安全网清理里）：扫描 `.video_cache/`，删除前查一次对应 alive marker（`GET`，不 `EXPIRE`），marker 存在则跳过；marker 不存在或已过期则按物理年龄正常清理。
+4. **独立的视频缓存租约清理**（复用 Phase A 的 `list_keys`/`stat`/`delete`/分布式锁/scheduler 基础设施，但是一段独立组织的清理逻辑，不塞进草稿清理或安全网扫描里）：扫描 `.video_cache/`，删除前查一次对应 alive marker（`GET`，不刷新），marker 存在则跳过；marker 不存在或已过期则按物理年龄正常清理。
 5. **测试**：
    - `prepare_video_media` 缓存命中：mock `_compress_video`/`_probe_video`，第一次调用产生缓存，第二次调用同一 `storage_key`+`model_cfg` 断言没有再调 `_probe_video`/`_compress_video`。
    - `storage_key` 变化、或 `model_cfg` 对应 transcode profile 变化（同 `storage_key`），都不命中旧缓存。
-   - 命中缓存时对应 alive marker 的 TTL 被刷新。
+   - 命中缓存时对应 alive marker 被重建/续期（断言调的是 `SET ... EX`，不是 `EXPIRE`）。
+   - **alive marker 因 Redis 丢失而不存在、但物理缓存文件还在**：命中读取后，marker 应该被重新创建出来（断言 `GET` 能拿到值，而不是断言"TTL 变化"——因为 key 本来就不存在，没有旧 TTL 可比）。这是本轮新增的用例，专门覆盖"用 EXPIRE 会静默失效"这个 bug。
    - 并发两个请求同时读同一个未缓存视频：mock `_compress_video` 断言只被调用一次（single-flight 锁生效）。
    - alive marker 存在但物理缓存文件不存在（如被外部误删）：`prepare_video_media` 应该自动重新转码，而不是直接报错或返回损坏结果；成功后重建 marker。
    - 视频缓存清理对 `.video_cache/` 的行为：alive marker 还在且未过期时，物理 mtime 超期的缓存对象**不删**；marker 不存在（或已过期）时按物理年龄正常清理。
-6. **上线验证**：devserver 上让咕咕连续两次读同一个视频，通过日志或手动查 Redis（`GET video_cache_alive:<uid>:<cache_key>`）确认第二次命中缓存、没有再触发 ffmpeg 转码。
+6. **上线验证**：devserver 上让咕咕连续两次读同一个视频，通过日志或手动查 Redis（`GET video_cache_alive:<uid>:<cache_key>`）确认第二次命中缓存、没有再触发 ffmpeg 转码；再手动 `FLUSHALL` 一次 Redis 后立刻再读一次，确认缓存文件仍能命中（走 storage 直接读），且 marker 被重新创建出来。
 
 ---
 
@@ -204,12 +205,16 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 **Phase A**：
 
 - [ ] 消息发送成功时，关联的 `chat_attachments` 行原子地从 `draft` 转成 `attached`，`message_id` 正确写入。
+- [ ] **Claim all-or-nothing**：一条消息带 3 个附件，模拟其中 1 个 claim 失败（比如已经被并发请求 claim 走，`affected_rows=0`）——断言整个事务回滚：消息本身不落库，另外 2 个附件也仍然是 `draft` 状态，不会出现"消息存在但只有部分附件是 attached"的半完整结果。
 - [ ] `/thumb`、`/download`、`/preview-pdf`：Redis 未命中/不存在时，能从 DB 正确回退拿到 meta 并返回内容（模拟"7 天后再打开历史消息"场景）；查询必须带 `user_id` 过滤——用另一个用户的身份查同一个 `attach_id` 应该拿不到（IDOR 回归测试）。
 - [ ] `delete_session`：会话下有 2 条消息各引用 1 个附件，删除会话后，两个附件的存储对象和 `chat_attachments` 行都应该消失；不属于这个会话的附件不受影响。
+- [ ] **共享 `storage_key` 时的删除隔离（P0，对应 PRD-IM-6 的复用场景）**：两条独立消息（分属不同会话）的 `chat_attachments` 行指向同一个 `storage_key`；删除其中一个会话后，断言：① 那条消息的 `chat_attachments` 行被删；② 物理 `storage_key` **没有**被删除（因为另一条还活着）；③ 另一条消息仍能正常通过 `/thumb`/`/download` 访问附件。再删除第二条消息所在会话后，这次断言物理字节才真正被删除。
+- [ ] `try_delete_storage_if_unreferenced()` 单测：`storage_key` 还有其他存活 `chat_attachments` 行时不删物理对象，返回"跳过"；没有任何存活行时才真正删除，返回"已删除"。
 - [ ] 草稿孤儿清理：`state='draft'` 且超过草稿 TTL 的行会被清理（含存储对象）；`state='attached'` 的行即使物理 mtime 同样很老也**不会**被草稿清理碰到。
 - [ ] 单个附件删除接口的状态守卫：`state='draft'` 时删除成功，对应存储对象和 DB 行都消失；`state='attached'` 时删除请求应该被拒绝（不能因为前端误判"发送失败"就删掉已生效的附件）；删除一个不存在或不属于当前用户的 `attach_id` 应该返回明确错误而不是静默成功。
 - [ ] **发送成功但 HTTP 响应丢失/超时的竞态**：模拟消息已经在服务端提交成功（附件已 claim 成 `attached`）之后，客户端仍然发出单附件删除请求——断言删除被拒绝，附件和存储对象都还在。
-- [ ] **GC 扫描与发送 claim 同时发生的竞态**：草稿孤儿清理判断某条记录"超过 TTL、可以删"和消息发送把同一条记录 claim 成 `attached` 并发执行时，最终结果不能是"消息已经引用了一个被删掉的附件"（用条件更新/行锁保证互斥，测试断言两者不会同时成功）。
+- [ ] **GC 扫描与发送 claim 同时发生的竞态**：草稿孤儿清理用条件删除（`DELETE ... WHERE state='draft' AND ...`）和消息发送用条件更新（`UPDATE ... WHERE state='draft' AND ...`）并发操作同一行——谁先改变这一行的 `state`，谁的条件语句先命中、`affected_rows=1`，另一方的条件语句因为 `state` 已经不是 `draft` 而 `affected_rows=0`、天然是 no-op。测试断言：最终结果只能是"消息正常引用附件"或"附件被 GC 干净清理、消息发送失败"两者之一，不会出现"消息引用了一个已被删除的附件"。
+- [ ] **`storage.put()` 成功但 `db.insert(draft)` 失败时的回滚**：mock DB insert 抛异常，断言 `stage()` 会 best-effort 调 `storage.delete()` 把刚写的字节清理掉；再 mock 这次回滚也失败，断言不会抛出未处理异常掩盖原始错误（回滚失败只记日志，原始 insert 异常正常向上抛）。
 - [ ] **DB commit 失败时 storage 字节不能提前被删**：`delete_session` 的 DB 事务失败（模拟异常）时，不应该有任何 `storage.delete()` 被调用。
 - [ ] **storage 删除失败不阻塞 session 删除**：`storage.delete()` 抛异常时，`delete_session` 本身仍应成功返回（DB 层面已完成），且这个失败应该能被后续安全网扫描识别为孤儿候选。
 - [ ] 空存储 / 无草稿孤儿时清理任务正常返回 `0`，不报错；`stat()` 返回 `mtime=None` 时跳过不删。
@@ -221,7 +226,8 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 
 - [ ] 首次调用 `prepare_video_media(..., storage_key=..., user_id=...)` 无缓存，正常走探测+转码，之后能在存储里读到 `.video_cache/{cache_key}.mp4` 和对应 alive marker。
 - [ ] 同一 `storage_key`+同一 `model_cfg` 第二次调用命中缓存：mock `_probe_video`/`_compress_video` 断言**没有被调用**，直接返回上次的媒体项。
-- [ ] 命中缓存时对应 alive marker 的 TTL 被刷新（断言 `EXPIRE` 被调用，或前后 `ttl()` 值变化）。
+- [ ] 命中缓存时对应 alive marker 用 `SET ... EX` 重建/续期，**不是 `EXPIRE`**（断言调用的 Redis 方法，`EXPIRE` 对不存在的 key 是空操作，会导致 Redis 丢失后缓存"自愈"失败）。
+- [ ] alive marker 不存在（模拟 Redis flush）但物理缓存文件还在：命中读取后 marker 被重新创建（`GET` 能拿到值）。
 - [ ] `storage_key` 变化、或同 `storage_key` 但 `model_cfg` 对应 transcode profile 变化，都不命中旧缓存，重新走探测+转码。
 - [ ] 未传 `storage_key`/`user_id`（聊天附件路径）完全不查/不写缓存，行为跟 Phase A 落地前一致（防止误伤现有聊天附件视频路径）。
 - [ ] **并发 single-flight**：两个请求同时读同一个未缓存的视频（同 `storage_key`+`model_cfg`），mock `_compress_video` 断言**只被调用一次**，另一个请求应该等锁释放后直接读到缓存产物。
@@ -234,7 +240,7 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 
 - [ ] 发一张图片给咕咕（正常发送，非草稿），刷新页面，确认气泡里的图片正常显示（走的是 DB 查询路径，不是靠 objectURL）。
 - [ ] 手动把 Redis 整个 flush 掉（模拟容器重建/数据丢失），再刷新这条历史消息，确认图片依然正常显示（证明真的从 DB 拿到了 meta，跟 Redis 状态无关——包括草稿阶段刚上传、还没发送成功的附件也应该在 DB 里能查到）。
-- [ ] 删除这条消息所在的整个会话，检查存储里对应的 storage_key 确实被删除了（不再残留孤儿字节），`chat_attachments` 表里对应行也应该消失。
+- [ ] 删除这条消息所在的整个会话，检查存储里对应的 storage_key 确实被删除了（不再残留孤儿字节），`chat_attachments` 表里对应行也应该消失。（`storage_key` 共享场景——两条消息共用同一份字节、删一条不影响另一条——目前只有自动化测试覆盖；PRD-IM-6 落地前没有可以手动触发共享场景的入口，等 IM-6 上线后再补一条手动验证。）
 - [ ] 上传一张图片但**不发送**（只调用暂存接口），等草稿 TTL 过期后跑一次清理任务，确认这个从未发送的草稿被清理掉了；再上传一张、正常发送、发送成功后手动改数据库把这张图的 mtime/created_at 改到 TTL 之外，确认它**不会**被草稿清理误删（因为已经是 `attached` 状态）。
 - [ ] 挂上定时任务后，观察 `app/core/scheduler.py` 的启动日志确认相关 job 被正确注册。
 - [ ] 观察一次真实的低峰自动运行（不手动触发），确认定时触发本身工作正常，不只是手动调用路径可用。
