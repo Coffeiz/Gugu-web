@@ -864,7 +864,110 @@ async def _upload_video_mmfile(raw: bytes, name: str, model_cfg) -> str | None:
         return None
 
 
-async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> dict:
+# ── 视频转码结果缓存（PRD-STORAGE-1 Phase B）─────────────────────────────────
+# cache_key 由 storage_key + 转码 profile + CACHE_VERSION 一起派生（不能只用
+# storage_key——同一份源文件换一个 model_cfg，分辨率/码率上限不同，转码产物不
+# 一样；以后调整 ffmpeg 参数，改 CACHE_VERSION 让所有旧缓存自然失效）。缓存路径
+# 由 cache_key 确定性推导，不经过 Redis 查找；Redis 只存一个"最近是否仍活跃"的
+# marker，随时全部丢失也不影响正确性（marker 不在了，`prepare_video_media` 就
+# 当没缓存，重新转码——缓存该有的性质：可以随时全丢，不影响业务 correctness）。
+VIDEO_CACHE_VERSION = "video-v1"
+VIDEO_CACHE_ALIVE_TTL = 7 * 24 * 3600   # 对齐旧 chat_attach.TTL，不新增一个自定义常量
+
+
+def _video_transcode_profile(model_cfg) -> dict:
+    """从 model_cfg 派生影响转码结果的关键字段。"""
+    return {
+        "minimax": bool(_minimax_video_enabled(model_cfg)) if model_cfg is not None else False,
+        "max_dim": VIDEO_COMPRESS_MAX_DIM,
+        "bitrate": VIDEO_COMPRESS_BITRATE,
+        "base64_max": VIDEO_BASE64_MAX,
+        "mmfile_max": VIDEO_MMFILE_MAX,
+    }
+
+
+def _video_cache_key(storage_key: str, profile: dict) -> str:
+    payload = json.dumps(
+        {"storage_key": storage_key, "profile": profile, "version": VIDEO_CACHE_VERSION},
+        sort_keys=True, ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _video_cache_path(user_id, cache_key: str) -> str:
+    return f"{user_id}/.video_cache/{cache_key}.mp4"
+
+
+def _video_cache_alive_key(user_id, cache_key: str) -> str:
+    return f"video_cache_alive:{user_id}:{cache_key}"
+
+
+async def _video_cache_try_read(cache_path: str, alive_key: str) -> bytes | None:
+    """命中就顺带刷新 alive marker——**必须用 `SET ... EX` 整体重设，不能用
+    `EXPIRE`**：Redis 整体丢失过之后 marker 这个 key 根本不存在，对不存在的
+    key 调 `EXPIRE` 是空操作、不会创建 key，会导致"缓存文件明明刚被命中读取，
+    marker 却依然不存在，下一轮安全网还是把它当孤儿清掉"这种违背自愈设计的 bug。"""
+    try:
+        data = await get_storage().get(cache_path)
+    except Exception:
+        return None
+    if not data:
+        return None
+    try:
+        await get_redis().set(alive_key, "1", ex=VIDEO_CACHE_ALIVE_TTL)
+    except Exception:
+        pass
+    return data
+
+
+async def _compress_video_cached(raw: bytes, probe: dict | None, storage_key: str | None,
+                                 user_id, model_cfg) -> bytes | None:
+    """`_compress_video` 的缓存包装：`storage_key`/`user_id` 都给了才启用缓存
+    （聊天附件路径的 `attach_id` 每次不同，天然没有稳定 key，直接走原始转码，
+    不接缓存）。命中直接返回；未命中时用 `video_cache_lock:{cache_key}` 做
+    single-flight（同一视频被多个并发请求同时未命中时只真正转码一次），加锁后
+    double-check 再读一次缓存（防止等锁期间前一个请求已经转码完）。"""
+    if not storage_key or not user_id:
+        return await _compress_video(raw, probe)
+
+    profile = _video_transcode_profile(model_cfg)
+    cache_key = _video_cache_key(storage_key, profile)
+    cache_path = _video_cache_path(user_id, cache_key)
+    alive_key = _video_cache_alive_key(user_id, cache_key)
+
+    cached = await _video_cache_try_read(cache_path, alive_key)
+    if cached is not None:
+        return cached
+
+    lock = get_redis().lock(f"video_cache_lock:{cache_key}", timeout=200)
+    got_lock = False
+    try:
+        got_lock = await lock.acquire(blocking=True, blocking_timeout=180)
+    except Exception:
+        got_lock = False
+    try:
+        if got_lock:
+            cached = await _video_cache_try_read(cache_path, alive_key)
+            if cached is not None:
+                return cached
+        compressed = await _compress_video(raw, probe)
+        if compressed is not None:
+            try:
+                await get_storage().put(cache_path, compressed, "video/mp4")
+                await get_redis().set(alive_key, "1", ex=VIDEO_CACHE_ALIVE_TTL)
+            except Exception:
+                pass   # 缓存写入失败不影响本次转码结果的正常返回，只是下次不会命中
+        return compressed
+    finally:
+        if got_lock:
+            try:
+                await lock.release()
+            except Exception:
+                pass
+
+
+async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg,
+                              *, storage_key: str | None = None, user_id=None) -> dict:
     """把视频原始字节按 provider 能力转成可以直接塞进 `media` 列表的视频块描述
     （交给 `build_user_content`/`video_media_to_anthropic_block` 再转成各 provider
     的最终 content block）。
@@ -906,6 +1009,10 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> di
     失败（超限/转码失败/上传失败）统一抛 `ValueError`，消息可以直接展示给用户；
     调用方负责捕获并决定怎么呈现（聊天附件退化成文字提示，read_file 直接把
     消息当工具错误返回）。
+
+    `storage_key`/`user_id`（PRD-STORAGE-1 Phase B，可选）：都传了才启用转码结果
+    缓存——同一份视频反复被读，跳过重复的 ffprobe/ffmpeg。聊天附件路径的
+    `attach_id` 每次不同，天然没有稳定 key，不传即可，行为与之前完全一致。
     """
     size = len(raw)
     if size > VIDEO_SOURCE_MAX:
@@ -925,7 +1032,7 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg) -> di
     if minimax:
         payload, payload_mime = raw, mime
         if _should_compress_video(probe, size):
-            compressed = await _compress_video(raw, probe)
+            compressed = await _compress_video_cached(raw, probe, storage_key, user_id, model_cfg)
             if not compressed:
                 raise ValueError("这条视频转码失败，没法直接看")
             payload, payload_mime = compressed, "video/mp4"
