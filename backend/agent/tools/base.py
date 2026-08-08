@@ -12,6 +12,7 @@ import time
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
+from agent.tool_contract import SchemaError, build_validator, invalid_input_payload, validate_input
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
@@ -56,16 +57,20 @@ def _redact_result(name: str, result):
     return result
 
 
-def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) -> None:
+def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> None:
     """记一行工具调用轨迹（best-effort，绝不因记日志影响工具）。
 
     隐私：args 只记**结构**——数字/布尔/null（project_id 等便于排查落位）原样保留，字符串值
     一律打码（可能含文件名/客户名/正文），不把用户内容写进日志（与决策轨迹脱敏同口径）。
+    非 object 输入只记类型名，不回显原值。
     """
     try:
-        summary = {}
-        for k, v in (args or {}).items():
-            summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
+        if isinstance(args, dict):
+            summary = {}
+            for k, v in args.items():
+                summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
+        else:
+            summary = {"_input_type": type(args).__name__}
         _ms = int((time.monotonic() - t0) * 1000)
         rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
         from agent.trace import get_trace
@@ -178,6 +183,8 @@ class Tool:
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
         # 不设置 = 该工具认为自己够快，不需要这条声明。
         self.start_message = start_message
+        # 注册时由 SkillRegistry.add() 完成 schema 自检并缓存；未注册 Tool 不允许直接 dispatch。
+        self._input_validator = None
 
     def to_anthropic(self) -> dict:
         return {
@@ -236,6 +243,13 @@ class SkillRegistry:
             raise ToolContractError(f"工具 {tool.name} 的 input_schema 非法：必须是 dict 且顶层 type='object'")
         if not callable(tool.handler):
             raise ToolContractError(f"工具 {tool.name} 的 handler 不可调用")
+        try:
+            tool._input_validator = build_validator(tool.input_schema)
+        except SchemaError as e:
+            rule = str(getattr(e, "validator", None) or "schema")
+            raise ToolContractError(
+                f"工具 {tool.name} 的 input_schema 不符合 JSON Schema Draft 2020-12（{rule}）"
+            ) from e
         self._tools[tool.name] = tool
 
     def add_skill(self, name: str, tool_names: list[str]) -> None:
@@ -270,7 +284,7 @@ class SkillRegistry:
     def openai_schemas(self, names: list[str]) -> list[dict]:
         return [self._tools[n].to_openai() for n in names if n in self._tools]
 
-    async def dispatch(self, user_id, name: str, args: dict) -> tuple[str, dict | None]:
+    async def dispatch(self, user_id, name: str, args: Any) -> tuple[str, dict | None]:
         """执行工具，返回 (给 LLM 的 JSON 字符串, 给前端的 UI artifact|None)。
 
         工具结果若是 dict 且含 `_artifact` 键，则把它抽出来作为 artifact（如发文件卡片），
@@ -290,6 +304,29 @@ class SkillRegistry:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             return json.dumps({"error": f"未知工具: {name}"}), None
 
+        # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再保留现有 ID 弱归一，最后按
+        # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
+        # 防止“参数根本不能执行，却先对用户说我去做了”或 mutation handler 带错参运行。
+        if not isinstance(args, dict):
+            payload = invalid_input_payload(
+                name,
+                [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}],
+            )
+            _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
+            return json.dumps(payload, ensure_ascii=False), None
+
+        # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
+        # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。
+        # 在 schema 校验前只转这批既有白名单 id；其它类型不做猜测式 coercion。
+        _coerce_int_ids(args)
+
+        issues = validate_input(tool._input_validator, args)
+        if issues:
+            payload = invalid_input_payload(name, issues)
+            first_rule = issues[0].get("rule", "invalid")
+            _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}", t0)
+            return json.dumps(payload, ensure_ascii=False), None
+
         await _maybe_announce_progress(tool, args)
 
         # user_id 归一成 UUID：IM 路（worker）传进来的是字符串，而 ORM 对象的 .user_id 是
@@ -303,11 +340,6 @@ class SkillRegistry:
                 user_id = _uuid.UUID(user_id)
             except (ValueError, AttributeError):
                 pass   # 非标准 UUID 串：原样传，交给下游 SQL 比较
-
-        # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
-        # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。
-        # 在入口把这些 id 键转成 int，下游 db.get/比较都稳。attach_id 是 hex 串、不能转，排除。
-        _coerce_int_ids(args)
 
         import app.db.session as _sess
         if _sess._engine is None:
