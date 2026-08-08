@@ -1071,9 +1071,14 @@ def _build_pinned_request(client, method: str, url: str):
     netloc = f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}"
     pinned_url = parsed._replace(netloc=netloc).geturl()
     extensions = {"sni_hostname": parsed.hostname} if parsed.scheme == "https" else {}
-    # Host 头带端口：非默认端口时（如 :8443）省略端口会让部分虚拟主机/CDN 按错误的
-    # 站点路由（code review 发现）；有 parsed.port 时原样带上，用默认端口时留纯域名。
-    host_header = f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+    # Host 头：字面 IPv6 地址在 URI authority/HTTP Host 里必须带方括号（如
+    # "[2606:4700:4700::1111]"），否则冒号会被误当成端口分隔符——parsed.hostname
+    # 对这种 URL 返回的是不带括号的裸地址，直接拼进 Host 头格式不合法（code review
+    # 发现）。普通域名不含冒号，加不加这个判断都不受影响。
+    host = f"[{parsed.hostname}]" if ":" in (parsed.hostname or "") else parsed.hostname
+    # 非默认端口（如 :8443）省略端口会让部分虚拟主机/CDN 按错误的站点路由（同样是
+    # code review 发现）；有 parsed.port 时原样带上，用默认端口时留纯 host。
+    host_header = f"{host}:{parsed.port}" if parsed.port else host
     req = client.build_request(method, pinned_url, headers={"Host": host_header}, extensions=extensions)
     return req, None
 

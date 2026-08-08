@@ -177,3 +177,57 @@ def test_build_pinned_request_host_header_keeps_non_default_port(monkeypatch):
     assert error is None
     assert captured["headers"]["Host"] == "example.com:8443"
     assert "93.184.216.34:8443" in captured["url"]
+
+
+def test_build_pinned_request_wraps_literal_ipv6_host_in_brackets(monkeypatch):
+    """URL 本身就是字面 IPv6 地址（如 https://[2606:4700:4700::1111]/a.png）时，
+    Host 头必须给 IPv6 地址加方括号——parsed.hostname 返回的是不带括号的裸地址，
+    直接拼进 Host 头会因为地址内部的冒号被误当成端口分隔符而格式不合法
+    （PR13 复审发现的 P3）。"""
+    import socket
+
+    from agent.tools.files import _build_pinned_request
+
+    def safe_result(*_args, **_kwargs):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 0, 0, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
+
+    captured = {}
+
+    class _FakeClientForHost:
+        def build_request(self, method, url, headers=None, extensions=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return "request-object"
+
+    req, error = _build_pinned_request(
+        _FakeClientForHost(), "GET", "https://[2606:4700:4700::1111]/a.png"
+    )
+    assert error is None
+    assert captured["headers"]["Host"] == "[2606:4700:4700::1111]"
+
+
+def test_build_pinned_request_wraps_literal_ipv6_host_with_port(monkeypatch):
+    """字面 IPv6 地址 + 非默认端口同时出现时，Host 头应该是「[地址]:端口」。"""
+    import socket
+
+    from agent.tools.files import _build_pinned_request
+
+    def safe_result(*_args, **_kwargs):
+        return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:4700:4700::1111", 0, 0, 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", safe_result)
+
+    captured = {}
+
+    class _FakeClientForHost:
+        def build_request(self, method, url, headers=None, extensions=None):
+            captured["headers"] = headers
+            return "request-object"
+
+    req, error = _build_pinned_request(
+        _FakeClientForHost(), "GET", "https://[2606:4700:4700::1111]:8443/a.png"
+    )
+    assert error is None
+    assert captured["headers"]["Host"] == "[2606:4700:4700::1111]:8443"
