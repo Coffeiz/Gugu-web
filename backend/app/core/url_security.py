@@ -7,17 +7,22 @@ from urllib.parse import urlparse
 
 
 def is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """判断地址是否属于不允许外连的范围，包括 IPv4-mapped IPv6。"""
+    """判断地址是否属于不允许外连的范围，包括 IPv4-mapped IPv6。
+
+    用 `not is_global` 而不是枚举 `is_private`/`is_loopback`/... 这几个类别：这里的
+    安全目标本来就是"只允许全球公网可达地址"，枚举法必须自己保证类别列全，Python
+    的 `ipaddress` 恰好有一个容易被漏掉的例外——CGNAT/shared address space
+    `100.64.0.0/10`：`is_private` 是 `False`，但 `is_global` 也是 `False`（Python
+    官方文档专门标注了这个特例）。枚举写法（旧实现）完全不会拦截 `100.64.0.1`
+    这种地址（code review 发现），而运营商 CGNAT、以及一些 overlay/私有组网环境
+    确实会用这一段——服务器如果处在这类网络里，攻击者仍可能借外部 URL 打到内部
+    服务。改成 `not is_global` 不需要自己维护"哪些非公网类别要禁"的枚举，天生
+    覆盖 `is_private`/`is_loopback`/`is_link_local`/`is_multicast`/`is_reserved`/
+    `is_unspecified`，以及 CGNAT 这类容易被漏掉的特例。
+    """
     mapped = getattr(ip, "ipv4_mapped", None)
     target = mapped or ip
-    return any((
-        target.is_private,
-        target.is_loopback,
-        target.is_link_local,
-        target.is_multicast,
-        target.is_reserved,
-        target.is_unspecified,
-    ))
+    return not target.is_global
 
 
 def url_is_safe(url: str) -> str | None:

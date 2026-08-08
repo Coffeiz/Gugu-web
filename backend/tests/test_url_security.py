@@ -16,6 +16,26 @@ def test_url_security_rejects_ipv4_mapped_ipv6():
     assert is_blocked_ip(ipaddress.ip_address("::ffff:127.0.0.1"))
 
 
+def test_url_security_rejects_cgnat_shared_address_space():
+    """code review 发现的真实漏洞：100.64.0.0/10（CGNAT/共享地址空间）is_private
+    是 False，旧的枚举写法（is_private/is_loopback/...）完全不会拦截它；运营商
+    CGNAT、部分 overlay/私有组网都可能用这一段，必须拦。改用 `not is_global` 后
+    天然覆盖，不需要专门枚举这个特例。"""
+    assert is_blocked_ip(ipaddress.ip_address("100.64.0.1"))
+    assert is_blocked_ip(ipaddress.ip_address("100.100.100.1"))   # 段内任意地址
+
+
+def test_url_security_rejects_ipv4_mapped_cgnat():
+    """IPv4-mapped IPv6 形式的 CGNAT 地址同样要拦——is_blocked_ip 先解开
+    ipv4_mapped 再判断 is_global，两层例外叠加时也不能漏。"""
+    assert is_blocked_ip(ipaddress.ip_address("::ffff:100.64.0.1"))
+
+
+def test_url_security_allows_public_ip():
+    """确认改用 not is_global 后没有误伤正常公网地址（回归对照用例）。"""
+    assert not is_blocked_ip(ipaddress.ip_address("93.184.216.34"))
+
+
 def test_url_security_rejects_mixed_dns_results(monkeypatch):
     import socket
 
