@@ -1,6 +1,6 @@
 # 群成员名单与按人查历史 PRD
 
-> 状态：✅ 已实施（含 Phase 2.5/2.6/2.7/2.9 架构修订）
+> 状态：✅ 已实施（含 Phase 2.5/2.6/2.7/2.9/2.10 架构修订）
 > 创建：2026-08-08
 > 最近更新：2026-08-08
 > 关联模块：`backend/agent/tools/group_context.py`、`backend/agent/memory/im_reflection.py`、`backend/agent/memory/store.py`、`backend/agent/memory/reflection.py`、`backend/agent/memory/scopes.py`、`backend/agent/memory/scoped_store.py`、`backend/app/models/__init__.py`（`ConversationMessage`）
@@ -21,6 +21,7 @@
 | Phase 2.7：members.json 写入与 LLM 反思调用解耦 | ✅ 已完成 | 实测另一个真实故障：某群反思任务因 LLM 返回 500（`anthropic.InternalServerError`，报文显示是内容审核拦截，非基础设施故障）连续失败，`_apply_output` 从未被调用，导致 `members.json` 的 `name`/`aliases`/`last_seen_at`/`message_count`——这几个纯 DB 聚合、本不需要 LLM 参与的字段——也跟着被卡住不更新。把这部分聚合和写入移到 `complete_json` 调用之前、独立 try/except，不再受 LLM 调用成败影响；`nicknames`（唯一真正需要 LLM 的字段）仍然只在拿到结果时才合并写入。见 FR-IM-8-2、3.1 节修订。 |
 | Phase 2.8：Code Review 发现的 4 个问题（合并前修复） | ✅ 已完成 | 外部 code review 定位到 4 个真实 bug（均已核实）：① `members.json` 被无意中整份塞进每次群反思 LLM prompt（`current` 在写完 members.json 后读出，直接 `json.dumps` 进 `user`），群越大 token 越多、越容易再撞审核拦截；② `aliases` 字段此前完全没被 `_resolve_speaker` 用到，改名后旧消息一旦被 500~600 条保留窗口裁掉就再也查不到人（"上线几天后才坏"的典型模式）；③ `members.json` 聚合失败被 `except Exception: pass` 完全静默，持续性故障（schema/SQL/OSS 权限）会永久停更且无法排查——恰恰是本 PRD 诞生的原因；④ `_aggregate_members` 排序没有 `id` 兜底，同一 `created_at` 时行序不确定，"最新名字"的判定可能不稳。四个都已修复，见 FR-IM-8-1（新增 aliases 层）、3.1/3.4 节。 |
 | Phase 2.9：Code Review 复审发现的 2 个数据生命周期问题（合并前修复） | ✅ 已完成 | 复审 Phase 2.8 修复后又发现 2 个新问题：① `members.json` 不是真正的持久名单——`_merge_members` 只保留本轮 `_aggregate_members` 还能看到的成员，成员一旦沉默太久、消息被 500~600 条保留窗口裁掉，会连人带 aliases/nicknames 一起从 `members.json` 消失（这些字段本来就是为了"退出窗口后依然能查到人"设计的，结果反而在人本身被裁出窗口时先丢了）；② `_resolve_speaker` 的"唯一名字模糊匹配立即返回"可能压过更强的精确 alias/nickname 匹配，导致静默查错人而非触发 ambiguous（比"多个候选"更危险）。两个都已修复，见 FR-IM-8-1（匹配顺序改成"先精确后模糊、来源合并判断"）、3.1 节（`_merge_members` 保留沉默成员）。 |
+| Phase 2.10：Code Review 二次复审发现的 1 个 P2 性能问题（合并前修复） | ✅ 已完成 | Phase 2.9 为保证 exact alias/nickname 能参与判断，改成除 `platform_user_id` 精确命中外都无条件 `load_members()`，而 `_load_members()` 底层调的是 `read_scope(scope)`——group scope 有 `profile.json`/`summary.json`/`daily.md`/`memory.md`/`members.json` 五个文件，`read_scope()` 会把全部五个都读一遍，等于按发言人查询这条已经进了热路径的调用，每次都要多读 4 个完全用不到的文件（OSS 后端是额外的网络请求）。修复：给 `scoped_store.py` 新增 `read_scope_json(scope, filename)` 只读单个 JSON 文件，`_load_members()` 改用它只读 `members.json`。见 3.2 节。 |
 
 ---
 
@@ -130,7 +131,7 @@
 - **写入时机（Phase 2.7 修订）**：只有 `complete_json` 调用**成功返回**且 `nicknames_add` 非空时，才在 `_apply_output` 里重新读一次 `members.json`、用 `_apply_nicknames()` 合并追加、再写回——不重新计算 `name`/`aliases`/`last_seen_at`/`message_count`（那几个字段已经在 LLM 调用之前独立更新过了）。`_merge_members`（纯 DB 合并）和 `_apply_nicknames`（LLM 结果合并）职责严格分开，互不调用。
 - **不适用 `_GROUP_INTERNAL_ID_RE` 过滤**——`profile.json` 刻意不落地任何 `platform_user_id`，而 `members.json` 恰恰相反，每条记录必须挂在具体的 `platform_user_id` 下才有意义，这是两个文件唯一但关键的设计分歧点，实现时需要显式注明，避免后来者误以为是疏漏而"修正"掉。
 
-### 3.2 `group_context_search` 的按发言人过滤（Phase 2.5/2.6/2.8/2.9 修订）
+### 3.2 `group_context_search` 的按发言人过滤（Phase 2.5/2.6/2.8/2.9/2.10 修订）
 
 - 新增 `speaker` 参数解析，**按匹配强度分两级（Phase 2.9），除①层外都读 `members.json`**：
   1. `speaker` 本身就是 `platform_user_id` → 直接精确匹配，不查任何表、不读 `members.json`。
@@ -144,6 +145,8 @@
 **为什么不是"先查 `members.json` 兜底，查不到再实时查"**：`members.json` 只应该覆盖它独占的那部分信息（`aliases`/`nicknames` 的内容本身），不该在"数据够不够新"这个维度上抢答——①层（id）永远优先且不需要 `members.json`；但②③层为了保证"匹配强度"判断的正确性（精确必须先于模糊，见 Phase 2.9），除①外都需要无条件读一次 `members.json` 参与比较，这跟"信息新不新"是两回事，不要混为一谈。
 
 **Phase 2.9 关于"精确 vs 模糊"的实现要点**：`_resolve_speaker` 内部用两个独立的合并字典（`exact_hits`/`fuzzy_hits`）分别收集三个来源的命中，`fuzzy_hits` 只有在 `exact_hits` 为空时才会被计算和使用——这保证了任何一个精确匹配都会在模糊匹配之前拿到优先权，不存在"模糊命中恰好唯一、精确命中被跳过"的执行路径。
+
+**Phase 2.10 修订的动机**：Phase 2.9 把"除①层外都无条件读 `members.json`"落地之后，`_load_members()` 底层调的是 `agent.memory.scoped_store.read_scope(scope)`——这个函数会把 `scope.files` 里的**全部**文件都读一遍，group scope 现在有 `profile.json`/`summary.json`/`daily.md`/`memory.md`/`members.json` 五个。也就是说按发言人查询（已经因为 Phase 2.9 变成热路径）每次都会连带把 `daily`/`memory` 这类跟"解析 speaker 是谁"毫无关系的数据也下载、decode、parse 一遍，OSS 后端下更是额外的网络请求。外部 code review 二次复审指出：不该为了读一个成员索引文件而加载整个 scope。修复是给 `scoped_store.py` 新增 `read_scope_json(scope, filename)`，只读、解析单个 JSON 文件；`_load_members()` 改成调 `read_scope_json(scope, "members.json")`，不再经过 `read_scope()`。`im_reflection.py` 里为反思 prompt/写入而全量读取 scope 的调用点不受影响，仍然用 `read_scope()`（那些场景本来就需要多个文件）。
 
 **多候选返回格式**：
 
@@ -262,3 +265,10 @@
 - [x] 7.2 `_resolve_speaker` 匹配逻辑重构：不再是"①id→②实时name→③aliases→④nicknames"四层顺序判断、任一层唯一命中就 `return`；改成"①id→②三来源合并精确匹配→③三来源合并模糊匹配"两级判断，精确匹配全都没有命中才进入模糊匹配。除①层外都无条件读一次 `members.json`（不再是"查不到实时名字才读"）。补三个测试：`test_resolve_speaker_reads_members_even_on_exact_live_name_hit`（验证②层即使实时名字精确唯一命中也会读 `members.json`）、`test_resolve_speaker_exact_alias_beats_fuzzy_live_name`（回归复现 code review 给出的静默查错人场景，验证修复后能正确命中精确 alias 而不是模糊 name）、`test_resolve_speaker_multiple_exact_matches_are_ambiguous_not_silent`（两个来源各有一个精确匹配时正确触发 ambiguous 而非随意二选一）；原 `test_resolve_speaker_does_not_read_members_when_live_hit` 拆成两个测试分别验证①层跳过 / ②层不跳过，命名同步改为 `_when_id_hit`。
 - [x] 7.3 排序候选的 `last_seen_at` 取值来源调整：优先取 `members.json` 里的 `last_seen_at`，没有才退回实时查询算出的值——两个候选出现在同一批种子消息、时间戳完全相同时，全靠实时值排不出稳定顺序，而 `members.json` 的值是反思任务全量聚合得出、更适合做排序依据。
 - 后端完整测试 778 passed（含新增 5 个，另有 3 个既有测试因行为变化同步改写）。
+
+### Phase 8（Phase 2.10 修订）：Code Review 二次复审发现的 1 个 P2 性能问题，合并前修复
+
+- [x] 8.1 `scoped_store.py` 新增 `read_scope_json(scope, filename)`：复用现有的 `_read()` 私有函数只读单个文件，JSON 解析逻辑跟 `read_scope()` 里对应分支保持一致（不存在/解析失败都返回 `{}`）；非 `.json` 文件名直接 `ValueError`，跟 `write_scope_json` 的校验风格一致。
+- [x] 8.2 `group_context.py` 的 `_load_members()` 改用 `read_scope_json(scope, "members.json")`，不再经过读全部 5 个文件的 `read_scope()`。`im_reflection.py` 里为反思 prompt 构造/`_apply_output` 写入而全量读取 scope 的调用点不改动——那些场景本来就需要 `profile`/`daily`/`memory` 等多个文件，不是这次要解决的问题。
+- [x] 8.3 新增 `tests/test_scoped_store.py`：`test_read_scope_json_only_reads_requested_file` 用记录调用 key 的假存储验证只读了 `members.json` 这一个 key；另外覆盖文件不存在返回 `{}`、JSON 解析失败返回 `{}`、非 `.json` 文件名报错三种边界。
+- 后端完整测试 782 passed（含新增 4 个）。

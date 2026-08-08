@@ -3,7 +3,7 @@
 from sqlalchemy import desc, select
 
 from agent.imctx import get_im
-from agent.memory.scoped_store import read_scope
+from agent.memory.scoped_store import read_scope_json
 from agent.memory.scopes import MemoryScope
 from agent.tools.base import BaseSkill, Tool
 from app.models import ConversationMessage, ConversationSession
@@ -181,9 +181,12 @@ async def _group_context_search(db, user_id, args: dict):
     speaker_id = None
     if speaker:
         async def _load_members() -> dict:
-            # speaker 不是 platform_user_id 精确命中时都会调用一次（供精确/模糊两级匹配共用）。
+            # speaker 不是 platform_user_id 精确命中时都会调用一次（供精确/模糊两级匹配共用），
+            # 已经进了热路径——用 read_scope_json 只读 members.json 一个文件，不要为了这一个
+            # 文件把 profile/summary/daily/memory 全部读一遍（code review 复审发现：Phase 2.9
+            # 之后 read_scope() 在这条路径上白白多打好几次存储请求，OSS 后端尤其明显）。
             scope = MemoryScope(user_id, "qq", im.get("channel_id"), "group", im["chat_id"])
-            members_data = (await read_scope(scope)).get("members") or {}
+            members_data = await read_scope_json(scope, "members.json")
             members = members_data.get("members") if isinstance(members_data, dict) else {}
             return members if isinstance(members, dict) else {}
 
