@@ -80,6 +80,12 @@ async def read_video(file) -> dict:
         info = await get_storage().stat(file.storage_key)
         if info is None:
             return {"error": "媒体文件不存在，无法读取"}
+        # 源文件超过处理上限时用 stat() 已经拿到的物理大小直接拒绝，不要先把整个
+        # 文件读进内存再交给 prepare_video_media 判断——stat() 通常只是一次元信息
+        # 查询（本地 os.stat / OSS head_object 级别），比整段 get() 便宜得多，没必要
+        # 为了一个注定要拒绝的 500MB+ 视频先申请 500MB 内存（code review 指出）。
+        if info.size > chat_attach.VIDEO_SOURCE_MAX:
+            return {"error": "这条视频太大（超过 500MB 处理上限），没法直接看"}
         raw = await get_storage().get(file.storage_key)
         mime = chat_attach._MEDIA_MIME.get(ext) or f"video/{ext}"
         media_item = await chat_attach.prepare_video_media(

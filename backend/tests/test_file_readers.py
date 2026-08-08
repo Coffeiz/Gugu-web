@@ -115,6 +115,22 @@ async def test_read_video_missing_file(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_read_video_rejects_over_500mb_without_reading_full_bytes(monkeypatch):
+    """源文件超过 VIDEO_SOURCE_MAX 时，用 stat() 已经拿到的物理大小直接拒绝，
+    不应该再去 get() 把整个文件读进内存——stat() 通常只是一次元信息查询，
+    没必要为了一个注定要拒绝的超大视频先申请等量内存（code review 指出）。"""
+    storage = _Storage(600 * 1024 * 1024)   # 600MB，超过 VIDEO_SOURCE_MAX(500MB)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
+
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    result = await file_readers.read_video(file)
+
+    assert "500MB" in result["error"]
+    assert storage.get_called is False
+
+
+@pytest.mark.asyncio
 async def test_read_video_propagates_prepare_video_media_rejection(monkeypatch):
     """>90MB / mm_file 上传失败等场景，prepare_video_media 抛 ValueError——
     read_video 必须原样把这个明确的拒绝理由返回给用户，而不是吞掉改成通用错误。"""
