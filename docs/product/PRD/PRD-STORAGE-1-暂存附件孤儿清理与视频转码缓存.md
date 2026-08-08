@@ -1,7 +1,8 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待评估（问题已排查确认，方案已对齐，未开始实现）
+> 状态：🔲 待评估（问题已排查确认，方案已对齐，实施步骤已拆解，未开始实现）
 > 创建：2026-08-08
+> 最近更新：2026-08-08
 > 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/core/chat_attach.py`（`prepare_video_media`）
 > 背景参考：PRD-LLM-3（`read_file` 视频理解重构）实现过程中，排查视频转码临时文件该放哪里时，顺带发现 `.chat_staging/`/`.voice/` 存储字节从未被真正清理过，是一个独立于视频功能、更早就存在的问题；两个问题的清理机制可以复用同一套"按物理年龄扫存储"基础设施，一并纳入本 PRD。
 
@@ -13,7 +14,7 @@
 |---|---|---|
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 | ✅ 已完成 | 确定用"定时扫存储、按物理 mtime 判断年龄"的清理任务，不依赖 Redis 状态、不跟进程重启绑定；视频转码缓存复用同一套存储层清理设施，但用 Redis TTL（读时刷新）单独管理生命周期。见第 2、3 节。 |
-| Phase 2：实施 | 🔲 待评估 | 见第 6 节实施计划。 |
+| Phase 2：实施 | 🔲 待评估 | 见第 5 节实施计划（拆 Phase A 清理任务 / Phase B 转码缓存两个独立 PR）。 |
 
 ---
 
@@ -80,3 +81,44 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 - 视频转码缓存的 TTL 具体取多久：先按 `chat_attach.TTL`（7 天）落地，还是需要更长/更短？建议先上线观察实际命中率和存储占用再调整。
 - 清理任务的运行频率：每天一次是否够用，还是需要更高频（比如每小时）？取决于孤儿文件的产生速度和存储成本敏感度，建议先每天一次，观察存储增长曲线后再调整。
 - `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。
+
+---
+
+## 5. 实施计划
+
+拆两个独立 PR：Phase A（清理任务）不依赖 Phase B（转码缓存），可以先落地、单独上线验证；Phase B 落地时复用 Phase A 已经跑通的清理任务，只是把 `.video_cache/` 加进扫描前缀。
+
+### Phase A：暂存附件按物理年龄定时清理（对应 FR-STORAGE-1-1）
+
+1. **`app/services/storage/__init__.py`**：`StorageBackend` 补一个 `list_dirs`/年龄相关的能力已经有了（`stat()` 返回 `mtime`、`list_keys()` 已存在），本阶段不需要新增存储层接口，直接复用现有的 `list_keys()` + `stat()` + `delete()` 三个方法组合即可。
+2. **新增 `app/services/storage/staging_gc.py`**（或直接放 `app/core/chat_attach.py` 底部，视代码量决定）：
+   - `async def sweep_expired_staging() -> int`：调 `get_storage().list_keys()` 拿全量 key，用正则/字符串匹配过滤出路径含 `/.chat_staging/` 或 `/.voice/` 的 key（参考 `app/api/v1/config.py:93` 的判断写法：`".chat_staging" in k`）。
+   - 对每个命中的 key 调 `stat()`；`mtime` 为 `None`（OSS 极端情况）时跳过、不删（保守，避免误删）。
+   - `now_utc().timestamp() - mtime > ttl` 才 `delete(key)`；`.chat_staging/` 用 `chat_attach.TTL`，`.voice/` 用 `chat_attach.TTL_VOICE`（按路径分支取对应 TTL，不要两者统一取一个值）。
+   - 返回删除数量，供任务日志/未来做监控埋点用。
+3. **并发保护**：函数开头用 `get_redis().set(lock_key, "1", nx=True, ex=<预估最长运行时间，比如 1800>)` 抢锁，抢不到直接 `return 0`（同一时刻只有一个进程真正执行扫描），跑完主动 `delete(lock_key)`（同 `agent/memory` scope 锁的加锁/释放模式，不需要引入新的锁抽象）。
+4. **接入 `app/core/scheduler.py`**：在 worker 启动路径里 `@scheduler.register(scheduler.cron(hour=4, minute=0), id="staging_gc", name="暂存附件孤儿清理")` 包一层薄封装调用 `sweep_expired_staging()`；凌晨低峰跑，避开白天的存储 I/O 高峰。
+5. **测试**（新增 `tests/test_staging_gc.py`，参考 `tests/test_storage_cleanup.py` 的 `LocalStorageBackend` + `tmp_path` fixture 风格）：
+   - 造 3 个 `.chat_staging/` 对象，其中 1 个手动改 mtime 到 TTL 之外（`os.utime`），断言只删了这 1 个。
+   - 造 `.voice/` 对象验证走的是 `TTL_VOICE` 而不是普通 `TTL`（构造一个 mtime 落在两个阈值之间的用例）。
+   - 非 `.chat_staging/`/`.voice/` 路径下的对象（比如用户正常上传的文件）不受影响，即使 mtime 很老。
+   - 并发保护：模拟锁已被占用时 `sweep_expired_staging()` 直接返回 0、不执行任何删除。
+6. **上线验证**：先在 devserver 手动跑一次 `sweep_expired_staging()`（复用本次手动清理时验证过的口径：`.chat_staging`/`.voice` 从 1.4G 降到 598M 左右），确认跟手动 `find -mtime +7 -delete` 的结果一致，再挂上定时任务。
+
+### Phase B：视频转码结果缓存（对应 FR-STORAGE-1-2）
+
+1. **`app/core/chat_attach.py` 新增缓存读写 helper**（紧邻 `prepare_video_media`）：
+   - `_video_cache_key(storage_key: str) -> str`：从 `storage_key` 派生一个安全的 Redis key 后缀（比如对 `storage_key` 做 `hashlib.sha256` 摘要，避免中文/特殊字符直接拼进 Redis key）。
+   - `_video_cache_redis_key(storage_key) -> str`：如 `f"video_cache:{_video_cache_key(storage_key)}"`。
+2. **`prepare_video_media()` 改造**（新增可选参数 `storage_key: str | None = None`，`resolve_for_message`/`read_video` 两个调用方都能传）：
+   - 有 `storage_key` 时，函数开头先查 Redis 指针；命中就 `get_storage().get(cached_path)` 读缓存产物直接走 base64/mm_file 判断（复用现有的最终 payload 三分逻辑，不用重新探测/转码），命中同时 `EXPIRE` 刷新 TTL。
+   - 未命中或没传 `storage_key`（比如聊天附件路径 `attach_id` 每次都不同，天然没有稳定 key 可缓存，可以先只给 `read_video` 接，聊天附件路径不接）走原有探测+转码逻辑；转码成功后，把产物 `put` 到 `{uid}/.video_cache/{cache_key}.mp4`，再 `SET` 一条 Redis 指针带 TTL。
+   - **注意**：`prepare_video_media` 当前不知道 `user_id`（只有 `raw`/`mime`/`name`/`model_cfg`），缓存路径需要 `{uid}/...` 前缀，需要额外传 `user_id` 参数——两个调用方（`resolve_for_message` 有 `user_id`、`read_video` 有 `file.user_id`）都能提供，属于最小的签名扩展。
+3. **`agent/tools/file_readers.py` 的 `read_video`**：调用 `prepare_video_media` 时补上 `storage_key=file.storage_key, user_id=file.user_id`。
+4. **Phase A 的 `sweep_expired_staging()` 扩展**：新增 `.video_cache/` 前缀扫描分支，删除前先查一次对应 Redis 指针（`GET`，不用 `EXPIRE`），指针存在则跳过本次删除（见 FR-STORAGE-1-2 的双向校验说明）；这是 `.video_cache/` 特有的分支，`.chat_staging/`/`.voice/` 不做这一步。
+5. **测试**：
+   - `prepare_video_media` 缓存命中：mock `_compress_video`/`_probe_video`，第一次调用产生缓存，第二次调用同一 `storage_key` 断言没有再调 `_probe_video`/`_compress_video`。
+   - `storage_key` 变化（模拟覆盖上传后重新暂存/上传）不命中旧缓存。
+   - 缓存命中时验证对应 Redis key 的 TTL 被刷新（`ttl()` 前后对比，或 mock `EXPIRE` 调用次数）。
+   - `sweep_expired_staging()` 对 `.video_cache/` 的双向校验：Redis 指针还在时不删物理年龄超期的对象；指针已经不在时正常删除。
+6. **上线验证**：devserver 上让咕咕连续两次读同一个视频，通过日志或手动查 Redis（`GET video_cache:<hash>`）确认第二次命中缓存、没有再触发 ffmpeg 转码。
