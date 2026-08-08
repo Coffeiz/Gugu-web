@@ -115,26 +115,33 @@ async def test_oss_get_does_not_retry_on_unrelated_exception():
     assert calls["n"] == 1
 
 
-# ── storage: OSSStorageBackend.stat/download_to_file/local_path（PRD-LLM-3 Phase 5 复审修复）──
+# ── storage: OSSStorageBackend.stat/download_to_file/local_path（PRD-LLM-3 Phase 5/6 复审修复）──
 
-def _fake_head_result(size, mtime=1700000000, etag="abc"):
+def _fake_meta_result(size, mtime=1700000000, etag="abc"):
     return SimpleNamespace(content_length=size, last_modified=mtime, etag=etag)
 
 
-async def test_oss_stat_uses_head_object_not_full_download():
-    """stat() 必须走 head_object 元信息查询，不能像默认实现那样整个 get() 下来只为量大小
-    （真实故障：200MB 视频光 stat 一次就要拉 200MB）。"""
+async def test_oss_stat_uses_get_object_meta_not_full_download():
+    """stat() 必须走元信息查询，不能像默认实现那样整个 get() 下来只为量大小
+    （真实故障：200MB 视频光 stat 一次就要拉 200MB）。
+
+    用 get_object_meta 而不是 head_object：两者都只取元信息不下载本体，但
+    head_object 对象不存在时抛的是 NotFound（HEAD 请求 404 时 SDK 分不清是
+    "对象不存在"还是"bucket 配错"），get_object_meta 官方保证抛更精确的
+    NoSuchKey——跟 stat() 的异常处理必须对得上，不能靠"顺便接住父类"蒙混过去
+    （code review 复审发现：早期实现测试自己 mock 的是 NoSuchKey，跟 head_object
+    真实抛出的 NotFound 对不上，测试全绿但语义是错的）。"""
     backend = _make_oss_backend()
     get_calls = {"n": 0}
 
-    def fake_head(key):
-        return _fake_head_result(12345)
+    def fake_meta(key):
+        return _fake_meta_result(12345)
 
     def fake_get(key):
         get_calls["n"] += 1
         raise AssertionError("stat() 不应该调用 get_object")
 
-    backend.bucket.head_object = fake_head
+    backend.bucket.get_object_meta = fake_meta
     backend.bucket.get_object = fake_get
     info = await backend.stat("k")
     assert info.size == 12345
@@ -146,33 +153,54 @@ async def test_oss_stat_returns_none_when_missing():
     import oss2.exceptions as oss_exc
     backend = _make_oss_backend()
 
-    def fake_head(key):
+    def fake_meta(key):
         raise oss_exc.NoSuchKey(404, {}, b"", {"Code": "NoSuchKey"})
 
-    backend.bucket.head_object = fake_head
+    backend.bucket.get_object_meta = fake_meta
     assert await backend.stat("missing") is None
 
 
-async def test_oss_download_to_file_streams_without_full_buffer(tmp_path):
-    """download_to_file 用 shutil.copyfileobj 分块写盘，不应该整个读进一个 bytes 变量。"""
+async def test_oss_download_to_file_uses_sdk_get_object_to_file(tmp_path):
+    """download_to_file 必须委托给 oss2 自带的 get_object_to_file，不要自己手写
+    get_object + shutil.copyfileobj——SDK 原生实现在已知 Content-Length 时会校验
+    实际读到的字节数与声明长度是否一致，不一致抛 InconsistentError；手写版本没有
+    这层保护，网络异常若没有以异常形式冒出来，会静默留下被截断的文件（code review
+    复审发现的真实风险：表现为下游 ffmpeg 莫名其妙"读取失败"而非"下载失败"）。"""
     backend = _make_oss_backend()
+    calls = {}
 
-    class _FakeStream:
-        def __init__(self, data):
-            self._chunks = [data[i:i + 4] for i in range(0, len(data), 4)]
+    def fake_get_object_to_file(key, filename):
+        calls["key"] = key
+        calls["filename"] = filename
+        with open(filename, "wb") as f:
+            f.write(b"0123456789abcdef")
 
-        def read(self, size=-1):
-            return self._chunks.pop(0) if self._chunks else b""
-
-    payload = b"0123456789abcdef"
-
-    def fake_get(key):
-        return _FakeStream(payload)
-
-    backend.bucket.get_object = fake_get
+    backend.bucket.get_object_to_file = fake_get_object_to_file
     dest = tmp_path / "out.mp4"
     await backend.download_to_file("k", dest)
-    assert dest.read_bytes() == payload
+    assert calls["key"] == "k"
+    assert calls["filename"] == str(dest)
+    assert dest.read_bytes() == b"0123456789abcdef"
+
+
+async def test_oss_download_to_file_retries_on_transient_error(tmp_path):
+    """download_to_file 复用 _oss_retry，瞬时故障应该退避重试（不是自己另起一套）。"""
+    import oss2.exceptions as oss_exc
+    backend = _make_oss_backend()
+    calls = {"n": 0}
+
+    def flaky(key, filename):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            raise oss_exc.RequestError(ConnectionError("conn reset"))
+        with open(filename, "wb") as f:
+            f.write(b"ok")
+
+    backend.bucket.get_object_to_file = flaky
+    dest = tmp_path / "out.mp4"
+    await backend.download_to_file("k", dest)
+    assert calls["n"] == 2
+    assert dest.read_bytes() == b"ok"
 
 
 def test_local_storage_local_path_returns_real_path(tmp_path):

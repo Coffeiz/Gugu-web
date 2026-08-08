@@ -404,30 +404,56 @@ class OSSStorageBackend(StorageBackend):
         )
 
     async def stat(self, key: str) -> StorageObjectInfo | None:
-        """用 head_object 查元信息，不下载对象本体（P1.1 默认实现是 exists+get，
-        大文件光是查大小就要整个下载一遍——真实故障：200MB 视频光 stat 就拉 200MB）。"""
+        """查元信息，不下载对象本体（P1.1 默认实现是 exists+get，大文件光是查大小
+        就要整个下载一遍——真实故障：200MB 视频光 stat 就拉 200MB）。
+
+        ⚠️ 用 `get_object_meta`（`GET ?objectMeta`），不是 `head_object`（`HEAD`）：
+        两者都只取元信息、都不下载对象本体，但 oss2 官方文档明确写的是 `head_object`
+        对象不存在时抛 `NotFound`，而 HEAD 请求返回 404 时 SDK 层面区分不了"对象不存在"
+        和"bucket 不存在/配错"——早期实现 `except NoSuchKey` 根本捕获不到 `NotFound`，
+        会让"对象不存在"这个完全正常的场景直接抛出未处理异常，`stat()` 的契约（不存在
+        → None）在 OSS 后端上名不副实（code review 复审发现：mock 测试自己造的是
+        `NoSuchKey`，跟 `head_object` 真实抛出的 `NotFound`对不上，测试全绿但语义是错的）。
+        `get_object_meta` 官方文档明确保证对象不存在时抛 `NoSuchKey`（`NotFound` 的子类，
+        语义更精确），跟这里的异常处理正好对上，不需要靠"顺便也接住父类"这种取巧写法。
+        """
         import oss2.exceptions as oss_exc
 
         try:
-            head = await self.head(key)
+            meta = await _oss_retry(
+                "storage.oss.get_object_meta",
+                "oss.head_timeout",
+                "文件状态查询失败，请稍后重试",
+                self.bucket.get_object_meta,
+                self.pfx + key,
+            )
         except oss_exc.NoSuchKey:
             return None
-        if head.content_length is None:
+        if meta.content_length is None:
             return None
-        return StorageObjectInfo(size=head.content_length, mtime=head.last_modified, checksum=head.etag)
+        return StorageObjectInfo(size=meta.content_length, mtime=meta.last_modified, checksum=meta.etag)
 
     async def download_to_file(self, key: str, dest: Path) -> None:
         """流式下载到本地文件，不把整个对象缓冲进内存（大文件如视频用；配合
-        stat() 用 head_object，一次 get_video 只产生一次真正的数据传输，
-        而不是旧实现里「先整个 get() 探大小、再整个 get() 一遍读内容」的两倍流量）。"""
-        import shutil
+        stat() 用 get_object_meta，一次 get_video 只产生一次真正的数据传输，
+        而不是旧实现里「先整个 get() 探大小、再整个 get() 一遍读内容」的两倍流量）。
 
-        def _dl():
-            result = self.bucket.get_object(self.pfx + key)
-            with open(dest, "wb") as f:
-                shutil.copyfileobj(result, f, length=1024 * 1024)
-
-        await _oss_retry("storage.oss.download_to_file", "oss.get_timeout", "文件读取失败，请稍后重试", _dl)
+        用 oss2 自带的 `get_object_to_file`，不要自己手写 `get_object` +
+        `shutil.copyfileobj`：SDK 原生实现在已知 `Content-Length` 时会用
+        `copyfileobj_and_verify` 校验实际读到的字节数与声明长度是否一致，不一致会抛
+        `InconsistentError`（自己手写的 `copyfileobj` 没有这层保护——网络中断多数会
+        抛异常触发 `_oss_retry`，但如果底层出现"提前 EOF、没有以异常形式冒出来"的
+        情况，会静默留下一个被截断的视频文件，表现为下游 ffmpeg 莫名其妙"读取失败"，
+        而不是能被立刻定位的"存储下载失败"，见 code review 复审）。
+        """
+        await _oss_retry(
+            "storage.oss.download_to_file",
+            "oss.get_timeout",
+            "文件读取失败，请稍后重试",
+            self.bucket.get_object_to_file,
+            self.pfx + key,
+            str(dest),
+        )
 
     async def list_keys(self) -> list[str]:
         import asyncio, oss2

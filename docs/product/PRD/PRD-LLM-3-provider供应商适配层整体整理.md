@@ -20,7 +20,8 @@
 | Phase 3：流式清洗/音频转码/鉴权等能力位收拢（纯重构） | 🔲 待评估 | 把 `sanitize.py` 的 MiniMax 清洗、`media_transcode.py` 的 mimo 音频白名单、`agent_admin.py` 的 `_mimo` 鉴权判断等收拢进适配器能力位。 |
 | Phase 4：视频时长限制（行为变化） | 🔲 待评估 | 在 `MediaLimits` 加 `max_duration_s=120`，ffprobe 读 duration，超 2 分钟拒绝。 |
 | Phase 5（独立追加）：`read_file` 读取视频复用压缩 | ✅ 已完成（Phase 6 已重做） | 用户反馈"文件库里的视频太大读不了"排查发现：视频压缩只在"用户发视频给咕咕"（`chat_attach.py`）这条路径生效，`read_file` 读文件库已有视频（`file_readers.py`）完全没有压缩，超过 36MB 直接拒绝。跟 Phase 1-4 的大重构（`providers/` 目录化）相互独立，不依赖其完成即可先落地。详见第 1.1、2.5 节。 |
-| Phase 6（独立追加）：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩 | ✅ 已完成 | 外部 code review 指出 Phase 5 实现有 3 个问题：①超大视频整个读进内存，OSS 后端因 `stat()` 默认实现是 exists+get 还要多下载一遍；②复用的 `_compress_video` 目标码率是给"发送给 MiniMax"设计的（1080p 5Mbps），跟"读取只需要 1 帧画面+前 5 分钟音频"的真实需求不匹配，长视频低码率反而可能越压越大；③新增测试没有真正断言 `read_video` 的最终结果。修复方案见 FR-LLM-3-6。 |
+| Phase 6（独立追加）：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩 | ✅ 已完成（Phase 8 已复审修复） | 外部 code review 指出 Phase 5 实现有 3 个问题：①超大视频整个读进内存，OSS 后端因 `stat()` 默认实现是 exists+get 还要多下载一遍；②复用的 `_compress_video` 目标码率是给"发送给 MiniMax"设计的（1080p 5Mbps），跟"读取只需要 1 帧画面+前 5 分钟音频"的真实需求不匹配，长视频低码率反而可能越压越大；③新增测试没有真正断言 `read_video` 的最终结果。修复方案见 FR-LLM-3-6。 |
+| Phase 8（独立追加）：Code Review 复审发现的 1 个 P1 + 2 个 P2 | ✅ 已完成 | 复审 Phase 6 修复后发现：① P1 `OSSStorageBackend.stat()` 捕获的异常类型是错的——`head_object` 对象不存在时抛的是 `NotFound`，不是代码里 `except` 的 `NoSuchKey`，`stat()` 在真实 OSS 上会直接抛未处理异常，"不存在→None"的契约名不副实（测试自己 mock 的异常类型跟真实 SDK 行为不一致，测试全绿但语义是错的）；② P2 `download_to_file` 手写 `get_object` + `shutil.copyfileobj`，丢了 oss2 官方 `get_object_to_file` 自带的 `Content-Length` 一致性校验，网络异常若未以异常形式冒出来会静默留下截断文件；③ P2 视频"物化到磁盘"这一步没有独立的并发限制，`_FFMPEG_SEMAPHORE` 只限制 ffmpeg 子进程数，挡不住高并发时磁盘上堆积大量完整临时视频文件。三个都已修复，见 FR-LLM-3-6 Phase 8 小节。 |
 
 ---
 
@@ -162,20 +163,31 @@ Phase 5 的实现（复用 `_compress_video` 整段压缩）被外部 code revie
 - `read_video` 改用 `_load_video_bytes`；`read_audio` 不受影响，继续用原来的 `_media_size_error`（音频没有类似的压缩手段，体积检查逻辑不变）。
 - 不判断是否"值得压"（不调用 `_should_compress_video`）——进这条分支时已经确定超过读取上限，直接压缩，没有"超限但不需要压"的中间状态。
 
-### FR-LLM-3-6：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩（✅ 已完成）
+### FR-LLM-3-6：`read_file` 视频读取改直接 ffmpeg 提取，不再整段压缩（✅ 已完成，Phase 8 复审再修 3 处）
 
 外部 code review 对 Phase 5 实现提出 3 个问题，逐条对应修复：
 
 1. **P1/P2 大视频整段进内存 + OSS 双下载**：`_load_video_bytes()` 无论多大都先 `get()` 整个对象；`OSSStorageBackend` 没覆写 `stat()`，继承的默认实现是 `exists→整个 get()→len(...)`，等于一次读取要从 OSS 拉两遍。
    修复：
-   - `OSSStorageBackend` 新增 `stat()` 覆写，改用已有的 `head_object`（`head()` 方法）查真实大小，不下载对象本体。
-   - `StorageBackend` 新增 `local_path(key) -> Path | None`（默认 `None`）和 `download_to_file(key, dest)`（默认整读整写，小文件兜底）两个接口；`LocalStorageBackend.local_path` 返回真实路径（零拷贝）；`OSSStorageBackend.download_to_file` 用 `shutil.copyfileobj` 流式下载到临时文件，不在内存里缓冲整个对象。
+   - `OSSStorageBackend` 新增 `stat()` 覆写，改用元信息查询接口，不下载对象本体（Phase 8 修订：最初用的 `head_object`，复审发现这个方法抛的异常类型跟代码里 `except` 的对不上，改用 `get_object_meta`，见下）。
+   - `StorageBackend` 新增 `local_path(key) -> Path | None`（默认 `None`）和 `download_to_file(key, dest)`（默认整读整写，小文件兜底）两个接口；`LocalStorageBackend.local_path` 返回真实路径（零拷贝）；`OSSStorageBackend.download_to_file` 流式下载到临时文件，不在内存里缓冲整个对象（Phase 8 修订：最初手写 `get_object` + `shutil.copyfileobj`，复审发现丢了 SDK 自带的一致性校验，改用 `get_object_to_file`，见下）。
 2. **P2 复用的压缩参数不是为读取设计的**：`_compress_video` 固定压 1080p 5Mbps h264（目标是给 MiniMax 上传用，边界是 45MB base64/90MB mm_file），而 `read_video` 实际只需要第 1 秒附近一帧画面 + 前 300 秒音频；长视频低码率场景下反而可能压完更大，且要等一次完整转码（最长 180 秒 timeout）才知道白等。
    修复：彻底不再走"整段压缩"这条路。新增 `_materialize_video(file)`：本地存储直接用 `local_path()` 给的真实路径；远程存储用 `download_to_file()` 流式落一份临时文件。`_extract_frame`/`_extract_audio`/`_run_ffmpeg` 改成直接对这个磁盘文件跑 ffmpeg（`-ss 1s` 截一帧 + 前 300 秒转 wav），不再需要先生成一份完整的压缩视频。`MEDIA_READ_MAX_BYTES` 不再是视频读取的门禁（改用于 `read_audio`，音频转写仍需整段进内存）——视频大小上限交给 ffmpeg 处理磁盘文件，真正进 Python 内存的只有 ≤8MB 的画面帧和 ≤16MB 的音频。
 3. **P2 测试没有真正验证 `read_video` 的最终结果**：原测试 mock 压缩产物后只断言 `_extract_frame`/`_extract_audio` 收到了参数，没检查 `read_video` 的返回值——而 fake audio 返回 `None` 加 `vision_ready=False` 时，真实代码路径其实会返回 `{"error": ...}`，测试没揭穿这一点。
    修复：`tests/test_file_readers.py` 重写为 `test_read_video_succeeds_via_direct_ffmpeg_extraction`（mock 音频转写返回真实文本，断言 `result["content"]` 真的包含转写结果）+ `test_read_video_downloads_remote_storage_to_temp_file`（断言远程存储走了 `download_to_file` 而不是 `get()`，且临时文件用完即删）。
 
 未在本次范围内改动：`chat_attach._compress_video`（发送给 MiniMax 用，目标是"生成一份可用于上传的压缩视频"，跟 `read_video` "只抽取有限画面/音频"是不同目标，不适合共用同一段压缩逻辑；`read_video` 改造后不再依赖它，两条路径不再有代码重叠，也就没有需要维护的重复实现）。
+
+**Phase 8 修订（外部 code review 复审又发现 1 个 P1 + 2 个 P2）**：
+
+1. **P1 `OSSStorageBackend.stat()` 捕获了错误的异常类型**：`head_object` 是 HEAD 请求，oss2 官方文档写明对象不存在时抛 `NotFound`——而且 HEAD 返回 404 时 SDK 层面区分不了"对象不存在"还是"bucket 配错/不存在"；代码里却 `except oss_exc.NoSuchKey`（`NotFound` 的子类），根本捕获不到父类异常，真实 OSS 上对象不存在时 `stat()` 会直接抛出未处理异常，违反"不存在→None"的契约。测试之所以全绿，是因为测试自己手动 mock 成了 `raise NoSuchKey(...)`，模拟的不是 `head_object` 的真实行为——这正是"mock 测试全绿，但 mock 模拟的底层库语义本身错了"这类问题的典型案例。
+   修复：改用 `bucket.get_object_meta(key)`（`GET ?objectMeta`）而不是 `head_object`——同样只取元信息不下载本体，但官方文档明确保证对象不存在时抛更精确的 `NoSuchKey`，跟这里的异常处理正好对上。
+2. **P2 `download_to_file` 手写流式下载丢了长度一致性校验**：`get_object()` + `shutil.copyfileobj()` 确实解决了"整个读进内存"的问题，但 oss2 官方 `get_object_to_file()` 内部在已知 `Content-Length` 时会调用 `copyfileobj_and_verify()`，下载完成后校验实际字节数与声明长度是否一致，不一致抛 `InconsistentError`；手写版本没有这层保护——网络中断多数情况会抛异常触发 `_oss_retry` 重试，但如果底层出现"提前 EOF、没有以异常形式冒出来"的情况，会静默留下一份被截断的视频文件，表现为下游 ffmpeg 莫名其妙"读取失败"，而不是能被立刻定位的"存储下载失败"。
+   修复：`download_to_file` 直接委托给 `bucket.get_object_to_file(key, filename)`，外面继续包 `_oss_retry` 复用现有的重试策略，不用自己另起一套。
+3. **P2 视频"物化到磁盘"这一步没有独立的并发限制**：`_FFMPEG_SEMAPHORE=2` 只限制"同时跑的 ffmpeg 子进程数"，而 `_materialize_video` 对远程存储的下载发生在进 `_run_ffmpeg` 之前——20 个用户同时读 OSS 视频，可以先并发下载出 20 份完整临时视频（当时已经取消了视频读取的大小上限，一批 200MB 视频 10 个并发就是 2GB 临时盘），才轮到 2 个排队跑 ffmpeg。
+   修复：新增独立的 `_VIDEO_READ_SEMAPHORE`，把"物化（含下载）+ 抽取"整个生命周期当一个临界区；刻意不复用 `_FFMPEG_SEMAPHORE` 包最外层——那样 `read_video` 先 acquire 一次、`_run_ffmpeg` 内部又对同一个 Semaphore 再 acquire 一次，等于嵌套等待同一把锁，反而抬高有效并发下限，必须用独立的 Semaphore 对象。
+
+Phase 8 测试：`tests/test_p2b_io_retry.py` 的 OSS stat/download 测试改成 mock `get_object_meta`/`get_object_to_file`（而不是 `head_object`/`get_object`），新增 `test_oss_download_to_file_retries_on_transient_error` 验证复用了 `_oss_retry`；`tests/test_file_readers.py` 新增 `test_read_video_limits_concurrent_materialize_lifecycle`，用 6 个并发 `read_video` 调用 + 计数器验证同时处于"物化+抽取"临界区内的调用数不超过 2。全量测试 756 passed。
 
 ---
 

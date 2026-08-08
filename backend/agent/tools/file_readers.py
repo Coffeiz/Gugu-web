@@ -25,6 +25,15 @@ MEDIA_AUDIO_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 MEDIA_FRAME_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 MEDIA_FRAME_MAX_WIDTH = 1920
 _FFMPEG_SEMAPHORE = asyncio.Semaphore(2)
+# 独立于 _FFMPEG_SEMAPHORE：限制"物化到磁盘"这个阶段本身的并发数，而不是 ffmpeg 子进程数。
+# _materialize_video 对远程存储会先把整段视频下载到本地临时文件，这一步发生在进
+# _run_ffmpeg 之前——单靠 _FFMPEG_SEMAPHORE=2 只能保证"同时最多 2 个 ffmpeg 进程"，
+# 挡不住"20 个用户同时读 OSS 视频，先并发下载出 20 份完整临时文件、才轮到 2 个排队
+# 跑 ffmpeg"这种磁盘堆积（视频读取已经不设大小上限，10 个并发 200MB 视频就是 2GB
+# 临时盘，见 code review 复审）。这里必须用独立的 Semaphore 对象，不能直接复用
+# _FFMPEG_SEMAPHORE 包最外层——那样 read_video 先 acquire 一次，_run_ffmpeg 内部又
+# 对同一个 Semaphore 再 acquire 一次，等于嵌套等待同一把锁，白白抬高并发下限。
+_VIDEO_READ_SEMAPHORE = asyncio.Semaphore(2)
 
 
 def _ffmpeg() -> str | None:
@@ -162,9 +171,13 @@ async def read_video(file) -> dict:
         info = await get_storage().stat(file.storage_key)
         if info is None:
             return {"error": "媒体文件不存在，无法读取"}
-        async with _materialize_video(file) as source:
-            frame = await _extract_frame(source)
-            audio = await _extract_audio(source)
+        # 物化（含远程下载到临时文件）+ 抽取全程持有同一个槽位，槽位释放后临时文件
+        # 已经在 _materialize_video 的 finally 里删掉了——不会出现"槽位放开但磁盘
+        # 文件还占着"的窗口。
+        async with _VIDEO_READ_SEMAPHORE:
+            async with _materialize_video(file) as source:
+                frame = await _extract_frame(source)
+                audio = await _extract_audio(source)
         transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)

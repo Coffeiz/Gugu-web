@@ -137,6 +137,49 @@ async def test_read_video_downloads_remote_storage_to_temp_file(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
+async def test_read_video_limits_concurrent_materialize_lifecycle(monkeypatch):
+    """code review 复审发现：_FFMPEG_SEMAPHORE 只限制同时跑的 ffmpeg 子进程数，
+    挡不住"物化到磁盘"这一步本身的并发——远程存储在进 ffmpeg 之前就要把整段视频
+    下载到本地临时文件，20 个并发读取会先在磁盘上堆出 20 份完整视频，才轮到 2 个
+    排队跑 ffmpeg。_VIDEO_READ_SEMAPHORE 必须把"下载 + 抽取"整个生命周期当一个
+    临界区，同一时刻在临界区内的调用数不能超过信号量容量（这里验证容量为 2）。"""
+    import asyncio
+
+    storage = _Storage(file_readers.MEDIA_READ_MAX_BYTES + 1, local=False)
+    monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
+    monkeypatch.setattr(file_readers.chat_attach, "vision_ready", lambda: False)
+
+    in_flight = 0
+    max_in_flight = 0
+    lock = asyncio.Lock()
+
+    async def fake_extract_frame(source):
+        nonlocal in_flight, max_in_flight
+        async with lock:
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.02)
+        async with lock:
+            in_flight -= 1
+        return None
+
+    async def fake_extract_audio(source):
+        return None
+
+    monkeypatch.setattr(file_readers, "_extract_frame", fake_extract_frame)
+    monkeypatch.setattr(file_readers, "_extract_audio", fake_extract_audio)
+
+    files = [
+        SimpleNamespace(storage_key=f"u/media{i}.mp4", size_bytes=0, size="0 B",
+                         ext="mp4", id=i, display_name=f"clip{i}")
+        for i in range(6)
+    ]
+    await asyncio.gather(*(file_readers.read_video(f) for f in files))
+
+    assert max_in_flight == 2
+
+
+@pytest.mark.asyncio
 async def test_media_reader_rejects_missing_physical_object(monkeypatch):
     storage = _Storage(None)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
