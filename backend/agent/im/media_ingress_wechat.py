@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from app.core.redaction import diag_log, diag_log_raw, redact
+from app.core.redaction import diag_log, redact
 
 _WECHAT_CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
 
@@ -74,7 +74,6 @@ def extract_quoted(ref_msg) -> tuple[str | None, list]:
         voice_text = (item.get("voice_item") or {}).get("text", "").strip()
         return (voice_text or "[语音消息]"), []
     if quoted_type == 2 or item.get("image_item"):
-        _probe_quoted_media(item.get("image_item") or {})
         return "[图片消息]", [{"type": 2, "image_item": item.get("image_item") or {}}]
     if quoted_type == 4 or item.get("file_item"):
         return "[文件消息]", []
@@ -83,15 +82,3 @@ def extract_quoted(ref_msg) -> tuple[str | None, list]:
     if title:
         return title, []
     return "[微信暂不支持消息引用识别]", []
-
-
-def _probe_quoted_media(image_item: dict) -> None:
-    """临时探针（PRD-STORAGE-1 引用附件复用可行性调查），同 qq.py 版本：落进受限诊断出口
-    `logs/gugu-diag.log`，确认微信引用消息的 image_item 里有没有稳定的 id/hash（比如
-    `encrypt_query_param` 是否在多次引用同一条历史消息时保持不变）。调查完应删除。"""
-    try:
-        import json
-        diag_log_raw("agent.im.media_ingress_wechat._probe_quoted_media",
-                      json.dumps(image_item, ensure_ascii=False)[:4000])
-    except Exception:
-        pass

@@ -147,23 +147,7 @@ def _extract_quoted(raw_data: Dict[str, Any]) -> tuple[str, list]:
     if not isinstance(attachments, list):
         attachments = []
     media = _dedupe_attachments(attachments + _collect_media_attachments(elem))
-    if media:
-        _probe_quoted_media(elem)
     return text, media
-
-
-def _probe_quoted_media(elem: Dict[str, Any]) -> None:
-    """临时探针（PRD-STORAGE-1 引用附件复用可行性调查）：把带媒体的引用元素原样落进
-    受限诊断出口（`logs/gugu-diag.log`，只有直登服务器能看，不进任何用户可见/后台可见
-    出口），确认 QQ payload 里有没有稳定的文件 id/hash 字段——如果同一条消息被多次引用时
-    这里能看到相同的 id/hash，说明可以拿它当"是否是同一份内容"的判断依据，不用每次都真
-    的重新下载去比对。只落结构、不改变任何现有行为；调查完确认可行/不可行后应删除。"""
-    try:
-        from app.core.redaction import diag_log_raw
-        diag_log_raw("agent.im.parsers.qq._probe_quoted_media",
-                      json.dumps(elem, ensure_ascii=False)[:4000])
-    except Exception:
-        pass
 
 
 def _collect_media_attachments(value) -> list:
