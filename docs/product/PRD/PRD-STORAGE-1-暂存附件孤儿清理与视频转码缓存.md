@@ -14,7 +14,8 @@
 |---|---|---|
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 | ✅ 已完成 | 确定用"定时扫存储、按物理 mtime 判断年龄"的清理任务，不依赖 Redis 状态、不跟进程重启绑定；视频转码缓存复用同一套存储层清理设施，但用 Redis TTL（读时刷新）单独管理生命周期。见第 2、3 节。 |
-| Phase 2：实施 | 🔲 待评估 | 见第 5 节实施计划（拆 Phase A 清理任务 / Phase B 转码缓存两个独立 PR）。 |
+| Phase 2a：Phase A 实施（清理任务） | ✅ 已完成 | `app/core/staging_gc.py` 新增 `sweep_expired_staging()`，挂 `app/core/scheduler.py` 每天 4:00 跑；`worker.py` 在 `sched.start()` 前 import 触发注册。测试见 `tests/test_staging_gc.py`（7 个用例，含并发锁、`.voice/` 分支选择、`mtime=None` 边界）。后端全量测试 844 passed。手动跑一次 `sweep_expired_staging()`/devserver 定时验证见第 6.2 节，尚未执行。 |
+| Phase 2b：Phase B 实施（转码缓存） | 🔲 待评估 | 见第 5 节实施计划。 |
 
 ---
 
