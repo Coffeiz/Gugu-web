@@ -122,3 +122,47 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
    - 缓存命中时验证对应 Redis key 的 TTL 被刷新（`ttl()` 前后对比，或 mock `EXPIRE` 调用次数）。
    - `sweep_expired_staging()` 对 `.video_cache/` 的双向校验：Redis 指针还在时不删物理年龄超期的对象；指针已经不在时正常删除。
 6. **上线验证**：devserver 上让咕咕连续两次读同一个视频，通过日志或手动查 Redis（`GET video_cache:<hash>`）确认第二次命中缓存、没有再触发 ffmpeg 转码。
+
+---
+
+## 6. 测试目标
+
+### 6.1 自动化测试
+
+**Phase A（`tests/test_staging_gc.py`，仿 `tests/test_storage_cleanup.py` 用 `LocalStorageBackend` + `tmp_path`）**：
+
+- [ ] 混合放 3 个 `.chat_staging/` 对象，其中 1 个用 `os.utime` 改到 TTL 之外，`sweep_expired_staging()` 后只有那 1 个被删，另外 2 个还在。
+- [ ] `.voice/` 对象走 `TTL_VOICE`：构造一个 mtime 落在「超过 `TTL_VOICE` 但没超过普通 `TTL`」区间的用例（如果两个常量当前相等，先把测试写成显式断言「用的是 `TTL_VOICE` 这个变量」而不是巧合碰到同一个值，防止以后两个 TTL 改成不同值时测试才发现改错了分支）。
+- [ ] 非 `.chat_staging/`/`.voice/` 路径下的对象（用户文件库正常上传的文件）即使 mtime 很老也不被清理任务碰。
+- [ ] 空存储 / 不存在任何 `.chat_staging`/`.voice` 对象时 `sweep_expired_staging()` 正常返回 `0`，不报错。
+- [ ] `stat()` 返回 `mtime=None`（OSS 极端情况）的对象被跳过、不删。
+- [ ] 并发保护：Redis 锁已被占用时 `sweep_expired_staging()` 直接返回 `0`、不执行任何 `list_keys()`/`delete()` 调用（mock 锁 `SETNX` 失败）。
+- [ ] 返回值：删除数量与实际删除的 key 数一致，可以用来断言/后续接监控。
+
+**Phase B（`tests/test_chat_attach_video.py` 补 `prepare_video_media` 缓存分支 + `test_staging_gc.py` 补 `.video_cache/` 分支）**：
+
+- [ ] 首次调用 `prepare_video_media(..., storage_key=..., user_id=...)` 无缓存，正常走探测+转码，之后能在存储里读到 `.video_cache/{cache_key}.mp4` 和对应 Redis 指针。
+- [ ] 同一 `storage_key` 第二次调用命中缓存：mock `_probe_video`/`_compress_video` 断言**没有被调用**，直接返回上次的媒体项。
+- [ ] 命中缓存时对应 Redis key 的 TTL 被刷新（断言 `EXPIRE`/`SET ... ex=` 被调用，或前后 `ttl()` 值变化）。
+- [ ] `storage_key` 变化（模拟覆盖上传产生新 key）不命中旧缓存，重新走探测+转码。
+- [ ] 未传 `storage_key`（聊天附件路径）完全不查/不写缓存，行为跟 Phase A 落地前一致（防止误伤现有聊天附件视频路径）。
+- [ ] `sweep_expired_staging()` 对 `.video_cache/` 的双向校验：Redis 指针还在且未过期时，物理 mtime 超期的缓存对象**不删**；Redis 指针已经不存在（或已过期）时正常按物理年龄删除。
+
+### 6.2 手动测试（devserver）
+
+**Phase A 上线前**：
+
+- [ ] 先手动跑一次 `sweep_expired_staging()`（脚本或临时加一个内部 API/CLI 入口），核对删除数量和释放空间与本次人工排查时用 `find -mtime +7` 得到的口径一致（`.chat_staging`/`.voice` 从约 1.4G 降到约 598M）。
+- [ ] 挂上定时任务后，观察 `app/core/scheduler.py` 的启动日志确认 `staging_gc` job 被正确注册（`[scheduler] started` 那条日志里能看到 job id）。
+- [ ] 手动改一个测试附件的物理 mtime 到 8 天前，等定时任务跑一轮（或手动触发），确认它被清掉；同时确认一个 3 天前的附件不受影响。
+- [ ] 确认清理任务运行期间不影响正常的附件暂存/读取（发一张图片给咕咕，清理任务跑的同时正常引用这张图片不受影响）。
+- [ ] 观察一次真实的凌晨自动运行（不手动触发），确认定时触发本身工作正常，不只是手动调用路径可用。
+
+**Phase B 上线前**：
+
+- [ ] 让咕咕读一个文件库里的视频（MiniMax M3 模型），记录这次转码耗时。
+- [ ] 立刻再让咕咕读同一个视频，确认响应明显更快（跳过了转码），日志里能看到"缓存命中"相关记录（需要在实现里加一条诊断日志，比如 `diag_log_raw("chat_attach.video_cache_hit", ...)`）。
+- [ ] 把这个视频文件重命名/覆盖上传替换内容后，再次读取，确认走的是全新转码（没有错误地命中旧缓存）。
+- [ ] 手动查 Redis（`GET video_cache:<hash>`、`TTL video_cache:<hash>`）确认命中后 TTL 确实被刷新，不是原地不动。
+- [ ] 用一个超过 90MB 触发 mm_file 分支的视频重复上述流程，确认 mm_file 场景下缓存同样生效（不只是 base64 场景测过）。
+- [ ] 观察一段时间后 `.video_cache/` 目录的存储占用增长趋势，判断第 4 节里悬而未决的"是否需要配额上限"问题是否需要提前处理。
