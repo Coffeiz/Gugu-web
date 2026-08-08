@@ -1,9 +1,9 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待评估（问题已排查确认，方案已对齐，实施步骤已拆解，未开始实现）
+> 状态：🔲 待评估（Phase A 方案重新设计中，已推翻"定时按物理年龄清理"版本；Phase B 方案不变）
 > 创建：2026-08-08
-> 最近更新：2026-08-08
-> 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/core/chat_attach.py`（`prepare_video_media`）
+> 最近更新：2026-08-09
+> 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/api/v1/agent.py`（`delete_session`、附件相关接口）、消息/会话数据模型
 > 背景参考：PRD-LLM-3（`read_file` 视频理解重构）实现过程中，排查视频转码临时文件该放哪里时，顺带发现 `.chat_staging/`/`.voice/` 存储字节从未被真正清理过，是一个独立于视频功能、更早就存在的问题；两个问题的清理机制可以复用同一套"按物理年龄扫存储"基础设施，一并纳入本 PRD。
 
 ---
@@ -13,8 +13,9 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
-| Phase 1：方案设计 | ✅ 已完成 | 确定用"定时扫存储、按物理 mtime 判断年龄"的清理任务，不依赖 Redis 状态、不跟进程重启绑定；视频转码缓存复用同一套存储层清理设施，但用 Redis TTL（读时刷新）单独管理生命周期。见第 2、3 节。 |
-| Phase 2：实施 | 🔲 待评估 | 见第 5 节实施计划（拆 Phase A 清理任务 / Phase B 转码缓存两个独立 PR）。 |
+| Phase 1：方案设计 v1（已推翻） | ❌ 已废弃 | 曾实现"定时扫存储、按物理 mtime 判断年龄，固定 7 天 TTL"的清理任务（commit `dece7584`），已 revert（commit `e63014a9`）。废弃原因见第 1.4 节：固定 TTL 会让长周期项目里、没有显式存进文件库的历史消息附件"失效"，这不是清理任务的 bug，是这个方案本身的产品语义就不对。 |
+| Phase 1'：方案设计 v2（进行中） | 🔲 设计中 | 改为"附件生命周期绑定消息/会话"——只要引用它的消息/会话没删，附件不因为时间流逝失效；元数据从 Redis-only 挪进 DB（Redis 只保留给发送前的草稿阶段用）；`delete_session` 级联清理存储字节与元数据；仍需一个兜底扫描处理草稿孤儿和级联逻辑遗漏。见第 1.4、2、5 节。 |
+| Phase 2：视频转码缓存实施 | 🔲 待评估 | 方案不变（Redis 指针 + 命中续 TTL），见第 2.2（FR-STORAGE-1-2）、第 5 节 Phase B。 |
 
 ---
 
@@ -39,7 +40,19 @@
 
 **结论**：只要"这个存储对象还有没有主人"这件事完全依赖一个没有持久化保证的 Redis key，无论是自然过期还是 Redis 数据丢失，存储字节都会变成孤儿。清理机制不能依赖 Redis 状态作为判断依据。
 
-### 1.3 视频转码缓存（新增能力，非 bug）
+### 1.3 固定 TTL 方案 v1 为什么被推翻：`.chat_staging` 不是"发送前的临时区"
+
+v1 把 `.chat_staging/`/`.voice/` 当成纯粹的、发送后即可按固定期限丢弃的暂存区。但代码证明并非如此：
+
+- `GET /agent/attachment/{attach_id}/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-131`）专门用来在**刷新页面后重新渲染历史气泡里的图片/文件**——注释原话："刷新后历史气泡里用户发的图本来只有 attach_id（无 file_id、本地 objectURL 已丢）"。也就是说，只要用户没有显式 `save_uploaded_file` 把附件存进文件库，`.chat_staging/` 里的这份拷贝就是**这条历史消息唯一还能用的附件源**，不是"用完即弃"的中转。
+- 这几个接口全部依赖 `get_meta()`，而 `get_meta` 读的是 Redis，TTL 固定 7 天（`chat_attach.py:6`）。
+- 净效果：**任何一次周期超过 7 天才回来看的对话**，只要中间发过图片/文件又没有手动存进文件库，历史气泡里的附件必然打不开——这个问题在 v1 之前就已经存在（Redis 元数据 7 天后过期，`get_meta` 返回 None），v1 的存储层清理只是让"存储字节"也跟着 Redis 元数据的 7 天窗口一起消失，跟现有语义对齐，但没有解决、也不该在这个 PRD 范围内被误认为"解决了"这个更大的产品问题。
+
+同时发现 `delete_session`（`app/api/v1/agent.py:356-366`）目前只是 `db.delete(session)`，同样是"删 DB 记录、不清对应存储字节"的模式——这跟 `.chat_staging` 的孤儿问题是同一类根因，适合放在一起重新设计。
+
+**结论**：`.chat_staging` 里已经被某条消息引用的附件，生死应该跟着"引用它的消息/会话是否还在"走，而不是一个跟产品语义无关的固定时间窗口；固定 TTL 只应该用于"从未被任何消息引用"的真正草稿孤儿。
+
+### 1.4 视频转码缓存（新增能力，非 bug）
 
 PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重新探测（ffprobe）+ 转码（ffmpeg）视频——`read_file` 场景下，用户可能反复让咕咕"再看一遍"同一个视频，每次都要重新跑一次可能耗时数十秒的转码，纯粹浪费 CPU 和等待时间。目标是把转码结果缓存下来，按 `storage_key` 命中直接复用。
 
@@ -47,15 +60,17 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 ## 2. 功能需求
 
-### FR-STORAGE-1-1：暂存附件按物理年龄定时清理（🔲 待评估）
+### FR-STORAGE-1-1：附件生命周期绑定消息/会话，草稿孤儿定时兜底清理（🔲 设计中，v2）
 
-- 新增一个定时任务（挂 `app/core/scheduler.py` 现有的 `register`/`cron` 机制），周期建议每天一次。
-- 任务逻辑：`list_keys()` 枚举全存储，过滤出路径包含 `.chat_staging/` 或 `.voice/` 的 key（`config.py:93` 已有类似的路径过滤写法可参考），对每个 key 调 `stat()` 拿 `mtime`；`now - mtime` 超过对应 TTL（`chat_attach.TTL`/`chat_attach.TTL_VOICE`，目前都是 7 天）就直接 `storage.delete(key)`。
-- **不读 Redis、不依赖任何"这个附件是否还被引用"的状态判断**——纯粹按物理写入时间算年龄。这是刻意的简化：
-  - 覆盖"自然过期后 Redis 有没有被清"和"Redis 数据整体丢失"两种触发方式，用同一套逻辑，不需要区分场景。
-  - 用户最近读取/查看过某个暂存附件**不会**延长它的寿命——`stat()` 的 mtime 只在写入时打上，`get()` 读取不会更新它；这跟现有 Redis TTL 语义一致（`get_meta()` 读取时也不会刷新 Redis key 的 TTL），是延续既有产品语义（"暂存 7 天，过期不管用没用过都清"），不是行为变化。
-- 并发保护：backend/worker 两个进程都会加载 `scheduler.py` 的任务注册，跑之前用 Redis 锁（`SET NX EX`，同 `agent/memory` scope 锁的模式）防止两边同时触发一次全量扫描。
-- 验收标准：清理任务运行后，`.chat_staging/`/`.voice/` 下不应存在 `mtime` 超过 TTL 的对象；未过期对象不受影响。
+**核心变化**：附件一旦被某条已发送、已持久化的消息引用，它的存活期跟着"引用它的消息/会话是否还存在"走，不再有固定过期时间；只有从未被任何消息引用的草稿附件，才继续用固定短 TTL 兜底清理。
+
+1. **元数据出 Redis、进 DB**：现在 `get_meta()`/`/thumb`、`/download` 等接口完全依赖 Redis 里 `ex=ttl` 的 JSON 元数据（`chat_attach.py:204`），Redis 一过期或丢数据，历史消息里的附件就"找不到了"——即使存储字节还在也没用。改造后，消息发送时（即 `resolve_for_message` 产生的 `attachments` 真正落进某条持久化消息记录的那一刻）需要把这条附件的完整元数据（name/ext/size/kind/storage_key/mime/duration/img_width/img_height 等）一并写入 DB，作为长期真相来源；Redis 继续用于**发送前的草稿阶段**（上传了但消息还没发出去），语义不变、TTL 不变。
+2. **`/thumb`、`/download`、`/preview-pdf` 改为优先查 DB**：Redis 未命中（过期/丢失/本来就是已发送附件）时，回退查 DB 元数据表，只要对应消息/会话没删，附件应该始终可读。
+3. **会话/消息删除级联清理存储字节**：`delete_session`（`app/api/v1/agent.py:356`）目前只 `db.delete(session)`，需要扩展为：删除前查出该会话下所有消息引用过的 storage_key（通过新的附件元数据表关联查询），级联 `storage.delete()` 对应对象和元数据行。如果未来支持删单条消息，同样需要级联。
+4. **草稿孤儿兜底清理（沿用原思路，缩小适用范围）**：只清理"从未进入任何已发送消息"的 `.chat_staging/`/`.voice/` 对象——判断依据是 DB 附件元数据表里没有对应记录（或有记录但标记为"未发送"）。物理年龄扫描 + 固定短 TTL（沿用现有 7 天，或缩短，见第 4 节待确认问题），逻辑跟 v1 类似但多一步"查 DB 确认未被引用"的过滤，避免误删已经发送、只是元数据还没来得及落库的边界情况。
+5. **安全网：更长周期的全量兜底扫描**：即使有级联清理，仍需要一个低频（比如每周一次）、更长物理年龄阈值（比如 90 天）的扫描，交叉检查 DB 附件表——如果某个 storage_key 仍被未删除的消息/会话引用，跳过删除；否则清理。用来兜住级联逻辑本身的 bug、历史遗留数据、手动 DB 操作等边界情况，不作为主清理路径。
+- 并发保护：沿用 `agent/memory` scope 锁的模式（Redis 分布式锁），防止 backend/worker 同时触发扫描。
+- 验收标准：一条 30 天前发送、且没有被 `save_uploaded_file` 存进文件库的消息，只要所属会话没被删除，历史气泡里的图片/文件仍能正常加载；会话被删除后，对应存储字节和元数据应在级联清理后消失，不再残留。
 
 ### FR-STORAGE-1-2：视频转码结果缓存，读时刷新 TTL（🔲 待评估）
 
@@ -71,15 +86,18 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 - **不做"重启时清理"**：backend/worker 重启是正常运维操作（发布、扩缩容、崩溃自动拉起），绝大多数情况下 Redis 数据是好的、暂存附件仍然有效；如果重启触发无条件清理，会把用户几分钟前刚发、还没来得及保存的正常附件误删，是比现有孤儿泄漏更严重的数据丢失。清理必须是时间驱动（定时任务），不能跟进程生命周期绑定。
 - **不做真正的"双向校验"**（反向检查 Redis 元数据指向的存储对象是否还在）：这种不一致（Redis 说有、存储没有）概率低，且现有代码已经优雅处理——`read_bytes` 读不到会抛异常，调用方已包 try/except 返回友好错误，不构成资源泄漏，不值得为此新增校验逻辑。FR-STORAGE-1-2 里视频缓存的"检查 Redis 指针是否存在"是例外，因为那里的 Redis 指针本身会被主动续期，需要靠它判断"是否仍在使用"，跟这里说的"双向校验"目的不同。
-- **不改变 `.chat_staging`/`.voice` 的产品语义**：仍然是"暂存 N 天，过期清"，不引入"最近用过就续命"的行为——本 PRD 只是把"7 天后应该被清理"这件事从"完全没人执行"变成"真的会被执行"，不改变用户能感知到的暂存期限。
+- **不做"访问延寿"**：附件生死跟消息/会话是否存在绑定，不跟"最近有没有被读取/查看"绑定——一条附件哪怕从没被再打开过，只要所属消息/会话还在，就应该一直可用；这跟视频转码缓存"常访问就续命"是完全不同的语义，不要混淆（缓存的目的是省计算，附件的目的是让历史消息保持可用）。
+- **不做上下文窗口驱动的清理**：附件生命周期不跟模型上下文窗口（滑动窗口/摘要裁剪）绑定——上下文裁剪是"喂给模型看什么"的问题，不代表这条历史消息对用户不重要了；如果按上下文窗口清理，附件失效速度会比现在的固定 7 天还快，是明确要避免的方向。
 - **不搭建 Redis 持久化**（AOF/RDB volume 挂载）：这属于基础设施配置变更，超出本 PRD 范围；即使做了 Redis 持久化，FR-STORAGE-1-1 的清理任务仍然需要（自然过期这条路径始终存在，跟 Redis 是否持久化无关）。
 
 ---
 
 ## 4. 待确认问题
 
+- **附件元数据表的具体形态**：新建独立的 `chat_attachments` 表，还是复用/扩展现有消息模型里的字段？取决于消息记录现在持久化 `attachments` 时具体存了什么（只是 attach_id 列表，还是已经带完整 meta）——需要先读 `ConversationMessage`（或对应模型）的实际字段再定。
+- **草稿孤儿的 TTL 要不要缩短**：现在草稿阶段（未发送）用的还是 7 天，是否偏长？草稿本来就是"发出去之前"的中间态，正常应该是分钟到小时级别，7 天更多是历史遗留值，可以考虑缩短到比如 24-48 小时。
+- **安全网扫描的频率和阈值**：第 5 节草案给的是"每周一次、90 天阈值"，是否合适，取决于级联清理逻辑本身的可信度——如果级联清理经过一段时间验证很少漏，阈值可以放宽；如果发现漏得多，可能需要提高频率或缩短阈值先兜住风险。
 - 视频转码缓存的 TTL 具体取多久：先按 `chat_attach.TTL`（7 天）落地，还是需要更长/更短？建议先上线观察实际命中率和存储占用再调整。
-- 清理任务的运行频率：每天一次是否够用，还是需要更高频（比如每小时）？取决于孤儿文件的产生速度和存储成本敏感度，建议先每天一次，观察存储增长曲线后再调整。
 - `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。
 
 ---
@@ -88,22 +106,19 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 拆两个独立 PR：Phase A（清理任务）不依赖 Phase B（转码缓存），可以先落地、单独上线验证；Phase B 落地时复用 Phase A 已经跑通的清理任务，只是把 `.video_cache/` 加进扫描前缀。
 
-### Phase A：暂存附件按物理年龄定时清理（对应 FR-STORAGE-1-1）
+### Phase A：附件生命周期绑定消息/会话（对应 FR-STORAGE-1-1 v2）
 
-1. **`app/services/storage/__init__.py`**：`StorageBackend` 补一个 `list_dirs`/年龄相关的能力已经有了（`stat()` 返回 `mtime`、`list_keys()` 已存在），本阶段不需要新增存储层接口，直接复用现有的 `list_keys()` + `stat()` + `delete()` 三个方法组合即可。
-2. **新增 `app/services/storage/staging_gc.py`**（或直接放 `app/core/chat_attach.py` 底部，视代码量决定）：
-   - `async def sweep_expired_staging() -> int`：调 `get_storage().list_keys()` 拿全量 key，用正则/字符串匹配过滤出路径含 `/.chat_staging/` 或 `/.voice/` 的 key（参考 `app/api/v1/config.py:93` 的判断写法：`".chat_staging" in k`）。
-   - 对每个命中的 key 调 `stat()`；`mtime` 为 `None`（OSS 极端情况）时跳过、不删（保守，避免误删）。
-   - `now_utc().timestamp() - mtime > ttl` 才 `delete(key)`；`.chat_staging/` 用 `chat_attach.TTL`，`.voice/` 用 `chat_attach.TTL_VOICE`（按路径分支取对应 TTL，不要两者统一取一个值）。
-   - 返回删除数量，供任务日志/未来做监控埋点用。
-3. **并发保护**：函数开头用 `get_redis().set(lock_key, "1", nx=True, ex=<预估最长运行时间，比如 1800>)` 抢锁，抢不到直接 `return 0`（同一时刻只有一个进程真正执行扫描），跑完主动 `delete(lock_key)`（同 `agent/memory` scope 锁的加锁/释放模式，不需要引入新的锁抽象）。
-4. **接入 `app/core/scheduler.py`**：在 worker 启动路径里 `@scheduler.register(scheduler.cron(hour=4, minute=0), id="staging_gc", name="暂存附件孤儿清理")` 包一层薄封装调用 `sweep_expired_staging()`；凌晨低峰跑，避开白天的存储 I/O 高峰。
-5. **测试**（新增 `tests/test_staging_gc.py`，参考 `tests/test_storage_cleanup.py` 的 `LocalStorageBackend` + `tmp_path` fixture 风格）：
-   - 造 3 个 `.chat_staging/` 对象，其中 1 个手动改 mtime 到 TTL 之外（`os.utime`），断言只删了这 1 个。
-   - 造 `.voice/` 对象验证走的是 `TTL_VOICE` 而不是普通 `TTL`（构造一个 mtime 落在两个阈值之间的用例）。
-   - 非 `.chat_staging/`/`.voice/` 路径下的对象（比如用户正常上传的文件）不受影响，即使 mtime 很老。
-   - 并发保护：模拟锁已被占用时 `sweep_expired_staging()` 直接返回 0、不执行任何删除。
-6. **上线验证**：先在 devserver 手动跑一次 `sweep_expired_staging()`（复用本次手动清理时验证过的口径：`.chat_staging`/`.voice` 从 1.4G 降到 598M 左右），确认跟手动 `find -mtime +7 -delete` 的结果一致，再挂上定时任务。
+> v1（定时按物理 mtime 扫描 + 固定 TTL）已实现过一次并 revert（commit `dece7584` → `e63014a9`），原因见第 1.3 节。以下是 v2 草案，落地前建议先把第 4 节"附件元数据表的具体形态"这个待确认问题定下来。
+
+1. **先确认现状**：读 `ConversationMessage`（或实际的消息模型）现在怎么持久化 `attachments` 字段——是完整 meta 快照，还是只有 attach_id 列表、依赖运行时再查 Redis 补全。这决定第 2 步是"新建表"还是"抽取已有数据"。
+2. **新增附件元数据表**（如 `chat_attachments`：`attach_id`、`user_id`、`session_id`、`message_id`、`storage_key`、`name`、`ext`、`mime`、`kind`、`size`、`duration`、`img_width`、`img_height`、`created_at`）：消息真正发送落库时，把 `resolve_for_message` 已经查到的 meta 写进这张表，跟消息/会话建立外键关联。
+3. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）改造**：`get_meta()` 优先查 Redis（草稿阶段快路径），未命中时回退查新的 DB 表（已发送附件的长期真相来源）。
+4. **`delete_session`（`app/api/v1/agent.py:356`）加级联清理**：删除前查出该会话下所有关联的 `storage_key`，`db.delete(session)` 之后（或同一事务内）对每个 key 调 `storage.delete()`，并删除对应的附件元数据行（若用外键 `ON DELETE CASCADE` 可以让 DB 自动处理元数据行，存储字节仍需要应用层显式删除）。
+5. **草稿孤儿兜底清理**（沿用 v1 的 `list_keys()` + `stat()` + `delete()` 思路，新增一步过滤）：`sweep_expired_staging()` 扫 `.chat_staging/`/`.voice/`，对每个超过短 TTL 的 key，先查步骤 2 的元数据表确认它**没有**被任何消息引用，确认后才删除——避免误删"已发送但表还没来得及写"的边界情况（比如可以要求 Redis 元数据和 DB 元数据在写入 DB 后才允许被这个任务碰）。
+6. **安全网扫描**（低频、大阈值）：定期交叉检查 DB 附件表和实际存储对象，两个方向都要看：① DB 有记录但存储对象已经不存在（级联删除漏了存储层，或者反过来数据不一致）；② 存储对象存在但 DB 无记录、且不是最近写入的草稿（真孤儿，兜底删除）。
+7. **并发保护**：沿用 `agent/memory` scope 锁的模式。
+8. **测试**（新增 `tests/test_staging_gc.py`、附件元数据表相关的模型测试、`delete_session` 级联清理的集成测试）：见第 6.1 节。
+9. **上线验证**：见第 6.2 节。
 
 ### Phase B：视频转码结果缓存（对应 FR-STORAGE-1-2）
 
@@ -129,15 +144,15 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 ### 6.1 自动化测试
 
-**Phase A（`tests/test_staging_gc.py`，仿 `tests/test_storage_cleanup.py` 用 `LocalStorageBackend` + `tmp_path`）**：
+**Phase A**：
 
-- [ ] 混合放 3 个 `.chat_staging/` 对象，其中 1 个用 `os.utime` 改到 TTL 之外，`sweep_expired_staging()` 后只有那 1 个被删，另外 2 个还在。
-- [ ] `.voice/` 对象走 `TTL_VOICE`：构造一个 mtime 落在「超过 `TTL_VOICE` 但没超过普通 `TTL`」区间的用例（如果两个常量当前相等，先把测试写成显式断言「用的是 `TTL_VOICE` 这个变量」而不是巧合碰到同一个值，防止以后两个 TTL 改成不同值时测试才发现改错了分支）。
-- [ ] 非 `.chat_staging/`/`.voice/` 路径下的对象（用户文件库正常上传的文件）即使 mtime 很老也不被清理任务碰。
-- [ ] 空存储 / 不存在任何 `.chat_staging`/`.voice` 对象时 `sweep_expired_staging()` 正常返回 `0`，不报错。
-- [ ] `stat()` 返回 `mtime=None`（OSS 极端情况）的对象被跳过、不删。
-- [ ] 并发保护：Redis 锁已被占用时 `sweep_expired_staging()` 直接返回 `0`、不执行任何 `list_keys()`/`delete()` 调用（mock 锁 `SETNX` 失败）。
-- [ ] 返回值：删除数量与实际删除的 key 数一致，可以用来断言/后续接监控。
+- [ ] 消息发送时，附件元数据表被正确写入一条记录，字段跟 `resolve_for_message` 查到的 meta 一致。
+- [ ] `/thumb`、`/download`、`/preview-pdf`：Redis 元数据过期/不存在时，能从 DB 表正确回退拿到 meta 并返回内容（模拟"7 天后再打开历史消息"场景）。
+- [ ] `delete_session`：会话下有 2 条消息各引用 1 个附件，删除会话后，两个附件的存储对象和元数据行都应该消失；不属于这个会话的附件不受影响。
+- [ ] 草稿孤儿清理：`.chat_staging/` 下一个从未被任何消息引用、且超过草稿 TTL 的对象会被清理；一个已经被某条消息引用（DB 表里有记录）但物理 mtime 同样超过草稿 TTL 的对象**不会**被清理。
+- [ ] 空存储 / 无草稿孤儿时清理任务正常返回 `0`，不报错；`stat()` 返回 `mtime=None` 时跳过不删。
+- [ ] 并发保护：Redis 锁已被占用时清理任务直接返回、不执行任何删除。
+- [ ] 安全网扫描：DB 有记录但存储对象缺失、存储对象存在但 DB 无记录且非最近写入，两种不一致场景都能被正确识别（不要求这一步一定要做删除动作，先要求能正确识别/上报）。
 
 **Phase B（`tests/test_chat_attach_video.py` 补 `prepare_video_media` 缓存分支 + `test_staging_gc.py` 补 `.video_cache/` 分支）**：
 
@@ -152,11 +167,12 @@ PRD-LLM-3 的 `prepare_video_media()`（`chat_attach.py`）每次调用都会重
 
 **Phase A 上线前**：
 
-- [ ] 先手动跑一次 `sweep_expired_staging()`（脚本或临时加一个内部 API/CLI 入口），核对删除数量和释放空间与本次人工排查时用 `find -mtime +7` 得到的口径一致（`.chat_staging`/`.voice` 从约 1.4G 降到约 598M）。
-- [ ] 挂上定时任务后，观察 `app/core/scheduler.py` 的启动日志确认 `staging_gc` job 被正确注册（`[scheduler] started` 那条日志里能看到 job id）。
-- [ ] 手动改一个测试附件的物理 mtime 到 8 天前，等定时任务跑一轮（或手动触发），确认它被清掉；同时确认一个 3 天前的附件不受影响。
-- [ ] 确认清理任务运行期间不影响正常的附件暂存/读取（发一张图片给咕咕，清理任务跑的同时正常引用这张图片不受影响）。
-- [ ] 观察一次真实的凌晨自动运行（不手动触发），确认定时触发本身工作正常，不只是手动调用路径可用。
+- [ ] 发一张图片给咕咕（正常发送，非草稿），刷新页面，确认气泡里的图片正常显示（走的是新的 Redis→DB 回退路径，不是靠 objectURL）。
+- [ ] 手动把这条附件的 Redis 元数据删掉（模拟过期/重启丢失），再刷新，确认图片依然正常显示（证明真的从 DB 拿到了 meta，不是巧合还没过期）。
+- [ ] 删除这条消息所在的整个会话，检查存储里对应的 storage_key 确实被删除了（不再残留孤儿字节）。
+- [ ] 上传一张图片但**不发送**（只调用暂存接口），等草稿 TTL 过期后跑一次清理任务，确认这个从未发送的草稿被清理掉了。
+- [ ] 挂上定时任务后，观察 `app/core/scheduler.py` 的启动日志确认相关 job 被正确注册。
+- [ ] 观察一次真实的低峰自动运行（不手动触发），确认定时触发本身工作正常，不只是手动调用路径可用。
 
 **Phase B 上线前**：
 
