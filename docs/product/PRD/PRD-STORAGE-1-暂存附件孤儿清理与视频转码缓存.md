@@ -1,6 +1,6 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待评估（Phase A 方案 v2 经两轮外部评审定稿：DB 状态机为所有权真相来源，Redis 降级为 cache/lock；Phase B 补充了 cache_key 正确性修复与并发锁；均未开始实现）
+> 状态：🔲 待实现（Phase A 方案 v2 已定稿：DB 状态机为所有权真相来源，`chat_attachments` 表关联方式已确认，草稿 TTL/安全网频率/异常响应/视频缓存 TTL 均已定数值；Phase B 补充了 cache_key 正确性修复与并发锁；均未开始实现）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/api/v1/agent.py`（`delete_session`、附件相关接口）、消息/会话数据模型
@@ -105,12 +105,12 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 3. **发送成功 = claim**：消息真正持久化时，把关联的 `chat_attachments` 行从 `DRAFT` 原子地转成 `ATTACHED`（`WHERE state='draft' AND attach_id=... AND user_id=...`，带条件更新防止竞态），同时写 `message_id`。转成 `ATTACHED` 之后，这条附件不再有任何 TTL，永久保留直到所属消息/会话被删除。
 4. **`/thumb`、`/download`、`/preview-pdf`（`app/api/v1/agent.py:68-142`）改为直接查 DB**，**查询必须带 `user_id`**（`WHERE attach_id=? AND user_id=?`，不能只按 `attach_id` 查——否则是新引入的 IDOR，之前设计里漏了这条）。Redis 命中时可以走缓存快路径，未命中一律回退 DB，不存在"彻底找不到"的情况（只要 DB 记录还在）。
 5. **会话/消息删除：DB commit 优先于 storage 删除，不假装成一个事务**：`delete_session`（`app/api/v1/agent.py:356`）目前只 `db.delete(session)`。改造后：① 一个 DB 事务内，删除 session 的同时把关联 `chat_attachments` 标记 `DELETING`（或直接级联删除行，取决于要不要保留审计痕迹）；② **DB 事务 commit 成功之后**，再 best-effort 对每个 `storage_key` 调 `storage.delete()`；③ storage 删除失败只记日志，不回滚 DB、不重试阻塞主流程——**原则：宁可临时泄漏，不可误删**（storage 先删、DB 后失败回滚，会导致"消息还在、附件没了"，这是真正的数据丢失，比孤儿字节严重得多）。步骤 7 的安全网负责兜住 storage 删除失败留下的孤儿。
-6. **草稿孤儿定时清理**：扫描 `chat_attachments WHERE state='draft' AND created_at < now() - ttl`（**DB 驱动，不再需要"扫 storage → 反查 DB"这种绕路**），对每条命中记录做 `storage.delete()` + 删 DB 行。TTL 建议缩短到 24-48 小时（草稿本来就是"发出去之前"的中间态，见第 4 节）。
+6. **草稿孤儿定时清理**：扫描 `chat_attachments WHERE state='draft' AND created_at < now() - 48h`（**DB 驱动，不再需要"扫 storage → 反查 DB"这种绕路**），对每条命中记录做 `storage.delete()` + 删 DB 行。TTL 定为 48 小时（草稿本来就是"发出去之前"的中间态，见第 4 节）。
 7. **发送失败/放弃时的及时清理（状态守卫，不是"失败就删"）**：新增按 `attach_id` 删除单个草稿附件的接口，**删除前必须校验 `state == 'draft'`，非 DRAFT 一律拒绝**——这是必须的安全条件：HTTP 响应丢失/超时不等于请求真的失败，消息可能已经在服务端提交成功、附件已经被 claim 成 `ATTACHED`；如果没有这层状态守卫，客户端一次误判的"发送失败"会把已经生效的正常附件删掉。前端在发送请求失败时调用；覆盖不了"上传后直接关标签页/崩溃/断网"这类无信号场景，仍需要步骤 6 的定时兜底，这里只是降低草稿孤儿产生速度的锦上添花，不是主机制。
 8. **安全网：低频全量一致性扫描**，DB 与 storage 交叉检查，**两种不一致必须区别处理，不能用同一套"清理"逻辑**：
-   - **DB 有记录（非 DRAFT）+ storage 对象缺失** → **完整性异常（integrity violation）**，只记录 error/metric/告警，**不做自动修复、不删除 DB 记录**——这种情况意味着 storage 被误删/损坏/人工误操作/删除顺序出错，是真实的数据丢失，自动"顺手清理掉 DB 记录"等于把这个事故悄悄掩盖掉。
+   - **DB 有记录（非 DRAFT）+ storage 对象缺失** → **完整性异常（integrity violation）**，记录到受限诊断出口，**并补一条 `SystemLog`**（后台「系统日志」页可见，不用登服务器就能发现；写入前必须过 `redact()`，不能把 `storage_key`/路径等原始信息直接暴露到这个用户可达的出口），**不做自动修复、不删除 DB 记录**——这种情况意味着 storage 被误删/损坏/人工误操作/删除顺序出错，是真实的数据丢失，自动"顺手清理掉 DB 记录"等于把这个事故悄悄掩盖掉。
    - **DB 无记录（或已删除）+ storage 对象存在** → **孤儿候选**，满足年龄/路径前缀等安全条件后允许清理（这是步骤 5 storage 删除失败、或早期历史数据的兜底路径）。**注意**：如果 PRD-IM-6（引用消息附件复用）之后落地，"DB 无记录"不能再简单等于"可以删物理字节"——需要改成"没有任何存活的 `chat_attachments` 行还指着这个 `storage_key`"（按 storage_key 引用计数，不是按单条记录），否则会把还在被另一条消息引用的字节误删。当前 Phase A 落地时 IM-6 还没实现，可以先按"单行判断"来，落地 IM-6 时需要回来改这一步。
-   - 频率建议低（如每周一次），大阈值（如 90 天），本质是 eventual consistency 的最后一道防线，不是主清理路径。
+   - 频率：每天一次；阈值：90 天。扫描本身只是按索引查询，成本低，选择更高频率是为了更快发现 integrity violation（真实数据丢失信号），本质是 eventual consistency 的最后一道防线，不是主清理路径。
 - **组织方式（约束，不规定具体文件）**：草稿清理、安全网扫描、（Phase B 的）视频缓存清理是三种不同生命周期策略（状态驱动 / 消息生命周期驱动 / 租约驱动），清理逻辑应按语义独立组织，不应该塞进一个按路径前缀 if-elif 堆叠多套判断的扫描函数里；可以共享底层 `list_keys`/`stat`/`delete`/锁/调度基础设施。
 - 并发保护：沿用 `agent/memory` scope 锁的模式（Redis 分布式锁），防止 backend/worker 同时触发同一扫描。
 - 验收标准：一条 30 天前发送、且没有被 `save_uploaded_file` 存进文件库的消息，只要所属会话没被删除，历史气泡里的图片/文件仍能正常加载（哪怕 Redis 整体清空）；会话被删除后，DB commit 成功即视为删除生效，对应存储字节尽力清理，清理失败由安全网兜底，不阻塞会话删除本身。
@@ -123,7 +123,7 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
   ```
   `transcode_profile` 是从 `model_cfg` 派生的、影响转码结果的关键字段（如目标分辨率上限/码率上限/编码器），`CACHE_VERSION`（如 `"video-v1"`）是一个硬编码常量，以后升级转码算法/参数时改这个常量即可让所有旧缓存自然失效（不需要手动清），等安全网/租约过期自动回收。
 - 转码产物写入存储的路径由 `cache_key` 确定性推导（如 `{uid}/.video_cache/{cache_key}.mp4`），**不需要经过 Redis 指针查找**——路径本身就是可计算的。
-- **Redis 只承担"最近是否仍活跃"这一个语义，不承担查找职责**：`video_cache_alive:{uid}:{cache_key} = 1`，`ex=ttl`，命中时 `EXPIRE` 刷新。`prepare_video_media()` 先按公式算出 `cache_key`，直接尝试 `storage.get(cached_path)`；能读到就是缓存命中（同时刷新 alive marker 的 TTL），读不到（文件不存在，或者存在但 alive marker 已经过期被安全网清理）就重新转码、覆盖写入、重置 alive marker。这样即使 Redis 整体丢失，最多导致"缓存被安全网提前当孤儿清理、下次多转码一次"，不会影响正确性——这正是缓存该有的性质：随时全部丢掉也不影响业务正确性，跟 FR-STORAGE-1-1 里"DB 是所有权真相来源、绝不能丢"的附件语义形成对比。
+- **Redis 只承担"最近是否仍活跃"这一个语义，不承担查找职责**：`video_cache_alive:{uid}:{cache_key} = 1`，`ex=7d`（对齐旧的 `chat_attach.TTL`，不新增一个自定义常量），命中时 `EXPIRE` 刷新。`prepare_video_media()` 先按公式算出 `cache_key`，直接尝试 `storage.get(cached_path)`；能读到就是缓存命中（同时刷新 alive marker 的 TTL），读不到（文件不存在，或者存在但 alive marker 已经过期被安全网清理）就重新转码、覆盖写入、重置 alive marker。这样即使 Redis 整体丢失，最多导致"缓存被安全网提前当孤儿清理、下次多转码一次"，不会影响正确性——这正是缓存该有的性质：随时全部丢掉也不影响业务正确性，跟 FR-STORAGE-1-1 里"DB 是所有权真相来源、绝不能丢"的附件语义形成对比。
 - **并发多个请求命中同一视频同一 cache_key 时需要 single-flight 锁**：真实场景（同一会话里连续问同一个视频的问题）会触发多个并发请求同时未命中缓存，各自起一个 ffmpeg 转码同一个大文件，浪费 CPU/内存。改为：查缓存未命中 → 用 `video_cache_lock:{cache_key}`（同 `agent/memory` scope 锁模式）尝试加锁 → 加锁成功后**再查一次缓存**（double-check，防止等锁的时候前一个请求已经转码完）→ 仍未命中才真正转码 → 写缓存 → 释放锁；等锁的请求锁释放后同样先查缓存命中就直接用。
 - 缓存产物本身的清理复用第 2 节 FR-STORAGE-1-1 里的组织约束，作为独立的"租约驱动"清理策略：物理年龄扫描 `.video_cache/`，删除前检查对应 alive marker 是否存在且未过期，存在则跳过（marker 不存在 或 已过期，正常按物理年龄清理）。
 - 验收标准：同一视频、同一 `model_cfg`（`storage_key` 不变）第二次 `read_file` 应命中缓存、不重新调用 `_probe_video`/`_compress_video`；`storage_key` 变化或 `model_cfg` 对应的 transcode profile 变化都不会命中旧缓存；并发多个请求读同一视频时 `_compress_video` 只应该被真正调用一次。
@@ -144,11 +144,11 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 
 ## 4. 待确认问题
 
-- **`chat_attachments` 表跟现有消息模型怎么关联**：需要先读 `ConversationMessage`（或对应模型）现在怎么持久化 `attachments` 字段（只是 attach_id 列表，还是已经带完整 meta），确定新表要新建成什么样、要不要跟现有字段做一次性数据迁移。
-- **草稿 TTL 具体取多久**：建议 24-48 小时（草稿是"发出去之前"的中间态，不该是天级别），具体数值待定。
-- **安全网扫描的频率和阈值**：草案给的是"每周一次、90 天阈值"，是否合适取决于步骤 5（会话删除级联清理）本身的可靠性——观察一段时间、看孤儿候选和完整性异常各自的实际发生频率再调整。
-- **完整性异常（DB 有记录、storage 缺失）触发后具体怎么响应**：PRD 只定了"记录 error/metric/告警、不自动删 DB 记录"，具体接到哪个监控渠道、要不要人工介入的 SOP，留到实现阶段再定。
-- 视频转码缓存 alive marker 的 TTL 具体取多久：建议先跟附件 ATTACHED 前的草稿 TTL 参考值对齐或单独定，上线观察实际命中率和存储占用再调整。
+- ~~**`chat_attachments` 表跟现有消息模型怎么关联**~~ **已确认**：`ConversationMessage`（`app/models/__init__.py:407`）没有专门的附件字段，用户上传附件的卡片跟"咕咕发的文件卡片"共用同一个 `files` JSON 列（`agent/gateway/web.py:174-177`，靠卡片里的 `upload: true` 区分）。这个已持久化的卡片（`chat_attach.py:846-854` 定义的结构）**缺 `storage_key`**——DB 里现有数据没法定位存储字节所在位置，不能靠"扩展现有字段"糊弄过去，必须新建独立的 `chat_attachments` 表（`message_id` 外键指向 `conversation_messages.id`）。不需要做一次性历史数据迁移（旧消息的 `files` JSON 本来就没有 `storage_key`，旧附件如果对应的 Redis 元数据还没过期，可以按现有逻辑继续走 Redis 兜底一段时间自然过渡；过期后旧消息的历史附件会显示"已过期"，属于新方案上线前的存量数据，不强求补全）。
+- ~~草稿 TTL 具体取多久~~ **已定**：48 小时。草稿是"发出去之前"的中间态，48 小时给了充分缓冲，同时比旧的 7 天大幅收紧暴露窗口。
+- ~~安全网扫描的频率~~ **已定**：每天一次（阈值仍是 90 天）。扫描只是按索引查询，成本低；更快发现 integrity violation（真实数据丢失信号）比省一点扫描频率更重要。
+- ~~完整性异常触发后具体怎么响应~~ **已定**：除了记录到受限诊断出口，顺带补一条 `SystemLog`（后台「系统日志」页可见），方便运维不用登服务器也能发现——**必须先过 `redact()`**（`app/core/redaction.py` 的规则：任何进 SystemLog/Debug 面板的文案都要脱敏，不能把 `storage_key`/路径等原始信息直接写进去）。
+- ~~视频转码缓存 alive marker 的 TTL~~ **已定**：7 天，对齐旧的 `chat_attach.TTL`，减少一个新的自定义常量。
 - `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。
 
 ---
@@ -159,9 +159,9 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 
 ### Phase A：附件所有权状态机（对应 FR-STORAGE-1-1 v2 定稿）
 
-> v1（定时按物理 mtime 扫描 + 固定 TTL）已实现过一次并 revert（commit `dece7584` → `e63014a9`），原因见第 1.3 节。以下是经两轮外部评审收敛后的方案，落地前建议先把第 4 节"`chat_attachments` 表跟现有消息模型怎么关联"定下来。
+> v1（定时按物理 mtime 扫描 + 固定 TTL）已实现过一次并 revert（commit `dece7584` → `e63014a9`），原因见第 1.3 节。以下是经两轮外部评审收敛后的方案，第 4 节"表跟现有消息模型怎么关联"这个阻塞点已确认（见下）。
 
-1. **先确认现状**：读 `ConversationMessage`（或实际的消息模型）现在怎么持久化 `attachments` 字段——是完整 meta 快照，还是只有 attach_id 列表、依赖运行时再查 Redis 补全。
+1. ~~先确认现状~~ **已确认**：`ConversationMessage.files` 只存卡片展示信息、缺 `storage_key`，必须新建独立表，不能靠扩展现有字段，见第 4 节。
 2. **新增 `chat_attachments` 表**（`id`、`attach_id`、`user_id`、`message_id` 可空、`storage_key`、`name`、`ext`、`mime`、`kind`、`size`、`duration`、`img_width`、`img_height`、`state`（`draft`/`attached`/`deleting`）、`created_at`、`attached_at`）。简单 `message_id` 外键，不做多对多（见第 1.4 节）。
 3. **`stage()` 改为直接写 DB**：`storage.put()` 成功后立刻 `INSERT chat_attachments(state=draft)`，不再依赖 Redis 作为草稿期间唯一的所有权凭证；Redis 之后只作为可选查找缓存。
 4. **发送成功时原子 claim**：`resolve_for_message` 产生的消息真正持久化时，对每个关联 `attach_id` 执行条件更新 `UPDATE chat_attachments SET state='attached', message_id=? WHERE attach_id=? AND user_id=? AND state='draft'`，claim 之后不再有任何 TTL。
@@ -169,7 +169,7 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 6. **`delete_session`（`app/api/v1/agent.py:356`）改为「DB 优先、storage 尽力而为」两阶段**：① 一个事务内删除 session、级联标记/删除关联 `chat_attachments` 行；② 事务 commit 成功后再逐个 best-effort `storage.delete()`，失败只记日志不回滚不阻塞、留给步骤 8 的安全网兜底。
 7. **草稿孤儿定时清理**：直接查 `chat_attachments WHERE state='draft' AND created_at < now() - ttl`（DB 驱动，不需要"扫 storage 再反查 DB"），命中即 `storage.delete()` + 删行。
 8. **发送失败时的状态守卫删除**：新增按 `attach_id` 删除单个草稿附件的接口，**删除前必须校验 `state='draft'`**，非 DRAFT 直接拒绝（防止 HTTP 响应丢失导致的误判把已生效附件删掉）；前端发送失败时调用。仅为优化，步骤 7 的定时兜底仍是主机制。
-9. **安全网扫描**（低频、大阈值，如每周一次/90 天）：DB 与 storage 交叉检查，**两种不一致分别处理**——`DB 有记录（非 draft）+ storage 缺失` 记录为 integrity violation（告警，不自动删 DB 记录）；`DB 无记录 + storage 存在（非最近写入）` 才是孤儿候选，允许清理。
+9. **安全网扫描**（每天一次，90 天阈值）：DB 与 storage 交叉检查，**两种不一致分别处理**——`DB 有记录（非 draft）+ storage 缺失` 记录为 integrity violation（诊断日志 + `SystemLog`，过 `redact()`，不自动删 DB 记录）；`DB 无记录 + storage 存在（非最近写入）` 才是孤儿候选，允许清理。
 10. **组织约束**：草稿清理 / 安全网扫描 / （Phase B）视频缓存清理三种不同生命周期策略，按语义独立组织实现，不塞进一个按路径前缀分支的扫描函数；可共享底层 `list_keys`/`stat`/`delete`/锁的基础设施。
 11. **并发保护**：沿用 `agent/memory` scope 锁的模式。
 12. **测试**（新增 `tests/test_staging_gc.py`、`chat_attachments` 状态机相关的模型/服务测试、`delete_session` 级联清理的集成测试、单个附件删除接口的状态守卫测试）：见第 6.1 节。
@@ -214,7 +214,8 @@ DRAFT 状态超过短 TTL（未被 claim）→ 草稿孤儿清理直接删。
 - [ ] **storage 删除失败不阻塞 session 删除**：`storage.delete()` 抛异常时，`delete_session` 本身仍应成功返回（DB 层面已完成），且这个失败应该能被后续安全网扫描识别为孤儿候选。
 - [ ] 空存储 / 无草稿孤儿时清理任务正常返回 `0`，不报错；`stat()` 返回 `mtime=None` 时跳过不删。
 - [ ] 并发保护：Redis 锁已被占用时清理任务直接返回、不执行任何删除。
-- [ ] 安全网扫描：`DB 有记录（非 draft）+ storage 缺失` 应该被标记为 integrity violation（只告警，不清理、不删 DB 记录）；`DB 无记录 + storage 存在且非最近写入` 才作为孤儿候选允许清理——两种情况的处理动作必须不同，不能用同一段代码路径。
+- [ ] 安全网扫描：`DB 有记录（非 draft）+ storage 缺失` 应该被标记为 integrity violation（写诊断日志 + 一条 `SystemLog`，不清理、不删 DB 记录）；`DB 无记录 + storage 存在且非最近写入` 才作为孤儿候选允许清理——两种情况的处理动作必须不同，不能用同一段代码路径。
+- [ ] integrity violation 写入 `SystemLog` 的文案必须过 `redact()`：断言写入内容不包含原始 `storage_key`/文件系统路径等敏感信息（复用 `app/core/redaction.py` 现有的脱敏正则做断言）。
 
 **Phase B（`tests/test_chat_attach_video.py` 补 `prepare_video_media` 缓存分支 + `test_staging_gc.py` 补 `.video_cache/` 分支）**：
 
