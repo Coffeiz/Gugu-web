@@ -18,7 +18,7 @@ from app.core import redis as R
 from app.core.tz import now_utc
 from agent.memory._llm import complete_json
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
-from agent.memory.scoped_store import read_scope, write_scope_file, write_scope_json
+from agent.memory.scoped_store import read_scope, read_scope_json, write_scope_file, write_scope_json
 from agent.memory.scopes import MemoryScope
 
 
@@ -213,7 +213,10 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 # members.json 的 DB 字段独立于下面的 LLM 调用是否成功，见 _merge_members 注释。
                 try:
                     aggregated = await _aggregate_members(db, scope)
-                    prior_doc = (await read_scope(scope)).get("members") or {}
+                    # 这里只需要 members.json 一个文件，不用 read_scope() 把 profile/
+                    # summary/daily/memory 全部读一遍（code review 复审提出的 P3 性能
+                    # 点：既然已经有 read_scope_json，这里顺手也改掉）。
+                    prior_doc = await read_scope_json(scope, "members.json")
                     prior_members = prior_doc.get("members") if isinstance(prior_doc, dict) else {}
                     await write_scope_json(
                         scope, "members.json",
@@ -296,6 +299,13 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     被低估、name/last_seen_at 也可能取到过期值（曾经复现过：窗口内改名一次，message_count
     从 5 条被腰斩成 3 条）。改成只取原始行按时间顺序在 Python 里聚合：count 累加所有行，
     name/last_seen_at 始终跟随时间最新的那一行，不受改名次数影响。
+
+    顺带收集 `names_seen`（本批内按时间出现过的所有不同名字，相邻重复去重）：
+    `_merge_members` 只能拿到"上一轮 members.json 记录的 name"和"这一轮最终 name"
+    两个点，如果一次反思窗口内连续改名两次以上（A→B→C），中间名字 B 既不是上一轮
+    记录的名字也不是这一轮的最终名字，永远不会被写进 aliases（code review 复审
+    发现：等 B 对应的消息被保留窗口裁掉，aliases 也查不到 B 了）。`names_seen`
+    把这批内部的完整改名链路都记下来，交给 `_merge_members` 决定要不要补进 aliases。
     """
     from app.models import ConversationMessage, ConversationSession
 
@@ -321,7 +331,9 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
     for pid, name, created_at in rows:
         if not pid:
             continue
-        member = members.setdefault(pid, {"name": "", "last_seen_at": None, "message_count": 0})
+        member = members.setdefault(
+            pid, {"name": "", "last_seen_at": None, "message_count": 0, "names_seen": []},
+        )
         member["message_count"] += 1
         ts = created_at.timestamp() if created_at else None
         # 行按 created_at 升序处理，靠 >= 保证同一时刻多条也以最后处理的为准，
@@ -329,6 +341,8 @@ async def _aggregate_members(db, scope: MemoryScope) -> dict[str, dict]:
         if ts is not None and (member["last_seen_at"] is None or ts >= member["last_seen_at"]):
             member["last_seen_at"] = ts
             member["name"] = name or member["name"]
+        if name and (not member["names_seen"] or member["names_seen"][-1] != name):
+            member["names_seen"].append(name)
     return members
 
 
@@ -355,6 +369,13 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
     现在改成：本轮聚合看不到的旧成员原样保留（name/aliases/nicknames/last_seen_at 不变），
     只把 message_count 归零（跟 docstring 开头说的"近期活跃度"语义一致——不在窗口内
     就是没有近期活跃度，但人和曾用名/称呼依然存在，不该被删）。
+
+    "跟上一轮记录的 name 比较、变了就追加进 aliases"只能捕获跨反思批次之间的一次改名；
+    如果同一批消息内部连续改名两次以上（A→B→C），中间名字 B 既不等于上一轮记录的 name
+    （A），也不等于这一轮的最终 name（C），单靠这个比较会永久漏记 B（code review 复审
+    发现：等 B 对应的消息被保留窗口裁掉，aliases 也查不到 B 了）。用 `_aggregate_members`
+    顺带收集的 `names_seen`（本批内按时间出现过的所有不同名字）补齐这个缺口：除最终
+    name 外全部追加进 aliases（去重）。
     """
     now = now_utc().timestamp()
     out: dict[str, dict] = {}
@@ -365,6 +386,9 @@ def _merge_members(current: Any, aggregated: dict[str, dict]) -> dict[str, dict]
         if isinstance(prev, dict) and prev.get("name") and prev["name"] != agg["name"]:
             if prev["name"] not in aliases:
                 aliases.append(prev["name"])
+        for historical_name in (agg.get("names_seen") or [])[:-1]:
+            if historical_name and historical_name != agg["name"] and historical_name not in aliases:
+                aliases.append(historical_name)
         nicknames = list(prev.get("nicknames") or []) if isinstance(prev, dict) else []
         out[pid] = {
             "name": agg["name"],
@@ -423,7 +447,7 @@ async def _apply_output(
         # 唯一依赖本轮 LLM 结果的字段，只有 output 里真有内容才需要再写一次文件。
         nicknames_add = output.get("nicknames_add")
         if nicknames_add:
-            doc = (await read_scope(scope)).get("members") or {}
+            doc = await read_scope_json(scope, "members.json")
             members = doc.get("members") if isinstance(doc, dict) else {}
             if isinstance(members, dict) and members:
                 updated = _apply_nicknames(members, nicknames_add)

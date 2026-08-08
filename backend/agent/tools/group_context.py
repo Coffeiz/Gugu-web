@@ -47,15 +47,17 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
     什么"，"小北" in "小北哥" 是模糊命中且唯一，旧代码直接把这次查询判给 B，A 的精确
     alias 根本没机会参与判断——不是 ambiguous（好歹会问用户），而是更危险的静默查错人。
 
-    ① speaker 本身就是 platform_user_id → 直接精确匹配，最高优先级，不需要加载
-       members.json；
+    ① speaker 本身就是 platform_user_id → 直接精确匹配，最高优先级——这一层同时检查
+       "实时消息表里的 pid"和"members.json 里持久记录的 pid"两个来源（见下），不只
+       查实时表；
     ② 精确匹配（相等）——同时看实时名字（当前群昵称，查消息表，不受反思节奏影响）+
        members.json 的 aliases（曾用名）+ nicknames（群友称呼），三个来源合并判断：
        唯一命中直接用，多个精确命中（同一个词被多个人精确用过）才算 ambiguous；
     ③ ②层没有任何精确命中，才退回模糊匹配（互为包含，"小北"能命中"moon_小北"）——
        同样合并实时名字 + aliases + nicknames 三个来源一起判断唯一性/ambiguous。
-    除①外都需要 members.json（load_members 是 async 回调，仅在①未命中时调用一次，
-    ②③ 共用同一份数据，避免多读文件）。
+    除①外都需要 members.json（load_members 是 async 回调，①的实时表命中时不需要
+    调用，但①里对 members.json 的 pid 精确匹配仍需要读一次；②③ 共用同一份数据，
+    不会因为多层判断而多读文件）。
     返回：
       {"platform_user_id": pid}          唯一命中
       {"ambiguous": True, "candidates": [...]}  多候选（按 last_seen_at 倒序，最多 5 个）
@@ -79,13 +81,22 @@ async def _resolve_speaker(db, user_id, platform: str, bot_id, chat_id, speaker:
         if ts is not None and ts > last_seen.get(pid, 0):
             last_seen[pid] = ts
 
-    # ① speaker 本身就是 platform_user_id
+    # ① speaker 本身就是 platform_user_id——先查实时表（最快，不用读文件）。
     if speaker in live_ids:
         return {"platform_user_id": speaker}
 
     # ②③ 都可能需要 aliases/nicknames，且精确匹配必须先于模糊匹配判断，所以无条件
-    # 加载一次（唯一的例外是①已经命中、提前 return 掉的情况）。
+    # 加载一次（唯一的例外是①在实时表里已经命中、提前 return 掉的情况）。
     members = await load_members()
+
+    # ①（续）：speaker 是沉默成员的 platform_user_id——这个人的消息已经被保留窗口
+    # 裁掉，live_ids 里查不到了，但 _merge_members()（PRD-IM-8 Phase 2.9）明确保证
+    # 沉默成员会继续留在 members.json 里，不会被删除。如果这里不补一次 exact key
+    # 查找，就会出现"members.json 明明保留了这个人，但直接传他的 platform_user_id
+    # 反而返回'没有找到'"的矛盾——违反本函数开头"①最高优先级"的契约（code review
+    # 复审发现）。
+    if speaker in members:
+        return {"platform_user_id": speaker}
 
     def _field_matches(field: str, *, exact: bool) -> dict[str, str]:
         found: dict[str, str] = {}

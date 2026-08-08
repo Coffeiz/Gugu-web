@@ -1,6 +1,6 @@
 # 群成员名单与按人查历史 PRD
 
-> 状态：✅ 已实施（含 Phase 2.5/2.6/2.7/2.9/2.10 架构修订）
+> 状态：✅ 已实施（含 Phase 2.5/2.6/2.7/2.9/2.10/2.11 架构修订）
 > 创建：2026-08-08
 > 最近更新：2026-08-08
 > 关联模块：`backend/agent/tools/group_context.py`、`backend/agent/memory/im_reflection.py`、`backend/agent/memory/store.py`、`backend/agent/memory/reflection.py`、`backend/agent/memory/scopes.py`、`backend/agent/memory/scoped_store.py`、`backend/app/models/__init__.py`（`ConversationMessage`）
@@ -22,6 +22,7 @@
 | Phase 2.8：Code Review 发现的 4 个问题（合并前修复） | ✅ 已完成 | 外部 code review 定位到 4 个真实 bug（均已核实）：① `members.json` 被无意中整份塞进每次群反思 LLM prompt（`current` 在写完 members.json 后读出，直接 `json.dumps` 进 `user`），群越大 token 越多、越容易再撞审核拦截；② `aliases` 字段此前完全没被 `_resolve_speaker` 用到，改名后旧消息一旦被 500~600 条保留窗口裁掉就再也查不到人（"上线几天后才坏"的典型模式）；③ `members.json` 聚合失败被 `except Exception: pass` 完全静默，持续性故障（schema/SQL/OSS 权限）会永久停更且无法排查——恰恰是本 PRD 诞生的原因；④ `_aggregate_members` 排序没有 `id` 兜底，同一 `created_at` 时行序不确定，"最新名字"的判定可能不稳。四个都已修复，见 FR-IM-8-1（新增 aliases 层）、3.1/3.4 节。 |
 | Phase 2.9：Code Review 复审发现的 2 个数据生命周期问题（合并前修复） | ✅ 已完成 | 复审 Phase 2.8 修复后又发现 2 个新问题：① `members.json` 不是真正的持久名单——`_merge_members` 只保留本轮 `_aggregate_members` 还能看到的成员，成员一旦沉默太久、消息被 500~600 条保留窗口裁掉，会连人带 aliases/nicknames 一起从 `members.json` 消失（这些字段本来就是为了"退出窗口后依然能查到人"设计的，结果反而在人本身被裁出窗口时先丢了）；② `_resolve_speaker` 的"唯一名字模糊匹配立即返回"可能压过更强的精确 alias/nickname 匹配，导致静默查错人而非触发 ambiguous（比"多个候选"更危险）。两个都已修复，见 FR-IM-8-1（匹配顺序改成"先精确后模糊、来源合并判断"）、3.1 节（`_merge_members` 保留沉默成员）。 |
 | Phase 2.10：Code Review 二次复审发现的 1 个 P2 性能问题（合并前修复） | ✅ 已完成 | Phase 2.9 为保证 exact alias/nickname 能参与判断，改成除 `platform_user_id` 精确命中外都无条件 `load_members()`，而 `_load_members()` 底层调的是 `read_scope(scope)`——group scope 有 `profile.json`/`summary.json`/`daily.md`/`memory.md`/`members.json` 五个文件，`read_scope()` 会把全部五个都读一遍，等于按发言人查询这条已经进了热路径的调用，每次都要多读 4 个完全用不到的文件（OSS 后端是额外的网络请求）。修复：给 `scoped_store.py` 新增 `read_scope_json(scope, filename)` 只读单个 JSON 文件，`_load_members()` 改用它只读 `members.json`。见 3.2 节。 |
+| Phase 2.11：Code Review 三次复审发现的 2 个 P2（合并前修复） | ✅ 已完成 | 三审又发现 2 个问题：① `_resolve_speaker` 的①层（`platform_user_id` 精确匹配）只查实时消息表的 `live_ids`，从未检查持久化的 `members.json`——沉默成员的消息全部退出保留窗口后，虽然 `_merge_members`（Phase 2.9）明确保证不会删除这个人，但直接传他的 `platform_user_id` 反而查不到，跟①层"最高优先级"的契约矛盾；② `_aggregate_members` 每个 pid 只输出最终 `name`，同一批反思消息内部连续改名两次以上（A→B→C）时，中间名字 B 既不等于上一轮记录的 name（A）也不等于这一轮最终 name（C），`_merge_members` 原有的"上一轮 vs 这一轮"比较永远捕获不到 B，等 B 对应的消息被裁出保留窗口后就彻底查不到了。两个都已修复：①层补上 `members.json` 的 exact key 查找；`_aggregate_members` 新增 `names_seen` 收集本批内出现过的全部不同名字，`_merge_members` 把除最终 name 外的历史名字都补进 aliases。顺带把反思任务里两处只需要 `members.json` 却调了全量 `read_scope()` 的调用点也换成 `read_scope_json()`（P3 性能，顺手一起改了）。见 3.1、3.2 节。 |
 
 ---
 
@@ -121,6 +122,7 @@
 - `aliases`：对比本次聚合结果里的 `name` 与 `members.json` 现存的 `name`，如果变了，把旧值追加进 `aliases`（去重）。
 - **写入时机（Phase 2.7 修订）**：在 `_execute_job_locked` 里、**调用 LLM（`complete_json`）之前**独立执行 `_aggregate_members` + `_merge_members` 并写入 `members.json`，包一层 try/except——失败不影响本轮反思继续跑，下次任务执行时会重新聚合一次，不是丢失只是晚一轮。不实时（每条消息）写，避免高频读改写 JSON 文件的并发/锁开销；不单独开调度，复用 `execute_job` 已有的执行节奏。
 - **沉默成员不删除（Phase 2.9 修订）**：`_aggregate_members` 只能聚合 `ConversationMessage` **保留窗口**（500~600 条）内还能看到的成员——成员一旦沉默太久、他的消息被裁出窗口，本轮聚合结果里就没有他了。`_merge_members` 早期实现是 `out = {}` 只填聚合结果里出现过的 `pid`，等于把这些沉默成员连人带 `aliases`/`nicknames` 一起从 `members.json` 里删掉了；而这两个字段本来就是为了"消息被裁出窗口后依然能查到人"设计的，结果反而在成员本身被裁出窗口时先丢失，跟 `members.json` 自己"持久成员名单"的定位矛盾。修法：本轮聚合看不到的旧成员原样保留 `name`/`aliases`/`nicknames`/`last_seen_at`，只把 `message_count` 归零（跟"近期活跃度"语义一致——不在窗口内就是没有近期活跃度，但人和曾用名/称呼依然存在）。
+- **批内多次改名不丢中间名字（Phase 2.11 修订）**：`_merge_members` 判断"要不要把旧名字追加进 aliases"，原来只比较"上一轮 members.json 记录的 name"和"这一轮聚合出的最终 name"——如果同一批反思消息内部连续改名两次以上（A→B→C），中间名字 B 既不是上一轮记录的（A），也不是这一轮最终的（C），永远不会被这个比较捕获到，等 B 对应的消息被裁出保留窗口就彻底查不到了。修法：`_aggregate_members` 顺带收集 `names_seen`（本批内按时间出现过的所有不同名字，相邻重复去重），`_merge_members` 把除最终 name 外的历史名字全部追加进 aliases（去重）。
   - **为什么必须放在 LLM 调用之前，而不是像最初实现那样放在 `_apply_output` 里**：最初实现把这一步和 `nicknames` 合并写在同一个 `_apply_output` 调用里，而 `_apply_output` 只有在 `complete_json` 成功返回之后才会被执行。实测某群反思任务因 LLM 返回 500（内容审核拦截，见下）连续失败，`_apply_output` 从未运行，这几个纯 DB 字段——本来跟这次 LLM 调用毫无关系——也跟着卡住不更新。挪到 LLM 调用之前、独立包 try/except，就能保证这几个字段的更新完全不受 LLM 调用成败影响。
 - **聚合数据源范围**：不能用 `execute_job` 本批 `messages`（`from_message_id`~`to_message_id`）累加（会漏掉窗口内、但不在本批范围的历史消息，也没法正确反映消息裁剪后的实际计数）。改为每次都**额外按 `chat_id` 单独查一次全量**（见上，取原始行不做 SQL 聚合）。
 - **`updated_at`/`last_seen_at` 时间格式**：统一用 `now_utc().timestamp()`（epoch 秒），不用 ISO 字符串，跟 `profile.json`/`summary.json` 现有风格保持一致（示例见上）。
@@ -131,10 +133,10 @@
 - **写入时机（Phase 2.7 修订）**：只有 `complete_json` 调用**成功返回**且 `nicknames_add` 非空时，才在 `_apply_output` 里重新读一次 `members.json`、用 `_apply_nicknames()` 合并追加、再写回——不重新计算 `name`/`aliases`/`last_seen_at`/`message_count`（那几个字段已经在 LLM 调用之前独立更新过了）。`_merge_members`（纯 DB 合并）和 `_apply_nicknames`（LLM 结果合并）职责严格分开，互不调用。
 - **不适用 `_GROUP_INTERNAL_ID_RE` 过滤**——`profile.json` 刻意不落地任何 `platform_user_id`，而 `members.json` 恰恰相反，每条记录必须挂在具体的 `platform_user_id` 下才有意义，这是两个文件唯一但关键的设计分歧点，实现时需要显式注明，避免后来者误以为是疏漏而"修正"掉。
 
-### 3.2 `group_context_search` 的按发言人过滤（Phase 2.5/2.6/2.8/2.9/2.10 修订）
+### 3.2 `group_context_search` 的按发言人过滤（Phase 2.5/2.6/2.8/2.9/2.10/2.11 修订）
 
-- 新增 `speaker` 参数解析，**按匹配强度分两级（Phase 2.9），除①层外都读 `members.json`**：
-  1. `speaker` 本身就是 `platform_user_id` → 直接精确匹配，不查任何表、不读 `members.json`。
+- 新增 `speaker` 参数解析，**按匹配强度分两级（Phase 2.9），除①层的实时查询外都读 `members.json`**：
+  1. `speaker` 本身就是 `platform_user_id` → 精确匹配，**先查实时消息表的 `live_ids`（不用读文件），查不到再查持久化 `members.json` 的 key（Phase 2.11 修订）**：早期实现只查 `live_ids`，沉默成员的消息全部退出保留窗口后，即使 `members.json` 明确保留了这个人（见下方"沉默成员不删除"），直接传他的 `platform_user_id` 反而查不到，跟①层"最高优先级"的契约矛盾。
   2. **精确匹配（相等）**：合并三个来源一起判断——实时查 `ConversationMessage` 得到的 `platform_user_name`（`SELECT DISTINCT platform_user_id, platform_user_name FROM ... WHERE`，同群、`role='user'`、`platform_user_id IS NOT NULL`，天然覆盖"当前显示名"和"保留窗口内用过的曾用名"）、`members.json` 的 `aliases`、`members.json` 的 `nicknames`；任一来源里存在 `speaker == value` 都算命中。唯一命中直接用；多个命中（哪怕来自不同来源）走 ambiguous——精确匹配内部平级，不按来源分优先级。
   3. **模糊匹配（互为包含，`speaker in value or value in speaker`）**：②层三个来源都没有精确命中，才退回模糊匹配，同样合并三个来源一起判断唯一性/ambiguous。
 - 找到唯一候选：按 `platform_user_id` 精确过滤 `ConversationMessage`，不再依赖关键词匹配正文（`keyword`/`queries` 参数仍可选叠加，用于在该发言人的历史里再按内容筛）。
@@ -272,3 +274,11 @@
 - [x] 8.2 `group_context.py` 的 `_load_members()` 改用 `read_scope_json(scope, "members.json")`，不再经过读全部 5 个文件的 `read_scope()`。`im_reflection.py` 里为反思 prompt 构造/`_apply_output` 写入而全量读取 scope 的调用点不改动——那些场景本来就需要 `profile`/`daily`/`memory` 等多个文件，不是这次要解决的问题。
 - [x] 8.3 新增 `tests/test_scoped_store.py`：`test_read_scope_json_only_reads_requested_file` 用记录调用 key 的假存储验证只读了 `members.json` 这一个 key；另外覆盖文件不存在返回 `{}`、JSON 解析失败返回 `{}`、非 `.json` 文件名报错三种边界。
 - 后端完整测试 782 passed（含新增 4 个）。
+
+### Phase 9（Phase 2.11 修订）：Code Review 三次复审发现的 2 个 P2，合并前修复
+
+- [x] 9.1 `_resolve_speaker` 的①层补上 `members.json` 的 exact key 查找：`live_ids` 未命中时，加载 `members` 后先判断 `speaker in members`，命中直接返回，再进入②③层的 name/alias/nickname 匹配。补测试 `test_resolve_speaker_by_stale_platform_user_id_from_members`（数据库里没有该成员的任何消息，只在 `members.json` 里保留，直接传 `platform_user_id` 依然要能命中）。
+- [x] 9.2 `_aggregate_members` 新增 `names_seen` 字段：逐行处理时，名字相对上一次记录发生变化就追加进列表（相邻重复去重），返回给 `_merge_members` 使用。补测试 `test_aggregate_members_collects_all_distinct_names_seen`（A→A→B→C 四条消息，`names_seen == ["A", "B", "C"]`）。
+- [x] 9.3 `_merge_members` 除了原有的"上一轮 name vs 这一轮最终 name"比较外，额外把 `names_seen[:-1]`（除最终名字外的历史名字）追加进 aliases（去重、跳过等于最终名字的项）。补测试 `test_merge_members_appends_intermediate_names_from_multi_rename_batch`（A→B→C 一批内连续改名，B 也要出现在 aliases 里）、`test_merge_members_names_seen_missing_does_not_break`（`aggregated` 缺少 `names_seen` 键时不报错，退化成原有比较逻辑）。
+- [x] 9.4（顺手做的 P3 性能项）：`_execute_job_locked` 里读旧 `members` 做合并、以及 `_apply_output` 里读旧 `members` 合并 `nicknames_add` 这两处，原来都调用全量 `read_scope(scope)` 只为了取 `"members"` 一个键，改成 `read_scope_json(scope, "members.json")`——跟 Phase 2.10 给 `group_context_search` 做的优化是同一类问题，顺手一起改掉，不需要再等下一轮 review 才发现。
+- 后端完整测试 786 passed（含新增 4 个）。
