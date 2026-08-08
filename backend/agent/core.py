@@ -269,6 +269,10 @@ class LLMRunner:
         一条共享循环后两边自然共用同一层兜底——OpenAI 路因此从"异常直接炸穿"变成
         "跟 Anthropic 路一样优雅降级成'咕咕开小差了'"，是明确的行为改善，不是意外。
         """
+        # 这轮真正要跑的模型配置透传给工具层（见 agent/modelctx.py 文档）——工具判断
+        # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
+        from agent import modelctx
+        modelctx.set_model_cfg(ai)
         client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 
         _mutset = _mutating_tools(self.tool_names)

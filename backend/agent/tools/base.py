@@ -364,6 +364,16 @@ class SkillRegistry:
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None
 
+        # 工具想让模型「看视频」：同上，真正的 video content block（不是代表帧/转写），
+        # 目前只有 read_file 读文件库视频（file_readers.py 的 read_video）会产生，且仅限
+        # MiniMax M3 这种 Anthropic 通道原生支持视频块的 provider——OpenAI 路工具结果只能
+        # 是纯文本，走不到这里。
+        if isinstance(result, dict) and "_video_media" in result:
+            block = result.pop("_video_media")
+            note = result.get("note", "")
+            content = ([{"type": "text", "text": note}] if note else []) + [block]
+            return content, None
+
         artifact = result.pop("_artifact", None) if isinstance(result, dict) else None
         # 细粒度增量提示（如删除类工具带 {op:remove,kind,id}）——供前端本地剔除，免全量重拉。
         # pop 掉别让它进给模型看的 JSON。咕咕/IM 侧无 client-id，origin 恒 None → 所有端都刷新。

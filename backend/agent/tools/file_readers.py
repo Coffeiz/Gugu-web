@@ -1,14 +1,11 @@
 """read_file 的媒体读取处理器。
 
 文本和 Office 文档仍由 files.py 负责；这里集中处理需要外部媒体工具的音频/视频，
-避免把 ffmpeg、ASR 和视觉模型分支继续堆进 read_file。
+避免把 ASR 和视频理解分支继续堆进 read_file。
 """
 from __future__ import annotations
 
-import asyncio
 import base64
-import os
-import tempfile
 
 from app.core.config import get_settings
 from app.core import chat_attach
@@ -18,84 +15,6 @@ from app.services.storage import get_storage
 VIDEO_EXTS = frozenset({"mp4", "mov", "avi", "mkv", "webm", "wmv", "m4v"})
 AUDIO_EXTS = frozenset({"mp3", "wav", "flac", "m4a", "ogg", "aac", "amr", "opus", "wma"})
 MEDIA_READ_MAX_BYTES = 36 * 1024 * 1024
-MEDIA_AUDIO_MAX_SECONDS = 300
-MEDIA_AUDIO_MAX_OUTPUT_BYTES = 16 * 1024 * 1024
-MEDIA_FRAME_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
-MEDIA_FRAME_MAX_WIDTH = 1920
-_FFMPEG_SEMAPHORE = asyncio.Semaphore(2)
-
-
-def _ffmpeg() -> str | None:
-    from app.core.media_transcode import _ffmpeg_bin
-    return _ffmpeg_bin()
-
-
-async def _read_limited(stream, max_bytes: int) -> bytes | None:
-    """分块读取 ffmpeg 输出，超过上限时返回 None，让调用方终止子进程。"""
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = await stream.read(min(64 * 1024, max_bytes - total + 1))
-        if not chunk:
-            return b"".join(chunks)
-        total += len(chunk)
-        if total > max_bytes:
-            return None
-        chunks.append(chunk)
-
-
-async def _run_ffmpeg(data: bytes, ext: str, args: list[str], max_output_bytes: int) -> bytes | None:
-    ffmpeg = _ffmpeg()
-    if not ffmpeg:
-        return None
-    fd, source = tempfile.mkstemp(suffix=f".{ext}", prefix="gugu_media_")
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-        async with _FFMPEG_SEMAPHORE:
-            proc = await asyncio.create_subprocess_exec(
-                ffmpeg, "-nostdin", "-loglevel", "error", "-y", "-i", source, *args,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            )
-            stderr_task = asyncio.create_task(proc.stderr.read())
-            try:
-                output = await asyncio.wait_for(_read_limited(proc.stdout, max_output_bytes), timeout=60)
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                raise
-            finally:
-                if proc.returncode is None:
-                    proc.kill()
-                await proc.wait()
-                await stderr_task
-        return output if proc.returncode == 0 and output else None
-    except (OSError, asyncio.TimeoutError):
-        return None
-    finally:
-        try:
-            os.unlink(source)
-        except OSError:
-            pass
-
-
-async def _extract_audio(data: bytes, ext: str) -> bytes | None:
-    return await _run_ffmpeg(
-        data, ext,
-        ["-vn", "-t", str(MEDIA_AUDIO_MAX_SECONDS), "-ar", "16000", "-ac", "1", "-f", "wav", "pipe:1"],
-        MEDIA_AUDIO_MAX_OUTPUT_BYTES,
-    )
-
-
-async def _extract_frame(data: bytes, ext: str) -> bytes | None:
-    # 取中前段画面，避免只取首帧时遇到黑场或片头；短视频由 ffmpeg 自动退回可用帧。
-    return await _run_ffmpeg(
-        data, ext,
-        ["-ss", "00:00:01", "-frames:v", "1", "-vf",
-         f"scale={MEDIA_FRAME_MAX_WIDTH}:-2:force_original_aspect_ratio=decrease",
-         "-f", "image2", "pipe:1"],
-        MEDIA_FRAME_MAX_OUTPUT_BYTES,
-    )
 
 
 async def _transcribe_audio(raw: bytes, mime: str) -> str:
@@ -130,29 +49,58 @@ async def read_audio(file) -> dict:
 
 
 async def read_video(file) -> dict:
+    """把文件库里的视频作为真正的视频内容交给模型看，复用 chat_attach 的聊天附件
+    视频理解能力（压缩阈值/base64 vs mm_file/大小上限全部在
+    `chat_attach.prepare_video_media` 里，这里不重新实现一套）。
+
+    视频 tool_result 里的 content block 只有 Anthropic 通道（MiniMax M3）能承载——
+    OpenAI 路的 tool 结果只能是纯文本（见 agent/tools/base.py dispatch 的
+    `_video_media` 处理），所以这里先判 provider 能力，不满足直接返回明确的
+    "当前模型不支持"错误，而不是退化成代表帧/转写这类近似方案。
+
+    能力判断必须用**这轮真正在跑的模型**（`agent.modelctx.get_model_cfg()`），
+    不能重新读静态的 `get_settings().ai`——pool/router 场景下两者可能不是同一个
+    模型，用错了会出现"顶层配的是 MiniMax、这轮实际跑 mimo，却按 MiniMax 生成
+    Anthropic video block"或反过来"误判不支持"。`modelctx` 读不到（没有走
+    `LLMRunner._run_loop`，理论上不会发生，兜底而已）才退回 `settings.ai`。
+    """
+    from agent import modelctx
+    from agent.llm_select import use_anthropic_for
+
     try:
-        error = await _media_size_error(file)
-        if error:
-            return error
-        data = await get_storage().get(file.storage_key)
-        frame = await _extract_frame(data, file.ext.lower())
-        audio = await _extract_audio(data, file.ext.lower())
-        transcript = await _transcribe_audio(audio, "audio/wav") if audio else ""
+        ai = modelctx.get_model_cfg() or get_settings().ai
+    except Exception as error:
+        diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
+        return {"error": "视频读取失败"}
+    if not (use_anthropic_for(ai) and chat_attach._minimax_video_enabled(ai)):
+        return {"error": "当前模型不支持通过文件库直接看视频（视频理解目前仅 MiniMax M3 支持）"}
+
+    ext = file.ext.lower()
+    try:
+        info = await get_storage().stat(file.storage_key)
+        if info is None:
+            return {"error": "媒体文件不存在，无法读取"}
+        # 源文件超过处理上限时用 stat() 已经拿到的物理大小直接拒绝，不要先把整个
+        # 文件读进内存再交给 prepare_video_media 判断——stat() 通常只是一次元信息
+        # 查询（本地 os.stat / OSS head_object 级别），比整段 get() 便宜得多，没必要
+        # 为了一个注定要拒绝的 500MB+ 视频先申请 500MB 内存（code review 指出）。
+        if info.size > chat_attach.VIDEO_SOURCE_MAX:
+            return {"error": "这条视频太大（超过 500MB 处理上限），没法直接看"}
+        raw = await get_storage().get(file.storage_key)
+        mime = chat_attach._MEDIA_MIME.get(ext) or f"video/{ext}"
+        media_item = await chat_attach.prepare_video_media(
+            raw, mime, f"{file.display_name}.{file.ext}", ai,
+        )
+    except ValueError as error:
+        return {"error": str(error)}
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}
 
-    if frame and chat_attach.vision_ready():
-        block = chat_attach.vision_block(frame, "png")
-        if block:
-            note = f"已读取视频《{file.display_name}.{file.ext}》的代表画面。"
-            if transcript:
-                note += f"音频转写：{transcript}"
-            return {"_vision_image": block, "note": note}
-    if transcript:
-        return {"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
-                "content": f"视频音频转写：\n{transcript}"}
-    return {"error": "视频无法读取：当前未配置可用的视觉模型或语音模型"}
+    block = chat_attach.video_media_to_anthropic_block(media_item)
+    if not block:
+        return {"error": "视频读取失败"}
+    return {"_video_media": block, "note": f"已读取视频《{file.display_name}.{file.ext}》。"}
 
 
 async def read_media(file) -> dict:
