@@ -115,6 +115,51 @@ async def test_oss_get_does_not_retry_on_unrelated_exception():
     assert calls["n"] == 1
 
 
+# ── storage: OSSStorageBackend.stat（用于 read_audio 的物理大小检查）─────────────
+
+def _fake_meta_result(size, mtime=1700000000, etag="abc"):
+    return SimpleNamespace(content_length=size, last_modified=mtime, etag=etag)
+
+
+async def test_oss_stat_uses_get_object_meta_not_full_download():
+    """stat() 必须走元信息查询，不能像默认实现那样整个 get() 下来只为量大小
+    （真实故障：200MB 视频光 stat 一次就要拉 200MB）。
+
+    用 get_object_meta 而不是 head_object：两者都只取元信息不下载本体，但
+    head_object 对象不存在时抛的是 NotFound（HEAD 请求 404 时 SDK 分不清是
+    "对象不存在"还是"bucket 配错"），get_object_meta 官方保证抛更精确的
+    NoSuchKey——跟 stat() 的异常处理必须对得上，不能靠"顺便接住父类"蒙混过去
+    （code review 复审发现：早期实现测试自己 mock 的是 NoSuchKey，跟 head_object
+    真实抛出的 NotFound 对不上，测试全绿但语义是错的）。"""
+    backend = _make_oss_backend()
+    get_calls = {"n": 0}
+
+    def fake_meta(key):
+        return _fake_meta_result(12345)
+
+    def fake_get(key):
+        get_calls["n"] += 1
+        raise AssertionError("stat() 不应该调用 get_object")
+
+    backend.bucket.get_object_meta = fake_meta
+    backend.bucket.get_object = fake_get
+    info = await backend.stat("k")
+    assert info.size == 12345
+    assert info.mtime == 1700000000
+    assert get_calls["n"] == 0
+
+
+async def test_oss_stat_returns_none_when_missing():
+    import oss2.exceptions as oss_exc
+    backend = _make_oss_backend()
+
+    def fake_meta(key):
+        raise oss_exc.NoSuchKey(404, {}, b"", {"Code": "NoSuchKey"})
+
+    backend.bucket.get_object_meta = fake_meta
+    assert await backend.stat("missing") is None
+
+
 # ── voice: transcribe() ASR 调用 ────────────────────────────────────────────────
 
 def _voice_settings():

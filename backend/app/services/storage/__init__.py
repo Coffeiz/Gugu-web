@@ -389,6 +389,38 @@ class OSSStorageBackend(StorageBackend):
             self.pfx + key,
         )
 
+    async def stat(self, key: str) -> StorageObjectInfo | None:
+        """查元信息，不下载对象本体（P1.1 默认实现是 exists+get，大文件光是查大小
+        就要整个下载一遍——`read_audio`（`agent/tools/file_readers.py` 的
+        `_media_size_error`）在读取前先 `stat()` 一次判断是否超限，默认实现会让
+        这次判断本身就要拉一次完整对象）。
+
+        ⚠️ 用 `get_object_meta`（`GET ?objectMeta`），不是 `head_object`（`HEAD`）：
+        两者都只取元信息、都不下载对象本体，但 oss2 官方文档明确写的是 `head_object`
+        对象不存在时抛 `NotFound`，而 HEAD 请求返回 404 时 SDK 层面区分不了"对象不存在"
+        和"bucket 不存在/配错"——早期实现 `except NoSuchKey` 根本捕获不到 `NotFound`，
+        会让"对象不存在"这个完全正常的场景直接抛出未处理异常，`stat()` 的契约（不存在
+        → None）在 OSS 后端上名不副实（code review 复审发现：mock 测试自己造的是
+        `NoSuchKey`，跟 `head_object` 真实抛出的 `NotFound`对不上，测试全绿但语义是错的）。
+        `get_object_meta` 官方文档明确保证对象不存在时抛 `NoSuchKey`（`NotFound` 的子类，
+        语义更精确），跟这里的异常处理正好对上，不需要靠"顺便也接住父类"这种取巧写法。
+        """
+        import oss2.exceptions as oss_exc
+
+        try:
+            meta = await _oss_retry(
+                "storage.oss.get_object_meta",
+                "oss.head_timeout",
+                "文件状态查询失败，请稍后重试",
+                self.bucket.get_object_meta,
+                self.pfx + key,
+            )
+        except oss_exc.NoSuchKey:
+            return None
+        if meta.content_length is None:
+            return None
+        return StorageObjectInfo(size=meta.content_length, mtime=meta.last_modified, checksum=meta.etag)
+
     async def list_keys(self) -> list[str]:
         import asyncio, oss2
         def _list():
