@@ -323,11 +323,12 @@ import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import CalendarContextMenu from './components/CalendarContextMenu.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
+import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import type { CalendarContext } from './domain/calendarContext'
 import EventEditFields from '@/components/events/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
-import { canDrag, canResize, getDisplayColor } from './domain/calendarRules'
+import { canResize, getDisplayColor } from './domain/calendarRules'
 import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
 import {
   maxSlots as calculateMaxSlots,
@@ -442,8 +443,7 @@ const editFormRef   = ref<HTMLElement | null>(null)
 const editFormStyle = ref<Record<string, string | number>>({})
 
 // ── 拖拽状态 ─────────────────────────────────────────────────────────────────
-type DragType = 'event' | 'proj-chip' | 'proj-bar' | 'proj-resize-start' | 'proj-resize-end'
-const drag = reactive<{ active: boolean; type: DragType | null; item: CalItem | null; offsetDays: number }>({
+const drag = reactive<CalendarDragState>({
   active:     false,
   type:       null,   // 'event' | 'proj-chip' | 'proj-bar' | 'proj-resize-start' | 'proj-resize-end'
   item:       null,
@@ -741,67 +741,20 @@ function isInDragRange(iso: string) {
   return r ? iso >= r.start && iso <= r.end : false
 }
 
-function startDrag(type: DragType, item: CalItem, e: MouseEvent, offsetDays = 0, onActivate: (() => void) | null = null) {
-  const startX = e.clientX
-  const startY = e.clientY
-  let activated = false
-
-  const mm = (ev: MouseEvent) => {
-    if (!activated) {
-      const dx = ev.clientX - startX
-      const dy = ev.clientY - startY
-      if (Math.sqrt(dx * dx + dy * dy) < 5) return
-      activated = true
-      drag.active     = true
-      drag.type       = type
-      drag.item       = item
-      drag.offsetDays = offsetDays
-      document.body.style.cursor     = 'grabbing'
-      document.body.style.userSelect = 'none'
-      onActivate?.()
-    }
-    dragOverIso.value = isoFromPoint(ev.clientX, ev.clientY)
-  }
-
-  const mu = (ev: MouseEvent) => {
-    document.removeEventListener('mousemove', mm)
-    document.removeEventListener('mouseup', mu)
-    if (activated) {
-      dragOverIso.value = isoFromPoint(ev.clientX, ev.clientY)
-      commitDrag()
-      // suppress the click that fires after mouseup so it doesn't trigger open/select
-      document.addEventListener('click', (ce) => ce.stopPropagation(), { capture: true, once: true })
-      setTimeout(() => {
-        drag.active = false
-        drag.type   = null
-        drag.item   = null
-        dragOverIso.value = null
-      }, 30)
-    }
-    document.body.style.cursor     = ''
-    document.body.style.userSelect = ''
-  }
-
-  document.addEventListener('mousemove', mm)
-  document.addEventListener('mouseup', mu)
-}
-
-function startEventDrag(ev: CalItem, e: MouseEvent)              { startDrag('event', ev, e) }
-function startProjChipDrag(bar: CalItem, e: MouseEvent)          { startDrag('proj-chip', bar, e) }
-function startMoreItemDrag(item: CalItem, e: MouseEvent) {
-  const closePopup = () => { morePopup.value.open = false }
-  if (!canDrag(item)) return
-  if (item.calendarType === 'project') startDrag('proj-chip', item, e, 0, closePopup)
-  else if (item.calendarType === 'event') startDrag('event', item, e, 0, closePopup)
-}
-function startBarDrag(bar: CalItem, e: MouseEvent) {
-  const anchorIso = isoFromPoint(e.clientX, e.clientY) ?? bar.startDate
-  if (!bar.startDate || !anchorIso) return
-  startDrag('proj-bar', bar, e, daysBetween(bar.startDate, anchorIso))
-}
-function startBarResize(bar: CalItem, edge: 'start' | 'end', e: MouseEvent) {
-  startDrag(edge === 'start' ? 'proj-resize-start' : 'proj-resize-end', bar, e)
-}
+const {
+  startEventDrag,
+  startProjectChipDrag: startProjChipDrag,
+  startMoreItemDrag,
+  startBarDrag,
+  startBarResize,
+} = useCalendarDrag({
+  drag,
+  dragOverIso,
+  isoFromPoint,
+  daysBetween,
+  commitDrag: () => { void commitDrag() },
+  closeMorePopup: () => { morePopup.value.open = false },
+})
 
 async function commitDrag() {
   const range = dragOverRange.value
