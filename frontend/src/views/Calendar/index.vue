@@ -197,6 +197,7 @@ import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import { useCalendarData } from './composables/useCalendarData'
+import { useCalendarWeekInteraction } from './composables/useCalendarWeekInteraction'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -411,82 +412,17 @@ function ctxAddProject() {
 }
 
 // ── 周视图·全天区：横向多日框选（复用 rangeSelect/selRange/activeRange）+ 右键新建项目 ──
-const wvAllDayGridRef = ref<HTMLElement | null>(null)
-function setAllDayGridRef(el: Element | { $el?: Element } | null) {
-  wvAllDayGridRef.value = el as HTMLElement | null
-}
-function _isoFromAllDayX(clientX: number) {
-  const grid = wvAllDayGridRef.value
-  if (!grid) return null
-  const r = grid.getBoundingClientRect()
-  const ci = Math.max(0, Math.min(6, Math.floor((clientX - r.left) / r.width * 7)))
-  return weekDays.value[ci]?.iso ?? null
-}
-// 当前周里落在 activeRange 内的列索引（全天区高亮）
-const wvSelCols = computed(() => {
-  if (viewMode.value !== 'week') return []
-  const r = activeRange.value
-  if (!r) return []
-  return weekDays.value.map((d, ci) => (d.iso >= r.start && d.iso <= r.end ? ci : -1)).filter(ci => ci >= 0)
-})
+// 周视图日期选择与小时格选择由 useCalendarWeekInteraction 管理。
+// 周视图日期选择与小时格选择由 useCalendarWeekInteraction 管理。
 // 「日选择」判定：只看 activeRange（顶部日期格 + 全天区共用）。单选也走 selRange={iso,iso}，
 // 故与「时段选择」(wvSelectedSlot) 互不干扰、互斥（见 onAllDayDown / onColDown）。
-function wvDaySelected(iso: string) {
-  const r = activeRange.value
-  return r ? (iso >= r.start && iso <= r.end) : false
-}
+// wvDaySelected 由 useCalendarWeekInteraction 提供。
 // 全天区悬停列（与小时格 hover 同理：opacity 叠层、可叠加在选区上）
-const wvAdHover = ref(-1)
-function onAllDayHover(e: MouseEvent) {
-  const grid = wvAllDayGridRef.value
-  if (!grid) return
-  const r = grid.getBoundingClientRect()
-  wvAdHover.value = Math.max(0, Math.min(6, Math.floor((e.clientX - r.left) / r.width * 7)))
-}
-function onAllDayLeave() { wvAdHover.value = -1 }
-function onAllDayDown(e: MouseEvent) {
-  if (e.button !== 0) return
-  if ((e.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return   // 点在已有条/活动上 → 不框选
-  const startIso = _isoFromAllDayX(e.clientX)
-  if (!startIso) return
-  e.preventDefault()
-  cellCtx.value = null
-  // 关键：mousedown 不清空 selRange、不进 range 态，否则单击时选中层会先淡出(变淡)再淡入。
-  // 只有真拖到「别的天」才进入 range 选择；单击在 mouseup 直接切到被选中态（旧选区一直在，无变淡反馈）。
-  let dragging = false
-  const mm = (ev: MouseEvent) => {
-    const iso = _isoFromAllDayX(ev.clientX)
-    if (!iso) return
-    if (!dragging && iso !== startIso) {
-      dragging = true
-      wvSelectedSlot.value = null   // 拖日期 → 清小时格选区（互斥）
-      rangeSelect.active = true
-      rangeSelect.anchor = startIso
-    }
-    if (dragging) hoverRangeEnd.value = iso
-  }
-  const mu = (ev: MouseEvent) => {
-    document.removeEventListener('mousemove', mm)
-    document.removeEventListener('mouseup', mu)
-    const endIso = _isoFromAllDayX(ev.clientX) || startIso
-    rangeSelect.active = false
-    hoverRangeEnd.value = null
-    if (dragging && endIso !== startIso) {   // 跨天多选：提交日期区间
-      const [a, b] = [startIso, endIso].sort()
-      selRange.value = { start: a, end: b }
-      document.addEventListener('click', ce => ce.stopPropagation(), { capture: true, once: true })
-    } else {                     // 单击：直接切到被选中态（单天也用 range 表示，统一高亮 + 可右键建单天项目）
-      wvSelectedSlot.value = null   // 选日期 → 清小时格选区（互斥）
-      selRange.value = { start: startIso, end: startIso }
-      selectedDate.value = startIso
-    }
-  }
-  document.addEventListener('mousemove', mm)
-  document.addEventListener('mouseup', mu)
-}
+// 全天区 hover 由 useCalendarWeekInteraction 提供。
+// onAllDayDown 由 useCalendarWeekInteraction 提供。
 function onAllDayContextMenu(e: MouseEvent) {
   if ((e.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
-  const iso = _isoFromAllDayX(e.clientX)
+  const iso = isoFromAllDayX(e.clientX)
   if (!iso) return
   cellCtx.value = { type: 'allday', date: iso, range: activeRange.value ?? null }
   cellCtxPosition.x = e.clientX; cellCtxPosition.y = e.clientY
@@ -501,7 +437,7 @@ function onColContextMenu(e: MouseEvent, d: WeekViewDay) {
     const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1) + 1
     time = `${p(a)}:00`; endTime = b >= 24 ? '00:00' : `${p(b)}:00`
   } else {                               // 单选：右键点击处的整点 → 1 小时
-    const h = _hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect())
+    const h = hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect())
     time = `${p(h)}:00`; endTime = h + 1 >= 24 ? '00:00' : `${p(h + 1)}:00`
   }
   cellCtx.value = { type: 'week-column', date: d.iso, time, endTime }
@@ -873,6 +809,42 @@ const {
   pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
 } = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays })
 
+const {
+  wvAllDayGridRef, wvSelCols, wvAdHover, wvHover, wvDragging, wvSelectedSlot,
+  setAllDayGridRef, isoFromAllDayX, hourAt, wvDaySelected,
+  onAllDayDown, onAllDayHover, onAllDayLeave, onColDown, onColMove, onColLeave,
+} = useCalendarWeekInteraction({
+  viewMode,
+  weekDays,
+  activeRange,
+  rangeSelect,
+  hoverRangeEnd,
+  selRange,
+  selectedDate,
+  clearContext: () => { cellCtx.value = null },
+  isExternalDragging: () => Boolean(_evDrag),
+  onSlotSelected: handleWeekSlotSelected,
+})
+
+function handleWeekSlotSelected(slot: WvSelectedSlot, previous: WvSelectedSlot | null, event: MouseEvent) {
+  const p = (n: number) => String(n).padStart(2, '0')
+  const endValue = slot.h1 + 1
+  newEvent.value = {
+    name: '', date: slot.iso, time: `${p(slot.h0)}:00`,
+    endTime: endValue >= 24 ? '00:00' : `${p(endValue)}:00`,
+    description: '', allDay: false,
+  }
+  resetReminder()
+  const isSameClick = slot.h0 === slot.h1 && previous && previous.iso === slot.iso && previous.h0 === slot.h0 && previous.h1 === slot.h1
+  if (!isSameClick) return
+  const width = 240
+  const left = Math.max(8, Math.min(event.clientX - width / 2, window.innerWidth - width - 8))
+  addFormStyle.value = { position: 'fixed', top: Math.max(8, event.clientY + 8) + 'px', left: left + 'px', width: width + 'px', zIndex: 1000 }
+  _wvFormOpening = true
+  showAddForm.value = true
+  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
+}
+
 function timedLayoutFor(iso: string) {
   return calculateTimedLayout(visibleEvents.value, iso, HOUR_H)
 }
@@ -943,66 +915,8 @@ watch(weekRef, v => {
   if (m0.getFullYear() !== cursor.value.getFullYear() || m0.getMonth() !== cursor.value.getMonth()) cursor.value = m0
 })
 
-// 周视图：悬停高亮小时格 + 按下拖拽选时段建活动
-const wvHover = ref<WvHover | null>(null)   // { iso, h } 悬停的小时格
-const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
-const wvSelectedSlot = ref<WvSelectedSlot | null>(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
-let _wvColRect: DOMRect | null = null
 let _wvFormOpening = false   // mouseup 打开表单后屏蔽紧随的 click → handleClickOutside 误关
-let _prevSelectedSlot: WvSelectedSlot | null = null // 记录 mousedown 前的选中格，用于判断是否二次点击同格
-function _hourAt(clientY: number, rect: DOMRect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / HOUR_H))) }
-
-function onColMove(e: MouseEvent, d: WeekViewDay) {
-  if (wvDragging.value || _evDrag) return                     // 选区/活动拖拽中：不高亮小时格
-  if ((e.target as HTMLElement).closest('.wv-ev')) { wvHover.value = null; return }   // 鼠标在活动上：不高亮下方格（替代原 .stop，避免挡住 document 拖拽监听）
-  wvHover.value = { iso: d.iso, h: _hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect()) }
-}
-function onColLeave() { if (!wvDragging.value) wvHover.value = null }
-// 悬停的小时格是否落在当前选中区内 → 是则不显示 hover 浅色（避免和选中深色叠加，同月视图单元格背景互斥）
-function onColDown(e: MouseEvent, d: WeekViewDay) {
-  if (e.button !== 0) return
-  selRange.value = null   // 选时段 → 清掉日期选择（两者用途不同，互斥）
-  _wvColRect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-  const h = _hourAt(e.clientY, _wvColRect)
-  _prevSelectedSlot = wvSelectedSlot.value ? { ...wvSelectedSlot.value } : null
-  wvDragging.value = true
-  wvSelectedSlot.value = { iso: d.iso, h0: h, h1: h }   // 直接进入「被选中」深色（取代原 selbox 点击反馈）
-  wvHover.value = null
-  document.addEventListener('mousemove', _wvDrag)
-  document.addEventListener('mouseup', _wvUp)
-  e.preventDefault()
-}
-function _wvDrag(e: MouseEvent) {
-  if (!wvDragging.value || !_wvColRect || !wvSelectedSlot.value) return
-  e.preventDefault()   // 拖拽期间彻底禁掉文本/元素选中（防整片染暗）
-  wvSelectedSlot.value = { ...wvSelectedSlot.value, h1: _hourAt(e.clientY, _wvColRect) }
-}
-function _wvUp(e: MouseEvent) {
-  document.removeEventListener('mousemove', _wvDrag)
-  document.removeEventListener('mouseup', _wvUp)
-  wvDragging.value = false
-  const sel = wvSelectedSlot.value
-  if (!sel) return
-  const a = Math.min(sel.h0, sel.h1), b = Math.max(sel.h0, sel.h1)
-  const p = (n: number) => String(n).padStart(2, '0')
-  const endV = b + 1   // 拖到 B 点 → 覆盖到 (B+1):00；点一下不拖 → 1 小时
-  wvSelectedSlot.value = { iso: sel.iso, h0: a, h1: b }   // 点击后格子保持暗色
-  selectedDate.value = sel.iso
-  newEvent.value = { name: '', date: sel.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00`, description: '', allDay: false }
-  resetReminder()
-  // 单击同一格的二次点击才弹出添加活动弹窗；拖选或首次单击只做格子选中
-  const prev = _prevSelectedSlot
-  const isSameClick = a === b && prev && prev.iso === sel.iso &&
-    Math.min(prev.h0, prev.h1) === a && Math.max(prev.h0, prev.h1) === b
-  if (isSameClick) {
-    const w = 240
-    const left = Math.max(8, Math.min(e.clientX - w / 2, window.innerWidth - w - 8))
-    addFormStyle.value = { position: 'fixed', top: Math.max(8, e.clientY + 8) + 'px', left: left + 'px', width: w + 'px', zIndex: 1000 }
-    _wvFormOpening = true
-    showAddForm.value = true
-    nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
-  }
-}
+// 周视图小时格交互由 useCalendarWeekInteraction 提供。
 
 // ── 周视图：拖活动边缘改起止时间 / 拖活动体改日期 ──
 const _SNAP = 30   // 分钟吸附
