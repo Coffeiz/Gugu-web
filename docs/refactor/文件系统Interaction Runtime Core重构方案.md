@@ -30,6 +30,8 @@
 
 本次不继续在旧 adapter 上打补丁，而是让 Runtime 成为唯一的交互编排者。
 
+**动画与手感基准**：交互动画、手感和视觉细节以 `gugu-interaction-runtime` 仓库 demo 的效果为准，不要求跟旧文件页/项目抽屉的现有效果保持兼容。旧效果只作问题记录和行为参考（同 1 节），迁移后如果 demo 效果与旧效果不一致，以 demo 为准，不为了"保留旧手感"额外定制。
+
 ## 3. 权责边界
 
 ### 3.1 Runtime Core 负责
@@ -215,6 +217,7 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 - 不为文件单独创建 Runtime 专属动画实现；
 - 不同时维护 detach 和 clone 两套文件业务编排；
 - 不整体 cherry-pick 旧 after 分支；
+- 不为兼容文件页/项目抽屉的旧动画手感而定制 Runtime 或 adapter 行为，动画效果统一以 demo 为准；
 - 不在没有 group interaction 前删除多选功能；
 - Phase 3 的 Runtime 核心改动（`GroupDragSession`、`VisualProxyCoordinator` 1:N 化）不在本仓库内实现，不在本重构分支里直接修改 `gugu-interaction-runtime` 源码。
 
@@ -226,7 +229,7 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 - 文件夹卡、面包屑和无效落点使用正确 landing 目标；
 - landing 过程中再次抓取可以从当前视觉位置接管；
 - 目标卡发生 FLIP 时，代理实时 retarget；
-- 文件页和项目抽屉的单卡手感、速度、旋转和淡出一致；
+- 文件页和项目抽屉的单卡手感、速度、旋转和淡出与 `gugu-interaction-runtime` demo 一致（不要求与重构前的旧效果一致）；
 - 上传入口参与布局 FLIP；
 - 目录切换不导致本体闪现或代理变形。
 
