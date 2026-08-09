@@ -48,10 +48,10 @@ import {
 } from 'chart.js'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
+import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './storageChart'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
 
-interface Snapshot { taken_at: string; object_count: number; total_bytes: number }
 interface Totals { object_count: number; total_bytes: number }
 
 const CATEGORIES = [
@@ -64,7 +64,7 @@ const CATEGORIES = [
 interface DiskUsage { total_bytes: number; used_bytes: number; free_bytes: number }
 
 const adminStore = useAdminStore()
-const byCategory = ref<Record<string, Snapshot[]>>({})
+const byCategory = ref<Record<string, StorageSnapshot[]>>({})
 const liveTotals = ref<Record<string, Totals>>({})
 const disk = ref<DiskUsage | null>(null)
 const loading = ref(false)
@@ -79,7 +79,7 @@ const hasTrend = computed(() => Object.values(byCategory.value).some(list => lis
 const diskUsedPct = computed(() => disk.value ? Math.round(disk.value.used_bytes / disk.value.total_bytes * 100) : 0)
 function fmtGB(bytes: number): string { return (bytes / 1024 / 1024 / 1024).toFixed(1) }
 
-function latestSnapshotOf(key: string): Snapshot | null {
+function latestSnapshotOf(key: string): StorageSnapshot | null {
   const list = byCategory.value[key]
   return list?.length ? list[list.length - 1] : null
 }
@@ -102,21 +102,14 @@ function cardCount(key: string): number | string {
   return t ? t.object_count : '—'
 }
 
-// 以所有类别里点数最多的一条时间轴为准对齐 labels（各类别定时任务时间点不完全
-// 相同，理论上天级粒度下同一天只会有一条，直接用最长的那组日期做横轴够用）
-const labels = computed(() => {
-  let longest: Snapshot[] = []
-  for (const list of Object.values(byCategory.value)) {
-    if (list.length > longest.length) longest = list
-  }
-  return longest.map(s => new Date(s.taken_at).toLocaleDateString('zh', { month: 'numeric', day: 'numeric' }))
-})
+const trend = computed(() => buildStorageTrend(byCategory.value, CATEGORIES))
+const labels = computed(() => trend.value.dates.map(formatSnapshotDate))
 
 const chartData = computed(() => ({
   labels: labels.value,
   datasets: CATEGORIES.map(cat => ({
     label: cat.label,
-    data: (byCategory.value[cat.key] || []).map(s => +(s.total_bytes / 1024 / 1024).toFixed(1)),
+    data: trend.value.datasets[CATEGORIES.findIndex(item => item.key === cat.key)].values,
     borderColor: cat.color,
     backgroundColor: cat.color.replace(',1)', ',0.1)'),
     fill: false,

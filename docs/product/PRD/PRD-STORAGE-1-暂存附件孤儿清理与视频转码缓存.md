@@ -190,12 +190,12 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
    - `_video_cache_key(storage_key: str, profile: dict) -> str`：`hashlib.sha256((storage_key + json.dumps(profile, sort_keys=True) + CACHE_VERSION).encode()).hexdigest()`，`CACHE_VERSION` 定义成模块级常量（如 `"video-v1"`）。
    - `_video_cache_alive_key(uid, cache_key) -> str`：如 `f"video_cache_alive:{uid}:{cache_key}"`。
 2. **`prepare_video_media()` 改造**（新增可选参数 `storage_key: str | None = None`、`user_id: str | None = None`，两者都传才启用缓存；`resolve_for_message`/`read_video` 两个调用方都能传，聊天附件路径 `attach_id` 每次不同、天然没有稳定 key，可以先只给 `read_video` 接）：
-   - 算出 `cache_key`，直接尝试 `storage.get({uid}/.video_cache/{cache_key}.mp4)`；能读到就是命中，跳过探测+转码，同时 **`SET video_cache_alive:{uid}:{cache_key} 1 EX 7d`**（不是 `EXPIRE`——marker 可能因为 Redis 整体丢失而不存在，`EXPIRE` 对不存在的 key 是空操作，必须用 `SET` 无条件重建/续期）。
+   - 算出 `cache_key`，直接尝试 `storage.get({uid}/.video_cache/{cache_key}.mp4)`；能读到就是命中，跳过重复的 ffmpeg 转码，但仍重新执行轻量 ffprobe，以便重新校验时长和 payload 规则；同时 **`SET video_cache_alive:{uid}:{cache_key} 1 EX 7d`**（不是 `EXPIRE`——marker 可能因为 Redis 整体丢失而不存在，`EXPIRE` 对不存在的 key 是空操作，必须用 `SET` 无条件重建/续期）。
    - 未命中（文件不存在，包括被安全网清理的情况）→ 先用 `video_cache_lock:{cache_key}` 加锁（`agent/memory` scope 锁模式）→ 加锁后 **double-check 再读一次缓存**（防止等锁期间前一个请求已经转码完）→ 仍未命中才真正探测+转码 → 转码成功后 `put` 到缓存路径、`SET` alive marker（`ex=7d`）→ 释放锁。
 3. **`agent/tools/file_readers.py` 的 `read_video`**：调用 `prepare_video_media` 时补上 `storage_key=file.storage_key, user_id=file.user_id`。
 4. **独立的视频缓存租约清理**（复用 Phase A 的 `list_keys`/`stat`/`delete`/分布式锁/scheduler 基础设施，但是一段独立组织的清理逻辑，不塞进草稿清理或安全网扫描里）：扫描 `.video_cache/`，删除前查一次对应 alive marker（`GET`，不刷新），marker 存在则跳过；marker 不存在或已过期则按物理年龄正常清理。
 5. **测试**：
-   - `prepare_video_media` 缓存命中：mock `_compress_video`/`_probe_video`，第一次调用产生缓存，第二次调用同一 `storage_key`+`model_cfg` 断言没有再调 `_probe_video`/`_compress_video`。
+   - `prepare_video_media` 缓存命中：mock `_compress_video`/`_probe_video`，第一次调用产生缓存，第二次调用同一 `storage_key`+`model_cfg` 断言仍会调 `_probe_video` 但不会再调 `_compress_video`。
    - `storage_key` 变化、或 `model_cfg` 对应 transcode profile 变化（同 `storage_key`），都不命中旧缓存。
    - 命中缓存时对应 alive marker 被重建/续期（断言调的是 `SET ... EX`，不是 `EXPIRE`）。
    - **alive marker 因 Redis 丢失而不存在、但物理缓存文件还在**：命中读取后，marker 应该被重新创建出来（断言 `GET` 能拿到值，而不是断言"TTL 变化"——因为 key 本来就不存在，没有旧 TTL 可比）。这是本轮新增的用例，专门覆盖"用 EXPIRE 会静默失效"这个 bug。

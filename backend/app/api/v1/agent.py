@@ -409,31 +409,11 @@ async def delete_session(
     尽力删物理字节，失败只记日志不阻塞、不回滚，留给安全网兜底（PRD-STORAGE-1
     不变量 2：删除前必须确认没有其他存活行还引用同一个 storage_key，对应 PRD-IM-9
     的共享附件场景）。"""
-    from app.models import ChatAttachment
-    from sqlalchemy import select, delete as sa_delete
+    from app.services.conversation_cleanup import remove_session_with_attachments
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
-    storage_keys = list(dict.fromkeys((await db.execute(
-        select(ChatAttachment.storage_key)
-        .join(ConversationMessage, ConversationMessage.id == ChatAttachment.message_id)
-        .where(ConversationMessage.session_id == session_id)
-    )).scalars().all()))
-    await db.execute(
-        sa_delete(ChatAttachment).where(
-            ChatAttachment.message_id.in_(
-                select(ConversationMessage.id).where(ConversationMessage.session_id == session_id)
-            )
-        )
-    )
-    await db.delete(session)
-    await db.commit()
-    for storage_key in storage_keys:
-        try:
-            await chat_attach.try_delete_storage_if_unreferenced(current_user.id, storage_key)
-        except Exception as exc:
-            from app.core.redaction import diag_log
-            diag_log("app.api.v1.agent.delete_session.storage_cleanup", exc)
+    await remove_session_with_attachments(db, session)
 
 
 class RenameSessionRequest(BaseModel):

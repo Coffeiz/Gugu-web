@@ -3,7 +3,8 @@
 
 覆盖：cache_key 随 storage_key/转码 profile 变化、alive marker 用 SET 而不是
 EXPIRE（Redis 丢失后仍能自愈）、marker 缺失但缓存文件还在时自动重建、并发
-single-flight 去重、清理任务尊重 alive marker。
+single-flight 去重、清理任务尊重 alive marker，以及公开的
+`prepare_video_media()` 命中缓存时仍重新探测但跳过转码。
 """
 import asyncio
 from types import SimpleNamespace
@@ -96,6 +97,43 @@ async def test_cache_hit_skips_transcode(storage, monkeypatch):
     second = await chat_attach._compress_video_cached(raw, probe, storage_key, user_id, MODEL_CFG)
     assert second == b"compressed-bytes"
     assert call_count == 1, "第二次应该命中缓存，不再调用 _compress_video"
+
+
+@pytest.mark.asyncio
+async def test_prepare_video_cache_hit_reprobes_but_skips_transcode(storage, monkeypatch):
+    """公共入口命中缓存时仍需重新确认时长/媒体规则，但不能再次跑 ffmpeg。"""
+    fake_redis = _FakeRedis()
+    monkeypatch.setattr(chat_attach, "get_redis", lambda: fake_redis)
+    probe_calls = 0
+    compress_calls = 0
+
+    async def fake_probe(_raw):
+        nonlocal probe_calls
+        probe_calls += 1
+        return {**_probe(), "width": 3840, "height": 2160}
+
+    async def fake_compress(_raw, probe=None):
+        nonlocal compress_calls
+        compress_calls += 1
+        return b"compressed-bytes"
+
+    monkeypatch.setattr(chat_attach, "_probe_video", fake_probe)
+    monkeypatch.setattr(chat_attach, "_compress_video", fake_compress)
+
+    kwargs = {
+        "storage_key": "u1/lib/video.mp4",
+        "user_id": "u1",
+    }
+    first = await chat_attach.prepare_video_media(
+        b"raw-video", "video/mp4", "video.mp4", MODEL_CFG, **kwargs
+    )
+    second = await chat_attach.prepare_video_media(
+        b"raw-video", "video/mp4", "video.mp4", MODEL_CFG, **kwargs
+    )
+
+    assert first["mode"] == second["mode"] == "base64"
+    assert probe_calls == 2
+    assert compress_calls == 1
 
 
 @pytest.mark.asyncio

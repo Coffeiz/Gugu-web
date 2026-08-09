@@ -1013,7 +1013,8 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg,
     消息当工具错误返回）。
 
     `storage_key`/`user_id`（PRD-STORAGE-1 Phase B，可选）：都传了才启用转码结果
-    缓存——同一份视频反复被读，跳过重复的 ffprobe/ffmpeg。聊天附件路径的
+    缓存——同一份视频反复被读，跳过重复的 ffmpeg 转码；每次仍会重新做轻量
+    ffprobe，以便按当前视频元数据重新判断时长和 payload 规则。聊天附件路径的
     `attach_id` 每次不同，天然没有稳定 key，不传即可，行为与之前完全一致。
     """
     size = len(raw)

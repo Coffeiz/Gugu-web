@@ -290,7 +290,10 @@ export function useChatStream(options: {
       // 不是主清理机制——后端只在附件仍是草稿态时才真的删，消息其实已经发送成功、
       // 只是这次响应丢失/超时的情况会被后端拒绝，不会误删，见 PRD-STORAGE-1）
       if (e?.name !== 'AbortError' && atts.length) {
-        atts.forEach(a => agentApi.deleteDraftAttachment(a.attach_id).catch(() => {}))
+        for (const attachment of atts) {
+          if (!attachment.attach_id) continue
+          agentApi.deleteDraftAttachment(attachment.attach_id).catch(() => {})
+        }
       }
     } finally {
       // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉
