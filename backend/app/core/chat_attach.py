@@ -186,7 +186,7 @@ def _current_platform(explicit: str | None) -> str | None:
     if explicit:
         return explicit
     try:
-        from agent import imctx
+        from agent.im import imctx
         ctx = imctx.get_im()
         return ctx.get("platform") if ctx else None
     except Exception:

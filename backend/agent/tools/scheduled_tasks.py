@@ -72,7 +72,7 @@ async def _resolve_delivery_targets(db, user_id, channels, mode: str = "owner_pr
     if mode != "current_group":
         return None, json.dumps({"error": "delivery_mode 只能是 owner_private 或 current_group"}, ensure_ascii=False)
 
-    from agent import imctx
+    from agent.im import imctx
 
     current = imctx.get_im()
     if not current or current.get("platform") != "qq" or current.get("chat_type") != "group":
@@ -98,7 +98,7 @@ def _group_delivery_mode_required(channels, delivery_mode) -> bool:
     if "qq" not in (channels or []):
         return False
 
-    from agent import imctx
+    from agent.im import imctx
 
     current = imctx.get_im()
     return bool(

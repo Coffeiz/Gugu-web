@@ -181,7 +181,7 @@ def _is_read_tool(name: str) -> bool:
 
 async def _im_cancelled() -> bool:
     """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
-    from agent import imctx
+    from agent.im import imctx
     from agent.runtime import runtime_state as rt
     im = imctx.get_im()
     if not im or not im.get("puid"):
@@ -204,7 +204,7 @@ async def _im_cancelled() -> bool:
 async def _im_set_tool_state(tool_name: str) -> None:
     """据工具名打细粒度状态（web_search→SEARCHING、create_document→GENERATING），
     让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
-    from agent import imctx
+    from agent.im import imctx
     from agent.runtime import runtime_state as rt
     im = imctx.get_im()
     if not im or not im.get("puid"):

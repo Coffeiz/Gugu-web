@@ -121,7 +121,7 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     触发的 IM 消息，用户并不在等这句过渡话术——它应包含在最终报告里，不能单独发一条，故跳过。"""
     if not tool.start_message:
         return
-    from agent import imctx
+    from agent.im import imctx
     payload = imctx.to_send_payload()
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
         return
@@ -277,7 +277,7 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
-        from agent import imctx
+        from agent.im import imctx
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None

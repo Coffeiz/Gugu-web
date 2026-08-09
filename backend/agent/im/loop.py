@@ -315,7 +315,7 @@ async def remember_im_reach(
 
 def bind_im_context(request: AgentRequest, payload: dict) -> None:
     """把当前请求的 IM 路由和权限快照绑定到工具侧 ContextVar。"""
-    from agent import imctx
+    from agent.im import imctx
 
     imctx.set_im(
         request.source,
