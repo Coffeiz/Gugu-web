@@ -58,14 +58,14 @@ async def read_video(file) -> dict:
     `_video_media` 处理），所以这里先判 provider 能力，不满足直接返回明确的
     "当前模型不支持"错误，而不是退化成代表帧/转写这类近似方案。
 
-    能力判断必须用**这轮真正在跑的模型**（`agent.modelctx.get_model_cfg()`），
+    能力判断必须用**这轮真正在跑的模型**（`agent.llm.modelctx.get_model_cfg()`），
     不能重新读静态的 `get_settings().ai`——pool/router 场景下两者可能不是同一个
     模型，用错了会出现"顶层配的是 MiniMax、这轮实际跑 mimo，却按 MiniMax 生成
     Anthropic video block"或反过来"误判不支持"。`modelctx` 读不到（没有走
     `LLMRunner._run_loop`，理论上不会发生，兜底而已）才退回 `settings.ai`。
     """
-    from agent import modelctx
-    from agent.llm_select import use_anthropic_for
+    from agent.llm import modelctx
+    from agent.llm.llm_select import use_anthropic_for
 
     try:
         ai = modelctx.get_model_cfg() or get_settings().ai

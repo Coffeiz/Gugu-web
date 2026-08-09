@@ -119,7 +119,7 @@ class AnthropicDriver:
         import httpx
         from agent import providers
         from agent.context import builder as _builder
-        from agent.llm_select import supports_anthropic_active_cache, _is_mimo
+        from agent.llm.llm_select import supports_anthropic_active_cache, _is_mimo
         from agent.tools import registry
 
         tools = registry.anthropic_schemas(tool_names)
@@ -246,7 +246,7 @@ class OpenAIDriver:
         import httpx
         from agent import providers
         from agent.context import builder as _builder
-        from agent.llm_select import supports_thinking_toggle, _is_deepseek
+        from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
         # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式

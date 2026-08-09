@@ -107,7 +107,8 @@ async def decide_im_shortcut(
     """根据当前 IM 状态判断是否需要在入队前短路。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     try:
         state = await runtime_state.get_state(
@@ -133,7 +134,7 @@ async def decide_im_shortcut(
     if dec.get("action") == "cancel":
         # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
         # （busy=False 时 router 不会返回 cancel，会当普通消息入队）。puid 用指纹脱敏。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.im.shortcut.cancel_decided",
@@ -155,7 +156,8 @@ def decide_im_shortcut_sync(
     """同步 Gateway 回调使用的 intent shortcut 决策。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     try:
         state = runtime_state.get_state_sync(
@@ -177,7 +179,7 @@ def decide_im_shortcut_sync(
         active_puid=active_puid,
     )
     if dec.get("action") == "cancel":
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.im.shortcut.cancel_decided_sync",
@@ -194,7 +196,7 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
     bot_id/scope_id 与活跃集合同作用域：取消标志按会话隔离，避免跨群误取消。
     """
     if decision.get("action") == "cancel":
-        from agent import runtime_state
+        from agent.runtime import runtime_state
         try:
             written = await runtime_state.request_cancel(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
@@ -207,7 +209,7 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
         # 只有真的 SET 成功才记"取消已生效"——request_cancel 在 bot_id/scope_id 缺失时
         # 会静默 no-op 返回 False，之前这里不检查返回值，会打出「写成功」的假日志
         # （code review 发现：调用方漏传 scope 时，日志会撒谎）。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         if written:
             diag_log_raw(
@@ -226,7 +228,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
                                   *, bot_id: str = "", scope_id: str = "") -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
-        from agent import runtime_state
+        from agent.runtime import runtime_state
         try:
             written = runtime_state.request_cancel_sync(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
@@ -236,7 +238,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
             diag_log("agent.im.shortcut.cancel_sync", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
             return
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         if written:
             diag_log_raw(
@@ -253,7 +255,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:
     """设置 IM 忙碌态，并启动平台支持的 typing 指示器。"""
-    from agent import runtime_state
+    from agent.runtime import runtime_state
     from agent.gateway import wechat
 
     # 会话作用域：bot_id=channel_id、scope_id=chat_id（私聊回退到 puid），与活跃集合同 key。
@@ -273,7 +275,7 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
 
 async def finish_im_activity(activity: ImActivity) -> None:
     """无论模型成功、失败或取消，都清理忙碌态和 typing 指示器。"""
-    from agent import runtime_state
+    from agent.runtime import runtime_state
     from agent.gateway import wechat
 
     await runtime_state.clear_state(
@@ -313,7 +315,7 @@ async def remember_im_reach(
 
 def bind_im_context(request: AgentRequest, payload: dict) -> None:
     """把当前请求的 IM 路由和权限快照绑定到工具侧 ContextVar。"""
-    from agent import imctx
+    from agent.im import imctx
 
     imctx.set_im(
         request.source,
@@ -331,7 +333,8 @@ def bind_im_context(request: AgentRequest, payload: dict) -> None:
 async def finalize_im_response(platform: str, platform_user_id: str,
                                cancelled: bool, reply_text: str) -> None:
     """根据 IM 回复结果更新是否等待用户继续回答的状态。"""
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     if cancelled:
         await runtime_state.set_awaiting(platform, platform_user_id, False)
@@ -655,7 +658,8 @@ async def dispatch_im_message(payload: dict):
     shortcut、模型执行、session 写回和出站回复均在这里完成，三平台共用同一条
     可测试的 IM Loop。
     """
-    from agent import logsafe, trace
+    from agent.security import logsafe
+    from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
 
     if payload.get("platform") == "qq":

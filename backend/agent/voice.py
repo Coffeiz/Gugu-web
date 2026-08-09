@@ -18,7 +18,7 @@ import tempfile
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
 
-from agent.logsafe import fingerprint
+from agent.security.logsafe import fingerprint
 from app.core.redaction import diag_log, redact
 
 logger = logging.getLogger("agent.voice")

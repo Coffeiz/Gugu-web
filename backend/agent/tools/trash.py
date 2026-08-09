@@ -13,7 +13,7 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.storage.trash import restore_file_storage
 from app.services.files.previews import delete_thumb_cache
-from agent import confirm
+from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 

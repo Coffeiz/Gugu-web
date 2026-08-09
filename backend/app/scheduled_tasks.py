@@ -563,7 +563,7 @@ async def _inject_group_context(user_id, target_map, prompt: str) -> tuple[str |
     group = _detect_group_target(target_map)
     if not group:
         return None, prompt
-    from agent.imctx import set_im
+    from agent.im.imctx import set_im
     set_im(
         platform=group["platform"],
         message_id=None,            # 定时任务无具体触发的 IM 消息
@@ -690,13 +690,13 @@ async def _run_agent(
         # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
         # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
         if group:
-            from agent import imctx
+            from agent.im import imctx
             imctx.clear()
 
 
 async def _run_agent_execution(user_id, uname, prompt, trial) -> tuple[str, list, str]:
     """_run_agent 的 execution + schema 解析主体（独立函数便于 try/finally 清理 imctx）。"""
-    from agent import sanitize
+    from agent.security import sanitize
     from agent.runner import run_scheduled_execution
 
     max_rounds = 2

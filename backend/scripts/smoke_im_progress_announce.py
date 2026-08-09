@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ 入 path
 
-from agent import imctx
+from agent.im import imctx
 from agent.tools.base import Tool, _maybe_announce_progress
 from app.core.config import get_settings
 

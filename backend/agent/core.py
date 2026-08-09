@@ -16,7 +16,8 @@ import random
 import re as _re_mod
 from typing import AsyncGenerator
 
-from agent import genstream, loop_drivers
+from agent.llm import genstream
+from agent import loop_drivers
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
@@ -132,7 +133,7 @@ def _pick_label(raw: str) -> str:
     return random.choice(parts) if parts else raw
 
 # 叙事/决策拒绝/意图播报守卫（跟 provider 无关，PRD-LLM-1 FR-LLM-3 搬到了 core_guards.py）：
-from agent.core_guards import (
+from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
@@ -180,18 +181,18 @@ def _is_read_tool(name: str) -> bool:
 
 async def _im_cancelled() -> bool:
     """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
-    from agent import imctx
+    from agent.im import imctx
+    from agent.runtime import runtime_state as rt
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return False
-    from agent import runtime_state as rt
     cancelled = await rt.is_cancelled(
         im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
     )
     if cancelled:
         # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
         # 中断了生成」。只在真正命中时打，不会刷屏。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.core.im_cancelled_hit",
@@ -203,11 +204,11 @@ async def _im_cancelled() -> bool:
 async def _im_set_tool_state(tool_name: str) -> None:
     """据工具名打细粒度状态（web_search→SEARCHING、create_document→GENERATING），
     让网关「还在吗」答得更准。web 路无 imctx 时 no-op。"""
-    from agent import imctx
+    from agent.im import imctx
+    from agent.runtime import runtime_state as rt
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return
-    from agent import runtime_state as rt
     fine = rt.TOOL_STATE.get(tool_name)
     if fine:
         await rt.set_state(
@@ -271,7 +272,7 @@ class LLMRunner:
         """
         # 这轮真正要跑的模型配置透传给工具层（见 agent/modelctx.py 文档）——工具判断
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
-        from agent import modelctx
+        from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
         client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 

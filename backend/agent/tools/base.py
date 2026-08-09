@@ -68,7 +68,7 @@ def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) ->
             summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
         _ms = int((time.monotonic() - t0) * 1000)
         rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
-        from agent.trace import get_trace
+        from agent.runtime.trace import get_trace
         if get_trace():
             rec["trace"] = get_trace()   # 全链路 trace：与网关「收到」行、worker 回复行同 id 可 grep 串联
         if not ok and note:
@@ -121,7 +121,7 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     触发的 IM 消息，用户并不在等这句过渡话术——它应包含在最终报告里，不能单独发一条，故跳过。"""
     if not tool.start_message:
         return
-    from agent import imctx
+    from agent.im import imctx
     payload = imctx.to_send_payload()
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
         return
@@ -137,7 +137,7 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         # （实测：取消后仍看到「我搜搜看有没有合适的图」这类 start_message）。
         im = imctx.get_im()
         if im and im.get("puid"):
-            from agent import runtime_state as rt
+            from agent.runtime import runtime_state as rt
             if await rt.is_cancelled(
                 im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
             ):
@@ -277,7 +277,7 @@ class SkillRegistry:
         其余字段序列化回给 LLM。每次工具调用自开一个数据库会话。
         """
         t0 = time.monotonic()
-        from agent import imctx
+        from agent.im import imctx
         from agent.im.permissions import can_use_tool
         current_im = imctx.get_im()
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
@@ -344,7 +344,7 @@ class SkillRegistry:
         # 返回了"成功执行" = 该 handler 漏接确认门、无确认就做了不可逆操作——已无法撤销，
         # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
-        from agent import confirm as _confirm
+        from agent.security import confirm as _confirm
         if tool.destructive and _ok and not _confirm.is_confirmed(args) and not _confirm.is_block(result):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])

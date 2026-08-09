@@ -219,7 +219,7 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
-        from agent import trace
+        from agent.runtime import trace
         tid = trace.new_trace()
 
         # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
@@ -244,7 +244,7 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
         # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
-        from agent import logsafe
+        from agent.security import logsafe
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(attachments)} quoted={bool(msg.parent_id)} trace={tid}", flush=True)
 

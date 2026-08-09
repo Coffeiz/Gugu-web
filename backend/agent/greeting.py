@@ -154,7 +154,7 @@ async def generate(db: AsyncSession, user_id, settings) -> str:
     try:
         prompt = _PROMPT.format(ctx=await _recent_context(db, user_id))
         from agent import providers
-        from agent.llm_select import use_anthropic_for, _is_mimo
+        from agent.llm.llm_select import use_anthropic_for, _is_mimo
         ai = settings.ai
         is_mimo = _is_mimo(ai)
         import httpx
