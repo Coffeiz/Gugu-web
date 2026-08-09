@@ -1114,7 +1114,3 @@ async def test_smtp(body: SmtpTestParams):
         return {"ok": True, "message": f"测试邮件已发送至 {to_addr}"}
     except Exception as e:
         return {"ok": False, "message": str(e)}
-
-
-
-

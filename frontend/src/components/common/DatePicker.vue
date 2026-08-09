@@ -93,7 +93,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/windowz'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -245,8 +245,19 @@ function onClickOutside(e: MouseEvent) {
   yearMode.value = false
 }
 
+let unregisterPopover: (() => void) | null = null
+watch(open, v => {
+  unregisterPopover?.()
+  unregisterPopover = v
+    ? registerPopover(z => { popupStyle.value = { ...popupStyle.value, zIndex: z } })
+    : null
+})
+
 onMounted(() => document.addEventListener('click', onClickOutside, true))
-onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
+onUnmounted(() => {
+  unregisterPopover?.()
+  document.removeEventListener('click', onClickOutside, true)
+})
 
 watch(() => props.modelValue, v => {
   if (v) cursor.value = new Date(v + 'T00:00:00')

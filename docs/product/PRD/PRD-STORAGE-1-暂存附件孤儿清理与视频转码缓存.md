@@ -1,6 +1,6 @@
 # 暂存附件孤儿清理与视频转码缓存 PRD
 
-> 状态：🔲 待实现（Phase A 方案 v3 已跟第 5 节实施计划同步：去掉 DELETING 中间状态，物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`（对应 PRD-IM-9 的共享 storage_key 场景，已声明"检查后又插入新引用"的竞态需要 PRD-IM-9 配合解决）、消息创建与附件 claim 同一事务、GC 遵守"DB 先变化再碰 storage"、Redis 只做 legacy fallback 不再是新数据快路径；Phase B 修了 alive marker 用 EXPIRE 而非 SET 的 bug；均未开始实现）
+> 状态：✅ 已实现（Phase A/B 已完成代码和核心 devserver 验证；仍保留低频自动运行与长期存储趋势观察项）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 关联模块：`backend/app/core/chat_attach.py`、`backend/app/services/storage/__init__.py`、`backend/app/core/scheduler.py`、`backend/app/api/v1/agent.py`（`delete_session`、附件相关接口）、消息/会话数据模型
@@ -15,8 +15,8 @@
 | Phase 0：问题排查 | ✅ 已完成 | 确认 `.chat_staging/`/`.voice/` 存储字节存在真实孤儿泄漏（见第 1 节），且 Redis 数据丢失（容器重建/无持久化）会让泄漏立刻大面积发生，不只是自然 7 天过期这一种触发方式。 |
 | Phase 1：方案设计 v1（已推翻） | ❌ 已废弃 | 曾实现"定时扫存储、按物理 mtime 判断年龄，固定 7 天 TTL"的清理任务（commit `dece7584`），已 revert（commit `e63014a9`）。废弃原因见第 1.4 节：固定 TTL 会让长周期项目里、没有显式存进文件库的历史消息附件"失效"，这不是清理任务的 bug，是这个方案本身的产品语义就不对。 |
 | Phase 1'：方案设计 v3（已定稿） | ✅ 已完成 | 核心是"**DB 是所有权真相来源**"：`chat_attachments` 只有 `draft`/`attached` 两态（无 `DELETING` 中间态），Redis 完全降级为 legacy fallback/lock/cache，不承担任何"这个对象还有没有主人"的判断责任。物理删除统一收口成 `try_delete_storage_if_unreferenced(user_id, storage_key)`，删除前按 `storage_key` 检查引用（对应 PRD-IM-9 的共享 storage_key 场景）；消息创建与所有附件 claim 是同一个 DB 事务；GC/安全网一律"DB 先变化、再碰 storage"。经三轮外部评审收敛，第 2、5 节实施计划已完全同步。见第 1.3、2、5 节。 |
-| Phase 2a：Phase A 实施 | ✅ 已完成 | `chat_attachments` 表 + migration；`try_delete_storage_if_unreferenced()`；`stage()`/`stage_sync()` 写 DB（插入失败回滚 storage）；`get_meta*`/`list_staged`/`clear_staged` 改 DB 优先 + Redis legacy fallback；`claim_attachments()` 接进网页/IM 全部三个消息落库入口（同事务、all-or-nothing）；`/thumb`/`download`/`preview-pdf` 走 DB 查询（IDOR 已由 `user_id` 过滤挡住）；`delete_session` 两阶段（DB 优先、显式删附件行不依赖 FK 级联、按引用计数删物理字节，含共享 storage_key 隔离）；新增单附件删除接口（状态守卫）；草稿 GC + 安全网两个定时任务（`app/core/attachment_gc.py`）；前端发送失败时调用清理。过程中顺手修了一个真实的跨事件循环 asyncpg bug（`app/db/session.py` 的 `ensure_engine()` 加了循环检测）。新增 27 个测试，后端全量测试 864 passed。Phase B（视频缓存）尚未开始。 |
-| Phase 2b：Phase B 实施（视频转码缓存） | ✅ 已完成 | `_video_transcode_profile`/`_video_cache_key`/`_video_cache_path`/`_video_cache_alive_key` + `_compress_video_cached()`（single-flight 锁、命中 `SET ... EX` 续期、marker 丢失自愈）；`prepare_video_media()` 新增可选 `storage_key`/`user_id` 参数，`read_video()` 调用点已接入（聊天附件路径不接，行为不变）；独立的 `app/core/video_cache_gc.py` 租约驱动清理任务（跟 Phase A 的草稿 GC/安全网独立组织，只共享底层存储/锁基础设施）。新增 11 个测试（`tests/test_video_cache.py`），后端全量测试 875 passed。尚未在 devserver 做手动验证（见第 6.2 节）。 |
+| Phase 2a：Phase A 实施 | ✅ 已完成 | `chat_attachments` 表 + migration；`try_delete_storage_if_unreferenced()`；`stage()`/`stage_sync()` 写 DB（插入失败回滚 storage）；`get_meta*`/`list_staged`/`clear_staged` 改 DB 优先 + Redis legacy fallback；`claim_attachments()` 接进网页/IM 全部三个消息落库入口（同事务、all-or-nothing）；`/thumb`/`download`/`preview-pdf` 走 DB 查询（IDOR 已由 `user_id` 过滤挡住）；`delete_session` 两阶段（DB 优先、显式删附件行不依赖 FK 级联、按引用计数删物理字节，含共享 storage_key 隔离）；新增单附件删除接口（状态守卫）；草稿 GC + 安全网两个定时任务（`app/core/attachment_gc.py`）；前端发送失败时调用清理。过程中顺手修了一个真实的跨事件循环 asyncpg bug（`app/db/session.py` 的 `ensure_engine()` 加了循环检测）。 |
+| Phase 2b：Phase B 实施（视频转码缓存） | ✅ 已完成 | `_video_transcode_profile`/`_video_cache_key`/`_video_cache_path`/`_video_cache_alive_key` + `_compress_video_cached()`（single-flight 锁、命中 `SET ... EX` 续期、marker 丢失自愈）；`prepare_video_media()` 新增可选 `storage_key`/`user_id` 参数，`read_video()` 调用点已接入（聊天附件路径不接，行为不变）；独立的 `app/core/video_cache_gc.py` 租约驱动清理任务（跟 Phase A 的草稿 GC/安全网独立组织，只共享底层存储/锁基础设施）。代码和核心 devserver 流程已验证，长期增长趋势仍按第 6.2 节观察。 |
 
 ---
 
@@ -156,7 +156,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 - ~~安全网扫描的频率~~ **已定**：每天一次（阈值仍是 90 天）。扫描只是按索引查询，成本低；更快发现 integrity violation（真实数据丢失信号）比省一点扫描频率更重要。
 - ~~完整性异常触发后具体怎么响应~~ **已定**：除了记录到受限诊断出口，顺带补一条 `SystemLog`（后台「系统日志」页可见），方便运维不用登服务器也能发现——**必须先过 `redact()`**（`app/core/redaction.py` 的规则：任何进 SystemLog/Debug 面板的文案都要脱敏，不能把 `storage_key`/路径等原始信息直接写进去）。
 - ~~视频转码缓存 alive marker 的 TTL~~ **已定**：7 天，对齐旧的 `chat_attach.TTL`，减少一个新的自定义常量。
-- `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。**观察工具已就绪**（2026-08-09）：新增 `video_cache_snapshots` 表，`video_cache_gc` 每次清理跑完后落一条占用快照（对象数+总字节数），管理后台「存储对账」页新增趋势图卡片（`GET /api/v1/admin/config/video-cache-snapshots`）——之后靠这条曲线的真实走势判断，不用再猜。
+- `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。**观察工具已就绪**（2026-08-09）：使用通用 `storage_category_snapshots` 表，`video_cache_gc` 每次清理跑完后落一条占用快照（对象数+总字节数），管理后台「存储对账」页新增趋势图卡片——之后靠这条曲线的真实走势判断，不用再猜。
 
 ---
 

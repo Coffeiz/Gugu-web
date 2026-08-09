@@ -48,7 +48,7 @@ select(func.sum(File.size_bytes)).where(File.user_id == user_id)
 
 - **用户文件库总量**：`SUM(files.size_bytes)`（可选按 space/project 再拆一层，但不落到具体文件）
 - **聊天附件总量，按状态拆分**：`SUM(chat_attachments.size) GROUP BY state`——这个特别有价值：**草稿态占用 vs 已发送占用分开看**，能直接反映草稿孤儿清理任务是不是真的在起作用（如果"草稿占用"曲线只涨不跌，说明清理任务可能挂了）
-- **视频转码缓存总量**：已经在做（`video_cache_snapshots`）
+- **视频转码缓存总量**：由 `storage_category_snapshots` 的 `category='video_cache'` 记录
 
 ### 3.2 得靠定时任务扫存储才能算、有成本
 
@@ -74,7 +74,7 @@ select(func.sum(File.size_bytes)).where(File.user_id == user_id)
 
 ## 4. 架构建议：一张通用快照表，不是每类一张
 
-现在已经有 `video_cache_snapshots(id, taken_at, object_count, total_bytes)`，如果照搬这个模式给每个类别各建一张表，以后每加一类监控就要加一次表+migration。建议现在就重构成通用表：
+最初曾有专用的 `video_cache_snapshots` 表，但现在已经统一为通用的 `storage_category_snapshots`，避免每加一个监控类别就新增一张表和 migration：
 
 ```
 storage_category_snapshots(
@@ -82,7 +82,7 @@ storage_category_snapshots(
 )
 ```
 
-`category` 取值如 `video_cache` / `chat_staging_draft` / `chat_staging_attached` / `agent_memory` / `thumbs` / `avatars` / `uncategorized`。所有类别共用同一张表、同一套写入函数、同一个前端查询接口（按 `category` 过滤或一次性拿全部类别画多条线）。`video_cache_snapshots` 现有数据做一次性迁移（写入时补上 `category='video_cache'`）。
+`category` 取值如 `video_cache` / `chat_staging_draft` / `chat_staging_attached` / `agent_memory` / `thumbs` / `avatars` / `uncategorized`。所有类别共用同一张表、同一套写入函数、同一个前端查询接口（按 `category` 过滤或一次性拿全部类别画多条线）。专用表没有真实积累数据，已在 migration 中直接替换为通用表。
 
 清理任务的"战果"和安全网的"发现数量"这两类操作型指标，是否也塞进同一张表（比如 `category='attachment_gc_deleted'`、`category='safety_net_violations'`），还是单独一张 `job_run_stats` 表，需要再权衡——前者复用现成基础设施成本低，后者语义更清晰（"占用了多少"和"这次操作做了什么"本质是两种不同的指标类型，混进同一张表的 `category` 枚举里会让这张表的字段含义变得模糊：`object_count`/`total_bytes` 对操作型指标来说命名就不太贴切）。倾向于分开成两张表，具体等要实现的时候再定。
 
