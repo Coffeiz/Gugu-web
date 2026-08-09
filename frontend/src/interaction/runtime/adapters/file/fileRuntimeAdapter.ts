@@ -13,15 +13,6 @@ export function fileObjectId(scope: string, kind: FileObjectKind, id: number | s
   return `${scope}:${kind}:${id}`
 }
 
-/** 从对象 ID 反解出 kind 与真实业务 id；不是本约定形式时返回 null。 */
-export function parseFileObjectId(scope: string, objectId: string): { kind: FileObjectKind; id: string } | null {
-  const filePrefix = `${scope}:file:`
-  const folderPrefix = `${scope}:folder:`
-  if (objectId.startsWith(filePrefix)) return { kind: 'file', id: objectId.slice(filePrefix.length) }
-  if (objectId.startsWith(folderPrefix)) return { kind: 'folder', id: objectId.slice(folderPrefix.length) }
-  return null
-}
-
 /** 浏览区稳定 Surface ID：当前目录内容始终渲染到同一个 Surface，目录切换不销毁它。 */
 export function browserSurfaceId(scope: string): string {
   return `${scope}:surface:browser`

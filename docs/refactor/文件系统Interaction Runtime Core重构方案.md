@@ -256,13 +256,34 @@ Phase 1 落地时已经顺带满足本阶段的实质要求，本阶段只做核
 
 候选删除内容：
 
-- `frontend/src/interaction/runtime/adapters/file/fileRuntimeAdapter.ts`；
-- 文件页和项目抽屉的 Runtime 注册 watchEffect；
-- 单卡旧 pointer/drop 分流；
+- ~~`frontend/src/interaction/runtime/adapters/file/fileRuntimeAdapter.ts`~~；
+- ~~文件页和项目抽屉的 Runtime 注册 watchEffect~~；
+- ~~单卡旧 pointer/drop 分流~~；
 - 多选迁移完成后删除 `fileDrag.ts` 和 `useProjectFileDrag.ts` 的拖拽职责；
 - 仅用于旧路径的测试、README 和兼容类型。
 
 纯 ID 生成函数、业务移动函数、选择逻辑和上传逻辑继续保留。
+
+#### Phase 5 执行记录（2026-08-10）
+
+前三条候选在写这份方案时假设的是"整体迁移旧 `after` 分支的 adapter 代码"，但
+Phase 0 已经决定不迁移（"旧的 `codex-filesystem-interaction-runtime-after-cc610ae0`
+只作为问题记录和行为参考，不整体迁移代码"）——Phase 1 实际是照 Runtime demo 重新
+写的一套全新代码：`fileRuntimeAdapter.ts` 是这次新建的纯 ID 辅助函数文件，不是旧
+adapter，本身就是要长期保留的产物；两个入口的 Runtime 注册 `watchEffect` 和单卡
+`onFolderPointerDown`/`onFilePointerDown` 分流同理，都是新架构的组成部分，不是待
+清理的旧代码。这三条从候选列表划掉。
+
+实际清理动作：删除了 `fileRuntimeAdapter.ts` 里未被任何调用点引用的
+`parseFileObjectId`（此前标注"kept for completeness"——按项目约定不为假设的未来
+用途保留死代码，直接删除，`vue-tsc --noEmit` 复核无影响）。全仓扫描
+`browserSurfaceId`/`folderSurfaceId`/`parseFolderSurfaceId`/`breadcrumbSurfaceId`/
+`parseBreadcrumbSurfaceId`/`fileObjectId` 均有实际调用点，未发现其余死代码。
+
+余下两条（`fileDrag.ts`/`useProjectFileDrag.ts` 的拖拽职责清理、仅用于旧路径的
+测试）明确依赖 Phase 3（多选进 Runtime），而 Phase 3 依赖 `gugu-interaction-runtime`
+仓库尚未开发的 `GroupDragSession`（见 Phase 3 小节的跨仓库依赖说明），本轮不具备
+执行条件，保持待办，不算本次重构范围内的遗留问题。
 
 ## 7. 暂不做的事情
 
