@@ -197,103 +197,23 @@
       </div>
 
       <!-- 侧栏 -->
-      <div class="cal-sidebar glass-card" ref="calSidebarRef">
-        <div class="sidebar-top">
-          <div class="sidebar-date-label">{{ selectedDateLabel }}</div>
-          <button v-if="activeRange" class="add-event-btn add-proj-btn" @click="ctxAddProject">
-            <PhPlus :size="13" weight="bold" />
-            添加项目
-          </button>
-          <button v-else class="add-event-btn" ref="addBtnRef" @click="openAddForm">
-            <PhPlus :size="13" weight="bold" />
-            添加活动
-          </button>
-        </div>
-
-        <div v-if="selectedEvents.length" class="sidebar-events">
-          <div v-for="ev in selectedEvents" :key="ev.id" class="sidebar-ev"
-               :class="{ 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
-               :data-event-id="ev.id"
-               :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
-               @click.left="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event))"
-               @contextmenu.prevent="ev.calendarType === 'event' && openEditForm(ev, $event)"
-          >
-            <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
-            <div class="sidebar-ev-body">
-              <div class="sidebar-ev-name" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">
-                <span v-if="ev.calendarType === 'project'" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
-                <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
-                <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
-                {{ ev.name }}
-                <span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
-              </div>
-              <template v-if="ev.calendarType === 'event'">
-                <div class="sidebar-ev-desc">
-                  <PhAlignLeft :size="11" weight="bold" style="flex-shrink:0;opacity:0.38;margin-top:1px" />
-                  <span v-if="ev.description">{{ ev.description }}</span>
-                </div>
-              </template>
-              <template v-else>
-                <div class="sidebar-ev-desc">
-                  {{ ev.startDate?.slice(5).replace('-','/') }} → {{ ev.endDate?.slice(5).replace('-','/') }}
-                  <template v-if="ev.currentStage"> · {{ ev.currentStage }}</template>
-                </div>
-              </template>
-            </div>
-            <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="deleteEvent(ev)" title="删除活动">
-              <PhTrash :size="12" weight="bold" />
-            </button>
-          </div>
-        </div>
-        <div v-else class="sidebar-empty">
-          <PhCalendarBlank :size="26" weight="bold" style="opacity:0.3" />
-          <span>当天无日程</span>
-        </div>
-
-        <div class="sidebar-divider"></div>
-
-        <div class="sidebar-section-title">近期节点</div>
-        <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row"
-             :class="{ 'upcoming-proj': ev.calendarType === 'project', 'upcoming-ev': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
-             :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
-             @click.left="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event))"
-             @contextmenu.prevent="ev.calendarType === 'event' && openEditForm(ev, $event)"
-        >
-          <div class="cap-capsule"
-               :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
-            <span class="cap-tag" :class="ev.calendarType === 'project' ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">{{ ev.calendarType === 'project' ? '项目' : '活动' }}</span>
-            <span v-if="ev.calendarType === 'project'" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
-            <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: (ev.daysLeft ?? 0) <= 3 }">{{ ev.daysLabel }}</span>
-          </div>
-        </div>
-      </div>
+      <CalendarSidebar
+        :selected-date-label="selectedDateLabel"
+        :has-active-range="!!activeRange"
+        :selected-events="selectedEvents"
+        :upcoming-list="upcomingList"
+        @add-project="ctxAddProject"
+        @add-event="openAddForm"
+        @open-project="openProject"
+        @edit-event="onSidebarEditEvent"
+        @delete-event="deleteEvent"
+      />
 
     </div>
   </div>
 
-  <!-- 统一"更多"弹窗（项目 + 事件合并） -->
-  <Teleport to="body">
-    <Transition name="more-pop">
-      <div v-if="morePopup.open" class="overflow-popup" ref="morePopupRef" :style="morePopup.style">
-        <div class="overflow-popup-title">{{ morePopup.dateLabel }}</div>
-        <div class="overflow-list">
-          <div
-            v-for="item in morePopup.items" :key="item.id"
-            class="overflow-item cal-chip"
-            :class="{ 'overflow-clickable': !!item.calendarType, 'cal-done': item.calendarType === 'project' && item.status === 'done' }"
-            :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType ? 'grab' : 'default' }"
-            @click.stop="item.calendarType === 'project' ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.calendarType === 'event' && openEditForm(item, $event, true))"
-            @mousedown.stop="item.calendarType && startMoreItemDrag(item, $event)"
-          >
-            <span class="overflow-tag" :class="{ 'overflow-tag-ev': item.calendarType !== 'project' }">{{ item.calendarType === 'project' ? '项目' : '活动' }}</span>
-            <span v-if="item.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + item.status"></span>
-            <span class="overflow-name">{{ item.name }}</span>
-          </div>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
+  <CalendarMorePopup :open="morePopup.open" :items="morePopup.items" :date-label="morePopup.dateLabel" :style="morePopup.style"
+                     @open-project="onMoreProject" @edit-event="onMoreEditEvent" @drag-item="onMoreDragItem" />
 
   <Teleport to="body">
     <YearMonthPicker ref="pickerRef" :open="pickerOpen" :year="pickerYear" :cursor="cursor" :style="pickerStyle"
@@ -415,7 +335,9 @@ import { fireHint } from '@/composables/useOnboarding'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
 import CalendarToolbar from './components/CalendarToolbar.vue'
+import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
+import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import EventEditFields from './components/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
@@ -433,7 +355,7 @@ import {
   useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
   LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
 } from '@/composables/useEventEditForm'
-import { PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
+import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -543,7 +465,6 @@ const editingEvent  = ref<EditingEvent | null>(null)
 const activeFormDate = computed(() => showEditForm.value ? editingEvent.value?.date : newEvent.value?.date)
 const editFormRef   = ref<HTMLElement | null>(null)
 const editFormStyle = ref<Record<string, string | number>>({})
-const calSidebarRef = ref<HTMLElement | null>(null)
 
 // ── 拖拽状态 ─────────────────────────────────────────────────────────────────
 type DragType = 'event' | 'proj-chip' | 'proj-bar' | 'proj-resize-start' | 'proj-resize-end'
@@ -949,7 +870,7 @@ const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 const pickerStyle     = ref<Record<string, string | number>>({})
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
-const morePopupRef = ref<HTMLElement | null>(null)
+const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
 
 // ── 动态行高测量 ──
 const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
@@ -1050,6 +971,20 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
 
   morePopup.value = { open: true, items, dateLabel: label, style }
+}
+
+function onMoreProject(item: CalItem) {
+  morePopup.value.open = false
+  showEditForm.value = false
+  openProject(item)
+}
+
+function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
+  openEditForm(payload.item, payload.event, true)
+}
+
+function onMoreDragItem(payload: { item: CalItem; event: MouseEvent }) {
+  startMoreItemDrag(payload.item, payload.event)
 }
 
 function togglePicker(anchor: HTMLElement | null = null) {
@@ -1690,14 +1625,15 @@ function _addDefaults() {
   return { date: selectedDate.value || todayIso.value, ...defaultTimeRange() }
 }
 
-function openAddForm() {
+function openAddForm(anchor: HTMLElement | null = null) {
+  addBtnRef.value = anchor
   newEvent.value = { name: '', ..._addDefaults(), description: '', allDay: false }
   resetReminder()
   const btnEl = addBtnRef.value
   if (btnEl) {
     const btnRect    = btnEl.getBoundingClientRect()
     const popupWidth = 240
-    const sbEl   = btnEl.closest('.cal-sidebar') ?? calSidebarRef.value
+    const sbEl   = btnEl.closest('.cal-sidebar')
     const sbRect = sbEl?.getBoundingClientRect()
     const centerX = sbRect
       ? sbRect.left + sbRect.width / 2
@@ -1734,7 +1670,7 @@ function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTi
   } else {
     const el    = (nativeEv.currentTarget ?? nativeEv.target) as HTMLElement
     const rect  = el.getBoundingClientRect()
-    const sbEl  = el.closest('.cal-sidebar') ?? calSidebarRef.value
+    const sbEl  = el.closest('.cal-sidebar')
     const sbRect = sbEl?.getBoundingClientRect()
     const centerX = sbRect ? sbRect.left + sbRect.width / 2 : rect.left + rect.width / 2
     left = Math.max(8, Math.min(centerX - w / 2, window.innerWidth - w - 8))
@@ -1745,6 +1681,10 @@ function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTi
   editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
   showEditForm.value = true
   nextTick(() => clampPopupIntoView(editFormRef, editFormStyle))
+}
+
+function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
+  openEditForm(payload.item, payload.event)
 }
 
 // ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
