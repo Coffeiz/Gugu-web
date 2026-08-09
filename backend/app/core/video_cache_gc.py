@@ -100,9 +100,10 @@ async def sweep_video_cache() -> int:
             pass
 
 
-@scheduler.register(scheduler.cron(hour=5, minute=0), id="video_cache_gc", name="视频转码缓存清理")
+@scheduler.register(scheduler.cron(hour=1, minute=0), id="video_cache_gc", name="视频转码缓存清理")
 async def _run_video_cache_gc() -> None:
-    """跟 Phase A 的两个 job（4:00/4:30）错开，避免同时段抢 I/O。"""
+    """所有存储相关定时任务统一从 0 点起跑、错开半小时到一刻钟一个，避免同时段
+    抢 I/O：0:00 草稿 GC → 0:30 安全网 → 1:00 这里 → 1:15 用量快照。"""
     try:
         n = await sweep_video_cache()
         if n:

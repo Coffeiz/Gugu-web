@@ -41,6 +41,32 @@ async def test_storage_snapshots_filters_by_days(db):
 
 
 @pytest.mark.asyncio
-async def test_storage_snapshots_empty_returns_empty_dict(db):
+async def test_storage_snapshots_empty_returns_empty_dict(db, monkeypatch):
+    import app.api.v1.ops_admin as ops_admin
+    monkeypatch.setattr(ops_admin, "_disk_usage_if_local", lambda: None)
     result = await storage_snapshots_history(days=30, db=db)
-    assert result == {"categories": {}}
+    assert result == {"categories": {}, "disk": None}
+
+
+@pytest.mark.asyncio
+async def test_disk_usage_none_when_oss_backend(monkeypatch):
+    from app.api.v1.ops_admin import _disk_usage_if_local
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(backend="oss", local_path="./uploads")))
+    assert _disk_usage_if_local() is None
+
+
+@pytest.mark.asyncio
+async def test_disk_usage_returns_numbers_when_local_backend(tmp_path, monkeypatch):
+    from app.api.v1.ops_admin import _disk_usage_if_local
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(backend="local", local_path=str(tmp_path))))
+    result = _disk_usage_if_local()
+    assert result is not None
+    assert result["total_bytes"] > 0
+    assert result["free_bytes"] >= 0
+    assert result["used_bytes"] >= 0

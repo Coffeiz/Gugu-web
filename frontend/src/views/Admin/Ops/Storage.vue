@@ -12,15 +12,20 @@
 
     <div v-if="err" class="ops-err">{{ err }}</div>
     <div v-else-if="loading && !hasData" class="ops-empty">加载中…</div>
-    <div v-else-if="!hasData" class="ops-empty">还没有快照数据——等定时任务跑过至少一次之后再来看（草稿/已发送附件、用户文件库次日 5:15 落一次，视频转码缓存 5:00）。</div>
+    <div v-else-if="!hasData" class="ops-empty">还没有快照数据——等定时任务跑过至少一次之后再来看（草稿/已发送附件、用户文件库次日 1:15 落一次，视频转码缓存 1:00）。</div>
 
     <template v-else>
-      <!-- 概览卡片：每个类别最新一条快照 -->
+      <!-- 概览卡片：每个类别最新一条快照 + 磁盘剩余（仅 Local 后端） -->
       <div class="ops-cards">
         <div v-for="cat in CATEGORIES" :key="cat.key" class="ops-card">
           <div class="oc-label">{{ cat.label }}</div>
           <div class="oc-value">{{ latestMB(cat.key) }}<i>MB</i></div>
           <div class="oc-hint">{{ latestCount(cat.key) }} 个对象</div>
+        </div>
+        <div v-if="disk" class="ops-card" :class="{ warn: diskUsedPct >= 85 }">
+          <div class="oc-label">磁盘剩余（Local 存储）</div>
+          <div class="oc-value">{{ fmtGB(disk.free_bytes) }}<i>GB</i></div>
+          <div class="oc-hint">已用 {{ diskUsedPct }}%（共 {{ fmtGB(disk.total_bytes) }}GB）</div>
         </div>
       </div>
 
@@ -54,13 +59,18 @@ const CATEGORIES = [
   { key: 'video_cache', label: '视频转码缓存', color: 'rgba(180,100,100,1)' },
 ] as const
 
+interface DiskUsage { total_bytes: number; used_bytes: number; free_bytes: number }
+
 const adminStore = useAdminStore()
 const byCategory = ref<Record<string, Snapshot[]>>({})
+const disk = ref<DiskUsage | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
 const err = ref('')
 
 const hasData = computed(() => Object.values(byCategory.value).some(list => list.length > 0))
+const diskUsedPct = computed(() => disk.value ? Math.round(disk.value.used_bytes / disk.value.total_bytes * 100) : 0)
+function fmtGB(bytes: number): string { return (bytes / 1024 / 1024 / 1024).toFixed(1) }
 
 function latestOf(key: string): Snapshot | null {
   const list = byCategory.value[key]
@@ -121,6 +131,7 @@ async function load(manual = false) {
     if (!res.ok) throw new Error(`加载失败 (${res.status})`)
     const data = await res.json()
     byCategory.value = data.categories || {}
+    disk.value = data.disk || null
     err.value = ''
   } catch (e: any) {
     err.value = e.message
@@ -145,6 +156,7 @@ onMounted(() => load())
   background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
   border-radius: 14px; padding: 16px 18px;
 }
+.ops-card.warn { border-color: rgba(210,150,60,0.4); background: rgba(210,150,60,0.08); }
 .oc-label { font-size: 12px; color: rgba(255,255,255,0.45); margin-bottom: 8px; }
 .oc-value { font-size: 24px; font-weight: 700; line-height: 1; }
 .oc-value i { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.5); margin-left: 2px; font-style: normal; }

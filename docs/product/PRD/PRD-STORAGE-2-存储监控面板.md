@@ -9,9 +9,12 @@
 
 - **放在「运维」导航分组下的独立页面**（`/storage-monitor`，路由名 `AdminStorageMonitor`），跟「存储对账」（`/storage-audit`）并列，不是嵌进对账页——符合第 1 节的定位。
 - **第 4 节的通用快照表建议照做**：`storage_category_snapshots(id, category, taken_at, object_count, total_bytes)`，替换掉最初按 PRD-STORAGE-1 落地时先做的专用 `video_cache_snapshots` 表（该表上线不到一天、无真实数据，migration 直接删表重建，未做数据迁移）。
-- **落地了 3.1 节里"零成本能算"的三类**：`user_files`（`SUM(files.size_bytes)`）、`chat_staging_draft`/`chat_staging_attached`（`SUM(chat_attachments.size) GROUP BY state`）+ 已有的 `video_cache`（`video_cache_gc` 扫描顺带算）。新增 `app/core/storage_snapshots.py` 承担前三类的定时任务（`storage_usage_snapshot`，凌晨 5:15，跟 Phase A 的两个 job 4:00/4:30 和 `video_cache_gc` 的 5:00 错开）。
-- **3.2 节的"扫存储成本较高"三类（`.agent/`/`.thumbs/`/`avatars/`）和"未分类兜底桶"暂未实现**——本轮先把有 DB 列、零成本的部分和已有的视频缓存接进来，验证整套面板/表结构能跑通；这几类到时候只需要新增一个定时任务往同一张 `storage_category_snapshots` 表写对应 `category` 的记录，不需要改表结构或前端页面（前端按 `categories` 字典的 key 遍历，加新分类只需要在 `Storage.vue` 的 `CATEGORIES` 常量里加一行）。
-- **操作型指标（清理任务战果、安全网异常趋势、磁盘剩余空间，见 3.3 节）暂未实现**——同样是后续可以复用同一张表或新增一张 `job_run_stats` 表的增量工作，不阻塞当前这版上线。
+- **落地了 3.1 节里"零成本能算"的三类**：`user_files`（`SUM(files.size_bytes)`）、`chat_staging_draft`/`chat_staging_attached`（`SUM(chat_attachments.size) GROUP BY state`）+ 已有的 `video_cache`（`video_cache_gc` 扫描顺带算）。新增 `app/core/storage_snapshots.py` 承担前三类的定时任务（`storage_usage_snapshot`）。
+- **磁盘剩余空间已落地（仅 Local 后端）**：`GET /admin/ops/storage-snapshots` 响应里带一个 `disk` 字段，`app.core.config.get_settings().storage.backend == "oss"` 时直接返回 `null`（OSS 是按量计费的对象存储，没有"盘满"概念，硬展示一个数字反而误导）；Local 后端用 `shutil.disk_usage()` 拿 `total/used/free`，前端超过 85% 用量时卡片变警告色。
+- **定时任务时间统一从 0 点起跑**：`attachment_draft_gc` 0:00 → `attachment_safety_net` 0:30 → `video_cache_gc` 1:00 → `storage_usage_snapshot` 1:15，保留原来的错峰间隔，只是整体前移，不再用 4~5 点这个随意选的起点。
+- **3.2 节的"扫存储成本较高"三类（`.agent/`/`.thumbs/`/`avatars/`）和"未分类兜底桶"暂未实现，但已经测过要不要做增量扫描**：在 devserver 上实测 `list_keys()` 全量扫描——当前 **1252 个对象，耗时 0.076 秒**。这个量级下全量扫描本身几乎零成本，"增量/差异扫描"是在解决一个目前不存在的性能问题，暂不做；如果对象总数以后涨到百万级（尤其是切到 OSS 之后，每次 LIST API 调用有实际次数成本），再回来做"高水位时间戳、只处理新对象"这类增量方案，或者引入 OSS 的 Object Inventory（存储清单）功能。
+  - 顺带发现：用"路径前缀匹配"粗判"未分类"对象并不可靠——测试脚本简单按 `.chat_staging/`/`.voice/`/`.video_cache/`/`.agent/`/`.thumbs/`/`avatars/` 这几个特殊前缀过滤，剩下约 263 个"未匹配"对象，但这些其实绝大部分是用户文件库的正常文件（`files.storage_key` 记录着，只是路径不在任何"特殊前缀"下）。真正实现"未分类兜底桶"时，必须拿全量 `list_keys()` 结果去掉「能在 `files.storage_key` 或 `chat_attachments.storage_key` 里查到」的部分，而不是只做字符串前缀匹配，否则会把正常的用户文件库内容误报成"未分类"。
+- **操作型指标（清理任务战果、安全网异常趋势，见 3.3 节）暂未实现**——同样是后续可以复用同一张表或新增一张 `job_run_stats` 表的增量工作，不阻塞当前这版上线。
 
 ## 1. 定位
 
@@ -84,6 +87,7 @@ storage_category_snapshots(
 
 ## 5. 待确认问题
 
-- 定时任务扫描频率：现在 `video_cache_gc` 是每天一次（凌晨 5 点），其他类别（`.agent/`/`.thumbs/`/`avatars/`）是否需要同样的频率，还是可以更低频（比如每周），取决于这些类别的实际增长速度——目前没有数据支撑，可能需要先上线跑一段时间观察。
-- "未分类/其他"桶的扫描成本：需要遍历全量 `list_keys()` 并排除所有已知前缀，如果对象总数很大，这一步本身可能比其他分类扫描都贵，需要先在 devserver 实测一次全量 `list_keys()` 的耗时再决定要不要做、多久做一次。
-- 磁盘剩余空间这个指标怎么取：本地 `shutil.disk_usage()` 还是别的方式，需要确认 Local 存储的挂载点路径在配置里是否已知。
+- ~~"未分类/其他"桶的扫描成本~~ **已实测**：devserver 上 `list_keys()` 全量扫描 1252 个对象耗时 0.076 秒，当前量级下做增量扫描没有必要，见第 0 节。
+- ~~磁盘剩余空间这个指标怎么取~~ **已定**：`shutil.disk_usage(cfg.storage.local_path)`，仅 Local 后端展示，OSS 返回 `null`，见第 0 节。
+- 定时任务扫描频率：现在 `video_cache_gc`/`storage_usage_snapshot` 是每天一次，`.agent/`/`.thumbs/`/`avatars/`/"未分类兜底桶"这几类还没实现，要不要同样每天跑，还是可以更低频（比如每周），取决于这些类别的实际增长速度——目前没有数据支撑，等实现后先跑一段时间观察。
+- "未分类兜底桶"的正确实现方式：不能只靠路径前缀匹配（见第 0 节踩到的坑），必须交叉排除 `files.storage_key`/`chat_attachments.storage_key` 这两个已知集合，具体用一次性拉全量 storage_key 集合做内存 set 差集，还是分批查 DB，等实现时再定（当前对象量级下一次性拉全量到内存完全没问题）。

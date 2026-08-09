@@ -179,7 +179,7 @@ async def sweep_orphans_and_report_integrity() -> dict:
             pass
 
 
-@scheduler.register(scheduler.cron(hour=4, minute=0), id="attachment_draft_gc", name="草稿附件孤儿清理")
+@scheduler.register(scheduler.cron(hour=0, minute=0), id="attachment_draft_gc", name="草稿附件孤儿清理")
 async def _run_draft_gc() -> None:
     """凌晨低峰跑，避开白天的存储/DB I/O 高峰。"""
     try:
@@ -191,7 +191,7 @@ async def _run_draft_gc() -> None:
         diag_log("app.core.attachment_gc.draft_sweep", exc)
 
 
-@scheduler.register(scheduler.cron(hour=4, minute=30), id="attachment_safety_net", name="附件所有权安全网扫描")
+@scheduler.register(scheduler.cron(hour=0, minute=30), id="attachment_safety_net", name="附件所有权安全网扫描")
 async def _run_safety_net() -> None:
     """跟草稿 GC 错开半小时，避免同时段抢 DB/存储 I/O。"""
     try:

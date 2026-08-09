@@ -46,4 +46,21 @@ async def storage_snapshots_history(
             "object_count": r.object_count,
             "total_bytes": r.total_bytes,
         })
-    return {"categories": by_category}
+    return {"categories": by_category, "disk": _disk_usage_if_local()}
+
+
+def _disk_usage_if_local() -> dict | None:
+    """磁盘剩余空间——**只有 Local 存储后端才有意义**：OSS 是按量计费的对象
+    存储，没有"盘满"这个概念，硬凑一个数字反而误导（该关心的是费用增长，不是
+    容量）。用 `shutil.disk_usage()`（底层 statvfs，同步但极快，不用丢线程池）。"""
+    from app.core.config import get_settings
+    cfg = get_settings()
+    if cfg.storage.backend == "oss":
+        return None
+    try:
+        import shutil
+        from pathlib import Path
+        usage = shutil.disk_usage(Path(cfg.storage.local_path).resolve())
+        return {"total_bytes": usage.total, "used_bytes": usage.used, "free_bytes": usage.free}
+    except Exception:
+        return None

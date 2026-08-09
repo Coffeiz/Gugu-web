@@ -72,9 +72,10 @@ async def record_sql_snapshots() -> None:
             pass
 
 
-@scheduler.register(scheduler.cron(hour=5, minute=15), id="storage_usage_snapshot", name="存储用量快照（SQL 汇总类）")
+@scheduler.register(scheduler.cron(hour=1, minute=15), id="storage_usage_snapshot", name="存储用量快照（SQL 汇总类）")
 async def _run_storage_usage_snapshot() -> None:
-    """跟 Phase A 的两个 job（4:00/4:30）和 video_cache_gc（5:00）错开。"""
+    """所有存储相关定时任务统一从 0 点起跑：0:00 草稿 GC → 0:30 安全网 →
+    1:00 video_cache_gc → 1:15 这里。"""
     try:
         await record_sql_snapshots()
     except Exception as exc:
