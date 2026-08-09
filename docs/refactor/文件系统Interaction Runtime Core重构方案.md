@@ -1,0 +1,249 @@
+# 文件系统 Interaction Runtime Core 重构方案
+
+## 1. 文档状态
+
+| 项目 | 内容 |
+| --- | --- |
+| 状态 | 规划中 |
+| 重构分支 | `codex-filesystem-core-rebuild` |
+| 基线 | `main` 合并 PR16 后的 `c1a2df52` |
+| 关联仓库 | `gugu-interaction-runtime` |
+| 目标 | 文件页和项目文件抽屉只通过 Runtime Core API 接入交互 |
+
+本次从最新 `main` 重新开始。旧的 `codex-filesystem-interaction-runtime-after-cc610ae0` 只作为问题记录和行为参考，不整体迁移代码。
+
+## 2. 重构动机
+
+当前文件页同时存在三套职责：
+
+1. Interaction Runtime 负责单卡 pointer、命中、代理、FLIP 和 landing。
+2. 文件页 adapter 负责对象注册、Surface/Target 生命周期和 Action 分流。
+3. `useFileDragDrop` 及项目文件拖拽逻辑继续维护另一套多选和 DOM 拖动生命周期。
+
+这会导致：
+
+- 同一个对象可能被两套 session 同时接管；
+- 目录切换时 DOM 被销毁，landing 目标和 FLIP 快照失效；
+- 文件页和项目抽屉复制注册逻辑，修复容易只覆盖一处；
+- 目标卡、面包屑和浏览区的语义目标在业务侧重复解析；
+- 乐观更新、视觉动画和 API 提交的完成时机互相影响。
+
+本次不继续在旧 adapter 上打补丁，而是让 Runtime 成为唯一的交互编排者。
+
+## 3. 权责边界
+
+### 3.1 Runtime Core 负责
+
+- Object、Surface、Target 注册和生命周期；
+- pointer 输入、抓取、移动、取消和 regrab；
+- 命中测试与目标解析；
+- detach/clone 视觉策略；
+- 代理接管、本体隐藏和交接；
+- landing、retarget、速度/旋转继承；
+- 同一布局集合内的 FLIP；
+- 运行时 ownership 和旧实例 generation 保护；
+- 输出标准化 `MoveAction`。
+
+### 3.2 Vue 业务适配层负责
+
+只负责把渲染节点注册到 Core API：
+
+```ts
+runtime.objects.register({ ... })
+runtime.objects.setElement(id, element)
+runtime.surfaces.register({ ... })
+runtime.surfaces.setElement(id, element)
+runtime.targets.register({ ... })
+runtime.targets.setElement(id, element)
+```
+
+Vue 层可以处理 `ref` 的挂载和卸载，但不得实现 pointer、landing、FLIP、代理或目标几何计算。
+
+### 3.3 文件业务层负责
+
+- 文件/文件夹 API 调用；
+- 乐观更新、提交、回滚和刷新；
+- 文件夹循环引用校验；
+- 权限判断；
+- 选择状态和批量操作；
+- 目录导航、面包屑数据和上传业务。
+
+Runtime 不直接访问文件 store 或后端 API。
+
+## 4. 目标接入形态
+
+单对象接入的目标形态：
+
+```ts
+const objectGeneration = runtime.objects.register({
+  id: fileObjectId(scope, 'file', file.id),
+  type: 'file-item',
+  visualMode: 'detach',
+  surfaceId: browserSurfaceId,
+  abilities: ['move'],
+})
+
+runtime.objects.setElement(objectId, element)
+
+runtime.surfaces.register({
+  id: browserSurfaceId,
+  type: 'file-browser',
+  accepts: ['file-item', 'folder-item'],
+})
+
+runtime.targets.register({
+  id: folderTargetId,
+  surfaceId: folderSurfaceId,
+  accepts: ['file-item', 'folder-item'],
+  priority: 2,
+})
+```
+
+业务侧只订阅 Action 并提交业务变更：
+
+```ts
+const stop = runtime.onAction(action => {
+  if (action.type !== 'move') return
+  void moveFileByRuntimeAction(action)
+})
+```
+
+`fileRuntimeAdapter` 不再隐藏 Core API，也不再维护另一份注册表。
+
+## 5. 目录模型
+
+### 5.1 浏览区
+
+当前目录始终使用稳定的 browser Surface。目录切换只更新其内容，不销毁交互根节点。
+
+### 5.2 文件夹卡
+
+文件夹卡同时是：
+
+- 一个可移动 Object；
+- 一个语义接收 Target；
+- 一个可选的 folder Surface 语义节点。
+
+Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Object 目标才单独注册 Target。
+
+### 5.3 面包屑
+
+面包屑是语义 Target，不作为普通文件卡 Object，不参与对象列表 FLIP。
+
+### 5.4 上传入口
+
+上传入口属于浏览区布局集合，必须参与兄弟卡片 FLIP，但不是可拖动 Object。
+
+## 6. 实施阶段
+
+### Phase 0：冻结基线
+
+- 从 `main` 开始，不迁移旧 after 分支的代码；
+- 记录当前 Runtime SHA；
+- 补齐单卡拖动、文件夹目标、面包屑目标、无效落点、regrab 和目录切换测试；
+- 明确单卡和多选的验收截图及行为。
+
+完成条件：基线测试稳定，失败可以归因到重构前行为。
+
+### Phase 1：单卡 Core API 接入
+
+- 删除文件页的 `createFileRuntimeBindings`；
+- 删除文件专用 Runtime 注册 watchEffect 和 prune 逻辑；
+- 文件卡、文件夹卡、面包屑直接注册 Core API；
+- 保留 generation 保护，但放到 Runtime 通用注册生命周期；
+- 文件页和 ProjectModal 使用同一套注册约定；
+- 单卡 Action 只进入业务移动函数。
+
+完成条件：单文件、单文件夹拖动完全由 Runtime 处理，旧 adapter 不再参与单卡生命周期。
+
+### Phase 2：业务提交边界收敛
+
+- 将文件移动业务抽成明确的 `moveByRuntimeAction`；
+- 统一文件页和项目抽屉的 optimistic mutation；
+- 保留循环目录校验和权限校验在业务侧；
+- 确认 Runtime 动画完成不等于 API 提交完成，两者不互相等待错误的生命周期。
+
+完成条件：视觉交互和数据提交可以分别测试，失败时不会重复触发 landing。
+
+### Phase 3：多选交互进入 Runtime（跨仓库，独立轨道）
+
+当前 Runtime Core 主要覆盖单 Object。要删除旧多选拖拽，需先提供通用 group interaction：
+
+- 多 Object 选择快照；
+- 一个 group session 和一个视觉代理；
+- 批量命中与统一目标；
+- 批量 MoveAction；
+- 取消、regrab 和失败恢复；
+- 业务侧只接收对象 ID 列表并执行批量 API。
+
+**依赖说明**：这一阶段不在 Gugu-web / 本仓库内完成，前置工作在 `gugu-interaction-runtime` 仓库：
+
+- 新增 `GroupDragSession`（不改造现有 `Session.objectId` 标量字段，避免牵连 `RuntimeMove.ts` 等既有单对象读取点）；
+- `VisualProxyCoordinator` 从 1 session : 1 proxy 改为 1 session : N proxy；
+- 复用现有 `Owner.takeObject`（循环获取多个 lease）、`GroupLayout` 的多元素 FLIP 原语、`Visual.createDragProxy`（调用 N 次），这几处已是 id-keyed/数组化实现，不需要改动；
+- 发布新版本后，本仓库更新 `.runtime-version` 锁定并消费。
+
+**与其他阶段的关系**：Phase 3 与 Phase 0/1/2/4 没有依赖关系，不阻塞后者合并上线。Phase 0/1/2/4 可以独立推进、独立验收、独立合并；Phase 3（以及依赖它的 Phase 5 多选清理部分）作为单独时间线，在 `gugu-interaction-runtime` 侧的 `GroupDragSession` 发布后再启动，不按线性阶段顺序卡住前面的工作。
+
+完成条件：`useFileDragDrop` 和 `useProjectFileDrag` 不再负责拖拽生命周期。
+
+### Phase 4：目录切换与布局收敛
+
+- 浏览区保持稳定 Surface；
+- 目录变化由 Runtime collection FLIP 捕获和播放；
+- 上传入口、文件卡和文件夹卡使用同一布局集合；
+- 移除业务侧额外的 `Transition mode="out-in"` 对交互节点的销毁影响；
+- 验证 landing 进行中切换目录、快速拖动和连续 regrab。
+
+完成条件：目录切换、卡片让位和 landing 不再出现瞬移、旧目标、重复 FLIP 或本体闪现。
+
+### Phase 5：清理旧代码
+
+候选删除内容：
+
+- `frontend/src/interaction/runtime/adapters/file/fileRuntimeAdapter.ts`；
+- 文件页和项目抽屉的 Runtime 注册 watchEffect；
+- 单卡旧 pointer/drop 分流；
+- 多选迁移完成后删除 `fileDrag.ts` 和 `useProjectFileDrag.ts` 的拖拽职责；
+- 仅用于旧路径的测试、README 和兼容类型。
+
+纯 ID 生成函数、业务移动函数、选择逻辑和上传逻辑继续保留。
+
+## 7. 暂不做的事情
+
+- 不把文件 API 或 optimistic mutation 放进 Runtime；
+- 不为文件单独创建 Runtime 专属动画实现；
+- 不同时维护 detach 和 clone 两套文件业务编排；
+- 不整体 cherry-pick 旧 after 分支；
+- 不在没有 group interaction 前删除多选功能；
+- Phase 3 的 Runtime 核心改动（`GroupDragSession`、`VisualProxyCoordinator` 1:N 化）不在本仓库内实现，不在本重构分支里直接修改 `gugu-interaction-runtime` 源码。
+
+## 8. 验收标准
+
+### 交互
+
+- 文件卡拖动时兄弟卡实时 FLIP；
+- 文件夹卡、面包屑和无效落点使用正确 landing 目标；
+- landing 过程中再次抓取可以从当前视觉位置接管；
+- 目标卡发生 FLIP 时，代理实时 retarget；
+- 文件页和项目抽屉的单卡手感、速度、旋转和淡出一致；
+- 上传入口参与布局 FLIP；
+- 目录切换不导致本体闪现或代理变形。
+
+### 数据
+
+- 成功移动后立即看到乐观结果；
+- API 失败时正确回滚；
+- 文件夹循环引用被业务层拒绝；
+- 多选移动不会重复提交或漏提交。
+
+### 工程
+
+- 文件业务侧不再实现 pointer、landing、FLIP 或代理生命周期；
+- 单卡不再依赖旧 file adapter；
+- Runtime Core API、Gugu-web 类型检查和测试均通过；
+- 每个阶段可独立提交、验证和回退。
+
+## 9. 预估收益
+
+单卡收敛预计减少业务侧约 500～650 行交互接线；多选迁移完成后再减少约 500～700 行旧拖拽编排。Runtime 会增加通用 group interaction，但文件页不再复制这套逻辑，长期维护的交互实现只保留一份。
