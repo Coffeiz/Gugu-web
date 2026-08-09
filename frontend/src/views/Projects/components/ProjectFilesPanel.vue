@@ -28,7 +28,7 @@
             }"></div>
             <!-- ── 网格视图 ── -->
             <template v-if="fileViewMode === 'grid'">
-              <FileBrowserGrid @empty-context="openPmCtx('empty', null, $event)">
+              <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <FolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
                   :display-name="folder.name"
@@ -39,6 +39,7 @@
                   :pre-selected="pmPreviewFolderIds.has(folder.id)"
                   :selection-mode="pmInSelectionMode"
                   :data-pm-folder-id="folder.id"
+                  data-layout-role="card" :data-layout-key="folderLayoutKey(folder)"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   @pointerdown="onPmFolderPointerDown(folder, $event)"
@@ -82,6 +83,7 @@
                   :selected="pmSelectedFileIds.has(file.id)" :pre-selected="pmPreviewFileIds.has(file.id)"
                   :dragging="pmDraggingFileIds.has(file.id)" :cut="pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id)"
                   :data-pm-file-id="file.id"
+                  data-layout-role="card" :data-layout-key="fileLayoutKey(file)"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
                   @pointerdown="onPmFilePointerDown(file, $event)"
@@ -133,7 +135,7 @@
 
             <!-- ── 列表视图 ── -->
             <template v-else>
-              <FileBrowserList class-name="file-list-view" @empty-context="openPmCtx('empty', null, $event)">
+              <FileBrowserList class-name="file-list-view" :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <div class="list-head">
                   <span class="lh-sortable" :class="{ active: pmSortKey === 'name' }" @click.stop="onPmSortSelect('name')">名称<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
                   <span class="lh-sortable" :class="{ active: pmSortKey === 'stage' }" @click.stop="onPmSortSelect('stage')">阶段<svg class="lh-arrow" :class="{ desc: pmSortDir === 'desc' }" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
@@ -146,6 +148,7 @@
                   class="list-row folder-list-row"
                   :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
+                  data-layout-role="card" :data-layout-key="folderLayoutKey(folder)"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   @pointerdown="onPmFolderPointerDown(folder, $event)"
@@ -186,6 +189,7 @@
                   class="list-row"
                   :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), dragging: pmDraggingFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
                   :data-pm-file-id="file.id"
+                  data-layout-role="card" :data-layout-key="fileLayoutKey(file)"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
                   @pointerdown="onPmFilePointerDown(file, $event)"
@@ -290,6 +294,7 @@ const {
   folderInputRef, PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal,
   pmIsDragging, pmSelectionRect, pmGridRef, onPmGridMouseDown, onPmContentClick, openPmCtx,
   onPmDragEnter, onPmDragLeave, onPmDrop, sortedCurrentFolders, pmFolderCount, accentColor,
+  folderLayoutKey, fileLayoutKey, layoutCollection,
   pmDragOverFolderId, pmSelectedFolderIds, pmPreviewFolderIds, onPmFolderClick, onPmFolderPointerDown,
   renamingFolderId, commitFolderRename, startRenameFolder, downloadFolderZip, deleteFolderCard,
   folderRenameText, cancelFolderRename, sortedCurrentFiles, isPmImageExt, pmSelectedFileIds,

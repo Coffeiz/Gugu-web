@@ -1,10 +1,11 @@
 <template>
-  <FileBrowserGrid @empty-context="openCtx('empty', null, $event)">
+  <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openCtx('empty', null, $event)">
     <FolderCard v-for="f in sortedContents.folders" :key="f.id"
       :display-name="f.displayName" :count-label="f.count != null ? f.count + ' 项' : '—'"
       :accent-color="folderAccentColor(f)" :selected="selectedFolderKeys.has(f.id)"
       :pre-selected="previewFolderKeys.has(f.id)" :drag-over="dragOverFolderId === f.folderId"
       :selection-mode="inSelectionMode" :data-folder-key="f.id" :data-folder-id="f.folderId"
+      data-layout-role="card" :data-layout-key="folderLayoutKey(f)"
       :ref="(el: any) => bindFolderEl(f, el)"
       @contextmenu.prevent.stop="openCtx('folder', f, $event)" @click.stop="handleFolderClick(f, $event)" @pointerdown="onFolderPointerDown(f, $event)">
       <template #icon><component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" /></template>
@@ -16,7 +17,7 @@
       </template>
     </FolderCard>
 
-    <FileCard v-for="f in sortedContents.files" :key="f.id" class="hover-card-fx" :ext="f.ext" :display-name="f.displayName" :has-thumb="isImageExt(f.ext)" :selected="selectedIds.has(f.id)" :pre-selected="previewFileIds.has(f.id)" :dragging="draggingFileIds.has(f.id)" :cut="cbStore.type === 'cut' && cbStore.fileIds.includes(f.id)" :data-file-id="f.id" :ref="(el: any) => bindFileEl(f, el)" @contextmenu.prevent.stop="openCtx('file', f, $event)" @click.stop="handleFileClick(f, $event)" @pointerdown="onFilePointerDown(f, $event)">
+    <FileCard v-for="f in sortedContents.files" :key="f.id" class="hover-card-fx" :ext="f.ext" :display-name="f.displayName" :has-thumb="isImageExt(f.ext)" :selected="selectedIds.has(f.id)" :pre-selected="previewFileIds.has(f.id)" :dragging="draggingFileIds.has(f.id)" :cut="cbStore.type === 'cut' && cbStore.fileIds.includes(f.id)" :data-file-id="f.id" data-layout-role="card" :data-layout-key="fileLayoutKey(f)" :ref="(el: any) => bindFileEl(f, el)" @contextmenu.prevent.stop="openCtx('file', f, $event)" @click.stop="handleFileClick(f, $event)" @pointerdown="onFilePointerDown(f, $event)">
       <template #thumb><img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny', revision: f.thumbRevision }" decoding="async" draggable="false" alt="" /><img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card', revision: f.thumbRevision }" :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }" decoding="async" draggable="false" alt="" @load="cardBlobReadyIds.add(f.id)" @error="($event.target as HTMLElement).style.display='none'" /><div class="fc-thumb-fade"></div></template>
       <template #name><span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></template>
       <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
@@ -40,7 +41,7 @@ import FileUploadButton from '@/components/common/file-browser/FileUploadButton.
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
-const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, bindFolderEl, bindFileEl } = props.context
+const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection } = props.context
 </script>
 
 <style scoped>

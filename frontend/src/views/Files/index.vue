@@ -87,9 +87,10 @@
           height: selectionRect.height + 'px',
         }"></div>
 
-        <!-- ── 内容区（导航切换时淡入） ── -->
-        <Transition name="content-fade" mode="out-in">
-        <div :key="JSON.stringify(navPath)" class="content-body">
+        <!-- ── 内容区：目录切换由 Runtime runLayoutMutation 驱动布局事务（Phase 4），
+             不再用 Vue Transition + :key 整体销毁重建，卡片跨目录切换走 Collection
+             Presence 进入/离场，而不是重挂载。 ── -->
+        <div class="content-body">
 
         <!-- ── 回收站视图 ── -->
         <FilesTrashView v-if="currentType === 'trash'" :context="trashViewContext" />
@@ -99,7 +100,6 @@
         <FilesListView v-else :context="listViewContext" />
 
         </div>
-        </Transition>
       </div>
     </div>
 
@@ -224,12 +224,60 @@ function loadContents() { directoryLoader() }
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
 const { folderIconStyle, folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 
+// ── Runtime Core API：浏览区 Surface 与目录切换布局事务（Phase 4） ──
+// 提前声明（早于 useFilesNav），因为 enterFolder/navigateTo/goBack/goForward 的包装
+// 需要在传给下游 composable 之前就绪；domAdapter 本身只依赖 runtime 单例，不依赖任何
+// 目录/内容状态，可以安全前移。
+const RUNTIME_SCOPE = 'files'
+const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
+const domAdapter = createVueRuntimeAdapter(runtime)
+
+/** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
+function hasActiveMove(): boolean {
+  const root = mainRef.value
+  if (!root) return false
+  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
+  for (const card of cards) {
+    const key = card.dataset.layoutKey
+    if (key && runtime.isControlled(key)) return true
+  }
+  return false
+}
+
+/**
+ * 目录切换的布局事务包装（Phase 4）：先量当前可见卡片的位置，执行状态 mutate，
+ * 等 Vue 完成 DOM patch，再播放 FLIP/Collection Presence——取代旧的
+ * `<Transition mode="out-in">` 整体销毁重建。拖拽进行中拒绝导航（对齐 demo 的
+ * hasActiveMove 守卫）。
+ */
+async function withLayoutNav(mutate: () => void): Promise<void> {
+  if (hasActiveMove()) return
+  const root = mainRef.value
+  if (!root) {
+    mutate()
+    return
+  }
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('[data-layout-role="card"]'))
+  await domAdapter.runLayoutMutation({
+    elements,
+    root,
+    mutate,
+    waitForPatch: () => nextTick(),
+  })
+}
+
 // ── 导航 ──
 const {
-  navPath, canGoBack, canGoForward, goBack, goForward,
+  navPath, canGoBack, canGoForward,
+  goBack: rawGoBack, goForward: rawGoForward,
   currentType, currentSeg, projectSeg, canUpload,
-  saveNav, enterFolder, navigateTo, restoreNav, pruneHistoryForFolders,
+  saveNav, enterFolder: rawEnterFolder, navigateTo: rawNavigateTo, restoreNav, pruneHistoryForFolders,
 } = useFilesNav({ loadContents, clearSelection })
+
+function enterFolder(folder: FolderCardMeta): void { void withLayoutNav(() => rawEnterFolder(folder)) }
+function navigateTo(idx: number): void { void withLayoutNav(() => rawNavigateTo(idx)) }
+function goBack(): void { void withLayoutNav(() => rawGoBack()) }
+function goForward(): void { void withLayoutNav(() => rawGoForward()) }
 
 const { jumpToTarget, consumePendingTarget } = useFileLibraryNavigation({
   projectStore,
@@ -570,9 +618,20 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
 // 单文件/单文件夹拖拽完全交给 Interaction Runtime：这里只做 3.2 节允许的事——注册
 // 对象/Surface/Target、同步 DOM ref、订阅 onAction 后转发进现有的 moveFoldersInto/
 // moveFilesInto（乐观更新、回滚、409 处理都不变）。多选继续走上面的 useFileDragDrop。
-const RUNTIME_SCOPE = 'files'
-const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
-const domAdapter = createVueRuntimeAdapter(runtime)
+// RUNTIME_SCOPE / runtimeBrowserSurfaceId / domAdapter 已在文件靠前处声明（Phase 4 需要
+// 提前给 withLayoutNav 使用）。
+
+function folderLayoutKey(f: FolderCardMeta): string {
+  // 真实文件夹卡复用 Phase 1 已全局唯一的 fileObjectId；伪文件夹卡（个人文件/项目/状态分组
+  // 等非 Runtime Object）没有该 id，仍需要一个全局唯一的 layout key 才能参与目录切换的
+  // Collection Presence 兄弟卡 FLIP，用固定前缀 + f.id 兜底。
+  return f.type === 'folder' && f.folderId != null
+    ? fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId)
+    : `${RUNTIME_SCOPE}:pseudo-folder:${f.id}`
+}
+function fileLayoutKey(f: FileMeta): string {
+  return fileObjectId(RUNTIME_SCOPE, 'file', f.id)
+}
 
 function bindFolderEl(f: FolderCardMeta, target: unknown) {
   if (f.type !== 'folder' || f.folderId == null) return
@@ -774,7 +833,7 @@ const gridViewContext = {
   deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
   onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
-  bindFolderEl, bindFileEl,
+  bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection: 'files-browser',
 }
 const listViewContext = {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
@@ -784,7 +843,7 @@ const listViewContext = {
   previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
-  bindFolderEl, bindFileEl,
+  bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection: 'files-browser',
 }
 
 function selCut() {
@@ -1346,7 +1405,4 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .drop-fade-enter-from, .drop-fade-leave-to { opacity: 0; }
 
 .content-body { width: 100%; height: 100%; display: contents; }
-.content-fade-enter-active { transition: opacity 0.12s ease; }
-.content-fade-leave-active { transition: opacity 0.04s ease; }
-.content-fade-enter-from, .content-fade-leave-to { opacity: 0; }
 </style>

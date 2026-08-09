@@ -254,7 +254,7 @@ const {
   getFiles: () => sortedCurrentFiles.value,
   openPreview: file => openPreview(file),
   isPreviewable,
-  enterFolder: folder => pmEnterFolder(folder),
+  enterFolder: folder => pmEnterFolderWrapped(folder),
 })
 
 // Tier 3：数据从全局 filesCache store 派生（currentFiles/currentFolders/pmFolderCount）。所有增删改
@@ -491,6 +491,51 @@ onUnmounted(() => {
   domAdapter.dispose()
 })
 
+// ── 目录切换布局事务（Phase 4）：包装 pmEnterFolder/pmNavigateTo/pmGoBack/pmGoForward，
+// 让目录切换走 runLayoutMutation（先量卡片位置 → mutate 目录状态 → 等 DOM patch → 播放
+// FLIP/Collection Presence），取代任何整体销毁重建。文件面板本来就没有 Transition
+// mode="out-in" 包裹卡片列表（见上方 410 行注释），这里只是把"怎么触发目录状态变化"
+// 接到 Runtime 布局事务上。拖拽进行中拒绝导航，对齐 demo 的 hasActiveMove 守卫。
+function hasActivePmMove(): boolean {
+  const root = pmGridRef.value
+  if (!root) return false
+  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
+  for (const card of cards) {
+    const key = card.dataset.layoutKey
+    if (key && runtime.isControlled(key)) return true
+  }
+  return false
+}
+async function withPmLayoutNav(mutate: () => void): Promise<void> {
+  if (hasActivePmMove()) return
+  const root = pmGridRef.value
+  if (!root) {
+    mutate()
+    return
+  }
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('[data-layout-role="card"]'))
+  await domAdapter.runLayoutMutation({
+    elements,
+    root,
+    mutate,
+    waitForPatch: () => nextTick(),
+  })
+}
+function pmEnterFolderWrapped(folder: FolderMeta): void { void withPmLayoutNav(() => pmEnterFolder(folder)) }
+function pmNavigateToWrapped(idx: number): void { void withPmLayoutNav(() => pmNavigateTo(idx)) }
+function pmGoBackWrapped(): void { void withPmLayoutNav(() => pmGoBack()) }
+function pmGoForwardWrapped(): void { void withPmLayoutNav(() => pmGoForward()) }
+
+// Collection Presence 标记（Phase 4）：collection 名带 projectId，与文件页的
+// 'files-browser' 互不相同，data-layout-key 复用 Phase 1 已全局唯一的 fileObjectId。
+const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
+function pmFolderLayoutKey(folder: FolderMeta): string {
+  return fileObjectId(RUNTIME_SCOPE.value, 'folder', folder.id)
+}
+function pmFileLayoutKey(file: FileMeta): string {
+  return fileObjectId(RUNTIME_SCOPE.value, 'file', file.id)
+}
+
 // ── 文件夹 ────────────────────────────────────────────────────────────────────
 
 const showNewFolder  = ref(false)
@@ -701,10 +746,10 @@ const filePanelContext = {
   stagesExpanded,
   togglePmStages,
   pmCanGoBack,
-  pmGoBack,
+  pmGoBack: pmGoBackWrapped,
   pmCanGoForward,
-  pmGoForward,
-  pmNavigateTo,
+  pmGoForward: pmGoForwardWrapped,
+  pmNavigateTo: pmNavigateToWrapped,
   folderStack,
   pmBcDragOverIdx,
   pmCbStore,
@@ -733,6 +778,9 @@ const filePanelContext = {
   sortedCurrentFolders,
   pmFolderCount,
   accentColor,
+  folderLayoutKey: pmFolderLayoutKey,
+  fileLayoutKey: pmFileLayoutKey,
+  layoutCollection: pmLayoutCollection,
   pmDragOverFolderId,
   pmSelectedFolderIds,
   pmPreviewFolderIds,
