@@ -68,7 +68,7 @@ def _log_traj(name: str, user_id, args: dict, ok: bool, note: str, t0: float) ->
             summary[k] = v if isinstance(v, (int, float, bool)) or v is None else "***"
         _ms = int((time.monotonic() - t0) * 1000)
         rec = {"t": "tool", "tool": name, "user": str(user_id)[:8], "ok": ok, "ms": _ms, "args": summary}
-        from agent.trace import get_trace
+        from agent.runtime.trace import get_trace
         if get_trace():
             rec["trace"] = get_trace()   # 全链路 trace：与网关「收到」行、worker 回复行同 id 可 grep 串联
         if not ok and note:
@@ -137,7 +137,7 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         # （实测：取消后仍看到「我搜搜看有没有合适的图」这类 start_message）。
         im = imctx.get_im()
         if im and im.get("puid"):
-            from agent import runtime_state as rt
+            from agent.runtime import runtime_state as rt
             if await rt.is_cancelled(
                 im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
             ):

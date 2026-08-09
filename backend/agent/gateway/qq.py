@@ -295,7 +295,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             await _qq_ack(channel_id, chat_type, ack_target, "文件收到啦，让我看看~", msg_id)
     if not text and not all_attachments and not quoted_text:
         return
-    from agent import trace
+    from agent.runtime import trace
     tid = trace.new_trace()
     payload = {
         "platform": "qq",

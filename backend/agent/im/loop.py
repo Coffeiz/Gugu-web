@@ -194,7 +194,7 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
     bot_id/scope_id 与活跃集合同作用域：取消标志按会话隔离，避免跨群误取消。
     """
     if decision.get("action") == "cancel":
-        from agent import runtime_state
+        from agent.runtime import runtime_state
         try:
             written = await runtime_state.request_cancel(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
@@ -226,7 +226,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
                                   *, bot_id: str = "", scope_id: str = "") -> None:
     """同步 Gateway 回调使用的取消动作。"""
     if decision.get("action") == "cancel":
-        from agent import runtime_state
+        from agent.runtime import runtime_state
         try:
             written = runtime_state.request_cancel_sync(
                 platform, bot_id or "", scope_id or platform_user_id, platform_user_id
@@ -253,7 +253,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
 
 async def start_im_activity(payload: dict, platform: str, platform_user_id: str) -> ImActivity:
     """设置 IM 忙碌态，并启动平台支持的 typing 指示器。"""
-    from agent import runtime_state
+    from agent.runtime import runtime_state
     from agent.gateway import wechat
 
     # 会话作用域：bot_id=channel_id、scope_id=chat_id（私聊回退到 puid），与活跃集合同 key。
@@ -273,7 +273,7 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
 
 async def finish_im_activity(activity: ImActivity) -> None:
     """无论模型成功、失败或取消，都清理忙碌态和 typing 指示器。"""
-    from agent import runtime_state
+    from agent.runtime import runtime_state
     from agent.gateway import wechat
 
     await runtime_state.clear_state(
@@ -656,7 +656,7 @@ async def dispatch_im_message(payload: dict):
     可测试的 IM Loop。
     """
     from agent.security import logsafe
-    from agent import trace
+    from agent.runtime import trace
     from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
 
     if payload.get("platform") == "qq":

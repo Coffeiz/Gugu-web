@@ -1,6 +1,6 @@
 # Agent 目录职责整理与模块化重构 PRD
 
-> 状态：🟡 实施中（Phase 0、Phase 1、Phase 2 已完成，后续阶段按依赖门槛推进）
+> 状态：🟡 实施中（Phase 0 至 Phase 3a 已完成，Phase 3b 复审后保留 `loop_drivers.py` 在根目录）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 所属层：Agent / 后端模块化
@@ -18,7 +18,7 @@
 | 实施计划与依赖门槛 | ✅ 已完成 | 已明确 LLM-3 对 `providers.py` 的优先接管关系、各 Phase 的迁移边界、验证矩阵和回滚方式。 |
 | Phase 1：安全模块归组 | ✅ 已完成 | 已迁入 `security/`，根目录保留仅转发导出；生产代码已切换 canonical import，安全/核心重点测试 46 个通过。 |
 | Phase 2：LLM 非 Provider 基础设施归组 | ✅ 已完成 | 已迁入 `llm/`，根目录保留仅转发导出；`providers.py` 未复制，LLM/核心重点测试 37 个通过。 |
-| Phase 3：运行时基础设施归组 | 🔲 待实施 | 先迁 `runtime_state.py`、`trace.py`；`loop_drivers.py` 等依赖 LLM-3 与循环依赖复核后再决定。 |
+| Phase 3：运行时基础设施归组 | ✅ 已完成 | `runtime_state.py`、`trace.py` 已迁入 `runtime/`；依赖复审后 `loop_drivers.py` 保留为根目录循环控制流入口，运行时/IM/核心重点测试 69 个通过。 |
 | Phase 4：领域服务归组 | 🔲 待实施 | 只迁移具有清晰共同边界的模块；`domain/` 是否建立必须由依赖图决定，不以减少根目录文件数为目标。 |
 | 兼容入口收敛 | 🔲 待实施 | 所有外部导入、测试和脚本迁移完成，并经过完整测试周期和 devserver 验证后，再删除根目录兼容模块。 |
 
@@ -236,6 +236,13 @@ backend/agent/
 - 重点执行流式多轮、工具调用、取消、IM、定时任务和网页 SSE 回归。
 
 完成条件：核心循环不出现新循环依赖，取消/重试/工具轮次行为不变，Worker 与 backend 都能启动。
+
+**Phase 3 实施结果（2026-08-09）**：
+
+- 新增 `agent/runtime/`，实现归入 `runtime_state.py`、`trace.py`。
+- 根目录同名模块保留兼容入口，并使用模块别名保留私有辅助函数和旧 monkeypatch 路径；生产代码已切换 canonical import。
+- `loop_drivers.py` 仍留在 `agent/` 根目录：它是循环控制流入口，内部依赖 Provider、Context、Tools，并被 `core.py` 延迟导入；移动它不会带来清晰职责收益，反而会改变循环导入时序。
+- canonical/兼容导入 smoke 通过；Runtime、IM、网关、取消链路、核心循环和 Runner 测试 `69 passed`。
 
 #### Phase 4：领域模块归属决策与最小迁移
 

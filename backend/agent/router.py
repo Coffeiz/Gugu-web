@@ -22,7 +22,7 @@
 咕咕在跑别人的 loop 时，当前用户发「取消」返回 `no_permission`（「这个不是你的任务哦，咕咕还在忙～」），
 不真的取消；发起者本人取消则正常中断。
 """
-from agent import runtime_state as st
+from agent.runtime import runtime_state as st
 
 # intent
 PROGRESS = "progress"

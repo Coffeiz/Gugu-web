@@ -185,7 +185,7 @@ async def _im_cancelled() -> bool:
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return False
-    from agent import runtime_state as rt
+        from agent.runtime import runtime_state as rt
     cancelled = await rt.is_cancelled(
         im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
     )
@@ -208,7 +208,7 @@ async def _im_set_tool_state(tool_name: str) -> None:
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return
-    from agent import runtime_state as rt
+        from agent.runtime import runtime_state as rt
     fine = rt.TOOL_STATE.get(tool_name)
     if fine:
         await rt.set_state(

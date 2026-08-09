@@ -219,7 +219,7 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
         if not text and not attachments:
             return
         open_id = ev.sender.sender_id.open_id if (ev.sender and ev.sender.sender_id) else None
-        from agent import trace
+        from agent.runtime import trace
         tid = trace.new_trace()
 
         # 引用消息：用户「回复」某条历史消息时，parent_id 指向那条被引用的消息——飞书只给 id，
