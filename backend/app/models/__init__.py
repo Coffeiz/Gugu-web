@@ -696,6 +696,19 @@ class SystemLog(Base):
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 
+# ── VideoCacheSnapshot（PRD-STORAGE-1 Phase B 存储占用趋势面板）───────────────
+# video_cache_gc 每次跑完清理后落一条快照（对象数 + 总字节数），管理后台画趋势图，
+# 判断第 4 节"要不要给 .video_cache/ 加配额上限"这个待确认问题需不需要提前处理。
+
+class VideoCacheSnapshot(Base):
+    __tablename__ = "video_cache_snapshots"
+
+    id:           Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    taken_at:     Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    object_count: Mapped[int]      = mapped_column(Integer, default=0)
+    total_bytes:  Mapped[int]      = mapped_column(BigInteger, default=0)
+
+
 # ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────
 
 class FrontendEvent(Base):

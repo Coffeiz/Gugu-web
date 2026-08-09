@@ -43,6 +43,8 @@ async def _sweep_locked() -> int:
     redis = R.get_redis()
     now_ts = now_utc().timestamp()
     deleted = 0
+    remaining_count = 0
+    remaining_bytes = 0
     for key in await storage.list_keys():
         user_id, cache_key = _parse_video_cache_path(key)
         if not user_id or not cache_key:
@@ -51,20 +53,51 @@ async def _sweep_locked() -> int:
         try:
             marker = await redis.get(alive_key)
         except Exception:
-            continue   # Redis 不可用时保守跳过，不误删
+            # Redis 不可用时保守跳过删除判断（不误删），但仍计入快照统计——
+            # 这个对象客观上还占着空间，快照要如实反映当前占用，不能因为
+            # Redis 暂时连不上就在图表上凭空"消失"一块。
+            info = await storage.stat(key)
+            if info is not None:
+                remaining_count += 1
+                remaining_bytes += info.size
+            continue
         if marker:
+            info = await storage.stat(key)
+            if info is not None:
+                remaining_count += 1
+                remaining_bytes += info.size
             continue
         info = await storage.stat(key)
         if info is None or info.mtime is None:
             continue
         if now_ts - info.mtime < _MIN_AGE_WITHOUT_MARKER:
+            remaining_count += 1
+            remaining_bytes += info.size
             continue
         try:
             await storage.delete(key)
             deleted += 1
         except Exception:
-            pass
+            remaining_count += 1
+            remaining_bytes += info.size
+    await _record_snapshot(remaining_count, remaining_bytes)
     return deleted
+
+
+async def _record_snapshot(object_count: int, total_bytes: int) -> None:
+    """清理跑完后落一条占用快照，供管理后台画趋势图（第 4 节"要不要加配额上限"
+    这个待确认问题需要观察一段时间的真实数据才能判断）。快照失败不影响清理本身
+    的返回结果，只记日志。"""
+    try:
+        from app.models import VideoCacheSnapshot
+        import app.db.session as db_session
+        db_session.ensure_engine()
+        async with db_session._SessionLocal() as db:
+            db.add(VideoCacheSnapshot(object_count=object_count, total_bytes=total_bytes))
+            await db.commit()
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("app.core.video_cache_gc.record_snapshot", exc)
 
 
 async def sweep_video_cache() -> int:

@@ -270,7 +270,7 @@ class _FakeGcRedis(_FakeRedis):
 
 
 @pytest.mark.asyncio
-async def test_video_cache_gc_skips_when_marker_alive(storage, monkeypatch):
+async def test_video_cache_gc_skips_when_marker_alive(db, storage, monkeypatch):
     import os, time
     fake_redis = _FakeGcRedis()
     monkeypatch.setattr(video_cache_gc.R, "get_redis", lambda: fake_redis)
@@ -290,7 +290,7 @@ async def test_video_cache_gc_skips_when_marker_alive(storage, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_video_cache_gc_deletes_old_without_marker(storage, monkeypatch):
+async def test_video_cache_gc_deletes_old_without_marker(db, storage, monkeypatch):
     import os, time
     fake_redis = _FakeGcRedis()
     monkeypatch.setattr(video_cache_gc.R, "get_redis", lambda: fake_redis)
@@ -310,7 +310,7 @@ async def test_video_cache_gc_deletes_old_without_marker(storage, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_video_cache_gc_skips_recent_without_marker(storage, monkeypatch):
+async def test_video_cache_gc_skips_recent_without_marker(db, storage, monkeypatch):
     fake_redis = _FakeGcRedis()
     monkeypatch.setattr(video_cache_gc.R, "get_redis", lambda: fake_redis)
 
@@ -327,7 +327,7 @@ async def test_video_cache_gc_skips_recent_without_marker(storage, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_video_cache_gc_noop_when_lock_held(storage, monkeypatch):
+async def test_video_cache_gc_noop_when_lock_held(db, storage, monkeypatch):
     import os, time
     fake_redis = _FakeGcRedis(acquirable=False)
     monkeypatch.setattr(video_cache_gc.R, "get_redis", lambda: fake_redis)
@@ -403,3 +403,35 @@ async def test_alive_marker_present_but_cache_file_missing_retranscodes(storage,
     assert call_count == 1, "marker 存在但文件缺失时应该重新转码，不能报错/返回空"
     assert await storage.exists(cache_path), "重新转码后应该重建缓存文件"
     assert fake_redis.store.get(alive_key) == "1"
+
+
+@pytest.mark.asyncio
+async def test_video_cache_gc_records_snapshot(db, storage, monkeypatch):
+    """清理跑完后应该落一条 VideoCacheSnapshot（管理后台趋势面板用），
+    对象数/总字节数要反映清理后的剩余占用。"""
+    from app.models import VideoCacheSnapshot
+    from sqlalchemy import select
+
+    fake_redis = _FakeGcRedis()
+    monkeypatch.setattr(video_cache_gc.R, "get_redis", lambda: fake_redis)
+
+    # 一个还活着（marker 在），一个该被清理（marker 不在 + 物理年龄够老）
+    kept_path = "u1/.video_cache/kept.mp4"
+    removed_path = "u1/.video_cache/removed.mp4"
+    await storage.put(kept_path, b"x" * 100, "video/mp4")
+    await storage.put(removed_path, b"y" * 50, "video/mp4")
+    fake_redis.store[chat_attach._video_cache_alive_key("u1", "kept")] = "1"
+
+    import os, time
+    old = time.time() - video_cache_gc._MIN_AGE_WITHOUT_MARKER - 3600
+    os.utime(storage.root / removed_path, (old, old))
+
+    n = await video_cache_gc.sweep_video_cache()
+    assert n == 1
+
+    snapshot = (await db.execute(
+        select(VideoCacheSnapshot).order_by(VideoCacheSnapshot.id.desc())
+    )).scalars().first()
+    assert snapshot is not None
+    assert snapshot.object_count == 1, "清理后只剩那个 marker 还活着的对象"
+    assert snapshot.total_bytes == 100

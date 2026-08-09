@@ -156,7 +156,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 - ~~安全网扫描的频率~~ **已定**：每天一次（阈值仍是 90 天）。扫描只是按索引查询，成本低；更快发现 integrity violation（真实数据丢失信号）比省一点扫描频率更重要。
 - ~~完整性异常触发后具体怎么响应~~ **已定**：除了记录到受限诊断出口，顺带补一条 `SystemLog`（后台「系统日志」页可见），方便运维不用登服务器也能发现——**必须先过 `redact()`**（`app/core/redaction.py` 的规则：任何进 SystemLog/Debug 面板的文案都要脱敏，不能把 `storage_key`/路径等原始信息直接写进去）。
 - ~~视频转码缓存 alive marker 的 TTL~~ **已定**：7 天，对齐旧的 `chat_attach.TTL`，减少一个新的自定义常量。
-- `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。
+- `.video_cache/` 的转码产物是否需要按用户设置存储配额上限（防止极端情况下缓存本身占用过多空间）？本 PRD 暂不引入，后续如有需要再评估。**观察工具已就绪**（2026-08-09）：新增 `video_cache_snapshots` 表，`video_cache_gc` 每次清理跑完后落一条占用快照（对象数+总字节数），管理后台「存储对账」页新增趋势图卡片（`GET /api/v1/admin/config/video-cache-snapshots`）——之后靠这条曲线的真实走势判断，不用再猜。
 
 ---
 
