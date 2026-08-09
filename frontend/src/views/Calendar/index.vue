@@ -270,26 +270,8 @@
     </Transition>
   </Teleport>
 
-  <!-- 日期格右键菜单 -->
-  <Teleport to="body">
-    <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
-      <div
-        v-if="cellCtx.show"
-        ref="cellCtxRef"
-        class="popup-menu cal-ctx-menu"
-        :style="{ position:'fixed', left: cellCtx.x+'px', top: cellCtx.y+'px', zIndex: 3000, minWidth:'110px' }"
-      >
-        <button v-if="cellCtx.kind === 'timed'" class="popup-menu-item" @click="ctxAddEvent">
-          <PhCalendarPlus :size="13" weight="bold" />
-          新建活动
-        </button>
-        <button v-if="cellCtx.kind !== 'timed'" class="popup-menu-item" @click="ctxAddProject">
-          <PhFolderPlus :size="13" weight="bold" />
-          新建项目
-        </button>
-      </div>
-    </Transition>
-  </Teleport>
+  <CalendarContextMenu ref="cellCtxRef" :open="cellCtx !== null" :context="cellCtx" :position="cellCtxPosition"
+                       @add-event="ctxAddEvent" @add-project="ctxAddProject" />
 
   <!-- 编辑事件弹窗 -->
   <Teleport to="body">
@@ -338,8 +320,10 @@ import CalendarToolbar from './components/CalendarToolbar.vue'
 import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
+import CalendarContextMenu from './components/CalendarContextMenu.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
+import type { CalendarContext } from './domain/calendarContext'
 import EventEditFields from '@/components/events/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
@@ -376,17 +360,6 @@ interface NewEventForm {
   endTime: string
   description: string
   allDay: boolean
-}
-
-interface CellCtxState {
-  show: boolean
-  x: number
-  y: number
-  iso: string | null
-  range: DateRange | null
-  kind: 'month' | 'week' | 'timed' | 'allday'
-  time: string
-  endTime: string
 }
 
 interface MonthDayCell {
@@ -505,7 +478,7 @@ function onCellMouseDown(d: MonthDayCell, e: MouseEvent) {
   e.preventDefault()
 
   const startIso = d.iso
-  cellCtx.show = false
+  cellCtx.value = null
   // mousedown 不清 selRange、不进 range 态：否则单击时 activeRange 瞬间变 null，会露出旧 selectedDate（跳一下）。
   // 只有真拖到别的天才进 range；单击在 mouseup 直接切到 selectedDate。
   let dragging = false
@@ -539,38 +512,39 @@ function onCellMouseDown(d: MonthDayCell, e: MouseEvent) {
 }
 
 // ── 右键菜单 ─────────────────────────────────────────────────────────────────
-const cellCtx = reactive<CellCtxState>({ show: false, x: 0, y: 0, iso: null, range: null, kind: 'month', time: '', endTime: '' })
-const cellCtxRef = ref<HTMLElement | null>(null)
+const cellCtx = ref<CalendarContext | null>(null)
+const cellCtxPosition = reactive({ x: 0, y: 0 })
+const cellCtxRef = ref<InstanceType<typeof CalendarContextMenu> | null>(null)
 
 function onWeekContextMenu(e: MouseEvent, week: MonthDayCell[]) {
   if ((e.target as HTMLElement).closest('.event-chip,.chip-more-btn,.project-bar')) return
   const iso = isoFromPoint(e.clientX, e.clientY)
   if (!iso) return
-  cellCtx.kind  = 'month'
-  cellCtx.time  = ''; cellCtx.endTime = ''
-  cellCtx.iso   = iso
-  cellCtx.range = activeRange.value ?? null   // 右键时快照，避免后续被 handleClickOutside 清掉
-  cellCtx.x     = e.clientX
-  cellCtx.y     = e.clientY
-  cellCtx.show  = true
+  cellCtx.value = { type: 'month-cell', date: iso, range: activeRange.value ?? null }
+  cellCtxPosition.x = e.clientX
+  cellCtxPosition.y = e.clientY
 }
 
 function ctxAddEvent() {
-  cellCtx.show = false
-  const iso = cellCtx.range?.start ?? cellCtx.iso ?? (selectedDate.value || todayIso.value)
-  const tr = cellCtx.kind === 'timed'  ? { time: cellCtx.time, endTime: cellCtx.endTime }
-           : cellCtx.kind === 'allday' ? { time: '', endTime: '' }       // 全天区 → 无时间活动
+  const context = cellCtx.value
+  cellCtx.value = null
+  if (!context) return
+  const iso = context.type === 'week-column'
+    ? context.date
+    : context.range?.start ?? context.date ?? (selectedDate.value || todayIso.value)
+  const tr = context.type === 'week-column' ? { time: context.time, endTime: context.endTime }
+           : context.type === 'allday' ? { time: '', endTime: '' }
            : defaultTimeRange()
-  newEvent.value = { name: '', date: iso, ...tr, description: '', allDay: cellCtx.kind === 'allday' }
+  newEvent.value = { name: '', date: iso, ...tr, description: '', allDay: context.type === 'allday' }
   resetReminder()
   const ADD_H = 260
-  const ctxTop = (window.innerHeight - cellCtx.y - 8 >= ADD_H)
-    ? cellCtx.y + 8
-    : cellCtx.y - ADD_H - 8
+  const ctxTop = (window.innerHeight - cellCtxPosition.y - 8 >= ADD_H)
+    ? cellCtxPosition.y + 8
+    : cellCtxPosition.y - ADD_H - 8
   addFormStyle.value = {
     position: 'fixed',
     top:  Math.max(8, ctxTop) + 'px',
-    left: Math.max(8, Math.min(cellCtx.x - 120, window.innerWidth - 258)) + 'px',
+    left: Math.max(8, Math.min(cellCtxPosition.x - 120, window.innerWidth - 258)) + 'px',
     width: '240px', zIndex: 1000,
   }
   showAddForm.value = true
@@ -578,10 +552,13 @@ function ctxAddEvent() {
 }
 
 function ctxAddProject() {
-  cellCtx.show = false
-  uiStore.newProjectRange = cellCtx.range
+  const context = cellCtx.value
+  cellCtx.value = null
+  if (!context) return
+  const range = context.type === 'month-cell' || context.type === 'allday' ? context.range : null
+  uiStore.newProjectRange = range
     ?? activeRange.value
-    ?? { start: cellCtx.iso || selectedDate.value || todayIso.value, end: cellCtx.iso || selectedDate.value || todayIso.value }
+    ?? { start: context.date || selectedDate.value || todayIso.value, end: context.date || selectedDate.value || todayIso.value }
   uiStore.openNewProject = true
 }
 
@@ -622,7 +599,7 @@ function onAllDayDown(e: MouseEvent) {
   const startIso = _isoFromAllDayX(e.clientX)
   if (!startIso) return
   e.preventDefault()
-  cellCtx.show = false
+  cellCtx.value = null
   // 关键：mousedown 不清空 selRange、不进 range 态，否则单击时选中层会先淡出(变淡)再淡入。
   // 只有真拖到「别的天」才进入 range 选择；单击在 mouseup 直接切到被选中态（旧选区一直在，无变淡反馈）。
   let dragging = false
@@ -660,11 +637,8 @@ function onAllDayContextMenu(e: MouseEvent) {
   if ((e.target as HTMLElement).closest('.wv-pbar,.wv-allday-ev,.wv-more')) return
   const iso = _isoFromAllDayX(e.clientX)
   if (!iso) return
-  cellCtx.kind  = 'allday'
-  cellCtx.iso   = iso
-  cellCtx.range = activeRange.value ?? null
-  cellCtx.time  = ''; cellCtx.endTime = ''
-  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
+  cellCtx.value = { type: 'allday', date: iso, range: activeRange.value ?? null }
+  cellCtxPosition.x = e.clientX; cellCtxPosition.y = e.clientY
 }
 // ── 周视图·小时区：右键在该天该时刻新建活动（有暗色选区则用选区时间段）──
 function onColContextMenu(e: MouseEvent, d: WeekViewDay) {
@@ -679,11 +653,8 @@ function onColContextMenu(e: MouseEvent, d: WeekViewDay) {
     const h = _hourAt(e.clientY, (e.currentTarget as HTMLElement).getBoundingClientRect())
     time = `${p(h)}:00`; endTime = h + 1 >= 24 ? '00:00' : `${p(h + 1)}:00`
   }
-  cellCtx.kind = 'timed'
-  cellCtx.iso  = d.iso
-  cellCtx.range = null
-  cellCtx.time = time; cellCtx.endTime = endTime
-  cellCtx.x = e.clientX; cellCtx.y = e.clientY; cellCtx.show = true
+  cellCtx.value = { type: 'week-column', date: d.iso, time, endTime }
+  cellCtxPosition.x = e.clientX; cellCtxPosition.y = e.clientY
 }
 
 function onWeekMouseMove(e: MouseEvent, week: MonthDayCell[]) {
@@ -1668,8 +1639,8 @@ function handleClickOutside(e: MouseEvent) {
     if (!morePopupRef.value?.contains(target) && !editFormRef.value?.contains(target))
       morePopup.value.open = false
   }
-  if (cellCtx.show) {
-    if (!cellCtxRef.value?.contains(target)) cellCtx.show = false
+  if (cellCtx.value) {
+    if (!cellCtxRef.value?.contains(target)) cellCtx.value = null
   }
 }
 
