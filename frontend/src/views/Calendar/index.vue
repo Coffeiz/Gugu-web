@@ -378,11 +378,11 @@ function ctxAddEvent() {
 function ctxAddProject() {
   const context = cellCtx.value
   cellCtx.value = null
-  if (!context) return
-  const range = context.type === 'month-cell' || context.type === 'allday' ? context.range : null
+  const range = context?.type === 'month-cell' || context?.type === 'allday' ? context.range : null
+  const fallbackDate = context?.date || selectedDate.value || todayIso.value
   uiStore.newProjectRange = range
     ?? activeRange.value
-    ?? { start: context.date || selectedDate.value || todayIso.value, end: context.date || selectedDate.value || todayIso.value }
+    ?? { start: fallbackDate, end: fallbackDate }
   uiStore.openNewProject = true
 }
 

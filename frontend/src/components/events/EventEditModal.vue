@@ -25,11 +25,13 @@ import { PhX } from '@phosphor-icons/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
+import { useLiveStore } from '@/stores/live'
 import { useEventEditForm, type EditingEvent } from '@/composables/useEventEditForm'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import EventEditFields from './EventEditFields.vue'
 
 const eventModalStore = useEventModalStore()
+const liveStore = useLiveStore()
 const form = useEventEditForm()
 const event = ref<EditingEvent | null>(null)
 // 不在请求刚开始时先挂一个「加载中」空弹窗：活动引用来自思维面板时，先取齐活动和
@@ -69,11 +71,16 @@ function close() { eventModalStore.closeModal() }
 
 async function onSave() {
   if (!event.value?.name) return
+  const eventId = event.value.id as number
   try {
     await form.saveEvent(event.value)
     close()
   } catch (e: any) {
-    if (e?.status === 409) showAppError('活动已被其他用户修改，已刷新页面')
+    if (e?.status === 409) {
+      showAppError('活动已被其他用户修改，已刷新页面')
+      await load(eventId)
+      liveStore.bump('calendar')
+    }
   }
 }
 async function onDelete() {

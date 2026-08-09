@@ -38,7 +38,7 @@ defineExpose({ contains })
 </script>
 
 <style>
-.cal-month-picker { position: fixed; background: rgba(255,255,255,0.82); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.9); border-radius: 13px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14); padding: 14px; }
+.cal-month-picker { position: fixed; background: var(--panel-bg); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.82); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14); padding: 14px; }
 .picker-year-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .picker-year { font-size: 13px; font-weight: 700; color: #1e2028; }
 .picker-nav { width: 26px; height: 26px; border-radius: 7px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #8a8fa8; transition: background 0.12s; }

@@ -74,7 +74,7 @@ defineEmits<{
 const addButton = ref<HTMLElement | null>(null)
 </script>
 
-<style>
+<style scoped>
 .cal-done { opacity: 0.45; }
 .cal-done:hover { opacity: 0.7; }
 .cal-done-mark { display: inline-flex; vertical-align: middle; margin-left: 3px; color: #6f7098; }

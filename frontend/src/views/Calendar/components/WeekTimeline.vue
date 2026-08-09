@@ -160,6 +160,8 @@ const emit = defineEmits<{
 .wv-pbar.bar-end { border-radius: 0 99px 99px 0; }
 .wv-pbar.bar-start.bar-end { border-radius: 99px; }
 .wv-more { position: absolute; box-sizing: border-box; overflow: hidden; z-index: 1; }
+.chip-more-btn.wv-more { height: 18px; }
+.wv-more:hover { background: rgba(123,127,178,0.22); }
 .wv-body { flex: 1; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
 .wv-grid { display: flex; position: relative; }
 .wv-hours { width: 46px; flex: none; }
