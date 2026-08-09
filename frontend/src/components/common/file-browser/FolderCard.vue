@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="rootEl"
     v-bind="$attrs"
     class="folder-card"
     :class="{ selected, 'pre-selected': preSelected, 'drag-over': dragOver }"
@@ -35,7 +36,12 @@
  * 文件夹网格卡片的共享展示壳。
  * 文件库和项目文件区保留各自的点击、拖拽、重命名和操作按钮，通过根节点事件透传与插槽接入。
  */
+import { ref } from 'vue'
+
 defineOptions({ inheritAttrs: false })
+
+const rootEl = ref<HTMLElement | null>(null)
+defineExpose({ rootEl })
 
 defineProps({
   displayName: { type: String, required: true },

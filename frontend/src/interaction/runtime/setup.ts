@@ -15,6 +15,21 @@ export function setupInteractionRuntime(): void {
     // "被拎着"的悬垂感，不是简单的居中或按点击位置对齐。
     grabAlign: { offsetY: 12 },
   })
+  // 文件/文件夹卡片：落地目标是文件夹/面包屑这类语义容器，用 landingMode:'target'
+  // 让代理松手后从第一帧开始缩小淡出，同时继承 landing 的释放速度、旋转与位置运动
+  // （效果基准是 gugu-interaction-runtime demo FileSystemDemo.vue，不迁移旧手感）。
+  runtime.registerObjectType('file-item', {
+    defaultVisualMode: 'detach',
+    landingMode: 'target',
+    motion: { enabled: true },
+    preserveMoveTarget: true,
+  })
+  runtime.registerObjectType('folder-item', {
+    defaultVisualMode: 'detach',
+    landingMode: 'target',
+    motion: { enabled: true },
+    preserveMoveTarget: true,
+  })
   runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({
     flip: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },

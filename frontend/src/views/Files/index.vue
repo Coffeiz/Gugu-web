@@ -43,6 +43,7 @@
           <button class="bc-item"
             :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg) }"
             :data-bc-idx="i"
+            :ref="(el: any) => bindBreadcrumbEl(i, seg, el)"
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
@@ -145,7 +146,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from 'vue'
 import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
@@ -194,6 +195,15 @@ import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFil
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
+import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import {
+  fileObjectId,
+  browserSurfaceId as makeBrowserSurfaceId,
+  folderSurfaceId,
+  parseFolderSurfaceId,
+  breadcrumbSurfaceId,
+  parseBreadcrumbSurfaceId,
+} from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 
 const projectStore = useProjectStore()
 const cacheStore   = useFilesCacheStore()
@@ -512,11 +522,25 @@ function _selectedFolderIdNums() {
   return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
 }
 
+// 与 useFileDragDrop.ts _startCardDrag 里的 isMulti 判断完全一致：这张卡此刻处于选中态，且
+// 自己这一类（文件夹/文件）的选区非空。只有这个条件为真时，旧的 pointer 拖拽编排才接管——
+// 单选场景交给下面的 Runtime Core API 对象（abilities 含 'move'）独占 pointerdown，避免
+// 同一次抓取被两套 session 同时接管。
+function isFolderRoutedToLegacyDrag(folderKey: string): boolean {
+  return selectedFolderKeys.value.has(folderKey) && _selectedFolderIdNums().size > 0
+}
+function isFileRoutedToLegacyDrag(fileId: number): boolean {
+  return selectedIds.value.has(fileId) && selectedIds.value.size > 0
+}
+
 function onFolderPointerDown(f: FolderCardMeta, e: PointerEvent) {
   // 全部文件根目录下"个人文件/项目文件/回收站"是伪文件夹卡片（type 不是 'folder'，没有真实
   // folderId），不能拖拽——之前没挡，f.folderId 是 undefined，落点判定/吸入动画照样能触发
   // （只是数据层最终 API 调用会因 id 无效而静默失败），表现为"能拖进别的卡片，但只有动画有效果"。
   if (f.type !== 'folder' || f.folderId == null) return
+  // 单选（未参与多选）时这张卡在 Runtime 里注册了 abilities:['move']，pointerdown 已经被
+  // Runtime 接管，旧编排不再重复起一份 session。
+  if (!isFolderRoutedToLegacyDrag(f.id)) return
   _onFolderPointerDown(e, {
     itemId: f.folderId,
     isSelected: selectedFolderKeys.value.has(f.id),
@@ -527,6 +551,7 @@ function onFolderPointerDown(f: FolderCardMeta, e: PointerEvent) {
   })
 }
 function onFilePointerDown(f: FileMeta, e: PointerEvent) {
+  if (!isFileRoutedToLegacyDrag(f.id)) return
   _onFilePointerDown(e, {
     itemId: f.id,
     isSelected: selectedIds.value.has(f.id),
@@ -535,6 +560,163 @@ function onFilePointerDown(f: FileMeta, e: PointerEvent) {
     extraOpts: { dragZIndex: 31 },
   })
 }
+
+// ── Runtime Core API 单卡接入（Phase 1） ──
+// 单文件/单文件夹拖拽完全交给 Interaction Runtime：这里只做 3.2 节允许的事——注册
+// 对象/Surface/Target、同步 DOM ref、订阅 onAction 后转发进现有的 moveFoldersInto/
+// moveFilesInto（乐观更新、回滚、409 处理都不变）。多选继续走上面的 useFileDragDrop。
+const RUNTIME_SCOPE = 'files'
+const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
+const domAdapter = createVueRuntimeAdapter(runtime)
+
+function bindFolderEl(f: FolderCardMeta, target: unknown) {
+  if (f.type !== 'folder' || f.folderId == null) return
+  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
+  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
+  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId), element ?? null)
+}
+function bindFileEl(f: FileMeta, target: unknown) {
+  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
+  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
+  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'file', f.id), element ?? null)
+}
+function bindBreadcrumbEl(idx: number, seg: NavSeg, element: HTMLElement | null) {
+  if (!isBcDroppable(seg)) return
+  const surfaceId = breadcrumbSurfaceId(RUNTIME_SCOPE, idx)
+  domAdapter.bindTarget(`bc:${idx}`, { surfaceId, accepts: ['file-item', 'folder-item'], priority: 1 }, element)
+}
+
+interface ObjectRegSnapshot { type: string; surfaceId: string; abilities: string[] }
+const objectGenerations = new Map<string, number>()
+const objectSnapshots = new Map<string, ObjectRegSnapshot>()
+const runtimeSurfaceIds = new Set<string>()
+
+watchEffect(() => {
+  const nextObjectIds = new Set<string>()
+  const folders = sortedContents.value.folders.filter(f => f.type === 'folder' && f.folderId != null)
+  const files = sortedContents.value.files
+
+  for (const f of folders) {
+    const id = fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId as number)
+    const abilities = isFolderRoutedToLegacyDrag(f.id) ? [] : ['move']
+    const surfaceId = runtimeBrowserSurfaceId
+    nextObjectIds.add(id)
+    const snapshot: ObjectRegSnapshot = { type: 'folder-item', surfaceId, abilities }
+    const prev = objectSnapshots.get(id)
+    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
+      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
+    if (changed) {
+      objectGenerations.set(id, runtime.objects.register({
+        id,
+        type: 'folder-item',
+        surfaceId,
+        element: runtime.objects.get(id)?.element ?? null,
+        abilities,
+        target: { surfaceId: folderSurfaceId(RUNTIME_SCOPE, f.folderId as number), accepts: ['file-item', 'folder-item'], priority: 2 },
+      }))
+      objectSnapshots.set(id, snapshot)
+    }
+  }
+
+  for (const f of files) {
+    const id = fileObjectId(RUNTIME_SCOPE, 'file', f.id)
+    const abilities = isFileRoutedToLegacyDrag(f.id) ? [] : ['move']
+    const surfaceId = runtimeBrowserSurfaceId
+    nextObjectIds.add(id)
+    const snapshot: ObjectRegSnapshot = { type: 'file-item', surfaceId, abilities }
+    const prev = objectSnapshots.get(id)
+    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
+      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
+    if (changed) {
+      objectGenerations.set(id, runtime.objects.register({
+        id,
+        type: 'file-item',
+        surfaceId,
+        element: runtime.objects.get(id)?.element ?? null,
+        abilities,
+      }))
+      objectSnapshots.set(id, snapshot)
+    }
+  }
+
+  for (const [id, generation] of objectGenerations) {
+    if (nextObjectIds.has(id)) continue
+    if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
+    objectGenerations.delete(id)
+    objectSnapshots.delete(id)
+  }
+
+  // Surface：浏览区是稳定的单一 Surface（绑定在 watchEffect 外，见下方 onMounted）；
+  // 文件夹自己的语义 Surface 和面包屑语义 Surface 只用来承接 Target，不对应真实容器 DOM。
+  const nextSurfaceIds = new Set<string>([runtimeBrowserSurfaceId])
+  for (const f of folders) nextSurfaceIds.add(folderSurfaceId(RUNTIME_SCOPE, f.folderId as number))
+  navPath.value.forEach((seg, i) => { if (isBcDroppable(seg)) nextSurfaceIds.add(breadcrumbSurfaceId(RUNTIME_SCOPE, i)) })
+  for (const id of nextSurfaceIds) {
+    if (!runtime.surfaces.has(id)) runtime.surfaces.register({
+      id,
+      type: id === runtimeBrowserSurfaceId ? 'file-browser' : id.includes(':breadcrumb:') ? 'file-breadcrumb' : 'file-folder',
+      element: null,
+      accepts: ['file-item', 'folder-item'],
+    })
+    runtimeSurfaceIds.add(id)
+  }
+  for (const id of runtimeSurfaceIds) {
+    if (nextSurfaceIds.has(id)) continue
+    runtime.surfaces.unregister(id)
+    runtimeSurfaceIds.delete(id)
+  }
+})
+
+async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
+  const isFolder = objectId.startsWith(`${RUNTIME_SCOPE}:folder:`)
+  const isFile = objectId.startsWith(`${RUNTIME_SCOPE}:file:`)
+  if (!isFolder && !isFile) return
+  const rawId = objectId.slice(objectId.lastIndexOf(':') + 1)
+  const id = Number(rawId)
+  if (Number.isNaN(id)) return
+
+  if (toSurfaceId === runtimeBrowserSurfaceId) return // 落回浏览区本身：不算移动
+
+  let targetFolderId: number | null
+  const folderTarget = parseFolderSurfaceId(RUNTIME_SCOPE, toSurfaceId)
+  if (folderTarget !== null) {
+    targetFolderId = Number(folderTarget)
+    if (Number.isNaN(targetFolderId)) return
+    if (isFolder && targetFolderId === id) return // 拖到自己身上
+  } else {
+    const idx = parseBreadcrumbSurfaceId(RUNTIME_SCOPE, toSurfaceId)
+    if (idx === null) return
+    const seg = navPath.value[idx]
+    if (!seg || !isBcDroppable(seg)) return
+    targetFolderId = seg.type === 'folder' ? (seg.folderId ?? null) : null
+  }
+
+  selectedFolderKeys.value = new Set()
+  selectedIds.value = new Set()
+  if (isFolder) await moveFoldersInto([id], targetFolderId)
+  else await moveFilesInto([id], targetFolderId)
+}
+
+const stopRuntimeAction = runtime.onAction(action => {
+  if (action.type !== 'move') return
+  void handleRuntimeMoveAction(action.objectId, action.toSurfaceId)
+})
+
+onMounted(() => {
+  // 浏览区绑到 .files-main（mainRef）本身：它在 <Transition mode="out-in"> 之外，
+  // 目录切换只替换里面的 .content-body，不会销毁这个交互根节点。
+  domAdapter.bindSurface(runtimeBrowserSurfaceId, mainRef.value)
+})
+watch(mainRef, el => domAdapter.bindSurface(runtimeBrowserSurfaceId, el))
+
+onUnmounted(() => {
+  stopRuntimeAction()
+  for (const [id, generation] of objectGenerations) {
+    if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
+  }
+  for (const id of runtimeSurfaceIds) runtime.surfaces.unregister(id)
+  domAdapter.dispose()
+})
 
 const folderActions = useFileLibraryFolderActions({
   currentType, currentSeg, projectSeg, cacheStore, fileActions,
@@ -587,6 +769,7 @@ const gridViewContext = {
   deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
   onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
+  bindFolderEl, bindFileEl,
 }
 const listViewContext = {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
@@ -596,6 +779,7 @@ const listViewContext = {
   previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
+  bindFolderEl, bindFileEl,
 }
 
 function selCut() {
