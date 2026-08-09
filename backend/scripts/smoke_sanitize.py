@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from agent.sanitize import sanitize_messages as S
+from agent.security.sanitize import sanitize_messages as S
 
 PASS, FAIL = [], []
 

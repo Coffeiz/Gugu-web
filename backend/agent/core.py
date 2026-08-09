@@ -132,7 +132,7 @@ def _pick_label(raw: str) -> str:
     return random.choice(parts) if parts else raw
 
 # 叙事/决策拒绝/意图播报守卫（跟 provider 无关，PRD-LLM-1 FR-LLM-3 搬到了 core_guards.py）：
-from agent.core_guards import (
+from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
@@ -191,7 +191,7 @@ async def _im_cancelled() -> bool:
     if cancelled:
         # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
         # 中断了生成」。只在真正命中时打，不会刷屏。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.core.im_cancelled_hit",

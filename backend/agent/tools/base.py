@@ -344,7 +344,7 @@ class SkillRegistry:
         # 返回了"成功执行" = 该 handler 漏接确认门、无确认就做了不可逆操作——已无法撤销，
         # 但必须响亮地被看见（静态守卫 scripts/check_confirm_gate.py 在提交前拦同类问题，
         # 这里是运行时兜底，抓静态分析覆盖不到的动态路径）。
-        from agent import confirm as _confirm
+        from agent.security import confirm as _confirm
         if tool.destructive and _ok and not _confirm.is_confirmed(args) and not _confirm.is_block(result):
             print(f"[skill] ⚠️ confirm-gate.bypassed 工具 {name} 未经确认执行了不可逆操作！", flush=True)
             _traj_log.critical("confirm-gate.bypassed tool=%s user=%s", name, str(user_id)[:8])

@@ -23,7 +23,8 @@ from app.models import (
     AgentUsage, CalendarEvent, ConversationMessage, ConversationSession,
     Project, User,
 )
-from agent import sanitize, genstream, quota
+from agent.security import sanitize
+from agent import genstream, quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.llm_select import is_minimax

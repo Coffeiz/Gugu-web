@@ -15,7 +15,8 @@ from typing import AsyncGenerator, AsyncIterator, List, Tuple
 from sqlalchemy import delete, desc, func, select
 
 from app.core.config import get_settings
-from agent import sanitize, quota
+from agent.security import sanitize
+from agent import quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for

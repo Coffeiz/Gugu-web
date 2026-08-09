@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from app.models import ScheduledTask
 from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
 from app.core.ownership import get_owned
-from agent import confirm
+from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 _WEEK = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六", "7": "周日"}

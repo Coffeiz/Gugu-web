@@ -211,7 +211,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     bot_platform_user_id = _qq_bot_mention_id(data, event_type)
     # 成员 mention 保留原始 ID；展示层按会话内最新 username 解析，避免改名后被旧昵称冻结。
     raw_text = (data.get("content") or "").strip()
-    from agent import logsafe
+    from agent.security import logsafe
     has_qq_face = _contains_qq_face(raw_text)
     face_ids = _extract_qq_faces(raw_text)
     # QQ 经常把一个表情拆成「协议文本」和紧随其后的图片事件；协议文本本身不应成为
@@ -318,7 +318,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["group_requires_at"] = requires_at
         payload["group_read_enabled"] = read_enabled
         payload["group_mentioned"] = mentioned
-    from agent import logsafe
+    from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
     sender_fp = logsafe.fingerprint(sender_id)
     if chat_type == "group":
@@ -363,7 +363,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
 
 
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
-    from agent import logsafe
+    from agent.security import logsafe
 
     channel_fp = logsafe.fingerprint(channel_id)
     session_id = None
@@ -476,7 +476,7 @@ def serve() -> None:
     owner = os.environ.get("QQ_OWNER", "")
     if not app_id or not secret:
         raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 supervisor 注入）。")
-    from agent import logsafe
+    from agent.security import logsafe
     print(f"[qq:{logsafe.fingerprint(channel_id)}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
     asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
 

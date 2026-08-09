@@ -133,7 +133,7 @@ async def decide_im_shortcut(
     if dec.get("action") == "cancel":
         # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
         # （busy=False 时 router 不会返回 cancel，会当普通消息入队）。puid 用指纹脱敏。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.im.shortcut.cancel_decided",
@@ -177,7 +177,7 @@ def decide_im_shortcut_sync(
         active_puid=active_puid,
     )
     if dec.get("action") == "cancel":
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         diag_log_raw(
             "agent.im.shortcut.cancel_decided_sync",
@@ -207,7 +207,7 @@ async def apply_im_shortcut_cancel(platform: str, platform_user_id: str, decisio
         # 只有真的 SET 成功才记"取消已生效"——request_cancel 在 bot_id/scope_id 缺失时
         # 会静默 no-op 返回 False，之前这里不检查返回值，会打出「写成功」的假日志
         # （code review 发现：调用方漏传 scope 时，日志会撒谎）。
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         if written:
             diag_log_raw(
@@ -236,7 +236,7 @@ def apply_im_shortcut_cancel_sync(platform: str, platform_user_id: str, decision
             diag_log("agent.im.shortcut.cancel_sync", exc)
             print(f"[im] 取消状态写入失败: {redact(type(exc).__name__)}", flush=True)
             return
-        from agent.logsafe import fingerprint
+        from agent.security.logsafe import fingerprint
         from app.core.redaction import diag_log_raw
         if written:
             diag_log_raw(
@@ -655,7 +655,8 @@ async def dispatch_im_message(payload: dict):
     shortcut、模型执行、session 写回和出站回复均在这里完成，三平台共用同一条
     可测试的 IM Loop。
     """
-    from agent import logsafe, trace
+    from agent.security import logsafe
+    from agent import trace
     from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
 
     if payload.get("platform") == "qq":

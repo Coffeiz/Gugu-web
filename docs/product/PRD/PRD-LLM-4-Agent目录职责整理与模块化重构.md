@@ -1,6 +1,6 @@
 # Agent 目录职责整理与模块化重构 PRD
 
-> 状态：🔲 待评估（已完成根目录现状盘点与目标结构设计，尚未迁移代码）
+> 状态：🟡 实施中（Phase 0、Phase 1 已完成，后续阶段按依赖门槛推进）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 所属层：Agent / 后端模块化
@@ -13,10 +13,10 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| 根目录现状盘点 | ✅ 已完成 | 已确认 `backend/agent/` 根目录存在 22 个业务/基础设施 Python 模块，职责横跨运行时、LLM、上下文状态、安全、领域服务和兼容入口。 |
+| 根目录现状盘点 | ✅ 已完成 | 已确认 `backend/agent/` 根目录存在业务/基础设施模块，职责横跨运行时、LLM、上下文状态、安全、领域服务和兼容入口。 |
 | 目标目录设计 | ✅ 已完成 | 确定优先整理 `security/`、`llm/`、`runtime/` 三组；`core.py`、`runner.py`、`router.py` 等顶层编排模块暂不强拆。 |
 | 实施计划与依赖门槛 | ✅ 已完成 | 已明确 LLM-3 对 `providers.py` 的优先接管关系、各 Phase 的迁移边界、验证矩阵和回滚方式。 |
-| Phase 1：安全模块归组 | 🔲 待实施 | 将 `confirm.py`、`sanitize.py`、`logsafe.py`、`core_guards.py` 迁入 `security/`，保留兼容导出。 |
+| Phase 1：安全模块归组 | ✅ 已完成 | 已迁入 `security/`，根目录保留仅转发导出；生产代码已切换 canonical import，安全/核心重点测试 46 个通过。 |
 | Phase 2：LLM 非 Provider 基础设施归组 | 🔲 待实施 | 先迁 `genstream.py`、`llm_select.py`、`modelctx.py`；`providers.py` 由 PRD-LLM-3 单独目录化，本 PRD 不重复搬迁。 |
 | Phase 3：运行时基础设施归组 | 🔲 待实施 | 先迁 `runtime_state.py`、`trace.py`；`loop_drivers.py` 等依赖 LLM-3 与循环依赖复核后再决定。 |
 | Phase 4：领域服务归组 | 🔲 待实施 | 只迁移具有清晰共同边界的模块；`domain/` 是否建立必须由依赖图决定，不以减少根目录文件数为目标。 |
@@ -181,6 +181,13 @@ backend/agent/
 
 交付物：迁移清单、依赖图、基线测试记录。该 Phase 不改运行时代码。
 
+**Phase 0 实测记录（2026-08-09）**：
+
+- 后端全量测试：`898 passed`，3 个第三方 deprecation warning。
+- 已完成生产代码、测试、脚本和 monkeypatch 路径盘点；安全模块被 `core`、网关、IM、工具、定时任务和脚本共同引用。
+- `llm_select.py` 依赖 `providers.py`，`loop_drivers.py` 延迟依赖 `core.py`；因此 `providers.py` 不在本 PRD 提前移动，`loop_drivers.py` 暂留根目录。
+- `.DS_Store` 与 `__pycache__` 属于独立仓库清洁任务，本轮不混入目录职责迁移。
+
 #### Phase 1：安全模块归组
 
 按依赖从低到高迁移：`logsafe.py` → `confirm.py` → `sanitize.py` → `core_guards.py`。
@@ -192,6 +199,13 @@ backend/agent/
 - 验证安全、流式、核心循环和 IM 相关测试；devserver 做一次模块导入和网页/Worker 启动检查。
 
 完成条件：新路径可直接导入，旧路径仍可用，兼容模块无实现重复，行为测试零回归。
+
+**Phase 1 实施结果（2026-08-09）**：
+
+- 新增 `agent/security/`，实现归入 `confirm.py`、`sanitize.py`、`logsafe.py`、`core_guards.py`。
+- 根目录四个同名模块仅保留兼容转发；`core.py`、网关、IM、工具、定时任务和脚本中的安全依赖已切换到新路径。
+- 生产导入 smoke 通过；安全、流式清洗、核心循环、追踪和运行状态重点测试 `46 passed`。
+- `core_guards.py` 的下划线守卫符号使用显式兼容导出，避免 `import *` 丢失内部公共契约。
 
 #### Phase 2：LLM 非 Provider 基础设施归组
 

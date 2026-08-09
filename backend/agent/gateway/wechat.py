@@ -124,10 +124,10 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     # 下载+解密+暂存媒体：当前消息附件 + 引用里的图片附件一并入队。
     media_items = non_text + quoted_items
     attachments = await _ingest_wechat_media(media_items, owner) if media_items else []
-    from agent import trace
+        from agent import trace
     tid = trace.new_trace()
     # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
-    from agent import logsafe
+        from agent.security import logsafe
     print(f"[wechat:{channel_id}] 收到 {from_user}: text_len={len(text)} fp={logsafe.fingerprint(text)} "
           f"att={len(attachments)} quoted={has_quote} trace={tid}", flush=True)
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）

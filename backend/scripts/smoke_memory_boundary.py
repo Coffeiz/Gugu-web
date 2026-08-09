@@ -25,7 +25,7 @@ from agent.core import LLMRunner
 from agent.llm_select import pick_model, release as _release_model
 from agent.profiles import DefaultProfile
 from agent.runner import _collect
-from agent.sanitize import strip_disallowed_emoji
+from agent.security.sanitize import strip_disallowed_emoji
 import app.db.session as _sess
 
 _UID = "00000000-0000-0000-0000-000000000000"   # DB 无此用户 → 空记忆

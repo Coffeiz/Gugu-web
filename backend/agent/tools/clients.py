@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.models import Client
 from app.core.ownership import get_owned
-from agent import confirm
+from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 

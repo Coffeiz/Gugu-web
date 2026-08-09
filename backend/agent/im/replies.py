@@ -34,7 +34,7 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
     platform = payload.get("platform")
     unsupported = reply.unsupported_capabilities(platform or "")
     if unsupported and platform in {"qq", "feishu", "wechat"}:
-        from agent import logsafe
+        from agent.security import logsafe
         print(
             f"[im] {platform} 不支持回复能力: {','.join(unsupported)} "
             f"fp={logsafe.fingerprint(reply.text)}",
@@ -70,7 +70,7 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         )
         return result is not False
     else:
-        from agent import logsafe
+        from agent.security import logsafe
         print(
             f"[im] (无发送通道) {platform}: len={len(reply.text)} "
             f"fp={logsafe.fingerprint(reply.text)}",
@@ -115,7 +115,7 @@ async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: st
     else:
         ok = await wechat.send_file(openid, data, fname, context_token, payload.get("channel_id"))
         label = "文件"
-    from agent import logsafe
+    from agent.security import logsafe
     print(
         f"[im] wechat 发{label} fp={logsafe.fingerprint(fname)}: "
         f"{'ok' if ok else '失败'}（{len(data)} bytes）",
@@ -126,7 +126,7 @@ async def _send_file_wechat(payload: dict, storage_key: str, ext: str, fname: st
 
 async def _send_file_feishu(payload: dict, ext: str, data: bytes, fname: str) -> bool:
     from agent.gateway import feishu
-    from agent import logsafe
+    from agent.security import logsafe
 
     is_image = (ext or "").lower() in _FEISHU_IMAGE_EXTS
     limit = _FEISHU_IMAGE_MAX if is_image else _FEISHU_FILE_MAX
