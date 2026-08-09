@@ -20,6 +20,7 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
+SYSTEMD_SERVICES="gugu-backend gugu-worker gugu-supervisor"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -38,6 +39,14 @@ is_running() {
     [ -f "$PID_FILE" ] || return 1
     local pid; pid="$(cat "$PID_FILE" 2>/dev/null || true)"
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+use_systemd() {
+    [ "${GUGU_SERVICE_MODE:-auto}" != "local" ] || return 1
+    command -v systemctl >/dev/null 2>&1 || return 1
+    [ "${GUGU_SERVICE_MODE:-auto}" = "systemd" ] && return 0
+    [ -f "/etc/systemd/system/gugu-backend.service" ] && return 0
+    systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service[[:space:]]'
 }
 
 wait_for_port() {
@@ -65,6 +74,12 @@ check_port_free() {
 
 # ── 子命令 ──────────────────────────────────────────────
 cmd_start() {
+    if use_systemd; then
+        log "使用 systemd 启动：${SYSTEMD_SERVICES}"
+        systemctl start $SYSTEMD_SERVICES
+        systemctl --no-pager --lines=3 status $SYSTEMD_SERVICES || true
+        return 0
+    fi
     detect_venv
     mkdir -p "$LOG_DIR"
     if is_running; then
@@ -99,6 +114,11 @@ cmd_start() {
 }
 
 cmd_stop() {
+    if use_systemd; then
+        log "使用 systemd 停止：${SYSTEMD_SERVICES}"
+        systemctl stop $SYSTEMD_SERVICES
+        return 0
+    fi
     if ! is_running; then
         log "INFO: 未运行"
         rm -f "$PID_FILE"
@@ -120,9 +140,21 @@ cmd_stop() {
     rm -f "$PID_FILE"
 }
 
-cmd_restart() { cmd_stop; sleep 1; cmd_start; }
+cmd_restart() {
+    if use_systemd; then
+        log "使用 systemd 重启：${SYSTEMD_SERVICES}"
+        systemctl restart $SYSTEMD_SERVICES
+        systemctl --no-pager --lines=3 status $SYSTEMD_SERVICES || true
+        return 0
+    fi
+    cmd_stop; sleep 1; cmd_start
+}
 
 cmd_status() {
+    if use_systemd; then
+        systemctl --no-pager --lines=5 status $SYSTEMD_SERVICES
+        return $?
+    fi
     if is_running; then
         local pid; pid="$(cat "$PID_FILE")"
         log "运行中 (PID $pid)"
