@@ -167,11 +167,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, onUnmounted, useAttrs, type PropType } from 'vue'
+import { computed, ref, nextTick, onUnmounted, useAttrs, watch, watchEffect, type PropType } from 'vue'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { useObject } from '@/interaction/runtime'
+import { runtime } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
@@ -189,12 +189,31 @@ const props = defineProps({
 const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
-const { elementRef: cardRef } = useObject({
-  id: String(props.project.id),
+const projectId = String(props.project.id)
+const cardRef = ref<HTMLElement | null>(null)
+const objectGeneration = runtime.objects.register({
+  id: projectId,
   type: 'project-card',
-  surface: () => props.project.status,
+  surfaceId: props.project.status,
+  element: null,
+  visualMode: 'detach',
   // 项目看板当前按业务字段排序，Runtime 只负责跨 Surface 移动；同列自由排序尚未持久化。
   abilities: ['move'],
+})
+watchEffect(() => {
+  runtime.objects.setSurface(projectId, props.project.status)
+})
+watch(cardRef, (element, previous) => {
+  if (element === null) {
+    const current = runtime.objects.get(projectId)
+    if (current?.element && current.element !== previous) return
+  }
+  runtime.objects.setElement(projectId, element)
+})
+onUnmounted(() => {
+  if (runtime.objects.get(projectId)?.generation === objectGeneration) {
+    runtime.objects.unregister(projectId)
+  }
 })
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)
