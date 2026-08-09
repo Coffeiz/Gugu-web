@@ -339,6 +339,7 @@ import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
+import { useCalendarNav } from './composables/useCalendarNav'
 import EventEditFields from './components/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
@@ -863,12 +864,7 @@ async function commitDrag() {
   }
 }
 
-// ── 年月选择器 ──
-const pickerOpen      = ref(false)
-const pickerYear      = ref(new Date().getFullYear())
-const pickerAnchorRef = ref<HTMLElement | null>(null)
 const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
-const pickerStyle     = ref<Record<string, string | number>>({})
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
@@ -986,26 +982,6 @@ function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
 
 function onMoreDragItem(payload: { item: CalItem; event: MouseEvent }) {
   startMoreItemDrag(payload.item, payload.event)
-}
-
-function togglePicker(anchor: HTMLElement | null = null) {
-  if (pickerOpen.value) { pickerOpen.value = false; return }
-  pickerAnchorRef.value = anchor
-  pickerYear.value = cursor.value.getFullYear()
-  pickerOpen.value = true
-  nextTick(() => {
-    const rect = pickerAnchorRef.value?.getBoundingClientRect()
-    if (!rect) return
-    const w = 220
-    let left = rect.left + rect.width / 2 - w / 2
-    left = Math.max(8, Math.min(left, window.innerWidth - w - 8))
-    pickerStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width: w + 'px', zIndex: 2000 }
-  })
-}
-
-function selectYearMonth(y: number, m: number) {
-  cursor.value = new Date(y, m, 1)
-  pickerOpen.value = false
 }
 
 const weekdays = ['一', '二', '三', '四', '五', '六', '日']
@@ -1174,7 +1150,6 @@ function weekBars(week: { iso: string }[]): CalItem[] {
 }
 
 // ───────────────── 周视图（时间轴）─────────────────
-const viewMode  = ref<'month' | 'week'>('month')
 const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
 const wvBodyRef = ref<HTMLElement | null>(null)
@@ -1198,6 +1173,11 @@ const weekDays = computed<WeekViewDay[]>(() => {
   }
   return out
 })
+
+const {
+  viewMode, periodLabel, prev, next, goToday, setView,
+  pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
+} = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays })
 
 function timedLayoutFor(iso: string) {
   return calculateTimedLayout(visibleEvents.value, iso, HOUR_H)
@@ -1259,13 +1239,6 @@ const nowTop = computed(() => nowMinutes.value / 60 * HOUR_H)
 let _nowTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => { _nowTimer = setInterval(() => { nowMinutes.value = new Date().getHours() * 60 + new Date().getMinutes() }, 60000) })
 onUnmounted(() => { if (_nowTimer) clearInterval(_nowTimer) })
-
-function setView(m: 'month' | 'week') {
-  if (m === viewMode.value) return
-  if (m === 'week') weekRef.value = new Date((selectedDate.value || todayIso.value) + 'T00:00:00')
-  else cursor.value = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), 1)
-  viewMode.value = m
-}
 
 function onToolbarViewChange(mode: string) {
   if (mode === 'month' || mode === 'week') setView(mode)
@@ -1467,30 +1440,6 @@ function _evDragUp(e: MouseEvent) {
   }
   selectedDate.value = s.date
   _persistEvent(s)
-}
-
-const periodLabel = computed(() => {
-  if (viewMode.value === 'week') {
-    const ds = weekDays.value
-    return new Date(ds[0].iso + 'T00:00:00').getFullYear() + '年 ' + ds[0].md + ' - ' + ds[6].md
-  }
-  const c = cursor.value
-  return c.getFullYear() + '年 ' + (c.getMonth()+1) + '月'
-})
-
-function prev() {
-  if (viewMode.value === 'week') { const d = new Date(weekRef.value); d.setDate(d.getDate() - 7); weekRef.value = d }
-  else { const d = new Date(cursor.value); d.setMonth(d.getMonth()-1); cursor.value = d }
-}
-function next() {
-  if (viewMode.value === 'week') { const d = new Date(weekRef.value); d.setDate(d.getDate() + 7); weekRef.value = d }
-  else { const d = new Date(cursor.value); d.setMonth(d.getMonth()+1); cursor.value = d }
-}
-function goToday() {
-  const now = new Date()
-  cursor.value = new Date(now.getFullYear(), now.getMonth(), 1)
-  weekRef.value = now
-  selectedDate.value = todayIso.value
 }
 
 const selectedDateLabel = computed(() => {
