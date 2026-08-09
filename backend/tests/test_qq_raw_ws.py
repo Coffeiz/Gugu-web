@@ -174,7 +174,8 @@ async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     # 查取消状态——单独跑这个测试时全局 Redis 客户端在本测试的事件循环里首次建立，能用；
     # 跟其他测试一起跑，客户端已经绑在前一个测试的（已关闭）事件循环上，会报
     # Event loop is closed。这不是偶发，是这个测试本身当初漏了这三行 mock。
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     async def fake_async_false(*args, **kwargs):
         return False
@@ -278,7 +279,8 @@ async def test_qq_raw_c2c_event_to_payload(monkeypatch):
 
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     async def fake_async_false(*args, **kwargs):
         return False
@@ -310,7 +312,7 @@ async def test_qq_message_still_reaches_stream_when_shortcut_redis_fails(monkeyp
         raise RuntimeError("redis unavailable")
 
     monkeypatch.setattr(qq.R, "produce", fake_produce)
-    monkeypatch.setattr("agent.runtime_state.get_state", fail_state)
+    monkeypatch.setattr("agent.runtime.runtime_state.get_state", fail_state)
 
     await qq._handle_raw_qq_message(
         "C2C_MESSAGE_CREATE",
@@ -336,7 +338,8 @@ async def test_qq_raw_group_event_to_payload(monkeypatch):
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     async def fake_async_false(*args, **kwargs):
         return False
@@ -385,7 +388,8 @@ async def test_qq_raw_group_message_create_respects_requires_at(monkeypatch):
     monkeypatch.setattr(qq, "_group_settings", fake_group_settings)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     async def fake_async_false(*args, **kwargs):
         return False
@@ -446,7 +450,8 @@ async def test_qq_raw_quoted_attachment_is_ingested(monkeypatch):
     monkeypatch.setattr(qq, "_qq_ack", fake_ack)
     monkeypatch.setattr(qq.R, "produce", fake_produce)
 
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     async def fake_async_false(*args, **kwargs):
         return False

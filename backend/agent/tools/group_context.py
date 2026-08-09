@@ -2,7 +2,7 @@
 
 from sqlalchemy import desc, select
 
-from agent.imctx import get_im
+from agent.im.imctx import get_im
 from agent.memory.scoped_store import read_scope_json
 from agent.memory.scopes import MemoryScope
 from agent.tools.base import BaseSkill, Tool

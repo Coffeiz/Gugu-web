@@ -10,7 +10,7 @@ import json
 
 async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) -> str:
     """单次非流式调用 → 返回纯文本。失败返回空串。"""
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
     try:
         return (
@@ -35,7 +35,7 @@ async def complete_json(
     pattern）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。
     temperature 默认 0.3（跟反思/压缩一致）；判断稳定性要求高、容错低的调用方（如批量删除类）
     可传更低的值换取更一致的输出。"""
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
     text = (
         await _anthropic(sys, user, settings, max_tokens, temperature, thinking=thinking)
@@ -82,7 +82,7 @@ async def _openai(
 ) -> str:
     import httpx
     from agent import providers
-    from agent.llm_select import supports_thinking_toggle
+    from agent.llm.llm_select import supports_thinking_toggle
 
     client = providers.build_openai_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))

@@ -84,7 +84,7 @@ async def test_bind_web_session_tool_is_owner_private_only(db, user_a, monkeypat
     await db.commit()
     await db.refresh(session)
 
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.conversations import _bind_web_session
 
     imctx.set_im("qq", "msg-1", "bot-1", None, "owner-1", "c2c", im_role="owner")

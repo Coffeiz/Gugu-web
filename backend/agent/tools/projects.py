@@ -16,7 +16,7 @@ from app.core.projects import (
 from app.core.tz import now_utc
 from app.models import File, Project
 
-from agent import confirm
+from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 

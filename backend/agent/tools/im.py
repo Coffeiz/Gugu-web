@@ -1,7 +1,7 @@
 """IM 互动技能：react——咕咕按内容给用户刚发的那条消息加一个贴切的表情回应。
 
 仅在 IM 对话（目前飞书）里可用：上下文（平台/message_id/channel_id）由 worker 经
-agent.imctx 透传。web 对话没有「可回应的消息」，调用时直接返回不可用。
+agent.im.imctx 透传。web 对话没有「可回应的消息」，调用时直接返回不可用。
 """
 from agent.tools.base import BaseSkill, Tool
 
@@ -23,7 +23,7 @@ _MOOD_EMOJI = {
 
 
 async def _react(db, user_id, args: dict):
-    from agent import imctx
+    from agent.im import imctx
     ctx = imctx.get_im()
     if not ctx or ctx.get("platform") != "feishu":
         return {"ok": False, "message": "当前不在飞书对话里，没法加表情回应（仅 IM 可用）。"}

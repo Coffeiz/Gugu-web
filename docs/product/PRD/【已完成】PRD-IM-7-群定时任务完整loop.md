@@ -60,7 +60,7 @@ def _detect_group_target(target_map: dict | None) -> dict | None:
 group_target = _detect_group_target(target_map)
 im_token = None
 if group_target:
-    from agent.imctx import set_im
+    from agent.im.imctx import set_im
     im_token = set_im(
         platform=group_target["platform"],
         message_id=None,            # 定时任务无具体触发的 IM 消息
@@ -76,7 +76,7 @@ finally:
     # 群定时任务 set_im 过：本轮 execution 结束后清理 imctx，避免 ContextVar 残留
     # 到 execute_task 协程结束（P2 生命周期债务）。私聊/Web 未 set_im，无需清理。
     if group:
-        from agent import imctx
+        from agent.im import imctx
         imctx.clear()
 ```
 
@@ -102,7 +102,7 @@ finally:
 ```python
 if group_target:
     # set_im 让 group_context_search 等群工具可用
-    from agent.imctx import set_im
+    from agent.im.imctx import set_im
     set_im(
         platform=group_target["platform"],
         message_id=None,            # 定时任务无具体触发的 IM 消息

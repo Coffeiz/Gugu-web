@@ -15,7 +15,7 @@ from fastapi import HTTPException
 from app.models import ScheduledTask
 from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
 from app.core.ownership import get_owned
-from agent import confirm
+from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 _WEEK = {"0": "周日", "1": "周一", "2": "周二", "3": "周三", "4": "周四", "5": "周五", "6": "周六", "7": "周日"}
@@ -72,7 +72,7 @@ async def _resolve_delivery_targets(db, user_id, channels, mode: str = "owner_pr
     if mode != "current_group":
         return None, json.dumps({"error": "delivery_mode 只能是 owner_private 或 current_group"}, ensure_ascii=False)
 
-    from agent import imctx
+    from agent.im import imctx
 
     current = imctx.get_im()
     if not current or current.get("platform") != "qq" or current.get("chat_type") != "group":
@@ -98,7 +98,7 @@ def _group_delivery_mode_required(channels, delivery_mode) -> bool:
     if "qq" not in (channels or []):
         return False
 
-    from agent import imctx
+    from agent.im import imctx
 
     current = imctx.get_im()
     return bool(

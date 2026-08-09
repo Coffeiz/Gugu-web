@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from agent.sanitize import tool_rounds_only
+from agent.security.sanitize import tool_rounds_only
 
 
 def _assistant_tool_use(uid="t1", name="create_project"):

@@ -76,9 +76,9 @@ async def test_run_agent_group_target_sets_imctx(monkeypatch, db, user_a):
         captured["chat_type"] = chat_type
         return "token"
 
-    # set_im 是 _inject_group_context 函数体内 from agent.imctx import set_im 局部 import，
-    # monkeypatch 改 agent.imctx.set_im 才能拦截。
-    monkeypatch.setattr("agent.imctx.set_im", fake_set_im)
+    # set_im 是 _inject_group_context 函数体内 from agent.im.imctx import set_im 局部 import，
+    # monkeypatch 改 agent.im.imctx.set_im 才能拦截。
+    monkeypatch.setattr("agent.im.imctx.set_im", fake_set_im)
     # preview_scope 同理。
     monkeypatch.setattr(
         "agent.memory.scope_lifecycle.preview_scope",
@@ -122,7 +122,7 @@ async def test_run_agent_private_target_no_imctx(monkeypatch, db, user_a):
         set_im_called["count"] += 1
         return "token"
 
-    monkeypatch.setattr("agent.imctx.set_im", fake_set_im)
+    monkeypatch.setattr("agent.im.imctx.set_im", fake_set_im)
 
     execution = AsyncMock(return_value=('{"summary":"ok","context":"","status":"success"}', False, {"tool_names": [], "mutated": False}))
     monkeypatch.setattr("agent.runner.run_scheduled_execution", execution)
@@ -151,7 +151,7 @@ async def test_run_agent_group_injects_group_memory(monkeypatch, db, user_a):
     """群定时任务：execution 阶段的 prompt 包含群 memory 段（format_im_memory 输出）。"""
     import app.scheduled_tasks as scheduled
 
-    monkeypatch.setattr("agent.imctx.set_im", lambda *a, **kw: "token")
+    monkeypatch.setattr("agent.im.imctx.set_im", lambda *a, **kw: "token")
     monkeypatch.setattr(
         "agent.memory.scope_lifecycle.preview_scope",
         AsyncMock(return_value={"profile": "群简介：测试群", "summary": "群近况：稳定"}),
@@ -198,7 +198,7 @@ async def test_run_agent_group_message_id_none(monkeypatch, db, user_a):
         captured["message_id"] = message_id
         return "token"
 
-    monkeypatch.setattr("agent.imctx.set_im", fake_set_im)
+    monkeypatch.setattr("agent.im.imctx.set_im", fake_set_im)
     monkeypatch.setattr(
         "agent.memory.scope_lifecycle.preview_scope",
         AsyncMock(return_value={}),
@@ -267,7 +267,7 @@ async def test_run_agent_group_missing_bot_id_skips_memory(monkeypatch, db, user
         preview_called["count"] += 1
         return {}
 
-    monkeypatch.setattr("agent.imctx.set_im", fake_set_im)
+    monkeypatch.setattr("agent.im.imctx.set_im", fake_set_im)
     monkeypatch.setattr("agent.memory.scope_lifecycle.preview_scope", fake_preview)
 
     captured_prompts = {}
@@ -305,7 +305,7 @@ async def test_scheduled_group_context_search_recalls_group_history(db, user_a):
     创建 QQ 群 session + 消息，通过 _inject_group_context 命中群目标 set_im，
     再调真实 _group_context_search，断言能搜到该群消息。"""
     import app.scheduled_tasks as scheduled
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
@@ -345,7 +345,7 @@ async def test_scheduled_group_context_search_recalls_group_history(db, user_a):
 async def test_scheduled_group_context_search_unavailable_without_channel_id(db, user_a):
     """缺 channel_id（bot_id）时 group_context_search 明确报不可用，不出现假信心。"""
     import app.scheduled_tasks as scheduled
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.group_context import _group_context_search
 
     target_map = {

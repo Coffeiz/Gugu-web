@@ -9,7 +9,7 @@
 """
 import pytest
 
-from agent import runtime_state as rt
+from agent.runtime import runtime_state as rt
 
 
 class _FakeRedis:

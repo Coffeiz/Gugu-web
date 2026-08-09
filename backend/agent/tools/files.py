@@ -1221,7 +1221,7 @@ async def _send_file(db, user_id, args: dict):
     群成员（member/unknown）只能用 url 发网络图片（搜图配图），不能发文件库文件
     （file/file_id）或重发暂存附件（attach_id）——后两者会读取 Bot 所属账号的私有文件。
     """
-    from agent import imctx
+    from agent.im import imctx
     im = imctx.get_im()
     is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
 

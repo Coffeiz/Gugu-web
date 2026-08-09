@@ -1,5 +1,5 @@
 """流式输出泄漏标记必须在写入网页/历史前被截断。"""
-from agent.sanitize import StreamSanitizer
+from agent.security.sanitize import StreamSanitizer
 
 
 def test_minimax_truncates_confirmed_e_tilde_leak_across_token_boundaries():

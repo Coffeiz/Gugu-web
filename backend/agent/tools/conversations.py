@@ -113,7 +113,7 @@ async def _read_conversation(db, user_id, args: dict):
 
 async def _bind_web_session(db, user_id, args: dict):
     """把当前 owner 私聊绑定到一个已确认属于自己的 Web session。"""
-    from agent import imctx
+    from agent.im import imctx
     from agent.im.owner_session import bind_session
 
     context = imctx.get_im()

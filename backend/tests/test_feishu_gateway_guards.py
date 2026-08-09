@@ -59,7 +59,8 @@ def test_feishu_gateway_deduplicates_message_id(monkeypatch):
     monkeypatch.setattr(feishu.R, "produce_sync", fake_produce_sync)
     monkeypatch.setattr(feishu, "_do_react", fake_do_react)
 
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     monkeypatch.setattr(router, "decide", lambda *args, **kwargs: {"action": "run"})
     monkeypatch.setattr(runtime_state, "get_state_sync", lambda *args, **kwargs: None)
@@ -86,7 +87,7 @@ def test_feishu_message_still_reaches_stream_when_shortcut_redis_fails(monkeypat
 
     monkeypatch.setattr(feishu.R, "produce_sync", fake_produce_sync)
     monkeypatch.setattr(feishu, "_do_react", lambda *_args, **_kwargs: True)
-    monkeypatch.setattr("agent.runtime_state.get_state_sync", fail_state)
+    monkeypatch.setattr("agent.runtime.runtime_state.get_state_sync", fail_state)
 
     handler = feishu._make_on_message("bot-1", "user-1", object(), expected_app_id="cli_expected")
     handler(_feishu_event(message_id="om_shortcut_redis_failure"))

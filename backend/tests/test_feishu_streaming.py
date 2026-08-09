@@ -273,7 +273,8 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
     import agent.im.files as im_files
     monkeypatch.setattr(im_files, "send_files", fake_send_files)
 
-    from agent import commands, runtime_state
+    from agent import commands
+    from agent.runtime import runtime_state
     from agent.gateway import feishu as feishu_mod
     from agent.gateway import wechat
     from agent.runner import run_stream as real_run_stream

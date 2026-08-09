@@ -57,7 +57,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 
@@ -79,7 +79,7 @@ async def test_group_context_search_only_reads_current_group(db, user_a, monkeyp
 
 
 async def test_group_context_search_accepts_multiple_keywords(db, user_a, monkeypatch):
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.group_context import _group_context_search
     from app.models import ConversationMessage, ConversationSession
 

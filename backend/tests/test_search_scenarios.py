@@ -2,7 +2,7 @@
 
 from app.models import CalendarEvent, ConversationMessage, ConversationSession, File, MindNode, Project
 from app.api.v1.search import run_global_search
-from agent import imctx
+from agent.im import imctx
 from agent.tools.conversations import _search_conversations
 from agent.tools.global_search import _global_search
 from agent.tools.group_context import _group_context_search

@@ -6,7 +6,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_group_delivery_mode_captures_current_qq_group():
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.scheduled_tasks import _resolve_delivery_targets
 
     imctx.set_im(
@@ -50,7 +50,7 @@ async def test_group_delivery_mode_rejects_web_context():
 
 @pytest.mark.asyncio
 async def test_group_delivery_mode_requires_confirmation_when_omitted():
-    from agent import imctx
+    from agent.im import imctx
     from agent.tools.scheduled_tasks import (
         _delivery_mode_confirmation_error,
         _group_delivery_mode_required,
@@ -269,7 +269,7 @@ async def test_execute_task_passes_structured_target_to_delivery(monkeypatch, db
 
 @pytest.mark.asyncio
 async def test_update_group_target_confirmation_does_not_mutate_task(monkeypatch):
-    from agent import imctx
+    from agent.im import imctx
     import agent.tools.scheduled_tasks as skill
 
     task = SimpleNamespace(

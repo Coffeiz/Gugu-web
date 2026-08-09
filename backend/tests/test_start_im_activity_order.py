@@ -12,7 +12,7 @@ Phase 2（本文件覆盖，PR13 复审）：即使顺序正确，三条独立 R
 """
 import pytest
 
-from agent import runtime_state
+from agent.runtime import runtime_state
 from agent.gateway import wechat
 from agent.im import loop as im_loop
 
