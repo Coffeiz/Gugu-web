@@ -424,3 +424,68 @@ async def test_delete_session_db_failure_prevents_storage_delete(db, user_a, sto
         await delete_session(session.id, current_user=user_a, db=db)
 
     assert delete_called["n"] == 0, "DB commit 失败时不应该有任何 storage.delete() 被调用"
+
+
+# ── 集成测试：走真实 /agent/upload 接口 + 真实草稿 GC 任务（PRD §6.2 手测第 4 条的自动化版本）
+
+@pytest.mark.asyncio
+async def test_e2e_draft_upload_expires_but_attached_survives(db, user_a, storage):
+    """走真实 `upload_attachment` 接口（而不是直接调 `chat_attach.stage()`）产生草稿，
+    再走真实 `attachment_gc.sweep_draft_attachments()`（而不是直接操作 DB 行）验证：
+    ① 过期草稿被清理（DB 行 + 物理字节都消失）；
+    ② 已经发送成功（claim 成 attached）的附件，哪怕物理创建时间同样很老，也不会
+       被草稿 GC 误删——对应 PRD-STORAGE-1 §6.2 手测清单第 4 条，用真实接口/真实
+       任务函数覆盖，不再需要每次手动跑一遍。"""
+    import io
+    from starlette.datastructures import Headers
+    from fastapi import UploadFile
+    from app.api.v1.agent import upload_attachment
+    from app.core import attachment_gc
+
+    class _FakeLock:
+        async def acquire(self, blocking=False):
+            return True
+        async def release(self):
+            pass
+
+    class _FakeRedis:
+        def lock(self, key, timeout=None, blocking=None):
+            return _FakeLock()
+
+    from unittest.mock import patch
+
+    # 草稿 1：只上传，不发送——过期后应该被清理
+    upload_file_1 = UploadFile(file=io.BytesIO(b"draft-image-bytes"), filename="draft.png",
+                               headers=Headers({"content-type": "image/png"}))
+    result_1 = await upload_attachment(file=upload_file_1, voice=False, current_user=user_a)
+    draft_attach_id = result_1["attach_id"]
+
+    # 草稿 2：上传后立刻"发送"（走真实 claim_attachments，同 web.py/runner.py 的路径）
+    upload_file_2 = UploadFile(file=io.BytesIO(b"attached-image-bytes"), filename="sent.png",
+                               headers=Headers({"content-type": "image/png"}))
+    result_2 = await upload_attachment(file=upload_file_2, voice=False, current_user=user_a)
+    attached_attach_id = result_2["attach_id"]
+
+    session = await _mk_session(db, user_a)
+    msg = await _mk_message(db, session)
+    await chat_attach.claim_attachments(db, user_a.id, msg.id, [attached_attach_id])
+    await db.commit()
+
+    # 两个附件的物理创建时间都改到草稿 TTL 之外，模拟"很久以前上传的"
+    old = now_utc() - timedelta(hours=chat_attach.DRAFT_TTL // 3600 + 1)
+    for aid in (draft_attach_id, attached_attach_id):
+        row = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == aid))).scalars().first()
+        row.created_at = old
+    await db.commit()
+
+    with patch.object(attachment_gc.R, "get_redis", lambda: _FakeRedis()):
+        n = await attachment_gc.sweep_draft_attachments()
+
+    assert n == 1, "只应该清理那 1 个真正的草稿"
+
+    draft_row = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == draft_attach_id))).scalars().first()
+    assert draft_row is None, "过期草稿应该被清理"
+
+    attached_row = (await db.execute(select(ChatAttachment).where(ChatAttachment.attach_id == attached_attach_id))).scalars().first()
+    assert attached_row is not None and attached_row.state == "attached", "已发送的附件不该被草稿 GC 碰，即使物理创建时间同样很老"
+    assert await storage.exists(attached_row.storage_key), "已发送附件的物理字节应该还在"
