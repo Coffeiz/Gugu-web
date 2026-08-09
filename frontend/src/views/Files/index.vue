@@ -512,7 +512,12 @@ const {
     return { targetFolderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, acceptsFiles: true, acceptsFolders: true }
   },
   cancelBoxDrag: () => _cancelBoxDrag(),
-  clearSelection() { selectedFolderKeys.value = new Set(); selectedIds.value = new Set() },
+  // 之前这里只清 selectedFolderKeys/selectedIds 两个 Set，没重置 selectModeForced——多选拖拽
+  // 落地后 inSelectionMode 仍然是 true，紧接着点文件夹卡片会被判成"多选模式下切换选中"而不是
+  // "进入文件夹"（handleFolderClick 里 `inSelectionMode.value` 分支优先于 enterFolder）。改用
+  // 上面定义的完整 clearSelection()（转发到 useFileLibrarySelection 的 clearSelectionImpl，
+  // 一并重置 selectModeForced 和框选状态），跟右键菜单、批量操作等其它清空选择的入口保持一致。
+  clearSelection,
   moveFolders: moveFoldersInto,
   moveFiles: moveFilesInto,
 })
