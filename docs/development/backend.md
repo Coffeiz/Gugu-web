@@ -16,5 +16,5 @@
 
 - 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver。
 - Web 使用 `cd backend && make dev-web`；Worker 使用 `make dev-worker`，启动前确保没有重复 Worker。
-- 生产环境执行 `make install` 后，`make start`、`make stop`、`make restart`、`make status` 会自动管理并检查 `gugu-backend`、`gugu-worker` 和 `gugu-supervisor` 三个 systemd 服务；启动/重启后任一服务不是 `active` 都会返回失败。需要强制使用本地 PID 模式时设置 `GUGU_SERVICE_MODE=local`。
+- 生产环境执行 `make install` 后，`make start`、`make stop`、`make restart`、`make status` 会自动管理并检查 `gugu-backend`、`gugu-worker` 和 `gugu-supervisor` 三个 systemd 服务；启动/重启后需连续多次确认三个服务均为 `active`，任一服务不稳定都会返回失败。需要强制使用本地 PID 模式时设置 `GUGU_SERVICE_MODE=local`。
 - 改动网关适配器时只重启对应平台子进程，不重启整个 supervisor。

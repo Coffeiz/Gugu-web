@@ -50,9 +50,10 @@ use_systemd() {
 }
 
 check_systemd_services() {
-    local attempts="${GUGU_SYSTEMD_CHECK_ATTEMPTS:-5}"
+    local attempts="${GUGU_SYSTEMD_CHECK_ATTEMPTS:-10}"
     local delay="${GUGU_SYSTEMD_CHECK_DELAY:-1}"
-    local attempt service all_active
+    local stable_checks="${GUGU_SYSTEMD_STABLE_CHECKS:-3}"
+    local attempt service all_active consecutive=0
 
     for ((attempt = 1; attempt <= attempts; attempt++)); do
         all_active=1
@@ -62,7 +63,12 @@ check_systemd_services() {
             fi
         done
         if [ "$all_active" -eq 1 ]; then
-            return 0
+            consecutive=$((consecutive + 1))
+            if [ "$consecutive" -ge "$stable_checks" ]; then
+                return 0
+            fi
+        else
+            consecutive=0
         fi
         if [ "$attempt" -lt "$attempts" ]; then
             sleep "$delay"
@@ -247,8 +253,7 @@ cmd_install() {
     for s in $services; do systemctl enable "$s"; done
     log "启动服务 ..."
     for s in $services; do systemctl restart "$s"; done
-    sleep 2
-    for s in $services; do systemctl status "$s" --no-pager --lines=3 || true; done
+    check_systemd_services
     log ""
     log "常用命令（web / IM 大脑 / IM 网关）："
     log "  systemctl status gugu-backend gugu-worker gugu-supervisor"
