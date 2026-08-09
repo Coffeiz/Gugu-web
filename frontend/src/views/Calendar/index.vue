@@ -1,30 +1,16 @@
 <template>
   <div class="cal-page">
 
-    <!-- 工具栏 -->
-    <div class="cal-toolbar glass-card">
-      <GlassBg />
-      <div class="toolbar-left">
-        <button class="nav-btn" @click="prev">
-          <PhCaretLeft :size="14" weight="bold" />
-        </button>
-        <button class="period-btn" ref="pickerAnchorRef" @click="togglePicker">
-          <span>{{ periodLabel }}</span>
-          <PhCaretDown :size="11" weight="bold" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
-        </button>
-        <button class="nav-btn" @click="next">
-          <PhCaretRight :size="14" weight="bold" />
-        </button>
-      </div>
-      <div class="toolbar-right">
-        <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1"
-                          style="--pill-radius: 7px">
-          <button :class="{ on: viewMode === 'month' }" @click="setView('month')">月</button>
-          <button :class="{ on: viewMode === 'week' }" @click="setView('week')">周</button>
-        </SegmentedControl>
-        <button class="today-btn" @click="goToday">今天</button>
-      </div>
-    </div>
+    <CalendarToolbar
+      :period-label="periodLabel"
+      :view-mode="viewMode"
+      :picker-open="pickerOpen"
+      @prev="prev"
+      @next="next"
+      @today="goToday"
+      @set-view="onToolbarViewChange"
+      @toggle-picker="togglePicker"
+    />
 
     <!-- 主体 -->
     <div class="cal-layout">
@@ -309,29 +295,9 @@
     </Transition>
   </Teleport>
 
-  <!-- 年月快速选择器 -->
   <Teleport to="body">
-    <Transition name="picker">
-      <div v-if="pickerOpen" class="cal-month-picker" ref="pickerRef" :style="pickerStyle">
-        <div class="picker-year-row">
-          <button class="picker-nav" @click.stop="pickerYear--">
-            <PhCaretLeft :size="12" weight="bold" />
-          </button>
-          <span class="picker-year">{{ pickerYear }}</span>
-          <button class="picker-nav" @click.stop="pickerYear++">
-            <PhCaretRight :size="12" weight="bold" />
-          </button>
-        </div>
-        <div class="picker-months">
-          <button
-            v-for="m in 12" :key="m"
-            class="picker-month"
-            :class="{ active: m - 1 === cursor.getMonth() && pickerYear === cursor.getFullYear() }"
-            @click.stop="selectYearMonth(pickerYear, m - 1)"
-          >{{ m }}月</button>
-        </div>
-      </div>
-    </Transition>
+    <YearMonthPicker ref="pickerRef" :open="pickerOpen" :year="pickerYear" :cursor="cursor" :style="pickerStyle"
+                     @prev-year="pickerYear--" @next-year="pickerYear++" @select="selectYearMonth" />
   </Teleport>
 
   <!-- 添加事件弹窗 -->
@@ -444,12 +410,12 @@ import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
-import GlassBg from '@/components/common/GlassBg.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
+import CalendarToolbar from './components/CalendarToolbar.vue'
+import YearMonthPicker from './components/YearMonthPicker.vue'
 import EventEditFields from './components/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
@@ -467,7 +433,7 @@ import {
   useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
   LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
 } from '@/composables/useEventEditForm'
-import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
+import { PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
@@ -979,7 +945,7 @@ async function commitDrag() {
 const pickerOpen      = ref(false)
 const pickerYear      = ref(new Date().getFullYear())
 const pickerAnchorRef = ref<HTMLElement | null>(null)
-const pickerRef       = ref<HTMLElement | null>(null)
+const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 const pickerStyle     = ref<Record<string, string | number>>({})
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
@@ -1086,8 +1052,9 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
   morePopup.value = { open: true, items, dateLabel: label, style }
 }
 
-function togglePicker() {
+function togglePicker(anchor: HTMLElement | null = null) {
   if (pickerOpen.value) { pickerOpen.value = false; return }
+  pickerAnchorRef.value = anchor
   pickerYear.value = cursor.value.getFullYear()
   pickerOpen.value = true
   nextTick(() => {
@@ -1271,7 +1238,7 @@ function weekBars(week: { iso: string }[]): CalItem[] {
 }
 
 // ───────────────── 周视图（时间轴）─────────────────
-const viewMode  = ref('month')        // 'month' | 'week'
+const viewMode  = ref<'month' | 'week'>('month')
 const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
 const wvBodyRef = ref<HTMLElement | null>(null)
@@ -1362,6 +1329,10 @@ function setView(m: 'month' | 'week') {
   if (m === 'week') weekRef.value = new Date((selectedDate.value || todayIso.value) + 'T00:00:00')
   else cursor.value = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), 1)
   viewMode.value = m
+}
+
+function onToolbarViewChange(mode: string) {
+  if (mode === 'month' || mode === 'week') setView(mode)
 }
 // 周视图导航/切换时把 cursor 同步到当周月份 → 触发按月 fetch（含 spillover，覆盖跨月那周）
 watch(weekRef, v => {
@@ -1944,22 +1915,6 @@ async function saveEvent() {
 .cal-page { display: flex; flex-direction: column; gap: 14px; height: 100%; }
 /* 浮在会动内容之上，用 backdrop-filter 会闪白带 → 改用 <GlassBg> faux 玻璃（同顶栏，见 DefaultLayout 注释）。
    宿主透明 + isolation 建层叠上下文让 GlassBg(z-index:-1) 压在内容下；backdrop-filter 显式关掉。*/
-.cal-toolbar { --gb-tint: var(--glass-bg); display: flex; align-items: center; justify-content: space-between; height: 52px; box-sizing: border-box; padding: 0 18px; flex-shrink: 0; position: relative; isolation: isolate; background: transparent; overflow: hidden; backdrop-filter: none; -webkit-backdrop-filter: none; }
-.cal-toolbar:hover { --gb-tint: var(--glass-bg-hover); background: transparent; box-shadow: var(--glass-shadow-lg); }
-.toolbar-left { display: flex; align-items: center; gap: 4px; }
-.nav-btn { width: 30px; height: 30px; border-radius: 8px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: background 0.15s; }
-.nav-btn:hover { background: rgba(0,0,0,0.06); }
-.period-btn {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 15px; font-weight: 700; color: var(--text-primary);
-  min-width: 130px; justify-content: center;
-  padding: 4px 10px; border-radius: 9px; border: none; background: none;
-  cursor: pointer; font-family: var(--font-sans);
-  transition: background 0.15s;
-}
-.period-btn:hover { background: rgba(0,0,0,0.06); }
-.today-btn { padding: 5px 14px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.56); font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans); transition: all 0.15s; }
-.today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
@@ -2203,27 +2158,6 @@ async function saveEvent() {
 .overflow-tag-ev { background: rgba(210,175,40,0.35); color: #7a5c00; }
 .overflow-name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 
-.cal-month-picker {
-  background: var(--panel-bg);
-  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255,255,255,0.82);
-  border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 10px 36px rgba(30,40,80,0.14);
-  padding: 14px;
-}
-.picker-year-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.picker-year { font-size: 13px; font-weight: 700; color: #1e2028; }
-.picker-nav { width: 26px; height: 26px; border-radius: 7px; border: none; background: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #8a8fa8; transition: background 0.12s; }
-.picker-nav:hover { background: rgba(0,0,0,0.07); }
-.picker-months { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
-.picker-month { padding: 6px 0; border-radius: 8px; border: none; font-size: 12px; font-weight: 500; font-family: 'PingFang SC','Segoe UI',sans-serif; cursor: pointer; background: none; color: #1e2028; transition: all 0.12s; }
-.picker-month:hover { background: rgba(123,127,178,0.14); }
-.picker-month.active { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-weight: 700; box-shadow: 0 2px 6px rgba(123,127,178,0.3); }
-
-.picker-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
-.picker-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
-.picker-enter-from,.picker-leave-to { opacity: 0; transform: scaleY(0.9) translateY(-6px); transform-origin: top; }
-
 /* 更多弹窗：transform-origin 由内联 style 控制，动画只改 opacity + scale */
 .more-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
@@ -2277,10 +2211,6 @@ async function saveEvent() {
   100%     { box-shadow: 0 0 0 0 rgba(123,127,178,0); }
 }
 /* ───────── 周视图（时间轴）───────── */
-.toolbar-right { display: flex; align-items: center; gap: 8px; }
-.view-toggle { gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
-.view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: color 0.15s; }
-.view-toggle button.on { color: #5a5e86; }
 
 .week-view { display: flex; flex-direction: column; flex: 1; min-height: 0; user-select: none; -webkit-user-select: none; }
 .wv-gutter { width: 46px; flex: none; }
