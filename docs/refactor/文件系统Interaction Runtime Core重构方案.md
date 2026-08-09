@@ -190,6 +190,36 @@ Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatc
 
 完成条件：视觉交互和数据提交可以分别测试，失败时不会重复触发 landing。
 
+#### Phase 2 执行记录（2026-08-10）
+
+Phase 1 落地时已经顺带满足本阶段的实质要求，本阶段只做核对，不追加代码：
+
+- **`moveByRuntimeAction`**：`Files/index.vue` 的 `handleRuntimeMoveAction` 与 `ProjectModal.vue`
+  的同名函数就是这个收敛点——从 `runtime.onAction()` 的 `MoveAction` 解析 `objectId`/
+  `toSurfaceId`，只做落点判定（面包屑 vs 文件夹 vs 浏览区本身/自身），不做乐观更新或 API
+  调用，两侧结构完全对称。
+- **optimistic mutation 是否要合并成一份**：核对后决定不合并。文件页的 `moveFoldersInto`/
+  `moveFilesInto` 和项目抽屉的 `useProjectFileDragMoves`（`moveFolders`/`moveFiles`）在
+  `afterMutate`/落点后刷新策略上本来就不同——文件页乐观更新后调用 `loadContents` 重投影，
+  项目抽屉落文件夹卡整体重拉、落面包屑轻量刷新——这是旧 `fileDrag.ts` 头注释里明确记录的
+  既有差异，不是这次重构引入的重复。"统一" 落实为两边使用同一套**调用形状**（`moveByRuntimeAction`
+  的解析/分流逻辑一致），而不是合并成一个函数——合并会抹掉两边本就不同的刷新语义，属于过度
+  抽象。
+- **循环目录校验**：核对 `backend/app/services/storage/folder_tree.py:150-155`，
+  `SqlAlchemyFolderTree.move()` 已经向上遍历目标链检测循环，命中即抛
+  `Invalid("folder.cycle", "不能将文件夹移动到自身或其子文件夹中")`。这层校验在后端服务层，
+  与前端用哪套拖拽编排（旧 pointer 系统还是 Runtime）无关，Phase 1/2 都不需要在前端重复实现，
+  前端只做了"拖到自身"这一浅层短路（`targetFolderId === id` 时直接 return，避免无意义的
+  网络往返），更深的祖先链校验完全交给后端。
+- **动画完成 ≠ API 提交完成**：`runtime.onAction(action => { void handleRuntimeMoveAction(...) })`
+  用 `void` 触发即不等待——Runtime 的 landing/reveal 动画按自己的时间线播放，不会被这个
+  Promise 挂起；`handleRuntimeMoveAction` 内部的 `optimisticMutation` 失败走 rollback，不影响
+  已经播放完的落地动画（视觉上"看起来移过去了"和"数据确实移过去了"是两条独立时间线，符合
+  完成条件里"失败时不会重复触发 landing"——失败只会在数据层 rollback，不会让 Runtime 认为
+  这次拖拽本身失败而重新触发一次 landing）。
+
+完成条件：视觉交互和数据提交可以分别测试，失败时不会重复触发 landing。
+
 ### Phase 3：多选交互进入 Runtime（跨仓库，独立轨道）
 
 当前 Runtime Core 主要覆盖单 Object。要删除旧多选拖拽，需先提供通用 group interaction：
