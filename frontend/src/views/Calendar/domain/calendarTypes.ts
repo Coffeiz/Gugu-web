@@ -68,3 +68,12 @@ export interface CalendarRenderItem {
   daysLeft?: number
   daysLabel?: string
 }
+
+export interface CalendarMonthDay {
+  key: string
+  date: number
+  iso: string
+  other: boolean
+  isToday: boolean
+  dow: number
+}

@@ -1,4 +1,4 @@
-import { createApp, nextTick } from 'vue'
+import { createApp, nextTick, ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { useCalendarDrag, type CalendarDragState } from './useCalendarDrag'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
@@ -15,7 +15,7 @@ const eventItem: CalendarRenderItem = {
 function mountDrag() {
   let state!: CalendarDragState
   let dragApi!: ReturnType<typeof useCalendarDrag>
-  const dragOverIso = { value: null as string | null }
+  const dragOverIso = ref<string | null>(null)
   const commitDrag = vi.fn()
   const app = createApp({
     setup() {

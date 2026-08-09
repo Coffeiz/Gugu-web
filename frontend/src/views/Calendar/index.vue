@@ -18,105 +18,39 @@
       <!-- 日历主区 -->
       <div class="cal-main glass-card">
         <!-- ───── 月视图 ───── -->
-        <template v-if="viewMode === 'month'">
-        <div class="weekday-row">
-          <span v-for="w in weekdays" :key="w" class="weekday-hdr" :class="{ weekend: w === '六' || w === '日' }">{{ w }}</span>
-        </div>
-
-        <div class="month-body">
-          <div
-            v-for="(week, wi) in monthWeeks" :key="wi"
-            class="week-row"
-            :data-wi="wi"
-            :ref="el => setWeekRef(el, wi)"
-            @mousemove="onWeekMouseMove($event, week)"
-            @mouseleave="hoveredDateIso = null"
-            @contextmenu.prevent="onWeekContextMenu($event, week)"
-          >
-            <div
-              v-for="d in week" :key="d.key"
-              class="month-cell"
-              :data-iso="d.iso"
-              :class="{
-                'other-month':  d.other,
-                'is-today':     d.isToday,
-                'is-selected':  d.iso === selectedDate && !activeRange,
-                'is-weekend':   d.dow >= 5,
-                'is-holiday':   !d.other && hdayType(d.iso) === 'holiday',
-                'is-workday':   !d.other && hdayType(d.iso) === 'workday',
-                'cell-hovered': d.iso === hoveredDateIso,
-                'in-range':     isInActiveRange(d.iso),
-                'range-start':  activeRange && d.iso === activeRange.start,
-                'range-end':    activeRange && d.iso === activeRange.end,
-              }"
-              @mousedown="onCellMouseDown(d, $event)"
-            >
-              <div class="cell-head">
-                <div class="cell-num">{{ d.date }}</div>
-                <span v-if="!d.other && hdayType(d.iso)" class="hday-badge" :class="'hday-' + hdayType(d.iso)">{{ hdayType(d.iso) === 'holiday' ? '休' : '班' }}</span>
-              </div>
-              <!-- chips：paddingTop 将格子坐标系对齐到 bars-layer 坐标系 -->
-              <template v-for="lay in [dayLayout(d.iso, week, wi)]" :key="'lay'">
-                <div
-                  class="cell-chips"
-                  :style="{ paddingTop: lay.paddingTop + 'px' }"
-                >
-                  <div
-                    v-for="ev in lay.visibleChips" :key="ev.id"
-                    class="event-chip cal-chip"
-                    :class="{ 'chip-proj': ev.calendarType === 'project', 'chip-ev-click': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
-                    :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.calendarType ? 'pointer' : 'default' }"
-                    @click.left.stop="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event, true))"
-                    @contextmenu.prevent.stop="ev.calendarType === 'event' && openEditForm(ev, $event, true)"
-                    @mousedown.stop="ev.calendarType === 'project' ? startProjChipDrag(ev, $event) : (ev.calendarType === 'event' && startEventDrag(ev, $event))"
-                  >
-                    <span v-if="ev.calendarType === 'project'" class="chip-proj-tag">项目</span>
-                    <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
-                    <span v-if="ev.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
-                    {{ ev.name }}
-                  </div>
-                  <button
-                    v-if="lay.moreCount > 0"
-                    class="chip-more-btn cal-chip"
-                    @click.stop="showMore($event, d.iso, lay.moreItems)"
-                  >+{{ lay.moreCount }} 更多</button>
-                </div>
-              </template>
-            </div>
-
-            <!-- 项目条层（绝对定位，覆盖整行，不再有溢出按钮） -->
-            <div class="bars-layer">
-              <template v-for="bar in weekBarsCapped(week, wi).bars" :key="bar.id">
-                <div
-                  class="project-bar cal-chip"
-                  :class="{ 'bar-start': bar.startsHere, 'bar-end': bar.endsHere, 'bar-dragging': drag.active && drag.item?.id === bar.id, 'bar-hovered': hoveredBarId === bar.id, 'cal-done': bar.status === 'done' }"
-                  :data-bar-id="bar.id"
-                  @mouseenter="hoveredBarId = bar.id"
-                  @mouseleave="hoveredBarId = null"
-                  @click.stop="openProject(bar)"
-                  @mousedown.stop="startBarDrag(bar, $event)"
-                  :style="{
-                    left:  bar.startsHere ? `calc(${(bar.colStart ?? 0) / 7 * 100}% + 6px)` : ((bar.colStart ?? 0) / 7 * 100) + '%',
-                    right: bar.endsHere   ? `calc(${(7 - (bar.colEnd ?? 0) - 1) / 7 * 100}% + 6px)` : ((7 - (bar.colEnd ?? 0) - 1) / 7 * 100) + '%',
-                    top:   (HEADER_H + (bar.row ?? 0) * BAR_H) + 'px',
-                    background: [deadlineWarnLayer(bar), `linear-gradient(to right, ${bar.accent}50 0%, ${bar.accent}50 ${barSegFill(bar)}%, ${bar.accent}1a ${barSegFill(bar)}%, ${bar.accent}1a 100%)`].filter(Boolean).join(', '),
-                    borderColor: bar.accent + '70',
-                    color:       darkenHex(bar.accent),
-                  }"
-                >
-                  <div v-if="bar.startsHere" class="bar-rh bar-rh-left" @mousedown.stop.prevent="startBarResize(bar, 'start', $event)"></div>
-                  <template v-if="bar.startsHere || (bar.colStart ?? 0) === 0">
-                    <span class="bar-proj-tag">项目</span>
-                    <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>
-                    <span class="bar-label">{{ bar.name }}</span>
-                  </template>
-                  <div v-if="bar.endsHere" class="bar-rh bar-rh-right" @mousedown.stop.prevent="startBarResize(bar, 'end', $event)"></div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </div>
-        </template>
+        <MonthGrid
+          v-if="viewMode === 'month'"
+          :weekdays="weekdays"
+          :month-weeks="monthWeeks"
+          :selected-date="selectedDate"
+          :active-range="activeRange"
+          :hovered-date-iso="hoveredDateIso"
+          :hovered-bar-id="hoveredBarId"
+          :drag="drag"
+          :header-height="HEADER_H"
+          :bar-height="BAR_H"
+          :hday-type="hdayType"
+          :is-in-active-range="isInActiveRange"
+          :day-layout="dayLayout"
+          :week-bars-capped="weekBarsCapped"
+          :deadline-warn-layer="deadlineWarnLayer"
+          :bar-seg-fill="barSegFill"
+          :darken-hex="darkenHex"
+          :set-week-ref="setWeekRef"
+          @week-mousemove="onWeekMouseMove"
+          @week-mouseleave="hoveredDateIso = null"
+          @week-contextmenu="onWeekContextMenu"
+          @cell-mousedown="onCellMouseDown"
+          @open-project="openProject"
+          @edit-event="(item, event) => openEditForm(item, event, true)"
+          @start-project-chip-drag="startProjChipDrag"
+          @start-event-drag="startEventDrag"
+          @show-more="showMore"
+          @start-bar-drag="startBarDrag"
+          @start-bar-resize="startBarResize"
+          @bar-mouseenter="hoveredBarId = $event"
+          @bar-mouseleave="hoveredBarId = null"
+        />
 
         <!-- ───── 周视图（时间轴）───── -->
         <div v-else class="week-view">
@@ -321,12 +255,13 @@ import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import CalendarContextMenu from './components/CalendarContextMenu.vue'
+import MonthGrid from './components/MonthGrid.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import type { CalendarContext } from './domain/calendarContext'
 import EventEditFields from '@/components/events/EventEditFields.vue'
-import type { CalendarRenderItem } from './domain/calendarTypes'
+import type { CalendarMonthDay, CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
 import { canResize, getDisplayColor } from './domain/calendarRules'
 import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
@@ -363,14 +298,7 @@ interface NewEventForm {
   allDay: boolean
 }
 
-interface MonthDayCell {
-  key: string
-  date: number
-  iso: string
-  other: boolean
-  isToday: boolean
-  dow: number
-}
+type MonthDayCell = CalendarMonthDay
 
 interface WeekViewDay {
   iso: string
@@ -1691,86 +1619,6 @@ async function saveEvent() {
 
 .cal-layout { display: grid; grid-template-columns: 1fr 260px; gap: 14px; flex: 1; min-height: 0; }
 .cal-main { padding: 16px 16px 8px; display: flex; flex-direction: column; overflow: hidden; }
-.weekday-row { display: grid; grid-template-columns: repeat(7, 1fr); flex-shrink: 0; margin-bottom: 2px; }
-.weekday-hdr { text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); padding: 3px 0 8px; border-right: 1px solid rgba(123,127,178,0.15); }
-.weekday-hdr:last-child { border-right: none; }
-.weekday-hdr.weekend { color: rgba(195,90,90,0.85); }
-
-.month-body { flex: 1; display: flex; flex-direction: column; border-top: 1px solid rgba(123,127,178,0.15); overflow: hidden; }
-
-.week-row {
-  flex: 1;
-  display: grid; grid-template-columns: repeat(7, 1fr);
-  position: relative;
-  border-bottom: 1px solid rgba(123,127,178,0.15);
-  min-height: 80px;
-  overflow: hidden;
-}
-.week-row:last-child { border-bottom: none; }
-
-.month-cell {
-  padding: 7px 6px 4px;
-  border-right: 1px solid rgba(123,127,178,0.15);
-  cursor: pointer;
-  overflow: hidden;
-  position: relative;
-  transition: background 0.12s ease;   /* 选中/范围态淡入淡出（hover 走 ::before opacity；grid 已提合成层不会拖累 cal-main） */
-}
-.month-cell:last-child { border-right: none; }
-/* hover 高光：用 ::before + opacity（合成层，零主线程重绘），不再走背景变化——背景变化会 0.12s
-   主线程重绘并级联拖累顶栏/cal-toolbar 的 backdrop-filter 重栅格、闪白带（见 perf trace）。*/
-.month-cell::before {
-  content: ''; position: absolute; inset: 0; z-index: 0;
-  background: rgba(123,127,178,0.06); opacity: 0;
-  transition: opacity 0.12s ease; pointer-events: none;
-}
-.month-cell.cell-hovered::before { opacity: 1; }
-.month-cell.is-weekend::before { background: rgba(195,90,90,0.07); }
-.month-cell > * { position: relative; z-index: 1; }
-.month-cell.other-month { opacity: 0.3; }
-.month-cell.is-weekend { background: rgba(195,90,90,0.028); }
-.month-cell.is-today { background: rgba(123,127,178,0.07); }
-.month-cell.is-today.is-weekend { background: rgba(195,90,90,0.07); }
-.month-cell.is-today .cell-num { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: rgba(255,255,255,0.88) !important; font-weight: 700; border-radius: 6px; }
-.month-cell.is-today.is-weekend .cell-num { background: linear-gradient(135deg,#b85c5c,#c97070); }
-.month-cell.is-selected { background: rgba(123,127,178,0.1); }
-.month-cell.is-selected.is-weekend { background: rgba(195,90,90,0.1); }
-.month-cell.is-selected:not(.is-today) .cell-num { background: rgba(123,127,178,0.15); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
-.month-cell.is-selected:not(.is-today).is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
-.month-cell.is-selected:not(.is-today).is-workday .cell-num { color: var(--color-primary); }
-
-/* ── 日期范围框选 ── */
-.month-cell.in-range { background: rgba(123,127,178,0.08); }
-.month-cell.in-range.is-weekend { background: rgba(195,90,90,0.07); }
-.month-cell.range-start,
-.month-cell.range-end { background: rgba(123,127,178,0.16); }
-.month-cell.range-start.is-weekend,
-.month-cell.range-end.is-weekend { background: rgba(195,90,90,0.1); }
-.month-cell.range-start .cell-num,
-.month-cell.range-end .cell-num { background: rgba(123,127,178,0.22); color: var(--color-primary); font-weight: 700; border-radius: 6px; }
-.month-cell.range-start.is-weekend .cell-num,
-.month-cell.range-end.is-weekend .cell-num { background: rgba(195,90,90,0.15); color: rgba(195,90,90,0.9); }
-
-.cell-head { display: flex; align-items: center; gap: 3px; height: 24px; }
-.cell-num { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; color: var(--text-primary); flex-shrink: 0; }  /* 去掉 transition: all（选中/今天时 border/color/font 一起动 → 合成失败重绘） */
-.hday-badge { font-size: 9px; font-weight: 700; line-height: 1; padding: 2px 3px; border-radius: 3px; flex-shrink: 0; }
-.hday-holiday { background: rgba(210,75,75,0.1); color: rgba(210,75,75,0.82); }
-.hday-workday { background: rgba(210,130,20,0.14); color: rgba(170,100,5,0.9); }
-.month-cell.is-holiday .cell-num { color: rgba(210,75,75,0.82); }
-.month-cell.is-workday.is-weekend .cell-num { color: var(--text-primary); }
-
-/* chip 区域：paddingTop 由 JS 动态设置，推到 bar 下方 */
-.cell-chips { display: flex; flex-direction: column; gap: 2px; }
-
-.event-chip {
-  height: 18px; box-sizing: border-box;
-  font-size: 10px; font-weight: 500;
-  padding: 0 7px; border-radius: 99px; border: 1px solid transparent;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  display: flex; align-items: center;
-}
-.event-chip.chip-proj,
-.event-chip.chip-ev-click { cursor: grab; }
 .chip-more-btn {
   height: 16px; box-sizing: border-box;
   font-size: 10px; font-weight: 500;
@@ -1781,39 +1629,6 @@ async function saveEvent() {
   white-space: nowrap;
   display: flex; align-items: center;
 }
-
-/* 项目条层 */
-.bars-layer { position: absolute; inset: 0; pointer-events: none; }
-/* bars-layer is pointer-events:none so date-cell clicks work; individual bars opt back in */
-
-.project-bar {
-  position: absolute; height: 16px;
-  border: 1px solid transparent;
-  display: flex; align-items: center;
-  padding: 0 6px; font-size: 10px; font-weight: 500;
-  white-space: nowrap; overflow: hidden; box-sizing: border-box;
-  pointer-events: auto; cursor: grab;
-}
-.project-bar.bar-dragging { opacity: 0.6; }
-.project-bar.bar-start  { border-radius: 99px 0 0 99px; padding-left: 8px; }
-.project-bar.bar-end    { border-radius: 0 99px 99px 0; }
-.project-bar.bar-start.bar-end { border-radius: 99px; }
-
-/* resize handles */
-.bar-rh {
-  position: absolute; top: 0; bottom: 0; width: 8px;
-  cursor: ew-resize; display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity 0.15s; z-index: 1;
-}
-.bar-rh::after {
-  content: ''; width: 2px; height: 8px; border-radius: 2px;
-  background: currentColor; opacity: 0.7;
-}
-.bar-rh-left  { left: 0; }
-.bar-rh-right { right: 0; }
-.project-bar.bar-hovered .bar-rh { opacity: 1; }
-
-.bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
 
 .bar-proj-tag {
   flex-shrink: 0;
