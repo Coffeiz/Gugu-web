@@ -185,7 +185,8 @@ import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
-import { showAppError, showAppNotice } from '@/composables/useAppToast'
+import { showAppError } from '@/composables/useAppToast'
+import { defaultTimeRange } from '@/composables/useEventEditForm'
 import CalendarToolbar from './components/CalendarToolbar.vue'
 import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
@@ -198,6 +199,7 @@ import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import { useCalendarData } from './composables/useCalendarData'
 import { useCalendarWeekInteraction } from './composables/useCalendarWeekInteraction'
+import { useCalendarEventForm } from './composables/useCalendarEventForm'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -210,10 +212,6 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import {
-  useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
-  LEAD_OPTIONS, CHAN_LABEL,
-} from '@/composables/useEventEditForm'
 import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
@@ -221,15 +219,6 @@ import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@ph
 type CalItem = CalendarRenderItem
 
 interface DateRange { start: string; end: string }
-
-interface NewEventForm {
-  name: string
-  date: string
-  time: string
-  endTime: string
-  description: string
-  allDay: boolean
-}
 
 type MonthDayCell = CalendarMonthDay
 
@@ -277,20 +266,6 @@ function hdayType(isoDate: string | null | undefined) {
   const yr = +isoDate.slice(0, 4)
   return getHolidayType(hdayCache.value[yr], isoDate)
 }
-const showAddForm  = ref(false)
-const addInputRef  = ref<HTMLInputElement | null>(null)
-// 打开新建表单时聚焦输入框，但 preventScroll——原来用 <input autofocus> 会让浏览器滚动去露出
-// position:fixed 的表单（点底部时尤其明显）→ 布局跳动、顶栏闪白块。preventScroll 聚焦不触发滚动。
-watch(showAddForm, (v) => { if (v) nextTick(() => addInputRef.value?.focus?.({ preventScroll: true })) })
-// 过去的日期（早于今天）不能加提醒——@once 到点早已过、worker 会判过期清掉，加了也白加
-function isPastDate(d: string | null | undefined) { return !!d && d < todayIso.value }
-const newEvent     = ref<NewEventForm>({ name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false })
-const addBtnRef    = ref<HTMLElement | null>(null)
-const addFormRef   = ref<HTMLElement | null>(null)
-const addFormStyle = ref<Record<string, string | number>>({})
-
-const activeFormDate = computed(() => newEvent.value?.date)
-
 // ── 拖拽状态 ─────────────────────────────────────────────────────────────────
 const drag = reactive<CalendarDragState>({
   active:     false,
@@ -809,6 +784,8 @@ const {
   pickerOpen, pickerYear, pickerAnchorRef, pickerStyle, togglePicker, selectYearMonth,
 } = useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDays })
 
+const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
+
 const {
   wvAllDayGridRef, wvSelCols, wvAdHover, wvHover, wvDragging, wvSelectedSlot,
   setAllDayGridRef, isoFromAllDayX, hourAt, wvDaySelected,
@@ -824,6 +801,30 @@ const {
   clearContext: () => { cellCtx.value = null },
   isExternalDragging: () => Boolean(_evDrag),
   onSlotSelected: handleWeekSlotSelected,
+})
+
+const {
+  showAddForm, addInputRef, addBtnRef, addFormRef, addFormStyle, newEvent, activeFormDate, isPastDate,
+  reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel,
+  resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
+  LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
+} = useCalendarEventForm({
+  selectedDate,
+  todayIso,
+  viewMode,
+  selectedSlot: wvSelectedSlot,
+  cursor,
+  extraEvents,
+  nextMonthEvents,
+  spilloverEvents,
+  projectTimelines,
+  refreshUpcoming,
+  cacheMonth,
+  normalizeCalendarEvent,
+  fetchEvents,
+  fetchNextMonthEvents,
+  fetchSpilloverEvents,
+  clampPopupIntoView,
 })
 
 function handleWeekSlotSelected(slot: WvSelectedSlot, previous: WvSelectedSlot | null, event: MouseEvent) {
@@ -1076,7 +1077,6 @@ const selectedEvents = computed<CalItem[]>(() => {
   return [...activeProjects, ...chips]
 })
 
-const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
 watch([projectTimelines, extraEvents, nextMonthEvents], () => {
   refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
 }, { immediate: true })
@@ -1130,48 +1130,6 @@ function clampPopupIntoView(elRef: { value: HTMLElement | null }, styleRef: { va
   const top = Math.max(SAFE_GAP, Math.min(cur, maxTop))
   if (Math.abs(top - cur) > 0.5) styleRef.value = { ...styleRef.value, top: top + 'px' }
 }
-// 新建活动的默认日期/时间：周视图里若有选中格 → 用选中格时段；否则下一个整点
-function _addDefaults() {
-  if (viewMode.value === 'week' && wvSelectedSlot.value) {
-    const s = wvSelectedSlot.value
-    const a = Math.min(s.h0, s.h1), b = Math.max(s.h0, s.h1)
-    const p = (n: number) => String(n).padStart(2, '0')
-    const endV = b + 1
-    return { date: s.iso, time: `${p(a)}:00`, endTime: endV >= 24 ? '00:00' : `${p(endV)}:00` }
-  }
-  return { date: selectedDate.value || todayIso.value, ...defaultTimeRange() }
-}
-
-function openAddForm(anchor: HTMLElement | null = null) {
-  addBtnRef.value = anchor
-  newEvent.value = { name: '', ..._addDefaults(), description: '', allDay: false }
-  resetReminder()
-  const btnEl = addBtnRef.value
-  if (btnEl) {
-    const btnRect    = btnEl.getBoundingClientRect()
-    const popupWidth = 240
-    const sbEl   = btnEl.closest('.cal-sidebar')
-    const sbRect = sbEl?.getBoundingClientRect()
-    const centerX = sbRect
-      ? sbRect.left + sbRect.width / 2
-      : btnRect.right - popupWidth / 2
-    const left = Math.max(8, Math.min(centerX - popupWidth / 2, window.innerWidth - popupWidth - 8))
-    const ADD_H = 260
-    const btnTop = (window.innerHeight - btnRect.bottom - 8 >= ADD_H)
-      ? btnRect.bottom + 8
-      : btnRect.top - ADD_H - 8
-    addFormStyle.value = {
-      position: 'fixed',
-      top:   Math.max(8, btnTop) + 'px',
-      left:  left + 'px',
-      width: popupWidth + 'px',
-      zIndex: 1000,
-    }
-  }
-  showAddForm.value = true
-  nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
-}
-
 function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, _nativeEv: MouseEvent, _useMousePos = false) {
   showAddForm.value = false
   if (typeof ev.id === 'number') eventModalStore.openModal(ev.id)
@@ -1179,24 +1137,6 @@ function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTi
 
 function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
   openEditForm(payload.item, payload.event)
-}
-
-// ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
-// 新建活动表单的提醒逻辑复用共享 composable；持久化活动编辑已统一由全局 EventEditModal 负责。
-const eventForm = useEventEditForm()
-const { reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel, resetReminder, applyReminders } = eventForm
-
-// 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
-watch([() => reminders.value.length, reminderChannels], () => {
-  nextTick(() => { if (showAddForm.value) clampPopupIntoView(addFormRef, addFormStyle) })
-})
-
-// 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
-async function testReminderChannels(name?: string) {
-  try {
-    const res = await eventForm.testReminderChannels(name || '活动提醒')
-    showAppNotice(res?.msg || '已发送测试消息')
-  } catch { showAppError('测试失败，请稍后重试') }
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -1244,56 +1184,6 @@ watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
-async function deleteEvent(ev: { id: string | number; _uid?: string }) {
-  // ① 按稳定 _uid 匹配（旧数据/无 _uid 时退回宽松 id 比较）——临时→真 id 替换后也能删对那份，
-  //    杜绝「服务器删成功了、视图里那份却因 id 形态对不上而没删掉」。
-  const match = (e: CalItem) => (ev._uid != null ? e._uid === ev._uid : String(e.id) === String(ev.id))
-  extraEvents.value     = extraEvents.value.filter(e => !match(e))
-  nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
-  spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
-  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-  cacheMonth(cursor.value, extraEvents.value)
-  try {
-    await eventsApi.delete(ev.id as unknown as number)
-  } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
-  finally {
-    // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
-    fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents()
-  }
-}
-
-async function saveEvent() {
-  if (!newEvent.value.name) return
-  if (newEvent.value.allDay) { newEvent.value.time = ''; newEvent.value.endTime = '' }
-  const date = newEvent.value.date || selectedDate.value || todayIso.value
-  const uid = 'u' + Date.now()
-  const localItem: CalItem = {
-    _uid:        uid,
-    id:          uid,                    // 临时 id；create 回来换成真数字 id，但 _uid 不变
-    date,
-    time:        newEvent.value.time || '',
-    endTime:     newEvent.value.endTime || '',
-    name:        newEvent.value.name,
-    client:      '',
-    type:        'event',
-    calendarType: 'event',
-    accent:      '#7b7fb2',
-    description: newEvent.value.description || '',
-  }
-  extraEvents.value.push(localItem)
-  selectedDate.value = date
-  newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false }
-  showAddForm.value = false
-
-  try {
-    const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
-    const norm = { ...normalizeCalendarEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
-    const idx = extraEvents.value.findIndex(e => e._uid === uid)
-    if (idx !== -1) extraEvents.value[idx] = norm
-    if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
-  } catch { }
-  cacheMonth(cursor.value, [...extraEvents.value])
-}
 </script>
 
 <style scoped>
