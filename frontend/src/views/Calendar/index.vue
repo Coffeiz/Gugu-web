@@ -338,10 +338,11 @@ import CalendarToolbar from './components/CalendarToolbar.vue'
 import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
+import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import EventEditFields from './components/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
-import { canDrag, canResize, getDisplayColor, typeLabel } from './domain/calendarRules'
+import { canDrag, canResize, getDisplayColor } from './domain/calendarRules'
 import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
 import {
   maxSlots as calculateMaxSlots,
@@ -844,7 +845,7 @@ async function commitDrag() {
     patch(extraEvents.value)
     patch(nextMonthEvents.value)
     patch(spilloverEvents.value)
-    buildUpcomingList()
+    refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
     eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
     try {
       const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
@@ -1369,7 +1370,7 @@ function _setEventLocal(id: string | number, fields: Partial<CalItem>) {
   apply(extraEvents.value); apply(nextMonthEvents.value); apply(spilloverEvents.value)
 }
 async function _persistEvent(s: EvDragState) {
-  buildUpcomingList()
+  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
   eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
   try {
     const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
@@ -1518,51 +1519,10 @@ const selectedEvents = computed<CalItem[]>(() => {
   return [...activeProjects, ...chips]
 })
 
-const upcomingList = ref<CalItem[]>([])
-
-function buildUpcomingList() {
-  const now         = new Date()
-  const todayStr    = toIso(now)
-  const cutoff      = toIso(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 15))
-  const midnight    = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-
-  function label(iso: string | null | undefined) {
-    const d = Math.round((+new Date((iso ?? '') + 'T00:00:00') - +midnight) / 86400000)
-    return { daysLeft: d, daysLabel: d === 0 ? '今天' : d === 1 ? '明天' : d + '天后' }
-  }
-
-  const prioVal = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
-
-  // 项目截止（15天内），已完成项目排最后
-  const projects: CalItem[] = projectTimelines.value
-    .filter(p => (p.endDate ?? '') >= todayStr && (p.endDate ?? '') <= cutoff)
-    .sort((a, b) => {
-      const doneDiff = (a.status === 'done' ? 1 : 0) - (b.status === 'done' ? 1 : 0)
-      if (doneDiff) return doneDiff
-      return prioVal(b) - prioVal(a)
-        || (a.startDate ?? '').localeCompare(b.startDate ?? '')
-        || (a.endDate ?? '').localeCompare(b.endDate ?? '')
-        || (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-    })
-    .slice(0, 4)
-    .map(p => ({ ...p, date: p.endDate ?? undefined, ...label(p.endDate) }))
-
-  // 日历事件（当月 + 下月，15天内）
-  const seen = new Set()
-  const events: CalItem[] = [...extraEvents.value, ...nextMonthEvents.value]
-    .filter(ev => {
-      if (seen.has(ev.id)) return false
-      seen.add(ev.id)
-      return (ev.date ?? '') >= todayStr && (ev.date ?? '') <= cutoff
-    })
-    .sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''))
-    .slice(0, 4)
-    .map(ev => ({ ...ev, ...label(ev.date) }))
-
-  upcomingList.value = [...projects, ...events]
-}
-
-watch([projectTimelines, extraEvents, nextMonthEvents], buildUpcomingList, { immediate: true })
+const { upcomingList, refresh: refreshUpcoming } = useCalendarUpcoming()
+watch([projectTimelines, extraEvents, nextMonthEvents], () => {
+  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
+}, { immediate: true })
 watch(activeRange, r => { uiStore.calendarActiveRange = r })
 
 // 搜索跳转：导航到日程所在月份并高亮。immediate:true 是关键——从别的页面搜索时，
@@ -1725,7 +1685,7 @@ async function saveEditEvent() {
   update(extraEvents.value)
   update(nextMonthEvents.value)
   update(spilloverEvents.value)
-  buildUpcomingList()
+  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[cacheKey] = [...extraEvents.value]
 
@@ -1793,7 +1753,7 @@ async function deleteEvent(ev: { id: string | number; _uid?: string }) {
   extraEvents.value     = extraEvents.value.filter(e => !match(e))
   nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
   spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
-  buildUpcomingList()
+  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
   const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   eventsCache[key] = extraEvents.value
   try {
