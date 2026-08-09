@@ -336,9 +336,48 @@ async def get_message_location(
 
 @router.delete("/attachments", status_code=200)
 async def clear_attachments(current_user: User = Depends(get_current_user)):
-    """清除当前用户所有未过期的聊天暂存附件（字节 + Redis 元数据）。"""
+    """清除当前用户所有草稿态（未发送）聊天暂存附件（字节 + DB 行）。"""
     n = await chat_attach.clear_staged(current_user.id)
     return {"deleted": n}
+
+
+@router.delete("/attachment/{attach_id}", status_code=200)
+async def delete_draft_attachment(
+    attach_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除单个草稿态（未发送）暂存附件——发送消息失败时前端调用，降低草稿孤儿
+    产生速度（PRD-STORAGE-1 §2 FR-STORAGE-1-1 步骤 8）。
+
+    **状态守卫是这个接口存在的意义**：只删 `state='draft'` 的附件，非 draft
+    一律拒绝。HTTP 响应丢失/超时不等于请求真的失败——消息可能已经在服务端
+    提交成功、附件已经被 claim 成 `attached`；没有这层守卫，客户端一次误判的
+    "发送失败"会把已经生效的正常附件删掉。"""
+    from app.models import ChatAttachment
+    from sqlalchemy import delete as sa_delete, select
+    row = (await db.execute(
+        select(ChatAttachment).where(
+            ChatAttachment.user_id == current_user.id,
+            ChatAttachment.attach_id == attach_id,
+        )
+    )).scalars().first()
+    if row is None:
+        raise HTTPException(404, "附件不存在")
+    storage_key = row.storage_key
+    result = await db.execute(
+        sa_delete(ChatAttachment).where(
+            ChatAttachment.attach_id == attach_id,
+            ChatAttachment.user_id == current_user.id,
+            ChatAttachment.state == "draft",
+        )
+    )
+    if result.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(409, "附件已被使用，无法删除")
+    await db.commit()
+    await chat_attach.try_delete_storage_if_unreferenced(current_user.id, storage_key)
+    return {"deleted": True}
 
 
 @router.delete("/memory", status_code=204)
@@ -359,11 +398,22 @@ async def delete_session(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """删会话：DB commit 优先于 storage 删除，两阶段（PRD-STORAGE-1 不变量 1）。
+
+    ① 一个事务内显式删除该会话下所有消息关联的 `chat_attachments` 行，再删
+    session（ORM cascade 级联删 `conversation_messages`）——**不依赖 `message_id`
+    外键的 `ON DELETE CASCADE` 自动帮忙**：SQLite（测试用）默认不强制外键约束，
+    而 Postgres（生产）默认强制，两边行为不一致，靠应用层显式删除更可靠、也让
+    这段逻辑在两种数据库下行为一致、可测试。
+    ② commit 成功后，对每个涉及的 `storage_key` 走 `try_delete_storage_if_unreferenced()`
+    尽力删物理字节，失败只记日志不阻塞、不回滚，留给安全网兜底（PRD-STORAGE-1
+    不变量 2：删除前必须确认没有其他存活行还引用同一个 storage_key，对应 PRD-IM-9
+    的共享附件场景）。"""
+    from app.services.conversation_cleanup import remove_session_with_attachments
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
-    await db.delete(session)
-    await db.commit()
+    await remove_session_with_attachments(db, session)
 
 
 class RenameSessionRequest(BaseModel):

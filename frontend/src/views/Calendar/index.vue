@@ -353,9 +353,9 @@
           </label>
         </div>
         <div class="time-box" v-if="!newEvent.allDay">
-          <input :value="newEvent.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'time')" @blur="newEvent.time = normTime(newEvent.time)" />
+          <TimeInput v-model="newEvent.time" :boxed="false" />
           <span class="time-dash">—</span>
-          <input :value="newEvent.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner" @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, newEvent, 'endTime')" @blur="newEvent.endTime = normTime(newEvent.endTime)" />
+          <TimeInput v-model="newEvent.endTime" :boxed="false" />
           <span v-if="isNextDay(newEvent.time, newEvent.endTime)" class="nextday-tag">次日</span>
         </div>
         <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
@@ -443,6 +443,7 @@ import { usePreferencesStore } from '@/stores/preferences'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
+import TimeInput from '@/components/common/TimeInput.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { useHolidays } from '@/composables/useHolidays'
@@ -451,7 +452,7 @@ import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
 import EventEditFields from './components/EventEditFields.vue'
 import {
-  useEventEditForm, onTimeInput, normTime, isNextDay, onToggleAllDay, defaultTimeRange,
+  useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
   LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
 } from '@/composables/useEventEditForm'
 import { PhCaretLeft, PhCaretRight, PhCaretDown, PhPlus, PhAlignLeft, PhTrash, PhCalendarBlank, PhX, PhCalendarPlus, PhFolderPlus, PhCheck, PhStack, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
@@ -2323,7 +2324,6 @@ async function saveEvent() {
 .allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
 .time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
 .time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;

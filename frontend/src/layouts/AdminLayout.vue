@@ -81,6 +81,10 @@
           <PhFolderSimpleDashed :size="14" />
           存储对账
         </div>
+        <div class="nav-item" :class="{ active: isActive('/storage-monitor') }" role="link" tabindex="0" @click="go('/storage-monitor')">
+          <PhChartLine :size="14" />
+          存储监控
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运营</div>

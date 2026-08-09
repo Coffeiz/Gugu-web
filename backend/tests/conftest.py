@@ -51,6 +51,14 @@ async def db(monkeypatch):
     Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     monkeypatch.setattr(_sess, "_engine", engine)
     monkeypatch.setattr(_sess, "_SessionLocal", Session)
+    # ensure_engine() 有一个跨事件循环检测（见 app/db/session.py）：当前运行的
+    # loop 跟"引擎创建时绑定的 loop"（_engine_loop）不一致就重建引擎——如果这里
+    # 不同步更新 _engine_loop，pytest-asyncio 给每个测试函数分配不同事件循环时，
+    # ensure_engine() 会误判成"引擎该重建了"，绕过我们刚 monkeypatch 上的测试库，
+    # 悄悄连回真实生产数据库（这个坑真实踩过一次：某个不带 db fixture 的调用链路
+    # 触发过一次真实 UndefinedTableError）。
+    import asyncio as _asyncio
+    monkeypatch.setattr(_sess, "_engine_loop", _asyncio.get_running_loop())
     async with Session() as session:
         yield session
     await engine.dispose()

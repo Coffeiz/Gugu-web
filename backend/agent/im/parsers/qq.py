@@ -146,7 +146,8 @@ def _extract_quoted(raw_data: Dict[str, Any]) -> tuple[str, list]:
     attachments = elem.get("attachments") or []
     if not isinstance(attachments, list):
         attachments = []
-    return text, _dedupe_attachments(attachments + _collect_media_attachments(elem))
+    media = _dedupe_attachments(attachments + _collect_media_attachments(elem))
+    return text, media
 
 
 def _collect_media_attachments(value) -> list:

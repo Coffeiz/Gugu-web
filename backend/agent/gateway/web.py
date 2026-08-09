@@ -173,8 +173,20 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
             user_id, req.attachments, req.message, model_cfg=settings.ai)
-        db.add(ConversationMessage(session_id=session.id, role="user", content=req.message,
-                                   files=attach_cards or None))
+        user_message = ConversationMessage(session_id=session.id, role="user", content=req.message,
+                                           files=attach_cards or None)
+        db.add(user_message)
+        await db.flush()
+        # 消息 + 所有附件 claim 是同一个事务（PRD-STORAGE-1 不变量 3）：只 claim
+        # resolve_for_message 已经确认存在的 attach_id（cards 里出现的那些），不存在/
+        # 输错的 id 在 resolve_for_message 阶段就已经被忽略，不该在这里炸整条消息。
+        try:
+            await chat_attach.claim_attachments(
+                db, user_id, user_message.id, [c["attach_id"] for c in attach_cards])
+        except chat_attach.AttachmentClaimError:
+            await db.rollback()
+            yield f"data: {json.dumps({'type': 'error', 'message': '附件已失效（可能已被使用或清理），请重新发送'})}\n\n"
+            return
         await db.commit()
         session_id = session.id
 

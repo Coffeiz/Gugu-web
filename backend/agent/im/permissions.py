@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 
-DEFAULT_GROUP_TOOLS = ["web_search", "image_search", "send_file"]
+DEFAULT_GROUP_TOOLS = ["web_search", "http_get", "image_search", "send_file"]
 
 
 def _parse_bot_db_id(value: Optional[str]) -> Optional[int]:
@@ -61,6 +61,7 @@ async def resolve_access(
         if chat_type == "group":
             import app.db.session as db_session
             from app.models import UserBot
+            from app.services.im_identity import normalize_group_allowed_tools
             if db_session._engine is None:
                 db_session._build_engine()
             bot_db_id = _parse_bot_db_id(channel_id)
@@ -71,9 +72,7 @@ async def resolve_access(
             if bot and bot.platform == platform and bot.user_id == owner_user_id:
                 if bot.owner_platform_user_id and bot.owner_platform_user_id == platform_user_id:
                     return ImAccess("owner", None)
-                configured = bot.group_allowed_tools
-                allowed = configured if isinstance(configured, list) else DEFAULT_GROUP_TOOLS
-                return ImAccess("member", [str(name) for name in allowed if isinstance(name, str)])
+                return ImAccess("member", normalize_group_allowed_tools(bot.group_allowed_tools))
             return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
         return ImAccess("unknown", list(DEFAULT_GROUP_TOOLS))
     if chat_type not in {"group", "c2c"}:

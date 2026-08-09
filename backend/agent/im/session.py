@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import desc, func, select
 
 from app.core import redis as R
 from agent.im.context_policy import IM_SOURCES
@@ -227,7 +227,9 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
             .limit(1)
         )).scalars().first()
         if oldest:
-            await db.delete(oldest)
+            from app.services.conversation_cleanup import remove_session_with_attachments
+
+            await remove_session_with_attachments(db, oldest)
     source = getattr(request, "source", "web")
     session = ConversationSession(
         user_id=user_id,
@@ -258,6 +260,7 @@ async def trim_session_messages(
         return
     import app.db.session as db_session
     from app.models import ConversationMessage
+    from app.services.conversation_cleanup import remove_messages_with_attachments
 
     if db_session._engine is None:
         db_session._build_engine()
@@ -274,10 +277,10 @@ async def trim_session_messages(
             .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
             .limit(limit)
         )
-        await db.execute(
-            delete(ConversationMessage).where(
+        old_ids = list((await db.execute(
+            select(ConversationMessage.id).where(
                 ConversationMessage.session_id == session_id,
                 ConversationMessage.id.not_in(keep_ids),
             )
-        )
-        await db.commit()
+        )).scalars().all())
+        await remove_messages_with_attachments(db, old_ids)
