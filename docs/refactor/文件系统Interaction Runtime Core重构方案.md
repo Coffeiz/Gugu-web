@@ -85,7 +85,7 @@ const objectGeneration = runtime.objects.register({
   abilities: ['move'],
 })
 
-runtime.objects.setElement(objectId, element)
+runtime.objects.setElement(fileObjectId(scope, 'file', file.id), element)
 
 runtime.surfaces.register({
   id: browserSurfaceId,
@@ -142,10 +142,11 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 
 - 从 `main` 开始，不迁移旧 after 分支的代码；
 - 记录当前 Runtime SHA；
+- 校验 `.runtime-version` 锁定的 commit 与本方案第 4 节示例所用的 Core API 版本一致——即业务侧计划调用的 API（`objects/surfaces/targets` 的具体字段和方法签名）在该 SHA 下确实存在，避免出现「前端已经按新 API 写好接入代码，`.runtime-version` 却还锁在没有该 API 的旧 commit」这类版本不匹配；后续阶段每次升级 `.runtime-version` 都需重复这一校验；
 - 补齐单卡拖动、文件夹目标、面包屑目标、无效落点、regrab 和目录切换测试；
 - 明确单卡和多选的验收截图及行为。
 
-完成条件：基线测试稳定，失败可以归因到重构前行为。
+完成条件：基线测试稳定，失败可以归因到重构前行为；`.runtime-version` 与业务侧实际调用的 Core API 版本已核对一致。
 
 ### Phase 1：单卡 Core API 接入
 
