@@ -31,6 +31,7 @@
         :can-go-forward="pmCanGoForward"
         :drag-over-index="pmBcDragOverIdx"
         :folder-stack="folderStack"
+        :bind-el="bindBreadcrumbEl"
         @go-back="pmGoBack"
         @go-forward="pmGoForward"
         @navigate="pmNavigateTo"
@@ -50,6 +51,6 @@ const {
   stagesExpanded, togglePmStages, pmCanGoBack, pmGoBack, pmCanGoForward, pmGoForward,
   pmNavigateTo, folderStack, pmBcDragOverIdx, pmCbStore, pmCtxPaste, pmInSelectionMode,
   togglePmSelectionMode, fileViewMode, showNewFolder, newFolderName, folderLoading, createFolder,
-  PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal,
+  PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal, bindBreadcrumbEl,
 } = props.context
 </script>

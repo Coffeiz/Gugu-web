@@ -41,7 +41,8 @@
                   :data-pm-folder-id="folder.id"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
-                  @pointerdown="onPmFolderPointerDown(folder, $event)">
+                  @pointerdown="onPmFolderPointerDown(folder, $event)"
+                  :ref="(el: any) => bindFolderEl(folder, el)">
                   <template #icon>
                     <svg class="fd-big-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
                       <path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
@@ -83,7 +84,8 @@
                   :data-pm-file-id="file.id"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
-                  @pointerdown="onPmFilePointerDown(file, $event)">
+                  @pointerdown="onPmFilePointerDown(file, $event)"
+                  :ref="(el: any) => bindFileEl(file, el)">
                   <template #thumb>
                     <img class="fc-thumb-tiny" v-lazy-src="{ id: file.id, size: 'tiny', revision: file.thumbRevision }" decoding="async" draggable="false" alt="" />
                     <img class="fc-thumb-full" v-lazy-src="{ id: file.id, size: 'card', revision: file.thumbRevision }"
@@ -146,7 +148,8 @@
                   :data-pm-folder-id="folder.id"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
-                  @pointerdown="onPmFolderPointerDown(folder, $event)">
+                  @pointerdown="onPmFolderPointerDown(folder, $event)"
+                  :ref="(el: any) => bindFolderEl(folder, el)">
                   <span class="lr-name-cell">
                     <PhFolder class="lr-folder-icon" :size="16" weight="fill" :style="{ color: accentColor }" />
                     <span class="lr-filename" :title="folder.name">
@@ -185,7 +188,8 @@
                   :data-pm-file-id="file.id"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
-                  @pointerdown="onPmFilePointerDown(file, $event)">
+                  @pointerdown="onPmFilePointerDown(file, $event)"
+                  :ref="(el: any) => bindFileEl(file, el)">
                   <span class="lr-name-cell">
                     <span class="lr-ext" :style="{ color: fileIconColor(file.ext), background: fileIconColor(file.ext) + '18' }">{{ file.ext }}</span>
                     <span class="lr-filename" :title="file.displayName">
@@ -291,6 +295,7 @@ const {
   folderRenameText, cancelFolderRename, sortedCurrentFiles, isPmImageExt, pmSelectedFileIds,
   pmPreviewFileIds, pmDraggingFileIds, renamingFileId, startRename, commitRename, renameText,
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick, onPmFilePointerDown,
+  bindFolderEl, bindFileEl,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection,
 } = props.context
