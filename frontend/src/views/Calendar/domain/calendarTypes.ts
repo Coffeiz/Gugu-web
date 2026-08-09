@@ -77,3 +77,23 @@ export interface CalendarMonthDay {
   isToday: boolean
   dow: number
 }
+
+export interface CalendarWeekDay {
+  iso: string
+  dateNum: number
+  cn: string
+  md: string
+  isToday: boolean
+  isWeekend: boolean
+}
+
+export interface CalendarTimeSelection {
+  iso: string
+  h0: number
+  h1: number
+}
+
+export interface CalendarHourHover {
+  iso: string
+  h: number
+}

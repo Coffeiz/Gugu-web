@@ -53,81 +53,42 @@
         />
 
         <!-- ───── 周视图（时间轴）───── -->
-        <div v-else class="week-view">
-          <!-- 日期表头 -->
-          <div class="wv-head">
-            <div class="wv-gutter"></div>
-            <div v-for="d in weekDays" :key="d.iso" class="wv-dhead" :class="{ today: d.isToday, weekend: d.isWeekend, selected: wvDaySelected(d.iso) }"
-                 @mousedown="onAllDayDown" @contextmenu.prevent="onAllDayContextMenu">
-              <span class="wv-dow">周{{ d.cn }}</span>
-              <span class="wv-dnum" :class="{ today: d.isToday }">{{ d.dateNum }}</span>
-            </div>
-          </div>
-
-          <!-- 全天行：项目跨天条 + 无时间活动 -->
-          <div class="wv-allday">
-            <div class="wv-gutter wv-allday-tag">全天</div>
-            <div class="wv-allday-grid" ref="wvAllDayGridRef" :style="{ height: wvAllDayH + 'px' }"
-                 @mousedown="onAllDayDown" @mousemove="onAllDayHover" @mouseleave="onAllDayLeave" @contextmenu.prevent="onAllDayContextMenu">
-              <div v-for="(d, ci) in weekDays" :key="d.iso" class="wv-aco" :class="{ today: d.isToday, weekend: d.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
-              <TransitionGroup name="cal-fade">
-                <div v-for="ci in wvSelCols" :key="'adsel' + ci" class="wv-ad-sel" :class="{ weekend: weekDays[ci]?.isWeekend }" :style="{ left: ci / 7 * 100 + '%' }"></div>
-              </TransitionGroup>
-              <Transition name="cal-fade">
-                <div v-if="wvAdHover >= 0 && !rangeSelect.active" :key="'adhov' + wvAdHover" class="wv-ad-hover" :class="{ weekend: weekDays[wvAdHover]?.isWeekend }" :style="{ left: wvAdHover / 7 * 100 + '%' }"></div>
-              </Transition>
-              <div v-for="bar in weekAllDayShown" :key="bar.id" class="wv-pbar cal-chip"
-                   :class="{ 'cal-done': bar.status === 'done', 'bar-start': bar.startsHere, 'bar-end': bar.endsHere }"
-                   :style="pbarStyle(bar)" @click.stop="openProject(bar)" :title="bar.name">
-                <span class="bar-proj-tag">项目</span>
-                <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
-              </div>
-              <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
-                <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.calendarType === 'project' ? it.id : it._uid"
-                     class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.calendarType === 'project' && it.status === 'done' }"
-                     :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.calendarType === 'project' ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
-                     @click.stop="it.calendarType === 'project' ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
-                  <span class="chip-proj-tag" :class="{ 'chip-ev-tag': it.calendarType !== 'project' }">{{ it.calendarType === 'project' ? '项目' : '活动' }}</span>
-                  <span v-if="it.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
-                </div>
-                <!-- 该天列被隐藏的跨天项目 → 在该列底部显示「+K 更多」（样式/逻辑完全同月视图，按天各自计数）-->
-                <button v-if="weekMoreFor(ci).length" class="chip-more-btn cal-chip wv-more"
-                        :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + allDayItemsFor(d.iso).length) * 20) + 'px' }"
-                        @click.stop="showMore($event, d.iso, weekMoreFor(ci))">+{{ weekMoreFor(ci).length }} 更多</button>
-              </template>
-            </div>
-          </div>
-
-          <!-- 时间网格（可滚动）-->
-          <div class="wv-body" ref="wvBodyRef">
-            <div class="wv-grid" :style="{ height: 24 * HOUR_H + 'px' }">
-              <div class="wv-hours">
-                <div v-for="h in 24" :key="h" class="wv-hour" :style="{ height: HOUR_H + 'px' }">
-                  <span v-if="h > 1">{{ h - 1 }}:00</span>
-                </div>
-              </div>
-              <div v-for="d in weekDays" :key="d.iso" class="wv-col" :class="{ today: d.isToday, weekend: d.isWeekend }"
-                   :style="{ backgroundSize: '100% ' + HOUR_H + 'px' }"
-                   @mousedown="onColDown($event, d)" @mousemove="onColMove($event, d)" @mouseleave="onColLeave"
-                   @contextmenu.prevent="onColContextMenu($event, d)">
-                <Transition name="cal-fade">
-                  <div v-if="wvSelectedSlot && wvSelectedSlot.iso === d.iso" :key="'sel' + wvSelectedSlot.h0" class="wv-selected" :style="{ top: Math.min(wvSelectedSlot.h0, wvSelectedSlot.h1) * HOUR_H + 'px', height: (Math.abs(wvSelectedSlot.h1 - wvSelectedSlot.h0) + 1) * HOUR_H + 'px' }"></div>
-                </Transition>
-                <Transition name="cal-fade">
-                  <div v-if="wvHover && wvHover.iso === d.iso && !wvDragging" class="wv-hover" :style="{ top: wvHover.h * HOUR_H + 'px', height: HOUR_H + 'px' }"></div>
-                </Transition>
-                <div v-if="d.isToday" class="wv-now" :style="{ top: nowTop + 'px' }"></div>
-                <div v-for="b in timedLayoutFor(d.iso)" :key="b.ev._uid" class="wv-ev cal-chip"
-                     :style="{ top: b.top + 'px', height: b.height + 'px', left: 'calc(' + b.leftPct + '% + 1px)', width: 'calc(' + b.widthPct + '% - 2px)', background: b.ev.accent + '2e', borderColor: b.ev.accent + '85', color: darkenHex(b.ev.accent) }"
-                     @mousedown.stop="onEvDown(b.ev, $event)" @mousemove="onEvHover($event)" :title="b.ev.name">
-                  <span class="wv-ev-t">{{ b.ev.time }}{{ b.ev.endTime ? '–' + b.ev.endTime : '' }}</span>
-                  <span class="wv-ev-n"><span class="chip-proj-tag chip-ev-tag">活动</span>{{ b.ev.name }}</span>
-                  <span v-if="b.ev.description" class="wv-ev-d">{{ b.ev.description }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <WeekTimeline
+          v-else
+          :week-days="weekDays"
+          :range-select-active="rangeSelect.active"
+          :wv-all-day-h="wvAllDayH"
+          :wv-sel-cols="wvSelCols"
+          :wv-ad-hover="wvAdHover"
+          :week-all-day-shown="weekAllDayShown"
+          :wv-shown-rows="wvShownRows"
+          :all-day-items-for="allDayItemsFor"
+          :week-more-for="weekMoreFor"
+          :pbar-style="pbarStyle"
+          :cap-bg="capBg"
+          :darken-hex="darkenHex"
+          :set-all-day-grid-ref="setAllDayGridRef"
+          :hour-height="HOUR_H"
+          :selected-slot="wvSelectedSlot"
+          :hover="wvHover"
+          :dragging="wvDragging"
+          :now-top="nowTop"
+          :timed-layout-for="timedLayoutFor"
+          :is-day-selected="wvDaySelected"
+          @all-day-down="onAllDayDown"
+          @all-day-hover="onAllDayHover"
+          @all-day-leave="onAllDayLeave"
+          @all-day-contextmenu="onAllDayContextMenu"
+          @open-project="openProject"
+          @edit-event="(item, event) => openEditForm(item, event, true)"
+          @show-more="showMore"
+          @column-down="onColDown"
+          @column-move="onColMove"
+          @column-leave="onColLeave"
+          @column-contextmenu="onColContextMenu"
+          @event-down="onEvDown"
+          @event-hover="onEvHover"
+        />
       </div>
 
       <!-- 侧栏 -->
@@ -256,12 +217,13 @@ import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import CalendarContextMenu from './components/CalendarContextMenu.vue'
 import MonthGrid from './components/MonthGrid.vue'
+import WeekTimeline from './components/WeekTimeline.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import type { CalendarContext } from './domain/calendarContext'
 import EventEditFields from '@/components/events/EventEditFields.vue'
-import type { CalendarMonthDay, CalendarRenderItem } from './domain/calendarTypes'
+import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
 import { canResize, getDisplayColor } from './domain/calendarRules'
 import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
@@ -300,16 +262,9 @@ interface NewEventForm {
 
 type MonthDayCell = CalendarMonthDay
 
-interface WeekViewDay {
-  iso: string
-  dateNum: number
-  cn: string
-  md: string
-  isToday: boolean
-  isWeekend: boolean
-}
-
-interface WvSelectedSlot { iso: string; h0: number; h1: number }
+type WeekViewDay = CalendarWeekDay
+type WvSelectedSlot = CalendarTimeSelection
+type WvHover = CalendarHourHover
 
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
@@ -492,6 +447,9 @@ function ctxAddProject() {
 
 // ── 周视图·全天区：横向多日框选（复用 rangeSelect/selRange/activeRange）+ 右键新建项目 ──
 const wvAllDayGridRef = ref<HTMLElement | null>(null)
+function setAllDayGridRef(el: Element | { $el?: Element } | null) {
+  wvAllDayGridRef.value = el as HTMLElement | null
+}
 function _isoFromAllDayX(clientX: number) {
   const grid = wvAllDayGridRef.value
   if (!grid) return null
@@ -1004,7 +962,6 @@ function weekBars(week: { iso: string }[]): CalItem[] {
 // ───────────────── 周视图（时间轴）─────────────────
 const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
-const wvBodyRef = ref<HTMLElement | null>(null)
 const _CN_DOW   = ['日','一','二','三','四','五','六']
 
 function _mondayOf(d: Date) {
@@ -1102,7 +1059,7 @@ watch(weekRef, v => {
 })
 
 // 周视图：悬停高亮小时格 + 按下拖拽选时段建活动
-const wvHover = ref<{ iso: string; h: number } | null>(null)   // { iso, h } 悬停的小时格
+const wvHover = ref<WvHover | null>(null)   // { iso, h } 悬停的小时格
 const wvDragging = ref(false)      // 是否正在小时格拖选（仅用于门控 hover，不再有单独的 selbox）
 const wvSelectedSlot = ref<WvSelectedSlot | null>(null)   // { iso, h0, h1 } 选中格（点击/拖拽直接驱动它 = 被选中深色，无中间反馈）
 let _wvColRect: DOMRect | null = null
