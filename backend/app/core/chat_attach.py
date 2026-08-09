@@ -917,6 +917,8 @@ async def _video_cache_try_read(cache_path: str, alive_key: str) -> bytes | None
         await get_redis().set(alive_key, "1", ex=VIDEO_CACHE_ALIVE_TTL)
     except Exception:
         pass
+    from app.core.redaction import diag_log_raw
+    diag_log_raw("chat_attach.video_cache_hit", f"cache_path={cache_path}")
     return data
 
 
