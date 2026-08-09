@@ -432,6 +432,19 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
             files=attachment_cards or None,
         )
         db.add(message_row)
+        await db.flush()
+        # 被动记录路径，同样遵守"消息+附件 claim 同事务"（不变量 3）；这里失败极罕见
+        # （只可能是并发 claim/GC 抢跑），rollback 后跳过这条消息记录，不影响群聊主链路。
+        from app.core import chat_attach
+        try:
+            await chat_attach.claim_attachments(
+                db, request.user_id, message_row.id,
+                [c["attach_id"] for c in attachment_cards])
+        except chat_attach.AttachmentClaimError as exc:
+            await db.rollback()
+            from app.core.redaction import diag_log
+            diag_log("agent.im.loop.record_passive_im_message.claim", exc)
+            return session_id or session.id
         await db.commit()
         await trim_session_messages(session.id)
         # 被动群消息不经过 runner，单独补发会话增量，网页才能实时看到这条已记录消息。

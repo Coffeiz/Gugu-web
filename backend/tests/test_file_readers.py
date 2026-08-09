@@ -65,7 +65,7 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
 
     captured_args = {}
 
-    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+    async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
         captured_args["raw"] = raw
         captured_args["mime"] = mime
         captured_args["name"] = name
@@ -74,7 +74,7 @@ async def test_read_video_returns_native_video_block_for_minimax_m3(monkeypatch)
 
     monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
 
-    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert "_video_media" in result
@@ -95,7 +95,7 @@ async def test_read_video_rejects_when_provider_not_minimax_m3(monkeypatch):
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_mimo_ai()))
 
-    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert "不支持" in result["error"]
@@ -123,7 +123,7 @@ async def test_read_video_rejects_over_500mb_without_reading_full_bytes(monkeypa
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
 
-    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert "500MB" in result["error"]
@@ -138,12 +138,12 @@ async def test_read_video_propagates_prepare_video_media_rejection(monkeypatch):
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
 
-    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+    async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
         raise ValueError("这条视频太大（超过 90MB 上限），没法直接看")
 
     monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", fake_prepare_video_media)
 
-    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert result == {"error": "这条视频太大（超过 90MB 上限），没法直接看"}
@@ -155,12 +155,12 @@ async def test_read_video_generic_failure_returns_generic_error(monkeypatch):
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)
     monkeypatch.setattr(file_readers, "get_settings", lambda: SimpleNamespace(ai=_minimax_m3_ai()))
 
-    async def boom(raw, mime, name, model_cfg):
+    async def boom(raw, mime, name, model_cfg, **kwargs):
         raise RuntimeError("ffmpeg 挂了")
 
     monkeypatch.setattr(file_readers.chat_attach, "prepare_video_media", boom)
 
-    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+    file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
     result = await file_readers.read_video(file)
 
     assert result == {"error": "视频读取失败"}
@@ -184,7 +184,7 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
 
     captured = {}
 
-    async def fake_prepare_video_media(raw, mime, name, model_cfg):
+    async def fake_prepare_video_media(raw, mime, name, model_cfg, **kwargs):
         captured["model_cfg"] = model_cfg
         return {"type": "video", "mode": "base64", "mime": "video/mp4", "b64": "ZmFrZQ=="}
 
@@ -193,7 +193,7 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
     real_ai = _minimax_m3_ai()
     token = modelctx._model_cfg.set(real_ai)
     try:
-        file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip")
+        file = SimpleNamespace(storage_key="u/media.mp4", ext="mp4", id=1, display_name="clip", user_id="u1")
         result = await file_readers.read_video(file)
     finally:
         modelctx._model_cfg.reset(token)

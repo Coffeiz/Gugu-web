@@ -466,8 +466,20 @@ async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):
     class _FakeResponse:
         status_code = 200
         headers = {"content-type": "text/plain"}
-        text = "ok body"
-        content = b"ok body"
+        encoding = "utf-8"
+
+        async def aiter_bytes(self):
+            yield b"ok body"
+
+    class _FakeStream:
+        def __init__(self, response):
+            self.response = response
+
+        async def __aenter__(self):
+            return self.response
+
+        async def __aexit__(self, *a):
+            return False
 
     class _FakeAsyncClient:
         def __init__(self, *a, **kw):
@@ -479,13 +491,13 @@ async def test_http_get_retries_on_timeout_then_succeeds(monkeypatch):
         async def __aexit__(self, *a):
             return False
 
-        async def get(self, url, headers=None):
+        def stream(self, method, url, headers=None):
             calls["n"] += 1
             if calls["n"] < 2:
                 raise httpx.ConnectTimeout("timed out")
-            return _FakeResponse()
+            return _FakeStream(_FakeResponse())
 
-    monkeypatch.setattr(web_mod, "_host_allowed", lambda host: True)
+    monkeypatch.setattr(web_mod, "resolve_pinned_ip", lambda url: ("93.184.216.34", None))
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
     out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert out["status"] == 200
@@ -507,11 +519,11 @@ async def test_http_get_exhausts_retries_returns_error():
         async def __aexit__(self, *a):
             return False
 
-        async def get(self, url, headers=None):
+        def stream(self, method, url, headers=None):
             calls["n"] += 1
             raise httpx.ConnectTimeout("still timing out")
 
-    with patch("agent.tools.web._host_allowed", lambda host: True), \
+    with patch("agent.tools.web.resolve_pinned_ip", lambda url: ("93.184.216.34", None)), \
          patch.object(httpx, "AsyncClient", _FakeAsyncClient):
         out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
@@ -534,12 +546,56 @@ async def test_http_get_does_not_retry_on_non_transient_exception():
         async def __aexit__(self, *a):
             return False
 
-        async def get(self, url, headers=None):
+        def stream(self, method, url, headers=None):
             calls["n"] += 1
             raise ValueError("unexpected")
 
-    with patch("agent.tools.web._host_allowed", lambda host: True), \
+    with patch("agent.tools.web.resolve_pinned_ip", lambda url: ("93.184.216.34", None)), \
          patch.object(httpx, "AsyncClient", _FakeAsyncClient):
         out = await web_mod._http_get(None, None, {"url": "https://example.com/x"})
     assert "error" in out
     assert calls["n"] == 1
+
+
+async def test_http_get_stops_reading_oversized_response(monkeypatch):
+    from agent.tools import web as web_mod
+
+    class _FakeResponse:
+        status_code = 200
+        headers = {"content-type": "text/plain"}
+        encoding = "utf-8"
+        chunks_read = 0
+
+        async def aiter_bytes(self):
+            self.chunks_read += 1
+            yield b"x" * (web_mod._MAX_DOWNLOAD_BYTES + 1)
+            self.chunks_read += 1
+            yield b"should not be read"
+
+    response = _FakeResponse()
+
+    class _FakeStream:
+        async def __aenter__(self):
+            return response
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        def stream(self, method, url, headers=None):
+            return _FakeStream()
+
+    monkeypatch.setattr(web_mod, "resolve_pinned_ip", lambda url: ("93.184.216.34", None))
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    out = await web_mod._http_get(None, None, {"url": "https://example.com/large"})
+    assert "过大" in out["error"]
+    assert response.chunks_read == 1

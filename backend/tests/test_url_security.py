@@ -1,5 +1,7 @@
 import ipaddress
 
+import pytest
+
 from app.core.url_security import is_blocked_ip, resolve_pinned_ip, url_is_safe
 
 
@@ -87,6 +89,31 @@ def test_resolve_pinned_ip_rejects_mixed_dns_results(monkeypatch):
     ip, error = resolve_pinned_ip("https://rebind.example/img.jpg")
     assert ip is None
     assert error is not None
+
+
+@pytest.mark.asyncio
+async def test_web_pinned_backend_uses_resolved_ip(monkeypatch):
+    from agent.tools.web import _PinnedAsyncNetworkBackend
+
+    calls = {}
+
+    class _Backend:
+        async def connect_tcp(self, host, port, **kwargs):
+            calls["host"] = host
+            calls["port"] = port
+            return "stream"
+
+        async def connect_unix_socket(self, *args, **kwargs):
+            raise AssertionError("不应连接 Unix socket")
+
+        async def sleep(self, seconds):
+            return None
+
+    backend = _PinnedAsyncNetworkBackend("93.184.216.34")
+    backend._backend = _Backend()
+    result = await backend.connect_tcp("rebind.example", 443)
+    assert result == "stream"
+    assert calls == {"host": "93.184.216.34", "port": 443}
 
 
 def test_build_pinned_request_connects_to_resolved_ip_not_hostname(monkeypatch):

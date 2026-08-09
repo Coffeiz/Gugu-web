@@ -126,11 +126,15 @@ export function useChatSessions(options: {
   async function renameSession(id: number, title: string) {
     const trimmed = title.trim()
     if (!trimmed) return
+    const target = sessions.value.find(s => s.id === id)
+    if (!target) return
+    const prev = target.title
+    target.title = trimmed   // 乐观更新：先改本地，输入框/列表立刻显示新标题，不用等接口返回
     try {
       await agentApi.renameSession(String(id), trimmed)
-      const target = sessions.value.find(s => s.id === id)
-      if (target) target.title = trimmed
-    } catch {}
+    } catch {
+      target.title = prev   // 失败回滚
+    }
   }
 
   return {

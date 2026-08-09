@@ -12,10 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import redis as R
-from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import User, UserBot
+from app.services.im_identity import normalize_group_allowed_tools
 
 router = APIRouter(prefix="/me/bots", tags=["user-bots"])
 
@@ -40,7 +41,7 @@ def _out(b: UserBot) -> dict:
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
         "group_response_mode": response_mode,
-        "group_allowed_tools": b.group_allowed_tools or ["web_search", "image_search", "send_file"],
+        "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -168,9 +169,9 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "image_search", "send_file", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "send_file", "group_context_search"}
         if unsupported:
-            raise HTTPException(400, "当前群成员只支持网页搜索、图片搜索、发网络图片和当前群上下文搜索")
+            raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
     await db.commit()
     await db.refresh(bot)

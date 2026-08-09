@@ -29,7 +29,7 @@ const groupResponseOptions = [
   { key: 'record_only', label: '静默记录' },
 ] as const
 const groupToolOptions = [
-  { key: 'web_search', label: '联网搜索 + 搜图发图', tools: ['web_search', 'image_search', 'send_file'] },
+  { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图发图', tools: ['web_search', 'http_get', 'image_search', 'send_file'] },
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const platforms = [
@@ -54,7 +54,7 @@ async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connec
 async function toggleGroupChat(bot: Bot) { try { await userBotsApi.update(bot.id, { group_chat_enabled: !bot.group_chat_enabled }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊设置失败' } }
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : bot.group_requires_at ? 'reply_mentions' : 'reply_all') }
 async function setGroupResponseMode(bot: Bot, mode: string) { try { await userBotsApi.update(bot.id, { group_response_mode: mode }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊回应方式设置失败' } }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'image_search', 'send_file'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 async function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   try {

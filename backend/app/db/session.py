@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from typing import AsyncGenerator
@@ -5,11 +7,19 @@ from app.core.config import get_settings
 
 _engine = None
 _SessionLocal = None
+_engine_loop = None   # 引擎创建时绑定的事件循环，见 ensure_engine() 的跨循环检测
 _MIGRATION_LOCK_KEY = 834271
 
 
+def _current_loop():
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 def _build_engine():
-    global _engine, _SessionLocal
+    global _engine, _SessionLocal, _engine_loop
     if _engine is not None and _SessionLocal is not None:
         return
     settings = get_settings()
@@ -23,10 +33,25 @@ def _build_engine():
         pool_recycle=1800,
     )
     _SessionLocal = async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False)
+    _engine_loop = _current_loop()
 
 
 def ensure_engine():
-    """确保当前进程只初始化一次数据库引擎和连接池。"""
+    """确保当前进程只初始化一次数据库引擎和连接池。
+
+    附带一次跨事件循环检测：正常情况下（FastAPI/worker 常驻单一 loop）这里永远
+    命中缓存、代价为零。但少数调用方会各自开一次性的新循环（比如脚本/测试反复
+    `asyncio.run()`，或独立线程里 `asyncio.run()` 一次性任务）——如果当前运行的
+    loop 跟引擎创建时绑定的 loop 不是同一个，池里缓存的 asyncpg 连接是绑在旧
+    （可能已经关闭的）loop 上的，直接复用会报 "Event loop is closed"/"attached to
+    a different loop"。这种情况下丢弃旧引擎引用、重新建一个绑定当前 loop 的——
+    旧连接池不主动 dispose（旧 loop 通常已经不可用，没法在其上正常关闭），随旧
+    loop 一起被回收，只是不够优雅，不影响正确性。"""
+    global _engine, _SessionLocal
+    current = _current_loop()
+    if _engine is not None and current is not None and _engine_loop is not None and current is not _engine_loop:
+        _engine = None
+        _SessionLocal = None
     if _engine is None or _SessionLocal is None:
         _build_engine()
     return _engine
@@ -40,8 +65,7 @@ def reset_engine():
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    if _engine is None:
-        _build_engine()
+    ensure_engine()
     async with _SessionLocal() as session:
         yield session
 

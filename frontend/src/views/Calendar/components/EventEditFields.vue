@@ -12,13 +12,9 @@
     </label>
   </div>
   <div class="time-box" v-if="!event.allDay">
-    <input :value="event.time" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner"
-           @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, event, 'time')"
-           @blur="event.time = normTime(event.time)" />
+    <TimeInput v-model="event.time" :boxed="false" />
     <span class="time-dash">—</span>
-    <input :value="event.endTime" type="text" maxlength="5" inputmode="numeric" placeholder="00:00" class="time-inner"
-           @focus="($event.target as HTMLInputElement).select()" @input="onTimeInput($event, event, 'endTime')"
-           @blur="event.endTime = normTime(event.endTime)" />
+    <TimeInput v-model="event.endTime" :boxed="false" />
     <span v-if="isNextDay(event.time, event.endTime)" class="nextday-tag">次日</span>
   </div>
   <textarea v-model="event.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
@@ -45,8 +41,9 @@
 <script setup lang="ts">
 import { PhBell, PhPaperPlaneTilt, PhX } from '@phosphor-icons/vue'
 import DatePicker from '@/components/common/DatePicker.vue'
+import TimeInput from '@/components/common/TimeInput.vue'
 import {
-  LEAD_OPTIONS, CHAN_LABEL, onTimeInput, normTime, isNextDay, onToggleAllDay,
+  LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
   type EditingEvent, type useEventEditForm,
 } from '@/composables/useEventEditForm'
 
@@ -65,7 +62,6 @@ const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-remi
 .allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
 .time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
 .time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
-.time-inner { border: none; background: none; outline: none; font-size: 13px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; padding: 0; width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: #9590c4; background: rgba(123,127,178,0.1); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
 .popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }

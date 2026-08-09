@@ -93,6 +93,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '存储对账' },
       },
       {
+        path: 'storage-monitor',
+        name: 'AdminStorageMonitor',
+        component: () => import('@/views/Admin/Ops/Storage.vue'),
+        meta: { title: '存储监控' },
+      },
+      {
         path: 'ops',
         name: 'AdminOps',
         component: () => import('@/views/Admin/Ops/index.vue'),

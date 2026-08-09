@@ -434,6 +434,9 @@ export const agentApi = {
   renameSession:   (sessionId: string, title: string) => patch(`/agent/sessions/${sessionId}`, { title }),
   clearMemory:       ()         => del('/agent/memory'),
   clearAttachments:  ()         => del('/agent/attachments'),
+  // 发送失败时删掉本次关联的草稿附件（best-effort，降低草稿孤儿产生速度；
+  // 后端只在附件仍是草稿态时才真的删，已被使用的附件会拒绝，见 PRD-STORAGE-1）
+  deleteDraftAttachment: (attachId: string) => del(`/agent/attachment/${attachId}`),
   uploadAttachment: (file: File, voice = false) => {   // 聊天附件暂存，返回 { attach_id, name, ext, size, kind, duration }
     const form = new FormData()
     form.append('file', file)

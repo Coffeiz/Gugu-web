@@ -11,6 +11,16 @@ import httpx
 import pytest
 
 from agent.tools import files as im_files
+from app.core import chat_attach
+
+
+async def _fake_stage(user_id, name, ext, mime, data, **kwargs):
+    """这个测试套件测的是 streaming 限流本身，不是 chat_attach 的持久化语义——
+    真跑 chat_attach.stage() 需要一个真实存在的 users 行（storage_key/DB 外键），
+    测试用的 user_id 只是个占位字符串，跟持久化无关，mock 掉避免测试依赖真实 DB/存储。"""
+    return {"attach_id": "fake", "name": name, "ext": ext, "mime": mime or "",
+            "size": len(data), "storage_key": f"{user_id}/.chat_staging/fake.{ext}",
+            "kind": kwargs.get("kind") or "binary"}
 
 # 与 files.py 保持一致
 MAX_BYTES = im_files._SEND_URL_MAX_BYTES
@@ -103,6 +113,7 @@ def test_streaming_aborts_near_limit_not_full_body(monkeypatch, total_bytes):
 def test_streaming_accepts_under_limit(monkeypatch):
     """小于上限的图片正常下载成功。"""
     monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    monkeypatch.setattr(chat_attach, "stage", _fake_stage)
     resp = _FakeResp(CHUNK)   # 1MB
     client = _FakeClient(resp)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: client)
@@ -136,6 +147,7 @@ def test_send_file_disables_keepalive_to_prevent_cross_hop_tls_reuse(monkeypatch
     不会重新握手，会出现"握手验证了 A 的证书，之后却拿这条连接发 Host: B"的 TLS
     hostname 隔离缺口。最简单的堵法是禁用 keep-alive，逼每一跳都新建连接/握手。"""
     monkeypatch.setattr(im_files, "_build_pinned_request", _fake_build_pinned_request)
+    monkeypatch.setattr(chat_attach, "stage", _fake_stage)
     resp = _FakeResp(CHUNK)
     client = _FakeClient(resp)
     captured_kwargs = {}

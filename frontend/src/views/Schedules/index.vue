@@ -29,14 +29,14 @@
     </div>
 
     <!-- 新建/编辑弹窗（共享 BaseModal，与项目弹窗同款风格+动画）-->
-    <BaseModal :show="showModal" width="360px" background="var(--panel-bg)" @close="showModal = false">
+    <BaseModal :show="showModal" width="420px" background="var(--panel-bg)" @close="showModal = false">
       <div class="sched-modal">
         <input v-model="form.name" ref="nameRef" class="title-input" placeholder="任务名称" maxlength="100" />
         <div class="divider divider-full"></div>
 
         <label class="field">
           <span>提醒内容</span>
-          <textarea v-model="form.payload" rows="2" placeholder="如：收集昨天的科技新闻"></textarea>
+          <textarea v-model="form.payload" ref="payloadRef" rows="3" placeholder="如：收集昨天的科技新闻" @input="resizePayload"></textarea>
         </label>
         <div class="divider"></div>
 
@@ -47,17 +47,25 @@
               class="repeat-tab" :class="{ on: repeatMode === opt.v }"
               @click="repeatMode = opt.v">{{ opt.label }}</button>
           </div>
+          <div v-if="repeatMode === 'interval'" class="interval-presets">
+            <button v-for="minutes in INTERVAL_PRESETS" :key="minutes" type="button"
+              class="interval-preset" :class="{ on: intervalPreset === String(minutes) }"
+              @click="selectIntervalPreset(minutes)">{{ minutes }}分钟</button>
+            <button type="button" class="interval-preset" :class="{ on: intervalPreset === 'custom' }"
+              @click="selectIntervalPreset('custom')">自定义</button>
+          </div>
           <div v-if="repeatMode === 'custom'" class="date-range">
             <DatePicker v-model="customStartDate" placeholder="选择日期" />
           </div>
         </div>
         <div class="divider"></div>
 
-        <label class="field time-field">
-          <span>时间</span>
-          <input type="text" v-model="form.time" placeholder="HH:MM" autocomplete="off" />
+        <label v-if="repeatMode !== 'interval' || intervalPreset === 'custom'" class="field time-field">
+          <span>{{ repeatMode === 'interval' ? '分钟' : '时间' }}</span>
+          <input v-if="repeatMode === 'interval' && intervalPreset === 'custom'" v-model.number="intervalMinutes" type="number" min="1" max="60" step="1" placeholder="例如 15" />
+          <TimeInput v-else v-model="form.time" />
         </label>
-        <div class="divider"></div>
+        <div v-if="repeatMode !== 'interval' || intervalPreset === 'custom'" class="divider"></div>
 
         <div class="field">
           <span>发到哪</span>
@@ -118,6 +126,7 @@ import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppT
 import { fireHint } from '@/composables/useOnboarding'
 import { useLiveRefresh } from '@/composables/useLiveRefresh'
 import BaseModal from '@/components/common/BaseModal.vue'
+import TimeInput from '@/components/common/TimeInput.vue'
 import { useAuthStore } from '@/stores/auth'
 import { PhAlarm } from '@phosphor-icons/vue'
 
@@ -132,14 +141,19 @@ const showModal = ref(false)
 const editing = ref<any | null>(null)
 const formErr = ref('')
 const nameRef = ref<HTMLInputElement | null>(null)
+const payloadRef = ref<HTMLTextAreaElement | null>(null)
 const REPEAT_OPTS = [
+  { v: 'interval', label: '分钟' },
   { v: 'daily',   label: '每日' },
   { v: 'weekday', label: '工作日' },
   { v: 'weekend', label: '周末' },
   { v: 'custom',  label: '自定义' },
 ]
-const repeatMode      = ref('daily')   // 'daily' | 'weekday' | 'weekend' | 'custom'
+const INTERVAL_PRESETS = [1, 5, 10, 30, 60]
+const repeatMode      = ref('daily')   // 'daily' | 'weekday' | 'weekend' | 'interval' | 'custom'
 const customStartDate = ref('')        // YYYY-MM-DD
+const intervalMinutes = ref(5)
+const intervalPreset  = ref('5')
 const form = reactive({ name: '', payload: '', time: '09:00', channels: ['web'] })
 
 function pad(n: number) { return String(n).padStart(2, '0') }
@@ -166,14 +180,25 @@ onMounted(() => { fireHint('schedules'); load() })   // 新手引导：第一次
 useLiveRefresh('scheduled_tasks', load)
 
 function blankForm() { return { name: '', payload: '', time: '09:00', channels: ['web'] } }
+function resizePayload() {
+  const el = payloadRef.value
+  if (!el) return
+  el.style.height = 'auto'
+  const min = 96
+  const max = 160
+  el.style.height = `${Math.min(max, Math.max(min, el.scrollHeight))}px`
+  el.style.overflowY = el.scrollHeight > max ? 'auto' : 'hidden'
+}
 function openCreate() {
   editing.value = null
   Object.assign(form, blankForm())
   repeatMode.value = 'daily'
   customStartDate.value = ''
+  intervalMinutes.value = 5
+  intervalPreset.value = '5'
   formErr.value = ''
   showModal.value = true
-  nextTick(() => nameRef.value?.focus())
+  nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
 function filterChannels(chans: any) {
   const allowed = ['web', ...imChannels.value]
@@ -185,15 +210,22 @@ function openEdit(t: any) {
   const parsed = parseCron(t.cron)
   repeatMode.value      = parsed.mode
   customStartDate.value = parsed.startDate ?? ''
+  intervalMinutes.value = parsed.intervalMinutes ?? 5
+  intervalPreset.value  = INTERVAL_PRESETS.includes(intervalMinutes.value) ? String(intervalMinutes.value) : 'custom'
   const chans = [...new Set([...t.channels].flatMap(c =>
     c === 'chat' ? ['web'] : c === 'im' ? ['feishu', 'qq', 'wechat'] : [c]))]
   Object.assign(form, { name: t.name, payload: t.payload, time: parsed.time, channels: filterChannels(chans) })
   formErr.value = ''
   showModal.value = true
-  nextTick(() => nameRef.value?.focus())
+  nextTick(() => { nameRef.value?.focus(); resizePayload() })
 }
 
 function buildCron() {
+  if (repeatMode.value === 'interval') {
+    const minutes = Math.min(60, Math.max(1, Math.round(Number(intervalMinutes.value) || 5)))
+    intervalMinutes.value = minutes
+    return `*/${minutes} * * * *`
+  }
   const [h, m] = form.time.split(':').map(Number)
   if (repeatMode.value === 'custom') {
     const date = customStartDate.value || (() => {
@@ -207,6 +239,10 @@ function buildCron() {
   const DOW = { daily: '*', weekday: '1-5', weekend: '0,6' }
   return `${m} ${h} * * ${DOW[repeatMode.value as keyof typeof DOW] ?? '*'}`
 }
+function selectIntervalPreset(value: number | 'custom') {
+  intervalPreset.value = String(value)
+  if (value !== 'custom') intervalMinutes.value = value
+}
 function parseCron(cron: string) {
   cron = cron || ''
   if (cron.startsWith('@once:')) {
@@ -218,6 +254,10 @@ function parseCron(cron: string) {
   const p = cron.split(' ')
   if (p.length !== 5) return { mode: 'daily', time: '09:00', startDate: '' }
   const [m, h, , , dow] = p
+  const interval = m.match(/^\*\/(\d+)$/)
+  if (interval && h === '*' && dow === '*') {
+    return { mode: 'interval', time: '09:00', startDate: '', intervalMinutes: Number(interval[1]) }
+  }
   const time = `${pad(Number(h))}:${pad(Number(m))}`
   const mode = dow === '1-5' || dow === '1,2,3,4,5' ? 'weekday'
              : dow === '0,6' || dow === '6,0'        ? 'weekend'
@@ -228,6 +268,9 @@ function cronLabel(cron: string) {
   const p = parseCron(cron)
   if (p.mode === 'custom') {
     return `${p.startDate} ${p.time}`
+  }
+  if (p.mode === 'interval') {
+    return `每 ${p.intervalMinutes} 分钟`
   }
   const labels = { daily: '每天', weekday: '工作日', weekend: '周末' }
   return `${labels[p.mode as keyof typeof labels] ?? '每天'} ${p.time}`
@@ -366,7 +409,7 @@ async function removeTask(t: any) {
 .field { display: block; margin-bottom: 11px; }
 .field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
 /* 输入框/选择框：学新建项目（0.72 白底 + rgba(0,0,0,0.1) 边 + 紫色 focus 光圈），曲率连续圆角 */
-.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time] {
+.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time], .field input[type=number] {
   width: 100%; box-sizing: border-box; padding: 8px 11px;
   border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm);
   background: rgba(255,255,255,0.72);
@@ -376,11 +419,11 @@ async function removeTask(t: any) {
 .field input:focus, .field textarea:focus, .field select:focus, .field input[type=time]:focus {
   border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
 }
-.field textarea { resize: none; line-height: 1.6; }
+.field textarea { min-height: 96px; max-height: 160px; resize: none; line-height: 1.6; overflow-y: hidden; }
 /* 重复：preset 选项卡 + 自定义日期范围 */
 .repeat-tabs { display: flex; gap: 6px; }
 .repeat-tab {
-  flex: 1; padding: 7px 0; border-radius: var(--radius-sm);
+  flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm);
   border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72);
   font-size: 13px; font-family: var(--font-sans); color: var(--text-secondary);
   cursor: pointer; transition: all 0.15s; text-align: center;
@@ -388,7 +431,15 @@ async function removeTask(t: any) {
 .repeat-tab:hover { border-color: rgba(123,127,178,0.4); }
 .repeat-tab.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.3); }
 .date-range { margin-top: 8px; }
-.time-field input { text-align: center; }
+.date-range :deep(.dp-input) { height: 34px; box-sizing: border-box; }
+.time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
+.interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); color: var(--text-secondary); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
+.interval-preset:hover { border-color: rgba(123,127,178,0.4); }
+.interval-preset.on { color: #fff; border-color: transparent; background: linear-gradient(135deg,#7b7fb2,#9590c4); box-shadow: 0 2px 8px rgba(123,127,178,0.25); }
+.time-field input[type=number] { appearance: textfield; }
+.time-field input[type=number]::-webkit-inner-spin-button,
+.time-field input[type=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 /* 勾选框：登录/注册页同款（隐藏原生 + 自定义方块 + SVG 对勾） */
 .chans { display: flex; gap: 18px; }
 .chk-row { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-primary); }

@@ -156,6 +156,93 @@ async def test_trim_session_messages_trims_above_threshold(db, user_a):
     assert count == 500
 
 
+async def test_trim_session_messages_cleans_attachment_storage(db, user_a, monkeypatch, tmp_path):
+    """retention trim 删除旧消息时，也要清理其附件物理对象。"""
+    from app.core import chat_attach
+    from app.models import ChatAttachment
+    from app.services.storage import LocalStorageBackend
+
+    storage = LocalStorageBackend(tmp_path)
+    monkeypatch.setattr(chat_attach, "get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
+
+    session = ConversationSession(user_id=user_a.id, title="私聊", source="qq")
+    db.add(session)
+    await db.flush()
+    messages = [ConversationMessage(session_id=session.id, role="user", content=f"消息 {i}")
+                for i in range(3)]
+    db.add_all(messages)
+    await db.flush()
+    metas = [await chat_attach.stage(user_a.id, f"a{i}.txt", "txt", "text/plain", b"x")
+             for i in range(3)]
+    for message, meta in zip(messages, metas):
+        await chat_attach.claim_attachments(db, user_a.id, message.id, [meta["attach_id"]])
+    await db.commit()
+
+    from agent.im import session as session_mod
+    monkeypatch.setattr(session_mod, "MESSAGE_TRIM_THRESHOLD", 2)
+    monkeypatch.setattr(session_mod, "MESSAGE_RETENTION_LIMIT", 1)
+    await session_mod.trim_session_messages(session.id, limit=1, threshold=2)
+
+    remaining = (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.session_id == session.id)
+    )).scalars().all()
+    assert len(remaining) == 1
+    old_rows = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.message_id != remaining[0].id)
+    )).scalars().all()
+    assert old_rows == []
+    assert await storage.exists(metas[2]["storage_key"])
+    assert not await storage.exists(metas[0]["storage_key"])
+    assert not await storage.exists(metas[1]["storage_key"])
+
+
+async def test_session_eviction_cleans_attachment_storage(db, user_a, monkeypatch, tmp_path):
+    """自动淘汰旧 session 时，也要清理附件物理对象。"""
+    from app.core import chat_attach
+    from app.models import ChatAttachment
+    from app.services.storage import LocalStorageBackend
+
+    storage = LocalStorageBackend(tmp_path)
+    monkeypatch.setattr(chat_attach, "get_storage", lambda: storage)
+    monkeypatch.setattr("app.services.storage.get_storage", lambda: storage)
+
+    oldest = ConversationSession(
+        user_id=user_a.id,
+        title="旧",
+        source="qq",
+        bot_id="bot-a",
+        platform_user_id="old-peer",
+        chat_type="c2c",
+    )
+    db.add(oldest)
+    await db.flush()
+    old_message = ConversationMessage(session_id=oldest.id, role="user", content="旧消息")
+    db.add(old_message)
+    await db.flush()
+    old_meta = await chat_attach.stage(user_a.id, "old.txt", "txt", "text/plain", b"old")
+    await chat_attach.claim_attachments(db, user_a.id, old_message.id, [old_meta["attach_id"]])
+    await db.commit()
+
+    created = await get_or_create_session(
+        db, _private_request(user_a.id, "new-peer"), user_a.id, max_sessions=1
+    )
+    assert created.is_new is True
+    assert (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.user_id == user_a.id,
+            ConversationSession.platform_user_id == "old-peer",
+        )
+    )).scalars().first() is None
+    assert (await db.execute(
+        select(ConversationMessage).where(ConversationMessage.content == "旧消息")
+    )).scalars().first() is None
+    assert (await db.execute(select(ChatAttachment).where(
+        ChatAttachment.attach_id == old_meta["attach_id"]
+    ))).scalars().first() is None
+    assert not await storage.exists(old_meta["storage_key"])
+
+
 async def test_group_session_platform_user_id_is_null(db, user_a):
     """群聊 session 的 platform_user_id 应为 NULL（群聊用 chat_id 隔离）。"""
     group = await get_or_create_session(

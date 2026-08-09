@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import { trackApi, CLIENT_ID, getToken } from '@/services/api'
+import { trackApi, agentApi, CLIENT_ID, getToken } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { playGuguSfx } from '@/services/sfx'
 import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
@@ -285,6 +285,15 @@ export function useChatStream(options: {
         options.clearStatus()
         messages.value.push({ id: mkid(), role: 'ai', text: '咕咕网络不太好 📡 可以再发一遍吗？', time: now() })
         await options.scrollBottom()
+      }
+      // 发送失败时清理本次带的草稿附件（best-effort，只是降低草稿孤儿产生速度的优化，
+      // 不是主清理机制——后端只在附件仍是草稿态时才真的删，消息其实已经发送成功、
+      // 只是这次响应丢失/超时的情况会被后端拒绝，不会误删，见 PRD-STORAGE-1）
+      if (e?.name !== 'AbortError' && atts.length) {
+        for (const attachment of atts) {
+          if (!attachment.attach_id) continue
+          agentApi.deleteDraftAttachment(attachment.attach_id).catch(() => {})
+        }
       }
     } finally {
       // 仍停在本次发送的会话才收尾全局状态；切走后这些状态归新会话的续看流管，别清掉

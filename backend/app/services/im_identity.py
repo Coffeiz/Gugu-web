@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import secrets
+from typing import List
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -14,7 +15,17 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS = ["web_search", "image_search", "send_file"]
+DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "send_file"]
+
+
+def normalize_group_allowed_tools(configured: object) -> List[str]:
+    """兼容旧白名单：已授权联网搜索的机器人同时获得网页阅读能力。"""
+    if not isinstance(configured, list):
+        return list(DEFAULT_GROUP_ALLOWED_TOOLS)
+    allowed = [str(name) for name in configured if isinstance(name, str)]
+    if "web_search" in allowed and "http_get" not in allowed:
+        allowed.insert(allowed.index("web_search") + 1, "http_get")
+    return allowed
 QQ_BINDING_CODE_TTL = 600
 QQ_BINDING_CODE_MAX_ATTEMPTS = 5
 
@@ -134,6 +145,4 @@ async def resolve_qq_group_access(db: AsyncSession, bot_id: int,
         return QQGroupAccess("unknown", list(DEFAULT_GROUP_ALLOWED_TOOLS))
     if bot.owner_platform_user_id == platform_user_id:
         return QQGroupAccess("owner", None)
-    configured = bot.group_allowed_tools
-    allowed = configured if isinstance(configured, list) else DEFAULT_GROUP_ALLOWED_TOOLS
-    return QQGroupAccess("member", [str(name) for name in allowed if isinstance(name, str)])
+    return QQGroupAccess("member", normalize_group_allowed_tools(bot.group_allowed_tools))

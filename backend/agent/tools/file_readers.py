@@ -90,6 +90,7 @@ async def read_video(file) -> dict:
         mime = chat_attach._MEDIA_MIME.get(ext) or f"video/{ext}"
         media_item = await chat_attach.prepare_video_media(
             raw, mime, f"{file.display_name}.{file.ext}", ai,
+            storage_key=file.storage_key, user_id=file.user_id,
         )
     except ValueError as error:
         return {"error": str(error)}

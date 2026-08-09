@@ -11,7 +11,7 @@ import json
 
 from sqlalchemy import (
     String, Integer, Float, Text, DateTime, ForeignKey, Boolean, BigInteger, Uuid, JSON,
-    UniqueConstraint, CheckConstraint,
+    UniqueConstraint, CheckConstraint, Index,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -426,6 +426,47 @@ class ConversationMessage(Base):
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
 
 
+# ── 聊天附件所有权（PRD-STORAGE-1 Phase A）──────────────────────────────────────
+# DB 是所有权真相来源，state 只有 draft/attached 两态（不设 DELETING 中间态，见
+# PRD 第 2 节 FR-STORAGE-1-1）。storage_key 允许被多条行共享（PRD-IM-9 引用复用场景），
+# 所以不能加唯一约束；物理删除必须走 chat_attach.try_delete_storage_if_unreferenced()，
+# 按 (user_id, storage_key) 检查还有没有其他存活行引用同一份字节。
+
+class ChatAttachment(Base):
+    __tablename__ = "chat_attachments"
+    __table_args__ = (
+        UniqueConstraint("user_id", "attach_id", name="uq_chat_attachments_user_attach"),
+        Index("ix_chat_attachments_state_created", "state", "created_at"),
+        Index("ix_chat_attachments_user_storage", "user_id", "storage_key"),
+        Index("ix_chat_attachments_message", "message_id"),
+        CheckConstraint(
+            "(state = 'draft' AND message_id IS NULL) OR (state = 'attached' AND message_id IS NOT NULL)",
+            name="ck_chat_attachments_state_message",
+        ),
+    )
+
+    id:          Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    attach_id:   Mapped[str]      = mapped_column(String(32), index=True)
+    user_id:     Mapped[UUID]     = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"))
+    message_id:  Mapped[Optional[int]] = mapped_column(
+        ForeignKey("conversation_messages.id", ondelete="CASCADE"), nullable=True, default=None)
+    storage_key: Mapped[str]      = mapped_column(String(500))
+    name:        Mapped[str]      = mapped_column(String(300), default="")
+    ext:         Mapped[str]      = mapped_column(String(20), default="")
+    mime:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
+    kind:        Mapped[str]      = mapped_column(String(20), default="binary")
+    size:        Mapped[int]      = mapped_column(BigInteger, default=0)
+    duration:    Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
+    img_width:   Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    img_height:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    state:       Mapped[str]      = mapped_column(String(10), default="draft")   # draft | attached
+    # 展示用的次要字段（platform/qq_face/quoted 等），跟原 Redis meta 里 stage() 的
+    # extra= 参数对应，不建独立列——字段集合会随业务演进，用一个开放的 JSON 兜底
+    extra:       Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    created_at:  Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    attached_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+
+
 # ── IM 记忆反思 ──────────────────────────────────────────────────────────────
 
 class MemoryReflectionJob(Base):
@@ -607,7 +648,7 @@ class UserBot(Base):
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
-    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "image_search", "send_file"])
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "send_file"])
     # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
@@ -653,6 +694,22 @@ class SystemLog(Base):
     message:    Mapped[str]           = mapped_column(Text)
     traceback:  Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
+
+
+# ── StorageCategorySnapshot（PRD-STORAGE-2 存储监控面板）─────────────────────
+# 通用的分类别存储占用快照，不是每加一个监控类别就建一张新表——`category` 取值
+# 如 "video_cache" / "chat_staging_draft" / "chat_staging_attached" /
+# "user_files"，各自的定时任务（video_cache_gc / storage_snapshots）跑完后落
+# 一条，管理后台「运维 → 存储监控」页按 category 分组画趋势图。
+
+class StorageCategorySnapshot(Base):
+    __tablename__ = "storage_category_snapshots"
+
+    id:           Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category:     Mapped[str]      = mapped_column(String(64), index=True)
+    taken_at:     Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    object_count: Mapped[int]      = mapped_column(Integer, default=0)
+    total_bytes:  Mapped[int]      = mapped_column(BigInteger, default=0)
 
 
 # ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────
