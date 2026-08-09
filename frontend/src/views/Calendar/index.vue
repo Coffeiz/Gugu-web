@@ -451,6 +451,18 @@ import { fireHint } from '@/composables/useOnboarding'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
 import { projectProgress } from '@/utils/projectProgress'
 import EventEditFields from './components/EventEditFields.vue'
+import type { CalendarRenderItem } from './domain/calendarTypes'
+import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
+import { typeLabel } from './domain/calendarRules'
+import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
+import {
+  maxSlots as calculateMaxSlots,
+  weekBars as calculateWeekBars,
+  capWeekBars,
+  dayLayout as calculateDayLayout,
+  timedLayoutFor as calculateTimedLayout,
+  type CalendarLayoutConstants,
+} from './utils/calendarLayout'
 import {
   useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
   LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
@@ -464,39 +476,7 @@ type EventResponse = components['schemas']['EventResponse']
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 之间自由 spread/mix（同一数组里既有 isProject 也有 isUserEvent 的对象），故用一个
 // 涵盖两者所有字段的联合形状而非两个互斥接口——贴合运行时实际结构，而非臆造新形状。
-interface CalItem {
-  id: string | number
-  _uid?: string
-  name: string
-  date?: string
-  time?: string
-  endTime?: string
-  client?: string | null
-  type?: string
-  accent: string
-  isUserEvent?: boolean
-  isProject?: boolean
-  description?: string
-  version?: number
-  status?: string
-  startDate?: string | null
-  endDate?: string | null
-  currentStage?: string | null
-  priority?: string | null
-  createdAt?: string
-  progress?: number
-  // weekBars() 贪心分行后回填的字段
-  colStart?: number
-  colEnd?: number
-  startsHere?: boolean
-  endsHere?: boolean
-  segStartIso?: string
-  segEndIso?: string
-  row?: number
-  // upcomingList 里附加的到期天数标签
-  daysLeft?: number
-  daysLabel?: string
-}
+type CalItem = CalendarRenderItem
 
 interface DateRange { start: string; end: string }
 
@@ -1010,6 +990,13 @@ const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
 const HEADER_H = 32  // bars-layer 第一条 bar 的 top：cell-num 底部(31) + 1px 间距
 const CELL_TOP = 31  // cell-chips 起点：cell padding-top(7) + cell-num(24)
 const BOTTOM_PAD = 8 // 底部安全留白（px）：cell padding-bottom(4) + 4px 视觉安全区
+const CALENDAR_LAYOUT_CONSTANTS: CalendarLayoutConstants = {
+  headerHeight: HEADER_H,
+  cellTop: CELL_TOP,
+  bottomPadding: BOTTOM_PAD,
+  barHeight: BAR_H,
+  hourHeight: 48,
+}
 
 const weekHeights = ref<Record<number, number>>({})   // { [weekIndex]: heightInPx }
 const weekRowElMap: Record<number, HTMLElement> = {}       // 原生 el 引用，不需要响应式
@@ -1039,7 +1026,7 @@ function setupRO() {
 // 某一行最多能放几个条目（项目条 + 更多按钮 + chip 共用这个池）
 function maxSlots(wi: number) {
   const h = weekHeights.value[wi] ?? 90
-  return Math.max(1, Math.floor((h - HEADER_H - BOTTOM_PAD) / BAR_H))
+  return calculateMaxSlots(h, CALENDAR_LAYOUT_CONSTANTS)
 }
 
 // ── 核心布局计算 ──
@@ -1057,7 +1044,7 @@ function weekBarsCapped(week: { iso: string }[], wi: number) {
   const all = weekBarsCached(week)
   const max = maxSlots(wi)
   return {
-    bars: all.filter(b => (b.row ?? 0) < max),
+    bars: capWeekBars(all, max),
     all,
   }
 }
@@ -1068,52 +1055,15 @@ function weekBarsCapped(week: { iso: string }[], wi: number) {
  */
 function dayLayout(iso: string, week: { iso: string }[], wi: number) {
   const { bars: cappedBars, all } = weekBarsCapped(week, wi)
-
-  // chip 起始行 = 覆盖该天的可见 bar 中最大 row + 1
-  let maxBarRow = -1
-  cappedBars.forEach(b => {
-    if ((b.startDate ?? '') <= iso && (b.endDate ?? '') >= iso) maxBarRow = Math.max(maxBarRow, b.row ?? 0)
-  })
-  const nextRow  = maxBarRow + 1
-  const paddingTop = Math.max(0, nextRow * BAR_H + HEADER_H - CELL_TOP)
-  const slots    = Math.max(0, maxSlots(wi) - nextRow)
-
-  // 当天被隐藏的项目（row >= max）
-  const cappedIds = new Set(cappedBars.map(b => b.id))
-  const hiddenProjects: CalItem[] = all
-    .filter(b => (b.startDate ?? '') <= iso && (b.endDate ?? '') >= iso && !cappedIds.has(b.id))
-    .map(b => ({ ...b, isProject: true }))
-
-  // 单日项目（startDate === endDate）不进 bars-layer，在此当 chip 显示
-  const singleDayProjects: CalItem[] = effectiveProjectTimelines.value
-    .filter(p => p.startDate === p.endDate && p.startDate === iso)
-    .map(p => ({ ...p, isProject: true }))
-  const allChips: CalItem[] = [...singleDayProjects, ...effectiveExtraEvents.value.filter(e => e.date === iso)]
-  const _chipPrio = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
-  allChips.sort((a, b) => {
-    const da = a.status === 'done' ? 1 : 0
-    const db = b.status === 'done' ? 1 : 0
-    if (da !== db) return da - db
-    const pd = _chipPrio(b) - _chipPrio(a)
-    if (pd !== 0) return pd
-    const as_ = a.startDate ?? a.date ?? ''
-    const bs  = b.startDate ?? b.date ?? ''
-    if (as_ !== bs) return as_.localeCompare(bs)
-    const ae = a.endDate ?? a.date ?? ''
-    const be = b.endDate ?? b.date ?? ''
-    if (ae !== be) return ae.localeCompare(be)
-    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-  })
-  const hasMore  = hiddenProjects.length > 0 || allChips.length > slots
-
-  if (!hasMore) {
-    return { paddingTop, visibleChips: allChips, moreCount: 0, moreItems: [] as CalItem[] }
-  }
-  const chipLimit    = Math.max(0, slots - 1)
-  const visibleChips = allChips.slice(0, chipLimit)
-  const hiddenChips  = allChips.slice(chipLimit)
-  const moreItems    = [...hiddenProjects, ...hiddenChips]
-  return { paddingTop, visibleChips, moreCount: moreItems.length, moreItems }
+  return calculateDayLayout(
+    iso,
+    cappedBars,
+    all,
+    effectiveProjectTimelines.value.filter(p => p.startDate === p.endDate && p.startDate === iso).map(p => ({ ...p, isProject: true })),
+    effectiveExtraEvents.value,
+    maxSlots(wi),
+    CALENDAR_LAYOUT_CONSTANTS,
+  )
 }
 
 // ── 统一"更多"弹窗 ──
@@ -1160,56 +1110,10 @@ const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
-function extractAccent(colorStr: string | null | undefined) {
-  const m = colorStr?.match(/#[0-9a-fA-F]{6}/)
-  return m ? m[0] : '#7b7fb2'
-}
-function capBg(hex: string, progress: number | undefined) {
-  const base = hexAlpha(hex, 0.1)
-  if (!progress) return base
-  const fill = hexAlpha(hex, 0.32)
-  return `linear-gradient(to right, ${fill} 0%, ${fill} ${progress}%, ${base} ${progress}%, ${base} 100%)`
-}
-
-function hexAlpha(hex: string, a: number) {
-  const r = parseInt(hex.slice(1,3),16)
-  const g = parseInt(hex.slice(3,5),16)
-  const b = parseInt(hex.slice(5,7),16)
-  return `rgba(${r},${g},${b},${a})`
-}
-function darkenHex(hex: string, amount = 0.60) {
-  const r = Math.round(parseInt(hex.slice(1,3),16) * amount)
-  const g = Math.round(parseInt(hex.slice(3,5),16) * amount)
-  const b = Math.round(parseInt(hex.slice(5,7),16) * amount)
-  return `rgb(${r},${g},${b})`
-}
-function typeLabel(t: string | undefined) {
-  return ({ deadline: '截止日', meeting: '会议', review: '审核', milestone: '节点', project: '进行中' } as Record<string, string>)[t ?? ''] ?? '活动'
-}
-
-const TYPE_ACCENT: Record<string, string> = {
-  meeting:   '#7b7fb2',
-  review:    '#7ab8c8',
-  milestone: '#c4afc8',
-  deadline:  '#b07858',
-  event:     '#8a8fa8',
-}
-
-function normalizeEvent(e: EventResponse): CalItem {
-  return {
-    _uid:        (e as EventResponse & { _uid?: string })._uid ?? ('e' + e.id),   // 稳定客户端标识：本地增删改按它匹配，不受临时→真 id 替换影响
-    id:          e.id,
-    date:        e.date,
-    time:        e.time ?? '',
-    endTime:     e.endTime ?? '',
-    name:        e.title,
-    client:      e.client ?? '',
-    type:        e.type,
-    accent:      TYPE_ACCENT[e.type] ?? '#8a8fa8',
-    isUserEvent: true,
-    description: e.description ?? '',
-    version:     e.version ?? 1,
-  }
+function normalizeCalendarEvent(e: EventResponse): CalItem {
+  return toRenderItem(normalizeEvent(e), {
+    uid: (e as EventResponse & { _uid?: string })._uid ?? `e${e.id}`,
+  })
 }
 
 const extraEvents     = ref<CalItem[]>([])
@@ -1224,7 +1128,7 @@ async function fetchNextMonthEvents() {
   if (eventsCache[key]) { nextMonthEvents.value = eventsCache[key]; return }
   try {
     const data       = await eventsApi.list(ny, nm)
-    const normalized = data.map(normalizeEvent)
+    const normalized = data.map(normalizeCalendarEvent)
     eventsCache[key] = normalized
     nextMonthEvents.value = normalized
   } catch { }
@@ -1237,7 +1141,7 @@ async function fetchEvents() {
   if (eventsCache[key]) extraEvents.value = eventsCache[key]
   try {
     const data       = await eventsApi.list(y, m)
-    const normalized = data.map(normalizeEvent)
+    const normalized = data.map(normalizeCalendarEvent)
     eventsCache[key] = normalized
     extraEvents.value = normalized
   } catch { }
@@ -1254,7 +1158,7 @@ async function fetchSpilloverEvents() {
     const key = `${yy}-${mm}`
     if (eventsCache[key]) return eventsCache[key] as CalItem[]
     try {
-      const norm = (await eventsApi.list(yy, mm)).map(normalizeEvent)
+      const norm = (await eventsApi.list(yy, mm)).map(normalizeCalendarEvent)
       eventsCache[key] = norm
       return norm
     } catch { return [] as CalItem[] }
@@ -1290,23 +1194,25 @@ function openProject(bar: CalItem) {
 const projectTimelines = computed<CalItem[]>(() =>
   projectStore.projects
     .filter(p => p.startDate && p.deadline)
-    .map((p): CalItem => ({
-      id:           `p${p.id}`,
-      name:         p.name,
-      client:       p.client,
-      startDate:    (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.startDate && toIso(new Date(p.doneAt)) < p.startDate)
-                      ? toIso(new Date(p.doneAt)) : p.startDate,
-      endDate:      (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
-                      ? toIso(new Date(p.doneAt)) : p.deadline,
-      accent:       extractAccent(p.color),
-      type:         'deadline',
-      isProject:    true,
-      status:       p.status,
-      currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
-      priority:     p.priority ?? null,
-      createdAt:    p.createdAt ?? '',
-      progress:     projectProgress(p),
-    }))
+    .map((p): CalItem => {
+      const startDate = (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.startDate && toIso(new Date(p.doneAt)) < p.startDate)
+        ? toIso(new Date(p.doneAt)) : p.startDate
+      const endDate = (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
+        ? toIso(new Date(p.doneAt)) : p.deadline
+      return toRenderItem(normalizeProjectTimeline({
+        id: `p${p.id}`,
+        name: p.name,
+        client: p.client,
+        startDate,
+        endDate,
+        accent: extractAccent(p.color),
+        status: p.status,
+        currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
+        priority: p.priority ?? null,
+        createdAt: p.createdAt ?? '',
+        progress: projectProgress(p),
+      }), { legacyType: 'deadline' })
+    })
 )
 
 const effectiveProjectTimelines = computed<CalItem[]>(() => {
@@ -1360,49 +1266,7 @@ const monthWeeks = computed(() => {
 })
 
 function weekBars(week: { iso: string }[]): CalItem[] {
-  const ws = week[0].iso
-  const we = week[6].iso
-  const bars: CalItem[] = effectiveProjectTimelines.value
-    .filter(p => (p.endDate ?? '') >= ws && (p.startDate ?? '') <= we && p.startDate !== p.endDate)
-    .map(p => {
-      const colStart = (p.startDate ?? '') <= ws ? 0 : week.findIndex(d => d.iso >= (p.startDate ?? ''))
-      let colEnd = 6
-      for (let i = 6; i >= 0; i--) { if (week[i].iso <= (p.endDate ?? '')) { colEnd = i; break } }
-      const cs = Math.max(0, colStart)
-      const ce = Math.min(6, colEnd)
-      return {
-        ...p,
-        colStart: cs,
-        colEnd:   ce,
-        startsHere:   (p.startDate ?? '') >= ws && (p.startDate ?? '') <= we,
-        endsHere:     (p.endDate ?? '')   >= ws && (p.endDate ?? '')   <= we,
-        segStartIso:  week[cs].iso,
-        segEndIso:    week[ce].iso,
-        row:          0,   // 占位，下方贪心分行回填（让 TS 认得 .row）
-      }
-    })
-
-  // 贪心区间着色：已完成排末尾；其次截止日早的优先；再次开始日；最后创建时间兜底
-  const _prioVal = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
-  bars.sort((a, b) => {
-    const da = a.status === 'done' ? 1 : 0
-    const db = b.status === 'done' ? 1 : 0
-    if (da !== db) return da - db
-    const pd = _prioVal(b) - _prioVal(a)
-    if (pd !== 0) return pd
-    if (a.startDate !== b.startDate) return (a.startDate ?? '').localeCompare(b.startDate ?? '')
-    if (a.endDate !== b.endDate) return (a.endDate ?? '').localeCompare(b.endDate ?? '')
-    return (a.createdAt ?? '').localeCompare(b.createdAt ?? '')
-  })
-  const rowEnds: number[] = []  // rowEnds[r] = 该行最后一条 bar 的 colEnd
-  bars.forEach(bar => {
-    let r = 0
-    while (rowEnds[r] !== undefined && rowEnds[r] >= (bar.colStart ?? 0)) r++
-    bar.row = r
-    rowEnds[r] = bar.colEnd ?? 0
-  })
-
-  return bars
+  return calculateWeekBars(effectiveProjectTimelines.value, week)
 }
 
 // ───────────────── 周视图（时间轴）─────────────────
@@ -1431,46 +1295,8 @@ const weekDays = computed<WeekViewDay[]>(() => {
   return out
 })
 
-function _parseMin(t: string | undefined) { const [h, m] = (t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
-
-interface TimedItem { ev: CalItem; s: number; e: number; _col?: number; _n?: number }
-
-// 某天「有时间」的活动 → 计算位置 + 重叠分栏（聚簇贪心分列）
 function timedLayoutFor(iso: string) {
-  const items: TimedItem[] = visibleEvents.value
-    .filter(e => e.date === iso && e.time)
-    .map(e => {
-      const s = _parseMin(e.time)
-      let en = e.endTime ? _parseMin(e.endTime) : s + 60
-      if (en <= s) en = 1440          // 结束<=开始（次日/无效）→ 当天截到 24:00
-      return { ev: e, s, e: Math.min(1440, en) }
-    })
-    .sort((a, b) => a.s - b.s || a.e - b.e)
-  const res: TimedItem[] = []
-  let cluster: TimedItem[] = [], cEnd = -1
-  const flush = () => {
-    const colEnds: number[] = []
-    cluster.forEach(it => {
-      let c = 0
-      while (c < colEnds.length && colEnds[c] > it.s) c++
-      it._col = c; colEnds[c] = it.e
-    })
-    const n = Math.max(1, colEnds.length)
-    cluster.forEach(it => { it._n = n })
-    res.push(...cluster); cluster = []; cEnd = -1
-  }
-  items.forEach(it => {
-    if (cluster.length && it.s >= cEnd) flush()
-    cluster.push(it); cEnd = Math.max(cEnd, it.e)
-  })
-  flush()
-  return res.map(it => ({
-    ev: it.ev,
-    top: it.s / 60 * HOUR_H,
-    height: Math.max(15, (it.e - it.s) / 60 * HOUR_H - 2),
-    leftPct: (it._col ?? 0) / (it._n ?? 1) * 100,
-    widthPct: 100 / (it._n ?? 1),
-  }))
+  return calculateTimedLayout(visibleEvents.value, iso, HOUR_H)
 }
 
 // 某天「无时间」的活动 → 全天行
@@ -2099,7 +1925,7 @@ async function saveEvent() {
   const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
     const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
-    const norm = { ...normalizeEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
+    const norm = { ...normalizeCalendarEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
     const idx = extraEvents.value.findIndex(e => e._uid === uid)
     if (idx !== -1) extraEvents.value[idx] = norm
     if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
