@@ -169,7 +169,7 @@ async def test_read_video_generic_failure_returns_generic_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch):
     """pool/router 场景下，settings.ai（顶层静态配置）可能和这轮真正执行的模型不是
-    同一个——read_video 判断能力/生成 video block 必须用 agent.modelctx 里这轮真正
+    同一个——read_video 判断能力/生成 video block 必须用 agent.llm.modelctx 里这轮真正
     在跑的 model_cfg，不能重新读 get_settings().ai（否则会出现"顶层配 MiniMax、这轮
     实际跑 mimo，却按 MiniMax 生成 Anthropic video block"这类错配）。这里反过来验证：
     settings.ai 是不支持视频的 mimo，但本轮 modelctx 里真正跑的是 MiniMax M3，

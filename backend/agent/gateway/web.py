@@ -328,7 +328,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     tool_names = profile.tool_names
 
-        from agent.llm.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
 
     runner = LLMRunner(tool_names, settings)

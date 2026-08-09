@@ -7,7 +7,7 @@ import json
 import logging
 import time
 
-from agent import trace
+from agent.runtime import trace
 from app.core import opsmetrics
 
 

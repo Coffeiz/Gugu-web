@@ -21,7 +21,7 @@ from agent.tools.trash import _permanent_delete
 
 
 def _blocked(res) -> bool:
-    from agent import confirm
+    from agent.security import confirm
     return confirm.is_block(res)
 
 
@@ -132,7 +132,7 @@ async def test_dispatch_tripwire_silent_when_gated(user_a, monkeypatch, caplog):
     """正确接了门的工具（返回 needs_confirm）不该触发绊线——信号不掺水。"""
     from agent.tools import base as base_mod
     import app.db.session as sess_mod
-    from agent import confirm
+    from agent.security import confirm
 
     class _FakeSession:
         async def __aenter__(self):

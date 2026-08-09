@@ -107,7 +107,8 @@ async def decide_im_shortcut(
     """根据当前 IM 状态判断是否需要在入队前短路。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router, runtime_state
+        from agent import router
+        from agent.runtime import runtime_state
 
     try:
         state = await runtime_state.get_state(
@@ -155,7 +156,8 @@ def decide_im_shortcut_sync(
     """同步 Gateway 回调使用的 intent shortcut 决策。"""
     if has_attachments:
         return {"action": "run"}
-    from agent import router, runtime_state
+        from agent import router
+        from agent.runtime import runtime_state
 
     try:
         state = runtime_state.get_state_sync(
@@ -331,7 +333,8 @@ def bind_im_context(request: AgentRequest, payload: dict) -> None:
 async def finalize_im_response(platform: str, platform_user_id: str,
                                cancelled: bool, reply_text: str) -> None:
     """根据 IM 回复结果更新是否等待用户继续回答的状态。"""
-    from agent import router, runtime_state
+    from agent import router
+    from agent.runtime import runtime_state
 
     if cancelled:
         await runtime_state.set_awaiting(platform, platform_user_id, False)
