@@ -18,8 +18,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, type PropType } from 'vue'
-import { useSurface } from '@/interaction/runtime'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
+import { runtime } from '@/interaction/runtime'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
 
@@ -28,13 +28,17 @@ const props = defineProps({
   ownershipVersion: { type: Number, default: 0 },
 })
 defineEmits(['card-click', 'open-archived'])
-const { elementRef: columnRef } = useSurface({
+const columnRef = ref<HTMLElement | null>(null)
+const colBodyRef = ref<HTMLElement | null>(null)
+runtime.surfaces.register({
   id: 'done',
   type: 'project-column',
+  element: null,
   accepts: ['project-card'],
   viewport: () => colBodyRef.value,
 })
-const colBodyRef = ref<HTMLElement | null>(null)
+watch(columnRef, element => runtime.surfaces.setElement('done', element))
+onUnmounted(() => runtime.surfaces.unregister('done'))
 </script>
 
 <style>

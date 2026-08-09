@@ -36,8 +36,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, type PropType } from 'vue'
-import { runtime, useSurface } from '@/interaction/runtime'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
+import { runtime } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
@@ -47,19 +47,23 @@ const props = defineProps({
   ownershipVersion: { type: Number, default: 0 },
 })
 defineEmits(['card-click', 'add-project'])
-const { elementRef: columnRef } = useSurface({
+const columnRef = ref<HTMLElement | null>(null)
+const colBodyRef = ref<HTMLElement | null>(null)
+runtime.surfaces.register({
   id: props.column.key,
   type: 'project-column',
+  element: null,
   accepts: ['project-card'],
   viewport: () => colBodyRef.value,
 })
-const colBodyRef = ref<HTMLElement | null>(null)
+watch(columnRef, element => runtime.surfaces.setElement(props.column.key, element))
+onUnmounted(() => runtime.surfaces.unregister(props.column.key))
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
 // （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
 function isDetached(projectId: string): boolean {
   props.ownershipVersion
-  return runtime.owner.isControlled(projectId)
+  return runtime.isControlled(projectId)
 }
 
 const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
