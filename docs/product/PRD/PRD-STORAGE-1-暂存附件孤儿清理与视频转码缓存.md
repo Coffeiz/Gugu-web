@@ -256,8 +256,8 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 
 **Phase B 上线前**：
 
-- [ ] 让咕咕读一个文件库里的视频（MiniMax M3 模型），记录这次转码耗时。
-- [ ] 立刻再让咕咕读同一个视频，确认响应明显更快（跳过了转码），日志里能看到"缓存命中"相关记录（需要在实现里加一条诊断日志，比如 `diag_log_raw("chat_attach.video_cache_hit", ...)`）。
+- [x] 让咕咕读一个文件库里的视频（MiniMax M3 模型），记录这次转码耗时。**已在 devserver 用真实文件库视频验证**（2026-08-09，脚本直调 `_compress_video_cached`，非经完整对话流程）：186.1MB/1080p/14.7Mbps/103.9s 的视频，首次转码耗时 **66.49s**，转码后 59.6MB。
+- [x] 立刻再让咕咕读同一个视频，确认响应明显更快（跳过了转码），日志里能看到"缓存命中"相关记录（需要在实现里加一条诊断日志，比如 `diag_log_raw("chat_attach.video_cache_hit", ...)`）。**已验证**：补上了漏掉的 `diag_log_raw("chat_attach.video_cache_hit", ...)` 诊断日志（之前实现时漏加）；第二次调用耗时 **0.04s**（加速比 1656x），`logs/gugu-diag.log` 确认命中记录；alive marker TTL 604800s（7 天）符合设计。
 - [ ] 把这个视频文件重命名/覆盖上传替换内容后，再次读取，确认走的是全新转码（没有错误地命中旧缓存）。
 - [ ] 手动查 Redis（`GET video_cache_alive:<uid>:<hash>`、`TTL ...`）确认命中后 TTL 确实被刷新，不是原地不动。
 - [ ] 用一个超过 90MB 触发 mm_file 分支的视频重复上述流程，确认 mm_file 场景下缓存同样生效（不只是 base64 场景测过）。
