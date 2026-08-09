@@ -132,7 +132,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 - **Redis 只承担"最近是否仍活跃"这一个语义，不承担查找职责**：`video_cache_alive:{uid}:{cache_key} = 1`，`ex=7d`（对齐旧的 `chat_attach.TTL`，不新增一个自定义常量）。**命中时必须用 `SET video_cache_alive:{uid}:{cache_key} 1 EX 7d` 重新整体设置，不能用 `EXPIRE`**——如果 Redis 整体丢失过（本 PRD 明确允许的场景），alive marker 这个 key 根本不存在，对不存在的 key 调 `EXPIRE` 是空操作、不会创建 key；如果只刷新 TTL，会出现"缓存文件明明刚被命中读取，但 marker 依然不存在，下一轮安全网还是会把它当不活跃孤儿清掉"这种违背自愈设计初衷的 bug。`prepare_video_media()` 先按公式算出 `cache_key`，直接尝试 `storage.get(cached_path)`；能读到就是缓存命中（同时 `SET` 重建/续期 alive marker），读不到（文件不存在，或者存在但 marker 已经过期被安全网清理）就重新转码、覆盖写入、重置 alive marker。这样即使 Redis 整体丢失，最多导致"缓存被安全网提前当孤儿清理、下次多转码一次"，不会影响正确性——这正是缓存该有的性质：随时全部丢掉也不影响业务正确性，跟 FR-STORAGE-1-1 里"DB 是所有权真相来源、绝不能丢"的附件语义形成对比。
 - **并发多个请求命中同一视频同一 cache_key 时需要 single-flight 锁**：真实场景（同一会话里连续问同一个视频的问题）会触发多个并发请求同时未命中缓存，各自起一个 ffmpeg 转码同一个大文件，浪费 CPU/内存。改为：查缓存未命中 → 用 `video_cache_lock:{cache_key}`（同 `agent/memory` scope 锁模式）尝试加锁 → 加锁成功后**再查一次缓存**（double-check，防止等锁的时候前一个请求已经转码完）→ 仍未命中才真正转码 → 写缓存 → 释放锁；等锁的请求锁释放后同样先查缓存命中就直接用。
 - 缓存产物本身的清理复用第 2 节 FR-STORAGE-1-1 里的组织约束，作为独立的"租约驱动"清理策略：物理年龄扫描 `.video_cache/`，删除前检查对应 alive marker 是否存在且未过期，存在则跳过（marker 不存在 或 已过期，正常按物理年龄清理）。
-- 验收标准：同一视频、同一 `model_cfg`（`storage_key` 不变）第二次 `read_file` 应命中缓存、不重新调用 `_probe_video`/`_compress_video`；`storage_key` 变化或 `model_cfg` 对应的 transcode profile 变化都不会命中旧缓存；并发多个请求读同一视频时 `_compress_video` 只应该被真正调用一次。
+- 验收标准：同一视频、同一 `model_cfg`（`storage_key` 不变）第二次 `read_file` 应命中缓存，仍重新调用轻量 `_probe_video` 但不再调用 `_compress_video`；`storage_key` 变化或 `model_cfg` 对应的 transcode profile 变化都不会命中旧缓存；并发多个请求读同一视频时 `_compress_video` 只应该被真正调用一次。
 
 ---
 
@@ -234,7 +234,7 @@ UPLOAD ──▶ chat_attachment(state=DRAFT)
 **Phase B（`tests/test_chat_attach_video.py` 补 `prepare_video_media` 缓存分支 + `test_staging_gc.py` 补 `.video_cache/` 分支）**：
 
 - [x] 首次调用 `prepare_video_media(..., storage_key=..., user_id=...)` 无缓存，正常走探测+转码，之后能在存储里读到 `.video_cache/{cache_key}.mp4` 和对应 alive marker。
-- [x] 同一 `storage_key`+同一 `model_cfg` 第二次调用命中缓存：mock `_probe_video`/`_compress_video` 断言**没有被调用**，直接返回上次的媒体项。
+- [x] 同一 `storage_key`+同一 `model_cfg` 第二次调用命中缓存：mock `_probe_video`/`_compress_video` 断言 `_probe_video` 仍被调用、`_compress_video` 不再被调用，直接返回缓存媒体项。
 - [x] 命中缓存时对应 alive marker 用 `SET ... EX` 重建/续期，**不是 `EXPIRE`**（断言调用的 Redis 方法，`EXPIRE` 对不存在的 key 是空操作，会导致 Redis 丢失后缓存"自愈"失败）。
 - [x] alive marker 不存在（模拟 Redis flush）但物理缓存文件还在：命中读取后 marker 被重新创建（`GET` 能拿到值）。
 - [x] `storage_key` 变化、或同 `storage_key` 但 `model_cfg` 对应 transcode profile 变化，都不命中旧缓存，重新走探测+转码。
