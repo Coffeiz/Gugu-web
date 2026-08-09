@@ -171,8 +171,6 @@
 </template>
 
 <script lang="ts">
-const eventsCache: Record<string, any> = {}
-const upcomingEventsCache: { data: any } = { data: null }
 </script>
 
 <script setup lang="ts">
@@ -180,17 +178,14 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
-import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
-import { eventsApi, scheduledTasksApi } from '@/services/api'
-import { calendarSignal } from '@/services/cache'
+import { eventsApi } from '@/services/api'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
-import { projectProgress } from '@/utils/projectProgress'
 import CalendarToolbar from './components/CalendarToolbar.vue'
 import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
@@ -201,11 +196,11 @@ import WeekTimeline from './components/WeekTimeline.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
+import { useCalendarData } from './composables/useCalendarData'
 import type { CalendarContext } from './domain/calendarContext'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
-import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
 import { canResize, getDisplayColor } from './domain/calendarRules'
-import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
+import { capBg, hexAlpha, darkenHex } from './utils/calendarColors'
 import {
   maxSlots as calculateMaxSlots,
   weekBars as calculateWeekBars,
@@ -219,10 +214,6 @@ import {
   LEAD_OPTIONS, CHAN_LABEL,
 } from '@/composables/useEventEditForm'
 import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
-import type { components } from '@/types/api'
-
-type EventResponse = components['schemas']['EventResponse']
-
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。
@@ -248,7 +239,6 @@ type WvHover = CalendarHourHover
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const liveStore = useLiveStore()
-const authStore = useAuthStore()
 const prefsStore = usePreferencesStore()
 const eventModalStore = useEventModalStore()
 const todayIso = ref(toIso(new Date()))
@@ -632,7 +622,7 @@ async function commitDrag() {
     patch(nextMonthEvents.value)
     patch(spilloverEvents.value)
     refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-    eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
+    cacheMonth(cursor.value, [...extraEvents.value])
     try {
       const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: range.start, description: ev.description || undefined, version: ev.version })
       const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
@@ -775,77 +765,21 @@ function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
 function displayColor(item: CalItem) { return getDisplayColor(item) }
-function normalizeCalendarEvent(e: EventResponse): CalItem {
-  return toRenderItem(normalizeEvent(e), {
-    uid: (e as EventResponse & { _uid?: string })._uid ?? `e${e.id}`,
-  })
-}
-
-const extraEvents     = ref<CalItem[]>([])
-const nextMonthEvents = ref<CalItem[]>([])
-
-async function fetchNextMonthEvents() {
-  const now = new Date()
-  const m   = now.getMonth() + 1
-  const nm  = m === 12 ? 1 : m + 1
-  const ny  = m === 12 ? now.getFullYear() + 1 : now.getFullYear()
-  const key = `${ny}-${nm}`
-  if (eventsCache[key]) { nextMonthEvents.value = eventsCache[key]; return }
-  try {
-    const data       = await eventsApi.list(ny, nm)
-    const normalized = data.map(normalizeCalendarEvent)
-    eventsCache[key] = normalized
-    nextMonthEvents.value = normalized
-  } catch { }
-}
-
-async function fetchEvents() {
-  const y   = cursor.value.getFullYear()
-  const m   = cursor.value.getMonth() + 1
-  const key = `${y}-${m}`
-  if (eventsCache[key]) extraEvents.value = eventsCache[key]
-  try {
-    const data       = await eventsApi.list(y, m)
-    const normalized = data.map(normalizeCalendarEvent)
-    eventsCache[key] = normalized
-    extraEvents.value = normalized
-  } catch { }
-}
-
-// 网格首/末行会溢出到上/下月（首行最多 6 天上月、末行最多 6 天下月），这些「其他月」格子上的
-// 单日活动也要显示。按 cursor 取上、下月活动（与 nextMonthEvents 区分：那个按真实今天算、给「即将到来」侧栏用）。
-const spilloverEvents = ref<CalItem[]>([])
-async function fetchSpilloverEvents() {
-  const y = cursor.value.getFullYear()
-  const m = cursor.value.getMonth()
-  const fetchMonth = async (date: Date) => {
-    const yy = date.getFullYear(), mm = date.getMonth() + 1
-    const key = `${yy}-${mm}`
-    if (eventsCache[key]) return eventsCache[key] as CalItem[]
-    try {
-      const norm = (await eventsApi.list(yy, mm)).map(normalizeCalendarEvent)
-      eventsCache[key] = norm
-      return norm
-    } catch { return [] as CalItem[] }
-  }
-  const [prev, next] = await Promise.all([
-    fetchMonth(new Date(y, m - 1, 1)),
-    fetchMonth(new Date(y, m + 1, 1)),
-  ])
-  spilloverEvents.value = [...prev, ...next]
-}
-
-// 咕咕在对话里增删改了活动 → 清月缓存并重取当前月 + 溢出月
-watch(calendarSignal, () => {
-  for (const k in eventsCache) delete eventsCache[k]
-  fetchEvents()
-  fetchSpilloverEvents()
-})
-
-// 当前月 + 溢出月（按 id 去重）——渲染溢出格、选中日详情都用它，保证跨月活动可见
-const visibleEvents = computed<CalItem[]>(() => {
-  const ids = new Set(extraEvents.value.map(e => e.id))
-  return [...extraEvents.value, ...spilloverEvents.value.filter(e => !ids.has(e.id))]
+const {
+  extraEvents,
+  nextMonthEvents,
+  spilloverEvents,
+  visibleEvents,
+  projectTimelines,
+  fetchEvents,
+  fetchNextMonthEvents,
+  fetchSpilloverEvents,
+  cacheMonth,
+  normalizeCalendarEvent,
+} = useCalendarData({
+  cursor,
+  projects: () => projectStore.projects,
+  doneMode: () => prefsStore.calendarDoneMode,
 })
 
 function singleEvents(iso: string) { return visibleEvents.value.filter(e => e.date === iso) }
@@ -855,30 +789,6 @@ function openProject(bar: CalItem) {
   const proj = projectStore.projects.find(p => p.id === pid)
   if (proj) projectStore.openModal(proj)
 }
-
-const projectTimelines = computed<CalItem[]>(() =>
-  projectStore.projects
-    .filter(p => p.startDate && p.deadline)
-    .map((p): CalItem => {
-      const startDate = (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt && p.startDate && toIso(new Date(p.doneAt)) < p.startDate)
-        ? toIso(new Date(p.doneAt)) : p.startDate
-      const endDate = (prefsStore.calendarDoneMode === 'done' && p.status === 'done' && p.doneAt)
-        ? toIso(new Date(p.doneAt)) : p.deadline
-      return toRenderItem(normalizeProjectTimeline({
-        id: `p${p.id}`,
-        name: p.name,
-        client: p.client,
-        startDate,
-        endDate,
-        accent: extractAccent(p.color),
-        status: p.status,
-        currentStage: p.stages?.find(s => s.key === p.currentStage)?.label ?? null,
-        priority: p.priority ?? null,
-        createdAt: p.createdAt ?? '',
-        progress: projectProgress(p),
-      }), { legacyType: 'deadline' })
-    })
-)
 
 const effectiveProjectTimelines = computed<CalItem[]>(() => {
   const range = dragOverRange.value
@@ -1128,7 +1038,7 @@ function _setEventLocal(id: string | number, fields: Partial<CalItem>) {
 }
 async function _persistEvent(s: EvDragState) {
   refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-  eventsCache[`${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`] = [...extraEvents.value]
+  cacheMonth(cursor.value, [...extraEvents.value])
   try {
     const updated = await eventsApi.update(s.id as unknown as number, { title: s.name, date: s.date, time: s.time || null, endTime: s.endTime || null, description: s.description || undefined, version: s.version })
     if (updated?.version) _setEventLocal(s.id, { version: updated.version })
@@ -1428,8 +1338,7 @@ async function deleteEvent(ev: { id: string | number; _uid?: string }) {
   nextMonthEvents.value = nextMonthEvents.value.filter(e => !match(e))
   spilloverEvents.value = spilloverEvents.value.filter(e => !match(e))
   refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-  const key = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
-  eventsCache[key] = extraEvents.value
+  cacheMonth(cursor.value, extraEvents.value)
   try {
     await eventsApi.delete(ev.id as unknown as number)
   } catch { /* 已删/网络等 → 下面对账兜底，不再静默留下脏状态 */ }
@@ -1462,7 +1371,6 @@ async function saveEvent() {
   newEvent.value = { name: '', date: todayIso.value, ...defaultTimeRange(), description: '', allDay: false }
   showAddForm.value = false
 
-  const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
   try {
     const created = await eventsApi.create({ title: localItem.name, date, time: localItem.time || undefined, endTime: localItem.endTime || undefined, type: 'event', description: localItem.description || undefined })
     const norm = { ...normalizeCalendarEvent(created), _uid: uid }   // 保留同一 _uid，删/改才能稳定匹配
@@ -1470,7 +1378,7 @@ async function saveEvent() {
     if (idx !== -1) extraEvents.value[idx] = norm
     if (typeof created?.id === 'number') await applyReminders(created.id, localItem.name, date, localItem.time)   // 新活动按提前量/渠道建提醒
   } catch { }
-  eventsCache[cacheKey] = [...extraEvents.value]
+  cacheMonth(cursor.value, [...extraEvents.value])
 }
 </script>
 
