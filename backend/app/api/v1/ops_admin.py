@@ -24,6 +24,21 @@ async def ops_summary(days: int = Query(1, ge=1, le=14)):
     return await opsmetrics.summary(days)
 
 
+@router.get("/storage-live-totals")
+async def storage_live_totals():
+    """存储用量——**实时查询，不依赖快照历史**（PRD-STORAGE-2）：`user_files`/
+    `chat_staging_draft`/`chat_staging_attached` 都是现算的 DB 汇总列
+    （`SUM`/`COUNT`，毫秒级），不用等定时任务落过快照才有数字，也不会因为
+    "最近一次快照是昨天"而显示过期数据。
+
+    `video_cache` 不在这里——它的用量只能靠扫存储拿到，扫一次的成本跟
+    `video_cache_gc` 清理任务本身相当，不适合每次打开面板都现算一遍，
+    继续走 `/storage-snapshots` 的历史快照（最新一条实际上就是"上次清理后
+    的真实占用"，新鲜度是"一天以内"，不是"过期"）。"""
+    from app.core import storage_snapshots
+    return {"categories": await storage_snapshots.compute_sql_totals()}
+
+
 @router.get("/storage-snapshots")
 async def storage_snapshots_history(
     days: int = Query(30, ge=1, le=365),

@@ -11,16 +11,16 @@
     </div>
 
     <div v-if="err" class="ops-err">{{ err }}</div>
-    <div v-else-if="loading && !hasData" class="ops-empty">加载中…</div>
-    <div v-else-if="!hasData" class="ops-empty">还没有快照数据——等定时任务跑过至少一次之后再来看（草稿/已发送附件、用户文件库次日 1:15 落一次，视频转码缓存 1:00）。</div>
+    <div v-else-if="loading && !liveLoaded" class="ops-empty">加载中…</div>
 
     <template v-else>
-      <!-- 概览卡片：每个类别最新一条快照 + 磁盘剩余（仅 Local 后端） -->
+      <!-- 概览卡片：SQL 类实时查（不依赖快照），视频缓存用最新一次清理快照，
+           磁盘剩余（仅 Local 后端） -->
       <div class="ops-cards">
         <div v-for="cat in CATEGORIES" :key="cat.key" class="ops-card">
           <div class="oc-label">{{ cat.label }}</div>
-          <div class="oc-value">{{ latestMB(cat.key) }}<i>MB</i></div>
-          <div class="oc-hint">{{ latestCount(cat.key) }} 个对象</div>
+          <div class="oc-value">{{ cardMB(cat.key) }}<i>MB</i></div>
+          <div class="oc-hint">{{ cardCount(cat.key) }} 个对象{{ cat.key === 'video_cache' ? '（上次清理后）' : '' }}</div>
         </div>
         <div v-if="disk" class="ops-card" :class="{ warn: diskUsedPct >= 85 }">
           <div class="oc-label">磁盘剩余（Local 存储）</div>
@@ -31,7 +31,8 @@
 
       <div class="ops-section">
         <div class="sec-title">占用趋势（近 30 天，按类别分开画线）</div>
-        <div class="chart-wrap">
+        <div v-if="!hasTrend" class="ops-empty">还没有历史快照——上面的概览卡片是实时数字，这条趋势线要等定时任务跑过至少一次之后才有（草稿/已发送附件、用户文件库次日 1:15 落一次，视频转码缓存 1:00）。</div>
+        <div v-else class="chart-wrap">
           <Line :data="chartData" :options="chartOpts" />
         </div>
       </div>
@@ -51,6 +52,7 @@ import { useAdminStore } from '@/stores/admin'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler)
 
 interface Snapshot { taken_at: string; object_count: number; total_bytes: number }
+interface Totals { object_count: number; total_bytes: number }
 
 const CATEGORIES = [
   { key: 'user_files', label: '用户文件库', color: 'rgba(123,127,178,1)' },
@@ -63,26 +65,41 @@ interface DiskUsage { total_bytes: number; used_bytes: number; free_bytes: numbe
 
 const adminStore = useAdminStore()
 const byCategory = ref<Record<string, Snapshot[]>>({})
+const liveTotals = ref<Record<string, Totals>>({})
 const disk = ref<DiskUsage | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
+const liveLoaded = ref(false)
 const err = ref('')
 
-const hasData = computed(() => Object.values(byCategory.value).some(list => list.length > 0))
+// 趋势线要有历史快照才画得出来；概览卡片（除 video_cache 外）不依赖这个，
+// 实时查即可，两者分开判断，别让"没有快照"挡住本来能立刻显示的实时数字。
+const hasTrend = computed(() => Object.values(byCategory.value).some(list => list.length > 0))
+
 const diskUsedPct = computed(() => disk.value ? Math.round(disk.value.used_bytes / disk.value.total_bytes * 100) : 0)
 function fmtGB(bytes: number): string { return (bytes / 1024 / 1024 / 1024).toFixed(1) }
 
-function latestOf(key: string): Snapshot | null {
+function latestSnapshotOf(key: string): Snapshot | null {
   const list = byCategory.value[key]
   return list?.length ? list[list.length - 1] : null
 }
-function latestMB(key: string): string {
-  const s = latestOf(key)
-  return s ? (s.total_bytes / 1024 / 1024).toFixed(1) : '—'
+// video_cache 没有实时接口（扫存储成本高，见 PRD-STORAGE-2），用最新一次
+// 清理快照；其余类别是纯 SQL 汇总，直接用实时查询结果。
+function cardMB(key: string): string {
+  if (key === 'video_cache') {
+    const s = latestSnapshotOf(key)
+    return s ? (s.total_bytes / 1024 / 1024).toFixed(1) : '—'
+  }
+  const t = liveTotals.value[key]
+  return t ? (t.total_bytes / 1024 / 1024).toFixed(1) : '—'
 }
-function latestCount(key: string): number | string {
-  const s = latestOf(key)
-  return s ? s.object_count : '—'
+function cardCount(key: string): number | string {
+  if (key === 'video_cache') {
+    const s = latestSnapshotOf(key)
+    return s ? s.object_count : '—'
+  }
+  const t = liveTotals.value[key]
+  return t ? t.object_count : '—'
 }
 
 // 以所有类别里点数最多的一条时间轴为准对齐 labels（各类别定时任务时间点不完全
@@ -127,16 +144,23 @@ async function load(manual = false) {
   if (manual) { refreshing.value = true; setTimeout(() => { refreshing.value = false }, 550) }
   loading.value = true
   try {
-    const res = await adminStore.authFetch('/api/v1/admin/ops/storage-snapshots?days=30')
-    if (!res.ok) throw new Error(`加载失败 (${res.status})`)
-    const data = await res.json()
-    byCategory.value = data.categories || {}
-    disk.value = data.disk || null
+    const [liveRes, historyRes] = await Promise.all([
+      adminStore.authFetch('/api/v1/admin/ops/storage-live-totals'),
+      adminStore.authFetch('/api/v1/admin/ops/storage-snapshots?days=30'),
+    ])
+    if (!liveRes.ok) throw new Error(`加载失败 (${liveRes.status})`)
+    if (!historyRes.ok) throw new Error(`加载失败 (${historyRes.status})`)
+    const liveData = await liveRes.json()
+    const historyData = await historyRes.json()
+    liveTotals.value = liveData.categories || {}
+    byCategory.value = historyData.categories || {}
+    disk.value = historyData.disk || null
     err.value = ''
   } catch (e: any) {
     err.value = e.message
   } finally {
     loading.value = false
+    liveLoaded.value = true
   }
 }
 

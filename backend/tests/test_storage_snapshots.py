@@ -97,3 +97,30 @@ async def test_sql_snapshots_noop_when_lock_held(db, user_a, monkeypatch):
     count = (await db.execute(select(StorageCategorySnapshot))).scalars().all()
     assert count == []
     assert fake_redis.lock_calls == [storage_snapshots._LOCK_KEY]
+
+
+@pytest.mark.asyncio
+async def test_compute_sql_totals_does_not_write_snapshot(db, user_a):
+    """compute_sql_totals() 是纯查询，不应该往 storage_category_snapshots 写
+    任何行——这是它跟 record_sql_snapshots() 的关键区别。"""
+    db.add(File(user_id=user_a.id, display_name="a", ext="TXT", storage_key="k1", size_bytes=100))
+    await db.commit()
+
+    totals = await storage_snapshots.compute_sql_totals()
+
+    assert totals[storage_snapshots.CATEGORY_USER_FILES]["object_count"] == 1
+    assert totals[storage_snapshots.CATEGORY_USER_FILES]["total_bytes"] == 100
+    rows = (await db.execute(select(StorageCategorySnapshot))).scalars().all()
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_storage_live_totals_endpoint(db, user_a):
+    from app.api.v1.ops_admin import storage_live_totals
+
+    db.add(File(user_id=user_a.id, display_name="a", ext="TXT", storage_key="k1", size_bytes=100))
+    await db.commit()
+
+    result = await storage_live_totals()
+
+    assert result["categories"][storage_snapshots.CATEGORY_USER_FILES]["total_bytes"] == 100
