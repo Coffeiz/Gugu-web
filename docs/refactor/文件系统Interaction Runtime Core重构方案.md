@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 规划中 |
+| 状态 | ✅ Phase 0/1/2/4/5 已完成并 devserver 验证（2026-08-10）；Phase 3（多选进 Runtime）依赖 gugu-interaction-runtime 的 GroupDragSession，待该仓库交付后作为独立轨道推进 |
 | 重构分支 | `codex-filesystem-core-rebuild` |
 | 基线 | `main` 合并 PR16 后的 `c1a2df52` |
 | 关联仓库 | `gugu-interaction-runtime` |
