@@ -49,6 +49,33 @@ use_systemd() {
     systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service[[:space:]]'
 }
 
+check_systemd_services() {
+    local attempts="${GUGU_SYSTEMD_CHECK_ATTEMPTS:-5}"
+    local delay="${GUGU_SYSTEMD_CHECK_DELAY:-1}"
+    local attempt service all_active
+
+    for ((attempt = 1; attempt <= attempts; attempt++)); do
+        all_active=1
+        for service in $SYSTEMD_SERVICES; do
+            if ! systemctl is-active --quiet "$service"; then
+                all_active=0
+            fi
+        done
+        if [ "$all_active" -eq 1 ]; then
+            return 0
+        fi
+        if [ "$attempt" -lt "$attempts" ]; then
+            sleep "$delay"
+        fi
+    done
+
+    err "systemd 服务未全部处于 active 状态："
+    for service in $SYSTEMD_SERVICES; do
+        systemctl --no-pager --lines=12 status "$service" || true
+    done
+    return 1
+}
+
 wait_for_port() {
     for _ in $(seq 1 15); do
         if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
@@ -77,7 +104,7 @@ cmd_start() {
     if use_systemd; then
         log "使用 systemd 启动：${SYSTEMD_SERVICES}"
         systemctl start $SYSTEMD_SERVICES
-        systemctl --no-pager --lines=3 status $SYSTEMD_SERVICES || true
+        check_systemd_services
         return 0
     fi
     detect_venv
@@ -144,7 +171,7 @@ cmd_restart() {
     if use_systemd; then
         log "使用 systemd 重启：${SYSTEMD_SERVICES}"
         systemctl restart $SYSTEMD_SERVICES
-        systemctl --no-pager --lines=3 status $SYSTEMD_SERVICES || true
+        check_systemd_services
         return 0
     fi
     cmd_stop; sleep 1; cmd_start

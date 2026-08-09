@@ -26,7 +26,7 @@ endif
 help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
-	@echo "生产：make install 后 make start | stop | restart | status 自动管理三个 systemd 服务"
+	@echo "生产：make install 后 make start | stop | restart | status 自动管理并检查三个 systemd 服务"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
 	@echo "venv 路径：$(VENV_BIN)（自动检测）"
 

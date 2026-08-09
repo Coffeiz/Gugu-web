@@ -260,7 +260,7 @@ backend/agent/
 
 - `behaviors.py` 与 `decay.py` 分别属于上下文行为和记忆衰减，调用关系不同，不合并为模糊的 `domain/`。
 - `greeting.py` 同时依赖日历/项目数据库、记忆和 Provider；`quota.py` 横跨 API 与 Agent；`voice.py` 横跨入口、附件处理和 Provider；三者都没有可安全抽出的共同目录边界。
-- `commands.py` 是命令解析入口，`outbound.py` 是 Runner 的出站编排 helper，`models.py` 是跨 gateway/IM/runner 的公共模型入口，`imctx.py` 是跨请求上下文，均保留在根目录。
+- `commands.py` 是命令解析入口，`outbound.py` 是 Runner 的出站编排 helper，`models.py` 是跨 gateway/IM/runner 的公共模型入口，均保留在根目录；`imctx.py` 属于 IM 请求上下文，已归位到 `agent/im/imctx.py`。
 - `router.py`、`runner.py`、`loop_drivers.py`、`providers.py` 继续按顶层编排和 Provider 依赖门槛保留，不为减少文件数强行迁移。
 - 因此本阶段没有新增目录，避免形成新的职责大杂烩；根目录保留项均有明确理由。
 
