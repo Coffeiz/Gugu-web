@@ -1,6 +1,5 @@
-<!-- 全局的活动编辑弹窗：笔记页点活动引用卡片时弹这个（不依赖日历页是否挂载）。
-     跟 Calendar/index.vue 自己那个跟随点击位置的浮层共用 EventEditFields + useEventEditForm，
-     字段/提醒逻辑只有一份，这里只是换了个居中弹窗的外壳。 -->
+<!-- 全局的活动编辑弹窗：笔记页、日历页和其他活动引用卡片共用。
+     字段/提醒逻辑只有一份，页面只负责通过 eventModal store 打开活动。 -->
 <template>
   <BaseModal :show="show" width="300px" background="rgba(255,255,255,0.9)" @close="close">
     <div class="eem-body">

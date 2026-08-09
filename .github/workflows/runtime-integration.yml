@@ -322,7 +322,7 @@ jobs:
         # 按文件而非 --grep 选测试：chromium 项目依赖 setup 项目（登录态），
         # --grep 会连 setup 项目里那条不带 @ci 的登录用例一起过滤掉，导致
         # 依赖链断裂；按路径跑则 setup 依赖照常执行，只是被测文件收窄。
-        run: npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts
+        run: npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts e2e/calendar.spec.ts
 
       - name: Upload backend/frontend logs on failure
         if: failure()

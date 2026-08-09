@@ -1,8 +1,6 @@
 /**
  * 日历活动的编辑态业务逻辑（全天切换/提醒 CRUD/保存删除），从
- * Calendar/index.vue 抽出来，好让笔记页的活动引用卡片也能弹同一套编辑表单——
- * 两处唯一的区别是外壳（Calendar 是跟随点击位置的浮层，笔记页是居中弹窗），
- * 表单字段和提醒逻辑本身完全一样，不用各写一份。
+ * Calendar/index.vue 抽出来，好让日历新建表单与跨页面活动引用弹窗复用同一套字段和提醒逻辑。
  */
 import { ref, computed } from 'vue'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
@@ -59,8 +57,7 @@ function _reminderAtIso(date: string, time: string | undefined, leadMin: number)
   return `${d.getFullYear()}-${_pad2(d.getMonth() + 1)}-${_pad2(d.getDate())}T${_pad2(d.getHours())}:${_pad2(d.getMinutes())}`
 }
 
-/** 每次调用都是一份独立状态——Calendar 的新建/编辑弹窗共用一份实例（同一时刻只开一个），
- *  全局的活动卡片弹窗另开一份，互不干扰。 */
+  /** 每次调用都是一份独立状态：页面新建表单与全局编辑弹窗各自持有实例，互不干扰。 */
 export function useEventEditForm() {
   const authStore = useAuthStore()
   const liveStore = useLiveStore()

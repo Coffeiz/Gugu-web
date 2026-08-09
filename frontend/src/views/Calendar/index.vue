@@ -168,27 +168,6 @@
   <CalendarContextMenu ref="cellCtxRef" :open="cellCtx !== null" :context="cellCtx" :position="cellCtxPosition"
                        @add-event="ctxAddEvent" @add-project="ctxAddProject" />
 
-  <!-- 编辑事件弹窗 -->
-  <Teleport to="body">
-    <Transition name="form-pop">
-      <div v-if="showEditForm && editingEvent" class="add-event-popup" ref="editFormRef" :style="editFormStyle">
-        <div class="popup-header">
-          <span class="popup-title">编辑活动</span>
-          <button class="popup-close-btn" @click="showEditForm = false" title="关闭">
-            <PhX :size="12" weight="bold" />
-          </button>
-        </div>
-        <EventEditFields :event="editingEvent" :form="eventForm" :is-past-date="isPastDate" autofocus
-                         @save="saveEditEvent" @close="showEditForm = false"
-                         @test-reminder="testReminderChannels(editingEvent.name)" />
-        <div class="popup-actions">
-          <button class="popup-save" @click="saveEditEvent" :disabled="!editingEvent.name">保存</button>
-          <button class="popup-delete" @click="deleteEventFromEdit">删除</button>
-        </div>
-      </div>
-    </Transition>
-  </Teleport>
-
 </template>
 
 <script lang="ts">
@@ -203,6 +182,7 @@ import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useEventModalStore } from '@/stores/eventModal'
 import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { calendarSignal } from '@/services/cache'
 import DatePicker from '@/components/common/DatePicker.vue'
@@ -222,7 +202,6 @@ import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
 import { useCalendarNav } from './composables/useCalendarNav'
 import { useCalendarDrag, type CalendarDragState } from './composables/useCalendarDrag'
 import type { CalendarContext } from './domain/calendarContext'
-import EventEditFields from '@/components/events/EventEditFields.vue'
 import type { CalendarHourHover, CalendarMonthDay, CalendarRenderItem, CalendarTimeSelection, CalendarWeekDay } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
 import { canResize, getDisplayColor } from './domain/calendarRules'
@@ -237,7 +216,7 @@ import {
 } from './utils/calendarLayout'
 import {
   useEventEditForm, isNextDay, onToggleAllDay, defaultTimeRange,
-  LEAD_OPTIONS, CHAN_LABEL, type EditingEvent,
+  LEAD_OPTIONS, CHAN_LABEL,
 } from '@/composables/useEventEditForm'
 import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
 import type { components } from '@/types/api'
@@ -271,6 +250,7 @@ const uiStore = useUiStore()
 const liveStore = useLiveStore()
 const authStore = useAuthStore()
 const prefsStore = usePreferencesStore()
+const eventModalStore = useEventModalStore()
 const todayIso = ref(toIso(new Date()))
 
 let _midnightTimer: ReturnType<typeof setTimeout> | null = null
@@ -318,12 +298,7 @@ const addBtnRef    = ref<HTMLElement | null>(null)
 const addFormRef   = ref<HTMLElement | null>(null)
 const addFormStyle = ref<Record<string, string | number>>({})
 
-const showEditForm  = ref(false)
-const editingEvent  = ref<EditingEvent | null>(null)
-// 当前打开的活动表单的日期（编辑优先）——提醒区共享，用它判断能否加提醒
-const activeFormDate = computed(() => showEditForm.value ? editingEvent.value?.date : newEvent.value?.date)
-const editFormRef   = ref<HTMLElement | null>(null)
-const editFormStyle = ref<Record<string, string | number>>({})
+const activeFormDate = computed(() => newEvent.value?.date)
 
 // ── 拖拽状态 ─────────────────────────────────────────────────────────────────
 const drag = reactive<CalendarDragState>({
@@ -782,11 +757,11 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
 
 function onMoreProject(item: CalItem) {
   morePopup.value.open = false
-  showEditForm.value = false
   openProject(item)
 }
 
 function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
+  morePopup.value.open = false
   openEditForm(payload.item, payload.event, true)
 }
 
@@ -1373,32 +1348,9 @@ function openAddForm(anchor: HTMLElement | null = null) {
   nextTick(() => clampPopupIntoView(addFormRef, addFormStyle))
 }
 
-function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, nativeEv: MouseEvent, useMousePos = false) {
+function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, _nativeEv: MouseEvent, _useMousePos = false) {
   showAddForm.value = false
-  editingEvent.value = { _uid: ev._uid, id: ev.id, name: ev.name, date: ev.date ?? '', time: ev.time || '', endTime: ev.endTime || '', description: ev.description || '', allDay: !ev.time }
-  loadReminders(ev)
-  const w = 240
-  const EDIT_H = 300
-  let left: number, top: number
-  if (useMousePos) {
-    left = Math.max(8, Math.min(nativeEv.clientX - w / 2, window.innerWidth - w - 8))
-    top  = (window.innerHeight - nativeEv.clientY - 8 >= EDIT_H)
-      ? nativeEv.clientY + 8
-      : nativeEv.clientY - EDIT_H - 8
-  } else {
-    const el    = (nativeEv.currentTarget ?? nativeEv.target) as HTMLElement
-    const rect  = el.getBoundingClientRect()
-    const sbEl  = el.closest('.cal-sidebar')
-    const sbRect = sbEl?.getBoundingClientRect()
-    const centerX = sbRect ? sbRect.left + sbRect.width / 2 : rect.left + rect.width / 2
-    left = Math.max(8, Math.min(centerX - w / 2, window.innerWidth - w - 8))
-    top  = (window.innerHeight - rect.bottom - 6 >= EDIT_H)
-      ? rect.bottom + 6
-      : rect.top - EDIT_H - 6
-  }
-  editFormStyle.value = { position: 'fixed', top: Math.max(8, top) + 'px', left: left + 'px', width: w + 'px', zIndex: 2100 }
-  showEditForm.value = true
-  nextTick(() => clampPopupIntoView(editFormRef, editFormStyle))
+  if (typeof ev.id === 'number') eventModalStore.openModal(ev.id)
 }
 
 function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
@@ -1406,17 +1358,13 @@ function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
 }
 
 // ── 活动绑定的提醒（定时任务）：可加多个，每个用「提前量」下拉选；渠道按用户已绑（web + feishu/qq/wechat）勾选 ──
-// 加/编辑两个表单共用；提醒在「保存活动」时一并对账落地（新增建、删除的删、改渠道）——
-// 逻辑本身抽到 useEventEditForm（笔记页的活动引用卡片弹窗也用它），这里只留这一份实例。
+// 新建活动表单的提醒逻辑复用共享 composable；持久化活动编辑已统一由全局 EventEditModal 负责。
 const eventForm = useEventEditForm()
-const { reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel, resetReminder, loadReminders, applyReminders } = eventForm
+const { reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel, resetReminder, applyReminders } = eventForm
 
 // 提醒条数 / 渠道变化（弹窗变高）后重新夹住当前打开的弹窗，避免保存按钮顶出屏幕底部
 watch([() => reminders.value.length, reminderChannels], () => {
-  nextTick(() => {
-    if (showEditForm.value) clampPopupIntoView(editFormRef, editFormStyle)
-    else if (showAddForm.value) clampPopupIntoView(addFormRef, addFormStyle)
-  })
+  nextTick(() => { if (showAddForm.value) clampPopupIntoView(addFormRef, addFormStyle) })
 })
 
 // 测试提醒渠道：往当前选的渠道发一条测试消息（不建任务，新建/编辑活动都能测）
@@ -1425,34 +1373,6 @@ async function testReminderChannels(name?: string) {
     const res = await eventForm.testReminderChannels(name || '活动提醒')
     showAppNotice(res?.msg || '已发送测试消息')
   } catch { showAppError('测试失败，请稍后重试') }
-}
-
-async function saveEditEvent() {
-  const ev = editingEvent.value
-  if (!ev?.name) return
-  if (ev.allDay) { ev.time = ''; ev.endTime = '' }
-  showEditForm.value = false
-
-  // 更新本地列表
-  const update = (list: CalItem[]) => {
-    const idx = list.findIndex(e => e.id === ev.id)
-    if (idx !== -1) {
-      list[idx] = { ...list[idx], name: ev.name, date: ev.date, time: ev.time || '', endTime: ev.endTime || '', description: ev.description }
-    }
-  }
-  update(extraEvents.value)
-  update(nextMonthEvents.value)
-  update(spilloverEvents.value)
-  refreshUpcoming(projectTimelines.value, [...extraEvents.value, ...nextMonthEvents.value])
-  const cacheKey = `${cursor.value.getFullYear()}-${cursor.value.getMonth() + 1}`
-  eventsCache[cacheKey] = [...extraEvents.value]
-
-  try {
-    const updated = await eventsApi.update(ev.id as unknown as number, { title: ev.name, date: ev.date, time: ev.time || null, endTime: ev.endTime || null, description: ev.description || undefined, version: ev.version })
-    const applyVer = (list: CalItem[]) => { const i = list.findIndex(e => e.id === ev.id); if (i !== -1 && updated?.version) list[i] = { ...list[i], version: updated.version } }
-    applyVer(extraEvents.value); applyVer(nextMonthEvents.value); applyVer(spilloverEvents.value)
-    await applyReminders(ev.id as unknown as number, ev.name, ev.date, ev.time)   // 按提前量/渠道落地提醒
-  } catch (e: any) { if (e?.status === 409) { showAppError('活动已被其他用户修改，已刷新页面'); await fetchEvents() } }
 }
 
 function handleClickOutside(e: MouseEvent) {
@@ -1465,16 +1385,12 @@ function handleClickOutside(e: MouseEvent) {
     if (!addBtnRef.value?.contains(target) && !addFormRef.value?.contains(target))
       showAddForm.value = false
   }
-  if (showEditForm.value) {
-    if (!editFormRef.value?.contains(target) && !morePopupRef.value?.contains(target))
-      showEditForm.value = false
-  }
   if (pickerOpen.value) {
     if (!pickerAnchorRef.value?.contains(target) && !pickerRef.value?.contains(target))
       pickerOpen.value = false
   }
   if (morePopup.value.open) {
-    if (!morePopupRef.value?.contains(target) && !editFormRef.value?.contains(target))
+    if (!morePopupRef.value?.contains(target))
       morePopup.value.open = false
   }
   if (cellCtx.value) {
@@ -1521,13 +1437,6 @@ async function deleteEvent(ev: { id: string | number; _uid?: string }) {
     // ③ 与服务器对账：不管成功/404 都按最新刷一次，杜绝「删了还在 / 删了又回来 / 再删报错」
     fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents()
   }
-}
-
-async function deleteEventFromEdit() {
-  const ev = editingEvent.value
-  if (!ev) return
-  showEditForm.value = false
-  await deleteEvent(ev)
 }
 
 async function saveEvent() {
