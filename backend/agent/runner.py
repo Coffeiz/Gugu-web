@@ -27,7 +27,7 @@ from agent.im.session import (
     get_or_create_session,
     session_scope_filters,
 )
-from agent.llm_select import is_minimax, pick_model, release as _release_model
+from agent.llm.llm_select import is_minimax, pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -394,7 +394,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     if _summary:
         system_prompt += compress_conv.system_block(_summary)
 
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     runner = LLMRunner(tool_names, settings)
@@ -650,7 +650,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     if _summary:
         system_prompt += compress_conv.system_block(_summary)
 
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     runner = LLMRunner(tool_names, settings)
@@ -920,7 +920,7 @@ async def _run_scheduled_once(
             user_tz=user_tz,
         )
 
-        from agent.llm_select import use_anthropic_for
+        from agent.llm.llm_select import use_anthropic_for
 
         use_anthropic = use_anthropic_for(model_cfg)
         tool_names = (

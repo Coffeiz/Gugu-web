@@ -19,7 +19,7 @@ from app.core.tz import iso_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User, UserBot
 
-from agent import genstream
+from agent.llm import genstream
 from agent.gateway import web as web_adapter
 from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest

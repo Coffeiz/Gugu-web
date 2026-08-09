@@ -24,10 +24,11 @@ from app.models import (
     Project, User,
 )
 from agent.security import sanitize
-from agent import genstream, quota
+from agent.llm import genstream
+from agent import quota
 from agent.context import builder, loaders, tokens
 from agent.core import LLMRunner
-from agent.llm_select import is_minimax
+from agent.llm.llm_select import is_minimax
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 
@@ -40,7 +41,7 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
     from agent import providers
-    from agent.llm_select import _is_mimo
+    from agent.llm.llm_select import _is_mimo
     is_mimo = _is_mimo(settings.ai)
     try:
         if use_anthropic:
@@ -81,7 +82,7 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         f"{convo[:1500]}"
     )
     from agent import providers
-    from agent.llm_select import _is_mimo
+    from agent.llm.llm_select import _is_mimo
     is_mimo = _is_mimo(settings.ai)
     try:
         if use_anthropic:
@@ -327,7 +328,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     tool_names = profile.tool_names
 
-    from agent.llm_select import use_anthropic_for
+        from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
 
     runner = LLMRunner(tool_names, settings)

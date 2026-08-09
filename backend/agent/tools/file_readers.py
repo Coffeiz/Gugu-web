@@ -64,8 +64,8 @@ async def read_video(file) -> dict:
     Anthropic video block"或反过来"误判不支持"。`modelctx` 读不到（没有走
     `LLMRunner._run_loop`，理论上不会发生，兜底而已）才退回 `settings.ai`。
     """
-    from agent import modelctx
-    from agent.llm_select import use_anthropic_for
+    from agent.llm import modelctx
+    from agent.llm.llm_select import use_anthropic_for
 
     try:
         ai = modelctx.get_model_cfg() or get_settings().ai

@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from agent.llm_select import supports_anthropic_active_cache
+from agent.llm.llm_select import supports_anthropic_active_cache
 
 
 def _model(provider: str, model: str, base_url: str = "") -> SimpleNamespace:

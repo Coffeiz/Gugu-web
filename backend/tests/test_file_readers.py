@@ -174,7 +174,7 @@ async def test_read_video_uses_running_model_cfg_not_static_settings(monkeypatch
     实际跑 mimo，却按 MiniMax 生成 Anthropic video block"这类错配）。这里反过来验证：
     settings.ai 是不支持视频的 mimo，但本轮 modelctx 里真正跑的是 MiniMax M3，
     read_video 必须按 modelctx 判断为"支持"，而不是被 settings.ai 误判为"不支持"。"""
-    from agent import modelctx
+    from agent.llm import modelctx
 
     storage = _Storage(1024)
     monkeypatch.setattr(file_readers, "get_storage", lambda: storage)

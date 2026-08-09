@@ -1,6 +1,6 @@
 # Agent 目录职责整理与模块化重构 PRD
 
-> 状态：🟡 实施中（Phase 0、Phase 1 已完成，后续阶段按依赖门槛推进）
+> 状态：🟡 实施中（Phase 0、Phase 1、Phase 2 已完成，后续阶段按依赖门槛推进）
 > 创建：2026-08-08
 > 最近更新：2026-08-09
 > 所属层：Agent / 后端模块化
@@ -17,7 +17,7 @@
 | 目标目录设计 | ✅ 已完成 | 确定优先整理 `security/`、`llm/`、`runtime/` 三组；`core.py`、`runner.py`、`router.py` 等顶层编排模块暂不强拆。 |
 | 实施计划与依赖门槛 | ✅ 已完成 | 已明确 LLM-3 对 `providers.py` 的优先接管关系、各 Phase 的迁移边界、验证矩阵和回滚方式。 |
 | Phase 1：安全模块归组 | ✅ 已完成 | 已迁入 `security/`，根目录保留仅转发导出；生产代码已切换 canonical import，安全/核心重点测试 46 个通过。 |
-| Phase 2：LLM 非 Provider 基础设施归组 | 🔲 待实施 | 先迁 `genstream.py`、`llm_select.py`、`modelctx.py`；`providers.py` 由 PRD-LLM-3 单独目录化，本 PRD 不重复搬迁。 |
+| Phase 2：LLM 非 Provider 基础设施归组 | ✅ 已完成 | 已迁入 `llm/`，根目录保留仅转发导出；`providers.py` 未复制，LLM/核心重点测试 37 个通过。 |
 | Phase 3：运行时基础设施归组 | 🔲 待实施 | 先迁 `runtime_state.py`、`trace.py`；`loop_drivers.py` 等依赖 LLM-3 与循环依赖复核后再决定。 |
 | Phase 4：领域服务归组 | 🔲 待实施 | 只迁移具有清晰共同边界的模块；`domain/` 是否建立必须由依赖图决定，不以减少根目录文件数为目标。 |
 | 兼容入口收敛 | 🔲 待实施 | 所有外部导入、测试和脚本迁移完成，并经过完整测试周期和 devserver 验证后，再删除根目录兼容模块。 |
@@ -218,6 +218,13 @@ backend/agent/
 - 回归模型选择、缓存能力、流式重试、问候、记忆 LLM 调用和管理端模型探测。
 
 完成条件：所有 LLM 非 Provider 调用点可切换到新路径，Provider 仍只有一份实现，旧导入兼容。
+
+**Phase 2 实施结果（2026-08-09）**：
+
+- 新增 `agent/llm/`，实现归入 `genstream.py`、`llm_select.py`、`modelctx.py`。
+- 根目录三个同名模块仅保留兼容转发；生产代码、测试和脚本已切换到 canonical import。
+- `llm_select.py` 继续委托现有 `agent.providers`，没有新增 Provider 注册表或第二份适配器实现。
+- canonical/兼容导入 smoke 通过；LLM 缓存能力、模型上下文、流式重试、Runner、核心循环和文件读取测试 `37 passed`。
 
 #### Phase 3：运行时基础设施归组
 

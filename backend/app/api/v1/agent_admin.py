@@ -556,7 +556,7 @@ async def test_llm_preset(preset_id: str):
     base_url = item.get("base_url", "").rstrip("/")
     model    = item.get("model", "")
     from types import SimpleNamespace
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     is_anthropic = use_anthropic_for(SimpleNamespace(provider=provider, base_url=base_url, api_format=item.get("api_format", "")))
     _mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()   # MiMo 用 api-key 头，非标准 Bearer
     try:
@@ -599,7 +599,7 @@ async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api
     base_url = (base_url or "").rstrip("/")
     if not base_url:
         raise HTTPException(400, "请先填写 Base URL")
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
 
     is_anthropic = use_anthropic_for(SimpleNamespace(
         provider=provider, base_url=base_url, api_format=api_format,
@@ -761,7 +761,7 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
     import httpx
     from types import SimpleNamespace
     from agent import providers
-    from agent.llm_select import use_anthropic_for
+    from agent.llm.llm_select import use_anthropic_for
     _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
                           model=model, api_format=api_format)
     # 与 runner 同一判定口（含显式 api_format）
@@ -781,7 +781,7 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
 
     # MiMo 的 OpenAI 扩展块（video_url / input_audio）是已知能力，直接判定，避免探测格式不匹配误判
     if not is_anthropic and dim in ("video", "audio"):
-        from agent.llm_select import _is_mimo
+        from agent.llm.llm_select import _is_mimo
         if _is_mimo(_ns):
             return True, 200, f"MiMo 原生支持{dim_label}输入 ✅"
 

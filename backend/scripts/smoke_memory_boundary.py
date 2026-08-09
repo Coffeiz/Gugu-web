@@ -22,7 +22,7 @@ from app.core.config import get_settings
 from app.core.chat_attach import build_user_content
 from agent.context import builder, loaders
 from agent.core import LLMRunner
-from agent.llm_select import pick_model, release as _release_model
+from agent.llm.llm_select import pick_model, release as _release_model
 from agent.profiles import DefaultProfile
 from agent.runner import _collect
 from agent.security.sanitize import strip_disallowed_emoji

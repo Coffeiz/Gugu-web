@@ -1,7 +1,7 @@
 """agent/modelctx.py：透传"这轮真正在跑的模型配置"给工具层。"""
 from types import SimpleNamespace
 
-from agent import modelctx
+from agent.llm import modelctx
 
 
 def test_get_model_cfg_defaults_to_none():
