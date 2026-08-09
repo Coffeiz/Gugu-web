@@ -39,7 +39,7 @@ const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const showArchived = ref(false)
 const ownershipRevisions = reactive(new Map<string, number>())
-const stopOwnershipSubscription = runtime.owner.subscribe((objectId) => {
+const stopOwnershipSubscription = runtime.onOwnershipChange((objectId) => {
   ownershipRevisions.set(objectId, (ownershipRevisions.get(objectId) ?? 0) + 1)
 })
 

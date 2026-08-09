@@ -7,6 +7,3 @@
  * 此文件只负责模块边界，不承担任何对象、指针或视觉生命周期编排。
  */
 export * from '../../../../../gugu-interaction-runtime/src/index'
-export * from '../../../../../gugu-interaction-runtime/src/vue/useObject'
-export * from '../../../../../gugu-interaction-runtime/src/vue/useSurface'
-export * from '../../../../../gugu-interaction-runtime/src/vue/useRuntimeTransition'

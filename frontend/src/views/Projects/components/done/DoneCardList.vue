@@ -27,7 +27,7 @@ defineEmits(['card-click'])
 
 function isDetached(projectId: string): boolean {
   props.ownershipVersion
-  return runtime.owner.isControlled(projectId)
+  return runtime.isControlled(projectId)
 }
 
 const props = defineProps({
