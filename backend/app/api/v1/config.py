@@ -21,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings, save_override
 from app.core.redaction import redact
-from app.core.tz import now_utc, iso_utc
 from app.db.session import create_all_tables, reset_engine, get_db
 
 router = APIRouter(prefix="/admin/config", tags=["admin"])
@@ -1117,23 +1116,5 @@ async def test_smtp(body: SmtpTestParams):
         return {"ok": False, "message": str(e)}
 
 
-@router.get("/video-cache-snapshots")
-async def video_cache_snapshots(days: int = 30, db: AsyncSession = Depends(get_db)):
-    """`.video_cache/` 存储占用趋势（PRD-STORAGE-1 Phase B §4 待确认问题：要不要
-    加配额上限，需要观察一段时间的真实数据才能判断）。每条快照由
-    `video_cache_gc` 每次清理跑完后落一条，不是实时统计。"""
-    from datetime import timedelta
-    from app.models import VideoCacheSnapshot
-    days = max(1, min(days, 365))
-    cutoff = now_utc() - timedelta(days=days)
-    rows = (await db.execute(
-        select(VideoCacheSnapshot)
-        .where(VideoCacheSnapshot.taken_at >= cutoff)
-        .order_by(VideoCacheSnapshot.taken_at)
-    )).scalars().all()
-    return {
-        "snapshots": [
-            {"taken_at": iso_utc(r.taken_at), "object_count": r.object_count, "total_bytes": r.total_bytes}
-            for r in rows
-        ],
-    }
+
+

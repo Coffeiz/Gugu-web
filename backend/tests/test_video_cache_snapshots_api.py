@@ -1,44 +1,46 @@
-"""`/admin/config/video-cache-snapshots` 端点（PRD-STORAGE-1 Phase B 存储占用
-趋势面板）：直接调路由函数验证返回 shape 和按天数过滤，同 test_files_api.py
+"""`/admin/ops/storage-snapshots` 端点（PRD-STORAGE-2 存储监控面板）：直接调
+路由函数验证按 category 分组、按天数过滤的返回 shape，同 test_files_api.py
 的风格（不起 TestClient）。"""
 from datetime import timedelta
 
 import pytest
 
-from app.api.v1.config import video_cache_snapshots
+from app.api.v1.ops_admin import storage_snapshots_history
 from app.core.tz import now_utc
-from app.models import VideoCacheSnapshot
+from app.models import StorageCategorySnapshot
 
 
 @pytest.mark.asyncio
-async def test_video_cache_snapshots_returns_recent_only(db):
-    old = VideoCacheSnapshot(taken_at=now_utc() - timedelta(days=40), object_count=5, total_bytes=500)
-    recent = VideoCacheSnapshot(taken_at=now_utc() - timedelta(days=1), object_count=2, total_bytes=200)
+async def test_storage_snapshots_groups_by_category(db):
+    db.add_all([
+        StorageCategorySnapshot(category="video_cache", taken_at=now_utc(), object_count=2, total_bytes=200),
+        StorageCategorySnapshot(category="user_files", taken_at=now_utc(), object_count=5, total_bytes=5000),
+    ])
+    await db.commit()
+
+    result = await storage_snapshots_history(days=30, db=db)
+
+    assert set(result["categories"].keys()) == {"video_cache", "user_files"}
+    assert result["categories"]["video_cache"][0]["object_count"] == 2
+    assert result["categories"]["user_files"][0]["total_bytes"] == 5000
+
+
+@pytest.mark.asyncio
+async def test_storage_snapshots_filters_by_days(db):
+    old = StorageCategorySnapshot(category="video_cache", taken_at=now_utc() - timedelta(days=40),
+                                  object_count=9, total_bytes=900)
+    recent = StorageCategorySnapshot(category="video_cache", taken_at=now_utc() - timedelta(days=1),
+                                     object_count=1, total_bytes=100)
     db.add_all([old, recent])
     await db.commit()
 
-    result = await video_cache_snapshots(days=30, db=db)
+    result = await storage_snapshots_history(days=30, db=db)
 
-    assert len(result["snapshots"]) == 1
-    assert result["snapshots"][0]["object_count"] == 2
-    assert result["snapshots"][0]["total_bytes"] == 200
-
-
-@pytest.mark.asyncio
-async def test_video_cache_snapshots_empty_returns_empty_list(db):
-    result = await video_cache_snapshots(days=30, db=db)
-    assert result == {"snapshots": []}
+    assert len(result["categories"]["video_cache"]) == 1
+    assert result["categories"]["video_cache"][0]["object_count"] == 1
 
 
 @pytest.mark.asyncio
-async def test_video_cache_snapshots_clamps_days_range(db):
-    """days 参数被夹到 [1, 365]，避免传 0/负数/超大值。"""
-    snap = VideoCacheSnapshot(taken_at=now_utc(), object_count=1, total_bytes=100)
-    db.add(snap)
-    await db.commit()
-
-    result = await video_cache_snapshots(days=0, db=db)
-    assert len(result["snapshots"]) == 1   # days=0 被夹到至少 1 天，今天的快照仍应出现
-
-    result = await video_cache_snapshots(days=99999, db=db)
-    assert len(result["snapshots"]) == 1
+async def test_storage_snapshots_empty_returns_empty_dict(db):
+    result = await storage_snapshots_history(days=30, db=db)
+    assert result == {"categories": {}}

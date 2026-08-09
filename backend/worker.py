@@ -327,6 +327,7 @@ async def serve():
     from app import scheduled_tasks as schedtasks
     from app.core import attachment_gc as _attachment_gc  # noqa: F401  # 触发内置任务 @scheduler.register（草稿 GC + 安全网），须在 sched.start() 之前 import
     from app.core import video_cache_gc as _video_cache_gc  # noqa: F401  # 触发内置任务 @scheduler.register（视频转码缓存清理），须在 sched.start() 之前 import
+    from app.core import storage_snapshots as _storage_snapshots  # noqa: F401  # 触发内置任务 @scheduler.register（存储用量快照，PRD-STORAGE-2），须在 sched.start() 之前 import
     sched.start()
     try:
         await schedtasks.reconcile()             # 立即从 DB 加载一遍

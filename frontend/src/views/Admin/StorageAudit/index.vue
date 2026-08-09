@@ -265,96 +265,15 @@
         </template>
       </template>
     </section>
-
-    <!-- ══ 视频转码缓存占用趋势（PRD-STORAGE-1 Phase B）══ -->
-    <section class="sa-card">
-      <div class="sa-card-head">
-        <div>
-          <h3 class="sa-card-title">视频转码缓存占用趋势</h3>
-          <p class="sa-card-sub">`.video_cache/` 每次清理任务（凌晨 5 点）跑完后落一条快照，不是实时统计——判断要不要加配额上限得看这条曲线的真实走势。</p>
-        </div>
-        <button class="sa-btn" :disabled="vcLoading" @click="loadVideoCacheSnapshots">
-          <PhMagnifyingGlass :size="15" weight="bold" />
-          {{ vcLoading ? '加载中…' : '刷新' }}
-        </button>
-      </div>
-      <div v-if="vcMsg" class="sa-inline-msg" :class="vcMsgKind">{{ vcMsg }}</div>
-      <div v-if="vcSnapshots.length" class="recon-summary">
-        最新：<b>{{ vcSnapshots[vcSnapshots.length - 1].object_count }}</b> 个对象 ·
-        <b>{{ (vcSnapshots[vcSnapshots.length - 1].total_bytes / 1024 / 1024).toFixed(1) }} MB</b>
-        （近 {{ vcSnapshots.length }} 个快照点）
-      </div>
-      <div v-if="vcSnapshots.length" class="vc-chart-wrap">
-        <Line :data="vcChartData" :options="vcChartOpts" />
-      </div>
-      <div v-else-if="!vcLoading && vcLoaded" class="recon-ok">还没有快照数据——等定时任务跑过至少一次之后再来看。</div>
-    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
-import { Line } from 'vue-chartjs'
-import {
-  Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler,
-} from 'chart.js'
+import { ref, computed } from 'vue'
 import { PhMagnifyingGlass, PhCheckCircle, PhWarningCircle, PhWrench } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
-
 const adminStore = useAdminStore()
-
-// ── 视频转码缓存占用趋势 ─────────────────────────────────────────────────────
-interface VideoCacheSnapshot { taken_at: string; object_count: number; total_bytes: number }
-const vcSnapshots = ref<VideoCacheSnapshot[]>([])
-const vcLoading = ref(false)
-const vcLoaded = ref(false)
-const vcMsg = ref('')
-const vcMsgKind = ref<'ok' | 'err'>('ok')
-
-async function loadVideoCacheSnapshots() {
-  vcLoading.value = true
-  vcMsg.value = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/config/video-cache-snapshots?days=30')
-    const data = await res.json()
-    if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`)
-    vcSnapshots.value = data.snapshots || []
-  } catch (e: any) {
-    vcMsg.value = `加载失败：${e?.message || e}`
-    vcMsgKind.value = 'err'
-  } finally {
-    vcLoading.value = false
-    vcLoaded.value = true
-  }
-}
-
-const vcChartData = computed(() => ({
-  labels: vcSnapshots.value.map(s => new Date(s.taken_at).toLocaleDateString('zh', { month: 'numeric', day: 'numeric' })),
-  datasets: [{
-    label: '占用（MB）',
-    data: vcSnapshots.value.map(s => +(s.total_bytes / 1024 / 1024).toFixed(1)),
-    borderColor: 'rgba(180,100,100,1)',
-    backgroundColor: 'rgba(180,100,100,0.15)',
-    fill: true,
-    tension: 0.35,
-    pointRadius: 2,
-  }],
-}))
-
-const vcChartOpts = {
-  responsive: true,
-  maintainAspectRatio: false,
-  animation: false as const,
-  plugins: { legend: { display: false } },
-  scales: {
-    x: { grid: { display: false } },
-    y: { beginAtZero: true, ticks: { callback: (v: any) => `${v}MB` } },
-  },
-}
-
-onMounted(loadVideoCacheSnapshots)
 
 interface TrashMigrationReport { backend: string; count: number; items: Array<{ file_id: number; name: string; source_key: string; target_key: string }>; note?: string }
 const trashMigrating = ref(false)
@@ -709,7 +628,6 @@ async function cleanupLegacy(keys: string[]) {
 .recon-summary { line-height: 1.7; color: rgba(255,255,255,0.88); }
 .recon-summary b { font-weight: 700; }
 .recon-ok { margin-top: 8px; color: #5ab899; font-weight: 600; }
-.vc-chart-wrap { height: 220px; margin-top: 10px; }
 .recon-err { color: #e07676; font-weight: 600; }
 .recon-block { margin-top: 10px; }
 .recon-block-title { font-weight: 600; margin-bottom: 4px; color: rgba(255,255,255,0.85); }

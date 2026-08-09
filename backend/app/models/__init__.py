@@ -696,14 +696,17 @@ class SystemLog(Base):
     created_at: Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 
-# ── VideoCacheSnapshot（PRD-STORAGE-1 Phase B 存储占用趋势面板）───────────────
-# video_cache_gc 每次跑完清理后落一条快照（对象数 + 总字节数），管理后台画趋势图，
-# 判断第 4 节"要不要给 .video_cache/ 加配额上限"这个待确认问题需不需要提前处理。
+# ── StorageCategorySnapshot（PRD-STORAGE-2 存储监控面板）─────────────────────
+# 通用的分类别存储占用快照，不是每加一个监控类别就建一张新表——`category` 取值
+# 如 "video_cache" / "chat_staging_draft" / "chat_staging_attached" /
+# "user_files"，各自的定时任务（video_cache_gc / storage_snapshots）跑完后落
+# 一条，管理后台「运维 → 存储监控」页按 category 分组画趋势图。
 
-class VideoCacheSnapshot(Base):
-    __tablename__ = "video_cache_snapshots"
+class StorageCategorySnapshot(Base):
+    __tablename__ = "storage_category_snapshots"
 
     id:           Mapped[int]      = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category:     Mapped[str]      = mapped_column(String(64), index=True)
     taken_at:     Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
     object_count: Mapped[int]      = mapped_column(Integer, default=0)
     total_bytes:  Mapped[int]      = mapped_column(BigInteger, default=0)

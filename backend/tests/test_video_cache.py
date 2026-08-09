@@ -407,9 +407,9 @@ async def test_alive_marker_present_but_cache_file_missing_retranscodes(storage,
 
 @pytest.mark.asyncio
 async def test_video_cache_gc_records_snapshot(db, storage, monkeypatch):
-    """清理跑完后应该落一条 VideoCacheSnapshot（管理后台趋势面板用），
-    对象数/总字节数要反映清理后的剩余占用。"""
-    from app.models import VideoCacheSnapshot
+    """清理跑完后应该落一条 StorageCategorySnapshot（category='video_cache'，
+    管理后台趋势面板用），对象数/总字节数要反映清理后的剩余占用。"""
+    from app.models import StorageCategorySnapshot
     from sqlalchemy import select
 
     fake_redis = _FakeGcRedis()
@@ -430,8 +430,9 @@ async def test_video_cache_gc_records_snapshot(db, storage, monkeypatch):
     assert n == 1
 
     snapshot = (await db.execute(
-        select(VideoCacheSnapshot).order_by(VideoCacheSnapshot.id.desc())
+        select(StorageCategorySnapshot).order_by(StorageCategorySnapshot.id.desc())
     )).scalars().first()
     assert snapshot is not None
+    assert snapshot.category == "video_cache"
     assert snapshot.object_count == 1, "清理后只剩那个 marker 还活着的对象"
     assert snapshot.total_bytes == 100

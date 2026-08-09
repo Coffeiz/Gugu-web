@@ -1,9 +1,17 @@
 # 存储监控面板 设计笔记
 
-> 状态：讨论稿，未开始实现
+> 状态：✅ 已实现（2026-08-09）
 > 创建：2026-08-09
-> 关联模块：`backend/app/core/attachment_gc.py`、`backend/app/core/video_cache_gc.py`、`backend/app/models/__init__.py`（`VideoCacheSnapshot`）、`frontend/src/views/Admin/StorageAudit/`
+> 关联模块：`backend/app/core/storage_snapshots.py`（新）、`backend/app/core/video_cache_gc.py`、`backend/app/api/v1/ops_admin.py`、`backend/app/models/__init__.py`（`StorageCategorySnapshot`）、`frontend/src/views/Admin/Ops/Storage.vue`（新）
 > 背景：PRD-STORAGE-1 落地过程中发现"要不要给 `.video_cache/` 加配额上限"这类问题完全没有观察数据支撑；现有「存储对账」页是一致性核查工具（幽灵记录/孤儿文件，一致性视角），不是用量看板，两种关注点不该混在一起。
+
+## 0. 实现落地（跟第 3、4 节设计的差异记录）
+
+- **放在「运维」导航分组下的独立页面**（`/storage-monitor`，路由名 `AdminStorageMonitor`），跟「存储对账」（`/storage-audit`）并列，不是嵌进对账页——符合第 1 节的定位。
+- **第 4 节的通用快照表建议照做**：`storage_category_snapshots(id, category, taken_at, object_count, total_bytes)`，替换掉最初按 PRD-STORAGE-1 落地时先做的专用 `video_cache_snapshots` 表（该表上线不到一天、无真实数据，migration 直接删表重建，未做数据迁移）。
+- **落地了 3.1 节里"零成本能算"的三类**：`user_files`（`SUM(files.size_bytes)`）、`chat_staging_draft`/`chat_staging_attached`（`SUM(chat_attachments.size) GROUP BY state`）+ 已有的 `video_cache`（`video_cache_gc` 扫描顺带算）。新增 `app/core/storage_snapshots.py` 承担前三类的定时任务（`storage_usage_snapshot`，凌晨 5:15，跟 Phase A 的两个 job 4:00/4:30 和 `video_cache_gc` 的 5:00 错开）。
+- **3.2 节的"扫存储成本较高"三类（`.agent/`/`.thumbs/`/`avatars/`）和"未分类兜底桶"暂未实现**——本轮先把有 DB 列、零成本的部分和已有的视频缓存接进来，验证整套面板/表结构能跑通；这几类到时候只需要新增一个定时任务往同一张 `storage_category_snapshots` 表写对应 `category` 的记录，不需要改表结构或前端页面（前端按 `categories` 字典的 key 遍历，加新分类只需要在 `Storage.vue` 的 `CATEGORIES` 常量里加一行）。
+- **操作型指标（清理任务战果、安全网异常趋势、磁盘剩余空间，见 3.3 节）暂未实现**——同样是后续可以复用同一张表或新增一张 `job_run_stats` 表的增量工作，不阻塞当前这版上线。
 
 ## 1. 定位
 
