@@ -148,6 +148,28 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 
 完成条件：基线测试稳定，失败可以归因到重构前行为；`.runtime-version` 与业务侧实际调用的 Core API 版本已核对一致。
 
+#### Phase 0 执行记录（2026-08-10）
+
+**`.runtime-version` 核对**：原锁定 `f4ea29617f4c9de1494ca22d86c7ab091a25f1d2`（"收敛 Runtime Core API 并移除 Vue 适配层"）。核对 `gugu-interaction-runtime` 最新 `52a88157bce72d03956778f552b31ee9fe1f87a7`（"撤回按落点控制目标可见性的修复"）后发现中间的 `d0a7dad`（"收敛框架适配器与文件 Demo 接入"）新增了：
+
+- `createVueRuntimeAdapter`/`createReactRuntimeAdapter`：收敛 `bindObject`/`bindSurface`/`bindTarget` 的注册-同步-卸载样板，直接消灭掉本方案第 3.2 节要求业务侧手写的那部分 ref 接线；
+- `runLayoutMutation`：目录切换时统一处理"先量旧卡片位置 → mutate 数据 → 等 DOM patch → 播放 FLIP"，正是第 5.1 节浏览区目录切换、Phase 4 布局收敛需要的原语，避免业务侧另起一套目录切换动画编排；
+- `data-layout-collection`/`data-layout-role`/`data-layout-key` + Collection Presence：卡片跨目录移动时的进入/离场淡入淡出，缺了这个仍需业务侧自己写 enter/leave。
+
+`gugu-interaction-runtime` 仓库当前工作区已在 `HEAD`（`52a8815`）无未提交改动，`.runtime-version` 已同步更新为该 commit（本仓库文件系统接入是源码直引，不经 npm 构建，`.runtime-version` 只是文档/CI 对齐标记，不是强制锁版本）。`docs/demo/FileSystemDemo.vue` 已是最新可用参照实现，Phase 1/4 直接照此模式接入，不用再自己设计目录切换的布局事务。
+
+**乐观更新等既有优化清点**（Phase 2/5 必须原样保留，不随交互层重写变化）：
+
+| 模块 | 位置 | 说明 |
+| --- | --- | --- |
+| `optimisticMutation` | `frontend/src/utils/optimisticMutation.ts` | 通用乐观提交工具：apply → work → onCommit / rollback + onError，Files 和 ProjectModal 两处都在用 |
+| `moveFoldersInto`/`moveFilesInto` | `frontend/src/views/Files/index.vue:453-486` | 文件页移动业务：乐观改 `parentId`/`folderId`，`version` 冲突（后端 409）走 rollback + `loadContents` 拉真实状态 |
+| `useProjectFileDragMoves` 的 `moveFolders`/`moveFiles` | `frontend/src/composables/files/useProjectFileDragMoves.ts` | 项目抽屉的等价业务，接入方式与文件页一致但刷新策略不同（落文件夹卡整体重拉，落面包屑轻量刷新，见旧 `fileDrag.ts` 头注释） |
+| `filesCache` store | `frontend/src/stores/filesCache.ts` | `updateFile`/`updateFolder`/`removeFiles` 等乐观更新原语 + 跨标签页/IM 回声抑制（`origin === 本页 client-id` 时跳过重拉） |
+| `fileActions.moveFolder`/`moveFile` API | 业务层 | 权限、循环引用校验、`version` 并发控制在后端 + 调用方双重保障 |
+
+Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatchDrop` 回调改成 `runtime.onAction()` 订阅），函数本身、乐观更新时序、回滚和 409 处理逻辑不变。
+
 ### Phase 1：单卡 Core API 接入
 
 - 删除文件页的 `createFileRuntimeBindings`；
