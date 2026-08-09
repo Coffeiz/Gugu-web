@@ -22,7 +22,7 @@ function project(id: string, startDate: string, endDate: string, extra: Partial<
     id,
     name: id,
     accent: '#7b7fb2',
-    isProject: true,
+    calendarType: 'project',
     status: 'active',
     startDate,
     endDate,
@@ -31,7 +31,7 @@ function project(id: string, startDate: string, endDate: string, extra: Partial<
 }
 
 function event(id: string, date: string, time: string, endTime: string): CalendarRenderItem {
-  return { id, name: id, date, time, endTime, accent: '#7ab8c8', isUserEvent: true }
+  return { id, name: id, date, time, endTime, accent: '#7ab8c8', calendarType: 'event' }
 }
 
 const week = [1, 2, 3, 4, 5, 6, 7].map(day => ({ iso: `2026-08-0${day}` }))

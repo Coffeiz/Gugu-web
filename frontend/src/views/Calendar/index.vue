@@ -78,15 +78,15 @@
                   <div
                     v-for="ev in lay.visibleChips" :key="ev.id"
                     class="event-chip cal-chip"
-                    :class="{ 'chip-proj': ev.isProject, 'chip-ev-click': ev.isUserEvent, 'cal-done': ev.isProject && ev.status === 'done' }"
-                    :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-                    @click.left.stop="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event, true))"
-                    @contextmenu.prevent.stop="ev.isUserEvent && openEditForm(ev, $event, true)"
-                    @mousedown.stop="ev.isProject ? startProjChipDrag(ev, $event) : (ev.isUserEvent && startEventDrag(ev, $event))"
+                    :class="{ 'chip-proj': ev.calendarType === 'project', 'chip-ev-click': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
+                    :style="{ background: ev.accent + '28', color: darkenHex(ev.accent), borderColor: ev.accent + '70', cursor: ev.calendarType ? 'pointer' : 'default' }"
+                    @click.left.stop="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event, true))"
+                    @contextmenu.prevent.stop="ev.calendarType === 'event' && openEditForm(ev, $event, true)"
+                    @mousedown.stop="ev.calendarType === 'project' ? startProjChipDrag(ev, $event) : (ev.calendarType === 'event' && startEventDrag(ev, $event))"
                   >
-                    <span v-if="ev.isProject" class="chip-proj-tag">项目</span>
+                    <span v-if="ev.calendarType === 'project'" class="chip-proj-tag">项目</span>
                     <span v-else class="chip-proj-tag chip-ev-tag">活动</span>
-                    <span v-if="ev.isProject" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
+                    <span v-if="ev.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + ev.status"></span>
                     {{ ev.name }}
                   </div>
                   <button
@@ -163,12 +163,12 @@
                 <span class="bar-status-dot" :class="'bsd-' + bar.status"></span>{{ bar.name }}
               </div>
               <template v-for="(d, ci) in weekDays" :key="'it' + d.iso">
-                <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.isProject ? it.id : it._uid"
-                     class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.isProject && it.status === 'done' }"
-                     :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.isProject ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
-                     @click.stop="it.isProject ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
-                  <span class="chip-proj-tag" :class="{ 'chip-ev-tag': !it.isProject }">{{ it.isProject ? '项目' : '活动' }}</span>
-                  <span v-if="it.isProject" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
+                <div v-for="(it, ii) in allDayItemsFor(d.iso)" :key="it.calendarType === 'project' ? it.id : it._uid"
+                     class="wv-allday-ev cal-chip" :class="{ 'cal-done': it.calendarType === 'project' && it.status === 'done' }"
+                     :style="{ left: `calc(${ci / 7 * 100}% + 6px)`, right: `calc(${(6 - ci) / 7 * 100}% + 6px)`, top: ((wvShownRows + ii) * 20) + 'px', background: it.calendarType === 'project' ? capBg(it.accent, it.progress) : it.accent + '28', color: darkenHex(it.accent), borderColor: it.accent + '70' }"
+                     @click.stop="it.calendarType === 'project' ? openProject(it) : openEditForm(it, $event, true)" :title="it.name">
+                  <span class="chip-proj-tag" :class="{ 'chip-ev-tag': it.calendarType !== 'project' }">{{ it.calendarType === 'project' ? '项目' : '活动' }}</span>
+                  <span v-if="it.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + it.status"></span>{{ it.name }}
                 </div>
                 <!-- 该天列被隐藏的跨天项目 → 在该列底部显示「+K 更多」（样式/逻辑完全同月视图，按天各自计数）-->
                 <button v-if="weekMoreFor(ci).length" class="chip-more-btn cal-chip wv-more"
@@ -226,22 +226,22 @@
 
         <div v-if="selectedEvents.length" class="sidebar-events">
           <div v-for="ev in selectedEvents" :key="ev.id" class="sidebar-ev"
-               :class="{ 'cal-done': ev.isProject && ev.status === 'done' }"
+               :class="{ 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
                :data-event-id="ev.id"
-               :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-               @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
-               @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
+               :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
+               @click.left="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event))"
+               @contextmenu.prevent="ev.calendarType === 'event' && openEditForm(ev, $event)"
           >
             <div class="sidebar-ev-bar" :style="{ background: ev.accent }"></div>
             <div class="sidebar-ev-body">
-              <div class="sidebar-ev-name" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">
-                <span v-if="!ev.isUserEvent" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
+              <div class="sidebar-ev-name" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">
+                <span v-if="ev.calendarType === 'project'" class="ev-type-badge ev-proj-badge" :style="{ color: darkenHex(ev.accent) }">项目</span>
                 <span v-else class="ev-type-badge ev-event-badge">{{ typeLabel(ev.type) }}</span>
                 <span v-if="ev.time" class="sidebar-ev-time" :class="{ 'has-end-time': ev.endTime }">{{ ev.time }}{{ ev.endTime ? '–' + ev.endTime : '' }}<span v-if="isNextDay(ev.time, ev.endTime)" class="nextday-mini">次日</span></span>
                 {{ ev.name }}
-                <span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
+                <span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span>
               </div>
-              <template v-if="ev.isUserEvent">
+              <template v-if="ev.calendarType === 'event'">
                 <div class="sidebar-ev-desc">
                   <PhAlignLeft :size="11" weight="bold" style="flex-shrink:0;opacity:0.38;margin-top:1px" />
                   <span v-if="ev.description">{{ ev.description }}</span>
@@ -254,7 +254,7 @@
                 </div>
               </template>
             </div>
-            <button v-if="ev.isUserEvent" class="ev-del-btn" @click.stop="deleteEvent(ev)" title="删除活动">
+            <button v-if="ev.calendarType === 'event'" class="ev-del-btn" @click.stop="deleteEvent(ev)" title="删除活动">
               <PhTrash :size="12" weight="bold" />
             </button>
           </div>
@@ -268,16 +268,16 @@
 
         <div class="sidebar-section-title">近期节点</div>
         <div v-for="ev in upcomingList" :key="ev.id" class="upcoming-item cap-row"
-             :class="{ 'upcoming-proj': ev.isProject, 'upcoming-ev': ev.isUserEvent, 'cal-done': ev.isProject && ev.status === 'done' }"
-             :style="{ cursor: ev.isProject || ev.isUserEvent ? 'pointer' : 'default' }"
-             @click.left="ev.isProject ? openProject(ev) : (ev.isUserEvent && openEditForm(ev, $event))"
-             @contextmenu.prevent="ev.isUserEvent && openEditForm(ev, $event)"
+             :class="{ 'upcoming-proj': ev.calendarType === 'project', 'upcoming-ev': ev.calendarType === 'event', 'cal-done': ev.calendarType === 'project' && ev.status === 'done' }"
+             :style="{ cursor: ev.calendarType ? 'pointer' : 'default' }"
+             @click.left="ev.calendarType === 'project' ? openProject(ev) : (ev.calendarType === 'event' && openEditForm(ev, $event))"
+             @contextmenu.prevent="ev.calendarType === 'event' && openEditForm(ev, $event)"
         >
           <div class="cap-capsule"
                :style="{ '--cap-bg': capBg(ev.accent, ev.progress), borderColor: hexAlpha(ev.accent, 0.3) }">
-            <span class="cap-tag" :class="ev.isProject ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.isProject ? { color: darkenHex(ev.accent) } : {}">{{ ev.isProject ? '项目' : '活动' }}</span>
-            <span v-if="ev.isProject" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
-            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.isProject && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
+            <span class="cap-tag" :class="ev.calendarType === 'project' ? 'cap-tag-proj' : 'cap-tag-ev'" :style="ev.calendarType === 'project' ? { color: darkenHex(ev.accent) } : {}">{{ ev.calendarType === 'project' ? '项目' : '活动' }}</span>
+            <span v-if="ev.calendarType === 'project'" class="cap-sdot" :class="'cap-s-' + ev.status"></span>
+            <span class="cap-name" :style="{ color: darkenHex(ev.accent) }">{{ ev.name }}<span v-if="ev.calendarType === 'project' && ev.status === 'done'" class="cal-done-mark"><PhCheck :size="9" weight="bold" /></span></span>
             <span v-if="ev.status !== 'done'" class="cap-days" :class="{ urgent: (ev.daysLeft ?? 0) <= 3 }">{{ ev.daysLabel }}</span>
           </div>
         </div>
@@ -295,13 +295,13 @@
           <div
             v-for="item in morePopup.items" :key="item.id"
             class="overflow-item cal-chip"
-            :class="{ 'overflow-clickable': item.isProject || item.isUserEvent, 'cal-done': item.isProject && item.status === 'done' }"
-            :style="{ background: item.isProject ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: (item.isProject || item.isUserEvent) ? 'grab' : 'default' }"
-            @click.stop="item.isProject ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.isUserEvent && openEditForm(item, $event, true))"
-            @mousedown.stop="(item.isProject || item.isUserEvent) && startMoreItemDrag(item, $event)"
+            :class="{ 'overflow-clickable': !!item.calendarType, 'cal-done': item.calendarType === 'project' && item.status === 'done' }"
+            :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType ? 'grab' : 'default' }"
+            @click.stop="item.calendarType === 'project' ? (morePopup.open = false, showEditForm = false, openProject(item)) : (item.calendarType === 'event' && openEditForm(item, $event, true))"
+            @mousedown.stop="item.calendarType && startMoreItemDrag(item, $event)"
           >
-            <span class="overflow-tag" :class="{ 'overflow-tag-ev': !item.isProject }">{{ item.isProject ? '项目' : '活动' }}</span>
-            <span v-if="item.isProject" class="bar-status-dot" :class="'bsd-' + item.status"></span>
+            <span class="overflow-tag" :class="{ 'overflow-tag-ev': item.calendarType !== 'project' }">{{ item.calendarType === 'project' ? '项目' : '活动' }}</span>
+            <span v-if="item.calendarType === 'project'" class="bar-status-dot" :class="'bsd-' + item.status"></span>
             <span class="overflow-name">{{ item.name }}</span>
           </div>
         </div>
@@ -453,7 +453,7 @@ import { projectProgress } from '@/utils/projectProgress'
 import EventEditFields from './components/EventEditFields.vue'
 import type { CalendarRenderItem } from './domain/calendarTypes'
 import { normalizeEvent, normalizeProjectTimeline, toRenderItem } from './domain/calendarNormalizer'
-import { typeLabel } from './domain/calendarRules'
+import { canDrag, canResize, getDisplayColor, typeLabel } from './domain/calendarRules'
 import { extractAccent, capBg, hexAlpha, darkenHex } from './utils/calendarColors'
 import {
   maxSlots as calculateMaxSlots,
@@ -474,8 +474,7 @@ type EventResponse = components['schemas']['EventResponse']
 
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
-// 之间自由 spread/mix（同一数组里既有 isProject 也有 isUserEvent 的对象），故用一个
-// 涵盖两者所有字段的联合形状而非两个互斥接口——贴合运行时实际结构，而非臆造新形状。
+// 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。
 type CalItem = CalendarRenderItem
 
 interface DateRange { start: string; end: string }
@@ -931,8 +930,9 @@ function startEventDrag(ev: CalItem, e: MouseEvent)              { startDrag('ev
 function startProjChipDrag(bar: CalItem, e: MouseEvent)          { startDrag('proj-chip', bar, e) }
 function startMoreItemDrag(item: CalItem, e: MouseEvent) {
   const closePopup = () => { morePopup.value.open = false }
-  if (item.isProject) startDrag('proj-chip', item, e, 0, closePopup)
-  else if (item.isUserEvent) startDrag('event', item, e, 0, closePopup)
+  if (!canDrag(item)) return
+  if (item.calendarType === 'project') startDrag('proj-chip', item, e, 0, closePopup)
+  else if (item.calendarType === 'event') startDrag('event', item, e, 0, closePopup)
 }
 function startBarDrag(bar: CalItem, e: MouseEvent) {
   const anchorIso = isoFromPoint(e.clientX, e.clientY) ?? bar.startDate
@@ -1059,7 +1059,7 @@ function dayLayout(iso: string, week: { iso: string }[], wi: number) {
     iso,
     cappedBars,
     all,
-    effectiveProjectTimelines.value.filter(p => p.startDate === p.endDate && p.startDate === iso).map(p => ({ ...p, isProject: true })),
+    effectiveProjectTimelines.value.filter(p => p.startDate === p.endDate && p.startDate === iso),
     effectiveExtraEvents.value,
     maxSlots(wi),
     CALENDAR_LAYOUT_CONSTANTS,
@@ -1110,6 +1110,7 @@ const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
 }
+function displayColor(item: CalItem) { return getDisplayColor(item) }
 function normalizeCalendarEvent(e: EventResponse): CalItem {
   return toRenderItem(normalizeEvent(e), {
     uid: (e as EventResponse & { _uid?: string })._uid ?? `e${e.id}`,
@@ -1305,11 +1306,11 @@ function allDayEventsFor(iso: string) { return visibleEvents.value.filter(e => e
 function singleDayProjectsFor(iso: string): CalItem[] {
   return effectiveProjectTimelines.value
     .filter(p => p.startDate === p.endDate && p.startDate === iso)
-    .map(p => ({ ...p, isProject: true }))
+    .map(p => ({ ...p, calendarType: 'project' as const }))
 }
 // 某天全天行的单天条目 = 单日项目 + 无时间活动，按月视图 chip 排序（done 末尾→优先级→开始/日期→创建）
 function allDayItemsFor(iso: string): CalItem[] {
-  const items: CalItem[] = [...singleDayProjectsFor(iso), ...allDayEventsFor(iso).map(e => ({ ...e, isProject: false }))]
+  const items: CalItem[] = [...singleDayProjectsFor(iso), ...allDayEventsFor(iso)]
   const prio = (p: CalItem) => ({ high: 3, medium: 2, low: 1 } as Record<string, number>)[p.priority ?? ''] ?? 0
   return items.sort((a, b) => {
     const da = a.status === 'done' ? 1 : 0, db = b.status === 'done' ? 1 : 0
@@ -1325,7 +1326,7 @@ function allDayItemsFor(iso: string): CalItem[] {
 const weekAllDayBars  = computed(() => weekBars(weekDays.value))
 const _WEEK_MAX_PROJ  = 10   // 全天行最多显示的项目数，超出收入「更多」（同月视图：封顶 + 更多）
 const weekAllDayShown = computed(() => weekAllDayBars.value.slice(0, _WEEK_MAX_PROJ))
-const weekAllDayMore  = computed(() => weekAllDayBars.value.slice(_WEEK_MAX_PROJ).map(b => ({ ...b, isProject: true })))
+const weekAllDayMore  = computed(() => weekAllDayBars.value.slice(_WEEK_MAX_PROJ))
 const wvShownRows     = computed(() => weekAllDayShown.value.reduce((m, b) => Math.max(m, (b.row ?? 0) + 1), 0))
 // 第 ci 列被隐藏（超出 10）的跨天项目 = 覆盖该天的隐藏条；每天列各自「更多」，按实际位置显示（同月视图）
 function weekMoreFor(ci: number) { return weekAllDayMore.value.filter(b => (b.colStart ?? 0) <= ci && (b.colEnd ?? 0) >= ci) }
@@ -1336,7 +1337,7 @@ function pbarStyle(bar: CalItem) {
            right: bar.endsHere   ? `calc(${(7 - (bar.colEnd ?? 0) - 1) / 7 * 100}% + 6px)` : ((7 - (bar.colEnd ?? 0) - 1) / 7 * 100) + '%',
            top: (bar.row ?? 0) * 20 + 'px',
            background: [deadlineWarnLayer(bar), capBg(bar.accent, bar.progress)].filter(Boolean).join(', '),   // 进度填充：与月视图/侧栏胶囊一致；deadlineWarnLayer 叠加临近截止日的标红
-           borderColor: bar.accent + '70', color: darkenHex(bar.accent) }
+           borderColor: displayColor(bar) + '70', color: darkenHex(displayColor(bar)) }
 }
 
 // 全天行高度：取各列「跨天条行 + 该列单日条目行 + 该列若有更多再 +1」的最大行数（避免溢出）
@@ -1471,6 +1472,7 @@ async function _persistEvent(s: EvDragState) {
 }
 
 function onEvResize(ev: CalItem, edge: 'start' | 'end' | null, e: MouseEvent) {   // 拖边缘改起止时间
+  if (!canResize(ev)) return
   const colEl = (e.currentTarget as HTMLElement).closest('.wv-col')
   if (!colEl) return
   const startMin = _toMin(ev.time || '09:00')
@@ -1913,8 +1915,8 @@ async function saveEvent() {
     name:        newEvent.value.name,
     client:      '',
     type:        'event',
+    calendarType: 'event',
     accent:      '#7b7fb2',
-    isUserEvent: true,
     description: newEvent.value.description || '',
   }
   extraEvents.value.push(localItem)

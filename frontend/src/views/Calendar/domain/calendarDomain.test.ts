@@ -32,7 +32,7 @@ describe('calendar domain', () => {
     expect(project.type).toBe('project')
     expect(project.allDay).toBe(true)
     expect(toRenderItem(event).name).toBe('评审')
-    expect(toRenderItem(project, { legacyType: 'deadline' }).isProject).toBe(true)
+    expect(toRenderItem(project, { legacyType: 'deadline' }).calendarType).toBe('project')
   })
 
   it('规则只从领域类型和配置派生，不依赖派生布尔字段', () => {

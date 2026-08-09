@@ -102,7 +102,7 @@ export function dayLayout(
   const cappedIds = new Set(cappedBars.map(bar => bar.id))
   const hiddenProjects = allBars
     .filter(bar => (bar.startDate ?? '') <= iso && (bar.endDate ?? '') >= iso && !cappedIds.has(bar.id))
-    .map(bar => ({ ...bar, isProject: true }))
+    .map(bar => ({ ...bar, calendarType: 'project' as const }))
 
   const allChips = [...singleDayProjects, ...extraEvents.filter(event => event.date === iso)]
   allChips.sort((a, b) => {

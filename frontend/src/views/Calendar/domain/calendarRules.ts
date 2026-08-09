@@ -1,4 +1,6 @@
-import type { CalendarItem } from './calendarTypes'
+import type { CalendarItem, CalendarRenderItem } from './calendarTypes'
+
+type CalendarRuleItem = CalendarItem | CalendarRenderItem
 
 const TYPE_LABEL: Record<string, string> = {
   deadline: '截止日',
@@ -8,16 +10,16 @@ const TYPE_LABEL: Record<string, string> = {
   project: '进行中',
 }
 
-export function canDrag(item: CalendarItem) {
-  return item.type === 'event' || item.type === 'project'
+export function canDrag(item: CalendarRuleItem) {
+  return item.type === 'event' || item.type === 'project' || ('calendarType' in item && (item.calendarType === 'event' || item.calendarType === 'project'))
 }
 
-export function canResize(item: CalendarItem) {
-  return item.type === 'event' || item.type === 'project'
+export function canResize(item: CalendarRuleItem) {
+  return item.type === 'event' || item.type === 'project' || ('calendarType' in item && (item.calendarType === 'event' || item.calendarType === 'project'))
 }
 
-export function getDisplayColor(item: CalendarItem) {
-  return item.color ?? '#8a8fa8'
+export function getDisplayColor(item: CalendarRuleItem) {
+  return 'accent' in item ? item.accent : item.color ?? '#8a8fa8'
 }
 
 export function typeLabel(type: string | undefined) {

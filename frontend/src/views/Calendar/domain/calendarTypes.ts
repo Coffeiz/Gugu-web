@@ -5,15 +5,14 @@
 export interface CalendarItemBase {
   id: string | number
   title: string
-  start: string
-  end?: string
   allDay: boolean
   color?: string
 }
 
 export interface EventCalendarItem extends CalendarItemBase {
   type: 'event'
-  time?: string
+  date: string
+  startTime?: string
   endTime?: string
   description?: string
   eventType?: string
@@ -23,6 +22,8 @@ export interface EventCalendarItem extends CalendarItemBase {
 
 export interface ProjectCalendarItem extends CalendarItemBase {
   type: 'project'
+  startDate?: string | null
+  endDate?: string | null
   client?: string | null
   status: string
   currentStage?: string | null
@@ -46,9 +47,8 @@ export interface CalendarRenderItem {
   endTime?: string
   client?: string | null
   type?: string
+  calendarType: 'event' | 'project'
   accent: string
-  isUserEvent?: boolean
-  isProject?: boolean
   description?: string
   version?: number
   status?: string
