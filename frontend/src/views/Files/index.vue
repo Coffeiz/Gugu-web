@@ -221,6 +221,16 @@ const loading     = ref(false)
 const mainRef     = ref<HTMLElement | null>(null)
 let directoryLoader: () => void = () => {}
 function loadContents() { directoryLoader() }
+
+// 列表行是高频阅读型布局，抓取时保持平面，避免 Runtime 默认的 rotateX
+// 把行内容变成“上窄下宽”。网格卡片仍保留原有的 3D 抓取手感；这里仅在
+// 文件页存活期间切换 Runtime 的全局跟手姿态，离开页面时恢复默认值。
+function syncFileDragRotation(mode: 'grid' | 'list') {
+  runtime.configureMotion({
+    controller: { rotation: { tilt: mode === 'list' ? 0 : 5 } },
+  })
+}
+watch(viewMode, syncFileDragRotation, { immediate: true })
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
 const { folderIconStyle, folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 
@@ -798,6 +808,8 @@ onMounted(() => {
 watch(mainRef, el => domAdapter.bindSurface(runtimeBrowserSurfaceId, el))
 
 onUnmounted(() => {
+  // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
+  syncFileDragRotation('grid')
   stopRuntimeAction()
   for (const timer of pendingUnregisterTimers.values()) clearTimeout(timer)
   pendingUnregisterTimers.clear()
