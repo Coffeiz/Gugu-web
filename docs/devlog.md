@@ -1835,3 +1835,10 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 生产结构副本迁移复核命令输出：`production_schema_copy_downgrade_upgrade_ok`，最终版本 `20260804000007`。
 - 迁移补充复核：已有业务表路径先 stamp head，再 downgrade 到 `20260804000002` 并 upgrade 回 head，最终版本仍为 `20260804000007`；bootstrap 路径确认提交事务，避免连接关闭时回滚建表结果。
 - 总体清理：移除已完成排查的 QQ 表情前端探针和文件拖拽临时 `debugLabel`，未保留调试输出或无调用的探针模块。
+
+## 2026-08-10 · 日历模块化 Phase 3/5 收尾
+
+- 日历页面的持久化活动编辑统一接入全局 `EventEditModal` 与 `eventModal` store；页面内只保留带定位的新建活动表单，删除了重复的编辑状态、定位、保存和删除逻辑。
+- 从“更多”活动菜单打开编辑时先关闭菜单，避免页面捕获点击与全局弹窗状态互相干扰；活动保存、删除和提醒更新继续通过 `liveStore` 触发日历刷新。
+- `MonthGrid`、`WeekTimeline` 已成为月/周视图的样式边界，清理父页面迁移后遗留的周视图重复 CSS，避免以后修改出现双份样式来源。
+- 日历 Playwright 用例加入 runtime integration CI，并在 devserver 实际验证月视图、周视图及其切换；全量前端测试、普通/严格 typecheck 均通过。
