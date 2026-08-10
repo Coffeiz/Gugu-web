@@ -163,7 +163,7 @@ import FilesTrashView from '@/views/Files/components/FilesTrashView.vue'
 import FilesGridView from '@/views/Files/components/FilesGridView.vue'
 import FilesListView from '@/views/Files/components/FilesListView.vue'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
-import RuntimeBreadcrumbTarget from '@/views/Files/components/RuntimeBreadcrumbTarget.vue'
+import RuntimeBreadcrumbTarget from '@/components/common/file-browser/RuntimeBreadcrumbTarget.vue'
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
@@ -397,6 +397,8 @@ const {
   toggleSelectMode, toggleSelectAllTrash, allTrashSelected,
   handleFolderClick, handleFileClick, handleTrashFileClick, handleTrashFolderClick,
 } = selection
+let suppressNextSelectionPageClick = false
+
 function clearSelection() { clearSelectionImpl() }
 
 function onMainMouseDown(e: MouseEvent) {
@@ -405,6 +407,10 @@ function onMainMouseDown(e: MouseEvent) {
 }
 
 function onPageClick() {
+  if (suppressNextSelectionPageClick) {
+    suppressNextSelectionPageClick = false
+    return
+  }
   clearSelection()
   // 排序菜单由 SortMenu 内部的 ContextMenu 监听外部 click 自动关闭，这里不用手动处理
 }
@@ -574,7 +580,6 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
 
 const {
   draggingFileIds, draggingFolderIds, dragOverFolderId, bcDragOverIdx,
-  onFolderPointerDown: _onFolderPointerDown, onFilePointerDown: _onFilePointerDown,
 } = useFileDragDrop({
   fileDataAttr: 'data-file-id',
   // data-folder-key 存的是 f.id（"f:65" 这种带前缀字符串，框选那套逻辑要靠它跟 selectedFolderKeys
@@ -604,49 +609,9 @@ function _selectedFolderIdNums() {
   return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
 }
 
-// 与 useFileDragDrop.ts _startCardDrag 里的 isMulti 判断完全一致：这张卡此刻处于选中态，且
-// 自己这一类（文件夹/文件）的选区非空。只有这个条件为真时，旧的 pointer 拖拽编排才接管——
-// 单选场景交给下面的 Runtime Core API 对象（abilities 含 'move'）独占 pointerdown，避免
-// 同一次抓取被两套 session 同时接管。
-function isFolderRoutedToLegacyDrag(folderKey: string): boolean {
-  return selectedFolderKeys.value.has(folderKey) && _selectedFolderIdNums().size > 0
-}
-function isFileRoutedToLegacyDrag(fileId: number): boolean {
-  return selectedIds.value.has(fileId) && selectedIds.value.size > 0
-}
-
-function onFolderPointerDown(f: FolderCardMeta, e: PointerEvent) {
-  // 全部文件根目录下"个人文件/项目文件/回收站"是伪文件夹卡片（type 不是 'folder'，没有真实
-  // folderId），不能拖拽——之前没挡，f.folderId 是 undefined，落点判定/吸入动画照样能触发
-  // （只是数据层最终 API 调用会因 id 无效而静默失败），表现为"能拖进别的卡片，但只有动画有效果"。
-  if (f.type !== 'folder' || f.folderId == null) return
-  // 单选（未参与多选）时这张卡在 Runtime 里注册了 abilities:['move']，pointerdown 已经被
-  // Runtime 接管，旧编排不再重复起一份 session。
-  if (!isFolderRoutedToLegacyDrag(f.id)) return
-  _onFolderPointerDown(e, {
-    itemId: f.folderId,
-    isSelected: selectedFolderKeys.value.has(f.id),
-    selectedFileIds: selectedIds.value,
-    selectedFolderIds: _selectedFolderIdNums(),
-    // landing 需要盖过文件工具栏/面包屑（工具栏 z-index:20），否则飞回面包屑时会被裁在其后。
-    extraOpts: { dragZIndex: 31 },
-  })
-}
-function onFilePointerDown(f: FileMeta, e: PointerEvent) {
-  if (!isFileRoutedToLegacyDrag(f.id)) return
-  _onFilePointerDown(e, {
-    itemId: f.id,
-    isSelected: selectedIds.value.has(f.id),
-    selectedFileIds: selectedIds.value,
-    selectedFolderIds: _selectedFolderIdNums(),
-    extraOpts: { dragZIndex: 31 },
-  })
-}
-
-// ── Runtime Core API 单卡接入（Phase 1） ──
-// 单文件/单文件夹拖拽完全交给 Interaction Runtime：这里只做 3.2 节允许的事——注册
-// 对象/Surface/Target、同步 DOM ref、订阅 onAction 后转发进现有的 moveFoldersInto/
-// moveFilesInto（乐观更新、回滚、409 处理都不变）。多选继续走上面的 useFileDragDrop。
+// ── Runtime Core API 接入 ──
+// 单文件/单文件夹和多选拖拽都交给 Interaction Runtime；这里仅负责注册
+// Object/Surface/Target，并把 Action 转发给现有的业务移动函数。
 // RUNTIME_SCOPE / runtimeBrowserSurfaceId / domAdapter 已在文件靠前处声明（Phase 4 需要
 // 提前给 withLayoutNav 使用）。
 
@@ -662,14 +627,15 @@ function fileLayoutKey(f: FileMeta): string {
   return fileObjectId(RUNTIME_SCOPE, 'file', f.id)
 }
 
-async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
-  const isFolder = objectId.startsWith(`${RUNTIME_SCOPE}:folder:`)
-  const isFile = objectId.startsWith(`${RUNTIME_SCOPE}:file:`)
-  if (!isFolder && !isFile) return
-  const rawId = objectId.slice(objectId.lastIndexOf(':') + 1)
-  const id = Number(rawId)
-  if (Number.isNaN(id)) return
-
+async function handleRuntimeMoveAction(objectIds: readonly string[], toSurfaceId: string) {
+  const parsed = objectIds.flatMap(objectId => {
+    const isFolder = objectId.startsWith(`${RUNTIME_SCOPE}:folder:`)
+    const isFile = objectId.startsWith(`${RUNTIME_SCOPE}:file:`)
+    if (!isFolder && !isFile) return []
+    const id = Number(objectId.slice(objectId.lastIndexOf(':') + 1))
+    return Number.isNaN(id) ? [] : [{ id, isFolder }]
+  })
+  if (parsed.length === 0) return
   if (toSurfaceId === runtimeBrowserSurfaceId) return // 落回浏览区本身：不算移动
 
   let targetFolderId: number | null
@@ -677,7 +643,7 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
   if (folderTarget !== null) {
     targetFolderId = Number(folderTarget)
     if (Number.isNaN(targetFolderId)) return
-    if (isFolder && targetFolderId === id) return // 拖到自己身上
+    if (parsed.some(item => item.isFolder && targetFolderId === item.id)) return // 拖到自己身上
   } else {
     const idx = parseBreadcrumbSurfaceId(RUNTIME_SCOPE, toSurfaceId)
     if (idx === null) return
@@ -686,15 +652,21 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
     targetFolderId = seg.type === 'folder' ? (seg.folderId ?? null) : null
   }
 
-  selectedFolderKeys.value = new Set()
-  selectedIds.value = new Set()
-  if (isFolder) await moveFoldersInto([id], targetFolderId)
-  else await moveFilesInto([id], targetFolderId)
+  const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
+  const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
+  await Promise.all([
+    folderIds.length > 0 ? moveFoldersInto(folderIds, targetFolderId) : Promise.resolve(),
+    fileIds.length > 0 ? moveFilesInto(fileIds, targetFolderId) : Promise.resolve(),
+  ])
+  // Runtime 的 landing/reveal 仍在独立时间线上运行；业务移动成功后再退出多选，
+  // 避免松手瞬间工具栏和源卡片状态先于动画跳变。无效落点或失败会保留原选区。
+  clearSelection()
 }
 
 useRuntimeAction(action => {
-  if (action.type !== 'move') return
-  void handleRuntimeMoveAction(action.objectId, action.toSurfaceId)
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  suppressNextSelectionPageClick = true
+  void handleRuntimeMoveAction(action.type === 'move-group' ? action.objectIds : [action.objectId], action.toSurfaceId)
 })
 
 onUnmounted(() => {
@@ -749,23 +721,23 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
 const gridViewContext = {
   contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode,
-  openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown,
+  openCtx, folderListIcon, folderAccentColor, handleFolderClick,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
   deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
-  onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
+  isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
-  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag,
+  folderLayoutKey, fileLayoutKey,
   layoutCollection: 'files-browser',
 }
 const listViewContext = {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
-  previewFolderKeys, dragOverFolderId, handleFolderClick, onFolderPointerDown, folderListIcon,
+  previewFolderKeys, dragOverFolderId, handleFolderClick, folderListIcon,
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
-  previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
+  previewFileIds, draggingFileIds, cbStore, handleFileClick,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
-  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag,
+  folderLayoutKey, fileLayoutKey,
   layoutCollection: 'files-browser',
 }
 

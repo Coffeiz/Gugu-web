@@ -32,6 +32,6 @@
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-from,
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-to { opacity: 0; }
-.list-row[data-runtime-proxy-content] > :nth-child(n+5) { overflow: hidden; }
-.list-row[data-runtime-proxy-content] > :nth-child(2) { white-space: nowrap; overflow: hidden; }
-.list-row[data-runtime-proxy-content] > :nth-child(3) { padding-left: 6px; box-sizing: border-box; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(n+5) { overflow: hidden; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(2) { white-space: nowrap; overflow: hidden; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(3) { padding-left: 6px; box-sizing: border-box; }

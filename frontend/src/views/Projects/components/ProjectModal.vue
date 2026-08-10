@@ -96,14 +96,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, watchEffect, onMounted, onUnmounted, nextTick, toRef, type PropType } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, nextTick, toRef, type PropType } from 'vue'
 import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
   folderSurfaceId,
   parseFolderSurfaceId,
-  breadcrumbSurfaceId,
   parseBreadcrumbSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 import { useProjectStore } from '@/stores/projects'
@@ -243,7 +243,7 @@ const {
   onContainerMouseDown: onPmGridMouseDown,
   cancelDrag: _cancelPmBoxDrag,
   clearSelection: clearPmSelection,
-  onContentClick: onPmContentClick,
+  onContentClick: onPmContentClickImpl,
   toggleFolderSelect: toggleFolderSelectPm,
   toggleSelectionMode: togglePmSelectionMode,
   handleFileClick: pmHandleFileClick,
@@ -256,6 +256,15 @@ const {
   isPreviewable,
   enterFolder: folder => pmEnterFolderWrapped(folder),
 })
+
+let suppressNextPmSelectionClick = false
+function onPmContentClick() {
+  if (suppressNextPmSelectionClick) {
+    suppressNextPmSelectionClick = false
+    return
+  }
+  onPmContentClickImpl()
+}
 
 // Tier 3：数据从全局 filesCache store 派生（currentFiles/currentFolders/pmFolderCount）。所有增删改
 // 只需更新 store（updateFile/updateFolder/removeFile/removeFolder/addFile/addFolder），视图自动跟随——
@@ -274,8 +283,6 @@ const {
   draggingFolderIds: pmDraggingFolderIds,
   dragOverFolderId: pmDragOverFolderId,
   bcDragOverIdx: pmBcDragOverIdx,
-  onFolderPointerDown: _onPmFolderPointerDown,
-  onFilePointerDown: _onPmFilePointerDown,
 } = useProjectFileDrag({
   folderStack,
   stagesExpanded,
@@ -301,159 +308,33 @@ const {
   sortDir: pmSortDir,
 })
 
-// ── Runtime Core API 单卡接入（Phase 1，对齐 Files/index.vue 的 df4238f3）────────
-// 单文件/单文件夹拖拽交给 Interaction Runtime；这里只做注册对象/Surface/Target、
-// 同步 DOM ref、订阅 onAction 后转发进未改动的 movePmFoldersInto/movePmFilesInto。
-// 多选继续走下面未改动的 useProjectFileDrag/useFileDragDrop。
-// scope 带上 projectId：ProjectModal 是全局单例（见 DefaultLayout.vue），project prop
-// 会随用户打开不同项目切换，而不是重新挂载组件，所以 scope 必须是 computed 而非常量。
-const RUNTIME_SCOPE = computed(() => `project-files:${props.project?.id ?? 'none'}`)
+// ── Runtime Vue API：项目文件区与文件库共用同一套对象/Surface/Target 接入 ──
+// ProjectModal 是全局单例，文件对象 ID 本身全局唯一，因此使用稳定 scope，避免 project
+// prop 切换时让静态 id 的 useSurface/useObject 失去对应关系。
+const RUNTIME_SCOPE = 'project-files'
 const domAdapter = createVueRuntimeAdapter(runtime)
-
-// 同 Files/index.vue：乐观更新即触发即生效，业务数据一变对象就可能从 sortedCurrentFolders/
-// sortedCurrentFiles 里消失。落点确定后 Runtime 几乎立刻释放这个对象的控制权（objectLease
-// 在 emit() 后马上放，早于 landing/reveal 动画播完，是刻意设计，避免 <Teleport> 二次跳变），
-// isControlled() 在这个时间点已经是 false，挡不住——真正要等的是"落地动画放完"。改成延迟注销
-// （见下方 unregister 循环），不是立刻同步注销。
-
-// 与 useFileDragDrop.ts _startCardDrag 里的 isMulti 判断完全一致：只有这张卡此刻处于
-// 选中态、且自己这一类的选区非空时，旧的 pointer 拖拽编排才接管——单选场景交给 Runtime
-// Core API 对象（abilities 含 'move'）独占 pointerdown，避免同一次抓取被两套 session 同时接管。
-function isFolderRoutedToLegacyDrag(folderId: number): boolean {
-  return pmSelectedFolderIds.value.has(folderId) && pmSelectedFolderIds.value.size > 0
-}
-function isFileRoutedToLegacyDrag(fileId: number): boolean {
-  return pmSelectedFileIds.value.has(fileId) && pmSelectedFileIds.value.size > 0
-}
-
-function onPmFolderPointerDown(folder: FolderMeta, e: PointerEvent) {
-  if (!isFolderRoutedToLegacyDrag(folder.id)) return
-  _onPmFolderPointerDown(folder, e)
-}
-function onPmFilePointerDown(file: FileMeta, e: PointerEvent) {
-  if (!isFileRoutedToLegacyDrag(file.id)) return
-  _onPmFilePointerDown(file, e)
-}
-
-function bindFolderEl(folder: FolderMeta, target: unknown) {
-  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
-  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
-  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE.value, 'folder', folder.id), element ?? null)
-}
-function bindFileEl(file: FileMeta, target: unknown) {
-  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
-  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
-  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE.value, 'file', file.id), element ?? null)
-}
-// idx 与 ProjectFileBreadcrumb.vue 的 data-bc-idx 约定一致：-1=项目文件根，0..length-2=中间
-// 层级；最后一段是当前目录，模板里渲染成不可点击的 <span>，本来就不会调用这个绑定。
-function bindBreadcrumbEl(idx: number, element: HTMLElement | null) {
-  const surfaceId = breadcrumbSurfaceId(RUNTIME_SCOPE.value, idx)
-  domAdapter.bindTarget(`bc:${idx}`, { surfaceId, accepts: ['file-item', 'folder-item'], priority: 1 }, element)
-}
-
-interface PmObjectRegSnapshot { type: string; surfaceId: string; abilities: string[] }
-const pmObjectGenerations = new Map<string, number>()
-const pmObjectSnapshots = new Map<string, PmObjectRegSnapshot>()
-const pmRuntimeSurfaceIds = new Set<string>()
-const pmPendingUnregisterTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const PM_UNREGISTER_DELAY_MS = 500
-
-watchEffect(() => {
-  const scope = RUNTIME_SCOPE.value
-  const browserSurfaceId = makeBrowserSurfaceId(scope)
-  const nextObjectIds = new Set<string>()
-  const folders = sortedCurrentFolders.value
-  const files = sortedCurrentFiles.value
-
-  for (const f of folders) {
-    const id = fileObjectId(scope, 'folder', f.id)
-    const abilities = isFolderRoutedToLegacyDrag(f.id) ? [] : ['move']
-    nextObjectIds.add(id)
-    const snapshot: PmObjectRegSnapshot = { type: 'folder-item', surfaceId: browserSurfaceId, abilities }
-    const prev = pmObjectSnapshots.get(id)
-    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
-      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
-    if (changed) {
-      pmObjectGenerations.set(id, runtime.objects.register({
-        id,
-        type: 'folder-item',
-        surfaceId: browserSurfaceId,
-        element: runtime.objects.get(id)?.element ?? null,
-        abilities,
-        target: { surfaceId: folderSurfaceId(scope, f.id), accepts: ['file-item', 'folder-item'], priority: 2 },
-      }))
-      pmObjectSnapshots.set(id, snapshot)
-    }
-  }
-
-  for (const f of files) {
-    const id = fileObjectId(scope, 'file', f.id)
-    const abilities = isFileRoutedToLegacyDrag(f.id) ? [] : ['move']
-    nextObjectIds.add(id)
-    const snapshot: PmObjectRegSnapshot = { type: 'file-item', surfaceId: browserSurfaceId, abilities }
-    const prev = pmObjectSnapshots.get(id)
-    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
-      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
-    if (changed) {
-      pmObjectGenerations.set(id, runtime.objects.register({
-        id,
-        type: 'file-item',
-        surfaceId: browserSurfaceId,
-        element: runtime.objects.get(id)?.element ?? null,
-        abilities,
-      }))
-      pmObjectSnapshots.set(id, snapshot)
-    }
-  }
-
-  for (const [id, generation] of pmObjectGenerations) {
-    if (nextObjectIds.has(id)) {
-      const pending = pmPendingUnregisterTimers.get(id)
-      if (pending) { clearTimeout(pending); pmPendingUnregisterTimers.delete(id) }
-      continue
-    }
-    if (pmPendingUnregisterTimers.has(id)) continue
-    pmPendingUnregisterTimers.set(id, setTimeout(() => {
-      pmPendingUnregisterTimers.delete(id)
-      if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
-      pmObjectGenerations.delete(id)
-      pmObjectSnapshots.delete(id)
-    }, PM_UNREGISTER_DELAY_MS))
-  }
-
-  // Surface：文件面板是稳定的单一 Surface（绑定在 watchEffect 外，见下方 onMounted，锚在
-  // pmGridRef/.file-content——它不在任何随目录切换重挂载的 Transition/:key 之内，项目切换
-  // 也不重挂载 ProjectModal 本身，见 DefaultLayout.vue）；文件夹自己的语义 Surface 和面包屑
-  // 语义 Surface 只用来承接 Target，不对应真实容器 DOM。
-  const nextSurfaceIds = new Set<string>([browserSurfaceId])
-  for (const f of folders) nextSurfaceIds.add(folderSurfaceId(scope, f.id))
-  nextSurfaceIds.add(breadcrumbSurfaceId(scope, -1))
-  for (let i = 0; i < folderStack.value.length - 1; i++) nextSurfaceIds.add(breadcrumbSurfaceId(scope, i))
-  for (const id of nextSurfaceIds) {
-    if (!runtime.surfaces.has(id)) runtime.surfaces.register({
-      id,
-      type: id === browserSurfaceId ? 'file-browser' : id.includes(':breadcrumb:') ? 'file-breadcrumb' : 'file-folder',
-      element: null,
-      accepts: ['file-item', 'folder-item'],
-    })
-    pmRuntimeSurfaceIds.add(id)
-  }
-  for (const id of pmRuntimeSurfaceIds) {
-    if (nextSurfaceIds.has(id)) continue
-    runtime.surfaces.unregister(id)
-    pmRuntimeSurfaceIds.delete(id)
-  }
+const { elementRef: pmRuntimeBrowserRef } = useSurface({
+  id: makeBrowserSurfaceId(RUNTIME_SCOPE),
+  type: 'file-browser',
+  accepts: ['file-item', 'folder-item'],
 })
 
-async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
-  const scope = RUNTIME_SCOPE.value
-  const isFolder = objectId.startsWith(`${scope}:folder:`)
-  const isFile = objectId.startsWith(`${scope}:file:`)
-  if (!isFolder && !isFile) return
-  const rawId = objectId.slice(objectId.lastIndexOf(':') + 1)
-  const id = Number(rawId)
-  if (Number.isNaN(id)) return
+function bindPmGridEl(target: unknown) {
+  const element = target as HTMLElement | null
+  pmGridRef.value = element
+  pmRuntimeBrowserRef.value = element
+}
+
+async function handleRuntimeMoveAction(objectIds: readonly string[], toSurfaceId: string) {
+  const scope = RUNTIME_SCOPE
+  const parsed = objectIds.flatMap(objectId => {
+    const isFolder = objectId.startsWith(`${scope}:folder:`)
+    const isFile = objectId.startsWith(`${scope}:file:`)
+    if (!isFolder && !isFile) return []
+    const id = Number(objectId.slice(objectId.lastIndexOf(':') + 1))
+    return Number.isNaN(id) ? [] : [{ id, isFolder }]
+  })
+  if (parsed.length === 0) return
 
   const browserSurfaceId = makeBrowserSurfaceId(scope)
   if (toSurfaceId === browserSurfaceId) return // 落回浏览区本身：不算移动
@@ -464,7 +345,7 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
   if (folderTarget !== null) {
     targetFolderId = Number(folderTarget)
     if (Number.isNaN(targetFolderId)) return
-    if (isFolder && targetFolderId === id) return // 拖到自己身上
+    if (parsed.some(item => item.isFolder && targetFolderId === item.id)) return // 拖到自己身上
     droppedOn = 'folder'
   } else {
     const idx = parseBreadcrumbSurfaceId(scope, toSurfaceId)
@@ -479,35 +360,23 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
     droppedOn = 'breadcrumb'
   }
 
+  const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
+  const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
+  await Promise.all([
+    folderIds.length > 0 ? movePmFoldersInto(folderIds, targetFolderId) : Promise.resolve(),
+    fileIds.length > 0 ? movePmFilesInto(fileIds, targetFolderId, { droppedOn }) : Promise.resolve(),
+  ])
   clearPmSelection()
-  if (isFolder) await movePmFoldersInto([id], targetFolderId)
-  else await movePmFilesInto([id], targetFolderId, { droppedOn })
 }
 
-const stopPmRuntimeAction = runtime.onAction(action => {
-  if (action.type !== 'move') return
-  void handleRuntimeMoveAction(action.objectId, action.toSurfaceId)
+useRuntimeAction(action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  if (!objectIds.some(id => id.startsWith(`${RUNTIME_SCOPE}:`))) return
+  suppressNextPmSelectionClick = true
+  void handleRuntimeMoveAction(objectIds, action.toSurfaceId)
 })
-
-onMounted(() => {
-  // 文件面板绑到 .file-content（pmGridRef）本身：目录导航只替换里面的卡片列表，不会销毁
-  // 这个交互根节点；ProjectModal 全局单例，切换项目也不重挂载它。
-  domAdapter.bindSurface(makeBrowserSurfaceId(RUNTIME_SCOPE.value), pmGridRef.value)
-})
-watch([pmGridRef, RUNTIME_SCOPE], () => {
-  domAdapter.bindSurface(makeBrowserSurfaceId(RUNTIME_SCOPE.value), pmGridRef.value)
-})
-
-onUnmounted(() => {
-  stopPmRuntimeAction()
-  for (const timer of pmPendingUnregisterTimers.values()) clearTimeout(timer)
-  pmPendingUnregisterTimers.clear()
-  for (const [id, generation] of pmObjectGenerations) {
-    if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
-  }
-  for (const id of pmRuntimeSurfaceIds) runtime.surfaces.unregister(id)
-  domAdapter.dispose()
-})
+onUnmounted(() => domAdapter.dispose())
 
 // ── 目录切换布局事务（Phase 4）：包装 pmEnterFolder/pmNavigateTo/pmGoBack/pmGoForward，
 // 让目录切换走 runLayoutMutation（先量卡片位置 → mutate 目录状态 → 等 DOM patch → 播放
@@ -548,10 +417,10 @@ function pmGoForwardWrapped(): void { void withPmLayoutNav(() => pmGoForward()) 
 // 'files-browser' 互不相同，data-layout-key 复用 Phase 1 已全局唯一的 fileObjectId。
 const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
 function pmFolderLayoutKey(folder: FolderMeta): string {
-  return fileObjectId(RUNTIME_SCOPE.value, 'folder', folder.id)
+  return fileObjectId(RUNTIME_SCOPE, 'folder', folder.id)
 }
 function pmFileLayoutKey(file: FileMeta): string {
-  return fileObjectId(RUNTIME_SCOPE.value, 'file', file.id)
+  return fileObjectId(RUNTIME_SCOPE, 'file', file.id)
 }
 
 // ── 文件夹 ────────────────────────────────────────────────────────────────────
@@ -787,6 +656,7 @@ const filePanelContext = {
   pmIsDragging,
   pmSelectionRect,
   pmGridRef,
+  bindPmGridEl,
   onPmGridMouseDown,
   onPmContentClick,
   openPmCtx,
@@ -803,7 +673,6 @@ const filePanelContext = {
   pmSelectedFolderIds,
   pmPreviewFolderIds,
   onPmFolderClick,
-  onPmFolderPointerDown,
   renamingFolderId,
   commitFolderRename,
   startRenameFolder,
@@ -825,10 +694,7 @@ const filePanelContext = {
   downloadFile,
   deleteFile,
   pmHandleFileClick,
-  onPmFilePointerDown,
-  bindFolderEl,
-  bindFileEl,
-  bindBreadcrumbEl,
+  runtimeScope: RUNTIME_SCOPE,
   uploadingItems,
   dragging,
   handleFileDrop,

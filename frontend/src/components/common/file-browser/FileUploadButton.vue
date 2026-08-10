@@ -27,7 +27,10 @@ const emit = defineEmits<{ select: [e: Event] }>()
 
 .fub.grid {
   border: 1.5px dashed rgba(0,0,0,0.09);
-  border-radius: 14px; corner-shape: round; overflow: hidden; min-height: 130px;
+  /* 文件/文件夹卡片的实际网格行高约为 132.86px（90px 内容区加标签区）。
+     上传入口与卡片同属 Grid 行且参与 Runtime FLIP，低于行高会在底部拖拽时
+     让 scrollHeight 少几个像素，浏览器随即把 scrollTop clamp 到更小的值。 */
+  border-radius: 14px; corner-shape: round; overflow: hidden; min-height: 133px;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 7px;
   font-size: 10px; font-weight: 600;

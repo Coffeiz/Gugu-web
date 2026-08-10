@@ -97,6 +97,40 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
     await personalCrumb.click()
     await expect(page.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
   })
+
+  test('底部拖拽单卡不改变文件区滚动位置', async ({ page }) => {
+    await page.goto('/files')
+    await page.locator('.folder-card', { hasText: '个人文件' }).first().click()
+    await expect(page.locator('.file-browser-panel')).toBeVisible()
+
+    const root = page.locator('.files-page')
+    const viewport = root.locator('.files-main')
+    const cards = root.locator('.fc-card')
+    const cardCount = await cards.count()
+    test.skip(cardCount === 0, '没有可拖拽文件卡')
+
+    // 将内容推到真正的滚动底部，覆盖“最后一行卡片被抓起”的边界。
+    await viewport.evaluate((element) => {
+      element.scrollTop = element.scrollHeight
+    })
+    const source = cards.last()
+    const box = await source.boundingBox()
+    if (!box) throw new Error('底部文件卡没有可见的 bounding box')
+
+    const startX = box.x + box.width / 2
+    const startY = box.y + box.height / 2
+    const before = await viewport.evaluate((element) => element.scrollTop)
+
+    await page.mouse.move(startX, startY)
+    await page.mouse.down()
+    // 只横向越过抓取阈值，避免触发靠近视口边缘时的自动滚动。
+    await page.mouse.move(startX + 8, startY, { steps: 2 })
+    const during = await viewport.evaluate((element) => element.scrollTop)
+    await page.mouse.up()
+    await page.mouse.move(0, 0)
+
+    expect(Math.abs(during - before)).toBeLessThanOrEqual(0.1)
+  })
 })
 
 test.describe('文件库：多选拖拽（沿用旧编排，Runtime 接入不影响）', () => {

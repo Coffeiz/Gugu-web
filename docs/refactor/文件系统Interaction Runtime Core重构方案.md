@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | ✅ 文件库主页面的单卡已通过 Vue API 接入并 devserver 验证（2026-08-10）；项目编辑卡仍保留过渡性的 Vue adapter 接线；Phase 3（多选进 Runtime）及 Phase 5 的多选清理依赖 gugu-interaction-runtime 的 GroupDragSession，待该仓库交付后作为独立轨道推进 |
+| 状态 | ✅ 文件库主页面与项目编辑卡的单卡、多选入口已接入 Runtime Group API；文件系统对象、Surface、Target 已统一走 Vue API；Runtime Core 与 Demo 多选验证完成（2026-08-11）；旧拖拽兼容状态的最终删除和全量验收留在 Phase 5 |
 | 重构分支 | `codex-filesystem-core-rebuild` |
 | 基线 | `main` 合并 PR16 后的 `c1a2df52` |
 | 关联仓库 | `gugu-interaction-runtime` |
@@ -14,11 +14,16 @@
 
 ## 2. 重构动机
 
-当前文件系统接入已经完成单卡 Runtime/Vue API 收口，但多选和项目编辑卡仍有过渡代码：
+当前文件系统接入已经完成单卡 Runtime/Vue API 收口；Runtime Demo 与 Gugu-web 文件库、项目编辑卡已经完成 Group API 接入，仍有少量旧 composable 和目标反馈字段待 Phase 5 清理：
 
 1. Interaction Runtime 负责单卡 pointer、命中、代理、FLIP 和 landing。
 2. 文件库主页面和文件卡组件通过 Vue composable 管理对象、Surface、Target 生命周期和 Action 分流。
-3. ProjectModal 仍通过 `createVueRuntimeAdapter` 保留一层过渡接线；`useFileDragDrop` 及项目文件拖拽逻辑继续维护多选和部分旧 DOM 拖动生命周期。
+3. ProjectModal 的对象、Surface、Target 和 Action 已通过 Vue API 接入；`createVueRuntimeAdapter` 只保留布局事务能力，`useFileDragDrop` / `useProjectFileDrag` 暂时保留共享的旧目标反馈和兼容状态，但卡片 pointerdown 与多选拖动已由 Runtime 接管。
+
+`gugu-interaction-runtime` 已提供并验证：`GroupDragSession`、`startGroupObjectPointer()`、
+`move-group` Action、同组 Object ownership、共享运动/landing/regrab 时间线，以及主卡 +
+后置修饰卡的通用视觉上下文。Runtime Demo 的网格/列表多选 E2E 已通过；这只代表通用 Core
+和 Demo 可用，不代表 Gugu-web 真实文件页已经迁移完成。
 
 这会导致：
 
@@ -245,7 +250,8 @@ Phase 1 落地时已经顺带满足本阶段的实质要求，本阶段只做核
 
 ### Phase 3：多选交互进入 Runtime（跨仓库，独立轨道）
 
-当前 Runtime Core 主要覆盖单 Object。要删除旧多选拖拽，需先提供通用 group interaction：
+Runtime Core 的通用 group interaction 已完成并在 Demo 验证。现在本阶段的重点从“设计并实现
+Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API”，仍需保证：
 
 - 多 Object 选择快照；
 - 一个 group session；
@@ -278,14 +284,63 @@ Phase 1 落地时已经顺带满足本阶段的实质要求，本阶段只做核
 仍分别调用现有的 `moveFilesInto` / `moveFoldersInto`，继续复用乐观更新、回滚、权限和
 后端校验。
 
-**依赖说明**：这一阶段不在 Gugu-web / 本仓库内完成，前置工作在 `gugu-interaction-runtime` 仓库：
+#### Phase 3 TODO
 
-- 新增 `GroupDragSession`（不改造现有 `Session.objectId` 标量字段，避免牵连 `RuntimeMove.ts` 等既有单对象读取点）；
+**A. Runtime Core（`gugu-interaction-runtime`）✅ 已完成（2026-08-11）**
+
+- [x] 定义 `GroupDragSession` 的创建、更新、取消、regrab 和结束状态机；
+- [x] 保存 `primaryObjectId`、完整 `objectIds`、来源 Surface 和附属卡相对主卡的初始偏移；
+- [x] 为同一 group 获取和释放全部 Object ownership，避免旧实例或单卡 session 抢占；
+- [x] 让主卡独占 pointer 跟随、速度采样、物理落点和目标命中；
+- [x] 让附属卡共享主卡运动轨迹，并支持主卡/附属卡在 landing、取消和 regrab 中同步；
+- [x] 通过 `VisualLifecycleContext.group` 提供主代理 + 附属代理的通用视觉上下文；当前 Demo
+      使用单代理叠卡，暂不扩大为多个独立物理代理；
+- [x] 增加 `move-group` Action，保证对象顺序稳定且包含主卡 ID、来源和目标 Surface；
+- [x] 补充 Group Session、Action、对象卸载、取消和文件系统 Demo 回归测试；
+
+**B. Runtime Demo（先验证通用能力）✅ 已完成（2026-08-11）**
+
+- [x] 以当前 `startMultiPhysicsDrag` 为视觉基线接入 Group Session，不改变主卡、修饰卡的布局、
+  阴影、缩放、compact/list 和 landing 参数；
+- [x] 验证网格和列表两种布局下主卡均为鼠标实际抓取卡，修饰卡保持后置偏移；
+- [x] 验证抛出、回弹、落地、落点命中和落地前 regrab 全部由同一 group 时间线驱动；
+- [x] 验证无论选中 2 张还是更多对象，视觉上只展示主卡和 1～2 张修饰卡，但业务对象不丢失；
+- [x] 通过 Demo 拖动、取消、跨列移动、快速连续拖动和文件夹落地 E2E 验收。
+
+**C. Gugu-web Vue 接入**
+
+- [x] 更新 `.runtime-version` 并核对 Group Session API；
+- [x] 将文件库多选入口从 `useFileDragDrop` 的拖拽生命周期改为 Runtime Group Session；
+- [x] 将项目编辑卡多选入口从 `useProjectFileDrag` 的拖拽生命周期改为同一套 Group API；
+- [x] 保留选择快照、目标配置和业务批量移动回调，不把文件 API、乐观更新或权限规则放进 Runtime；
+- [x] 通过 `useRuntimeAction` 接收 `move-group`，按对象 ID 分流 `moveFilesInto` / `moveFoldersInto`；
+- [x] 失败时沿用现有 optimistic mutation 和 rollback，不能重复触发 landing 或重复提交对象。
+
+#### Phase 3 C 执行记录（2026-08-11）
+
+- 文件库网格、列表的文件/文件夹卡已通过 Vue `useObject({ selected })` 声明选中状态；单卡和多卡统一保留 `move` 能力，不再由业务侧按选区切换 pointer 拖拽入口。
+- 文件库订阅 `move` 与 `move-group` Action，并按对象 ID 分别复用现有文件/文件夹批量移动函数；Runtime 不持有文件 API、权限或 optimistic mutation。
+- 项目编辑卡网格/列表已经移除旧的 `useProjectFileDrag` 卡片 pointerdown 入口；对象的 `selected` 状态与 `move-group` Action 统一由 Runtime 管理，业务侧仍保留原有选择框、工具栏和批量移动函数。
+- 项目编辑卡的网格卡、列表行、浏览区 Surface 和面包屑 Target 已改用 `components/common/file-browser` 下的 Vue Runtime 包装组件；ProjectModal 不再手写对象/Surface 注册、generation、延迟注销或 DOM bind。
+
+**D. Gugu-web 验收与清理**
+
+- [ ] 文件库网格、列表、回收站和项目文件区分别验证多文件、多文件夹及混合选择；
+- [ ] 验证主卡抓取、修饰卡显示、跨目录移动、面包屑落点、无效落点、取消和落地前 regrab；
+- [ ] 验证 API 成功、409、权限拒绝和批量部分失败时的回滚与缓存一致性；
+- [ ] 对比单卡路径，确认 Group Session 没有改变单卡动作、视觉和生命周期；
+- [ ] 删除 `fileDrag.ts` / `useProjectFileDrag.ts` 中仅服务多选拖拽的生命周期代码；
+- [ ] 清理多选旧路径专用的探针、兼容类型和测试，保留选择、业务移动和上传逻辑；
+- [ ] 更新 Runtime 接入文档、changelog，并在合并前完成 typecheck、单测和关键 E2E。
+
+**依赖说明**：Runtime 前置工作已经在 `gugu-interaction-runtime` 仓库完成；Gugu-web 接下来只消费
+已验证的公共 API，不把文件业务规则搬进 Runtime：
+
+- 已新增 `GroupDragSession`（保留现有 `Session.objectId` 标量字段，主卡兼容既有单对象路径）；
 - `GroupDragSession` 保存 `primaryObjectId`、完整 `objectIds` 和各附属卡相对主卡的初始偏移；
-- `VisualProxyCoordinator` 支持 1 session : 1 个主代理 + N 个附属代理，视觉上默认只展示主卡和 1～2 张后置修饰卡；
-- 主代理和附属代理共享同一套跟手、弹簧、落地、取消和 regrab 时间线，不启动多个独立物理 session；
-- 复用现有 `Owner.takeObject`（循环获取多个 lease）、`GroupLayout` 的多元素 FLIP 原语、`Visual.createDragProxy`（调用 N 次），这几处已是 id-keyed/数组化实现，不需要改动；
-- 发布新版本后，本仓库更新 `.runtime-version` 锁定并消费。
+- Runtime 通过 `VisualLifecycleContext.group` 支持 1 session : 主代理 + N 个附属对象视觉描述，Demo 默认只展示主卡和 1～2 张后置修饰卡；
+- 主代理和附属对象共享同一套跟手、弹簧、落地、取消和 regrab 时间线，不启动多个独立物理 session；
+- Runtime Demo 与 Gugu-web 文件库、项目编辑卡已通过 `GroupDragSession`、`MoveGroupAction` 和对应的类型校验；后续只需完成 UI 端到端验收和旧兼容代码清理。
 
 **与其他阶段的关系**：Phase 3 与 Phase 0/1/2/4 没有依赖关系，不阻塞后者合并上线。Phase 0/1/2/4 可以独立推进、独立验收、独立合并；Phase 3（以及依赖它的 Phase 5 多选清理部分）作为单独时间线，在 `gugu-interaction-runtime` 侧的 `GroupDragSession` 发布后再启动，不按线性阶段顺序卡住前面的工作。
 
@@ -331,10 +386,14 @@ adapter，本身就是要长期保留的产物；两个入口的 Runtime 注册 
 `browserSurfaceId`/`folderSurfaceId`/`parseFolderSurfaceId`/`breadcrumbSurfaceId`/
 `parseBreadcrumbSurfaceId`/`fileObjectId` 均有实际调用点，未发现其余死代码。
 
+#### Phase 5 当前执行记录（2026-08-11）
+
+- 文件库网格/列表已经移除旧 `onFilePointerDown` / `onFolderPointerDown` 入口，以及按选区在旧 pointer 拖拽与 Runtime 之间切换的分流代码；选择框、工具栏、拖拽目标高亮状态和业务移动函数均保留。
+- `useFileDragDrop.ts` 与 `useProjectFileDrag.ts` 暂不删除：项目编辑卡已不再从它们调用卡片 pointerdown，但其中的目标反馈/兼容状态仍需结合 Runtime 的目标视觉能力单独清理。
+- 当前 Phase 5 不能标记为全完成；本轮已完成文件库和项目编辑卡的 Group API 接入，尚未删除旧兼容代码，也未替代选择框、工具栏和业务 Action。
+
 余下两条（`fileDrag.ts`/`useProjectFileDrag.ts` 的拖拽职责清理、仅用于旧路径的
-测试）明确依赖 Phase 3（多选进 Runtime），而 Phase 3 依赖 `gugu-interaction-runtime`
-仓库尚未开发的 `GroupDragSession`（见 Phase 3 小节的跨仓库依赖说明），本轮不具备
-执行条件，保持待办，不算本次重构范围内的遗留问题。
+测试）属于 Phase 5 收尾，不再阻塞 Phase 3 的 Group API 接入。
 
 ## 7. 暂不做的事情
 

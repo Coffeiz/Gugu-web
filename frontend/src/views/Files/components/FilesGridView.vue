@@ -3,11 +3,12 @@
     <RuntimeFolderCard v-for="f in sortedContents.folders" :key="f.id"
       :card-props="{ displayName: f.displayName, countLabel: f.count != null ? f.count + ' 项' : '—', accentColor: folderAccentColor(f), selected: selectedFolderKeys.has(f.id), preSelected: previewFolderKeys.has(f.id), dragOver: dragOverFolderId === f.folderId, selectionMode: inSelectionMode }"
       :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser"
-      :runtime-abilities="f.type === 'folder' && f.folderId != null && !isFolderRoutedToLegacyDrag(f.id) ? ['move'] : []"
+      :runtime-selected="selectedFolderKeys.has(f.id)"
+      :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []"
       :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined"
       :data-folder-key="f.id" :data-folder-id="f.folderId"
       data-layout-role="card" :data-layout-key="folderLayoutKey(f)"
-      @contextmenu.prevent.stop="openCtx('folder', f, $event)" @click.stop="handleFolderClick(f, $event)" @pointerdown="onFolderPointerDown(f, $event)">
+      @contextmenu.prevent.stop="openCtx('folder', f, $event)" @click.stop="handleFolderClick(f, $event)">
       <template #icon><component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" /></template>
       <template #name><span :title="f.displayName"><span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></span></template>
       <template #actions>
@@ -20,8 +21,9 @@
     <RuntimeFileCard v-for="f in sortedContents.files" :key="f.id" class="hover-card-fx"
       :card-props="{ ext: f.ext, displayName: f.displayName, hasThumb: isImageExt(f.ext), selected: selectedIds.has(f.id), preSelected: previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
       :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser"
-      :runtime-abilities="isFileRoutedToLegacyDrag(f.id) ? [] : ['move']"
-      :data-file-id="f.id" data-layout-role="card" :data-layout-key="fileLayoutKey(f)" @contextmenu.prevent.stop="openCtx('file', f, $event)" @click.stop="handleFileClick(f, $event)" @pointerdown="onFilePointerDown(f, $event)">
+      :runtime-selected="selectedIds.has(f.id)"
+      :runtime-abilities="['move']"
+      :data-file-id="f.id" data-layout-role="card" :data-layout-key="fileLayoutKey(f)" @contextmenu.prevent.stop="openCtx('file', f, $event)" @click.stop="handleFileClick(f, $event)">
       <template #thumb><img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny', revision: f.thumbRevision }" decoding="async" draggable="false" alt="" /><img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card', revision: f.thumbRevision }" :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }" decoding="async" draggable="false" alt="" @load="cardBlobReadyIds.add(f.id)" @error="($event.target as HTMLElement).style.display='none'" /><div class="fc-thumb-fade"></div></template>
       <template #name><span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></template>
       <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
@@ -39,13 +41,13 @@ import type { PropType } from 'vue'
 import { PhCheck, PhDownloadSimple, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
-import RuntimeFileCard from '@/views/Files/components/RuntimeFileCard.vue'
-import RuntimeFolderCard from '@/views/Files/components/RuntimeFolderCard.vue'
+import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
+import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
-const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, onFolderPointerDown, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag, layoutCollection } = props.context
+const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, folderLayoutKey, fileLayoutKey, layoutCollection } = props.context
 </script>
 
 <style scoped>

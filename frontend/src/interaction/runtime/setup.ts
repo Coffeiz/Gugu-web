@@ -9,6 +9,7 @@ export function setupInteractionRuntime(): void {
 
   runtime.registerObjectType('project-card', {
     defaultVisualMode: 'detach',
+    groupVisual: 'default',
     motion: { enabled: true },
     // 抓取对齐沿用咕咕旧版（main 分支 usePhysicsDrag.ts）看板卡片的
     // centerGrab:true 手感：卡片几何中心对齐指针，再往下偏 12px 做出
@@ -57,12 +58,13 @@ export function setupInteractionRuntime(): void {
   const listProxyLayout = {
     compact: {
       selector: '.list-row',
-      width: 'min(268px, calc(100vw - 48px))',
-      gridTemplateColumns: '1.4fr 36px 0.9fr 38px 0px 0px',
+      width: 'min(300px, calc(100vw - 48px))',
+      gridTemplateColumns: '1.3fr 36px 1fr 44px 0px 0px',
     },
   }
   runtime.registerObjectType('file-item', {
     defaultVisualMode: 'detach',
+    groupVisual: 'default',
     landingMode: 'target',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
@@ -71,6 +73,7 @@ export function setupInteractionRuntime(): void {
   })
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
+    groupVisual: 'default',
     landingMode: 'target',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,

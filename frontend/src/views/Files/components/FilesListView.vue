@@ -17,8 +17,8 @@
       ><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
     </div>
 
-    <RuntimeFolderListRow v-for="f in sortedContents.folders" :key="f.id" :item="f" :context="props.context" :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-abilities="f.type === 'folder' && f.folderId != null && !isFolderRoutedToLegacyDrag(f.id) ? ['move'] : []" :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined" />
-    <RuntimeFileListRow v-for="f in sortedContents.files" :key="f.id" :item="f" :context="props.context" :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-abilities="isFileRoutedToLegacyDrag(f.id) ? [] : ['move']" />
+    <RuntimeFolderListRow v-for="f in sortedContents.folders" :key="f.id" :item="f" :context="props.context" :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedFolderKeys.has(f.id)" :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []" :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined" />
+    <RuntimeFileListRow v-for="f in sortedContents.files" :key="f.id" :item="f" :context="props.context" :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-selected="selectedIds.has(f.id)" :runtime-abilities="['move']" />
 
     <!-- 上传中的幽灵卡片 -->
     <FileUploadGhostCard
@@ -78,13 +78,13 @@ const headers = [
 
 const {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx,
-  selectedFolderKeys, previewFolderKeys, dragOverFolderId, handleFolderClick, onFolderPointerDown,
+  selectedFolderKeys, previewFolderKeys, dragOverFolderId, handleFolderClick,
   folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode,
-  selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
+  selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile, deleteSingleFile,
   uploadingItems, loading, canUpload, handleFileInput,
-  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag, layoutCollection,
+  folderLayoutKey, fileLayoutKey, layoutCollection,
 } = props.context
 </script>
 
@@ -198,5 +198,5 @@ const {
    不加 overflow:hidden 会从 0 宽的列格里溢出来。按位置而不是类名选择这两列——文件行
    第 5、6 个直接子元素固定是 date/actions，文件夹行是占位/actions，两种行位置一致，
    比 .lr-text 这种文件行/文件夹行共用、大小和日期又共用的类名更准确。 */
-.list-row[data-runtime-proxy-content] > :nth-child(n+5) { overflow: hidden; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(n+5) { overflow: hidden; }
 </style>
