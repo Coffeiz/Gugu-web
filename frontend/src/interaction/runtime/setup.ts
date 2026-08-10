@@ -23,17 +23,35 @@ export function setupInteractionRuntime(): void {
   // 插值出不对齐的中间态，表现为拖入文件夹时图标/缩略图直接变成了文件夹本身，而不是带着
   // 自己的图标飞向文件夹再缩小消失。demo 的 file-item/folder-item 共用同一套内部结构，
   // morph 平滑不易察觉；咕咕这边关掉这段 morph，只保留位置和缩小淡出。
+  // target 飞入/消失参数：消失（300ms ease-out、缩到 0.72）沿用 demo 调参面板的数值。
+  // 飞入弹簧刚度/阻尼当前是 200/25（在测试阶段，先保留阻尼不变只提刚度）——
+  // integrateSpring 是标准阻尼弹簧（a = k·(target-x) - c·v，质量隐含为 1），
+  // 临界阻尼 = 2√k。200/25 的阻尼比 ζ = 25/(2√200) ≈ 0.88（欠阻尼，会有轻微
+  // 过冲回弹，跟之前 100/25（ζ≈1.25，过阻尼）或 200/35（同比例的过阻尼版本，
+  // ζ≈1.25）手感不同，目前在对比快速甩动时"贴合目标飞入"的弧线观感是否更接近
+  // demo，还在调参阶段，不是最终值。
+  // landing.duration/easing 这两个字段在 disableTargetVisualMorph:true 时基本不生效
+  // （只驱动内容/背景 morph 的 CSS transition，这条路径被关掉了），位置动画完全由弹簧
+  // 自己收敛决定，留着仅为字段完整性，不影响实际手感。
+  const targetMotionProfile = {
+    motion: {
+      position: { stiffness: 200, damping: 25 },
+      scale: { stiffness: 200, damping: 25 },
+    },
+    landing: { duration: 300, easing: 'ease-out' as const },
+    dismiss: { duration: 300, easing: 'ease-out' as const, scale: 0.72 },
+  }
   runtime.registerObjectType('file-item', {
     defaultVisualMode: 'detach',
     landingMode: 'target',
-    motion: { enabled: true },
+    motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
   })
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
     landingMode: 'target',
-    motion: { enabled: true },
+    motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
   })
