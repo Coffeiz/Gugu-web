@@ -216,7 +216,7 @@ import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates'
-import { nextZ } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
 import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
@@ -259,6 +259,14 @@ function openTplPanel() {
 
 watch(tplOpen, async v => {
   if (v) { openTplPanel(); await nextTick(); }
+})
+
+let unregisterTplPopover: (() => void) | null = null
+watch(tplOpen, v => {
+  unregisterTplPopover?.()
+  unregisterTplPopover = v
+    ? registerPopover(z => { tplPanelStyle.value = { ...tplPanelStyle.value, zIndex: z } })
+    : null
 })
 
 function applyTpl(t: any) {
@@ -314,7 +322,10 @@ function onClickOutsideTpl(e: MouseEvent) {
 }
 
 onMounted(() => document.addEventListener('click', onClickOutsideTpl, true))
-onUnmounted(() => document.removeEventListener('click', onClickOutsideTpl, true))
+onUnmounted(() => {
+  unregisterTplPopover?.()
+  document.removeEventListener('click', onClickOutsideTpl, true)
+})
 
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`

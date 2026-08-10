@@ -99,6 +99,8 @@
     "src/views/DevOnboarding.vue",
     "src/views/Admin/Agent/index.vue",
     "src/views/Calendar/index.vue",
+    "src/views/Calendar/domain/**/*.ts",
+    "src/views/Calendar/utils/**/*.ts",
     "src/views/Mind/index.vue",
     "src/views/Mind/NotesView.vue",
     "src/views/Mind/components/CaptureBar.vue",

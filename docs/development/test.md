@@ -26,7 +26,7 @@
 `.github/workflows/runtime-integration.yml` 的 `e2e` job 目前只按文件名显式跑这几条（不是跑全部 `e2e/*.spec.ts`）：
 
 ```
-npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts
+npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts e2e/calendar.spec.ts
 ```
 
 **新增用例要不要接进 CI，标准是"能不能做到完全确定"**：

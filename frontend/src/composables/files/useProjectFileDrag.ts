@@ -21,7 +21,11 @@ export function useProjectFileDrag(options: ProjectFileDragOptions) {
     folderSelector: '.folder-card, .folder-list-row',
     bcSelector: '.bc-seg',
     resolveBcTarget(index) {
-      if (index === -1) return { targetFolderId: null, acceptsFiles: true, acceptsFolders: true }
+      if (index === -1) {
+        // 当前就在项目根目录时，「项目文件」这一段代表的正是当前目录，拖回来不算有效落点
+        if (!options.folderStack.value.length) return null
+        return { targetFolderId: null, acceptsFiles: true, acceptsFolders: true }
+      }
       const segment = options.folderStack.value[index]
       return segment ? { targetFolderId: segment.id, acceptsFiles: true, acceptsFolders: true } : null
     },

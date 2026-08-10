@@ -1,5 +1,5 @@
-<!-- 活动编辑表单的字段部分（名称/日期/全天/时间段/描述/提醒），从 Calendar/index.vue 抽出来，
-     好让全局的活动引用卡片弹窗（EventEditModal）跟日历页自己的编辑浮层共用同一份字段和提醒逻辑。
+<!-- 活动表单的字段部分（名称/日期/全天/时间段/描述/提醒），从 Calendar/index.vue 抽出来，
+     好让新建活动和全局编辑弹窗共用同一份字段和提醒逻辑。
      外壳（浮层定位 / 居中弹窗、标题栏、保存删除按钮）留在各自的调用方，这里只管字段本身。 -->
 <template>
   <input v-model="event.name" class="popup-input" placeholder="活动名称"
@@ -44,11 +44,11 @@ import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import {
   LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
-  type EditingEvent, type useEventEditForm,
+  type EventDraft, type useEventEditForm,
 } from '@/composables/useEventEditForm'
 
 defineProps<{
-  event: EditingEvent
+  event: EventDraft
   form: ReturnType<typeof useEventEditForm>
   autofocus?: boolean
   isPastDate: (d: string | null | undefined) => boolean
