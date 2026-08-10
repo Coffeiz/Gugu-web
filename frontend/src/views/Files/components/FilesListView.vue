@@ -294,4 +294,14 @@ const {
 .sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
 .sel-cb-enter-from,
 .sel-cb-leave-to { opacity: 0; }
+
+/* 抓起时的紧凑代理（proxyLayout.compact，见 interaction/runtime/setup.ts）：代理是
+   .list-row 的完整克隆，天生带着跟本体一模一样的 grid-template-columns。紧凑/展开
+   的列宽切换完全交给 Visual.ts 用内联样式驱动（跟本体保持同一套 6 列定义，只把日期/
+   操作两列的宽度在 0px 和真实值之间过渡），这里不需要另起一套布局规则去重排字段位置。
+   唯一要补的是：日期/操作两列宽度收到 0px 时，它们自己的文字/按钮内容不会跟着缩小，
+   不加 overflow:hidden 会从 0 宽的列格里溢出来。按位置而不是类名选择这两列——文件行
+   第 5、6 个直接子元素固定是 date/actions，文件夹行是占位/actions，两种行位置一致，
+   比 .lr-text 这种文件行/文件夹行共用、大小和日期又共用的类名更准确。 */
+.list-row[data-runtime-proxy-content] > :nth-child(n+5) { overflow: hidden; }
 </style>

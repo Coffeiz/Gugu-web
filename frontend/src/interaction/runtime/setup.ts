@@ -41,12 +41,33 @@ export function setupInteractionRuntime(): void {
     landing: { duration: 300, easing: 'ease-out' as const },
     dismiss: { duration: 300, easing: 'ease-out' as const, scale: 0.72 },
   }
+  // 列表行抓起时收成紧凑卡片，不带着整行 6 列宽的表格布局跟手飞。gridTemplateColumns
+  // 跟 FilesListView.vue 里 .list-row 真实的列定义（2fr 90px 1.2fr 80px 72px 56px）
+  // 轨道数量、类型完全一致——这样抓起/落地时浏览器是在给同一套列定义做数值插值，不是
+  // 两套布局互相替换的瞬间跳变，字段落地时能精确回到本体行里真实的列位置。
+  // 每一列紧凑值和真实值必须是同一种单位类型（fr↔fr 或 px↔px），浏览器才能连续插值；
+  // 两边类型对不上的属性值是不可插值的，过渡到一半会直接瞬间跳变，不是连续变化（第 1、
+  // 3 列——名称、项目阶段——本体是 fr，紧凑态也必须用 fr，不能改成 px，踩过一次坑：
+  // 项目阶段改成固定 px 后单独跳变了一下，跟其它列的连续过渡对不上）。
+  // 类型/项目阶段/大小三列不照抄本体的 90px/1.2fr/80px（那是给"MD"这种短徽章、"0 KB"
+  // 这种短文本留了本体表格才需要的大量空白），收紧到接近内容实际宽度；日期/操作两列
+  // 收到 0。这个字符串跟 FilesListView.vue 的列定义是耦合的，那边的列宽/列数一旦改动，
+  // 这里要同步改。
+  // selector 只匹配 .list-row，网格视图的 FolderCard/FileCard 不带这个 class，不受影响。
+  const listProxyLayout = {
+    compact: {
+      selector: '.list-row',
+      width: 'min(268px, calc(100vw - 48px))',
+      gridTemplateColumns: '1.4fr 36px 0.9fr 38px 0px 0px',
+    },
+  }
   runtime.registerObjectType('file-item', {
     defaultVisualMode: 'detach',
     landingMode: 'target',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
+    proxyLayout: listProxyLayout,
   })
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
@@ -54,6 +75,7 @@ export function setupInteractionRuntime(): void {
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
+    proxyLayout: listProxyLayout,
   })
   runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({
