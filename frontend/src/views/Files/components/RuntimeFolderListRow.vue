@@ -10,10 +10,12 @@
 import type { PropType } from 'vue'
 import { PhCheck, PhDownloadSimple, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
-import { useObject, type ObjectTargetOptions } from '@/interaction/runtime/vue'
+import { useObject, useSurface, type ObjectTargetOptions } from '@/interaction/runtime/vue'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
 
 const props = defineProps({ item: { type: Object as PropType<FolderCardMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeTarget: { type: Object as PropType<ObjectTargetOptions | undefined>, default: undefined } })
+const targetSurfaceId = props.runtimeTarget?.surfaceId ?? `${props.runtimeId}:surface`
+useSurface({ id: targetSurfaceId, type: 'file-folder', accepts: ['file-item', 'folder-item'] })
 const { elementRef } = useObject({ id: props.runtimeId, type: 'folder-item', surface: () => props.runtimeSurfaceId, abilities: () => props.runtimeAbilities, target: () => props.runtimeTarget })
 const { selectedFolderKeys, previewFolderKeys, dragOverFolderId, handleFolderClick, onFolderPointerDown, openCtx, folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, inSelectionMode } = props.context
 </script>

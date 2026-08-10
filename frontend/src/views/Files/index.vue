@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import type { TrashFolderMeta } from '@/services/api'
 import FileUploadDropOverlay from '@/components/common/file-browser/FileUploadDropOverlay.vue'
 import FileStorageUsage from '@/components/common/file-browser/FileStorageUsage.vue'
@@ -209,7 +209,6 @@ import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
-  folderSurfaceId,
   parseFolderSurfaceId,
   breadcrumbSurfaceId,
   parseBreadcrumbSurfaceId,
@@ -670,31 +669,6 @@ function fileLayoutKey(f: FileMeta): string {
   return fileObjectId(RUNTIME_SCOPE, 'file', f.id)
 }
 
-const runtimeSurfaceIds = new Set<string>()
-
-watchEffect(() => {
-  const allFolders = sortedContents.value.folders.filter(f => f.type === 'folder' && f.folderId != null)
-  // Surface：浏览区由 useSurface 管理；
-  // 文件夹自己的语义 Surface 和面包屑语义 Surface 只用来承接 Target，不对应真实容器 DOM。
-  const nextSurfaceIds = new Set<string>()
-  for (const f of allFolders) nextSurfaceIds.add(folderSurfaceId(RUNTIME_SCOPE, f.folderId as number))
-  navPath.value.forEach((seg, i) => { if (isBcDroppable(seg, i)) nextSurfaceIds.add(breadcrumbSurfaceId(RUNTIME_SCOPE, i)) })
-  for (const id of nextSurfaceIds) {
-    if (!runtime.surfaces.has(id)) runtime.surfaces.register({
-      id,
-      type: id.includes(':breadcrumb:') ? 'file-breadcrumb' : 'file-folder',
-      element: null,
-      accepts: ['file-item', 'folder-item'],
-    })
-    runtimeSurfaceIds.add(id)
-  }
-  for (const id of runtimeSurfaceIds) {
-    if (nextSurfaceIds.has(id)) continue
-    runtime.surfaces.unregister(id)
-    runtimeSurfaceIds.delete(id)
-  }
-})
-
 async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
   const isFolder = objectId.startsWith(`${RUNTIME_SCOPE}:folder:`)
   const isFile = objectId.startsWith(`${RUNTIME_SCOPE}:file:`)
@@ -733,7 +707,6 @@ useRuntimeAction(action => {
 onUnmounted(() => {
   // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
   syncFileDragRotation('grid')
-  for (const id of runtimeSurfaceIds) runtime.surfaces.unregister(id)
   domAdapter.dispose()
 })
 

@@ -11,7 +11,7 @@
 <script setup lang="ts">
 import { computed, ref, useAttrs, watch, type PropType } from 'vue'
 import FolderCard from '@/components/common/file-browser/FolderCard.vue'
-import { useObject, type ObjectTargetOptions } from '@/interaction/runtime/vue'
+import { useObject, useSurface, type ObjectTargetOptions } from '@/interaction/runtime/vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -25,6 +25,8 @@ const props = defineProps({
 })
 const attrs = useAttrs()
 const forwardedAttrs = computed(() => ({ ...attrs, ...props.cardProps }))
+const targetSurfaceId = props.runtimeTarget?.surfaceId ?? `${props.runtimeId}:surface`
+useSurface({ id: targetSurfaceId, type: 'file-folder', accepts: ['file-item', 'folder-item'] })
 
 const { elementRef } = useObject({
   id: props.runtimeId,

@@ -4,7 +4,7 @@
 
 <script setup lang="ts">
 import type { PropType } from 'vue'
-import { useTarget } from '@/interaction/runtime/vue'
+import { useSurface, useTarget } from '@/interaction/runtime/vue'
 
 defineOptions({ inheritAttrs: false })
 
@@ -15,6 +15,7 @@ const props = defineProps({
   priority: { type: Number, default: 1 },
 })
 
+useSurface({ id: props.surfaceId, type: 'file-breadcrumb', accepts: () => props.accepts })
 const { elementRef } = useTarget({
   id: props.targetId,
   surfaceId: () => props.surfaceId,
