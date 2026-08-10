@@ -103,7 +103,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { nextZ } from '@/composables/windowz'
+import { nextZ, registerPopover } from '@/composables/windowz'
 
 const props = defineProps({
   startDate: { type: String, default: '' },
@@ -255,8 +255,21 @@ function onClickOutside(e: MouseEvent) {
   yearMode.value = false
 }
 
+// 日期范围选择器会 Teleport 到 body。注册为宿主窗口的浮层，编辑卡/新建卡被点击置顶时，
+// 仍让已打开的日期弹层保持在宿主之上，直到这次外部点击完成关闭。
+let unregisterPopover: (() => void) | null = null
+watch(open, v => {
+  unregisterPopover?.()
+  unregisterPopover = v
+    ? registerPopover(z => { popupStyle.value = { ...popupStyle.value, zIndex: z } })
+    : null
+})
+
 onMounted(() => document.addEventListener('click', onClickOutside, true))
-onUnmounted(() => document.removeEventListener('click', onClickOutside, true))
+onUnmounted(() => {
+  unregisterPopover?.()
+  document.removeEventListener('click', onClickOutside, true)
+})
 
 watch(() => props.startDate, v => {
   if (v) cursor.value = new Date(v + 'T00:00:00')

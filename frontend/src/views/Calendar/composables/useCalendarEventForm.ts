@@ -5,19 +5,13 @@ import {
   useEventEditForm, defaultTimeRange, LEAD_OPTIONS, CHAN_LABEL,
   isNextDay, onToggleAllDay,
 } from '@/composables/useEventEditForm'
+import type { EventDraft } from '@/composables/useEventEditForm'
 import type { CalendarRenderItem, CalendarTimeSelection } from '../domain/calendarTypes'
 import type { components } from '@/types/api'
 
 type EventResponse = components['schemas']['EventResponse']
 
-interface NewEventForm {
-  name: string
-  date: string
-  time: string
-  endTime: string
-  description: string
-  allDay: boolean
-}
+interface NewEventForm extends EventDraft {}
 
 interface EventFormOptions {
   selectedDate: Ref<string | null>
@@ -131,7 +125,7 @@ export function useCalendarEventForm(options: EventFormOptions) {
   }
 
   return {
-    showAddForm, addInputRef, addBtnRef, addFormRef, addFormStyle, newEvent, activeFormDate, isPastDate,
+    showAddForm, addInputRef, addBtnRef, addFormRef, addFormStyle, newEvent, activeFormDate, isPastDate, eventForm,
     reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel,
     resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
     LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,

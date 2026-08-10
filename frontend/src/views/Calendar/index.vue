@@ -107,7 +107,7 @@
     </div>
   </div>
 
-  <CalendarMorePopup :open="morePopup.open" :items="morePopup.items" :date-label="morePopup.dateLabel" :style="morePopup.style"
+  <CalendarMorePopup ref="morePopupRef" :open="morePopup.open" :items="morePopup.items" :date-label="morePopup.dateLabel" :style="morePopup.style"
                      @open-project="onMoreProject" @edit-event="onMoreEditEvent" @drag-item="onMoreDragItem" />
 
   <Teleport to="body">
@@ -118,49 +118,10 @@
   <!-- 添加事件弹窗 -->
   <Teleport to="body">
     <Transition name="form-pop">
-      <div v-if="showAddForm" class="add-event-popup" ref="addFormRef" :style="addFormStyle">
-        <div class="popup-header">
-          <span class="popup-title">添加活动</span>
-          <button class="popup-close-btn" @click="showAddForm = false" title="关闭">
-            <PhX :size="12" weight="bold" />
-          </button>
-        </div>
-        <input v-model="newEvent.name" ref="addInputRef" class="popup-input" placeholder="活动名称" v-enter="saveEvent" @keydown.esc="showAddForm = false" />
-        <div class="date-row">
-          <DatePicker class="date-row-picker" v-model="newEvent.date" placeholder="选择日期" />
-          <label class="allday-toggle">
-            <input type="checkbox" v-model="newEvent.allDay" @change="onToggleAllDay(newEvent)" />
-            全天
-          </label>
-        </div>
-        <div class="time-box" v-if="!newEvent.allDay">
-          <TimeInput v-model="newEvent.time" :boxed="false" />
-          <span class="time-dash">—</span>
-          <TimeInput v-model="newEvent.endTime" :boxed="false" />
-          <span v-if="isNextDay(newEvent.time, newEvent.endTime)" class="nextday-tag">次日</span>
-        </div>
-        <textarea v-model="newEvent.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
-        <div class="reminder-section" v-if="!isPastDate(activeFormDate)">
-          <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
-          <div v-for="(r, i) in reminders" :key="i" class="reminder-item">
-            <select v-model.number="r.leadMin" class="lead-select">
-              <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
-            </select>
-            <button class="reminder-del" @click="removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
-          </div>
-          <button class="reminder-add-toggle" @click="addReminder">＋ 添加提醒</button>
-          <div class="chan-block" v-if="reminders.length">
-            <div class="reminder-label">渠道</div>
-            <div class="chan-chips">
-              <button class="chan-chip" :class="{ on: reminderChannels.includes('web') }" @click="toggleReminderChannel('web')">web</button>
-              <button v-for="ch in imChannels" :key="ch" class="chan-chip" :class="{ on: reminderChannels.includes(ch) }" @click="toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
-            </div>
-            <button class="reminder-test-bar" @click="testReminderChannels(newEvent.name)"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
-          </div>
-        </div>
-        <div class="popup-actions">
-          <button class="popup-save" @click="saveEvent" :disabled="!newEvent.name">保存</button>
-        </div>
+      <div v-if="showAddForm" class="add-event-popup shared-event-popup" ref="addFormRef" :style="addFormStyle">
+        <EventFormPanel :event="newEvent" :form="eventForm" :is-past-date="isPastDate" title="添加活动" autofocus
+                        @save="saveEvent" @close="showAddForm = false"
+                        @test-reminder="testReminderChannels(newEvent.name)" />
       </div>
     </Transition>
   </Teleport>
@@ -181,8 +142,6 @@ import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
 import { eventsApi } from '@/services/api'
-import DatePicker from '@/components/common/DatePicker.vue'
-import TimeInput from '@/components/common/TimeInput.vue'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError } from '@/composables/useAppToast'
@@ -192,6 +151,7 @@ import CalendarSidebar from './components/CalendarSidebar.vue'
 import YearMonthPicker from './components/YearMonthPicker.vue'
 import CalendarMorePopup from './components/CalendarMorePopup.vue'
 import CalendarContextMenu from './components/CalendarContextMenu.vue'
+import EventFormPanel from '@/components/events/EventFormPanel.vue'
 import MonthGrid from './components/MonthGrid.vue'
 import WeekTimeline from './components/WeekTimeline.vue'
 import { useCalendarUpcoming } from './composables/useCalendarUpcoming'
@@ -212,7 +172,7 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import { PhX, PhCalendarPlus, PhFolderPlus, PhBell, PhPaperPlaneTilt } from '@phosphor-icons/vue'
+import { PhCalendarPlus, PhFolderPlus } from '@phosphor-icons/vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。
@@ -662,7 +622,6 @@ function onMoreProject(item: CalItem) {
 }
 
 function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
-  morePopup.value.open = false
   openEditForm(payload.item, payload.event, true)
 }
 
@@ -792,6 +751,7 @@ const {
   onAllDayDown, onAllDayHover, onAllDayLeave, onColDown, onColMove, onColLeave,
 } = useCalendarWeekInteraction({
   viewMode,
+  hourHeight: HOUR_H,
   weekDays,
   activeRange,
   rangeSelect,
@@ -804,10 +764,8 @@ const {
 })
 
 const {
-  showAddForm, addInputRef, addBtnRef, addFormRef, addFormStyle, newEvent, activeFormDate, isPastDate,
-  reminders, reminderChannels, imChannels, addReminder, removeReminderAt, toggleReminderChannel,
+  showAddForm, addBtnRef, addFormRef, addFormStyle, newEvent, isPastDate, eventForm,
   resetReminder, testReminderChannels, openAddForm, saveEvent, deleteEvent,
-  LEAD_OPTIONS, CHAN_LABEL, isNextDay, onToggleAllDay,
 } = useCalendarEventForm({
   selectedDate,
   todayIso,
@@ -1132,7 +1090,30 @@ function clampPopupIntoView(elRef: { value: HTMLElement | null }, styleRef: { va
 }
 function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, _nativeEv: MouseEvent, _useMousePos = false) {
   showAddForm.value = false
-  if (typeof ev.id === 'number') eventModalStore.openModal(ev.id)
+  if (typeof ev.id !== 'number') return
+  const width = 240
+  const editHeight = 300
+  let left: number, top: number
+  if (_useMousePos) {
+    left = Math.max(8, Math.min(_nativeEv.clientX - width / 2, window.innerWidth - width - 8))
+    top = window.innerHeight - _nativeEv.clientY - 8 >= editHeight
+      ? _nativeEv.clientY + 8
+      : _nativeEv.clientY - editHeight - 8
+  } else {
+    const element = (_nativeEv.currentTarget ?? _nativeEv.target) as HTMLElement
+    const rect = element.getBoundingClientRect()
+    const sidebar = element.closest('.cal-sidebar')
+    const sidebarRect = sidebar?.getBoundingClientRect()
+    const centerX = sidebarRect ? sidebarRect.left + sidebarRect.width / 2 : rect.left + rect.width / 2
+    left = Math.max(8, Math.min(centerX - width / 2, window.innerWidth - width - 8))
+    top = window.innerHeight - rect.bottom - 6 >= editHeight
+      ? rect.bottom + 6
+      : rect.top - editHeight - 6
+  }
+  eventModalStore.openModal(ev.id, {
+    floating: true,
+    position: { left, top: Math.max(8, top), width },
+  })
 }
 
 function onSidebarEditEvent(payload: { item: CalItem; event: MouseEvent }) {
@@ -1330,6 +1311,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
 .add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.add-event-popup.shared-event-popup { padding: 0; }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
 .popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
 .popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }

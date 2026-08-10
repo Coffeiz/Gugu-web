@@ -7,15 +7,18 @@ import { eventsApi, scheduledTasksApi } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useLiveStore } from '@/stores/live'
 
-export interface EditingEvent {
-  _uid?: string
-  id: string | number
+export interface EventDraft {
   name: string
   date: string
   time: string
   endTime: string
   description: string
   allDay: boolean
+}
+
+export interface EditingEvent extends EventDraft {
+  _uid?: string
+  id: string | number
   version?: number
 }
 

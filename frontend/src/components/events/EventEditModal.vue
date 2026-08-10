@@ -1,34 +1,27 @@
 <!-- 全局的活动编辑弹窗：笔记页、日历页和其他活动引用卡片共用。
      字段/提醒逻辑只有一份，页面只负责通过 eventModal store 打开活动。 -->
 <template>
-  <BaseModal :show="show" width="300px" background="rgba(255,255,255,0.9)" @close="close">
-    <div class="eem-body">
-      <div class="popup-header">
-        <span class="popup-title">编辑活动</span>
-        <button class="popup-close-btn" @click="close" title="关闭">
-          <PhX :size="12" weight="bold" />
-        </button>
-      </div>
-      <EventEditFields :event="event" :form="form" :is-past-date="isPastDate" autofocus
-                       @save="onSave" @close="close" @test-reminder="onTestReminder" />
-      <div class="popup-actions">
-        <button class="popup-save" @click="onSave" :disabled="!event.name">保存</button>
-        <button class="popup-delete" @click="onDelete">删除</button>
-      </div>
+  <Transition name="form-pop">
+    <div v-if="show && isFloating" ref="floatingRef" class="eem-floating" :style="floatingStyle">
+      <EventFormPanel :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+                      @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
     </div>
+  </Transition>
+  <BaseModal v-if="show && !isFloating" :show="true" width="300px" background="rgba(255,255,255,0.9)" @close="close">
+    <EventFormPanel :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+                    @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </BaseModal>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import { PhX } from '@phosphor-icons/vue'
+import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useLiveStore } from '@/stores/live'
 import { useEventEditForm, type EditingEvent } from '@/composables/useEventEditForm'
 import { showAppError, showAppNotice } from '@/composables/useAppToast'
-import EventEditFields from './EventEditFields.vue'
+import EventFormPanel from './EventFormPanel.vue'
 
 const eventModalStore = useEventModalStore()
 const liveStore = useLiveStore()
@@ -37,6 +30,18 @@ const event = ref<EditingEvent | null>(null)
 // 不在请求刚开始时先挂一个「加载中」空弹窗：活动引用来自思维面板时，先取齐活动和
 // 提醒数据，再让 BaseModal 入场，避免用户看到空壳闪一下后才替换成编辑表单。
 const show = computed(() => eventModalStore.openEventId != null && event.value != null)
+const isFloating = computed(() => eventModalStore.floating && eventModalStore.floatingPosition != null)
+const floatingStyle = computed(() => {
+  const position = eventModalStore.floatingPosition
+  return position ? {
+    position: 'fixed' as const,
+    top: `${position.top}px`,
+    left: `${position.left}px`,
+    width: `${position.width}px`,
+    zIndex: 2100,
+  } : {}
+})
+const floatingRef = ref<HTMLElement | null>(null)
 
 const todayIso = () => {
   const d = new Date()
@@ -69,6 +74,11 @@ watch(() => eventModalStore.openEventId, (id) => {
 
 function close() { eventModalStore.closeModal() }
 
+function onFloatingOutsideClick(event: MouseEvent) {
+  if (!isFloating.value || !show.value) return
+  if (!floatingRef.value?.contains(event.target as Node)) close()
+}
+
 async function onSave() {
   if (!event.value?.name) return
   const eventId = event.value.id as number
@@ -97,18 +107,14 @@ async function onTestReminder() {
     showAppError('测试失败，请稍后重试')
   }
 }
+
+onMounted(() => document.addEventListener('click', onFloatingOutsideClick, true))
+onBeforeUnmount(() => document.removeEventListener('click', onFloatingOutsideClick, true))
 </script>
 
 <style scoped>
-.eem-body { display: flex; flex-direction: column; gap: 9px; padding: 16px; }
-.popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-close-btn { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: var(--text-secondary); cursor: pointer; }
-.popup-close-btn:hover { background: rgba(0,0,0,0.06); }
-.popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
-.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
-.popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
-.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
-.popup-save:disabled { opacity: 0.38; cursor: default; }
-.popup-save:not(:disabled):hover { opacity: 0.88; }
+.eem-floating { position: fixed; box-sizing: border-box; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); }
+.form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
+.form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
+.form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
 </style>

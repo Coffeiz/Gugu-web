@@ -6,6 +6,7 @@ interface RangeSelection { active: boolean; anchor: string | null }
 
 interface WeekInteractionOptions {
   viewMode: Ref<string>
+  hourHeight: number
   weekDays: ComputedRef<CalendarWeekDay[]>
   activeRange: ComputedRef<DateRange | null>
   rangeSelect: RangeSelection
@@ -18,7 +19,7 @@ interface WeekInteractionOptions {
 }
 
 export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
-  const { viewMode, weekDays, activeRange, rangeSelect, hoverRangeEnd, selRange, selectedDate, clearContext, isExternalDragging, onSlotSelected } = options
+  const { viewMode, hourHeight, weekDays, activeRange, rangeSelect, hoverRangeEnd, selRange, selectedDate, clearContext, isExternalDragging, onSlotSelected } = options
   const wvAllDayGridRef = ref<HTMLElement | null>(null)
   const wvSelCols = computed(() => {
     if (viewMode.value !== 'week' || !activeRange.value) return []
@@ -31,6 +32,9 @@ export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
   const wvSelectedSlot = ref<CalendarTimeSelection | null>(null)
   let wvColRect: DOMRect | null = null
   let previousSelectedSlot: CalendarTimeSelection | null = null
+  let allDayMove: ((event: MouseEvent) => void) | null = null
+  let allDayUp: ((event: MouseEvent) => void) | null = null
+  let allDayClickBlocker: ((event: MouseEvent) => void) | null = null
 
   function setAllDayGridRef(el: Element | { $el?: Element } | null) { wvAllDayGridRef.value = el as HTMLElement | null }
   function isoFromAllDayX(clientX: number) {
@@ -40,7 +44,7 @@ export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
     const index = Math.max(0, Math.min(6, Math.floor((clientX - rect.left) / rect.width * 7)))
     return weekDays.value[index]?.iso ?? null
   }
-  function hourAt(clientY: number, rect: DOMRect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / 48))) }
+  function hourAt(clientY: number, rect: DOMRect) { return Math.max(0, Math.min(23, Math.floor((clientY - rect.top) / hourHeight))) }
   function wvDaySelected(iso: string) {
     const range = activeRange.value
     return range ? iso >= range.start && iso <= range.end : false
@@ -57,6 +61,10 @@ export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
     const startIso = isoFromAllDayX(event.clientX)
     if (!startIso) return
     event.preventDefault(); clearContext()
+    if (allDayMove && allDayUp) {
+      document.removeEventListener('mousemove', allDayMove)
+      document.removeEventListener('mouseup', allDayUp)
+    }
     let dragging = false
     const move = (moveEvent: MouseEvent) => {
       const iso = isoFromAllDayX(moveEvent.clientX)
@@ -68,15 +76,22 @@ export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
     }
     const up = (upEvent: MouseEvent) => {
       document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up)
+      allDayMove = null; allDayUp = null
       const endIso = isoFromAllDayX(upEvent.clientX) || startIso
       rangeSelect.active = false; hoverRangeEnd.value = null
       if (dragging && endIso !== startIso) {
         const [start, end] = [startIso, endIso].sort(); selRange.value = { start, end }
-        document.addEventListener('click', clickEvent => clickEvent.stopPropagation(), { capture: true, once: true })
+        const blockClick = (clickEvent: MouseEvent) => {
+          clickEvent.stopPropagation()
+          allDayClickBlocker = null
+        }
+        allDayClickBlocker = blockClick
+        document.addEventListener('click', blockClick, { capture: true, once: true })
       } else {
         wvSelectedSlot.value = null; selRange.value = { start: startIso, end: startIso }; selectedDate.value = startIso
       }
     }
+    allDayMove = move; allDayUp = up
     document.addEventListener('mousemove', move); document.addEventListener('mouseup', up)
   }
   function onColMove(event: MouseEvent, day: CalendarWeekDay) {
@@ -106,6 +121,13 @@ export function useCalendarWeekInteraction(options: WeekInteractionOptions) {
     wvSelectedSlot.value = selected; selectedDate.value = selected.iso
     onSlotSelected(selected, previousSelectedSlot, event); previousSelectedSlot = null
   }
-  onUnmounted(() => { document.removeEventListener('mousemove', onColumnDrag); document.removeEventListener('mouseup', onColumnUp) })
+  onUnmounted(() => {
+    document.removeEventListener('mousemove', onColumnDrag)
+    document.removeEventListener('mouseup', onColumnUp)
+    if (allDayMove) document.removeEventListener('mousemove', allDayMove)
+    if (allDayUp) document.removeEventListener('mouseup', allDayUp)
+    if (allDayClickBlocker) document.removeEventListener('click', allDayClickBlocker, true)
+    allDayMove = null; allDayUp = null; allDayClickBlocker = null
+  })
   return { wvAllDayGridRef, wvSelCols, wvAdHover, wvHover, wvDragging, wvSelectedSlot, setAllDayGridRef, isoFromAllDayX, hourAt, wvDaySelected, onAllDayDown, onAllDayHover, onAllDayLeave, onColDown, onColMove, onColLeave }
 }

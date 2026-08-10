@@ -496,6 +496,7 @@ const {
   folderDataAttr: 'data-folder-id',
   folderSelector: '.folder-card, .folder-row',
   resolveBcTarget(idx) {
+    if (idx === navPath.value.length - 1) return null   // 当前目录本身，拖回来不算有效落点
     const seg = navPath.value[idx]
     if (!seg || !isBcDroppable(seg)) return null
     return { targetFolderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, acceptsFiles: true, acceptsFolders: true }
