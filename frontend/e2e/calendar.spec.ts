@@ -57,11 +57,17 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
   const pad = (value: number) => String(value).padStart(2, '0')
   const initialDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`
   const title = `E2E 活动 ${Date.now()}`
-  const response = await page.request.post('/api/v1/events', {
-    data: { title, date: initialDate, type: 'event' },
-  })
-  expect(response.ok()).toBeTruthy()
-  const created = await response.json()
+  await page.goto('/calendar')
+  const created = await page.evaluate(async ({ title: eventTitle, date }) => {
+    const token = localStorage.getItem('user_token')
+    const response = await fetch('/api/v1/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` },
+      body: JSON.stringify({ title: eventTitle, date, type: 'event' }),
+    })
+    return { ok: response.ok, body: await response.json() }
+  }, { title, date: initialDate })
+  expect(created.ok).toBeTruthy()
 
   try {
     await page.goto('/calendar')
@@ -83,6 +89,12 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
     await expect(editModal).toBeVisible()
     await expect(editModal.locator('.dp-input')).toContainText(`${now.getMonth() + 1}/${Number(nextDayNumber)}`)
   } finally {
-    await page.request.delete(`/api/v1/events/${created.id}`)
+    await page.evaluate(async (eventId) => {
+      const token = localStorage.getItem('user_token')
+      await fetch(`/api/v1/events/${eventId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token ?? ''}` },
+      })
+    }, created.body.id)
   }
 })
