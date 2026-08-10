@@ -40,10 +40,18 @@
           <svg class="bc-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
             <path d="M3 2l4 3-4 3"/>
           </svg>
-          <button class="bc-item"
+          <RuntimeBreadcrumbTarget v-if="isBcDroppable(seg, i)" class="bc-item"
+            :target-id="`bc:${i}`"
+            :surface-id="breadcrumbSurfaceId(RUNTIME_SCOPE, i)"
             :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg, i) }"
             :data-bc-idx="i"
-            :ref="(el: any) => bindBreadcrumbEl(i, seg, el)"
+            @click="navigateTo(i)"
+          >
+            <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
+            {{ seg.name }}
+          </RuntimeBreadcrumbTarget>
+          <button v-else class="bc-item"
+            :class="{ active: i === navPath.length - 1 }"
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
@@ -155,6 +163,7 @@ import FilesTrashView from '@/views/Files/components/FilesTrashView.vue'
 import FilesGridView from '@/views/Files/components/FilesGridView.vue'
 import FilesListView from '@/views/Files/components/FilesListView.vue'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
+import RuntimeBreadcrumbTarget from '@/views/Files/components/RuntimeBreadcrumbTarget.vue'
 import FileBrowserPanel from '@/components/common/file-browser/FileBrowserPanel.vue'
 import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'
@@ -196,6 +205,7 @@ import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
 import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
@@ -240,6 +250,13 @@ const { folderIconStyle, folderListIcon, folderAccentColor } = useFileLibraryFol
 // 目录/内容状态，可以安全前移。
 const RUNTIME_SCOPE = 'files'
 const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
+const { elementRef: browserSurfaceRef } = useSurface({
+  id: runtimeBrowserSurfaceId,
+  type: 'file-browser',
+  accepts: ['file-item', 'folder-item'],
+  viewport: () => mainRef.value,
+})
+watch(mainRef, element => { browserSurfaceRef.value = element })
 const domAdapter = createVueRuntimeAdapter(runtime)
 
 // 乐观更新是即触发即生效的（onAction 里 void 掉，不等 API），业务数据一变，下面注册对象的
@@ -664,12 +681,6 @@ function bindFileEl(f: FileMeta, target: unknown) {
   const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
   domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'file', f.id), element ?? null)
 }
-function bindBreadcrumbEl(idx: number, seg: NavSeg, element: HTMLElement | null) {
-  if (!isBcDroppable(seg, idx)) return
-  const surfaceId = breadcrumbSurfaceId(RUNTIME_SCOPE, idx)
-  domAdapter.bindTarget(`bc:${idx}`, { surfaceId, accepts: ['file-item', 'folder-item'], priority: 1 }, element)
-}
-
 interface ObjectRegSnapshot { type: string; surfaceId: string; abilities: string[] }
 const objectGenerations = new Map<string, number>()
 const objectSnapshots = new Map<string, ObjectRegSnapshot>()
@@ -681,9 +692,13 @@ const pendingUnregisterTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const UNREGISTER_DELAY_MS = 500
 
 watchEffect(() => {
+  // 网格卡片由各自的 Vue Runtime wrapper 管理生命周期；列表/回收站仍由这里
+  // 维护对象注册，避免同一对象同时被两套 generation 接管。
+  const usesVueCardRuntime = viewMode.value === 'grid' && currentType.value !== 'trash'
   const nextObjectIds = new Set<string>()
-  const folders = sortedContents.value.folders.filter(f => f.type === 'folder' && f.folderId != null)
-  const files = sortedContents.value.files
+  const allFolders = sortedContents.value.folders.filter(f => f.type === 'folder' && f.folderId != null)
+  const folders = usesVueCardRuntime ? [] : allFolders
+  const files = usesVueCardRuntime ? [] : sortedContents.value.files
 
   for (const f of folders) {
     const id = fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId as number)
@@ -744,15 +759,15 @@ watchEffect(() => {
     }, UNREGISTER_DELAY_MS))
   }
 
-  // Surface：浏览区是稳定的单一 Surface（绑定在 watchEffect 外，见下方 onMounted）；
+  // Surface：浏览区由 useSurface 管理；
   // 文件夹自己的语义 Surface 和面包屑语义 Surface 只用来承接 Target，不对应真实容器 DOM。
-  const nextSurfaceIds = new Set<string>([runtimeBrowserSurfaceId])
-  for (const f of folders) nextSurfaceIds.add(folderSurfaceId(RUNTIME_SCOPE, f.folderId as number))
+  const nextSurfaceIds = new Set<string>()
+  for (const f of allFolders) nextSurfaceIds.add(folderSurfaceId(RUNTIME_SCOPE, f.folderId as number))
   navPath.value.forEach((seg, i) => { if (isBcDroppable(seg, i)) nextSurfaceIds.add(breadcrumbSurfaceId(RUNTIME_SCOPE, i)) })
   for (const id of nextSurfaceIds) {
     if (!runtime.surfaces.has(id)) runtime.surfaces.register({
       id,
-      type: id === runtimeBrowserSurfaceId ? 'file-browser' : id.includes(':breadcrumb:') ? 'file-breadcrumb' : 'file-folder',
+      type: id.includes(':breadcrumb:') ? 'file-breadcrumb' : 'file-folder',
       element: null,
       accepts: ['file-item', 'folder-item'],
     })
@@ -795,22 +810,14 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
   else await moveFilesInto([id], targetFolderId)
 }
 
-const stopRuntimeAction = runtime.onAction(action => {
+useRuntimeAction(action => {
   if (action.type !== 'move') return
   void handleRuntimeMoveAction(action.objectId, action.toSurfaceId)
 })
 
-onMounted(() => {
-  // 浏览区绑到 .files-main（mainRef）本身：它在 <Transition mode="out-in"> 之外，
-  // 目录切换只替换里面的 .content-body，不会销毁这个交互根节点。
-  domAdapter.bindSurface(runtimeBrowserSurfaceId, mainRef.value)
-})
-watch(mainRef, el => domAdapter.bindSurface(runtimeBrowserSurfaceId, el))
-
 onUnmounted(() => {
   // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
   syncFileDragRotation('grid')
-  stopRuntimeAction()
   for (const timer of pendingUnregisterTimers.values()) clearTimeout(timer)
   pendingUnregisterTimers.clear()
   for (const [id, generation] of objectGenerations) {
@@ -871,7 +878,8 @@ const gridViewContext = {
   deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
   onFilePointerDown, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
-  bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection: 'files-browser',
+  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag,
+  layoutCollection: 'files-browser',
 }
 const listViewContext = {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
