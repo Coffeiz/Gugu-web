@@ -32,7 +32,7 @@ from app.services.storage import get_storage
 
 _DIR = ".agent"
 DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
-DAILY_COMPACT_AT  = 150  # daily 达到此条数触发一次压缩
+DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
 DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
 
 # ── 用户画像（profile.json，无需衰减）──
