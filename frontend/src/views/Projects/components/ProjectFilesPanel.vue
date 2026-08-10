@@ -125,9 +125,11 @@
                 <!-- 幽灵上传卡片：单文件 / 文件夹（拖入文件夹时汇总一张） -->
                 <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid"
                   :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
-                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" />
+                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error"
+                  data-flip-target />
                 <!-- 上传卡片 -->
                 <FileUploadButton mode="grid" :dragging="dragging"
+                  data-flip-target
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop"
                   @select="handleFileInput" />
               </FileBrowserGrid>
@@ -228,7 +230,8 @@
                 <!-- 幽灵上传行：单文件 / 文件夹（拖入文件夹时汇总一行） -->
             <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" mode="list" list-layout="project"
                   :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress"
-                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error">
+                  :done="g.done" :total="g.total" :failed="g.failed" :error="g.error"
+                  data-flip-target>
                   <template #list="{ color, statusText }">
                   <span class="lr-name-cell">
                     <span v-if="!g.isFolder" class="lr-ext" :style="{ color, background: color + '18' }">{{ g.ext || '—' }}</span>
@@ -244,6 +247,7 @@
                 </FileUploadGhostCard>
                 <!-- 上传行 -->
                 <FileUploadButton mode="list" :dragging="dragging"
+                  data-flip-target
                   @dragover.prevent="dragging = true" @dragleave="dragging = false" @drop.prevent="handleFileDrop"
                   @select="handleFileInput" />
               </FileBrowserList>

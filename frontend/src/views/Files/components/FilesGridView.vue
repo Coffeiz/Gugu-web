@@ -24,8 +24,8 @@
       <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }"><svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
       <div v-if="!inSelectionMode" class="fc-hover-actions"><button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)"><PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" /><PhPencilSimple v-else :size="11" weight="bold" /></button><button class="file-card-btn" title="下载" @click.stop="downloadFile(f)"><PhDownloadSimple :size="11" weight="bold" /></button><button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)"><PhTrash :size="11" weight="bold" /></button></div>
     </FileCard>
-    <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" />
-    <FileUploadButton v-if="canUpload" mode="grid" @select="handleFileInput" />
+    <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" data-flip-target />
+    <FileUploadButton v-if="canUpload" mode="grid" data-flip-target @select="handleFileInput" />
   </FileBrowserGrid>
   <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="grid" />
 </template>

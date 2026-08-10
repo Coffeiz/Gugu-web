@@ -310,6 +310,12 @@ const {
 const RUNTIME_SCOPE = computed(() => `project-files:${props.project?.id ?? 'none'}`)
 const domAdapter = createVueRuntimeAdapter(runtime)
 
+// 同 Files/index.vue：乐观更新即触发即生效，业务数据一变对象就可能从 sortedCurrentFolders/
+// sortedCurrentFiles 里消失。落点确定后 Runtime 几乎立刻释放这个对象的控制权（objectLease
+// 在 emit() 后马上放，早于 landing/reveal 动画播完，是刻意设计，避免 <Teleport> 二次跳变），
+// isControlled() 在这个时间点已经是 false，挡不住——真正要等的是"落地动画放完"。改成延迟注销
+// （见下方 unregister 循环），不是立刻同步注销。
+
 // 与 useFileDragDrop.ts _startCardDrag 里的 isMulti 判断完全一致：只有这张卡此刻处于
 // 选中态、且自己这一类的选区非空时，旧的 pointer 拖拽编排才接管——单选场景交给 Runtime
 // Core API 对象（abilities 含 'move'）独占 pointerdown，避免同一次抓取被两套 session 同时接管。
@@ -350,6 +356,8 @@ interface PmObjectRegSnapshot { type: string; surfaceId: string; abilities: stri
 const pmObjectGenerations = new Map<string, number>()
 const pmObjectSnapshots = new Map<string, PmObjectRegSnapshot>()
 const pmRuntimeSurfaceIds = new Set<string>()
+const pmPendingUnregisterTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const PM_UNREGISTER_DELAY_MS = 500
 
 watchEffect(() => {
   const scope = RUNTIME_SCOPE.value
@@ -400,10 +408,18 @@ watchEffect(() => {
   }
 
   for (const [id, generation] of pmObjectGenerations) {
-    if (nextObjectIds.has(id)) continue
-    if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
-    pmObjectGenerations.delete(id)
-    pmObjectSnapshots.delete(id)
+    if (nextObjectIds.has(id)) {
+      const pending = pmPendingUnregisterTimers.get(id)
+      if (pending) { clearTimeout(pending); pmPendingUnregisterTimers.delete(id) }
+      continue
+    }
+    if (pmPendingUnregisterTimers.has(id)) continue
+    pmPendingUnregisterTimers.set(id, setTimeout(() => {
+      pmPendingUnregisterTimers.delete(id)
+      if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
+      pmObjectGenerations.delete(id)
+      pmObjectSnapshots.delete(id)
+    }, PM_UNREGISTER_DELAY_MS))
   }
 
   // Surface：文件面板是稳定的单一 Surface（绑定在 watchEffect 外，见下方 onMounted，锚在
@@ -484,6 +500,8 @@ watch([pmGridRef, RUNTIME_SCOPE], () => {
 
 onUnmounted(() => {
   stopPmRuntimeAction()
+  for (const timer of pmPendingUnregisterTimers.values()) clearTimeout(timer)
+  pmPendingUnregisterTimers.clear()
   for (const [id, generation] of pmObjectGenerations) {
     if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
   }
