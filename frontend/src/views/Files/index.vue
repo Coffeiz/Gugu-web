@@ -41,7 +41,7 @@
             <path d="M3 2l4 3-4 3"/>
           </svg>
           <button class="bc-item"
-            :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg) }"
+            :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg, i) }"
             :data-bc-idx="i"
             :ref="(el: any) => bindBreadcrumbEl(i, seg, el)"
             @click="navigateTo(i)"
@@ -509,9 +509,12 @@ const {
 // perf trace 实测证实）。抓取判断单选/多选 → 起 startPhysicsDrag/startMultiPhysicsDrag → 拖拽
 // 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
 // 了共享 composable useFileDragDrop，这里只提供 Files 特有的选择器/面包屑规则/落地 API。
-function isBcDroppable(seg: NavSeg) {
+function isBcDroppable(seg: NavSeg, idx: number) {
   // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
   // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。
+  // idx 是当前目录本身这一段（navPath 最后一位）时排除——拖回来不算有效落点，应该直接归位，
+  // 不该演一遍飞入动画。
+  if (idx === navPath.value.length - 1) return false
   return seg.type === 'folder' || seg.type === 'personal' || seg.type === 'project'
 }
 
@@ -563,7 +566,7 @@ const {
   resolveBcTarget(idx) {
     if (idx === navPath.value.length - 1) return null   // 当前目录本身，拖回来不算有效落点
     const seg = navPath.value[idx]
-    if (!seg || !isBcDroppable(seg)) return null
+    if (!seg || !isBcDroppable(seg, idx)) return null
     return { targetFolderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, acceptsFiles: true, acceptsFolders: true }
   },
   cancelBoxDrag: () => _cancelBoxDrag(),
@@ -652,7 +655,7 @@ function bindFileEl(f: FileMeta, target: unknown) {
   domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'file', f.id), element ?? null)
 }
 function bindBreadcrumbEl(idx: number, seg: NavSeg, element: HTMLElement | null) {
-  if (!isBcDroppable(seg)) return
+  if (!isBcDroppable(seg, idx)) return
   const surfaceId = breadcrumbSurfaceId(RUNTIME_SCOPE, idx)
   domAdapter.bindTarget(`bc:${idx}`, { surfaceId, accepts: ['file-item', 'folder-item'], priority: 1 }, element)
 }
@@ -735,7 +738,7 @@ watchEffect(() => {
   // 文件夹自己的语义 Surface 和面包屑语义 Surface 只用来承接 Target，不对应真实容器 DOM。
   const nextSurfaceIds = new Set<string>([runtimeBrowserSurfaceId])
   for (const f of folders) nextSurfaceIds.add(folderSurfaceId(RUNTIME_SCOPE, f.folderId as number))
-  navPath.value.forEach((seg, i) => { if (isBcDroppable(seg)) nextSurfaceIds.add(breadcrumbSurfaceId(RUNTIME_SCOPE, i)) })
+  navPath.value.forEach((seg, i) => { if (isBcDroppable(seg, i)) nextSurfaceIds.add(breadcrumbSurfaceId(RUNTIME_SCOPE, i)) })
   for (const id of nextSurfaceIds) {
     if (!runtime.surfaces.has(id)) runtime.surfaces.register({
       id,
@@ -772,7 +775,7 @@ async function handleRuntimeMoveAction(objectId: string, toSurfaceId: string) {
     const idx = parseBreadcrumbSurfaceId(RUNTIME_SCOPE, toSurfaceId)
     if (idx === null) return
     const seg = navPath.value[idx]
-    if (!seg || !isBcDroppable(seg)) return
+    if (!seg || !isBcDroppable(seg, idx)) return
     targetFolderId = seg.type === 'folder' ? (seg.folderId ?? null) : null
   }
 
