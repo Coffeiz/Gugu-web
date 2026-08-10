@@ -36,7 +36,7 @@
     <!-- 内容区 -->
     <div class="fpw-body">
       <!-- 真实内容（在下层） -->
-      <ImageViewer v-if="isImg" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
+      <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
       <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
@@ -57,6 +57,7 @@
           <img
             class="fpw-placeholder-img"
             :src="placeholderSrc ?? undefined"
+            :style="placeholderTransformStyle"
             @load="onPlaceholderLoad"
             alt=""
           />
@@ -213,6 +214,15 @@ const imageReady       = ref(false)
 const _SVG_EXTS    = new Set(['SVG'])
 const placeholderSrc = ref<string | null>(null)   // 从 blob Map 取，避免与全图下载竞速
 
+// 占位缩略图套上跟 ImageViewer 当前一致的缩放/平移，切图时才不会先跳回居中/100%
+// 再跳回真图当前的视图——两次跳变叠在一起就是用户看到的"闪一下"。
+const imageViewerRef = ref<InstanceType<typeof ImageViewer> | null>(null)
+const placeholderTransformStyle = computed(() => {
+  const iv = imageViewerRef.value
+  if (!iv) return {}
+  return { transform: `translate(${iv.tx}px, ${iv.ty}px) scale(${iv.scale})` }
+})
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const TITLE_H  = 40
 const PAD      = 48
@@ -347,11 +357,11 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       }
     }
   }
-  // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成
-  if (isImg.value && f.imgWidth && f.imgHeight) {
-    if (ready.value) animating.value = true
+  // 已知真实尺寸：直接定好窗口，无需等缩略图或下载完成。窗口尺寸只由打开时的第一张图
+  // 决定，跟内容解耦——切换到其它图片不再重新定窗口尺寸，图片靠 object-fit:contain
+  // 在固定窗口里自适应显示，不然窗口宽高跟着每张图变化，观感很跳。
+  if (isImg.value && f.imgWidth && f.imgHeight && !ready.value) {
     fitWindow(f.imgWidth, f.imgHeight)
-    if (animating.value) setTimeout(() => { animating.value = false }, 220)
   }
   const token   = localStorage.getItem('user_token') ?? ''
   const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
@@ -406,18 +416,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
       const img = new Image()
       img.onload = () => {
         contentSize.value = `${img.naturalWidth} × ${img.naturalHeight}`
-        const nw = img.naturalWidth, nh = img.naturalHeight
-        if (ready.value) {
-          // 窗口已显示（有占位图预定尺）：先启用 transition 再改值，保证动画生效
-          animating.value = true
-          requestAnimationFrame(() => {
-            fitWindow(nw, nh)
-            setTimeout(() => { animating.value = false }, 220)
-          })
-        } else {
-          // 快速下载（占位图未触发显示）：直接定尺并显示，无需动画
-          fitWindow(nw, nh)
-        }
+        // 窗口尺寸只由打开时的第一张图决定（同上），这里只在窗口还没显示过时才定尺。
+        if (!ready.value) fitWindow(img.naturalWidth, img.naturalHeight)
       }
       img.src = url
     }
@@ -500,19 +500,24 @@ function onResizeMove(e: MouseEvent) {
   const dx = e.clientX - mx
   const dy = e.clientY - my
   // 左侧的角：一边收缩宽度一边把 x 往右挪，钳到 MIN_W 后用实际收缩量算 x，避免碰到下限后窗口和鼠标脱节
-  if (dir.includes('e')) {
-    w.value = Math.max(MIN_W, ow + dx)
-  } else {
-    const newW = Math.max(MIN_W, ow - dx)
-    x.value = Math.max(0, ox + (ow - newW))
-    w.value = newW
+  // 单边手柄（n/s/e/w）只含一个方向字母，只能动对应那根轴；四角手柄（se/sw/ne/nw）两根轴都动，不受影响。
+  if (dir.includes('e') || dir.includes('w')) {
+    if (dir.includes('e')) {
+      w.value = Math.max(MIN_W, ow + dx)
+    } else {
+      const newW = Math.max(MIN_W, ow - dx)
+      x.value = Math.max(0, ox + (ow - newW))
+      w.value = newW
+    }
   }
-  if (dir.includes('s')) {
-    h.value = Math.max(MIN_H, oh + dy)
-  } else {
-    const newH = Math.max(MIN_H, oh - dy)
-    y.value = Math.max(0, oy + (oh - newH))
-    h.value = newH
+  if (dir.includes('s') || dir.includes('n')) {
+    if (dir.includes('s')) {
+      h.value = Math.max(MIN_H, oh + dy)
+    } else {
+      const newH = Math.max(MIN_H, oh - dy)
+      y.value = Math.max(0, oy + (oh - newH))
+      h.value = newH
+    }
   }
 }
 
