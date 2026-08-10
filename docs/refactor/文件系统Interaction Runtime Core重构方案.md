@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | ✅ Phase 0/1/2/4/5 已完成并 devserver 验证（2026-08-10）；Phase 3（多选进 Runtime）依赖 gugu-interaction-runtime 的 GroupDragSession，待该仓库交付后作为独立轨道推进 |
+| 状态 | ✅ 文件库主页面的单卡已通过 Vue API 接入并 devserver 验证（2026-08-10）；项目编辑卡仍保留过渡性的 Vue adapter 接线；Phase 3（多选进 Runtime）及 Phase 5 的多选清理依赖 gugu-interaction-runtime 的 GroupDragSession，待该仓库交付后作为独立轨道推进 |
 | 重构分支 | `codex-filesystem-core-rebuild` |
 | 基线 | `main` 合并 PR16 后的 `c1a2df52` |
 | 关联仓库 | `gugu-interaction-runtime` |
@@ -14,11 +14,11 @@
 
 ## 2. 重构动机
 
-当前文件页同时存在三套职责：
+当前文件系统接入已经完成单卡 Runtime/Vue API 收口，但多选和项目编辑卡仍有过渡代码：
 
 1. Interaction Runtime 负责单卡 pointer、命中、代理、FLIP 和 landing。
-2. 文件页 adapter 负责对象注册、Surface/Target 生命周期和 Action 分流。
-3. `useFileDragDrop` 及项目文件拖拽逻辑继续维护另一套多选和 DOM 拖动生命周期。
+2. 文件库主页面和文件卡组件通过 Vue composable 管理对象、Surface、Target 生命周期和 Action 分流。
+3. ProjectModal 仍通过 `createVueRuntimeAdapter` 保留一层过渡接线；`useFileDragDrop` 及项目文件拖拽逻辑继续维护多选和部分旧 DOM 拖动生命周期。
 
 这会导致：
 
@@ -30,7 +30,10 @@
 
 本次不继续在旧 adapter 上打补丁，而是让 Runtime 成为唯一的交互编排者。
 
-**动画与手感基准**：交互动画、手感和视觉细节以 `gugu-interaction-runtime` 仓库 demo 的效果为准，不要求跟旧文件页/项目抽屉的现有效果保持兼容。旧效果只作问题记录和行为参考（同 1 节），迁移后如果 demo 效果与旧效果不一致，以 demo 为准，不为了"保留旧手感"额外定制。
+**动画与手感基准**：单卡交互以 `gugu-interaction-runtime` 仓库 demo 的效果为准，不要求跟旧文件页/项目抽屉的单卡效果保持兼容。多选交互在迁移到 Group Session 时，必须保留当前
+`startMultiPhysicsDrag` 的主卡 + 后置修饰卡表现、卡片偏移、玻璃底色、阴影、缩放、落地和
+regrab 手感，不重新设计多选视觉。旧效果只作问题记录和行为参考；除多选兼容约束外，
+不为了保留旧手感额外定制 Runtime 或 adapter。
 
 ## 3. 权责边界
 
@@ -43,23 +46,30 @@
 - 代理接管、本体隐藏和交接；
 - landing、retarget、速度/旋转继承；
 - 同一布局集合内的 FLIP；
+- 多对象拖拽的 Group Session：由一张主卡驱动物理，附属卡共享运动轨迹；
 - 运行时 ownership 和旧实例 generation 保护；
 - 输出标准化 `MoveAction`。
 
 ### 3.2 Vue 业务适配层负责
 
-只负责把渲染节点注册到 Core API：
+Vue 适配层是业务侧的唯一注册入口。文件卡、文件夹卡、浏览区 Surface 和面包屑目标优先使用
+`frontend/src/interaction/runtime/vue.ts` 暴露的 composable，自动处理注册、DOM ref 同步、
+generation 保护和卸载注销：
 
 ```ts
-runtime.objects.register({ ... })
-runtime.objects.setElement(id, element)
-runtime.surfaces.register({ ... })
-runtime.surfaces.setElement(id, element)
-runtime.targets.register({ ... })
-runtime.targets.setElement(id, element)
+const { elementRef: objectRef } = useObject({ ... })
+const { elementRef: surfaceRef } = useSurface({ ... })
+const { elementRef: targetRef } = useTarget({ ... })
+useRuntimeAction(action => { ... })
 ```
 
-Vue 层可以处理 `ref` 的挂载和卸载，但不得实现 pointer、landing、FLIP、代理或目标几何计算。
+`useObject`、`useSurface`、`useTarget` 负责声明对象/Surface/Target；`useRuntimeAction` 负责
+生命周期内订阅和自动注销 Action。Vue 层不得实现 pointer、landing、FLIP、代理或目标几何
+计算。
+
+`createVueRuntimeAdapter` 仅作为尚未完成迁移的项目编辑卡过渡桥接，不再作为新接入代码的
+推荐形态。最终目标是项目编辑卡也改为独立的 Vue composable 接入，业务组件不直接调用
+`register`、`setElement` 或手写 generation/prune 逻辑。
 
 ### 3.3 文件业务层负责
 
@@ -74,26 +84,23 @@ Runtime 不直接访问文件 store 或后端 API。
 
 ## 4. 目标接入形态
 
-单对象接入的目标形态：
+单对象接入的目标形态（Vue 业务组件）：
 
 ```ts
-const objectGeneration = runtime.objects.register({
+const { elementRef: cardRef } = useObject({
   id: fileObjectId(scope, 'file', file.id),
   type: 'file-item',
-  visualMode: 'detach',
-  surfaceId: browserSurfaceId,
-  abilities: ['move'],
+  surface: () => browserSurfaceId,
+  abilities: () => ['move'],
 })
 
-runtime.objects.setElement(fileObjectId(scope, 'file', file.id), element)
-
-runtime.surfaces.register({
+const { elementRef: browserRef } = useSurface({
   id: browserSurfaceId,
   type: 'file-browser',
   accepts: ['file-item', 'folder-item'],
 })
 
-runtime.targets.register({
+const { elementRef: folderRef } = useTarget({
   id: folderTargetId,
   surfaceId: folderSurfaceId,
   accepts: ['file-item', 'folder-item'],
@@ -101,16 +108,16 @@ runtime.targets.register({
 })
 ```
 
-业务侧只订阅 Action 并提交业务变更：
+业务侧只订阅 Action 并提交业务变更，通常使用统一的 Vue composable：
 
 ```ts
-const stop = runtime.onAction(action => {
+useRuntimeAction(action => {
   if (action.type !== 'move') return
   void moveFileByRuntimeAction(action)
 })
 ```
 
-`fileRuntimeAdapter` 不再隐藏 Core API，也不再维护另一份注册表。
+`fileRuntimeAdapter` 只保留 ID 生成和解析等纯函数，不隐藏 Core API，也不维护另一份注册表。
 
 ## 5. 目录模型
 
@@ -168,18 +175,34 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 | `filesCache` store | `frontend/src/stores/filesCache.ts` | `updateFile`/`updateFolder`/`removeFiles` 等乐观更新原语 + 跨标签页/IM 回声抑制（`origin === 本页 client-id` 时跳过重拉） |
 | `fileActions.moveFolder`/`moveFile` API | 业务层 | 权限、循环引用校验、`version` 并发控制在后端 + 调用方双重保障 |
 
-Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatchDrop` 回调改成 `runtime.onAction()` 订阅），函数本身、乐观更新时序、回滚和 409 处理逻辑不变。
+Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatchDrop` 回调改成
+`useRuntimeAction()` 订阅），函数本身、乐观更新时序、回滚和 409 处理逻辑不变。
 
-### Phase 1：单卡 Core API 接入
+### Phase 1：单卡 Core API 与 Vue API 接入
 
 - 删除文件页的 `createFileRuntimeBindings`；
 - 删除文件专用 Runtime 注册 watchEffect 和 prune 逻辑；
-- 文件卡、文件夹卡、面包屑直接注册 Core API；
-- 保留 generation 保护，但放到 Runtime 通用注册生命周期；
-- 文件页和 ProjectModal 使用同一套注册约定；
+- 文件卡、文件夹卡、面包屑和浏览区 Surface 通过 `useObject`、`useSurface`、`useTarget`
+  接入 Runtime；
+- 保留 generation 保护，由 Vue 适配层统一处理；
+- 文件库主页面已完成该迁移；ProjectModal 仍有 `createVueRuntimeAdapter` 过渡接线，作为
+  后续收口项单独迁移；
 - 单卡 Action 只进入业务移动函数。
 
-完成条件：单文件、单文件夹拖动完全由 Runtime 处理，旧 adapter 不再参与单卡生命周期。
+完成条件：文件库主页面的单文件、单文件夹拖动完全由 Runtime 处理，单卡业务组件不再
+手写注册生命周期；项目编辑卡完成 composable 迁移后，本阶段才算全仓收口。
+
+#### Phase 1 执行记录（2026-08-10）
+
+- `RuntimeFileCard.vue`、`RuntimeFolderCard.vue`、`RuntimeFileListRow.vue`、
+  `RuntimeFolderListRow.vue` 使用 `useObject`；文件夹卡同时用 `useSurface` 注册可接收的
+  文件夹 Surface。
+- `RuntimeBreadcrumbTarget.vue` 使用 `useSurface` + `useTarget`，面包屑不再由业务页面手写
+  Target 生命周期。
+- `Files/index.vue` 使用 `useSurface` 注册浏览区，并使用 `useRuntimeAction` 订阅单卡移动
+  Action；`fileRuntimeAdapter` 只保留 ID/Surface 纯函数。
+- `ProjectModal.vue` 仍使用 `createVueRuntimeAdapter` 绑定项目文件卡、面包屑和浏览区，作为
+  下一步 Vue composable 收口对象；本记录不将它误标成已完成。
 
 ### Phase 2：业务提交边界收敛
 
@@ -225,22 +248,50 @@ Phase 1 落地时已经顺带满足本阶段的实质要求，本阶段只做核
 当前 Runtime Core 主要覆盖单 Object。要删除旧多选拖拽，需先提供通用 group interaction：
 
 - 多 Object 选择快照；
-- 一个 group session 和一个视觉代理；
+- 一个 group session；
+- 鼠标实际抓起的卡片作为主卡代理，其他选中卡作为 1～2 张后置修饰代理；
+- 主卡负责跟随指针、速度采样、物理落点和目标命中，修饰代理共享主卡的运动向量；
+- 所有选中对象参与 ownership、落地和最终业务动作，但不要求每个对象都单独创建一套物理 session；
 - 批量命中与统一目标；
 - 批量 MoveAction；
 - 取消、regrab 和失败恢复；
 - 业务侧只接收对象 ID 列表并执行批量 API。
 
+**视觉基准与兼容约束**：多选迁移不重新设计文件拖拽样式。继续沿用当前
+`startMultiPhysicsDrag` 的主卡 + 后置修饰卡表现、卡片间偏移、玻璃底色、阴影、缩放、
+落地和 regrab 手感。单卡仍走现有 `useObject`/Runtime 单对象路径，不因 Group Session
+引入新的单卡分支。列表模式继续使用 compact layout，网格模式保留原有卡片比例和视觉参数。
+
+**动作契约**：单卡继续发出原有 `move` 动作；多选新增批量动作，至少携带：
+
+```ts
+{
+  type: 'move-group'
+  objectIds: string[]
+  primaryObjectId: string
+  fromSurfaceId: string
+  toSurfaceId: string
+}
+```
+
+`primaryObjectId` 只表示用户实际抓起的主卡，不代表只移动这一项。文件业务层收到列表后
+仍分别调用现有的 `moveFilesInto` / `moveFoldersInto`，继续复用乐观更新、回滚、权限和
+后端校验。
+
 **依赖说明**：这一阶段不在 Gugu-web / 本仓库内完成，前置工作在 `gugu-interaction-runtime` 仓库：
 
 - 新增 `GroupDragSession`（不改造现有 `Session.objectId` 标量字段，避免牵连 `RuntimeMove.ts` 等既有单对象读取点）；
-- `VisualProxyCoordinator` 从 1 session : 1 proxy 改为 1 session : N proxy；
+- `GroupDragSession` 保存 `primaryObjectId`、完整 `objectIds` 和各附属卡相对主卡的初始偏移；
+- `VisualProxyCoordinator` 支持 1 session : 1 个主代理 + N 个附属代理，视觉上默认只展示主卡和 1～2 张后置修饰卡；
+- 主代理和附属代理共享同一套跟手、弹簧、落地、取消和 regrab 时间线，不启动多个独立物理 session；
 - 复用现有 `Owner.takeObject`（循环获取多个 lease）、`GroupLayout` 的多元素 FLIP 原语、`Visual.createDragProxy`（调用 N 次），这几处已是 id-keyed/数组化实现，不需要改动；
 - 发布新版本后，本仓库更新 `.runtime-version` 锁定并消费。
 
 **与其他阶段的关系**：Phase 3 与 Phase 0/1/2/4 没有依赖关系，不阻塞后者合并上线。Phase 0/1/2/4 可以独立推进、独立验收、独立合并；Phase 3（以及依赖它的 Phase 5 多选清理部分）作为单独时间线，在 `gugu-interaction-runtime` 侧的 `GroupDragSession` 发布后再启动，不按线性阶段顺序卡住前面的工作。
 
-完成条件：`useFileDragDrop` 和 `useProjectFileDrag` 不再负责拖拽生命周期。
+完成条件：`useFileDragDrop` 和 `useProjectFileDrag` 不再负责多选拖拽生命周期；它们只保留
+选择快照、目标配置和业务批量移动回调。Runtime demo 与 Gugu 文件库的多选拖拽在视觉上
+保持主卡 + 后置修饰卡的现有表现，单卡行为不回归。
 
 ### Phase 4：目录切换与布局收敛
 
@@ -291,7 +342,7 @@ adapter，本身就是要长期保留的产物；两个入口的 Runtime 注册 
 - 不为文件单独创建 Runtime 专属动画实现；
 - 不同时维护 detach 和 clone 两套文件业务编排；
 - 不整体 cherry-pick 旧 after 分支；
-- 不为兼容文件页/项目抽屉的旧动画手感而定制 Runtime 或 adapter 行为，动画效果统一以 demo 为准；
+- 单卡动画效果以 demo 为准；多选迁移必须遵守 Phase 3 的 `startMultiPhysicsDrag` 视觉兼容约束；
 - 不在没有 group interaction 前删除多选功能；
 - Phase 3 的 Runtime 核心改动（`GroupDragSession`、`VisualProxyCoordinator` 1:N 化）不在本仓库内实现，不在本重构分支里直接修改 `gugu-interaction-runtime` 源码。
 
