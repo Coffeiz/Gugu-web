@@ -14,7 +14,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
@@ -31,17 +31,19 @@ const event = ref<EditingEvent | null>(null)
 // 提醒数据，再让 BaseModal 入场，避免用户看到空壳闪一下后才替换成编辑表单。
 const show = computed(() => eventModalStore.openEventId != null && event.value != null)
 const isFloating = computed(() => eventModalStore.floating && eventModalStore.floatingPosition != null)
+const floatingTop = ref<number | null>(null)
 const floatingStyle = computed(() => {
   const position = eventModalStore.floatingPosition
   return position ? {
     position: 'fixed' as const,
-    top: `${position.top}px`,
+    top: `${floatingTop.value ?? position.top}px`,
     left: `${position.left}px`,
     width: `${position.width}px`,
     zIndex: 2100,
   } : {}
 })
 const floatingRef = ref<HTMLElement | null>(null)
+let clampRaf = 0
 
 const todayIso = () => {
   const d = new Date()
@@ -68,6 +70,7 @@ async function load(id: number) {
 }
 
 watch(() => eventModalStore.openEventId, (id) => {
+  floatingTop.value = null
   if (id != null) load(id)
   else event.value = null
 })
@@ -76,8 +79,33 @@ function close() { eventModalStore.closeModal() }
 
 function onFloatingOutsideClick(event: MouseEvent) {
   if (!isFloating.value || !show.value) return
-  if (!floatingRef.value?.contains(event.target as Node)) close()
+  const target = event.target as HTMLElement
+  // DatePicker/DateSpanPicker 都 Teleport 到 body，它们不是浮动编辑窗的 DOM 子节点，
+  // 但属于当前编辑窗的交互范围，不能被 capture 阶段的 outside-click 误关。
+  if (target.closest('.dp-popup, .drp-popup')) return
+  if (!floatingRef.value?.contains(target)) close()
 }
+
+function clampFloatingIntoView() {
+  cancelAnimationFrame(clampRaf)
+  clampRaf = requestAnimationFrame(async () => {
+    await nextTick()
+    if (!isFloating.value || !show.value || !floatingRef.value) return
+    const position = eventModalStore.floatingPosition
+    if (!position) return
+    const height = floatingRef.value.getBoundingClientRect().height
+    const safeGap = 12
+    const maxTop = Math.max(safeGap, window.innerHeight - height - safeGap)
+    const top = Math.min(Math.max(position.top, safeGap), maxTop)
+    if (Math.abs((floatingTop.value ?? position.top) - top) > 0.5) floatingTop.value = top
+  })
+}
+
+watch(
+  [show, isFloating, () => form.reminders.value.length, () => form.reminderChannels.value.join('|')],
+  clampFloatingIntoView,
+  { flush: 'post' },
+)
 
 async function onSave() {
   if (!event.value?.name) return
@@ -108,8 +136,15 @@ async function onTestReminder() {
   }
 }
 
-onMounted(() => document.addEventListener('click', onFloatingOutsideClick, true))
-onBeforeUnmount(() => document.removeEventListener('click', onFloatingOutsideClick, true))
+onMounted(() => {
+  document.addEventListener('click', onFloatingOutsideClick, true)
+  window.addEventListener('resize', clampFloatingIntoView)
+})
+onBeforeUnmount(() => {
+  cancelAnimationFrame(clampRaf)
+  document.removeEventListener('click', onFloatingOutsideClick, true)
+  window.removeEventListener('resize', clampFloatingIntoView)
+})
 </script>
 
 <style scoped>
