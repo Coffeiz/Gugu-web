@@ -688,10 +688,15 @@ onUnmounted(() => {
   cursor: pointer;
   opacity: 0;
   pointer-events: none;   /* 隐藏时别挡住底下图片的点击/拖拽 */
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  transition: opacity 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 .fpw-body:hover .fpw-nav { opacity: 1; pointer-events: auto; }
-.fpw-nav:hover { background: rgba(123, 127, 178, 0.16); color: var(--color-primary); }
+.fpw-nav:hover {
+  box-shadow:
+    0 2px 14px rgba(80, 90, 110, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+}
 .fpw-nav-prev { left: 10px; }
 .fpw-nav-next { right: 10px; }
 

@@ -51,7 +51,7 @@
       </template>
     </FileUploadGhostCard>
 
-    <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading" variant="list" />
+    <FileBrowserEmptyState v-if="contents.folders.length === 0 && contents.files.length === 0 && !loading && !canUpload" variant="list" />
     <FileUploadButton v-if="canUpload" mode="list" data-flip-target @select="handleFileInput" />
   </FileBrowserList>
 </template>

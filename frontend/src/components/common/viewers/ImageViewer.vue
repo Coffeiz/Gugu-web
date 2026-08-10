@@ -23,7 +23,7 @@
     </div>
 
     <!-- 缩放工具栏 -->
-    <div v-if="!error" class="iv-toolbar" @mousedown.stop>
+    <div v-if="!error" class="iv-toolbar" @mousedown.stop @dblclick.stop>
       <button class="iv-tb-btn" title="缩小" @click="zoomOut">
         <PhMinus weight="bold" :size="12" />
       </button>
