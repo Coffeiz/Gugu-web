@@ -109,5 +109,10 @@ watch(() => props.showNewFolder, value => {
 }
 .btn-confirm-sm { background: var(--color-primary); color: #fff; }
 .btn-confirm-sm:disabled { opacity: .5; cursor: default; }
-.btn-cancel-sm { background: rgba(0,0,0,.07); color: var(--text-secondary); }
+.btn-cancel-sm {
+  background: rgba(0,0,0,.07); color: var(--text-secondary);
+  width: 28px; height: 28px; padding: 0; border: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
 </style>
