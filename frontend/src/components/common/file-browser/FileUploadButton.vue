@@ -39,11 +39,13 @@ const emit = defineEmits<{ select: [e: Event] }>()
 }
 
 .fub.list {
-  display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+  display: flex; align-items: center; gap: 7px; padding: 9px 10px;
+  min-height: 42px; box-sizing: border-box;
   font-size: 12px; border-radius: var(--radius-sm);
   border: 1px dashed transparent; transition: background 0.12s;
 }
 .fub.list:hover, .fub.list.dragging {
   background: rgba(123,127,178,0.05); border-color: rgba(123,127,178,0.3); color: var(--color-primary);
 }
+.fub.list .fub-text { font-weight: 600; }
 </style>

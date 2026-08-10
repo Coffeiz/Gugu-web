@@ -1143,15 +1143,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   background: rgba(123,127,178,0.06);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 0 0 1.5px rgba(123,127,178,0.15);
 }
-.list-row.pre-selected {
-  background: rgba(123,127,178,0.06);
-  outline: 1px solid rgba(123,127,178,0.25);
-}
-
-.list-row.folder-row.selected {
-  background: rgba(123,127,178,0.09);
-}
-
 /* ── 网格 ── */
 .file-grid {
   display: grid;
@@ -1160,46 +1151,10 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   align-content: start;
 }
 
-.grid-empty {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 10px; padding: 72px 0;
-  font-size: 12px; color: var(--text-secondary); opacity: 0.5;
-}
-
 /* ── 文件卡片 ──
    底色/边框/hover/选中态/缩略图区/大图标/标题元信息这些基础视觉已抽到
    components/common/FileCard.vue（含 :hover 的 box-shadow/background，跟全局
    .hover-card-fx 的位移动效分工一致），这里只留本页专属的选择框/悬浮操作等交互态样式。 */
-.sel-checkbox {
-  position: absolute; top: 8px; right: 8px; z-index: 3;
-  width: 18px; height: 18px; border-radius: 5px;
-  border: 2px solid rgba(123, 127, 178, 0.55);
-  background: rgba(255,255,255,0.75);
-  display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s, border-color 0.15s;
-  pointer-events: none;
-}
-.sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-.lr-actions { position: relative; }
-.lr-actions .sel-checkbox {
-  position: absolute;
-  right: 0; top: 50%; transform: translateY(-50%);
-  background: rgba(255,255,255,0.55);
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
-.lr-actions .sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-/* 勾选框出现/消失动画 */
-.sel-cb-enter-active,
-.sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
-.sel-cb-enter-from,
-.sel-cb-leave-to { opacity: 0; }
-
 .fc-ext-badge {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
@@ -1259,82 +1214,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 
 /* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
 
-/* ── 拖动状态（.fc-card.dragging 已挪进 FileCard.vue，这里只留列表行） ── */
-.list-row.dragging { opacity: 0.35; cursor: grabbing; }
-.list-row.folder-row.drag-over {
-  background: rgba(123,127,178,0.08);
-  outline: 1.5px solid var(--color-primary); outline-offset: -1px;
-}
-
 /* 网格/列表上传按钮外观改由共用组件 FileUploadButton.vue 提供（跟项目文件区同一份）。 */
-
-/* ── 列表视图 ── */
-.file-list { display: flex; flex-direction: column; gap: 2px; }
-
-.lh-sortable {
-  display: flex; align-items: center; gap: 3px;
-  cursor: pointer; user-select: none; transition: color 0.12s;
-}
-.lh-sortable:hover { color: var(--text-primary); }
-.lh-sortable.active { color: var(--color-primary); }
-.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
-.lh-sortable.active .lh-arrow { opacity: 1; }
-.lh-arrow.desc { transform: rotate(180deg); }
-
-.list-head {
-  display: grid;
-  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  padding: 0 10px 8px;
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
-}
-.list-row {
-  display: grid;
-  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  align-items: center; padding: 9px 10px;
-  min-height: 42px;
-  border-radius: 9px; transition: background 0.12s;
-  cursor: pointer;
-}
-.list-row:hover { background: rgba(123,127,178,0.06); }
-.list-row.selected { background: rgba(123,127,178,0.1); }
-.folder-row { cursor: pointer; }
-.folder-row:hover { background: rgba(180,148,80,0.06); }
-
-.lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
-.lr-type-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.lr-ext {
-  font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
-  border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5;
-}
-.lr-type-text { font-size: 11px; color: var(--text-secondary); }
-.lr-filename {
-  font-size: 12px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px;
-}
-.lr-proj-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.lr-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.8; }
-.lr-projname {
-  font-size: 11px; color: var(--text-secondary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  padding-bottom: 2px; margin-bottom: -2px;
-}
-.lr-text { font-size: 11px; color: var(--text-secondary); }
-
-.lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.list-row:hover .file-list-btn { opacity: 1; }
-
-.list-empty {
-  display: flex; flex-direction: column; align-items: center;
-  gap: 8px; padding: 56px 0; color: var(--text-secondary); font-size: 12px; opacity: 0.5;
-}
-
-/* ── 回收站视图 ── */
-.trash-list .list-head,
-.trash-list .list-row { grid-template-columns: 2fr 90px 1.2fr 56px 72px 96px; }
 
 .days-warn { color: #c85a5a; font-weight: 600; }
 
@@ -1380,8 +1260,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .sel-download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-/* ── 右键菜单（.fc-card.cut 已挪进 FileCard.vue，这里只留列表行） ── */
-.list-row.cut { opacity: 0.45; }
 .sel-delete-btn {
   display: flex; align-items: center; gap: 5px;
   padding: 6px 12px; border-radius: 8px; border: none;
