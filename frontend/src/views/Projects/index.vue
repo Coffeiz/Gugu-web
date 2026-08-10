@@ -25,6 +25,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { runtime, type MoveAction } from '@/interaction/runtime'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
 import { showAppError } from '@/composables/useAppToast'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
@@ -63,7 +64,7 @@ onMounted(() => {
   if (!projectStore.archivedLoaded && !projectStore.archivedLoading) projectStore.fetchArchivedProjects()
 })
 
-const stopRuntimeActions = runtime.onAction(action => {
+useRuntimeAction(action => {
   if (action.type !== 'move') return
   const move = action as MoveAction
   const object = runtime.objects.get(move.objectId)
@@ -75,7 +76,6 @@ const stopRuntimeActions = runtime.onAction(action => {
   if (!projectStore.projects.some(project => project.id === projectId)) return
   projectStore.moveProject(projectId, move.toSurfaceId)
 })
-onUnmounted(stopRuntimeActions)
 onUnmounted(stopOwnershipSubscription)
 
 // 全局搜索点击项目 → 跳转本页后高亮对应项目卡（不打开编辑弹窗）
