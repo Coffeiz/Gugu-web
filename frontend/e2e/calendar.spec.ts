@@ -51,3 +51,38 @@ test('框选日期后可以从侧栏创建带日期范围的项目', async ({ pa
   }
   await expect(page.locator('.drp-input')).toContainText(`${fmt(startIso!)} — ${fmt(endIso!)}`)
 })
+
+test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', async ({ page }) => {
+  const now = new Date()
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const initialDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`
+  const title = `E2E 活动 ${Date.now()}`
+  const response = await page.request.post('/api/v1/events', {
+    data: { title, date: initialDate, type: 'event' },
+  })
+  expect(response.ok()).toBeTruthy()
+  const created = await response.json()
+
+  try {
+    await page.goto('/calendar')
+    await expect(page.locator('.month-body')).toBeVisible()
+
+    const chip = page.locator('.event-chip.chip-ev-click').filter({ hasText: title })
+    await expect(chip).toBeVisible()
+    await chip.click()
+
+    const editModal = page.locator('.eem-floating')
+    await expect(editModal).toBeVisible()
+    await editModal.locator('.dp-input').click()
+    await expect(page.locator('.dp-popup')).toBeVisible()
+
+    const nextDay = page.locator('.dp-popup .dp-day:not(.other):not(.disabled):not(.selected)').first()
+    const nextDayNumber = await nextDay.innerText()
+    await nextDay.click()
+
+    await expect(editModal).toBeVisible()
+    await expect(editModal.locator('.dp-input')).toContainText(`${now.getMonth() + 1}/${Number(nextDayNumber)}`)
+  } finally {
+    await page.request.delete(`/api/v1/events/${created.id}`)
+  }
+})
