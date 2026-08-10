@@ -1,9 +1,8 @@
 /**
  * 文件系统 Runtime 接入用的纯 ID/类型辅助函数。
  *
- * 按方案第 4 节约束：这里不隐藏 Core API，也不维护另一份对象/Surface 注册表——
- * 只提供 `scope:kind:id` 形式的对象 ID 生成/解析，供业务侧（Files/index.vue 等）
- * 直接调用 `runtime.objects`/`runtime.surfaces`/`runtime.targets`/`runtime.onAction()`。
+ * 主文件库页面的对象、Surface、Target 已由 Vue 接入层管理；项目编辑卡仍复用
+ * Core API，因此这里保留统一的 ID 生成/解析辅助函数，不维护第二份注册表。
  */
 
 export type FileObjectKind = 'file' | 'folder'

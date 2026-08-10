@@ -258,13 +258,6 @@ const { elementRef: browserSurfaceRef } = useSurface({
 watch(mainRef, element => { browserSurfaceRef.value = element })
 const domAdapter = createVueRuntimeAdapter(runtime)
 
-// 乐观更新是即触发即生效的（onAction 里 void 掉，不等 API），业务数据一变，下面注册对象的
-// watchEffect 马上就会看到这个文件/文件夹从当前目录的 sortedContents 里消失。落点确定后
-// Runtime 几乎立刻就释放了这个对象的控制权（objectLease 在 emit() 后马上放，早于 landing/
-// reveal 动画播完，是刻意设计，避免 <Teleport> 二次跳变），所以 runtime.isControlled() 在这
-// 个时间点已经是 false，挡不住——真正要等的是"落地动画放完"，不是"控制权还在"。这里改成延迟
-// 注销（见下方 unregister 循环），不是立刻同步注销，给动画留出时间窗口再真正从 Runtime 摘掉。
-
 /** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
 function hasActiveMove(): boolean {
   const root = mainRef.value
