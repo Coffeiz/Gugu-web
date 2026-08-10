@@ -670,95 +670,10 @@ function fileLayoutKey(f: FileMeta): string {
   return fileObjectId(RUNTIME_SCOPE, 'file', f.id)
 }
 
-function bindFolderEl(f: FolderCardMeta, target: unknown) {
-  if (f.type !== 'folder' || f.folderId == null) return
-  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
-  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
-  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId), element ?? null)
-}
-function bindFileEl(f: FileMeta, target: unknown) {
-  const el = (target as { rootEl?: HTMLElement | null } | HTMLElement | null)
-  const element = el && typeof el === 'object' && 'rootEl' in el ? (el as { rootEl: HTMLElement | null }).rootEl : (el as HTMLElement | null)
-  domAdapter.bindObject(fileObjectId(RUNTIME_SCOPE, 'file', f.id), element ?? null)
-}
-interface ObjectRegSnapshot { type: string; surfaceId: string; abilities: string[] }
-const objectGenerations = new Map<string, number>()
-const objectSnapshots = new Map<string, ObjectRegSnapshot>()
 const runtimeSurfaceIds = new Set<string>()
-// 对象离开当前目录视图后不立刻注销，改成延迟到落地动画时长之后（见下方 unregister 循环）；
-// 这里记录已排期的定时器，避免同一个 id 重复排期，对象重新出现在视图里时要能取消排期。
-const pendingUnregisterTimers = new Map<string, ReturnType<typeof setTimeout>>()
-// 配置里最长的 landing 时长（target 落地 300ms）+ 余量，动画放完之后再摘注册，不提前抢跑。
-const UNREGISTER_DELAY_MS = 500
 
 watchEffect(() => {
-  // 网格卡片由各自的 Vue Runtime wrapper 管理生命周期；列表/回收站仍由这里
-  // 维护对象注册，避免同一对象同时被两套 generation 接管。
-  const usesVueCardRuntime = viewMode.value === 'grid' && currentType.value !== 'trash'
-  const nextObjectIds = new Set<string>()
   const allFolders = sortedContents.value.folders.filter(f => f.type === 'folder' && f.folderId != null)
-  const folders = usesVueCardRuntime ? [] : allFolders
-  const files = usesVueCardRuntime ? [] : sortedContents.value.files
-
-  for (const f of folders) {
-    const id = fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId as number)
-    const abilities = isFolderRoutedToLegacyDrag(f.id) ? [] : ['move']
-    const surfaceId = runtimeBrowserSurfaceId
-    nextObjectIds.add(id)
-    const snapshot: ObjectRegSnapshot = { type: 'folder-item', surfaceId, abilities }
-    const prev = objectSnapshots.get(id)
-    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
-      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
-    if (changed) {
-      objectGenerations.set(id, runtime.objects.register({
-        id,
-        type: 'folder-item',
-        surfaceId,
-        element: runtime.objects.get(id)?.element ?? null,
-        abilities,
-        target: { surfaceId: folderSurfaceId(RUNTIME_SCOPE, f.folderId as number), accepts: ['file-item', 'folder-item'], priority: 2 },
-      }))
-      objectSnapshots.set(id, snapshot)
-    }
-  }
-
-  for (const f of files) {
-    const id = fileObjectId(RUNTIME_SCOPE, 'file', f.id)
-    const abilities = isFileRoutedToLegacyDrag(f.id) ? [] : ['move']
-    const surfaceId = runtimeBrowserSurfaceId
-    nextObjectIds.add(id)
-    const snapshot: ObjectRegSnapshot = { type: 'file-item', surfaceId, abilities }
-    const prev = objectSnapshots.get(id)
-    const changed = !prev || prev.type !== snapshot.type || prev.surfaceId !== snapshot.surfaceId
-      || prev.abilities.length !== snapshot.abilities.length || prev.abilities[0] !== snapshot.abilities[0]
-    if (changed) {
-      objectGenerations.set(id, runtime.objects.register({
-        id,
-        type: 'file-item',
-        surfaceId,
-        element: runtime.objects.get(id)?.element ?? null,
-        abilities,
-      }))
-      objectSnapshots.set(id, snapshot)
-    }
-  }
-
-  for (const [id, generation] of objectGenerations) {
-    if (nextObjectIds.has(id)) {
-      // 对象重新出现在当前目录视图里（比如乐观更新后又撤销/刷新拉回原状）：取消排期的注销。
-      const pending = pendingUnregisterTimers.get(id)
-      if (pending) { clearTimeout(pending); pendingUnregisterTimers.delete(id) }
-      continue
-    }
-    if (pendingUnregisterTimers.has(id)) continue // 已经排过队，不用重复排
-    pendingUnregisterTimers.set(id, setTimeout(() => {
-      pendingUnregisterTimers.delete(id)
-      if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
-      objectGenerations.delete(id)
-      objectSnapshots.delete(id)
-    }, UNREGISTER_DELAY_MS))
-  }
-
   // Surface：浏览区由 useSurface 管理；
   // 文件夹自己的语义 Surface 和面包屑语义 Surface 只用来承接 Target，不对应真实容器 DOM。
   const nextSurfaceIds = new Set<string>()
@@ -818,11 +733,6 @@ useRuntimeAction(action => {
 onUnmounted(() => {
   // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
   syncFileDragRotation('grid')
-  for (const timer of pendingUnregisterTimers.values()) clearTimeout(timer)
-  pendingUnregisterTimers.clear()
-  for (const [id, generation] of objectGenerations) {
-    if (runtime.objects.get(id)?.generation === generation) runtime.objects.unregister(id)
-  }
   for (const id of runtimeSurfaceIds) runtime.surfaces.unregister(id)
   domAdapter.dispose()
 })
@@ -889,7 +799,8 @@ const listViewContext = {
   previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
-  bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection: 'files-browser',
+  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag,
+  layoutCollection: 'files-browser',
 }
 
 function selCut() {

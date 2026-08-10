@@ -17,114 +17,8 @@
       ><path d="M5 2v6M2 5l3-3 3 3"/></svg></span>
     </div>
 
-    <!-- 文件夹行 -->
-    <div
-      v-for="f in sortedContents.folders"
-      :key="f.id"
-      class="list-row folder-row"
-      :class="{
-        selected: selectedFolderKeys.has(f.id),
-        'pre-selected': previewFolderKeys.has(f.id),
-        'drag-over': dragOverFolderId === f.folderId,
-      }"
-      :data-folder-key="f.id"
-      :data-folder-id="f.folderId"
-      data-layout-role="card"
-      :data-layout-key="folderLayoutKey(f)"
-      :ref="(el: any) => bindFolderEl(f, el)"
-      @click.stop="handleFolderClick(f, $event)"
-      @contextmenu.prevent.stop="openCtx('folder', f, $event)"
-      @pointerdown="onFolderPointerDown(f, $event)"
-    >
-      <span class="lr-name-cell">
-        <component :is="folderListIcon(f)" class="lr-folder-icon" :size="16" weight="fill" :style="{ color: folderAccentColor(f) }" />
-        <span class="lr-filename" :title="f.displayName">
-          <RenameInput
-            v-if="renamingFolderKey === f.folderId"
-            v-model="renameText"
-            @commit="commitRename"
-            @cancel="cancelRename"
-          />
-          <template v-else>{{ f.displayName }}</template>
-        </span>
-      </span>
-      <span class="lr-type-text">文件夹</span>
-      <span class="lr-text">—</span>
-      <span class="lr-text">{{ f.count != null ? f.count + ' 项' : '—' }}</span>
-      <span class="lr-text">—</span>
-      <span class="lr-actions">
-        <Transition name="sel-cb">
-          <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedFolderKeys.has(f.id) }">
-            <svg v-if="selectedFolderKeys.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
-          </div>
-        </Transition>
-        <template v-if="f.type === 'folder' && !inSelectionMode">
-          <button class="file-list-btn" @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)">
-            <PhCheck v-if="renamingFolderKey === f.folderId" :size="11" />
-            <PhPencilSimple v-else :size="11" />
-          </button>
-          <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)"><PhDownloadSimple :size="11" /></button>
-          <button class="file-list-btn del" title="删除" @click.stop="deleteFolder(f)"><PhTrash :size="11" /></button>
-        </template>
-      </span>
-    </div>
-
-    <!-- 文件行 -->
-    <div
-      v-for="f in sortedContents.files"
-      :key="f.id"
-      class="list-row"
-      :class="{
-        selected: selectedIds.has(f.id),
-        'pre-selected': previewFileIds.has(f.id),
-        dragging: draggingFileIds.has(f.id),
-        cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id),
-      }"
-      :data-file-id="f.id"
-      data-layout-role="card"
-      :data-layout-key="fileLayoutKey(f)"
-      :ref="(el: any) => bindFileEl(f, el)"
-      @contextmenu.prevent.stop="openCtx('file', f, $event)"
-      @click.stop="handleFileClick(f, $event)"
-      @pointerdown="onFilePointerDown(f, $event)"
-    >
-      <span class="lr-name-cell">
-        <component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" />
-        <span class="lr-filename" :title="f.displayName">
-          <RenameInput
-            v-if="renamingFileId === f.id"
-            v-model="renameText"
-            @commit="commitRename"
-            @cancel="cancelRename"
-          />
-          <template v-else>{{ f.displayName }}</template>
-        </span>
-      </span>
-      <span class="lr-type-cell">
-        <span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span>
-      </span>
-      <span class="lr-proj-cell">
-        <span v-if="f.projectColor" class="lr-dot" :style="{ background: f.projectColor || '' }"></span>
-        <span class="lr-projname">{{ f.projectName || f.stageName || '—' }}</span>
-      </span>
-      <span class="lr-text">{{ f.size }}</span>
-      <span class="lr-text">{{ f.createdAt }}</span>
-      <span class="lr-actions">
-        <Transition name="sel-cb">
-          <div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }">
-            <svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round"><path d="M2 6l3 3 5-5"/></svg>
-          </div>
-        </Transition>
-        <template v-if="!inSelectionMode">
-          <button class="file-list-btn" @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)">
-            <PhCheck v-if="renamingFileId === f.id" :size="11" />
-            <PhPencilSimple v-else :size="11" />
-          </button>
-          <button class="file-list-btn" title="下载" @click.stop="downloadFile(f)"><PhDownloadSimple :size="11" /></button>
-          <button class="file-list-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)"><PhTrash :size="11" /></button>
-        </template>
-      </span>
-    </div>
+    <RuntimeFolderListRow v-for="f in sortedContents.folders" :key="f.id" :item="f" :context="props.context" :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-abilities="f.type === 'folder' && f.folderId != null && !isFolderRoutedToLegacyDrag(f.id) ? ['move'] : []" :runtime-target="f.type === 'folder' && f.folderId != null ? { surfaceId: `files:surface:folder:${f.folderId}`, accepts: ['file-item', 'folder-item'], priority: 2 } : undefined" />
+    <RuntimeFileListRow v-for="f in sortedContents.files" :key="f.id" :item="f" :context="props.context" :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser" :runtime-abilities="isFileRoutedToLegacyDrag(f.id) ? [] : ['move']" />
 
     <!-- 上传中的幽灵卡片 -->
     <FileUploadGhostCard
@@ -163,12 +57,13 @@
 </template>
 <script setup lang="ts">
 import type { PropType } from 'vue'
-import { PhCheck, PhDownloadSimple, PhFolder, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
+import { PhFolder } from '@phosphor-icons/vue'
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
-import RenameInput from '@/components/common/file-browser/RenameInput.vue'
+import RuntimeFolderListRow from '@/views/Files/components/RuntimeFolderListRow.vue'
+import RuntimeFileListRow from '@/views/Files/components/RuntimeFileListRow.vue'
 
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 
@@ -189,7 +84,7 @@ const {
   selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, onFilePointerDown,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile, deleteSingleFile,
   uploadingItems, loading, canUpload, handleFileInput,
-  bindFolderEl, bindFileEl, folderLayoutKey, fileLayoutKey, layoutCollection,
+  folderLayoutKey, fileLayoutKey, isFolderRoutedToLegacyDrag, isFileRoutedToLegacyDrag, layoutCollection,
 } = props.context
 </script>
 
