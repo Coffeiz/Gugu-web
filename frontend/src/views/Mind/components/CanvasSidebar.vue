@@ -38,7 +38,7 @@
         </section>
 
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
-         <div ref="projectListRef" class="cd-list project-list">
+         <div ref="projectListRef" class="cd-list project-list" data-layout-surface="mind:drawer:projects">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
@@ -46,8 +46,8 @@
             </div>
             <template v-else-if="canvasProjectIdsReady">
               <!-- 三个状态分组的 key 恒定；几何位移统一由布局协调器处理。 -->
-              <TransitionGroup :css="false" tag="div" class="project-groups" move-class="project-groups-vue-move">
-                <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" :data-layout-key="group.status">
+              <TransitionGroup :css="false" tag="div" class="project-groups" data-layout-collection="mind:drawer:projects" move-class="project-groups-vue-move">
+                <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" data-layout-group="mind:drawer:projects" :data-layout-key="group.status">
                   <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
                     <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
                     <svg class="project-group-chevron" :class="{ open: group.items.length > 0 && openProjectStatuses.has(group.status) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -59,7 +59,7 @@
                     @enter="onGroupFoldEnter"
                     @leave="onGroupFoldLeave"
                   >
-                    <div v-if="group.items.length > 0 && openProjectStatuses.has(group.status)" class="project-group-content">
+                    <div v-if="group.items.length > 0 && openProjectStatuses.has(group.status)" class="project-group-content" data-layout-content="mind:drawer:projects">
                       <TransitionGroup :css="false" tag="div" class="project-group-cards">
                         <ProjectDrawerCard
                           v-for="project in group.items"
@@ -143,7 +143,6 @@ let projectListObserver: ResizeObserver | null = null
 let projectGroupAnimationCount = 0
 let projectGroupScrollRaf: number | null = null
 let drawerSurfaceGeneration: number | null = null
-let drawerTargetGeneration: number | null = null
 const DRAWER_LAYOUT_DURATION = 340
 const DRAWER_LAYOUT_EASING = 'cubic-bezier(.22,1,.36,1)'
 const projectGroupsLayout = createProjectGroupsLayoutAdapter({
@@ -429,17 +428,6 @@ function syncRuntimeDrawerSurface() {
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
   }
-  if (drawerTargetGeneration === null) {
-    drawerTargetGeneration = runtime.targets.register({
-      id: 'mind:drawer-target',
-      surfaceId: MIND_DRAWER_SURFACE_ID,
-      element,
-      accepts: [MIND_CANVAS_OBJECT_TYPE],
-      priority: 1,
-    })
-  } else {
-    runtime.targets.setElement('mind:drawer-target', element)
-  }
 }
 
 onMounted(() => {
@@ -461,10 +449,6 @@ onBeforeUnmount(() => {
   if (drawerSurfaceGeneration !== null) {
     runtime.surfaces.unregister(MIND_DRAWER_SURFACE_ID, drawerSurfaceGeneration)
     drawerSurfaceGeneration = null
-  }
-  if (drawerTargetGeneration !== null) {
-    runtime.targets.unregister('mind:drawer-target', drawerTargetGeneration)
-    drawerTargetGeneration = null
   }
 })
 </script>
