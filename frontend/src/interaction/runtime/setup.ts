@@ -85,7 +85,21 @@ export function setupInteractionRuntime(): void {
     defaultVisualMode: 'detach',
     landingMode: 'free',
     releaseMode: 'physical',
-    motion: { enabled: true },
+    // 画布单独限制释放速度；该档案只在 landingMode:'free' 时读取，
+    // 不会改变文件/项目列和语义目标 landing 的抛出手感。
+    motion: {
+      enabled: true,
+      profile: {
+        freeLanding: {
+          duration: 550,
+          easing: 'cubic-bezier(.22,1,.36,1)',
+          coastSeconds: 0.12,
+          maxCoast: 260,
+          minVelocity: 30,
+          release: { velocityScale: 1, maxVelocity: 2500 },
+        },
+      },
+    },
     resolveFreeLandingRect: ({ objectId, destination }) => {
       const targetSurface = destination && typeof destination === 'object'
         ? (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
