@@ -528,9 +528,8 @@ const {
 // ── 拖动移动 ──
 // pointer 模式（setPointerCapture 自建拖拽，不是原生 HTML5 draggable/dragstart——原生拖拽从
 // dragstart 起浏览器会整段暂停 mouseover/mouseout 派发，导致落地揭示卡片时 hover 高亮跳变，
-// perf trace 实测证实）。抓取判断单选/多选 → 起 startPhysicsDrag/startMultiPhysicsDrag → 拖拽
-// 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
-// 了 Runtime 的对象/Surface/Target 声明，这里只提供 Files 特有的目标解析和业务移动 API。
+// perf trace 实测证实）。单选/多选均由 Interaction Runtime 接管；拖拽中由 Runtime 命中
+// 目标并派发 Action，这里只提供 Files 特有的目标解析和业务移动 API。
 function isBcDroppable(seg: NavSeg, idx: number) {
   // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
   // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。

@@ -36,7 +36,7 @@
 本次不继续在旧 adapter 上打补丁，而是让 Runtime 成为唯一的交互编排者。
 
 **动画与手感基准**：单卡交互以 `gugu-interaction-runtime` 仓库 demo 的效果为准，不要求跟旧文件页/项目抽屉的单卡效果保持兼容。多选交互在迁移到 Group Session 时，必须保留当前
-`startMultiPhysicsDrag` 的主卡 + 后置修饰卡表现、卡片偏移、玻璃底色、阴影、缩放、落地和
+Runtime Group Session 的主卡 + 后置修饰卡表现、卡片偏移、玻璃底色、阴影、缩放、落地和
 regrab 手感，不重新设计多选视觉。旧效果只作问题记录和行为参考；除多选兼容约束外，
 不为了保留旧手感额外定制 Runtime 或 adapter。
 
@@ -263,7 +263,7 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 - 业务侧只接收对象 ID 列表并执行批量 API。
 
 **视觉基准与兼容约束**：多选迁移不重新设计文件拖拽样式。继续沿用当前
-`startMultiPhysicsDrag` 的主卡 + 后置修饰卡表现、卡片间偏移、玻璃底色、阴影、缩放、
+Runtime Group Session 的主卡 + 后置修饰卡表现、卡片间偏移、玻璃底色、阴影、缩放、
 落地和 regrab 手感。单卡仍走现有 `useObject`/Runtime 单对象路径，不因 Group Session
 引入新的单卡分支。列表模式继续使用 compact layout，网格模式保留原有卡片比例和视觉参数。
 
@@ -299,7 +299,7 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 
 **B. Runtime Demo（先验证通用能力）✅ 已完成（2026-08-11）**
 
-- [x] 以当前 `startMultiPhysicsDrag` 为视觉基线接入 Group Session，不改变主卡、修饰卡的布局、
+- [x] 以 Runtime Group Session 为视觉基线接入，不改变主卡、修饰卡的布局、
   阴影、缩放、compact/list 和 landing 参数；
 - [x] 验证网格和列表两种布局下主卡均为鼠标实际抓取卡，修饰卡保持后置偏移；
 - [x] 验证抛出、回弹、落地、落点命中和落地前 regrab 全部由同一 group 时间线驱动；
@@ -443,7 +443,7 @@ Vue Runtime 声明、共享 Action 适配和文件业务提交边界。后续新
 - 不为文件单独创建 Runtime 专属动画实现；
 - 不同时维护 detach 和 clone 两套文件业务编排；
 - 不整体 cherry-pick 旧 after 分支；
-- 单卡动画效果以 demo 为准；多选迁移必须遵守 Phase 3 的 `startMultiPhysicsDrag` 视觉兼容约束；
+- 单卡动画效果以 demo 为准；多选迁移必须遵守 Runtime Group Session 的视觉兼容约束；
 - 不在没有 group interaction 前删除多选功能；
 - Phase 3 的 Runtime 核心改动（`GroupDragSession`、`VisualProxyCoordinator` 1:N 化）不在本仓库内实现，不在本重构分支里直接修改 `gugu-interaction-runtime` 源码。
 
