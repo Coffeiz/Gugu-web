@@ -264,14 +264,12 @@ function connectionTargetSide(nodeId: number) {
   return connectionDrag.targetNodeId === nodeId ? connectionDrag.targetSide : null
 }
 function targetAt(event: PointerEvent, originNodeId: number) {
-  const element = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest<HTMLElement>('[data-node-id]')
-  const nodeId = element ? Number(element.dataset.nodeId) : NaN
+  const port = runtime.hitNodePort({ x: event.clientX, y: event.clientY }, { objectType: MIND_CANVAS_OBJECT_TYPE })
+  const nodeId = port?.objectId.startsWith('mind:') ? Number(port.objectId.slice('mind:'.length)) : NaN
   if (!Number.isFinite(nodeId) || nodeId === originNodeId || landingNodeIds.has(nodeId)) return null
   const item = props.items.find(current => current.nodeId === nodeId)
   if (!item) return null
-  const pointer = screenToWorld(event.clientX, event.clientY)
-  const { w } = measuredSizes.get(nodeId) ?? itemSize(item)
-  return { item, side: pointer.x < item.x + w / 2 ? 'left' as const : 'right' as const }
+  return { item, side: port!.side }
 }
 function updateConnectionTarget(event: PointerEvent) {
   const originNodeId = connectionDrag.originNodeId
@@ -285,6 +283,7 @@ function updateConnectionTarget(event: PointerEvent) {
 function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 'right') {
   const origin = props.items.find(current => current.nodeId === nodeId)
   if (!origin) return
+  if (!runtime.beginNodeConnection(`mind:${nodeId}`, side)) return
   connectionDrag.active = true
   connectionDrag.originNodeId = nodeId
   connectionDrag.originSide = side
@@ -301,6 +300,7 @@ function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 
   connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
 function onConnectionDragMove(event: PointerEvent) {
+  runtime.updateNodeConnection(screenToWorld(event.clientX, event.clientY))
   updateConnectionTarget(event)
 }
 function onConnectionDragEnd(event: PointerEvent) {
@@ -313,11 +313,15 @@ function onConnectionDragEnd(event: PointerEvent) {
   connectionDrag.originNodeId = null
   connectionDrag.targetNodeId = null
   connectionDrag.targetSide = null
-  if (originNodeId == null || !target) return
+  if (originNodeId == null || !target) {
+    runtime.cancelNodeConnection()
+    return
+  }
   // 落点判定用真实指针位置（event.clientX/Y），不用还在弹簧里追赶的渲染位置——手感上的
   // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
   const source = props.items.find(item => item.nodeId === originNodeId)
   if (!source) return
+  if (!runtime.finishNodeConnection(`mind:${target.item.nodeId}`, target.side)) return
   emit('linkNodes', originNodeId, target.item.nodeId, {
     srcSide: connectionDrag.originSide,
     dstSide: target.side,
@@ -387,6 +391,7 @@ onMounted(() => {
   window.addEventListener('pointerup', onPointerUp)
 })
 onBeforeUnmount(() => {
+  runtime.cancelNodeConnection()
   stopRuntimeActions?.()
   stopRuntimeActions = null
   runtime.surfaces.unregister(MIND_CANVAS_SURFACE_ID)

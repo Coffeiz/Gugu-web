@@ -31,6 +31,12 @@ export function useMindRuntimeObject(options: {
         element,
         contentScale: options.contentScale,
         abilities: ['move'],
+        node: {
+          ports: [
+            { id: 'left', side: 'left', position: 0.5, accepts: [MIND_CANVAS_OBJECT_TYPE] },
+            { id: 'right', side: 'right', position: 0.5, accepts: [MIND_CANVAS_OBJECT_TYPE] },
+          ],
+        },
       })
     } else {
       runtime.objects.setElement(options.objectId, element)
