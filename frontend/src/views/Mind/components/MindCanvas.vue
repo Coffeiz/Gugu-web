@@ -14,28 +14,28 @@
         <NoteSticker
           v-if="item.node.kind === 'canvas_note'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
+          @remove="item => emit('remove', item)" @measured="onItemMeasured"
           @moved="onItemMoved"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <ProjectRefCard
           v-else-if="item.node.refType === 'project'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
+          @remove="item => emit('remove', item)" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)" @return-to-drawer="item => emit('returnToDrawer', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <FileRefCard
           v-else-if="item.node.refType === 'file'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
+          @remove="item => emit('remove', item)" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <EntitySticker
           v-else
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
-          @remove="item => emit('remove', item)" @dragging="onItemDragging" @landing="onItemLanding" @landing-done="onItemLandingDone" @measured="onItemMeasured"
+          @remove="item => emit('remove', item)" @measured="onItemMeasured"
           @moved="onItemMoved" @open="item => emit('openRef', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
@@ -51,7 +51,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { runtime, type MoveAction } from '@/interaction/runtime'
+import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
@@ -128,8 +128,7 @@ function onViewportPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
   startPan(event)
 }
-/** 贴纸自己算好了新的世界坐标（卡片中心落在松手时的鼠标位置，见 useCardDrag.ts 的
- *  onDropAt），这里只管落库持久化。 */
+/** Runtime 在松手时给出最终世界位置，这里只负责落库持久化。 */
 function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   item.x = x
   item.y = y
@@ -153,21 +152,14 @@ function onRuntimeMove(action: MoveAction) {
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
 }
-/** 拖拽进行中每帧调用（见 useCardDrag.ts 的 onDragMove）：只改本地状态，不 emit 往上落库——
- *  贴纸本体此刻被 startPhysicsDrag 的克隆接管显示（源贴纸 display:none），这里改 item.x/y
- *  不会造成本体视觉跳变，只会让 RelationLayer 依据同一份响应式数据重绘，连着这张贴纸的
- *  关系线就能跟手实时移动——这才是"实时运动"，不是给线本身加动画。松手时 onItemMoved
- *  才会真正落库，中途每帧都打接口既没必要也会把后端打爆。 */
-function onItemDragging(item: MindCanvasItem, x: number, y: number) {
-  item.x = x
-  item.y = y
-}
+/** 卡片尺寸变化时同步给 RelationLayer；拖动中的位置由 Runtime 代理事件提供。 */
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
   measuredSizes.set(item.nodeId, size)
 }
 
 let viewportResizeObserver: ResizeObserver | null = null
 let stopRuntimeActions: (() => void) | null = null
+let stopRuntimeVisual: (() => void) | null = null
 function updateViewportSize() {
   const viewport = viewportRef.value
   if (!viewport) return
@@ -189,32 +181,35 @@ function onItemHover(item: MindCanvasItem, hovering: boolean) {
   else if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
 }
 
-/** 松手后惯性落地动画期间（见 useCardDrag.ts 的 onLanding）每帧调用一次——跟 onItemDragging
- *  的关键区别：这里*不*写 item.x/y。onItemMoved 在落地动画开始前就已经把 item.x/y 同步改成
- *  了最终落点（物理模块紧接着要读它算克隆体飞行目标，不能等），如果这里再往 item.x/y 里写
- *  "还没到终点"的插值，会先让关系线闪一下终点、再跳回起点重新播这段惯性动画——很难看。这里
- *  改用一份独立的 landingPositions 表只覆盖 RelationLayer 的取点，不影响贴纸自己的真实位置
- *  （贴纸这时还隐藏着，item.x/y 提前到位对它没有视觉影响）。 */
 const landingPositions = reactive(new Map<number, { x: number; y: number }>())
 // 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
 // 不能把它提前识别成可吸附目标。
 const landingNodeIds = reactive(new Set<number>())
-function onItemLanding(item: MindCanvasItem, x: number, y: number) {
-  landingNodeIds.add(item.nodeId)
-  if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
-  landingPositions.set(item.nodeId, { x, y })
-}
-/** 落地插值播完（正好停在 item.x/y 的真实落库值上）——摘掉覆盖，RelationLayer 改读 item.x/y
- *  不会有任何跳变。 */
-function onItemLandingDone(item: MindCanvasItem) {
-  landingPositions.delete(item.nodeId)
-  landingNodeIds.delete(item.nodeId)
-  // _revealWithoutStaleHover 会在本体重新出现时主动补 mouseenter，但那一刻这张卡仍在
-  // landingNodeIds 里，会被 onItemHover 正确忽略。若鼠标原地未动，浏览器不会再发第二次
-  // enter；门禁解除后主动按真实命中状态补一次，关系线才能和本体一起恢复 hover。
-  const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${item.nodeId}"]`)]
-    .some(el => el.matches(':hover'))
-  if (hovered) hoveredNodeId.value = item.nodeId
+/** Runtime 代理的实际屏幕盒是连接线在拖动/落地期间唯一可信的临时几何来源。
+ * 这里只覆盖 RelationLayer 的位置，不写回 item.x/y，也不参与卡片动画。 */
+function onRuntimeVisual(event: RuntimeEvent) {
+  if (event.type === 'move-visual-end') {
+    const nodeId = event.objectId.startsWith('mind:') ? Number(event.objectId.slice('mind:'.length)) : NaN
+    if (!Number.isFinite(nodeId)) return
+    landingPositions.delete(nodeId)
+    landingNodeIds.delete(nodeId)
+    const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
+      .some(element => element.matches(':hover'))
+    if (hovered) hoveredNodeId.value = nodeId
+    return
+  }
+  if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
+  const nodeId = Number(event.objectId.slice('mind:'.length))
+  if (!Number.isFinite(nodeId)) return
+  const item = props.items.find(current => current.nodeId === nodeId)
+  if (!item) return
+  const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
+  const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
+  landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
+  if (event.phase === 'landing') {
+    landingNodeIds.add(nodeId)
+    if (hoveredNodeId.value === nodeId) hoveredNodeId.value = null
+  }
 }
 
 // ── 建立关联：从贴纸边缘的圆点按住拖出一条线，松手落在另一张贴纸上就建立关系 ──────────
@@ -384,6 +379,7 @@ onMounted(() => {
   stopRuntimeActions = runtime.onAction(action => {
     if (action.type === 'move') onRuntimeMove(action as MoveAction)
   })
+  stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
   updateViewportSize()
   viewportResizeObserver = new ResizeObserver(updateViewportSize)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
@@ -394,6 +390,8 @@ onBeforeUnmount(() => {
   runtime.cancelNodeConnection()
   stopRuntimeActions?.()
   stopRuntimeActions = null
+  stopRuntimeVisual?.()
+  stopRuntimeVisual = null
   runtime.surfaces.unregister(MIND_CANVAS_SURFACE_ID)
   viewportResizeObserver?.disconnect()
   window.removeEventListener('pointermove', onPointerMove)
