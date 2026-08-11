@@ -143,6 +143,7 @@ let projectListObserver: ResizeObserver | null = null
 let projectGroupAnimationCount = 0
 let projectGroupScrollRaf: number | null = null
 let drawerSurfaceGeneration: number | null = null
+let drawerTargetGeneration: number | null = null
 const DRAWER_LAYOUT_DURATION = 340
 const DRAWER_LAYOUT_EASING = 'cubic-bezier(.22,1,.36,1)'
 const projectGroupsLayout = createProjectGroupsLayoutAdapter({
@@ -428,6 +429,17 @@ function syncRuntimeDrawerSurface() {
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
   }
+  if (drawerTargetGeneration === null) {
+    drawerTargetGeneration = runtime.targets.register({
+      id: 'mind:drawer-target',
+      surfaceId: MIND_DRAWER_SURFACE_ID,
+      element,
+      accepts: [MIND_CANVAS_OBJECT_TYPE],
+      priority: 1,
+    })
+  } else {
+    runtime.targets.setElement('mind:drawer-target', element)
+  }
 }
 
 onMounted(() => {
@@ -449,6 +461,10 @@ onBeforeUnmount(() => {
   if (drawerSurfaceGeneration !== null) {
     runtime.surfaces.unregister(MIND_DRAWER_SURFACE_ID, drawerSurfaceGeneration)
     drawerSurfaceGeneration = null
+  }
+  if (drawerTargetGeneration !== null) {
+    runtime.targets.unregister('mind:drawer-target', drawerTargetGeneration)
+    drawerTargetGeneration = null
   }
 })
 </script>

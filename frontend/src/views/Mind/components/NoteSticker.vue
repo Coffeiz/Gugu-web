@@ -169,6 +169,7 @@ async function onColor(color: string | null) {
 const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: noteCardEl,
+  contentScale: () => props.scale,
 })
 </script>
 

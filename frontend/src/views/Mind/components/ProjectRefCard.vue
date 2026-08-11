@@ -178,6 +178,7 @@ const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: () => cardEl.value ?? missingRef.value,
   onClick: onOpen,
+  contentScale: () => props.scale,
 })
 function onOpen() {
   emit('open', props.item)

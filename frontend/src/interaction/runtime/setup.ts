@@ -86,7 +86,16 @@ export function setupInteractionRuntime(): void {
     landingMode: 'free',
     releaseMode: 'physical',
     motion: { enabled: true },
-    resolveFreeLandingRect: ({ objectId, destination }) => resolveMindLandingRect(objectId, destination),
+    resolveFreeLandingRect: ({ objectId, destination }) => {
+      const targetSurface = destination && typeof destination === 'object'
+        ? (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
+          ?? (destination as { toSurfaceId?: unknown; columnId?: unknown }).columnId
+        : null
+      // 画布内是自由落点；进入抽屉时必须交给 drawer Surface 的语义目标，
+      // 不能把鼠标释放点误当成抽屉卡的最终位置。
+      if (targetSurface === 'mind:drawer') return null
+      return resolveMindLandingRect(objectId, destination)
+    },
   })
   runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({
