@@ -17,7 +17,6 @@ import { dragRegistry } from './core/DragRegistry'
 import { integrateSpring } from './core/physics'
 import { dispatchDragHandoff, installLandingHandoff } from './interaction/handoff'
 import { startPhysicsDrag as startPhysicsDragRuntime } from './interaction/single'
-import { startMultiPhysicsDrag as startMultiPhysicsDragRuntime } from './interaction/multi'
 import { animateScroll, findScrollParent, layoutBoxAtTransitionsEnd, layoutBoxInScroller } from './interaction/dom'
 import { startThresholdDrag, ThresholdDragOpts } from './interaction/threshold'
 import { cloneForDrag, createLandingClone } from './visual/clone'
@@ -37,7 +36,7 @@ export function prepareFlipTransaction(
   return transaction
 }
 
-// 拖拽物理可选项（startPhysicsDrag / startMultiPhysicsDrag 共用）
+// 单卡拖拽物理可选项。
 export interface PhysicsDragOpts {
   /** 物理拖拽创建新会话后通知业务 adapter，供其保护自己的异步视觉回调。 */
   onSessionStart?: (session: DragSession) => void
@@ -347,20 +346,11 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
     visualController: createCardVisualController,
   })
 }
-export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTMLElement, count: number, extras: HTMLElement[] = [], opts: PhysicsDragOpts = {}) {
-  startMultiPhysicsDragRuntime(event, sourceEl, count, extras, opts, {
-    active: _activeState,
-    easing: _SETTLE,
-    transparentGhost: _transparentGhost,
-    registerCleanup: (session, cleanup) => session.addCleanup(cleanup),
-    visualController: createCardVisualController,
-  })
-}
 /**
  * pointer 模式下「按住不放越过阈值才算真的开拖，否则算一次点击」的判定，抽成通用函数
  * 前——ProjectCard.vue（看板卡）、文件系统旧拖拽入口（文件/文件夹卡，单选/多选两种）、
  * useCardDrag.ts（画布贴纸）三处各自手写过一份几乎一样的「攒位移 → 判阈值 → 起
- * startPhysicsDrag/startMultiPhysicsDrag，否则当点击」，连 window 监听器的挂卸都是抄的。
+ * startPhysicsDrag，否则当点击」，连 window 监听器的挂卸都是抄的。
  * 这里只收敛这段公共的「阈值判定 + 生命周期」外壳，真正“越过阈值后要怎么起拖”（选单选
  * 还是多选、传哪些 opts）仍然是各调用方自己的业务，通过 onDragStart 回调交还给它们，
  * 不强行假设只有一种起拖方式。
