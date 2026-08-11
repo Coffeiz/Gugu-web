@@ -1,4 +1,5 @@
 import { runtime } from './index'
+import { MIND_CANVAS_OBJECT_TYPE, resolveMindLandingRect } from './canvas'
 
 let initialized = false
 
@@ -79,6 +80,13 @@ export function setupInteractionRuntime(): void {
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
     proxyLayout: listProxyLayout,
+  })
+  runtime.registerObjectType(MIND_CANVAS_OBJECT_TYPE, {
+    defaultVisualMode: 'detach',
+    landingMode: 'free',
+    releaseMode: 'physical',
+    motion: { enabled: true },
+    resolveFreeLandingRect: ({ objectId, destination }) => resolveMindLandingRect(objectId, destination),
   })
   runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({

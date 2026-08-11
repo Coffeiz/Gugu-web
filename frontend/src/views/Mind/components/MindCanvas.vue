@@ -51,6 +51,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
+import { runtime, type MoveAction } from '@/interaction/runtime'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
@@ -133,6 +135,24 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   item.y = y
   emit('itemMoved', item)
 }
+
+function onRuntimeMove(action: MoveAction) {
+  if (!action.objectId.startsWith('mind:')) return
+  const nodeId = Number(action.objectId.slice('mind:'.length))
+  const item = props.items.find(current => current.nodeId === nodeId)
+  if (!item) return
+  if (action.toSurfaceId === MIND_DRAWER_SURFACE_ID) {
+    if (item.node.refType === 'project') emit('returnToDrawer', item)
+    return
+  }
+  if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) return
+  const velocity = action.releaseVelocity
+  const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
+  const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
+  const center = screenToWorld(action.point.x + coastX, action.point.y + coastY)
+  const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
+  onItemMoved(item, center.x - w / 2, center.y - h / 2)
+}
 /** 拖拽进行中每帧调用（见 useCardDrag.ts 的 onDragMove）：只改本地状态，不 emit 往上落库——
  *  贴纸本体此刻被 startPhysicsDrag 的克隆接管显示（源贴纸 display:none），这里改 item.x/y
  *  不会造成本体视觉跳变，只会让 RelationLayer 依据同一份响应式数据重绘，连着这张贴纸的
@@ -147,6 +167,7 @@ function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
 }
 
 let viewportResizeObserver: ResizeObserver | null = null
+let stopRuntimeActions: (() => void) | null = null
 function updateViewportSize() {
   const viewport = viewportRef.value
   if (!viewport) return
@@ -349,6 +370,16 @@ function viewportCenter() {
 defineExpose({ camera, centerView: centerViewAndEmit, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, resetScaleAtCenter: resetScaleAtCenterAndEmit, viewportCenter })
 
 onMounted(() => {
+  runtime.surfaces.register({
+    id: MIND_CANVAS_SURFACE_ID,
+    type: 'canvas-free',
+    element: viewportRef.value,
+    viewport: () => viewportRef.value,
+    accepts: [MIND_CANVAS_OBJECT_TYPE],
+  })
+  stopRuntimeActions = runtime.onAction(action => {
+    if (action.type === 'move') onRuntimeMove(action as MoveAction)
+  })
   updateViewportSize()
   viewportResizeObserver = new ResizeObserver(updateViewportSize)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
@@ -356,6 +387,9 @@ onMounted(() => {
   window.addEventListener('pointerup', onPointerUp)
 })
 onBeforeUnmount(() => {
+  stopRuntimeActions?.()
+  stopRuntimeActions = null
+  runtime.surfaces.unregister(MIND_CANVAS_SURFACE_ID)
   viewportResizeObserver?.disconnect()
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)

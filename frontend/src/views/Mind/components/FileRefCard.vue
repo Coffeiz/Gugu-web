@@ -11,6 +11,7 @@
     :has-thumb="isImageExt(file.ext)"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -52,6 +53,7 @@
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -81,6 +83,7 @@
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -100,13 +103,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
-import { useCardDrag } from '@/composables/useCardDrag'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { getThumb, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import { itemSize } from '@/composables/useMindCanvas'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -177,22 +180,13 @@ function observeCard() {
 watch(file, () => nextTick(observeCard), { immediate: true })
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => fileCardRef.value?.rootEl ?? null,
-  onClick: () => { if (file.value) emit('open', props.item) },
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: `mind:${props.item.nodeId}`,
+  element: () => fileCardRef.value?.rootEl ?? null,
 })
+function onOpen() {
+  if (file.value) emit('open', props.item)
+}
 </script>
 
 <style scoped>

@@ -42,7 +42,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
-import { useCardDrag } from '@/composables/useCardDrag'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 import { itemSize } from '@/composables/useMindCanvas'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { showAppError } from '@/composables/useAppToast'
@@ -166,20 +166,9 @@ async function onColor(color: string | null) {
 // 点便签本体进编辑态、点标题/正文里的待办/引用/展开按钮等都是 NoteCard 自己处理
 // （见其 onBodyClick/startEditAt），这里的拖拽只处理"按住越过阈值"的真正拖拽；
 // NoteCard 内部所有可交互元素都挂了 @pointerdown.stop，不会被这层拖拽阈值判定抢走。
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => noteCardEl(),
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: `mind:${props.item.nodeId}`,
+  element: noteCardEl,
 })
 </script>
 
