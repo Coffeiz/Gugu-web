@@ -42,4 +42,22 @@ describe('scheduleCron', () => {
     expect(parseCron('')).toEqual({ mode: 'daily', time: '09:00', startDate: '' })
     expect(parseCron('not-a-cron')).toEqual({ mode: 'daily', time: '09:00', startDate: '' })
   })
+
+  it('覆盖最小和最大间隔，并保持同一输入结果稳定', () => {
+    expect(buildCron({ mode: 'interval', time: '09:00', intervalMinutes: 1 })).toBe('*/1 * * * *')
+    expect(buildCron({ mode: 'interval', time: '09:00', intervalMinutes: 60 })).toBe('*/60 * * * *')
+    const input = { mode: 'weekday' as const, time: '09:05' }
+    expect(buildCron(input)).toBe(buildCron(input))
+    expect(parseCron(buildCron(input))).toEqual({ mode: 'weekday', time: '09:05', startDate: '' })
+  })
+
+  it('对空值、不完整格式和未知日期规则使用稳定默认值', () => {
+    const fallback = { mode: 'daily', time: '09:00', startDate: '' }
+    expect(parseCron('')).toEqual(fallback)
+    expect(parseCron('*/5 * *')).toEqual(fallback)
+    expect(parseCron('5 9 * * 2')).toEqual({ mode: 'daily', time: '09:05', startDate: '' })
+    expect(parseCron('@once:2026-08-12')).toEqual({
+      mode: 'custom', time: '09:00', startDate: '2026-08-12',
+    })
+  })
 })
