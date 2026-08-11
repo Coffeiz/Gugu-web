@@ -9,8 +9,8 @@
 <script setup lang="ts">
 /**
  * 文件库网格/列表和项目文件区网格/列表共用的上传入口——之前四处各画一份（文件库列表甚至
- * 漏画了），图标大小、文字包裹方式、hover 颜色都不一致。拖拽悬停态（dragging）由调用方
- * 自己的 useFileDragDrop/等价逻辑管理，这里只负责按 mode 呈现网格卡片式还是列表行式外观；
+ * 漏画了），图标大小、文字包裹方式、hover 颜色都不一致。上传拖拽悬停态（dragging）由调用方
+ * 的上传流程管理，这里只负责按 mode 呈现网格卡片式还是列表行式外观；
  * dragover/dragleave/drop 走原生事件透传，调用方直接在 <FileUploadButton> 标签上绑定即可。
  */
 import { PhUploadSimple } from '@phosphor-icons/vue'

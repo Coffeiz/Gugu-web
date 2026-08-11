@@ -1,7 +1,7 @@
 <template>
   <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openCtx('empty', null, $event)">
     <RuntimeFolderCard v-for="f in sortedContents.folders" :key="f.id"
-      :card-props="{ displayName: f.displayName, countLabel: f.count != null ? f.count + ' 项' : '—', accentColor: folderAccentColor(f), selected: selectedFolderKeys.has(f.id), preSelected: previewFolderKeys.has(f.id), dragOver: dragOverFolderId === f.folderId, selectionMode: inSelectionMode }"
+      :card-props="{ displayName: f.displayName, countLabel: f.count != null ? f.count + ' 项' : '—', accentColor: folderAccentColor(f), selected: selectedFolderKeys.has(f.id), preSelected: previewFolderKeys.has(f.id), selectionMode: inSelectionMode }"
       :runtime-id="folderLayoutKey(f)" runtime-surface-id="files:surface:browser"
       :runtime-selected="selectedFolderKeys.has(f.id)"
       :runtime-abilities="f.type === 'folder' && f.folderId != null ? ['move'] : []"
@@ -19,7 +19,7 @@
     </RuntimeFolderCard>
 
     <RuntimeFileCard v-for="f in sortedContents.files" :key="f.id" class="hover-card-fx"
-      :card-props="{ ext: f.ext, displayName: f.displayName, hasThumb: isImageExt(f.ext), selected: selectedIds.has(f.id), preSelected: previewFileIds.has(f.id), dragging: draggingFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
+      :card-props="{ ext: f.ext, displayName: f.displayName, hasThumb: isImageExt(f.ext), selected: selectedIds.has(f.id), preSelected: previewFileIds.has(f.id), cut: cbStore.type === 'cut' && cbStore.fileIds.includes(f.id) }"
       :runtime-id="fileLayoutKey(f)" runtime-surface-id="files:surface:browser"
       :runtime-selected="selectedIds.has(f.id)"
       :runtime-abilities="['move']"
@@ -47,7 +47,7 @@ import FileUploadButton from '@/components/common/file-browser/FileUploadButton.
 import FileUploadGhostCard from '@/components/common/file-browser/FileUploadGhostCard.vue'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
-const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, folderLayoutKey, fileLayoutKey, layoutCollection } = props.context
+const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode, openCtx, folderListIcon, folderAccentColor, handleFolderClick, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, selectedIds, previewFileIds, cbStore, handleFileClick, isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile, downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading, folderLayoutKey, fileLayoutKey, layoutCollection } = props.context
 </script>
 
 <style scoped>

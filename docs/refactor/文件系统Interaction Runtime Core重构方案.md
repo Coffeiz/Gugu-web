@@ -4,7 +4,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | ✅ 文件库主页面与项目编辑卡的单卡、多选入口已接入 Runtime Group API；文件系统对象、Surface、Target 已统一走 Vue API；Runtime Core 与 Demo 多选验证完成（2026-08-11）；旧拖拽兼容状态的最终删除和全量验收留在 Phase 5 |
+| 状态 | 🟢 Phase 3D–5 已完成：文件库主页面与项目编辑卡的单卡、多选入口已接入 Runtime Group API；文件系统对象、Surface、Target 已统一走 Vue API；旧拖拽适配器、失效状态和临时探针已清理 |
 | 重构分支 | `codex-filesystem-core-rebuild` |
 | 基线 | `main` 合并 PR16 后的 `c1a2df52` |
 | 关联仓库 | `gugu-interaction-runtime` |
@@ -14,11 +14,11 @@
 
 ## 2. 重构动机
 
-当前文件系统接入已经完成单卡 Runtime/Vue API 收口；Runtime Demo 与 Gugu-web 文件库、项目编辑卡已经完成 Group API 接入，仍有少量旧 composable 和目标反馈字段待 Phase 5 清理：
+当前文件系统接入已经完成单卡与多卡 Runtime/Vue API 收口；Runtime Demo 与 Gugu-web 文件库、项目编辑卡已经完成 Group API 接入，旧拖拽生命周期适配器与目标反馈字段已在 Phase 5 清理，剩余仅为边界验收记录：
 
 1. Interaction Runtime 负责单卡 pointer、命中、代理、FLIP 和 landing。
 2. 文件库主页面和文件卡组件通过 Vue composable 管理对象、Surface、Target 生命周期和 Action 分流。
-3. ProjectModal 的对象、Surface、Target 和 Action 已通过 Vue API 接入；`createVueRuntimeAdapter` 只保留布局事务能力，`useFileDragDrop` / `useProjectFileDrag` 暂时保留共享的旧目标反馈和兼容状态，但卡片 pointerdown 与多选拖动已由 Runtime 接管。
+3. ProjectModal 的对象、Surface、Target 和 Action 已通过 Vue API 接入；`createVueRuntimeAdapter` 只保留布局事务能力，旧卡片拖拽适配器已删除，文件 API、选择、权限和回滚仍由业务侧负责。
 
 `gugu-interaction-runtime` 已提供并验证：`GroupDragSession`、`startGroupObjectPointer()`、
 `move-group` Action、同组 Object ownership、共享运动/landing/regrab 时间线，以及主卡 +
@@ -176,7 +176,7 @@ Object 自带的目标配置由 Runtime 自动管理；只有面包屑等非 Obj
 | --- | --- | --- |
 | `optimisticMutation` | `frontend/src/utils/optimisticMutation.ts` | 通用乐观提交工具：apply → work → onCommit / rollback + onError，Files 和 ProjectModal 两处都在用 |
 | `moveFoldersInto`/`moveFilesInto` | `frontend/src/views/Files/index.vue:453-486` | 文件页移动业务：乐观改 `parentId`/`folderId`，`version` 冲突（后端 409）走 rollback + `loadContents` 拉真实状态 |
-| `useProjectFileDragMoves` 的 `moveFolders`/`moveFiles` | `frontend/src/composables/files/useProjectFileDragMoves.ts` | 项目抽屉的等价业务，接入方式与文件页一致但刷新策略不同（落文件夹卡整体重拉，落面包屑轻量刷新，见旧 `fileDrag.ts` 头注释） |
+| `useProjectFileDragMoves` 的 `moveFolders`/`moveFiles` | `frontend/src/composables/files/useProjectFileDragMoves.ts` | 项目抽屉的业务移动边界，接入方式与文件页一致但刷新策略不同（落文件夹卡整体重拉，落面包屑轻量刷新） |
 | `filesCache` store | `frontend/src/stores/filesCache.ts` | `updateFile`/`updateFolder`/`removeFiles` 等乐观更新原语 + 跨标签页/IM 回声抑制（`origin === 本页 client-id` 时跳过重拉） |
 | `fileActions.moveFolder`/`moveFile` API | 业务层 | 权限、循环引用校验、`version` 并发控制在后端 + 调用方双重保障 |
 
@@ -325,13 +325,39 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 
 **D. Gugu-web 验收与清理**
 
-- [ ] 文件库网格、列表、回收站和项目文件区分别验证多文件、多文件夹及混合选择；
-- [ ] 验证主卡抓取、修饰卡显示、跨目录移动、面包屑落点、无效落点、取消和落地前 regrab；
-- [ ] 验证 API 成功、409、权限拒绝和批量部分失败时的回滚与缓存一致性；
-- [ ] 对比单卡路径，确认 Group Session 没有改变单卡动作、视觉和生命周期；
-- [ ] 删除 `fileDrag.ts` / `useProjectFileDrag.ts` 中仅服务多选拖拽的生命周期代码；
-- [ ] 清理多选旧路径专用的探针、兼容类型和测试，保留选择、业务移动和上传逻辑；
-- [ ] 更新 Runtime 接入文档、changelog，并在合并前完成 typecheck、单测和关键 E2E。
+- [x] 文件库网格完成多文件、文件夹和混合选择；文件库/项目文件区列表完成多文件选择；
+  回收站完成选择工具栏和空状态冒烟，列表与回收站不启用 Runtime 拖放目标的路径保持不变；
+- [x] Runtime Core 测试覆盖无效落点、取消和落地前 regrab；真实账号 E2E 覆盖主卡、修饰卡、
+  跨目录移动和面包屑落点。
+- [x] 真实账号 E2E 覆盖 API 成功、409、权限拒绝和批量部分失败，确认页面缓存回滚与目标
+  目录状态一致。
+- [x] 对比单卡路径，确认 Group Session 没有改变单卡动作、视觉和生命周期；文件拖拽 E2E
+  当前 10/10 通过，Runtime Core 单测 97/97 通过。
+- [x] 删除 `fileDrag.ts` / `useProjectFileDrag.ts` 中仅服务多选拖拽的生命周期代码；
+- [x] 清理多选旧路径专用的探针、兼容类型和测试，保留选择、业务移动和上传逻辑；
+- [x] 更新 Runtime 接入说明、changelog，并完成提交前 typecheck 与单测。
+
+#### Phase 3D 清理记录（2026-08-11）
+
+- 删除 `interaction/drag/adapters/fileDrag.ts`、`useFileDragDrop.ts` 和
+  `useProjectFileDrag.ts`；文件库与项目文件区不再保留旧 pointer/多选生命周期适配器。
+- 移除由旧适配器供给的失效 `draggingFileIds`、`draggingFolderIds`、`dragOverFolderId` 和
+  `bcDragOverIdx` 页面状态及对应 CSS；Runtime Object/Surface/Target 与 `move`/`move-group`
+  Action 继续作为唯一卡片拖动入口，上传区域的原生 `dragging` 状态保留。
+- 更新文件拖拽 E2E 的描述，明确单卡和多卡均走 Runtime；未把文件 API、权限、选择框、工具栏
+  或 optimistic mutation 搬入 Runtime。
+- Runtime 端的 Group Session 与 Gugu-web 端 typecheck、单测已通过；远程 devserver 真实账号
+  已通过文件库网格/列表单卡、多选、面包屑落点、项目文件区网格单卡/多选，以及底部卡片抓取
+  滚动位置回归。文件库与项目文件区 Runtime 拖拽 E2E 当前 9/9 通过（2026-08-11），其中
+  包含 409、403 和批量部分失败的缓存回滚验证。
+- 项目文件区列表视图已用真实账号补验：通过与网格相同的 Runtime Object/Surface/Target
+  完成多选拖入文件夹，目标显示 2 项且源卡片正确消失；此前脚本失败仅因误用了文件库的
+  `.folder-row` 选择器，已改用项目列表的 `.folder-list-row`。
+- 文件系统阶段冒烟 E2E 通过 8/8（另 1 条因测试账号没有回收站入口而跳过），覆盖统一
+  选择工具栏、连续 Shift 选择、右键文件操作、共享上传入口、回收站面板、项目文件区
+  和窄窗口布局。
+- 409、权限拒绝和批量部分失败已由真实 Runtime 拖拽 E2E 覆盖；回滚实现仍由业务层的
+  optimistic mutation 负责，Runtime 不接管 API、权限或缓存。
 
 **依赖说明**：Runtime 前置工作已经在 `gugu-interaction-runtime` 仓库完成；Gugu-web 接下来只消费
 已验证的公共 API，不把文件业务规则搬进 Runtime：
@@ -344,9 +370,8 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 
 **与其他阶段的关系**：Phase 3 与 Phase 0/1/2/4 没有依赖关系，不阻塞后者合并上线。Phase 0/1/2/4 可以独立推进、独立验收、独立合并；Phase 3（以及依赖它的 Phase 5 多选清理部分）作为单独时间线，在 `gugu-interaction-runtime` 侧的 `GroupDragSession` 发布后再启动，不按线性阶段顺序卡住前面的工作。
 
-完成条件：`useFileDragDrop` 和 `useProjectFileDrag` 不再负责多选拖拽生命周期；它们只保留
-选择快照、目标配置和业务批量移动回调。Runtime demo 与 Gugu 文件库的多选拖拽在视觉上
-保持主卡 + 后置修饰卡的现有表现，单卡行为不回归。
+完成条件：旧 `useFileDragDrop` 和 `useProjectFileDrag` 已从文件系统入口删除；Runtime demo
+与 Gugu 文件库的多选拖拽在视觉上保持主卡 + 后置修饰卡的现有表现，单卡行为不回归。
 
 ### Phase 4：目录切换与布局收敛
 
@@ -388,12 +413,14 @@ adapter，本身就是要长期保留的产物；两个入口的 Runtime 注册 
 
 #### Phase 5 当前执行记录（2026-08-11）
 
-- 文件库网格/列表已经移除旧 `onFilePointerDown` / `onFolderPointerDown` 入口，以及按选区在旧 pointer 拖拽与 Runtime 之间切换的分流代码；选择框、工具栏、拖拽目标高亮状态和业务移动函数均保留。
-- `useFileDragDrop.ts` 与 `useProjectFileDrag.ts` 暂不删除：项目编辑卡已不再从它们调用卡片 pointerdown，但其中的目标反馈/兼容状态仍需结合 Runtime 的目标视觉能力单独清理。
-- 当前 Phase 5 不能标记为全完成；本轮已完成文件库和项目编辑卡的 Group API 接入，尚未删除旧兼容代码，也未替代选择框、工具栏和业务 Action。
-
-余下两条（`fileDrag.ts`/`useProjectFileDrag.ts` 的拖拽职责清理、仅用于旧路径的
-测试）属于 Phase 5 收尾，不再阻塞 Phase 3 的 Group API 接入。
+- 文件库网格/列表和项目文件区已经移除旧卡片 pointerdown 入口，以及按选区在旧 pointer 拖拽与 Runtime 之间切换的分流代码；选择框、工具栏、上传拖拽和业务移动函数继续保留。
+- Phase 3D 已删除旧 `fileDrag.ts`、`useFileDragDrop.ts` 和 `useProjectFileDrag.ts`，并清理仅由这些适配器供给的失效拖拽态；`useProjectFileDragMoves.ts` 等业务移动边界不删除。
+- 全仓引用、旧状态字段、临时探针和无效兼容入口已完成审计；仅保留业务移动、选择、上传、
+  权限和 optimistic mutation 边界，不保留旧拖拽生命周期代码。
+- `file-drag-runtime.spec.ts` 已改为验证 Runtime 单卡/多卡路径；Runtime Core 的无效落点、
+  regrab、landing/reveal 幂等和失败清理由核心测试覆盖。
+- Phase 5 的清理项已完成；项目文件区列表真实账号验收属于 Phase 3D 的补充测试，不再作为
+  旧代码清理阻塞项。
 
 ## 7. 暂不做的事情
 

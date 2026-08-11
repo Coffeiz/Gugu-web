@@ -8,7 +8,6 @@
     </button>
     <RuntimeBreadcrumbTarget class="bc-seg" target-id="bc:-1"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
-      :class="{ 'bc-drop-target': dragOverIndex === -1 }"
       data-bc-idx="-1" @click="emit('navigate', -1)">
       项目文件
     </RuntimeBreadcrumbTarget>
@@ -18,7 +17,6 @@
         :target-id="`bc:${index}`"
         :surface-id="breadcrumbSurfaceId(runtimeScope, index)"
         :data-bc-idx="index"
-        :class="{ 'bc-drop-target': dragOverIndex === index }"
         @click="emit('navigate', index)">
         {{ segment.name }}
       </RuntimeBreadcrumbTarget>
@@ -38,7 +36,6 @@ import { breadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRun
 defineProps({
   canGoBack: Boolean,
   canGoForward: Boolean,
-  dragOverIndex: { type: Number, default: null },
   folderStack: { type: Array as PropType<FolderMeta[]>, required: true },
   runtimeScope: { type: String, required: true },
 })

@@ -78,10 +78,10 @@ const headers = [
 
 const {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx,
-  selectedFolderKeys, previewFolderKeys, dragOverFolderId, handleFolderClick,
+  selectedFolderKeys, previewFolderKeys, handleFolderClick,
   folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode,
-  selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
+  selectedIds, previewFileIds, cbStore, handleFileClick,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile, deleteSingleFile,
   uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey, layoutCollection,
@@ -127,15 +127,10 @@ const {
   background: rgba(123,127,178,0.06);
   outline: 1px solid rgba(123,127,178,0.25);
 }
-.list-row.dragging { opacity: 0.35; cursor: grabbing; }
 .list-row.cut { opacity: 0.45; }
 .folder-row { cursor: pointer; }
 .folder-row:hover { background: rgba(180,148,80,0.06); }
 .list-row.folder-row.selected { background: rgba(123,127,178,0.09); }
-.list-row.folder-row.drag-over {
-  background: rgba(123,127,178,0.08);
-  outline: 1.5px solid var(--color-primary); outline-offset: -1px;
-}
 
 .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: 0.82; }

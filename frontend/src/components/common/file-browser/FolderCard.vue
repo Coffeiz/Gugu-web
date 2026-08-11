@@ -3,7 +3,7 @@
     ref="rootEl"
     v-bind="$attrs"
     class="folder-card"
-    :class="{ selected, 'pre-selected': preSelected, 'drag-over': dragOver }"
+    :class="{ selected, 'pre-selected': preSelected }"
     :style="{ '--fd-color': accentColor }"
   >
     <div class="fd-icon-area">
@@ -49,7 +49,6 @@ defineProps({
   accentColor: { type: String, default: '#8888a0' },
   selected: { type: Boolean, default: false },
   preSelected: { type: Boolean, default: false },
-  dragOver: { type: Boolean, default: false },
   selectionMode: { type: Boolean, default: false },
 })
 </script>
@@ -80,11 +79,6 @@ defineProps({
   border-color: rgba(123,127,178,0.38);
   background: rgba(123,127,178,0.05);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
-}
-.folder-card.drag-over {
-  background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
-  border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 2px color-mix(in srgb, var(--fd-color, var(--color-primary)) 30%, transparent);
 }
 .fd-icon-area {
   height: 90px; flex-shrink: 0;

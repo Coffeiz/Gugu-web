@@ -31,7 +31,7 @@
               <FileBrowserGrid :layout-collection="layoutCollection" @empty-context="openPmCtx('empty', null, $event)">
                 <!-- 文件夹卡片（当前层） -->
                 <RuntimeFolderCard v-for="folder in sortedCurrentFolders" :key="folder.id"
-                  :card-props="{ displayName: folder.name, countLabel: `${pmFolderCount(folder.id)} 个文件`, accentColor, dragOver: pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
+                  :card-props="{ displayName: folder.name, countLabel: `${pmFolderCount(folder.id)} 个文件`, accentColor, selected: pmSelectedFolderIds.has(folder.id), preSelected: pmPreviewFolderIds.has(folder.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'folder', folder.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
@@ -76,7 +76,7 @@
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
                   class="hover-card-fx"
-                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), dragging: pmDraggingFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
+                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
@@ -151,7 +151,7 @@
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
                   :runtime-target="{ surfaceId: folderSurfaceId(runtimeScope, folder.id), accepts: ['file-item', 'folder-item'], priority: 2 }"
                   class="list-row folder-list-row"
-                  :class="{ 'drag-over': pmDragOverFolderId === folder.id, selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
+                  :class="{ selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
                   data-layout-role="card" :data-layout-key="folderLayoutKey(folder)"
                   @click.stop="onPmFolderClick(folder, $event)"
@@ -196,7 +196,7 @@
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
                   :runtime-abilities="['move']"
                   class="list-row"
-                  :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), dragging: pmDraggingFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
+                  :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
                   :data-pm-file-id="file.id"
                   data-layout-role="card" :data-layout-key="fileLayoutKey(file)"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
@@ -307,10 +307,10 @@ const {
   pmIsDragging, pmSelectionRect, pmGridRef, bindPmGridEl, onPmGridMouseDown, onPmContentClick, openPmCtx,
   onPmDragEnter, onPmDragLeave, onPmDrop, sortedCurrentFolders, pmFolderCount, accentColor,
   folderLayoutKey, fileLayoutKey, layoutCollection,
-  pmDragOverFolderId, pmSelectedFolderIds, pmPreviewFolderIds, onPmFolderClick, runtimeScope,
+  pmSelectedFolderIds, pmPreviewFolderIds, onPmFolderClick, runtimeScope,
   renamingFolderId, commitFolderRename, startRenameFolder, downloadFolderZip, deleteFolderCard,
   folderRenameText, cancelFolderRename, sortedCurrentFiles, isPmImageExt, pmSelectedFileIds,
-  pmPreviewFileIds, pmDraggingFileIds, renamingFileId, startRename, commitRename, renameText,
+  pmPreviewFileIds, renamingFileId, startRename, commitRename, renameText,
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection,
@@ -558,16 +558,6 @@ const {
   position: absolute; pointer-events: none; z-index: 30;
   border: 1.5px solid rgba(123,127,178,0.55);
   background: rgba(123,127,178,0.08); border-radius: 4px;
-}
-
-/* ── 拖动 / 选中状态 ──
-   .fc-card 的选中/预选/拖拽态现在完全由 FileCard.vue 自己的 props+scoped 样式提供（跟文件库
-   同一份，数值本来就抄自这里），不用再手写一份——写了也够不到子组件内部，见上面 :deep() 的说明。
-   这里只留 .list-row（列表视图，未改造）需要的部分。 */
-.list-row.dragging { opacity: 0.35; cursor: grabbing; }
-.list-row.folder-list-row.drag-over {
-  background: rgba(123,127,178,0.08);
-  outline: 1.5px solid var(--color-primary); outline-offset: -1px;
 }
 
 /* 列表视图 */

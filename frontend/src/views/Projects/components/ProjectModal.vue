@@ -142,7 +142,6 @@ import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
 import { useProjectFileBatchActions } from '@/composables/files/useProjectFileBatchActions'
 import { useProjectFileContextActions } from '@/composables/files/useProjectFileContextActions'
 import { useProjectFileDragMoves } from '@/composables/files/useProjectFileDragMoves'
-import { useProjectFileDrag } from '@/composables/files/useProjectFileDrag'
 import { useProjectFileKeyboard } from '@/composables/files/useProjectFileKeyboard'
 import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting'
 import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
@@ -276,22 +275,6 @@ const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjec
   fileActions,
   fileCacheStore,
   projectId: () => props.project?.id ?? null,
-})
-
-const {
-  draggingFileIds: pmDraggingFileIds,
-  draggingFolderIds: pmDraggingFolderIds,
-  dragOverFolderId: pmDragOverFolderId,
-  bcDragOverIdx: pmBcDragOverIdx,
-} = useProjectFileDrag({
-  folderStack,
-  stagesExpanded,
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  cancelBoxDrag: _cancelPmBoxDrag,
-  clearSelection: clearPmSelection,
-  moveFolders: movePmFoldersInto,
-  moveFiles: movePmFilesInto,
 })
 
 
@@ -638,7 +621,6 @@ const filePanelContext = {
   pmGoForward: pmGoForwardWrapped,
   pmNavigateTo: pmNavigateToWrapped,
   folderStack,
-  pmBcDragOverIdx,
   pmCbStore,
   pmCtxPaste,
   pmInSelectionMode,
@@ -669,7 +651,6 @@ const filePanelContext = {
   folderLayoutKey: pmFolderLayoutKey,
   fileLayoutKey: pmFileLayoutKey,
   layoutCollection: pmLayoutCollection,
-  pmDragOverFolderId,
   pmSelectedFolderIds,
   pmPreviewFolderIds,
   onPmFolderClick,
@@ -684,7 +665,6 @@ const filePanelContext = {
   isPmImageExt,
   pmSelectedFileIds,
   pmPreviewFileIds,
-  pmDraggingFileIds,
   renamingFileId,
   startRename,
   commitRename,

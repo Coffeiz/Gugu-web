@@ -43,7 +43,7 @@
           <RuntimeBreadcrumbTarget v-if="isBcDroppable(seg, i)" class="bc-item"
             :target-id="`bc:${i}`"
             :surface-id="breadcrumbSurfaceId(RUNTIME_SCOPE, i)"
-            :class="{ active: i === navPath.length - 1, 'bc-drop-target': bcDragOverIdx === i && isBcDroppable(seg, i) }"
+            :class="{ active: i === navPath.length - 1 }"
             :data-bc-idx="i"
             @click="navigateTo(i)"
           >
@@ -187,7 +187,6 @@ import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav
 import { useFilesNav } from '@/composables/useFilesNav'
 import { useFileLibraryNavigation } from '@/composables/files/useFileLibraryNavigation'
 import { useFileLibraryDirectory } from '@/composables/files/useFileLibraryDirectory'
-import { useFileDragDrop } from '@/composables/useFileDragDrop'
 import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting'
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
@@ -533,7 +532,7 @@ const {
 // dragstart 起浏览器会整段暂停 mouseover/mouseout 派发，导致落地揭示卡片时 hover 高亮跳变，
 // perf trace 实测证实）。抓取判断单选/多选 → 起 startPhysicsDrag/startMultiPhysicsDrag → 拖拽
 // 中找落点高亮 → 松手判定目标并派发移动，这套编排跟 ProjectModal.vue 的文件面板完全一样，抽成
-// 了共享 composable useFileDragDrop，这里只提供 Files 特有的选择器/面包屑规则/落地 API。
+// 了 Runtime 的对象/Surface/Target 声明，这里只提供 Files 特有的目标解析和业务移动 API。
 function isBcDroppable(seg: NavSeg, idx: number) {
   // folder/personal/project 段都可作为拖放目标：folder→该文件夹，personal/project→对应根（parentId=null，
   // resolveBcTarget 里非 folder 段一律映射为 null）。此前漏了 project，导致子目录文件夹拖不回项目根。
@@ -577,32 +576,6 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
     onError: err => console.error('[Files] 移动失败:', (err as Error).message),
   })
 }
-
-const {
-  draggingFileIds, draggingFolderIds, dragOverFolderId, bcDragOverIdx,
-} = useFileDragDrop({
-  fileDataAttr: 'data-file-id',
-  // data-folder-key 存的是 f.id（"f:65" 这种带前缀字符串，框选那套逻辑要靠它跟 selectedFolderKeys
-  // 对上），不是真实数字 folderId——拖拽这边要拿去拼 API/跟面包屑 folderId 比较，得用另一个只放
-  // 数字 folderId 的属性，两套别混用（混用过一次：Number("f:65") 是 NaN，导致移动全部落空）。
-  folderDataAttr: 'data-folder-id',
-  folderSelector: '.folder-card, .folder-row',
-  resolveBcTarget(idx) {
-    if (idx === navPath.value.length - 1) return null   // 当前目录本身，拖回来不算有效落点
-    const seg = navPath.value[idx]
-    if (!seg || !isBcDroppable(seg, idx)) return null
-    return { targetFolderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, acceptsFiles: true, acceptsFolders: true }
-  },
-  cancelBoxDrag: () => _cancelBoxDrag(),
-  // 之前这里只清 selectedFolderKeys/selectedIds 两个 Set，没重置 selectModeForced——多选拖拽
-  // 落地后 inSelectionMode 仍然是 true，紧接着点文件夹卡片会被判成"多选模式下切换选中"而不是
-  // "进入文件夹"（handleFolderClick 里 `inSelectionMode.value` 分支优先于 enterFolder）。改用
-  // 上面定义的完整 clearSelection()（转发到 useFileLibrarySelection 的 clearSelectionImpl，
-  // 一并重置 selectModeForced 和框选状态），跟右键菜单、批量操作等其它清空选择的入口保持一致。
-  clearSelection,
-  moveFolders: moveFoldersInto,
-  moveFiles: moveFilesInto,
-})
 
 // selectedFolderKeys 里放的是 f.id（"f:65"），拖拽需要真实数字 folderId——查当前层文件夹列表换算
 function _selectedFolderIdNums() {
@@ -720,10 +693,10 @@ const contextActions = useFileLibraryContextActions<Exclude<CtxTarget, null>>({
 })
 const { state: ctx, openContext: openCtx, handleAction: handleCtxMenuAction } = contextActions
 const gridViewContext = {
-  contents, sortedContents, selectedFolderKeys, previewFolderKeys, dragOverFolderId, inSelectionMode,
+  contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelectionMode,
   openCtx, folderListIcon, folderAccentColor, handleFolderClick,
   renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder,
-  deleteFolder, selectedIds, previewFileIds, draggingFileIds, cbStore, handleFileClick,
+  deleteFolder, selectedIds, previewFileIds, cbStore, handleFileClick,
   isImageExt, cardBlobReadyIds, renamingFileId, startRenameFile,
   downloadFile, deleteSingleFile, uploadingItems, canUpload, handleFileInput, loading,
   folderLayoutKey, fileLayoutKey,
@@ -731,10 +704,10 @@ const gridViewContext = {
 }
 const listViewContext = {
   contents, sortedContents, sortKey, sortDir, onSortSelect, openCtx, selectedFolderKeys,
-  previewFolderKeys, dragOverFolderId, handleFolderClick, folderListIcon,
+  previewFolderKeys, handleFolderClick, folderListIcon,
   folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename,
   startRenameFolder, downloadFolder, deleteFolder, inSelectionMode, selectedIds,
-  previewFileIds, draggingFileIds, cbStore, handleFileClick,
+  previewFileIds, cbStore, handleFileClick,
   fileListIcon, fileIconColor, renamingFileId, startRenameFile, downloadFile,
   deleteSingleFile, uploadingItems, loading, canUpload, handleFileInput,
   folderLayoutKey, fileLayoutKey,
