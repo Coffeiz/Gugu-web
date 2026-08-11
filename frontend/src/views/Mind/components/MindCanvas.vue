@@ -15,28 +15,27 @@
           v-if="item.node.kind === 'canvas_note'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @measured="onItemMeasured"
-          @moved="onItemMoved"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <ProjectRefCard
           v-else-if="item.node.refType === 'project'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @measured="onItemMeasured"
-          @moved="onItemMoved" @open="item => emit('openRef', item)" @return-to-drawer="item => emit('returnToDrawer', item)"
+          @open="item => emit('openRef', item)" @return-to-drawer="item => emit('returnToDrawer', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <FileRefCard
           v-else-if="item.node.refType === 'file'"
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @measured="onItemMeasured"
-          @moved="onItemMoved" @open="item => emit('openRef', item)"
+          @open="item => emit('openRef', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
         <EntitySticker
           v-else
           :item="item" :connecting="connectionDrag.originNodeId === item.nodeId" :connection-target-side="connectionTargetSide(item.nodeId)" :screen-to-world="screenToWorld" :scale="camera.scale"
           @remove="item => emit('remove', item)" @measured="onItemMeasured"
-          @moved="onItemMoved" @open="item => emit('openRef', item)"
+          @open="item => emit('openRef', item)"
           @connect-drag-start="(e, side) => onConnectDragStart(e, item.nodeId, side)" @hover="onItemHover"
         />
       </template>
@@ -128,7 +127,7 @@ function onViewportPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
   startPan(event)
 }
-/** Runtime 在松手时给出最终世界位置，这里只负责落库持久化。 */
+/** Runtime 在松手时给出最终世界位置，这里只负责更新模型并通知页面持久化。 */
 function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   item.x = x
   item.y = y
