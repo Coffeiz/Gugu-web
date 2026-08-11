@@ -13,6 +13,7 @@ httpx==0.28.1
 httpcore==1.0.9
 aiohttp>=3.9.0
 apscheduler>=3.10.0
+jsonschema>=4.23.0,<5.0.0
 # AI
 openai>=1.30.0
 anthropic>=0.111.0
