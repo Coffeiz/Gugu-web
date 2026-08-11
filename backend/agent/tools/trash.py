@@ -5,9 +5,10 @@
 """
 import json
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
+from sqlalchemy.orm import aliased
 
-from app.models import File
+from app.models import File, Folder
 from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
@@ -18,18 +19,40 @@ from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_trash(db, user_id, args: dict):
-    limit = args.get("limit", 50)
-    rows = (await db.execute(
-        select(File).where(File.user_id == user_id, File.deleted_at.isnot(None))
-        .order_by(File.deleted_at.desc()).limit(limit)
+    limit = max(1, min(int(args.get("limit", 50)), 100))
+
+    # 文件夹是整体恢复单元：文件夹内的文件不再重复列出，只列独立删除的文件。
+    ParentFolder = aliased(Folder)
+    file_rows = (await db.execute(
+        select(File).outerjoin(Folder, File.folder_id == Folder.id).where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        ).order_by(File.deleted_at.desc()).limit(limit)
     )).scalars().all()
+    folder_rows = (await db.execute(
+        select(Folder).outerjoin(ParentFolder, Folder.parent_id == ParentFolder.id).where(
+            Folder.user_id == user_id,
+            Folder.deleted_at.isnot(None),
+            or_(Folder.parent_id.is_(None), ParentFolder.deleted_at.is_(None)),
+        ).order_by(Folder.deleted_at.desc()).limit(limit)
+    )).scalars().all()
+
     items = [
-        {"id": f.id, "name": f"{f.display_name}.{f.ext}", "space": f.space,
-         "deleted_at": f.deleted_at.isoformat() if f.deleted_at else None}
-        for f in rows
+        {"id": f.id, "file_id": f.id, "kind": "file", "name": f"{f.display_name}.{f.ext}",
+         "space": f.space, "deleted_at": f.deleted_at.isoformat() if f.deleted_at else None}
+        for f in file_rows
+    ] + [
+        {"id": folder.id, "folder_id": folder.id, "kind": "folder", "name": folder.name,
+         "space": "project" if folder.project_id is not None else "personal",
+         "deleted_at": folder.deleted_at.isoformat() if folder.deleted_at else None}
+        for folder in folder_rows
     ]
+    items.sort(key=lambda item: item["deleted_at"] or "", reverse=True)
+    has_more = len(items) > limit or len(file_rows) == limit or len(folder_rows) == limit
+    items = items[:limit]
     # 列满 limit 说明可能还有更多（本工具不翻页）→ 提示用整体操作，别误以为只有这些
-    if len(rows) == limit:
+    if has_more:
         return {"items": items, "note": f"仅列出最近 {limit} 个，可能还有更多；要清空整个回收站用 permanent_delete(all=true) 一次清，别逐个删。"}
     return items
 
@@ -104,7 +127,7 @@ class TrashSkill(BaseSkill):
     tools = [
         Tool(
             name="list_trash", label="查看回收站",
-            description="列出回收站里的文件（软删除、30 天内可还原的文件）。",
+            description="列出回收站里的独立文件和顶层文件夹（软删除、30 天内可还原）；文件夹内的文件随文件夹整体恢复，不重复列出。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_trash,
         ),
