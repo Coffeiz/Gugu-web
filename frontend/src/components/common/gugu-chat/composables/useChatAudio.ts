@@ -47,11 +47,19 @@ export function useChatAudio(options: {
     audioDuration.value ? (audioCurrent.value / audioDuration.value) * 100 : 0
   )
 
+  // 浏览器可能在没有用户手势时拒绝自动播放；必须消费 play() 的 Promise，
+  // 否则会把正常的自动播放限制冒泡成未捕获异常。用户随后点击播放时仍会重试。
+  function playMainAudio() {
+    const element = audioEl.value
+    if (!element) return
+    void element.play().catch(() => { audioPlaying.value = false })
+  }
+
   function onCanPlay() {
     if (!audioEl.value) return
     audioEl.value.volume = audioVolume.value
     if (needsRestore.value) { needsRestore.value = false; restoreProgress() }
-    audioEl.value.play()
+    playMainAudio()
   }
   function onAudioPause() { audioPlaying.value = false }
   function onAudioEnded() {
@@ -60,7 +68,8 @@ export function useChatAudio(options: {
   }
   function audioToggle() {
     if (!audioEl.value) return
-    audioPlaying.value ? audioEl.value.pause() : audioEl.value.play()
+    if (audioPlaying.value) audioEl.value.pause()
+    else playMainAudio()
   }
   function audioStop() {
     audioEl.value?.pause()

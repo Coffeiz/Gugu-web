@@ -4,7 +4,7 @@
  * sway（左右晃动）用默认值，跟看板卡/文件卡是同一套通用手感；tilt（3D 后仰）画布贴纸
  * 单独关掉——设计草案明确排除会改变文字渲染的 3D 后仰效果，sway 只是平面内的 rotateZ
  * 摆动，不在此列。阈值判定本身复用 usePhysicsDrag.ts 的 startThresholdDrag
- * （ProjectCard.vue/useFileDragDrop.ts 同一份，不再各自抄一遍）。
+ * （ProjectCard.vue 与 Runtime 文件对象现在共用同一套阈值契约）。
  *
  * 画布贴纸是绝对定位（依 x/y 世界坐标 + 外层 canvas-world 的 camera transform 摆放），不是
  * 列表重排——这里只用 startPhysicsDrag 的「跟手克隆 + 松手飞向新位置」视觉，落点换算成

@@ -99,15 +99,27 @@ watch(() => props.showNewFolder, value => {
 .sel-mode-btn.on { color: var(--color-primary); background: rgba(123,127,178,.14); }
 .sel-mode-btn:hover { color: var(--text-primary); background: rgba(0,0,0,.06); }
 .new-folder-inline { display: flex; align-items: center; gap: 5px; }
-.new-folder-inline .new-folder-input { width: 120px; }
+.new-folder-inline .new-folder-input {
+  width: 120px; height: 28px; box-sizing: border-box;
+  padding: 0 9px; border: 1px solid rgba(0,0,0,.08); border-radius: 7px;
+  background: rgba(255,255,255,.7); font-size: 12px; font-family: inherit;
+  color: var(--text-primary); outline: none;
+}
+.new-folder-inline .new-folder-input:focus { border-color: rgba(123,127,178,.4); }
 .btn-confirm-sm, .btn-cancel-sm {
+  height: 28px; box-sizing: border-box;
   border: none;
-  border-radius: 6px;
-  padding: 4px 7px;
+  border-radius: 7px;
+  padding: 0 10px;
   font-size: 11px;
   cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
 .btn-confirm-sm { background: var(--color-primary); color: #fff; }
 .btn-confirm-sm:disabled { opacity: .5; cursor: default; }
-.btn-cancel-sm { background: rgba(0,0,0,.07); color: var(--text-secondary); }
+.btn-cancel-sm {
+  background: rgba(0,0,0,.07); color: var(--text-secondary);
+  width: 28px; padding: 0;
+}
 </style>

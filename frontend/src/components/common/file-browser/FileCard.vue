@@ -1,7 +1,7 @@
 <template>
   <div ref="rootEl"
     class="fc-card"
-    :class="{ selected, 'pre-selected': preSelected, dragging, cut, 'fc-has-thumb': hasThumb, 'no-lift': !lift, 'canvas-mode': canvasMode }"
+    :class="{ selected, 'pre-selected': preSelected, cut, 'fc-has-thumb': hasThumb, 'no-lift': !lift, 'canvas-mode': canvasMode }"
     :style="{ '--fc-color': fileIconColor(ext), '--fc-area-h': `${areaHeight}px`, '--fc-icon-lift': `${iconLift}px` }"
   >
     <span class="fc-ext-badge">{{ ext }}</span>
@@ -51,7 +51,6 @@ defineProps({
   areaHeight: { type: Number as PropType<number>, default: 90 }, // 缩略图/大图标区高度，两处调用方尺寸不同（86/90 vs 80/80）
   selected: { type: Boolean, default: false },
   preSelected: { type: Boolean, default: false },
-  dragging: { type: Boolean, default: false },
   cut: { type: Boolean, default: false },
   lift: { type: Boolean, default: true },   // 悬停是否上浮 2px；Dashboard 最近文件面板不要这个位移，走 no-lift
   canvasMode: { type: Boolean, default: false },
@@ -111,7 +110,6 @@ defineProps({
 }
 .fc-card.selected .fc-thumb-area::after    { background: rgba(123,127,178,0.28); }
 .fc-card.pre-selected .fc-thumb-area::after { background: rgba(123,127,178,0.16); }
-.fc-card.dragging { opacity: 0.35; cursor: grabbing; }
 .fc-card.cut { opacity: 0.45; }
 
 .fc-ext-badge {

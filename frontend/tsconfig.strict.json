@@ -41,6 +41,7 @@
     "src/composables/useThumbCache.ts",
     "src/composables/usePhysicsDrag.ts",
     "src/composables/useFileDragDrop.ts",
+    "src/composables/files/useFileRuntimeMove.ts",
     "src/stores/auth.ts",
     "src/composables/useLazyThumb.ts",
     "src/composables/useMindEditor.ts",

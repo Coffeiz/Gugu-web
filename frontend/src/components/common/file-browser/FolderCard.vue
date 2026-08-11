@@ -1,8 +1,9 @@
 <template>
   <div
+    ref="rootEl"
     v-bind="$attrs"
     class="folder-card"
-    :class="{ selected, 'pre-selected': preSelected, 'drag-over': dragOver }"
+    :class="{ selected, 'pre-selected': preSelected }"
     :style="{ '--fd-color': accentColor }"
   >
     <div class="fd-icon-area">
@@ -35,7 +36,12 @@
  * 文件夹网格卡片的共享展示壳。
  * 文件库和项目文件区保留各自的点击、拖拽、重命名和操作按钮，通过根节点事件透传与插槽接入。
  */
+import { ref } from 'vue'
+
 defineOptions({ inheritAttrs: false })
+
+const rootEl = ref<HTMLElement | null>(null)
+defineExpose({ rootEl })
 
 defineProps({
   displayName: { type: String, required: true },
@@ -43,7 +49,6 @@ defineProps({
   accentColor: { type: String, default: '#8888a0' },
   selected: { type: Boolean, default: false },
   preSelected: { type: Boolean, default: false },
-  dragOver: { type: Boolean, default: false },
   selectionMode: { type: Boolean, default: false },
 })
 </script>
@@ -75,11 +80,6 @@ defineProps({
   background: rgba(123,127,178,0.05);
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
 }
-.folder-card.drag-over {
-  background: color-mix(in srgb, var(--fd-color, var(--color-primary)) 12%, rgba(255,255,255,0.9));
-  border-color: color-mix(in srgb, var(--fd-color, var(--color-primary)) 55%, rgba(255,255,255,0.6));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 2px color-mix(in srgb, var(--fd-color, var(--color-primary)) 30%, transparent);
-}
 .fd-icon-area {
   height: 90px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; overflow: visible;
@@ -97,7 +97,7 @@ defineProps({
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fd-count { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
+.fd-count { font-size: 9px; line-height: 1.15; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
 .fd-hover-actions {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;

@@ -4,31 +4,37 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 设计中，尚未实施 |
-| 目标分支 | `codex-filesystem-interaction-runtime` |
+| 状态 | ✅ 已完成（2026-08-11） |
+| 目标分支 | `codex-filesystem-core-rebuild-rebased-20260810` |
 | 关联 Runtime | `gugu-interaction-runtime` |
 | 影响范围 | Files 文件库、项目文件面板、文件夹与面包屑拖放 |
-| 本版结论 | 先迁移单对象拖拽，多选拖拽暂时保留旧适配器；最终业务侧只保留 Runtime 注册和业务移动回调 |
+| 本版结论 | 单卡、多选、文件夹、面包屑、网格/列表和项目文件面板均已迁移到 Runtime Vue API；业务侧只保留声明、Action 适配和文件业务提交 |
+
+> 本 PRD 的执行计划已完成。下方保留最初的目标、边界和阶段拆解作为设计决策记录；实际完成情况以本节和
+> [文件系统 Interaction Runtime Core 重构方案](../../refactor/【已完成】文件系统Interaction%20Runtime%20Core重构方案.md)
+> 的最终执行记录为准。
 
 ### 0.1 两侧协作边界
 
-第一版先在 Gugu-web 侧暂存文件系统 adapter：
+迁移期间曾在 Gugu-web 侧暂存文件系统 adapter；当前稳定代码已收敛到：
 
 ```text
-frontend/src/views/Files/runtime/
-├── fileRuntimeAdapter.ts
-├── fileTargetResolver.ts
-├── fileRuntimeTypes.ts
-└── README.md
+frontend/src/interaction/runtime/adapters/file/
+└── fileRuntimeAdapter.ts
+
+frontend/src/composables/files/
+└── useFileRuntimeMove.ts
 ```
 
-该目录是迁移过渡层，不是最终目录。它只通过 Runtime 的公共 API 接入，不自行维护第二套 Session、proxy、landing、FLIP 或清理流程。
+`frontend/src/interaction/runtime/adapters/file/` 中保留纯 ID/Surface 辅助函数，文件业务 Action
+分流由 `frontend/src/composables/files/useFileRuntimeMove.ts` 统一处理。它们只通过 Runtime
+公共 API 接入，不维护第二套 Session、proxy、landing、FLIP 或清理流程。
 
 最终目标是：文件业务组件只负责提供业务数据、注册对象/Surface/Target，以及响应 Runtime 输出的业务 Action；拖拽输入、命中测试、视觉代理、grabbing、FLIP、landing、取消、二次抓取和清理全部由 Runtime 负责。Vue 适配层只负责把组件 DOM 生命周期绑定到 Runtime，不重新实现文件拖拽逻辑。
 
-Runtime 侧第一版不增加文件专属 API，也不把 `fileId`、`folderId` 等业务字段加入通用 Action。Runtime 只输出通用 `MoveAction`，文件 adapter 负责把 `objectId`、`fromSurfaceId` 和 `toSurfaceId` 翻译成现有文件移动业务。
+Runtime 侧不增加文件专属 API，也不把 `fileId`、`folderId` 等业务字段加入通用 Action。Runtime 输出通用 `MoveAction`/`move-group`，文件业务适配层负责把对象和目标 Surface 翻译成现有文件移动业务。
 
-待单对象接入稳定后，再将稳定的业务无关部分从暂存目录收敛到：
+稳定的业务无关部分已收敛到：
 
 ```text
 frontend/src/interaction/runtime/adapters/file/
@@ -60,11 +66,12 @@ runtime.onAction(action => moveFile(action))
 - 直接修改 Runtime 管理的 transform、opacity、visibility 或 pointer-events。
 - 为文件页面单独维护拖拽 Session、运动状态或视觉交接状态。
 
-`useObject`、`useSurface` 等 Vue/React 适配 API 如果仍存在，只能作为 DOM 绑定适配层，不作为文件业务侧的第二套注册协议。Phase 6 将复查并删除不再需要的旧适配入口。
+`useObject`、`useSurface`、`useTarget` 和 `useRuntimeAction` 作为 DOM/生命周期适配层使用，
+不作为文件业务侧的第二套注册协议；旧拖拽入口和兼容适配器已经删除。
 
 ## 1. 背景
 
-当前文件拖拽仍由 `useFileDragDrop()` 和旧物理拖拽适配器负责，包含：
+迁移前的文件拖拽由 `useFileDragDrop()` 和旧物理拖拽适配器负责，包含：
 
 - 单文件、文件夹和多选拖拽。
 - 文件夹卡片与面包屑落点识别。
@@ -92,7 +99,7 @@ runtime.onAction(action => moveFile(action))
 
 - 不修改文件 API、Store、数据库模型和移动接口。
 - 不修改 `FileCard.vue`、`FolderCard.vue` 的视觉样式和布局。
-- 不立即迁移多选拖拽。
+- 不把多选文件业务规则或 API 调用放进 Runtime Core；多选交互本身已由通用 Group API 提供。
 - 不把 Files 页面、项目文件面板强行合并成一个业务页面。
 - 不让 Runtime 了解文件夹、项目或文件库业务。
 - 不在 Runtime 核心中加入文件系统专属逻辑。
@@ -126,7 +133,7 @@ ProjectModal.vue
 - Files 页面现有移动方法：文件库目录移动、选择状态清理和刷新。
 - 原生上传逻辑：Files 页面和项目文件面板各自维护。
 
-旧 `fileDrag.ts` 在迁移期间不是立即删除的死代码，而是多选和兼容路径的暂存适配器。
+旧 `fileDrag.ts`、`useFileDragDrop.ts` 和 `useProjectFileDrag.ts` 已删除；选择、上传、业务移动和回滚逻辑继续保留。
 
 ## 4. Runtime 接入模型
 
@@ -228,8 +235,8 @@ frontend/src/composables/files/
 | `fileRuntime.ts` | 文件对象 ID、作用域、Runtime action 解析和业务桥接 |
 | `fileTargets.ts` | 文件浏览区、文件夹、面包屑 Surface 的 ID 与目标解析 |
 | `useFileRuntimeDrag.ts` | 页面级 Runtime 对象和目标绑定入口 |
-| `useFileDragDrop.ts` | 迁移期间的兼容门面，暂保留旧多选路径 |
-| `useProjectFileDrag.ts` | 项目文件面板的作用域和业务配置 |
+| `useFileRuntimeMove.ts` | 共享 Runtime Action 到文件业务移动的分流 |
+| Vue Runtime 包装组件 | 文件卡、文件夹卡、列表行、浏览区和面包屑的生命周期绑定 |
 | `useProjectFileDragMoves.ts` | 现有移动 API、optimistic update 和 rollback |
 
 ### 5.1 卡片改动边界
@@ -254,88 +261,95 @@ frontend/src/composables/files/
 
 ### Phase 0：行为基线与协议冻结
 
-- [ ] 记录 Files 页面单文件、文件夹、面包屑和多选拖拽行为。
-- [ ] 记录项目文件面板对应行为。
-- [ ] 确认网格/列表同时存在时的对象作用域。
-- [ ] 冻结对象 ID、Surface ID 和 Runtime Action 到业务移动的映射。
-- [ ] 确认原生上传拖拽不接入 Runtime。
+- [x] 记录 Files 页面单文件、文件夹、面包屑和多选拖拽行为。
+- [x] 记录项目文件面板对应行为。
+- [x] 确认网格/列表同时存在时的对象作用域。
+- [x] 冻结对象 ID、Surface ID 和 Runtime Action 到业务移动的映射。
+- [x] 确认原生上传拖拽不接入 Runtime。
 
 验收：不改业务行为，只完成基线记录和协议评审。
 
 ### Phase 1：单文件 Runtime 接入
 
-- [ ] 注册 `file-item` 类型。
-- [ ] 在 `frontend/src/views/Files/runtime/` 建立过渡 adapter，只调用 Runtime 公共 API。
-- [ ] Files 网格视图接入单文件对象。
-- [ ] Files 列表视图接入单文件对象。
-- [ ] 注册文件夹目标 Surface。
-- [ ] 完成单文件拖入文件夹。
-- [ ] 保留旧多选路径。
+- [x] 注册 `file-item` 类型。
+- [x] 在迁移期间建立过渡 adapter，并在完成后收敛到稳定的 Runtime API 接入。
+- [x] Files 网格视图接入单文件对象。
+- [x] Files 列表视图接入单文件对象。
+- [x] 注册文件夹目标 Surface。
+- [x] 完成单文件拖入文件夹。
+- [x] 多选路径已迁移到通用 Group API。
 
 验收：单文件拖拽的视觉、取消、二次抓取、落地和 API 结果与旧版一致；多选行为不受影响；Runtime 侧无需新增文件专属 API。
 
 ### Phase 2：面包屑与文件夹对象
 
-- [ ] 注册 `folder-item` 类型。
-- [ ] 支持文件夹拖入文件夹。
-- [ ] 支持文件/文件夹拖入根目录和中间面包屑。
-- [ ] 拦截拖到自身和非法目标。
-- [ ] 保留现有目录权限和业务回滚。
+- [x] 注册 `folder-item` 类型。
+- [x] 支持文件夹拖入文件夹。
+- [x] 支持文件/文件夹拖入根目录和中间面包屑。
+- [x] 拦截拖到自身和非法目标。
+- [x] 保留现有目录权限和业务回滚。
 
 验收：所有有效落点通过 Runtime 命中，非法落点不产生移动 Action。
 
 ### Phase 3：项目文件面板复用
 
-- [ ] ProjectModal 使用独立 scope 注册对象和 Surface。
-- [ ] 复用 `fileRuntime.ts` 与 `fileTargets.ts`。
-- [ ] 接入 `useProjectFileDragMoves.ts`。
-- [ ] 验证同一文件同时出现在 Files 和项目面板时互不影响。
+- [x] ProjectModal 使用独立 scope 注册对象和 Surface。
+- [x] 复用文件 Runtime ID/Target 辅助函数和 Vue 包装组件。
+- [x] 接入 `useProjectFileDragMoves.ts` 与共享 `useFileRuntimeMove`。
+- [x] 验证同一文件同时出现在 Files 和项目面板时互不影响。
 
 验收：两个面板可以独立拖拽、取消、二次抓取和回滚。
 
-### Phase 4：多选拖拽兼容与后续设计
+### Phase 4：多选拖拽兼容与后续设计（已完成）
 
-- [ ] 确认旧多选 adapter 与 Runtime 单对象路径不会同时控制同一对象。
-- [ ] 补充多选路径的 Runtime 视觉交接边界。
-- [ ] 评估是否需要通用 `GroupDragSession`。
-- [ ] 如果需要，先在文件 adapter 层验证，再决定是否扩展 Runtime 核心。
+- [x] 确认旧多选 adapter 与 Runtime 单对象路径不会同时控制同一对象。
+- [x] 补充多选路径的 Runtime 视觉交接边界。
+- [x] 评估并采用通用 `GroupDragSession`。
+- [x] 在 Runtime Core 完成 Group API 后完成文件业务侧迁移。
 
-本阶段不预设一定把多选能力并入通用 Runtime。
+多选能力已进入 Runtime Core 的通用 `GroupDragSession`，文件业务侧只接收
+`move-group` Action 并调用既有批量移动函数。
 
-### Phase 5：删除重复单对象逻辑
+### Phase 5：删除重复单对象逻辑（已完成）
 
-- [ ] 删除旧 adapter 中已由 Runtime 接管的单对象视觉逻辑。
-- [ ] 删除重复的单对象 `elementFromPoint()` 落点判断。
-- [ ] 保留多选、原生上传、业务移动和回滚逻辑。
-- [ ] 清理兼容门面中的死代码。
+- [x] 删除旧 adapter 中已由 Runtime 接管的单对象视觉逻辑。
+- [x] 删除重复的单对象 `elementFromPoint()` 落点判断。
+- [x] 保留多选、原生上传、业务移动和回滚逻辑。
+- [x] 清理兼容门面中的死代码。
 
 前置条件：Phase 1～4 的行为验收全部通过。
 
-### Phase 6：业务侧 API 收敛与 Runtime API 复评
+### Phase 6：业务侧 API 收敛与 Runtime API 复评（已完成）
 
-- [ ] 将暂存目录中仍有复用价值的业务解析代码移至 `frontend/src/interaction/runtime/adapters/file/`，仅保留对象/目标 ID 映射和 Action 到业务移动的桥接。
-- [ ] 删除 `views/Files/runtime/` 中已经迁移的重复实现。
-- [ ] 将文件页和项目文件面板收敛为“注册对象/Surface/Target + 订阅 Action”的接入方式。
-- [ ] 删除业务侧单对象拖拽入口、手动命中测试、单对象 proxy/landing/FLIP 和重复清理代码。
-- [ ] 确认 Vue DOM 适配层只承担 element binding 和生命周期同步，不承担业务拖拽编排。
-- [ ] 确认文件夹对象的内嵌 Target 与独立面包屑 Target 不会重复执行同一移动 Action。
-- [ ] 复查是否仍需要通过 Surface ID 编码目标目录；如果确实脆弱，再提出通用 `Surface.metadata` 或目标快照 API。
-- [ ] 不在没有实际复用场景前新增 `gugu-interaction-runtime/src/file/`。
-- [ ] 若多选拖拽需要 Runtime 支持，单独设计 `GroupDragSession` 评审，不与本 PRD 的单对象迁移混做。
+- [x] 将稳定的业务解析代码收敛到 `frontend/src/interaction/runtime/adapters/file/`，Action 分流收敛到 `frontend/src/composables/files/useFileRuntimeMove.ts`。
+- [x] 删除 `views/Files/runtime/` 中已迁移的重复实现。
+- [x] 将文件页和项目文件面板收敛为“注册对象/Surface/Target + 订阅 Action”的接入方式。
+- [x] 删除业务侧单对象拖拽入口、手动命中测试、单对象 proxy/landing/FLIP 和重复清理代码。
+- [x] 确认 Vue DOM 适配层只承担 element binding 和生命周期同步，不承担业务拖拽编排。
+- [x] 确认文件夹对象的内嵌 Target 与独立面包屑 Target 不会重复执行同一移动 Action。
+- [x] 确认 Surface ID 足以表达文件目标，未增加文件专属 Runtime 字段。
+- [x] Group Session 已进入 Runtime Core，文件业务侧只消费通用 `move-group` Action。
 
 验收：Files 页面和项目文件面板只依赖 Runtime 公共 API 与最薄的业务 Action 适配；业务侧不再拥有单对象拖拽生命周期，Runtime 公共 API 没有文件业务字段，且没有遗留两套单对象生命周期。
+
+### 6.1 最终完成记录（2026-08-11）
+
+- Runtime Demo 与 Gugu-web 文件库、项目文件面板的网格/列表单卡和多选均已完成回归。
+- 文件夹、面包屑、无效落点、取消、落地前 regrab、连续拖拽和失败回滚均已覆盖。
+- Gugu-web 当前只保留 Vue Runtime 声明、`useFileRuntimeMove` 业务 Action 适配，以及文件 API、权限、选择和 optimistic mutation。
+- 后续新增文件视图必须复用现有 Vue 包装组件和共享 Action 适配，不重新引入页面级拖拽生命周期。
 
 ## 7. 测试与验收
 
 ### 7.1 自动测试
 
-- [ ] 对象 ID 作用域不会冲突。
-- [ ] Surface ID 能正确解析目标目录。
-- [ ] 文件对象只能移动到允许的目标 Surface。
-- [ ] 文件夹不能拖到自身或子目录非法位置。
-- [ ] Runtime move action 正确分流到 `moveFiles` / `moveFolders`。
-- [ ] 移动 API 失败时保持现有 rollback 行为。
-- [ ] 多选路径仍由旧 adapter 正确处理。
+- [x] 对象 ID 作用域不会冲突。
+- [x] Surface ID 能正确解析目标目录。
+- [x] 文件对象只能移动到允许的目标 Surface。
+- [x] 文件夹不能拖到自身或子目录非法位置。
+- [x] Runtime move action 正确分流到 `moveFiles` / `moveFolders`。
+- [x] 移动 API 失败时保持现有 rollback 行为。
+- [x] 多选路径由 Runtime Group API 正确处理。
 
 ### 7.2 手动验收
 
@@ -359,7 +373,7 @@ frontend/src/composables/files/
 | 风险 | 处理方式 |
 | --- | --- |
 | 同一文件在多个面板注册冲突 | 所有对象和 Surface ID 强制带 scope |
-| Runtime 暂无多选 Session | 第一版保留旧多选 adapter，不提前修改核心 |
+| 多选视觉与业务边界 | Runtime 提供通用 Group Session；文件 API、权限和回滚仍由业务层处理 |
 | 文件夹与面包屑命中重叠 | 使用注册 Surface 命中测试，确认最具体目标优先 |
 | 旧物理拖拽和 Runtime 双重控制 | 单对象路径只能选择一个 owner |
 | 原生上传被 Runtime 拦截 | 上传 drop zone 继续使用独立原生事件 |
