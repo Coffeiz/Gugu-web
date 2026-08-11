@@ -52,10 +52,6 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
-  (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landing', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landingDone', item: MindCanvasItem): void
-  (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
