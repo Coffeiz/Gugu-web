@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
-from agent.tool_contract import SchemaError, build_validator, invalid_input_payload, validate_input
+from agent.tools.tool_contract import SchemaError, build_validator, invalid_input_payload, validate_input
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
