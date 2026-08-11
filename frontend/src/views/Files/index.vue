@@ -179,7 +179,6 @@ import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
 import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
-import { resolveFolderIds } from '@/utils/folderKeys'
 import { splitName } from '@/utils/fileParse'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
@@ -200,6 +199,7 @@ import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
+import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
@@ -208,9 +208,7 @@ import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
-  parseFolderSurfaceId,
   breadcrumbSurfaceId,
-  parseBreadcrumbSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 
 const projectStore = useProjectStore()
@@ -577,11 +575,6 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
   })
 }
 
-// selectedFolderKeys 里放的是 f.id（"f:65"），拖拽需要真实数字 folderId——查当前层文件夹列表换算
-function _selectedFolderIdNums() {
-  return new Set(resolveFolderIds(selectedFolderKeys.value, sortedContents.value.folders))
-}
-
 // ── Runtime Core API 接入 ──
 // 单文件/单文件夹和多选拖拽都交给 Interaction Runtime；这里仅负责注册
 // Object/Surface/Target，并把 Action 转发给现有的业务移动函数。
@@ -600,41 +593,18 @@ function fileLayoutKey(f: FileMeta): string {
   return fileObjectId(RUNTIME_SCOPE, 'file', f.id)
 }
 
-async function handleRuntimeMoveAction(objectIds: readonly string[], toSurfaceId: string) {
-  const parsed = objectIds.flatMap(objectId => {
-    const isFolder = objectId.startsWith(`${RUNTIME_SCOPE}:folder:`)
-    const isFile = objectId.startsWith(`${RUNTIME_SCOPE}:file:`)
-    if (!isFolder && !isFile) return []
-    const id = Number(objectId.slice(objectId.lastIndexOf(':') + 1))
-    return Number.isNaN(id) ? [] : [{ id, isFolder }]
-  })
-  if (parsed.length === 0) return
-  if (toSurfaceId === runtimeBrowserSurfaceId) return // 落回浏览区本身：不算移动
-
-  let targetFolderId: number | null
-  const folderTarget = parseFolderSurfaceId(RUNTIME_SCOPE, toSurfaceId)
-  if (folderTarget !== null) {
-    targetFolderId = Number(folderTarget)
-    if (Number.isNaN(targetFolderId)) return
-    if (parsed.some(item => item.isFolder && targetFolderId === item.id)) return // 拖到自己身上
-  } else {
-    const idx = parseBreadcrumbSurfaceId(RUNTIME_SCOPE, toSurfaceId)
-    if (idx === null) return
+const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
+  scope: RUNTIME_SCOPE,
+  browserSurfaceId: runtimeBrowserSurfaceId,
+  resolveBreadcrumbTarget: idx => {
     const seg = navPath.value[idx]
-    if (!seg || !isBcDroppable(seg, idx)) return
-    targetFolderId = seg.type === 'folder' ? (seg.folderId ?? null) : null
-  }
-
-  const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
-  const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
-  await Promise.all([
-    folderIds.length > 0 ? moveFoldersInto(folderIds, targetFolderId) : Promise.resolve(),
-    fileIds.length > 0 ? moveFilesInto(fileIds, targetFolderId) : Promise.resolve(),
-  ])
-  // Runtime 的 landing/reveal 仍在独立时间线上运行；业务移动成功后再退出多选，
-  // 避免松手瞬间工具栏和源卡片状态先于动画跳变。无效落点或失败会保留原选区。
-  clearSelection()
-}
+    if (!seg || !isBcDroppable(seg, idx)) return null
+    return { folderId: seg.type === 'folder' ? (seg.folderId ?? null) : null, droppedOn: 'breadcrumb' }
+  },
+  moveFolders: moveFoldersInto,
+  moveFiles: (ids, targetFolderId) => moveFilesInto(ids, targetFolderId),
+  clearSelection,
+})
 
 useRuntimeAction(action => {
   if (action.type !== 'move' && action.type !== 'move-group') return

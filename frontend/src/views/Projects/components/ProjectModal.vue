@@ -103,8 +103,6 @@ import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
   folderSurfaceId,
-  parseFolderSurfaceId,
-  parseBreadcrumbSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 import { useProjectStore } from '@/stores/projects'
 import { PROJECT_COLOR_PRESETS, extractProjectAccent } from '@/utils/projectColors'
@@ -142,6 +140,7 @@ import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
 import { useProjectFileBatchActions } from '@/composables/files/useProjectFileBatchActions'
 import { useProjectFileContextActions } from '@/composables/files/useProjectFileContextActions'
 import { useProjectFileDragMoves } from '@/composables/files/useProjectFileDragMoves'
+import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useProjectFileKeyboard } from '@/composables/files/useProjectFileKeyboard'
 import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting'
 import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
@@ -308,49 +307,18 @@ function bindPmGridEl(target: unknown) {
   pmRuntimeBrowserRef.value = element
 }
 
-async function handleRuntimeMoveAction(objectIds: readonly string[], toSurfaceId: string) {
-  const scope = RUNTIME_SCOPE
-  const parsed = objectIds.flatMap(objectId => {
-    const isFolder = objectId.startsWith(`${scope}:folder:`)
-    const isFile = objectId.startsWith(`${scope}:file:`)
-    if (!isFolder && !isFile) return []
-    const id = Number(objectId.slice(objectId.lastIndexOf(':') + 1))
-    return Number.isNaN(id) ? [] : [{ id, isFolder }]
-  })
-  if (parsed.length === 0) return
-
-  const browserSurfaceId = makeBrowserSurfaceId(scope)
-  if (toSurfaceId === browserSurfaceId) return // 落回浏览区本身：不算移动
-
-  let targetFolderId: number | null
-  let droppedOn: 'folder' | 'breadcrumb'
-  const folderTarget = parseFolderSurfaceId(scope, toSurfaceId)
-  if (folderTarget !== null) {
-    targetFolderId = Number(folderTarget)
-    if (Number.isNaN(targetFolderId)) return
-    if (parsed.some(item => item.isFolder && targetFolderId === item.id)) return // 拖到自己身上
-    droppedOn = 'folder'
-  } else {
-    const idx = parseBreadcrumbSurfaceId(scope, toSurfaceId)
-    if (idx === null) return
-    if (idx === -1) {
-      targetFolderId = null
-    } else {
-      const seg = folderStack.value[idx]
-      if (!seg) return
-      targetFolderId = seg.id
-    }
-    droppedOn = 'breadcrumb'
-  }
-
-  const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
-  const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
-  await Promise.all([
-    folderIds.length > 0 ? movePmFoldersInto(folderIds, targetFolderId) : Promise.resolve(),
-    fileIds.length > 0 ? movePmFilesInto(fileIds, targetFolderId, { droppedOn }) : Promise.resolve(),
-  ])
-  clearPmSelection()
-}
+const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
+  scope: RUNTIME_SCOPE,
+  browserSurfaceId: makeBrowserSurfaceId(RUNTIME_SCOPE),
+  resolveBreadcrumbTarget: idx => {
+    if (idx === -1) return { folderId: null, droppedOn: 'breadcrumb' }
+    const seg = folderStack.value[idx]
+    return seg ? { folderId: seg.id, droppedOn: 'breadcrumb' } : null
+  },
+  moveFolders: movePmFoldersInto,
+  moveFiles: movePmFilesInto,
+  clearSelection: clearPmSelection,
+})
 
 useRuntimeAction(action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
