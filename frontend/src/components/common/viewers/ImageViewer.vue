@@ -23,7 +23,7 @@
     </div>
 
     <!-- 缩放工具栏 -->
-    <div v-if="!error" class="iv-toolbar" @mousedown.stop>
+    <div v-if="!error" class="iv-toolbar" @mousedown.stop @dblclick.stop>
       <button class="iv-tb-btn" title="缩小" @click="zoomOut">
         <PhMinus weight="bold" :size="12" />
       </button>
@@ -125,6 +125,10 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onMouseMove)
   window.removeEventListener('mouseup', onMouseUp)
 })
+
+// 供外层占位缩略图（切换图片时短暂覆盖在真图上方）复用同一份缩放/平移状态，
+// 避免占位图停在默认的居中/100%，真图加载完再"跳"回当前视图。
+defineExpose({ scale, tx, ty })
 </script>
 
 <style scoped>

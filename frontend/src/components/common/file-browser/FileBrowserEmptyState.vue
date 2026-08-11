@@ -19,3 +19,15 @@ defineProps({
   text: { type: String, default: '暂无文件' },
 })
 </script>
+
+<style scoped>
+.list-empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 56px 0; color: var(--text-secondary); font-size: 12px; opacity: 0.5;
+}
+.grid-empty {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px; padding: 72px 0;
+  font-size: 12px; color: var(--text-secondary); opacity: 0.5;
+}
+</style>

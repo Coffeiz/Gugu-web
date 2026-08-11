@@ -358,7 +358,7 @@ export function startMultiPhysicsDrag(event: PointerEvent | DragEvent, sourceEl:
 }
 /**
  * pointer 模式下「按住不放越过阈值才算真的开拖，否则算一次点击」的判定，抽成通用函数
- * 前——ProjectCard.vue（看板卡）、useFileDragDrop.ts（文件/文件夹卡，单选/多选两种）、
+ * 前——ProjectCard.vue（看板卡）、文件系统旧拖拽入口（文件/文件夹卡，单选/多选两种）、
  * useCardDrag.ts（画布贴纸）三处各自手写过一份几乎一样的「攒位移 → 判阈值 → 起
  * startPhysicsDrag/startMultiPhysicsDrag，否则当点击」，连 window 监听器的挂卸都是抄的。
  * 这里只收敛这段公共的「阈值判定 + 生命周期」外壳，真正“越过阈值后要怎么起拖”（选单选

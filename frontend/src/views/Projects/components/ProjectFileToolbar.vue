@@ -29,8 +29,8 @@
       <ProjectFileBreadcrumb
         :can-go-back="pmCanGoBack"
         :can-go-forward="pmCanGoForward"
-        :drag-over-index="pmBcDragOverIdx"
         :folder-stack="folderStack"
+        :runtime-scope="runtimeScope"
         @go-back="pmGoBack"
         @go-forward="pmGoForward"
         @navigate="pmNavigateTo"
@@ -48,8 +48,8 @@ import ProjectFileBreadcrumb from '@/views/Projects/components/ProjectFileBreadc
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const {
   stagesExpanded, togglePmStages, pmCanGoBack, pmGoBack, pmCanGoForward, pmGoForward,
-  pmNavigateTo, folderStack, pmBcDragOverIdx, pmCbStore, pmCtxPaste, pmInSelectionMode,
+  pmNavigateTo, folderStack, pmCbStore, pmCtxPaste, pmInSelectionMode,
   togglePmSelectionMode, fileViewMode, showNewFolder, newFolderName, folderLoading, createFolder,
-  PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal,
+  PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal, runtimeScope,
 } = props.context
 </script>

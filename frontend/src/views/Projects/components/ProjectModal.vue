@@ -96,7 +96,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, nextTick, toRef, type PropType } from 'vue'
+import { ref, reactive, computed, watch, onUnmounted, nextTick, toRef, type PropType } from 'vue'
+import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
+import {
+  fileObjectId,
+  browserSurfaceId as makeBrowserSurfaceId,
+  folderSurfaceId,
+} from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
 import { useProjectStore } from '@/stores/projects'
 import { PROJECT_COLOR_PRESETS, extractProjectAccent } from '@/utils/projectColors'
 import { useFilesCacheStore, type FileMeta, type FolderMeta } from '@/stores/filesCache'
@@ -133,7 +140,7 @@ import { useProjectFileUpload } from '@/composables/files/useProjectFileUpload'
 import { useProjectFileBatchActions } from '@/composables/files/useProjectFileBatchActions'
 import { useProjectFileContextActions } from '@/composables/files/useProjectFileContextActions'
 import { useProjectFileDragMoves } from '@/composables/files/useProjectFileDragMoves'
-import { useProjectFileDrag } from '@/composables/files/useProjectFileDrag'
+import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useProjectFileKeyboard } from '@/composables/files/useProjectFileKeyboard'
 import { useProjectFileSorting } from '@/composables/files/useProjectFileSorting'
 import { useProjectFileRename } from '@/composables/files/useProjectFileRename'
@@ -234,7 +241,7 @@ const {
   onContainerMouseDown: onPmGridMouseDown,
   cancelDrag: _cancelPmBoxDrag,
   clearSelection: clearPmSelection,
-  onContentClick: onPmContentClick,
+  onContentClick: onPmContentClickImpl,
   toggleFolderSelect: toggleFolderSelectPm,
   toggleSelectionMode: togglePmSelectionMode,
   handleFileClick: pmHandleFileClick,
@@ -245,8 +252,17 @@ const {
   getFiles: () => sortedCurrentFiles.value,
   openPreview: file => openPreview(file),
   isPreviewable,
-  enterFolder: folder => pmEnterFolder(folder),
+  enterFolder: folder => pmEnterFolderWrapped(folder),
 })
+
+let suppressNextPmSelectionClick = false
+function onPmContentClick() {
+  if (suppressNextPmSelectionClick) {
+    suppressNextPmSelectionClick = false
+    return
+  }
+  onPmContentClickImpl()
+}
 
 // Tier 3：数据从全局 filesCache store 派生（currentFiles/currentFolders/pmFolderCount）。所有增删改
 // 只需更新 store（updateFile/updateFolder/removeFile/removeFolder/addFile/addFolder），视图自动跟随——
@@ -260,23 +276,6 @@ const { moveFolders: movePmFoldersInto, moveFiles: movePmFilesInto } = useProjec
   projectId: () => props.project?.id ?? null,
 })
 
-const {
-  draggingFileIds: pmDraggingFileIds,
-  draggingFolderIds: pmDraggingFolderIds,
-  dragOverFolderId: pmDragOverFolderId,
-  bcDragOverIdx: pmBcDragOverIdx,
-  onFolderPointerDown: onPmFolderPointerDown,
-  onFilePointerDown: onPmFilePointerDown,
-} = useProjectFileDrag({
-  folderStack,
-  stagesExpanded,
-  selectedFileIds: pmSelectedFileIds,
-  selectedFolderIds: pmSelectedFolderIds,
-  cancelBoxDrag: _cancelPmBoxDrag,
-  clearSelection: clearPmSelection,
-  moveFolders: movePmFoldersInto,
-  moveFiles: movePmFilesInto,
-})
 
 // ── 排序 ──────────────────────────────────────────────────────────────────────
 const { SORT_OPTIONS: PM_SORT_OPTIONS, sortKey: pmSortKey, sortDir: pmSortDir, onSortSelect: onPmSortSelect } = useSorting()
@@ -290,6 +289,93 @@ const {
   sortKey: pmSortKey,
   sortDir: pmSortDir,
 })
+
+// ── Runtime Vue API：项目文件区与文件库共用同一套对象/Surface/Target 接入 ──
+// ProjectModal 是全局单例，文件对象 ID 本身全局唯一，因此使用稳定 scope，避免 project
+// prop 切换时让静态 id 的 useSurface/useObject 失去对应关系。
+const RUNTIME_SCOPE = 'project-files'
+const domAdapter = createVueRuntimeAdapter(runtime)
+const { elementRef: pmRuntimeBrowserRef } = useSurface({
+  id: makeBrowserSurfaceId(RUNTIME_SCOPE),
+  type: 'file-browser',
+  accepts: ['file-item', 'folder-item'],
+})
+
+function bindPmGridEl(target: unknown) {
+  const element = target as HTMLElement | null
+  pmGridRef.value = element
+  pmRuntimeBrowserRef.value = element
+}
+
+const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
+  scope: RUNTIME_SCOPE,
+  browserSurfaceId: makeBrowserSurfaceId(RUNTIME_SCOPE),
+  resolveBreadcrumbTarget: idx => {
+    if (idx === -1) {
+      if (!folderStack.value.length) return null
+      return { folderId: null, droppedOn: 'breadcrumb' }
+    }
+    const seg = folderStack.value[idx]
+    return seg ? { folderId: seg.id, droppedOn: 'breadcrumb' } : null
+  },
+  moveFolders: movePmFoldersInto,
+  moveFiles: movePmFilesInto,
+  clearSelection: clearPmSelection,
+})
+
+useRuntimeAction(action => {
+  if (action.type !== 'move' && action.type !== 'move-group') return
+  const objectIds = action.type === 'move-group' ? action.objectIds : [action.objectId]
+  if (!objectIds.some(id => id.startsWith(`${RUNTIME_SCOPE}:`))) return
+  suppressNextPmSelectionClick = true
+  void handleRuntimeMoveAction(objectIds, action.toSurfaceId)
+})
+onUnmounted(() => domAdapter.dispose())
+
+// ── 目录切换布局事务（Phase 4）：包装 pmEnterFolder/pmNavigateTo/pmGoBack/pmGoForward，
+// 让目录切换走 runLayoutMutation（先量卡片位置 → mutate 目录状态 → 等 DOM patch → 播放
+// FLIP/Collection Presence），取代任何整体销毁重建。文件面板本来就没有 Transition
+// mode="out-in" 包裹卡片列表（见上方 410 行注释），这里只是把"怎么触发目录状态变化"
+// 接到 Runtime 布局事务上。拖拽进行中拒绝导航，对齐 demo 的 hasActiveMove 守卫。
+function hasActivePmMove(): boolean {
+  const root = pmGridRef.value
+  if (!root) return false
+  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
+  for (const card of cards) {
+    const key = card.dataset.layoutKey
+    if (key && runtime.isControlled(key)) return true
+  }
+  return false
+}
+async function withPmLayoutNav(mutate: () => void): Promise<void> {
+  if (hasActivePmMove()) return
+  const root = pmGridRef.value
+  if (!root) {
+    mutate()
+    return
+  }
+  const elements = Array.from(root.querySelectorAll<HTMLElement>('[data-layout-role="card"]'))
+  await domAdapter.runLayoutMutation({
+    elements,
+    root,
+    mutate,
+    waitForPatch: () => nextTick(),
+  })
+}
+function pmEnterFolderWrapped(folder: FolderMeta): void { void withPmLayoutNav(() => pmEnterFolder(folder)) }
+function pmNavigateToWrapped(idx: number): void { void withPmLayoutNav(() => pmNavigateTo(idx)) }
+function pmGoBackWrapped(): void { void withPmLayoutNav(() => pmGoBack()) }
+function pmGoForwardWrapped(): void { void withPmLayoutNav(() => pmGoForward()) }
+
+// Collection Presence 标记（Phase 4）：collection 名带 projectId，与文件页的
+// 'files-browser' 互不相同，data-layout-key 复用 Phase 1 已全局唯一的 fileObjectId。
+const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
+function pmFolderLayoutKey(folder: FolderMeta): string {
+  return fileObjectId(RUNTIME_SCOPE, 'folder', folder.id)
+}
+function pmFileLayoutKey(file: FileMeta): string {
+  return fileObjectId(RUNTIME_SCOPE, 'file', file.id)
+}
 
 // ── 文件夹 ────────────────────────────────────────────────────────────────────
 
@@ -501,12 +587,11 @@ const filePanelContext = {
   stagesExpanded,
   togglePmStages,
   pmCanGoBack,
-  pmGoBack,
+  pmGoBack: pmGoBackWrapped,
   pmCanGoForward,
-  pmGoForward,
-  pmNavigateTo,
+  pmGoForward: pmGoForwardWrapped,
+  pmNavigateTo: pmNavigateToWrapped,
   folderStack,
-  pmBcDragOverIdx,
   pmCbStore,
   pmCtxPaste,
   pmInSelectionMode,
@@ -524,6 +609,7 @@ const filePanelContext = {
   pmIsDragging,
   pmSelectionRect,
   pmGridRef,
+  bindPmGridEl,
   onPmGridMouseDown,
   onPmContentClick,
   openPmCtx,
@@ -533,11 +619,12 @@ const filePanelContext = {
   sortedCurrentFolders,
   pmFolderCount,
   accentColor,
-  pmDragOverFolderId,
+  folderLayoutKey: pmFolderLayoutKey,
+  fileLayoutKey: pmFileLayoutKey,
+  layoutCollection: pmLayoutCollection,
   pmSelectedFolderIds,
   pmPreviewFolderIds,
   onPmFolderClick,
-  onPmFolderPointerDown,
   renamingFolderId,
   commitFolderRename,
   startRenameFolder,
@@ -549,7 +636,6 @@ const filePanelContext = {
   isPmImageExt,
   pmSelectedFileIds,
   pmPreviewFileIds,
-  pmDraggingFileIds,
   renamingFileId,
   startRename,
   commitRename,
@@ -559,7 +645,7 @@ const filePanelContext = {
   downloadFile,
   deleteFile,
   pmHandleFileClick,
-  onPmFilePointerDown,
+  runtimeScope: RUNTIME_SCOPE,
   uploadingItems,
   dragging,
   handleFileDrop,

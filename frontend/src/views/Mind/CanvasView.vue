@@ -2,6 +2,8 @@
   <div class="canvas-page">
     <MindCanvas
       ref="canvasRef"
+      class="canvas-page-canvas"
+      :class="{ 'canvas-page-canvas-ready': canvasReady }"
       :canvas-key="activeCanvasId"
       :items="store.canvasItems"
       :relations="store.canvasRelations"
@@ -65,6 +67,11 @@ const { openMindRef } = useMindRefActions()
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
 // 抽屉只能在当前画布项目加载完后量项目高度，否则首帧会把已放入画布的项目计入缓存。
 const canvasProjectIdsReady = ref(false)
+// 画布相机初始是默认原点/1倍缩放，真实视角要等 restoreView() 异步跑完才定下来——
+// 之间会有至少一帧按默认相机位置渲染，切换/进入画布时表现为"先闪一下错误位置再跳到
+// 正确视角"。用这个开关在 restoreView() 完成前把画布整体藏起来，只显示后再淡入，
+// 不让用户看到那一帧过渡态。
+const canvasReady = ref(false)
 const activeCanvasId = computed(() => store.activeCanvasId)
 // 数据库约束 uq_canvas_node 已保证同一项目在同一画布只会有一个展示项；抽屉只展示尚未摆入
 // 当前画布的项目，拖入成功后由 canvasItems 的响应式更新自动移出，无需另维护一份临时状态。
@@ -122,12 +129,14 @@ async function activateCanvas(id: number) {
   const seq = ++activationSeq
   flushViewSave()
   canvasProjectIdsReady.value = false
+  canvasReady.value = false
   try {
     const loaded = await store.loadCanvas(id)
     if (!loaded) return
   } catch {
     if (seq === activationSeq) {
       canvasProjectIdsReady.value = true
+      canvasReady.value = true
       showAppError('画布加载失败，请稍后重试')
     }
     return
@@ -136,7 +145,10 @@ async function activateCanvas(id: number) {
   canvasProjectIdsReady.value = true
   localStorage.setItem('mind-last-canvas-id', String(id))
   await nextTick()
-  if (seq === activationSeq) restoreView(id)
+  if (seq === activationSeq) {
+    restoreView(id)
+    canvasReady.value = true
+  }
 }
 
 /** 打开画布时优先回到用户上次离开时的视角（存在 mind_maps.data_json 里）；
@@ -290,5 +302,11 @@ async function onItemMoved(item: MindCanvasItem) {
 </script>
 
 <style scoped>
-.canvas-page { position: fixed; inset: 0; z-index: 8; }
+/* background 跟 MindCanvas.vue 的 .mind-canvas 底色（#e8ebf3）保持一致——画布本身
+   opacity:0 藏起来的这段时间，底下露出来的是这层背景，不跟着变黑/透出页面默认底色。 */
+.canvas-page { position: fixed; inset: 0; z-index: 8; background: #e8ebf3; }
+/* 相机真实视角要等 restoreView() 异步跑完才定下来，之前有一帧是默认原点/1倍缩放——
+   进画布/切画布时藏起来，只在相机定好之后才淡入，不让用户看到那帧过渡态。 */
+.canvas-page-canvas { opacity: 0; transition: none; }
+.canvas-page-canvas.canvas-page-canvas-ready { opacity: 1; transition: opacity 0.12s ease; }
 </style>
