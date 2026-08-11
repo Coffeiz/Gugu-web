@@ -1,8 +1,8 @@
 # 工具调用校验与联网搜索可靠性 PRD
 
-> 状态：🔲 待评估（仅完成现状摸底与方案设计，未开始实现）
+> 状态：Phase 1～5 已实现，待 PR 合并与生产环境验证
 > 创建：2026-08-08
-> 最近更新：2026-08-08
+> 最近更新：2026-08-11
 > 所属层：Agent / Tool Contract / 联网搜索
 > 关联模块：`backend/agent/tools/base.py`、`backend/agent/loop_drivers.py`、`backend/agent/core.py`、`backend/agent/tools/search.py`、`backend/agent/skills/web-search.md`、`backend/app/core/config.py`
 > 关联测试：`backend/tests/test_core_loop_characterization.py`、`backend/tests/test_tool_isolation.py`、待新增工具契约与 SearXNG 回归测试
@@ -16,11 +16,11 @@
 |---|---|---|
 | 现状摸底 | ✅ 已完成 | 已确认当前有 JSON 语法解析、截断保护、ID 弱归一化、工具定义基础检查，但中央 `dispatch` 没有按 `input_schema` 做运行时实例校验。 |
 | SearXNG 现状摸底 | ✅ 已完成 | 已确认 `web_search` 只读取 `data.results`，没有保留 `unresponsive_engines` 等引擎健康信息；空数组统一被解释为“没搜到结果”。 |
-| Phase 1：工具 schema 运行时校验 | 🔲 待评估 | 在唯一工具派发入口增加 object 检查、现有 ID normalize、JSON Schema validate、结构化错误回传；非法参数不得执行 handler。 |
-| Phase 2：工具 schema 注册期完整检查 | 🔲 待评估 | 在工具注册时校验 schema 本身是否合法并预编译 validator，避免 schema 定义错误到运行时才暴露。 |
-| Phase 3：SearXNG 状态可观测性 | 🔲 待评估 | 区分 `ok / degraded / empty / unavailable`，把引擎失败信息转成稳定、精简的 `search_status` 返回给模型。 |
-| Phase 4：搜索 query 语义约束 | 🔲 待评估 | 补强 `query` schema 描述与联网技能说明，让模型优先生成适合传统搜索引擎的短关键词组合；健康空结果时再改关键词，基础设施不可用时直接走兜底。 |
-| Phase 5：回归验证 | 🔲 待评估 | 增加工具参数错误边界、SearXNG 空结果/部分故障/全故障、query 说明等回归测试。 |
+| Phase 1：工具 schema 运行时校验 | ✅ 已完成 | 唯一工具派发入口已增加 object 检查、现有 ID normalize、JSON Schema validate 和结构化错误回传；非法参数不会执行 handler。 |
+| Phase 2：工具 schema 注册期完整检查 | ✅ 已完成 | 工具注册时校验 schema 并预编译 validator；dispatch 对直接注入 registry 的扩展保留延迟构建保护。 |
+| Phase 3：SearXNG 状态可观测性 | ✅ 已完成 | 已区分 `ok / degraded / empty / unavailable`，并把引擎失败信息转成稳定、精简的 `search_status`。 |
+| Phase 4：搜索 query 语义约束 | ✅ 已完成 | 已补强 `query` schema 描述与联网技能说明，并限制 `max_results` 为 1～20。 |
+| Phase 5：回归验证 | ✅ 已完成 | 新增工具参数错误边界、SearXNG 空结果/部分故障/全故障和 query 说明测试；后端全量测试通过。 |
 
 ---
 

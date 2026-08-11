@@ -320,6 +320,10 @@ class SkillRegistry:
         # 在 schema 校验前只转这批既有白名单 id；其它类型不做猜测式 coercion。
         _coerce_int_ids(args)
 
+        # 正常工具会在 registry.add() 时缓存 validator；测试工具和少量运行时扩展可能直接
+        # 注入 registry，仍需在 dispatch 边界补建，避免校验器为空导致整轮 Agent 崩溃。
+        if tool._input_validator is None:
+            tool._input_validator = build_validator(tool.input_schema)
         issues = validate_input(tool._input_validator, args)
         if issues:
             payload = invalid_input_payload(name, issues)
