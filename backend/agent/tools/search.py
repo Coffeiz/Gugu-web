@@ -16,7 +16,9 @@ sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 
 from datetime import datetime
 
 import asyncio
+from collections import Counter
 import json
+import logging
 import random
 
 from app.core.tz import local_day_start_utc
@@ -29,6 +31,178 @@ from app.models import SearchUsage
 from agent.tools.base import BaseSkill, Tool
 
 _TAVILY_URL = "https://api.tavily.com/search"
+_search_log = logging.getLogger("agent.search")
+
+_SEARCH_QUERY_DESCRIPTION = (
+    "搜索关键词。优先使用简短关键词组合，不要直接复制用户的完整问题或写成长句；"
+    "保留实体名、产品名、版本号、年份/日期和关键术语。精确文件名、报错文本、论文标题、"
+    "产品完整型号等本身是高价值检索词，应完整保留。"
+)
+
+
+def _parse_requested_engines(raw: str | None) -> list[str]:
+    """把后台逗号分隔的引擎配置转成有序、去重列表。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for part in str(raw or "").split(","):
+        name = part.strip()
+        key = name.casefold()
+        if name and key not in seen:
+            seen.add(key)
+            out.append(name)
+    return out
+
+
+def _normalize_failure_reason(raw_reason) -> str:
+    text = str(raw_reason or "").strip().lower()
+    if not text:
+        return "unknown"
+    if "captcha" in text or "challenge" in text:
+        return "captcha"
+    if "too many requests" in text or "rate limit" in text or "ratelimit" in text or "429" in text:
+        return "rate_limited"
+    if "suspend" in text:
+        return "suspended"
+    if "timeout" in text or "timed out" in text:
+        return "timeout"
+    if any(token in text for token in (
+        "unavailable", "connection", "network", "forbidden", "access denied",
+        "accessdenied", "blocked", "403", "502", "503", "504",
+    )):
+        return "unavailable"
+    return "unknown"
+
+
+def _normalize_engine_failures(data: dict) -> list[dict[str, str]]:
+    """容错读取 SearXNG 的 ``unresponsive_engines``，只保留 engine + 归一化 reason。
+
+    SearXNG 版本/引擎实现可能返回 list/tuple/dict 等不同形态；诊断字段坏掉不能影响
+    已拿到的正常 results，所以任何无法识别的项都忽略或归入 unknown，不向上抛。
+    """
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("unresponsive_engines")
+    if not raw:
+        return []
+
+    if isinstance(raw, dict):
+        entries = [{"engine": engine, "reason": reason} for engine, reason in raw.items()]
+    elif isinstance(raw, (list, tuple)):
+        entries = list(raw)
+    else:
+        return []
+
+    out_by_key: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+    for item in entries:
+        engine = None
+        reason_raw = None
+        if isinstance(item, dict):
+            engine = item.get("engine") or item.get("name")
+            reason_raw = item.get("reason") or item.get("error") or item.get("message")
+        elif isinstance(item, (list, tuple)) and item:
+            engine = item[0]
+            reason_raw = " ".join(str(part) for part in item[1:] if part is not None)
+        elif isinstance(item, str):
+            if ":" in item:
+                engine, reason_raw = item.split(":", 1)
+            else:
+                engine = item
+
+        name = str(engine or "").strip()
+        if not name:
+            continue
+        key = name.casefold()
+        normalized = _normalize_failure_reason(reason_raw)
+        if key not in out_by_key:
+            order.append(key)
+            out_by_key[key] = {"engine": name, "reason": normalized}
+        elif out_by_key[key]["reason"] == "unknown" and normalized != "unknown":
+            out_by_key[key] = {"engine": name, "reason": normalized}
+
+    return [out_by_key[key] for key in order]
+
+
+def _build_search_status(
+    results: list[dict],
+    requested_engines: list[str],
+    failures: list[dict[str, str]],
+) -> dict:
+    requested_keys = {name.casefold() for name in requested_engines}
+    failed_keys = {item["engine"].casefold() for item in failures if item.get("engine")}
+    failed_requested = requested_keys & failed_keys
+    all_requested_failed = bool(requested_keys) and requested_keys.issubset(failed_keys)
+
+    if failures:
+        # 有实际结果时即便所有配置引擎都报告过异常，也至少不是“完全没法搜”；保留结果并标 degraded。
+        state = "unavailable" if not results and all_requested_failed else "degraded"
+    else:
+        state = "ok" if results else "empty"
+
+    working_count = (
+        max(len(requested_engines) - len(failed_requested), 0)
+        if requested_engines else None
+    )
+    return {
+        "state": state,
+        "requested_engines": requested_engines,
+        "failed_engines": failures,
+        "working_engine_count": working_count,
+        "result_count": len(results),
+    }
+
+
+def _search_note(state: str, *, kind: str, has_results: bool) -> str | None:
+    noun = "图片" if kind == "image" else "结果"
+    if state == "ok":
+        return None
+    if state == "empty":
+        return f"当前可用搜索引擎没有返回{noun}；可以换一组更短/更宽的关键词再搜一次。"
+    if state == "unavailable":
+        prefix = "当前配置的 SearXNG 图片搜索引擎均不可用" if kind == "image" else "当前配置的 SearXNG 搜索引擎均不可用"
+        return f"{prefix}；这不代表没有相关结果。请改用 deep_research 兜底。"
+    if has_results:
+        return "部分搜索引擎不可用，当前结果覆盖可能不完整；已有结果仍可使用。"
+    return "本次没有返回结果，但部分搜索引擎不可用，不能据此判断网上没有相关内容；可换关键词重试一次，或改用 deep_research。"
+
+
+def _log_search_health(kind: str, query: str, status: dict) -> None:
+    """只记搜索健康元数据，不新增 query 原文日志。"""
+    try:
+        reason_counts = Counter(
+            item.get("reason", "unknown") for item in status.get("failed_engines", [])
+        )
+        _search_log.info(json.dumps({
+            "t": "search_health",
+            "kind": kind,
+            "state": status.get("state"),
+            "requested_engine_count": len(status.get("requested_engines") or []),
+            "failed_engine_count": len(status.get("failed_engines") or []),
+            "failure_reasons": dict(reason_counts),
+            "result_count": status.get("result_count", 0),
+            "query_len": len(query),
+        }, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _build_search_response(
+    query: str,
+    results: list[dict],
+    engines_config: str | None,
+    data: dict,
+    *,
+    kind: str,
+) -> dict:
+    requested = _parse_requested_engines(engines_config)
+    failures = _normalize_engine_failures(data)
+    status = _build_search_status(results, requested, failures)
+    payload = {"query": query, "results": results, "search_status": status}
+    note = _search_note(status["state"], kind=kind, has_results=bool(results))
+    if note:
+        payload["note"] = note
+    _log_search_health(kind, query, status)
+    return payload
 
 
 # ── web_search：SearXNG（通用、免费、无配额）────────────────────────────────
@@ -44,7 +218,8 @@ async def _searxng_search(db, user_id, args: dict):
     max_results = args.get("max_results") or settings.search.max_results
     # 不用 categories：国内服务器上 news/it/science 等类别的引擎（google/bing news 等）全被墙，
     # 传了只会挂一堆死引擎、拖慢甚至超时；通用引擎 sogou/quark/360 本就覆盖新闻等查询。
-    params = {"q": query, "format": "json", "engines": settings.search.searxng_engines}
+    engines = settings.search.searxng_engines
+    params = {"q": query, "format": "json", "engines": engines}
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
@@ -65,9 +240,7 @@ async def _searxng_search(db, user_id, args: dict):
         {"title": r.get("title"), "url": r.get("url"), "content": (r.get("content") or "")[:300]}
         for r in (data.get("results") or [])[:max_results]
     ]
-    if not results:
-        return {"query": query, "results": [], "note": "没搜到结果；换个关键词，或改用 deep_research 深度研究兜底"}
-    return {"query": query, "results": results}
+    return _build_search_response(query, results, engines, data, kind="web")
 
 
 # ── image_search：SearXNG images 分类（通用、免费、无配额）───────────────────
@@ -118,10 +291,7 @@ async def _searxng_image_search(db, user_id, args: dict):
         for r in (data.get("results") or [])[:max_results]
         if r.get("img_src")
     ]
-    if not results:
-        return {"query": query, "results": [],
-                "note": "没搜到图片；换个关键词重试，或该实例的图片搜索引擎可能未配置/不可达（searxng_image_engines）"}
-    return {"query": query, "results": results}
+    return _build_search_response(query, results, engines, data, kind="image")
 
 
 # ── deep_research：Tavily（深度、有配额）─────────────────────────────────────
@@ -197,8 +367,11 @@ class SearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "max_results": {"type": "integer", "description": "返回结果数（默认 5）"},
+                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "max_results": {
+                        "type": "integer", "minimum": 1, "maximum": 20,
+                        "description": "返回结果数（默认 5，范围 1~20）",
+                    },
                 },
                 "required": ["query"],
             },
@@ -216,8 +389,11 @@ class SearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "max_results": {"type": "integer", "description": "返回候选数（默认 5）"},
+                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "max_results": {
+                        "type": "integer", "minimum": 1, "maximum": 20,
+                        "description": "返回候选数（默认 5，范围 1~20）",
+                    },
                 },
                 "required": ["query"],
             },
@@ -235,8 +411,11 @@ class SearchSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "搜索关键词"},
-                    "max_results": {"type": "integer", "description": "返回结果数（默认 5）"},
+                    "query": {"type": "string", "description": "研究问题或检索主题，可使用自然语言问题"},
+                    "max_results": {
+                        "type": "integer", "minimum": 1, "maximum": 20,
+                        "description": "返回结果数（默认 5，范围 1~20）",
+                    },
                     "depth": {"type": "string", "enum": ["basic", "advanced"],
                               "description": "搜索深度，默认 basic（advanced 更深但更慢）"},
                 },
