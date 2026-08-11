@@ -6,6 +6,7 @@
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onCardClick"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -37,7 +38,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { eventsApi, type MindCanvasItem } from '@/services/api'
-import { useCardDrag } from '@/composables/useCardDrag'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 import { itemSize } from '@/composables/useMindCanvas'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
@@ -138,22 +139,13 @@ onMounted(() => nextTick(observeCard))
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
 
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => cardRef.value,
-  onClick: () => { if (!isTombstone.value) emit('open', props.item) },
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: `mind:${props.item.nodeId}`,
+  element: () => cardRef.value,
 })
+function onCardClick() {
+  if (!isTombstone.value) emit('open', props.item)
+}
 </script>
 
 <style scoped>

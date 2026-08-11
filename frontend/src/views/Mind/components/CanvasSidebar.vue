@@ -97,6 +97,8 @@ import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
 import { createProjectGroupsLayoutAdapter } from '@/interaction/drag/adapters/projectGroupsLayout'
+import { runtime } from '@/interaction/runtime'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -140,6 +142,7 @@ let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
 let projectGroupAnimationCount = 0
 let projectGroupScrollRaf: number | null = null
+let drawerSurfaceGeneration: number | null = null
 const DRAWER_LAYOUT_DURATION = 340
 const DRAWER_LAYOUT_EASING = 'cubic-bezier(.22,1,.36,1)'
 const projectGroupsLayout = createProjectGroupsLayoutAdapter({
@@ -165,6 +168,7 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
+watch(expanded, () => { void nextTick(syncRuntimeDrawerSurface) })
 let previousDrawerProjectIds = new Set<number>()
 let drawerProjectSnapshotReady = false
 watch(filteredProjects, (projects) => {
@@ -412,6 +416,20 @@ function onDelete(canvas: MindCanvas) {
   emit('delete', canvas.id)
 }
 
+function syncRuntimeDrawerSurface() {
+  const element = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
+  if (drawerSurfaceGeneration === null) {
+    drawerSurfaceGeneration = runtime.surfaces.register({
+      id: MIND_DRAWER_SURFACE_ID,
+      type: 'mind-drawer',
+      element,
+      accepts: [MIND_CANVAS_OBJECT_TYPE],
+    })
+  } else {
+    runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
+  }
+}
+
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
   projectListObserver = new ResizeObserver(() => {
@@ -421,12 +439,17 @@ onMounted(() => {
   if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
+  syncRuntimeDrawerSurface()
   window.addEventListener('resize', measurePanels)
 })
 onBeforeUnmount(() => {
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
   window.removeEventListener('resize', measurePanels)
+  if (drawerSurfaceGeneration !== null) {
+    runtime.surfaces.unregister(MIND_DRAWER_SURFACE_ID, drawerSurfaceGeneration)
+    drawerSurfaceGeneration = null
+  }
 })
 </script>
 

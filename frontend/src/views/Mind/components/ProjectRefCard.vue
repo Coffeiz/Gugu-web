@@ -13,7 +13,7 @@
     :data-node-id="item.nodeId"
     :data-canvas-item-id="item.id"
     @pointerdown.stop="onPointerDown"
-    @physics-landing-regrab="onLandingRegrab"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -27,8 +27,7 @@
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </div>
-  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown"
-    @physics-landing-regrab="onLandingRegrab"
+  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
@@ -62,13 +61,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import type { Project } from '@/types/project'
-import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
 import ProjectCardBody from './ProjectCardBody.vue'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -173,62 +172,13 @@ onBeforeUnmount(() => {
   cardResizeObserver?.disconnect()
 })
 
-// 项目和文件贴纸共用同一套物理入口、真实根节点和坐标回调。
-const { onPointerDown, startLandingRegrab } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => cardEl.value ?? missingRef.value,
-  exclude: target => !!(target as HTMLElement)?.closest?.('.seg-bar-wrap, .card-actions, .conn-dot'),
+// 项目和文件贴纸统一由 Runtime 负责抓取、物理落地和重抓接管；项目回抽屉的目标
+// Surface 由 MindCanvas 统一提交，组件只保留业务点击和展示职责。
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: `mind:${props.item.nodeId}`,
+  element: () => cardEl.value ?? missingRef.value,
   onClick: onOpen,
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
-  resolveAbsorbTarget: pointer => {
-    // 项目已被删除（墓碑态，project 为 null）时，抽屉里压根没有这个项目对应的卡片可以
-    // 接收——projectStore.projects 里根本没有这一条，resolveAbsorbLandingTarget 永远找
-    // 不到目标，轮询超时后卡在半途（曾经复现过"拖进抽屉卡住"）。这类卡片不允许吸入抽屉，
-    // 落在抽屉区域也当成普通画布移动处理。
-    if (!project.value) return null
-    // 物理克隆与画布分属不同层叠上下文，elementFromPoint 在抽屉上方时可能命中画布层，
-    // 即使指针几何位置已经在抽屉内。抽屉本身是唯一有效投放区，按它的可见矩形判定更稳定。
-    const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
-    if (!drawer) return null
-    const rect = drawer.getBoundingClientRect()
-    return pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom
-      ? drawer
-      : null
-  },
-  resolveAbsorbLandingTarget: () => {
-    const projectId = props.item.node.refId
-    return projectId == null
-      ? null
-      : document.querySelector<HTMLElement>(`.drawer-project-card[data-project-id="${projectId}"]`)
-  },
-  absorbShrink: false,
-  // returnCanvasItemToDrawer 是接口请求，真实网络延迟经常超过 usePhysicsDrag.ts 默认的
-  // 300ms 轮询上限——超时就找不到刚挂载的那张具体抽屉卡，只能退化用命中的抽屉容器当
-  // 落点，飞行/揭示都对不上真实卡片位置。放宽到 1500ms，与抽屉→画布方向
-  // landingTargetWaitMs 的量级保持一致。
-  absorbLandingWaitMs: 1500,
-  // 拖回抽屉的落地飞行（clone2）中途被重新抓起时，把手势转手给落点的抽屉卡自己接力，
-  // 而不是拿这次吸入请求的 opts（画布卡视角的 resolveAbsorbTarget/resolveLandingTarget
-  // 等）硬套在抽屉卡身上继续拖——不接的话转手事件落进没人听的地方，抓起来之后就没法
-  // 再放回画布。ProjectDrawerCard.vue 那边接了 physics-landing-regrab 事件才能接力。
-  delegateLandingRegrab: true,
-  onAbsorb: () => emit('returnToDrawer', props.item),
 })
-function onLandingRegrab(event: Event) {
-  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
-  startLandingRegrab(handoff.detail.event, handoff.detail.initialRect)
-  event.preventDefault()
-}
 function onOpen() {
   emit('open', props.item)
 }
