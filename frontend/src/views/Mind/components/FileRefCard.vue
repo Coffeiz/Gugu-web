@@ -183,6 +183,7 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: () => fileCardRef.value?.rootEl ?? null,
+  contentScale: () => props.scale,
 })
 function onOpen() {
   if (file.value) emit('open', props.item)

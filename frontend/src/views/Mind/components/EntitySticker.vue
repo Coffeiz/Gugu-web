@@ -142,6 +142,7 @@ onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: () => cardRef.value,
+  contentScale: () => props.scale,
 })
 function onCardClick() {
   if (!isTombstone.value) emit('open', props.item)

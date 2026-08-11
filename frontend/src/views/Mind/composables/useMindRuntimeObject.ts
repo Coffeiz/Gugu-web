@@ -10,6 +10,7 @@ export function useMindRuntimeObject(options: {
   objectId: string
   element: Ref<HTMLElement | null> | (() => HTMLElement | null)
   onClick?: () => void
+  contentScale?: number | (() => number)
 }) {
   let generation: number | null = null
   let boundElement: HTMLElement | null = null
@@ -28,6 +29,7 @@ export function useMindRuntimeObject(options: {
         visualMode: 'detach',
         surfaceId: MIND_CANVAS_SURFACE_ID,
         element,
+        contentScale: options.contentScale,
         abilities: ['move'],
       })
     } else {
