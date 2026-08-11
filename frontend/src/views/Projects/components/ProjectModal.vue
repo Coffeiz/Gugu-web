@@ -311,7 +311,10 @@ const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
   scope: RUNTIME_SCOPE,
   browserSurfaceId: makeBrowserSurfaceId(RUNTIME_SCOPE),
   resolveBreadcrumbTarget: idx => {
-    if (idx === -1) return { folderId: null, droppedOn: 'breadcrumb' }
+    if (idx === -1) {
+      if (!folderStack.value.length) return null
+      return { folderId: null, droppedOn: 'breadcrumb' }
+    }
     const seg = folderStack.value[idx]
     return seg ? { folderId: seg.id, droppedOn: 'breadcrumb' } : null
   },

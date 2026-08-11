@@ -6,7 +6,11 @@
     <button class="pm-nav-hist-btn" :disabled="!canGoForward" @click="emit('goForward')" title="前进">
       <PhArrowRight :size="13" weight="bold" />
     </button>
-    <RuntimeBreadcrumbTarget class="bc-seg" target-id="bc:-1"
+    <button v-if="folderStack.length === 0" class="bc-seg"
+      data-bc-idx="-1" @click="emit('navigate', -1)">
+      项目文件
+    </button>
+    <RuntimeBreadcrumbTarget v-else class="bc-seg" target-id="bc:-1"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
       项目文件

@@ -167,7 +167,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, nextTick, useAttrs, watch, type PropType } from 'vue'
+import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } from 'vue'
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
