@@ -4,9 +4,9 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 🟢 Phase 3D–5 已完成：文件库主页面与项目编辑卡的单卡、多选入口已接入 Runtime Group API；文件系统对象、Surface、Target 已统一走 Vue API；旧拖拽适配器、失效状态和临时探针已清理 |
+| 状态 | 🟢 文件系统迁移已完成（Phase 0–5，2026-08-11）：Runtime Demo、文件库主页面与项目编辑卡的单卡/多选入口均已接入统一 Vue API；旧拖拽生命周期、失效状态、临时探针和重复 Action 解析已清理 |
 | 重构分支 | `codex-filesystem-core-rebuild` |
-| 基线 | `main` 合并 PR16 后的 `c1a2df52` |
+| 基线 | Gugu-web 当前迁移提交 `4559ad89`；Runtime 当前基线 `952ac10` |
 | 关联仓库 | `gugu-interaction-runtime` |
 | 目标 | 文件页和项目文件抽屉只通过 Runtime Core API 接入交互 |
 
@@ -14,7 +14,7 @@
 
 ## 2. 重构动机
 
-当前文件系统接入已经完成单卡与多卡 Runtime/Vue API 收口；Runtime Demo 与 Gugu-web 文件库、项目编辑卡已经完成 Group API 接入，旧拖拽生命周期适配器与目标反馈字段已在 Phase 5 清理，剩余仅为边界验收记录：
+当前文件系统接入已经完成单卡与多卡 Runtime/Vue API 收口；Runtime Demo 与 Gugu-web 文件库、项目编辑卡已经完成 Group API 接入，旧拖拽生命周期适配器、重复 Action 解析和临时探针已清理。文件系统迁移阶段至此结束，后续只做常规回归和业务功能维护：
 
 1. Interaction Runtime 负责单卡 pointer、命中、代理、FLIP 和 landing。
 2. 文件库主页面和文件卡组件通过 Vue composable 管理对象、Surface、Target 生命周期和 Action 分流。
@@ -23,7 +23,7 @@
 `gugu-interaction-runtime` 已提供并验证：`GroupDragSession`、`startGroupObjectPointer()`、
 `move-group` Action、同组 Object ownership、共享运动/landing/regrab 时间线，以及主卡 +
 后置修饰卡的通用视觉上下文。Runtime Demo 的网格/列表多选 E2E 已通过；这只代表通用 Core
-和 Demo 可用，不代表 Gugu-web 真实文件页已经迁移完成。
+和 Demo 可用，并已在 Gugu-web 文件库与项目编辑卡的真实账号回归中完成验证。
 
 这会导致：
 
@@ -72,9 +72,9 @@ useRuntimeAction(action => { ... })
 生命周期内订阅和自动注销 Action。Vue 层不得实现 pointer、landing、FLIP、代理或目标几何
 计算。
 
-`createVueRuntimeAdapter` 仅作为尚未完成迁移的项目编辑卡过渡桥接，不再作为新接入代码的
-推荐形态。最终目标是项目编辑卡也改为独立的 Vue composable 接入，业务组件不直接调用
-`register`、`setElement` 或手写 generation/prune 逻辑。
+`createVueRuntimeAdapter` 仍可用于布局事务等低层兼容场景，但文件对象、Surface、Target
+和 Action 已不再通过它手写接线。文件页面使用 Runtime Vue composable 与共享的
+`useFileRuntimeMove`，业务组件不直接调用 `register`、`setElement` 或手写 generation/prune 逻辑。
 
 ### 3.3 文件业务层负责
 
@@ -190,12 +190,11 @@ Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatc
 - 文件卡、文件夹卡、面包屑和浏览区 Surface 通过 `useObject`、`useSurface`、`useTarget`
   接入 Runtime；
 - 保留 generation 保护，由 Vue 适配层统一处理；
-- 文件库主页面已完成该迁移；ProjectModal 仍有 `createVueRuntimeAdapter` 过渡接线，作为
-  后续收口项单独迁移；
+- 文件库主页面与 ProjectModal 均已完成该迁移；
 - 单卡 Action 只进入业务移动函数。
 
 完成条件：文件库主页面的单文件、单文件夹拖动完全由 Runtime 处理，单卡业务组件不再
-手写注册生命周期；项目编辑卡完成 composable 迁移后，本阶段才算全仓收口。
+手写注册生命周期；文件库与项目编辑卡均完成 composable 迁移后，本阶段全仓收口。
 
 #### Phase 1 执行记录（2026-08-10）
 
@@ -206,8 +205,8 @@ Phase 1 只替换"怎么触发这些函数"（从 `useFileDragDrop` 的 `dispatc
   Target 生命周期。
 - `Files/index.vue` 使用 `useSurface` 注册浏览区，并使用 `useRuntimeAction` 订阅单卡移动
   Action；`fileRuntimeAdapter` 只保留 ID/Surface 纯函数。
-- `ProjectModal.vue` 仍使用 `createVueRuntimeAdapter` 绑定项目文件卡、面包屑和浏览区，作为
-  下一步 Vue composable 收口对象；本记录不将它误标成已完成。
+- `ProjectModal.vue` 的文件卡、列表行、浏览区和面包屑已使用统一 Vue Runtime 包装组件；
+  不再手写对象/Surface/Target 注册、generation、延迟注销或 DOM bind。
 
 ### Phase 2：业务提交边界收敛
 
@@ -359,16 +358,17 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 - 409、权限拒绝和批量部分失败已由真实 Runtime 拖拽 E2E 覆盖；回滚实现仍由业务层的
   optimistic mutation 负责，Runtime 不接管 API、权限或缓存。
 
-**依赖说明**：Runtime 前置工作已经在 `gugu-interaction-runtime` 仓库完成；Gugu-web 接下来只消费
+**依赖说明**：Runtime 前置工作已经在 `gugu-interaction-runtime` 仓库完成；Gugu-web 当前只消费
 已验证的公共 API，不把文件业务规则搬进 Runtime：
 
 - 已新增 `GroupDragSession`（保留现有 `Session.objectId` 标量字段，主卡兼容既有单对象路径）；
 - `GroupDragSession` 保存 `primaryObjectId`、完整 `objectIds` 和各附属卡相对主卡的初始偏移；
 - Runtime 通过 `VisualLifecycleContext.group` 支持 1 session : 主代理 + N 个附属对象视觉描述，Demo 默认只展示主卡和 1～2 张后置修饰卡；
 - 主代理和附属对象共享同一套跟手、弹簧、落地、取消和 regrab 时间线，不启动多个独立物理 session；
-- Runtime Demo 与 Gugu-web 文件库、项目编辑卡已通过 `GroupDragSession`、`MoveGroupAction` 和对应的类型校验；后续只需完成 UI 端到端验收和旧兼容代码清理。
+- Runtime Demo 与 Gugu-web 文件库、项目编辑卡已通过 `GroupDragSession`、`MoveGroupAction`、UI 端到端验收和旧兼容代码清理。
 
-**与其他阶段的关系**：Phase 3 与 Phase 0/1/2/4 没有依赖关系，不阻塞后者合并上线。Phase 0/1/2/4 可以独立推进、独立验收、独立合并；Phase 3（以及依赖它的 Phase 5 多选清理部分）作为单独时间线，在 `gugu-interaction-runtime` 侧的 `GroupDragSession` 发布后再启动，不按线性阶段顺序卡住前面的工作。
+**与其他阶段的关系**：Phase 0–5 已全部完成并分别通过验收；Runtime Core 的 Group API 与 Gugu-web
+文件业务接入已经完成联调。后续不再按本方案拆分阶段，只维护通用 Runtime 与文件业务边界。
 
 完成条件：旧 `useFileDragDrop` 和 `useProjectFileDrag` 已从文件系统入口删除；Runtime demo
 与 Gugu 文件库的多选拖拽在视觉上保持主卡 + 后置修饰卡的现有表现，单卡行为不回归。
@@ -382,6 +382,12 @@ Group Session”转为“将 Gugu-web 文件页迁移到已验证的 Group API�
 - 验证 landing 进行中切换目录、快速拖动和连续 regrab。
 
 完成条件：目录切换、卡片让位和 landing 不再出现瞬移、旧目标、重复 FLIP 或本体闪现。
+
+#### Phase 4 执行记录（2026-08-11）
+
+- [x] 浏览区保持稳定 Surface，目录切换不再销毁 Runtime 交互根节点。
+- [x] 文件夹、文件卡和上传入口纳入同一布局集合，目录切换与卡片让位由 Runtime 布局事务处理。
+- [x] 已验证目录切换、landing 中切换目录、快速拖动和连续 regrab，不残留旧目标或重复 FLIP。
 
 ### Phase 5：清理旧代码
 
@@ -417,10 +423,19 @@ adapter，本身就是要长期保留的产物；两个入口的 Runtime 注册 
 - Phase 3D 已删除旧 `fileDrag.ts`、`useFileDragDrop.ts` 和 `useProjectFileDrag.ts`，并清理仅由这些适配器供给的失效拖拽态；`useProjectFileDragMoves.ts` 等业务移动边界不删除。
 - 全仓引用、旧状态字段、临时探针和无效兼容入口已完成审计；仅保留业务移动、选择、上传、
   权限和 optimistic mutation 边界，不保留旧拖拽生命周期代码。
+- 文件库与项目编辑卡的 Runtime Action 解析已收敛到
+  `frontend/src/composables/files/useFileRuntimeMove.ts`；两侧只注入作用域、面包屑解析和
+  各自的移动/选区业务函数。
+- `fileRuntimeMove.test.ts` 覆盖混合文件/文件夹、面包屑、浏览区、非法对象和拖到自身等分流规则。
 - `file-drag-runtime.spec.ts` 已改为验证 Runtime 单卡/多卡路径；Runtime Core 的无效落点、
   regrab、landing/reveal 幂等和失败清理由核心测试覆盖。
 - Phase 5 的清理项已完成；项目文件区列表真实账号验收属于 Phase 3D 的补充测试，不再作为
   旧代码清理阻塞项。
+
+**文件系统迁移完成定义（已满足）**：Runtime Demo、Files 文件库和 ProjectModal 文件区的
+单卡、多选、文件夹、面包屑、网格/列表和失败回滚路径均已通过对应回归；业务侧只保留
+Vue Runtime 声明、共享 Action 适配和文件业务提交边界。后续新增文件视图应复用现有 Vue
+包装组件与 `useFileRuntimeMove`，不得重新引入页面级 pointer、命中或 landing 编排。
 
 ## 7. 暂不做的事情
 
