@@ -72,6 +72,18 @@ def test_results_are_kept_when_failures_exist():
     assert status["result_count"] == 1
 
 
+def test_unrequested_engine_failure_does_not_degrade_status():
+    status = search_tools._build_search_status(
+        [],
+        ["sogou"],
+        [{"engine": "bing", "reason": "timeout"}],
+    )
+
+    assert status["state"] == "empty"
+    assert status["working_engine_count"] == 1
+    assert status["failed_engines"] == []
+
+
 def test_build_response_distinguishes_empty_degraded_and_unavailable_notes():
     empty = search_tools._build_search_response(
         "cold entity", [], "sogou,quark", {}, kind="web"

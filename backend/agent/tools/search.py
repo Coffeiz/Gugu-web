@@ -129,11 +129,21 @@ def _build_search_status(
     failures: list[dict[str, str]],
 ) -> dict:
     requested_keys = {name.casefold() for name in requested_engines}
-    failed_keys = {item["engine"].casefold() for item in failures if item.get("engine")}
+    # SearXNG 可能返回本次请求之外的引擎故障（例如配置只请求 sogou，响应却带了
+    # bing 的 timeout）。这些故障不能改变本次请求的状态，也不能被展示成当前搜索引擎失败。
+    relevant_failures = [
+        item for item in failures
+        if not requested_keys or str(item.get("engine", "")).casefold() in requested_keys
+    ]
+    failed_keys = {
+        str(item["engine"]).casefold()
+        for item in relevant_failures
+        if item.get("engine")
+    }
     failed_requested = requested_keys & failed_keys
     all_requested_failed = bool(requested_keys) and requested_keys.issubset(failed_keys)
 
-    if failures:
+    if relevant_failures:
         # 有实际结果时即便所有配置引擎都报告过异常，也至少不是“完全没法搜”；保留结果并标 degraded。
         state = "unavailable" if not results and all_requested_failed else "degraded"
     else:
@@ -146,7 +156,7 @@ def _build_search_status(
     return {
         "state": state,
         "requested_engines": requested_engines,
-        "failed_engines": failures,
+        "failed_engines": relevant_failures,
         "working_engine_count": working_count,
         "result_count": len(results),
     }
