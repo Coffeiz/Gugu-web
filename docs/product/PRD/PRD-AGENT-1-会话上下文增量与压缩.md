@@ -1,8 +1,12 @@
-# Persistent Session Context · PRD
+# PRD-AGENT-1 会话上下文增量与压缩
 
 > 💡 **讨论稿阶段，未实现。** 本文描述咕咕对话上下文从“每个用户回合重新装配 + 最近历史窗口 + 文本摘要”演进到“每个 Session 拥有持久上下文、持续增量追加、按预算滚动压缩、按 revision 刷新业务真值”的目标方案。
 >
-> **状态：PRD v0.2（2026-08-08），待实现。**
+> 状态：Phase 0 待评估
+> 创建：2026-08-08
+> 最近更新：2026-08-08
+> 关联模块：`backend/agent/context/`、`backend/agent/core.py`、`backend/agent/runner.py`、`backend/agent/loop_drivers.py`
+> 背景参考：现有 `builder`、`compress_conv` 与 Agent Loop 上下文装配逻辑
 >
 > v0.2 核心修订：不再把 `Session Tape` 作为最高层概念，而是把 **Persistent Session Context（持久 Session 上下文）** 定义为一级实体；`Stable Context / Cached Context / Compacted State / Recent Tape / Context Budget` 都属于 Session。Agent Loop 只消费 Session Context，不拥有它。
 >
