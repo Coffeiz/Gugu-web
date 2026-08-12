@@ -480,6 +480,7 @@ const SIDEBAR_W = parseInt(getComputedStyle(document.documentElement).getPropert
 const timelineGroups = computed(() => [...store.timeline].reverse())
 const indexGroups = computed(() => timelineGroups.value.map(g => ({ date: g.date, count: g.items.length })))
 const activeDate  = ref('')
+let syncingDateFromScroll = false
 // 连续分数位置：内容区中线（=屏幕上的物理中心）落在第几列（含小数）。滑杆和玻璃卡的
 // 深度效果共用同一个值，不再单独滞后平滑——卡片尺寸必须严格绑定「谁现在正在屏幕中间」，
 // 不管这一刻的当前日/选中日是谁，物理居中的那张才该是最大的。
@@ -542,7 +543,11 @@ function updateActive() {
   const nextDate = cols[Math.round(frac)].date
   activeDate.value = nextDate
   // 横向滚动改变居中日期时同步日历，避免日历仍保留初始选中日期。
-  if (store.jumpTarget !== nextDate) store.jumpTarget = nextDate
+  if (store.jumpTarget !== nextDate) {
+    syncingDateFromScroll = true
+    store.jumpTarget = nextDate
+    syncingDateFromScroll = false
+  }
 }
 
 function onScroll() {
@@ -576,6 +581,19 @@ function stopCardFollow() {
   cardFollowOnSettled = null   // 弹簧被打断（比如用户自己划走了）就不该再触发那个回调
   suppressEditGuard = false   // 同上：这趟"追向编辑目标"的位移被用户自己的操作打断了，
                               // 居中日期改判定要立刻恢复正常，该退出编辑就退出
+}
+
+function stopWheelMotion() {
+  if (wheelLoopRaf) cancelAnimationFrame(wheelLoopRaf)
+  wheelLoopRaf = 0
+  wheelSessionActive = false
+  wheelVelocity = 0
+  const cols = timelineColsEl()
+  if (cols) cols.style.transform = ''
+  cardRubberShift = 0
+  cardRubberReturning = false
+  if (cardVisualReturnRaf) cancelAnimationFrame(cardVisualReturnRaf)
+  cardVisualReturnRaf = 0
 }
 
 /** 让玻璃卡列带阻尼地追随目标位置；日期条本身仍直接跟手。onSettled 只在弹簧真正停稳时调
@@ -635,11 +653,22 @@ function jumpTo(date: string, animate = true) {
   const root = scrollRef.value
   const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
   if (root && col) {
-    root.scrollTo({
-      left: col.offsetLeft + col.offsetWidth / 2 - contentCenter(root),
-      behavior: animate ? 'smooth' : 'auto',
-    })
+    // 日历跳转是新的导航意图，必须先打断仍在运行的自定义弹簧；否则下一帧会继续写旧
+    // 的 scrollLeft，把“今天”的跳转覆盖掉。动画统一走时间轴自己的 followCardsTo。
+    stopCardFollow()
+    stopWheelMotion()
+    const target = col.offsetLeft + col.offsetWidth / 2 - contentCenter(root)
+    if (animate) followCardsTo(target)
+    else root.scrollTo({ left: target, behavior: 'auto' })
   }
+}
+
+function isDateCentered(date: string): boolean {
+  const root = scrollRef.value
+  const col = root?.querySelector<HTMLElement>(`.tl-col[data-date="${date}"]`)
+  if (!root || !col) return false
+  const target = col.offsetLeft + col.offsetWidth / 2 - contentCenter(root)
+  return Math.abs(root.scrollLeft - target) < 1
 }
 
 // ── 编辑态强制绑定居中日期：点两侧列的便签立刻进编辑态（点了却要等移动完才有反应，
@@ -696,8 +725,9 @@ function nearestExistingDate(target: string): string | null {
 }
 watch(() => store.jumpTarget, (date) => {
   if (!date) return
+  if (syncingDateFromScroll) return
   // 滚动同步回来的日期已经是当前居中列，不要再次触发平滑跳转。
-  if (date === activeDate.value) return
+  if (date === activeDate.value && isDateCentered(date)) return
   if (indexGroups.value.some(g => g.date === date)) { jumpTo(date); return }
   const nearest = nearestExistingDate(date)
   if (nearest) jumpTo(nearest)
@@ -709,7 +739,7 @@ watch(() => store.jumpTarget, (date) => {
   } else {
     showAppNotice('还没有任何记录')
   }
-})
+}, { flush: 'sync' })
 
 // 全局搜索跳转到某条便签：定位到它所在的那天并复用「刚创建」那套 flash 高亮，
 // 跟项目搜索跳转"高亮不打开编辑弹窗"是同一种克制——不强行弹进编辑态打断用户。
