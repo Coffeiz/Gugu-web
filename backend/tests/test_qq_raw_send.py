@@ -23,6 +23,43 @@ async def test_post_sends_markdown(monkeypatch):
     assert body["markdown"] == {"content": "你好"}
 
 
+async def test_post_compat_mode_sends_plain_text(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post("bot-1", "ou_1", "**不要渲染**", "msg-1", "compat")
+
+    assert calls == [{
+        "msg_type": 0,
+        "content": "**不要渲染**",
+        "msg_seq": 1,
+        "msg_id": "msg-1",
+    }]
+
+
+async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post("bot-1", "ou_1", "普通文本", "msg-1", "smart")
+    await qq._post("bot-1", "ou_1", "**加粗**", "msg-2", "smart")
+
+    assert calls[0]["msg_type"] == 0
+    assert calls[0]["content"] == "普通文本"
+    assert calls[1]["msg_type"] == 2
+    assert calls[1]["markdown"] == {"content": "**加粗**"}
+
+
 async def test_post_falls_back_to_plain_text_when_markdown_blocked(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []

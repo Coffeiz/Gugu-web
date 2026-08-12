@@ -90,7 +90,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
           user_msg: str = "", non_streaming: bool = False,
           include_projects: bool = True, include_calendar: bool = True,
           include_files: bool = True, include_memory: bool = True,
-          user_tz=None) -> str:
+          user_tz=None, im_message_format: str | None = None) -> str:
     # include_* 允许少数轻量阶段关闭业务上下文；跳过时不省 header 文字，
     # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆）。
     memory = memory if (include_memory and memory) else {}
@@ -202,6 +202,13 @@ def build(profile: str, user_name: str, projects: list, events: list,
     if non_streaming:
         dynamic.append(_NON_STREAMING_BLOCK)
     dynamic.append(result)
+    if im_message_format == "compat":
+        dynamic.insert(-1, (
+            "## 当前消息格式约束\n\n"
+            "当前 QQ 会话使用兼容格式。回复必须使用普通纯文本；不要使用 Markdown 标记，"
+            "包括标题、列表标记、表格、代码围栏、反引号、加粗、斜体、删除线或 Markdown 链接。"
+            "用自然的纯文本和换行表达内容。"
+        ))
 
     stable_str  = "\n\n---\n\n".join(stable)
     dynamic_str = "\n\n---\n\n".join(dynamic)
