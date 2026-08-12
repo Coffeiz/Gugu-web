@@ -1,5 +1,5 @@
 import { runtime } from './index'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, resolveMindLandingRect } from './canvas'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
 
 let initialized = false
 
@@ -107,6 +107,7 @@ export function setupInteractionRuntime(): void {
       if (targetSurface === 'mind:drawer') return null
       return resolveMindLandingRect(objectId, destination)
     },
+    resolveMoveLandingTarget: ({ objectId, destination }) => resolveMindLandingTarget(objectId, destination),
   })
   registerMindObjectType(MIND_CANVAS_OBJECT_TYPE)
   registerMindObjectType(MIND_PROJECT_OBJECT_TYPE)

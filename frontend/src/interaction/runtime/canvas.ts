@@ -7,8 +7,10 @@ export const MIND_PROJECT_OBJECT_TYPE = 'mind-project-object'
 export const MIND_CANVAS_OBJECT_TYPES = [MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE] as const
 
 type LandingResolver = (destination: unknown) => LandingRect | null
+type LandingTargetResolver = (destination: unknown) => HTMLElement | null
 
 const landingResolvers = new Map<string, LandingResolver>()
+const landingTargetResolvers = new Map<string, LandingTargetResolver>()
 
 export function registerMindLandingResolver(objectId: string, resolver: LandingResolver): () => void {
   landingResolvers.set(objectId, resolver)
@@ -19,4 +21,15 @@ export function registerMindLandingResolver(objectId: string, resolver: LandingR
 
 export function resolveMindLandingRect(objectId: string, destination: unknown): LandingRect | null {
   return landingResolvers.get(objectId)?.(destination) ?? null
+}
+
+export function registerMindLandingTargetResolver(objectId: string, resolver: LandingTargetResolver): () => void {
+  landingTargetResolvers.set(objectId, resolver)
+  return () => {
+    if (landingTargetResolvers.get(objectId) === resolver) landingTargetResolvers.delete(objectId)
+  }
+}
+
+export function resolveMindLandingTarget(objectId: string, destination: unknown): HTMLElement | null {
+  return landingTargetResolvers.get(objectId)?.(destination) ?? null
 }
