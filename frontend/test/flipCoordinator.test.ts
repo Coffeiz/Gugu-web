@@ -65,10 +65,15 @@ describe('FLIP 协调器', () => {
     tx.capture([{ key: 'card', element }], [rect(0, 0)])
     tx.measure([{ key: 'card', element }], [rect(20, 0)])
     const play = tx.play()
-    await vi.runAllTimersAsync()
-    expect(await play).toBe('finished')
-    expect(element.style.transform).toBe('scale(1)')
-    vi.useRealTimers()
+    try {
+      // play() 的首帧使用真实 RAF，先让事务进入 playing，再推进 fake timer。
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await vi.runAllTimersAsync()
+      expect(await play).toBe('finished')
+      expect(element.style.transform).toBe('scale(1)')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('session 门禁失效时不会写入 inverse transform', async () => {
