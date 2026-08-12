@@ -4,6 +4,7 @@
     :width="panel === 'projects' ? '284px' : '190px'"
     :panel-class="panel === 'projects' ? 'project-panel' : ''"
     :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
+    data-layout-surface="mind:drawer"
     @pointerdown.stop
   >
     <template #header><div class="cd-head">
@@ -38,7 +39,7 @@
         </section>
 
        <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
-         <div ref="projectListRef" class="cd-list project-list" data-layout-surface="mind:drawer:projects">
+         <div ref="projectListRef" class="cd-list project-list">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
