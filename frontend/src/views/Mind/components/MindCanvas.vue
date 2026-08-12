@@ -51,7 +51,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } fr
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
@@ -140,7 +140,23 @@ function onRuntimeMove(action: MoveAction) {
   const item = props.items.find(current => current.nodeId === nodeId)
   if (!item) return
   if (action.toSurfaceId === MIND_DRAWER_SURFACE_ID) {
-    if (item.node.refType === 'project') emit('returnToDrawer', item)
+    if (item.node.refType === 'project') {
+      const projectId = item.node.refId
+      if (projectId != null) {
+        const objectId = action.objectId
+        let stopResolver: (() => void) | null = null
+        stopResolver = registerMindLandingTargetResolver(objectId, destination => {
+          if (!destination || typeof destination !== 'object') return null
+          const destinationSurface = (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
+            ?? (destination as { toSurfaceId?: unknown; columnId?: unknown }).columnId
+          if (destinationSurface !== MIND_DRAWER_SURFACE_ID) return null
+          const target = document.querySelector<HTMLElement>(`[data-project-drawer-dropzone] [data-project-id="${projectId}"]`)
+          if (target) stopResolver?.()
+          return target
+        })
+      }
+      emit('returnToDrawer', item)
+    }
     return
   }
   if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) return

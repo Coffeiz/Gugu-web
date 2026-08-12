@@ -30,7 +30,7 @@ export function useMindRuntimeObject(options: {
       stopBinding?.()
       stopResolver?.()
       if (generation !== null && runtime.objects.get(registeredObjectId)?.generation === generation) {
-        runtime.objects.unregister(registeredObjectId, generation)
+        runtime.unregisterObjectWhenIdle(registeredObjectId, generation)
       }
       generation = null
       boundElement = null
@@ -83,7 +83,7 @@ export function useMindRuntimeObject(options: {
     stopBinding?.()
     stopResolver?.()
     if (generation !== null && registeredObjectId !== null && runtime.objects.get(registeredObjectId)?.generation === generation) {
-      runtime.objects.unregister(registeredObjectId, generation)
+      runtime.unregisterObjectWhenIdle(registeredObjectId, generation)
     }
     generation = null
     boundElement = null
