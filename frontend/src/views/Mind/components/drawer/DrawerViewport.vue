@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { createDrawerLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
+import { transitionGroupHeight } from '@/interaction/runtime'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -24,7 +24,6 @@ export interface DrawerScrollSnapshot {
 }
 
 const viewportRef = ref<HTMLElement | null>(null)
-let heightTransaction: ReturnType<typeof createDrawerLayoutTransaction> | null = null
 function scrollElement(): HTMLElement | null {
   const key = String(props.scrollKey || '').replace(/"/g, '\\"')
   return viewportRef.value?.querySelector<HTMLElement>(`[data-drawer-scroll="${key}"]`) ?? viewportRef.value
@@ -36,27 +35,21 @@ function animateTo(nextHeight: number) {
   }
   const currentHeight = viewportRef.value.getBoundingClientRect().height
   if (Math.abs(currentHeight - nextHeight) < 0.5) {
-    heightTransaction?.cancel()
-    heightTransaction = null
     isAnimating.value = false
     height.value = nextHeight
     return
   }
   const preservedScrollElement = scrollElement()
   const preservedScrollTop = preservedScrollElement?.scrollTop ?? 0
-  heightTransaction?.cancel()
-  const transaction = createDrawerLayoutTransaction(viewportRef.value)
-  heightTransaction = transaction
   isAnimating.value = true
-  void transaction.play(nextHeight).then(() => {
-    if (heightTransaction === transaction) {
-      height.value = nextHeight
-      isAnimating.value = false
-      // 高度从 0 展开时浏览器可能触发 scroll anchoring，把位置推到最大值；
-      // 布局事务只负责高度，不应改变用户原本的滚动位置。
-      if (preservedScrollElement) preservedScrollElement.scrollTop = preservedScrollTop
-    }
-  })
+  transitionGroupHeight(viewportRef.value, nextHeight, undefined, undefined, undefined, true)
+  window.setTimeout(() => {
+    height.value = nextHeight
+    isAnimating.value = false
+    // 高度从 0 展开时浏览器可能触发 scroll anchoring，把位置推到最大值；
+    // 布局事务只负责高度，不应改变用户原本的滚动位置。
+    if (preservedScrollElement) preservedScrollElement.scrollTop = preservedScrollTop
+  }, 390)
 }
 watch(() => [props.open, props.targetHeight], ([open, target]) => {
   animateTo(open ? Number(target) : 0)
