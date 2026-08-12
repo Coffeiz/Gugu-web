@@ -51,7 +51,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } fr
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
@@ -136,9 +136,9 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
 
 function onRuntimeMove(action: MoveAction) {
   if (!action.objectId.startsWith('mind:')) return
-  const nodeId = Number(action.objectId.slice('mind:'.length))
-  const item = props.items.find(current => current.nodeId === nodeId)
+  const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
   if (!item) return
+  const nodeId = item.nodeId
   if (action.toSurfaceId === MIND_DRAWER_SURFACE_ID) {
     if (item.node.refType === 'project') {
       const projectId = item.node.refId
@@ -205,8 +205,9 @@ const landingNodeIds = reactive(new Set<number>())
  * 这里只覆盖 RelationLayer 的位置，不写回 item.x/y，也不参与卡片动画。 */
 function onRuntimeVisual(event: RuntimeEvent) {
   if (event.type === 'move-visual-end') {
-    const nodeId = event.objectId.startsWith('mind:') ? Number(event.objectId.slice('mind:'.length)) : NaN
-    if (!Number.isFinite(nodeId)) return
+    const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
+    if (!item) return
+    const nodeId = item.nodeId
     landingPositions.delete(nodeId)
     landingNodeIds.delete(nodeId)
     const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
@@ -215,10 +216,9 @@ function onRuntimeVisual(event: RuntimeEvent) {
     return
   }
   if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
-  const nodeId = Number(event.objectId.slice('mind:'.length))
-  if (!Number.isFinite(nodeId)) return
-  const item = props.items.find(current => current.nodeId === nodeId)
+  const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return
+  const nodeId = item.nodeId
   const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
@@ -276,10 +276,12 @@ function connectionTargetSide(nodeId: number) {
 }
 function targetAt(event: PointerEvent, originNodeId: number) {
   const port = runtime.hitNodePort({ x: event.clientX, y: event.clientY }, { objectType: MIND_CANVAS_OBJECT_TYPE })
-  const nodeId = port?.objectId.startsWith('mind:') ? Number(port.objectId.slice('mind:'.length)) : NaN
-  if (!Number.isFinite(nodeId) || nodeId === originNodeId || landingNodeIds.has(nodeId)) return null
-  const item = props.items.find(current => current.nodeId === nodeId)
+  const item = port?.objectId.startsWith('mind:')
+    ? props.items.find(current => mindCanvasObjectId(current) === port.objectId)
+    : undefined
   if (!item) return null
+  const nodeId = item.nodeId
+  if (nodeId === originNodeId || landingNodeIds.has(nodeId)) return null
   return { item, side: port!.side }
 }
 function updateConnectionTarget(event: PointerEvent) {

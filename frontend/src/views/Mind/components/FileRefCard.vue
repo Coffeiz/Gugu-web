@@ -110,6 +110,7 @@ import { itemSize } from '@/composables/useMindCanvas'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -177,7 +178,7 @@ watch(file, () => nextTick(observeCard), { immediate: true })
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
 const { onPointerDown } = useMindRuntimeObject({
-  objectId: `mind:${props.item.nodeId}`,
+  objectId: () => mindCanvasObjectId(props.item),
   element: () => fileCardRef.value?.rootEl ?? null,
 })
 function onOpen() {
