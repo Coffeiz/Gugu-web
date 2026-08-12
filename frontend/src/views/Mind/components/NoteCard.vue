@@ -56,7 +56,7 @@
         </button>
       </span>
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
-           @click="onBodyClick" v-html="mdToPreviewHtml(bodyMd)"></div>
+           @click="onBodyClick" v-html="previewHtml"></div>
       <button v-if="clamped" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
@@ -82,6 +82,22 @@ import type { MindNote } from '@/services/api'
 import CardConnDot from './CardConnDot.vue'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
+
+// Markdown 预览会在时间轴卡片、画布卡片之间复用相同正文。按正文缓存有限数量的 HTML，避免
+// 实时刷新或卡片重新挂载时重复做代码高亮；限制容量避免长期编辑造成无界内存增长。
+const PREVIEW_CACHE_LIMIT = 256
+const previewCache = new Map<string, string>()
+function cachedPreviewHtml(md: string): string {
+  const cached = previewCache.get(md)
+  if (cached !== undefined) return cached
+  const html = mdToPreviewHtml(md)
+  previewCache.set(md, html)
+  if (previewCache.size > PREVIEW_CACHE_LIMIT) {
+    const oldest = previewCache.keys().next().value
+    if (oldest !== undefined) previewCache.delete(oldest)
+  }
+  return html
+}
 
 const { openMindRef, resolveMindRef } = useMindRefActions()
 
@@ -349,6 +365,9 @@ const _split = computed(() => {
 const title     = computed(() => _split.value.title)
 const isHeading = computed(() => _split.value.isHeading)
 const bodyMd = computed(() => _split.value.body)
+// 只读卡片的 Markdown 预览不是纯字符串拼接：代码块还要做语法高亮。把结果绑定到正文
+// 内容本身，避免父级时间轴更新（例如其它日期新增便签）时为每张卡重复解析一遍。
+const previewHtml = computed(() => bodyMd.value ? cachedPreviewHtml(bodyMd.value) : '')
 
 /** 是否溢出 clamp 高度（内容/展开态变了都重测）。scrollHeight 对比要在未展开的 clamp 态量 */
 async function measureClamp() {

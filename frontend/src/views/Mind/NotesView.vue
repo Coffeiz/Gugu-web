@@ -26,6 +26,7 @@
         @color="onColor"
         @toggle-task="onToggleTask"
         @edit-request="onEditRequest"
+        @load-more="store.loadMoreNotes"
       />
     </div>
 
@@ -543,7 +544,10 @@ function updateActive() {
 
 function onScroll() {
   if (scrollRaf) return
-  scrollRaf = requestAnimationFrame(() => { scrollRaf = 0; updateActive() })
+  scrollRaf = requestAnimationFrame(() => {
+    scrollRaf = 0
+    updateActive()
+  })
 }
 
 function onSnap(date: string) {

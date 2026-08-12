@@ -13,7 +13,7 @@
         <span class="tl-count">{{ g.items.length }}</span>
       </div>
 
-      <div class="tl-col-body">
+      <div class="tl-col-body" @scroll="onColumnScroll">
         <div class="note-stack">
           <NoteCard
             v-for="n in g.items"
@@ -57,10 +57,16 @@ const emit = defineEmits<{
   (e: 'color', note: MindNote, color: string | null): void
   (e: 'toggleTask', note: MindNote, idx: number): void
   (e: 'editRequest', note: MindNote): void
+  (e: 'loadMore'): void
 }>()
 
 const editingId = ref<number | null>(null)
 const conflict  = ref(false)
+
+function onColumnScroll(event: Event) {
+  const el = event.currentTarget as HTMLElement
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) emit('loadMore')
+}
 
 // 编辑态强制绑定"当前居中的日期"：点哪张卡不直接进编辑，先把请求交给 NotesView.vue——
 // 那张卡所在的日期正好居中就立刻走 confirmEdit；不居中就先把那天滚到正中，稳定之后
