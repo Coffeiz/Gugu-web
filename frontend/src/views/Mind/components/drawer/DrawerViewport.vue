@@ -1,5 +1,5 @@
 <template>
-  <div ref="viewportRef" class="drawer-viewport" :style="{ '--drawer-height': `${height}px` }" data-layout-role="viewport" data-layout-key="drawer-viewport">
+  <div ref="viewportRef" class="drawer-viewport" :style="{ height: `${height}px` }" data-layout-role="viewport" data-layout-key="drawer-viewport">
     <slot />
   </div>
 </template>
@@ -42,14 +42,7 @@ function animateTo(nextHeight: number) {
   const preservedScrollElement = scrollElement()
   const preservedScrollTop = preservedScrollElement?.scrollTop ?? 0
   isAnimating.value = true
-  const started = transitionGroupHeight(viewportRef.value, nextHeight, undefined, undefined, undefined, true)
-  if (!started) {
-    // Runtime 正在接管同一 Surface 的高度；这里只更新最终自然高度，
-    // 让 CSS 变量在 Runtime 恢复 inline height 后接管布局，不再启动第二条动画。
-    height.value = nextHeight
-    isAnimating.value = false
-    return
-  }
+  transitionGroupHeight(viewportRef.value, nextHeight, undefined, undefined, undefined, true)
   window.setTimeout(() => {
     height.value = nextHeight
     isAnimating.value = false
@@ -94,7 +87,7 @@ defineExpose({ viewportRef, captureScroll, restoreScroll, animateTo, isAnimating
 </script>
 
 <style scoped>
-.drawer-viewport { position: relative; width: 100%; height: var(--drawer-height); overflow: hidden; overflow-anchor: none; }
+.drawer-viewport { position: relative; width: 100%; overflow: hidden; overflow-anchor: none; }
 .drawer-viewport [data-drawer-scroll] { overflow-anchor: none; }
 .drawer-viewport.canvas-viewport, .drawer-viewport.project-viewport { overflow: hidden; }
 .drawer-viewport::-webkit-scrollbar { width: 3px; }
