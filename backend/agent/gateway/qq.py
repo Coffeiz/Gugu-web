@@ -27,7 +27,6 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from uuid import UUID
 
@@ -517,7 +516,9 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
         return b.app_id, b.app_secret, b.sandbox
 
 
-from agent.im.permissions import resolve_group_policy as _group_settings, resolve_qq_message_format as _message_format
+from agent.im.message_format import message_type as _message_type
+from agent.im.message_format import resolve_message_format as _message_format
+from agent.im.permissions import resolve_group_policy as _group_settings
 
 
 async def _send_token(channel_id: str) -> tuple[str, str]:
@@ -615,21 +616,6 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
         return "msg_id无效或越权" in message
     text = str(body) if body is not None else str(exc)
     return "40034024" in text or "msg_id无效或越权" in text
-
-
-_MD_SIGNAL_RE = re.compile(r"(^|\n)\s*(?:#{1,6}\s|[-*+]\s|>\s|```)|\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]]+\]\([^\n)]+\)")
-
-
-def _message_type(text: str, mode: str | None) -> int:
-    """按会话策略选择 QQ 文本消息类型；未知模式按兼容格式处理。"""
-    # 未传模式的内部调用保留历史行为；正式 IM payload 会由网关显式填充模式。
-    if mode is None:
-        return 2
-    if mode == "markdown":
-        return 2
-    if mode == "smart" and _MD_SIGNAL_RE.search(text or ""):
-        return 2
-    return 0
 
 
 async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
