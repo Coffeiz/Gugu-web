@@ -84,6 +84,7 @@ export function setupInteractionRuntime(): void {
   runtime.registerObjectType(MIND_CANVAS_OBJECT_TYPE, {
     defaultVisualMode: 'detach',
     landingMode: 'free',
+    allowSurfaceLandingTarget: true,
     releaseMode: 'physical',
     // 画布单独限制释放速度；该档案只在 landingMode:'free' 时读取，
     // 不会改变文件/项目列和语义目标 landing 的抛出手感。
