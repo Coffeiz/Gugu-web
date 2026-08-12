@@ -27,7 +27,7 @@ const props = defineProps({
 const attrs = useAttrs()
 const forwardedAttrs = computed(() => ({ ...attrs, ...props.cardProps }))
 const targetSurfaceId = props.runtimeTarget?.surfaceId ?? `${props.runtimeId}:surface`
-useSurface({ id: targetSurfaceId, type: 'file-folder', accepts: ['file-item', 'folder-item'] })
+useSurface({ id: targetSurfaceId, type: 'file-folder', layout: 'grid', accepts: ['file-item', 'folder-item'] })
 const { elementRef } = useObject({
   id: props.runtimeId,
   type: () => props.runtimeType,

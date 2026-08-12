@@ -67,10 +67,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, defineAsyncComponent } from 'vue'
+import { ref, watch, nextTick, computed, defineAsyncComponent, type PropType } from 'vue'
+import { useRouter } from 'vue-router'
 import { PhWarningCircle, PhPencilSimple } from '@phosphor-icons/vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
+import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
+import { usePreviewStore, isPreviewable } from '@/stores/preview'
+import { useUiStore } from '@/stores/ui'
+import { resolveRelativeFileLink } from '@/utils/fileLinks'
 
 // CodeMirror 全部延迟加载：TextViewer 从 FloatPreviewWindow 静态引入，FloatPreviewWindow
 // 又从 DefaultLayout 静态引入（基本每个登录页都会经过这条链路）——顶层 import codemirror/
@@ -87,7 +92,14 @@ const props = defineProps({
   fontSize: { type: Number, default: 13 },
   // 文件标识：滚动位置按它存进 localStorage，刷新（重载/组件重建）后据此还原
   fileKey:  { type: [String, Number], default: null },
+  // 文件库预览时用于解析 Markdown 相对链接；聊天附件等非文件库内容不传此值。
+  fileContext: { type: Object as PropType<Partial<FileMeta> | null>, default: null },
 })
+
+const router = useRouter()
+const filesCache = useFilesCacheStore()
+const previewStore = usePreviewStore()
+const uiStore = useUiStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
 
@@ -453,17 +465,40 @@ async function toggleTask(idx: number, cb: HTMLInputElement) {
   }
 }
 
-// ── md 区域点击（事件委托）：任务勾选框 → 切换+存；复制按钮 → 复制代码 ──
-function onMdClick(e: MouseEvent) {
+// ── md 区域点击（事件委托）：任务勾选框/复制按钮/文件库相对链接 ──
+async function onMdClick(e: MouseEvent) {
   const cb = (e.target as HTMLElement).closest('input[type="checkbox"][data-task]') as HTMLInputElement | null
   if (cb) { toggleTask(Number(cb.dataset.task), cb); return }   // 不 preventDefault：原生勾选即时显示
   const btn = (e.target as HTMLElement).closest('.md-copy-btn') as HTMLElement | null
-  if (!btn) return
-  const code = btn.closest('.md-pre')?.querySelector('code')?.textContent ?? ''
-  navigator.clipboard.writeText(code).then(() => {
-    btn.classList.add('md-copied')
-    setTimeout(() => btn.classList.remove('md-copied'), 2000)
-  })
+  if (btn) {
+    const code = btn.closest('.md-pre')?.querySelector('code')?.textContent ?? ''
+    navigator.clipboard.writeText(code).then(() => {
+      btn.classList.add('md-copied')
+      setTimeout(() => btn.classList.remove('md-copied'), 2000)
+    })
+    return
+  }
+
+  const anchor = (e.target as HTMLElement).closest('a[href]') as HTMLAnchorElement | null
+  if (!anchor || !props.fileContext?.id) return
+  const href = anchor.getAttribute('href')
+  if (!href) return
+  if (!filesCache.loaded) await filesCache.load()
+  const resolved = resolveRelativeFileLink(
+    href,
+    { folderId: props.fileContext.folderId, projectId: props.fileContext.projectId },
+    filesCache.allFiles,
+    filesCache.allFolders,
+  )
+  if (!resolved) return
+
+  e.preventDefault()
+  if (resolved.kind === 'file' && isPreviewable(resolved.file.ext)) {
+    previewStore.open(resolved.file)
+    return
+  }
+  uiStore.pendingFileTarget = { kind: resolved.kind, id: resolved.kind === 'file' ? resolved.file.id : resolved.folder.id }
+  await router.push('/files')
 }
 
 // 把一段文本渲染成 mdHtml / 纯文本行（首次加载、md/txt 编辑保存后重渲都走这条）。代码类扩展名

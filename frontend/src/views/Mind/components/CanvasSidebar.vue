@@ -314,7 +314,9 @@ function syncRuntimeDrawerSurface() {
       // 项目抽屉只接受画布项目卡，其他画布卡片不能触发抽屉 landing。
       accepts: [MIND_PROJECT_OBJECT_TYPE],
       layout: 'grid',
-      camera: { scale: () => props.canvasScale },
+      // 抽屉卡抓起后要先从抽屉 1x 平滑过渡到画布当前比例；落回抽屉时
+      // landing 会根据目标卡片真实尺寸再收敛回 1x。
+      camera: { scale: () => props.canvasScale, pickupDuration: 160 },
     })
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)

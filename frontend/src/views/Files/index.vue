@@ -250,6 +250,7 @@ const { elementRef: browserSurfaceRef } = useSurface({
   id: runtimeBrowserSurfaceId,
   type: 'file-browser',
   accepts: ['file-item', 'folder-item'],
+  layout: 'grid',
   viewport: () => mainRef.value,
 })
 watch(mainRef, element => { browserSurfaceRef.value = element })

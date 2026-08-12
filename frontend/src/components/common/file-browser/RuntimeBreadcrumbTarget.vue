@@ -15,7 +15,7 @@ const props = defineProps({
   priority: { type: Number, default: 1 },
 })
 
-useSurface({ id: props.surfaceId, type: 'file-breadcrumb', accepts: () => props.accepts })
+useSurface({ id: props.surfaceId, type: 'file-breadcrumb', layout: 'grid', accepts: () => props.accepts })
 const { elementRef } = useTarget({
   id: props.targetId,
   surfaceId: () => props.surfaceId,

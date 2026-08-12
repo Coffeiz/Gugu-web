@@ -1,60 +1,87 @@
 <template>
   <article
+    ref="cardEl"
     class="drawer-project-card hover-card-fx"
+    data-layout-role="card"
+    :data-layout-key="`project:${project.id}`"
     :data-project-id="project.id"
     :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     @pointerdown.stop="onPointerDown"
-    @physics-landing-regrab="onLandingRegrab"
+    @click.stop="emit('add')"
   >
     <ProjectCardBody :project="project" />
   </article>
 </template>
 
 <script setup lang="ts">
-import { type PropType } from 'vue'
-import { startDrawerDrag, startDrawerPointerDrag } from '@/interaction/drag/adapters/drawerDrag'
+import { ref, type PropType } from 'vue'
 import type { Project } from '@/types/project'
+import type { MoveAction } from '@/interaction/runtime'
+import {
+  MIND_CANVAS_SURFACE_ID,
+  MIND_DRAWER_SURFACE_ID,
+  MIND_PROJECT_OBJECT_TYPE,
+  registerMindLandingTargetResolver,
+} from '@/interaction/runtime/canvas'
 import ProjectCardBody from './ProjectCardBody.vue'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },
-  canvasScale: { type: Number, default: 1 },
   addToCanvas: {
     type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
     required: true,
   },
 })
 const emit = defineEmits<{ (e: 'add'): void }>()
+const cardEl = ref<HTMLElement | null>(null)
 
-// 拖出抽屉这条路径起拖逻辑抽成独立函数，好让「首次抓起」（onPointerDown）和「画布卡拖回
-// 抽屉、飞行中途被重新抓起」（onLandingRegrab，见其注释）复用同一份 startPhysicsDrag 配置，
-// 不必维护两份容易长歪的重复逻辑。
-function onPointerDown(event: PointerEvent) {
-  startDrawerPointerDrag(event, {
-    projectId: props.project.id,
-    canvasScale: () => props.canvasScale,
-    addToCanvas: props.addToCanvas,
-    onClick: () => emit('add'),
+function coastPoint(action: MoveAction) {
+  const point = action.point
+  if (!point) return null
+  const velocity = action.releaseVelocity
+  const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
+  const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
+  return { x: point.x + coastX, y: point.y + coastY }
+}
+
+function registerCanvasLandingTarget(objectId: string, projectId: number) {
+  let stop: (() => void) | null = null
+  const resolver = () => document.querySelector<HTMLElement>(
+    `[data-canvas-item-id][data-project-id="${projectId}"]`,
+  )
+  stop = registerMindLandingTargetResolver(objectId, destination => {
+    const destinationSurface = destination && typeof destination === 'object'
+      ? (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
+        ?? (destination as { toSurfaceId?: unknown; columnId?: unknown }).columnId
+      : null
+    if (destinationSurface !== MIND_CANVAS_SURFACE_ID) return null
+    const target = resolver()
+    if (target) stop?.()
+    return target
   })
+  // The resolver normally removes itself on the first successful landing lookup.
+  // Keep a bounded lifetime for failed optimistic inserts or cancelled sessions.
+  window.setTimeout(() => stop?.(), 2000)
 }
-// 画布项目卡拖回抽屉、落地飞行（clone2）中途被重新抓起时的接力入口。usePhysicsDrag.ts 的
-// delegateLandingRegrab 机制会把这次手势通过 physics-landing-regrab 事件转手给落点本体
-// （ProjectRefCard.vue 那边同款事件转手给画布卡时也是这个模式，见其 onLandingRegrab）——
-// 之前这条方向没接这个事件，转手落进没人接的地方，物理模块只能退化用旧的 opts（画布卡那次
-// 拖拽的 resolveAbsorbTarget/resolveLandingTarget 等）硬套在抽屉卡身上继续拖，语义完全对不
-// 上，表现就是抓起来之后没法再放回画布。接上之后转手改用抽屉卡自己这份 startDrag 配置续接，
-// 跟"从抽屉首次拖出"完全同源，行为自然一致。
-function onLandingRegrab(event: Event) {
-  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
-  const card = event.currentTarget as HTMLElement
-  startDrawerDrag(handoff.detail.event, card, {
-    projectId: props.project.id,
-    canvasScale: () => props.canvasScale,
-    addToCanvas: props.addToCanvas,
-    onClick: () => emit('add'),
-  }, { initialRect: handoff.detail.initialRect, isLandingRegrab: true })
-  event.preventDefault()
-}
+
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: () => `mind:drawer-project:${props.project.id}`,
+  element: () => cardEl.value,
+  objectType: MIND_PROJECT_OBJECT_TYPE,
+  surfaceId: MIND_DRAWER_SURFACE_ID,
+  onMove: action => {
+    if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID) return
+    const center = coastPoint(action)
+    if (!center) return
+    registerCanvasLandingTarget(`mind:drawer-project:${props.project.id}`, props.project.id)
+    const rect = cardEl.value?.getBoundingClientRect()
+    void props.addToCanvas(props.project.id, center, {
+      w: rect?.width ?? 240,
+      h: rect?.height ?? 120,
+    })
+  },
+})
 </script>
 
 <style scoped>

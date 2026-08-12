@@ -34,6 +34,7 @@ const { elementRef: columnRef } = useSurface({
   id: 'done',
   type: 'project-column',
   accepts: ['project-card'],
+  layout: 'grid',
   viewport: () => colBodyRef.value,
 })
 </script>
