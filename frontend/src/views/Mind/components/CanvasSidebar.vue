@@ -45,8 +45,8 @@
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
             </div>
             <template v-else-if="canvasProjectIdsReady">
-              <!-- 三个状态分组的 key 恒定；几何位移统一由布局协调器处理。 -->
-              <TransitionGroup :css="false" tag="div" class="project-groups" data-layout-collection="mind:drawer:projects" move-class="project-groups-vue-move">
+              <!-- 三个状态分组的 key 恒定；几何位移统一由 Runtime 编排。 -->
+              <div class="project-groups" data-layout-collection="mind:drawer:projects">
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" data-layout-group="mind:drawer:projects" :data-layout-key="group.status">
                   <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
                     <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
@@ -54,26 +54,25 @@
                       <path d="M2 3.5l3 3 3-3"/>
                     </svg>
                   </button>
-                  <Transition
-                    :css="false"
-                    @enter="onGroupFoldEnter"
-                    @leave="onGroupFoldLeave"
+                  <div
+                    v-if="group.items.length > 0"
+                    class="project-group-content"
+                    data-layout-content="mind:drawer:projects"
+                    :data-layout-open="openProjectStatuses.has(group.status) ? 'true' : 'false'"
                   >
-                    <div v-if="group.items.length > 0 && openProjectStatuses.has(group.status)" class="project-group-content" data-layout-content="mind:drawer:projects">
-                      <TransitionGroup :css="false" tag="div" class="project-group-cards">
-                        <ProjectDrawerCard
-                          v-for="project in group.items"
-                          :key="project.id"
-                          :project="project"
-                          :canvas-scale="canvasScale"
-                          :add-to-canvas="addProjectToCanvas"
-                          @add="emit('addProject', project.id)"
-                        />
-                      </TransitionGroup>
+                    <div class="project-group-cards">
+                      <ProjectDrawerCard
+                        v-for="project in group.items"
+                        :key="project.id"
+                        :project="project"
+                        :canvas-scale="canvasScale"
+                        :add-to-canvas="addProjectToCanvas"
+                        @add="emit('addProject', project.id)"
+                      />
                     </div>
-                  </Transition>
+                  </div>
                 </section>
-              </TransitionGroup>
+              </div>
               <div v-if="!projectsLoading && projectQuery.trim() && !filteredProjects.length" class="project-empty">没有匹配的项目</div>
            </template>
             </DrawerTrack>
@@ -85,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, onBeforeUpdate, onUpdated, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhArrowRight, PhSquaresFour, PhStack } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -95,8 +94,6 @@ import DrawerShell from './drawer/DrawerShell.vue'
 import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
-import { createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
-import { createProjectGroupsLayoutAdapter } from '@/interaction/drag/adapters/projectGroupsLayout'
 import { runtime } from '@/interaction/runtime'
 import { MIND_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
 
@@ -107,8 +104,8 @@ const props = defineProps({
   canvasProjectIds: { type: Object as PropType<Set<number>>, required: true },
   canvasProjectIdsReady: { type: Boolean, default: false },
   projectsLoading: { type: Boolean, default: false },
-  // 抽屉卡抓起后会脱离抽屉、落进按相机缩放渲染的画布；把当前比例交给物理克隆，
-  // 让 clone1 从第一帧起就是画布尺寸，不能等 clone2 交接时才突然缩小。
+  // 抽屉是 grid Surface，但它的卡片会飞入带相机缩放的 free 画布；把当前画布比例
+  // 暴露给 Runtime Surface，由 Runtime 统一处理代理从抽屉尺寸到画布尺寸的衔接。
   canvasScale: { type: Number, default: 1 },
   addProjectToCanvas: {
     type: Function as PropType<(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) => Promise<HTMLElement | null>>,
@@ -140,18 +137,8 @@ const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
 const targetHeight = computed(() => panelHeights.value[panel.value])
 let canvasListObserver: ResizeObserver | null = null
 let projectListObserver: ResizeObserver | null = null
-let projectGroupAnimationCount = 0
-let projectGroupScrollRaf: number | null = null
 let drawerSurfaceGeneration: number | null = null
-const DRAWER_LAYOUT_DURATION = 340
-const DRAWER_LAYOUT_EASING = 'cubic-bezier(.22,1,.36,1)'
-const projectGroupsLayout = createProjectGroupsLayoutAdapter({
-  getRoot: () => projectListRef.value?.querySelector<HTMLElement>('.project-groups') ?? null,
-  captureScroll: () => drawerViewportRef.value?.captureScroll() ?? null,
-  restoreScroll: snapshot => drawerViewportRef.value?.restoreScroll(snapshot as Parameters<NonNullable<typeof drawerViewportRef.value>['restoreScroll']>[0]),
-  duration: DRAWER_LAYOUT_DURATION,
-  easing: DRAWER_LAYOUT_EASING,
-})
+let projectGroupTogglePending = false
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
   const query = projectQuery.value.trim().toLowerCase()
@@ -183,21 +170,17 @@ watch(filteredProjects, (projects) => {
     if (previousDrawerProjectIds.has(project.id)) continue
     const status = project.status
     if (!openProjectStatuses.value.has(status)) {
-      const next = new Set(openProjectStatuses.value)
-      next.add(status)
-      openProjectStatuses.value = next
       statusesToOpen.push(status)
     }
   }
   previousDrawerProjectIds = currentIds
-  // 拖入画布抽屉时，状态组是由数据监听器自动打开的，不会经过点击组标题的入口；
-  // 补上同一笔外层高度事务，让新卡进入、组展开和抽屉高度变化从同一帧开始。
-  if (statusesToOpen.length) {
-    void nextTick(() => statusesToOpen.forEach(status => animateViewportWithGroup(status, true, 0)))
-  }
   // project-list-scroll 有 max-height，项目变少时外层尺寸可能不变，ResizeObserver
   // 不会发出通知；DOM 提交后主动量最终的可用项目高度。
-  void nextTick(() => measurePanel('projects'))
+  void nextTick(() => {
+    syncCollapsedProjectGroups()
+    measurePanel('projects')
+    void runProjectGroupToggles(statusesToOpen)
+  })
 }, { immediate: true, flush: 'post' })
 
 watch(() => props.canvasProjectIdsReady, (ready) => {
@@ -212,7 +195,6 @@ watch(() => props.canvases.length, () => {
 
 function measurePanel(panelName: Panel) {
   if (panelName === 'projects' && !props.canvasProjectIdsReady) return
-  if (panelName === 'projects' && projectGroupAnimationCount > 0) return
   const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
   if (!list) return
   // 画布列表的子项 FLIP 会把向下位移计入 scrollHeight，删除时会短暂得到一个偏大的目标值，
@@ -235,153 +217,59 @@ function measurePanels() {
   measurePanel('canvases')
   measurePanel('projects')
 }
-function projectGroupTitleScrollTarget(status: string): { scroller: HTMLElement, target: number } | null {
-  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
-  const title = group?.querySelector<HTMLElement>('.project-group-title')
-  const scroller = projectListRef.value?.querySelector<HTMLElement>('.project-list-scroll')
-  if (!title || !scroller) return null
-  const titleRect = title.getBoundingClientRect()
-  const scrollerRect = scroller.getBoundingClientRect()
-  const target = scroller.scrollTop + titleRect.top - scrollerRect.top
-  return {
-    scroller,
-    target: Math.max(0, Math.min(target, scroller.scrollHeight - scroller.clientHeight)),
+async function runProjectGroupToggle(status: string, opening = !openProjectStatuses.value.has(status)): Promise<void> {
+  const root = drawerViewportRef.value?.viewportRef ?? projectListRef.value
+  const group = root?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
+  const content = group?.querySelector<HTMLElement>('.project-group-content')
+  if (!root || !content || projectGroupTogglePending) return
+
+  projectGroupTogglePending = true
+  const profile = runtime.getMotionProfile()?.group
+  try {
+    await runtime.runGroupToggle({
+    root,
+    content,
+    opening,
+    mutate: () => {
+      const next = new Set(openProjectStatuses.value)
+      if (opening) next.add(status)
+      else next.delete(status)
+      openProjectStatuses.value = next
+    },
+    waitForLayout: async () => {
+      await nextTick()
+      syncCollapsedProjectGroups()
+      measurePanel('projects')
+      // 让 DrawerViewport 先收到新的目标高度；随后 Runtime 再播放组和 surface 的同一笔事务。
+      await nextTick()
+    },
+    duration: profile?.duration,
+    easing: profile?.easing,
+    })
+  } finally {
+    projectGroupTogglePending = false
+    void nextTick(measureProjectsAfterGroupSettles)
   }
 }
-function alignProjectGroupTitleDuringExpand(status: string, smooth = true) {
-  if (projectGroupScrollRaf !== null) cancelAnimationFrame(projectGroupScrollRaf)
-  if (!smooth) {
-    const result = projectGroupTitleScrollTarget(status)
-    if (result) result.scroller.scrollTop = result.target
+
+function measureProjectsAfterGroupSettles() {
+  const list = projectListRef.value
+  if (!list) return
+  if (list.querySelector('[data-runtime-group-animating="true"]')) {
+    window.setTimeout(measureProjectsAfterGroupSettles, 40)
     return
   }
-  const deadline = performance.now() + DRAWER_LAYOUT_DURATION + 80
-  const tick = () => {
-    const result = projectGroupTitleScrollTarget(status)
-    if (!result) {
-      projectGroupScrollRaf = null
-      return
-    }
-    const distance = result.target - result.scroller.scrollTop
-    if (performance.now() < deadline) {
-      result.scroller.scrollTop += distance * 0.18
-      projectGroupScrollRaf = requestAnimationFrame(tick)
-    } else {
-      result.scroller.scrollTop = result.target
-      projectGroupScrollRaf = null
-    }
-  }
-  tick()
+  syncCollapsedProjectGroups()
+  measurePanel('projects')
 }
-// 折叠元素自己的高度用真实过渡在变化（createGroupLayoutTransaction 直接 animate
-// element.style.height），它是文档流里的普通块级元素——后面的兄弟 .project-group
-// 会跟着这个高度变化逐帧自动回流、自动挪位，浏览器原生免费提供平滑效果，不需要
-// projectGroupsLayout 那套 FLIP 补间。之前 toggle 路径也接了 FLIP，实测会在「已有
-// 一组展开」时把同一次挪位用 transform 重新播一遍——折叠过渡明明已经带动兄弟组
-// 平滑到位，FLIP 事务又照着 before/after 快照播了一次，看着就是"动画放完了又来一次"。
-// FLIP 只留给 data-update（拖拽改数据，组内卡片数量非连续突变，没有平滑高度过渡
-// 可言）这条路径。
-function onGroupFoldEnter(el: Element, done: () => void) {
-  projectGroupAnimationCount += 1
-  // 组高度事务接管自然回流；旧的标题 FLIP 若继续播放，会把同一批标题
-  // 再写一层 transform，松手瞬间就会出现标题重叠。
-  projectGroupsLayout.cancel()
-  const group = el.parentElement
-  const status = group?.dataset.layoutKey
-  if (status) {
-    // 已完成组通常位于列表底部，拖入时 clone2 正在交接；持续滚动会让落点盒子
-    // 同帧变化，产生一次可见顿挫。该组进入时固定即时对齐，点击展开仍走缓动路径。
-    const landingInProgress = document.body.classList.contains('phys-dragging')
-      || !!el.querySelector('.phys-drag-source-placeholder, .phys-reveal-snap, .phys-just-revealed')
-    alignProjectGroupTitleDuringExpand(status, !landingInProgress)
-  }
-  const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
-  void tx.play(true).finally(() => {
-    done()
-    projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
-    if (projectGroupAnimationCount === 0) requestAnimationFrame(() => measurePanel('projects'))
-  })
-  if (status) animateViewportWithGroup(status, true, 0)
-}
-function onGroupFoldLeave(el: Element, done: () => void) {
-  projectGroupAnimationCount += 1
-  projectGroupsLayout.cancel()
-  const previousHeight = (el as HTMLElement).getBoundingClientRect().height
-  const tx = createGroupLayoutTransaction(el as HTMLElement, DRAWER_LAYOUT_DURATION, DRAWER_LAYOUT_EASING)
-  void tx.play(false).finally(() => {
-    done()
-    projectGroupAnimationCount = Math.max(0, projectGroupAnimationCount - 1)
-    if (projectGroupAnimationCount === 0) {
-      // v-if 的离场节点在 done() 后还要经过 Vue 的卸载调度；下一帧可能仍读到
-      // “标题存在、内容高度已是 0”的中间 DOM。等两帧再校准，避免把这个中间值
-      // 写进 DrawerViewport，导致外层先缩到 0 再恢复最终高度。
-      requestAnimationFrame(() => requestAnimationFrame(() => measurePanel('projects')))
-    }
-  })
-  const status = el.parentElement?.dataset.layoutKey
-  if (status) animateViewportWithGroup(status, false, previousHeight)
-}
-function animateViewportWithGroup(status: string, opening: boolean, previousHeight: number) {
-  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
-  const content = group?.querySelector<HTMLElement>('.project-group-content')
-  const groupGap = group ? parseFloat(getComputedStyle(group).rowGap) || 0 : 0
-  const contentHeight = content?.scrollHeight ?? 0
-  const maxHeight = window.innerHeight * 0.55
-  const currentHeight = drawerViewportRef.value?.viewportRef?.getBoundingClientRect().height
-    ?? panelHeights.value.projects
-  // 收缩时 viewport 可能已经被 max-height 截断，不能用「当前 viewport - 组高度」
-  // 反推目标，否则滚动区域里的其它组会被一起扣掉，目标会错误变成 0。
-  const naturalListHeight = projectListRef.value?.scrollHeight ?? currentHeight
-  let targetNaturalHeight = naturalListHeight + contentHeight + groupGap
-  if (!opening && content) {
-    // 收起事务已经开始，但 Vue 的离场节点还在 DOM 中。临时把该 wrapper
-    // 设为最终的 0 高度读取外层自然高度，随后恢复事务当前样式；这样能在
-    // 组动画开始时就拿到外层目标，而不必等组动画结束后才测量。
-    const previousInlineHeight = content.style.height
-    const previousInlineMarginTop = content.style.marginTop
-    content.style.height = '0px'
-    content.style.marginTop = `-${groupGap}px`
-    void content.offsetHeight
-    targetNaturalHeight = projectListRef.value?.scrollHeight ?? naturalListHeight
-    content.style.height = previousInlineHeight
-    content.style.marginTop = previousInlineMarginTop
-  }
-  const target = Math.max(0, Math.min(maxHeight, targetNaturalHeight))
-  // 让 DrawerViewport 的 props watcher 负责启动唯一一笔外层高度事务；直接调用
-  // animateTo 再改 panelHeights 会形成两次相同的高度动画。
-  if (Math.abs(panelHeights.value.projects - target) >= 0.5) {
-    panelHeights.value = { ...panelHeights.value, projects: target }
+async function runProjectGroupToggles(statuses: string[]): Promise<void> {
+  for (const status of [...new Set(statuses)]) {
+    await runProjectGroupToggle(status, true)
   }
 }
 function toggleProjectStatus(status: string) {
-  // 仍要调一次 requestLayout('toggle')：它唯一剩下的作用是置位 skipNextDataUpdate，
-  // 抵消紧跟着 onBeforeUpdate 触发的那次 'data-update' 请求——否则 toggle 引起的
-  // 重渲染会被 data-update 路径当成“数据变了”又捕一次 FLIP，等于换了个入口重新
-  // 引入同一个二次动画问题。
-  projectGroupsLayout.requestLayout('toggle')
-  const group = projectListRef.value?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
-  const content = group?.querySelector<HTMLElement>('.project-group-content')
-  const previousHeight = content?.getBoundingClientRect().height ?? 0
-  const opening = !openProjectStatuses.value.has(status)
-  if (opening) alignProjectGroupTitleDuringExpand(status)
-  const next = new Set(openProjectStatuses.value)
-  next.has(status) ? next.delete(status) : next.add(status)
-  openProjectStatuses.value = next
-  void nextTick(() => {
-    animateViewportWithGroup(status, opening, previousHeight)
-  })
+  void runProjectGroupToggle(status)
 }
-onBeforeUpdate(() => {
-  // 跨抽屉/画布拖拽会直接改变项目数据，状态组本身不会经过 toggleProjectStatus；
-  // 这里补上同一套组位移事务，避免源组收缩后其它状态组瞬移。
-  // 但组高度事务进行期间，下面的标题应跟随自然回流；此时再捕获一笔
-  // data-update FLIP 会把离场中的中间布局留到动画结束后，造成已完成组迟到重叠。
-  if (projectGroupAnimationCount > 0) return
-  projectGroupsLayout.requestLayout('data-update')
-})
-onUpdated(() => {
-  if (projectGroupAnimationCount === 0) void projectGroupsLayout.measureAndPlay()
-})
 async function togglePanel(nextPanel: Panel) {
   if (drawerAnimating.value) return
   if (expanded.value && panel.value === nextPanel) {
@@ -426,6 +314,7 @@ function syncRuntimeDrawerSurface() {
       // 项目抽屉只接受画布项目卡，其他画布卡片不能触发抽屉 landing。
       accepts: [MIND_PROJECT_OBJECT_TYPE],
       layout: 'grid',
+      camera: { scale: () => props.canvasScale },
     })
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
@@ -435,15 +324,33 @@ function syncRuntimeDrawerSurface() {
 onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
   projectListObserver = new ResizeObserver(() => {
-    if (projectGroupAnimationCount > 0) return
+    if (projectListRef.value?.querySelector('[data-runtime-group-animating="true"]')) return
     measurePanel('projects')
   })
   if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
   if (projectListRef.value) projectListObserver.observe(projectListRef.value)
   measurePanels()
+  syncCollapsedProjectGroups()
   syncRuntimeDrawerSurface()
   window.addEventListener('resize', measurePanels)
 })
+
+function syncCollapsedProjectGroups() {
+  projectListRef.value?.querySelectorAll<HTMLElement>('.project-group-content').forEach(content => {
+    if (content.dataset.runtimeGroupAnimating === 'true') return
+    if (content.dataset.layoutOpen === 'true') {
+      if (content.style.height === '0px') {
+        content.style.height = ''
+        content.style.overflow = ''
+      }
+      return
+    }
+    if (!content.style.height) {
+      content.style.height = '0px'
+      content.style.overflow = 'hidden'
+    }
+  })
+}
 onBeforeUnmount(() => {
   canvasListObserver?.disconnect()
   projectListObserver?.disconnect()
@@ -516,24 +423,10 @@ onBeforeUnmount(() => {
 .canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
-.project-groups-vue-move { transition: none !important; }
 .project-group { display: flex; flex-direction: column; gap: 6px; }
-/* 折叠动画改走 JS 实测像素高度（见 onGroupFoldEnter/onGroupFoldLeave），不再用
-   grid-template-rows: 1fr/0fr 这个技巧——fr 单位插值在浏览器里对「最后一帧精确到 0」
-   处理不完全一致，跟 <Transition> 等 transitionend 才卸载元素配合，会在快结束时冒出
-   一帧亚像素级的吸入感（2026-07-17 复现，探针数据显示动画全程连续、唯独最后一帧有
-   极小跳变，是这个技巧的已知局限，不是逻辑 bug）。这里只保留 overflow:hidden 兜底，
-   实际高度/transition 由 JS 钩子接管。 */
+/* 组内容常驻 DOM，开合高度和卡片出现状态由 Runtime 事务控制。 */
 .project-group-content { min-height: 0; overflow: hidden; }
 .project-group-content > .project-group-cards { min-height: 0; }
-/* leave-active 把离场卡切成 position:absolute（见下方 .drawer-project-cards-leave-active）
-   時没有 top/left，浏览器按它离场前的「静态位置」摆放——但这个静态位置是相对**最近的
-   已定位祖先**算的，而不是它离场前视觉所在的这个 flex 容器。.project-group-cards 本身
-   不带 position，最近定位祖先一路上翻到 .cd-content-panel（projects-panel），中间隔着
-   一层可滚动的 .cd-list（overflow-y:auto，有独立 padding/scrollTop）；离场卡因此会按
-   .cd-content-panel 的坐标系重新摆放，跟它离场前在 .cd-list 里滚动之后的真实视觉位置对
-   不上，看着就是"虚线框动了一下"。补一个 position:relative 把定位祖先钉在它离场前的
-   直接父容器上，静态位置的坐标系跟视觉位置保持一致，不再跳。 */
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
 .project-group-cards > .drawer-project-card { flex: 0 0 auto; }
 .project-group-title {
