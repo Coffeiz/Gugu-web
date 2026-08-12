@@ -113,3 +113,21 @@ async def resolve_group_policy(bot_id: str) -> tuple[bool, bool, bool]:
         return bot.group_chat_enabled, bot.group_requires_at, (
             bot.group_read_enabled if bot.group_requires_at else False
         )
+
+
+async def resolve_qq_message_format(bot_id: str, chat_type: str | None) -> str:
+    """读取 QQ 文本出站格式；缺配置时按兼容优先返回稳定默认值。"""
+    import app.db.session as db_session
+    from app.models import UserBot
+
+    if db_session._engine is None:
+        db_session._build_engine()
+    bot_db_id = _parse_bot_db_id(bot_id)
+    if bot_db_id is None:
+        return "compat" if chat_type == "group" else "smart"
+    async with db_session._SessionLocal() as db:
+        bot = await db.get(UserBot, bot_db_id)
+    if not bot:
+        return "compat" if chat_type == "group" else "smart"
+    value = bot.group_message_format if chat_type == "group" else bot.private_message_format
+    return value if value in {"compat", "smart", "markdown"} else ("compat" if chat_type == "group" else "smart")

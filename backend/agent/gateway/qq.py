@@ -165,10 +165,11 @@ def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
 
 async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, msg_id: str) -> None:
     try:
+        message_format = await _message_format(channel_id, chat_type)
         if chat_type == "group":
-            await _post_group(channel_id, target_id, text, msg_id)
+            await _post_group(channel_id, target_id, text, msg_id, message_format)
         else:
-            await _post(channel_id, target_id, text, msg_id)
+            await _post(channel_id, target_id, text, msg_id, message_format)
     except Exception as e:
         # best-effort：这只是"收到啦"的秒回提示，失败不影响正式回复走 worker 那条主链路，
         # 可以广吞，但仍要留痕方便排查。
@@ -318,6 +319,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["group_requires_at"] = requires_at
         payload["group_read_enabled"] = read_enabled
         payload["group_mentioned"] = mentioned
+    payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
     sender_fp = logsafe.fingerprint(sender_id)
@@ -515,7 +517,7 @@ async def _creds_by_id(bot_id: str) -> tuple[str, str, bool]:
         return b.app_id, b.app_secret, b.sandbox
 
 
-from agent.im.permissions import resolve_group_policy as _group_settings
+from agent.im.permissions import resolve_group_policy as _group_settings, resolve_qq_message_format as _message_format
 
 
 async def _send_token(channel_id: str) -> tuple[str, str]:
@@ -615,20 +617,37 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
     return "40034024" in text or "msg_id无效或越权" in text
 
 
-async def _post(channel_id: str, openid: str, text: str, msg_id: str | None):
-    """先发原生 markdown(msg_type=2) 让 QQ 渲染；该 bot 无 md 权限则回退纯文本(msg_type=0)。
-    每次发都取新 msg_seq，避免重复 seq 被去重。"""
+_MD_SIGNAL_RE = re.compile(r"(^|\n)\s*(?:#{1,6}\s|[-*+]\s|>\s|```)|\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]]+\]\([^\n)]+\)")
+
+
+def _message_type(text: str, mode: str | None) -> int:
+    """按会话策略选择 QQ 文本消息类型；未知模式按兼容格式处理。"""
+    # 未传模式的内部调用保留历史行为；正式 IM payload 会由网关显式填充模式。
+    if mode is None:
+        return 2
+    if mode == "markdown":
+        return 2
+    if mode == "smart" and _MD_SIGNAL_RE.search(text or ""):
+        return 2
+    return 0
+
+
+async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
+                message_format: str | None = None):
+    """按会话格式发送 QQ 文本；Markdown 被拒时回退纯文本。"""
     path = f"/v2/users/{openid}/messages"
-    body = {
-        "msg_type": 2, "markdown": {"content": text},
-        "msg_seq": await _next_seq(msg_id),
-    }
+    msg_type = _message_type(text, message_format)
+    body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
+    if msg_type == 2:
+        body["markdown"] = {"content": text}
+    else:
+        body["content"] = text
     if msg_id:
         body["msg_id"] = msg_id
     try:
         await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
-        if not _markdown_blocked(me):
+        if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
@@ -636,19 +655,22 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None):
         await _qq_request(channel_id, "POST", path, json_body=body)
 
 
-async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None):
-    """群聊版 _post：先发原生 markdown，该 bot 无 md 权限则回退纯文本。"""
+async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None,
+                      message_format: str | None = None):
+    """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
-    body = {
-        "msg_type": 2, "markdown": {"content": text},
-        "msg_seq": await _next_seq(msg_id),
-    }
+    msg_type = _message_type(text, message_format)
+    body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
+    if msg_type == 2:
+        body["markdown"] = {"content": text}
+    else:
+        body["content"] = text
     if msg_id:
         body["msg_id"] = msg_id
     try:
         await _qq_request(channel_id, "POST", path, json_body=body)
     except Exception as me:
-        if not _markdown_blocked(me):
+        if msg_type != 2 or not _markdown_blocked(me):
             raise
         body = {"msg_type": 0, "content": text, "msg_seq": await _next_seq(msg_id)}
         if msg_id:
@@ -657,7 +679,7 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
-                   channel_id: str | None = None) -> bool:
+                   channel_id: str | None = None, message_format: str | None = None) -> bool:
     """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
     时重试一次；4xx 等永久错误直接失败——发消息不是幂等操作，重试会造成重复推送，
     对不会成功的永久错误重试只有坏处没有好处（P2-b §1/§4-A 幂等前提）。"""
@@ -669,7 +691,10 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
     }, ensure_ascii=False), flush=True)
     for attempt in (1, 2):
         try:
-            await _post(channel_id, openid, text, msg_id)
+            if message_format is None:
+                await _post(channel_id, openid, text, msg_id)
+            else:
+                await _post(channel_id, openid, text, msg_id, message_format)
             print(json.dumps({
                 "event": "send-c2c-ok",
                 "attempt": attempt,
@@ -685,7 +710,10 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
                 try:
-                    await _post(channel_id, openid, text, None)
+                    if message_format is None:
+                        await _post(channel_id, openid, text, None)
+                    else:
+                        await _post(channel_id, openid, text, None, message_format)
                     return True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_c2c.active_fallback", fallback_error)
@@ -702,7 +730,7 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
 
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
-                     channel_id: str | None = None) -> bool:
+                     channel_id: str | None = None, message_format: str | None = None) -> bool:
     """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
     4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
     print(json.dumps({
@@ -713,7 +741,10 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
     }, ensure_ascii=False), flush=True)
     for attempt in (1, 2):
         try:
-            await _post_group(channel_id, group_openid, text, msg_id)
+            if message_format is None:
+                await _post_group(channel_id, group_openid, text, msg_id)
+            else:
+                await _post_group(channel_id, group_openid, text, msg_id, message_format)
             print(json.dumps({
                 "event": "send-group-ok",
                 "attempt": attempt,
@@ -729,7 +760,10 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")
                 try:
-                    await _post_group(channel_id, group_openid, text, None)
+                    if message_format is None:
+                        await _post_group(channel_id, group_openid, text, None)
+                    else:
+                        await _post_group(channel_id, group_openid, text, None, message_format)
                     return True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)
