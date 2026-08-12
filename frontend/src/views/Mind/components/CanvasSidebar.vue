@@ -98,7 +98,7 @@ import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { createGroupLayoutTransaction } from '@/interaction/drag/animation/flipCoordinator'
 import { createProjectGroupsLayoutAdapter } from '@/interaction/drag/adapters/projectGroupsLayout'
 import { runtime } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
+import { MIND_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -423,7 +423,9 @@ function syncRuntimeDrawerSurface() {
       id: MIND_DRAWER_SURFACE_ID,
       type: 'mind-drawer',
       element,
-      accepts: [MIND_CANVAS_OBJECT_TYPE],
+      // 项目抽屉只接受画布项目卡，其他画布卡片不能触发抽屉 landing。
+      accepts: [MIND_PROJECT_OBJECT_TYPE],
+      layout: 'grid',
     })
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
