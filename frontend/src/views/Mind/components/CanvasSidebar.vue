@@ -438,7 +438,7 @@ onBeforeUnmount(() => {
 .project-group { display: flex; flex-direction: column; gap: 0; }
 /* 组内容常驻 DOM，开合高度和卡片出现状态由 Runtime 事务控制。 */
 .project-group-content { min-height: 0; overflow: hidden; }
-.project-group-content[data-layout-open="true"] { margin-top: 6px; }
+.project-group-content[data-layout-open="true"]:has(.drawer-project-card:not([data-runtime-active="true"])) { margin-top: 6px; }
 .project-group-content > .project-group-cards { min-height: 0; }
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
 .project-group-cards > .drawer-project-card { flex: 0 0 auto; }
