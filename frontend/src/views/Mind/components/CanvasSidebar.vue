@@ -4,7 +4,6 @@
     :width="panel === 'projects' ? '284px' : '190px'"
     :panel-class="panel === 'projects' ? 'project-panel' : ''"
     :data-project-drawer-dropzone="expanded && panel === 'projects' ? '' : undefined"
-    data-layout-surface="mind:drawer"
     @pointerdown.stop
   >
     <template #header><div class="cd-head">
@@ -30,6 +29,7 @@
       :target-height="targetHeight"
       :scroll-key="panel"
       :class="panel === 'canvases' ? 'canvas-viewport' : 'project-viewport'"
+      data-layout-surface="mind:drawer"
     >
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
@@ -318,6 +318,12 @@ function syncRuntimeDrawerSurface() {
       // 抽屉卡抓起后要先从抽屉 1x 平滑过渡到画布当前比例；落回抽屉时
       // landing 会根据目标卡片真实尺寸再收敛回 1x。
       camera: { scale: () => props.canvasScale, pickupDuration: 160 },
+      layoutElement: () => drawerViewportRef.value?.viewportRef ?? null,
+      measureLayout: () => {
+        const list = projectListRef.value
+        if (!list) return null
+        return { height: Math.min(list.scrollHeight, window.innerHeight * 0.55) }
+      },
     })
   } else {
     runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
@@ -328,6 +334,9 @@ onMounted(() => {
   canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
   projectListObserver = new ResizeObserver(() => {
     if (projectListRef.value?.querySelector('[data-runtime-group-animating="true"]')) return
+    const layoutElement = drawerViewportRef.value?.viewportRef
+    if (layoutElement?.dataset.runtimeLayoutTransaction === 'true'
+      || layoutElement?.dataset.runtimeSurfaceResize === 'true') return
     measurePanel('projects')
   })
   if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
@@ -426,9 +435,10 @@ onBeforeUnmount(() => {
 .canvas-track[data-drawer-scroll] { height: 100%; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .project-groups, .project-group-cards { display: flex; flex-direction: column; gap: 6px; }
 .project-groups { gap: 9px; }
-.project-group { display: flex; flex-direction: column; gap: 6px; }
+.project-group { display: flex; flex-direction: column; gap: 0; }
 /* 组内容常驻 DOM，开合高度和卡片出现状态由 Runtime 事务控制。 */
 .project-group-content { min-height: 0; overflow: hidden; }
+.project-group-content[data-layout-open="true"] { margin-top: 6px; }
 .project-group-content > .project-group-cards { min-height: 0; }
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
 .project-group-cards > .drawer-project-card { flex: 0 0 auto; }
