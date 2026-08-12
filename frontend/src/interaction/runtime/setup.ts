@@ -1,5 +1,5 @@
 import { runtime } from './index'
-import { MIND_CANVAS_OBJECT_TYPE, resolveMindLandingRect } from './canvas'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, resolveMindLandingRect } from './canvas'
 
 let initialized = false
 
@@ -17,8 +17,8 @@ export function setupInteractionRuntime(): void {
     // "被拎着"的悬垂感，不是简单的居中或按点击位置对齐。
     grabAlign: { offsetY: 12 },
   })
-  // 文件/文件夹卡片：落地目标是文件夹/面包屑这类语义容器，用 landingMode:'target'
-  // 让代理松手后从第一帧开始缩小淡出，同时继承 landing 的释放速度、旋转与位置运动
+  // 文件/文件夹卡片：落地目标是文件夹/面包屑这类语义容器。
+  // 语义 target 由对象实例/独立 Target 注册，Surface 只描述自身的 grid/free 布局。
   // （效果基准是 gugu-interaction-runtime demo FileSystemDemo.vue，不迁移旧手感）。
   // disableTargetVisualMorph：文件卡（FileCard.vue）和文件夹卡（FolderCard.vue）内部
   // 结构差异较大（不同组件、不同子节点布局），默认的"代理套上目标背景/圆角/内容"视觉 morph
@@ -66,7 +66,6 @@ export function setupInteractionRuntime(): void {
   runtime.registerObjectType('file-item', {
     defaultVisualMode: 'detach',
     groupVisual: 'default',
-    landingMode: 'target',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
@@ -75,18 +74,15 @@ export function setupInteractionRuntime(): void {
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
     groupVisual: 'default',
-    landingMode: 'target',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
     proxyLayout: listProxyLayout,
   })
-  runtime.registerObjectType(MIND_CANVAS_OBJECT_TYPE, {
+  const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
-    landingMode: 'free',
-    allowSurfaceLandingTarget: true,
     releaseMode: 'physical',
-    // 画布单独限制释放速度；该档案只在 landingMode:'free' 时读取，
+    // 画布单独限制释放速度；该档案只在 free Surface 上读取，
     // 不会改变文件/项目列和语义目标 landing 的抛出手感。
     motion: {
       enabled: true,
@@ -112,6 +108,8 @@ export function setupInteractionRuntime(): void {
       return resolveMindLandingRect(objectId, destination)
     },
   })
+  registerMindObjectType(MIND_CANVAS_OBJECT_TYPE)
+  registerMindObjectType(MIND_PROJECT_OBJECT_TYPE)
   runtime.configureVisual({ dragGlass: true, layoutPresence: true })
   runtime.configureMotion({
     flip: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },

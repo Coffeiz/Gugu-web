@@ -2,6 +2,7 @@ import { onBeforeUnmount, onMounted, watch, type Ref } from 'vue'
 import { runtime } from '@/interaction/runtime'
 import {
   MIND_CANVAS_OBJECT_TYPE,
+  MIND_CANVAS_OBJECT_TYPES,
   MIND_CANVAS_SURFACE_ID,
   registerMindLandingResolver,
 } from '@/interaction/runtime/canvas'
@@ -9,8 +10,8 @@ import {
 export function useMindRuntimeObject(options: {
   objectId: string
   element: Ref<HTMLElement | null> | (() => HTMLElement | null)
+  objectType?: string
   onClick?: () => void
-  contentScale?: number | (() => number)
 }) {
   let generation: number | null = null
   let boundElement: HTMLElement | null = null
@@ -24,17 +25,16 @@ export function useMindRuntimeObject(options: {
     if (generation === null) {
       generation = runtime.objects.register({
         id: options.objectId,
-        type: MIND_CANVAS_OBJECT_TYPE,
-        visual: MIND_CANVAS_OBJECT_TYPE,
+        type: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
+        visual: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
         visualMode: 'detach',
         surfaceId: MIND_CANVAS_SURFACE_ID,
         element,
-        contentScale: options.contentScale,
         abilities: ['move'],
         node: {
           ports: [
-            { id: 'left', side: 'left', position: 0.5, accepts: [MIND_CANVAS_OBJECT_TYPE] },
-            { id: 'right', side: 'right', position: 0.5, accepts: [MIND_CANVAS_OBJECT_TYPE] },
+            { id: 'left', side: 'left', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
+            { id: 'right', side: 'right', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
           ],
         },
       })

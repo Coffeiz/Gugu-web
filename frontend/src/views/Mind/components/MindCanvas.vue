@@ -51,7 +51,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } fr
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
@@ -373,7 +373,12 @@ onMounted(() => {
     type: 'canvas-free',
     element: viewportRef.value,
     viewport: () => viewportRef.value,
-    accepts: [MIND_CANVAS_OBJECT_TYPE],
+    accepts: [...MIND_CANVAS_OBJECT_TYPES],
+    layout: 'free',
+    camera: {
+      scale: () => camera.scale,
+      origin: () => ({ left: camera.x, top: camera.y }),
+    },
   })
   stopRuntimeActions = runtime.onAction(action => {
     if (action.type === 'move') onRuntimeMove(action as MoveAction)

@@ -68,6 +68,7 @@ import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
 import ProjectCardBody from './ProjectCardBody.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -173,8 +174,8 @@ onBeforeUnmount(() => {
 const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: () => cardEl.value ?? missingRef.value,
+  objectType: MIND_PROJECT_OBJECT_TYPE,
   onClick: onOpen,
-  contentScale: () => props.scale,
 })
 function onOpen() {
   emit('open', props.item)
