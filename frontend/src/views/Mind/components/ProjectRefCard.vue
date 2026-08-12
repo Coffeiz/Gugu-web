@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
 // 项目和文件贴纸统一由 Runtime 负责抓取、物理落地和重抓接管；项目回抽屉的目标
 // Surface 由 MindCanvas 统一提交，组件只保留业务点击和展示职责。
 const { onPointerDown } = useMindRuntimeObject({
-  objectId: `mind:${props.item.nodeId}`,
+  objectId: () => `mind:${props.item.nodeId}`,
   element: () => cardEl.value ?? missingRef.value,
   objectType: MIND_PROJECT_OBJECT_TYPE,
   onClick: onOpen,

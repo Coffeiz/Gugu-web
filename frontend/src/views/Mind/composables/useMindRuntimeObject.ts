@@ -8,23 +8,37 @@ import {
 } from '@/interaction/runtime/canvas'
 
 export function useMindRuntimeObject(options: {
-  objectId: string
+  objectId: string | (() => string)
   element: Ref<HTMLElement | null> | (() => HTMLElement | null)
   objectType?: string
   onClick?: () => void
 }) {
   let generation: number | null = null
   let boundElement: HTMLElement | null = null
+  let registeredObjectId: string | null = null
   let stopBinding: (() => void) | null = null
   let stopResolver: (() => void) | null = null
 
   const getElement = () => typeof options.element === 'function' ? options.element() : options.element.value
+  const getObjectId = () => typeof options.objectId === 'function' ? options.objectId() : options.objectId
   const sync = () => {
     const element = getElement()
     if (!element) return
+    const objectId = getObjectId()
+    if (!objectId) return
+    if (registeredObjectId !== null && registeredObjectId !== objectId) {
+      stopBinding?.()
+      stopResolver?.()
+      if (generation !== null && runtime.objects.get(registeredObjectId)?.generation === generation) {
+        runtime.objects.unregister(registeredObjectId, generation)
+      }
+      generation = null
+      boundElement = null
+      registeredObjectId = null
+    }
     if (generation === null) {
       generation = runtime.objects.register({
-        id: options.objectId,
+        id: objectId,
         type: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
         visual: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
         visualMode: 'detach',
@@ -38,15 +52,16 @@ export function useMindRuntimeObject(options: {
           ],
         },
       })
+      registeredObjectId = objectId
     } else {
-      runtime.objects.setElement(options.objectId, element)
+      runtime.objects.setElement(objectId, element)
     }
     if (boundElement === element) return
     stopBinding?.()
-    stopBinding = runtime.bindObjectPointer(options.objectId, element)
+    stopBinding = runtime.bindObjectPointer(objectId, element)
     boundElement = element
     stopResolver?.()
-    stopResolver = registerMindLandingResolver(options.objectId, destination => {
+    stopResolver = registerMindLandingResolver(objectId, destination => {
       const rect = element.getBoundingClientRect()
       const point = destination as { point?: { x?: unknown; y?: unknown }; releaseVelocity?: { x?: unknown; y?: unknown } } | null
       if (!point?.point || typeof point.point.x !== 'number' || typeof point.point.y !== 'number') return null
@@ -63,15 +78,16 @@ export function useMindRuntimeObject(options: {
   }
 
   onMounted(sync)
-  watch(() => getElement(), sync)
+  watch(() => [getObjectId(), getElement()] as const, sync)
   onBeforeUnmount(() => {
     stopBinding?.()
     stopResolver?.()
-    if (generation !== null && runtime.objects.get(options.objectId)?.generation === generation) {
-      runtime.objects.unregister(options.objectId, generation)
+    if (generation !== null && registeredObjectId !== null && runtime.objects.get(registeredObjectId)?.generation === generation) {
+      runtime.objects.unregister(registeredObjectId, generation)
     }
     generation = null
     boundElement = null
+    registeredObjectId = null
   })
 
   return {
