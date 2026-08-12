@@ -203,12 +203,8 @@ def build(profile: str, user_name: str, projects: list, events: list,
         dynamic.append(_NON_STREAMING_BLOCK)
     dynamic.append(result)
     if im_message_format == "compat":
-        dynamic.insert(-1, (
-            "## 当前消息格式约束\n\n"
-            "当前 QQ 会话使用兼容格式。回复必须使用普通纯文本；不要使用 Markdown 标记，"
-            "包括标题、列表标记、表格、代码围栏、反引号、加粗、斜体、删除线或 Markdown 链接。"
-            "用自然的纯文本和换行表达内容。"
-        ))
+        from agent.im.message_format import compatibility_prompt
+        dynamic.insert(-1, compatibility_prompt())
 
     stable_str  = "\n\n---\n\n".join(stable)
     dynamic_str = "\n\n---\n\n".join(dynamic)
