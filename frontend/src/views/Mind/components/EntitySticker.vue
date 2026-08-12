@@ -39,6 +39,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { eventsApi, type MindCanvasItem } from '@/services/api'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import { itemSize } from '@/composables/useMindCanvas'
 import CardActions from './CardActions.vue'
 import CardConnDot from './CardConnDot.vue'
@@ -136,7 +137,7 @@ watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
 
 const { onPointerDown } = useMindRuntimeObject({
-  objectId: `mind:${props.item.nodeId}`,
+  objectId: () => mindCanvasObjectId(props.item),
   element: () => cardRef.value,
 })
 function onCardClick() {

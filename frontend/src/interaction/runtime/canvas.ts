@@ -6,6 +6,11 @@ export const MIND_CANVAS_OBJECT_TYPE = 'mind-canvas-object'
 export const MIND_PROJECT_OBJECT_TYPE = 'mind-project-object'
 export const MIND_CANVAS_OBJECT_TYPES = [MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE] as const
 
+/** 画布卡片的 Runtime 身份必须跨乐观插入和服务端落库保持稳定。 */
+export function mindCanvasObjectId(item: { nodeId: number; clientKey?: string }): string {
+  return `mind:${item.clientKey ?? item.nodeId}`
+}
+
 type LandingResolver = (destination: unknown) => LandingRect | null
 type LandingTargetResolver = (destination: unknown) => HTMLElement | null
 

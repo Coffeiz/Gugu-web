@@ -43,6 +43,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import { itemSize } from '@/composables/useMindCanvas'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { showAppError } from '@/composables/useAppToast'
@@ -163,7 +164,7 @@ async function onColor(color: string | null) {
 // （见其 onBodyClick/startEditAt），这里的拖拽只处理"按住越过阈值"的真正拖拽；
 // NoteCard 内部所有可交互元素都挂了 @pointerdown.stop，不会被这层拖拽阈值判定抢走。
 const { onPointerDown } = useMindRuntimeObject({
-  objectId: `mind:${props.item.nodeId}`,
+  objectId: () => mindCanvasObjectId(props.item),
   element: noteCardEl,
 })
 </script>
