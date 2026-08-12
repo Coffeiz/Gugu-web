@@ -539,7 +539,10 @@ function updateActive() {
   }
   centerFrac.value = frac
   if (!colDragging && !cardRubberReturning) cardVisualCenterFrac.value = frac
-  activeDate.value = cols[Math.round(frac)].date
+  const nextDate = cols[Math.round(frac)].date
+  activeDate.value = nextDate
+  // 横向滚动改变居中日期时同步日历，避免日历仍保留初始选中日期。
+  if (store.jumpTarget !== nextDate) store.jumpTarget = nextDate
 }
 
 function onScroll() {
@@ -553,6 +556,7 @@ function onScroll() {
 function onSnap(date: string) {
   suppressEditGuard = false   // 同 onScrub：用户自己操作滑杆，不该再当成"飞去编辑目标"处理
   activeDate.value = date
+  if (store.jumpTarget !== date) store.jumpTarget = date
 }
 
 let cardFollowRaf = 0
@@ -692,6 +696,8 @@ function nearestExistingDate(target: string): string | null {
 }
 watch(() => store.jumpTarget, (date) => {
   if (!date) return
+  // 滚动同步回来的日期已经是当前居中列，不要再次触发平滑跳转。
+  if (date === activeDate.value) return
   if (indexGroups.value.some(g => g.date === date)) { jumpTo(date); return }
   const nearest = nearestExistingDate(date)
   if (nearest) jumpTo(nearest)
