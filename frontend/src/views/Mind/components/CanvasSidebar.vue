@@ -156,7 +156,14 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
-watch(expanded, () => { void nextTick(syncRuntimeDrawerSurface) })
+watch(expanded, () => {
+  void nextTick(() => {
+    // 抽屉内容常驻 DOM；重新打开时要把上一次展开留下的分组高度
+    // 与 openProjectStatuses 重新对齐，避免收起组短暂显示旧卡片。
+    syncCollapsedProjectGroups()
+    syncRuntimeDrawerSurface()
+  })
+})
 let previousDrawerProjectIds = new Set<number>()
 let drawerProjectSnapshotReady = false
 watch(filteredProjects, (projects) => {
@@ -357,10 +364,9 @@ function syncCollapsedProjectGroups() {
       }
       return
     }
-    if (!content.style.height) {
-      content.style.height = '0px'
-      content.style.overflow = 'hidden'
-    }
+    if (projectGroupTogglePending) return
+    content.style.height = '0px'
+    content.style.overflow = 'hidden'
   })
 }
 onBeforeUnmount(() => {
@@ -438,6 +444,10 @@ onBeforeUnmount(() => {
 .project-group { display: flex; flex-direction: column; gap: 0; }
 /* 组内容常驻 DOM，开合高度和卡片出现状态由 Runtime 事务控制。 */
 .project-group-content { min-height: 0; overflow: hidden; }
+.project-group-content[data-layout-open="false"]:not([data-runtime-group-animating="true"]) {
+  height: 0 !important;
+  overflow: hidden;
+}
 .project-group-content[data-layout-open="true"]:has(.drawer-project-card:not([data-runtime-active="true"])) { margin-top: 6px; }
 .project-group-content > .project-group-cards { min-height: 0; }
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
