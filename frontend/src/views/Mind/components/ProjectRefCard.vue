@@ -12,6 +12,7 @@
     :style="cardStyle"
     :data-node-id="item.nodeId"
     :data-canvas-item-id="item.id"
+    :data-project-id="item.node.refId"
     @pointerdown.stop="onPointerDown"
     @click.stop="onOpen"
     @mouseenter="onEnter"
@@ -27,7 +28,7 @@
       @drag-start="(e, side) => emit('connectDragStart', e, side)"
     />
   </div>
-  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
+  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>

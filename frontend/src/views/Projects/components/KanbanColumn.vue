@@ -53,6 +53,7 @@ const { elementRef: columnRef } = useSurface({
   id: props.column.key,
   type: 'project-column',
   accepts: ['project-card'],
+  layout: 'grid',
   viewport: () => colBodyRef.value,
 })
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，

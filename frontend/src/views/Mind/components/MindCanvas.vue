@@ -167,6 +167,7 @@ function onRuntimeMove(action: MoveAction) {
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
 }
+
 /** 卡片尺寸变化时同步给 RelationLayer；拖动中的位置由 Runtime 代理事件提供。 */
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
   measuredSizes.set(item.nodeId, size)

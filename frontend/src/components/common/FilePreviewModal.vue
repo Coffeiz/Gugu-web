@@ -37,7 +37,7 @@
             <template v-else-if="blobUrl || videoSrc">
               <PdfViewer   v-if="isPdf || isOffice" :blobUrl="blobUrl ?? undefined" />
               <ImageViewer v-else-if="isImage"      :blobUrl="blobUrl ?? undefined" />
-              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" />
+              <TextViewer  v-else-if="isText"       :blobUrl="blobUrl ?? undefined" :ext="file?.ext" :fileKey="file?.id ?? file?.attach_id ?? undefined" :fileContext="file ?? null" />
               <VideoViewer v-else-if="isVideo"      :src="videoSrc ?? undefined" />
 
             </template>

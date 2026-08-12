@@ -55,7 +55,7 @@ const props = defineProps({
   connectionTargetSide: { type: String as PropType<'left' | 'right' | null>, default: null },
   screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, required: true },
   // 画布相机当前缩放（MindCanvas.vue 的 camera.scale）——拖拽克隆脱离 .canvas-world 的
-  // transform:scale 祖先后要自己补回视觉缩放，见 usePhysicsDrag.ts 的 contentScale。
+  // transform:scale 祖先后的视觉补偿由画布 Surface camera 统一提供给 Runtime。
   scale: { type: Number, default: 1 },
 })
 const emit = defineEmits<{
@@ -165,7 +165,6 @@ async function onColor(color: string | null) {
 const { onPointerDown } = useMindRuntimeObject({
   objectId: `mind:${props.item.nodeId}`,
   element: noteCardEl,
-  contentScale: () => props.scale,
 })
 </script>
 
