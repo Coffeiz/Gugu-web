@@ -81,6 +81,7 @@ export function setupInteractionRuntime(): void {
   })
   const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
+    camera: { enabled: true },
     releaseMode: 'physical',
     // 画布单独限制释放速度；该档案只在 free Surface 上读取，
     // 不会改变文件/项目列和语义目标 landing 的抛出手感。

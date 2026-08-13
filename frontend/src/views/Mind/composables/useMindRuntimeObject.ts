@@ -43,20 +43,24 @@ export function useMindRuntimeObject(options: {
       registeredObjectId = null
     }
     if (generation === null) {
+      const surfaceId = options.surfaceId ?? MIND_CANVAS_SURFACE_ID
+      const isCanvasObject = surfaceId === MIND_CANVAS_SURFACE_ID
       generation = runtime.objects.register({
         id: objectId,
         type: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
         visual: options.objectType ?? MIND_CANVAS_OBJECT_TYPE,
         visualMode: 'detach',
-        surfaceId: options.surfaceId ?? MIND_CANVAS_SURFACE_ID,
+        surfaceId,
         element,
-        abilities: ['move'],
-        node: {
-          ports: [
-            { id: 'left', side: 'left', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
-            { id: 'right', side: 'right', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
-          ],
-        },
+        abilities: isCanvasObject ? ['move', 'link'] : ['move'],
+        ...(isCanvasObject ? {
+          node: {
+            ports: [
+              { id: 'left', side: 'left', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
+              { id: 'right', side: 'right', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
+            ],
+          },
+        } : {}),
       })
       registeredObjectId = objectId
     } else {

@@ -319,7 +319,7 @@ function updateConnectionTarget(event: PointerEvent) {
 function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 'right') {
   const origin = props.items.find(current => current.nodeId === nodeId)
   if (!origin) return
-  if (!runtime.beginNodeConnection(`mind:${nodeId}`, side)) return
+  if (!runtime.beginNodeConnection(mindCanvasObjectId(origin), side)) return
   connectionDrag.active = true
   connectionDrag.originNodeId = nodeId
   connectionDrag.originSide = side
@@ -357,7 +357,7 @@ function onConnectionDragEnd(event: PointerEvent) {
   // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
   const source = props.items.find(item => item.nodeId === originNodeId)
   if (!source) return
-  if (!runtime.finishNodeConnection(`mind:${target.item.nodeId}`, target.side)) return
+  if (!runtime.finishNodeConnection(mindCanvasObjectId(target.item), target.side)) return
   emit('linkNodes', originNodeId, target.item.nodeId, {
     srcSide: connectionDrag.originSide,
     dstSide: target.side,
