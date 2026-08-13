@@ -20,6 +20,7 @@
     <!-- UI 与顶部胶囊一样放到 body 顶层，避免被 body 上的拖拽 clone/camGlue 层叠上下文压住。 -->
     <Teleport to="body">
       <CanvasSidebar
+        ref="canvasSidebarRef"
         :canvases="store.canvases"
         :active-id="activeCanvasId"
         :projects="projectStore.projects"
@@ -65,6 +66,7 @@ const projectStore = useProjectStore()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
+const canvasSidebarRef = ref<InstanceType<typeof CanvasSidebar> | null>(null)
 // 抽屉只能在当前画布项目加载完后量项目高度，否则首帧会把已放入画布的项目计入缓存。
 const canvasProjectIdsReady = ref(false)
 // 画布相机初始是默认原点/1倍缩放，真实视角要等 restoreView() 异步跑完才定下来——
@@ -223,6 +225,10 @@ async function removeItem(item: MindCanvasItem) {
   await store.removeCanvasItem(item.id)
 }
 function returnProjectToDrawer(item: MindCanvasItem) {
+  const projectStatus = item.node.refType === 'project' && item.node.refId != null
+    ? projectStore.projects.find(project => project.id === item.node.refId)?.status
+    : null
+  if (projectStatus) canvasSidebarRef.value?.openProjectStatus(projectStatus)
   void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
 }
 async function removeRelation(id: number) {
