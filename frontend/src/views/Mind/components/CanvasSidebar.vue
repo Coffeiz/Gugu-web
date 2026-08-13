@@ -1,5 +1,6 @@
 <template>
   <DrawerShell
+    ref="drawerShellRef"
     :open="expanded"
     :width="panel === 'projects' ? '284px' : '190px'"
     :panel-class="panel === 'projects' ? 'project-panel' : ''"
@@ -25,16 +26,13 @@
          不会再出现旧面板尺寸被新面板借用一帧的横向/纵向两段动画。 -->
     <DrawerViewport
       ref="drawerViewportRef"
-      :open="expanded"
-      :target-height="targetHeight"
-      :scroll-key="panel"
       :class="panel === 'canvases' ? 'canvas-viewport' : 'project-viewport'"
       data-layout-surface="mind:drawer"
     >
       <div class="cd-stage">
         <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
-            <CanvasDrawerContent ref="canvasContentRef" :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" @layout-finished="measurePanel('canvases')" />
+            <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" />
           </DrawerTrack>
         </section>
 
@@ -85,7 +83,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
 import { PhArrowRight, PhSquaresFour, PhStack } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
@@ -96,6 +94,7 @@ import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
+import { useSurface } from '@/interaction/runtime/vue'
 import { MIND_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
@@ -130,15 +129,9 @@ const panel = ref<Panel>('canvases')
 const visiblePanel = ref<Panel>('canvases')
 const contentVisible = ref(false)
 const headerVisible = ref(false)
-const canvasContentRef = ref<InstanceType<typeof CanvasDrawerContent> | null>(null)
 const projectListRef = ref<HTMLElement | null>(null)
+const drawerShellRef = ref<InstanceType<typeof DrawerShell> | null>(null)
 const drawerViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
-const drawerAnimating = computed(() => drawerViewportRef.value?.isAnimating ?? false)
-const panelHeights = ref<Record<Panel, number>>({ canvases: 0, projects: 0 })
-const targetHeight = computed(() => panelHeights.value[panel.value])
-let canvasListObserver: ResizeObserver | null = null
-let projectListObserver: ResizeObserver | null = null
-let drawerSurfaceGeneration: number | null = null
 let projectGroupTogglePending = false
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -156,12 +149,32 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
-watch(expanded, () => {
+const { elementRef: drawerSurfaceRef, isAnimating: drawerAnimating } = useSurface({
+  id: MIND_DRAWER_SURFACE_ID,
+  type: 'mind-drawer',
+  // Surface 为了让 Runtime 在收起状态也能接管高度而常驻注册；只有展开的项目面板
+  // 才允许项目卡命中，避免常驻根节点扩大原来的抽屉 dropzone 范围。
+  accepts: () => expanded.value && panel.value === 'projects'
+    ? [MIND_PROJECT_OBJECT_TYPE]
+    : ['mind-drawer-inactive'],
+  layout: 'grid',
+  camera: { scale: () => props.canvasScale, pickupDuration: 160 },
+  floating: {
+    open: () => expanded.value,
+    scrollKey: () => panel.value,
+    maxHeight: () => window.innerHeight * 0.55,
+  },
+})
+function syncDrawerSurfaceElement() {
+  drawerSurfaceRef.value = drawerShellRef.value?.rootRef ?? null
+}
+
+watch([expanded, panel], () => {
   void nextTick(() => {
     // 抽屉内容常驻 DOM；重新打开时要把上一次展开留下的分组高度
     // 与 openProjectStatuses 重新对齐，避免收起组短暂显示旧卡片。
     syncCollapsedProjectGroups()
-    syncRuntimeDrawerSurface()
+    syncDrawerSurfaceElement()
   })
 })
 let previousDrawerProjectIds = new Set<number>()
@@ -182,49 +195,11 @@ watch(filteredProjects, (projects) => {
     }
   }
   previousDrawerProjectIds = currentIds
-  // project-list-scroll 有 max-height，项目变少时外层尺寸可能不变，ResizeObserver
-  // 不会发出通知；DOM 提交后主动量最终的可用项目高度。
   void nextTick(() => {
     syncCollapsedProjectGroups()
-    measurePanel('projects')
     void runProjectGroupToggles(statusesToOpen)
   })
 }, { immediate: true, flush: 'post' })
-
-watch(() => props.canvasProjectIdsReady, (ready) => {
-  if (ready) void nextTick(() => measurePanel('projects'))
-}, { flush: 'post' })
-
-// 画布列表的子项删除会先经过自身 FLIP，ResizeObserver 不一定能捕获到外层最终高度；
-// 数据提交后主动重测，避免删除后抽屉保留旧的底部空白。
-watch(() => props.canvases.length, () => {
-  void nextTick(() => measurePanel('canvases'))
-}, { flush: 'post' })
-
-function measurePanel(panelName: Panel) {
-  if (panelName === 'projects' && !props.canvasProjectIdsReady) return
-  const list = panelName === 'canvases' ? canvasContentRef.value?.listRef : projectListRef.value
-  if (!list) return
-  // 画布列表的子项 FLIP 会把向下位移计入 scrollHeight，删除时会短暂得到一个偏大的目标值，
-  // 让抽屉先收一小段、等 FLIP 结束后再收一次。画布列表自身没有独立滚动高度，使用实际布局
-  // 高度即可让外层收缩和卡片让位从同一刻开始；项目列表仍保留 scrollHeight 语义。
-  const measuredHeight = panelName === 'canvases'
-    ? list.getBoundingClientRect().height
-    : list.scrollHeight
-  // 内容面板在切换可见性时会短暂处于 height:0；无内容的中间态不能覆盖已经量好的
-  // 展开目标，否则高度事务会被重置成 0。
-  if (measuredHeight <= 0) return
-  const nextHeight = Math.min(measuredHeight, window.innerHeight * 0.55)
-  if (panelHeights.value[panelName] === nextHeight) return
-  panelHeights.value = {
-    ...panelHeights.value,
-    [panelName]: nextHeight,
-  }
-}
-function measurePanels() {
-  measurePanel('canvases')
-  measurePanel('projects')
-}
 async function runProjectGroupToggle(status: string, opening = !openProjectStatuses.value.has(status)): Promise<void> {
   const root = drawerViewportRef.value?.viewportRef ?? projectListRef.value
   const group = root?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
@@ -247,8 +222,6 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
     waitForLayout: async () => {
       await nextTick()
       syncCollapsedProjectGroups()
-      measurePanel('projects')
-      // 让 DrawerViewport 先收到新的目标高度；随后 Runtime 再播放组和 surface 的同一笔事务。
       await nextTick()
     },
     duration: profile?.duration,
@@ -256,19 +229,7 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
     })
   } finally {
     projectGroupTogglePending = false
-    void nextTick(measureProjectsAfterGroupSettles)
   }
-}
-
-function measureProjectsAfterGroupSettles() {
-  const list = projectListRef.value
-  if (!list) return
-  if (list.querySelector('[data-runtime-group-animating="true"]')) {
-    window.setTimeout(measureProjectsAfterGroupSettles, 40)
-    return
-  }
-  syncCollapsedProjectGroups()
-  measurePanel('projects')
 }
 async function runProjectGroupToggles(statuses: string[]): Promise<void> {
   for (const status of [...new Set(statuses)]) {
@@ -292,14 +253,8 @@ async function togglePanel(nextPanel: Panel) {
   contentVisible.value = false
   panel.value = nextPanel
   visiblePanel.value = nextPanel
-  // 先临时解除内容面板的 height:0，让 scrollHeight 读取真实内容高度；如果直接在
-  // 隐藏状态测量，cd-content-panel:not(.visible) 会把高度压成 0，DrawerViewport
-  // 只能从 0 开始展开，视觉上就会先变成长条再补高度。
   contentVisible.value = true
   await nextTick()
-  measurePanels()
-  // 保持内容面板参与布局；如果这里再次设为 false，viewport 高度动画期间会只剩
-  // 一个没有内容的横向抽屉，随后内容揭示才会把高度瞬间补上。
   headerVisible.value = true
   expanded.value = true
   // 内容已经在测量阶段挂载，宽度和高度事务现在可以与内容一起并行展开。
@@ -312,49 +267,9 @@ function onDelete(canvas: MindCanvas) {
   emit('delete', canvas.id)
 }
 
-function syncRuntimeDrawerSurface() {
-  const element = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
-  if (drawerSurfaceGeneration === null) {
-    drawerSurfaceGeneration = runtime.surfaces.register({
-      id: MIND_DRAWER_SURFACE_ID,
-      type: 'mind-drawer',
-      element,
-      // 项目抽屉只接受画布项目卡，其他画布卡片不能触发抽屉 landing。
-      accepts: [MIND_PROJECT_OBJECT_TYPE],
-      layout: 'grid',
-      // 抽屉卡抓起后要先从抽屉 1x 平滑过渡到画布当前比例；落回抽屉时
-      // landing 会根据目标卡片真实尺寸再收敛回 1x。
-      camera: { scale: () => props.canvasScale, pickupDuration: 160 },
-      layoutElement: () => drawerViewportRef.value?.viewportRef ?? null,
-      // 外层 drawer-viewport 只负责高度和命中，真正承载项目卡片滚动的是
-      // project-list-scroll。落地目标超出抽屉可视范围时，Runtime 必须滚动这个节点。
-      viewport: () => projectListRef.value?.querySelector<HTMLElement>('[data-drawer-scroll="projects"]') ?? null,
-      measureLayout: () => {
-        const list = projectListRef.value
-        if (!list) return null
-        return { height: Math.min(list.scrollHeight, window.innerHeight * 0.55) }
-      },
-    })
-  } else {
-    runtime.surfaces.setElement(MIND_DRAWER_SURFACE_ID, element)
-  }
-}
-
 onMounted(() => {
-  canvasListObserver = new ResizeObserver(() => measurePanel('canvases'))
-  projectListObserver = new ResizeObserver(() => {
-    if (projectListRef.value?.querySelector('[data-runtime-group-animating="true"]')) return
-    const layoutElement = drawerViewportRef.value?.viewportRef
-    if (layoutElement?.dataset.runtimeLayoutTransaction === 'true'
-      || layoutElement?.dataset.runtimeSurfaceResize === 'true') return
-    measurePanel('projects')
-  })
-  if (canvasContentRef.value?.listRef) canvasListObserver.observe(canvasContentRef.value.listRef)
-  if (projectListRef.value) projectListObserver.observe(projectListRef.value)
-  measurePanels()
   syncCollapsedProjectGroups()
-  syncRuntimeDrawerSurface()
-  window.addEventListener('resize', measurePanels)
+  syncDrawerSurfaceElement()
 })
 
 function syncCollapsedProjectGroups() {
@@ -372,15 +287,6 @@ function syncCollapsedProjectGroups() {
     content.style.overflow = 'hidden'
   })
 }
-onBeforeUnmount(() => {
-  canvasListObserver?.disconnect()
-  projectListObserver?.disconnect()
-  window.removeEventListener('resize', measurePanels)
-  if (drawerSurfaceGeneration !== null) {
-    runtime.surfaces.unregister(MIND_DRAWER_SURFACE_ID, drawerSurfaceGeneration)
-    drawerSurfaceGeneration = null
-  }
-})
 </script>
 
 <style scoped>
@@ -422,8 +328,8 @@ onBeforeUnmount(() => {
 .projects-panel { width: 284px; }
 .cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }
 .canvas-list { width: 190px; }
-.project-list { display: flex; flex-direction: column; width: 284px; height: auto; max-height: 55vh; min-height: 0; gap: 0; }
-.project-list-scroll { flex: none; max-height: calc(55vh - 38px); overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
+.project-list { display: flex; flex-direction: column; width: 284px; height: auto; min-height: 0; gap: 0; }
+.project-list-scroll { flex: none; max-height: 100%; overflow-y: auto; min-height: 0; padding-bottom: 9px; scrollbar-gutter: stable; }
 
 .canvas-item { display: flex; align-items: center; gap: 6px; width: 100%; box-sizing: border-box; height: 32px; padding: 0 4px 0 8px; border-radius: 6px; background: none; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 .canvas-create-card { display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; height: 32px; margin-top: 5px; box-sizing: border-box; border: 1.5px dashed rgba(0,0,0,.12); border-radius: 6px; background: rgba(255,255,255,.16); color: var(--text-secondary); font: 600 12px var(--font-sans); cursor: pointer; transition: background .15s ease, border-color .15s ease, color .15s ease; }
