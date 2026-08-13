@@ -134,6 +134,22 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   emit('itemMoved', item)
 }
 
+/**
+ * 读取当前画布卡片的布局尺寸。offset 尺寸不包含画布 camera transform、抓取倾斜和
+ * landing 代理的视觉缩放，正好是落点换算需要的世界尺寸。乐观节点换成真实 nodeId
+ * 的交接窗口里，measuredSizes 可能还没有迁移完成，因此这里必须优先读活 DOM。
+ */
+function renderedItemSize(item: MindCanvasItem): { w: number; h: number } | null {
+  const element = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  if (!element || !element.isConnected) return null
+  const width = element.offsetWidth
+  const height = element.offsetHeight
+  if (width > 0 && height > 0) return { w: width, h: height }
+  const rect = element.getBoundingClientRect()
+  if (rect.width <= 0 || rect.height <= 0 || camera.scale <= 0) return null
+  return { w: rect.width / camera.scale, h: rect.height / camera.scale }
+}
+
 function onRuntimeMove(action: MoveAction) {
   if (!action.objectId.startsWith('mind:')) return
   const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
@@ -164,7 +180,7 @@ function onRuntimeMove(action: MoveAction) {
   const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
   const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
   const center = screenToWorld(action.point.x + coastX, action.point.y + coastY)
-  const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
+  const { w, h } = renderedItemSize(item) ?? measuredSizes.get(nodeId) ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
 }
 
