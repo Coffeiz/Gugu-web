@@ -47,7 +47,7 @@
 /** 无限画布：平移/缩放 + 贴纸绝对定位渲染，相机数学委托给 useMindCanvas.ts；贴纸拖拽统一走
  *  全站卡片物理模块（见各贴纸组件里的 useCardDrag.ts），这里只负责相机、建立关联的拖拽手势
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
@@ -59,6 +59,7 @@ import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
 import ProjectRefCard from './ProjectRefCard.vue'
 import RelationLayer from './RelationLayer.vue'
+import { cacheCanvasItemSize, measuredCanvasItemSize, migrateCanvasItemSize } from '../utils/canvasItemMeasurements'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -78,6 +79,7 @@ const emit = defineEmits<{
 
 const viewportRef = ref<HTMLElement | null>(null)
 const measuredSizes = reactive(new Map<number, { w: number; h: number }>())
+const measuredSizesByClientKey = new Map<string, { w: number; h: number }>()
 const viewportSize = reactive({ width: 0, height: 0 })
 const {
   camera, centerView, screenToWorld, zoomAt, zoomAtCenter, workspaceCenter, onWheel,
@@ -85,6 +87,9 @@ const {
 } = useMindCanvas(viewportRef)
 
 const worldStyle = computed(() => ({ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.scale})` }))
+watch(() => props.items, items => {
+  items.forEach(item => migrateCanvasItemSize(measuredSizes, measuredSizesByClientKey, item))
+}, { immediate: true })
 // 贴纸和连线只渲染在视口附近。420px 缓冲给边缘拖拽、连线和快速平移留出余量；缓冲按
 // 屏幕像素定义，缩放时换算成世界坐标，因此不会在不同倍率下改变可见范围的体感。
 const WINDOW_BUFFER_PX = 420
@@ -180,13 +185,15 @@ function onRuntimeMove(action: MoveAction) {
   const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
   const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
   const center = screenToWorld(action.point.x + coastX, action.point.y + coastY)
-  const { w, h } = renderedItemSize(item) ?? measuredSizes.get(nodeId) ?? itemSize(item)
+  const { w, h } = renderedItemSize(item)
+    ?? measuredCanvasItemSize(measuredSizes, measuredSizesByClientKey, item)
+    ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
 }
 
 /** 卡片尺寸变化时同步给 RelationLayer；拖动中的位置由 Runtime 代理事件提供。 */
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
-  measuredSizes.set(item.nodeId, size)
+  cacheCanvasItemSize(measuredSizes, measuredSizesByClientKey, item, size)
 }
 
 let viewportResizeObserver: ResizeObserver | null = null
