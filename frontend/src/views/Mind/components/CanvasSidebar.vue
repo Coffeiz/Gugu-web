@@ -25,18 +25,25 @@
     <!-- 两个面板始终挂载、各自在固定宽度下量高度。开关时只换目标尺寸与可见内容，
          不会再出现旧面板尺寸被新面板借用一帧的横向/纵向两段动画。 -->
     <DrawerViewport
-      ref="drawerViewportRef"
-      :class="panel === 'canvases' ? 'canvas-viewport' : 'project-viewport'"
-      data-layout-surface="mind:drawer"
+      ref="canvasViewportRef"
+      class="canvas-viewport"
+      data-layout-surface="mind:canvas-drawer"
+      :class="{ 'is-visible': visiblePanel === 'canvases' && contentVisible }"
     >
-      <div class="cd-stage">
-        <section class="cd-content-panel canvas-panel" :class="{ visible: visiblePanel === 'canvases' && contentVisible }" :aria-hidden="visiblePanel !== 'canvases'">
+        <section class="cd-content-panel canvas-panel" :class="contentPanelClass('canvases')" :aria-hidden="visiblePanel !== 'canvases'">
           <DrawerTrack class="canvas-track" data-drawer-scroll="canvases">
             <CanvasDrawerContent :canvases="canvases" :active-id="activeId" :rename="props.renameCanvas" @create="emit('create')" @open="onOpen" @delete="onDelete" />
           </DrawerTrack>
         </section>
+    </DrawerViewport>
 
-       <section class="cd-content-panel projects-panel" :class="{ visible: visiblePanel === 'projects' && contentVisible }" :aria-hidden="visiblePanel !== 'projects'">
+    <DrawerViewport
+      ref="projectViewportRef"
+      class="project-viewport"
+      data-layout-surface="mind:project-drawer"
+      :class="{ 'is-visible': visiblePanel === 'projects' && contentVisible }"
+    >
+       <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
            <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
@@ -77,7 +84,6 @@
             </DrawerTrack>
          </div>
        </section>
-      </div>
     </DrawerViewport>
   </DrawerShell>
 </template>
@@ -95,7 +101,7 @@ import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
 import { useSurface } from '@/interaction/runtime/vue'
-import { MIND_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -131,7 +137,8 @@ const contentVisible = ref(false)
 const headerVisible = ref(false)
 const projectListRef = ref<HTMLElement | null>(null)
 const drawerShellRef = ref<InstanceType<typeof DrawerShell> | null>(null)
-const drawerViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
+const canvasViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
+const projectViewportRef = ref<InstanceType<typeof DrawerViewport> | null>(null)
 let projectGroupTogglePending = false
 const projectQuery = ref('')
 const filteredProjects = computed(() => {
@@ -149,29 +156,46 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
-const { elementRef: drawerSurfaceRef, isAnimating: drawerAnimating } = useSurface({
-  id: MIND_DRAWER_SURFACE_ID,
+const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useSurface({
+  id: MIND_CANVAS_DRAWER_SURFACE_ID,
   type: 'mind-drawer',
-  // Surface 为了让 Runtime 在收起状态也能接管高度而常驻注册；只有展开的项目面板
-  // 才允许项目卡命中，避免常驻根节点扩大原来的抽屉 dropzone 范围。
+  accepts: ['mind-drawer-inactive'],
+  layout: 'grid',
+  motion: { resize: { duration: 350, easing: 'cubic-bezier(.22,1,.36,1)' } },
+  camera: { scale: () => props.canvasScale, pickupDuration: 160 },
+  floating: {
+    open: () => expanded.value && panel.value === 'canvases',
+    scrollKey: 'canvases',
+    maxHeight: () => window.innerHeight * 0.55,
+  },
+})
+const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useSurface({
+  id: MIND_PROJECT_DRAWER_SURFACE_ID,
+  type: 'mind-drawer',
   accepts: () => expanded.value && panel.value === 'projects'
     ? [MIND_PROJECT_OBJECT_TYPE]
     : ['mind-drawer-inactive'],
   layout: 'grid',
+  motion: { resize: { duration: 350, easing: 'cubic-bezier(.22,1,.36,1)' } },
   camera: { scale: () => props.canvasScale, pickupDuration: 160 },
   floating: {
-    open: () => expanded.value,
-    scrollKey: () => panel.value,
+    open: () => expanded.value && panel.value === 'projects',
+    scrollKey: 'projects',
     maxHeight: () => window.innerHeight * 0.55,
   },
 })
-function syncDrawerSurfaceElement() {
-  drawerSurfaceRef.value = drawerShellRef.value?.rootRef ?? null
+const drawerAnimating = computed(() => canvasAnimating.value || projectAnimating.value)
+function contentPanelClass(panelName: Panel) {
+  return { visible: panelName === visiblePanel.value && contentVisible.value }
+}
+function syncDrawerSurfaceElements() {
+  canvasSurfaceRef.value = canvasViewportRef.value?.viewportRef ?? null
+  projectSurfaceRef.value = projectViewportRef.value?.viewportRef ?? null
 }
 
 watch([expanded, panel], () => {
   void nextTick(() => {
-    syncDrawerSurfaceElement()
+    syncDrawerSurfaceElements()
     flushPendingProjectStatus()
   })
 })
@@ -182,7 +206,7 @@ watch(filteredProjects, () => {
   })
 }, { immediate: true, flush: 'post' })
 async function runProjectGroupToggle(status: string, opening = !openProjectStatuses.value.has(status)): Promise<void> {
-  const root = drawerViewportRef.value?.viewportRef ?? projectListRef.value
+  const root = projectViewportRef.value?.viewportRef ?? projectListRef.value
   const group = root?.querySelector<HTMLElement>(`.project-group[data-layout-key="${CSS.escape(status)}"]`)
   const content = group?.querySelector<HTMLElement>('.project-group-content')
   if (!root || !content || projectGroupTogglePending) return
@@ -235,13 +259,16 @@ async function togglePanel(nextPanel: Panel) {
   if (expanded.value && panel.value === nextPanel) {
     contentVisible.value = false
     headerVisible.value = false
-    // 内容和外壳立即开始收起；展开头部保留在 DOM 中完成 leave 动画，不能随着 expanded
-    // 同一帧卸载，否则右侧返回图标会直接消失而不是淡出。
     expanded.value = false
     return
   }
-  headerVisible.value = false
-  contentVisible.value = false
+  if (expanded.value && panel.value !== nextPanel) {
+    contentVisible.value = false
+    panel.value = nextPanel
+    visiblePanel.value = nextPanel
+    contentVisible.value = true
+    return
+  }
   panel.value = nextPanel
   visiblePanel.value = nextPanel
   contentVisible.value = true
@@ -259,7 +286,7 @@ function onDelete(canvas: MindCanvas) {
 }
 
 onMounted(() => {
-  syncDrawerSurfaceElement()
+  syncDrawerSurfaceElements()
 })
 </script>
 
@@ -272,7 +299,7 @@ onMounted(() => {
   flex-shrink: 0;
   /* 收起时内容区从一行列表缩到 0、目录头从单枚入口变两枚入口；高度必须同样
      插值，不能让头部先瞬跳再等内容区收合。 */
-  transition: height .38s cubic-bezier(.22,1,.36,1);
+  transition: height .35s cubic-bezier(.22,1,.36,1);
 }
 /* 顶栏行高固定 50px（--canvas-toolbar-height），flex 竖直居中天然让内容的几何中心落在
    距顶 25px——跟圆角半径（.canvas-drawer.open 的 25px）相同，横向也照这个数走：标题
@@ -288,16 +315,16 @@ onMounted(() => {
 .canvas-drawer.open .cd-title { opacity: 1; transition-delay: .08s; }
 .cd-return { margin-left: auto; }
 .cd-expanded-enter-active, .cd-expanded-leave-active {
-  transition: opacity .18s cubic-bezier(.22,1,.36,1), filter .18s cubic-bezier(.22,1,.36,1);
+  transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1);
 }
 .cd-expanded-enter-from, .cd-expanded-leave-to { opacity: 0; filter: blur(3px); }
-.cd-compact-enter-active { transition: opacity .22s ease-out, filter .22s ease-out; }
+.cd-compact-enter-active, .cd-compact-leave-active { transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1); }
 .cd-compact-enter-from { opacity: 0; filter: blur(3px); }
+.cd-compact-leave-to { opacity: 0; filter: blur(3px); }
 
-.cd-stage { position: relative; width: 100%; height: 100%; }
-.cd-content-panel { position: absolute; top: 0; left: 0; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .26s cubic-bezier(.22,1,.36,1), filter .26s cubic-bezier(.22,1,.36,1); }
-.cd-content-panel:not(.visible) { height: 0; overflow: hidden; }
-.cd-content-panel.visible { height: 100%; opacity: 1; filter: blur(0); pointer-events: auto; }
+.cd-content-panel { position: relative; width: 100%; opacity: 0; filter: blur(6px); pointer-events: none; transition: opacity .35s cubic-bezier(.22,1,.36,1), filter .35s cubic-bezier(.22,1,.36,1); }
+.cd-content-panel:not(.visible) { overflow: hidden; }
+.cd-content-panel.visible { opacity: 1; filter: blur(0); pointer-events: auto; }
 .canvas-panel { width: 190px; }
 .projects-panel { width: 284px; }
 .cd-list { box-sizing: border-box; max-height: none; overflow: visible; padding: 0 9px 9px; }

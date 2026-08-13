@@ -5,7 +5,7 @@ import {
   MIND_CANVAS_OBJECT_TYPE,
   MIND_CANVAS_OBJECT_TYPES,
   MIND_CANVAS_SURFACE_ID,
-  MIND_DRAWER_SURFACE_ID,
+  MIND_PROJECT_DRAWER_SURFACE_ID,
   registerMindLandingResolver,
 } from '@/interaction/runtime/canvas'
 
@@ -76,7 +76,7 @@ export function useMindRuntimeObject(options: {
         ? (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
           ?? (destination as { toSurfaceId?: unknown; columnId?: unknown }).columnId
         : null
-      if (destinationSurface === MIND_DRAWER_SURFACE_ID) return null
+      if (destinationSurface === MIND_PROJECT_DRAWER_SURFACE_ID) return null
       const velocity = point.releaseVelocity
       const coastX = typeof velocity?.x === 'number' ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
       const coastY = typeof velocity?.y === 'number' ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0

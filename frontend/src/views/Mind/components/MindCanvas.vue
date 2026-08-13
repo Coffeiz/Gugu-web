@@ -51,7 +51,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, type PropType } fr
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import EntitySticker from './EntitySticker.vue'
@@ -139,7 +139,7 @@ function onRuntimeMove(action: MoveAction) {
   const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
   if (!item) return
   const nodeId = item.nodeId
-  if (action.toSurfaceId === MIND_DRAWER_SURFACE_ID) {
+  if (action.toSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) {
     if (item.node.refType === 'project') {
       const projectId = item.node.refId
       if (projectId != null) {
@@ -149,7 +149,7 @@ function onRuntimeMove(action: MoveAction) {
           if (!destination || typeof destination !== 'object') return null
           const destinationSurface = (destination as { toSurfaceId?: unknown; columnId?: unknown }).toSurfaceId
             ?? (destination as { toSurfaceId?: unknown; columnId?: unknown }).columnId
-          if (destinationSurface !== MIND_DRAWER_SURFACE_ID) return null
+          if (destinationSurface !== MIND_PROJECT_DRAWER_SURFACE_ID) return null
           const target = document.querySelector<HTMLElement>(`[data-project-drawer-dropzone] [data-project-id="${projectId}"]`)
           if (target) stopResolver?.()
           return target

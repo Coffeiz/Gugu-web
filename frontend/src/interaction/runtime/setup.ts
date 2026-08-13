@@ -1,5 +1,5 @@
 import { runtime } from './index'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
 
 let initialized = false
 
@@ -104,7 +104,7 @@ export function setupInteractionRuntime(): void {
         : null
       // 画布内是自由落点；进入抽屉时必须交给 drawer Surface 的语义目标，
       // 不能把鼠标释放点误当成抽屉卡的最终位置。
-      if (targetSurface === 'mind:drawer') return null
+      if (targetSurface === MIND_PROJECT_DRAWER_SURFACE_ID) return null
       return resolveMindLandingRect(objectId, destination)
     },
     resolveMoveLandingTarget: ({ objectId, destination }) => resolveMindLandingTarget(objectId, destination),
