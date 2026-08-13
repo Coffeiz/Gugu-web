@@ -171,9 +171,6 @@ function syncDrawerSurfaceElement() {
 
 watch([expanded, panel], () => {
   void nextTick(() => {
-    // 抽屉内容常驻 DOM；重新打开时要把上一次展开留下的分组高度
-    // 与 openProjectStatuses 重新对齐，避免收起组短暂显示旧卡片。
-    syncCollapsedProjectGroups()
     syncDrawerSurfaceElement()
     flushPendingProjectStatus()
   })
@@ -181,7 +178,6 @@ watch([expanded, panel], () => {
 let pendingProjectStatus: string | null = null
 watch(filteredProjects, () => {
   void nextTick(() => {
-    syncCollapsedProjectGroups()
     flushPendingProjectStatus()
   })
 }, { immediate: true, flush: 'post' })
@@ -205,8 +201,6 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
       openProjectStatuses.value = next
     },
     waitForLayout: async () => {
-      await nextTick()
-      syncCollapsedProjectGroups()
       await nextTick()
     },
     duration: profile?.duration,
@@ -265,25 +259,8 @@ function onDelete(canvas: MindCanvas) {
 }
 
 onMounted(() => {
-  syncCollapsedProjectGroups()
   syncDrawerSurfaceElement()
 })
-
-function syncCollapsedProjectGroups() {
-  projectListRef.value?.querySelectorAll<HTMLElement>('.project-group-content').forEach(content => {
-    if (content.dataset.runtimeGroupAnimating === 'true') return
-    if (content.dataset.layoutOpen === 'true') {
-      if (content.style.height === '0px') {
-        content.style.height = ''
-        content.style.overflow = ''
-      }
-      return
-    }
-    if (projectGroupTogglePending) return
-    content.style.height = '0px'
-    content.style.overflow = 'hidden'
-  })
-}
 </script>
 
 <style scoped>
