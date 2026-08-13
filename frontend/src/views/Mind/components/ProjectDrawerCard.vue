@@ -19,7 +19,7 @@ import type { Project } from '@/types/project'
 import type { MoveAction } from '@/interaction/runtime'
 import {
   MIND_CANVAS_SURFACE_ID,
-  MIND_DRAWER_SURFACE_ID,
+  MIND_PROJECT_DRAWER_SURFACE_ID,
   MIND_PROJECT_OBJECT_TYPE,
   registerMindLandingTargetResolver,
 } from '@/interaction/runtime/canvas'
@@ -69,7 +69,7 @@ const { onPointerDown } = useMindRuntimeObject({
   objectId: () => `mind:drawer-project:${props.project.id}`,
   element: () => cardEl.value,
   objectType: MIND_PROJECT_OBJECT_TYPE,
-  surfaceId: MIND_DRAWER_SURFACE_ID,
+  surfaceId: MIND_PROJECT_DRAWER_SURFACE_ID,
   onMove: action => {
     if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID) return
     const center = coastPoint(action)

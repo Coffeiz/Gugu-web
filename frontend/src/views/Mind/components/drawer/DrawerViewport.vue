@@ -13,7 +13,9 @@ defineExpose({ viewportRef })
 </script>
 
 <style scoped>
-.drawer-viewport { position: relative; width: 100%; overflow: hidden; overflow-anchor: none; }
+.drawer-viewport { position: relative; width: 100%; flex: 0 0 auto; overflow: hidden; overflow-anchor: none; }
+.drawer-viewport:not(.is-visible) { height: 0; }
+.drawer-viewport.is-visible { height: auto; }
 .drawer-viewport [data-drawer-scroll] { overflow-anchor: none; }
 .drawer-viewport.canvas-viewport, .drawer-viewport.project-viewport { overflow: hidden; }
 .drawer-viewport::-webkit-scrollbar { width: 3px; }

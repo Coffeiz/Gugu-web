@@ -42,7 +42,8 @@ defineExpose({ rootRef })
   border-radius: 25px;
   corner-shape: round;
   transform: translateY(-50%);
-  transition: width .38s cubic-bezier(.22,1,.36,1), border-radius .38s cubic-bezier(.22,1,.36,1), background .25s ease, box-shadow .25s ease;
+  /* 与 Runtime 的 Surface resize profile 保持同一时长和缓动，避免高度先结束、宽度再滞后。 */
+  transition: width .35s cubic-bezier(.22,1,.36,1), border-radius .35s cubic-bezier(.22,1,.36,1), background .35s ease, box-shadow .35s ease;
 }
 .drawer-shell-collapse { position: relative; width: 100%; overflow: hidden; }
 </style>
