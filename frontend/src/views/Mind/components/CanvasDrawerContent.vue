@@ -37,7 +37,7 @@ const props = defineProps({
   activeId: { type: Number as PropType<number | null>, default: null },
   rename: { type: Function as PropType<(id: number, title: string) => Promise<unknown>>, required: true },
 })
-const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void; (e: 'layout-finished'): void }>()
+const emit = defineEmits<{ (e: 'create'): void; (e: 'open', id: number): void; (e: 'delete', canvas: MindCanvas): void }>()
 const listRef = ref<HTMLElement | null>(null)
 const editingId = ref<number | null>(null)
 const editingText = ref('')
@@ -60,7 +60,7 @@ onBeforeUpdate(() => {
 onUpdated(() => {
   if (!pendingLayout || !pendingLayoutItems.length) return
   pendingLayout.measure(pendingLayoutItems)
-  void pendingLayout.play().then(() => emit('layout-finished'))
+  void pendingLayout.play()
   pendingLayout = null
 })
 

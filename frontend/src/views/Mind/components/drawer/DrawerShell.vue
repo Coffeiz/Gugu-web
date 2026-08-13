@@ -1,6 +1,9 @@
 <template>
   <div
+    ref="rootRef"
     class="drawer-shell canvas-drawer glass-card"
+    data-runtime-surface
+    data-floating-surface
     data-layout-role="shell"
     data-layout-key="drawer-shell"
     :class="[{ open, 'project-panel': panelClass === 'project-panel' }, panelClass]"
@@ -14,12 +17,17 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+
+const rootRef = ref<HTMLElement | null>(null)
+
 defineProps({
   open: { type: Boolean, default: false },
   width: { type: String, default: '190px' },
   panelClass: { type: String, default: '' },
 })
 
+defineExpose({ rootRef })
 </script>
 
 <style scoped>
