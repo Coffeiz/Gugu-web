@@ -175,29 +175,14 @@ watch([expanded, panel], () => {
     // 与 openProjectStatuses 重新对齐，避免收起组短暂显示旧卡片。
     syncCollapsedProjectGroups()
     syncDrawerSurfaceElement()
+    flushPendingProjectStatus()
   })
 })
-let previousDrawerProjectIds = new Set<number>()
-let drawerProjectSnapshotReady = false
-watch(filteredProjects, (projects) => {
-  const currentIds = new Set(projects.map(project => project.id))
-  if (!drawerProjectSnapshotReady) {
-    previousDrawerProjectIds = currentIds
-    drawerProjectSnapshotReady = true
-    return
-  }
-  const statusesToOpen: string[] = []
-  for (const project of projects) {
-    if (previousDrawerProjectIds.has(project.id)) continue
-    const status = project.status
-    if (!openProjectStatuses.value.has(status)) {
-      statusesToOpen.push(status)
-    }
-  }
-  previousDrawerProjectIds = currentIds
+let pendingProjectStatus: string | null = null
+watch(filteredProjects, () => {
   void nextTick(() => {
     syncCollapsedProjectGroups()
-    void runProjectGroupToggles(statusesToOpen)
+    flushPendingProjectStatus()
   })
 }, { immediate: true, flush: 'post' })
 async function runProjectGroupToggle(status: string, opening = !openProjectStatuses.value.has(status)): Promise<void> {
@@ -231,14 +216,26 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
     projectGroupTogglePending = false
   }
 }
-async function runProjectGroupToggles(statuses: string[]): Promise<void> {
-  for (const status of [...new Set(statuses)]) {
-    await runProjectGroupToggle(status, true)
-  }
-}
 function toggleProjectStatus(status: string) {
   void runProjectGroupToggle(status)
 }
+function flushPendingProjectStatus() {
+  const status = pendingProjectStatus
+  if (!status || !expanded.value || panel.value !== 'projects' || projectGroupTogglePending) return
+  if (!projectGroups.value.some(group => group.status === status && group.items.length > 0)) return
+  pendingProjectStatus = null
+  void runProjectGroupToggle(status, true)
+}
+function openProjectStatus(status: string) {
+  if (openProjectStatuses.value.has(status)) return
+  const group = projectGroups.value.find(item => item.status === status)
+  if (!expanded.value || panel.value !== 'projects' || !group?.items.length) {
+    pendingProjectStatus = status
+    return
+  }
+  void runProjectGroupToggle(status, true)
+}
+defineExpose({ openProjectStatus })
 async function togglePanel(nextPanel: Panel) {
   if (drawerAnimating.value) return
   if (expanded.value && panel.value === nextPanel) {
