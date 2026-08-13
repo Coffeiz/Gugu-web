@@ -80,12 +80,13 @@ export function useMindRuntimeObject(options: {
       const velocity = point.releaseVelocity
       const coastX = typeof velocity?.x === 'number' ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
       const coastY = typeof velocity?.y === 'number' ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
-      return {
+      const resolved = {
         left: point.point.x + coastX - rect.width / 2,
         top: point.point.y + coastY - rect.height / 2,
         width: rect.width,
         height: rect.height,
       }
+      return resolved
     })
     if (options.onMove) {
       stopAction = runtime.onAction(action => {

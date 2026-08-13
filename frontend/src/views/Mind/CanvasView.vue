@@ -292,15 +292,19 @@ async function addProjectAtCenter(projectId: number) {
 /** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
  * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
  * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
-async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, _size: { w: number; h: number }) {
+async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) {
   const canvas = canvasRef.value
   const canvasId = activeCanvasId.value
   if (!canvas || canvasId == null) return null
   const world = canvas.screenToWorld(center.x, center.y)
-  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, world.x - 120, world.y - 60)
+  const width = Number.isFinite(size.w) && size.w > 0 ? size.w : 240
+  const height = Number.isFinite(size.h) && size.h > 0 ? size.h : 120
+  const position = { x: world.x - width / 2, y: world.y - height / 2 }
+  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, position.x, position.y)
   ready.catch(() => showAppError('添加到画布失败，请重试'))
   await nextTick()
-  return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  const target = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  return target
 }
 async function onItemMoved(item: MindCanvasItem) {
   await store.bringCanvasItemToFront(item.id, item.x, item.y)

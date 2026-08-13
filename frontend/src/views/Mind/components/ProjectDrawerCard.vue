@@ -75,10 +75,9 @@ const { onPointerDown } = useMindRuntimeObject({
     const center = coastPoint(action)
     if (!center) return
     registerCanvasLandingTarget(`mind:drawer-project:${props.project.id}`, props.project.id)
-    const rect = cardEl.value?.getBoundingClientRect()
     void props.addToCanvas(props.project.id, center, {
-      w: rect?.width ?? 240,
-      h: rect?.height ?? 120,
+      w: action.sourceSize?.w ?? 240,
+      h: action.sourceSize?.h ?? 120,
     })
   },
 })
