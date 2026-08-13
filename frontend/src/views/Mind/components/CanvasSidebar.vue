@@ -358,6 +358,9 @@ onMounted(() => {
   height: 0 !important;
   overflow: hidden;
 }
+.project-group-content[data-layout-open="true"]:not([data-runtime-group-animating="true"]) {
+  overflow: visible;
+}
 .project-group-content[data-layout-open="true"]:has(.drawer-project-card:not([data-runtime-active="true"])) { margin-top: 6px; }
 .project-group-content > .project-group-cards { min-height: 0; }
 .project-group-cards { position: relative; min-height: 0; align-self: stretch; }
