@@ -326,6 +326,9 @@ function syncRuntimeDrawerSurface() {
       // landing 会根据目标卡片真实尺寸再收敛回 1x。
       camera: { scale: () => props.canvasScale, pickupDuration: 160 },
       layoutElement: () => drawerViewportRef.value?.viewportRef ?? null,
+      // 外层 drawer-viewport 只负责高度和命中，真正承载项目卡片滚动的是
+      // project-list-scroll。落地目标超出抽屉可视范围时，Runtime 必须滚动这个节点。
+      viewport: () => projectListRef.value?.querySelector<HTMLElement>('[data-drawer-scroll="projects"]') ?? null,
       measureLayout: () => {
         const list = projectListRef.value
         if (!list) return null
