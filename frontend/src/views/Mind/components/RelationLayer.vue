@@ -193,6 +193,8 @@ function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y:
   // 此时必须优先使用 runtime 每帧提供的代理坐标，否则连接线会提前跳到目标卡片，
   // 而代理仍在飞行。主动拖拽期间没有 pos，仍走真实连接点测量。
   if (pos) {
+    const measured = measuredAnchor(item, side)
+    if (measured) return measured
     const { w, h } = geometry(item)
     const x = pos.x
     const y = pos.y
