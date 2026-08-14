@@ -214,12 +214,17 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
 :global(.runtime-affordances-hidden) {
   pointer-events: none !important;
   opacity: 0 !important;
-  visibility: hidden !important;
+  transition: opacity 0.15s ease !important;
 }
 
 :global(.runtime-affordances-hidden) > * {
   pointer-events: none !important;
   opacity: 0 !important;
-  visibility: hidden !important;
+  transition: opacity 0.15s ease !important;
+}
+
+/* inline 模式的根节点是 display:contents，不参与绘制；子节点必须单独承担淡出。 */
+:global([data-card-affordances] > *) {
+  transition: opacity 0.15s ease;
 }
 </style>
