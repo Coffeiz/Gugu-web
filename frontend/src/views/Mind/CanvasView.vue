@@ -48,13 +48,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import { showAppError } from '@/composables/useAppToast'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
+import { runtime } from '@/interaction/runtime'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
@@ -82,20 +84,35 @@ const canvasProjectIds = computed(() => new Set(
     .filter(item => item.node.kind === 'ref' && item.node.refType === 'project' && item.node.refId != null)
     .map(item => item.node.refId as number),
 ))
+// 临时关系在后端响应前也必须保留用户实际拖出的端点，不能让 RelationLayer 按几何位置猜边。
+const optimisticRelationAnchors = ref<Record<string, RelationAnchorSides>>({})
 const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
   const value = data?.relationAnchors
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const result: Record<string, RelationAnchorSides> = {}
-  for (const [id, sides] of Object.entries(value)) {
-    if (!sides || typeof sides !== 'object') continue
-    const { srcSide, dstSide } = sides as Partial<RelationAnchorSides>
-    if ((srcSide === 'left' || srcSide === 'right') && (dstSide === 'left' || dstSide === 'right')) {
-      result[id] = { srcSide, dstSide }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [id, sides] of Object.entries(value)) {
+      if (!sides || typeof sides !== 'object') continue
+      const { srcSide, dstSide } = sides as Partial<RelationAnchorSides>
+      if ((srcSide === 'left' || srcSide === 'right') && (dstSide === 'left' || dstSide === 'right')) {
+        result[id] = { srcSide, dstSide }
+      }
     }
   }
+  Object.assign(result, optimisticRelationAnchors.value)
   return result
 })
+watch(activeCanvasId, () => {
+  optimisticRelationAnchors.value = {}
+})
+function setOptimisticRelationAnchor(id: number, sides: RelationAnchorSides) {
+  optimisticRelationAnchors.value = { ...optimisticRelationAnchors.value, [String(id)]: sides }
+}
+function deleteOptimisticRelationAnchor(id: number) {
+  const next = { ...optimisticRelationAnchors.value }
+  delete next[String(id)]
+  optimisticRelationAnchors.value = next
+}
 
 onMounted(async () => {
   // 项目抽屉会在首屏就被打开，项目数据不能等笔记/画布请求串行完成后才开始拉；否则抽屉
@@ -198,7 +215,9 @@ function flushViewSave() {
 function resetView() {
   canvasRef.value?.resetScaleAtCenter()
 }
-onBeforeUnmount(flushViewSave)
+onBeforeUnmount(() => {
+  flushViewSave()
+})
 
 async function createCanvas() {
   const canvas = await store.createCanvas()
@@ -232,7 +251,17 @@ function returnProjectToDrawer(item: MindCanvasItem) {
   void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
 }
 async function removeRelation(id: number) {
+  if (id < 0) {
+    deleteOptimisticRelationAnchor(id)
+    store.rollbackOptimisticCanvasRelation(id)
+    return
+  }
+  const relation = store.canvasRelations.find(current => current.id === id)
   await store.removeCanvasRelation(id)
+  deleteOptimisticRelationAnchor(id)
+  if (relation) {
+    runtime.deleteNodeConnectionsBetween(`mind:${relation.srcNodeId}`, `mind:${relation.dstNodeId}`)
+  }
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
 async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides) {
@@ -250,15 +279,46 @@ async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAn
     (relation.srcNodeId === dstNodeId && relation.dstNodeId === srcNodeId),
   )
   for (const current of samePair) {
+    // 临时关系已经代表一条正在提交的边；请求尚未返回前再次拖同一对节点，
+    // 不能把它误判成“没有同端点关系”而继续创建平行边。
+    if (current.id < 0) return
     const existingSides = relationAnchors.value[String(current.id)]
     const normalized = normalizeSides(current.srcNodeId)
     if (existingSides?.srcSide === normalized.srcSide && existingSides.dstSide === normalized.dstSide) return
   }
-  const relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
-  if (relationAnchors.value[String(relation.id)]) return
-  // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
+  const runtimeConnection = {
+    sourceObjectId: mindCanvasObjectId({ nodeId: srcNodeId }),
+    sourcePortId: sides.srcSide,
+    targetObjectId: mindCanvasObjectId({ nodeId: dstNodeId }),
+    targetPortId: sides.dstSide,
+  }
+  const optimistic = store.addOptimisticCanvasRelation(srcNodeId, dstNodeId)
+  setOptimisticRelationAnchor(optimistic.id, { ...sides })
+  let relation: Awaited<ReturnType<typeof store.createCanvasRelation>>
+  try {
+    relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
+  } catch (error) {
+    // API 创建失败时回滚 Runtime 已登记的去重记录，否则下一次重试会被
+    // 当成重复连接拒绝。
+    runtime.unregisterNodeConnection(runtimeConnection)
+    deleteOptimisticRelationAnchor(optimistic.id)
+    store.rollbackOptimisticCanvasRelation(optimistic.id)
+    throw error
+  }
+  // 用户可能在请求返回前点击了临时连接线；这种情况下不把已创建的后端关系重新显示出来。
+  if (!store.canvasRelations.some(current => current.id === optimistic.id)) {
+    runtime.unregisterNodeConnection(runtimeConnection)
+    deleteOptimisticRelationAnchor(optimistic.id)
+    await store.removeCanvasRelation(relation.id).catch(() => {})
+    return
+  }
   const normalized = normalizeSides(relation.srcNodeId)
-  await store.saveCanvasRelationAnchors(canvasId, { ...relationAnchors.value, [relation.id]: normalized })
+  deleteOptimisticRelationAnchor(optimistic.id)
+  setOptimisticRelationAnchor(relation.id, normalized)
+  store.replaceOptimisticCanvasRelation(optimistic.id, relation)
+  // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
+  const persistedAnchors = Object.fromEntries(Object.entries(relationAnchors.value).filter(([id]) => Number(id) >= 0))
+  await store.saveCanvasRelationAnchors(canvasId, { ...persistedAnchors, [relation.id]: normalized })
 }
 function openRef(item: MindCanvasItem) {
   if (item.node.kind !== 'ref' || !item.node.refType || item.node.refId == null) return

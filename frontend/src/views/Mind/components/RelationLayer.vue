@@ -176,10 +176,19 @@ function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y:
   return props.screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2)
 }
 function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }) {
-  // 不能拿 pos（landingPositions）判断"是不是在拖"——那份表只在松手后的惯性插值阶段才有
-  // 这张卡的条目，主动拖拽期间卡片走的是直接改 item.x/y 的路径，pos 全程是 undefined。
-  // measuredAnchor 内部自己会判断查不查得到对应的连接点 DOM，这里无条件先试，测不到
-  // （没挂载/还没进 DOM 之类的边界情况）才落回按轴对齐估算的兜底公式。
+  // 落地期间本体会先切到最终位置并保持隐藏，连接点 DOM 也可能已经出现在目标位置；
+  // 此时必须优先使用 runtime 每帧提供的代理坐标，否则连接线会提前跳到目标卡片，
+  // 而代理仍在飞行。主动拖拽期间没有 pos，仍走真实连接点测量。
+  if (pos) {
+    const { w, h } = geometry(item)
+    const x = pos.x
+    const y = pos.y
+    if (side === 'left') return { x, y: y + h / 2 }
+    if (side === 'right') return { x: x + w, y: y + h / 2 }
+    if (side === 'top') return { x: x + w / 2, y }
+    return { x: x + w / 2, y: y + h }
+  }
+  // 没有落地坐标时，优先测量主动拖拽/悬浮连接点；量不到再按世界坐标兜底。
   const measured = measuredAnchor(item, side)
   if (measured) return measured
   const { w, h } = geometry(item)
@@ -191,7 +200,9 @@ function anchorFor(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y:
   return { x: x + w / 2, y: y + h }
 }
 function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanvasItem) {
-  let sides = props.relationAnchors[String(relation.id)] ?? anchorSideCache.get(relation.id)
+  const explicit = props.relationAnchors[String(relation.id)]
+  if (explicit) anchorSideCache.set(relation.id, explicit)
+  let sides = explicit ?? anchorSideCache.get(relation.id)
   if (!sides) {
     const srcCenter = centerFor(src), dstCenter = centerFor(dst)
     sides = { srcSide: pickAnchorSide(srcCenter, dstCenter), dstSide: pickAnchorSide(dstCenter, srcCenter) }
@@ -211,6 +222,15 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
 const departingRelations = ref<{ relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number }[]>([])
 const immediateDepartures = new Set<number>()
 let departingRaf = 0
+function pruneAnchorSideCache() {
+  const retained = new Set([
+    ...props.relations.map(relation => relation.id),
+    ...departingRelations.value.map(entry => entry.relation.id),
+  ])
+  for (const id of anchorSideCache.keys()) {
+    if (!retained.has(id)) anchorSideCache.delete(id)
+  }
+}
 // 松手（卡片从 items/relations 里被摘掉）那一刻就开始淡出，不用等飞行克隆真正落地——
 // 跟随和淡出同时进行，视觉上"松手就往下走"而不是"跟完全程才突然开始淡"。比落地飞行本身
 // （0.55~0.7s）快很多，线在飞行途中就已经淡没了，不会跟着飞完全程。时间到直接移出列表，
@@ -222,6 +242,7 @@ function pumpDepartingFrames() {
   const now = performance.now()
   const next = departingRelations.value.filter(({ since }) => now - since < DEPARTING_FADE_MS)
   if (next.length !== departingRelations.value.length) departingRelations.value = next
+  pruneAnchorSideCache()
   if (departingRelations.value.length) {
     departingRaf = requestAnimationFrame(pumpDepartingFrames)
   } else {
@@ -248,6 +269,7 @@ watch(
     if (nextRelations.length === 0 && props.items.length === 0) {
       departingRelations.value = []
       immediateDepartures.clear()
+      anchorSideCache.clear()
       return
     }
     const nextIds = new Set(nextRelations.map(relation => relation.id))
@@ -256,7 +278,10 @@ watch(
       const immediate = immediateDepartures.delete(relation.id)
       return !immediate
     })
-    if (!departing.length) return
+    if (!departing.length) {
+      pruneAnchorSideCache()
+      return
+    }
     const prevItemByNodeId = new Map(prevItems.map(item => [item.nodeId, item]))
     const additions = departing
       .map((relation) => {
@@ -265,8 +290,12 @@ watch(
         return src && dst ? { relation, src, dst, since: performance.now() } : null
       })
       .filter((v): v is { relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number } => v != null)
-    if (!additions.length) return
+    if (!additions.length) {
+      pruneAnchorSideCache()
+      return
+    }
     departingRelations.value = [...departingRelations.value, ...additions]
+    pruneAnchorSideCache()
     if (!departingRaf) departingRaf = requestAnimationFrame(pumpDepartingFrames)
   },
 )

@@ -33,6 +33,7 @@ function plainOf(md: string): string {
 }
 
 let optimisticSeq = 0
+let optimisticRelationSeq = 0
 
 export const useMindStore = defineStore('mind', () => {
   const notes   = ref<MindNote[]>([])
@@ -402,6 +403,31 @@ export const useMindStore = defineStore('mind', () => {
     return relation
   }
 
+  function addOptimisticCanvasRelation(srcNodeId: number, dstNodeId: number): MindRelation {
+    const now = new Date().toISOString()
+    const relation: MindRelation = {
+      id: -(++optimisticRelationSeq),
+      srcNodeId,
+      dstNodeId,
+      relType: 'related',
+      origin: 'user',
+      status: 'confirmed',
+      createdAt: now,
+      updatedAt: now,
+    }
+    canvasRelations.value.push(relation)
+    return relation
+  }
+
+  function replaceOptimisticCanvasRelation(optimisticId: number, relation: MindRelation): void {
+    canvasRelations.value = canvasRelations.value.filter(current => current.id !== optimisticId)
+    if (!canvasRelations.value.some(current => current.id === relation.id)) canvasRelations.value.push(relation)
+  }
+
+  function rollbackOptimisticCanvasRelation(id: number): void {
+    canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
+  }
+
   async function removeCanvasRelation(id: number) {
     await mindApi.deleteRelation(id)
     canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
@@ -455,7 +481,7 @@ export const useMindStore = defineStore('mind', () => {
     notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, addOptimisticCanvasRelation, replaceOptimisticCanvasRelation, rollbackOptimisticCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })
