@@ -54,6 +54,12 @@ const props = defineProps({
   // 直接量真实 DOM，抬起多少不用关心），只用来知道"什么时候该在这 0.25s 过渡窗口里持续
   // 重新量一遍"，见下面 pumpHoverFrames。
   hoveredNodeId: { type: Number as PropType<number | null>, default: null },
+  // Runtime 每帧更新拖拽代理的视觉位置；这个计数只负责让连接线重新读取真实连接点，
+  // 不把代理的轴对齐矩形当成旋转中的卡片几何。
+  visualFrame: { type: Number, default: 0 },
+  // Runtime 当前拖拽的本体不一定创建独立的连接点管理层；标记它后允许 measuredAnchor
+  // 读取本体里的真实 dot，覆盖卡片的实时位移和 rotateZ。
+  activeVisualNodeId: { type: Number as PropType<number | null>, default: null },
   // 拖拽/落地飞行期间用来把「强制绑定」量出的真实屏幕坐标换算回世界坐标（见 anchorFor）。
   screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, default: null },
 })
@@ -155,7 +161,14 @@ function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y:
   if (!props.screenToWorld) return null
   // 先找拖拽/落地飞行专用的那份连接点覆盖层——这个查询无条件放行：覆盖层只在真的有物理
   // 模块在拖这张卡时才存在，静止的卡查不到，成本可以忽略。
-  let dot = document.querySelector<HTMLElement>(`.phys-conn-dot-manager[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  const visibleDot = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)].find(candidate => {
+    if (!candidate.isConnected) return false
+    const style = getComputedStyle(candidate)
+    if (style.display === 'none' || style.visibility === 'hidden') return false
+    const rect = candidate.getBoundingClientRect()
+    return rect.width >= 1 && rect.height >= 1
+  }) ?? null
+  let dot = visibleDot(`.phys-conn-dot-manager[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
   // 卡片本体真实渲染的连接点这条回退分支，两种情况才查：①「当前正在悬浮的」——持续条件，
   // 不设时限，鼠标停留多久就测多久，抬起态是 :hover 的稳态而不是一次性动画，只测 300ms
   // 会在悬停时长超过这个窗口后把还在抬着的卡误判成"已经落地"，线跟着瞬间掉回静止公式，
@@ -167,8 +180,8 @@ function measuredAnchor(item: MindCanvasItem, side: AnchorSide): { x: number; y:
   // 的 transform 提交之间没有强制排序，读到上一帧的屏幕坐标就会让连线看起来"慢半拍"，这是
   // 画布平移时连线肉眼可见滞后的根因（devlog 2026-07-14）。两种情况都不占的静止卡片直接
   // 退到下面按 item.x/y 算的几何兜底——纯世界坐标，平移画布时天然跟手，不需要量真实 DOM。
-  if (!dot && (item.nodeId === props.hoveredNodeId || hoverSettleIds.value.has(item.nodeId))) {
-    dot = document.querySelector<HTMLElement>(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
+  if (!dot && (item.nodeId === props.activeVisualNodeId || item.nodeId === props.hoveredNodeId || hoverSettleIds.value.has(item.nodeId))) {
+    dot = visibleDot(`.card-conn-dots[data-node-id="${item.nodeId}"] .conn-dot-${side}`)
   }
   if (!dot) return null
   const rect = dot.getBoundingClientRect()
@@ -302,6 +315,7 @@ watch(
 
 const visibleRelations = computed(() => {
   void renderTick.value   // 悬停抬起过渡期间的心跳依赖，见 pumpHoverFrames
+  void props.visualFrame
   const live = props.relations.flatMap((relation) => {
     const src = itemByNodeId.value.get(relation.srcNodeId)
     const dst = itemByNodeId.value.get(relation.dstNodeId)
