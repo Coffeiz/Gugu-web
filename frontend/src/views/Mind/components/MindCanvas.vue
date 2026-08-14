@@ -6,7 +6,7 @@
         :items="relationItems" :relations="visibleRelations" :highlight-node-id="connectionDrag.originNodeId"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
-        :hovered-node-id="hoveredNodeId" :screen-to-world="screenToWorld"
+        :hovered-node-id="hoveredNodeId" :visual-frame="runtimeVisualFrame" :active-visual-node-id="activeVisualNodeId" :screen-to-world="screenToWorld"
         @remove="id => emit('removeRelation', id)"
       />
 
@@ -222,6 +222,8 @@ function onItemHover(item: MindCanvasItem, hovering: boolean) {
 
 const landingPositions = reactive(new Map<number, { x: number; y: number }>())
 const landingObjectNodeIds = new Map<string, number>()
+const runtimeVisualFrame = ref(0)
+const activeVisualNodeId = ref<number | null>(null)
 // 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
 // 不能把它提前识别成可吸附目标。
 const landingNodeIds = reactive(new Set<number>())
@@ -232,6 +234,7 @@ function onRuntimeVisual(event: RuntimeEvent) {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
     landingObjectNodeIds.delete(event.objectId)
+    if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
     if (nodeId == null) return
     landingPositions.delete(nodeId)
     landingNodeIds.delete(nodeId)
@@ -241,16 +244,22 @@ function onRuntimeVisual(event: RuntimeEvent) {
     return
   }
   if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
+  runtimeVisualFrame.value++
   const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return
   const nodeId = item.nodeId
   landingObjectNodeIds.set(event.objectId, nodeId)
+  if (event.phase === 'active') activeVisualNodeId.value = nodeId
   const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
-  landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
   if (event.phase === 'landing') {
+    landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
     landingNodeIds.add(nodeId)
     if (hoveredNodeId.value === nodeId) hoveredNodeId.value = null
+  } else {
+    // active 阶段的代理会随卡片 rotateZ 摆动，端点必须由 RelationLayer 读取真实 dot；
+    // landing 阶段才使用这份轴对齐插值位置，避免把旋转中的连接点压回卡片中线。
+    landingPositions.delete(nodeId)
   }
 }
 
