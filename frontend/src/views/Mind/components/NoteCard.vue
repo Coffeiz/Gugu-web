@@ -36,7 +36,8 @@
     <template v-else>
       <div v-if="isHeading" class="nc-head">
         <span class="nc-title" @click="startEditAt('title')">{{ title }}</span>
-        <span class="nc-actions">
+        <CardAffordances :hovering="isHovering && !editing" actions-placement="inline" :node-id="null">
+          <template #actions>
           <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
           <button class="nc-icon" title="编辑" @pointerdown.stop @click.stop="startEditAt(null)">
             <PhPencilSimple :size="12" weight="bold" />
@@ -44,9 +45,11 @@
           <button class="nc-icon danger" title="删除" @pointerdown.stop @click.stop="emit('delete')">
             <PhTrash :size="12" weight="bold" />
           </button>
-        </span>
+          </template>
+        </CardAffordances>
       </div>
-      <span v-else class="nc-actions nc-actions-float">
+      <CardAffordances v-else :hovering="isHovering && !editing" actions-placement="float" :node-id="null">
+        <template #actions>
         <ColorSwatches :model-value="note.color" :allow-none="!canvasMode" @update:model-value="c => emit('color', c)" />
         <button class="nc-icon" title="编辑" @pointerdown.stop @click.stop="startEditAt(null)">
           <PhPencilSimple :size="12" weight="bold" />
@@ -54,21 +57,22 @@
         <button class="nc-icon danger" title="删除" @pointerdown.stop @click.stop="emit('delete')">
           <PhTrash :size="12" weight="bold" />
         </button>
-      </span>
+        </template>
+      </CardAffordances>
       <div v-if="bodyMd" ref="bodyRef" class="nc-body md-preview" :class="{ clamped: clamped && !expanded }"
            @click="onBodyClick" v-html="previewHtml"></div>
       <button v-if="clamped" class="nc-expand" @pointerdown.stop @click.stop="expanded = !expanded">
         {{ expanded ? '收起' : '展开' }}
       </button>
     </template>
-    <!-- 连接点只有画布模式才有（笔记页时间流不支持建立关联）。放在这里（NoteCard 自己的
+    <!-- 连接点只有画布模式才有，并且保持在 NoteCard 自己的 DOM 子树里，确保拖拽克隆时
          子树里，不是 NoteSticker.vue 那层壳的兄弟节点）是关键——拖拽克隆 cloneNode(true)
          只拷贝这张卡自己的 DOM 子树，连接点得是这棵子树的真子集，才能跟着克隆体一起飞、
          跟文件/活动/项目引用卡三种画布卡片同样的路数（见 NoteSticker.vue 的说明）。 -->
-    <CardConnDot
+    <CardAffordances
       v-if="canvasMode"
       :node-id="note.id" :hovering="isHovering && !editing" :connecting="connecting ?? false" :target-side="connectionTargetSide ?? null"
-      @drag-start="(e, side) => emit('connect-drag-start', e, side)"
+      @connect-drag-start="(e, side) => emit('connect-drag-start', e, side)"
     />
   </div>
 </template>
@@ -79,7 +83,7 @@ import { PhCheck, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import { combineTitleBody, mdToPreviewHtml } from '@/composables/useMindEditor'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import type { MindNote } from '@/services/api'
-import CardConnDot from './CardConnDot.vue'
+import CardAffordances from '@/components/common/CardAffordances.vue'
 import ColorSwatches from './ColorSwatches.vue'
 import NoteEditor from './NoteEditor.vue'
 
@@ -115,7 +119,7 @@ const props = defineProps<{
   // getBoundingClientRect 量出的屏幕像素差值换回世界坐标像素，见该函数内的换算注释。
   // 笔记页时间流没有缩放祖先，不传按 1 处理，换算是 no-op。
   scale?: number
-  // 建立关联相关——只有画布模式会用（笔记页时间流不支持连线），见下面 CardConnDot 的
+  // 建立关联相关——只有画布模式会用（笔记页时间流不支持连线），见下面 CardAffordances 的
   // v-if="canvasMode"。NoteSticker.vue 原样转发 MindCanvas.vue 给它的同名 prop。
   connecting?: boolean
   connectionTargetSide?: 'left' | 'right' | null
@@ -131,8 +135,8 @@ const emit = defineEmits<{
   (e: 'connect-drag-start', event: PointerEvent, side: 'left' | 'right'): void
 }>()
 
-// CardConnDot 用 prop 驱动外观（不是 CSS :hover）——只有画布模式会实际渲染 CardConnDot，
-// 但 hover 监听器挂在根节点上无条件生效也无妨（笔记页时间流没有 CardConnDot 消费这个值）。
+// CardAffordances 用 prop 驱动外观（不是 CSS :hover）——只有画布模式才传入 node-id，
+// 便签页时间流因此不会渲染连接点。
 const isHovering = ref(false)
 
 // 编辑态按区域拆成标题草稿 + 正文草稿（对齐只读态的 nc-head/nc-body 分区），
@@ -546,8 +550,8 @@ defineExpose({ rootEl: cardRef })
 .note-card.canvas-mode.tint-blue  { background: rgb(224,239,251); }
 .note-card.canvas-mode.tint-teal  { background: rgb(229,248,250); }
 /* 画布模式下改回 visible——.note-card 平时 overflow:hidden（裁掉溢出圆角的正文/标题内容），
-   但连接点（CardConnDot.vue）现在渲染在这张卡自己的子树里、圆点位置故意摆在卡片边缘外侧
-   （见 CardConnDot.vue 的 .conn-dot-left/right，left/right: -8px），会被这份 hidden 整个
+   但连接点（CardAffordances.vue）现在渲染在这张卡自己的子树里、圆点位置故意摆在卡片边缘外侧
+   （见 CardAffordances.vue 的 .conn-dot-left/right），会被这份 hidden 整个
    裁掉一半——文件/项目引用卡本来就各自这样处理过同一个坑（FileRefCard.vue 的 :deep(.fc-card)
    /ProjectRefCard.vue 的 .pr-card 都是 overflow:visible），便签只在画布模式才需要，不影响
    笔记页时间流原有的裁剪需要。 */
@@ -569,13 +573,6 @@ defineExpose({ rootEl: cardRef })
   flex: 1; min-width: 0; cursor: text;
   font-size: 14px; font-weight: 600; line-height: 1.35; color: var(--text-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.nc-actions { margin-left: auto; flex-shrink: 0; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
-.note-card:hover .nc-actions { opacity: 1; }
-/* 没有真标题的卡：编辑/删除浮在右上角，不占正文的地方、不凭空造一条头部 */
-.nc-actions-float {
-  position: absolute; top: 11px; right: 13px; z-index: 2;
-  margin-left: 0;
 }
 .nc-icon {
   padding: 3px; border: none; border-radius: 5px;

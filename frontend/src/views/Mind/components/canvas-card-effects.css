@@ -52,7 +52,7 @@
 .entity-sticker.phys-reveal-controls .card-actions,
 .pr-missing.phys-reveal-controls .card-actions,
 .fr-missing.phys-reveal-controls .card-actions,
-.note-card.phys-reveal-controls .nc-actions { opacity: 1 !important; }
+.note-card.phys-reveal-controls .card-actions { opacity: 1 !important; }
 .fc-card.phys-reveal-controls .conn-dot::before,
 .pr-card.phys-reveal-controls .conn-dot::before,
 .entity-sticker.phys-reveal-controls .conn-dot::before,

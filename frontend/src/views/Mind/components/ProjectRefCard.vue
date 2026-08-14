@@ -20,13 +20,12 @@
   >
     <ProjectCardBody :project="project" />
 
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+      <template #connect />
+    </CardAffordances>
   </div>
   <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
@@ -47,13 +46,11 @@
          "已删除，仅保留快照"，缓存刚加载完那一下会先说谎再改口。跟 FileRefCard.vue 同一个
          坑（见其注释），这里只是文字层面的表现，不像文件卡那样有缩略图区带来的跳动。 -->
     <span class="pr-deleted">{{ projectStore.loading ? '加载中…' : '已删除，仅保留快照' }}</span>
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </div>
 </template>
 
@@ -65,8 +62,7 @@ import type { Project } from '@/types/project'
 import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
-import CardActions from './CardActions.vue'
-import CardConnDot from './CardConnDot.vue'
+import CardAffordances from '@/components/common/CardAffordances.vue'
 import ProjectCardBody from './ProjectCardBody.vue'
 import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
 import { MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
@@ -88,7 +84,7 @@ const emit = defineEmits<{
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
-// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
+// CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
 function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
@@ -193,7 +189,7 @@ function onOpen() {
    越往后建的项目卡片、前面项目卡片越多/越高，累积偏差就越大。
    圆角只用 border-radius，不叠 corner-shape:squircle——文件卡/便签/活动贴纸这几种画布卡片
    都是普通圆角，项目卡跟着统一，不再各转各的曲线。overflow:visible 是因为连接点的判定区
-   摆在卡片边缘外侧（见 CardConnDot.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
+   摆在卡片边缘外侧（见 CardAffordances.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
    裁掉一半；背景渐变本身不需要 overflow:hidden 也会被自己的 border-radius 裁成圆角（元素
    自身背景永远贴合自己的盒子形状，overflow 管的是会溢出盒子的子元素/内容，不影响这点）。
    "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
@@ -245,6 +241,6 @@ function onOpen() {
 .pr-deadline.urgent { color: var(--color-warning); font-weight: 600; }
 .pr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
-/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
-   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都由 CardAffordances.vue 提供，
+   外观/悬停显形逻辑不再各卡自己抄一份。 */
 </style>
