@@ -10,6 +10,7 @@ export function setupInteractionRuntime(): void {
 
   runtime.registerObjectType('project-card', {
     defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
     groupVisual: 'default',
     motion: { enabled: true },
     // 抓取对齐沿用咕咕旧版（main 分支 usePhysicsDrag.ts）看板卡片的
@@ -65,6 +66,7 @@ export function setupInteractionRuntime(): void {
   }
   runtime.registerObjectType('file-item', {
     defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
     groupVisual: 'default',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
@@ -73,6 +75,7 @@ export function setupInteractionRuntime(): void {
   })
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
     groupVisual: 'default',
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
@@ -81,6 +84,7 @@ export function setupInteractionRuntime(): void {
   })
   const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
     camera: { enabled: true },
     releaseMode: 'physical',
     // 画布单独限制释放速度；该档案只在 free Surface 上读取，

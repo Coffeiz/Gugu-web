@@ -176,5 +176,5 @@ const { onPointerDown } = useMindRuntimeObject({
    不用再叠一份；"正在建立关联"的虚线描边现在是 global.css 的共用 .connecting 规则，
    这里也不用再单独声明一份。 */
 
-/* 连接点挪进了共用组件 CardConnDot.vue，外观/悬停显形逻辑不再自己抄一份。 */
+/* 连接点挪进了共用组件 CardAffordances.vue，外观/悬停显形逻辑不再自己抄一份。 */
 </style>

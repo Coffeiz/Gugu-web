@@ -186,6 +186,7 @@ export function startPhysicsDrag(event: PointerEvent | DragEvent, sourceEl: HTML
   const startsHovered = opts.initialHover || sourceEl.matches(':hover')
   clone.classList.remove('phys-reveal-controls')
   if (startsHovered) {
+    // CardAffordances 的兼容 class 保持连接点拖拽视觉逻辑稳定。
     clone.querySelectorAll<HTMLElement>('.card-conn-dots').forEach(dot => dot.classList.add('hovering'))
   }
   // 连接点不能跟随两张卡片内容克隆交叉淡变：后创建的落地克隆会短暂盖住前一张，圆点便会

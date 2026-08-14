@@ -60,6 +60,7 @@ export function createLandingClone(source: HTMLElement, options: LandingCloneOpt
     removeClasses: ['phys-drag-source', 'phys-reveal-controls', 'phys-drag-source-placeholder'],
   })
   if (options.cloneClass) content.classList.add(options.cloneClass)
+  // CardAffordances 保留 .card-conn-dots 作为拖拽视觉层的稳定 DOM 契约。
   content.querySelectorAll('.card-conn-dots').forEach(dot => dot.remove())
   content.querySelectorAll<HTMLElement>('.card-actions, .nc-actions').forEach(action => {
     action.style.visibility = 'hidden'
