@@ -221,6 +221,7 @@ function onItemHover(item: MindCanvasItem, hovering: boolean) {
 }
 
 const landingPositions = reactive(new Map<number, { x: number; y: number }>())
+const landingObjectNodeIds = new Map<string, number>()
 // 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
 // 不能把它提前识别成可吸附目标。
 const landingNodeIds = reactive(new Set<number>())
@@ -229,8 +230,9 @@ const landingNodeIds = reactive(new Set<number>())
 function onRuntimeVisual(event: RuntimeEvent) {
   if (event.type === 'move-visual-end') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
-    if (!item) return
-    const nodeId = item.nodeId
+    const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
+    landingObjectNodeIds.delete(event.objectId)
+    if (nodeId == null) return
     landingPositions.delete(nodeId)
     landingNodeIds.delete(nodeId)
     const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
@@ -242,6 +244,7 @@ function onRuntimeVisual(event: RuntimeEvent) {
   const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return
   const nodeId = item.nodeId
+  landingObjectNodeIds.set(event.objectId, nodeId)
   const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
@@ -292,7 +295,20 @@ function connSpringFrame(now: number) {
 }
 function connectionAnchor(item: MindCanvasItem, side: 'left' | 'right') {
   const { w, h } = measuredSizes.get(item.nodeId) ?? itemSize(item)
-  return { x: item.x + (side === 'right' ? w : 0), y: item.y + h / 2 }
+  const card = document.querySelector<HTMLElement>(`[data-node-id="${item.nodeId}"]`)
+  const dot = document.querySelector<HTMLElement>(
+    `.phys-conn-dot-manager[data-node-id="${item.nodeId}"] .conn-dot-${side}, [data-node-id="${item.nodeId}"] .card-conn-dots .conn-dot-${side}`,
+  )
+  const cardRect = card?.isConnected ? card.getBoundingClientRect() : null
+  const dotRect = dot?.isConnected ? dot.getBoundingClientRect() : null
+  const measured = cardRect && cardRect.width > 0 && cardRect.height > 0
+    ? { w: cardRect.width / camera.scale, h: cardRect.height / camera.scale }
+    : null
+  if (measured) measuredSizes.set(item.nodeId, measured)
+  const point = dotRect && dotRect.width > 0 && dotRect.height > 0
+    ? screenToWorld(dotRect.left + dotRect.width / 2, dotRect.top + dotRect.height / 2)
+    : { x: item.x + (side === 'right' ? (measured?.w ?? w) : 0), y: item.y + (measured?.h ?? h) / 2 }
+  return point
 }
 function connectionTargetSide(nodeId: number) {
   return connectionDrag.targetNodeId === nodeId ? connectionDrag.targetSide : null
@@ -450,6 +466,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
   cancelAnimationFrame(connSpringRaf)
+  landingObjectNodeIds.clear()
 })
 </script>
 
