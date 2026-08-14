@@ -56,8 +56,10 @@ export function useMindRuntimeObject(options: {
         ...(isCanvasObject ? {
           node: {
             ports: [
-              { id: 'left', side: 'left', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
-              { id: 'right', side: 'right', position: 0.5, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
+              // 与 CardAffordances 的 32px 透明连接按钮保持一致：命中半径为 16px，
+              // 不要求鼠标必须精确压在可见圆点中心。
+              { id: 'left', side: 'left', position: 0.5, hitRadius: 16, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
+              { id: 'right', side: 'right', position: 0.5, hitRadius: 16, accepts: [...MIND_CANVAS_OBJECT_TYPES] },
             ],
           },
         } : {}),

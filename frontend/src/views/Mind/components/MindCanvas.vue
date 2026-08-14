@@ -298,7 +298,10 @@ function connectionTargetSide(nodeId: number) {
   return connectionDrag.targetNodeId === nodeId ? connectionDrag.targetSide : null
 }
 function targetAt(event: PointerEvent, originNodeId: number) {
-  const port = runtime.hitNodePort({ x: event.clientX, y: event.clientY }, { objectType: MIND_CANVAS_OBJECT_TYPE })
+  const port = runtime.hitNodePort(
+    { x: event.clientX, y: event.clientY },
+    { objectType: MIND_CANVAS_OBJECT_TYPE, snapToObject: true },
+  )
   const item = port?.objectId.startsWith('mind:')
     ? props.items.find(current => mindCanvasObjectId(current) === port.objectId)
     : undefined
@@ -311,8 +314,10 @@ function updateConnectionTarget(event: PointerEvent) {
   const originNodeId = connectionDrag.originNodeId
   if (originNodeId == null) return
   const target = targetAt(event, originNodeId)
-  connectionDrag.targetNodeId = target?.item.nodeId ?? null
-  connectionDrag.targetSide = target?.side ?? null
+  const nextTargetNodeId = target?.item.nodeId ?? null
+  const nextTargetSide = target?.side ?? null
+  connectionDrag.targetNodeId = nextTargetNodeId
+  connectionDrag.targetSide = nextTargetSide
   // 命中目标卡后，视觉线端弹簧吸到该侧连接点；命中/左右判定仍按原始鼠标位置。
   connSpringTarget = target ? connectionAnchor(target.item, target.side) : screenToWorld(event.clientX, event.clientY)
 }
