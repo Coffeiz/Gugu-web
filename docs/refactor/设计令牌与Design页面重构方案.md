@@ -35,6 +35,57 @@
 8. `/design` 展示页直接读取运行时 CSS 变量，不重复维护一份实际数值。
 9. 动态业务颜色可以通过受控的局部 CSS 变量传入，但必须明确例外原因。
 
+### 1.3 滚动条契约
+
+滚动条统一为低干扰的 CSS 滚动条，不采用全局隐藏。普通页面需要保留滚动可发现性；画布和笔记横向拖拽区等已有替代交互的区域，才允许隐藏滚动条。
+
+滚动条只保留三档尺寸：
+
+```css
+--scrollbar-size-compact: 3px;
+--scrollbar-size-default: 5px;
+--scrollbar-size-editor: 8px;
+```
+
+语义映射：
+
+| 类型 | 用途 |
+|---|---|
+| `compact` | 侧栏、看板列、抽屉、通知列表、弹窗内部 |
+| `default` | 主页面、聊天、文件列表、普通内容面板 |
+| `editor` | Agent prompt、代码块、长文本编辑器 |
+
+统一滚动容器类：
+
+```text
+.scroll-surface
+.scroll-surface--compact
+.scroll-surface--editor
+.scroll-surface--hidden
+```
+
+其中 `scroll-surface--hidden` 只用于有明确替代操作反馈的横向画布/笔记滚动区，不用于普通纵向列表。
+
+滚动条的颜色和主题覆盖使用语义令牌：
+
+```css
+--scrollbar-track: transparent;
+--scrollbar-thumb: rgba(123, 127, 178, 0.22);
+--scrollbar-thumb-hover: rgba(123, 127, 178, 0.38);
+--scrollbar-corner: transparent;
+```
+
+Admin 只覆盖颜色，不复制一套滚动行为：
+
+```css
+.admin-theme {
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+}
+```
+
+滚动容器默认使用 `scrollbar-gutter: stable`，需要双侧对齐的时间线或面板使用 `stable both-edges`。组件不再各自手写 `::-webkit-scrollbar`，只在编辑器和隐藏横向区保留明确特例。
+
 ## 2. 现状调查
 
 ### 2.1 页面与视觉表面
@@ -124,7 +175,7 @@ frontend/src/assets/styles/
 ├── global.css
 ├── variables.css              # 兼容入口，最终只负责导入 tokens/index.css
 └── tokens/
-    ├── primitives.css         # 色板、透明度、间距、字号、圆角、基础阴影
+    ├── primitives.css         # 色板、透明度、间距、字号、圆角、滚动条尺寸、基础阴影
     ├── semantic.css           # surface、content、border、action、status、layer
     ├── components.css         # 卡片、弹窗、侧栏、按钮、输入框
     ├── motion.css             # 普通 UI 动效
@@ -502,6 +553,8 @@ const value = getComputedStyle(document.documentElement)
 - [ ] 建立主应用 `light/dark/system` 主题映射
 - [ ] 建立入口 HTML 的首屏主题初始化
 - [ ] 增加层级、focus、disabled、error 和 reduced-motion 令牌
+- [ ] 增加滚动条尺寸、颜色、hover 和 corner 令牌
+- [ ] 建立 `scroll-surface`、`compact`、`editor`、`hidden` 容器样式
 
 ### Phase 2：`/design` 页面
 
@@ -522,6 +575,8 @@ const value = getComputedStyle(document.documentElement)
 - [ ] 迁移通用按钮、输入框、标签、复选框和弹窗
 - [ ] 迁移 AppSidebar、顶栏和浮动窗口
 - [ ] 迁移 popup、modal、tooltip 的层级和阴影
+- [ ] 将重复的 `::-webkit-scrollbar` 规则迁移到滚动容器语义类
+- [ ] 保留画布/笔记横向隐藏滚动条和编辑器滚动条作为明确特例
 - [ ] 清理共享组件中新增加的裸色值
 
 ### Phase 4：业务页面迁移
@@ -538,6 +593,7 @@ const value = getComputedStyle(document.documentElement)
 ### Phase 5：约束与收尾
 
 - [ ] 统计剩余硬编码色值、字号、圆角、阴影和 blur
+- [ ] 统计剩余局部滚动条规则和未分类的 `overflow` 容器
 - [ ] 检查间距、圆角和字号主档位均为 4 个
 - [ ] 建立允许例外清单
 - [ ] 对新增样式增加 raw literal 检查
@@ -551,6 +607,9 @@ const value = getComputedStyle(document.documentElement)
 ### 令牌系统
 
 - 页面通用颜色、表面、边框、文字、状态、圆角、阴影和动效都有语义变量。
+- 普通滚动容器使用统一滚动条样式，并按 compact/default/editor 选择尺寸。
+- 只有具有替代交互反馈的画布/笔记横向区域可以隐藏滚动条。
+- 滚动条出现或消失不会导致主要内容发生布局跳动。
 - 间距、圆角和字体大小主档位均为 4 个。
 - 新增普通组件不需要直接写品牌色和通用透明度。
 - 主应用支持 `light`、`dark`、`system`，且首屏不会出现明显主题闪烁。
