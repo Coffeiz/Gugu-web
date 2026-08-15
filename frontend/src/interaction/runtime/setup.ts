@@ -1,5 +1,5 @@
 import { runtime } from './index'
-import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
+import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_CANVAS_DRAG_Z_INDEX, MIND_CANVAS_LANDING_Z_INDEX, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
 
 let initialized = false
 
@@ -84,6 +84,12 @@ export function setupInteractionRuntime(): void {
   })
   const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
+    proxyZIndex: MIND_CANVAS_DRAG_Z_INDEX,
+    landingProxyZIndex: ({ sourceSurfaceId, destinationSurfaceId }) => {
+      if (destinationSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) return MIND_CANVAS_DRAG_Z_INDEX
+      if (sourceSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) return MIND_CANVAS_DRAG_Z_INDEX
+      return MIND_CANVAS_LANDING_Z_INDEX
+    },
     affordances: { selector: '[data-card-affordances]' },
     camera: { enabled: true },
     releaseMode: 'physical',
