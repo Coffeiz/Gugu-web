@@ -232,6 +232,7 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
     })
   } finally {
     projectGroupTogglePending = false
+    flushPendingProjectStatus()
   }
 }
 function toggleProjectStatus(status: string) {
@@ -246,6 +247,10 @@ function flushPendingProjectStatus() {
 }
 function openProjectStatus(status: string) {
   if (openProjectStatuses.value.has(status)) return
+  if (projectGroupTogglePending) {
+    pendingProjectStatus = status
+    return
+  }
   const group = projectGroups.value.find(item => item.status === status)
   if (!expanded.value || panel.value !== 'projects' || !group?.items.length) {
     pendingProjectStatus = status
