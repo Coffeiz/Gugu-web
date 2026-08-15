@@ -24,6 +24,8 @@
       <ComponentStatesPreview />
     </section>
 
+    <PrimitiveTokenPreview />
+
     <TokenSection v-for="group in groupNames" :key="group" :title="group" :tokens="grouped[group]" :value-of="valueOf" @copy="copyToken" />
 
     <section class="admin-preview admin-theme">
@@ -41,6 +43,7 @@ import type { DesignToken } from './data/tokenCatalog'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import TokenSection from './components/TokenSection.vue'
 import ComponentStatesPreview from './components/ComponentStatesPreview.vue'
+import PrimitiveTokenPreview from './components/PrimitiveTokenPreview.vue'
 
 const { preference, setTheme } = useTheme()
 const { tokens, valueOf, copyToken } = useDesignTokens()
@@ -54,7 +57,7 @@ const scalePreview = [
 </script>
 
 <style scoped>
-.design-page { min-height: 100vh; overflow: auto; padding: 40px clamp(24px, 6vw, 96px) 72px; color: var(--content-primary); background: var(--surface-page); font-family: var(--font-sans); }
+.design-page { height: 100%; min-height: 0; box-sizing: border-box; overflow-y: auto; overscroll-behavior: contain; padding: 40px clamp(24px, 6vw, 96px) 72px; color: var(--content-primary); background: var(--surface-page); font-family: var(--font-sans); }
 .design-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; max-width: 1180px; margin: 0 auto 28px; }
 .eyebrow, .preview-label { color: var(--content-secondary); font-size: var(--font-size-xs); letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin-top: 5px; font-size: 32px; line-height: 1.15; } h2 { font-size: var(--font-size-lg); }
