@@ -24,6 +24,11 @@ from app.services.mind_canvas import (
     get_canvas_item,
     get_canvas_item_by_node,
     get_owned_canvas,
+    get_owned_project,
+    get_canvas_last_item,
+    get_canvas_near_item,
+    get_canvas_note,
+    get_canvas_reference_node,
     get_or_create_reference,
     list_canvas_nodes,
     list_canvas_relations,
@@ -318,19 +323,12 @@ async def _resolve_canvas_position(db, user_id, canvas: MindMap, node: MindNode,
         near_node_id = position.get("near_node_id")
         if not isinstance(near_node_id, int):
             raise ValueError("near_node 锚点必须提供 near_node_id")
-        near_item = await db.scalar(select(MindCanvasItem).where(
-            MindCanvasItem.canvas_id == canvas.id,
-            MindCanvasItem.user_id == user_id,
-            MindCanvasItem.node_id == near_node_id,
-        ))
+        near_item = await get_canvas_near_item(db, user_id, canvas.id, near_node_id)
         if near_item is None:
             raise ValueError("找不到要靠近的画布节点")
         near_w = near_item.w or 220
         return float(near_item.x + near_w + 40 + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
-    items = (await db.execute(select(MindCanvasItem).where(
-        MindCanvasItem.canvas_id == canvas.id,
-        MindCanvasItem.user_id == user_id,
-    ).order_by(MindCanvasItem.x.desc(), MindCanvasItem.id.desc()).limit(1))).scalars().first()
+    items = await get_canvas_last_item(db, user_id, canvas.id)
     if items is None:
         return camera_x + 40, camera_y + 40
     return float(items.x + (items.w or 220) + 40), float(items.y)
@@ -345,7 +343,7 @@ async def _mind_create_canvas(db, user_id, args: dict):
         return {"error": "画布标题不能超过 300 个字符"}
     project_id = args.get("project_id")
     if project_id is not None:
-        if not isinstance(project_id, int) or await db.scalar(select(Project).where(Project.id == project_id, Project.user_id == user_id)) is None:
+        if not isinstance(project_id, int) or await get_owned_project(db, user_id, project_id) is None:
             return {"error": "项目不存在"}
     canvas = await create_canvas(db, user_id, title, project_id)
     if canvas is None:
@@ -383,9 +381,7 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
         return {"error": "画布不存在"}
     node_id = args.get("node_id")
     if isinstance(node_id, int):
-        node = await db.scalar(select(MindNode).where(
-            MindNode.id == node_id, MindNode.user_id == user_id, MindNode.kind == "ref", MindNode.deleted_at.is_(None),
-        ))
+        node = await get_canvas_reference_node(db, user_id, node_id)
         if node is None:
             return {"error": "只能把项目、文件或活动引用节点放入画布"}
     else:
@@ -460,10 +456,7 @@ async def _mind_update_canvas_note(db, user_id, args: dict):
     node_id, version = args.get("node_id"), args.get("version")
     if not isinstance(node_id, int) or not isinstance(version, int):
         return {"error": "更新画布便签必须提供 node_id 和 version"}
-    node = await db.scalar(select(MindNode).where(
-        MindNode.id == node_id, MindNode.user_id == user_id,
-        MindNode.kind == "canvas_note", MindNode.deleted_at.is_(None),
-    ))
+    node = await get_canvas_note(db, user_id, node_id)
     if node is None:
         return {"error": "找不到这条画布便签"}
     fields = {}
@@ -493,10 +486,7 @@ async def _mind_delete_canvas_note(db, user_id, args: dict):
     node_id, version = args.get("node_id"), args.get("version")
     if not isinstance(node_id, int) or not isinstance(version, int):
         return {"error": "删除画布便签必须提供 node_id 和 version"}
-    node = await db.scalar(select(MindNode).where(
-        MindNode.id == node_id, MindNode.user_id == user_id,
-        MindNode.kind == "canvas_note", MindNode.deleted_at.is_(None),
-    ))
+    node = await get_canvas_note(db, user_id, node_id)
     if node is None:
         return {"error": "找不到这条画布便签"}
     blocked = confirm.needs_confirmation(args, f"将删除画布便签「{node.title or '未命名'}」，并从画布移除其视图项", user_id)

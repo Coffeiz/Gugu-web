@@ -155,6 +155,35 @@ async def get_owned_canvas(db, user_id, canvas_id):
     return await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))
 
 
+async def get_canvas_near_item(db, user_id, canvas_id, node_id):
+    return await db.scalar(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+        MindCanvasItem.node_id == node_id,
+    ))
+
+
+async def get_canvas_last_item(db, user_id, canvas_id):
+    return (await db.execute(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+    ).order_by(MindCanvasItem.x.desc(), MindCanvasItem.id.desc()).limit(1))).scalars().first()
+
+
+async def get_owned_project(db, user_id, project_id):
+    return await get_owned(db, Project, project_id, user_id)
+
+
+async def get_canvas_reference_node(db, user_id, node_id):
+    node = await get_owned(db, MindNode, node_id, user_id)
+    return node if node and node.kind == "ref" and node.deleted_at is None else None
+
+
+async def get_canvas_note(db, user_id, node_id):
+    node = await get_owned(db, MindNode, node_id, user_id)
+    return node if node and node.kind == "canvas_note" and node.deleted_at is None else None
+
+
 async def list_canvases(db, user_id, *, project_id=None, limit=20, offset=0):
     stmt = select(MindMap).where(MindMap.user_id == user_id)
     count_stmt = select(func.count()).select_from(MindMap).where(MindMap.user_id == user_id)
