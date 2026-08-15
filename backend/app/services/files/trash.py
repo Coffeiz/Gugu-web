@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -36,6 +36,57 @@ async def get_top_level_deleted_folder(db: AsyncSession, user_id, folder_id: int
     return (await db.execute(
         top_level_deleted_folders_stmt(user_id).where(Folder.id == folder_id)
     )).scalar_one_or_none()
+
+
+async def list_deleted_files(db: AsyncSession, user_id, limit: int):
+    """列出当前用户回收站中的独立文件。"""
+    return (await db.execute(
+        select(File).outerjoin(Folder, File.folder_id == Folder.id).where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        ).order_by(File.deleted_at.desc()).limit(limit)
+    )).scalars().all()
+
+
+async def list_deleted_folders(db: AsyncSession, user_id, limit: int):
+    """列出当前用户回收站中的顶层文件夹。"""
+    return (await db.execute(
+        top_level_deleted_folders_stmt(user_id).limit(limit)
+    )).scalars().all()
+
+
+async def count_deleted_files(db: AsyncSession, user_id) -> int:
+    """统计当前用户回收站文件数量，不修改事务。"""
+    from sqlalchemy import func
+
+    return (await db.execute(
+        select(func.count(File.id)).where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+        )
+    )).scalar_one()
+
+
+async def get_deleted_file(db: AsyncSession, user_id, file_id):
+    """读取当前用户自己的回收站文件，供确认文案使用。"""
+    file = await get_owned(db, File, file_id, user_id)
+    return file if file and file.deleted_at is not None else None
+
+
+async def permanently_delete_all_files(db: AsyncSession, storage, user_id) -> list[int]:
+    """永久删除当前用户回收站中的独立文件，返回已删除文件 ID。"""
+    files = (await db.execute(
+        select(File).where(File.user_id == user_id, File.deleted_at.isnot(None))
+    )).scalars().all()
+    file_ids = [file.id for file in files]
+    for file in files:
+        try:
+            await storage.delete(file.storage_key)
+        except Exception:
+            pass
+        await db.delete(file)
+    return file_ids
 
 
 async def permanently_delete_file(
