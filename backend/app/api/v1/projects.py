@@ -2,7 +2,6 @@ from datetime import datetime
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import events
@@ -11,9 +10,16 @@ from app.core.projects import build_project, normalize_project_stages_for_read, 
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
-from app.models import File, Project, User
+from app.models import Project, User
 from app.schemas import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.services.storage import get_storage
+from app.services.projects import (
+    add_project,
+    count_project_files,
+    get_project_row,
+    list_project_rows,
+    soft_delete_project_files,
+)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -53,23 +59,8 @@ async def list_projects(
     db: AsyncSession = Depends(get_db),
 ):
     # 只计根目录文件（folder_id IS NULL），和项目文件视图保持一致；文件夹内文件通过文件夹 UI 展示
-    file_count_subq = (
-        select(func.count(File.id))
-        .where(
-            File.deleted_at.is_(None),
-            File.project_id == Project.id,
-            File.folder_id.is_(None),
-        )
-        .correlate(Project)
-        .scalar_subquery()
-    )
-    stmt = (
-        select(Project, file_count_subq.label("fc"))
-        .where(Project.user_id == current_user.id, Project.archived == archived)
-        .order_by(Project.created_at.desc())
-    )
-    result = await db.execute(stmt)
-    return [_to_resp(p, fc) for p, fc in result.all()]
+    return [_to_resp(p, fc) for p, fc in await list_project_rows(
+        db, current_user.id, archived=archived)]
 
 
 @router.post("", response_model=ProjectResponse, status_code=201)
@@ -83,7 +74,7 @@ async def create_project(
         p = build_project(current_user.id, body.model_dump(by_alias=False))
     except ValueError as exc:
         raise HTTPException(422, str(exc))
-    db.add(p)
+    await add_project(db, p)
     await db.commit()
     await db.refresh(p)
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
@@ -96,14 +87,7 @@ async def get_project(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(Project, func.count(File.id).label("fc"))
-        .outerjoin(File, File.project_id == Project.id)
-        .where(Project.id == pid, Project.user_id == current_user.id)
-        .group_by(Project.id)
-    )
-    result = await db.execute(stmt)
-    row = result.one_or_none()
+    row = await get_project_row(db, current_user.id, pid)
     if not row:
         raise HTTPException(404, "项目不存在")
     return _to_resp(row[0], row[1])
@@ -159,10 +143,7 @@ async def update_project(
     await db.refresh(p)
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
 
-    fc_res = await db.execute(
-        select(func.count(File.id)).where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
-    )
-    return _to_resp(p, fc_res.scalar_one())
+    return _to_resp(p, await count_project_files(db, current_user.id, pid))
 
 
 @router.delete("/{pid}", status_code=204)
@@ -179,11 +160,7 @@ async def delete_project(
     #   · 文件：软删（置 deleted_at），保留物理与「可恢复」语义，与单文件删除一致；
     #   · 文件夹：由 folders.project_id 的 ON DELETE CASCADE 随项目自动删除。
     # 前端在项目有文件/文件夹时已弹确认，这里直接执行级联删除。
-    await db.execute(
-        update(File)
-        .where(File.project_id == pid, File.user_id == current_user.id, File.deleted_at.is_(None))
-        .values(deleted_at=now_utc())
-    )
+    await soft_delete_project_files(db, current_user.id, pid, now_utc())
     await db.delete(p)
     await db.commit()
     await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
