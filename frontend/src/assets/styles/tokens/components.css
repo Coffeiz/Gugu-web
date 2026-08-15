@@ -88,6 +88,8 @@
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-md);
   --project-card-motion: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, background .25s ease-out, border-color .18s ease;
+  --done-group-border: var(--card-advance-border);
+  --card-advance-border: color-mix(in srgb,var(--content-muted) 25%,transparent);
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;

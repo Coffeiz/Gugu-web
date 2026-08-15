@@ -83,6 +83,7 @@ async def test_search_canvas_excludes_timeline_note_and_returns_canvas_note(db, 
     assert result["count"] == 1
     assert result["matches"][0]["node_id"] == canvas_note.id
     assert result["matches"][0]["kind"] == "canvas_note"
+    assert result["matches"][0]["version"] == canvas_note.version
 
 
 async def test_search_placeable_nodes_returns_owned_project_file_event_only(db, user_a, user_b):
@@ -180,18 +181,25 @@ async def test_add_canvas_node_creates_ref_reuses_it_and_rejects_note(db, user_a
 
 
 async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
+    user_id = user_a.id
     canvas = await _canvas(db, user_a)
+    canvas_id = canvas.id
     node = await _node(db, user_a, title="可移动便签")
     item = await _item(db, user_a, canvas, node)
+    item_id = item.id
 
-    updated = await _mind_update_canvas_node(db, user_a.id, {
-        "canvas_id": canvas.id, "item_id": item.id, "x": 120, "y": 240,
-        "w": 320, "collapsed": True,
+    rejected_size = await _mind_update_canvas_node(db, user_id, {
+        "canvas_id": canvas_id, "item_id": item_id, "w": 320,
+    })
+    assert "不支持修改 w/h" in rejected_size["error"]
+    updated = await _mind_update_canvas_node(db, user_id, {
+        "canvas_id": canvas_id, "item_id": item_id, "x": 120, "y": 240,
+        "collapsed": True,
     })
     assert updated["updated"] is True
     assert updated["node"]["position"] == {"x": 120.0, "y": 240.0}
-    assert updated["node"]["size"] == {"w": 320.0, "h": None}
-    removed = await _mind_remove_canvas_node(db, user_a.id, {"canvas_id": canvas.id, "item_id": item.id})
+    assert updated["node"]["size"] == {"w": None, "h": None}
+    removed = await _mind_remove_canvas_node(db, user_id, {"canvas_id": canvas_id, "item_id": item_id})
     assert removed["node_preserved"] is True
     assert await db.get(MindNode, node.id) is not None
 
@@ -199,12 +207,14 @@ async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
 async def test_update_canvas_note_uses_version_and_rejects_timeline_note(db, user_a):
     canvas = await _canvas(db, user_a)
     canvas_note = await _node(db, user_a, kind="canvas_note", title="旧标题", content="旧正文")
+    old_version = canvas_note.version
     result = await _mind_update_canvas_note(db, user_a.id, {
-        "node_id": canvas_note.id, "version": canvas_note.version,
+        "node_id": canvas_note.id, "version": old_version,
         "title": "新标题", "content": "新正文", "color": "blue",
     })
     assert result["updated"] is True
     assert result["node"]["title"] == "新标题"
+    assert result["node"]["version"] == old_version + 1
     timeline_note = await _node(db, user_a, kind="note", title="时间流")
     rejected = await _mind_update_canvas_note(db, user_a.id, {"node_id": timeline_note.id, "version": 1, "title": "不应修改"})
     assert "画布便签" in rejected["error"]
@@ -357,3 +367,92 @@ async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db
     ]})
     assert failed["rolled_back"] is True
     assert await db.scalar(select(MindNode).where(MindNode.ref_type == "project", MindNode.ref_id == rollback_project_id)) is None
+
+
+async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db, user_a):
+    user_id = user_a.id
+    canvas = await _canvas(db, user_a)
+    canvas_id = canvas.id
+    created = await _mind_create_canvas_note(db, user_a.id, {
+        "canvas_id": canvas_id,
+        "notes": [
+            {"title": "批量一", "content": "内容一"},
+            {"title": "批量二", "content": "内容二"},
+        ],
+    })
+    assert created["count"] == 2
+    note_ids = [entry["node"]["node_id"] for entry in created["results"]]
+
+    updated = await _mind_update_canvas_note(db, user_a.id, {
+        "updates": [
+            {"node_id": note_ids[0], "version": 1, "content": "更新一"},
+            {"node_id": note_ids[1], "version": 1, "content": "更新二"},
+        ],
+    })
+    assert updated["count"] == 2
+
+    removed = await _mind_remove_canvas_node(db, user_a.id, {
+        "canvas_id": canvas_id,
+        "item_ids": [entry["node"]["item_id"] for entry in created["results"]],
+    })
+    assert removed["count"] == 2
+    assert all(item["node_preserved"] for item in removed["results"])
+
+    notes = await db.scalars(select(MindNode).where(MindNode.id.in_(note_ids)))
+    versions = [note.version for note in notes]
+    blocked = await _mind_delete_canvas_note(db, user_a.id, {
+        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+    })
+    blocked_payload = json.loads(blocked)
+    assert blocked_payload["needs_confirm"] is True
+    deleted = await _mind_delete_canvas_note(db, user_a.id, {
+        "notes": [{"node_id": node_id, "version": version} for node_id, version in zip(note_ids, versions)],
+        "confirm": True,
+        "confirm_token": blocked_payload["confirm_token"],
+    })
+    assert deleted["count"] == 2
+
+    too_many = await _mind_create_canvas_note(db, user_a.id, {
+        "canvas_id": canvas_id,
+        "notes": [{"content": str(index)} for index in range(21)],
+    })
+    assert "最多处理 20 个操作" in too_many["error"]
+
+    batch = await _mind_batch_canvas(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "request_id": "batch-crud-001",
+        "operations": [
+            {"kind": "create_note", "title": "事务便签", "content": "事务内容"},
+        ],
+    })
+    assert batch["atomic"] is True
+    assert batch["operations"][0]["created"] is True
+    batch_node = batch["operations"][0]["node"]
+    batch_item_id = batch_node["item_id"]
+    rejected_batch_size = await _mind_batch_canvas(db, user_id, {
+        "canvas_id": canvas_id,
+        "request_id": "batch-crud-size-rejected",
+        "operations": [{"kind": "update_item", "item_id": batch_item_id, "w": 100, "h": 60}],
+    })
+    assert rejected_batch_size["rolled_back"] is True
+    assert "不能修改画布卡片大小" in rejected_batch_size["error"]
+    removed_batch = await _mind_batch_canvas(db, user_id, {
+        "canvas_id": canvas_id,
+        "request_id": "batch-crud-remove-001",
+        "operations": [{"kind": "remove_item", "item_id": batch_item_id}],
+    })
+    assert removed_batch["atomic"] is True
+    assert removed_batch["operations"][0]["node_preserved"] is True
+
+    delete_request = {
+        "canvas_id": canvas_id,
+        "request_id": "batch-crud-delete-001",
+        "operations": [{"kind": "delete_note", "node_id": batch_node["node_id"], "version": batch_node["version"]}],
+    }
+    blocked_batch = await _mind_batch_canvas(db, user_id, delete_request)
+    blocked_batch_payload = json.loads(blocked_batch)
+    assert blocked_batch_payload["needs_confirm"] is True
+    delete_request.update({"confirm": True, "confirm_token": blocked_batch_payload["confirm_token"]})
+    deleted_batch = await _mind_batch_canvas(db, user_id, delete_request)
+    assert deleted_batch["atomic"] is True
+    assert deleted_batch["operations"][0]["deleted_node_id"] == batch_node["node_id"]

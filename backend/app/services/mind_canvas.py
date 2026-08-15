@@ -503,8 +503,24 @@ async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *
         for index, operation in enumerate(operations):
             if not isinstance(operation, dict):
                 raise ValueError(f"第 {index + 1} 个操作格式不正确")
+            if any(key in operation for key in ("w", "h")):
+                raise ValueError(f"第 {index + 1} 个操作不能修改画布卡片大小")
+            position = operation.get("position")
+            if isinstance(position, dict) and any(key in position for key in ("w", "h")):
+                raise ValueError(f"第 {index + 1} 个操作不能在 position 中传入卡片大小")
             kind = operation.get("kind")
-            if kind == "add_node":
+            if kind == "create_note":
+                title = operation.get("title") or "新便签"
+                content = operation.get("content") or ""
+                if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
+                    raise ValueError(f"第 {index + 1} 个便签操作格式不正确")
+                x, y = await resolve_position(db, user_id, canvas, None, operation.get("position"))
+                node, item = await create_canvas_note(
+                    db, user_id, canvas.id, title.strip() or "新便签", content,
+                    operation.get("color", "amber"), x, y, commit=False,
+                )
+                results.append({"index": index, "kind": kind, "created": True, "node": summarize(node, item)})
+            elif kind == "add_node":
                 ref_type, ref_id = operation.get("ref_type"), operation.get("ref_id")
                 if ref_type not in {"project", "file", "event"} or not isinstance(ref_id, int):
                     raise ValueError(f"第 {index + 1} 个放置操作缺少有效引用")
@@ -524,9 +540,9 @@ async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *
                 item = await get_canvas_item(db, user_id, canvas.id, item_id)
                 if item is None:
                     raise ValueError(f"第 {index + 1} 个布局操作找不到节点")
-                fields = {key: operation[key] for key in ("x", "y", "w", "h", "z", "collapsed") if key in operation}
-                for key in ("x", "y", "w", "h"):
-                    if key in fields and (not isinstance(fields[key], (int, float)) or isinstance(fields[key], bool) or (key in ("w", "h") and fields[key] <= 0)):
+                fields = {key: operation[key] for key in ("x", "y", "z", "collapsed") if key in operation}
+                for key in ("x", "y"):
+                    if key in fields and (not isinstance(fields[key], (int, float)) or isinstance(fields[key], bool)):
                         raise ValueError(f"第 {index + 1} 个布局操作包含无效 {key}")
                 if not fields:
                     raise ValueError(f"第 {index + 1} 个布局操作没有修改字段")
@@ -535,6 +551,27 @@ async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *
                 await db.refresh(item)
                 node = await get_owned(db, MindNode, item.node_id, user_id)
                 results.append({"index": index, "kind": kind, "updated": True, "node": summarize(node, item)})
+            elif kind == "remove_item":
+                item_id = operation.get("item_id")
+                if not isinstance(item_id, int):
+                    raise ValueError(f"第 {index + 1} 个移除操作缺少 item_id")
+                item = await get_canvas_item(db, user_id, canvas.id, item_id)
+                if item is None:
+                    raise ValueError(f"第 {index + 1} 个移除操作找不到节点")
+                node_id = item.node_id
+                await db.delete(item)
+                await db.flush()
+                results.append({"index": index, "kind": kind, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True})
+            elif kind == "delete_note":
+                node_id, version = operation.get("node_id"), operation.get("version")
+                if not isinstance(node_id, int) or not isinstance(version, int):
+                    raise ValueError(f"第 {index + 1} 个删除便签操作缺少 node_id 或 version")
+                node = await get_canvas_node(db, user_id, node_id, kind="canvas_note", deleted=False)
+                if node is None or node.version != version:
+                    raise ValueError(f"第 {index + 1} 个画布便签已被其他端修改，请先重新读取")
+                if not await soft_delete_canvas_note(db, node_id, user_id, version):
+                    raise ValueError(f"第 {index + 1} 个画布便签删除失败")
+                results.append({"index": index, "kind": kind, "deleted_node_id": node_id, "can_restore": True})
             elif kind == "connect":
                 source_id, target_id = operation.get("source_node_id"), operation.get("target_node_id")
                 if not isinstance(source_id, int) or not isinstance(target_id, int):
@@ -555,7 +592,7 @@ async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *
                 await db.flush()
                 results.append({"index": index, "kind": kind, "relation_id": relation.id, "created_or_reused": True})
             else:
-                raise ValueError(f"不支持的批量操作 {kind or '空操作'}；删除请使用单独工具确认")
+                raise ValueError(f"不支持的批量操作 {kind or '空操作'}")
         await db.commit()
     except Exception as exc:
         await db.rollback()

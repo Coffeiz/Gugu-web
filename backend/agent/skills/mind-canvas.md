@@ -12,6 +12,7 @@ emoji: 🧠
 - 搜索画布中已经存在的节点用 `mind_search_canvas`。
 - 搜索可以放入画布的项目、文件、活动用 `mind_search_placeable_nodes`。
 - 普通时间流 `note` 不能放入画布；画布便签必须使用 `mind_create_canvas_note`。
+- 创建、放置、更新、移除和删除工具都支持单项或数组调用；数组一次最多 20 项。
 - 创建、移动、连接或批量编排后，以工具结果为准，不要只用文字声称成功。
 
 ## 坐标、尺寸和安全距离
@@ -19,7 +20,7 @@ emoji: 🧠
 画布节点是有尺寸的矩形，不是无尺寸的点。
 
 - `position.x/y` 是卡片**左上角**的世界坐标，不是中心坐标。
-- 节点实际占用尺寸优先使用 `layout.effective_size`。
+- 节点实际占用尺寸优先使用 `layout.effective_size`；卡片尺寸由系统按节点类型统一管理，Agent 工具不能设置或修改 `w/h`。
 - 未显式设置尺寸时使用 `layout.default_size`。
 - 当前默认尺寸约定：画布便签 `244×148`、项目卡 `240×120`、文件卡 `156×140`、活动卡 `220×96`。
 - 两个卡片在上、下、左、右任一方向相邻时，矩形边缘之间都必须至少保持 `150px` 安全距离；不能只满足横向间距。
@@ -70,10 +71,24 @@ bottom = y + height
 
 ## 批量编排
 
-- `mind_batch_canvas` 单次最多 20 个操作，使用稳定的 `request_id`。
+- 各 CRUD 工具优先直接使用数组参数完成同类操作：
+  - `mind_create_canvas_note.notes`
+  - `mind_add_canvas_node.nodes`
+  - `mind_update_canvas_node.updates`
+  - `mind_update_canvas_note.updates`
+  - `mind_remove_canvas_node.item_ids`
+  - `mind_delete_canvas_note.notes`
+- 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。创建、放置和更新都只接受位置、层级和折叠状态，不要传 `w/h`；如果需要调整视觉尺寸，应由前端/Runtime 的布局策略处理。
+- `mind_batch_canvas` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
+- 批量事务使用稳定的 `request_id`；任一操作失败会整体回滚。
 - 批量连接也遵循相向端点规则，并可指定两端连接点。
 - 批量布局失败会整体回滚；收到回滚结果后先调整方案，不要盲目重复提交。
-- 批量工具不执行删除类操作；删除使用独立工具并确认影响范围。
+- `mind_delete_canvas_note` 和批量中的 `delete_note` 都会一次性展示影响并请求确认；版本冲突时整批不执行。
+
+同类操作不要为了凑批量事务而逐项调用：例如创建多条便签直接使用
+`mind_create_canvas_note.notes`，移动多个节点直接使用 `mind_update_canvas_node.updates`。
+只有“创建便签 → 放置引用 → 调整布局 → 建立连接”这类相互依赖的多类型流程，才使用
+`mind_batch_canvas`。
 
 ## 典型示例
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="exp-sidebar panel-left">
+  <div class="exp-sidebar">
     <div class="exp-sidebar-header">
       <span class="exp-sidebar-title">咕咕</span>
     </div>
@@ -106,6 +106,8 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   display: flex;
   flex-direction: column;
   color: var(--content-primary);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 .exp-sidebar-header {
   min-height: 50px;

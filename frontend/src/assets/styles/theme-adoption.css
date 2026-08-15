@@ -56,7 +56,7 @@ html[data-theme][data-family] .topbar .btn-primary-custom:hover {
 /* ── Projects ─────────────────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .proj-card {
   color: var(--content-primary);
-  background-image: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%) !important;
+  background-image: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
   border-color: var(--project-card-border) !important;
   box-shadow: var(--project-card-shadow) !important;
 }
@@ -89,18 +89,12 @@ html[data-theme][data-family] .proj-card .file-badge,
 html[data-theme][data-family] .proj-card .card-advance:hover {
   background: var(--surface-soft-hover);
 }
-html[data-theme][data-family] .proj-card .card-advance {
+html[data-theme][data-family] .proj-card .card-advance:not(.card-advance-placeholder) {
   color: var(--content-tertiary);
-  border-left-color: var(--border-subtle);
 }
 html[data-theme][data-family] .proj-card .card-advance:hover { color: var(--content-primary); }
 html[data-theme][data-family] .proj-card .card-advance:active { background: var(--selection-bg); }
 html[data-theme][data-family] .proj-card .star-btn { color: var(--content-tertiary); }
-html[data-theme='dark'][data-family] .proj-card .star-btn.active { color: var(--content-primary); }
-html[data-theme='dark'][data-family] .proj-card .star-btn.active polygon {
-  fill: currentColor !important;
-  stroke: currentColor !important;
-}
 html[data-theme][data-family] .proj-card .done-label {
   color: var(--status-success);
   background: var(--status-success-bg);
@@ -143,12 +137,11 @@ html[data-theme][data-family] .done-col .year-row:hover,
 html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
 html[data-theme][data-family] .done-col .year-chev,
 html[data-theme][data-family] .done-col .month-chev { color: var(--content-tertiary); }
-html[data-theme][data-family] .done-col .year-label { color: var(--content-primary); }
+html[data-theme][data-family] .done-col .year-label { color: var(--content-secondary); }
 html[data-theme][data-family] .done-col .year-label.undated,
 html[data-theme][data-family] .done-col .year-cnt,
 html[data-theme][data-family] .done-col .month-cnt { color: var(--content-tertiary); }
 html[data-theme][data-family] .done-col .month-name { color: var(--content-secondary); }
-html[data-theme][data-family] .done-col .year-folder { border-left-color: var(--border-subtle); }
 
 /* ── Files ────────────────────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .fc-card {
@@ -347,3 +340,140 @@ html[data-theme][data-family] .task-card .link.danger:hover { color: var(--statu
 html[data-theme][data-family] .task-card .slider { background: var(--border-strong); }
 html[data-theme][data-family] .task-card .slider::before { background: var(--surface-raised); }
 html[data-theme][data-family] .task-card .switch input:checked + .slider { background: var(--action-primary); }
+
+/* ── GuguChat 暗色契约 ───────────────────────────────────────────────────────────────
+   旧聊天组件仍有少量亮色硬编码；暗色主题统一改消费与令牌页样板相同的 contract。 */
+html[data-theme='dark'][data-family] .chat-window {
+  border-color: var(--gugu-chat-border);
+  box-shadow: var(--gugu-chat-shadow);
+}
+html[data-theme='dark'][data-family] .chat-window::after {
+  box-shadow: inset 0 1px 0 var(--gugu-chat-highlight),
+    inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 52%,transparent),
+    inset 0 -1px 0 color-mix(in srgb,var(--gugu-chat-highlight) 38%,transparent);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-drop-overlay {
+  color: var(--action-primary);
+  background: var(--gugu-chat-drop-bg);
+  border-color: var(--gugu-chat-drop-border);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-header,
+html[data-theme='dark'][data-family] .chat-window .chat-input-row {
+  border-color: var(--gugu-chat-header-border);
+}
+html[data-theme='dark'][data-family] .chat-window .popup-icon-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .exp-icon-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .popup-close-btn:hover {
+  background: var(--surface-soft-hover) !important;
+  color: var(--content-primary) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .popup-close-btn:hover {
+  color: var(--status-danger) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .chat-att-chip,
+html[data-theme='dark'][data-family] .chat-window .rec-cancel {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-att-chip.att-up {
+  color: var(--content-secondary);
+  background: var(--surface-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .send-btn,
+html[data-theme='dark'][data-family] .chat-window .exp-send-btn,
+html[data-theme='dark'][data-family] .chat-window .mv-btn,
+html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-file,
+html[data-theme='dark'][data-family] .chat-window .msg-voice {
+  color: var(--content-primary);
+  background: var(--gugu-chat-assistant-bg);
+  border-color: var(--border-subtle);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.user .msg-bubble {
+  color: var(--content-on-accent);
+  background: var(--gugu-chat-user-bg);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.member .msg-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-quoted {
+  color: var(--content-secondary);
+  background: var(--surface-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .msg-file-name,
+html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
+html[data-theme='dark'][data-family] .chat-window .mv-dur {
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
+html[data-theme='dark'][data-family] .chat-window .mv-dur { color: var(--content-tertiary); }
+html[data-theme='dark'][data-family] .chat-window .mv-wave i { background: var(--content-tertiary); }
+html[data-theme='dark'][data-family] .chat-window .msg-copy-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .msg-file-dl:hover,
+html[data-theme='dark'][data-family] .chat-window .msg-voice:hover {
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .mini-player {
+  background: var(--gugu-chat-bg);
+  border-color: var(--gugu-chat-border);
+  box-shadow: var(--gugu-chat-shadow);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-bars i,
+html[data-theme='dark'][data-family] .mini-player .mp-track {
+  background: var(--surface-soft-hover);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-fill,
+html[data-theme='dark'][data-family] .mini-player .mp-thumb,
+html[data-theme='dark'][data-family] .mini-player .mp-btn--play {
+  background: var(--brand-gradient);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-btn--pin:hover,
+html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {
+  color: var(--content-primary);
+  background: var(--surface-soft-hover);
+}
+html[data-theme='dark'][data-family] .cb-overlay { background: var(--scrim); }
+html[data-theme='dark'][data-family] .cb-qr { background: var(--surface-raised); box-shadow: var(--elevation-card); }
+html[data-theme='dark'][data-family] .cb-err { color: var(--status-danger); }
+html[data-theme='dark'][data-family] .cb-cancel { color: var(--content-secondary); background: var(--action-soft); }
+html[data-theme='dark'][data-family] .cb-cancel:hover { background: var(--surface-soft-hover); }
+html[data-theme='dark'][data-family] .chat-window .rec-dot { background: var(--status-danger); }
+html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--status-danger); }
+html[data-theme='dark'][data-family] .chat-window .tool-spinner { border-color: var(--border-subtle); border-top-color: var(--action-primary); }
+html[data-theme='dark'][data-family] .chat-window .tool-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
+html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {
+  color: var(--content-primary);
+  border-color: var(--border-hover);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--border-highlight), 0 0 0 3px var(--focus-ring);
+}
+html[data-theme='dark'][data-family] .chat-window .exp-sidebar {
+  border-right-color: var(--gugu-chat-sidebar-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .panel-left {
+  border-right-color: var(--gugu-chat-sidebar-border) !important;
+  box-shadow: inset -1px 0 0 var(--gugu-chat-sidebar-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .chat-header,
+html[data-theme='dark'][data-family] .chat-window .chat-input-row {
+  border-color: var(--gugu-chat-header-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .exp-sidebar-divider,
+html[data-theme='dark'][data-family] .chat-window .exp-group-divider {
+  background: var(--gugu-chat-sidebar-border) !important;
+}

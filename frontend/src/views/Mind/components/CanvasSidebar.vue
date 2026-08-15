@@ -215,18 +215,18 @@ async function runProjectGroupToggle(status: string, opening = !openProjectStatu
   const profile = runtime.getMotionProfile()?.group
   try {
     await runtime.runGroupToggle({
-    root,
-    content,
-    opening,
-    mutate: () => {
-      const next = new Set(openProjectStatuses.value)
-      if (opening) next.add(status)
-      else next.delete(status)
-      openProjectStatuses.value = next
-    },
-    waitForLayout: async () => {
-      await nextTick()
-    },
+      root,
+      content,
+      opening,
+      mutate: () => {
+        const next = new Set(openProjectStatuses.value)
+        if (opening) next.add(status)
+        else next.delete(status)
+        openProjectStatuses.value = next
+      },
+      waitForLayout: async () => {
+        await nextTick()
+      },
     duration: profile?.duration,
     easing: profile?.easing,
     })

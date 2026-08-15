@@ -46,6 +46,7 @@ from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 20
+_MAX_MUTATIONS = 20
 _PLACEABLE_TYPES = ("project", "file", "event")
 _CANVAS_TYPES = ("canvas_note", "project", "file", "event")
 _DEFAULT_ITEM_SIZES = {
@@ -72,6 +73,30 @@ def _limit(value: Any, default: int = 10) -> int:
     if not isinstance(value, int):
         return default
     return max(1, min(value, _MAX_RESULTS))
+
+
+def _mutation_entries(args: dict, plural_key: str) -> tuple[list[dict[str, Any]], bool, str | None]:
+    """把单项参数统一成批量条目，同时保持旧的单项返回契约。"""
+    raw = args.get(plural_key)
+    if raw is None:
+        return [args], False, None
+    if not isinstance(raw, list) or not raw:
+        return [], True, f"{plural_key} 必须是非空数组"
+    if len(raw) > _MAX_MUTATIONS:
+        return [], True, f"单次最多处理 {_MAX_MUTATIONS} 个操作"
+    entries = [entry for entry in raw if isinstance(entry, dict)]
+    if len(entries) != len(raw):
+        return [], True, f"{plural_key} 中每一项都必须是对象"
+    return entries, True, None
+
+
+def _reject_card_size(entry: dict[str, Any]) -> None:
+    """Agent 不直接控制卡片尺寸，尺寸由系统按节点类型统一决定。"""
+    if "w" in entry or "h" in entry:
+        raise ValueError("画布卡片大小由系统管理，工具不支持修改 w/h")
+    position = entry.get("position")
+    if isinstance(position, dict) and ("w" in position or "h" in position):
+        raise ValueError("画布卡片大小由系统管理，工具不支持在 position 中传入 w/h")
 
 
 def _view_summary(canvas: Any) -> dict[str, Any]:
@@ -103,6 +128,8 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
         "node_id": node.id,
         "kind": node.kind,
         "title": node.title,
+        # 画布便签更新走 MindNode 乐观锁；搜索结果必须携带当前版本，禁止调用方猜版本重试。
+        "version": node.version,
         "ref_type": node.ref_type,
         "ref_id": node.ref_id,
         "preview": plain[:240],
@@ -364,23 +391,31 @@ async def _mind_create_canvas(db, user_id, args: dict):
 
 async def _mind_create_canvas_note(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
-    title = args.get("title") or "新便签"
-    content = args.get("content") or ""
-    color = args.get("color", "amber")
     if not isinstance(canvas_id, int) or await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
-        return {"error": "便签标题或正文格式不正确"}
-    try:
-        color = validate_note_color(color)
-    except ValueError as exc:
-        return {"error": str(exc)}
     canvas = await get_owned_canvas(db, user_id, canvas_id)
-    x, y = await _resolve_canvas_position(db, user_id, canvas, None, args.get("position"))
-    node, item = await create_canvas_note(
-        db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y, commit=True,
-    )
-    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
+    entries, batched, error = _mutation_entries(args, "notes")
+    if error:
+        return {"error": error}
+    results = []
+    try:
+        for entry in entries:
+            _reject_card_size(entry)
+            title = entry.get("title") or "新便签"
+            content = entry.get("content") or ""
+            if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
+                raise ValueError("便签标题或正文格式不正确")
+            color = validate_note_color(entry.get("color", "amber"))
+            x, y = await _resolve_canvas_position(db, user_id, canvas, None, entry.get("position"))
+            node, item = await create_canvas_note(
+                db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y, commit=False,
+            )
+            results.append({"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True})
+        await db.commit()
+    except (TypeError, ValueError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_add_canvas_node(db, user_id, args: dict):
@@ -390,116 +425,180 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
-    node_id = args.get("node_id")
-    if isinstance(node_id, int):
-        node = await get_canvas_reference_node(db, user_id, node_id)
-        if node is None:
-            return {"error": "只能把项目、文件或活动引用节点放入画布"}
-    else:
-        ref_type, ref_id = args.get("ref_type"), args.get("ref_id")
-        if ref_type not in _PLACEABLE_TYPES or not isinstance(ref_id, int):
-            return {"error": "需要提供 ref_type 和 ref_id，且类型必须是 project、file 或 event"}
-        try:
-            node, _ = await get_or_create_reference(db, user_id, ref_type, ref_id)
-        except (ValueError, LookupError) as exc:
-            return {"error": str(exc)}
-    existing = await get_canvas_item_by_node(db, user_id, canvas_id, node.id)
-    if existing is not None:
-        return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
-    x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
-    existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y, commit=True)
-    if not created:
-        return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
-    return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": True}
+    entries, batched, error = _mutation_entries(args, "nodes")
+    if error:
+        return {"error": error}
+    results = []
+    try:
+        for entry in entries:
+            _reject_card_size(entry)
+            node_id = entry.get("node_id")
+            if isinstance(node_id, int):
+                node = await get_canvas_reference_node(db, user_id, node_id)
+                if node is None:
+                    raise ValueError("只能把项目、文件或活动引用节点放入画布")
+            else:
+                ref_type, ref_id = entry.get("ref_type"), entry.get("ref_id")
+                if ref_type not in _PLACEABLE_TYPES or not isinstance(ref_id, int):
+                    raise ValueError("需要提供 ref_type 和 ref_id，且类型必须是 project、file 或 event")
+                node, _ = await get_or_create_reference(db, user_id, ref_type, ref_id)
+            existing = await get_canvas_item_by_node(db, user_id, canvas_id, node.id)
+            if existing is None:
+                x, y = await _resolve_canvas_position(db, user_id, canvas, node, entry.get("position"))
+                existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y, commit=False)
+            else:
+                created = False
+            results.append({"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": created})
+        await db.commit()
+    except (TypeError, ValueError, LookupError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_update_canvas_node(db, user_id, args: dict):
     canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
-    if not isinstance(canvas_id, int) or not isinstance(item_id, int):
-        return {"error": "需要提供 canvas_id 和 item_id"}
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    item = await get_canvas_item(db, user_id, canvas_id, item_id)
-    if item is None:
-        return {"error": "画布节点不存在"}
-    fields = {}
-    for key in ("x", "y", "w", "h"):
-        if key in args:
-            value = args[key]
-            if not _finite_number(value) or (key in ("w", "h") and value <= 0):
-                return {"error": f"{key} 必须是有效的正数" if key in ("w", "h") else f"{key} 必须是有效数字"}
-            fields[key] = float(value)
-    if "z" in args:
-        if not isinstance(args["z"], int):
-            return {"error": "z 必须是整数"}
-        fields["z"] = args["z"]
-    if "collapsed" in args:
-        if not isinstance(args["collapsed"], bool):
-            return {"error": "collapsed 必须是布尔值"}
-        fields["collapsed"] = args["collapsed"]
-    if not fields:
-        return {"error": "至少提供一个要修改的布局字段"}
-    item = await update_canvas_item(db, user_id, canvas_id, item_id, fields, commit=True)
-    node = await get_canvas_node(db, user_id, item.node_id)
-    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True}
+    entries, batched, error = _mutation_entries(args, "updates")
+    if error:
+        return {"error": error}
+    results = []
+    try:
+        for entry in entries:
+            _reject_card_size(entry)
+            item_id = entry.get("item_id")
+            if not isinstance(item_id, int):
+                raise ValueError("需要提供 item_id")
+            if await get_canvas_item(db, user_id, canvas_id, item_id) is None:
+                raise ValueError("画布节点不存在")
+            fields = {}
+            for key in ("x", "y"):
+                if key in entry:
+                    value = entry[key]
+                    if not _finite_number(value):
+                        raise ValueError(f"{key} 必须是有效数字")
+                    fields[key] = float(value)
+            if "z" in entry:
+                if not isinstance(entry["z"], int):
+                    raise ValueError("z 必须是整数")
+                fields["z"] = entry["z"]
+            if "collapsed" in entry:
+                if not isinstance(entry["collapsed"], bool):
+                    raise ValueError("collapsed 必须是布尔值")
+                fields["collapsed"] = entry["collapsed"]
+            if not fields:
+                raise ValueError("至少提供一个要修改的布局字段")
+            item = await update_canvas_item(db, user_id, canvas_id, item_id, fields, commit=False)
+            node = await get_canvas_node(db, user_id, item.node_id)
+            results.append({"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True})
+        await db.commit()
+    except (TypeError, ValueError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_remove_canvas_node(db, user_id, args: dict):
-    canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
-    if not isinstance(canvas_id, int) or not isinstance(item_id, int):
-        return {"error": "需要提供 canvas_id 和 item_id"}
+    canvas_id = args.get("canvas_id")
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    item = await get_canvas_item(db, user_id, canvas_id, item_id)
-    if item is None:
-        return {"error": "画布节点不存在"}
-    node_id = await remove_canvas_item(db, user_id, canvas_id, item_id, commit=True)
-    return {"canvas_id": canvas_id, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True}
+    raw_ids = args.get("item_ids")
+    batched = raw_ids is not None
+    item_ids = raw_ids if batched else [args.get("item_id")]
+    if not isinstance(item_ids, list) or not item_ids:
+        return {"error": "item_ids 必须是非空数组" if batched else "需要提供 item_id"}
+    if len(item_ids) > _MAX_MUTATIONS or any(not isinstance(item_id, int) for item_id in item_ids):
+        return {"error": f"单次最多处理 {_MAX_MUTATIONS} 个有效 item_id"}
+    results = []
+    try:
+        for item_id in item_ids:
+            item = await get_canvas_item(db, user_id, canvas_id, item_id)
+            if item is None:
+                raise ValueError("画布节点不存在")
+            node_id = await remove_canvas_item(db, user_id, canvas_id, item_id, commit=False)
+            results.append({"canvas_id": canvas_id, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True})
+        await db.commit()
+    except (TypeError, ValueError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_update_canvas_note(db, user_id, args: dict):
-    node_id, version = args.get("node_id"), args.get("version")
-    if not isinstance(node_id, int) or not isinstance(version, int):
-        return {"error": "更新画布便签必须提供 node_id 和 version"}
-    node = await get_canvas_note(db, user_id, node_id)
-    if node is None:
-        return {"error": "找不到这条画布便签"}
-    fields = {}
-    if "title" in args:
-        if not isinstance(args["title"], str) or len(args["title"].strip()) > 300:
-            return {"error": "便签标题格式不正确"}
-        fields["title"] = args["title"].strip() or "新便签"
-    if "content" in args:
-        if not isinstance(args["content"], str):
-            return {"error": "便签正文必须是文本"}
-        fields["content_md"] = args["content"]
-    if "color" in args:
-        try:
-            fields["color"] = validate_note_color(args["color"])
-        except ValueError as exc:
-            return {"error": str(exc)}
-    if not fields:
-        return {"error": "至少提供一个要修改的字段"}
-    node = await update_canvas_note(db, user_id, node_id, version, fields, commit=True)
-    if node is False:
-        return {"error": "画布便签已被其他端修改，请先重新读取后再更新"}
-    return {"node": _node_summary(node), "updated": True}
+    entries, batched, error = _mutation_entries(args, "updates")
+    if error:
+        return {"error": error}
+    results = []
+    try:
+        for entry in entries:
+            node_id, version = entry.get("node_id"), entry.get("version")
+            if not isinstance(node_id, int) or not isinstance(version, int):
+                raise ValueError("更新画布便签必须提供 node_id 和 version")
+            if await get_canvas_note(db, user_id, node_id) is None:
+                raise ValueError("找不到这条画布便签")
+            fields = {}
+            if "title" in entry:
+                if not isinstance(entry["title"], str) or len(entry["title"].strip()) > 300:
+                    raise ValueError("便签标题格式不正确")
+                fields["title"] = entry["title"].strip() or "新便签"
+            if "content" in entry:
+                if not isinstance(entry["content"], str):
+                    raise ValueError("便签正文必须是文本")
+                fields["content_md"] = entry["content"]
+            if "color" in entry:
+                fields["color"] = validate_note_color(entry["color"])
+            if not fields:
+                raise ValueError("至少提供一个要修改的字段")
+            node = await update_canvas_note(db, user_id, node_id, version, fields, commit=False)
+            if node is False:
+                raise ValueError("画布便签已被其他端修改，请先重新读取后再更新")
+            results.append({"node": _node_summary(node), "updated": True})
+        await db.commit()
+    except (TypeError, ValueError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_delete_canvas_note(db, user_id, args: dict):
     from agent.security import confirm
-    node_id, version = args.get("node_id"), args.get("version")
-    if not isinstance(node_id, int) or not isinstance(version, int):
-        return {"error": "删除画布便签必须提供 node_id 和 version"}
-    node = await get_canvas_note(db, user_id, node_id)
-    if node is None:
-        return {"error": "找不到这条画布便签"}
-    blocked = confirm.needs_confirmation(args, f"将删除画布便签「{node.title or '未命名'}」，并从画布移除其视图项", user_id)
+    entries, batched, error = _mutation_entries(args, "notes")
+    if error:
+        return {"error": error}
+    checked = []
+    for entry in entries:
+        node_id, version = entry.get("node_id"), entry.get("version")
+        if not isinstance(node_id, int) or not isinstance(version, int):
+            return {"error": "删除画布便签必须提供 node_id 和 version"}
+        node = await get_canvas_note(db, user_id, node_id)
+        if node is None:
+            return {"error": "找不到这条画布便签"}
+        if node.version != version:
+            return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
+        checked.append((node_id, version, node))
+    if batched:
+        message = f"将删除 {len(checked)} 条画布便签，并从画布移除其视图项"
+    else:
+        message = f"将删除画布便签「{checked[0][2].title or '未命名'}」，并从画布移除其视图项"
+    blocked = confirm.needs_confirmation(args, message, user_id)
     if blocked is not None:
         return blocked
-    if not await delete_canvas_note(db, user_id, node_id, version, commit=True):
-        return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
-    return {"deleted_node_id": node_id, "can_restore": True}
+    results = []
+    try:
+        for node_id, version, _ in checked:
+            if not await delete_canvas_note(db, user_id, node_id, version, commit=False):
+                raise ValueError("画布便签已被其他端修改，请先重新读取后再删除")
+            results.append({"deleted_node_id": node_id, "can_restore": True})
+        await db.commit()
+    except (TypeError, ValueError) as exc:
+        await db.rollback()
+        return {"error": str(exc)}
+    return {"results": results, "count": len(results)} if batched else results[0]
 
 
 async def _mind_connect_nodes(db, user_id, args: dict):
@@ -564,9 +663,9 @@ async def _mind_disconnect_nodes(db, user_id, args: dict):
 
 
 async def _mind_batch_canvas(db, user_id, args: dict):
-    """在一个事务内批量放置引用节点、调整布局和创建连接。
+    """在一个事务内批量创建、放置、移除、调整布局和创建连接。
 
-    批量接口不接受删除类操作；引用节点/画布项/related 关系本身都有唯一约束，重试同一
+    引用节点/画布项/related 关系本身都有唯一约束，重试同一
     request_id 时会复用已有对象，从而保持可重放。任一操作失败都会回滚整批。
     """
     canvas_id = args.get("canvas_id")
@@ -581,6 +680,15 @@ async def _mind_batch_canvas(db, user_id, args: dict):
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
+    if any(isinstance(operation, dict) and operation.get("kind") == "delete_note" for operation in operations):
+        from agent.security import confirm
+        blocked = confirm.needs_confirmation(
+            args,
+            f"将删除 {sum(isinstance(operation, dict) and operation.get('kind') == 'delete_note' for operation in operations)} 条画布便签，并从画布移除其视图项",
+            user_id,
+        )
+        if blocked is not None:
+            return blocked
     return await batch_canvas_operations(
         db, user_id, canvas, operations, request_id,
         resolve_position=_resolve_canvas_position,
@@ -671,7 +779,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_create_canvas_note", label="创建画布便签",
-            description="在指定画布创建专属便签。它不会进入时间流 note；普通时间流笔记不能通过此工具放入画布。",
+            description="在指定画布创建一个或多个专属便签，最多 20 个。它们不会进入时间流 note；普通时间流笔记不能通过此工具放入画布。卡片大小由系统管理，不能传 w/h。单项调用使用 title/content，批量调用使用 notes 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -680,15 +788,16 @@ class MindCanvasSkill(BaseSkill):
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
+                    "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
-                "required": ["canvas_id", "content"],
+                "required": ["canvas_id"],
             },
             handler=_mind_create_canvas_note,
             mutates=True,
         ),
         Tool(
             name="mind_add_canvas_node", label="放置画布节点",
-            description="把当前用户的项目、文件或日历活动引用放入画布。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 计算矩形，节点在上、下、左、右任一方向相邻时都不能重叠，并默认保留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
+            description="把当前用户的项目、文件或日历活动引用放入画布，单次最多 20 个。卡片大小由系统管理，不能传 w/h。单项调用使用 node_id 或 ref_type/ref_id，批量调用使用 nodes 数组。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 避让。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -697,6 +806,7 @@ class MindCanvasSkill(BaseSkill):
                     "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
                     "ref_id": {"type": "integer"},
                     "position": {"type": "object"},
+                    "nodes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
                 "required": ["canvas_id"],
             },
@@ -705,53 +815,54 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_update_canvas_node", label="调整画布节点",
-            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 在上、下、左、右任一方向留出至少 150px 边缘间距，采用中心点排布时至少保持 750px 中心距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
+            description="调整一个或多个已放置节点的位置、层级或折叠状态，最多 20 个；卡片大小由系统按节点类型统一管理，工具不支持修改 w/h。只改变画布视图，不改变原项目、文件或活动。单项调用使用 item_id，批量调用使用 updates 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"}, "item_id": {"type": "integer"},
                     "x": {"type": "number"}, "y": {"type": "number"},
-                    "w": {"type": "number", "exclusiveMinimum": 0}, "h": {"type": "number", "exclusiveMinimum": 0},
                     "z": {"type": "integer"}, "collapsed": {"type": "boolean"},
+                    "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
-                "required": ["canvas_id", "item_id"],
+                "required": ["canvas_id"],
             },
             handler=_mind_update_canvas_node,
             mutates=True,
         ),
         Tool(
             name="mind_remove_canvas_node", label="移除画布节点",
-            description="从指定画布移除节点视图；不会删除项目、文件、活动或画布便签正文。",
+            description="从指定画布移除一个或多个节点视图，最多 20 个；不会删除项目、文件、活动或画布便签正文。单项调用使用 item_id，批量调用使用 item_ids 数组。",
             input_schema={
                 "type": "object",
-                "properties": {"canvas_id": {"type": "integer"}, "item_id": {"type": "integer"}},
-                "required": ["canvas_id", "item_id"],
+                "properties": {"canvas_id": {"type": "integer"}, "item_id": {"type": "integer"}, "item_ids": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "integer"}}},
+                "required": ["canvas_id"],
             },
             handler=_mind_remove_canvas_node,
             mutates=True,
         ),
         Tool(
             name="mind_update_canvas_note", label="修改画布便签",
-            description="按 node_id 和 version 修改画布专属便签；不能修改普通时间流 note。",
+            description="按 node_id 和 version 修改一个或多个画布专属便签，最多 20 个；不能修改普通时间流 note。单项调用使用 node_id/version，批量调用使用 updates 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"}, "version": {"type": "integer"},
                     "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+                    "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
-                "required": ["node_id", "version"],
+                "required": [],
             },
             handler=_mind_update_canvas_note,
             mutates=True,
         ),
         Tool(
             name="mind_delete_canvas_note", label="删除画布便签",
-            description="删除画布专属便签并移除其画布视图；执行前必须先展示影响并获得确认。",
+            description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项调用使用 node_id/version，批量调用使用 notes 数组。",
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
-                "required": ["node_id", "version"],
+                "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": [],
             },
             handler=_mind_delete_canvas_note,
             mutates=True,
@@ -802,7 +913,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_batch_canvas", label="批量编排画布",
-            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。批量放置仍必须按每个节点的 layout.effective_size 做矩形避让，节点在上、下、左、右任一方向相邻时都不得重叠且默认留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
+            description="在一个事务内最多 20 个操作：创建便签、放置项目/文件/活动引用、调整位置/层级/折叠状态、移除视图、删除便签和创建 related 连接。卡片大小由系统管理，不能传 w/h。失败会整批回滚，删除便签会先统一确认；使用 request_id 重试可复用已有对象。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -810,11 +921,14 @@ class MindCanvasSkill(BaseSkill):
                     "operations": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
                         "type": "object",
                         "properties": {
-                            "kind": {"type": "string", "enum": ["add_node", "update_item", "connect"]},
+                            "kind": {"type": "string", "enum": ["create_note", "add_node", "update_item", "remove_item", "delete_note", "connect"]},
                             "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)}, "ref_id": {"type": "integer"},
+                            "node_id": {"type": "integer"}, "version": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
-                            "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
+                            "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                            "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+                            "x": {"type": "number"}, "y": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
                         },
                         "required": ["kind"],

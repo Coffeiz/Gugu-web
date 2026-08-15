@@ -221,6 +221,7 @@ async def test_global_search_finds_note_by_body_text(db, user_a):
     groups = {g["type"]: g for g in result["groups"]}
     assert "note" in groups
     assert groups["note"]["items"][0]["subtitle"]        # 给了命中片段
+    assert groups["note"]["items"][0]["version"] == 1  # 更新工具可直接使用，不得要求猜版本
 
 
 @pytest.mark.asyncio

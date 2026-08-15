@@ -3,7 +3,7 @@
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :data-card="String(project.id)"
-    :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
+    :style="{ '--project-color': project.color, background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
     :class="{ 'file-drag-over': fileDragOver }"
     @click="emit('click')"
     @dragenter.prevent="onFileDragEnter"
@@ -609,7 +609,7 @@ async function setPriority(n: number) {
   width: 42px; flex-shrink: 0; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none;
-  border-left: 1px solid rgba(0,0,0,0.07);
+  border-left: 1px solid var(--card-advance-border);
   cursor: pointer;
   color: rgba(0,0,0,0.25);
   transition: background 0.15s, color 0.15s;

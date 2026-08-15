@@ -115,7 +115,7 @@ html[data-theme][data-family] .design-page .sample-topbar:hover {
 html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-primary {
   color:var(--content-on-accent);
   background:var(--brand-gradient);
-  box-shadow:0 3px 12px color-mix(in srgb,var(--action-primary) 30%,transparent);
+  box-shadow:var(--elevation-card);
 }
 html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-ghost {
   color:var(--content-secondary);
