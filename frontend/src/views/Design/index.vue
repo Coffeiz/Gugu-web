@@ -1,7 +1,7 @@
 <template>
-  <TokenPlayground />
+  <DesignSystemPage />
 </template>
 
 <script setup lang="ts">
-import TokenPlayground from './components/TokenPlayground.vue'
+import DesignSystemPage from './components/DesignSystemPage.vue'
 </script>
