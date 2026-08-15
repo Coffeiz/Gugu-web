@@ -351,7 +351,7 @@ async def _mind_create_canvas(db, user_id, args: dict):
     if project_id is not None:
         if not isinstance(project_id, int) or await get_owned_project(db, user_id, project_id) is None:
             return {"error": "项目不存在"}
-    canvas = await create_canvas(db, user_id, title, project_id)
+    canvas = await create_canvas(db, user_id, title, project_id, commit=True)
     if canvas is None:
         return {"error": "项目不存在"}
     return {"canvas": {"canvas_id": canvas.id, "title": canvas.title, "project_id": canvas.project_id}}
@@ -373,7 +373,7 @@ async def _mind_create_canvas_note(db, user_id, args: dict):
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     x, y = await _resolve_canvas_position(db, user_id, canvas, None, args.get("position"))
     node, item = await create_canvas_note(
-        db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y,
+        db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y, commit=True,
     )
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
 
@@ -402,7 +402,7 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
     if existing is not None:
         return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
     x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
-    existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y)
+    existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y, commit=True)
     if not created:
         return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
     return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": True}
@@ -434,7 +434,7 @@ async def _mind_update_canvas_node(db, user_id, args: dict):
         fields["collapsed"] = args["collapsed"]
     if not fields:
         return {"error": "至少提供一个要修改的布局字段"}
-    item = await update_canvas_item(db, user_id, canvas_id, item_id, fields)
+    item = await update_canvas_item(db, user_id, canvas_id, item_id, fields, commit=True)
     node = await get_canvas_node(db, user_id, item.node_id)
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True}
 
@@ -448,7 +448,7 @@ async def _mind_remove_canvas_node(db, user_id, args: dict):
     item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return {"error": "画布节点不存在"}
-    node_id = await remove_canvas_item(db, user_id, canvas_id, item_id)
+    node_id = await remove_canvas_item(db, user_id, canvas_id, item_id, commit=True)
     return {"canvas_id": canvas_id, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True}
 
 
@@ -475,7 +475,7 @@ async def _mind_update_canvas_note(db, user_id, args: dict):
             return {"error": str(exc)}
     if not fields:
         return {"error": "至少提供一个要修改的字段"}
-    node = await update_canvas_note(db, user_id, node_id, version, fields)
+    node = await update_canvas_note(db, user_id, node_id, version, fields, commit=True)
     if node is False:
         return {"error": "画布便签已被其他端修改，请先重新读取后再更新"}
     return {"node": _node_summary(node), "updated": True}
@@ -492,7 +492,7 @@ async def _mind_delete_canvas_note(db, user_id, args: dict):
     blocked = confirm.needs_confirmation(args, f"将删除画布便签「{node.title or '未命名'}」，并从画布移除其视图项", user_id)
     if blocked is not None:
         return blocked
-    if not await delete_canvas_note(db, user_id, node_id, version):
+    if not await delete_canvas_note(db, user_id, node_id, version, commit=True):
         return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
     return {"deleted_node_id": node_id, "can_restore": True}
 
@@ -512,7 +512,7 @@ async def _mind_connect_nodes(db, user_id, args: dict):
             or (target_side is not None and target_side not in {"left", "right"})):
         return {"error": "连接点只能是 left 或 right"}
     relation, error = await connect_nodes(
-        db, user_id, canvas_id, source_id, target_id, args.get("type") or "related",
+        db, user_id, canvas_id, source_id, target_id, args.get("type") or "related", commit=True,
     )
     if error:
         return {"error": error}
@@ -523,7 +523,7 @@ async def _mind_connect_nodes(db, user_id, args: dict):
             normalized = (source_side, target_side)
         else:
             normalized = (target_side, source_side)
-        anchor = await update_relation_anchor(db, user_id, canvas_id, relation, *normalized)
+        anchor = await update_relation_anchor(db, user_id, canvas_id, relation, *normalized, commit=True)
     return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True, **(anchor or {})}
 
 
@@ -537,7 +537,7 @@ async def _mind_update_relation_anchor(db, user_id, args: dict):
     relation = await get_canvas_relation(db, user_id, relation_id)
     if relation is None:
         return {"error": "关联不存在"}
-    anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side)
+    anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, commit=True)
     if anchor is None:
         return {"error": "关联的两个节点必须都位于指定画布"}
     return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, **anchor, "updated": True}
@@ -554,7 +554,7 @@ async def _mind_disconnect_nodes(db, user_id, args: dict):
     blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
     if blocked is not None:
         return blocked
-    await disconnect_node_relation(db, user_id, relation_id)
+    await disconnect_node_relation(db, user_id, relation_id, commit=True)
     return {"deleted_relation_id": relation_id}
 
 
