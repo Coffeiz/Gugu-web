@@ -62,8 +62,10 @@ html[data-theme][data-family] .gs-panel {
   color: var(--content-primary);
 }
 
-/* ProjectCard keeps its business-owned project-color gradient; chrome/elevation come from tokens. */
+/* ProjectCard keeps its business-owned project color. Inline shorthand owns background-color;
+   only background-image needs !important because inline shorthand also sets that sub-property. */
 html[data-theme][data-family] .proj-card {
+  background-image: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%) !important;
   border-color: var(--project-card-border);
   border-radius: var(--project-card-radius);
   box-shadow: var(--project-card-shadow);
