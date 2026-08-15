@@ -137,3 +137,59 @@ async def test_agent_restore_folder_matches_file_service(db, user_a, tmp_path, m
     assert file.storage_key == original_key
     assert await storage.get(original_key) == b"folder-body"
     assert (storage.root / f"{user_a.id}/个人文件/目录恢复").is_dir()
+
+
+async def test_agent_edit_file_updates_content_and_metadata(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    service = FileService(db, storage=storage)
+    result = await service.create_file(
+        user_a.id,
+        space="personal",
+        project_id=None,
+        folder_id=None,
+        stage_name="",
+        mind_map_id=None,
+        display_name="编辑测试",
+        ext="md",
+        mime_type="text/markdown",
+        data="旧内容".encode(),
+    )
+    file = result.file
+    await db.commit()
+
+    edited = await agent_files._edit_file(
+        db, user_a.id,
+        {"file_id": file.id, "mode": "replace_all", "content": "新内容"},
+    )
+
+    assert edited["success"] is True
+    assert await storage.get(file.storage_key) == "新内容".encode()
+    await db.refresh(file)
+    assert file.size_bytes == len("新内容".encode())
+
+
+async def test_agent_delete_file_moves_file_to_trash(db, user_a, tmp_path, monkeypatch):
+    agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)
+    service = FileService(db, storage=storage)
+    result = await service.create_file(
+        user_a.id,
+        space="personal",
+        project_id=None,
+        folder_id=None,
+        stage_name="",
+        mind_map_id=None,
+        display_name="删除测试",
+        ext="txt",
+        mime_type="text/plain",
+        data=b"trash me",
+    )
+    file = result.file
+    original_key = file.storage_key
+    await db.commit()
+
+    deleted = await agent_files._delete_file(db, user_a.id, {"file_id": file.id})
+
+    assert deleted["success"] is True
+    await db.refresh(file)
+    assert file.deleted_at is not None
+    assert file.storage_key != original_key

@@ -233,6 +233,13 @@ async def _searxng_search(db, user_id, args: dict):
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
         ) as client:
             resp = await client.get(f"{base}/search", params=params)
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+        # SearXNG 已明确不可用时直接切换深度研究，避免模型在同一轮里重复调用
+        # 已超时的 web_search。deep_research 自己负责配额和错误回执。
+        return await _deep_research(db, user_id, {
+            "query": query,
+            "max_results": max_results,
+        })
     except Exception as e:
         return {"error": f"通用搜索暂时失败（{type(e).__name__}）；可改用 deep_research 深度研究兜底"}
     if resp.status_code == 403:
