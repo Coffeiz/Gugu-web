@@ -115,6 +115,11 @@ def scan_added_lines(base: str) -> list[str]:
         code = line[1:].strip()
         if not code or code.startswith("#"):
             continue
+        # Service 是规范要求承接 ORM 的边界；阶段 1 只禁止 API/Agent 绕过
+        # Service 新增高风险 ORM，Service 自身的查询由后续领域迁移与测试约束。
+        if not (current_file.startswith("backend/app/api/v1/")
+                or current_file.startswith("backend/agent/tools/")):
+            continue
         high_risk = (
             "from app.models import" in code and any(name in code for name in ("File", "Folder"))
             or any(token in code for token in ("select(", "update(", "delete(", "insert("))

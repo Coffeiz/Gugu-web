@@ -461,29 +461,26 @@ async def _create_document(db, user_id, args: dict):
     except Exception as e:
         return json.dumps({"error": f"生成失败：{str(e)[:120]}"})
 
-    storage = get_storage()
     try:
-        base_key = await _resolve_key(
-            db, user_id, space, display_name, ext,
-            project_id=project_id, folder_id=folder_id,
+        result = await FileService(db).create_file(
+            user_id,
+            space=space,
+            project_id=project_id if space == "project" else None,
+            folder_id=folder_id,
+            stage_name="",
+            mind_map_id=None,
+            display_name=display_name,
+            ext=ext,
+            mime_type=_DOC_MIME[ext],
+            data=data,
         )
-    except ValueError as e:
+    except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
-    await storage.put(final_key, data, _DOC_MIME[ext])
-
-    db_file = File(
-        user_id=user_id, display_name=final_name, ext=ext, space=space,
-        project_id=project_id if space == "project" else None,
-        folder_id=folder_id, stage_name="",
-        storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=_DOC_MIME[ext],
-    )
-    db.add(db_file)
     await db.commit()
+    db_file = result.file
     await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{ext}", "size": db_file.size,
+            "name": f"{db_file.display_name}.{db_file.ext}", "size": db_file.size,
             **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
@@ -496,24 +493,25 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
         data = await chat_attach.read_bytes(meta)
     except Exception as e:
         return False, {"name": f"{display_name}.{ext}", "error": f"读取附件失败：{str(e)[:80]}"}
-    storage = get_storage()
     try:
-        base_key = await _resolve_key(db, user_id, space, display_name, ext,
-                                      project_id=project_id, folder_id=folder_id)
-    except ValueError as e:
-        return False, {"name": f"{display_name}.{ext}", "error": str(e)}
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
-    await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
-    db_file = File(
-        user_id=user_id, display_name=final_name, ext=ext, space=space,
-        project_id=project_id if space == "project" else None, folder_id=folder_id, stage_name="",
-        storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=meta.get("mime") or "",
-    )
-    db.add(db_file)
+        result = await FileService(db).create_file(
+            user_id,
+            space=space,
+            project_id=project_id if space == "project" else None,
+            folder_id=folder_id,
+            stage_name="",
+            mind_map_id=None,
+            display_name=display_name,
+            ext=ext,
+            mime_type=meta.get("mime") or "application/octet-stream",
+            data=data,
+        )
+    except Exception as e:
+        return False, {"name": f"{display_name}.{ext}", "error": redact(f"{type(e).__name__}: {e}")}
     await db.commit()
+    db_file = result.file
     await db.refresh(db_file)
-    return True, {"file_id": db_file.id, "name": f"{final_name}.{ext}",
+    return True, {"file_id": db_file.id, "name": f"{db_file.display_name}.{db_file.ext}",
                   "size": db_file.size,
                   **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
@@ -1017,27 +1015,17 @@ async def _copy_file(db, user_id, args: dict):
                 project_id = fo.project_id
                 space = "project"
     try:
-        base_key = await _resolve_key(db, user_id, space, f.display_name, f.ext,
-                                      project_id=project_id, folder_id=folder_id)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-    storage = get_storage()
-    new_key, new_display = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
-    try:
-        data = await storage.get(f.storage_key)
+        result = await FileService(db).copy_file(
+            user_id, f.id, folder_id=folder_id,
+            project_id=project_id if space == "project" else None,
+        )
     except Exception as e:
-        return json.dumps({"error": f"复制失败（源文件可能已丢失）：{str(e)[:80]}"})
-    await storage.put(new_key, data, f.mime_type)
-    new_file = File(
-        user_id=user_id, display_name=new_display, ext=f.ext, space=space,
-        project_id=project_id if space == "project" else None, folder_id=folder_id,
-        stage_name=f.stage_name, storage_key=new_key, size=f.size,
-        size_bytes=f.size_bytes, mime_type=f.mime_type,
-    )
-    db.add(new_file)
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
+    new_file = result.file
     await db.refresh(new_file)
-    return {"success": True, "file_id": new_file.id, "name": f"{new_display}.{f.ext}"}
+    return {"success": True, "file_id": new_file.id,
+            "name": f"{new_file.display_name}.{new_file.ext}"}
 
 
 # ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────
