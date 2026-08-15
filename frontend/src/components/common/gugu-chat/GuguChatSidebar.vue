@@ -3,21 +3,32 @@
     <div class="exp-sidebar-header">
       <span class="exp-sidebar-title">咕咕</span>
     </div>
+
+    <div class="exp-new-session-wrap">
+      <button class="exp-new-session-btn" @click="onNewSession">
+        <PhPencilSimple weight="bold" :size="13" />
+        新对话
+      </button>
+    </div>
+
     <div class="exp-sidebar-divider"></div>
-    <div class="exp-session-list">
-      <!-- IM 平台：飞书 / QQ / 微信，可展开抽屉。未接入 → 扫码连接；接入后 → 该平台会话 -->
+    <div class="exp-session-list scroll-surface scroll-surface--compact">
+      <!-- 即时通讯区域：保留真实平台折叠/扫码/会话行为，只统一视觉和最后对话时间。 -->
+      <span class="sidebar-caption">即时通讯</span>
       <GuguChatImConnect
         ref="imConnectRef"
         :im-platforms="imPlatforms" :im-open="imOpen" :im-highlight="imHighlight"
         :bots-of="botsOf" :im-sessions-of="imSessionsOf" :session-id="sessionId"
         :connect="connect" :connect-hint="connectHint" :connect-err="connectErr" :connecting="connecting"
+        :format-session-time="formatSessionTime"
         :on-toggle-platform="onTogglePlatform" :on-set-connect-canvas="onSetConnectCanvas"
         :on-start-im-connect="onStartImConnect" :on-cancel-im-connect="onCancelImConnect"
         :on-load-session="onLoadSession" :on-delete-session="onDeleteSession" :on-rename-session="onRenameSession"
       />
 
       <!-- 网页对话 -->
-      <div v-if="webSessions.length" class="exp-group-divider"></div>
+      <div class="exp-group-divider"></div>
+      <span class="sidebar-caption">最近对话</span>
       <div
         v-for="s in webSessions" :key="s.id"
         class="exp-session-item"
@@ -25,34 +36,20 @@
         :class="{ active: s.id === sessionId }"
         @click="onLoadSession(s.id)"
       >
-        <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
+        <div class="exp-session-copy">
+          <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
+          <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
+        </div>
         <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除">
           <PhTrash :size="12" weight="bold" />
         </button>
       </div>
-    </div>
-    <div class="exp-sidebar-divider" style="margin: 0 12px"></div>
-    <div class="exp-new-session-wrap">
-      <button class="exp-new-session-btn" @click="onNewSession">
-        <PhPencilSimple weight="bold" :size="13" />
-        新对话
-      </button>
+      <div v-if="!webSessions.length" class="exp-session-empty">还没有网页对话</div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-/**
- * 大窗侧边栏：IM 平台抽屉（GuguChatImConnect.vue）+ 网页会话列表 + 新建会话。
- * 只做展示和事件转发，不持有会话数据或 IM 连接状态本身——这些仍在
- * GuguChat.vue（会话加载与流式紧耦合，IM 扫码连接是跨请求的轮询状态机，
- * 都不适合在这一步单独抽composable，标记为后续独立工作）。
- *
- * imGroupEl 通过 defineExpose 转发 GuguChatImConnect 自己暴露的同名值：
- * offline 状态被点击时（promptConnectIM）要展开侧栏、把 IM 分组滚入视口并
- * 高亮，这段一次性的滚动+高亮编排仍由父组件（useChatImConnect.ts）持有，
- * 只是要经这一层转发才能拿到实际 DOM（IM 分组的 DOM 现在归子组件所有）。
- */
 import { ref, computed, type ComponentPublicInstance } from 'vue'
 import { PhTrash, PhPencilSimple } from '@phosphor-icons/vue'
 import GuguChatImConnect from './GuguChatImConnect.vue'
@@ -84,98 +81,136 @@ defineProps<{
   onNewSession: () => void
 }>()
 
+function formatSessionTime(raw?: string) {
+  if (!raw) return ''
+  const date = new Date(raw)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+  if (sameDay) return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)
+  if (date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()) return '昨天'
+  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}/${date.getDate()}`
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`
+}
+
 const imConnectRef = ref<InstanceType<typeof GuguChatImConnect> | null>(null)
 defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) })
 </script>
 
 <style scoped>
 .exp-sidebar {
-  width: 210px; flex-shrink: 0;
-  display: flex; flex-direction: column;
+  width: 210px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--content-primary);
 }
 .exp-sidebar-header {
-  display: flex; align-items: center;
-  padding: 16px 14px 12px;
+  min-height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-md);
   flex-shrink: 0;
 }
-.exp-sidebar-divider {
-  height: 1px; flex-shrink: 0; margin: 0 4px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
-}
+.exp-sidebar-title { font-size: var(--font-size-md); font-weight: var(--font-weight-bold); }
+.exp-sidebar-divider,
 .exp-group-divider {
-  height: 1px; flex-shrink: 0; margin: 4px 2px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
-}
-.exp-sidebar-title { flex: 1; font-size: 14px; font-weight: 700; color: var(--text-primary); text-align: center; }
-
-.exp-new-session-wrap {
-  padding: 10px 10px 12px;
+  height: 1px;
   flex-shrink: 0;
+  background: var(--divider-line);
 }
+.exp-sidebar-divider { margin: 0 var(--space-md); }
+.exp-group-divider { margin: var(--space-sm) var(--space-xs); }
+
+.exp-new-session-wrap { padding: 0 var(--space-sm) var(--space-md); flex-shrink: 0; }
 .exp-new-session-btn {
-  width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 9px 14px; border-radius: var(--radius-sm); cursor: pointer;
-  font-size: 12.5px; font-weight: 700; font-family: var(--font-sans);
-  color: var(--color-primary);
-  background: rgba(255,255,255,0.82);
-  border: 1px solid rgba(255,255,255,0.95);
-  box-shadow: 0 2px 8px rgba(123,127,178,0.12), inset 0 1px 0 rgba(255,255,255,1);
-  transition: background 0.15s, box-shadow 0.15s;
+  width: 100%;
+  height: var(--control-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--action-primary);
+  background: color-mix(in srgb,var(--surface-raised) 84%,transparent);
+  box-shadow: var(--elevation-card);
+  font: var(--font-weight-semibold) var(--font-size-sm) var(--font-sans);
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.exp-new-session-btn:hover {
-  background: rgba(255,255,255,0.95);
-  box-shadow: 0 5px 16px rgba(123,127,178,0.22), inset 0 1px 0 rgba(255,255,255,1);
-}
-.exp-new-session-btn:active {
-  transform: translateY(1px);
-  box-shadow: 0 1px 4px rgba(123,127,178,0.1), inset 0 1px 0 rgba(255,255,255,1);
-  transition: transform 0.05s, box-shadow 0.05s;
-}
-.exp-new-session-btn svg { display: block; }
+.exp-new-session-btn:hover { background: var(--surface-raised); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
+.exp-new-session-btn:active { transform: translateY(1px); }
 
 .exp-session-list {
-  flex: 1; overflow-y: auto;
-  padding: 8px;
-  display: flex; flex-direction: column; gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md) var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
-/* exp-session-item 系列类名同时用于本组件的网页会话列表和
-   GuguChatImConnect.vue 子组件的 IM 会话列表——用 :deep() 而不是各自
-   重复一份，样式只维护一处（跟 GuguChat.vue 用 :deep() 覆盖 MessageRow
-   的做法一致）。 */
-:deep(.exp-session-item) {
-  display: flex; align-items: center; gap: 1px;
-  padding: 8px 10px; border-radius: 9px; cursor: pointer;
-  transition: background 0.12s;
-  flex-shrink: 0;  /* 防止 line-height 调整后被外层 flex column 压扁 */
-}
-:deep(.exp-session-item:hover) { background: rgba(255,255,255,0.55); }
-:deep(.exp-session-item.active) { background: rgba(123,127,178,0.12); }
-:deep(.exp-session-item.active .exp-session-title) { font-weight: 700; }
-:deep(.exp-session-del) {
-  width: 20px; height: 20px; border-radius: 5px; border: none;
-  background: none; color: var(--text-secondary);
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; flex-shrink: 0;
-}
-/* 重命名按钮与删除按钮：整个会话项 hover 时一起浮现（判定区域一致，动画同文件卡 0.15s） */
-:deep(.exp-session-item:hover .exp-session-rename-btn),
-:deep(.exp-session-item:hover .exp-session-del) { opacity: 1; }
-:deep(.exp-session-del:hover) { background: rgba(200,80,80,0.1); color: rgba(200,80,80,0.8); }
-:deep(.exp-session-del svg) { display: block; }
-:deep(.exp-session-empty) { font-size: 12px; color: var(--text-secondary); padding: 12px 10px; }
-.exp-session-source {
-  flex-shrink: 0; font-size: 11px; font-weight: 600; line-height: 1;
-  font-family: var(--font-sans); letter-spacing: 0.01em;
-  padding: 2px 5px; border-radius: 4px;
-}
-.exp-session-source.src-qq { background: rgba(18,183,245,0.15); color: #0c8fc0; }
-.exp-session-source.src-feishu { background: rgba(66,133,244,0.15); color: #3b6fc4; }
-:deep(.exp-session-tag) {
-  flex-shrink: 0; font-size: 10.5px; font-weight: 600; line-height: 1;
-  font-family: var(--font-sans);
-  padding: 2px 4px; border-radius: 4px;
-  background: rgba(123,127,178,0.15); color: #6a6ea3;
+.sidebar-caption {
+  display: block;
+  padding: var(--space-xs) var(--space-sm);
+  color: var(--gugu-chat-caption);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--tracking-label);
 }
 
-/* IM 平台抽屉的样式（分组高亮、扫码连接、二维码）已随 GuguChatImConnect.vue 迁移 */
+:deep(.exp-session-item) {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--content-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .14s ease, border-color .14s ease, color .14s ease;
+}
+:deep(.exp-session-item:hover) { color: var(--content-primary); background: var(--gugu-chat-session-hover); }
+:deep(.exp-session-item.active) {
+  color: var(--gugu-chat-session-active-fg);
+  background: var(--gugu-chat-session-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+}
+:deep(.exp-session-copy) { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: var(--space-xs); }
+:deep(.exp-session-time) { color: var(--content-tertiary); font-size: var(--font-size-xs); line-height: 1; }
+:deep(.exp-session-item.active .exp-session-title) { font-weight: var(--font-weight-semibold); }
+:deep(.exp-session-del) {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-xs);
+  border: none;
+  background: transparent;
+  color: var(--content-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, background .15s ease, color .15s ease;
+  flex-shrink: 0;
+}
+:deep(.exp-session-item:hover .exp-session-rename-btn),
+:deep(.exp-session-item:hover .exp-session-del) { opacity: 1; }
+:deep(.exp-session-del:hover) { background: var(--status-danger-bg); color: var(--status-danger); }
+:deep(.exp-session-empty) { font-size: var(--font-size-xs); color: var(--content-tertiary); padding: var(--space-sm); }
+:deep(.exp-session-tag) {
+  flex-shrink: 0;
+  padding: 2px var(--space-xs);
+  border-radius: var(--radius-xs);
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
 </style>
