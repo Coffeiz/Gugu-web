@@ -7,7 +7,7 @@
         </button>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
-      <div v-else-if="tasks.length" class="task-grid">
+      <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
         <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
           @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
       </div>
@@ -73,7 +73,8 @@ async function submit(data: Record<string, any>) {
 .btn-primary:hover { opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 .panel {
-  --surface-glass: rgba(255,255,255,0.25);
+  --glass-card-background: var(--column-bg);
+  --glass-card-background-hover: var(--column-bg);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
   padding: 22px 24px;
