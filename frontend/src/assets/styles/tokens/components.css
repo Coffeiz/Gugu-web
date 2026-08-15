@@ -85,7 +85,7 @@
   --gugu-chat-highlight: var(--border-highlight);
   --gugu-chat-radius: var(--radius-lg);
   --gugu-chat-shadow: var(--elevation-window);
-  --gugu-chat-header-border: var(--border-subtle);
+  --gugu-chat-header-border: color-mix(in srgb,var(--content-primary) 12%,transparent);
   --gugu-chat-sidebar-border: var(--border-subtle);
   --gugu-chat-session-hover: var(--surface-soft-hover);
   --gugu-chat-session-active: var(--sidebar-item-active);

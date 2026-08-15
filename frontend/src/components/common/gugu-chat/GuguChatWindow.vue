@@ -34,7 +34,7 @@
           :title="currentSessionTitle"
           :on-rename="(t) => onRenameSession(sessionId!, t)"
         />
-        <span v-else class="chat-title">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
+        <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
@@ -241,6 +241,7 @@ defineExpose({
 }
 .chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
 .chat-title { font-size: 13px; font-weight: 700; }
+.chat-title.is-new-session { display: inline-block; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }

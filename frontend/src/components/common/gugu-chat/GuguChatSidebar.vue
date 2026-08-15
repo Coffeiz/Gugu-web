@@ -125,7 +125,12 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 .exp-sidebar-divider { margin: 0 var(--space-md); }
 .exp-group-divider { margin: var(--space-sm) var(--space-xs); }
 
-.exp-new-session-wrap { padding: var(--space-sm) var(--space-sm) var(--space-md); flex-shrink: 0; }
+.exp-new-session-wrap {
+  min-height: 48px;
+  box-sizing: border-box;
+  padding: var(--space-sm);
+  flex-shrink: 0;
+}
 .exp-new-session-btn {
   width: 100%;
   height: var(--control-sm);
@@ -173,6 +178,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   color: var(--content-secondary);
   cursor: pointer;
   flex-shrink: 0;
+  position: relative;
   transition: background .14s ease, border-color .14s ease, color .14s ease;
 }
 :deep(.exp-session-item:hover) { color: var(--content-primary); background: var(--gugu-chat-session-hover); }
