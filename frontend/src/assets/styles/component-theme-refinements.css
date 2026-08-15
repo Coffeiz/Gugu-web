@@ -44,7 +44,7 @@ html[data-theme][data-family] .task-card:hover::after {
 html[data-theme][data-family] .task-card:hover { box-shadow: var(--card-shadow-hover) !important; }
 
 /* Dark mode removes surface brightening, while lift/shadow/controls remain interactive. */
-html[data-theme='dark'][data-family] .glass-card:hover {
+html[data-theme='dark'][data-family] .glass-card:not(.topbar):not(.cal-toolbar):not(.files-toolbar):hover {
   background: var(--glass-card-background);
   border-color: var(--glass-card-border);
 }

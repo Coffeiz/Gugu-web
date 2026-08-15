@@ -43,7 +43,7 @@ html[data-theme][data-family] .topbar {
   transition: box-shadow var(--hover-motion-control);
 }
 html[data-theme='dark'][data-family] .topbar:hover {
-  --gb-tint: var(--topbar-bg);
+  --gb-tint: var(--glass-bg);
   box-shadow: var(--topbar-shadow);
 }
 html[data-theme][data-family] .topbar .btn-ghost-custom {

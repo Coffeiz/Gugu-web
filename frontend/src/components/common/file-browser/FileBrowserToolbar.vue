@@ -1,5 +1,6 @@
 <template>
   <div class="file-browser-toolbar right-header">
+    <GlassBg />
     <slot name="breadcrumb" />
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
     <button v-if="showSelection" class="sel-mode-btn select-mode-btn" :class="{ on: selectionMode }"
@@ -38,6 +39,7 @@ import { PhCheckSquare, PhFolderPlus, PhList, PhSquaresFour, PhX } from '@phosph
 import SortMenu from '@/components/common/SortMenu.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 
 const props = defineProps({
   canPaste: Boolean,
@@ -83,6 +85,11 @@ watch(() => props.showNewFolder, value => {
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  position: relative;
+  isolation: isolate;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 .sel-mode-btn {
   display: flex;

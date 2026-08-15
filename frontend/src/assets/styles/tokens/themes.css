@@ -93,7 +93,7 @@
 
 /* Compatibility aliases for existing pages while component migration proceeds. */
 :root {
-  --bg-gradient: var(--theme-page); --glass-bg: var(--theme-glass); --glass-bg-hover: var(--theme-glass-hover);
+  --bg-gradient: var(--theme-page); --glass-bg: var(--surface-glass); --glass-bg-hover: var(--surface-glass-hover);
   --glass-border: var(--theme-border-strong); --glass-border-hover: var(--theme-border-hover); --panel-bg: var(--theme-base);
   --text-primary: var(--theme-content-primary); --text-secondary: var(--theme-content-secondary);
   --color-primary: var(--theme-action-primary); --color-primary-hover: var(--theme-action-hover); --color-secondary: var(--color-rose-500); --color-tertiary: var(--color-cyan-500);
