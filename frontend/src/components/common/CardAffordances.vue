@@ -97,7 +97,7 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   gap: 3px;
   opacity: 0;
   pointer-events: auto;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-hover-control);
 }
 
 .card-affordances.hovering .card-affordances__actions {
@@ -163,7 +163,7 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   background: var(--color-primary, #7b7fb2);
   box-shadow: 0 1px 4px rgba(30, 35, 60, 0.25);
   opacity: 0;
-  transition: opacity 0.15s, transform 0.15s, box-shadow 0.15s;
+  transition: opacity var(--motion-hover-control), transform var(--motion-hover-control), box-shadow var(--motion-hover-control);
 }
 
 .card-affordances.hovering .conn-dot::before,

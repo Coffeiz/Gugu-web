@@ -128,6 +128,15 @@
             </div>
           </div>
         </div>
+        <div class="subsection">
+          <div class="subheading"><h3>Hover motion · 3</h3><p>悬停反馈统一为微交互、控件、卡片主体三档速度。</p></div>
+          <div class="motion-token-grid">
+            <article v-for="token in hoverMotionTokens" :key="token.name" class="token-card motion-token-card">
+              <div class="motion-preview"><span class="motion-preview-dot" :style="{ '--motion-preview-duration': `var(${token.name})` }" /></div>
+              <div class="token-meta"><strong>{{ token.label }}</strong><code>{{ token.name }}</code><span>{{ token.value }} · {{ token.note }}</span></div>
+            </article>
+          </div>
+        </div>
         <div class="foundation-split">
           <div class="foundation-panel">
             <div class="subheading"><h3>Typography · 5</h3><p>11 / 12 / 14 / 16 / 20</p></div>
@@ -241,6 +250,11 @@ const scrollbarStyles = [
   { label: 'Compact', name: '--scrollbar-size-compact', note: '紧凑列表', kind: 'size', density: 'compact' },
   { label: 'Editor', name: '--scrollbar-size-editor', note: '编辑器', kind: 'size', density: 'editor' },
 ]
+const hoverMotionTokens = [
+  { label: 'Micro', name: '--motion-hover-micro', value: '120ms', note: '连接点 / 箭头 / 轻量状态' },
+  { label: 'Control', name: '--motion-hover-control', value: '150ms', note: '按钮 / 输入框 / 附加交互' },
+  { label: 'Card', name: '--motion-hover-card', value: '250ms', note: '卡片抬起 / 阴影 / 高光' },
+]
 const typeScale = [
   {role:'Caption',token:'--font-size-xs',size:'11px',weight:500,sample:'项目阶段 · 刚刚更新'},
   {role:'Secondary',token:'--font-size-sm',size:'12px',weight:400,sample:'明天下午留给角色设定'},
@@ -263,13 +277,13 @@ const contracts = [
 const tokenIndex = [
   {title:'Foundations',items:['--font-size-xs','--font-size-sm','--font-size-md','--font-size-lg','--font-size-xl','--space-xs','--space-sm','--space-md','--space-lg','--space-xl','--radius-xs','--radius-sm','--radius-md','--radius-lg','--radius-pill','--scrollbar-size-default','--scrollbar-size-compact','--scrollbar-size-editor','--scrollbar-safe-inset']},
   {title:'Semantic',items:['--color-primary','--color-accent','--color-accent-muted','--action-primary-bg','--surface-hover-tint','--color-text','--color-muted','--color-surface','--surface-floating','--content-primary','--border-subtle','--status-success','--elevation-popup']},
-  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--card-motion','--card-overlay-motion','--calendar-grid-line','--calendar-weekend-bg','--calendar-today-date-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--scrollbar-overlay-right-offset','--scrollbar-column-right-offset','--scrollbar-overlay-z-index','--scrollbar-overlay-modal-z-index','--scrollbar-overlay-transition','--scrollbar-overlay-track-inset','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
+  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--motion-hover-micro','--motion-hover-control','--motion-hover-card','--card-motion','--card-overlay-motion','--calendar-grid-line','--calendar-weekend-bg','--calendar-today-date-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--scrollbar-overlay-right-offset','--scrollbar-column-right-offset','--scrollbar-overlay-z-index','--scrollbar-overlay-modal-z-index','--scrollbar-overlay-transition','--scrollbar-overlay-track-inset','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
 ]
 function indexDotStyle(token:string){return /color|surface|content|border|action|status|bg|active|calendar/.test(token)?{background:`var(${token})`}:{background:'var(--action-primary)'}}
 </script>
 
 <style scoped>
-.design-page{min-height:100vh;background:var(--surface-page);color:var(--content-primary);font-family:var(--font-sans);font-synthesis:none;-webkit-font-smoothing:antialiased}
+.motion-token-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--design-grid-gap)}.motion-token-card{overflow:hidden}.motion-preview{height:76px;display:flex;align-items:center;padding:0 var(--space-lg);border-bottom:1px solid var(--border-hairline);background:var(--surface-soft)}.motion-preview-dot{width:22px;height:22px;border-radius:var(--radius-pill);background:var(--action-primary);box-shadow:0 3px 10px color-mix(in srgb,var(--action-primary) 28%,transparent);transition:transform var(--motion-preview-duration) var(--motion-ease-emphasis)}.motion-token-card:hover .motion-preview-dot{transform:translateX(calc(100% + 120px))}.design-page{min-height:100vh;background:var(--surface-page);color:var(--content-primary);font-family:var(--font-sans);font-synthesis:none;-webkit-font-smoothing:antialiased}
 .design-hero{position:fixed;top:0;right:0;left:0;z-index:50;min-height:58px;display:flex;align-items:center;gap:var(--space-xl);padding:var(--space-sm) clamp(var(--space-lg),4vw,56px);background:color-mix(in srgb,var(--surface-glass) 78%,transparent);border-bottom:1px solid var(--border-strong);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 .hero-copy{min-width:0;max-width:760px}.hero-title-row{display:flex;align-items:baseline;gap:var(--space-sm)}.eyebrow,.section-kicker{color:var(--content-tertiary);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);letter-spacing:var(--tracking-label)}.hero-copy h1{font-size:var(--font-size-xl);line-height:var(--line-height-tight)}.hero-copy p{margin-top:var(--space-xs);color:var(--content-secondary);font-size:var(--font-size-xs);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .design-content{width:min(1440px,100%);margin:0 auto;padding:calc(58px + var(--space-xl) + var(--space-lg)) clamp(var(--space-lg),4vw,56px) 72px}
@@ -315,4 +329,5 @@ function indexDotStyle(token:string){return /color|surface|content|border|action
 .sample-main > .sample-topbar .sample-ghost { border: 1px solid color-mix(in srgb, var(--control-border) 75%, transparent); color: var(--content-secondary); background: color-mix(in srgb, var(--control-bg) 74%, transparent); box-shadow: inset 0 1px 0 var(--highlight-muted); }
 .sample-main > .sample-topbar .sample-primary { color: var(--content-on-accent); background: var(--action-primary-bg); box-shadow: 0 3px 12px color-mix(in srgb, var(--color-primary) 30%, transparent); }
 @media(max-width:760px){.sample-main > .sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-main > .sample-topbar .sample-search{display:none}.sample-main > .sample-topbar .sample-ghost{display:none}}
+@media(max-width:760px){.motion-token-grid{grid-template-columns:1fr}}
 </style>

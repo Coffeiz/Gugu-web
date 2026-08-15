@@ -1,11 +1,22 @@
 :root {
-  --motion-fast: 150ms;
-  --motion-default: 250ms;
+  /* Hover 速度只保留三档：微交互、控件、卡片主体。 */
+  --motion-hover-micro: 120ms;
+  --motion-hover-control: 150ms;
+  --motion-hover-card: 250ms;
+  --motion-fast: var(--motion-hover-control);
+  --motion-default: var(--motion-hover-card);
   --motion-slow: 340ms;
   --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
   --motion-ease-emphasis: cubic-bezier(0.34, 1.2, 0.64, 1);
   --motion-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) {
-  :root { --motion-fast: 0ms; --motion-default: 0ms; --motion-slow: 0ms; }
+  :root {
+    --motion-hover-micro: 0ms;
+    --motion-hover-control: 0ms;
+    --motion-hover-card: 0ms;
+    --motion-fast: 0ms;
+    --motion-default: 0ms;
+    --motion-slow: 0ms;
+  }
 }

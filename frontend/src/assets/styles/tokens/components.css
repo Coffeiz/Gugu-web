@@ -5,8 +5,8 @@
   --card-shadow-hover: var(--elevation-card-hover);
   /* One motion contract for project/file/folder/schedule card surfaces. Hover tint is a separate
      opacity layer so the whole card changes uniformly instead of animating a directional gradient. */
-  --card-motion: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, background-color .18s ease, border-color .18s ease;
-  --card-overlay-motion: opacity .20s ease;
+  --card-motion: transform var(--motion-hover-card) cubic-bezier(.34,1.2,.64,1), box-shadow var(--motion-hover-card) ease, background-color var(--motion-hover-card) ease, border-color var(--motion-hover-card) ease;
+  --card-overlay-motion: opacity var(--motion-hover-card) ease;
   --card-hover-overlay: var(--surface-hover-tint);
   --card-surface-bg-hover: var(--surface-raised);
   --card-surface-border-hover: var(--border-hover);

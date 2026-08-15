@@ -434,8 +434,8 @@ async function setPriority(n: number) {
      transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
      本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
      能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.25s ease, background 0.25s ease-out;
+  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow var(--motion-hover-card) ease, background var(--motion-hover-card) ease-out;
   user-select: none;
 }
 .proj-card.file-drag-over {
@@ -476,7 +476,7 @@ async function setPriority(n: number) {
   background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,1);
   opacity: 0;
-  transition: opacity 0.25s ease;
+  transition: opacity var(--motion-hover-card) ease;
   pointer-events: none;
 }
 /* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
