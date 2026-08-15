@@ -9,12 +9,18 @@ list 一次返回全部。这些工具不进 RESOURCE_BY_TOOL（单行写入、�
 """
 import json
 
-from sqlalchemy import select
 from fastapi import HTTPException
 
 from app.models import ScheduledTask
 from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
-from app.core.ownership import get_owned
+from app.services.scheduled_tasks import (
+    create_task,
+    delete_task,
+    find_tasks,
+    get_task,
+    list_tasks,
+    update_task,
+)
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
@@ -124,22 +130,14 @@ async def _resolve_task(db, user_id, args):
     # 日程提醒（event_id 非空）归日历管，咕咕的定时任务工具一律视作「不存在」、不可解析/改/删
     tid = args.get("task_id")
     if tid:
-        t = await get_owned(db, ScheduledTask, tid, user_id)
-        return (t, None) if (t and t.event_id is None) else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
+        t = await get_task(db, user_id, tid)
+        return (t, None) if t else (None, json.dumps({"error": "定时任务不存在"}, ensure_ascii=False))
     name = args.get("task")
     if name:
         name = str(name).strip()
-        rows = (await db.execute(
-            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name == name)
-        )).scalars().all()
+        rows = await find_tasks(db, user_id, name)
         if not rows:
-            rows = (await db.execute(
-                select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None), ScheduledTask.name.ilike(f"%{name}%"))
-            )).scalars().all()
-        if not rows:
-            avail = (await db.execute(
-                select(ScheduledTask.name).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
-            )).scalars().all()
+            avail = [task.name for task in await list_tasks(db, user_id)]
             return None, json.dumps({"error": f"未找到名为「{name}」的定时任务", "available": sorted(set(avail))[:20]}, ensure_ascii=False)
         if len(rows) > 1:
             return None, json.dumps({"error": f"有多个匹配「{name}」的定时任务，请指明是哪个",
@@ -150,11 +148,7 @@ async def _resolve_task(db, user_id, args):
 
 async def _list_scheduled_tasks(db, user_id, args: dict):
     # 日程提醒与定时任务完全分开：event_id 非空的是活动提醒（归日历管），咕咕的定时任务工具一律不碰
-    rows = (await db.execute(
-        select(ScheduledTask)
-        .where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.is_(None))
-        .order_by(ScheduledTask.id.desc())
-    )).scalars().all()
+    rows = await list_tasks(db, user_id)
     return [_to_dict(t) for t in rows]
 
 
@@ -178,17 +172,14 @@ async def _create_scheduled_task(db, user_id, args: dict):
     )
     if target_error:
         return target_error
-    t = ScheduledTask(
-        user_id=user_id, name=name,
+    t = await create_task(
+        db, user_id, name=name,
         payload=(args.get("instruction") or "").strip(),
         cron=cron,
         channels=channels,
         enabled=args.get("enabled", True),
         delivery_targets=delivery_targets,
     )
-    db.add(t)
-    await db.commit()
-    await db.refresh(t)
     return {"success": True, "task_id": t.id, **_to_dict(t),
             "note": "最多 30 秒后开始按时触发"}
 
@@ -216,23 +207,23 @@ async def _update_scheduled_task(db, user_id, args: dict):
         )
         if target_error:
             return target_error
+    fields = {}
     if args.get("cron") is not None:
         c = _check_cron(str(args["cron"]).strip())
         if c:
             return c
-        t.cron = str(args["cron"]).strip()
+        fields["cron"] = str(args["cron"]).strip()
     if args.get("name") is not None:
-        t.name = str(args["name"]).strip()
+        fields["name"] = str(args["name"]).strip()
     if args.get("instruction") is not None:
-        t.payload = str(args["instruction"]).strip()
+        fields["payload"] = str(args["instruction"]).strip()
     if args.get("channels") is not None or args.get("delivery_mode") is not None:
         if args.get("channels") is not None:
-            t.channels = next_channels
-        t.delivery_targets = delivery_targets
+            fields["channels"] = next_channels
+        fields["delivery_targets"] = delivery_targets
     if args.get("enabled") is not None:
-        t.enabled = bool(args["enabled"])
-    await db.commit()
-    await db.refresh(t)
+        fields["enabled"] = bool(args["enabled"])
+    t = await update_task(db, t, fields)
     return {"success": True, **_to_dict(t)}
 
 
@@ -243,9 +234,7 @@ async def _delete_scheduled_task(db, user_id, args: dict):
     blocked = confirm.needs_confirmation(args, f"将删除定时任务「{t.name}」（{_humanize_cron(t.cron)}）", user_id)
     if blocked is not None:
         return blocked
-    tid, name = t.id, t.name
-    await db.delete(t)
-    await db.commit()
+    tid, name = await delete_task(db, t)
     return {"success": True, "deleted_task_id": tid, "name": name}
 
 
