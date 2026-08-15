@@ -43,9 +43,11 @@ html[data-theme='dark'][data-family] {
   --project-card-highlight-hover: transparent;
 
   /* Keep the previous dark calendar grid treatment while light mode restores the original
-     purple-grey main-branch lines. Capsule/chip hover brightening is disabled with all surfaces. */
+     purple-grey main-branch lines. Capsule/chip/cell hover brightening is disabled with surfaces. */
   --calendar-grid-line: var(--border-subtle);
   --calendar-grid-line-strong: var(--border-subtle);
+  --calendar-cell-hover-bg: transparent;
+  --calendar-weekend-hover-bg: var(--calendar-weekend-bg);
   --calendar-chip-hover-overlay: transparent;
   --calendar-capsule-hover-overlay: transparent;
   --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
