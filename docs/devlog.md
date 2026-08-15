@@ -1,5 +1,11 @@
 # 咕咕 · 早期开发记录
 
+## 2026-08-16 · Runtime 卡片主题过渡不再抢占交互动画
+
+`component-theme-refinements.css` 的卡片主题规则曾用 `transition: ... !important` 覆盖 Runtime 在抓取、FLIP 和 landing 生命周期中写入的过渡。现在保留同一组 `--card-motion` 主题动效，但移除卡片本体 transition 的强制优先级；伪元素 hover 层仍保留自己的过渡。
+
+回归说明：抽屉卡片拖出/拖入时，兄弟卡片应继续执行 FLIP，grabbing 阴影应连续交接到 landing；主题 hover 动效仍保持不变。
+
 ## 2026-08-06 · 视频链路 PR 审查收尾（P2 后续优化 + P3 文档修正）
 
 PR #7 视频链路审查确认 3 个 P1 已修复（事件循环阻塞、竖屏长边、超限回退），全量 701 测试通过。另有两个非阻塞项：
