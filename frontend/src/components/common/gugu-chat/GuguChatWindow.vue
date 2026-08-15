@@ -236,7 +236,7 @@ defineExpose({
 .chat-header {
   display: flex; align-items: center; gap: 9px;
   padding: 13px 14px 10px;
-  border-bottom: 1px solid rgba(255,255,255,0.5);
+  border-bottom: 1px solid var(--gugu-chat-header-border, rgba(255,255,255,0.5));
   flex-shrink: 0;
 }
 .chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
