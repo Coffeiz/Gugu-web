@@ -651,7 +651,7 @@ Phase 5 已完成接入准备：前端在保存 camera 时同步保存 viewport 
 - [x] 视口锚点根据 camera 正确转换为世界坐标。
 
 上述用例由 `backend/tests/test_mind_canvas_tools.py` 覆盖；画布相关用例与 Mind API、工具
-隔离测试一起运行，当前全量后端回归为 949 passed。
+隔离测试一起运行，当前全量后端回归为 950 passed；前端 typecheck 与 272 项单元测试通过，画布 Playwright 冒烟测试在 devserver 通过（2 passed）。
 
 ### 11.2 Agent 工具验收
 
