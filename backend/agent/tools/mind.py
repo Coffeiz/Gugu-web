@@ -9,6 +9,7 @@ from app.core.mind import (
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
 from app.core.ownership import get_owned
 from app.models import MindNode, MindRelation
+from app.services.mind import get_live_note, latest_gugu_note, list_live_nodes, list_node_relations, search_live_nodes
 from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
@@ -143,37 +144,19 @@ def _parse_captured_at(value) -> datetime:
 
 
 async def _get_live_note(db, user_id, node_id) -> MindNode | None:
-    node = await get_owned(db, MindNode, node_id, user_id)
-    if node is None or node.kind != "note" or node.deleted_at is not None:
-        return None
-    return node
+    return await get_live_note(db, user_id, node_id)
 
 
 async def _live_nodes_by_ids(db, user_id, node_ids: set[int]) -> dict[int, MindNode]:
     if not node_ids:
         return {}
-    rows = (await db.execute(
-        select(MindNode).where(
-            MindNode.user_id == user_id,
-            MindNode.id.in_(node_ids),
-            MindNode.deleted_at.is_(None),
-        )
-    )).scalars().all()
-    return {node.id: node for node in rows}
+    return await list_live_nodes(db, user_id, node_ids)
 
 
 async def _relations_for_nodes(db, user_id, node_ids: set[int]) -> list[MindRelation]:
     if not node_ids:
         return []
-    return (await db.execute(
-        select(MindRelation).where(
-            MindRelation.user_id == user_id,
-            or_(
-                MindRelation.src_node_id.in_(node_ids),
-                MindRelation.dst_node_id.in_(node_ids),
-            ),
-        ).order_by(MindRelation.created_at.desc())
-    )).scalars().all()
+    return await list_node_relations(db, user_id, node_ids)
 
 
 def _relation_summary(relation: MindRelation, current_node_id: int, nodes: dict[int, MindNode]) -> dict | None:
@@ -202,14 +185,7 @@ async def _mind_search(db, user_id, args: dict):
     if not isinstance(limit, int):
         limit = 5
     limit = max(1, min(limit, _MAX_RESULTS))
-    matches = (await db.execute(
-        select(MindNode).where(
-            MindNode.user_id == user_id,
-            MindNode.kind.in_(("note", "canvas_note")),
-            MindNode.deleted_at.is_(None),
-            keyword_condition([MindNode.title, MindNode.content_plain], search_queries, args.get("mode")),
-        ).order_by(MindNode.captured_at.desc()).limit(limit)
-    )).scalars().all()
+    matches = await search_live_nodes(db, user_id, search_queries, args.get("mode"), limit)
 
     match_ids = {node.id for node in matches}
     relations = await _relations_for_nodes(db, user_id, match_ids)
@@ -349,17 +325,7 @@ async def _restore_note(db, user_id, args: dict):
 
 
 async def _undo_last_gugu_note(db, user_id, args: dict):
-    node = await db.scalar(
-        select(MindNode)
-        .where(
-            MindNode.user_id == user_id,
-            MindNode.kind == "note",
-            MindNode.origin == "gugu",
-            MindNode.deleted_at.is_(None),
-        )
-        .order_by(MindNode.created_at.desc(), MindNode.id.desc())
-        .limit(1)
-    )
+    node = await latest_gugu_note(db, user_id)
     if node is None:
         return {"error": "没有可撤销的咕咕记录"}
     if not await soft_delete_mind_note(db, node.id, user_id, node.version):
