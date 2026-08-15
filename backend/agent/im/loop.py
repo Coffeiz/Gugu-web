@@ -647,6 +647,7 @@ async def prepare_request(
         im_role=role,
         allowed_tool_names=allowed_tool_names,
         actor_context=actor,
+        im_message_format=payload.get("message_format"),
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 

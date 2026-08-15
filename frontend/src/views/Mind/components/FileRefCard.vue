@@ -11,6 +11,7 @@
     :has-thumb="isImageExt(file.ext)"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -22,13 +23,11 @@
         @error="($event.target as HTMLElement).style.display = 'none'" />
     </template>
     <template #meta>{{ file.projectName || '未分类' }} · {{ file.size }}</template>
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </FileCard>
   <!-- filesCache 还没加载完（画布常常是用户没先逛过文件库/Dashboard 就直接进来的入口，
        全局缓存这时是空的）跟"文件真的被删了"是两回事，但两者都会让 file 算出来是
@@ -52,17 +51,16 @@
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
     <template #meta>加载中…</template>
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </FileCard>
   <!-- 缓存已经加载完、确实找不到这个文件——这才是真的"已删除"，跟上面"还在等缓存"是两种
        性质完全不同的状态，但同样用 FileCard 渲染（不再是独立的扁平墓碑布局）：ext 用创建
@@ -81,17 +79,16 @@
     :has-thumb="false"
     :canvas-mode="true"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
     <template #meta>已删除，仅保留快照</template>
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </FileCard>
 </template>
 
@@ -100,13 +97,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
-import { useCardDrag } from '@/composables/useCardDrag'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { getThumb, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import { itemSize } from '@/composables/useMindCanvas'
-import CardActions from './CardActions.vue'
-import CardConnDot from './CardConnDot.vue'
+import CardAffordances from '@/components/common/CardAffordances.vue'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -117,17 +114,13 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
-  (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landing', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landingDone', item: MindCanvasItem): void
-  (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
-// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有 file/
+// CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有 file/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
 function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
@@ -177,22 +170,13 @@ function observeCard() {
 watch(file, () => nextTick(observeCard), { immediate: true })
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => fileCardRef.value?.rootEl ?? null,
-  onClick: () => { if (file.value) emit('open', props.item) },
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: () => mindCanvasObjectId(props.item),
+  element: () => fileCardRef.value?.rootEl ?? null,
 })
+function onOpen() {
+  if (file.value) emit('open', props.item)
+}
 </script>
 
 <style scoped>
@@ -205,14 +189,14 @@ const { onPointerDown } = useCardDrag({
    等于强迫它填满 .fr-wrap 的 min-height，内容矮于这个值时 .fc-label 的 flex:1 会把空白
    拉伸垫在卡片下方（文件卡显得比其它页面同款卡片长的根因）。 */
 /* .fc-card 全局有 overflow:hidden。连接点走它的插槽后是它的子节点（跟着拖拽克隆一起飞，见
-   上面模板注释），但圆点的判定区摆在卡片边缘外侧（见 CardConnDot.vue 的 .conn-dot-left/
+   上面模板注释），但圆点的判定区摆在卡片边缘外侧（见 CardAffordances.vue 的 .conn-dot-left/
    right），会被这份 overflow:hidden 整个裁掉一半——看着像"文件节点被裁在容器里"。
    .fc-thumb-area 自己另有一份 overflow:hidden 专门裁缩略图，改这里成 visible 不影响缩略图
    圆角。"正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 :deep(.fc-card.fr-card) { overflow: visible; }
 
-/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
-   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都由 CardAffordances.vue 提供，
+   外观/悬停显形逻辑不再各卡自己抄一份。 */
 
 /* 缩略图两层（模糊占位 tiny + 淡入 full），跟 Dashboard/FilePanel.vue 同款；基础定位/裁剪
    走 FileCard.vue 的 .fc-thumb-area :deep(img)，这里只管两层各自的差异。 */

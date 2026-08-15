@@ -6,6 +6,7 @@
     :style="stickerStyle"
     :data-node-id="item.nodeId"
     @pointerdown.stop="onPointerDown"
+    @click.stop="onCardClick"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -22,14 +23,11 @@
     <span v-if="eventTimeLabel" class="es-time">
       <PhClock :size="11" weight="bold" />{{ eventTimeLabel }}
     </span>
-    <CardActions v-if="!isTombstone" :hovering="isHovering">
+    <CardAffordances v-if="!isTombstone" :hovering="isHovering" :node-id="item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      v-if="!isTombstone"
-      :node-id="item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </article>
 </template>
 
@@ -37,10 +35,10 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { PhCalendarBlank, PhClock, PhFile, PhStack, PhTrash } from '@phosphor-icons/vue'
 import { eventsApi, type MindCanvasItem } from '@/services/api'
-import { useCardDrag } from '@/composables/useCardDrag'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import { itemSize } from '@/composables/useMindCanvas'
-import CardActions from './CardActions.vue'
-import CardConnDot from './CardConnDot.vue'
+import CardAffordances from '@/components/common/CardAffordances.vue'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -51,10 +49,6 @@ const props = defineProps({
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
-  (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landing', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landingDone', item: MindCanvasItem): void
-  (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
@@ -109,7 +103,7 @@ const eventTimeLabel = computed(() => {
   return `${dateStr} ${e.time}${e.endTime ? `–${e.endTime}` : ''}`
 })
 
-// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），所以这里要自己记一份悬停
+// CardAffordances 用 prop 驱动外观（不是 CSS :hover），所以这里要自己记一份悬停
 // 状态——反正 mouseenter/mouseleave 本来就要往上报给 MindCanvas.vue（连线抬起效果），
 // 顺手多存一份本地状态不算额外开销。
 const isHovering = ref(false)
@@ -138,22 +132,13 @@ onMounted(() => nextTick(observeCard))
 watch(() => props.scale, () => nextTick(emitMeasuredSize))
 onBeforeUnmount(() => cardResizeObserver?.disconnect())
 
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => cardRef.value,
-  onClick: () => { if (!isTombstone.value) emit('open', props.item) },
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: () => mindCanvasObjectId(props.item),
+  element: () => cardRef.value,
 })
+function onCardClick() {
+  if (!isTombstone.value) emit('open', props.item)
+}
 </script>
 
 <style scoped>
@@ -203,6 +188,6 @@ h3 { margin: 0; font-size: 13.5px; line-height: 1.35; font-weight: 700; overflow
   font-size: 10.5px; color: var(--text-secondary); opacity: .85;
 }
 
-/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
-   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都由 CardAffordances.vue 提供，
+   外观/悬停显形逻辑不再各卡自己抄一份。 */
 </style>

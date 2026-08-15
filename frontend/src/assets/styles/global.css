@@ -228,51 +228,7 @@ body {
 }
 .fc-card:hover::after, .folder-card:hover::after { opacity: 1; }
 .fc-card:hover, .folder-card:hover { transform: translateY(-2px); }
-/* 拖拽落地揭示后短暂压住全部 hover 效果，见 usePhysicsDrag.ts 的 _revealWithoutStaleHover——
-   :hover 判定没被拦（一直照真实指针位置实时判定），只是这段时间内不让视觉效果显形。
-   之前只压了 transform，文件库/项目编辑卡两处 scoped 样式里的 box-shadow/background/
-   操作按钮渐显没压住：位移之外的 hover 效果瞬间就到位，200ms 后位移才补上，看着像
-   「先出现一半 hover 效果、再跳一下变全 hover」。这里把每一项都摘掉，200ms 内看起来是
-   完整的非 hover 态，200ms 后（还压着的话）一次性正常呈现完整 hover，不再分两截。
-   background/box-shadow 用 !important——scoped 样式编译后带 data-v 属性选择器，跟这里的
-   类选择器特异度可能刚好打平，谁赢要看两份样式表的实际注入顺序，不保真，直接 !important
-   免得赌。 */
-.fc-card.phys-just-revealed:hover, .folder-card.phys-just-revealed:hover {
-  transform: none !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06) !important;
-}
-.fc-card.phys-just-revealed:hover { background: rgba(255,255,255,0.72) !important; }
-.folder-card.phys-just-revealed:hover {
-  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82)) !important;
-}
-.fc-card.phys-just-revealed:hover::after, .folder-card.phys-just-revealed:hover::after { opacity: 0 !important; }
-.fc-card.phys-just-revealed:hover .fc-hover-actions,
-.folder-card.phys-just-revealed:hover .fd-hover-actions { opacity: 0 !important; }
-/* 项目页看板的项目卡（.proj-card，ProjectCard.vue）走同一套 physics 拖拽与揭示，同样加这两个类；
-   它的静止态阴影/hover 值跟文件卡不同，单独压一份：抬起(-2px，来自 .hover-card-fx)、hover 阴影
-   （0 6px 18px）、::after 高光都压回静止态。box-shadow 的静止值抄自 ProjectCard.vue 的 .proj-card。 */
-.proj-card.phys-just-revealed:hover {
-  transform: none !important;
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07) !important;
-}
-.proj-card.phys-just-revealed:hover::after { opacity: 0 !important; }
-/* 揭示当帧：把卡片及其所有子元素的过渡一并关掉，让「压制态」瞬间生效、零动画（卡片不下沉、
-   操作按钮不从陈旧的 hover opacity 淡出）。只挂一帧，提交后立即由 JS 摘掉。见 _revealWithoutStaleHover。
-   必须连 ::before/::after 一起关：通配符 * 匹配不到伪元素，而 hover 高光遮罩正是 .fc-card::after，
-   漏了它高光就仍会从陈旧的 hover opacity 淡出、200ms 后再淡入（表现为「高光闪一下」）。 */
-.phys-reveal-snap, .phys-reveal-snap *,
-.phys-reveal-snap::before, .phys-reveal-snap::after,
-.phys-reveal-snap *::before, .phys-reveal-snap *::after { transition: none !important; }
-/* 连接点（CardConnDot.vue）是个例外：卡片落地揭示这一帧如果鼠标已经压在上面，_revealWithoutStaleHover
-   会同步派发 synthetic mouseenter，hovering 变 true 的这次 class 切换恰好落在上面这条快照
-   规则生效的同一帧，把连接点本该有的淡入动画也一并压没了，表现为"点瞬间出现"而不是跟手淡入。
-   快照要压的是转手/下沉这类「陈旧 hover 视觉」造成的跳变，连接点首次出现的淡入不属于这类，
-   补一条更具体的选择器把它排除在外，各类选择器的特异度都比上面这条通用规则高，不用管书写
-   顺序谁在前。 */
-.phys-reveal-snap .card-conn-dots .conn-dot::before {
-  transition: opacity 0.15s, transform 0.15s, box-shadow 0.2s ease !important;
-}
-/* .card-actions/.conn-dot 是 FileRefCard.vue（画布文件引用卡）通过插槽塞进 .fc-card 内部的
+/* .card-actions/.conn-dot 是 CardAffordances.vue 通过插槽塞进画布卡片内部的
    按钮，不是 FileCard.vue 自己认得的 .fc-hover-actions——按下移除/连线圆点时同样不该带着
    整张卡一起按下去，在同一条排除名单里一并列上。 */
 .fc-card:active:not(:has(:active)) { transform: translateY(1px); opacity: 0.93; }
@@ -427,7 +383,7 @@ body {
 }
 ::placeholder { color: var(--text-secondary); opacity: 0.75; }
 
-/* ── 拖拽物理效果（usePhysicsDrag）── */
+/* 旧版拖拽物理样式已移除，卡片视觉由 interaction runtime 与组件样式负责。 */
 /* 克隆体：跟着指针弹簧跟随的卡片，抬起阴影 + 毛玻璃强化「拎起来」的感觉。
    全站唯一定义（文件库/项目编辑卡/看板项目卡的拖拽克隆共用）——别在组件里各自定义。
    background 带 !important：盖过 cloneNode 保留的源卡 scoped 白底与历史内联底色。 */
@@ -437,15 +393,6 @@ body {
    排在后面赢了）侥幸吃到这份"拎起来"的阴影，其它类型全部被自己的静止阴影盖掉、拖起来跟不
    拖时几乎一样重，看着"各种卡片的拖动悬浮阴影不一样"。全站拖拽克隆的抬起阴影只应该有一份、
    不该被谁的静止态阴影个别覆盖，这里强制赢。 */
-.phys-drag-clone {
-  background: rgba(255, 255, 255, 0.42) !important;
-  backdrop-filter: blur(12px) saturate(1.15);
-  -webkit-backdrop-filter: blur(12px) saturate(1.15);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 22px 50px rgba(30, 35, 60, 0.30) !important;
-  cursor: grabbing;
-  opacity: 0.97;
-}
 /* 文件卡 / 文件夹卡 / 项目卡拖拽：卡片容器自己背景+模糊，不加外圈装饰层（试过用负
    z-index 子元素做「本体不透明+外圈单独模糊」的分层方案，box-shadow 柔光/backdrop-filter
    都试过，效果要么是装饰光晕、要么在拖拽自带的 3D 后仰变换下失真变成硬边白框——都不是
@@ -454,34 +401,15 @@ body {
    都更透的 0.5：更高时 20% 见光量对肉眼来说模糊基本不可感知（实测截图确认），0.5 是能看出
    背后模糊内容、同时不至于完全「只剩玻璃感」的折中点。ProjectModal 内的文件/文件夹卡同时
    带 .pm-clone-expanded，仍会命中 .fc-card/.folder-card，不用单独再写一条。 */
-.phys-drag-clone.fc-card,
-.phys-drag-clone.folder-card,
-.phys-drag-clone.proj-card,
-.phys-drag-clone.pr-card {
-  background: rgba(255, 255, 255, 0.5) !important;
-  backdrop-filter: blur(12px) saturate(1.15);
-  -webkit-backdrop-filter: blur(12px) saturate(1.15);
-}
 /* 文件名和元信息比玻璃层次更需要清晰度：透明祖先会把整张卡降进灰阶抗锯齿合成，细字发虚。
    文件克隆保留 backdrop-filter 与阴影，但不再用 opacity 叠一层。 */
-.phys-drag-clone.fc-card { opacity: 1; }
 /* 图片文件卡：缩略图（.fc-thumb-area）是完全不透明的真实图片，铺在 .fc-card 上层，挡住了
    卡片自己 backdrop-filter 模糊到的「背后内容」（拖过其他卡片时应该透出模糊的其他卡片，
    不是把缩略图自己的画面弄模糊）。给 .fc-thumb-area 单独挂一份跟卡片同参数的
    backdrop-filter（模糊它背后——也就是正被拖过的其他文件卡），图片本身不加 filter，只降
    透明度让这份模糊透出来，跟卡片主体「半透明白底 + backdrop-filter 模糊背景」的双层观感
    对齐。 */
-.phys-drag-clone.fc-card .fc-thumb-area {
-  background: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(12px) saturate(1.15);
-  -webkit-backdrop-filter: blur(12px) saturate(1.15);
-}
-.phys-drag-clone.fc-card .fc-thumb-tiny,
-.phys-drag-clone.fc-card .fc-thumb-full.fc-loaded {
-  opacity: 0.75;
-}
 /* 源卡 / 落点卡：隐藏但保留布局占位，让飞动的克隆体看起来就是卡片本体 */
-.phys-drag-source { opacity: 0 !important; }
 
 
 /* 曾经拖拽期间关掉顶栏/侧栏 backdrop-filter 减负（perf trace 显示单次整屏重绘 ~29ms）——
@@ -490,24 +418,5 @@ body {
    上又测出明显的拖拽卡顿，再回来考虑更精细的方案（比如只在克隆体真的经过顶栏/侧栏那片
    区域时才临时关闭，而不是整段拖拽期间全程关闭）。 */
 /* pointer 驱动拖拽没有原生 drag 光标，整页给个抓取态补回手感 */
-body.phys-dragging, body.phys-dragging * { cursor: grabbing !important; }
 
 /* 多文件拖拽数量徽章（右上角圆形数字） */
-.phys-drag-badge {
-  position: absolute;
-  top: -9px;
-  right: -9px;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 5px;
-  background: var(--color-primary, #6c6ef5);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 22px;
-  border-radius: 99px;
-  text-align: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
-  pointer-events: none;
-  z-index: 1;
-}

@@ -29,7 +29,7 @@ def test_drops_synthetic_control_user_prompts():
     """守卫注入的合成 user 消息是纯字符串 content（无工具块）→ 丢。"""
     delta = [
         {"role": "assistant", "content": [{"type": "text", "text": "改好了"}]},   # narration 那轮的假装文字
-        {"role": "user", "content": "【系统提醒 · 你在用嘴假装操作】…"},            # _NARRATION_NUDGE
+        {"role": "user", "content": "【系统提醒 · 缺少工具回执】…"},            # _NARRATION_NUDGE
     ]
     assert tool_rounds_only(delta) == []
 

@@ -12,23 +12,22 @@
     :style="cardStyle"
     :data-node-id="item.nodeId"
     :data-canvas-item-id="item.id"
+    :data-project-id="item.node.refId"
     @pointerdown.stop="onPointerDown"
-    @physics-landing-regrab="onLandingRegrab"
+    @click.stop="onOpen"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
     <ProjectCardBody :project="project" />
 
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+      <template #connect />
+    </CardAffordances>
   </div>
-  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" @pointerdown.stop="onPointerDown"
-    @physics-landing-regrab="onLandingRegrab"
+  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
@@ -47,13 +46,11 @@
          "已删除，仅保留快照"，缓存刚加载完那一下会先说谎再改口。跟 FileRefCard.vue 同一个
          坑（见其注释），这里只是文字层面的表现，不像文件卡那样有缩略图区带来的跳动。 -->
     <span class="pr-deleted">{{ projectStore.loading ? '加载中…' : '已删除，仅保留快照' }}</span>
-    <CardActions :hovering="isHovering">
+    <CardAffordances :hovering="isHovering" :node-id="props.item.nodeId" :connecting="connecting" :target-side="connectionTargetSide" @connect-drag-start="(e, side) => emit('connectDragStart', e, side)">
+      <template #actions>
       <button title="从画布移除" @pointerdown.stop @click.stop="emit('remove', item)"><PhTrash :size="12" weight="bold" /></button>
-    </CardActions>
-    <CardConnDot
-      :node-id="props.item.nodeId" :hovering="isHovering" :connecting="connecting" :target-side="connectionTargetSide"
-      @drag-start="(e, side) => emit('connectDragStart', e, side)"
-    />
+      </template>
+    </CardAffordances>
   </div>
 </template>
 
@@ -62,13 +59,14 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropTy
 import { PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvasItem } from '@/services/api'
 import type { Project } from '@/types/project'
-import { useCardDrag } from '@/composables/useCardDrag'
 import { itemSize } from '@/composables/useMindCanvas'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import { useProjectStore } from '@/stores/projects'
-import CardActions from './CardActions.vue'
-import CardConnDot from './CardConnDot.vue'
+import CardAffordances from '@/components/common/CardAffordances.vue'
 import ProjectCardBody from './ProjectCardBody.vue'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 
 const props = defineProps({
   item: { type: Object as PropType<MindCanvasItem>, required: true },
@@ -80,17 +78,13 @@ const props = defineProps({
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
   (e: 'returnToDrawer', item: MindCanvasItem): void
-  (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landing', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landingDone', item: MindCanvasItem): void
-  (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'open', item: MindCanvasItem): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
 }>()
 
-// CardActions/CardConnDot 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
+// CardAffordances 用 prop 驱动外观（不是 CSS :hover），两个模板分支（有项目/
 // 已删除墓碑）共用同一份悬停状态。
 const isHovering = ref(false)
 function onEnter() { isHovering.value = true; emit('hover', props.item, true) }
@@ -119,7 +113,7 @@ const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
   return {
     left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}`,
-    background: project.value ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.value.color}` : undefined,
+    '--pr-project-color': project.value?.color || undefined,
   }
 })
 
@@ -173,62 +167,14 @@ onBeforeUnmount(() => {
   cardResizeObserver?.disconnect()
 })
 
-// 项目和文件贴纸共用同一套物理入口、真实根节点和坐标回调。
-const { onPointerDown, startLandingRegrab } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => cardEl.value ?? missingRef.value,
-  exclude: target => !!(target as HTMLElement)?.closest?.('.seg-bar-wrap, .card-actions, .conn-dot'),
+// 项目和文件贴纸统一由 Runtime 负责抓取、物理落地和重抓接管；项目回抽屉的目标
+// Surface 由 MindCanvas 统一提交，组件只保留业务点击和展示职责。
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: () => mindCanvasObjectId(props.item),
+  element: () => cardEl.value ?? missingRef.value,
+  objectType: MIND_PROJECT_OBJECT_TYPE,
   onClick: onOpen,
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
-  resolveAbsorbTarget: pointer => {
-    // 项目已被删除（墓碑态，project 为 null）时，抽屉里压根没有这个项目对应的卡片可以
-    // 接收——projectStore.projects 里根本没有这一条，resolveAbsorbLandingTarget 永远找
-    // 不到目标，轮询超时后卡在半途（曾经复现过"拖进抽屉卡住"）。这类卡片不允许吸入抽屉，
-    // 落在抽屉区域也当成普通画布移动处理。
-    if (!project.value) return null
-    // 物理克隆与画布分属不同层叠上下文，elementFromPoint 在抽屉上方时可能命中画布层，
-    // 即使指针几何位置已经在抽屉内。抽屉本身是唯一有效投放区，按它的可见矩形判定更稳定。
-    const drawer = document.querySelector<HTMLElement>('[data-project-drawer-dropzone]')
-    if (!drawer) return null
-    const rect = drawer.getBoundingClientRect()
-    return pointer.x >= rect.left && pointer.x <= rect.right && pointer.y >= rect.top && pointer.y <= rect.bottom
-      ? drawer
-      : null
-  },
-  resolveAbsorbLandingTarget: () => {
-    const projectId = props.item.node.refId
-    return projectId == null
-      ? null
-      : document.querySelector<HTMLElement>(`.drawer-project-card[data-project-id="${projectId}"]`)
-  },
-  absorbShrink: false,
-  // returnCanvasItemToDrawer 是接口请求，真实网络延迟经常超过 usePhysicsDrag.ts 默认的
-  // 300ms 轮询上限——超时就找不到刚挂载的那张具体抽屉卡，只能退化用命中的抽屉容器当
-  // 落点，飞行/揭示都对不上真实卡片位置。放宽到 1500ms，与抽屉→画布方向
-  // landingTargetWaitMs 的量级保持一致。
-  absorbLandingWaitMs: 1500,
-  // 拖回抽屉的落地飞行（clone2）中途被重新抓起时，把手势转手给落点的抽屉卡自己接力，
-  // 而不是拿这次吸入请求的 opts（画布卡视角的 resolveAbsorbTarget/resolveLandingTarget
-  // 等）硬套在抽屉卡身上继续拖——不接的话转手事件落进没人听的地方，抓起来之后就没法
-  // 再放回画布。ProjectDrawerCard.vue 那边接了 physics-landing-regrab 事件才能接力。
-  delegateLandingRegrab: true,
-  onAbsorb: () => emit('returnToDrawer', props.item),
 })
-function onLandingRegrab(event: Event) {
-  const handoff = event as CustomEvent<{ event: PointerEvent; initialRect: DOMRect }>
-  startLandingRegrab(handoff.detail.event, handoff.detail.initialRect)
-  event.preventDefault()
-}
 function onOpen() {
   emit('open', props.item)
 }
@@ -243,19 +189,32 @@ function onOpen() {
    越往后建的项目卡片、前面项目卡片越多/越高，累积偏差就越大。
    圆角只用 border-radius，不叠 corner-shape:squircle——文件卡/便签/活动贴纸这几种画布卡片
    都是普通圆角，项目卡跟着统一，不再各转各的曲线。overflow:visible 是因为连接点的判定区
-   摆在卡片边缘外侧（见 CardConnDot.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
+   摆在卡片边缘外侧（见 CardAffordances.vue 的 .conn-dot-left/right），overflow:hidden 会把它们
    裁掉一半；背景渐变本身不需要 overflow:hidden 也会被自己的 border-radius 裁成圆角（元素
    自身背景永远贴合自己的盒子形状，overflow 管的是会溢出盒子的子元素/内容，不影响这点）。
    "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 .pr-card, .pr-missing {
   position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
   font-family: var(--font-sans);
+  background: rgb(255,255,255);
   border-radius: 14px;
   corner-shape: round;
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: visible;
 }
+.pr-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), var(--pr-project-color);
+  pointer-events: none; z-index: 0;
+  transition: opacity 0.25s ease-out;
+}
+.pr-card > :not(.card-affordances) { position: relative; z-index: 1; }
+/* 抓取态只显示 runtime 提供的毛玻璃底；landing 阶段恢复本体渐变，仍由同一张卡片完成
+   单层过渡，不再把整张项目卡拆成两份 opacity 交叉层。 */
+.pr-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.pr-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
+.pr-card[data-runtime-phase="landing"]::before { opacity: 1; }
 /* 悬停抬起/阴影加深走全局 .hover-card-fx（已加在模板类名里），但 scoped 样式编译后会带
    [data-v-xxx] 属性选择器，跟上面 .pr-card 静止态 box-shadow 那条一样特异度（类+属性选择
    器），跟全局 .hover-card-fx:hover（类+伪类，同样两级）打平——打平时看两份样式表谁在最终
@@ -295,6 +254,6 @@ function onOpen() {
 .pr-deadline.urgent { color: var(--color-warning); font-weight: 600; }
 .pr-deleted { font-size: 10.5px; color: var(--text-secondary); opacity: .7; }
 
-/* 操作按钮（.card-actions）和连接点（.conn-dot）都挪进了共用组件 CardActions.vue/
-   CardConnDot.vue，外观/悬停显形逻辑不再各卡自己抄一份。 */
+/* 操作按钮（.card-actions）和连接点（.conn-dot）都由 CardAffordances.vue 提供，
+   外观/悬停显形逻辑不再各卡自己抄一份。 */
 </style>
