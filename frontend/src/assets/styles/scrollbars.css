@@ -49,6 +49,11 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb] {
   transition: background-color var(--scrollbar-overlay-transition);
 }
 
+/* 聊天窗口的滑块挂在窗口内部，随窗口的 transform/缩放动画同步移动。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--chat {
+  position: absolute;
+}
+
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--compact {
   width: var(--scrollbar-size-compact);
 }

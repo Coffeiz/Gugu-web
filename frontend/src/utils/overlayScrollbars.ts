@@ -12,6 +12,7 @@ type ScrollBinding = {
   thumb: HTMLDivElement
   resizeObserver: ResizeObserver
   onScroll: () => void
+  owner: HTMLElement | null
 }
 
 const bindings = new WeakMap<HTMLElement, ScrollBinding>()
@@ -36,13 +37,25 @@ function updateThumb(element: HTMLElement, binding: ScrollBinding) {
   const offset = maxScroll > 0 ? (element.scrollTop / maxScroll) * maxOffset : 0
   binding.thumb.hidden = false
   binding.thumb.style.height = `${thumbHeight}px`
-  binding.thumb.style.top = `${rect.top + trackInset + offset}px`
-  binding.thumb.style.right = `calc(${Math.max(0, window.innerWidth - rect.right)}px - var(--scrollbar-overlay-right-offset))`
+  if (binding.owner) {
+    const ownerRect = binding.owner.getBoundingClientRect()
+    binding.thumb.style.top = `${rect.top - ownerRect.top + trackInset + offset}px`
+    binding.thumb.style.right = `calc(${Math.max(0, ownerRect.right - rect.right)}px - var(--scrollbar-overlay-right-offset))`
+  } else {
+    binding.thumb.style.top = `${rect.top + trackInset + offset}px`
+    binding.thumb.style.right = `calc(${Math.max(0, window.innerWidth - rect.right)}px - var(--scrollbar-overlay-right-offset))`
+  }
 
   const modal = element.closest<HTMLElement>('.bm-center')
   if (modal) {
     const modalZ = Number.parseInt(getComputedStyle(modal).zIndex, 10)
     if (Number.isFinite(modalZ)) binding.thumb.style.zIndex = String(modalZ + 1)
+  } else {
+    const chatWindow = element.closest<HTMLElement>('.chat-window')
+    if (chatWindow) {
+      const chatZ = Number.parseInt(getComputedStyle(chatWindow).zIndex, 10)
+      if (Number.isFinite(chatZ)) binding.thumb.style.zIndex = String(chatZ + 1)
+    }
   }
 }
 
@@ -57,22 +70,47 @@ function bind(element: HTMLElement) {
   if (element.classList.contains('scroll-surface--editor')) thumb.classList.add('overlay-scrollbar--editor')
   if (element.classList.contains('col-body')) thumb.classList.add('overlay-scrollbar--column')
   if (element.closest('.project-modal-root')) thumb.classList.add('overlay-scrollbar--modal')
-  document.body.appendChild(thumb)
+  const owner = element.closest<HTMLElement>('.chat-window')
+  if (owner) thumb.classList.add('overlay-scrollbar--chat')
+  const thumbHost = owner ?? document.body
+  thumbHost.appendChild(thumb)
 
   const onScroll = () => {
     const binding = bindings.get(element)
     if (binding) updateThumb(element, binding)
   }
-  const resizeObserver = new ResizeObserver(onScroll)
-  resizeObserver.observe(element)
-  resizeObserver.observe(element.firstElementChild ?? element)
-
-  const binding = { thumb, resizeObserver, onScroll }
+  const binding: ScrollBinding = {
+    thumb,
+    resizeObserver: new ResizeObserver(onScroll),
+    onScroll,
+    owner,
+  }
   bindings.set(element, binding)
+  binding.resizeObserver.observe(element)
+  binding.resizeObserver.observe(element.firstElementChild ?? element)
   element.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('scroll', onScroll, { passive: true })
   window.addEventListener('resize', onScroll, { passive: true })
   updateThumb(element, binding)
+}
+
+function unbind(element: HTMLElement) {
+  const binding = bindings.get(element)
+  if (!binding) return
+
+  binding.resizeObserver.disconnect()
+  element.removeEventListener('scroll', binding.onScroll)
+  window.removeEventListener('scroll', binding.onScroll)
+  window.removeEventListener('resize', binding.onScroll)
+  binding.thumb.remove()
+  element.classList.remove(HOST_CLASS)
+  bindings.delete(element)
+}
+
+function unbindTree(node: Node) {
+  if (!(node instanceof HTMLElement)) return
+  if (node.matches(SCROLL_SURFACE_SELECTOR)) unbind(node)
+  node.querySelectorAll<HTMLElement>(SCROLL_SURFACE_SELECTOR).forEach(unbind)
 }
 
 function scan(root: ParentNode) {
@@ -92,12 +130,26 @@ function refreshAncestor(element: HTMLElement | null) {
 export function installOverlayScrollbars() {
   scan(document)
   const observer = new MutationObserver((records) => {
-    records.forEach((record) => record.addedNodes.forEach((node) => {
-      if (node instanceof HTMLElement) {
-        scan(node)
-        refreshAncestor(node.parentElement)
+    records.forEach((record) => {
+      record.removedNodes.forEach(unbindTree)
+      record.addedNodes.forEach((node) => {
+        if (node instanceof HTMLElement) {
+          scan(node)
+          refreshAncestor(node.parentElement)
+        }
+      })
+      if (record.type === 'attributes' && record.target instanceof HTMLElement) {
+        record.target.querySelectorAll<HTMLElement>(SCROLL_SURFACE_SELECTOR).forEach((element) => {
+          const binding = bindings.get(element)
+          if (binding) updateThumb(element, binding)
+        })
       }
-    }))
+    })
   })
-  observer.observe(document.body, { childList: true, subtree: true })
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['style'],
+  })
 }
