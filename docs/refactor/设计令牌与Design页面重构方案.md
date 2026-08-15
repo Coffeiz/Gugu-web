@@ -24,13 +24,16 @@
 
 但咕咕的页面和交互更复杂，因此需要额外区分 Admin、Mind/画布、普通 UI 动效和画布物理参数，不能直接复制 Mafuyu 的单文件结构。
 
+当前盘点确认：Admin 在视觉上已经是一套独立的深色 Glassmorphism 体系，但代码层还没有真正形成独立主题层。整体背景由 `AdminLayout.vue` 维护，多个 Admin 页面仍直接写入暗色背景、文字、边框、阴影和圆角值；只有部分弹窗和基础样式复用了全局变量。因此 Admin 的迁移重点不是重新设计颜色，而是把现有暗色语义抽取到独立作用域，并消除页面间重复值。
+
 ### 1.2 硬性约束
 
 1. 页面和组件优先使用语义令牌，不直接写品牌色和通用透明度。
 2. 间距、圆角和字体大小各自只保留 4 个主档位。
-4. 透明度、阴影和 blur 按语义收敛，不为单个组件无限增加新值。
-5. 主应用支持 `light`、`dark`、`system`。
-6. Admin 使用独立暗色主题，不与主应用 dark 主题混用。
+3. 透明度、阴影和 blur 按语义收敛，不为单个组件无限增加新值。
+4. 主应用支持 `light`、`dark`、`system`。
+5. Admin 默认使用独立暗色主题，不与主应用 `dark` 主题混用，也不跟随主应用的 `light/dark/system` 切换。
+6. 共享的是基础尺度和行为契约，不直接共享主应用的 surface/content/border/shadow 具体值。
 7. Mind/画布的 camera、物理、landing 和 connection 行为由 Runtime/交互模块管理，不被普通令牌迁移改写。
 8. `/design` 展示页直接读取运行时 CSS 变量，不重复维护一份实际数值。
 9. 动态业务颜色可以通过受控的局部 CSS 变量传入，但必须明确例外原因。
@@ -368,7 +371,13 @@ frontend/src/assets/styles/
 
 ### 4.3 Admin 主题
 
-Admin 不直接复用主应用的浅色 surface，也不跟随用户侧 `data-theme="dark"` 自动切换。使用独立主题作用域：
+#### 当前状态
+
+Admin 已经是默认暗色产品，但当前主要依赖 `.admin-layout`、Admin 全局样式和各页面 scoped 样式，尚未落地统一的 `.admin-theme` 语义容器。现有代码中仍有较多重复的暗色 literal，尤其是面板透明度、白色文字透明度、紫色强调色、边框和圆角。
+
+#### 目标结构
+
+Admin 不直接复用主应用的浅色 surface，也不跟随用户侧 `data-theme="dark"` 自动切换。迁移后使用独立主题作用域：
 
 ```html
 <div class="admin-theme">
@@ -376,7 +385,28 @@ Admin 不直接复用主应用的浅色 surface，也不跟随用户侧 `data-th
 </div>
 ```
 
-Admin 可以共享字号、间距、圆角、状态色和动效命名，但 surface、content、border 和 shadow 使用独立映射。
+Admin 可以共享字号、间距、圆角档位、状态语义、动效命名和滚动条行为，但 surface、content、border、shadow、玻璃透明度和背景渐变使用独立映射。
+
+推荐分层：
+
+```css
+:root {
+  --space-1: ...;
+  --radius-sm: ...;
+  --font-size-body: ...;
+}
+
+.admin-theme {
+  --surface-page: ...;
+  --surface-panel: ...;
+  --content-primary: ...;
+  --content-secondary: ...;
+  --border-subtle: ...;
+  --shadow-panel: ...;
+}
+```
+
+迁移顺序固定为：先给布局入口和 Admin 全局组件加主题作用域，再迁移按钮、输入、弹窗、表格等共享 Admin 组件，最后处理 Analytics、Debug、Notifications 等页面的局部样式。不得把 Admin 的暗色值直接写入主应用主题，也不得为了复用而修改现有 Admin 的信息密度和深色产品定位。
 
 ## 5. `/design` 页面方案
 
@@ -543,6 +573,9 @@ const value = getComputedStyle(document.documentElement)
 - [ ] 建立历史间距、字号和圆角值到标准档位的映射表
 - [ ] 记录动态业务色、画布物理参数和第三方组件变量的例外规则
 - [ ] 确认令牌命名规则和废弃变量规则
+- [ ] 盘点 AdminLayout、Admin 全局样式和各 Admin 页面中的暗色 literal、重复组件样式与局部滚动条
+- [ ] 确认 Admin 以默认暗色运行，不参与主应用 `light/dark/system` 切换
+- [ ] 确认 Admin 共享基础尺度、独立语义 surface/content/border/shadow 的边界
 
 ### Phase 1：令牌基础层
 
@@ -586,6 +619,8 @@ const value = getComputedStyle(document.documentElement)
 - [ ] 迁移文件系统和文件预览
 - [ ] 迁移 GuguChat 和 ProfileModal
 - [ ] 迁移 Mind 笔记和画布视觉变量
+- [ ] 为 AdminLayout 增加 `.admin-theme` 主题作用域
+- [ ] 抽取 Admin 专属暗色语义 token，替换布局和全局组件中的重复 literal
 - [ ] 迁移 Admin 暗色主题
 - [ ] 验证主应用暗色下的玻璃层、卡片、弹窗、聊天和文件预览
 - [ ] 验证 `system` 模式在系统主题变化时实时切换
