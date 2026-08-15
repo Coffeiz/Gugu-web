@@ -305,3 +305,19 @@ html[data-theme][data-family] .folder-card .sel-checkbox.checked {
   background: var(--action-primary-bg);
   border-color: transparent;
 }
+html[data-theme][data-family] .folder-card .sel-checkbox.checked svg { stroke: var(--content-on-accent); }
+
+/* Folder/file hover affordances sit on top of cards and therefore need their own control contract. */
+html[data-theme][data-family] .file-card-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .file-card-btn:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+}
+html[data-theme][data-family] .file-card-btn.del:hover {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
