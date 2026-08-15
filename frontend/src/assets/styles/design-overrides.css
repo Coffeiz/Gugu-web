@@ -1,0 +1,125 @@
+/* Design route refinements that intentionally sit outside the scoped showcase component.
+ * Keep product Topbar behavior owned by DefaultLayout; only the Design page header gets the
+ * Mafuyu-style "transparent at top -> surface after scroll" treatment.
+ */
+
+html[data-theme][data-family] .design-page {
+  scroll-timeline: --design-page-scroll block;
+}
+
+html[data-theme][data-family] .design-page .design-hero {
+  min-height: 56px;
+  background: transparent;
+  border-bottom-color: transparent;
+  box-shadow: none;
+  backdrop-filter: blur(0) saturate(100%);
+  -webkit-backdrop-filter: blur(0) saturate(100%);
+}
+
+@supports (animation-timeline: scroll()) {
+  html[data-theme][data-family] .design-page .design-hero {
+    animation: design-topbar-reveal linear both;
+    animation-duration: auto;
+    animation-timeline: --design-page-scroll;
+    animation-range: 0px 32px;
+  }
+}
+
+@keyframes design-topbar-reveal {
+  from {
+    background-color: transparent;
+    border-bottom-color: transparent;
+    box-shadow: none;
+    backdrop-filter: blur(0) saturate(100%);
+    -webkit-backdrop-filter: blur(0) saturate(100%);
+    transform: translateY(0);
+  }
+  to {
+    background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
+    border-bottom-color: var(--border-subtle);
+    box-shadow: var(--topbar-shadow);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+    transform: translateY(-2px);
+  }
+}
+
+/* Public family names are Aero / Mono. Keep glass / v2 as internal data-family ids for stored
+   preference and selector compatibility; only user-facing labels change. */
+html[data-theme][data-family] .design-page .hero-copy > p {
+  font-size: 0;
+}
+html[data-theme][data-family] .design-page .hero-copy > p::after {
+  content: 'Aero / Mono × Light / Dark · 产品样板只消费真实 Semantic / Component tokens。';
+  font-size: var(--font-size-xs);
+}
+
+html[data-theme][data-family] .design-page .theme-cell strong,
+html[data-theme][data-family] .design-page .theme-cell small,
+html[data-theme][data-family] .design-page .state-badge {
+  font-size: 0;
+}
+html[data-theme][data-family] .design-page .theme-cell strong::after,
+html[data-theme][data-family] .design-page .theme-cell small::after,
+html[data-theme][data-family] .design-page .state-badge::after {
+  font-size: var(--font-size-xs);
+}
+html[data-theme][data-family] .design-page .theme-cell strong::after {
+  font-size: var(--font-size-sm);
+}
+html[data-theme][data-family] .design-page .glass-light strong::after { content: 'Aero Light'; }
+html[data-theme][data-family] .design-page .glass-dark strong::after { content: 'Aero Dark'; }
+html[data-theme][data-family] .design-page .v2-light strong::after { content: 'Mono Light'; }
+html[data-theme][data-family] .design-page .v2-dark strong::after { content: 'Mono Dark'; }
+html[data-theme][data-family] .design-page .glass-light small::after { content: '轻透玻璃'; }
+html[data-theme][data-family] .design-page .glass-dark small::after { content: '低亮度透明层'; }
+html[data-theme][data-family] .design-page .v2-light small::after { content: '安静实体表面'; }
+html[data-theme][data-family] .design-page .v2-dark small::after { content: '低拟态深色实体'; }
+html[data-family='glass'][data-theme='light'] .design-page .state-badge::after { content: 'AERO · LIGHT'; }
+html[data-family='glass'][data-theme='dark'] .design-page .state-badge::after { content: 'AERO · DARK'; }
+html[data-family='v2'][data-theme='light'] .design-page .state-badge::after { content: 'MONO · LIGHT'; }
+html[data-family='v2'][data-theme='dark'] .design-page .state-badge::after { content: 'MONO · DARK'; }
+
+/* Product preview keeps the real product Topbar visible from rest; the scroll reveal belongs only
+   to the outer Design header above. */
+html[data-theme][data-family] .design-page .sample-topbar {
+  border-color: var(--topbar-border);
+  background: var(--topbar-bg);
+  box-shadow: var(--topbar-shadow);
+}
+html[data-theme][data-family] .design-page .sample-topbar:hover {
+  background: var(--topbar-bg-hover);
+  box-shadow: var(--topbar-shadow-hover);
+}
+
+/* Exact KanbanColumn add-card treatment: 96px dashed squircle, no lift or outer shadow. */
+html[data-theme][data-family] .design-page .add-project {
+  width: 100%;
+  min-height: 96px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  border: 1.5px dashed color-mix(in srgb,var(--content-primary) 10%,transparent);
+  border-radius: var(--radius-md);
+  corner-shape: squircle;
+  color: var(--content-secondary);
+  background: color-mix(in srgb,var(--surface-raised) 15%,transparent);
+  box-shadow: none;
+  cursor: pointer;
+  font-size: 0;
+  transition: border-color .18s,color .18s,background .18s;
+}
+html[data-theme][data-family] .design-page .add-project::after {
+  content: '新建项目';
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+html[data-theme][data-family] .design-page .add-project:hover {
+  transform: none;
+  border-color: color-mix(in srgb,var(--action-primary) 35%,transparent);
+  color: var(--action-primary);
+  background: color-mix(in srgb,var(--surface-raised) 30%,transparent);
+  box-shadow: none;
+}
