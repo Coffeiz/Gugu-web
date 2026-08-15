@@ -12,8 +12,6 @@
 }
 
 html[data-theme='dark'][data-family] {
-  /* Dark UI should read from local contrast, not white paint. These aliases intentionally stay
-     translucent and slightly family-tinted. */
   --color-accent-muted: color-mix(in srgb, var(--action-primary) 18%, var(--surface-raised));
   --highlight-soft: color-mix(in srgb, var(--action-primary) 12%, rgba(255,255,255,.06));
   --highlight-muted: color-mix(in srgb, var(--action-primary) 7%, rgba(255,255,255,.035));
@@ -21,19 +19,47 @@ html[data-theme='dark'][data-family] {
 
 /* Legacy popup/user surfaces still contain literal white highlights in scoped/global CSS.
    Override them only in resolved dark mode until those components are fully tokenized. */
-html[data-theme='dark'][data-family] .settings-popup {
+html[data-theme='dark'][data-family] .settings-popup,
+html[data-theme='dark'][data-family] .notif-popup {
   background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
   border-color: var(--border-default);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
 }
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item {
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item,
+html[data-theme='dark'][data-family] .notif-title,
+html[data-theme='dark'][data-family] .notif-msg,
+html[data-theme='dark'][data-family] .notif-meta.as-title {
   color: var(--content-primary);
 }
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before {
+html[data-theme='dark'][data-family] .notif-meta,
+html[data-theme='dark'][data-family] .notif-empty {
+  color: var(--content-tertiary);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before,
+html[data-theme='dark'][data-family] .notif-item:hover,
+html[data-theme='dark'][data-family] .notif-item.unread {
   background: var(--color-accent-faint);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep,
+html[data-theme='dark'][data-family] .notif-header {
+  border-color: var(--border-subtle);
 }
 html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep {
   background: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .pm-nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+}
+html[data-theme='dark'][data-family] .pm-nav-item:hover {
+  color: var(--content-primary);
+  background: var(--color-accent-faint);
+}
+html[data-theme='dark'][data-family] .pm-nav-divider {
+  background: var(--divider-line);
 }
 
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom,
@@ -41,7 +67,6 @@ html[data-theme='dark'][data-family] .sample-topbar .sample-ghost {
   --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
   box-shadow: var(--topbar-btn-shadow) !important;
 }
-
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover,
 html[data-theme='dark'][data-family] .sample-topbar .sample-ghost:hover {
   box-shadow: inset 0 1px 0 var(--highlight-soft), 0 3px 10px rgba(0,0,0,.16) !important;
