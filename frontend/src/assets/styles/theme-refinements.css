@@ -22,8 +22,10 @@ html[data-theme='dark'][data-family] {
   --card-hover-overlay: transparent;
   --card-surface-bg-hover: var(--surface-card-solid);
   --card-surface-border-hover: var(--border-strong);
+  --card-shadow-hover: var(--card-shadow);
   --glass-card-background-hover: var(--glass-card-background);
   --glass-card-border-hover: var(--glass-card-border);
+  --glass-card-shadow-hover: var(--glass-card-shadow);
   --sidebar-user-bg-hover: var(--sidebar-user-bg);
   --topbar-bg-hover: var(--topbar-bg);
   --topbar-shadow-hover: var(--topbar-shadow);
