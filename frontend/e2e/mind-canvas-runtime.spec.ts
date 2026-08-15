@@ -12,7 +12,8 @@ test('画布首屏、项目抽屉和相机控制可用', async ({ page }) => {
 
   await expect(page.locator('.canvas-page-canvas-ready')).toBeVisible({ timeout: 15000 })
   await expect(page.locator('.mind-canvas')).toBeVisible()
-  await expect(page.locator('[data-layout-surface="mind:project-drawer"]')).toBeVisible()
+  // 项目抽屉默认收起；先确认 Runtime Surface 已挂载，再通过真实入口打开。
+  await expect(page.locator('[data-layout-surface="mind:project-drawer"]')).toBeAttached()
 
   const toolbar = page.locator('.canvas-toolbar')
   const zoomLabel = toolbar.locator('button[title="恢复 100%"]')
