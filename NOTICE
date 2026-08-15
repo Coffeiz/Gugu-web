@@ -40,4 +40,5 @@ Vue 3, Pinia, Vue Router, Arco Design Vue, Tiptap (包含 ProseMirror),
 CodeMirror 6, Vue Codemirror, Chart.js, Vue Chart.js, Axios, Day.js,
 marked, lowlight, QRCode, TanStack Vue Virtual, @phosphor-icons/vue,
 Vite, Vitest 等。完整的版权声明请参见各组件随附的 LICENSE 文件。
+完整的版本化依赖清单见 `licenses/THIRD-PARTY-NOTICES.md`，前端页面数据见 `frontend/public/licenses.json`。
 ------------------------------------------------------------------------

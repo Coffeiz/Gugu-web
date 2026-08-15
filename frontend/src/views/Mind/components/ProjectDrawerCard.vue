@@ -118,24 +118,5 @@ const { onPointerDown } = useMindRuntimeObject({
 .drawer-project-card:hover::after { opacity: 1; }
 .drawer-project-card:active { cursor: grabbing; }
 
-/* 抽屉素材拖往画布时保留原尺寸的空位，不让列表在拖拽期间重排。这不是纯装饰选择：
-   1) 抽屉列表是 <TransitionGroup>，靠 Vue 响应式数据驱动排版——物理模块若直接把源卡
-      display:none 再手写兄弟卡 FLIP，Vue 侧数据完全没变，TransitionGroup 不会跟着挪，
-      物理模块自己那套 FLIP 又会跟 TransitionGroup 的 move 过渡打架，试过会两边都不对。
-   2) 松手落回抽屉时，落地飞行要用 sourceEl 自己的 getBoundingClientRect() 当终点；
-      display:none 的元素量出来是全 0，飞行克隆会冲向 (0,0) 的 0 尺寸方框、揭示时
-      source 也还停在 display:none 没人给它复原，卡片就"凭空消失"了。保留占位（只降
-      透明度，不摘出正常流）让这次量数永远是真实值。 */
-/* 虚线颜色跟画布卡片"正在建立关联"用的是同一个（canvas-card-effects.css 的 .connecting
-   规则），但粗细跟静止态的 1px 对齐（不用那边的 2px）——占位态和静止态都是同一个
-   border-box 元素，边框粗细没理由在这两态之间跳变。 */
-.drawer-project-card.phys-drag-source-placeholder {
-  background: transparent !important;
-  border: 1px dashed rgba(123,127,178,.6);
-  box-shadow: none;
-  cursor: grabbing;
-}
-.drawer-project-card.phys-drag-source-placeholder::before,
-.drawer-project-card.phys-drag-source-placeholder :deep(.project-card-body) { opacity: 0; }
 .drawer-project-card :deep(.project-card-body) { transition: opacity .16s ease; }
 </style>

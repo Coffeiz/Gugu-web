@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFlipRetargetRegistry, createFlipTransaction } from '../src/interaction/drag/animation/flipCoordinator'
+import { createFlipRetargetRegistry, createFlipTransaction } from '../src/interaction/layout/flipCoordinator'
 
 const rect = (left: number, top: number): DOMRect => ({
   left, top, width: 40, height: 20, right: left + 40, bottom: top + 20,

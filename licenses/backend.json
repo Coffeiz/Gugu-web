@@ -1,0 +1,841 @@
+{
+  "project": "backend",
+  "label": "Gugu-web / 后端",
+  "packageManager": "pip",
+  "packageManifests": [
+    "backend/requirements.txt"
+  ],
+  "environment": "当前 Python 环境",
+  "dependencies": [
+    {
+      "name": "aiohappyeyeballs",
+      "version": "2.6.2",
+      "license": "PSF-2.0",
+      "homepage": "",
+      "repository": "https://github.com/aio-libs/aiohappyeyeballs"
+    },
+    {
+      "name": "aiohttp",
+      "version": "3.14.1",
+      "license": "Apache-2.0 AND MIT",
+      "homepage": "https://github.com/aio-libs/aiohttp",
+      "repository": ""
+    },
+    {
+      "name": "aiosignal",
+      "version": "1.4.0",
+      "license": "Apache 2.0",
+      "homepage": "https://github.com/aio-libs/aiosignal",
+      "repository": ""
+    },
+    {
+      "name": "aiosqlite",
+      "version": "0.22.1",
+      "license": "OSI Approved :: MIT License",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "alembic",
+      "version": "1.18.5",
+      "license": "MIT",
+      "homepage": "https://alembic.sqlalchemy.org",
+      "repository": "https://github.com/sqlalchemy/alembic/"
+    },
+    {
+      "name": "aliyun-python-sdk-core",
+      "version": "2.16.0",
+      "license": "Apache License 2.0",
+      "homepage": "https://github.com/aliyun/aliyun-openapi-python-sdk",
+      "repository": ""
+    },
+    {
+      "name": "aliyun-python-sdk-kms",
+      "version": "2.16.5",
+      "license": "Apache",
+      "homepage": "http://develop.aliyun.com/sdk/python",
+      "repository": ""
+    },
+    {
+      "name": "annotated-doc",
+      "version": "0.0.4",
+      "license": "MIT",
+      "homepage": "https://github.com/fastapi/annotated-doc",
+      "repository": "https://github.com/fastapi/annotated-doc"
+    },
+    {
+      "name": "annotated-types",
+      "version": "0.7.0",
+      "license": "OSI Approved :: MIT License",
+      "homepage": "https://github.com/annotated-types/annotated-types",
+      "repository": "https://github.com/annotated-types/annotated-types"
+    },
+    {
+      "name": "anthropic",
+      "version": "0.116.0",
+      "license": "MIT",
+      "homepage": "https://github.com/anthropics/anthropic-sdk-python",
+      "repository": "https://github.com/anthropics/anthropic-sdk-python"
+    },
+    {
+      "name": "anyio",
+      "version": "4.14.0",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "APScheduler",
+      "version": "3.11.2",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "asyncpg",
+      "version": "0.31.0",
+      "license": "Apache-2.0",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "attrs",
+      "version": "26.1.0",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "babel",
+      "version": "2.18.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://babel.pocoo.org/",
+      "repository": "https://github.com/python-babel/babel"
+    },
+    {
+      "name": "bcrypt",
+      "version": "5.0.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/pyca/bcrypt/",
+      "repository": ""
+    },
+    {
+      "name": "certifi",
+      "version": "2026.6.17",
+      "license": "MPL-2.0",
+      "homepage": "https://github.com/certifi/python-certifi",
+      "repository": "https://github.com/certifi/python-certifi"
+    },
+    {
+      "name": "cffi",
+      "version": "2.0.0",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "charset-normalizer",
+      "version": "3.4.7",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "click",
+      "version": "8.4.1",
+      "license": "BSD-3-Clause",
+      "homepage": "",
+      "repository": "https://github.com/pallets/click/"
+    },
+    {
+      "name": "courlan",
+      "version": "1.4.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/adbar/courlan",
+      "repository": ""
+    },
+    {
+      "name": "crcmod",
+      "version": "1.7",
+      "license": "MIT",
+      "homepage": "http://crcmod.sourceforge.net/",
+      "repository": ""
+    },
+    {
+      "name": "cryptography",
+      "version": "49.0.0",
+      "license": "Apache-2.0 OR BSD-3-Clause",
+      "homepage": "https://github.com/pyca/cryptography",
+      "repository": "https://github.com/pyca/cryptography/"
+    },
+    {
+      "name": "dateparser",
+      "version": "1.4.1",
+      "license": "BSD-3-Clause",
+      "homepage": "",
+      "repository": "https://github.com/scrapinghub/dateparser"
+    },
+    {
+      "name": "defusedxml",
+      "version": "0.7.1",
+      "license": "PSFL",
+      "homepage": "https://github.com/tiran/defusedxml",
+      "repository": ""
+    },
+    {
+      "name": "Deprecated",
+      "version": "1.3.1",
+      "license": "MIT",
+      "homepage": "https://github.com/laurent-laporte-pro/deprecated",
+      "repository": "https://github.com/laurent-laporte-pro/deprecated"
+    },
+    {
+      "name": "distro",
+      "version": "1.9.0",
+      "license": "Apache License, Version 2.0",
+      "homepage": "https://github.com/python-distro/distro",
+      "repository": ""
+    },
+    {
+      "name": "dnspython",
+      "version": "2.8.0",
+      "license": "ISC",
+      "homepage": "https://www.dnspython.org",
+      "repository": "https://github.com/rthalley/dnspython.git"
+    },
+    {
+      "name": "docstring_parser",
+      "version": "0.18.0",
+      "license": "MIT",
+      "homepage": "https://github.com/rr-/docstring_parser",
+      "repository": "https://github.com/rr-/docstring_parser"
+    },
+    {
+      "name": "ecdsa",
+      "version": "0.19.2",
+      "license": "MIT",
+      "homepage": "http://github.com/tlsfuzzer/python-ecdsa",
+      "repository": ""
+    },
+    {
+      "name": "email-validator",
+      "version": "2.3.0",
+      "license": "Unlicense",
+      "homepage": "https://github.com/JoshData/python-email-validator",
+      "repository": ""
+    },
+    {
+      "name": "fastapi",
+      "version": "0.139.0",
+      "license": "MIT",
+      "homepage": "https://github.com/fastapi/fastapi",
+      "repository": "https://github.com/fastapi/fastapi"
+    },
+    {
+      "name": "frozenlist",
+      "version": "1.8.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aio-libs/frozenlist",
+      "repository": ""
+    },
+    {
+      "name": "greenlet",
+      "version": "3.5.2",
+      "license": "MIT AND PSF-2.0",
+      "homepage": "https://greenlet.readthedocs.io",
+      "repository": "https://github.com/python-greenlet/greenlet"
+    },
+    {
+      "name": "h11",
+      "version": "0.16.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-hyper/h11",
+      "repository": ""
+    },
+    {
+      "name": "htmldate",
+      "version": "1.10.0",
+      "license": "Apache-2.0",
+      "homepage": "https://htmldate.readthedocs.io",
+      "repository": "https://github.com/adbar/htmldate"
+    },
+    {
+      "name": "httpcore",
+      "version": "1.0.9",
+      "license": "BSD-3-Clause",
+      "homepage": "https://www.encode.io/httpcore/",
+      "repository": "https://github.com/encode/httpcore"
+    },
+    {
+      "name": "httptools",
+      "version": "0.8.0",
+      "license": "MIT",
+      "homepage": "https://github.com/MagicStack/httptools",
+      "repository": ""
+    },
+    {
+      "name": "httpx",
+      "version": "0.28.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/encode/httpx",
+      "repository": "https://github.com/encode/httpx"
+    },
+    {
+      "name": "idna",
+      "version": "3.18",
+      "license": "BSD-3-Clause",
+      "homepage": "",
+      "repository": "https://github.com/kjd/idna"
+    },
+    {
+      "name": "iniconfig",
+      "version": "2.3.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pytest-dev/iniconfig",
+      "repository": ""
+    },
+    {
+      "name": "jaconv",
+      "version": "0.5.0",
+      "license": "MIT License",
+      "homepage": "https://github.com/ikegami-yukino/jaconv",
+      "repository": ""
+    },
+    {
+      "name": "jiter",
+      "version": "0.15.0",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/jiter/",
+      "repository": ""
+    },
+    {
+      "name": "jmespath",
+      "version": "0.10.0",
+      "license": "MIT",
+      "homepage": "https://github.com/jmespath/jmespath.py",
+      "repository": ""
+    },
+    {
+      "name": "jsonpointer",
+      "version": "3.1.1",
+      "license": "Modified BSD License",
+      "homepage": "https://github.com/stefankoegl/python-json-pointer",
+      "repository": ""
+    },
+    {
+      "name": "jsonschema",
+      "version": "4.26.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-jsonschema/jsonschema",
+      "repository": "https://github.com/python-jsonschema/jsonschema"
+    },
+    {
+      "name": "jsonschema-specifications",
+      "version": "2025.9.1",
+      "license": "MIT",
+      "homepage": "https://github.com/python-jsonschema/jsonschema-specifications",
+      "repository": "https://github.com/python-jsonschema/jsonschema-specifications"
+    },
+    {
+      "name": "jusText",
+      "version": "3.0.2",
+      "license": "The BSD 2-Clause License",
+      "homepage": "https://github.com/miso-belica/jusText",
+      "repository": ""
+    },
+    {
+      "name": "lark-oapi",
+      "version": "1.7.1",
+      "license": "MIT",
+      "homepage": "https://github.com/larksuite/oapi-sdk-python",
+      "repository": "https://github.com/larksuite/oapi-sdk-python"
+    },
+    {
+      "name": "lxml",
+      "version": "6.1.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://lxml.de/",
+      "repository": "https://github.com/lxml/lxml"
+    },
+    {
+      "name": "lxml_html_clean",
+      "version": "0.4.5",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/fedora-python/lxml_html_clean/",
+      "repository": ""
+    },
+    {
+      "name": "Mako",
+      "version": "1.3.12",
+      "license": "MIT",
+      "homepage": "https://www.makotemplates.org/",
+      "repository": ""
+    },
+    {
+      "name": "markdown-it-py",
+      "version": "4.2.0",
+      "license": "OSI Approved :: MIT License",
+      "homepage": "https://github.com/executablebooks/markdown-it-py",
+      "repository": ""
+    },
+    {
+      "name": "MarkupSafe",
+      "version": "3.0.3",
+      "license": "BSD-3-Clause",
+      "homepage": "",
+      "repository": "https://github.com/pallets/markupsafe/"
+    },
+    {
+      "name": "mdurl",
+      "version": "0.1.2",
+      "license": "OSI Approved :: MIT License",
+      "homepage": "https://github.com/executablebooks/mdurl",
+      "repository": ""
+    },
+    {
+      "name": "multidict",
+      "version": "6.7.1",
+      "license": "Apache License 2.0",
+      "homepage": "https://github.com/aio-libs/multidict",
+      "repository": ""
+    },
+    {
+      "name": "numpy",
+      "version": "2.5.0",
+      "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0",
+      "homepage": "https://numpy.org",
+      "repository": "https://github.com/numpy/numpy"
+    },
+    {
+      "name": "openai",
+      "version": "2.45.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/openai/openai-python",
+      "repository": "https://github.com/openai/openai-python"
+    },
+    {
+      "name": "oss2",
+      "version": "2.19.1",
+      "license": "OSI Approved :: MIT License",
+      "homepage": "http://oss.aliyun.com",
+      "repository": ""
+    },
+    {
+      "name": "packaging",
+      "version": "26.2",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "homepage": "",
+      "repository": "https://github.com/pypa/packaging"
+    },
+    {
+      "name": "passlib",
+      "version": "1.7.4",
+      "license": "BSD",
+      "homepage": "https://passlib.readthedocs.io",
+      "repository": ""
+    },
+    {
+      "name": "pendulum",
+      "version": "3.2.0",
+      "license": "MIT License",
+      "homepage": "https://pendulum.eustace.io",
+      "repository": "https://github.com/sdispater/pendulum"
+    },
+    {
+      "name": "pilk",
+      "version": "0.2.4",
+      "license": "OSI Approved :: GNU General Public License v3 (GPLv3)",
+      "homepage": "https://github.com/foyoux/pilk",
+      "repository": ""
+    },
+    {
+      "name": "pillow",
+      "version": "12.3.0",
+      "license": "MIT-CMU",
+      "homepage": "https://python-pillow.github.io",
+      "repository": "https://github.com/python-pillow/Pillow"
+    },
+    {
+      "name": "pillow_heif",
+      "version": "1.4.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/bigcat88/pillow_heif",
+      "repository": "https://github.com/bigcat88/pillow_heif"
+    },
+    {
+      "name": "pluggy",
+      "version": "1.6.0",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "propcache",
+      "version": "0.5.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aio-libs/propcache",
+      "repository": ""
+    },
+    {
+      "name": "pyasn1",
+      "version": "0.6.3",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/pyasn1/pyasn1",
+      "repository": "https://github.com/pyasn1/pyasn1"
+    },
+    {
+      "name": "pycparser",
+      "version": "3.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/eliben/pycparser",
+      "repository": ""
+    },
+    {
+      "name": "pycryptodome",
+      "version": "3.23.0",
+      "license": "BSD, Public Domain",
+      "homepage": "https://www.pycryptodome.org",
+      "repository": "https://github.com/Legrandin/pycryptodome/"
+    },
+    {
+      "name": "pydantic",
+      "version": "2.13.4",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/pydantic",
+      "repository": "https://github.com/pydantic/pydantic"
+    },
+    {
+      "name": "pydantic-settings",
+      "version": "2.14.2",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/pydantic-settings",
+      "repository": "https://github.com/pydantic/pydantic-settings"
+    },
+    {
+      "name": "pydantic_core",
+      "version": "2.46.4",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/pydantic",
+      "repository": "https://github.com/pydantic"
+    },
+    {
+      "name": "Pygments",
+      "version": "2.20.0",
+      "license": "BSD-2-Clause",
+      "homepage": "https://pygments.org",
+      "repository": "https://github.com/pygments/pygments"
+    },
+    {
+      "name": "pykakasi",
+      "version": "2.3.0",
+      "license": "GPL-3.0-or-later",
+      "homepage": "",
+      "repository": "https://codeberg.org/miurahr/pykakasi"
+    },
+    {
+      "name": "pypinyin",
+      "version": "0.55.0",
+      "license": "MIT",
+      "homepage": "https://github.com/mozillazg/python-pinyin",
+      "repository": "https://github.com/mozillazg/python-pinyin"
+    },
+    {
+      "name": "pytest",
+      "version": "9.1.1",
+      "license": "MIT",
+      "homepage": "https://docs.pytest.org/en/latest/",
+      "repository": "https://github.com/pytest-dev/pytest"
+    },
+    {
+      "name": "pytest-asyncio",
+      "version": "1.4.0",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/pytest-dev/pytest-asyncio",
+      "repository": ""
+    },
+    {
+      "name": "python-dateutil",
+      "version": "2.9.0.post0",
+      "license": "Dual License",
+      "homepage": "https://github.com/dateutil/dateutil",
+      "repository": "https://github.com/dateutil/dateutil"
+    },
+    {
+      "name": "python-dotenv",
+      "version": "1.2.2",
+      "license": "BSD-3-Clause",
+      "homepage": "",
+      "repository": "https://github.com/theskumar/python-dotenv"
+    },
+    {
+      "name": "python-jose",
+      "version": "3.5.0",
+      "license": "MIT",
+      "homepage": "http://github.com/mpdavis/python-jose",
+      "repository": "https://github.com/mpdavis/python-jose/"
+    },
+    {
+      "name": "python-multipart",
+      "version": "0.0.32",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/Kludex/python-multipart",
+      "repository": "https://github.com/Kludex/python-multipart"
+    },
+    {
+      "name": "pytz",
+      "version": "2026.2",
+      "license": "MIT",
+      "homepage": "http://pythonhosted.org/pytz",
+      "repository": ""
+    },
+    {
+      "name": "PyYAML",
+      "version": "6.0.3",
+      "license": "MIT",
+      "homepage": "https://pyyaml.org/",
+      "repository": ""
+    },
+    {
+      "name": "redis",
+      "version": "8.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/redis/redis-py",
+      "repository": ""
+    },
+    {
+      "name": "referencing",
+      "version": "0.37.0",
+      "license": "MIT",
+      "homepage": "https://github.com/python-jsonschema/referencing",
+      "repository": "https://github.com/python-jsonschema/referencing"
+    },
+    {
+      "name": "regex",
+      "version": "2026.6.28",
+      "license": "Apache-2.0 AND CNRI-Python",
+      "homepage": "https://github.com/mrabarnett/mrab-regex",
+      "repository": ""
+    },
+    {
+      "name": "requests",
+      "version": "2.34.2",
+      "license": "Apache-2.0",
+      "homepage": "",
+      "repository": "https://github.com/psf/requests"
+    },
+    {
+      "name": "requests-toolbelt",
+      "version": "1.0.0",
+      "license": "Apache 2.0",
+      "homepage": "https://toolbelt.readthedocs.io/",
+      "repository": "https://github.com/requests/toolbelt"
+    },
+    {
+      "name": "rich",
+      "version": "15.0.0",
+      "license": "MIT",
+      "homepage": "https://github.com/Textualize/rich",
+      "repository": ""
+    },
+    {
+      "name": "rpds-py",
+      "version": "2026.6.3",
+      "license": "MIT",
+      "homepage": "https://github.com/crate-py/rpds",
+      "repository": "https://github.com/crate-py/rpds"
+    },
+    {
+      "name": "rsa",
+      "version": "4.9.1",
+      "license": "Apache-2.0",
+      "homepage": "https://stuvel.eu/rsa",
+      "repository": "https://github.com/sybrenstuvel/python-rsa"
+    },
+    {
+      "name": "six",
+      "version": "1.17.0",
+      "license": "MIT",
+      "homepage": "https://github.com/benjaminp/six",
+      "repository": ""
+    },
+    {
+      "name": "sniffio",
+      "version": "1.3.1",
+      "license": "MIT OR Apache-2.0",
+      "homepage": "https://github.com/python-trio/sniffio",
+      "repository": ""
+    },
+    {
+      "name": "SQLAlchemy",
+      "version": "2.0.51",
+      "license": "MIT",
+      "homepage": "https://www.sqlalchemy.org",
+      "repository": ""
+    },
+    {
+      "name": "starlette",
+      "version": "1.3.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/Kludex/starlette",
+      "repository": "https://github.com/Kludex/starlette"
+    },
+    {
+      "name": "tld",
+      "version": "0.13.2",
+      "license": "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "tomli",
+      "version": "2.4.1",
+      "license": "MIT",
+      "homepage": "https://github.com/hukkin/tomli",
+      "repository": ""
+    },
+    {
+      "name": "tqdm",
+      "version": "4.68.3",
+      "license": "MPL-2.0 AND MIT",
+      "homepage": "https://tqdm.github.io",
+      "repository": "https://github.com/tqdm/tqdm"
+    },
+    {
+      "name": "trafilatura",
+      "version": "2.1.0",
+      "license": "Apache-2.0",
+      "homepage": "https://trafilatura.readthedocs.io",
+      "repository": "https://github.com/adbar/trafilatura"
+    },
+    {
+      "name": "typing-inspection",
+      "version": "0.4.2",
+      "license": "MIT",
+      "homepage": "https://github.com/pydantic/typing-inspection",
+      "repository": "https://github.com/pydantic/typing-inspection"
+    },
+    {
+      "name": "typing_extensions",
+      "version": "4.15.0",
+      "license": "PSF-2.0",
+      "homepage": "",
+      "repository": "https://github.com/python/typing_extensions"
+    },
+    {
+      "name": "tzdata",
+      "version": "2026.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/python/tzdata",
+      "repository": "https://github.com/python/tzdata"
+    },
+    {
+      "name": "tzlocal",
+      "version": "5.4.3",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "urllib3",
+      "version": "2.7.0",
+      "license": "MIT",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "uuid6",
+      "version": "2025.0.1",
+      "license": "MIT",
+      "homepage": "https://github.com/oittaa/uuid6-python",
+      "repository": ""
+    },
+    {
+      "name": "uvicorn",
+      "version": "0.51.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://uvicorn.dev/",
+      "repository": "https://github.com/Kludex/uvicorn"
+    },
+    {
+      "name": "uvloop",
+      "version": "0.22.1",
+      "license": "MIT License",
+      "homepage": "",
+      "repository": ""
+    },
+    {
+      "name": "watchfiles",
+      "version": "1.2.0",
+      "license": "MIT",
+      "homepage": "https://github.com/samuelcolvin/watchfiles",
+      "repository": "https://github.com/samuelcolvin/watchfiles"
+    },
+    {
+      "name": "websockets",
+      "version": "16.1",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/python-websockets/websockets",
+      "repository": ""
+    },
+    {
+      "name": "wrapt",
+      "version": "2.2.2",
+      "license": "BSD-2-Clause",
+      "homepage": "https://github.com/GrahamDumpleton/wrapt",
+      "repository": ""
+    },
+    {
+      "name": "xxhash",
+      "version": "3.7.0",
+      "license": "BSD",
+      "homepage": "https://github.com/ifduyue/python-xxhash",
+      "repository": ""
+    },
+    {
+      "name": "yarl",
+      "version": "1.24.2",
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/aio-libs/yarl",
+      "repository": ""
+    },
+    {
+      "name": "zstandard",
+      "version": "0.25.0",
+      "license": "BSD-3-Clause",
+      "homepage": "https://github.com/indygreg/python-zstandard",
+      "repository": ""
+    }
+  ],
+  "directDependencies": [
+    "aiohttp",
+    "alembic",
+    "anthropic",
+    "apscheduler",
+    "asyncpg",
+    "email-validator",
+    "fastapi",
+    "httpcore",
+    "httpx",
+    "jsonschema",
+    "lark-oapi",
+    "openai",
+    "oss2",
+    "passlib",
+    "pendulum",
+    "pilk",
+    "Pillow",
+    "pillow-heif",
+    "pydantic-settings",
+    "pykakasi",
+    "pypinyin",
+    "python-dotenv",
+    "python-jose",
+    "python-multipart",
+    "redis",
+    "sqlalchemy",
+    "trafilatura",
+    "uuid6",
+    "uvicorn"
+  ],
+  "missingDirectDependencies": []
+}

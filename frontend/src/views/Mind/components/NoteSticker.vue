@@ -72,7 +72,7 @@ const store = useMindStore()
 // 拖边调整）；高度不再从 itemSize 取——NoteCard 自己按标题+正文自然撑高，跟项目/文件
 // 引用卡是同一个道理（见 ProjectRefCard.vue/FileRefCard.vue 的 ResizeObserver 上报）。
 // 但 .canvas-note-wrap 自己不能留成"高度全靠 NoteCard 撑起来"的纯 auto：拖拽期间
-// usePhysicsDrag.ts 把 NoteCard（sourceEl）display:none 直至落地飞行动画整个播完
+// runtime 把 NoteCard（sourceEl）隐藏直至落地飞行动画整个播完
 // （~0.55s），这段时间里 wrap 唯一的正常流子元素消失，auto 高度直接塌成 0——而
 // conn-dot 是 wrap 的绝对定位子元素、top:50% 参照的正是 wrap 自身高度，塌成 0 后两颗
 // 连接点全部被钉在顶部，揭示 NoteCard 那一刻高度瞬间恢复，两颗点跟着从顶部猛地"弹"到

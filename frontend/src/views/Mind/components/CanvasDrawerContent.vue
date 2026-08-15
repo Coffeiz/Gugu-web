@@ -29,7 +29,7 @@
 import { nextTick, onBeforeUpdate, onUpdated, ref, type PropType } from 'vue'
 import { PhCheck, PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
-import { createFlipTransaction, createLayoutItems } from '@/interaction/drag/animation/flipCoordinator'
+import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { showAppError } from '@/composables/useAppToast'
 
 const props = defineProps({

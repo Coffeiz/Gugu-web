@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 /** 无限画布：平移/缩放 + 贴纸绝对定位渲染，相机数学委托给 useMindCanvas.ts；贴纸拖拽统一走
- *  全站卡片物理模块（见各贴纸组件里的 useCardDrag.ts），这里只负责相机、建立关联的拖拽手势
+ *  interaction runtime，这里只负责相机、建立关联的拖拽手势
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import './canvas-card-effects.css'
@@ -276,8 +276,7 @@ const connectionDrag = reactive({
   from: { x: 0, y: 0 },
   to: { x: 0, y: 0 },   // 弹簧跟随后的渲染位置（画出来的线用这个，带一点弹性的"给"）
 })
-// 预览线不是死板地焊死在指针上——用跟卡片拖拽同一路数的二阶弹簧追指针（见
-// usePhysicsDrag.ts 顶部注释同款公式，这里简化成标量各轴独立算），松开圆点或改变方向时
+// 预览线不是死板地焊死在指针上——用二阶弹簧追指针，松开圆点或改变方向时
 // 能看出线头带一点惯性甩动，像真牵了一根有弹性的线，不是几何上精确却毫无生气的跟手直线。
 let connSpringTarget = { x: 0, y: 0 }   // 指针当前的原始世界坐标（弹簧追的目标）
 let connSpringVel = { x: 0, y: 0 }

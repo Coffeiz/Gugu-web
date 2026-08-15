@@ -541,8 +541,7 @@ defineExpose({ rootEl: cardRef })
    两个类（.note-card.tint-amber）特异度相同——一张画布便签同时挂着 canvas-mode 和 tint-amber
    两个类时，两条规则打平，谁赢看谁在样式表里排得靠后：这条排在 .tint-* 后面，会赢，把刚选
    的颜色重新盖回纸色，画布便签的静止态（没在拖）就只会显示纸色、看不出选的颜色——只有拖起来
-   那一刻的克隆体是靠 .phys-drag-clone.note-card.canvas-mode.tint-*（四个类 +!important）
-   另外赢一次，才会显示颜色（"抓起来时正确、松开后又变回纸色"的根因）。这里必须补一份三个类
+   那一刻的克隆体会由 runtime 复制样式。这里必须补一份三个类
    的 .canvas-mode.tint-* 稳赢，不能只留这条两个类的默认纸色声明。 */
 .note-card.canvas-mode { background: rgba(255,252,238,0.97); }
 .note-card.canvas-mode.tint-amber { background: rgb(255,246,231); }
