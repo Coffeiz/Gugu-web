@@ -324,7 +324,7 @@ Agent 工具和后台任务
 - [x] 确认 `backend/app/core/mind_canvas.py` 只保留领域原子逻辑，不新增查询入口。
 - [x] 使用现有画布工具回归覆盖节点、引用、关系和批量回滚行为。
 - [x] 验收：`mind_canvas.py` 不再导入 SQLAlchemy 或 `app.models`，不再直接调用 `db.execute/get/add/delete/refresh`；`commit/rollback` 事务协调留到 P3 统一处理。
-- [ ] 提交边界：待审查后只提交画布 ORM 收口、测试和必要文档，不包含画布功能或 UI 改动。
+- [x] 提交边界：已拆分为独立提交，只包含画布 ORM 收口和必要守卫，不包含画布功能或 UI 改动。
 
 ### P1：扩展 Agent ORM 守卫
 
@@ -340,7 +340,7 @@ Agent 工具和后台任务
 - [x] 搜索用量：移除直接聚合查询，统一使用搜索 Service。
 - [x] 日历、项目、定时任务：移除引用校验、Model 依赖和残余刷新操作。
 - [x] 文件和回收站：清点 `refresh()`、归属查询和事务协调，确认不绕过 `FileService`；事务提交留到 P3。
-- [ ] 每个领域单独提交，提交信息使用“收口 XXX Agent Service 边界”格式。
+- [x] 每个领域单独提交；本轮画布与其他 Agent 工具清理已拆分为独立提交，事务协调继续留到 P3。
 
 ### P3：统一事务边界
 
