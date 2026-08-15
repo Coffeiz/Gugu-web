@@ -1,62 +1,95 @@
 :root {
-  --app-background: var(--surface-page);
-  --success-fg: var(--status-success);
-  --control-border: var(--border-subtle);
-  --brand-gradient: linear-gradient(135deg, #7b7fb2, #c4afc8);
-  --chat-fab-gradient: linear-gradient(135deg, #7b7fb2, #9590c4);
-  --chat-fab-shadow: 0 4px 18px rgba(123,127,178,.32), inset 0 1px 0 rgba(255,255,255,.45);
-  --chat-fab-hover-shadow: 0 7px 24px rgba(123,127,178,.42), inset 0 1px 0 rgba(255,255,255,.5);
-  --sidebar-item-hover: rgba(123,127,178,.08);
-  --sidebar-item-active: rgba(255,255,255,.38);
-  --sidebar-item-active-fg: #6b6fa0;
-  --surface-page: var(--bg-gradient);
-  --surface-canvas: var(--bg-gradient);
-  --surface-sidebar: var(--glass-bg);
-  --surface-base: var(--panel-bg);
-  --surface-glass: var(--glass-bg);
-  --surface-glass-hover: var(--glass-bg-hover);
-  --surface-panel: var(--panel-bg);
-  --surface-popup: var(--surface-floating);
-  --surface-card: var(--glass-bg);
-  --surface-card-solid: var(--panel-bg);
-  --surface-soft: color-mix(in srgb, var(--action-primary) 6%, transparent);
-  --surface-soft-hover: color-mix(in srgb, var(--action-primary) 10%, transparent);
-  --surface-raised: var(--glass-bg-hover);
-  --surface-floating: rgba(255, 255, 255, 0.72);
-  --surface-scrim: rgba(31, 34, 45, 0.22);
-  --surface-drag-proxy: var(--glass-bg);
-  --content-primary: var(--text-primary);
-  --content-secondary: var(--text-secondary);
-  --content-muted: color-mix(in srgb, var(--text-secondary) 72%, transparent);
-  --content-tertiary: color-mix(in srgb, var(--text-secondary) 65%, transparent);
-  --content-disabled: color-mix(in srgb, var(--text-secondary) 42%, transparent);
-  --content-inverse: #fff;
+  /* Surfaces */
+  --surface-page: var(--theme-page);
+  --surface-canvas: var(--theme-page);
+  --surface-sidebar: var(--theme-sidebar);
+  --surface-base: var(--theme-base);
+  --surface-panel: var(--theme-base);
+  --surface-glass: var(--theme-glass);
+  --surface-glass-hover: var(--theme-glass-hover);
+  --surface-card: var(--theme-glass);
+  --surface-card-solid: var(--theme-card-solid);
+  --surface-soft: var(--theme-soft);
+  --surface-soft-hover: var(--theme-soft-hover);
+  --surface-raised: var(--theme-raised);
+  --surface-floating: var(--theme-floating);
+  --surface-popup: var(--theme-floating);
+  --surface-scrim: var(--theme-scrim);
+  --surface-column: var(--theme-column);
+  --surface-drag-proxy: var(--theme-glass);
+
+  /* Content */
+  --content-primary: var(--theme-content-primary);
+  --content-secondary: var(--theme-content-secondary);
+  --content-tertiary: var(--theme-content-tertiary);
+  --content-muted: color-mix(in srgb, var(--theme-content-secondary) 78%, transparent);
+  --content-disabled: var(--theme-content-disabled);
+  --content-inverse: var(--theme-content-inverse);
   --content-on-accent: #fff;
+
+  /* Borders */
+  --border-hairline: var(--theme-border-hairline);
   --border-subtle: var(--theme-border-subtle);
-  --border-strong: var(--glass-border);
-  --border-hover: var(--glass-border-hover);
-  --border-hairline: color-mix(in srgb, var(--border-subtle) 65%, transparent);
-  --border-default: var(--border-strong);
-  --border-highlight: var(--shadow-highlight-rest);
-  --border-focus: rgba(123, 127, 178, 0.45);
-  --action-primary: var(--color-primary);
-  --action-primary-hover: var(--color-primary-hover);
-  --action-primary-pressed: color-mix(in srgb, var(--action-primary) 82%, black);
-  --action-soft: color-mix(in srgb, var(--action-primary) 8%, transparent);
-  --action-soft-hover: color-mix(in srgb, var(--action-primary) 14%, transparent);
-  --action-outline: color-mix(in srgb, var(--action-primary) 35%, transparent);
-  --selection-bg: color-mix(in srgb, var(--action-primary) 16%, transparent);
-  --selection-fg: var(--action-primary-hover);
-  --focus-ring: var(--border-focus);
-  --status-success: var(--color-success);
-  --status-warning: var(--color-warning);
-  --status-danger: #c85a5a;
+  --border-default: var(--theme-border-default);
+  --border-strong: var(--theme-border-strong);
+  --border-hover: var(--theme-border-hover);
+  --border-highlight: var(--theme-highlight-rest);
+  --border-focus: var(--theme-focus);
+
+  /* Actions / selection */
+  --action-primary: var(--theme-action-primary);
+  --action-primary-hover: var(--theme-action-hover);
+  --action-primary-pressed: var(--theme-action-pressed);
+  --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
+  --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
+  --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
+  --selection-bg: var(--theme-selection);
+  --selection-fg: var(--theme-action-hover);
+  --focus-ring: var(--theme-focus);
+
+  /* Status */
+  --status-success: var(--theme-success);
+  --status-warning: var(--theme-warning);
+  --status-danger: var(--theme-danger);
+  --status-info: var(--theme-info);
   --status-success-bg: color-mix(in srgb, var(--status-success) 14%, transparent);
   --status-warning-bg: color-mix(in srgb, var(--status-warning) 14%, transparent);
   --status-danger-bg: color-mix(in srgb, var(--status-danger) 14%, transparent);
-  --layer-sidebar: 10;
-  --layer-topbar: 20;
+  --status-info-bg: color-mix(in srgb, var(--status-info) 14%, transparent);
+
+  /* Elevation: four product levels, not decorative presets. */
+  --elevation-card: var(--theme-shadow-1);
+  --elevation-card-hover: var(--theme-shadow-2);
+  --elevation-popup: var(--theme-shadow-3);
+  --elevation-window: var(--theme-shadow-4);
+  --shadow-rest: var(--elevation-card);
+  --shadow-hover: var(--elevation-card-hover);
+  --shadow-popup: var(--elevation-popup);
+  --shadow-1: var(--elevation-card);
+  --shadow-2: var(--elevation-card-hover);
+  --shadow-3: var(--elevation-popup);
+  --shadow-4: var(--elevation-window);
+
+  /* Brand + shared environment */
+  --brand-gradient: var(--theme-brand-gradient);
+  --app-background: var(--surface-page);
+  --column-bg: var(--surface-column);
+  --divider-line: var(--theme-divider);
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--theme-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover);
+  --control-border: var(--border-subtle);
+  --success-fg: var(--status-success);
+
+  /* Motion aliases used by old + new components. */
+  --ease-standard: var(--motion-ease-standard);
+  --ease-emphasis: var(--motion-ease-emphasis);
+
+  /* Layer contract */
+  --layer-sidebar: 40;
+  --layer-topbar: 40;
   --layer-popup: 100;
   --layer-modal: 200;
   --layer-drag: 300;
+  --layer-chat: 400;
 }
