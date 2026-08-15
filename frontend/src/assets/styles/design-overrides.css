@@ -1,6 +1,6 @@
 /* Design route refinements that intentionally sit outside the scoped showcase component.
- * Product Topbar behaviour stays owned by DefaultLayout/product.css; only this header gets the
- * Mafuyu-style "transparent at top -> surface after scroll" treatment.
+ * Product Topbar behaviour stays owned by DefaultLayout/product.css; this file only adjusts the
+ * standalone Design showcase and its product mock.
  */
 
 html[data-theme][data-family]:has(.design-page),
@@ -15,31 +15,42 @@ body:has(.design-page) {
 }
 
 html[data-theme][data-family] .design-page .design-hero {
-  min-height: 56px;
+  min-height: 58px;
   background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
   border-bottom-color: var(--border-subtle);
   box-shadow: var(--topbar-shadow);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
-  transition:
-    background-color var(--motion-default) var(--motion-ease-standard),
-    border-color var(--motion-default) var(--motion-ease-standard),
-    box-shadow var(--motion-default) var(--motion-ease-standard),
-    backdrop-filter var(--motion-default) var(--motion-ease-standard),
-    -webkit-backdrop-filter var(--motion-default) var(--motion-ease-standard),
-    transform var(--motion-default) var(--motion-ease-standard);
 }
 
-/* Public family names are Aero / Mono. Keep glass / v2 as internal data-family ids for stored
-   preference and selector compatibility; all user-facing labels use the new names. */
+/* Hero: one title on the left. The supporting note is deliberately separated vertically instead
+   of competing with a second heading on the same baseline. */
+html[data-theme][data-family] .design-page .hero-title-row {
+  display: block;
+}
+html[data-theme][data-family] .design-page .hero-title-row .eyebrow {
+  display: block;
+  color: var(--content-primary);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: .04em;
+}
+html[data-theme][data-family] .design-page .hero-title-row h1 {
+  display: none;
+}
 html[data-theme][data-family] .design-page .hero-copy > p {
+  margin-top: var(--space-sm);
   font-size: 0;
+  line-height: var(--line-height-ui);
 }
 html[data-theme][data-family] .design-page .hero-copy > p::after {
-  content: 'Aero / Mono × Light / Dark · 产品样板只消费真实 Semantic / Component tokens。';
+  content: 'Aero / Mono · Semantic / Component tokens 与真实产品组件共用同一套契约。';
+  color: var(--content-tertiary);
   font-size: var(--font-size-xs);
 }
 
+/* Public family names are Aero / Mono. Internal ids remain glass / v2 for persistence and selector
+   compatibility. */
 html[data-theme][data-family] .design-page .theme-cell strong,
 html[data-theme][data-family] .design-page .theme-cell small,
 html[data-theme][data-family] .design-page .state-badge {
@@ -50,9 +61,7 @@ html[data-theme][data-family] .design-page .theme-cell small::after,
 html[data-theme][data-family] .design-page .state-badge::after {
   font-size: var(--font-size-xs);
 }
-html[data-theme][data-family] .design-page .theme-cell strong::after {
-  font-size: var(--font-size-sm);
-}
+html[data-theme][data-family] .design-page .theme-cell strong::after { font-size: var(--font-size-sm); }
 html[data-theme][data-family] .design-page .glass-light strong::after { content: 'Aero Light'; }
 html[data-theme][data-family] .design-page .glass-dark strong::after { content: 'Aero Dark'; }
 html[data-theme][data-family] .design-page .v2-light strong::after { content: 'Mono Light'; }
@@ -66,7 +75,6 @@ html[data-family='glass'][data-theme='dark'] .design-page .state-badge::after { 
 html[data-family='v2'][data-theme='light'] .design-page .state-badge::after { content: 'MONO · LIGHT'; }
 html[data-family='v2'][data-theme='dark'] .design-page .state-badge::after { content: 'MONO · DARK'; }
 
-/* The Project color copy is part of the public Design page too. */
 html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p {
   font-size: 0;
 }
@@ -75,8 +83,45 @@ html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .sub
   font-size: var(--font-size-xs);
 }
 
-/* Product preview keeps the real product Topbar visible from rest; the scroll reveal belongs only
-   to the outer Design header above. */
+/* System color gains explicit accent + muted-accent roles without adding another palette layer. */
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before,
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  min-height: 122px;
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-md);
+  border: 1px solid var(--design-card-border);
+  border-radius: var(--design-card-radius);
+  box-shadow: var(--elevation-card);
+  color: var(--content-primary);
+  font: var(--font-weight-semibold) var(--font-size-sm) var(--font-sans);
+  white-space: pre-line;
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before {
+  content: 'Accent\A --color-accent';
+  background: linear-gradient(to bottom,var(--color-accent) 0 58%,var(--design-card-bg) 58% 100%);
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  content: 'Muted accent\A --color-accent-muted';
+  background: linear-gradient(to bottom,var(--color-accent-muted) 0 58%,var(--design-card-bg) 58% 100%);
+}
+
+/* Product preview mirrors the real Projects page: three columns, 16px gutter, real topbar geometry,
+   and the same column padding. The fourth mock-only "待确认" lane stays in source data but is not
+   part of the visual sample because the real page currently renders pending / active / done. */
+html[data-theme][data-family] .design-page .sample-board {
+  padding: 118px 20px 20px;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 16px;
+}
+html[data-theme][data-family] .design-page .project-column {
+  padding: 12px 10px;
+}
+html[data-theme][data-family] .design-page .project-column:nth-child(3) {
+  display: none;
+}
+
+/* Product preview keeps the real product Topbar visible from rest. */
 html[data-theme][data-family] .design-page .sample-topbar {
   border-color: var(--topbar-border);
   background: var(--topbar-bg);
@@ -85,6 +130,28 @@ html[data-theme][data-family] .design-page .sample-topbar {
 html[data-theme][data-family] .design-page .sample-topbar:hover {
   background: var(--topbar-bg-hover);
   box-shadow: var(--topbar-shadow-hover);
+}
+
+/* Real button language, but token-driven. */
+html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-primary {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  box-shadow: 0 3px 12px color-mix(in srgb,var(--action-primary) 30%,transparent);
+}
+html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-ghost {
+  color: var(--content-secondary);
+  background: color-mix(in srgb,var(--control-bg) 86%,transparent);
+  border-color: var(--control-border);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+
+/* GuguChat is a window-level object. It must sit above the sample topbar (z=40), exactly like the
+   real product where chat owns the higher interaction layer. */
+html[data-theme][data-family] .design-page .gugu-chat-mock {
+  z-index: 70;
+}
+html[data-theme][data-family] .design-page .sample-gugu-fab {
+  z-index: 71;
 }
 
 /* Exact KanbanColumn add-card treatment: 96px dashed squircle, no lift or outer shadow. */
@@ -117,4 +184,51 @@ html[data-theme][data-family] .design-page .add-project:hover {
   color: var(--action-primary);
   background: color-mix(in srgb,var(--surface-raised) 30%,transparent);
   box-shadow: none;
+}
+
+/* Every scrollbar density card is itself a real scroll surface. Hover and drag each thumb to inspect
+   the actual contract; the old single preview is intentionally hidden. */
+html[data-theme][data-family] .design-page .scrollbar-token-layout {
+  grid-template-columns: 1fr;
+}
+html[data-theme][data-family] .design-page .scrollbar-preview {
+  display: none;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-grid {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card {
+  height: 168px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card .token-meta::after {
+  content: 'Scroll surface\A hover thumb\A drag thumb\A safe inset\A transparent track\A stable content\A end of sample';
+  display: block;
+  margin-top: var(--space-sm);
+  padding-top: var(--space-sm);
+  border-top: 1px solid var(--border-hairline);
+  color: var(--content-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: 2.2;
+  white-space: pre-line;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(1)::-webkit-scrollbar { width: var(--scrollbar-size-default); }
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(2)::-webkit-scrollbar { width: var(--scrollbar-size-compact); }
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(3)::-webkit-scrollbar { width: var(--scrollbar-size-editor); }
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: var(--scrollbar-safe-inset);
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--radius-pill);
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+@media(max-width:900px) {
+  html[data-theme][data-family] .design-page .scrollbar-style-grid { grid-template-columns: 1fr; }
+  html[data-theme][data-family] .design-page .sample-board { grid-template-columns: repeat(3,220px); overflow-x:auto; }
 }
