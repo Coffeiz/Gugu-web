@@ -27,6 +27,13 @@
   --control-border-hover: var(--border-hover);
   --control-radius: var(--radius-sm);
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
+  /* 项目列 add-card 与设计页 add-project 的统一轻量入口契约。 */
+  --inline-action-bg: color-mix(in srgb,var(--surface-raised) 15%,transparent);
+  --inline-action-bg-hover: color-mix(in srgb,var(--surface-raised) 30%,transparent);
+  --inline-action-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --inline-action-border-hover: color-mix(in srgb,var(--action-primary) 35%,transparent);
+  --inline-action-fg: var(--content-secondary);
+  --inline-action-fg-hover: var(--action-primary);
 
   /* Sidebar */
   --sidebar-bg: var(--surface-sidebar);

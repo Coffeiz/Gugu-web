@@ -135,11 +135,11 @@ html[data-theme][data-family] .design-page .add-project {
   align-items:center;
   justify-content:center;
   gap:var(--space-sm);
-  border:1.5px dashed color-mix(in srgb,var(--content-primary) 10%,transparent);
+  border:1.5px dashed var(--inline-action-border);
   border-radius:var(--radius-md);
   corner-shape:squircle;
-  color:var(--content-secondary);
-  background:color-mix(in srgb,var(--surface-raised) 15%,transparent);
+  color:var(--inline-action-fg);
+  background:var(--inline-action-bg);
   box-shadow:none;
   cursor:pointer;
   font-size:0;
@@ -152,9 +152,9 @@ html[data-theme][data-family] .design-page .add-project::after {
 }
 html[data-theme][data-family] .design-page .add-project:hover {
   transform:none;
-  border-color:color-mix(in srgb,var(--action-primary) 35%,transparent);
-  color:var(--action-primary);
-  background:color-mix(in srgb,var(--surface-raised) 30%,transparent);
+  border-color:var(--inline-action-border-hover);
+  color:var(--inline-action-fg-hover);
+  background:var(--inline-action-bg-hover);
   box-shadow:none;
 }
 

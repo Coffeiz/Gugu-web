@@ -125,14 +125,14 @@ html[data-theme][data-family] .seg-bar .seg,
 html[data-theme][data-family] .progress-bar { background: var(--surface-soft-hover) !important; }
 
 html[data-theme][data-family] .column .add-card {
-  color: var(--content-secondary);
-  background: var(--surface-soft);
-  border-color: var(--border-subtle);
+  color: var(--inline-action-fg);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
 }
 html[data-theme][data-family] .column .add-card:hover {
-  color: var(--action-primary);
-  background: var(--surface-soft-hover);
-  border-color: var(--action-outline);
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
 }
 html[data-theme][data-family] .done-col .archived-entry-mini {
   color: var(--control-fg);
@@ -177,12 +177,16 @@ html[data-theme][data-family] .fc-card .fc-name { color: var(--content-primary);
 html[data-theme][data-family] .fc-card .fc-meta { color: var(--content-secondary); }
 
 html[data-theme][data-family] .fub.grid {
-  color: var(--content-secondary);
-  background: var(--surface-soft);
-  border-color: var(--border-subtle);
+  color: var(--inline-action-fg);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
 }
 html[data-theme][data-family] .fub.grid:hover,
-html[data-theme][data-family] .fub.grid.dragging,
+html[data-theme][data-family] .fub.grid.dragging {
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
+}
 html[data-theme][data-family] .fub.list:hover,
 html[data-theme][data-family] .fub.list.dragging {
   color: var(--action-primary);

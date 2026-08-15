@@ -113,20 +113,20 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 .add-card {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; flex-shrink: 0; min-height: 96px;
-  background: rgba(255,255,255,0.15);
-  border: 1.5px dashed rgba(0,0,0,0.1);
+  background: var(--inline-action-bg);
+  border: 1.5px dashed var(--inline-action-border);
   border-radius: var(--radius-md);
   corner-shape: squircle;
-  color: var(--text-secondary);
+  color: var(--inline-action-fg);
   cursor: pointer;
   /* transform 由 Runtime FLIP 独占；不能使用 transition: all，
      否则旧的列表位移或 hover 状态会让新建按钮二次进动。 */
   transition: border-color 0.18s, color 0.18s, background 0.18s;
 }
 .add-card:hover {
-  border-color: rgba(123,127,178,0.35);
-  color: var(--color-primary);
-  background: rgba(255,255,255,0.3);
+  border-color: var(--inline-action-border-hover);
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
 }
 .add-card-text { font-size: 11px; font-weight: 600; }
 </style>
