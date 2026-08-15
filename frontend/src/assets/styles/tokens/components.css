@@ -77,9 +77,10 @@
   --gugu-fab-ripple: color-mix(in srgb,var(--action-primary) 75%,transparent);
 
   /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */
-  --gugu-chat-bg: color-mix(in srgb,var(--surface-base) 90%,transparent);
-  --gugu-chat-main-bg: color-mix(in srgb,var(--surface-base) 62%,transparent);
-  --gugu-chat-sidebar-bg: color-mix(in srgb,var(--surface-sidebar) 82%,transparent);
+  /* 主题 surface 已经携带旧版透明度，这里直接复用，避免二次 alpha 混合。 */
+  --gugu-chat-bg: var(--surface-base);
+  --gugu-chat-main-bg: var(--surface-base);
+  --gugu-chat-sidebar-bg: var(--surface-sidebar);
   --gugu-chat-border: var(--border-strong);
   --gugu-chat-highlight: var(--border-highlight);
   --gugu-chat-radius: var(--radius-lg);

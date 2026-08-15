@@ -4,13 +4,6 @@
       <span class="exp-sidebar-title">咕咕</span>
     </div>
 
-    <div class="exp-new-session-wrap">
-      <button class="exp-new-session-btn" @click="onNewSession">
-        <PhPencilSimple weight="bold" :size="13" />
-        新对话
-      </button>
-    </div>
-
     <div class="exp-sidebar-divider"></div>
     <div class="exp-session-list scroll-surface scroll-surface--compact">
       <!-- 即时通讯区域：保留真实平台折叠/扫码/会话行为，只统一视觉和最后对话时间。 -->
@@ -45,6 +38,14 @@
         </button>
       </div>
       <div v-if="!webSessions.length" class="exp-session-empty">还没有网页对话</div>
+    </div>
+
+    <div class="exp-sidebar-divider"></div>
+    <div class="exp-new-session-wrap">
+      <button class="exp-new-session-btn" @click="onNewSession">
+        <PhPencilSimple weight="bold" :size="13" />
+        新对话
+      </button>
     </div>
   </div>
 </template>
@@ -124,7 +125,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 .exp-sidebar-divider { margin: 0 var(--space-md); }
 .exp-group-divider { margin: var(--space-sm) var(--space-xs); }
 
-.exp-new-session-wrap { padding: 0 var(--space-sm) var(--space-md); flex-shrink: 0; }
+.exp-new-session-wrap { padding: var(--space-sm) var(--space-sm) var(--space-md); flex-shrink: 0; }
 .exp-new-session-btn {
   width: 100%;
   height: var(--control-sm);
