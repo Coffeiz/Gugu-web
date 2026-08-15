@@ -20,7 +20,7 @@ html[data-theme][data-family] .file-browser-toolbar .bc-item.bc-drop-target {
 }
 html[data-theme][data-family] .file-browser-toolbar .bc-arrow { color: var(--content-tertiary); }
 
-html[data-theme][data-family] .file-browser-toolbar .storage-bar-bg { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .file-browser-toolbar .storage-bar-bg { background: var(--surface-soft); }
 html[data-theme][data-family] .file-browser-toolbar .storage-text { color: var(--content-tertiary); }
 
 html[data-theme][data-family] .file-browser-toolbar .select-all-btn {
