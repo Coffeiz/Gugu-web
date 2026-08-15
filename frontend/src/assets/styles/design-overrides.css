@@ -1,72 +1,8 @@
-/* Design route refinements plus the explicit rollback of the accidental product-Topbar experiment.
- * Product geometry/behaviour belongs to DefaultLayout. Only the Design page header gets the
+/* Design route refinements that intentionally sit outside the scoped showcase component.
+ * Product Topbar behaviour stays owned by DefaultLayout/product.css; only this header gets the
  * Mafuyu-style "transparent at top -> surface after scroll" treatment.
  */
 
-/* ── Real product Topbar rollback ────────────────────────────────
-   product.css from the previous iteration attached a scroll timeline and changed real Topbar
-   geometry. Restore the values owned by DefaultLayout while keeping theme paint tokens. */
-html[data-theme][data-family] .layout-main { timeline-scope: none; }
-html[data-theme][data-family] .page-content { scroll-timeline: none; }
-html[data-theme][data-family] .topbar.glass-card {
-  --gb-tint: var(--topbar-bg);
-  top: 20px;
-  left: 20px;
-  right: 24px;
-  height: auto;
-  min-height: 0;
-  gap: 14px;
-  padding: 14px 20px;
-  border-color: var(--glass-card-border);
-  background: transparent;
-  box-shadow: var(--topbar-shadow);
-  animation: none !important;
-}
-html[data-theme][data-family] .topbar .glass-bg {
-  opacity: 1;
-  animation: none !important;
-}
-html[data-theme][data-family] .topbar:hover {
-  --gb-tint: var(--topbar-bg-hover);
-  background: transparent;
-  box-shadow: var(--topbar-shadow-hover);
-}
-html[data-theme][data-family] .topbar .topbar-title {
-  min-width: initial;
-  display: block;
-  white-space: normal;
-}
-html[data-theme][data-family] .topbar .topbar-title h1 {
-  font-size: var(--topbar-title-size);
-  line-height: 1.2;
-  font-weight: var(--font-weight-bold);
-}
-html[data-theme][data-family] .topbar .topbar-title p {
-  margin: 2px 0 0;
-  color: var(--content-secondary);
-  font-size: var(--topbar-meta-size);
-}
-html[data-theme][data-family] .topbar .gs-wrap {
-  flex: 1;
-  width: auto;
-  max-width: 340px;
-  margin-left: auto;
-}
-html[data-theme][data-family] .topbar .topbar-actions {
-  flex-shrink: 0;
-  gap: 8px;
-}
-html[data-theme][data-family] .topbar .btn-ghost-custom {
-  color: var(--control-fg) !important;
-  background: var(--control-bg) !important;
-  border-color: var(--control-border) !important;
-}
-html[data-theme][data-family] .topbar .btn-primary-custom {
-  color: var(--content-on-accent) !important;
-  background: var(--action-primary) !important;
-}
-
-/* ── Design-only Topbar reveal ────────────────────────────────── */
 html[data-theme][data-family] .design-page {
   scroll-timeline: --design-page-scroll block;
 }
@@ -109,7 +45,7 @@ html[data-theme][data-family] .design-page .design-hero {
 }
 
 /* Public family names are Aero / Mono. Keep glass / v2 as internal data-family ids for stored
-   preference and selector compatibility; only user-facing labels change. */
+   preference and selector compatibility; all user-facing labels use the new names. */
 html[data-theme][data-family] .design-page .hero-copy > p {
   font-size: 0;
 }
@@ -143,6 +79,15 @@ html[data-family='glass'][data-theme='light'] .design-page .state-badge::after {
 html[data-family='glass'][data-theme='dark'] .design-page .state-badge::after { content: 'AERO · DARK'; }
 html[data-family='v2'][data-theme='light'] .design-page .state-badge::after { content: 'MONO · LIGHT'; }
 html[data-family='v2'][data-theme='dark'] .design-page .state-badge::after { content: 'MONO · DARK'; }
+
+/* The Project color copy is part of the public Design page too. */
+html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p {
+  font-size: 0;
+}
+html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p::after {
+  content: '内容色跨 Aero / Mono 保持身份。';
+  font-size: var(--font-size-xs);
+}
 
 /* Product preview keeps the real product Topbar visible from rest; the scroll reveal belongs only
    to the outer Design header above. */
