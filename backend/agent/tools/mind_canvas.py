@@ -48,6 +48,12 @@ from agent.tools.base import BaseSkill, Tool
 _MAX_RESULTS = 20
 _PLACEABLE_TYPES = ("project", "file", "event")
 _CANVAS_TYPES = ("canvas_note", "project", "file", "event")
+_DEFAULT_ITEM_SIZES = {
+    "canvas_note": (244, 148),
+    "project": (240, 120),
+    "file": (156, 140),
+    "event": (220, 96),
+}
 
 
 def _json_object(raw: str | None) -> dict[str, Any]:
@@ -98,10 +104,22 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
         "preview": plain[:240],
     }
     if item is not None:
+        default_w, default_h = _DEFAULT_ITEM_SIZES.get(
+            "canvas_note" if node.kind == "canvas_note" else node.ref_type,
+            _DEFAULT_ITEM_SIZES["event"],
+        )
+        effective_w = item.w if item.w is not None else default_w
+        effective_h = item.h if item.h is not None else default_h
         result.update({
             "item_id": item.id,
             "position": {"x": item.x, "y": item.y},
             "size": {"w": item.w, "h": item.h},
+            "layout": {
+                "effective_size": {"w": effective_w, "h": effective_h},
+                "default_size": {"w": default_w, "h": default_h},
+                "size_source": "explicit" if item.w is not None or item.h is not None else "default",
+                "recommended_gap": 40,
+            },
             "collapsed": item.collapsed,
             "z": item.z,
         })
@@ -390,17 +408,13 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": True}
 
 
-async def _canvas_item(db, user_id, canvas_id: int, item_id: int):
-    return await get_canvas_item(db, user_id, canvas_id, item_id)
-
-
 async def _mind_update_canvas_node(db, user_id, args: dict):
     canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
     if not isinstance(canvas_id, int) or not isinstance(item_id, int):
         return {"error": "需要提供 canvas_id 和 item_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    item = await _canvas_item(db, user_id, canvas_id, item_id)
+    item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return {"error": "画布节点不存在"}
     fields = {}
@@ -431,7 +445,7 @@ async def _mind_remove_canvas_node(db, user_id, args: dict):
         return {"error": "需要提供 canvas_id 和 item_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    item = await _canvas_item(db, user_id, canvas_id, item_id)
+    item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return {"error": "画布节点不存在"}
     node_id = await remove_canvas_item(db, user_id, canvas_id, item_id)
@@ -586,7 +600,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_get_canvas", label="读取思维画布",
-            description="读取当前用户指定画布的节点摘要、连接和最后查看的 camera/viewport。完整正文只在用户明确要求时读取。",
+            description="读取当前用户指定画布的节点摘要、连接和最后查看的 camera/viewport。节点带有 layout.effective_size、layout.default_size 与推荐间距，排布时按实际尺寸避让。完整正文只在用户明确要求时读取。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -686,7 +700,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_update_canvas_node", label="调整画布节点",
-            description="调整已放置节点的位置、大小、层级或折叠状态；只改变画布视图，不改变原项目、文件或活动。",
+            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 留出约 40px 间距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -29,7 +29,7 @@ def relation_anchor_from_canvas(canvas, relation_id):
     return {"source_side": src_side, "target_side": dst_side}
 
 
-async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, *, commit=True):
+async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, *, commit=False):
     """更新指定画布上的关系端点，保留画布 data_json 的其它视图状态。"""
     if source_side not in _RELATION_SIDES or target_side not in _RELATION_SIDES:
         raise ValueError("连接点只能是 left 或 right")
@@ -63,17 +63,20 @@ async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, 
     return {"source_side": source_side, "target_side": target_side}
 
 
-async def create_canvas(db, user_id, title, project_id=None):
+async def create_canvas(db, user_id, title, project_id=None, *, commit=False):
     if project_id is not None and not await get_owned(db, Project, project_id, user_id):
         return None
     canvas = MindMap(user_id=user_id, title=title, project_id=project_id, data_json="{}")
     db.add(canvas)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(canvas)
     return canvas
 
 
-async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y):
+async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y, *, commit=False):
     node = MindNode(
         user_id=user_id, kind="canvas_note", title=title, content_md=content,
         content_plain=to_plain_text(content), color=validate_note_color(color),
@@ -83,13 +86,16 @@ async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y
     await db.flush()
     item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
     db.add(item)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(node)
     await db.refresh(item)
     return node, item
 
 
-async def add_canvas_item(db, user_id, canvas_id, node, x, y):
+async def add_canvas_item(db, user_id, canvas_id, node, x, y, *, commit=False):
     existing = await db.scalar(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.node_id == node.id,
@@ -100,7 +106,10 @@ async def add_canvas_item(db, user_id, canvas_id, node, x, y):
         return existing, False
     item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
     db.add(item)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(item)
     return item, True
 
@@ -137,7 +146,7 @@ async def get_canvas_relation(db, user_id, relation_id):
     return await get_owned(db, MindRelation, relation_id, user_id)
 
 
-async def update_canvas_item(db, user_id, canvas_id, item_id, fields):
+async def update_canvas_item(db, user_id, canvas_id, item_id, fields, *, commit=False):
     item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return None
@@ -146,38 +155,48 @@ async def update_canvas_item(db, user_id, canvas_id, item_id, fields):
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
     ).values(**fields, updated_at=now_utc()))
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(item)
     return item
 
 
-async def remove_canvas_item(db, user_id, canvas_id, item_id):
+async def remove_canvas_item(db, user_id, canvas_id, item_id, *, commit=False):
     item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return None
     node_id = item.node_id
     await db.delete(item)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return node_id
 
 
-async def update_canvas_note(db, user_id, node_id, version, fields):
+async def update_canvas_note(db, user_id, node_id, version, fields, *, commit=False):
     if not await update_node_atomic(db, node_id, user_id, version, fields):
-        await db.rollback()
         return False
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return await get_owned(db, MindNode, node_id, user_id)
 
 
-async def delete_canvas_note(db, user_id, node_id, version):
+async def delete_canvas_note(db, user_id, node_id, version, *, commit=False):
     if not await soft_delete_canvas_note(db, node_id, user_id, version):
-        await db.rollback()
         return False
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return True
 
 
-async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="related", *, commit=True):
+async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="related", *, commit=False):
     items = (await db.execute(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
@@ -205,14 +224,17 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
     return relation, None
 
 
-async def disconnect_node_relation(db, user_id, relation_id):
+async def disconnect_node_relation(db, user_id, relation_id, *, commit=False):
     relation = await db.scalar(select(MindRelation).where(
         MindRelation.id == relation_id, MindRelation.user_id == user_id,
     ))
     if relation is None:
         return None
     await db.delete(relation)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return relation
 
 
