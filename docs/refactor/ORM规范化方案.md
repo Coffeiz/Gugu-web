@@ -284,3 +284,4 @@ Agent 工具和后台任务
 - 现有 `check_ownership.py`、`check_confirm_gate.py` 和 `check_utcnow.py` 继续作为独立守卫；它们不替代后续文件域 Service 迁移。
 - 阶段 2 已完成文件域试点：文件夹列表/下载、回收站列表/内容/恢复/永久删除、FileService 写操作，以及 Agent 文件工具的浏览、创建、移动、复制、删除和回收站操作均已收口到 `services/files/` 或 `FileService`，并补充跨用户回归测试。
 - 阶段 3 项目域已完成首个边界：项目列表、详情计数、创建落库和项目删除时文件软删已迁移到 `services/projects.py`；日历事件及活动提醒的查询、创建、删除已迁移到 `services/calendar.py`；思维面板 Agent 的画布创建、节点放置/布局、便签编辑/删除、连接写入、画布列表/节点/关系查询、可放置对象搜索及批量事务已迁移到 `services/mind_canvas.py`；客户、独立定时任务、历史对话、总览、时间流思维查询、群上下文和搜索用量 Agent 工具已分别迁移到 `services/clients.py`、`services/scheduled_tasks.py`、`services/conversations.py`、`services/overview.py`、`services/mind.py`、`services/group_context.py`、`services/search.py`；画布剩余归属/位置解析也已收口到同一 Service。工具层仅保留参数校验、确认门、结果整形和事务协调。
+- 阶段 4 已完成迁移域的兼容入口清点：文件、项目、日历、思维面板、客户、定时任务、历史对话、总览、群上下文和搜索用量均由对应 Service 承接 ORM；`app.core` 中保留的原子函数属于底层领域原语，不再作为 Agent/API 的平行查询入口。阶段 0 基线中的 API 存量和工具层事务提交仍由后续 API 领域迁移单独处理，不纳入本轮已完成范围。
