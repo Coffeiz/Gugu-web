@@ -122,8 +122,8 @@ def build_reminder(user_id, event, lead_minutes, channels):
     ), None
 
 
-async def create_event_reminders(db, user_id, event, leads, channels):
-    """批量创建事件提醒并提交，返回 (tasks, skipped_messages)。"""
+async def create_event_reminders(db, user_id, event, leads, channels, *, commit=False):
+    """批量创建事件提醒；默认只 flush，由 API/任务边界提交。"""
     created, skipped = [], []
     for lead in leads:
         task, error = build_reminder(user_id, event, lead, channels)
@@ -132,19 +132,25 @@ async def create_event_reminders(db, user_id, event, leads, channels):
         else:
             db.add(task)
             created.append(task)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     for task in created:
         await db.refresh(task)
     return created, skipped
 
 
-async def delete_event_with_reminders(db, user_id, event):
-    """删除事件及其提醒，返回删除的提醒数量。"""
+async def delete_event_with_reminders(db, user_id, event, *, commit=False):
+    """删除事件及其提醒；默认只 flush，由 API/任务边界提交。"""
     reminders = await list_event_reminders(db, user_id, event.id)
     for reminder in reminders:
         await db.delete(reminder)
     await db.delete(event)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return len(reminders)
 
 
@@ -155,11 +161,14 @@ async def get_event_reminder(db, user_id, reminder_id):
     return reminder
 
 
-async def delete_event_reminder(db, user_id, reminder_id):
+async def delete_event_reminder(db, user_id, reminder_id, *, commit=False):
     reminder = await get_event_reminder(db, user_id, reminder_id)
     if reminder is None:
         return None
     reminder_id = reminder.id
     await db.delete(reminder)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return reminder_id

@@ -356,6 +356,10 @@ class SkillRegistry:
         try:
             async with _sess._SessionLocal() as db:
                 result: Any = await tool.handler(db, user_id, args)
+                # Agent 一次工具调用就是一个任务事务边界。普通 Service 只负责 flush，
+                # 由这里统一提交；异常路径由上下文退出前回滚，避免半成品写入下一次调用。
+                if db is not None:
+                    await db.commit()
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
             _safe = sanitize_error(f"{type(e).__name__}: {e}")

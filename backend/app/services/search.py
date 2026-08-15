@@ -15,6 +15,9 @@ async def count_daily_search_usage(db, user_id, day_start):
     ))).scalar() or 0
 
 
-async def record_search_usage(db, user_id, query):
+async def record_search_usage(db, user_id, query, *, commit=False):
     db.add(SearchUsage(user_id=user_id, query=query[:500]))
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()

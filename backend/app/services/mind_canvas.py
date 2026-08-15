@@ -1,7 +1,7 @@
 """思维画布 Agent/API 共用的主要写入边界。"""
 import json
 
-from sqlalchemy import and_, false, func, or_, select, update
+from sqlalchemy import and_, delete, false, func, or_, select, update
 
 from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation, validate_note_color
 from app.core.mind_canvas import get_or_create_reference_node, soft_delete_canvas_note
@@ -76,7 +76,40 @@ async def create_canvas(db, user_id, title, project_id=None, *, commit=False):
     return canvas
 
 
-async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y, *, commit=False):
+async def update_canvas(db, user_id, canvas_id, fields, *, commit=False):
+    """更新画布自身的标题/视图数据，默认只 flush。"""
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return None
+    if "title" in fields:
+        canvas.title = fields["title"]
+    if "data_json" in fields:
+        canvas.data_json = fields["data_json"]
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    await db.refresh(canvas)
+    return canvas
+
+
+async def delete_canvas(db, user_id, canvas_id, *, commit=False):
+    """删除画布视图及画布记录，不删除全局节点/关系。"""
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return False
+    await db.execute(delete(MindCanvasItem).where(MindCanvasItem.canvas_id == canvas_id))
+    await db.delete(canvas)
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    return True
+
+
+async def create_canvas_note(
+    db, user_id, canvas_id, title, content, color, x, y, *, w=None, h=None, z=0, commit=False,
+):
     node = MindNode(
         user_id=user_id, kind="canvas_note", title=title, content_md=content,
         content_plain=to_plain_text(content), color=validate_note_color(color),
@@ -84,7 +117,10 @@ async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y
     )
     db.add(node)
     await db.flush()
-    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
+    item = MindCanvasItem(
+        user_id=user_id, canvas_id=canvas_id, node_id=node.id,
+        x=x, y=y, w=w, h=h, z=z,
+    )
     db.add(item)
     if commit:
         await db.commit()
@@ -95,7 +131,10 @@ async def create_canvas_note(db, user_id, canvas_id, title, content, color, x, y
     return node, item
 
 
-async def add_canvas_item(db, user_id, canvas_id, node, x, y, *, commit=False):
+async def add_canvas_item(
+    db, user_id, canvas_id, node, x, y, *, w=None, h=None, z=0, collapsed=False,
+    data_json=None, commit=False,
+):
     existing = await db.scalar(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.node_id == node.id,
@@ -104,7 +143,11 @@ async def add_canvas_item(db, user_id, canvas_id, node, x, y, *, commit=False):
     if existing is not None:
         await db.refresh(node)
         return existing, False
-    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
+    item = MindCanvasItem(
+        user_id=user_id, canvas_id=canvas_id, node_id=node.id,
+        x=x, y=y, w=w, h=h, z=z, collapsed=collapsed,
+        data_json=data_json or "{}",
+    )
     db.add(item)
     if commit:
         await db.commit()
@@ -128,6 +171,19 @@ async def get_canvas_item_by_node(db, user_id, canvas_id, node_id):
         MindCanvasItem.node_id == node_id,
         MindCanvasItem.user_id == user_id,
     ))
+
+
+async def list_canvas_items(db, user_id, canvas_id):
+    return (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(
+            MindCanvasItem.canvas_id == canvas_id,
+            MindCanvasItem.user_id == user_id,
+            MindNode.user_id == user_id,
+        )
+        .order_by(MindCanvasItem.z, MindCanvasItem.id)
+    )).all()
 
 
 async def get_canvas_node(db, user_id, node_id, *, kind=None, deleted=None):
@@ -222,6 +278,52 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
         await db.flush()
     await db.refresh(relation)
     return relation, None
+
+
+async def create_relation(
+    db, user_id, source_id, target_id, *, rel_type="related", allow_parallel=False, commit=False,
+):
+    """创建全局节点关系；画布/API 共用，默认幂等并只 flush。"""
+    if source_id == target_id:
+        return None, "节点不能连向自己"
+    nodes = (await db.execute(select(MindNode).where(
+        MindNode.id.in_((source_id, target_id)),
+        MindNode.user_id == user_id,
+        MindNode.deleted_at.is_(None),
+    ))).scalars().all()
+    if len(nodes) != 2:
+        return None, "节点不存在"
+    try:
+        relation = await upsert_relation(
+            db, user_id, source_id, target_id,
+            rel_type=rel_type, allow_parallel=allow_parallel,
+        )
+    except ValueError as exc:
+        return None, str(exc)
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    await db.refresh(relation)
+    return relation, None
+
+
+async def bring_canvas_item_to_front(db, user_id, canvas_id, item_id, x, y, *, commit=False):
+    """在画布内置顶节点并更新位置，保持整个排序操作一个事务。"""
+    rows = await list_canvas_items(db, user_id, canvas_id)
+    target = next(((item, node) for item, node in rows if item.id == item_id), None)
+    if target is None:
+        return None
+    for index, (item, _) in enumerate([row for row in rows if row[0].id != item_id] + [target], start=1):
+        item.z = index * 1000
+    target_item, target_node = target
+    target_item.x, target_item.y = x, y
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    await db.refresh(target_item)
+    return target_item, target_node
 
 
 async def disconnect_node_relation(db, user_id, relation_id, *, commit=False):

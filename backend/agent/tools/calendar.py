@@ -33,7 +33,6 @@ async def _create_event(db, user_id, args: dict):
     )
     if ev is None:
         return json.dumps({"error": "项目不存在"})
-    await db.commit()
     resp = {"success": True, "event_id": ev.id, "title": ev.title, "date": ev.date,
             "time": ev.time, "end_time": ev.end_time}
     # 顺手把提醒也建了，省得再单独调 add_event_reminder（一次工具调用搞定「建活动+提醒」）

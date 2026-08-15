@@ -27,24 +27,33 @@ async def list_tasks(db, user_id):
     ).order_by(ScheduledTask.id.desc()))).scalars().all()
 
 
-async def create_task(db, user_id, **fields):
+async def create_task(db, user_id, *, commit=False, **fields):
     task = ScheduledTask(user_id=user_id, **fields)
     db.add(task)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(task)
     return task
 
 
-async def update_task(db, task, fields):
+async def update_task(db, task, fields, *, commit=False):
     for field, value in fields.items():
         setattr(task, field, value)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(task)
     return task
 
 
-async def delete_task(db, task):
+async def delete_task(db, task, *, commit=False):
     task_id, name = task.id, task.name
     await db.delete(task)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return task_id, name

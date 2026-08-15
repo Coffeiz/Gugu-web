@@ -11,10 +11,13 @@ async def list_clients(db, user_id):
     )).scalars().all()
 
 
-async def create_client(db, user_id, **fields):
+async def create_client(db, user_id, *, commit=False, **fields):
     client = Client(user_id=user_id, **fields)
     db.add(client)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(client)
     return client
 
@@ -34,15 +37,21 @@ async def get_client(db, user_id, client_id):
     return await get_owned(db, Client, client_id, user_id)
 
 
-async def update_client(db, client, fields):
+async def update_client(db, client, fields, *, commit=False):
     for field, value in fields.items():
         setattr(client, field, value)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return client
 
 
-async def delete_client(db, client):
+async def delete_client(db, client, *, commit=False):
     client_id, name = client.id, client.name
     await db.delete(client)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     return client_id, name
