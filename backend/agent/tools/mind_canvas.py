@@ -11,12 +11,25 @@ from typing import Any
 
 from sqlalchemy import and_, false, func, or_, select, update
 
-from app.core.mind import content_hash, to_plain_text, validate_note_color
-from app.core.mind import update_node_atomic
+from app.core.mind import validate_note_color
 from app.core.mind_canvas import get_or_create_reference_node, soft_delete_canvas_note
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
+from app.services.mind_canvas import (
+    add_canvas_item,
+    connect_nodes,
+    create_canvas,
+    create_canvas_note,
+    delete_canvas_note,
+    disconnect_node_relation,
+    get_canvas_item,
+    get_canvas_item_by_node,
+    get_or_create_reference,
+    remove_canvas_item,
+    update_canvas_item,
+    update_canvas_note,
+)
 from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
@@ -394,10 +407,9 @@ async def _mind_create_canvas(db, user_id, args: dict):
     if project_id is not None:
         if not isinstance(project_id, int) or await db.scalar(select(Project).where(Project.id == project_id, Project.user_id == user_id)) is None:
             return {"error": "项目不存在"}
-    canvas = MindMap(user_id=user_id, title=title, project_id=project_id, data_json="{}")
-    db.add(canvas)
-    await db.commit()
-    await db.refresh(canvas)
+    canvas = await create_canvas(db, user_id, title, project_id)
+    if canvas is None:
+        return {"error": "项目不存在"}
     return {"canvas": {"canvas_id": canvas.id, "title": canvas.title, "project_id": canvas.project_id}}
 
 
@@ -415,19 +427,10 @@ async def _mind_create_canvas_note(db, user_id, args: dict):
     except ValueError as exc:
         return {"error": str(exc)}
     canvas = await _get_owned_canvas(db, user_id, canvas_id)
-    node = MindNode(
-        user_id=user_id, kind="canvas_note", title=title.strip() or "新便签",
-        content_md=content, content_plain=to_plain_text(content), color=color,
-        indexed_hash=content_hash(to_plain_text(content)), indexed_at=None,
+    x, y = await _resolve_canvas_position(db, user_id, canvas, None, args.get("position"))
+    node, item = await create_canvas_note(
+        db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y,
     )
-    db.add(node)
-    await db.flush()
-    x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
-    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
-    db.add(item)
-    await db.commit()
-    await db.refresh(node)
-    await db.refresh(item)
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
 
 
@@ -450,32 +453,23 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
         if ref_type not in _PLACEABLE_TYPES or not isinstance(ref_id, int):
             return {"error": "需要提供 ref_type 和 ref_id，且类型必须是 project、file 或 event"}
         try:
-            node, _ = await get_or_create_reference_node(db, user_id, ref_type, ref_id)
+            node, _ = await get_or_create_reference(db, user_id, ref_type, ref_id)
         except (ValueError, LookupError) as exc:
             await db.rollback()
             return {"error": str(exc)}
-    existing = await db.scalar(select(MindCanvasItem).where(
-        MindCanvasItem.canvas_id == canvas_id,
-        MindCanvasItem.node_id == node.id,
-        MindCanvasItem.user_id == user_id,
-    ))
+    existing = await get_canvas_item_by_node(db, user_id, canvas_id, node.id)
     if existing is not None:
         await db.refresh(node)
         return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
     x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
-    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
-    db.add(item)
-    await db.commit()
-    await db.refresh(item)
-    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
+    existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y)
+    if not created:
+        return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
+    return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": True}
 
 
 async def _canvas_item(db, user_id, canvas_id: int, item_id: int):
-    return await db.scalar(select(MindCanvasItem).where(
-        MindCanvasItem.id == item_id,
-        MindCanvasItem.canvas_id == canvas_id,
-        MindCanvasItem.user_id == user_id,
-    ))
+    return await get_canvas_item(db, user_id, canvas_id, item_id)
 
 
 async def _mind_update_canvas_node(db, user_id, args: dict):
@@ -504,15 +498,7 @@ async def _mind_update_canvas_node(db, user_id, args: dict):
         fields["collapsed"] = args["collapsed"]
     if not fields:
         return {"error": "至少提供一个要修改的布局字段"}
-    values = dict(fields)
-    values["updated_at"] = now_utc()
-    await db.execute(update(MindCanvasItem).where(
-        MindCanvasItem.id == item.id,
-        MindCanvasItem.canvas_id == canvas_id,
-        MindCanvasItem.user_id == user_id,
-    ).values(**values))
-    await db.commit()
-    await db.refresh(item)
+    item = await update_canvas_item(db, user_id, canvas_id, item_id, fields)
     node = await get_owned(db, MindNode, item.node_id, user_id)
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True}
 
@@ -526,9 +512,7 @@ async def _mind_remove_canvas_node(db, user_id, args: dict):
     item = await _canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
         return {"error": "画布节点不存在"}
-    node_id = item.node_id
-    await db.delete(item)
-    await db.commit()
+    node_id = await remove_canvas_item(db, user_id, canvas_id, item_id)
     return {"canvas_id": canvas_id, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True}
 
 
@@ -558,11 +542,9 @@ async def _mind_update_canvas_note(db, user_id, args: dict):
             return {"error": str(exc)}
     if not fields:
         return {"error": "至少提供一个要修改的字段"}
-    if not await update_node_atomic(db, node_id, user_id, version, fields):
-        await db.rollback()
+    node = await update_canvas_note(db, user_id, node_id, version, fields)
+    if node is False:
         return {"error": "画布便签已被其他端修改，请先重新读取后再更新"}
-    await db.commit()
-    await db.refresh(node)
     return {"node": _node_summary(node), "updated": True}
 
 
@@ -580,39 +562,24 @@ async def _mind_delete_canvas_note(db, user_id, args: dict):
     blocked = confirm.needs_confirmation(args, f"将删除画布便签「{node.title or '未命名'}」，并从画布移除其视图项", user_id)
     if blocked is not None:
         return blocked
-    if not await soft_delete_canvas_note(db, node_id, user_id, version):
-        await db.rollback()
+    if not await delete_canvas_note(db, user_id, node_id, version):
         return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
-    await db.commit()
     return {"deleted_node_id": node_id, "can_restore": True}
 
 
 async def _mind_connect_nodes(db, user_id, args: dict):
-    from app.core.mind import upsert_relation
     canvas_id, source_id, target_id = args.get("canvas_id"), args.get("source_node_id"), args.get("target_node_id")
     if not all(isinstance(value, int) for value in (canvas_id, source_id, target_id)):
         return {"error": "需要提供 canvas_id、source_node_id 和 target_node_id"}
     if await _get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    ids = (source_id, target_id)
-    items = (await db.execute(select(MindCanvasItem).where(
-        MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
-        MindCanvasItem.node_id.in_(ids),
-    ))).scalars().all()
-    if {item.node_id for item in items} != set(ids):
-        return {"error": "两个节点都必须已经放在同一张画布上"}
-    nodes = (await db.execute(select(MindNode).where(
-        MindNode.id.in_(ids), MindNode.user_id == user_id,
-        MindNode.kind.in_(("ref", "canvas_note")), MindNode.deleted_at.is_(None),
-    ))).scalars().all()
-    if len(nodes) != 2:
-        return {"error": "只能连接画布便签或业务引用节点"}
-    try:
-        relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=args.get("type") or "related")
-    except ValueError as exc:
-        return {"error": str(exc)}
-    await db.commit()
-    await db.refresh(relation)
+    if source_id == target_id:
+        return {"error": "节点不能连向自己"}
+    relation, error = await connect_nodes(
+        db, user_id, canvas_id, source_id, target_id, args.get("type") or "related",
+    )
+    if error:
+        return {"error": error}
     return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True}
 
 
@@ -621,14 +588,13 @@ async def _mind_disconnect_nodes(db, user_id, args: dict):
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
-    relation = await db.scalar(select(MindRelation).where(MindRelation.id == relation_id, MindRelation.user_id == user_id))
+    relation = await get_owned(db, MindRelation, relation_id, user_id)
     if relation is None:
         return {"error": "关联不存在"}
     blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
     if blocked is not None:
         return blocked
-    await db.delete(relation)
-    await db.commit()
+    await disconnect_node_relation(db, user_id, relation_id)
     return {"deleted_relation_id": relation_id}
 
 
