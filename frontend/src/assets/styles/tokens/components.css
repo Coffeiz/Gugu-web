@@ -35,25 +35,26 @@
   --sidebar-label-fg: var(--content-secondary);
   --sidebar-item-fg: color-mix(in srgb,var(--content-primary) 76%,var(--content-secondary));
   --sidebar-item-hover: var(--action-soft);
-  --sidebar-item-active: var(--selection-bg);
-  --sidebar-item-active-fg: var(--selection-fg);
-  --sidebar-item-active-border: var(--border-default);
-  --sidebar-item-active-shadow: inset 0 1px 0 var(--border-highlight);
+  --sidebar-item-active: var(--theme-sidebar-active-bg);
+  --sidebar-item-active-fg: var(--theme-sidebar-active-fg);
+  --sidebar-item-active-border: var(--theme-sidebar-active-border);
+  --sidebar-item-active-shadow: inset 0 1px 0 var(--theme-sidebar-active-highlight);
   --sidebar-user-bg: color-mix(in srgb,var(--surface-glass) 78%,transparent);
   --sidebar-user-bg-hover: var(--surface-glass);
   --sidebar-user-border: var(--border-strong);
 
-  /* Topbar: deliberately quiet; it should dissolve into the page instead of reading as a card. */
+  /* Topbar: transparent at rest; product.css reveals its GlassBg when content scrolls. */
   --topbar-bg: var(--theme-topbar-bg);
   --topbar-bg-hover: var(--theme-topbar-bg-hover);
   --topbar-border: var(--theme-topbar-border);
   --topbar-shadow: var(--theme-topbar-shadow);
   --topbar-shadow-hover: var(--theme-topbar-shadow-hover);
   --topbar-blur: 16px;
-  --topbar-title-size: var(--font-size-xl);
-  --topbar-meta-size: var(--font-size-sm);
+  --topbar-title-size: var(--font-size-lg);
+  --topbar-meta-size: var(--font-size-xs);
+  --topbar-height: 52px;
 
-  /* Project cards: keep the original Gugu horizontal project-color gradient in every family. */
+  /* Project cards: exact Gugu horizontal project-colour gradient and real hover motion. */
   --project-card-gradient-start: var(--theme-project-overlay-start);
   --project-card-gradient-end: var(--theme-project-overlay-end);
   --project-card-border: var(--theme-project-border);
@@ -65,6 +66,7 @@
   --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 45%,transparent 100%);
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-md);
+  --project-card-motion: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, background .25s ease-out, border-color .18s ease;
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;
@@ -74,17 +76,27 @@
   --gugu-fab-hover-shadow: 0 7px 24px color-mix(in srgb,var(--action-primary) 42%,transparent), inset 0 1px 0 rgba(255,255,255,.50);
   --gugu-fab-ripple: color-mix(in srgb,var(--action-primary) 75%,transparent);
 
-  /* Gugu chat window */
-  --gugu-chat-bg: var(--surface-base);
+  /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */
+  --gugu-chat-bg: color-mix(in srgb,var(--surface-base) 90%,transparent);
+  --gugu-chat-main-bg: color-mix(in srgb,var(--surface-base) 62%,transparent);
+  --gugu-chat-sidebar-bg: color-mix(in srgb,var(--surface-sidebar) 82%,transparent);
   --gugu-chat-border: var(--border-strong);
   --gugu-chat-highlight: var(--border-highlight);
   --gugu-chat-radius: var(--radius-lg);
   --gugu-chat-shadow: var(--elevation-window);
   --gugu-chat-header-border: var(--border-subtle);
+  --gugu-chat-sidebar-border: var(--border-subtle);
+  --gugu-chat-session-hover: var(--surface-soft-hover);
+  --gugu-chat-session-active: var(--sidebar-item-active);
+  --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);
+  --gugu-chat-caption: var(--content-tertiary);
+  --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
+  --gugu-chat-user-bg: var(--action-primary);
+  --gugu-chat-composer-bg: color-mix(in srgb,var(--surface-raised) 90%,transparent);
   --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);
 
-  /* Design system page: token.html grammar = one glass shell per section, quieter content inside. */
+  /* Design system page. Product sample deliberately opts out of this outer shell. */
   --design-section-gap: var(--space-xl);
   --design-grid-gap: var(--space-md);
   --design-section-bg: color-mix(in srgb,var(--surface-glass) 84%,transparent);
