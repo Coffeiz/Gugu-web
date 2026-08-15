@@ -1,0 +1,72 @@
+/* Design-page-only corrections. Keep the showcase truthful to the same product tokens. */
+
+/* Accent samples are generated as pseudo cards for compatibility with the current data list. Match
+ * the real color-card geometry instead of presenting them as a different card family. */
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before,
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 144px;
+  display: block;
+  padding: calc(76px + var(--space-md)) var(--space-md) var(--space-md);
+  overflow: hidden;
+  border: 1px solid var(--design-card-border);
+  border-radius: var(--design-card-radius);
+  box-shadow: var(--elevation-card);
+  color: var(--content-primary);
+  font: var(--font-weight-semibold) var(--font-size-sm)/var(--line-height-body) var(--font-sans);
+  white-space: pre-line;
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before {
+  content: 'Accent\A--color-accent\A主操作 / 强调';
+  background: linear-gradient(to bottom,var(--color-accent) 0 76px,var(--design-card-bg) 76px 100%);
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  content: 'Muted accent\A--color-accent-muted\A弱强调 / 选中底色';
+  background: linear-gradient(to bottom,var(--color-accent-muted) 0 76px,var(--design-card-bg) 76px 100%);
+}
+
+/* Every scrollbar density card remains directly scrollable. The original preview at the right is
+ * repurposed as the explicit overflow case: both axes overflow, so horizontal and vertical thumbs
+ * can be hovered and dragged in the Design page. */
+html[data-theme][data-family] .design-page .scrollbar-token-layout {
+  grid-template-columns: minmax(0,1fr) minmax(260px,340px);
+  gap: var(--space-md);
+  align-items: start;
+}
+html[data-theme][data-family] .design-page .scrollbar-preview {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  height: 168px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  padding: var(--space-md);
+  border: 1px solid var(--design-card-border);
+  border-radius: var(--design-card-radius);
+  color: var(--content-secondary);
+  background: var(--design-card-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .design-page .scrollbar-preview::before {
+  content: 'Overflow · X / Y';
+  position: sticky;
+  left: 0;
+  display: block;
+  width: max-content;
+  margin-bottom: var(--space-sm);
+  color: var(--content-primary);
+  font: var(--font-weight-semibold) var(--font-size-sm)/var(--line-height-ui) var(--font-sans);
+}
+html[data-theme][data-family] .design-page .scrollbar-preview p {
+  min-width: 620px;
+  padding: var(--space-xs) 0;
+  border-bottom: 1px solid var(--border-hairline);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+html[data-theme][data-family] .design-page .scrollbar-preview p:last-child { border-bottom: 0; }
+
+@media(max-width:900px) {
+  html[data-theme][data-family] .design-page .scrollbar-token-layout { grid-template-columns: 1fr; }
+}
