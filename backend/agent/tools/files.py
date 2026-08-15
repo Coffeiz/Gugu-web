@@ -21,7 +21,7 @@ from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
 from app.services.storage.file_service.files import _fmt_size
-from app.services.storage.trash import move_file_to_trash
+from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.search.query import keyword_condition, normalize_queries
@@ -726,43 +726,27 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
                            "current_folder_id": f.folder_id})
 
     try:
-        new_key = await _resolve_key(
-            db, user_id, space, f.display_name, f.ext,
-            project_id=project_id, folder_id=folder_id,
+        result = await FileService(db).update_file(
+            user_id,
+            f.id,
+            display_name=None,
+            stage_name=target.get("stage_name") if "stage_name" in target else None,
+            folder_id=folder_id,
+            project_id=new_pid,
+            folder_set=True,
+            project_set=True,
         )
-    except ValueError as e:
+    except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    storage = get_storage()
-    new_display = f.display_name
-    if new_key != f.storage_key:
-        new_key, new_display = await _resolve_conflict(storage, new_key, f.display_name, f.ext)
-        try:
-            await storage.rename_file(f.storage_key, new_key)
-        except Exception as e:
-            return json.dumps({"error": f"移动失败（物理文件可能已丢失）：{str(e)[:80]}"})
-        f.storage_key = new_key
-    f.display_name = new_display
-    f.space = space
-    f.project_id = new_pid
-    f.folder_id = folder_id
-    if "stage_name" in target:
-        f.stage_name = target["stage_name"]
-    f.updated_at = now_utc()
     await db.commit()
-
-    folder_name = "（根目录）"
-    if folder_id:
-        fo = await get_owned(db, Folder, folder_id, user_id)
-        folder_name = fo.name if fo else "（根目录）"
+    moved = result.file
+    folder_name = result.folder_name or "（根目录）"
     # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
     # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
-    project_name = None
-    if f.space == "project" and f.project_id:
-        p = await get_owned(db, Project, f.project_id, user_id)
-        project_name = p.name if p else None
-    return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
-            "space": f.space, "project_id": f.project_id, "project_name": project_name,
-            "folder_id": f.folder_id, "moved_to": folder_name}
+    project_name = result.project.name if result.project else None
+    return {"success": True, "file_id": moved.id, "name": f"{moved.display_name}.{moved.ext}",
+            "space": moved.space, "project_id": moved.project_id, "project_name": project_name,
+            "folder_id": moved.folder_id, "moved_to": folder_name}
 
 
 def _as_dict(r):
@@ -903,8 +887,7 @@ async def _delete_file(db, user_id, args: dict):
     if _err:
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
-    await move_file_to_trash(get_storage(), f)
-    f.deleted_at = now_utc()
+    await delete_file_action(db, get_storage(), user_id, f.id, now_utc())
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原",
