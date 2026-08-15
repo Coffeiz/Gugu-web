@@ -11,6 +11,10 @@ async def get_live_note(db, user_id, node_id):
     return node if node and node.kind == "note" and node.deleted_at is None else None
 
 
+async def get_user_node(db, user_id, node_id):
+    return await get_owned(db, MindNode, node_id, user_id)
+
+
 async def list_live_nodes(db, user_id, node_ids):
     if not node_ids:
         return {}

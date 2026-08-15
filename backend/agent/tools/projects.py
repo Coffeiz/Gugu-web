@@ -12,7 +12,6 @@ from app.core.projects import (
     normalize_project_stages, replace_project_stages, update_project_atomic,
 )
 from app.core.tz import now_utc
-from app.models import Project
 from app.services.projects import (
     add_project,
     count_project_files,
@@ -125,7 +124,6 @@ async def _create_project(db, user_id, args: dict):
         return json.dumps({"error": str(exc)})
     await add_project(db, p)
     await db.commit()
-    await db.refresh(p)
     return {"success": True, "project_id": p.id, "name": p.name,
             "stages": [s["label"] for s in stages]}
 
@@ -271,7 +269,6 @@ async def _commit_project_intent(db, project, user_id, fields: dict):
         await db.rollback()
         return json.dumps({"error": "项目刚被其他端修改，请重试"})
     await db.commit()
-    await db.refresh(project)
     return None
 
 

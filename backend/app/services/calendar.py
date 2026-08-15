@@ -56,6 +56,10 @@ async def get_event(db, user_id, event_id):
     return await get_owned(db, CalendarEvent, event_id, user_id)
 
 
+async def get_project(db, user_id, project_id):
+    return await get_owned(db, Project, project_id, user_id)
+
+
 async def find_events_by_title(db, user_id, title: str):
     rows = (await db.execute(
         select(CalendarEvent).where(

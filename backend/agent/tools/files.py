@@ -8,14 +8,9 @@
 生成（create_document）：文本格式直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice
 转换（系统已装，零新依赖）。
 """
-import json
-from app.core.tz import now_utc
 from datetime import datetime
+import json
 
-from sqlalchemy import select
-
-from app.models import Project
-from app.core.ownership import get_owned
 from app.core.redaction import redact
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
@@ -29,6 +24,7 @@ from app.services.files.browser import (
     list_user_folders,
     search_user_files,
 )
+from app.services.projects import get_user_project
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
@@ -133,7 +129,7 @@ async def _resolve_key(db, user_id, space, display_name, ext,
                        project_id=None, folder_id=None):
     project_name = project_year = project_month = folder_path = ""
     if space == "project" and project_id:
-        p = await get_owned(db, Project, project_id, user_id)
+        p = await get_user_project(db, user_id, project_id)
         if not p:
             raise ValueError("目标项目不存在")
         project_name = p.name
@@ -159,7 +155,7 @@ async def _location_receipt(db, user_id, space, project_id, folder_id):
     """保存/创建后的真实落点，完整路径供模型照回执转告，不再猜目录。"""
     project_name = None
     if space == "project" and project_id:
-        project = await get_owned(db, Project, project_id, user_id)
+        project = await get_user_project(db, user_id, project_id)
         project_name = project.name if project else None
     folder_path = "（根目录）"
     if folder_id:
@@ -486,7 +482,6 @@ async def _create_document(db, user_id, args: dict):
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
     db_file = result.file
-    await db.refresh(db_file)
     return {"success": True, "file_id": db_file.id,
             "name": f"{db_file.display_name}.{db_file.ext}", "size": db_file.size,
             **(await _location_receipt(db, user_id, space, project_id, folder_id))}
@@ -518,7 +513,6 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
         return False, {"name": f"{display_name}.{ext}", "error": redact(f"{type(e).__name__}: {e}")}
     await db.commit()
     db_file = result.file
-    await db.refresh(db_file)
     return True, {"file_id": db_file.id, "name": f"{db_file.display_name}.{db_file.ext}",
                   "size": db_file.size,
                   **(await _location_receipt(db, user_id, space, project_id, folder_id))}
@@ -864,7 +858,6 @@ async def _create_folder(db, user_id, args: dict):
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
-    await db.refresh(fo)
     return {"success": True, "folder_id": fo.id, "name": fo.name}
 
 
@@ -989,7 +982,6 @@ async def _copy_file(db, user_id, args: dict):
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
     new_file = result.file
-    await db.refresh(new_file)
     return {"success": True, "file_id": new_file.id,
             "name": f"{new_file.display_name}.{new_file.ext}"}
 

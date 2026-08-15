@@ -8,10 +8,10 @@ reconcile 到 APScheduler，新建/改动最多 30s 后生效）。复用 API �
 list 一次返回全部。这些工具不进 RESOURCE_BY_TOOL（单行写入、风险低，不触发自我核实那轮，省调用）。
 """
 import json
+from typing import Any
 
 from fastapi import HTTPException
 
-from app.models import ScheduledTask
 from app.api.v1.scheduled_tasks import _validate_cron, _norm_channels
 from app.services.scheduled_tasks import (
     create_task,
@@ -55,7 +55,7 @@ def _check_cron(cron: str):
         return json.dumps({"error": f"时间格式不对：{e.detail}"}, ensure_ascii=False)
 
 
-def _to_dict(t: ScheduledTask) -> dict:
+def _to_dict(t: Any) -> dict:
     return {
         "id": t.id, "name": t.name, "when": _humanize_cron(t.cron),
         "instruction": t.payload,

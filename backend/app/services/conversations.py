@@ -12,7 +12,12 @@ async def list_recent_sessions(db, user_id, limit):
     ).order_by(desc(ConversationSession.updated_at)).limit(limit))).scalars().all()
 
 
-async def search_messages(db, user_id, conditions, queries, limit):
+async def search_messages(db, user_id, queries, mode, limit):
+    conditions = keyword_condition(
+        [ConversationMessage.content, ConversationSession.title, ConversationSession.summary],
+        queries,
+        mode,
+    )
     return (await db.execute(
         select(ConversationMessage, ConversationSession)
         .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)

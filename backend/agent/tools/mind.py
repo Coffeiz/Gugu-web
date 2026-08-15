@@ -1,16 +1,13 @@
 """思维面板工具：检索、读取及受限块协议下的笔记 CRUD。"""
 from datetime import datetime
-
-from sqlalchemy import or_, select
+from typing import Any
 
 from app.core.mind import (
     create_mind_note, restore_mind_note, soft_delete_mind_note, update_mind_note,
 )
 from app.core.mind_content import MindContentError, serialize_mind_blocks, validate_mind_references
-from app.core.ownership import get_owned
-from app.models import MindNode, MindRelation
-from app.services.mind import get_live_note, latest_gugu_note, list_live_nodes, list_node_relations, search_live_nodes
-from app.search.query import keyword_condition, normalize_queries
+from app.services.mind import get_live_note, get_user_node, latest_gugu_note, list_live_nodes, list_node_relations, search_live_nodes
+from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 10
@@ -107,7 +104,7 @@ _BLOCKS_SCHEMA_HELP = (
 )
 
 
-def _node_summary(node: MindNode) -> dict:
+def _node_summary(node: Any) -> dict:
     """返回适合列表召回的节点摘要，不把整篇笔记塞进搜索结果。"""
     plain = node.content_plain.strip()
     return {
@@ -122,7 +119,7 @@ def _node_summary(node: MindNode) -> dict:
     }
 
 
-def _note_detail(node: MindNode) -> dict:
+def _note_detail(node: Any) -> dict:
     return {
         **_node_summary(node),
         "content_md": node.content_md,
@@ -143,23 +140,23 @@ def _parse_captured_at(value) -> datetime:
     return parsed
 
 
-async def _get_live_note(db, user_id, node_id) -> MindNode | None:
+async def _get_live_note(db, user_id, node_id) -> Any:
     return await get_live_note(db, user_id, node_id)
 
 
-async def _live_nodes_by_ids(db, user_id, node_ids: set[int]) -> dict[int, MindNode]:
+async def _live_nodes_by_ids(db, user_id, node_ids: set[int]) -> dict[int, Any]:
     if not node_ids:
         return {}
     return await list_live_nodes(db, user_id, node_ids)
 
 
-async def _relations_for_nodes(db, user_id, node_ids: set[int]) -> list[MindRelation]:
+async def _relations_for_nodes(db, user_id, node_ids: set[int]) -> list[Any]:
     if not node_ids:
         return []
     return await list_node_relations(db, user_id, node_ids)
 
 
-def _relation_summary(relation: MindRelation, current_node_id: int, nodes: dict[int, MindNode]) -> dict | None:
+def _relation_summary(relation: Any, current_node_id: int, nodes: dict[int, Any]) -> dict | None:
     other_id = relation.dst_node_id if relation.src_node_id == current_node_id else relation.src_node_id
     other = nodes.get(other_id)
     if other is None:
@@ -215,7 +212,7 @@ async def _mind_search(db, user_id, args: dict):
 
 async def _mind_get(db, user_id, args: dict):
     node_id = args.get("node_id")
-    node = await get_owned(db, MindNode, node_id, user_id)
+    node = await get_user_node(db, user_id, node_id)
     if node is None or node.deleted_at is not None:
         return {"error": "找不到这条思维节点"}
 
@@ -247,7 +244,6 @@ async def _create_note(db, user_id, args: dict):
             captured_at=captured_at, origin="gugu",
         )
         await db.commit()
-        await db.refresh(node)
     except (MindContentError, ValueError) as exc:
         await db.rollback()
         return {"error": str(exc)}
@@ -288,7 +284,6 @@ async def _update_note(db, user_id, args: dict):
             await db.rollback()
             return {"error": "便签已被其他端修改，请先重新读取后再更新"}
         await db.commit()
-        await db.refresh(node)
     except (MindContentError, ValueError) as exc:
         await db.rollback()
         return {"error": str(exc)}
@@ -313,14 +308,13 @@ async def _restore_note(db, user_id, args: dict):
     node_id = args.get("node_id")
     if not isinstance(node_id, int):
         return {"error": "恢复便签必须提供 node_id"}
-    node = await get_owned(db, MindNode, node_id, user_id)
+    node = await get_user_node(db, user_id, node_id)
     if node is None or node.kind != "note" or node.deleted_at is None:
         return {"error": "找不到可恢复的便签"}
     if not await restore_mind_note(db, node_id, user_id):
         await db.rollback()
         return {"error": "便签状态已变化，请重新确认"}
     await db.commit()
-    await db.refresh(node)
     return {"note": _note_detail(node)}
 
 

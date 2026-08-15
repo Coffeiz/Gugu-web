@@ -4,12 +4,11 @@
 """
 import json
 
-from app.models import Project
-from app.core.ownership import get_owned
 from app.services.calendar import (
     create_event,
     find_events_by_title,
     get_event,
+    get_project,
     create_event_reminders,
     delete_event_reminder,
     delete_event_with_reminders,
@@ -35,7 +34,6 @@ async def _create_event(db, user_id, args: dict):
     if ev is None:
         return json.dumps({"error": "项目不存在"})
     await db.commit()
-    await db.refresh(ev)
     resp = {"success": True, "event_id": ev.id, "title": ev.title, "date": ev.date,
             "time": ev.time, "end_time": ev.end_time}
     # 顺手把提醒也建了，省得再单独调 add_event_reminder（一次工具调用搞定「建活动+提醒」）
@@ -99,7 +97,7 @@ async def _update_event(db, user_id, args: dict):
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
         return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
-        proj = await get_owned(db, Project, args["project_id"], user_id)
+        proj = await get_project(db, user_id, args["project_id"])
         if not proj:
             return json.dumps({"error": "关联项目不存在"})
     for field in fields:

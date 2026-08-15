@@ -1,14 +1,11 @@
 """只搜索当前 QQ 群会话的短期上下文，不触碰用户其他对话。"""
 
-from sqlalchemy import desc, select
-
 from agent.im.imctx import get_im
 from agent.memory.scoped_store import read_scope_json
 from agent.memory.scopes import MemoryScope
 from agent.tools.base import BaseSkill, Tool
-from app.models import ConversationMessage, ConversationSession
 from app.services.group_context import live_speaker_index, search_group_messages
-from app.search.query import keyword_condition, normalize_mode, normalize_queries
+from app.search.query import normalize_mode, normalize_queries
 
 
 async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> list[tuple]:

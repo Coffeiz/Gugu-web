@@ -24,8 +24,6 @@ import random
 from app.core.tz import local_day_start_utc
 
 import httpx
-from sqlalchemy import func, select
-
 from app.core.config import get_settings
 from app.services.search import count_daily_search_usage, get_user_daily_search_limit, record_search_usage
 from agent.tools.base import BaseSkill, Tool

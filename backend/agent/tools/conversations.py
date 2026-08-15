@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import json
 
-from app.services.conversations import list_messages, list_recent_sessions, search_messages, get_session
+from app.services.conversations import get_session, list_messages, list_recent_sessions, search_messages
 
-from app.models import ConversationMessage, ConversationSession
-from app.search.query import keyword_condition, keyword_score, normalize_mode, normalize_queries
+from app.search.query import normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -37,8 +36,7 @@ async def _search_conversations(db, user_id, args: dict):
     # 有关键词 → 搜消息正文 + 标题，按 session 聚合，每条给匹配片段
     rows = await search_messages(
         db, user_id,
-        keyword_condition([ConversationMessage.content, ConversationSession.title, ConversationSession.summary], search_queries, mode),
-        search_queries, limit * 4,
+        search_queries, mode, limit * 4,
     )
 
     seen: dict[int, dict] = {}
