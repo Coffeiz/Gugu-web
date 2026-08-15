@@ -47,7 +47,7 @@ const { elementRef: columnRef } = useSurface({
 .done-col .col-header-right { display:flex; align-items:center; gap:8px; }
 .done-col .col-count { font-size:11px; font-weight:700; color:#fff; background:rgba(123,127,178,.42); border-radius:20px; padding:1px 7px; min-width:22px; text-align:center; }
 .done-col .archived-entry-mini { display:flex; align-items:center; padding:2px 8px; border-radius:7px; border:1px solid rgba(0,0,0,.08); background:rgba(255,255,255,.5); color:var(--text-secondary); font-size:11px; font-weight:600; cursor:pointer; }
-.done-col .col-body { display:flex; flex-direction:column; gap:2px; flex:1; overflow-y:auto; min-width:0; box-sizing:border-box; overflow-x:hidden; scrollbar-gutter:stable; padding:2px 6px; }
+.done-col .col-body { display:flex; flex-direction:column; gap:2px; flex:1; overflow-y:auto; min-width:0; box-sizing:border-box; overflow-x:hidden; scrollbar-gutter:auto; padding:2px 6px; }
 .done-col .done-layout-root { display:flex; flex-direction:column; width:100%; min-width:0; }
 .done-col .col-empty { display:flex; align-items:center; justify-content:center; min-height:96px; color:var(--text-secondary); opacity:.4; }
 .done-col .recent-done { margin-bottom:10px; }

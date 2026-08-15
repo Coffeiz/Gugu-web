@@ -57,10 +57,11 @@
           <div class="sample-main">
             <!-- 顶部静止时无底色；真实项目滚动后由 product.css 的 scroll timeline 淡入 GlassBg。 -->
             <header class="sample-topbar">
-              <div class="sample-title"><h3>项目</h3><span>8月15日 · 星期六</span></div>
+              <GlassBg />
+              <div class="sample-title"><h1>项目</h1><p>8月15日 · 星期六</p></div>
               <div class="sample-search"><PhMagnifyingGlass :size="14" /><span>搜索项目、文件、日程、客户…</span><kbd>⌘ K</kbd></div>
               <div class="sample-top-actions">
-                <button class="sample-ghost"><PhUploadSimple :size="13" weight="bold" />上传</button>
+                <button class="sample-ghost"><PhUploadSimple :size="13" weight="bold" />上传文件</button>
                 <button class="sample-primary"><PhPlus :size="13" weight="bold" />新建项目</button>
               </div>
             </header>
@@ -190,6 +191,7 @@ import { PhAddressBook, PhAlarm, PhBrowser, PhCalendarBlank, PhFolder, PhGraph, 
 import { useTheme } from '@/composables/useTheme'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import GuguChatMock from './GuguChatMock.vue'
+import GlassBg from '@/components/common/GlassBg.vue'
 
 const { preference, resolved, family, setTheme, setFamily } = useTheme()
 const chatOpen = ref(false)
@@ -258,16 +260,16 @@ const contracts = [
 const tokenIndex = [
   {title:'Foundations',items:['--font-size-xs','--font-size-sm','--font-size-md','--font-size-lg','--font-size-xl','--space-xs','--space-sm','--space-md','--space-lg','--space-xl','--radius-xs','--radius-sm','--radius-md','--radius-lg','--radius-pill','--scrollbar-size-default','--scrollbar-size-compact','--scrollbar-size-editor','--scrollbar-safe-inset']},
   {title:'Semantic',items:['--color-primary','--color-text','--color-muted','--color-surface','--surface-floating','--content-primary','--border-subtle','--status-success','--elevation-popup']},
-  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
+  {title:'Components',items:['--sidebar-item-active','--topbar-bg','--scrollbar-track','--scrollbar-thumb','--scrollbar-thumb-hover','--scrollbar-overlay-right-offset','--scrollbar-column-right-offset','--scrollbar-overlay-z-index','--scrollbar-overlay-modal-z-index','--scrollbar-overlay-transition','--scrollbar-overlay-track-inset','--project-card-shadow','--project-card-motion','--gugu-chat-bg','--gugu-chat-sidebar-bg','--gugu-fab-bg']},
 ]
 function indexDotStyle(token:string){return /color|surface|content|border|action|status|bg|active/.test(token)?{background:`var(${token})`}:{background:'var(--action-primary)'}}
 </script>
 
 <style scoped>
-.design-page{height:100vh;overflow-y:auto;background:var(--surface-page);color:var(--content-primary);font-family:var(--font-sans);font-synthesis:none;-webkit-font-smoothing:antialiased}
-.design-hero{position:sticky;top:0;z-index:50;min-height:58px;display:flex;align-items:center;gap:var(--space-xl);padding:var(--space-sm) clamp(var(--space-lg),3vw,56px);background:color-mix(in srgb,var(--surface-glass) 78%,transparent);border-bottom:1px solid var(--border-strong);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.design-page{min-height:100vh;background:var(--surface-page);color:var(--content-primary);font-family:var(--font-sans);font-synthesis:none;-webkit-font-smoothing:antialiased}
+.design-hero{position:fixed;top:0;right:0;left:0;z-index:50;min-height:58px;display:flex;align-items:center;gap:var(--space-xl);padding:var(--space-sm) clamp(var(--space-lg),4vw,56px);background:color-mix(in srgb,var(--surface-glass) 78%,transparent);border-bottom:1px solid var(--border-strong);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
 .hero-copy{min-width:0;max-width:760px}.hero-title-row{display:flex;align-items:baseline;gap:var(--space-sm)}.eyebrow,.section-kicker{color:var(--content-tertiary);font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);letter-spacing:var(--tracking-label)}.hero-copy h1{font-size:var(--font-size-xl);line-height:var(--line-height-tight)}.hero-copy p{margin-top:var(--space-xs);color:var(--content-secondary);font-size:var(--font-size-xs);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.design-content{width:min(1440px,100%);margin:0 auto;padding:var(--space-xl) clamp(var(--space-lg),4vw,56px) 72px}
+.design-content{width:min(1440px,100%);margin:0 auto;padding:calc(58px + var(--space-xl) + var(--space-lg)) clamp(var(--space-lg),4vw,56px) 72px}
 
 /* token.html theme matrix */
 .theme-matrix{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-sm);margin-bottom:var(--space-xl)}
@@ -304,5 +306,19 @@ function indexDotStyle(token:string){return /color|surface|content|border|action
 .contract-card{min-height:94px;display:flex;align-items:center;gap:var(--space-md);padding:var(--space-lg);border:1px solid var(--design-card-border);border-radius:var(--design-card-radius);background:var(--design-card-bg)}.contract-icon{width:38px;height:38px;display:grid;place-items:center;flex-shrink:0;border-radius:var(--radius-sm);color:var(--action-primary);background:var(--action-soft)}.contract-icon.gugu{color:#fff;background:var(--gugu-fab-bg)}.contract-card div{display:flex;flex-direction:column;gap:var(--space-xs)}.contract-card strong{font-size:var(--font-size-sm)}.contract-card small{font-size:var(--font-size-xs);color:var(--content-tertiary)}
 .index-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--design-grid-gap)}.index-group{padding:var(--space-md);border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-soft)}.index-group header{display:flex;justify-content:space-between;margin-bottom:var(--space-sm)}.index-group h3{font-size:var(--font-size-sm)}.index-group header span{font:var(--font-size-xs) var(--font-mono);color:var(--content-tertiary)}.index-grid{display:flex;flex-direction:column;gap:var(--space-xs)}.index-card{min-height:38px;padding:var(--space-sm);display:flex;align-items:center;justify-content:space-between;box-shadow:none}.index-dot{width:18px;height:18px;border:1px solid var(--border-subtle);border-radius:var(--radius-xs)}
 @media(max-width:1100px){.theme-matrix,.token-grid,.semantic-grid,.elevation-grid,.component-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.index-groups{grid-template-columns:1fr}.sample-sidebar{width:188px}.product-frame{grid-template-columns:188px 1fr}.sample-search{display:none}}
-@media(max-width:760px){.design-hero{position:relative;flex-direction:column;align-items:flex-start}.hero-copy p{white-space:normal}.theme-matrix,.token-grid,.semantic-grid,.elevation-grid,.component-strip{grid-template-columns:1fr}.foundation-split,.scrollbar-token-layout{grid-template-columns:1fr}.product-frame{grid-template-columns:1fr}.sample-sidebar{display:none}.sample-board{grid-template-columns:repeat(4,220px);overflow-x:auto}.sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-title span,.sample-ghost{display:none}.type-row{grid-template-columns:1fr;padding:var(--space-sm) 0}.radius-row{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:760px){.design-hero{position:fixed;flex-direction:column;align-items:flex-start}.design-content{padding-top:calc(112px + var(--space-xl))}.hero-copy p{white-space:normal}.theme-matrix,.token-grid,.semantic-grid,.elevation-grid,.component-strip{grid-template-columns:1fr}.foundation-split,.scrollbar-token-layout{grid-template-columns:1fr}.product-frame{grid-template-columns:1fr}.sample-sidebar{display:none}.sample-board{grid-template-columns:repeat(4,220px);overflow-x:auto}.sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-title span,.sample-ghost{display:none}.type-row{grid-template-columns:1fr;padding:var(--space-sm) 0}.radius-row{grid-template-columns:repeat(3,1fr)}}
+
+/* 样板顶栏直接复用真实 DefaultLayout 顶栏的层级、玻璃背景和控件尺寸。 */
+.sample-main > .sample-topbar { --gb-tint: var(--glass-bg); top: 20px; right: 24px; left: 20px; z-index: 40; height: auto; min-height: 52px; gap: 14px; padding: 14px 20px; isolation: isolate; overflow: visible; border: 0; background: transparent; box-shadow: var(--topbar-shadow); }
+.sample-main > .sample-topbar:hover { --gb-tint: var(--glass-bg-hover); box-shadow: var(--topbar-shadow-hover); }
+.sample-main > .sample-topbar .sample-title { min-width: 150px; display: block; }
+.sample-main > .sample-topbar .sample-title h1 { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.2; }
+.sample-main > .sample-topbar .sample-title p { margin: 2px 0 0; color: var(--content-secondary); font-size: 12px; }
+.sample-main > .sample-topbar .sample-search { height: auto; min-height: 32px; max-width: 320px; gap: 8px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--control-border) 70%, transparent); background: color-mix(in srgb, var(--control-bg) 74%, transparent); font-size: 11px; }
+.sample-main > .sample-topbar .sample-search kbd { margin-left: auto; color: var(--content-tertiary); font-size: 9px; }
+.sample-main > .sample-topbar .sample-top-actions { gap: 8px; }
+.sample-main > .sample-topbar .sample-ghost, .sample-main > .sample-topbar .sample-primary { height: 32px; padding: 0 12px; border-radius: var(--radius-sm); font-size: 11px; }
+.sample-main > .sample-topbar .sample-ghost { border: 1px solid color-mix(in srgb, var(--control-border) 75%, transparent); color: var(--content-secondary); background: color-mix(in srgb, var(--control-bg) 74%, transparent); box-shadow: inset 0 1px 0 rgba(255,255,255,.95); }
+.sample-main > .sample-topbar .sample-primary { color: var(--content-inverse); background: linear-gradient(135deg, var(--color-primary), var(--color-secondary)); box-shadow: 0 3px 12px color-mix(in srgb, var(--color-primary) 30%, transparent); }
+@media(max-width:760px){.sample-main > .sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-main > .sample-topbar .sample-search{display:none}.sample-main > .sample-topbar .sample-ghost{display:none}}
 </style>

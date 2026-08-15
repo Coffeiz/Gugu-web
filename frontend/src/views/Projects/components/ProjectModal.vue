@@ -763,7 +763,7 @@ const filePanelContext = {
 .left-content {
   flex: 1; overflow-y: auto; padding: 12px 16px;
   display: flex; flex-direction: column; gap: 0; min-height: 0;
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 
 .section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }

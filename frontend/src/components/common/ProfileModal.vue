@@ -381,7 +381,7 @@ async function doDeleteAccount() {
 }
 .pm-content-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 
-.pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; scrollbar-gutter: stable; }
+.pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; scrollbar-gutter: auto; }
 
 .pm-section { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }
 .pm-section-label {

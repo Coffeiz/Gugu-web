@@ -3,45 +3,31 @@
  * Mafuyu-style "transparent at top -> surface after scroll" treatment.
  */
 
-html[data-theme][data-family] .design-page {
-  scroll-timeline: --design-page-scroll block;
+html[data-theme][data-family]:has(.design-page),
+body:has(.design-page) {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#app:has(.design-page) {
+  height: auto;
+  overflow: visible;
 }
 
 html[data-theme][data-family] .design-page .design-hero {
   min-height: 56px;
-  background: transparent;
-  border-bottom-color: transparent;
-  box-shadow: none;
-  backdrop-filter: blur(0) saturate(100%);
-  -webkit-backdrop-filter: blur(0) saturate(100%);
-}
-
-@supports (animation-timeline: scroll()) {
-  html[data-theme][data-family] .design-page .design-hero {
-    animation: design-topbar-reveal linear both;
-    animation-duration: auto;
-    animation-timeline: --design-page-scroll;
-    animation-range: 0px 32px;
-  }
-}
-
-@keyframes design-topbar-reveal {
-  from {
-    background-color: transparent;
-    border-bottom-color: transparent;
-    box-shadow: none;
-    backdrop-filter: blur(0) saturate(100%);
-    -webkit-backdrop-filter: blur(0) saturate(100%);
-    transform: translateY(0);
-  }
-  to {
-    background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
-    border-bottom-color: var(--border-subtle);
-    box-shadow: var(--topbar-shadow);
-    backdrop-filter: blur(18px) saturate(140%);
-    -webkit-backdrop-filter: blur(18px) saturate(140%);
-    transform: translateY(-2px);
-  }
+  background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
+  border-bottom-color: var(--border-subtle);
+  box-shadow: var(--topbar-shadow);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  transition:
+    background-color var(--motion-default) var(--motion-ease-standard),
+    border-color var(--motion-default) var(--motion-ease-standard),
+    box-shadow var(--motion-default) var(--motion-ease-standard),
+    backdrop-filter var(--motion-default) var(--motion-ease-standard),
+    -webkit-backdrop-filter var(--motion-default) var(--motion-ease-standard),
+    transform var(--motion-default) var(--motion-ease-standard);
 }
 
 /* Public family names are Aero / Mono. Keep glass / v2 as internal data-family ids for stored

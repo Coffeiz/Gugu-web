@@ -5,7 +5,7 @@
             <ProjectFileToolbar :context="props.context" />
           </template>
 
-          <div class="file-content" :ref="bindPmGridEl" style="position:relative" @mousedown="onPmGridMouseDown"
+          <div class="file-content scroll-surface" :ref="bindPmGridEl" style="position:relative" @mousedown="onPmGridMouseDown"
             @click="onPmContentClick"
             @contextmenu.prevent.self="openPmCtx('empty', null, $event)"
             @dragenter.prevent="onPmDragEnter"

@@ -296,8 +296,8 @@ const todayStr = computed(() => {
 
 .page-content {
   height: 100%;
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
+  overflow-y: auto;
+  scrollbar-gutter: auto;
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
 }

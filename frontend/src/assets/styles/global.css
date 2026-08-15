@@ -12,7 +12,7 @@ svg { shape-rendering: geometricPrecision; }
 .trace-list,
 .trace-detail,
 .log-table-wrap {
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 
 /* 全局勾选框样式：注册页确认勾选（原 .ack-box）与 markdown 预览 task list 用的同一套视觉，

@@ -217,7 +217,7 @@ function handleLogout() {
   flex: 1; padding: 14px 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
-  /* scrollbar-gutter: stable 提到 global.css（Admin 后台滚动条统一规则） */
+  /* 滚动条由全局浮层契约统一管理，不为它预留布局空间。 */
 }
 /* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
    固定不收缩，让溢出交给滚动而非挤压内容。 */

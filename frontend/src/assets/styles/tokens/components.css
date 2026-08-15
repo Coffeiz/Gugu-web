@@ -61,6 +61,12 @@
   --scrollbar-corner: transparent;
   --scrollbar-safe-inset: var(--space-sm);
   --scrollbar-min-thumb: 24px;
+  --scrollbar-overlay-right-offset: 0px;
+  --scrollbar-column-right-offset: 4px;
+  --scrollbar-overlay-z-index: 10;
+  --scrollbar-overlay-modal-z-index: var(--layer-modal);
+  --scrollbar-overlay-transition: 120ms ease;
+  --scrollbar-overlay-track-inset: 8px;
 
   /* Project cards: exact Gugu horizontal project-colour gradient and real hover motion. */
   --project-card-gradient-start: var(--theme-project-overlay-start);
