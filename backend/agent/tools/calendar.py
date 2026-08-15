@@ -8,26 +8,30 @@ from sqlalchemy import select
 
 from app.models import CalendarEvent, Project
 from app.core.ownership import get_owned
+from app.services.calendar import (
+    create_event,
+    find_events_by_title,
+    get_event,
+    list_event_reminders,
+    list_events_with_reminders,
+)
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 
 async def _create_event(db, user_id, args: dict):
     pid = args.get("project_id")
-    if pid is not None:
-        proj = await get_owned(db, Project, pid, user_id)
-        if not proj:
-            return json.dumps({"error": "项目不存在"})
-    ev = CalendarEvent(
-        user_id=user_id,
+    ev = await create_event(
+        db, user_id,
         title=args["title"],
         date=args["date"],
-        time=(args.get("time") or None),         # 开始 HH:MM，可选
-        end_time=(args.get("end_time") or None), # 结束 HH:MM，可选
-        type=args.get("type", "event"),
+        time=args.get("time") or None,
+        end_time=args.get("end_time") or None,
+        event_type=args.get("type", "event"),
         project_id=pid,
     )
-    db.add(ev)
+    if ev is None:
+        return json.dumps({"error": "项目不存在"})
     await db.commit()
     await db.refresh(ev)
     resp = {"success": True, "event_id": ev.id, "title": ev.title, "date": ev.date,
@@ -43,26 +47,14 @@ async def _create_event(db, user_id, args: dict):
 
 
 async def _list_events(db, user_id, args: dict):
-    stmt = select(CalendarEvent).where(CalendarEvent.user_id == user_id)
-    if args.get("from"):
-        stmt = stmt.where(CalendarEvent.date >= args["from"])
-    if args.get("to"):
-        stmt = stmt.where(CalendarEvent.date <= args["to"])
-    if args.get("type"):
-        stmt = stmt.where(CalendarEvent.type == args["type"])
-    stmt = stmt.order_by(CalendarEvent.date).limit(args.get("limit", 50))
-    rows = (await db.execute(stmt)).scalars().all()
+    rows, rem_by_event = await list_events_with_reminders(
+        db, user_id,
+        start=args.get("from"),
+        end=args.get("to"),
+        event_type=args.get("type"),
+        limit=args.get("limit", 50),
+    )
     # 一并把这些活动的提醒查出来分组挂上，省得模型再逐个 list_event_reminders（一次调用拿全）
-    from app.models import ScheduledTask
-    rem_by_event: dict = {}
-    eids = [e.id for e in rows]
-    if eids:
-        rtasks = (await db.execute(
-            select(ScheduledTask).where(ScheduledTask.user_id == user_id, ScheduledTask.event_id.in_(eids))
-            .order_by(ScheduledTask.id)
-        )).scalars().all()
-        for t in rtasks:
-            rem_by_event.setdefault(t.event_id, []).append(t)
     out = []
     for e in rows:
         d = {"id": e.id, "title": e.title, "date": e.date, "time": e.time, "end_time": e.end_time, "type": e.type,
@@ -78,20 +70,14 @@ async def _resolve_event(db, user_id, args):
     """按 event_id 或事件标题 event（+可选 on_date）定位；返回 (Event|None, 错误JSON|None)。"""
     eid = args.get("event_id")
     if eid:
-        e = await get_owned(db, CalendarEvent, eid, user_id)
+        e = await get_event(db, user_id, eid)
         if not e:
             return None, json.dumps({"error": "事件不存在"})
         return e, None
     title = args.get("event")
     if title:
         title = str(title).strip()
-        rows = (await db.execute(
-            select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.title == title)
-        )).scalars().all()
-        if not rows:
-            rows = (await db.execute(
-                select(CalendarEvent).where(CalendarEvent.user_id == user_id, CalendarEvent.title.ilike(f"%{title}%"))
-            )).scalars().all()
+        rows = await find_events_by_title(db, user_id, title)
         if args.get("on_date"):
             rows = [e for e in rows if e.date == args["on_date"]]
         if not rows:
@@ -249,10 +235,7 @@ async def _list_event_reminders(db, user_id, args: dict):
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
-    rows = (await db.execute(
-        select(ScheduledTask).where(ScheduledTask.event_id == e.id, ScheduledTask.user_id == user_id)
-        .order_by(ScheduledTask.id)
-    )).scalars().all()
+    rows = await list_event_reminders(db, user_id, e.id)
     base = _event_base_dt(e.date, e.time)
     return {"event_id": e.id, "title": e.title, "reminders": [_reminder_brief(t, base) for t in rows]}
 
