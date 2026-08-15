@@ -4,14 +4,16 @@
 """
 import json
 
-from sqlalchemy import select
-
-from app.models import CalendarEvent, Project
+from app.models import Project
 from app.core.ownership import get_owned
 from app.services.calendar import (
     create_event,
     find_events_by_title,
     get_event,
+    create_event_reminders,
+    delete_event_reminder,
+    delete_event_with_reminders,
+    get_event_reminder,
     list_event_reminders,
     list_events_with_reminders,
 )
@@ -115,10 +117,7 @@ async def _delete_event(db, user_id, args: dict):
     eid, etitle = e.id, e.title
     # 应用层级联：连带删掉绑定到该事件的提醒任务（event_id 无 DB 外键，手动清，免留孤儿提醒）。
     # 先点清提醒数量，好在二次确认里如实告知用户「连带删 N 条提醒」。
-    from app.models import ScheduledTask
-    reminders = (await db.execute(
-        select(ScheduledTask).where(ScheduledTask.event_id == eid)
-    )).scalars().all()
+    reminders = await list_event_reminders(db, user_id, eid)
 
     # 事件无回收站 → 不可逆 → 删除二次确认保底
     _r = f"及其 {len(reminders)} 条提醒" if reminders else ""
@@ -127,24 +126,13 @@ async def _delete_event(db, user_id, args: dict):
     if blocked is not None:
         return blocked
 
-    for t in reminders:
-        await db.delete(t)
-    await db.delete(e)
-    await db.commit()
+    await delete_event_with_reminders(db, user_id, e)
     return {"success": True, "deleted_event_id": eid, "title": etitle, "deleted_reminders": len(reminders)}
 
 
 # ── 活动提醒（绑定到事件的 @once 定时任务，event_id 非空）──────────────────────
 # 与独立定时任务完全分开：这些提醒只归活动管，不出现在 list_scheduled_tasks，
 # 删活动时连带删；在网页活动卡里也能看到/改。
-_REMINDER_CHANNELS = {"web", "feishu", "qq", "wechat"}
-
-
-def _norm_reminder_channels(chs):
-    chs = [c for c in (chs or ["web"]) if c in _REMINDER_CHANNELS]
-    return ",".join(chs) if chs else "web"
-
-
 def _event_base_dt(date_s, time_s):
     """活动开始的本地 naive datetime；无时间的活动按 09:00 计。"""
     from datetime import datetime
@@ -167,31 +155,6 @@ def _reminder_brief(t, base):
             "channels": [c for c in (t.channels or "").split(",") if c], "enabled": t.enabled}
 
 
-def _build_reminder(user_id, e, lead, channels):
-    """构造一条绑定到活动 e 的 @once 提醒任务（不 commit）。返回 (task|None, 跳过说明|None)。"""
-    from datetime import timedelta
-    from app.core.tz import local_now
-    from app.models import ScheduledTask
-    try:
-        lead = int(lead)
-    except (TypeError, ValueError):
-        return None, "lead_minutes 需为整数分钟（0=活动开始时）"
-    if lead < 0:
-        return None, "lead_minutes 不能为负"
-    fire = _event_base_dt(e.date, e.time) - timedelta(minutes=lead)
-    if fire <= local_now().replace(tzinfo=None):
-        return None, f"提前 {lead} 分钟（{fire.strftime('%Y-%m-%d %H:%M')}）已过，跳过"
-    when = e.date + (f" {e.time}" if e.time else "")
-    t = ScheduledTask(
-        user_id=user_id, name=f"{e.title} 提醒",
-        payload=f"提醒：{e.title}（{when}）",
-        cron=f"@once:{fire.strftime('%Y-%m-%dT%H:%M')}",
-        channels=_norm_reminder_channels(channels),
-        enabled=True, event_id=e.id,
-    )
-    return t, None
-
-
 def _lead_list(args):
     """取提前量列表：支持 reminders=[30,1440] 批量，或单个 lead_minutes。"""
     rs = args.get("reminders")
@@ -205,17 +168,7 @@ def _lead_list(args):
 async def _add_reminders_for(db, user_id, e, leads, channels):
     """给活动 e 批量建提醒并 commit；返回 (added_briefs, skipped_msgs)。"""
     base = _event_base_dt(e.date, e.time)
-    created, skipped = [], []
-    for lead in leads:
-        t, err = _build_reminder(user_id, e, lead, channels)
-        if err:
-            skipped.append(err)
-        else:
-            db.add(t)
-            created.append(t)
-    await db.commit()
-    for t in created:
-        await db.refresh(t)
+    created, skipped = await create_event_reminders(db, user_id, e, leads, channels)
     return [_reminder_brief(t, base) for t in created], skipped
 
 
@@ -231,7 +184,6 @@ async def _add_event_reminder(db, user_id, args: dict):
 
 
 async def _list_event_reminders(db, user_id, args: dict):
-    from app.models import ScheduledTask
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
@@ -241,17 +193,13 @@ async def _list_event_reminders(db, user_id, args: dict):
 
 
 async def _remove_event_reminder(db, user_id, args: dict):
-    from app.models import ScheduledTask
     rid = args.get("reminder_id")
     if not rid:
         return json.dumps({"error": "需提供 reminder_id（用 list_event_reminders 查）"}, ensure_ascii=False)
-    t = await get_owned(db, ScheduledTask, rid, user_id)
-    # 必须是活动提醒（event_id 非空）——独立定时任务不归这个工具删（归属已由 get_owned 强制）
-    if not t or t.event_id is None:
+    t = await get_event_reminder(db, user_id, rid)
+    if t is None:
         return json.dumps({"error": "活动提醒不存在"}, ensure_ascii=False)
-    tid = t.id
-    await db.delete(t)
-    await db.commit()
+    tid = await delete_event_reminder(db, user_id, rid)
     return {"success": True, "removed_reminder_id": tid}
 
 
