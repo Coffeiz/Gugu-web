@@ -8,6 +8,7 @@
 @import './calendar-theme-bridge.css';
 @import './overlay-theme-bridge.css';
 @import './component-theme-refinements.css';
+@import './file-toolbar-theme-refinements.css';
 
 :root {
   --glass-blur: blur(20px);
