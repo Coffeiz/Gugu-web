@@ -114,7 +114,6 @@ html[data-theme][data-family] .chat-window .chat-header {
   min-height: 48px;
   padding: 0 var(--space-md);
   gap: var(--space-sm);
-  border-bottom-color: var(--gugu-chat-header-border);
   background: transparent;
 }
 html[data-theme][data-family] .chat-window .chat-main.is-expanded .chat-header {
