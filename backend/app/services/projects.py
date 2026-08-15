@@ -2,6 +2,7 @@
 from sqlalchemy import func, select, update
 
 from app.models import File, Project
+from app.core.ownership import get_owned
 
 
 async def list_project_rows(db, user_id, *, archived: bool):
@@ -62,3 +63,44 @@ async def soft_delete_project_files(db, user_id, project_id: int, deleted_at):
         )
         .values(deleted_at=deleted_at)
     )
+
+
+async def list_agent_projects(db, user_id, *, archived: bool):
+    return (await db.execute(
+        select(Project).where(
+            Project.user_id == user_id,
+            Project.archived == archived,
+        ).order_by(Project.updated_at.desc())
+    )).scalars().all()
+
+
+async def project_colors(db, user_id):
+    return (await db.execute(
+        select(Project.color).where(Project.user_id == user_id)
+    )).scalars().all()
+
+
+async def find_project_rows(db, user_id, name: str):
+    rows = (await db.execute(
+        select(Project).where(Project.user_id == user_id, Project.name == name)
+    )).scalars().all()
+    if not rows:
+        rows = (await db.execute(
+            select(Project).where(Project.user_id == user_id, Project.name.ilike(f"%{name}%"))
+        )).scalars().all()
+    return rows
+
+
+async def list_active_project_names(db, user_id):
+    return (await db.execute(
+        select(Project.name).where(Project.user_id == user_id, Project.archived.is_(False))
+    )).scalars().all()
+
+
+async def get_user_project(db, user_id, project_id):
+    return await get_owned(db, Project, project_id, user_id)
+
+
+async def delete_project(db, user_id, project, deleted_at):
+    await soft_delete_project_files(db, user_id, project.id, deleted_at)
+    await db.delete(project)
