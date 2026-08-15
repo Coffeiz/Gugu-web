@@ -239,19 +239,22 @@ async def list_existing_canvas_reference_items(db, user_id, canvas_id):
 async def search_placeable_entities(db, user_id, selected, normalized, mode, limit):
     matches = []
     if "project" in selected:
-        matches.extend((await db.execute(select(Project).where(
+        rows = (await db.execute(select(Project).where(
             Project.user_id == user_id,
             keyword_condition([Project.name, Project.client], normalized, mode),
-        ).order_by(Project.updated_at.desc()).limit(limit))).scalars().all())
+        ).order_by(Project.updated_at.desc()).limit(limit))).scalars().all()
+        matches.extend(("project", row) for row in rows)
     if "file" in selected and len(matches) < limit:
-        matches.extend((await db.execute(select(File).where(
+        rows = (await db.execute(select(File).where(
             File.user_id == user_id,
             File.deleted_at.is_(None),
             keyword_condition([File.display_name, File.ext, File.stage_name], normalized, mode),
-        ).order_by(File.updated_at.desc()).limit(limit))).scalars().all())
+        ).order_by(File.updated_at.desc()).limit(limit))).scalars().all()
+        matches.extend(("file", row) for row in rows)
     if "event" in selected and len(matches) < limit:
-        matches.extend((await db.execute(select(CalendarEvent).where(
+        rows = (await db.execute(select(CalendarEvent).where(
             CalendarEvent.user_id == user_id,
             keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client], normalized, mode),
-        ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all())
+        ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all()
+        matches.extend(("event", row) for row in rows)
     return matches

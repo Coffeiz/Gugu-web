@@ -283,4 +283,4 @@ Agent 工具和后台任务
 - 阶段 1 当前拦截范围：API、Agent 新增 `select/update/delete/insert`、数据库写入/裸 `get`，以及 API/Agent 直接导入 `File/Folder`；Service 是规范要求承接 ORM 的边界，不由这条棘轮拦截。
 - 现有 `check_ownership.py`、`check_confirm_gate.py` 和 `check_utcnow.py` 继续作为独立守卫；它们不替代后续文件域 Service 迁移。
 - 阶段 2 已完成文件域试点：文件夹列表/下载、回收站列表/内容/恢复/永久删除、FileService 写操作，以及 Agent 文件工具的浏览、创建、移动、复制、删除和回收站操作均已收口到 `services/files/` 或 `FileService`，并补充跨用户回归测试。
-- 阶段 3 项目域已完成首个边界：项目列表、详情计数、创建落库和项目删除时文件软删已迁移到 `services/projects.py`；日历事件及活动提醒的查询、创建、删除已迁移到 `services/calendar.py`；思维面板 Agent 的画布创建、节点放置/布局、便签编辑/删除、连接写入及画布列表/节点/关系查询已迁移到 `services/mind_canvas.py`，可放置对象搜索和批量事务仍待继续收口。
+- 阶段 3 项目域已完成首个边界：项目列表、详情计数、创建落库和项目删除时文件软删已迁移到 `services/projects.py`；日历事件及活动提醒的查询、创建、删除已迁移到 `services/calendar.py`；思维面板 Agent 的画布创建、节点放置/布局、便签编辑/删除、连接写入、画布列表/节点/关系查询及可放置对象搜索已迁移到 `services/mind_canvas.py`，批量事务仍待继续收口。

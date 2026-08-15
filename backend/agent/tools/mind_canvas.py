@@ -30,6 +30,9 @@ from app.services.mind_canvas import (
     list_canvas_nodes,
     list_canvas_relations,
     list_canvases,
+    list_existing_canvas_reference_items,
+    list_existing_reference_nodes,
+    search_placeable_entities,
     search_canvas_nodes,
     remove_canvas_item,
     update_canvas_item,
@@ -245,43 +248,20 @@ async def _mind_search_placeable_nodes(db, user_id, args: dict):
     canvas_id = args.get("canvas_id") if isinstance(args.get("canvas_id"), int) else None
     if canvas_id is not None and await _get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    existing_stmt = select(MindNode).where(
-        MindNode.user_id == user_id,
-        MindNode.kind == "ref",
-        MindNode.deleted_at.is_(None),
-        MindNode.ref_type.in_(selected),
-    )
-    existing_nodes = (await db.execute(existing_stmt)).scalars().all()
+    existing_nodes = await list_existing_reference_nodes(db, user_id, selected)
     existing_by_key = {(node.ref_type, node.ref_id): node for node in existing_nodes}
     items_by_key: dict[tuple[str, int], MindCanvasItem] = {}
     if canvas_id is not None:
-        item_rows = (await db.execute(
-            select(MindCanvasItem, MindNode)
-            .join(MindNode, MindNode.id == MindCanvasItem.node_id)
-            .where(MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id, MindNode.kind == "ref")
-        )).all()
+        item_rows = await list_existing_canvas_reference_items(db, user_id, canvas_id)
         items_by_key = {(node.ref_type, node.ref_id): item for item, node in item_rows}
 
     matches: list[dict[str, Any]] = []
-    if "project" in selected:
-        rows = (await db.execute(select(Project).where(
-            Project.user_id == user_id,
-            keyword_condition([Project.name, Project.client], normalized, args.get("mode")),
-        ).order_by(Project.updated_at.desc()).limit(candidate_limit))).scalars().all()
-        matches.extend(_placeable_summary(row, existing_by_key.get(("project", row.id)), items_by_key.get(("project", row.id)), "project") for row in rows)
-    if "file" in selected and len(matches) < candidate_limit:
-        rows = (await db.execute(select(File).where(
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-            keyword_condition([File.display_name, File.ext, File.stage_name], normalized, args.get("mode")),
-        ).order_by(File.updated_at.desc()).limit(candidate_limit))).scalars().all()
-        matches.extend(_placeable_summary(row, existing_by_key.get(("file", row.id)), items_by_key.get(("file", row.id)), "file") for row in rows)
-    if "event" in selected and len(matches) < candidate_limit:
-        rows = (await db.execute(select(CalendarEvent).where(
-            CalendarEvent.user_id == user_id,
-            keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client], normalized, args.get("mode")),
-        ).order_by(CalendarEvent.created_at.desc()).limit(candidate_limit))).scalars().all()
-        matches.extend(_placeable_summary(row, existing_by_key.get(("event", row.id)), items_by_key.get(("event", row.id)), "event") for row in rows)
+    for ref_type, row in await search_placeable_entities(
+        db, user_id, selected, normalized, args.get("mode"), candidate_limit,
+    ):
+        matches.append(_placeable_summary(
+            row, existing_by_key.get((ref_type, row.id)), items_by_key.get((ref_type, row.id)), ref_type,
+        ))
     page = matches[offset:offset + limit]
     return {
         "queries": normalized,
