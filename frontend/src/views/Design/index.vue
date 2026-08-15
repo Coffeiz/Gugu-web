@@ -11,7 +11,7 @@
         <div class="color-grid">
           <article v-for="token in colorTokens" :key="token.variable" class="color-card">
             <div class="color-swatch" :style="{ background: `var(${token.variable})` }" />
-            <div class="token-card-body"><strong>{{ token.name }}</strong><code>{{ token.variable }}</code><small>{{ valueOf(token) }}</small><button type="button" @click="copyToken(token)">复制变量</button></div>
+            <div class="token-card-body"><button class="copy-button" type="button" :title="copiedVariable === token.variable ? '已复制' : `复制 ${token.variable}`" :aria-label="copiedVariable === token.variable ? '已复制' : `复制 ${token.variable}`" @click.stop="handleCopy(token)"><PhCheck v-if="copiedVariable === token.variable" :size="15" weight="bold" /><PhCopy v-else :size="15" weight="bold" /></button><strong>{{ token.name }}</strong><code>{{ token.variable }}</code><small>{{ valueOf(token) }}</small></div>
           </article>
         </div>
       </section>
@@ -55,15 +55,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useTheme } from '@/composables/useTheme'
 import { useDesignTokens } from './composables/useDesignTokens'
 import { tokenCatalog, type DesignToken } from './data/tokenCatalog'
 import ThemeSwitcher from './components/ThemeSwitcher.vue'
 import ComponentStatesPreview from './components/ComponentStatesPreview.vue'
+import { PhCheck, PhCopy } from '@phosphor-icons/vue'
 
 const { preference, setTheme } = useTheme()
 const { valueOf, copyToken } = useDesignTokens()
+const copiedVariable = ref<string | null>(null)
+let copiedTimer: ReturnType<typeof setTimeout> | null = null
 const by = (predicate: (token: DesignToken) => boolean) => computed(() => tokenCatalog.filter(predicate))
 const colorTokens = by(token => token.type === 'color')
 const fontTokens = by(token => token.variable.startsWith('--font-size-'))
@@ -77,6 +80,14 @@ function spacePixels(token: DesignToken): number {
   const value = Number.parseFloat(valueOf(token))
   return Number.isFinite(value) ? value : 0
 }
+
+async function handleCopy(token: DesignToken) {
+  const copied = await copyToken(token)
+  if (!copied) return
+  copiedVariable.value = token.variable
+  if (copiedTimer) clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => { copiedVariable.value = null }, 1600)
+}
 </script>
 
 <style scoped>
@@ -89,7 +100,7 @@ h1 { margin: 5px 0; font-size: 32px; line-height: 1.15; } .subtitle { color: var
 .section-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; } .section-heading h2 { margin: 0; font-size: 24px; }
 .color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
 .color-card, .sample-card { min-width: 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-glass); box-shadow: var(--shadow-rest); }
-.color-swatch { height: 76px; border-bottom: 1px solid var(--border-subtle); } .token-card-body { display: grid; gap: 4px; padding: 12px; } .token-card-body strong { font-size: var(--font-size-sm); } code, small { color: var(--content-secondary); font-size: var(--font-size-xs); } .token-card-body button, .admin-demo button { width: max-content; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 5px 8px; color: var(--content-secondary); background: transparent; cursor: pointer; font: inherit; font-size: var(--font-size-xs); }
+.color-swatch { height: 76px; border-bottom: 1px solid var(--border-subtle); } .token-card-body { position: relative; display: grid; gap: 4px; padding: 12px; } .token-card-body strong { padding-right: 28px; font-size: var(--font-size-sm); } code, small { color: var(--content-secondary); font-size: var(--font-size-xs); } .copy-button, .admin-demo button { width: max-content; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 6px; color: var(--content-secondary); background: transparent; cursor: pointer; font: inherit; } .copy-button { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; } .copy-button:hover { color: var(--content-primary); background: var(--surface-glass-hover); } .admin-demo button { padding: 5px 8px; font-size: var(--font-size-xs); }
 .type-grid, .motion-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); } .type-card, .motion-card { display: grid; gap: 12px; padding: var(--space-4); } .type-card p { min-height: 34px; margin: 0; color: var(--content-primary); }
 .layout-grid, .component-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--space-2); } .layout-grid > *, .component-grid > * { grid-column: span 4; } .sample-card { padding: var(--space-4); }
 .sample-card-heading { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 16px; } .sample-card-heading span { color: var(--content-muted); font-size: var(--font-size-xs); }
