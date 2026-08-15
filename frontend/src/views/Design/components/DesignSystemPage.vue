@@ -80,7 +80,7 @@
             </div>
           </div>
 
-          <button class="sample-gugu-fab" :class="{ opened: chatOpen }" title="打开 GuguChat 小窗" @click="chatOpen = true">
+          <button class="sample-gugu-fab" title="切换 GuguChat 小窗" @click="chatOpen = !chatOpen">
             <BirdIcon :size="22" />
           </button>
           <GuguChatMock :open="chatOpen" @close="chatOpen = false" />
@@ -403,7 +403,7 @@ function indexDotStyle(token: string) {
 .mini-popup span { color: var(--content-secondary); font-size: var(--font-size-sm); }
 .mini-popup button { padding: var(--space-xs); border: 0; border-radius: var(--radius-xs); color: var(--action-primary); background: var(--action-soft); font: var(--font-size-xs) var(--font-sans); }
 .mini-chat { width: 190px; height: 90px; align-self: center; display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-md); border-radius: var(--gugu-chat-radius); background: var(--gugu-chat-bg); border: 1px solid var(--gugu-chat-border); box-shadow: var(--gugu-chat-shadow); }
-.mini-chat-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: white; background: var(--gugu-fab-bg); }
+.mini-chat-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--radius-pill); color: white; background: var(--gugu-fab-bg); }
 .mini-chat div, .case-meta { display: flex; flex-direction: column; gap: var(--space-xs); }
 .mini-chat strong, .case-meta strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .mini-chat small { color: var(--content-tertiary); font-size: var(--font-size-xs); }
@@ -440,7 +440,7 @@ function indexDotStyle(token: string) {
 .nav-count { margin-left: auto; padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-pill); color: white; background: color-mix(in srgb,var(--action-primary) 42%,transparent); font-size: var(--font-size-xs); }
 .soon { margin-left: auto; color: var(--content-tertiary); font-size: var(--font-size-xs); }
 .sample-user { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-sm); border-radius: var(--radius-md); background: var(--sidebar-user-bg); border: 1px solid var(--sidebar-user-border); box-shadow: var(--sidebar-item-active-shadow); }
-.sample-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: white; background: linear-gradient(135deg,var(--action-primary),var(--status-info)); font-size: var(--font-size-md); font-weight: var(--font-weight-bold); }
+.sample-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--radius-pill); color: white; background: linear-gradient(135deg,var(--action-primary),var(--status-info)); font-size: var(--font-size-md); font-weight: var(--font-weight-bold); }
 .sample-user div { min-width: 0; display: flex; flex-direction: column; }
 .sample-user strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .sample-user small { color: var(--content-tertiary); font-size: var(--font-size-xs); }
@@ -460,7 +460,7 @@ function indexDotStyle(token: string) {
 .column-heading { display: flex; align-items: center; gap: var(--space-sm); padding: var(--space-xs); }
 .column-heading strong { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .column-heading em { margin-left: auto; color: var(--content-tertiary); font: normal var(--font-size-xs) var(--font-mono); }
-.column-dot { width: 7px; height: 7px; border-radius: 50%; }
+.column-dot { width: 7px; height: 7px; border-radius: var(--radius-pill); }
 .sample-project-card { position: relative; overflow: hidden; min-height: 104px; border: 1px solid var(--project-card-border); border-radius: var(--project-card-radius); background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color); box-shadow: var(--project-card-shadow); transition: transform var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast); }
 .sample-project-card::before { content:''; position:absolute; inset:0; background:var(--project-card-sheen-rest); box-shadow:inset 0 1px 0 var(--project-card-highlight-rest); pointer-events:none; }
 .sample-project-card:hover { transform: translateY(-2px); border-color: var(--project-card-hover-border); box-shadow: var(--project-card-hover-shadow); }
@@ -475,9 +475,8 @@ function indexDotStyle(token: string) {
 .progress-track { height: 3px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-soft-hover); }
 .progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--project-color); }
 .add-project { height: 30px; display: flex; align-items: center; justify-content: center; gap: var(--space-xs); border: 1px dashed var(--border-subtle); border-radius: var(--radius-sm); color: var(--content-tertiary); background: transparent; font: var(--font-size-xs) var(--font-sans); }
-.sample-gugu-fab { position: absolute; right: var(--floating-edge); bottom: var(--floating-edge); z-index: 16; width: var(--gugu-fab-size); height: var(--gugu-fab-size); display: grid; place-items: center; border: 1px solid var(--gugu-fab-border); border-radius: 50%; color: white; background: var(--gugu-fab-bg); box-shadow: var(--gugu-fab-shadow); cursor: pointer; transition: transform var(--motion-fast),box-shadow var(--motion-fast),opacity var(--motion-fast); }
+.sample-gugu-fab { position: absolute; right: var(--floating-edge); bottom: var(--floating-edge); z-index: 16; width: var(--gugu-fab-size); height: var(--gugu-fab-size); display: grid; place-items: center; border: 1px solid var(--gugu-fab-border); border-radius: var(--radius-pill); color: white; background: var(--gugu-fab-bg); box-shadow: var(--gugu-fab-shadow); cursor: pointer; transition: transform var(--motion-fast),box-shadow var(--motion-fast); }
 .sample-gugu-fab:hover { transform: scale(1.08); box-shadow: var(--gugu-fab-hover-shadow); }
-.sample-gugu-fab.opened { opacity: 0; pointer-events: none; transform: scale(.9); }
 
 @media (max-width: 1100px) {
   .token-grid,.semantic-grid,.elevation-grid,.component-strip { grid-template-columns: repeat(2,minmax(0,1fr)); }
