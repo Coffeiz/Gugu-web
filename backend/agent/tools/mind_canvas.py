@@ -632,6 +632,87 @@ async def _mind_disconnect_nodes(db, user_id, args: dict):
     return {"deleted_relation_id": relation_id}
 
 
+async def _mind_batch_canvas(db, user_id, args: dict):
+    """在一个事务内批量放置引用节点、调整布局和创建连接。
+
+    批量接口不接受删除类操作；引用节点/画布项/related 关系本身都有唯一约束，重试同一
+    request_id 时会复用已有对象，从而保持可重放。任一操作失败都会回滚整批。
+    """
+    canvas_id = args.get("canvas_id")
+    operations = args.get("operations")
+    request_id = args.get("request_id")
+    if not isinstance(canvas_id, int) or not isinstance(operations, list) or not operations:
+        return {"error": "需要提供 canvas_id 和非空 operations"}
+    if len(operations) > 20:
+        return {"error": "单次最多批量处理 20 个操作"}
+    if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 120:
+        return {"error": "需要提供用于重试去重的 request_id"}
+    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return {"error": "画布不存在"}
+    results = []
+    try:
+        for index, operation in enumerate(operations):
+            if not isinstance(operation, dict):
+                raise ValueError(f"第 {index + 1} 个操作格式不正确")
+            kind = operation.get("kind")
+            if kind == "add_node":
+                ref_type, ref_id = operation.get("ref_type"), operation.get("ref_id")
+                if ref_type not in _PLACEABLE_TYPES or not isinstance(ref_id, int):
+                    raise ValueError(f"第 {index + 1} 个放置操作缺少有效引用")
+                node, _ = await get_or_create_reference_node(db, user_id, ref_type, ref_id)
+                item = await db.scalar(select(MindCanvasItem).where(
+                    MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.node_id == node.id,
+                    MindCanvasItem.user_id == user_id,
+                ))
+                created = item is None
+                if item is None:
+                    x, y = await _resolve_canvas_position(db, user_id, canvas, node, operation.get("position"))
+                    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
+                    db.add(item)
+                    await db.flush()
+                results.append({"index": index, "kind": kind, "created": created, "node": _node_summary(node, item)})
+            elif kind == "update_item":
+                item_id = operation.get("item_id")
+                if not isinstance(item_id, int):
+                    raise ValueError(f"第 {index + 1} 个布局操作缺少 item_id")
+                item = await _canvas_item(db, user_id, canvas_id, item_id)
+                if item is None:
+                    raise ValueError(f"第 {index + 1} 个布局操作找不到节点")
+                fields = {key: operation[key] for key in ("x", "y", "w", "h", "z", "collapsed") if key in operation}
+                for key in ("x", "y", "w", "h"):
+                    if key in fields and (not _finite_number(fields[key]) or (key in ("w", "h") and fields[key] <= 0)):
+                        raise ValueError(f"第 {index + 1} 个布局操作包含无效 {key}")
+                if not fields:
+                    raise ValueError(f"第 {index + 1} 个布局操作没有修改字段")
+                await db.execute(update(MindCanvasItem).where(MindCanvasItem.id == item.id).values(**fields, updated_at=now_utc()))
+                await db.flush()
+                await db.refresh(item)
+                node = await get_owned(db, MindNode, item.node_id, user_id)
+                results.append({"index": index, "kind": kind, "updated": True, "node": _node_summary(node, item)})
+            elif kind == "connect":
+                source_id, target_id = operation.get("source_node_id"), operation.get("target_node_id")
+                if not isinstance(source_id, int) or not isinstance(target_id, int):
+                    raise ValueError(f"第 {index + 1} 个连接操作缺少节点")
+                items = (await db.execute(select(MindCanvasItem).where(
+                    MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
+                    MindCanvasItem.node_id.in_((source_id, target_id)),
+                ))).scalars().all()
+                if {item.node_id for item in items} != {source_id, target_id}:
+                    raise ValueError(f"第 {index + 1} 个连接操作的节点不在此画布")
+                from app.core.mind import upsert_relation
+                relation = await upsert_relation(db, user_id, source_id, target_id, rel_type="related")
+                await db.flush()
+                results.append({"index": index, "kind": kind, "relation_id": relation.id, "created_or_reused": True})
+            else:
+                raise ValueError(f"不支持的批量操作 {kind or '空操作'}；删除请使用单独工具确认")
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        return {"error": str(exc), "request_id": request_id, "rolled_back": True}
+    return {"canvas_id": canvas_id, "request_id": request_id, "operations": results, "atomic": True}
+
+
 class MindCanvasSkill(BaseSkill):
     name = "mind_canvas"
     tools = [
@@ -828,6 +909,30 @@ class MindCanvasSkill(BaseSkill):
             handler=_mind_disconnect_nodes,
             mutates=True,
             destructive=True,
+        ),
+        Tool(
+            name="mind_batch_canvas", label="批量编排画布",
+            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"}, "request_id": {"type": "string", "maxLength": 120},
+                    "operations": {"type": "array", "minItems": 1, "maxItems": 20, "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["add_node", "update_item", "connect"]},
+                            "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)}, "ref_id": {"type": "integer"},
+                            "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
+                            "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
+                            "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
+                        },
+                        "required": ["kind"],
+                    }},
+                },
+                "required": ["canvas_id", "request_id", "operations"],
+            },
+            handler=_mind_batch_canvas,
+            mutates=True,
         ),
     ]
 

@@ -20,6 +20,7 @@ from agent.tools.mind_canvas import (
     _mind_delete_canvas_note,
     _mind_connect_nodes,
     _mind_disconnect_nodes,
+    _mind_batch_canvas,
 )
 
 
@@ -237,3 +238,25 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     relation = await _mind_connect_nodes(db, user_a.id, {"canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id})
     blocked_relation = await _mind_disconnect_nodes(db, user_a.id, {"relation_id": relation["relation_id"]})
     assert json.loads(blocked_relation)["needs_confirm"] is True
+
+
+async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db, user_a):
+    canvas = await _canvas(db, user_a)
+    project = Project(user_id=user_a.id, name="批量项目")
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    request = {"canvas_id": canvas.id, "request_id": "batch-001", "operations": [
+        {"kind": "add_node", "ref_type": "project", "ref_id": project.id, "position": {"x": 20, "y": 30}},
+    ]}
+    first = await _mind_batch_canvas(db, user_a.id, request)
+    second = await _mind_batch_canvas(db, user_a.id, request)
+    assert first["atomic"] is True
+    assert first["operations"][0]["created"] is True
+    assert second["operations"][0]["created"] is False
+
+    failed = await _mind_batch_canvas(db, user_a.id, {"canvas_id": canvas.id, "request_id": "batch-rollback", "operations": [
+        {"kind": "add_node", "ref_type": "project", "ref_id": project.id},
+        {"kind": "unsupported"},
+    ]})
+    assert failed["rolled_back"] is True

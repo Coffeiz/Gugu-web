@@ -45,7 +45,7 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "mind_add_canvas_node": "mind", "mind_update_canvas_node": "mind",
     "mind_remove_canvas_node": "mind", "mind_update_canvas_note": "mind",
     "mind_delete_canvas_note": "mind", "mind_connect_nodes": "mind",
-    "mind_disconnect_nodes": "mind",
+    "mind_disconnect_nodes": "mind", "mind_batch_canvas": "mind",
 }
 
 
