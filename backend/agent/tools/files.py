@@ -14,17 +14,26 @@ from datetime import datetime
 
 from sqlalchemy import select
 
-from app.models import File, Folder, Project
+from app.models import Project
 from app.core.ownership import get_owned
 from app.core.redaction import redact
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
+from app.services.files.browser import (
+    descendant_folder_ids,
+    find_user_files_by_name,
+    find_user_folders_by_name,
+    get_user_file,
+    get_user_folder,
+    list_user_folders,
+    search_user_files,
+)
 from app.services.storage.file_service.files import _fmt_size
 from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
-from app.search.query import keyword_condition, normalize_queries
+from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -250,14 +259,10 @@ def _target_loc(f, target: dict):
 
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
-    stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
-    if args.get("space"):
-        stmt = stmt.where(File.space == args["space"])
-    if args.get("project_id") is not None:
-        stmt = stmt.where(File.project_id == args["project_id"])
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
+    folder_id = None
     if folder_value not in (None, ""):
         try:
             folder_id = int(str(folder_value).strip().lstrip("#"))
@@ -272,21 +277,24 @@ async def _list_files(db, user_id, args: dict):
             if error:
                 return error
             folder_id = folder.id
-        stmt = stmt.where(File.folder_id == folder_id)
-    if args.get("ext"):
-        stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
     file_queries = normalize_queries(
         args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
     )
-    if file_queries:
-        stmt = stmt.where(keyword_condition([File.display_name], file_queries, args.get("mode")))
     requested_limit = args.get("limit", 100)
     try:
         limit = max(1, min(int(requested_limit), 200))
     except (TypeError, ValueError):
         limit = 100
-    stmt = stmt.order_by(File.updated_at.desc()).limit(limit)
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await search_user_files(
+        db, user_id,
+        space=args.get("space"),
+        project_id=args.get("project_id"),
+        folder_id=folder_id,
+        ext=args.get("ext"),
+        queries=file_queries,
+        mode=args.get("mode"),
+        limit=limit,
+    )
     out = []
     for file in rows:
         folder_path = "（根目录）"
@@ -638,18 +646,15 @@ async def _resolve_file(db, user_id, args):
     """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
     fid = args.get("file_id")
     if fid:
-        f = await get_owned(db, File, fid, user_id)
-        if not f or f.deleted_at is not None:
+        f = await get_user_file(db, user_id, fid)
+        if not f:
             return None, json.dumps({"error": "文件不存在"})
         return f, None
     name = args.get("file")
     if name:
         name = str(name).strip()
         base = name.rsplit(".", 1)[0] if "." in name else name
-        base_stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
-        rows = (await db.execute(base_stmt.where(File.display_name == base))).scalars().all()
-        if not rows:
-            rows = (await db.execute(base_stmt.where(File.display_name.ilike(f"%{base}%")))).scalars().all()
+        rows = await find_user_files_by_name(db, user_id, base)
         if not rows:
             return None, json.dumps({"error": f"未找到文件「{name}」"})
         if len(rows) > 1:
@@ -666,20 +671,13 @@ async def _folder_by_name(db, user_id, name, space=None, project_id=None):
     重名时优先顶层（parent_id 为空）；仍有歧义则返回候选让调用方/模型用 folder_id 指定。
     """
     name = str(name).strip()
-    stmt = select(Folder).where(Folder.user_id == user_id, Folder.name == name)
-    if space == "project" and project_id:
-        stmt = stmt.where(Folder.project_id == project_id)
-    elif space and space != "project":
-        stmt = stmt.where(Folder.project_id.is_(None))
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await find_user_folders_by_name(
+        db, user_id, name, space=space, project_id=project_id)
     if not rows:
         # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
-        avail_stmt = select(Folder.name).where(Folder.user_id == user_id)
-        if space == "project" and project_id:
-            avail_stmt = avail_stmt.where(Folder.project_id == project_id)
-        elif space and space != "project":
-            avail_stmt = avail_stmt.where(Folder.project_id.is_(None))
-        avail = (await db.execute(avail_stmt)).scalars().all()
+        available = await list_user_folders(
+            db, user_id, project_id=project_id if space == "project" else None)
+        avail = [folder.name for folder in available]
         return None, json.dumps({"error": f"未找到名为「{name}」的文件夹",
                                  "available_folders": sorted(set(avail))})
     if len(rows) > 1:
@@ -763,16 +761,7 @@ def _as_dict(r):
 
 async def _descendant_folder_ids(db, user_id, root_id: int) -> list[int]:
     """root_id 及其所有子孙文件夹 id（沿 parent_id 逐层 BFS）。"""
-    ids = [root_id]
-    frontier = [root_id]
-    while frontier:
-        rows = (await db.execute(
-            select(Folder.id).where(Folder.user_id == user_id, Folder.parent_id.in_(frontier))
-        )).scalars().all()
-        fresh = [i for i in rows if i not in ids]
-        ids.extend(fresh)
-        frontier = fresh
-    return ids
+    return await descendant_folder_ids(db, user_id, root_id)
 
 
 async def _resolve_target(db, user_id, target: dict):
@@ -783,7 +772,7 @@ async def _resolve_target(db, user_id, target: dict):
     folder_id = target.get("folder_id")
     fname = target.get("folder")
     if folder_id:
-        fo = await get_owned(db, Folder, folder_id, user_id)
+        fo = await get_user_folder(db, user_id, folder_id)
         if not fo:
             return None, None, None, {"error": "目标文件夹不存在"}
         return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
@@ -845,12 +834,10 @@ async def _move_items(db, user_id, args: dict):
     # 文件夹
     for it in (args.get("folders") or []):
         if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            fo = await get_owned(db, Folder, int(it), user_id)
+            fo = await get_user_folder(db, user_id, int(it))
         else:
             # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
-            rows = (await db.execute(
-                select(Folder).where(Folder.user_id == user_id, Folder.name == str(it))
-            )).scalars().all()
+            rows = await find_user_folders_by_name(db, user_id, str(it))
             fo = rows[0] if len(rows) == 1 else None
             if len(rows) > 1:
                 failed.append({"item": it, "kind": "folder", "error": "有多个同名文件夹，请改用 folder_id"})
@@ -895,15 +882,11 @@ async def _delete_file(db, user_id, args: dict):
 
 
 async def _list_folders(db, user_id, args: dict):
-    stmt = select(Folder).where(
-        Folder.user_id == user_id,
-        Folder.deleted_at.is_(None),
+    rows = await list_user_folders(
+        db, user_id,
+        project_id=args.get("project_id"),
+        parent_id=args.get("parent_id"),
     )
-    if args.get("project_id") is not None:
-        stmt = stmt.where(Folder.project_id == args["project_id"])
-    if args.get("parent_id") is not None:
-        stmt = stmt.where(Folder.parent_id == args["parent_id"])
-    rows = (await db.execute(stmt)).scalars().all()
     out = []
     for folder in rows:
         resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
@@ -926,7 +909,7 @@ async def _find_folder(db, user_id, args: dict):
             fid = int(str(fid).strip())
         except (ValueError, TypeError):
             pass
-        fo = await get_owned(db, Folder, fid, user_id)
+        fo = await get_user_folder(db, user_id, fid)
         if not fo:
             return json.dumps({"error": "文件夹不存在"})
         return fo
