@@ -34,8 +34,8 @@ function go() {
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 12px;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-regular);
@@ -53,7 +53,7 @@ function go() {
 .nav-item.active {
   background: var(--sidebar-item-active);
   color: var(--sidebar-item-active-fg);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
   border-color: var(--sidebar-item-active-border);
   box-shadow: var(--sidebar-item-active-shadow);
 }
@@ -66,9 +66,9 @@ function go() {
 .badge {
   background: color-mix(in srgb,var(--action-primary) 42%,transparent);
   color: var(--content-on-accent);
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-bold);
-  padding: 1px 6px;
+  padding: 1px var(--space-xs);
   border-radius: var(--radius-pill);
   min-width: 18px;
   text-align: center;
