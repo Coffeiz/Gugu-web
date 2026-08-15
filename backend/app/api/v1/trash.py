@@ -4,7 +4,6 @@ from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func, or_
-from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -22,6 +21,8 @@ from app.services.files.trash import (
     RestoreParentTrashError,
     permanently_delete_file,
     permanently_delete_folder,
+    top_level_deleted_folders_stmt,
+    get_top_level_deleted_folder,
     empty_trash as empty_trash_service,
     restore_file_by_id,
     restore_files_by_ids,
@@ -36,24 +37,6 @@ router = APIRouter(prefix="/trash", tags=["trash"])
 
 TRASH_DAYS = 30
 _log = logging.getLogger("app.api.v1.trash")
-
-
-def _top_level_deleted_folders_stmt(user_id=None):
-    """顶层已删文件夹（可整体恢复的单元）：自身已删 且（无父 或 父未删）——
-    父已删说明本节点是被祖先那次删除连带扫入的，不单独列为回收站条目。
-    user_id=None → 不限用户（cleanup_expired 全局清理任务用）；否则限定该用户（回收站列表用）。"""
-    ParentFolder = aliased(Folder)
-    stmt = (
-        select(Folder)
-        .outerjoin(ParentFolder, Folder.parent_id == ParentFolder.id)
-        .where(
-            Folder.deleted_at.isnot(None),
-            (Folder.parent_id.is_(None)) | (ParentFolder.deleted_at.is_(None)),
-        )
-    )
-    if user_id is not None:
-        stmt = stmt.where(Folder.user_id == user_id)
-    return stmt.order_by(Folder.deleted_at.desc())
 
 
 # ── GET /trash ────────────────────────────────────────────────────────────────
@@ -87,7 +70,7 @@ async def list_trash_folders(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folders = (await db.execute(_top_level_deleted_folders_stmt(current_user.id))).scalars().all()
+    folders = (await db.execute(top_level_deleted_folders_stmt(current_user.id))).scalars().all()
     if not folders:
         return []
     # 浅层计数：该文件夹自身直接包含、已在回收站的文件数（同现有 _file_count 的浅层惯例）
@@ -114,9 +97,7 @@ async def list_trash_folder_contents(
     db: AsyncSession = Depends(get_db),
 ):
     """读取顶层回收站文件夹的直属内容，内部文件不作为独立恢复单元。"""
-    folder = (await db.execute(
-        _top_level_deleted_folders_stmt(current_user.id).where(Folder.id == fid)
-    )).scalar_one_or_none()
+    folder = await get_top_level_deleted_folder(db, current_user.id, fid)
     if not folder:
         raise HTTPException(404, "文件夹不存在")
     child_folders = (await db.execute(
@@ -184,9 +165,7 @@ async def hard_delete_folder(
     db: AsyncSession = Depends(get_db),
 ):
     # 只允许删除回收站中可见的顶层恢复单元，避免绕开父文件夹删掉子树中的一个节点。
-    folder = (await db.execute(
-        _top_level_deleted_folders_stmt(current_user.id).where(Folder.id == fid)
-    )).scalar_one_or_none()
+    folder = await get_top_level_deleted_folder(db, current_user.id, fid)
     if not folder:
         raise HTTPException(404, "文件夹不存在")
 
@@ -262,7 +241,7 @@ async def empty_trash(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    roots = (await db.execute(_top_level_deleted_folders_stmt(current_user.id))).scalars().all()
+    roots = (await db.execute(top_level_deleted_folders_stmt(current_user.id))).scalars().all()
     fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
     await db.commit()
     for fid in fids:
@@ -296,7 +275,7 @@ async def cleanup_expired(db: AsyncSession) -> int:
     # （Folder.children，`all, delete-orphan`）连带删掉整棵子树；子树内文件已由上面那段按
     # 各自 deleted_at 清掉（同批软删的文件与文件夹共用同一时间戳，自然同批过期）。目录骨架的
     # 物理清理已在原删除那一刻尽力做过（P2.2 delete()），这里只做尽力而为的收尾重试。
-    roots = (await db.execute(_top_level_deleted_folders_stmt().where(
+    roots = (await db.execute(top_level_deleted_folders_stmt().where(
         Folder.deleted_at <= cutoff))).scalars().all()
     for root in roots:
         dir_key = await folder_dir_key(db, root.user_id, root)

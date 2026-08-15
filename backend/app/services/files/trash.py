@@ -1,5 +1,6 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.ownership import get_owned
 from app.models import File, Folder
@@ -9,6 +10,32 @@ from app.services.storage.trash import restore_file_storage
 
 class RestoreParentTrashError(Exception):
     """文件所属文件夹仍在回收站，不能单独恢复。"""
+
+
+def top_level_deleted_folders_stmt(user_id=None):
+    """构造回收站顶层文件夹查询。
+
+    用户回收站传入 ``user_id`` 做归属隔离；过期清理任务不传用户，执行全局清理。
+    """
+    parent_folder = aliased(Folder)
+    stmt = (
+        select(Folder)
+        .outerjoin(parent_folder, Folder.parent_id == parent_folder.id)
+        .where(
+            Folder.deleted_at.isnot(None),
+            (Folder.parent_id.is_(None)) | (parent_folder.deleted_at.is_(None)),
+        )
+    )
+    if user_id is not None:
+        stmt = stmt.where(Folder.user_id == user_id)
+    return stmt.order_by(Folder.deleted_at.desc())
+
+
+async def get_top_level_deleted_folder(db: AsyncSession, user_id, folder_id: int):
+    """读取当前用户可见的顶层回收站文件夹。"""
+    return (await db.execute(
+        top_level_deleted_folders_stmt(user_id).where(Folder.id == folder_id)
+    )).scalar_one_or_none()
 
 
 async def permanently_delete_file(
