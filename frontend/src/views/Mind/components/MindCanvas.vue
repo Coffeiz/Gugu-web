@@ -50,7 +50,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
-import { runtime, type MoveAction, type RuntimeEvent } from '@/interaction/runtime'
+import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
@@ -71,7 +71,7 @@ const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
   (e: 'returnToDrawer', item: MindCanvasItem): void
   (e: 'removeRelation', id: number): void
-  (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides): void
+  (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides, runtimeConnection: NodeConnectionEndpoint): void
   (e: 'openRef', item: MindCanvasItem): void
   (e: 'itemMoved', item: MindCanvasItem): void
   (e: 'viewChange', view: { x: number; y: number; scale: number }): void
@@ -385,12 +385,21 @@ function onConnectionDragEnd(event: PointerEvent) {
   // 落点判定用真实指针位置（event.clientX/Y），不用还在弹簧里追赶的渲染位置——手感上的
   // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
   const source = props.items.find(item => item.nodeId === originNodeId)
-  if (!source) return
-  if (!runtime.finishNodeConnection(mindCanvasObjectId(target.item), target.side)) return
+  if (!source) {
+    runtime.cancelNodeConnection()
+    return
+  }
+  const runtimeConnection: NodeConnectionEndpoint = {
+    sourceObjectId: mindCanvasObjectId(source),
+    sourcePortId: connectionDrag.originSide,
+    targetObjectId: mindCanvasObjectId(target.item),
+    targetPortId: target.side,
+  }
+  if (!runtime.finishNodeConnection(runtimeConnection.targetObjectId, runtimeConnection.targetPortId)) return
   emit('linkNodes', originNodeId, target.item.nodeId, {
     srcSide: connectionDrag.originSide,
     dstSide: target.side,
-  })
+  }, runtimeConnection)
 }
 
 function onPointerMove(event: PointerEvent) {
