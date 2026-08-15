@@ -50,7 +50,7 @@
   --topbar-shadow: var(--theme-topbar-shadow);
   --topbar-shadow-hover: var(--theme-topbar-shadow-hover);
   --topbar-blur: 16px;
-  --topbar-title-size: var(--font-size-title);
+  --topbar-title-size: var(--font-size-xl);
   --topbar-meta-size: var(--font-size-sm);
 
   /* Project cards: keep the original Gugu horizontal project-color gradient in every family. */
@@ -78,15 +78,20 @@
   --gugu-chat-bg: var(--surface-base);
   --gugu-chat-border: var(--border-strong);
   --gugu-chat-highlight: var(--border-highlight);
-  --gugu-chat-radius: var(--radius-xl);
+  --gugu-chat-radius: var(--radius-lg);
   --gugu-chat-shadow: var(--elevation-window);
   --gugu-chat-header-border: var(--border-subtle);
   --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);
 
-  /* Design system page uses the same surface grammar as the product. */
-  --design-section-gap: var(--space-8);
-  --design-grid-gap: var(--space-3-compact);
+  /* Design system page: token.html grammar = one glass shell per section, quieter content inside. */
+  --design-section-gap: var(--space-xl);
+  --design-grid-gap: var(--space-md);
+  --design-section-bg: color-mix(in srgb,var(--surface-glass) 84%,transparent);
+  --design-section-border: var(--border-strong);
+  --design-section-highlight: var(--border-highlight);
+  --design-section-radius: var(--radius-lg);
+  --design-section-shadow: var(--elevation-card);
   --design-card-bg: color-mix(in srgb,var(--surface-card-solid) 68%,transparent);
   --design-card-border: var(--border-subtle);
   --design-card-radius: var(--radius-md);
