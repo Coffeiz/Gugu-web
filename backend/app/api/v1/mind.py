@@ -20,6 +20,7 @@ from app.core.mind import (
     content_hash, create_mind_note, soft_delete_mind_note, to_plain_text, update_mind_note,
     update_node_atomic, upsert_relation,
 )
+from app.core.mind_canvas import get_or_create_reference_node
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import now_utc
@@ -564,56 +565,13 @@ async def create_ref_node(
     db: AsyncSession = Depends(get_db),
 ):
     """把既有对象接入全局图层；同一用户/对象永远复用同一 ref 节点。"""
-    targets = {
-        "project": (Project, "name"),
-        "file": (File, "display_name"),
-        "event": (CalendarEvent, "title"),
-    }
-    target = targets.get(body.ref_type)
-    if target is None:
-        raise HTTPException(422, "不支持的引用类型")
-    model, label_attr = target
-    entity = await get_owned(db, model, body.ref_id, current_user.id)
-    if entity is None:
-        raise HTTPException(404, "引用对象不存在")
-
-    node = await db.scalar(select(MindNode).where(
-        MindNode.user_id == current_user.id,
-        MindNode.kind == "ref",
-        MindNode.ref_type == body.ref_type,
-        MindNode.ref_id == body.ref_id,
-    ))
-    if node is None:
-        # 三种引用各缓存一份「够渲染删除态快照」的极简数据（同一份「title 快照降级墓碑」
-        # 思路，见 MindNode 类注释）——被引用对象删除后，画布卡片拿不到活的记录，没有这份
-        # 缓存就只能显示一张信息全丢光的灰卡。只在创建这一刻拍照，之后原对象改这些字段
-        # 不会回填；对象还活着时，各卡片优先用实时数据（ProjectCardBody 走 projectStore、
-        # 活动卡走 _event_ref_data 实时查表），只有确认对象已删除才回退到这份快照。
-        # - project：client/status/startDate/deadline/doneAt，够画客户行+日期区，不收
-        #   stages/fileCount（数据量大、变化频繁，被删的项目也不需要还原进度条）。
-        # - file：ext，够画文件类型角标/图标（FileCard 的 .fc-ext-badge 只靠这一个字段）。
-        # - event：date/time/endTime，够画日期区（跟 _event_ref_data 缓存的字段一致，
-        #   活动没删时优先用后者的实时查询结果，两边字段对齐方便前端统一取用）。
-        ref_snapshot = None
-        if body.ref_type == "project":
-            ref_snapshot = {
-                "client": entity.client,
-                "status": entity.status,
-                "startDate": entity.start_date,
-                "deadline": entity.deadline,
-                "doneAt": entity.done_at.isoformat() if entity.done_at else None,
-            }
-        elif body.ref_type == "file":
-            ref_snapshot = {"ext": entity.ext}
-        elif body.ref_type == "event":
-            ref_snapshot = {"date": entity.date, "time": entity.time, "endTime": entity.end_time}
-        node = MindNode(
-            user_id=current_user.id, kind="ref", ref_type=body.ref_type, ref_id=body.ref_id,
-            title=getattr(entity, label_attr), content_md="", content_plain="",
-            color=getattr(entity, "color", None) if body.ref_type == "project" else None,
-            ref_snapshot=ref_snapshot,
-        )
-        db.add(node)
+    try:
+        node, created = await get_or_create_reference_node(db, current_user.id, body.ref_type, body.ref_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    if created:
         await db.commit()
         await db.refresh(node)
     return _to_resp(node)

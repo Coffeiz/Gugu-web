@@ -40,6 +40,9 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     # 思维画布便签
     "create_note": "mind", "update_note": "mind", "delete_note": "mind",
     "restore_note": "mind", "undo_last_gugu_note": "mind",
+    # 思维画布 Agent 工具
+    "mind_create_canvas": "mind", "mind_create_canvas_note": "mind",
+    "mind_add_canvas_node": "mind",
 }
 
 

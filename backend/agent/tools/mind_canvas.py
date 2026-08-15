@@ -11,6 +11,8 @@ from typing import Any
 
 from sqlalchemy import and_, false, func, or_, select
 
+from app.core.mind import content_hash, to_plain_text, validate_note_color
+from app.core.mind_canvas import get_or_create_reference_node
 from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -314,6 +316,157 @@ async def _mind_search_placeable_nodes(db, user_id, args: dict):
     }
 
 
+def _finite_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+async def _resolve_canvas_position(db, user_id, canvas: MindMap, node: MindNode, position: Any) -> tuple[float, float]:
+    """把显式世界坐标或语义锚点转换成 MindCanvasItem 的世界坐标。"""
+    position = position if isinstance(position, dict) else {}
+    x, y = position.get("x"), position.get("y")
+    if _finite_number(x) and _finite_number(y):
+        return float(x), float(y)
+    anchor = position.get("anchor", "auto")
+    if anchor not in {"auto", "viewport_center", "viewport_top_left", "viewport_top_right", "viewport_bottom_left", "viewport_bottom_right", "near_node"}:
+        raise ValueError("不支持的画布位置锚点")
+    data = _json_object(canvas.data_json)
+    camera = {key: data.get(key) for key in ("x", "y", "scale")}
+    scale = float(camera["scale"]) if _finite_number(camera.get("scale")) and camera["scale"] > 0 else 1.0
+    camera_x = float(camera["x"]) if _finite_number(camera.get("x")) else 0.0
+    camera_y = float(camera["y"]) if _finite_number(camera.get("y")) else 0.0
+    viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else None
+    width = viewport.get("width") if viewport else None
+    height = viewport.get("height") if viewport else None
+    if anchor.startswith("viewport_"):
+        if not (_finite_number(width) and _finite_number(height)):
+            raise ValueError("画布尚未保存视口尺寸，暂时不能按当前视野定位")
+        world_w, world_h = float(width) / scale, float(height) / scale
+        world_x, world_y = -camera_x / scale, -camera_y / scale
+        if anchor.endswith("center"):
+            world_x += world_w / 2 - 110
+            world_y += world_h / 2 - 60
+        elif anchor.endswith("top_right"):
+            world_x += world_w - 240
+            world_y += 24
+        elif anchor.endswith("bottom_left"):
+            world_x += 24
+            world_y += world_h - 144
+        elif anchor.endswith("bottom_right"):
+            world_x += world_w - 240
+            world_y += world_h - 144
+        else:
+            world_x += 24
+            world_y += 24
+        return world_x + float(position.get("offset_x", 0) or 0), world_y + float(position.get("offset_y", 0) or 0)
+    if anchor == "near_node":
+        near_node_id = position.get("near_node_id")
+        if not isinstance(near_node_id, int):
+            raise ValueError("near_node 锚点必须提供 near_node_id")
+        near_item = await db.scalar(select(MindCanvasItem).where(
+            MindCanvasItem.canvas_id == canvas.id,
+            MindCanvasItem.user_id == user_id,
+            MindCanvasItem.node_id == near_node_id,
+        ))
+        if near_item is None:
+            raise ValueError("找不到要靠近的画布节点")
+        near_w = near_item.w or 220
+        return float(near_item.x + near_w + 40 + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
+    items = (await db.execute(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas.id,
+        MindCanvasItem.user_id == user_id,
+    ).order_by(MindCanvasItem.x.desc(), MindCanvasItem.id.desc()).limit(1))).scalars().first()
+    if items is None:
+        return camera_x + 40, camera_y + 40
+    return float(items.x + (items.w or 220) + 40), float(items.y)
+
+
+async def _mind_create_canvas(db, user_id, args: dict):
+    title = args.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return {"error": "需要提供画布标题"}
+    title = title.strip()
+    if len(title) > 300:
+        return {"error": "画布标题不能超过 300 个字符"}
+    project_id = args.get("project_id")
+    if project_id is not None:
+        if not isinstance(project_id, int) or await db.scalar(select(Project).where(Project.id == project_id, Project.user_id == user_id)) is None:
+            return {"error": "项目不存在"}
+    canvas = MindMap(user_id=user_id, title=title, project_id=project_id, data_json="{}")
+    db.add(canvas)
+    await db.commit()
+    await db.refresh(canvas)
+    return {"canvas": {"canvas_id": canvas.id, "title": canvas.title, "project_id": canvas.project_id}}
+
+
+async def _mind_create_canvas_note(db, user_id, args: dict):
+    canvas_id = args.get("canvas_id")
+    title = args.get("title") or "新便签"
+    content = args.get("content") or ""
+    color = args.get("color", "amber")
+    if not isinstance(canvas_id, int) or await _get_owned_canvas(db, user_id, canvas_id) is None:
+        return {"error": "画布不存在"}
+    if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
+        return {"error": "便签标题或正文格式不正确"}
+    try:
+        color = validate_note_color(color)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    node = MindNode(
+        user_id=user_id, kind="canvas_note", title=title.strip() or "新便签",
+        content_md=content, content_plain=to_plain_text(content), color=color,
+        indexed_hash=content_hash(to_plain_text(content)), indexed_at=None,
+    )
+    db.add(node)
+    await db.flush()
+    x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
+    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
+    db.add(item)
+    await db.commit()
+    await db.refresh(node)
+    await db.refresh(item)
+    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
+
+
+async def _mind_add_canvas_node(db, user_id, args: dict):
+    canvas_id = args.get("canvas_id")
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
+    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return {"error": "画布不存在"}
+    node_id = args.get("node_id")
+    if isinstance(node_id, int):
+        node = await db.scalar(select(MindNode).where(
+            MindNode.id == node_id, MindNode.user_id == user_id, MindNode.kind == "ref", MindNode.deleted_at.is_(None),
+        ))
+        if node is None:
+            return {"error": "只能把项目、文件或活动引用节点放入画布"}
+    else:
+        ref_type, ref_id = args.get("ref_type"), args.get("ref_id")
+        if ref_type not in _PLACEABLE_TYPES or not isinstance(ref_id, int):
+            return {"error": "需要提供 ref_type 和 ref_id，且类型必须是 project、file 或 event"}
+        try:
+            node, _ = await get_or_create_reference_node(db, user_id, ref_type, ref_id)
+        except (ValueError, LookupError) as exc:
+            await db.rollback()
+            return {"error": str(exc)}
+    existing = await db.scalar(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.node_id == node.id,
+        MindCanvasItem.user_id == user_id,
+    ))
+    if existing is not None:
+        await db.refresh(node)
+        return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
+    x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
+    item = MindCanvasItem(user_id=user_id, canvas_id=canvas_id, node_id=node.id, x=x, y=y, z=0)
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
+
+
 class MindCanvasSkill(BaseSkill):
     name = "mind_canvas"
     tools = [
@@ -382,6 +535,54 @@ class MindCanvasSkill(BaseSkill):
                 "required": [],
             },
             handler=_mind_search_placeable_nodes,
+        ),
+        Tool(
+            name="mind_create_canvas", label="创建思维画布",
+            description="按用户明确要求创建一张当前用户自己的思维画布；不能替用户猜测标题或项目。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "minLength": 1, "maxLength": 300},
+                    "project_id": {"type": ["integer", "null"]},
+                },
+                "required": ["title"],
+            },
+            handler=_mind_create_canvas,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_create_canvas_note", label="创建画布便签",
+            description="在指定画布创建专属便签。它不会进入时间流 note；普通时间流笔记不能通过此工具放入画布。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"},
+                    "title": {"type": "string", "maxLength": 300},
+                    "content": {"type": "string"},
+                    "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+                    "position": {"type": "object"},
+                },
+                "required": ["canvas_id", "content"],
+            },
+            handler=_mind_create_canvas_note,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_add_canvas_node", label="放置画布节点",
+            description="把当前用户的项目、文件或日历活动引用放入画布。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"},
+                    "node_id": {"type": "integer"},
+                    "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)},
+                    "ref_id": {"type": "integer"},
+                    "position": {"type": "object"},
+                },
+                "required": ["canvas_id"],
+            },
+            handler=_mind_add_canvas_node,
+            mutates=True,
         ),
     ]
 

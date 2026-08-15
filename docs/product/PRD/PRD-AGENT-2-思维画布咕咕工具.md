@@ -1,6 +1,6 @@
 # 思维画布咕咕工具 PRD
 
-> 状态：Phase 1 已完成，Phase 2 待实施
+> 状态：Phase 2 已完成，Phase 3 待实施
 > 创建：2026-08-15
 > 最近更新：2026-08-15
 > 关联文档：[`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md)、[`思维面板/数据模型草案.md`](../思维面板/数据模型草案.md)、[`思维面板/实现方案.md`](../思维面板/实现方案.md)
@@ -585,12 +585,14 @@ Phase 1 实现位置：`backend/agent/tools/mind_canvas.py`，测试位置：`ba
 
 ### Phase 2：创建和放置
 
-- [ ] 实现 `mind_create_canvas`；
-- [ ] 实现 `mind_create_canvas_note`；
-- [ ] 实现 `mind_add_canvas_node`；
-- [ ] 支持 `auto`、`near_node` 和 `viewport_*` 锚点；
-- [ ] 复用已有引用节点，避免重复代理；
-- [ ] 增加幂等、位置不重叠和失败回滚测试。
+- [x] 实现 `mind_create_canvas`；
+- [x] 实现 `mind_create_canvas_note`；
+- [x] 实现 `mind_add_canvas_node`；
+- [x] 支持 `auto`、`near_node` 和 `viewport_*` 锚点；
+- [x] 复用已有引用节点，避免重复代理；
+- [x] 增加幂等、位置不重叠和失败回滚测试。
+
+Phase 2 共用领域入口位于 `backend/app/core/mind_canvas.py`；创建/放置回归位于 `backend/tests/test_mind_canvas_tools.py`，并覆盖普通 `note` 拒绝、引用节点复用、视口中心定位和失败归属校验。
 
 ### Phase 3：编辑和连接
 

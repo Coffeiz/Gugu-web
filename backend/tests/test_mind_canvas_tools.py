@@ -7,6 +7,9 @@ import json
 
 from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, Project
 from agent.tools.mind_canvas import (
+    _mind_add_canvas_node,
+    _mind_create_canvas,
+    _mind_create_canvas_note,
     _mind_get_canvas,
     _mind_list_canvases,
     _mind_search_canvas,
@@ -117,3 +120,50 @@ async def test_search_placeable_marks_existing_ref_and_item(db, user_a):
     )
     assert result["matches"][0]["node_id"] == ref.id
     assert result["matches"][0]["already_placed"] is True
+
+
+async def test_create_canvas_and_canvas_note_use_viewport_anchor(db, user_a):
+    canvas_result = await _mind_create_canvas(db, user_a.id, {"title": "发布规划"})
+    canvas_id = canvas_result["canvas"]["canvas_id"]
+    canvas = await db.get(MindMap, canvas_id)
+    canvas.data_json = json.dumps({"x": -100, "y": -50, "scale": 1, "viewport": {"width": 1000, "height": 600}})
+    await db.commit()
+
+    result = await _mind_create_canvas_note(db, user_a.id, {
+        "canvas_id": canvas_id,
+        "title": "当前视野便签",
+        "content": "先完成接口联调",
+        "color": "teal",
+        "position": {"anchor": "viewport_center"},
+    })
+
+    assert result["created"] is True
+    assert result["node"]["kind"] == "canvas_note"
+    assert result["node"]["position"] == {"x": 490.0, "y": 290.0}
+
+
+async def test_add_canvas_node_creates_ref_reuses_it_and_rejects_note(db, user_a):
+    canvas = await _canvas(db, user_a)
+    project = Project(user_id=user_a.id, name="接口项目")
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+
+    first = await _mind_add_canvas_node(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "ref_type": "project",
+        "ref_id": project.id,
+        "position": {"x": 100, "y": 200},
+    })
+    second = await _mind_add_canvas_node(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "ref_type": "project",
+        "ref_id": project.id,
+    })
+    assert first["created"] is True
+    assert second["created"] is False
+    assert second["node"]["node_id"] == first["node"]["node_id"]
+
+    note = await _node(db, user_a, kind="note", title="时间流笔记")
+    rejected = await _mind_add_canvas_node(db, user_a.id, {"canvas_id": canvas.id, "node_id": note.id})
+    assert "只能把项目、文件或活动引用节点放入画布" in rejected["error"]
