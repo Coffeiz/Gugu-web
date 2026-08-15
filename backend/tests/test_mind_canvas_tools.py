@@ -239,6 +239,51 @@ async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a
     blocked_relation = await _mind_disconnect_nodes(db, user_a.id, {"relation_id": relation["relation_id"]})
     assert json.loads(blocked_relation)["needs_confirm"] is True
 
+    relation_token = json.loads(blocked_relation)["confirm_token"]
+    deleted_relation = await _mind_disconnect_nodes(db, user_a.id, {
+        "relation_id": relation["relation_id"], "confirm": True, "confirm_token": relation_token,
+    })
+    assert deleted_relation["deleted_relation_id"] == relation["relation_id"]
+
+    note_token = json.loads(blocked)["confirm_token"]
+    deleted_note = await _mind_delete_canvas_note(db, user_a.id, {
+        "node_id": note.id, "version": note.version, "confirm": True, "confirm_token": note_token,
+    })
+    assert deleted_note["deleted_node_id"] == note.id
+    assert (await db.get(MindNode, note.id)).deleted_at is not None
+    assert await db.get(MindCanvasItem, item.id) is None
+
+
+async def test_canvas_mutations_reject_self_cross_user_and_stale_versions(db, user_a, user_b):
+    canvas = await _canvas(db, user_a)
+    first = await _node(db, user_a, title="自己连接一")
+    second = await _node(db, user_a, title="自己连接二")
+    await _item(db, user_a, canvas, first)
+    await _item(db, user_a, canvas, second, x=200)
+    self_link = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": first.id,
+    })
+    assert "不能连向自己" in self_link["error"]
+
+    foreign = await _node(db, user_b, title="其他用户节点")
+    # 模拟脏数据/并发迁移：即使视图项误挂到当前用户画布，节点归属校验仍不能越界。
+    await _item(db, user_a, canvas, foreign, x=400)
+    cross_link = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": foreign.id,
+    })
+    assert "只能连接画布便签或业务引用节点" in cross_link["error"]
+
+    note = await _node(db, user_a, kind="canvas_note", title="版本便签")
+    version = note.version
+    updated = await _mind_update_canvas_note(db, user_a.id, {
+        "node_id": note.id, "version": version, "content": "第一次修改",
+    })
+    assert updated["updated"] is True
+    stale = await _mind_update_canvas_note(db, user_a.id, {
+        "node_id": note.id, "version": version, "content": "旧版本覆盖",
+    })
+    assert "其他端修改" in stale["error"]
+
 
 async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db, user_a):
     canvas = await _canvas(db, user_a)
