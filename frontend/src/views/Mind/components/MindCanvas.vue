@@ -74,7 +74,7 @@ const emit = defineEmits<{
   (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides, runtimeConnection: NodeConnectionEndpoint): void
   (e: 'openRef', item: MindCanvasItem): void
   (e: 'itemMoved', item: MindCanvasItem): void
-  (e: 'viewChange', view: { x: number; y: number; scale: number }): void
+  (e: 'viewChange', view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } }): void
 }>()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -204,6 +204,10 @@ function updateViewportSize() {
   if (!viewport) return
   viewportSize.width = viewport.clientWidth
   viewportSize.height = viewport.clientHeight
+}
+function updateViewportSizeAndEmit() {
+  updateViewportSize()
+  emitViewChange()
 }
 
 // 悬浮抬起（见各贴纸组件的 .hover-card-fx）用纯 CSS transform，SVG 连线不知道 DOM 层面的
@@ -415,7 +419,12 @@ function onWheelZoom(event: WheelEvent) {
   emitViewChange()
 }
 function emitViewChange() {
-  emit('viewChange', { x: camera.x, y: camera.y, scale: camera.scale })
+  emit('viewChange', {
+    x: camera.x, y: camera.y, scale: camera.scale,
+    ...(viewportSize.width > 0 && viewportSize.height > 0
+      ? { viewport: { width: viewportSize.width, height: viewportSize.height } }
+      : {}),
+  })
 }
 function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
@@ -466,8 +475,8 @@ onMounted(() => {
     if (action.type === 'move') onRuntimeMove(action as MoveAction)
   })
   stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
-  updateViewportSize()
-  viewportResizeObserver = new ResizeObserver(updateViewportSize)
+  updateViewportSizeAndEmit()
+  viewportResizeObserver = new ResizeObserver(updateViewportSizeAndEmit)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)

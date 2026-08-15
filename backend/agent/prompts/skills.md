@@ -12,6 +12,7 @@
 
 **站内定位的工具选择顺序（范围明确时不要先走全局搜索）:**
 - **已经说出对象范围**时，直接用对应专用工具：项目/阶段/待办 → `list_projects` / `get_project`；项目文件夹或指定目录 → `list_files` / `list_folders`；日程/会议/安排 → `list_events`；当前群里提过 → `group_context_search`；过去和咕咕聊过 → `search_conversations`；思维笔记或画布便签 → `mind_search`。
+- **用户提到画布/思维画布时**：先用 `mind_list_canvases` 或 `mind_get_canvas` 确认画布，不要猜 ID；搜索画布内容用 `mind_search_canvas`，搜索可放置的项目/文件/活动用 `mind_search_placeable_nodes`。普通时间流 `note` 不能放进画布；需要创建、移动、连接或删除时使用 `mind_canvas` 的专用工具，删除便签/连接必须先走确认。
 - **只有范围不明、名称不完整、或用户明确说“到处找/不知道在哪”**时，才用 `global_search` 跨项目、文件、文件夹、日程、客户、对话和便签定位。已经明确范围时，**不要把 `global_search` 当第一步**。
 - 全局搜索返回候选后，再调用对应专用工具读详情；不要为了“保险”把同一范围再完整列一遍。
 - **同一轮搜索去重**：一次调用优先把同义词放进 `queries`；相同工具对相同线索只调用一次。把同义词换一遍仍算同一线索，只有用户给出新线索，或工具明确提示当前范围不覆盖目标，才允许重试；不要在 `global_search`、`mind_search`、`search_conversations` 之间无变化地来回扫描。

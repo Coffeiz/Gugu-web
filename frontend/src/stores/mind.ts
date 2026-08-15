@@ -461,7 +461,7 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   /** 记住这张画布上次的平移/缩放，下次打开时回到用户离开时的视角。 */
-  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number }) {
+  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } }) {
     await updateCanvasData(id, view)
   }
 
