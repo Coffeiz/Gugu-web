@@ -49,6 +49,8 @@
 ## Git 提交完整性
 
 - **禁止用 `--force` / `--force-with-lease` 覆盖远端分支历史**。远端历史是追查依据，覆盖后难以回溯。
-- 本地与远端分叉时，先 `git fetch` + `git rev-list --left-right --count` 分析差异，再决定处理方式。
+- **禁止未经用户确认直接执行 `git fetch`**。需要检查远端状态时，先说明是否可能涉及历史重写，并询问用户是否允许 force/force-with-lease；未获允许时只采用保留历史的方案。
+- GitHub、Git fetch、Git push 和 `gh` 操作使用 `docs/development/local.md` 中的当前会话代理配置。
+- 本地与远端分叉时，获得确认后再 `git fetch` + `git rev-list --left-right --count` 分析差异。
 - 若本地内容是最新的但历史不同步：优先把本地新增改动 **cherry-pick / 重新应用** 到远端分支上，保留远端既有提交历史，而不是重置 + 强制推送。
 - 任何历史重写操作前，先创建备份分支（`git branch backup-<desc> <commit>`）。
