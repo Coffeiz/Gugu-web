@@ -1,0 +1,76 @@
+/* Unified scrollbar contract.
+ *
+ * Visual rule: transparent track, thumb only. Chromium/WebKit track margins keep the thumb away
+ * from rounded top/bottom edges. Layout rule: known scroll surfaces reserve their gutter from the
+ * beginning, so overflow appearing later never changes content width. On overlay-scrollbar systems
+ * the browser naturally paints above content and the reserved gutter collapses to the platform rule.
+ */
+:root {
+  --scrollbar-safe-inset: var(--space-sm);
+}
+
+html[data-theme][data-family] * {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+html[data-theme][data-family] .scroll-surface,
+html[data-theme][data-family] .page-content,
+html[data-theme][data-family] .design-page,
+html[data-theme][data-family] .task-grid,
+html[data-theme][data-family] .col-body {
+  scrollbar-gutter: stable;
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar {
+  width: var(--scrollbar-size-default);
+  height: var(--scrollbar-size-default);
+  background: transparent;
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar-track {
+  background: transparent;
+  margin-block: var(--scrollbar-safe-inset);
+  margin-inline: var(--scrollbar-safe-inset);
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar-corner,
+html[data-theme][data-family] *::-webkit-scrollbar-button {
+  background: transparent;
+}
+
+html[data-theme][data-family] *::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+html[data-theme][data-family] .scroll-surface--compact::-webkit-scrollbar {
+  width: var(--scrollbar-size-compact);
+  height: var(--scrollbar-size-compact);
+}
+
+html[data-theme][data-family] .scroll-surface--editor::-webkit-scrollbar {
+  width: var(--scrollbar-size-editor);
+  height: var(--scrollbar-size-editor);
+}
+
+html[data-theme][data-family] .scroll-surface--hidden {
+  scrollbar-width: none;
+}
+
+html[data-theme][data-family] .scroll-surface--hidden::-webkit-scrollbar {
+  display: none;
+}
