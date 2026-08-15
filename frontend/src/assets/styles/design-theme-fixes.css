@@ -19,7 +19,13 @@ html[data-theme][data-family] .design-page .scrollbar-demo-grid {
 }
 html[data-theme][data-family] .design-page .scrollbar-style-card {
   min-width:0;
+  height:auto;
   overflow:hidden;
+  scrollbar-gutter:auto;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card .token-meta::after {
+  content:none;
+  display:none;
 }
 html[data-theme][data-family] .design-page .scrollbar-live-surface,
 html[data-theme][data-family] .design-page .scrollbar-overflow-surface {
