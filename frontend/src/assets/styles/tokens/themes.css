@@ -16,6 +16,7 @@
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(123,127,178,0.22);
   --scrollbar-thumb-hover: rgba(123,127,178,0.38);
+  --divider-line: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
   color-scheme: light;
 }
 :root[data-theme='dark'] {
@@ -31,5 +32,6 @@
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(190,185,235,0.24);
   --scrollbar-thumb-hover: rgba(190,185,235,0.42);
+  --divider-line: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 20%, rgba(255,255,255,0.12) 80%, transparent 100%);
   color-scheme: dark;
 }

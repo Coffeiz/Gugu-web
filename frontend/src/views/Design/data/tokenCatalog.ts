@@ -45,5 +45,6 @@ export const tokenCatalog: DesignToken[] = [
   { name: '静止阴影', variable: '--shadow-rest', category: 'primitive', type: 'shadow', description: '普通表面静止态。' },
   { name: '悬停阴影', variable: '--shadow-hover', category: 'primitive', type: 'shadow', description: '普通 UI hover 态。' },
   { name: '默认过渡', variable: '--motion-default', category: 'motion', type: 'duration', description: '普通 UI 过渡时长。' },
+  { name: '导航分割线', variable: '--divider-line', category: 'component', type: 'other', description: '导航栏与页面章节共用的主题分割线。' },
   { name: '画布点阵', variable: '--canvas-dot-color', category: 'canvas', type: 'color', description: '画布点阵视觉，不含 camera 算法。' },
 ]

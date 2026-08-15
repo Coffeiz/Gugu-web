@@ -36,6 +36,7 @@
         <div class="section-heading"><span>04</span><h2 id="components-title">表面与组件</h2></div>
         <div class="component-grid">
           <article class="sample-card glass-sample"><code>--surface-glass</code><div class="glass-demo"><strong>共享玻璃表面</strong><span>面板、弹窗和普通卡片共用语义表面。</span></div></article>
+          <article class="sample-card divider-sample"><code>--divider-line</code><div class="divider-demo" /><small>导航栏和页面章节共用的主题分割线。</small></article>
           <ComponentStatesPreview />
           <article class="sample-card admin-sample admin-theme"><code>admin-theme</code><div class="admin-demo"><strong>Admin 暗色表面</strong><span>Admin 独立映射 surface、content、border 和 scrollbar。</span><button type="button">配置面板</button></div></article>
         </div>
@@ -96,7 +97,8 @@ async function handleCopy(token: DesignToken) {
 .design-header { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); padding-bottom: 28px; border-bottom: 1px solid var(--border-subtle); }
 .eyebrow, .section-heading span { color: var(--content-secondary); font-size: var(--font-size-xs); letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 5px 0; font-size: 32px; line-height: 1.15; } .subtitle { color: var(--content-secondary); font-size: var(--font-size-sm); }
-.token-section { padding: 32px 0; border-bottom: 1px solid var(--border-subtle); }
+.token-section { position: relative; padding: 32px 0; }
+.token-section::after { content: ''; position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: var(--divider-line); }
 .section-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; } .section-heading h2 { margin: 0; font-size: 24px; }
 .color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
 .color-card, .sample-card { min-width: 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-glass); box-shadow: var(--shadow-rest); }
@@ -108,6 +110,7 @@ h1 { margin: 5px 0; font-size: 32px; line-height: 1.15; } .subtitle { color: var
 .radius-list { grid-template-columns: repeat(4, 1fr); } .radius-sample { display: grid; place-items: center; min-height: 58px; border: 1px solid var(--border-strong); background: var(--surface-panel); } .radius-sample code { font-size: 10px; }
 .shadow-sample { display: grid; gap: 4px; min-height: 48px; padding: 10px; border-radius: var(--radius-sm); background: var(--surface-panel); } .shadow-sample strong { font-size: var(--font-size-sm); }
 .glass-demo, .admin-demo { display: grid; gap: 8px; margin-top: 16px; padding: 20px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-panel); } .glass-demo span, .admin-demo span { color: var(--content-secondary); font-size: var(--font-size-sm); }
+.divider-demo { height: 1px; margin: 34px 0 14px; background: var(--divider-line); }
 .motion-demo { padding: 16px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-panel); transition-property: transform, background-color; } .motion-demo:hover { transform: translateY(-3px); background: var(--surface-glass-hover); }
 .canvas-grid { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-2); } .canvas-demo { padding: 0; } .dot-field { position: relative; min-height: 220px; overflow: hidden; background-color: var(--surface-panel); background-image: radial-gradient(var(--canvas-dot-color) 1px, transparent 1px); background-size: 18px 18px; } .canvas-node { position: absolute; top: 76px; left: 25%; padding: 18px 28px; border: 1px solid var(--border-strong); border-radius: var(--canvas-card-radius); background: var(--surface-card); box-shadow: var(--card-shadow); } .canvas-line { position: absolute; top: 132px; left: 43%; width: 40%; height: 1px; background: var(--canvas-connection-color); transform: rotate(-12deg); transform-origin: left; } .canvas-token-list { display: grid; gap: var(--space-2); } .canvas-token { display: grid; gap: 8px; padding: var(--space-4); }
 @media (max-width: 900px) { .color-grid, .type-grid, .motion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .layout-grid > *, .component-grid > * { grid-column: span 6; } .canvas-grid { grid-template-columns: 1fr; } }

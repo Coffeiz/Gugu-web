@@ -266,7 +266,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .nav-section { display: flex; flex-direction: column; gap: 2px; }
 .nav-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
+  background: var(--divider-line);
   margin: 6px 4px;
   flex-shrink: 0;
 }
