@@ -1,4 +1,4 @@
-/* 兼容入口：业务样式暂时仍可从这里导入，实际令牌按层位于 tokens/。 */
+/* Compatibility entry. New component styles should consume semantic/component tokens directly. */
 @import './tokens/index.css';
 
 :root {
@@ -8,12 +8,8 @@
   --modal-leave-duration: 0.18s;
   --modal-enter-easing: cubic-bezier(0.4, 0, 0.2, 1);
   --modal-leave-easing: cubic-bezier(0.4, 0, 1, 1);
-  --glass-shadow: var(--shadow-rest);
-  --glass-shadow-lg: var(--shadow-hover);
+  --glass-shadow: var(--elevation-card);
+  --glass-shadow-lg: var(--elevation-card-hover);
   --gugu-body-size: var(--font-size-md);
-  --gugu-body-line: 1.5;
-  --sidebar-width: 220px;
-  --floating-edge: 28px;
-  --canvas-toolbar-height: 50px;
-  --font-sans: 'PingFang SC', 'SF Pro Text', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --gugu-body-line: var(--line-height-body);
 }
