@@ -60,6 +60,7 @@ import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
+import { createRelationRuntimeConnection } from './utils/relationRuntimeConnection'
 
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
@@ -282,9 +283,19 @@ async function removeRelation(id: number) {
   const relation = store.canvasRelations.find(current => current.id === id)
   const sourceObjectId = relation ? runtimeObjectIdForNode(relation.srcNodeId) : null
   const targetObjectId = relation ? runtimeObjectIdForNode(relation.dstNodeId) : null
+  const runtimeConnection = relation
+    ? createRelationRuntimeConnection(
+        relationAnchors.value[String(relation.id)],
+        sourceObjectId,
+        targetObjectId,
+      )
+    : null
   await store.removeCanvasRelation(id)
   deleteOptimisticRelationAnchor(id)
-  if (sourceObjectId && targetObjectId) {
+  if (runtimeConnection) {
+    runtime.unregisterNodeConnection(runtimeConnection)
+  } else if (sourceObjectId && targetObjectId) {
+    // 兼容尚未保存端点的历史 relation；新 relation 都走上面的精确注销。
     runtime.deleteNodeConnectionsBetween(sourceObjectId, targetObjectId)
   }
 }
