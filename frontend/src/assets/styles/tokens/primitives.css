@@ -43,7 +43,7 @@
   --project-blue: #7d8eb7;
   --project-mauve: #a980ad;
 
-  /* Glass legacy palette：保留现有产品识别色，也供兼容层引用。 */
+  /* Glass legacy palette：实现细节只留在 foundations，Design 页不直接暴露这些名字。 */
   --palette-purple-500: #7b7fb2;
   --palette-purple-400: #9590c4;
   --palette-pink-400: #c4afc8;
@@ -84,17 +84,21 @@
   --alpha-black-12: rgba(0,0,0,.12);
   --alpha-black-18: rgba(0,0,0,.18);
 
-  /* ── Typography ──────────────────────────────────────────────── */
+  /* ── Typography ────────────────────────────────────────────────
+     Five sizes only. Role aliases below keep existing components source-compatible. */
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --font-size-micro: 10px;
   --font-size-xs: 11px;
   --font-size-sm: 12px;
-  --font-size-body: 13px;
   --font-size-md: 14px;
   --font-size-lg: 16px;
-  --font-size-title: 20px;
-  --font-size-display: 24px;
+  --font-size-xl: 20px;
+
+  --font-size-micro: var(--font-size-xs);
+  --font-size-body: var(--font-size-md);
+  --font-size-title: var(--font-size-xl);
+  --font-size-display: var(--font-size-xl);
+
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
@@ -104,29 +108,38 @@
   --line-height-body: 1.55;
   --tracking-label: .07em;
 
-  /* ── Spacing: 4px grid + useful half steps ───────────────────── */
-  --space-0-5: 2px;
-  --space-1: 4px;
-  --space-1-5: 6px;
-  --space-2: 8px;
-  --space-2-5: 10px;
-  --space-3: 16px; /* compatibility: do not remap */
-  --space-3-compact: 12px;
-  --space-3-5: 14px;
-  --space-4: 24px; /* compatibility: do not remap */
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-8: 32px;
-  --space-10: 40px;
-  --space-12: 48px;
+  /* ── Spacing ───────────────────────────────────────────────────
+     Five reusable steps. Numeric aliases remain for old components, but they resolve
+     to these five values so the product cannot silently grow another spacing scale. */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
 
-  /* ── Shape ───────────────────────────────────────────────────── */
+  --space-0-5: var(--space-xs);
+  --space-1: var(--space-xs);
+  --space-1-5: var(--space-xs);
+  --space-2: var(--space-sm);
+  --space-2-5: var(--space-sm);
+  --space-3-compact: var(--space-md);
+  --space-3-5: var(--space-md);
+  --space-3: var(--space-lg);
+  --space-5: var(--space-lg);
+  --space-4: var(--space-xl);
+  --space-6: var(--space-xl);
+  --space-8: var(--space-xl);
+  --space-10: var(--space-xl);
+  --space-12: var(--space-xl);
+
+  /* ── Shape ─────────────────────────────────────────────────────
+     Four geometric radii + pill = five shapes. xl is a compatibility alias. */
   --radius-xs: 6px;
   --radius-sm: 10px;
   --radius-md: 14px;
-  --radius-lg: 18px;
-  --radius-xl: 20px;
+  --radius-lg: 20px;
   --radius-pill: 999px;
+  --radius-xl: var(--radius-lg);
 
   /* Raw geometry. Components should prefer semantic/component aliases. */
   --sidebar-width: 220px;
