@@ -2,7 +2,18 @@
   <div>
     <div class="pm-section">
       <div class="pm-section-label">外观</div>
-      <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">主题</span><span class="pm-field-hint">界面颜色风格</span></div><div class="pm-coming">咕了</div></div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc"><span class="pm-field-name">主题</span><span class="pm-field-hint">选择 Aero 或 Mono 视觉体系</span></div>
+        <div class="pm-style-group">
+          <button v-for="item in families" :key="item.value" class="pm-style-chip" :class="{ active: family === item.value }" @click="setFamily(item.value)">{{ item.label }}</button>
+        </div>
+      </div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc"><span class="pm-field-name">明暗模式</span><span class="pm-field-hint">固定亮色 / 暗色，或跟随系统</span></div>
+        <div class="pm-style-group">
+          <button v-for="item in modes" :key="item.value" class="pm-style-chip" :class="{ active: preference === item.value }" @click="setTheme(item.value)">{{ item.label }}</button>
+        </div>
+      </div>
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">语言</span><span class="pm-field-hint">界面显示语言</span></div><div class="pm-static">简体中文</div></div>
     </div>
     <div class="pm-sep"></div>
@@ -32,8 +43,19 @@
 
 <script setup lang="ts">
 import { usePreferencesStore } from '@/stores/preferences'
+import { useTheme, type ThemeFamily, type ThemePreference } from '@/composables/useTheme'
 
 const prefsStore = usePreferencesStore()
+const { preference, family, setTheme, setFamily } = useTheme()
+const families: Array<{ value: ThemeFamily; label: string }> = [
+  { value: 'glass', label: 'Aero' },
+  { value: 'v2', label: 'Mono' },
+]
+const modes: Array<{ value: ThemePreference; label: string }> = [
+  { value: 'light', label: '亮色' },
+  { value: 'dark', label: '暗色' },
+  { value: 'system', label: '跟随系统' },
+]
 const views = [
   { value: 'projects', label: '项目' },
   { value: 'calendar', label: '日历' },
