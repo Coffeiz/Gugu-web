@@ -25,7 +25,12 @@ from app.services.mind_canvas import (
     disconnect_node_relation,
     get_canvas_item,
     get_canvas_item_by_node,
+    get_owned_canvas,
     get_or_create_reference,
+    list_canvas_nodes,
+    list_canvas_relations,
+    list_canvases,
+    search_canvas_nodes,
     remove_canvas_item,
     update_canvas_item,
     update_canvas_note,
@@ -100,7 +105,7 @@ def _node_summary(node: MindNode, item: MindCanvasItem | None = None, *, include
 
 
 async def _get_owned_canvas(db, user_id, canvas_id: int) -> MindMap | None:
-    return await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))
+    return await get_owned_canvas(db, user_id, canvas_id)
 
 
 async def _mind_list_canvases(db, user_id, args: dict):
@@ -108,22 +113,9 @@ async def _mind_list_canvases(db, user_id, args: dict):
     offset = args.get("offset", 0)
     offset = offset if isinstance(offset, int) and offset >= 0 else 0
     project_id = args.get("project_id")
-    stmt = select(MindMap).where(MindMap.user_id == user_id)
-    if isinstance(project_id, int):
-        stmt = stmt.where(MindMap.project_id == project_id)
-    rows = (await db.execute(stmt.order_by(MindMap.updated_at.desc(), MindMap.id.desc()).limit(limit).offset(offset))).scalars().all()
-    count_stmt = select(func.count()).select_from(MindMap).where(MindMap.user_id == user_id)
-    if isinstance(project_id, int):
-        count_stmt = count_stmt.where(MindMap.project_id == project_id)
-    total = await db.scalar(count_stmt) or 0
-    counts = {}
-    if rows:
-        count_rows = await db.execute(
-            select(MindCanvasItem.canvas_id, func.count(MindCanvasItem.id))
-            .where(MindCanvasItem.user_id == user_id, MindCanvasItem.canvas_id.in_([row.id for row in rows]))
-            .group_by(MindCanvasItem.canvas_id)
-        )
-        counts = dict(count_rows.all())
+    rows, total, counts = await list_canvases(
+        db, user_id, project_id=project_id, limit=limit, offset=offset,
+    )
     return {
         "canvases": [
             {
@@ -165,31 +157,13 @@ async def _mind_get_canvas(db, user_id, args: dict):
     }
     if not include_nodes:
         return result
-    rows = (await db.execute(
-        select(MindCanvasItem, MindNode)
-        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
-        .where(
-            MindCanvasItem.canvas_id == canvas.id,
-            MindCanvasItem.user_id == user_id,
-            MindNode.user_id == user_id,
-            MindNode.kind.in_(("canvas_note", "ref")),
-            MindNode.deleted_at.is_(None),
-        )
-        .order_by(MindCanvasItem.z, MindCanvasItem.id)
-        .limit(limit)
-    )).all()
+    rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit)
     result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in rows]
     result["truncated"] = len(rows) >= limit
     if include_relations:
         node_ids = [node.id for _, node in rows]
         if node_ids:
-            relations = (await db.execute(
-                select(MindRelation).where(
-                    MindRelation.user_id == user_id,
-                    MindRelation.src_node_id.in_(node_ids),
-                    MindRelation.dst_node_id.in_(node_ids),
-                ).order_by(MindRelation.id)
-            )).scalars().all()
+            relations = await list_canvas_relations(db, user_id, node_ids)
             result["relations"] = [
                 {
                     "relation_id": relation.id,
@@ -225,24 +199,11 @@ async def _mind_search_canvas(db, user_id, args: dict):
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
     limit = _limit(args.get("limit"), 10)
-    stmt = (
-        select(MindCanvasItem, MindNode)
-        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
-        .where(
-            MindCanvasItem.canvas_id == canvas_id,
-            MindCanvasItem.user_id == user_id,
-            MindNode.user_id == user_id,
-            MindNode.deleted_at.is_(None),
-        )
-        .order_by(MindCanvasItem.z.desc(), MindCanvasItem.id.desc())
-        .limit(limit)
-    )
     type_condition = _canvas_type_condition(args.get("types") if isinstance(args.get("types"), list) else None)
-    if type_condition is not None:
-        stmt = stmt.where(type_condition)
+    conditions = [type_condition] if type_condition is not None else []
     if normalized:
-        stmt = stmt.where(keyword_condition([MindNode.title, MindNode.content_plain], normalized, args.get("mode")))
-    rows = (await db.execute(stmt)).all()
+        conditions.append(keyword_condition([MindNode.title, MindNode.content_plain], normalized, args.get("mode")))
+    rows = await search_canvas_nodes(db, user_id, canvas_id, condition=and_(*conditions) if conditions else None, limit=limit)
     return {
         "canvas_id": canvas_id,
         "query": q,

@@ -1,11 +1,13 @@
 """思维画布 Agent/API 共用的主要写入边界。"""
-from sqlalchemy import select, update
+from sqlalchemy import and_, false, func, or_, select, update
 
 from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation, validate_note_color
 from app.core.mind_canvas import get_or_create_reference_node, soft_delete_canvas_note
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import MindCanvasItem, MindMap, MindNode, MindRelation, Project
+from app.models import CalendarEvent, File
+from app.search.query import keyword_condition
 
 
 async def create_canvas(db, user_id, title, project_id=None):
@@ -144,3 +146,112 @@ async def disconnect_node_relation(db, user_id, relation_id):
 
 async def get_or_create_reference(db, user_id, ref_type, ref_id):
     return await get_or_create_reference_node(db, user_id, ref_type, ref_id)
+
+
+async def get_owned_canvas(db, user_id, canvas_id):
+    return await db.scalar(select(MindMap).where(MindMap.id == canvas_id, MindMap.user_id == user_id))
+
+
+async def list_canvases(db, user_id, *, project_id=None, limit=20, offset=0):
+    stmt = select(MindMap).where(MindMap.user_id == user_id)
+    count_stmt = select(func.count()).select_from(MindMap).where(MindMap.user_id == user_id)
+    if isinstance(project_id, int):
+        stmt = stmt.where(MindMap.project_id == project_id)
+        count_stmt = count_stmt.where(MindMap.project_id == project_id)
+    rows = (await db.execute(
+        stmt.order_by(MindMap.updated_at.desc(), MindMap.id.desc()).limit(limit).offset(offset)
+    )).scalars().all()
+    total = await db.scalar(count_stmt) or 0
+    counts = {}
+    if rows:
+        count_rows = await db.execute(
+            select(MindCanvasItem.canvas_id, func.count(MindCanvasItem.id))
+            .where(MindCanvasItem.user_id == user_id, MindCanvasItem.canvas_id.in_([row.id for row in rows]))
+            .group_by(MindCanvasItem.canvas_id)
+        )
+        counts = dict(count_rows.all())
+    return rows, total, counts
+
+
+async def list_canvas_nodes(db, user_id, canvas_id, *, limit):
+    return (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(
+            MindCanvasItem.canvas_id == canvas_id,
+            MindCanvasItem.user_id == user_id,
+            MindNode.user_id == user_id,
+            MindNode.kind.in_(("canvas_note", "ref")),
+            MindNode.deleted_at.is_(None),
+        )
+        .order_by(MindCanvasItem.z, MindCanvasItem.id)
+        .limit(limit)
+    )).all()
+
+
+async def list_canvas_relations(db, user_id, node_ids):
+    if not node_ids:
+        return []
+    return (await db.execute(
+        select(MindRelation).where(
+            MindRelation.user_id == user_id,
+            MindRelation.src_node_id.in_(node_ids),
+            MindRelation.dst_node_id.in_(node_ids),
+        ).order_by(MindRelation.id)
+    )).scalars().all()
+
+
+async def search_canvas_nodes(db, user_id, canvas_id, *, condition, limit):
+    stmt = (
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(
+            MindCanvasItem.canvas_id == canvas_id,
+            MindCanvasItem.user_id == user_id,
+            MindNode.user_id == user_id,
+            MindNode.deleted_at.is_(None),
+        )
+        .order_by(MindCanvasItem.z.desc(), MindCanvasItem.id.desc())
+        .limit(limit)
+    )
+    if condition is not None:
+        stmt = stmt.where(condition)
+    return (await db.execute(stmt)).all()
+
+
+async def list_existing_reference_nodes(db, user_id, ref_types):
+    return (await db.execute(select(MindNode).where(
+        MindNode.user_id == user_id,
+        MindNode.kind == "ref",
+        MindNode.deleted_at.is_(None),
+        MindNode.ref_type.in_(ref_types),
+    ))).scalars().all()
+
+
+async def list_existing_canvas_reference_items(db, user_id, canvas_id):
+    return (await db.execute(
+        select(MindCanvasItem, MindNode)
+        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
+        .where(MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id, MindNode.kind == "ref")
+    )).all()
+
+
+async def search_placeable_entities(db, user_id, selected, normalized, mode, limit):
+    matches = []
+    if "project" in selected:
+        matches.extend((await db.execute(select(Project).where(
+            Project.user_id == user_id,
+            keyword_condition([Project.name, Project.client], normalized, mode),
+        ).order_by(Project.updated_at.desc()).limit(limit))).scalars().all())
+    if "file" in selected and len(matches) < limit:
+        matches.extend((await db.execute(select(File).where(
+            File.user_id == user_id,
+            File.deleted_at.is_(None),
+            keyword_condition([File.display_name, File.ext, File.stage_name], normalized, mode),
+        ).order_by(File.updated_at.desc()).limit(limit))).scalars().all())
+    if "event" in selected and len(matches) < limit:
+        matches.extend((await db.execute(select(CalendarEvent).where(
+            CalendarEvent.user_id == user_id,
+            keyword_condition([CalendarEvent.title, CalendarEvent.description, CalendarEvent.client], normalized, mode),
+        ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all())
+    return matches
