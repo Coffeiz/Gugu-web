@@ -45,6 +45,9 @@ export interface ChatSession {
   title: string
   source?: string
   chatType?: string
+  // /agent/sessions 已返回这两个 ISO 时间；侧栏用 updatedAt 显示“最后对话时间”。
+  updatedAt?: string
+  createdAt?: string
 }
 
 // 共享给 GuguChat.vue 和 GuguChatSidebar.vue：函数类型 props 在 strictFunctionTypes 下
