@@ -141,6 +141,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -170,6 +171,13 @@ jobs:
 
       - name: Confirmation gate guard
         run: python backend/scripts/check_confirm_gate.py
+
+      - name: ORM boundary ratchet
+        env:
+          ORM_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base="${ORM_BASE_SHA:-$(git rev-parse HEAD^)}"
+          python backend/scripts/check_orm_boundaries.py --diff-base "$base"
 
   # 最小 E2E 基线：只保留不可 skip 的关键路径（文件上传删除、定时任务立即
   # 运行、GuguChat 悬浮窗收发消息/会话切换），环境全部确定化——真实

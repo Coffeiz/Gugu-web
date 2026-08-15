@@ -275,3 +275,10 @@ Agent 工具和后台任务
 > Model 管数据结构，Service 管业务规则，API 管 HTTP 边界；权限、事务、目录和删除语义只能有一个入口。
 
 棘轮的目标不是让旧代码立即完美，而是保证每次改动都不会让 ORM 边界变得更松散。
+
+## 12. 实施状态
+
+- 阶段 0 已完成：基线见 `docs/refactor/ORM规范化阶段0基线.md`，扫描器为 `backend/scripts/check_orm_boundaries.py`，默认只报告存量。
+- 阶段 1 已完成首个守卫接入：CI 使用 `--diff-base` 只检查新增的高风险 ORM 行，不因历史存量阻塞当前开发。
+- 阶段 1 当前拦截范围：API、Agent、Service 新增 `select/update/delete/insert`、数据库写入/裸 `get`，以及 API/Agent 直接导入 `File/Folder`。
+- 现有 `check_ownership.py`、`check_confirm_gate.py` 和 `check_utcnow.py` 继续作为独立守卫；它们不替代后续文件域 Service 迁移。

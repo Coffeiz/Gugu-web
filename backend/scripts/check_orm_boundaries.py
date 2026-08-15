@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -94,10 +95,50 @@ def scan() -> list[Finding]:
     return findings
 
 
+def scan_added_lines(base: str) -> list[str]:
+    """只检查相对 base 新增的高风险代码行，作为阶段 1 棘轮。"""
+    diff = subprocess.run(
+        ["git", "diff", "--unified=0", f"{base}...HEAD", "--", "backend/app/api/v1", "backend/agent/tools", "backend/app/services"],
+        cwd=BACKEND.parent,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    violations: list[str] = []
+    current_file = ""
+    for line in diff.splitlines():
+        if line.startswith("+++ b/"):
+            current_file = line[6:]
+            continue
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        code = line[1:].strip()
+        if not code or code.startswith("#"):
+            continue
+        high_risk = (
+            "from app.models import" in code and any(name in code for name in ("File", "Folder"))
+            or any(token in code for token in ("select(", "update(", "delete(", "insert("))
+            or any(token in code for token in ("db.get(", "session.get(", "self.db.get(", "db.commit(", "db.rollback(", "db.execute(", "db.delete(", "db.add("))
+        )
+        if high_risk:
+            violations.append(f"{current_file}: {code[:160]}")
+    return violations
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--diff-base", help="阶段 1：只检查相对该 Git ref 新增的高风险 ORM 行")
     args = parser.parse_args()
+    if args.diff_base:
+        violations = scan_added_lines(args.diff_base)
+        if violations:
+            print("❌ ORM 阶段 1 棘轮失败：新增代码包含未收口的 ORM 边界，请迁移到 Service 或补充明确豁免：")
+            for violation in violations:
+                print(f"  {violation}")
+            return 1
+        print("✅ ORM 阶段 1 棘轮通过：新增高风险 ORM 边界未扩大")
+        return 0
     findings = scan()
     counts = Counter((item.area, item.category) for item in findings)
     files = defaultdict(set)
