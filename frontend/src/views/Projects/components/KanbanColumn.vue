@@ -70,10 +70,11 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 </script>
 
 <style scoped>
-/* 玻璃质感（background/border/圆角/box-shadow/backdrop-filter/hover）统一走全局
-   .glass-card 与 Glass 组件 token；看板列只保留自身布局职责。 */
+/* Column background is a product role now. Feed the shared --column-bg into glass-card rather than
+   shadowing --surface-glass locally, so Projects / Schedules / Design preview resolve the same value. */
 .column {
-  --surface-glass: rgba(255,255,255,0.25);
+  --glass-card-background: var(--column-bg);
+  --glass-card-background-hover: var(--column-bg);
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
@@ -94,9 +95,8 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   flex: 1; overflow-y: auto;
   min-width: 0; box-sizing: border-box;
   overflow-x: hidden;
-  /* 固定预留滚动条空间：内容跨过溢出阈值时，卡片宽度不能被动态挤窄。overlay 是
-     非标准属性，系统设为始终显示滚动条时仍会退化成 auto。 */
-  scrollbar-gutter: stable;
+  /* scroll-surface reserves the gutter before overflow and the global scrollbar contract owns
+     width/track/safe inset. Cards therefore never change width when the thumb appears. */
   padding: 2px 6px;
   margin-right: 0;
 }
