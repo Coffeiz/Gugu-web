@@ -290,6 +290,7 @@ async def test_canvas_mutations_reject_self_cross_user_and_stale_versions(db, us
 async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db, user_a):
     user_id = user_a.id
     canvas = await _canvas(db, user_a)
+    canvas_id = canvas.id
     project = Project(user_id=user_a.id, name="批量项目")
     db.add(project)
     await db.commit()
@@ -312,9 +313,10 @@ async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db
     rollback_project = Project(user_id=user_id, name="回滚项目")
     db.add(rollback_project)
     await db.commit()
-    failed = await _mind_batch_canvas(db, user_a.id, {"canvas_id": canvas.id, "request_id": "batch-rollback-2", "operations": [
-        {"kind": "add_node", "ref_type": "project", "ref_id": rollback_project.id},
+    rollback_project_id = rollback_project.id
+    failed = await _mind_batch_canvas(db, user_id, {"canvas_id": canvas_id, "request_id": "batch-rollback-2", "operations": [
+        {"kind": "add_node", "ref_type": "project", "ref_id": rollback_project_id},
         {"kind": "unsupported"},
     ]})
     assert failed["rolled_back"] is True
-    assert await db.scalar(select(MindNode).where(MindNode.ref_type == "project", MindNode.ref_id == rollback_project.id)) is None
+    assert await db.scalar(select(MindNode).where(MindNode.ref_type == "project", MindNode.ref_id == rollback_project_id)) is None
