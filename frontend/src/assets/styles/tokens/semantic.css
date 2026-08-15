@@ -10,7 +10,7 @@
   --content-secondary: var(--text-secondary);
   --content-muted: color-mix(in srgb, var(--text-secondary) 72%, transparent);
   --content-on-accent: #fff;
-  --border-subtle: rgba(255, 255, 255, 0.42);
+  --border-subtle: var(--theme-border-subtle);
   --border-strong: var(--glass-border);
   --border-focus: rgba(123, 127, 178, 0.45);
   --action-primary: var(--color-primary);

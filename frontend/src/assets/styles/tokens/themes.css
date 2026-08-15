@@ -17,21 +17,33 @@
   --scrollbar-thumb: rgba(123,127,178,0.22);
   --scrollbar-thumb-hover: rgba(123,127,178,0.38);
   --divider-line: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
+  --theme-border-subtle: rgba(255, 255, 255, 0.42);
+  --theme-border-strong: rgba(255, 255, 255, 0.76);
+  --shadow-highlight-rest: rgba(255,255,255,0.95);
+  --shadow-highlight-side: rgba(255,255,255,0.55);
+  --shadow-highlight-hover: rgba(255,255,255,0.98);
+  --shadow-highlight-hover-side: rgba(255,255,255,0.65);
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --bg-gradient: linear-gradient(145deg, #151727 0%, #1d2033 60%, #252942 100%);
-  --glass-bg: rgba(32, 35, 56, 0.76);
-  --glass-bg-hover: rgba(42, 45, 70, 0.86);
-  --glass-border: rgba(255,255,255,0.14);
-  --panel-bg: rgba(26, 29, 46, 0.92);
+  --bg-gradient: linear-gradient(145deg, #0e101a 0%, #11131f 60%, #13152a 100%);
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-bg-hover: rgba(255, 255, 255, 0.09);
+  --glass-border: rgba(255,255,255,0.12);
+  --panel-bg: rgba(24, 27, 44, 0.86);
   --text-primary: rgba(255,255,255,0.92);
-  --text-secondary: rgba(255,255,255,0.58);
-  --color-primary: #aaa6d8;
-  --color-primary-hover: #c0bbed;
+  --text-secondary: rgba(255,255,255,0.55);
+  --color-primary: #9590c4;
+  --color-primary-hover: #aaa6d8;
   --scrollbar-track: transparent;
   --scrollbar-thumb: rgba(190,185,235,0.24);
   --scrollbar-thumb-hover: rgba(190,185,235,0.42);
   --divider-line: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 20%, rgba(255,255,255,0.12) 80%, transparent 100%);
+  --theme-border-subtle: rgba(255,255,255,0.07);
+  --theme-border-strong: rgba(255,255,255,0.12);
+  --shadow-highlight-rest: rgba(255,255,255,0.12);
+  --shadow-highlight-side: rgba(255,255,255,0.06);
+  --shadow-highlight-hover: rgba(255,255,255,0.16);
+  --shadow-highlight-hover-side: rgba(255,255,255,0.08);
   color-scheme: dark;
 }

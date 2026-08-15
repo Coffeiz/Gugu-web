@@ -26,9 +26,9 @@
   --radius-md: 14px;
   --radius-lg: 18px;
   --radius-pill: 999px;
-  --shadow-rest: 0 4px 16px rgba(80, 90, 110, 0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
-  --shadow-hover: 0 8px 28px rgba(80, 90, 110, 0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
-  --shadow-popup: 0 8px 28px rgba(80, 90, 110, 0.14), inset 0 1px 0 rgba(255,255,255,0.95);
+  --shadow-rest: 0 4px 16px rgba(80, 90, 110, 0.08), inset 0 1px 0 var(--shadow-highlight-rest), inset 1px 0 0 var(--shadow-highlight-side);
+  --shadow-hover: 0 8px 28px rgba(80, 90, 110, 0.11), inset 0 1px 0 var(--shadow-highlight-hover), inset 1px 0 0 var(--shadow-highlight-hover-side);
+  --shadow-popup: 0 8px 28px rgba(80, 90, 110, 0.14), inset 0 1px 0 var(--shadow-highlight-rest);
   --scrollbar-size-compact: 3px;
   --scrollbar-size-default: 5px;
   --scrollbar-size-editor: 8px;
