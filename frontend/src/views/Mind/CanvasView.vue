@@ -61,6 +61,11 @@ import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
 import { createRelationRuntimeConnection } from './utils/relationRuntimeConnection'
+import {
+  setRelationRuntimeConnection as setRuntimeConnection,
+  takeRelationRuntimeConnection as takeRuntimeConnection,
+  transferRelationRuntimeConnection as transferRuntimeConnection,
+} from './utils/relationRuntimeRegistry'
 
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
@@ -87,7 +92,9 @@ const canvasProjectIds = computed(() => new Set(
 ))
 // 临时关系在后端响应前也必须保留用户实际拖出的端点，不能让 RelationLayer 按几何位置猜边。
 const optimisticRelationAnchors = ref<Record<string, RelationAnchorSides>>({})
-const optimisticRelationConnections = ref<Record<string, NodeConnectionEndpoint>>({})
+// 保存业务 relation 与实际 Runtime endpoint 的绑定。服务端会按 node id 归一无向 relation，
+// 因此持久化 relation 的 src/dst 不能可靠地反推出创建时的有向 Runtime key。
+const relationRuntimeConnections = ref<Record<string, NodeConnectionEndpoint>>({})
 const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
   const value = data?.relationAnchors
@@ -109,11 +116,11 @@ function runtimeObjectIdForNode(nodeId: number): string | null {
   return item ? mindCanvasObjectId(item) : null
 }
 watch(activeCanvasId, () => {
-  for (const connection of Object.values(optimisticRelationConnections.value)) {
+  for (const connection of Object.values(relationRuntimeConnections.value)) {
     runtime.unregisterNodeConnection(connection)
   }
   optimisticRelationAnchors.value = {}
-  optimisticRelationConnections.value = {}
+  relationRuntimeConnections.value = {}
 })
 function setOptimisticRelationAnchor(id: number, sides: RelationAnchorSides) {
   optimisticRelationAnchors.value = { ...optimisticRelationAnchors.value, [String(id)]: sides }
@@ -123,17 +130,16 @@ function deleteOptimisticRelationAnchor(id: number) {
   delete next[String(id)]
   optimisticRelationAnchors.value = next
 }
-function setOptimisticRelationConnection(id: number, connection: NodeConnectionEndpoint) {
-  optimisticRelationConnections.value = { ...optimisticRelationConnections.value, [String(id)]: connection }
+function setRelationRuntimeConnection(id: number, connection: NodeConnectionEndpoint) {
+  relationRuntimeConnections.value = setRuntimeConnection(relationRuntimeConnections.value, id, connection)
 }
-function takeOptimisticRelationConnection(id: number): NodeConnectionEndpoint | null {
-  const key = String(id)
-  const connection = optimisticRelationConnections.value[key] ?? null
-  if (!connection) return null
-  const next = { ...optimisticRelationConnections.value }
-  delete next[key]
-  optimisticRelationConnections.value = next
-  return connection
+function takeRelationRuntimeConnection(id: number): NodeConnectionEndpoint | null {
+  const result = takeRuntimeConnection(relationRuntimeConnections.value, id)
+  relationRuntimeConnections.value = result.registry
+  return result.connection
+}
+function transferRelationRuntimeConnection(fromId: number, toId: number) {
+  relationRuntimeConnections.value = transferRuntimeConnection(relationRuntimeConnections.value, fromId, toId)
 }
 
 onMounted(async () => {
@@ -274,7 +280,7 @@ function returnProjectToDrawer(item: MindCanvasItem) {
 }
 async function removeRelation(id: number) {
   if (id < 0) {
-    const runtimeConnection = takeOptimisticRelationConnection(id)
+    const runtimeConnection = takeRelationRuntimeConnection(id)
     if (runtimeConnection) runtime.unregisterNodeConnection(runtimeConnection)
     deleteOptimisticRelationAnchor(id)
     store.rollbackOptimisticCanvasRelation(id)
@@ -283,14 +289,21 @@ async function removeRelation(id: number) {
   const relation = store.canvasRelations.find(current => current.id === id)
   const sourceObjectId = relation ? runtimeObjectIdForNode(relation.srcNodeId) : null
   const targetObjectId = relation ? runtimeObjectIdForNode(relation.dstNodeId) : null
-  const runtimeConnection = relation
-    ? createRelationRuntimeConnection(
-        relationAnchors.value[String(relation.id)],
-        sourceObjectId,
-        targetObjectId,
-      )
-    : null
-  await store.removeCanvasRelation(id)
+  const trackedRuntimeConnection = takeRelationRuntimeConnection(id)
+  const runtimeConnection = trackedRuntimeConnection
+    ?? (relation
+      ? createRelationRuntimeConnection(
+          relationAnchors.value[String(relation.id)],
+          sourceObjectId,
+          targetObjectId,
+        )
+      : null)
+  try {
+    await store.removeCanvasRelation(id)
+  } catch (error) {
+    if (trackedRuntimeConnection) setRelationRuntimeConnection(id, trackedRuntimeConnection)
+    throw error
+  }
   deleteOptimisticRelationAnchor(id)
   if (runtimeConnection) {
     runtime.unregisterNodeConnection(runtimeConnection)
@@ -340,7 +353,7 @@ async function linkNodes(
   }
   const optimistic = store.addOptimisticCanvasRelation(srcNodeId, dstNodeId)
   setOptimisticRelationAnchor(optimistic.id, { ...sides })
-  setOptimisticRelationConnection(optimistic.id, runtimeConnection)
+  setRelationRuntimeConnection(optimistic.id, runtimeConnection)
   let relation: Awaited<ReturnType<typeof store.createCanvasRelation>>
   try {
     relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
@@ -348,7 +361,7 @@ async function linkNodes(
     // API 创建失败时回滚 Runtime 已登记的去重记录，否则下一次重试会被
     // 当成重复连接拒绝。
     runtime.unregisterNodeConnection(runtimeConnection)
-    takeOptimisticRelationConnection(optimistic.id)
+    takeRelationRuntimeConnection(optimistic.id)
     deleteOptimisticRelationAnchor(optimistic.id)
     store.rollbackOptimisticCanvasRelation(optimistic.id)
     throw error
@@ -356,13 +369,13 @@ async function linkNodes(
   // 用户可能在请求返回前点击了临时连接线；这种情况下不把已创建的后端关系重新显示出来。
   if (!store.canvasRelations.some(current => current.id === optimistic.id)) {
     runtime.unregisterNodeConnection(runtimeConnection)
-    takeOptimisticRelationConnection(optimistic.id)
+    takeRelationRuntimeConnection(optimistic.id)
     deleteOptimisticRelationAnchor(optimistic.id)
     await store.removeCanvasRelation(relation.id).catch(() => {})
     return
   }
   const normalized = normalizeSides(relation.srcNodeId)
-  takeOptimisticRelationConnection(optimistic.id)
+  transferRelationRuntimeConnection(optimistic.id, relation.id)
   deleteOptimisticRelationAnchor(optimistic.id)
   setOptimisticRelationAnchor(relation.id, normalized)
   store.replaceOptimisticCanvasRelation(optimistic.id, relation)
