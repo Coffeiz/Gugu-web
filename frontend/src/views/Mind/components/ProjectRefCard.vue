@@ -113,7 +113,7 @@ const cardStyle = computed(() => {
   const { w } = itemSize(props.item)
   return {
     left: `${props.item.x}px`, top: `${props.item.y}px`, width: `${w}px`, zIndex: `${props.item.z}`,
-    background: project.value ? `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.value.color}` : undefined,
+    '--pr-project-color': project.value?.color || undefined,
   }
 })
 
@@ -196,12 +196,25 @@ function onOpen() {
 .pr-card, .pr-missing {
   position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
   font-family: var(--font-sans);
+  background: rgb(255,255,255);
   border-radius: 14px;
   corner-shape: round;
   border: 1px solid rgba(255,255,255,0.72);
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
   overflow: visible;
 }
+.pr-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), var(--pr-project-color);
+  pointer-events: none; z-index: 0;
+  transition: opacity 0.25s ease-out;
+}
+.pr-card > :not(.card-affordances) { position: relative; z-index: 1; }
+/* 抓取态只显示 runtime 提供的毛玻璃底；landing 阶段恢复本体渐变，仍由同一张卡片完成
+   单层过渡，不再把整张项目卡拆成两份 opacity 交叉层。 */
+.pr-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.pr-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
+.pr-card[data-runtime-phase="landing"]::before { opacity: 1; }
 /* 悬停抬起/阴影加深走全局 .hover-card-fx（已加在模板类名里），但 scoped 样式编译后会带
    [data-v-xxx] 属性选择器，跟上面 .pr-card 静止态 box-shadow 那条一样特异度（类+属性选择
    器），跟全局 .hover-card-fx:hover（类+伪类，同样两级）打平——打平时看两份样式表谁在最终
