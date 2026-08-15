@@ -9,11 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import and_, false, or_, select
-
 from app.core.mind import validate_note_color
-from app.core.ownership import get_owned
-from app.models import MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from app.services.mind_canvas import (
     add_canvas_item,
     connect_nodes,
@@ -23,6 +19,8 @@ from app.services.mind_canvas import (
     disconnect_node_relation,
     get_canvas_item,
     get_canvas_item_by_node,
+    get_canvas_node,
+    get_canvas_relation,
     get_owned_canvas,
     get_owned_project,
     get_canvas_last_item,
@@ -44,7 +42,7 @@ from app.services.mind_canvas import (
     update_canvas_note,
     update_relation_anchor,
 )
-from app.search.query import keyword_condition, normalize_queries
+from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 _MAX_RESULTS = 20
@@ -66,7 +64,7 @@ def _limit(value: Any, default: int = 10) -> int:
     return max(1, min(value, _MAX_RESULTS))
 
 
-def _view_summary(canvas: MindMap) -> dict[str, Any]:
+def _view_summary(canvas: Any) -> dict[str, Any]:
     """返回可供模型理解的世界视图；不把屏幕坐标伪装成节点坐标。"""
     data = _json_object(canvas.data_json)
     camera = {
@@ -89,7 +87,7 @@ def _view_summary(canvas: MindMap) -> dict[str, Any]:
     }
 
 
-def _node_summary(node: MindNode, item: MindCanvasItem | None = None, *, include_content: bool = False) -> dict[str, Any]:
+def _node_summary(node: Any, item: Any = None, *, include_content: bool = False) -> dict[str, Any]:
     plain = (node.content_plain or "").strip()
     result: dict[str, Any] = {
         "node_id": node.id,
@@ -111,10 +109,6 @@ def _node_summary(node: MindNode, item: MindCanvasItem | None = None, *, include
         result["content_md"] = node.content_md
         result["content_plain"] = node.content_plain
     return result
-
-
-async def _get_owned_canvas(db, user_id, canvas_id: int) -> MindMap | None:
-    return await get_owned_canvas(db, user_id, canvas_id)
 
 
 async def _mind_list_canvases(db, user_id, args: dict):
@@ -147,7 +141,7 @@ async def _mind_get_canvas(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
-    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
     include_nodes = args.get("include_nodes", True) is not False
@@ -189,31 +183,22 @@ async def _mind_get_canvas(db, user_id, args: dict):
     return result
 
 
-def _canvas_type_condition(types: list[str] | None):
-    selected = [item for item in (types or list(_CANVAS_TYPES)) if item in _CANVAS_TYPES]
-    conditions = [MindNode.kind == "canvas_note"] if "canvas_note" in selected else []
-    ref_types = [item for item in selected if item in _PLACEABLE_TYPES]
-    if ref_types:
-        conditions.append(and_(MindNode.kind == "ref", MindNode.ref_type.in_(ref_types)))
-    return or_(*conditions) if conditions else false()
-
-
 async def _mind_search_canvas(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
-    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     q = (args.get("q") or "").strip()
     raw_queries = args.get("queries")
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
     limit = _limit(args.get("limit"), 10)
-    type_condition = _canvas_type_condition(args.get("types") if isinstance(args.get("types"), list) else None)
-    conditions = [type_condition] if type_condition is not None else []
-    if normalized:
-        conditions.append(keyword_condition([MindNode.title, MindNode.content_plain], normalized, args.get("mode")))
-    rows = await search_canvas_nodes(db, user_id, canvas_id, condition=and_(*conditions) if conditions else None, limit=limit)
+    selected = [item for item in (args.get("types") or list(_CANVAS_TYPES)) if item in _CANVAS_TYPES]
+    rows = await search_canvas_nodes(
+        db, user_id, canvas_id, selected=selected, normalized=normalized,
+        mode=args.get("mode"), limit=limit,
+    )
     return {
         "canvas_id": canvas_id,
         "query": q,
@@ -227,7 +212,7 @@ async def _mind_search_canvas(db, user_id, args: dict):
     }
 
 
-def _placeable_summary(entity, ref_node: MindNode | None, item: MindCanvasItem | None, ref_type: str) -> dict[str, Any]:
+def _placeable_summary(entity, ref_node: Any, item: Any, ref_type: str) -> dict[str, Any]:
     title = getattr(entity, "name", None) or getattr(entity, "display_name", None) or getattr(entity, "title", "")
     return {
         "kind": "ref",
@@ -253,11 +238,11 @@ async def _mind_search_placeable_nodes(db, user_id, args: dict):
     offset = offset if isinstance(offset, int) and offset >= 0 else 0
     candidate_limit = offset + limit
     canvas_id = args.get("canvas_id") if isinstance(args.get("canvas_id"), int) else None
-    if canvas_id is not None and await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if canvas_id is not None and await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     existing_nodes = await list_existing_reference_nodes(db, user_id, selected)
     existing_by_key = {(node.ref_type, node.ref_id): node for node in existing_nodes}
-    items_by_key: dict[tuple[str, int], MindCanvasItem] = {}
+    items_by_key: dict[tuple[str, int], Any] = {}
     if canvas_id is not None:
         item_rows = await list_existing_canvas_reference_items(db, user_id, canvas_id)
         items_by_key = {(node.ref_type, node.ref_id): item for item, node in item_rows}
@@ -284,7 +269,7 @@ def _finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-async def _resolve_canvas_position(db, user_id, canvas: MindMap, node: MindNode, position: Any) -> tuple[float, float]:
+async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position: Any) -> tuple[float, float]:
     """把显式世界坐标或语义锚点转换成 MindCanvasItem 的世界坐标。"""
     position = position if isinstance(position, dict) else {}
     x, y = position.get("x"), position.get("y")
@@ -359,7 +344,7 @@ async def _mind_create_canvas_note(db, user_id, args: dict):
     title = args.get("title") or "新便签"
     content = args.get("content") or ""
     color = args.get("color", "amber")
-    if not isinstance(canvas_id, int) or await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if not isinstance(canvas_id, int) or await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     if not isinstance(title, str) or len(title.strip()) > 300 or not isinstance(content, str):
         return {"error": "便签标题或正文格式不正确"}
@@ -367,7 +352,7 @@ async def _mind_create_canvas_note(db, user_id, args: dict):
         color = validate_note_color(color)
     except ValueError as exc:
         return {"error": str(exc)}
-    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
     x, y = await _resolve_canvas_position(db, user_id, canvas, None, args.get("position"))
     node, item = await create_canvas_note(
         db, user_id, canvas_id, title.strip() or "新便签", content, color, x, y,
@@ -379,7 +364,7 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
-    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
     node_id = args.get("node_id")
@@ -394,11 +379,9 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
         try:
             node, _ = await get_or_create_reference(db, user_id, ref_type, ref_id)
         except (ValueError, LookupError) as exc:
-            await db.rollback()
             return {"error": str(exc)}
     existing = await get_canvas_item_by_node(db, user_id, canvas_id, node.id)
     if existing is not None:
-        await db.refresh(node)
         return {"canvas_id": canvas_id, "node": _node_summary(node, existing), "created": False}
     x, y = await _resolve_canvas_position(db, user_id, canvas, node, args.get("position"))
     existing, created = await add_canvas_item(db, user_id, canvas_id, node, x, y)
@@ -415,7 +398,7 @@ async def _mind_update_canvas_node(db, user_id, args: dict):
     canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
     if not isinstance(canvas_id, int) or not isinstance(item_id, int):
         return {"error": "需要提供 canvas_id 和 item_id"}
-    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     item = await _canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
@@ -438,7 +421,7 @@ async def _mind_update_canvas_node(db, user_id, args: dict):
     if not fields:
         return {"error": "至少提供一个要修改的布局字段"}
     item = await update_canvas_item(db, user_id, canvas_id, item_id, fields)
-    node = await get_owned(db, MindNode, item.node_id, user_id)
+    node = await get_canvas_node(db, user_id, item.node_id)
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True}
 
 
@@ -446,7 +429,7 @@ async def _mind_remove_canvas_node(db, user_id, args: dict):
     canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
     if not isinstance(canvas_id, int) or not isinstance(item_id, int):
         return {"error": "需要提供 canvas_id 和 item_id"}
-    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     item = await _canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
@@ -504,7 +487,7 @@ async def _mind_connect_nodes(db, user_id, args: dict):
     canvas_id, source_id, target_id = args.get("canvas_id"), args.get("source_node_id"), args.get("target_node_id")
     if not all(isinstance(value, int) for value in (canvas_id, source_id, target_id)):
         return {"error": "需要提供 canvas_id、source_node_id 和 target_node_id"}
-    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+    if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
     if source_id == target_id:
         return {"error": "节点不能连向自己"}
@@ -519,7 +502,7 @@ async def _mind_connect_nodes(db, user_id, args: dict):
     )
     if error:
         return {"error": error}
-    anchor = relation_anchor_from_canvas(await _get_owned_canvas(db, user_id, canvas_id), relation.id)
+    anchor = relation_anchor_from_canvas(await get_owned_canvas(db, user_id, canvas_id), relation.id)
     if source_side is not None:
         # related 关系可能按节点 id 归一，端点必须跟返回的 source/target 字段保持一致。
         if source_id == relation.src_node_id:
@@ -537,7 +520,7 @@ async def _mind_update_relation_anchor(db, user_id, args: dict):
         return {"error": "需要提供 canvas_id 和 relation_id"}
     if source_side not in {"left", "right"} or target_side not in {"left", "right"}:
         return {"error": "source_side 和 target_side 只能是 left 或 right"}
-    relation = await get_owned(db, MindRelation, relation_id, user_id)
+    relation = await get_canvas_relation(db, user_id, relation_id)
     if relation is None:
         return {"error": "关联不存在"}
     anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side)
@@ -551,7 +534,7 @@ async def _mind_disconnect_nodes(db, user_id, args: dict):
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
-    relation = await get_owned(db, MindRelation, relation_id, user_id)
+    relation = await get_canvas_relation(db, user_id, relation_id)
     if relation is None:
         return {"error": "关联不存在"}
     blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
@@ -576,7 +559,7 @@ async def _mind_batch_canvas(db, user_id, args: dict):
         return {"error": "单次最多批量处理 20 个操作"}
     if not isinstance(request_id, str) or not request_id.strip() or len(request_id) > 120:
         return {"error": "需要提供用于重试去重的 request_id"}
-    canvas = await _get_owned_canvas(db, user_id, canvas_id)
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
     return await batch_canvas_operations(

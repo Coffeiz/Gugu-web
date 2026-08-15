@@ -121,6 +121,22 @@ async def get_canvas_item_by_node(db, user_id, canvas_id, node_id):
     ))
 
 
+async def get_canvas_node(db, user_id, node_id, *, kind=None, deleted=None):
+    """按归属读取画布节点，统一处理节点类型和软删除条件。"""
+    node = await get_owned(db, MindNode, node_id, user_id)
+    if node is None:
+        return None
+    if kind is not None and node.kind != kind:
+        return None
+    if deleted is not None and (node.deleted_at is not None) != deleted:
+        return None
+    return node
+
+
+async def get_canvas_relation(db, user_id, relation_id):
+    return await get_owned(db, MindRelation, relation_id, user_id)
+
+
 async def update_canvas_item(db, user_id, canvas_id, item_id, fields):
     item = await get_canvas_item(db, user_id, canvas_id, item_id)
     if item is None:
@@ -286,7 +302,16 @@ async def list_canvas_relations(db, user_id, node_ids):
     )).scalars().all()
 
 
-async def search_canvas_nodes(db, user_id, canvas_id, *, condition, limit):
+def _canvas_type_condition(selected):
+    selected = selected or []
+    conditions = [MindNode.kind == "canvas_note"] if "canvas_note" in selected else []
+    ref_types = [item for item in selected if item in {"project", "file", "event"}]
+    if ref_types:
+        conditions.append(and_(MindNode.kind == "ref", MindNode.ref_type.in_(ref_types)))
+    return or_(*conditions) if conditions else false()
+
+
+async def search_canvas_nodes(db, user_id, canvas_id, *, selected=None, normalized=None, mode=None, limit):
     stmt = (
         select(MindCanvasItem, MindNode)
         .join(MindNode, MindNode.id == MindCanvasItem.node_id)
@@ -299,8 +324,10 @@ async def search_canvas_nodes(db, user_id, canvas_id, *, condition, limit):
         .order_by(MindCanvasItem.z.desc(), MindCanvasItem.id.desc())
         .limit(limit)
     )
-    if condition is not None:
-        stmt = stmt.where(condition)
+    condition = _canvas_type_condition(selected)
+    if normalized:
+        condition = and_(condition, keyword_condition([MindNode.title, MindNode.content_plain], normalized, mode))
+    stmt = stmt.where(condition)
     return (await db.execute(stmt)).all()
 
 
