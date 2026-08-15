@@ -14,6 +14,43 @@
   --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
 }
 
+/* Dark surfaces do not brighten on hover. Interactive controls still use control/action hover
+   tokens, so disabling surface highlight does not remove affordance from buttons or inputs. */
+html[data-theme='dark'][data-family] {
+  --surface-hover-tint: transparent;
+  --surface-glass-hover: var(--surface-glass);
+  --card-hover-overlay: transparent;
+  --card-surface-bg-hover: var(--surface-card-solid);
+  --card-surface-border-hover: var(--border-strong);
+  --glass-card-background-hover: var(--glass-card-background);
+  --glass-card-border-hover: var(--glass-card-border);
+  --sidebar-user-bg-hover: var(--sidebar-user-bg);
+  --topbar-bg-hover: var(--topbar-bg);
+  --topbar-shadow-hover: var(--topbar-shadow);
+  --gugu-chat-session-hover: transparent;
+
+  /* Dark primary fills are intentionally quieter than the foreground accent. This is the shared
+     fill for topbar primary actions and calendar current-date markers. */
+  --action-primary-bg: linear-gradient(135deg,
+    color-mix(in srgb,var(--action-primary) 46%,var(--surface-base)),
+    color-mix(in srgb,var(--action-primary) 62%,var(--surface-base)));
+  --action-primary-bg-hover: linear-gradient(135deg,
+    color-mix(in srgb,var(--action-primary) 54%,var(--surface-base)),
+    color-mix(in srgb,var(--action-primary) 70%,var(--surface-base)));
+
+  /* Project cards keep lift/shadow feedback, but no extra sheen flash in dark mode. */
+  --project-card-sheen-hover: transparent;
+  --project-card-highlight-hover: transparent;
+
+  /* Keep the previous dark calendar grid treatment while light mode restores the original
+     purple-grey main-branch lines. Capsule/chip hover brightening is disabled with all surfaces. */
+  --calendar-grid-line: var(--border-subtle);
+  --calendar-grid-line-strong: var(--border-subtle);
+  --calendar-chip-hover-overlay: transparent;
+  --calendar-capsule-hover-overlay: transparent;
+  --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
+}
+
 /* Legacy popup/user surfaces still contain light-theme literals in scoped/global CSS. Keep their
    product contract here until those components are fully tokenized. */
 html[data-theme='dark'][data-family] .settings-popup,
