@@ -3,6 +3,13 @@
   --card-radius: var(--radius-md);
   --card-shadow: var(--elevation-card);
   --card-shadow-hover: var(--elevation-card-hover);
+  /* One motion contract for project/file/folder/schedule card surfaces. Hover tint is a separate
+     opacity layer so the whole card changes uniformly instead of animating a directional gradient. */
+  --card-motion: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, background-color .18s ease, border-color .18s ease;
+  --card-overlay-motion: opacity .20s ease;
+  --card-hover-overlay: var(--surface-hover-tint);
+  --card-surface-bg-hover: var(--surface-raised);
+  --card-surface-border-hover: var(--border-hover);
   --glass-card-background: var(--surface-glass);
   --glass-card-background-hover: var(--surface-glass-hover);
   --glass-card-border: var(--border-strong);
@@ -27,6 +34,9 @@
   --control-border-hover: var(--border-hover);
   --control-radius: var(--radius-sm);
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
+  --segmented-track-bg: var(--action-soft);
+  --segmented-pill-bg: var(--control-bg);
+  --segmented-pill-shadow: var(--elevation-card);
   /* 项目列 add-card 与设计页 add-project 的统一轻量入口契约。 */
   --inline-action-bg: color-mix(in srgb,var(--surface-raised) 15%,transparent);
   --inline-action-bg-hover: color-mix(in srgb,var(--surface-raised) 30%,transparent);
@@ -75,7 +85,7 @@
   --scrollbar-overlay-transition: 120ms ease;
   --scrollbar-overlay-track-inset: 8px;
 
-  /* Project cards: exact Gugu horizontal project-colour gradient and real hover motion. */
+  /* Project cards: exact Gugu horizontal project-colour gradient and shared card motion. */
   --project-card-gradient-start: var(--theme-project-overlay-start);
   --project-card-gradient-end: var(--theme-project-overlay-end);
   --project-card-border: var(--theme-project-border);
@@ -87,9 +97,25 @@
   --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 45%,transparent 100%);
   --project-card-highlight-hover: var(--theme-project-highlight-hover);
   --project-card-radius: var(--radius-md);
-  --project-card-motion: transform .25s cubic-bezier(.34,1.2,.64,1), box-shadow .25s ease, background .25s ease-out, border-color .18s ease;
+  --project-card-motion: var(--card-motion);
   --done-group-border: var(--card-advance-border);
   --card-advance-border: color-mix(in srgb,var(--content-muted) 25%,transparent);
+
+  /* Calendar: preserve the original light grid/weekend character while giving dark mode its own
+     values through theme-refinements.css. These roles must not reuse generic glass borders/status BG. */
+  --calendar-grid-line: color-mix(in srgb,var(--action-primary) 15%,transparent);
+  --calendar-grid-line-strong: color-mix(in srgb,var(--action-primary) 18%,transparent);
+  --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 6%,transparent);
+  --calendar-today-cell-bg: color-mix(in srgb,var(--action-primary) 7%,transparent);
+  --calendar-weekend-fg: color-mix(in srgb,var(--status-danger) 85%,transparent);
+  --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
+  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 7%,transparent);
+  --calendar-weekend-selected-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
+  --calendar-weekend-date-bg: color-mix(in srgb,var(--status-danger) 15%,transparent);
+  --calendar-today-date-bg: var(--action-primary-bg);
+  --calendar-chip-hover-overlay: var(--surface-hover-tint);
+  --calendar-capsule-surface-overlay: transparent;
+  --calendar-capsule-hover-overlay: var(--surface-hover-tint);
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;
