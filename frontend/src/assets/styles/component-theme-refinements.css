@@ -1,0 +1,307 @@
+/* Final component adoption layer for token-driven theme behaviour.
+ * This file only maps existing product classes to semantic/component tokens; no product-specific
+ * colour literals live here. It loads after the legacy bridges so old scoped rules cannot reassert
+ * light-only surfaces in resolved dark mode. */
+
+/* ── Shared surface / card motion ───────────────────────────────────────────────────── */
+html[data-theme][data-family] .hover-card-fx,
+html[data-theme][data-family] .fc-card,
+html[data-theme][data-family] .folder-card,
+html[data-theme][data-family] .task-card,
+html[data-theme][data-family] .sample-project-card {
+  transition: var(--card-motion) !important;
+}
+html[data-theme][data-family] .fc-card::after,
+html[data-theme][data-family] .folder-card::after {
+  background: var(--card-hover-overlay) !important;
+  transition: var(--card-overlay-motion) !important;
+}
+html[data-theme][data-family] .fc-card:hover {
+  background: var(--card-surface-bg-hover) !important;
+  border-color: var(--card-surface-border-hover) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover) !important;
+}
+html[data-theme][data-family] .cal-chip::after {
+  background: var(--calendar-chip-hover-overlay) !important;
+  transition: var(--card-overlay-motion) !important;
+}
+
+/* ScheduleCard previously animated ::after from a bottom gradient to a flat fill. That made the
+   hover look like light travelled vertically through the card. It is now one opacity layer. */
+html[data-theme][data-family] .task-card {
+  transition: var(--card-motion) !important;
+}
+html[data-theme][data-family] .task-card::after {
+  background: var(--card-hover-overlay) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft) !important;
+  opacity: 0;
+  transition: var(--card-overlay-motion) !important;
+}
+html[data-theme][data-family] .task-card:hover::after {
+  background: var(--card-hover-overlay) !important;
+  opacity: 1;
+}
+html[data-theme][data-family] .task-card:hover { box-shadow: var(--card-shadow-hover) !important; }
+
+/* Dark mode removes surface brightening, while lift/shadow/controls remain interactive. */
+html[data-theme='dark'][data-family] .glass-card:hover {
+  background: var(--glass-card-background);
+  border-color: var(--glass-card-border);
+}
+html[data-theme='dark'][data-family] .user-card:hover { background: var(--sidebar-user-bg); }
+html[data-theme='dark'][data-family] .proj-card:hover::after,
+html[data-theme='dark'][data-family] .sample-project-card:hover::after,
+html[data-theme='dark'][data-family] .fc-card:hover::after,
+html[data-theme='dark'][data-family] .folder-card:hover::after,
+html[data-theme='dark'][data-family] .task-card:hover::after,
+html[data-theme='dark'][data-family] .cal-chip:hover::after,
+html[data-theme='dark'][data-family] .cal-chip.bar-hovered::after {
+  opacity: 0 !important;
+}
+
+/* ── Primary action fill ────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .topbar .btn-primary-custom,
+html[data-theme][data-family] .sample-topbar .sample-primary,
+html[data-theme][data-family] .cal-sidebar .add-proj-btn,
+html[data-theme][data-family] .event-form-body .popup-save,
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
+  color: var(--content-on-accent) !important;
+  background: var(--action-primary-bg) !important;
+}
+html[data-theme][data-family] .topbar .btn-primary-custom:hover,
+html[data-theme][data-family] .sample-topbar .sample-primary:hover,
+html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
+html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
+  background: var(--action-primary-bg-hover) !important;
+}
+
+/* ── Calendar grid / weekend fidelity ──────────────────────────────────────────────── */
+html[data-theme][data-family] .cal-page .weekday-hdr,
+html[data-theme][data-family] .cal-page .month-body,
+html[data-theme][data-family] .cal-page .week-row,
+html[data-theme][data-family] .cal-page .month-cell,
+html[data-theme][data-family] .cal-page .wv-aco,
+html[data-theme][data-family] .cal-page .wv-col {
+  border-color: var(--calendar-grid-line) !important;
+}
+html[data-theme][data-family] .cal-page .wv-head,
+html[data-theme][data-family] .cal-page .wv-allday {
+  border-color: var(--calendar-grid-line-strong) !important;
+}
+html[data-theme][data-family] .cal-page .wv-col {
+  background-image: linear-gradient(to bottom,var(--calendar-grid-line) 1px,transparent 1px) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell::before,
+html[data-theme][data-family] .cal-page .wv-dhead::after,
+html[data-theme][data-family] .cal-page .wv-ad-hover {
+  background: var(--calendar-cell-hover-bg) !important;
+}
+html[data-theme][data-family] .cal-page .weekday-hdr.weekend,
+html[data-theme][data-family] .cal-page .wv-dhead.weekend .wv-dow {
+  color: var(--calendar-weekend-fg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-weekend,
+html[data-theme][data-family] .cal-page .wv-aco.weekend {
+  background: var(--calendar-weekend-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-weekend::before,
+html[data-theme][data-family] .cal-page .wv-dhead.weekend::after,
+html[data-theme][data-family] .cal-page .wv-ad-hover.weekend {
+  background: var(--calendar-weekend-hover-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.in-range.is-weekend {
+  background: var(--calendar-weekend-hover-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-selected.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend,
+html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend,
+html[data-theme][data-family] .cal-page .wv-ad-sel.weekend {
+  background: var(--calendar-weekend-selected-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-selected:not(.is-today).is-weekend .cell-num,
+html[data-theme][data-family] .cal-page .month-cell.range-start.is-weekend .cell-num,
+html[data-theme][data-family] .cal-page .month-cell.range-end.is-weekend .cell-num {
+  color: var(--calendar-weekend-fg) !important;
+  background: var(--calendar-weekend-date-bg) !important;
+}
+html[data-theme][data-family] .cal-page .month-cell.is-today .cell-num,
+html[data-theme][data-family] .cal-page .month-cell.is-today.is-weekend .cell-num,
+html[data-theme][data-family] .cal-page .wv-dnum.today,
+html[data-theme][data-family] .cal-page .wv-dhead.weekend .wv-dnum.today {
+  color: var(--content-on-accent) !important;
+  background: var(--calendar-today-date-bg) !important;
+}
+
+/* Calendar capsule accent stays content-owned; theme adds only a surface tone. */
+html[data-theme][data-family] .cap-capsule {
+  box-shadow: inset 0 0 0 100px var(--calendar-capsule-surface-overlay);
+}
+html[data-theme][data-family] .cap-row:hover .cap-capsule {
+  box-shadow:
+    inset 0 0 0 100px var(--calendar-capsule-surface-overlay),
+    inset 0 0 0 100px var(--calendar-capsule-hover-overlay),
+    var(--elevation-card);
+}
+html[data-theme][data-family] .cal-page .chip-proj-tag,
+html[data-theme][data-family] .cal-page .bar-proj-tag,
+html[data-theme][data-family] .cal-sidebar .cap-tag-proj {
+  color: var(--selection-fg) !important;
+  background: var(--selection-bg) !important;
+}
+html[data-theme][data-family] .cal-page .chip-ev-tag,
+html[data-theme][data-family] .cal-sidebar .cap-tag-ev {
+  color: var(--status-warning) !important;
+  background: var(--status-warning-bg) !important;
+}
+html[data-theme='dark'][data-family] .cal-sidebar .cap-name,
+html[data-theme='dark'][data-family] .cal-page .wv-pbar,
+html[data-theme='dark'][data-family] .cal-page .wv-allday-ev,
+html[data-theme='dark'][data-family] .cal-page .event-chip,
+html[data-theme='dark'][data-family] .cal-page .project-bar,
+html[data-theme='dark'][data-family] .cal-page .wv-ev {
+  color: var(--content-primary) !important;
+}
+
+/* ── Calendar toolbar ───────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .cal-toolbar { --gb-tint: var(--surface-glass); }
+html[data-theme][data-family] .cal-toolbar:hover { --gb-tint: var(--surface-glass-hover); }
+html[data-theme][data-family] .cal-toolbar .nav-btn,
+html[data-theme][data-family] .cal-toolbar .period-btn {
+  color: var(--control-fg);
+  background: transparent;
+}
+html[data-theme][data-family] .cal-toolbar .period-btn { color: var(--content-primary); }
+html[data-theme][data-family] .cal-toolbar .nav-btn:hover,
+html[data-theme][data-family] .cal-toolbar .period-btn:hover { background: var(--action-soft); }
+html[data-theme][data-family] .cal-toolbar .today-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme][data-family] .cal-toolbar .today-btn:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
+}
+html[data-theme][data-family] .cal-toolbar .view-toggle {
+  --pill-bg: var(--segmented-pill-bg);
+  --pill-shadow: var(--segmented-pill-shadow);
+  background: var(--segmented-track-bg);
+}
+html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
+html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
+
+/* ── File toolbar ───────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn,
+html[data-theme][data-family] .file-browser-toolbar .new-folder-btn,
+html[data-theme][data-family] .file-browser-toolbar .close-btn,
+html[data-theme][data-family] .file-paste-button,
+html[data-theme][data-family] .sort-selector .sort-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn:hover,
+html[data-theme][data-family] .file-browser-toolbar .new-folder-btn:hover,
+html[data-theme][data-family] .file-browser-toolbar .close-btn:hover,
+html[data-theme][data-family] .file-paste-button:hover,
+html[data-theme][data-family] .sort-selector .sort-btn:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
+}
+html[data-theme][data-family] .file-paste-button,
+html[data-theme][data-family] .sort-selector .sort-btn { color: var(--action-primary); }
+html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn.on {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle {
+  --pill-bg: var(--segmented-pill-bg) !important;
+  --pill-shadow: var(--segmented-pill-shadow) !important;
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--control-radius);
+  background: var(--segmented-track-bg);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--control-fg);
+  background: transparent;
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button.on { color: var(--selection-fg); }
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input {
+  color: var(--content-primary);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: var(--control-focus-shadow);
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
+  border: 1px solid transparent;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-cancel-sm {
+  color: var(--control-fg);
+  background: var(--surface-soft);
+  border: 1px solid var(--control-border);
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-cancel-sm:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+}
+
+/* ── Disabled navigation entries ────────────────────────────────────────────────────── */
+html[data-theme][data-family] .sidebar .soon-item { color: var(--content-disabled); }
+html[data-theme][data-family] .sidebar .soon-badge {
+  color: var(--content-tertiary);
+  background: var(--surface-soft);
+  border: 1px solid var(--border-hairline);
+}
+
+/* ── Folder cards ───────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .folder-card {
+  background: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 6%,var(--surface-card-solid)) !important;
+  border-color: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 14%,var(--border-strong)) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow) !important;
+  transition: var(--card-motion) !important;
+}
+html[data-theme][data-family] .folder-card:hover {
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover) !important;
+}
+html[data-theme][data-family] .folder-card.selected {
+  color: var(--content-primary);
+  background: var(--surface-raised) !important;
+  border-color: var(--action-outline) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg) !important;
+}
+html[data-theme][data-family] .folder-card.selected::before { background: var(--selection-bg) !important; }
+html[data-theme][data-family] .folder-card.pre-selected {
+  background: var(--action-soft) !important;
+  border-color: var(--action-outline) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px var(--selection-bg) !important;
+}
+html[data-theme][data-family] .folder-card .fd-name { color: var(--content-primary); }
+html[data-theme][data-family] .folder-card .fd-count { color: var(--content-secondary); }
+html[data-theme][data-family] .folder-card .sel-checkbox {
+  background: var(--control-bg);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .folder-card .sel-checkbox.checked {
+  background: var(--action-primary-bg);
+  border-color: transparent;
+}
