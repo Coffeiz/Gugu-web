@@ -58,9 +58,8 @@ defineProps({
 </script>
 
 <style scoped>
-/* .fc-card 的 transition/悬停上浮位移(transform)/::after 高光/落地揭示后的压制态全部由
-   global.css 的通用 .fc-card 规则统一提供（跟拖拽物理的 phys-just-revealed 揭示时序是配套
-   的一整套，见 usePhysicsDrag.ts 的 _revealWithoutStaleHover）——这里不能再自己声明
+/* .fc-card 的 transition/悬停上浮位移(transform)/::after 高光全部由
+   global.css 的通用 .fc-card 规则统一提供——这里不能再自己声明
    transition，哪怕只是想加 box-shadow/background 的过渡：CSS transition 是覆盖式属性，
    scoped 样式编译后带 data-v 属性选择器、特异度比 global.css 那份纯类选择器高，会整体
    压过它、连带把 transform 的过渡一起吃掉，悬停上浮就变成瞬间跳变、没有非线性缓动

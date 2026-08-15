@@ -102,7 +102,7 @@ backend/
 |---|---|---|---|
 | 大面板 | `--glass-blur`（variables.css） | `blur(20px)` | glass-card 面板、聊天窗、音乐播放器、BaseModal 卡片、Profile、通知气泡、编辑卡右栏 |
 | 小弹窗 | `--popup-blur`（variables.css） | `blur(12px)` | `.popup-menu`（右键/排序/表单）、日期选择器、活动添加/编辑弹窗、文件信息、通知中心、全局搜索下拉、月份选择、溢出弹窗 |
-| 拖拽克隆 | `.phys-drag-clone`（global.css） | `blur(12px)` + 白 42% 底 | 全站拖拽克隆体（文件卡/项目卡/多选叠）唯一定义，组件里别各自定义底色 |
+| 拖拽克隆 | Interaction Runtime 代理视觉 | 由 runtime 与卡片组件共同管理 | 卡片拖拽代理的材质和内容层由 runtime 生命周期统一协调，组件只提供自身视觉结构 |
 
 ### 色彩
 
@@ -213,8 +213,8 @@ function darkenHex(hex, amount = 0.60) {
 - **不可拖动的卡片禁止 hover 浮起**：全局 `.fc-card:hover` 默认 `translateY(-2px)`；若卡片不支持拖动（如 Dashboard 最近文件），需在 scoped CSS 覆盖 `transform: none`，保留阴影加深和白色高亮，不产生位移
 - **彩色胶囊/条 hover**：统一使用 `box-shadow: inset 0 0 0 100px rgba(255,255,255,0.45), 0 2px 6px rgba(80,90,110,0.1)`，`0.25s ease` 过渡；inset 阴影天然在内容之下，无需 z-index 操控，可覆盖 inline background。适用场景：近期节点胶囊（`.cap-row:hover .cap-capsule`，global.css 统一定义）、日历事件 chip、项目条、更多按钮、更多弹窗条目
 - **勾选框样式已全局统一**：原生 `input[type="checkbox"]` 统一走 16px、5px 圆角、紫灰边白底；选中态是紫色渐变 + 白勾。登录/注册确认框、markdown 任务列表、日历“全天”等都复用这套，不要在局部组件再复制一份外观 CSS
-- **卡片拖拽一律用 pointer 模式，别用原生 HTML5 `draggable`/`dragstart`**：原生拖拽从 `dragstart` 起浏览器会整段暂停 `mouseover`/`mouseout` 派发，抓起卡片那一刻缓存的 `:hover` 状态全程不会被清掉，直到 `dragend` 后才重新判定——这段时间差会导致拖拽落地揭示卡片时出现 hover 高亮跳变（perf trace 实测证实，见 `usePhysicsDrag.ts` 注释）。改用 `pointerdown` + 阈值检测（越过 5px 才真正起拖，否则当普通点击）+ `setPointerCapture` 自建拖拽，浏览器的 hover 判定全程正常，不存在这个问题。项目看板卡片（`ProjectCard.vue`）和文件库文件/文件夹卡片（`Files/index.vue`）均已是这套模式；落点判定（拖进文件夹/拖到面包屑）不再靠原生 `@dragover`/`@drop`，改成 `usePhysicsDrag.ts` 的 `onDragOver`/`onDrop` 回调里手动 `elementFromPoint` 判定。OS 文件拖拽上传是唯一仍需要原生 `dataTransfer` 的场景（只有原生拖拽才能拿到 OS 文件），走页面级独立的 `@dragenter`/`@dragover`/`@drop` 监听，和卡片自身的拖拽机制无关，互不影响。
-- **文件/文件夹/项目卡拖拽克隆：容器自己背景+模糊，不加外圈装饰层**（`global.css` 的 `.phys-drag-clone.fc-card` 等规则）：定版为 `background: rgba(255,255,255,0.5) !important` + `backdrop-filter: blur(12px) saturate(1.15)`，单层，卡片本体直接承担"能看出白底、又能看出背后内容被模糊"两个诉求。中间试过的方案都放弃了——纯调透明度/blur 半径两头兼顾（试了 0.42/0.7/0.8 几档，实测"够白"和"模糊可见"重叠区间几乎不存在，20% 见光量对 20px 模糊来说观感上等于没有）；本体不透明+外圈单独一层模糊光晕的分层方案（无论 `backdrop-filter` 真模糊还是 `box-shadow` 柔光），backdrop-filter 版在拖拽自带的 3D 后仰变换（`perspective`+`rotateX`）下不会正常柔化、渲染成一圈硬边白框；且因为文件夹树解析先于文件上传创建真实文件夹，「本体不透明」还会导致真实文件夹和进度用的克隆卡同时出现，看起来像"两个文件夹"。缩略图区域（`.fc-thumb-area`）本身是不透明真图，只有它自带的渐隐蒙版露出的过渡区、以及底部文字标签条能看到卡片的模糊背景，这是预期行为，不是 bug——图片本来就该保持清晰、不该被强行蒙一层雾。
+- **卡片拖拽统一由 Interaction Runtime 接管**：业务卡片使用 pointer 入口注册 Object、Surface、Target 和 Action；Runtime 负责阈值、代理、命中、landing、reveal、regrab 与清理，业务侧只处理数据和业务动作。原生 HTML5 `dataTransfer` 仅保留给操作系统文件上传，不用于卡片移动。
+- **拖拽代理视觉由卡片结构与 Runtime 生命周期共同管理**：卡片组件提供本体材质、内容和附加交互，Runtime 控制代理快照、毛玻璃/本体交接、相机 shell 和落地时序；不要再新增 `.phys-drag-clone` 或页面级物理样式。
 - **多选拖拽的主克隆/影子叠层不叠额外 `opacity`**：曾经影子卡（`i===0`/`i===1`）各叠 `opacity: 0.55`/`0.35`、主克隆叠 `0.88`，跟卡片自身 `background` 的 `0.5` 透明度相乘后严重稀释白底（0.5×0.35≈0.18，肉眼看基本只剩玻璃感），跟单文件拖拽观感不一致。层次感（"这是叠了好几张"）已经靠位置偏移（`dx`/`dy`）、旋转（`rz`）、缩放（`sc`）、`zIndex`、`box-shadow` 表达，不需要再用透明度区分，故去掉这层额外 opacity，多选拖拽的每一层都跟单文件走同一份底色/透明度。**`backdrop-filter` 分层限制**：每叠一层都是一次独立的背景采样+高斯模糊，GPU 开销随层数线性上升，多选最多叠 3 层（主卡+2 张影子）全做全尺寸模糊太费——只留前两层做模糊：主克隆 `blur(12px)`（CSS 默认值），紧贴主卡的第一张影子（`i===0`）降到 `blur(6px)`（内联样式覆盖，CSS 规则未加 `!important` 故可覆盖），再往后那张（`i===1`，仅选中 3+ 项才出现）`backdrop-filter: none`——这张压在最底下、被前两张挡掉大半，模糊不模糊肉眼分不出来。
 
 ---

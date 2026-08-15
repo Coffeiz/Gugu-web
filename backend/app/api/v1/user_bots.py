@@ -42,6 +42,8 @@ def _out(b: UserBot) -> dict:
         "group_read_enabled": b.group_read_enabled,
         "group_response_mode": response_mode,
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
+        "group_message_format": b.group_message_format or "compat",
+        "private_message_format": b.private_message_format or "smart",
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -131,6 +133,8 @@ class BotUpdate(BaseModel):
     group_read_enabled: bool | None = None
     group_response_mode: str | None = None
     group_allowed_tools: list[str] | None = None
+    group_message_format: str | None = None
+    private_message_format: str | None = None
 
 
 @router.put("/{bot_id}")
@@ -173,6 +177,12 @@ async def update_my_bot(
         if unsupported:
             raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
+    for field in ("group_message_format", "private_message_format"):
+        value = getattr(body, field)
+        if value is not None:
+            if value not in {"compat", "smart", "markdown"}:
+                raise HTTPException(400, "无效的 QQ 消息格式")
+            setattr(bot, field, value)
     await db.commit()
     await db.refresh(bot)
     await _touch_supervisor()

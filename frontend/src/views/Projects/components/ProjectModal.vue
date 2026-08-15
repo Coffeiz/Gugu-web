@@ -299,6 +299,7 @@ const { elementRef: pmRuntimeBrowserRef } = useSurface({
   id: makeBrowserSurfaceId(RUNTIME_SCOPE),
   type: 'file-browser',
   accepts: ['file-item', 'folder-item'],
+  layout: 'grid',
 })
 
 function bindPmGridEl(target: unknown) {

@@ -34,6 +34,7 @@ class AgentRequest:
     im_role: Optional[str] = None       # IM 身份：owner/member/unknown；网页为空
     allowed_tool_names: Optional[list[str]] = None  # None=沿用完整工具集；群成员使用白名单
     actor_context: Optional[ActorContext] = None    # IM 统一身份快照；Web 为空
+    im_message_format: Optional[str] = None         # QQ 文本出站格式策略
 
 
 @dataclass

@@ -35,6 +35,14 @@ async def test_agent_folder_create_rename_delete_matches_service(db, user_a, tmp
     assert deleted["success"] is True
     assert await FileService(db, storage=storage).folder_tree.get(user_a.id, folder_id) is None
 
+    visible = await agent_files._list_folders(db, user_a.id, {})
+    assert folder_id not in {item["id"] for item in visible}
+
+    import agent.tools.trash as agent_trash
+    trash = await agent_trash._list_trash(db, user_a.id, {})
+    assert isinstance(trash, list)
+    assert {item["folder_id"] for item in trash if item["kind"] == "folder"} == {folder_id}
+
 
 async def test_agent_folder_move_uses_service_physical_relocation(db, user_a, tmp_path, monkeypatch):
     agent_files, storage = await _wire_agent_storage(monkeypatch, tmp_path)

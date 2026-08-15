@@ -1,0 +1,6 @@
+{
+  "description": "Gugu-web 第三方依赖许可证策略",
+  "blockedPatterns": ["AGPL", "GPL", "LGPL", "SSPL", "BUSL"],
+  "reviewLicenses": ["Unknown", "Unlicense", "Python-2.0", "BlueOak-1.0.0"],
+  "exceptions": []
+}

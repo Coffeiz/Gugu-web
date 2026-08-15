@@ -1,0 +1,106 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  list: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+  run: vi.fn(),
+  refresh: null as ((resource?: string) => void) | null,
+  showError: vi.fn(),
+  showNotice: vi.fn(),
+}))
+
+vi.mock('@/services/api', () => ({
+  scheduledTasksApi: {
+    list: mocks.list,
+    create: mocks.create,
+    update: mocks.update,
+    delete: mocks.remove,
+    run: mocks.run,
+  },
+}))
+vi.mock('@/composables/useAppToast', () => ({
+  errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
+  showAppError: mocks.showError,
+  showAppNotice: mocks.showNotice,
+}))
+vi.mock('@/composables/useLiveRefresh', () => ({
+  useLiveRefresh: (_resource: string, callback: (resource?: string) => void) => {
+    mocks.refresh = callback
+  },
+}))
+
+import { useScheduledTasks } from '@/views/Schedules/composables/useScheduledTasks'
+
+const task = { id: 7, name: '科技新闻', payload: '收集新闻', cron: '5 9 * * *', channels: ['web'], enabled: true }
+
+describe('useScheduledTasks', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.refresh = null
+    mocks.list.mockResolvedValue({ tasks: [task] })
+    mocks.create.mockResolvedValue({ id: 8 })
+    mocks.update.mockResolvedValue({})
+    mocks.remove.mockResolvedValue({})
+    mocks.run.mockResolvedValue({ msg: '已发送' })
+  })
+
+  it('加载任务并通过实时刷新回调再次加载', async () => {
+    const state = useScheduledTasks()
+    await state.load()
+    expect(state.tasks.value).toEqual([task])
+    expect(state.loading.value).toBe(false)
+    expect(mocks.refresh).toBeTypeOf('function')
+
+    await mocks.refresh?.('scheduled_tasks')
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('保存时区分创建和更新，并在完成后刷新列表', async () => {
+    const state = useScheduledTasks()
+    await state.save(null, { name: '新任务' })
+    expect(mocks.create).toHaveBeenCalledWith({ name: '新任务' })
+    expect(mocks.list).toHaveBeenCalledTimes(1)
+    expect(state.busy.value).toBe(false)
+
+    await state.save(7, { name: '已修改' })
+    expect(mocks.update).toHaveBeenCalledWith(7, { name: '已修改' })
+    expect(mocks.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('支持启停、试运行和删除，并把失败转为提示', async () => {
+    const state = useScheduledTasks()
+    await state.toggle(task)
+    expect(mocks.update).toHaveBeenCalledWith(7, { enabled: false })
+
+    await state.runNow(task)
+    expect(mocks.run).toHaveBeenCalledWith(7)
+    expect(mocks.showNotice).toHaveBeenCalledWith('已发送')
+
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    await state.remove(task)
+    expect(mocks.remove).toHaveBeenCalledWith(7)
+    vi.unstubAllGlobals()
+
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    mocks.remove.mockClear()
+    await state.remove(task)
+    expect(mocks.remove).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+
+    mocks.update.mockRejectedValueOnce(new Error('网络失败'))
+    await state.toggle(task)
+    expect(mocks.showError).toHaveBeenCalledWith('更新任务失败：网络失败')
+
+    mocks.run.mockRejectedValueOnce(new Error('执行失败'))
+    await state.runNow(task)
+    expect(mocks.showError).toHaveBeenCalledWith('执行失败：执行失败')
+
+    mocks.remove.mockRejectedValueOnce(new Error('删除失败'))
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    await state.remove(task)
+    expect(mocks.showError).toHaveBeenCalledWith('删除任务失败：删除失败')
+    vi.unstubAllGlobals()
+  })
+})

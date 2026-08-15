@@ -60,6 +60,8 @@ Thumbs.db
 .settings/
 
 # ===== 项目特定 =====
+docs/development/local.md
+
 # 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/
 uploads/
 backend/uploads/

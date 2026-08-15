@@ -373,6 +373,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
+        im_message_format=getattr(req, "im_message_format", None),
         user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
         non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
         user_tz=user_tz,

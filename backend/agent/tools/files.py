@@ -914,7 +914,10 @@ async def _delete_file(db, user_id, args: dict):
 
 
 async def _list_folders(db, user_id, args: dict):
-    stmt = select(Folder).where(Folder.user_id == user_id)
+    stmt = select(Folder).where(
+        Folder.user_id == user_id,
+        Folder.deleted_at.is_(None),
+    )
     if args.get("project_id") is not None:
         stmt = stmt.where(Folder.project_id == args["project_id"])
     if args.get("parent_id") is not None:

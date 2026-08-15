@@ -1,8 +1,7 @@
 /**
  * 画布相机（平移/缩放）的纯逻辑层，被 MindCanvas.vue 组装成交互。
  *
- * 贴纸自身的拖拽不在这里——统一走全站卡片拖拽物理模块（各贴纸组件里的
- * composables/useCardDrag.ts 封装的 startPhysicsDrag），跟项目卡/文件卡同一套手感，
+ * 贴纸自身的拖拽不在这里——统一走 interaction runtime 的卡片拖拽，跟项目卡/文件卡同一套手感，
  * 这里只管相机怎么跟手指/滚轮走。
  */
 import { reactive, type Ref } from 'vue'

@@ -15,7 +15,7 @@ import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
 
 const props = defineProps({ item: { type: Object as PropType<FolderCardMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeSelected: { type: Boolean, default: false }, runtimeTarget: { type: Object as PropType<ObjectTargetOptions | undefined>, default: undefined } })
 const targetSurfaceId = props.runtimeTarget?.surfaceId ?? `${props.runtimeId}:surface`
-useSurface({ id: targetSurfaceId, type: 'file-folder', accepts: ['file-item', 'folder-item'] })
+useSurface({ id: targetSurfaceId, type: 'file-folder', layout: 'grid', accepts: ['file-item', 'folder-item'] })
 const { elementRef } = useObject({ id: props.runtimeId, type: 'folder-item', surface: () => props.runtimeSurfaceId, abilities: () => props.runtimeAbilities, selected: () => props.runtimeSelected, target: () => props.runtimeTarget })
 const { selectedFolderKeys, previewFolderKeys, handleFolderClick, openCtx, folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, inSelectionMode } = props.context
 </script>

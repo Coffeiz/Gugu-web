@@ -33,11 +33,14 @@ function plainOf(md: string): string {
 }
 
 let optimisticSeq = 0
+let optimisticRelationSeq = 0
 
 export const useMindStore = defineStore('mind', () => {
   const notes   = ref<MindNote[]>([])
   const loading = ref(false)
   const loaded  = ref(false)
+  const loadingMore = ref(false)
+  const hasMore = ref(true)
   const filterQ = ref('')   // 胶囊条的便签筛选（客户端过滤已加载的便签）
   const jumpTarget = ref('')   // 顶部日历选中的日期：跨 index.vue/NotesView.vue 传递跳转意图
   const canvases = ref<MindCanvas[]>([])
@@ -59,7 +62,8 @@ export const useMindStore = defineStore('mind', () => {
       ? notes.value.filter(n => plainOf(n.contentMd).toLowerCase().includes(q))
       : notes.value
     const groups: { date: string; items: MindNote[] }[] = []
-    for (const n of [...pool].sort(byCapturedDesc)) {
+    // notes 始终由 store 按 capturedAt 保持有序；筛选只过滤，不再为每次输入复制并排序整份列表。
+    for (const n of pool) {
       const date = localDayKey(parseUtc(n.capturedAt))   // 按用户本地日分组（不是 UTC 日，否则跨午夜错一天）
       const last = groups[groups.length - 1]
       if (last && last.date === date) last.items.push(n)
@@ -68,13 +72,32 @@ export const useMindStore = defineStore('mind', () => {
     return groups
   })
 
+  const NOTE_PAGE_SIZE = 100
+
   async function fetchNotes() {
     loading.value = true
     try {
-      notes.value = await mindApi.listNotes(200, 0)
+      const firstPage = await mindApi.listNotes(NOTE_PAGE_SIZE, 0)
+      notes.value = firstPage
+      hasMore.value = firstPage.length === NOTE_PAGE_SIZE
       loaded.value = true
     } finally {
       loading.value = false
+    }
+  }
+
+  /** 时间轴向左（更早日期）滚动到边缘时追加下一页，已加载的卡片不重建。 */
+  async function loadMoreNotes() {
+    if (!loaded.value || loading.value || loadingMore.value || !hasMore.value) return
+    loadingMore.value = true
+    try {
+      const page = await mindApi.listNotes(NOTE_PAGE_SIZE, notes.value.length)
+      const known = new Set(notes.value.map(note => note.id))
+      const appended = page.filter(note => !known.has(note.id))
+      if (appended.length) notes.value = [...notes.value, ...appended].sort(byCapturedDesc)
+      hasMore.value = page.length === NOTE_PAGE_SIZE
+    } finally {
+      loadingMore.value = false
     }
   }
 
@@ -380,6 +403,31 @@ export const useMindStore = defineStore('mind', () => {
     return relation
   }
 
+  function addOptimisticCanvasRelation(srcNodeId: number, dstNodeId: number): MindRelation {
+    const now = new Date().toISOString()
+    const relation: MindRelation = {
+      id: -(++optimisticRelationSeq),
+      srcNodeId,
+      dstNodeId,
+      relType: 'related',
+      origin: 'user',
+      status: 'confirmed',
+      createdAt: now,
+      updatedAt: now,
+    }
+    canvasRelations.value.push(relation)
+    return relation
+  }
+
+  function replaceOptimisticCanvasRelation(optimisticId: number, relation: MindRelation): void {
+    canvasRelations.value = canvasRelations.value.filter(current => current.id !== optimisticId)
+    if (!canvasRelations.value.some(current => current.id === relation.id)) canvasRelations.value.push(relation)
+  }
+
+  function rollbackOptimisticCanvasRelation(id: number): void {
+    canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
+  }
+
   async function removeCanvasRelation(id: number) {
     await mindApi.deleteRelation(id)
     canvasRelations.value = canvasRelations.value.filter(relation => relation.id !== id)
@@ -430,10 +478,10 @@ export const useMindStore = defineStore('mind', () => {
   })
 
   return {
-    notes, loading, loaded, filterQ, jumpTarget, timeline, fetchNotes, createNote, updateNote, deleteNote,
+    notes, loading, loaded, loadingMore, hasMore, filterQ, jumpTarget, timeline, fetchNotes, loadMoreNotes, createNote, updateNote, deleteNote,
     canvases, canvasesLoaded, canvasLoading, activeCanvasId, canvasItems, canvasRelations,
     fetchCanvases, createCanvas, renameCanvas, deleteCanvas, loadCanvas, addNoteToCanvas, updateCanvasItem,
-    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
+    addRefToCanvas, addProjectRefOptimistic, createCanvasNote, updateCanvasNote, removeCanvasItem, returnCanvasItemToDrawer, createCanvasRelation, addOptimisticCanvasRelation, replaceOptimisticCanvasRelation, rollbackOptimisticCanvasRelation, removeCanvasRelation, nextCanvasZ, bringCanvasItemToFront,
     saveCanvasView, saveCanvasRelationAnchors,
   }
 })

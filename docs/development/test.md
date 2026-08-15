@@ -16,6 +16,8 @@
 
 - 跑法：`npm run test:run`（一次性）或 `npm run test`（watch）。
 - 改完纯逻辑/composable 之后必须跑；改完成功能或提交前跑一次完整 `npm run typecheck`（涉及 `frontend/tsconfig.strict.json` 白名单里的文件用 `npm run typecheck:strict`，见 `docs/development/frontend.md`）。
+- 测试失败时先定位实现、夹具和调用链，不得直接改断言、删除用例、增加 `skip` 或放宽校验来恢复绿色；只有产品契约明确改变并完成记录后才调整预期。
+- 回归用例名称和注释要写明防止的具体回归行为，至少包含触发路径和关键视觉/数据结果，避免只验证“调用成功”。
 
 ## E2E（Playwright）
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFlipRetargetRegistry, createFlipTransaction } from '../src/interaction/drag/animation/flipCoordinator'
+import { createFlipRetargetRegistry, createFlipTransaction } from '../src/interaction/layout/flipCoordinator'
 
 const rect = (left: number, top: number): DOMRect => ({
   left, top, width: 40, height: 20, right: left + 40, bottom: top + 20,
@@ -65,10 +65,15 @@ describe('FLIP 协调器', () => {
     tx.capture([{ key: 'card', element }], [rect(0, 0)])
     tx.measure([{ key: 'card', element }], [rect(20, 0)])
     const play = tx.play()
-    await vi.runAllTimersAsync()
-    expect(await play).toBe('finished')
-    expect(element.style.transform).toBe('scale(1)')
-    vi.useRealTimers()
+    try {
+      // Vitest 4 会把 RAF 纳入 fake timer；先推进首帧，再推进事务结束计时器。
+      await vi.advanceTimersByTimeAsync(16)
+      await vi.runAllTimersAsync()
+      expect(await play).toBe('finished')
+      expect(element.style.transform).toBe('scale(1)')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('session 门禁失效时不会写入 inverse transform', async () => {
@@ -136,6 +141,7 @@ describe('FLIP 协调器', () => {
   })
 
   it('transitionend 只接受本元素的 transform 事件并完成事务', async () => {
+    vi.useFakeTimers()
     const element = document.createElement('div')
     const child = document.createElement('span')
     element.appendChild(child)
@@ -144,7 +150,7 @@ describe('FLIP 协调器', () => {
     tx.capture([{ key: 'card', element }], [rect(0, 0)])
     tx.measure([{ key: 'card', element }], [rect(20, 0)])
     const play = tx.play()
-    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    await vi.advanceTimersByTimeAsync(16)
 
     child.dispatchEvent(new TransitionEvent('transitionend', { propertyName: 'transform', bubbles: true }))
     expect(element.style.transform).toBe('')
@@ -152,6 +158,7 @@ describe('FLIP 协调器', () => {
     expect(element.style.transition).toContain('1000ms')
     element.dispatchEvent(new TransitionEvent('transitionend', { propertyName: 'transform' }))
     expect(await play).toBe('finished')
+    vi.useRealTimers()
   })
 
   it('播放期间元素卸载时由 fallback 结束事务且不残留样式', async () => {

@@ -20,6 +20,7 @@
     <!-- UI 与顶部胶囊一样放到 body 顶层，避免被 body 上的拖拽 clone/camGlue 层叠上下文压住。 -->
     <Teleport to="body">
       <CanvasSidebar
+        ref="canvasSidebarRef"
         :canvases="store.canvases"
         :active-id="activeCanvasId"
         :projects="projectStore.projects"
@@ -47,16 +48,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { MindCanvasItem, MindRefSuggestItem } from '@/services/api'
 import { useMindRefActions } from '@/composables/useMindRefActions'
 import { showAppError } from '@/composables/useAppToast'
 import type { RelationAnchorSides } from '@/composables/useMindCanvas'
 import { useMindStore } from '@/stores/mind'
 import { useProjectStore } from '@/stores/projects'
+import { runtime, type NodeConnectionEndpoint } from '@/interaction/runtime'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import CanvasSidebar from './components/CanvasSidebar.vue'
 import CanvasToolbar from './components/CanvasToolbar.vue'
 import MindCanvas from './components/MindCanvas.vue'
+import { createRelationRuntimeConnection } from './utils/relationRuntimeConnection'
+import {
+  setRelationRuntimeConnection as setRuntimeConnection,
+  takeRelationRuntimeConnection as takeRuntimeConnection,
+  transferRelationRuntimeConnection as transferRuntimeConnection,
+} from './utils/relationRuntimeRegistry'
 
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
@@ -65,6 +74,7 @@ const projectStore = useProjectStore()
 const { openMindRef } = useMindRefActions()
 
 const canvasRef = ref<InstanceType<typeof MindCanvas> | null>(null)
+const canvasSidebarRef = ref<InstanceType<typeof CanvasSidebar> | null>(null)
 // 抽屉只能在当前画布项目加载完后量项目高度，否则首帧会把已放入画布的项目计入缓存。
 const canvasProjectIdsReady = ref(false)
 // 画布相机初始是默认原点/1倍缩放，真实视角要等 restoreView() 异步跑完才定下来——
@@ -80,20 +90,57 @@ const canvasProjectIds = computed(() => new Set(
     .filter(item => item.node.kind === 'ref' && item.node.refType === 'project' && item.node.refId != null)
     .map(item => item.node.refId as number),
 ))
+// 临时关系在后端响应前也必须保留用户实际拖出的端点，不能让 RelationLayer 按几何位置猜边。
+const optimisticRelationAnchors = ref<Record<string, RelationAnchorSides>>({})
+// 保存业务 relation 与实际 Runtime endpoint 的绑定。服务端会按 node id 归一无向 relation，
+// 因此持久化 relation 的 src/dst 不能可靠地反推出创建时的有向 Runtime key。
+const relationRuntimeConnections = ref<Record<string, NodeConnectionEndpoint>>({})
 const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   const data = store.canvases.find(canvas => canvas.id === activeCanvasId.value)?.data
   const value = data?.relationAnchors
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
   const result: Record<string, RelationAnchorSides> = {}
-  for (const [id, sides] of Object.entries(value)) {
-    if (!sides || typeof sides !== 'object') continue
-    const { srcSide, dstSide } = sides as Partial<RelationAnchorSides>
-    if ((srcSide === 'left' || srcSide === 'right') && (dstSide === 'left' || dstSide === 'right')) {
-      result[id] = { srcSide, dstSide }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    for (const [id, sides] of Object.entries(value)) {
+      if (!sides || typeof sides !== 'object') continue
+      const { srcSide, dstSide } = sides as Partial<RelationAnchorSides>
+      if ((srcSide === 'left' || srcSide === 'right') && (dstSide === 'left' || dstSide === 'right')) {
+        result[id] = { srcSide, dstSide }
+      }
     }
   }
+  Object.assign(result, optimisticRelationAnchors.value)
   return result
 })
+function runtimeObjectIdForNode(nodeId: number): string | null {
+  const item = store.canvasItems.find(current => current.nodeId === nodeId)
+  return item ? mindCanvasObjectId(item) : null
+}
+watch(activeCanvasId, () => {
+  for (const connection of Object.values(relationRuntimeConnections.value)) {
+    runtime.unregisterNodeConnection(connection)
+  }
+  optimisticRelationAnchors.value = {}
+  relationRuntimeConnections.value = {}
+})
+function setOptimisticRelationAnchor(id: number, sides: RelationAnchorSides) {
+  optimisticRelationAnchors.value = { ...optimisticRelationAnchors.value, [String(id)]: sides }
+}
+function deleteOptimisticRelationAnchor(id: number) {
+  const next = { ...optimisticRelationAnchors.value }
+  delete next[String(id)]
+  optimisticRelationAnchors.value = next
+}
+function setRelationRuntimeConnection(id: number, connection: NodeConnectionEndpoint) {
+  relationRuntimeConnections.value = setRuntimeConnection(relationRuntimeConnections.value, id, connection)
+}
+function takeRelationRuntimeConnection(id: number): NodeConnectionEndpoint | null {
+  const result = takeRuntimeConnection(relationRuntimeConnections.value, id)
+  relationRuntimeConnections.value = result.registry
+  return result.connection
+}
+function transferRelationRuntimeConnection(fromId: number, toId: number) {
+  relationRuntimeConnections.value = transferRuntimeConnection(relationRuntimeConnections.value, fromId, toId)
+}
 
 onMounted(async () => {
   // 项目抽屉会在首屏就被打开，项目数据不能等笔记/画布请求串行完成后才开始拉；否则抽屉
@@ -196,7 +243,9 @@ function flushViewSave() {
 function resetView() {
   canvasRef.value?.resetScaleAtCenter()
 }
-onBeforeUnmount(flushViewSave)
+onBeforeUnmount(() => {
+  flushViewSave()
+})
 
 async function createCanvas() {
   const canvas = await store.createCanvas()
@@ -223,15 +272,58 @@ async function removeItem(item: MindCanvasItem) {
   await store.removeCanvasItem(item.id)
 }
 function returnProjectToDrawer(item: MindCanvasItem) {
+  const projectStatus = item.node.refType === 'project' && item.node.refId != null
+    ? projectStore.projects.find(project => project.id === item.node.refId)?.status
+    : null
+  if (projectStatus) canvasSidebarRef.value?.openProjectStatus(projectStatus)
   void store.returnCanvasItemToDrawer(item.id).catch(() => showAppError('项目移回抽屉失败，已恢复到画布'))
 }
 async function removeRelation(id: number) {
-  await store.removeCanvasRelation(id)
+  if (id < 0) {
+    const runtimeConnection = takeRelationRuntimeConnection(id)
+    if (runtimeConnection) runtime.unregisterNodeConnection(runtimeConnection)
+    deleteOptimisticRelationAnchor(id)
+    store.rollbackOptimisticCanvasRelation(id)
+    return
+  }
+  const relation = store.canvasRelations.find(current => current.id === id)
+  const sourceObjectId = relation ? runtimeObjectIdForNode(relation.srcNodeId) : null
+  const targetObjectId = relation ? runtimeObjectIdForNode(relation.dstNodeId) : null
+  const trackedRuntimeConnection = takeRelationRuntimeConnection(id)
+  const runtimeConnection = trackedRuntimeConnection
+    ?? (relation
+      ? createRelationRuntimeConnection(
+          relationAnchors.value[String(relation.id)],
+          sourceObjectId,
+          targetObjectId,
+        )
+      : null)
+  try {
+    await store.removeCanvasRelation(id)
+  } catch (error) {
+    if (trackedRuntimeConnection) setRelationRuntimeConnection(id, trackedRuntimeConnection)
+    throw error
+  }
+  deleteOptimisticRelationAnchor(id)
+  if (runtimeConnection) {
+    runtime.unregisterNodeConnection(runtimeConnection)
+  } else if (sourceObjectId && targetObjectId) {
+    // 兼容尚未保存端点的历史 relation；新 relation 都走上面的精确注销。
+    runtime.deleteNodeConnectionsBetween(sourceObjectId, targetObjectId)
+  }
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
-async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides) {
+async function linkNodes(
+  srcNodeId: number,
+  dstNodeId: number,
+  sides: RelationAnchorSides,
+  runtimeConnection: NodeConnectionEndpoint,
+) {
   const canvasId = activeCanvasId.value
-  if (canvasId == null) return
+  if (canvasId == null) {
+    runtime.unregisterNodeConnection(runtimeConnection)
+    return
+  }
   // related 在语义上仍是无向关系；画布视图则允许同一节点对用不同端点各连一条，形成 loop。
   // 先把用户这次拖出的端点换成后端归一后的方向，再和已有边逐一比较：同端点组合直接复用，
   // 另一组端点才明确请求平行边，避免手滑重复拖出一堆完全重合的线。
@@ -244,15 +336,52 @@ async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAn
     (relation.srcNodeId === dstNodeId && relation.dstNodeId === srcNodeId),
   )
   for (const current of samePair) {
+    // 临时关系已经代表一条正在提交的边；请求尚未返回前再次拖同一对节点，
+    // 不能把它误判成“没有同端点关系”而继续创建平行边。
+    if (current.id < 0) {
+      // Runtime 已经在 MindCanvas.finishNodeConnection() 中登记了本次连接，
+      // 但业务层拒绝与另一条 pending relation 并行提交，必须回滚 Runtime。
+      runtime.unregisterNodeConnection(runtimeConnection)
+      return
+    }
     const existingSides = relationAnchors.value[String(current.id)]
     const normalized = normalizeSides(current.srcNodeId)
-    if (existingSides?.srcSide === normalized.srcSide && existingSides.dstSide === normalized.dstSide) return
+    if (existingSides?.srcSide === normalized.srcSide && existingSides.dstSide === normalized.dstSide) {
+      runtime.unregisterNodeConnection(runtimeConnection)
+      return
+    }
   }
-  const relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
-  if (relationAnchors.value[String(relation.id)]) return
-  // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
+  const optimistic = store.addOptimisticCanvasRelation(srcNodeId, dstNodeId)
+  setOptimisticRelationAnchor(optimistic.id, { ...sides })
+  setRelationRuntimeConnection(optimistic.id, runtimeConnection)
+  let relation: Awaited<ReturnType<typeof store.createCanvasRelation>>
+  try {
+    relation = await store.createCanvasRelation(srcNodeId, dstNodeId, samePair.length > 0)
+  } catch (error) {
+    // API 创建失败时回滚 Runtime 已登记的去重记录，否则下一次重试会被
+    // 当成重复连接拒绝。
+    runtime.unregisterNodeConnection(runtimeConnection)
+    takeRelationRuntimeConnection(optimistic.id)
+    deleteOptimisticRelationAnchor(optimistic.id)
+    store.rollbackOptimisticCanvasRelation(optimistic.id)
+    throw error
+  }
+  // 用户可能在请求返回前点击了临时连接线；这种情况下不把已创建的后端关系重新显示出来。
+  if (!store.canvasRelations.some(current => current.id === optimistic.id)) {
+    runtime.unregisterNodeConnection(runtimeConnection)
+    takeRelationRuntimeConnection(optimistic.id)
+    deleteOptimisticRelationAnchor(optimistic.id)
+    await store.removeCanvasRelation(relation.id).catch(() => {})
+    return
+  }
   const normalized = normalizeSides(relation.srcNodeId)
-  await store.saveCanvasRelationAnchors(canvasId, { ...relationAnchors.value, [relation.id]: normalized })
+  transferRelationRuntimeConnection(optimistic.id, relation.id)
+  deleteOptimisticRelationAnchor(optimistic.id)
+  setOptimisticRelationAnchor(relation.id, normalized)
+  store.replaceOptimisticCanvasRelation(optimistic.id, relation)
+  // related 是无向关系，后端会按 node id 归一 src/dst；随之交换锚点，保证存的是响应中那条边的方向。
+  const persistedAnchors = Object.fromEntries(Object.entries(relationAnchors.value).filter(([id]) => Number(id) >= 0))
+  await store.saveCanvasRelationAnchors(canvasId, { ...persistedAnchors, [relation.id]: normalized })
 }
 function openRef(item: MindCanvasItem) {
   if (item.node.kind !== 'ref' || !item.node.refType || item.node.refId == null) return
@@ -286,15 +415,19 @@ async function addProjectAtCenter(projectId: number) {
 /** 抽屉项目松手后先本地乐观插入一张画布卡，立刻交给抽屉克隆做落地动画——不等
  * createRefNode/addCanvasItem 这两次串行请求（真实环境轻松上百毫秒），克隆体才不会
  * 在空中冻住顿一下。接口在背后跑，成功后原地换真实数据，失败则原地摘除并提示。 */
-async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, _size: { w: number; h: number }) {
+async function addProjectAtScreen(projectId: number, center: { x: number; y: number }, size: { w: number; h: number }) {
   const canvas = canvasRef.value
   const canvasId = activeCanvasId.value
   if (!canvas || canvasId == null) return null
   const world = canvas.screenToWorld(center.x, center.y)
-  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, world.x - 120, world.y - 60)
+  const width = Number.isFinite(size.w) && size.w > 0 ? size.w : 240
+  const height = Number.isFinite(size.h) && size.h > 0 ? size.h : 120
+  const position = { x: world.x - width / 2, y: world.y - height / 2 }
+  const { item, ready } = store.addProjectRefOptimistic(canvasId, projectId, position.x, position.y)
   ready.catch(() => showAppError('添加到画布失败，请重试'))
   await nextTick()
-  return document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  const target = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
+  return target
 }
 async function onItemMoved(item: MindCanvasItem) {
   await store.bringCanvasItemToFront(item.id, item.x, item.y)

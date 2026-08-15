@@ -53,12 +53,14 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
                 reply.text,
                 reply.reply_to_message_id,
                 payload.get("channel_id"),
+                payload.get("message_format"),
             )
         return await qq.send_c2c(
             reply.target.id,
             reply.text,
             reply.reply_to_message_id,
             payload.get("channel_id"),
+            payload.get("message_format"),
         )
     elif platform == "wechat" and reply.target.id:
         from agent.gateway import wechat

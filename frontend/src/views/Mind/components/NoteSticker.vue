@@ -42,7 +42,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type PropType } from 'vue'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
-import { useCardDrag } from '@/composables/useCardDrag'
+import { useMindRuntimeObject } from '../composables/useMindRuntimeObject'
+import { mindCanvasObjectId } from '@/interaction/runtime/canvas'
 import { itemSize } from '@/composables/useMindCanvas'
 import { MindConflictError, useMindStore } from '@/stores/mind'
 import { showAppError } from '@/composables/useAppToast'
@@ -55,15 +56,11 @@ const props = defineProps({
   connectionTargetSide: { type: String as PropType<'left' | 'right' | null>, default: null },
   screenToWorld: { type: Function as PropType<(clientX: number, clientY: number) => { x: number; y: number }>, required: true },
   // 画布相机当前缩放（MindCanvas.vue 的 camera.scale）——拖拽克隆脱离 .canvas-world 的
-  // transform:scale 祖先后要自己补回视觉缩放，见 usePhysicsDrag.ts 的 contentScale。
+  // transform:scale 祖先后的视觉补偿由画布 Surface camera 统一提供给 Runtime。
   scale: { type: Number, default: 1 },
 })
 const emit = defineEmits<{
   (e: 'remove', item: MindCanvasItem): void
-  (e: 'dragging', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landing', item: MindCanvasItem, x: number, y: number): void
-  (e: 'landingDone', item: MindCanvasItem): void
-  (e: 'moved', item: MindCanvasItem, x: number, y: number): void
   (e: 'connectDragStart', event: PointerEvent, side: 'left' | 'right'): void
   (e: 'hover', item: MindCanvasItem, hovering: boolean): void
   (e: 'measured', item: MindCanvasItem, size: { w: number; h: number }): void
@@ -75,7 +72,7 @@ const store = useMindStore()
 // 拖边调整）；高度不再从 itemSize 取——NoteCard 自己按标题+正文自然撑高，跟项目/文件
 // 引用卡是同一个道理（见 ProjectRefCard.vue/FileRefCard.vue 的 ResizeObserver 上报）。
 // 但 .canvas-note-wrap 自己不能留成"高度全靠 NoteCard 撑起来"的纯 auto：拖拽期间
-// usePhysicsDrag.ts 把 NoteCard（sourceEl）display:none 直至落地飞行动画整个播完
+// runtime 把 NoteCard（sourceEl）隐藏直至落地飞行动画整个播完
 // （~0.55s），这段时间里 wrap 唯一的正常流子元素消失，auto 高度直接塌成 0——而
 // conn-dot 是 wrap 的绝对定位子元素、top:50% 参照的正是 wrap 自身高度，塌成 0 后两颗
 // 连接点全部被钉在顶部，揭示 NoteCard 那一刻高度瞬间恢复，两颗点跟着从顶部猛地"弹"到
@@ -166,20 +163,9 @@ async function onColor(color: string | null) {
 // 点便签本体进编辑态、点标题/正文里的待办/引用/展开按钮等都是 NoteCard 自己处理
 // （见其 onBodyClick/startEditAt），这里的拖拽只处理"按住越过阈值"的真正拖拽；
 // NoteCard 内部所有可交互元素都挂了 @pointerdown.stop，不会被这层拖拽阈值判定抢走。
-const { onPointerDown } = useCardDrag({
-  screenToWorld: props.screenToWorld,
-  contentScale: () => props.scale,
-  getDragEl: () => noteCardEl(),
-  onDragMove: (worldX, worldY) => {
-    emit('dragging', props.item, worldX, worldY)
-  },
-  onLanding: (worldX, worldY) => {
-    emit('landing', props.item, worldX, worldY)
-  },
-  onLandingDone: () => emit('landingDone', props.item),
-  onDropAt: (worldX, worldY) => {
-    emit('moved', props.item, worldX, worldY)
-  },
+const { onPointerDown } = useMindRuntimeObject({
+  objectId: () => mindCanvasObjectId(props.item),
+  element: noteCardEl,
 })
 </script>
 
@@ -190,5 +176,5 @@ const { onPointerDown } = useCardDrag({
    不用再叠一份；"正在建立关联"的虚线描边现在是 global.css 的共用 .connecting 规则，
    这里也不用再单独声明一份。 */
 
-/* 连接点挪进了共用组件 CardConnDot.vue，外观/悬停显形逻辑不再自己抄一份。 */
+/* 连接点挪进了共用组件 CardAffordances.vue，外观/悬停显形逻辑不再自己抄一份。 */
 </style>

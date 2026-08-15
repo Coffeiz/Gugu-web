@@ -90,7 +90,7 @@ def build(profile: str, user_name: str, projects: list, events: list,
           user_msg: str = "", non_streaming: bool = False,
           include_projects: bool = True, include_calendar: bool = True,
           include_files: bool = True, include_memory: bool = True,
-          user_tz=None) -> str:
+          user_tz=None, im_message_format: str | None = None) -> str:
     # include_* 允许少数轻量阶段关闭业务上下文；跳过时不省 header 文字，
     # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆）。
     memory = memory if (include_memory and memory) else {}
@@ -202,6 +202,9 @@ def build(profile: str, user_name: str, projects: list, events: list,
     if non_streaming:
         dynamic.append(_NON_STREAMING_BLOCK)
     dynamic.append(result)
+    if im_message_format == "compat":
+        from agent.im.message_format import compatibility_prompt
+        dynamic.insert(-1, compatibility_prompt())
 
     stable_str  = "\n\n---\n\n".join(stable)
     dynamic_str = "\n\n---\n\n".join(dynamic)

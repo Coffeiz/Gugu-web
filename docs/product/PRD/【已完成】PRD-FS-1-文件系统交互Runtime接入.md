@@ -110,19 +110,14 @@ runtime.onAction(action => moveFile(action))
 
 ```text
 Files/index.vue
-  └── useFileDragDrop()
-        └── interaction/drag/adapters/fileDrag.ts
-              ├── startPhysicsDrag
-              ├── startMultiPhysicsDrag
-              ├── startThresholdDrag
-              ├── elementFromPoint 落点识别
-              ├── 文件夹高亮
-              └── 面包屑高亮与目录解析
+  ├── Vue Runtime API：Object / Surface / Target
+  ├── useRuntimeAction(move / move-group)
+  └── useFileRuntimeMove（文件业务移动与回滚）
 
 ProjectModal.vue
-  └── useProjectFileDrag()
-        ├── useFileDragDrop()
-        └── useProjectFileDragMoves()
+  ├── Vue Runtime API：Object / Surface / Target
+  ├── useRuntimeAction(move / move-group)
+  └── useFileRuntimeMove（项目文件业务移动与回滚）
 ```
 
 ### 3.2 现有业务边界
