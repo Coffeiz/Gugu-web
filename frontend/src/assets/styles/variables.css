@@ -1,5 +1,6 @@
 /* Compatibility entry. New component styles should consume semantic/component tokens directly. */
 @import './tokens/index.css';
+@import './theme-refinements.css';
 @import './scrollbars.css';
 @import './design-overrides.css';
 
