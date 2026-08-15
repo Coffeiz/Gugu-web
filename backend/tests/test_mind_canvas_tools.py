@@ -21,6 +21,7 @@ from agent.tools.mind_canvas import (
     _mind_update_canvas_note,
     _mind_delete_canvas_note,
     _mind_connect_nodes,
+    _mind_update_relation_anchor,
     _mind_disconnect_nodes,
     _mind_batch_canvas,
 )
@@ -223,6 +224,38 @@ async def test_connect_is_idempotent_and_requires_same_canvas(db, user_a):
     })
     assert created["relation_id"] == reused["relation_id"]
     assert reused["created_or_reused"] is True
+
+
+async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a):
+    canvas = await _canvas(db, user_a)
+    first = await _node(db, user_a, title="端点一")
+    second = await _node(db, user_a, title="端点二")
+    await _item(db, user_a, canvas, first)
+    await _item(db, user_a, canvas, second, x=200)
+
+    relation = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": first.id,
+        "target_node_id": second.id,
+        "source_side": "right",
+        "target_side": "left",
+    })
+    assert relation["source_side"] == "right"
+    assert relation["target_side"] == "left"
+
+    canvas_view = await _mind_get_canvas(db, user_a.id, {"canvas_id": canvas.id})
+    assert canvas_view["relations"][0]["source_side"] == "right"
+    assert canvas_view["relations"][0]["target_side"] == "left"
+
+    updated = await _mind_update_relation_anchor(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "relation_id": relation["relation_id"],
+        "source_side": "left",
+        "target_side": "right",
+    })
+    assert updated["updated"] is True
+    assert updated["source_side"] == "left"
+    assert updated["target_side"] == "right"
 
 
 async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a):

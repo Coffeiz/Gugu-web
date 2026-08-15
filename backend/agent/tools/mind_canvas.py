@@ -32,6 +32,7 @@ from app.services.mind_canvas import (
     get_or_create_reference,
     list_canvas_nodes,
     list_canvas_relations,
+    relation_anchor_from_canvas,
     list_canvases,
     list_existing_canvas_reference_items,
     list_existing_reference_nodes,
@@ -41,6 +42,7 @@ from app.services.mind_canvas import (
     remove_canvas_item,
     update_canvas_item,
     update_canvas_note,
+    update_relation_anchor,
 )
 from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -178,6 +180,7 @@ async def _mind_get_canvas(db, user_id, args: dict):
                     "target_node_id": relation.dst_node_id,
                     "type": relation.rel_type,
                     "status": relation.status,
+                    **(relation_anchor_from_canvas(canvas, relation.id) or {}),
                 }
                 for relation in relations
             ]
@@ -505,12 +508,42 @@ async def _mind_connect_nodes(db, user_id, args: dict):
         return {"error": "画布不存在"}
     if source_id == target_id:
         return {"error": "节点不能连向自己"}
+    source_side, target_side = args.get("source_side"), args.get("target_side")
+    if (source_side is None) != (target_side is None):
+        return {"error": "source_side 和 target_side 必须同时提供"}
+    if ((source_side is not None and source_side not in {"left", "right"})
+            or (target_side is not None and target_side not in {"left", "right"})):
+        return {"error": "连接点只能是 left 或 right"}
     relation, error = await connect_nodes(
         db, user_id, canvas_id, source_id, target_id, args.get("type") or "related",
     )
     if error:
         return {"error": error}
-    return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True}
+    anchor = relation_anchor_from_canvas(await _get_owned_canvas(db, user_id, canvas_id), relation.id)
+    if source_side is not None:
+        # related 关系可能按节点 id 归一，端点必须跟返回的 source/target 字段保持一致。
+        if source_id == relation.src_node_id:
+            normalized = (source_side, target_side)
+        else:
+            normalized = (target_side, source_side)
+        anchor = await update_relation_anchor(db, user_id, canvas_id, relation, *normalized)
+    return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True, **(anchor or {})}
+
+
+async def _mind_update_relation_anchor(db, user_id, args: dict):
+    canvas_id, relation_id = args.get("canvas_id"), args.get("relation_id")
+    source_side, target_side = args.get("source_side"), args.get("target_side")
+    if not isinstance(canvas_id, int) or not isinstance(relation_id, int):
+        return {"error": "需要提供 canvas_id 和 relation_id"}
+    if source_side not in {"left", "right"} or target_side not in {"left", "right"}:
+        return {"error": "source_side 和 target_side 只能是 left 或 right"}
+    relation = await get_owned(db, MindRelation, relation_id, user_id)
+    if relation is None:
+        return {"error": "关联不存在"}
+    anchor = await update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side)
+    if anchor is None:
+        return {"error": "关联的两个节点必须都位于指定画布"}
+    return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, **anchor, "updated": True}
 
 
 async def _mind_disconnect_nodes(db, user_id, args: dict):
@@ -724,16 +757,33 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_connect_nodes", label="连接画布节点",
-            description="连接同一张画布中已经放置的画布便签或业务引用节点；默认 related 且幂等。",
+            description="连接同一张画布中已经放置的画布便签或业务引用节点；默认 related 且幂等。可选 source_side/target_side 指定两端连接点，未指定时沿用已有端点或由画布自动决定。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"}, "source_node_id": {"type": "integer"},
                     "target_node_id": {"type": "integer"}, "type": {"type": "string", "enum": ["related"]},
+                    "source_side": {"type": "string", "enum": ["left", "right"]},
+                    "target_side": {"type": "string", "enum": ["left", "right"]},
                 },
                 "required": ["canvas_id", "source_node_id", "target_node_id"],
             },
             handler=_mind_connect_nodes,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_update_relation_anchor", label="调整画布连接点",
+            description="修改指定画布关系两端使用的连接点。source_side/target_side 分别对应读取结果中的 source_node_id/target_node_id；只改变画布视图，不改变关系语义。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"}, "relation_id": {"type": "integer"},
+                    "source_side": {"type": "string", "enum": ["left", "right"]},
+                    "target_side": {"type": "string", "enum": ["left", "right"]},
+                },
+                "required": ["canvas_id", "relation_id", "source_side", "target_side"],
+            },
+            handler=_mind_update_relation_anchor,
             mutates=True,
         ),
         Tool(
@@ -761,6 +811,7 @@ class MindCanvasSkill(BaseSkill):
                             "kind": {"type": "string", "enum": ["add_node", "update_item", "connect"]},
                             "ref_type": {"type": "string", "enum": list(_PLACEABLE_TYPES)}, "ref_id": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
+                            "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
                             "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
                         },

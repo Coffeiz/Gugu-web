@@ -1,4 +1,6 @@
 """思维画布 Agent/API 共用的主要写入边界。"""
+import json
+
 from sqlalchemy import and_, false, func, or_, select, update
 
 from app.core.mind import content_hash, to_plain_text, update_node_atomic, upsert_relation, validate_note_color
@@ -8,6 +10,57 @@ from app.core.tz import now_utc
 from app.models import MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from app.models import CalendarEvent, File
 from app.search.query import keyword_condition
+
+_RELATION_SIDES = frozenset(("left", "right"))
+
+
+def relation_anchor_from_canvas(canvas, relation_id):
+    """读取画布视图中保存的关系端点；关系语义本身仍由 MindRelation 保存。"""
+    try:
+        data = json.loads(canvas.data_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    raw = data.get("relationAnchors", {}).get(str(relation_id)) if isinstance(data, dict) else None
+    if not isinstance(raw, dict):
+        return None
+    src_side, dst_side = raw.get("srcSide"), raw.get("dstSide")
+    if src_side not in _RELATION_SIDES or dst_side not in _RELATION_SIDES:
+        return None
+    return {"source_side": src_side, "target_side": dst_side}
+
+
+async def update_relation_anchor(db, user_id, canvas_id, relation, source_side, target_side, *, commit=True):
+    """更新指定画布上的关系端点，保留画布 data_json 的其它视图状态。"""
+    if source_side not in _RELATION_SIDES or target_side not in _RELATION_SIDES:
+        raise ValueError("连接点只能是 left 或 right")
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return None
+    node_ids = (await db.execute(select(MindCanvasItem.node_id).where(
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+        MindCanvasItem.node_id.in_((relation.src_node_id, relation.dst_node_id)),
+    ))).scalars().all()
+    if set(node_ids) != {relation.src_node_id, relation.dst_node_id}:
+        return None
+    try:
+        data = json.loads(canvas.data_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    anchors = data.get("relationAnchors")
+    if not isinstance(anchors, dict):
+        anchors = {}
+    anchors[str(relation.id)] = {"srcSide": source_side, "dstSide": target_side}
+    data["relationAnchors"] = anchors
+    canvas.data_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    await db.refresh(canvas)
+    return {"source_side": source_side, "target_side": target_side}
 
 
 async def create_canvas(db, user_id, title, project_id=None):
@@ -335,9 +388,19 @@ async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *
                 source_id, target_id = operation.get("source_node_id"), operation.get("target_node_id")
                 if not isinstance(source_id, int) or not isinstance(target_id, int):
                     raise ValueError(f"第 {index + 1} 个连接操作缺少节点")
+                source_side, target_side = operation.get("source_side"), operation.get("target_side")
+                if (source_side is None) != (target_side is None):
+                    raise ValueError(f"第 {index + 1} 个连接操作的两端连接点必须同时提供")
+                if ((source_side is not None and source_side not in _RELATION_SIDES)
+                        or (target_side is not None and target_side not in _RELATION_SIDES)):
+                    raise ValueError(f"第 {index + 1} 个连接操作的连接点只能是 left 或 right")
                 relation, error = await connect_nodes(db, user_id, canvas.id, source_id, target_id, commit=False)
                 if error:
                     raise ValueError(f"第 {index + 1} 个连接操作{error}")
+                if source_side is not None:
+                    sides = (source_side, target_side) if source_id == relation.src_node_id else (target_side, source_side)
+                    if await update_relation_anchor(db, user_id, canvas.id, relation, *sides, commit=False) is None:
+                        raise ValueError(f"第 {index + 1} 个连接操作找不到关系所在画布")
                 await db.flush()
                 results.append({"index": index, "kind": kind, "relation_id": relation.id, "created_or_reused": True})
             else:

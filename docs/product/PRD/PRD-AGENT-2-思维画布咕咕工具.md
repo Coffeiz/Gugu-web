@@ -395,7 +395,8 @@ mind_connect_nodes({
   source_node_id: number,
   target_node_id: number,
   relation_type?: "related",
-  note?: string
+  source_side?: "left" | "right",
+  target_side?: "left" | "right"
 })
 ```
 
@@ -405,7 +406,18 @@ mind_disconnect_nodes({
 })
 ```
 
-连接前验证两个节点属于当前用户并位于该画布。前端连接点的左右方向属于画布视图状态；第一版关系数据不保存端点方向，不能让 Agent 假装拥有未持久化的端口语义。
+```ts
+mind_update_relation_anchor({
+  canvas_id: number,
+  relation_id: number,
+  source_side: "left" | "right",
+  target_side: "left" | "right"
+})
+```
+
+连接前验证两个节点属于当前用户并位于该画布。连接点属于画布视图状态，保存在画布
+`data_json.relationAnchors` 中；读取画布关系时会返回 `source_side` / `target_side`，
+创建时可指定两端，之后可用 `mind_update_relation_anchor` 修改，不改变关系语义。
 
 ## 6. 摄像机和最后查看位置
 
@@ -600,6 +612,7 @@ Phase 2 共用领域入口位于 `backend/app/core/mind_canvas.py`；创建/放�
 - [x] 实现 `mind_remove_canvas_node`；
 - [x] 实现画布便签更新和删除；
 - [x] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
+  - [x] 读取、指定和修改关系两端的左右连接点；
 - [x] 增加关系归一、重复连接、自连接和并发测试；
 - [x] 接入确认门和操作结果回显。
 
