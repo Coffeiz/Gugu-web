@@ -20,8 +20,10 @@ import type { ThemeFamily, ThemePreference } from '@/composables/useTheme'
 
 defineProps<{ modelValue: ThemePreference; family: ThemeFamily }>()
 defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily] }>()
+// Public names are Aero / Mono. Internal ids stay glass / v2 so existing preferences and
+// data-family selectors migrate without a breaking storage/schema change.
 const families: Array<{ value: ThemeFamily; label: string }> = [
-  { value: 'glass', label: 'Glass' }, { value: 'v2', label: 'V2' },
+  { value: 'glass', label: 'Aero' }, { value: 'v2', label: 'Mono' },
 ]
 const themes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' },
