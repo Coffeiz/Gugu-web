@@ -270,6 +270,51 @@ async def list_user_folders(db: AsyncSession, user_id, *, project_id=None, paren
     return (await db.execute(stmt)).scalars().all()
 
 
+async def list_folder_rows_with_file_counts(
+    db: AsyncSession,
+    user_id,
+    *,
+    project_id=None,
+    parent_id=None,
+    all_folders=False,
+):
+    """查询文件夹及其直属存活文件数，统一应用用户和软删边界。"""
+    stmt = select(Folder).where(
+        Folder.user_id == user_id,
+        Folder.deleted_at.is_(None),
+    )
+    if not all_folders:
+        stmt = stmt.where(
+            Folder.project_id == project_id if project_id is not None
+            else Folder.project_id.is_(None),
+            Folder.parent_id == parent_id if parent_id is not None
+            else Folder.parent_id.is_(None),
+        )
+    folders = (await db.execute(stmt.order_by(Folder.created_at))).scalars().all()
+    if not folders:
+        return []
+    counts = await db.execute(
+        select(File.folder_id, func.count().label("cnt")).where(
+            File.user_id == user_id,
+            File.folder_id.in_([folder.id for folder in folders]),
+            File.deleted_at.is_(None),
+        ).group_by(File.folder_id)
+    )
+    count_map = {row.folder_id: row.cnt for row in counts}
+    return [(folder, count_map.get(folder.id, 0)) for folder in folders]
+
+
+async def file_count_for_folder(db: AsyncSession, user_id, folder_id: int) -> int:
+    """统计当前用户文件夹直属存活文件数。"""
+    return (await db.execute(
+        select(func.count()).select_from(File).where(
+            File.user_id == user_id,
+            File.folder_id == folder_id,
+            File.deleted_at.is_(None),
+        )
+    )).scalar_one()
+
+
 async def descendant_folder_ids(db: AsyncSession, user_id, root_id: int) -> list[int]:
     """按归属查询文件夹子树 ID。"""
     ids = [root_id]
