@@ -17,6 +17,9 @@
   --surface-scrim: var(--theme-scrim);
   --surface-column: var(--theme-column);
   --surface-drag-proxy: var(--theme-glass);
+  /* Surface hover tint is intentionally a semantic role: dark mode can disable brightening
+     globally while controls keep their own action/control hover feedback. */
+  --surface-hover-tint: color-mix(in srgb, var(--theme-highlight-rest) 16%, transparent);
 
   /* Content */
   --content-primary: var(--theme-content-primary);
@@ -40,6 +43,10 @@
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
+  /* Background fill is separate from the accent foreground. Light keeps the brand gradient;
+     resolved dark mode derives a quieter fill in theme-refinements.css. */
+  --action-primary-bg: var(--theme-brand-gradient);
+  --action-primary-bg-hover: var(--theme-brand-gradient);
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
