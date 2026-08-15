@@ -12,6 +12,7 @@
   --content-on-accent: #fff;
   --border-subtle: var(--theme-border-subtle);
   --border-strong: var(--glass-border);
+  --border-hover: var(--glass-border-hover);
   --border-focus: rgba(123, 127, 178, 0.45);
   --action-primary: var(--color-primary);
   --action-primary-hover: var(--color-primary-hover);

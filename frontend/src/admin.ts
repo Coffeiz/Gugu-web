@@ -8,6 +8,9 @@ import '@/assets/styles/global.css'
 import AdminApp from './AdminApp.vue'
 import router from './router/admin'
 import { installEnterDirective } from '@/directives/enter'
+import { initializeTheme } from '@/composables/useTheme'
+
+initializeTheme('dark')
 
 const app = createApp(AdminApp)
 

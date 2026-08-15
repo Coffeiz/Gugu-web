@@ -29,7 +29,15 @@ function watchSystem() {
   mediaQuery?.addEventListener('change', apply)
 }
 
-export function initializeTheme() {
+export function initializeTheme(forcedTheme?: ResolvedTheme) {
+  if (forcedTheme) {
+    resolved.value = forcedTheme
+    document.documentElement.dataset.theme = forcedTheme
+    document.documentElement.style.colorScheme = forcedTheme
+    mediaQuery?.removeEventListener('change', apply)
+    mediaQuery = null
+    return
+  }
   apply()
   watchSystem()
 }

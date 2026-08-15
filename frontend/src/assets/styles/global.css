@@ -115,18 +115,22 @@ body {
 
 /* 玻璃面板工具类 */
 .glass-card {
-  background: var(--surface-glass);
-  border: 1px solid var(--border-strong);
+  background: var(--glass-card-background);
+  border: 1px solid var(--glass-card-border);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
-  box-shadow: var(--card-shadow);
+  box-shadow: var(--glass-card-shadow);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  transition: background 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    background var(--glass-card-transition),
+    border-color var(--glass-card-transition),
+    box-shadow var(--glass-card-transition);
 }
 .glass-card:hover {
-  background: var(--surface-glass-hover);
-  box-shadow: var(--card-shadow-hover);
+  background: var(--glass-card-background-hover);
+  border-color: var(--glass-card-border-hover);
+  box-shadow: var(--glass-card-shadow-hover);
 }
 
 /* 滚动条 */

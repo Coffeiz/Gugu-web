@@ -70,12 +70,10 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 </script>
 
 <style scoped>
-/* 玻璃质感（background/border/圆角/box-shadow/backdrop-filter）走全局 .glass-card；
-   看板列比 --glass-bg 标准的大面板值（0.56）更透，覆盖成看板专用的 0.25，且不跟随
-   .glass-card:hover 变亮（悬停/拖拽状态另有 .drag-over own 语义，不该被通用 hover 抢）。 */
+/* 玻璃质感（background/border/圆角/box-shadow/backdrop-filter/hover）统一走全局
+   .glass-card 与 Glass 组件 token；看板列只保留自身布局职责。 */
 .column {
   --surface-glass: rgba(255,255,255,0.25);
-  --surface-glass-hover: rgba(255,255,255,0.25);
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;

@@ -1,5 +1,5 @@
 <template>
-  <div class="admin-layout admin-theme">
+  <div class="admin-layout">
     <aside class="admin-sidebar">
       <!-- 品牌 -->
       <div class="sidebar-brand">

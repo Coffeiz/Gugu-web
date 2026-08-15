@@ -9,7 +9,7 @@
       <section class="token-section" aria-labelledby="colors-title">
         <div class="section-heading"><span>01</span><h2 id="colors-title">色彩</h2></div>
         <div class="color-grid">
-          <article v-for="token in colorTokens" :key="token.variable" class="color-card">
+          <article v-for="token in colorTokens" :key="token.variable" class="color-card glass-card">
             <div class="color-swatch" :style="{ background: `var(${token.variable})` }" />
             <div class="token-card-body"><button class="copy-button" type="button" :title="copiedVariable === token.variable ? '已复制' : `复制 ${token.variable}`" :aria-label="copiedVariable === token.variable ? '已复制' : `复制 ${token.variable}`" @click.stop="handleCopy(token)"><PhCheck v-if="copiedVariable === token.variable" :size="15" weight="bold" /><PhCopy v-else :size="15" weight="bold" /></button><strong>{{ token.name }}</strong><code>{{ token.variable }}</code><small>{{ valueOf(token) }}</small></div>
           </article>
@@ -19,37 +19,37 @@
       <section class="token-section" aria-labelledby="type-title">
         <div class="section-heading"><span>02</span><h2 id="type-title">字体</h2></div>
         <div class="type-grid">
-          <article v-for="token in fontTokens" :key="token.variable" class="sample-card type-card"><code>{{ token.variable }}</code><p :style="{ fontSize: `var(${token.variable})` }">设计令牌示例文字</p><small>{{ valueOf(token) }} · {{ token.description }}</small></article>
+          <article v-for="token in fontTokens" :key="token.variable" class="sample-card glass-card type-card"><code>{{ token.variable }}</code><p :style="{ fontSize: `var(${token.variable})` }">设计令牌示例文字</p><small>{{ valueOf(token) }} · {{ token.description }}</small></article>
         </div>
       </section>
 
       <section class="token-section" aria-labelledby="layout-title">
         <div class="section-heading"><span>03</span><h2 id="layout-title">布局</h2></div>
         <div class="layout-grid">
-          <article class="sample-card spacing-card"><div class="sample-card-heading"><strong>间距</strong><span>四档主尺度</span></div><div class="spacing-list"><div v-for="token in spaceTokens" :key="token.variable" class="spacing-row"><code>{{ token.variable }}</code><i :style="{ width: `${spacePixels(token) * 4}px` }" /><small>{{ valueOf(token) }}</small></div></div></article>
-          <article class="sample-card radius-card"><div class="sample-card-heading"><strong>圆角</strong><span>四档主尺度</span></div><div class="radius-list"><div v-for="token in radiusTokens" :key="token.variable" class="radius-sample" :style="{ borderRadius: `var(${token.variable})` }"><code>{{ token.variable }}</code></div></div></article>
-          <article class="sample-card shadow-card"><div class="sample-card-heading"><strong>阴影</strong><span>表面层级</span></div><div class="shadow-list"><div v-for="token in shadowTokens" :key="token.variable" class="shadow-sample" :style="{ boxShadow: `var(${token.variable})` }"><strong>{{ token.name }}</strong><code>{{ token.variable }}</code></div></div></article>
+          <article class="sample-card glass-card spacing-card"><div class="sample-card-heading"><strong>间距</strong><span>四档主尺度</span></div><div class="spacing-list"><div v-for="token in spaceTokens" :key="token.variable" class="spacing-row"><code>{{ token.variable }}</code><i :style="{ width: `${spacePixels(token) * 4}px` }" /><small>{{ valueOf(token) }}</small></div></div></article>
+          <article class="sample-card glass-card radius-card"><div class="sample-card-heading"><strong>圆角</strong><span>四档主尺度</span></div><div class="radius-list"><div v-for="token in radiusTokens" :key="token.variable" class="radius-sample" :style="{ borderRadius: `var(${token.variable})` }"><code>{{ token.variable }}</code></div></div></article>
+          <article class="sample-card glass-card shadow-card"><div class="sample-card-heading"><strong>阴影</strong><span>表面层级</span></div><div class="shadow-list"><div v-for="token in shadowTokens" :key="token.variable" class="shadow-sample" :style="{ boxShadow: `var(${token.variable})` }"><strong>{{ token.name }}</strong><code>{{ token.variable }}</code></div></div></article>
         </div>
       </section>
 
       <section class="token-section" aria-labelledby="components-title">
         <div class="section-heading"><span>04</span><h2 id="components-title">表面与组件</h2></div>
         <div class="component-grid">
-          <article class="sample-card glass-sample"><code>--surface-glass</code><div class="glass-demo"><strong>共享玻璃表面</strong><span>面板、弹窗和普通卡片共用语义表面。</span></div></article>
-          <article class="sample-card divider-sample"><code>--divider-line</code><div class="divider-demo" /><small>导航栏和页面章节共用的主题分割线。</small></article>
+          <article class="sample-card glass-card glass-sample"><code>--surface-glass</code><div class="glass-demo"><strong>共享玻璃表面</strong><span>面板、弹窗和普通卡片共用语义表面。</span></div></article>
+          <article class="sample-card glass-card divider-sample"><code>--divider-line</code><div class="divider-demo" /><small>导航栏和页面章节共用的主题分割线。</small></article>
           <ComponentStatesPreview />
-          <article class="sample-card admin-sample admin-theme"><code>admin-theme</code><div class="admin-demo"><strong>Admin 暗色表面</strong><span>Admin 独立映射 surface、content、border 和 scrollbar。</span><button type="button">配置面板</button></div></article>
+          <article class="sample-card glass-card admin-sample"><code>data-theme="dark"</code><div class="admin-demo"><strong>共享暗色表面</strong><span>Admin 直接使用全局暗色主题，不再维护独立主题映射。</span><button type="button">配置面板</button></div></article>
         </div>
       </section>
 
       <section class="token-section" aria-labelledby="motion-title">
         <div class="section-heading"><span>05</span><h2 id="motion-title">动效</h2></div>
-        <div class="motion-grid"><article v-for="token in motionTokens" :key="token.variable" class="sample-card motion-card"><code>{{ token.variable }}</code><div class="motion-demo" :style="{ transitionDuration: `var(${token.variable})` }">悬停查看过渡</div><small>{{ valueOf(token) }} · {{ token.description }}</small></article></div>
+        <div class="motion-grid"><article v-for="token in motionTokens" :key="token.variable" class="sample-card glass-card motion-card"><code>{{ token.variable }}</code><div class="motion-demo" :style="{ transitionDuration: `var(${token.variable})` }">悬停查看过渡</div><small>{{ valueOf(token) }} · {{ token.description }}</small></article></div>
       </section>
 
       <section class="token-section" aria-labelledby="canvas-title">
         <div class="section-heading"><span>06</span><h2 id="canvas-title">画布</h2></div>
-        <div class="canvas-grid"><article class="sample-card canvas-demo"><div class="dot-field"><div class="canvas-node">画布卡片</div><span class="canvas-line" /></div></article><div class="canvas-token-list"><article v-for="token in canvasTokens" :key="token.variable" class="sample-card canvas-token"><code>{{ token.variable }}</code><strong>{{ valueOf(token) }}</strong><small>{{ token.description }}</small></article></div></div>
+        <div class="canvas-grid"><article class="sample-card glass-card canvas-demo"><div class="dot-field"><div class="canvas-node">画布卡片</div><span class="canvas-line" /></div></article><div class="canvas-token-list"><article v-for="token in canvasTokens" :key="token.variable" class="sample-card glass-card canvas-token"><code>{{ token.variable }}</code><strong>{{ valueOf(token) }}</strong><small>{{ token.description }}</small></article></div></div>
       </section>
     </div>
   </main>
@@ -102,7 +102,7 @@ h1 { margin: 5px 0; font-size: 32px; line-height: 1.15; } .subtitle { color: var
 .token-section::after { content: ''; position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: var(--divider-line); }
 .section-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 18px; } .section-heading h2 { margin: 0; font-size: 24px; }
 .color-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
-.color-card, .sample-card { min-width: 0; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); background: var(--surface-glass); box-shadow: var(--shadow-rest); }
+.color-card, .sample-card { min-width: 0; overflow: hidden; }
 .color-swatch { height: 76px; border-bottom: 1px solid var(--border-subtle); } .token-card-body { position: relative; display: grid; gap: 4px; padding: 12px; } .token-card-body strong { padding-right: 28px; font-size: var(--font-size-sm); } code, small { color: var(--content-secondary); font-size: var(--font-size-xs); } .copy-button, .admin-demo button { width: max-content; border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 6px; color: var(--content-secondary); background: transparent; cursor: pointer; font: inherit; } .copy-button { position: absolute; top: 10px; right: 10px; display: grid; place-items: center; } .copy-button:hover { color: var(--content-primary); background: var(--surface-glass-hover); } .admin-demo button { padding: 5px 8px; font-size: var(--font-size-xs); }
 .type-grid, .motion-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); } .type-card, .motion-card { display: grid; gap: 12px; padding: var(--space-4); } .type-card p { min-height: 34px; margin: 0; color: var(--content-primary); }
 .layout-grid, .component-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--space-2); } .layout-grid > *, .component-grid > * { grid-column: span 4; } .sample-card { padding: var(--space-4); }

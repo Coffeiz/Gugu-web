@@ -2,6 +2,13 @@
   --card-radius: var(--radius-md);
   --card-shadow: var(--shadow-rest);
   --card-shadow-hover: var(--shadow-hover);
+  --glass-card-background: var(--surface-glass);
+  --glass-card-background-hover: var(--surface-glass-hover);
+  --glass-card-border: var(--border-strong);
+  --glass-card-border-hover: var(--border-hover);
+  --glass-card-shadow: var(--card-shadow);
+  --glass-card-shadow-hover: var(--card-shadow-hover);
+  --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
   --popup-radius: var(--radius-md);
   --popup-shadow: var(--shadow-popup);
   --control-height-sm: 32px;

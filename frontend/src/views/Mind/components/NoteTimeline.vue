@@ -156,10 +156,9 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
      松手后的回弹由 NotesView 的同一套阻尼弹簧逐帧驱动，不能在这里再叠一层 CSS 缓动。 */
 }
 
-/* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
+/* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 由共享 Glass token 统一处理。 */
 .tl-col {
   --surface-glass: rgba(255,255,255,0.25);
-  --surface-glass-hover: rgba(255,255,255,0.25);
   /* isolation:isolate 给每张卡一个独立、稳定的合成层边界，不被页面其它地方（比如日历
      弹层里跟卡片重叠的那一角）的重绘牵连——本仓库处理 backdrop-filter 玻璃层怪异重绘
      早就用过这招（topbar/GuguChat 悬浮球），这里同样的坑先按同样的方子试一次。 */

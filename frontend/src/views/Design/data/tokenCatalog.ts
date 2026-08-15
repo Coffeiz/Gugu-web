@@ -12,6 +12,8 @@ export interface DesignToken {
 export const tokenCatalog: DesignToken[] = [
   { name: '页面表面', variable: '--surface-page', category: 'semantic', type: 'color', description: '应用根页面背景。' },
   { name: '玻璃表面', variable: '--surface-glass', category: 'semantic', type: 'color', description: '主应用玻璃面板。' },
+  { name: '玻璃悬停表面', variable: '--surface-glass-hover', category: 'semantic', type: 'color', description: '所有玻璃组件统一的悬停亮色表面。' },
+  { name: '玻璃悬停边界', variable: '--border-hover', category: 'semantic', type: 'color', description: '所有玻璃组件统一的悬停边界高光。' },
   { name: '主要文字', variable: '--content-primary', category: 'semantic', type: 'color', description: '正文与主要标题。' },
   { name: '次要文字', variable: '--content-secondary', category: 'semantic', type: 'color', description: '辅助信息与弱化标签。' },
   { name: '主色', variable: '--action-primary', category: 'semantic', type: 'color', description: '主要操作与强调色。' },
@@ -44,6 +46,7 @@ export const tokenCatalog: DesignToken[] = [
   { name: '黑色透明度 08', variable: '--alpha-black-08', category: 'primitive', type: 'color', description: '深色遮罩透明度。' },
   { name: '静止阴影', variable: '--shadow-rest', category: 'primitive', type: 'shadow', description: '普通表面静止态。' },
   { name: '悬停阴影', variable: '--shadow-hover', category: 'primitive', type: 'shadow', description: '普通 UI hover 态。' },
+  { name: '玻璃卡片悬停阴影', variable: '--glass-card-shadow-hover', category: 'component', type: 'shadow', description: 'Glass 卡片统一的悬停阴影。' },
   { name: '默认过渡', variable: '--motion-default', category: 'motion', type: 'duration', description: '普通 UI 过渡时长。' },
   { name: '导航分割线', variable: '--divider-line', category: 'component', type: 'other', description: '导航栏与页面章节共用的主题分割线。' },
   { name: '画布点阵', variable: '--canvas-dot-color', category: 'canvas', type: 'color', description: '画布点阵视觉，不含 camera 算法。' },
