@@ -1,9 +1,9 @@
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.ownership import get_owned
-from app.models import File, Folder
+from app.models import File, Folder, Project
 from app.services.storage.folders import folder_dir_key
 from app.services.storage.trash import restore_file_storage
 
@@ -54,6 +54,53 @@ async def list_deleted_folders(db: AsyncSession, user_id, limit: int):
     return (await db.execute(
         top_level_deleted_folders_stmt(user_id).limit(limit)
     )).scalars().all()
+
+
+async def list_trash_file_rows(db: AsyncSession, user_id):
+    """查询回收站独立文件及响应所需的关联名称。"""
+    return (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.user_id == user_id,
+            File.deleted_at.isnot(None),
+            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
+        ).order_by(File.deleted_at.desc())
+    )).all()
+
+
+async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: int):
+    """查询顶层回收站文件夹的直属文件夹、文件和浅层计数。"""
+    folder = await get_top_level_deleted_folder(db, user_id, folder_id)
+    if not folder:
+        return None
+    child_folders = (await db.execute(
+        select(Folder).where(
+            Folder.user_id == user_id,
+            Folder.parent_id == folder.id,
+            Folder.deleted_at.isnot(None),
+        ).order_by(Folder.deleted_at.desc())
+    )).scalars().all()
+    direct_files = (await db.execute(
+        select(File, Project.name, Project.color, Folder.name)
+        .outerjoin(Project, Project.id == File.project_id)
+        .outerjoin(Folder, Folder.id == File.folder_id)
+        .where(
+            File.user_id == user_id,
+            File.folder_id == folder.id,
+            File.deleted_at.isnot(None),
+        ).order_by(File.deleted_at.desc())
+    )).all()
+    counts = await db.execute(
+        select(File.folder_id, func.count().label("cnt")).where(
+            File.user_id == user_id,
+            File.folder_id.in_([item.id for item in child_folders]),
+            File.deleted_at.isnot(None),
+        ).group_by(File.folder_id)
+    ) if child_folders else None
+    count_map = {row.folder_id: row.cnt for row in counts} if counts else {}
+    return folder, child_folders, direct_files, count_map
 
 
 async def count_deleted_files(db: AsyncSession, user_id) -> int:

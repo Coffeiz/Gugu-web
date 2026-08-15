@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -23,6 +23,8 @@ from app.services.files.trash import (
     permanently_delete_folder,
     top_level_deleted_folders_stmt,
     get_top_level_deleted_folder,
+    list_trash_file_rows,
+    list_trash_folder_contents_rows,
     empty_trash as empty_trash_service,
     restore_file_by_id,
     restore_files_by_ids,
@@ -46,21 +48,10 @@ async def list_trash(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = (
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(
-            File.user_id == current_user.id,
-            File.deleted_at.isnot(None),
-            # 文件夹作为整体恢复单元时，内部文件不应再以独立条目出现；否则用户可以把
-            # 文件恢复到仍被软删的父目录里，得到数据库指向已删文件夹的“幽灵文件”。
-            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
-        )
-        .order_by(File.deleted_at.desc())
-    )
-    result = await db.execute(stmt)
-    return [to_file_response(f, pname, color_value(pcolor), fname) for f, pname, pcolor, fname in result.all()]
+    return [
+        to_file_response(f, pname, color_value(pcolor), fname)
+        for f, pname, pcolor, fname in await list_trash_file_rows(db, current_user.id)
+    ]
 
 
 # ── GET /trash/folders （P2.3：顶层已删文件夹）───────────────────────────────
@@ -97,35 +88,10 @@ async def list_trash_folder_contents(
     db: AsyncSession = Depends(get_db),
 ):
     """读取顶层回收站文件夹的直属内容，内部文件不作为独立恢复单元。"""
-    folder = await get_top_level_deleted_folder(db, current_user.id, fid)
-    if not folder:
+    contents = await list_trash_folder_contents_rows(db, current_user.id, fid)
+    if not contents:
         raise HTTPException(404, "文件夹不存在")
-    child_folders = (await db.execute(
-        select(Folder).where(
-            Folder.user_id == current_user.id,
-            Folder.parent_id == folder.id,
-            Folder.deleted_at.isnot(None),
-        ).order_by(Folder.deleted_at.desc())
-    )).scalars().all()
-    direct_files = (await db.execute(
-        select(File, Project.name, Project.color, Folder.name)
-        .outerjoin(Project, Project.id == File.project_id)
-        .outerjoin(Folder, Folder.id == File.folder_id)
-        .where(
-            File.user_id == current_user.id,
-            File.folder_id == folder.id,
-            File.deleted_at.isnot(None),
-        ).order_by(File.deleted_at.desc())
-    )).all()
-    if child_folders:
-        counts_res = await db.execute(
-            select(File.folder_id, func.count().label("cnt"))
-            .where(File.folder_id.in_([f.id for f in child_folders]), File.deleted_at.isnot(None))
-            .group_by(File.folder_id)
-        )
-        count_map = {row.folder_id: row.cnt for row in counts_res}
-    else:
-        count_map = {}
+    folder, child_folders, direct_files, count_map = contents
     return TrashFolderContentsResponse(
         folders=[TrashFolderResponse(
             id=f.id, project_id=f.project_id, parent_id=f.parent_id, name=f.name,
