@@ -14,7 +14,7 @@
       <span class="col-count">{{ projects.length }}</span>
     </div>
 
-    <div ref="colBodyRef" class="col-body">
+    <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact">
       <!-- 位移动画统一由 Runtime FLIP 驱动；保留 TransitionGroup 仅作为渲染容器，
            避免新建项目按钮继续被旧的 0.18s CSS move 动画单独推动。 -->
       <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="false">
@@ -74,8 +74,8 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
    看板列比 --glass-bg 标准的大面板值（0.56）更透，覆盖成看板专用的 0.25，且不跟随
    .glass-card:hover 变亮（悬停/拖拽状态另有 .drag-over own 语义，不该被通用 hover 抢）。 */
 .column {
-  --glass-bg: rgba(255,255,255,0.25);
-  --glass-bg-hover: rgba(255,255,255,0.25);
+  --surface-glass: rgba(255,255,255,0.25);
+  --surface-glass-hover: rgba(255,255,255,0.25);
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
   min-width: 0; min-height: 0; overflow: hidden;
@@ -102,9 +102,6 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   padding: 2px 6px;
   margin-right: 0;
 }
-.col-body::-webkit-scrollbar { width: 3px; }
-.col-body::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
-.col-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
 .kanban-card-list {
   display: flex;
   flex-direction: column;

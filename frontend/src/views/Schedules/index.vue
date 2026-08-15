@@ -73,8 +73,8 @@ async function submit(data: Record<string, any>) {
 .btn-primary:hover { opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 .panel {
-  --glass-bg: rgba(255,255,255,0.25);
-  --glass-bg-hover: rgba(255,255,255,0.25);
+  --surface-glass: rgba(255,255,255,0.25);
+  --surface-glass-hover: rgba(255,255,255,0.25);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
   padding: 22px 24px;

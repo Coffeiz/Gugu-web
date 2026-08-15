@@ -158,8 +158,8 @@ defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopE
 
 /* 一天一块玻璃底板：轻玻璃（同定时任务面板 --glass-bg 0.25），hover 不提亮（底板不是交互件） */
 .tl-col {
-  --glass-bg: rgba(255,255,255,0.25);
-  --glass-bg-hover: rgba(255,255,255,0.25);
+  --surface-glass: rgba(255,255,255,0.25);
+  --surface-glass-hover: rgba(255,255,255,0.25);
   /* isolation:isolate 给每张卡一个独立、稳定的合成层边界，不被页面其它地方（比如日历
      弹层里跟卡片重叠的那一角）的重绘牵连——本仓库处理 backdrop-filter 玻璃层怪异重绘
      早就用过这招（topbar/GuguChat 悬浮球），这里同样的坑先按同样的方子试一次。 */

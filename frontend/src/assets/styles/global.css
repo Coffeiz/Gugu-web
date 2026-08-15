@@ -103,30 +103,30 @@ html, body, #app {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  color: var(--text-primary);
+  color: var(--content-primary);
   -webkit-font-smoothing: antialiased;
 }
 
 body {
-  background: var(--bg-gradient);
+  background: var(--surface-page);
   background-attachment: fixed;
   min-height: 100vh;
 }
 
 /* 玻璃面板工具类 */
 .glass-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--card-shadow);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   transition: background 0.25s ease, box-shadow 0.25s ease;
 }
 .glass-card:hover {
-  background: var(--glass-bg-hover);
-  box-shadow: var(--glass-shadow-lg);
+  background: var(--surface-glass-hover);
+  box-shadow: var(--card-shadow-hover);
 }
 
 /* 滚动条 */

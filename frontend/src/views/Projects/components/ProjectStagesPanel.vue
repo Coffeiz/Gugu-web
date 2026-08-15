@@ -4,7 +4,7 @@
       <label class="section-label">项目阶段 <span class="label-hint">拖拽排序</span></label>
       <button class="add-stage-btn" @click="handleAddStage">＋ 添加</button>
     </div>
-    <div class="stage-flow" ref="stageFlowRef">
+    <div class="stage-flow scroll-surface scroll-surface--compact" ref="stageFlowRef">
       <TransitionGroup name="stage-flip">
         <div
           v-for="(stage, i) in displayStages" :key="stage.key"
@@ -333,9 +333,6 @@ function handleToggleTodo(todo: ProjectTodo) {
 }
 .add-stage-btn:hover { opacity: 0.7; }
 .stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
-.stage-flow::-webkit-scrollbar { width: 3px; }
-.stage-flow::-webkit-scrollbar-track { background: transparent; }
-.stage-flow::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
 .stage-node.stage-dragging { opacity: 0.15; pointer-events: none; transition: none; }

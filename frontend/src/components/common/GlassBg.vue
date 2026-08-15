@@ -37,7 +37,7 @@
 .gb-tint {
   position: absolute;
   inset: 0;
-  background: var(--gb-tint, var(--glass-bg));
+  background: var(--gb-tint, var(--surface-glass));
   transition: background 0.25s ease;
   /* 亮边高光：与 glass-card 完全一致（上沿 1px/0.95 + 左沿 0.55），静态不重绘、无白带之虞 */
   box-shadow:

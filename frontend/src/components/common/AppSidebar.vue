@@ -117,7 +117,7 @@
           <button class="notif-mark-all" @click="markAllRead">全部已读</button>
         </div>
 
-        <div class="notif-list">
+        <div class="notif-list scroll-surface scroll-surface--compact">
           <div
             v-for="n in notifications"
             :key="n.id ?? ''"
@@ -404,9 +404,6 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
   padding: 6px; display: flex; flex-direction: column; gap: 2px;
   flex: 1; min-height: 0; overflow-y: auto;   /* 在弹窗 max-height 内滚动，不撑出页面 */
 }
-.notif-list::-webkit-scrollbar { width: 3px; }
-.notif-list::-webkit-scrollbar-track { background: transparent; margin: 6px; }
-.notif-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
 .notif-item {
   display: flex; align-items: flex-start; gap: 10px;
