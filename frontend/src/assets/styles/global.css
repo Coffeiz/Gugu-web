@@ -15,6 +15,13 @@ svg { shape-rendering: geometricPrecision; }
   scrollbar-gutter: stable;
 }
 
+/* 统一滚动容器：默认保留可发现的滚动条，组件只选择密度，不再复制伪元素规则。 */
+.scroll-surface { scrollbar-gutter: stable; }
+.scroll-surface--compact { scrollbar-width: thin; }
+.scroll-surface--editor { scrollbar-width: auto; }
+.scroll-surface--hidden { scrollbar-width: none; }
+.scroll-surface--hidden::-webkit-scrollbar { display: none; }
+
 /* 全局勾选框样式：注册页确认勾选（原 .ack-box）与 markdown 预览 task list 用的同一套视觉，
    统一收到这里，避免各处各抄一份字面量。16px 圆角 5px，紫灰边白底，选中紫色渐变 + 阴影 + 白勾。
    排除掉 arco 组件自带的 checkbox（它们有自己的 class，不吃这条全局规则）。 */
@@ -123,9 +130,13 @@ body {
 }
 
 /* 滚动条 */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(123,127,178,0.22); border-radius: 99px; }
+::-webkit-scrollbar { width: var(--scrollbar-size-default); height: var(--scrollbar-size-default); }
+::-webkit-scrollbar-track { background: var(--scrollbar-track); margin-top: 8px; margin-bottom: 8px; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: var(--radius-pill); }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+::-webkit-scrollbar-corner { background: var(--scrollbar-corner, transparent); }
+.scroll-surface--compact::-webkit-scrollbar { width: var(--scrollbar-size-compact); height: var(--scrollbar-size-compact); }
+.scroll-surface--editor::-webkit-scrollbar { width: var(--scrollbar-size-editor); height: var(--scrollbar-size-editor); }
 
 /* 段落间距 */
 .section-header {

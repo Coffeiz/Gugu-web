@@ -1,0 +1,17 @@
+.admin-theme {
+  --surface-page: linear-gradient(145deg, #0e101a 0%, #11131f 60%, #13152a 100%);
+  --surface-glass: rgba(255, 255, 255, 0.05);
+  --surface-glass-hover: rgba(255, 255, 255, 0.09);
+  --surface-panel: rgba(24, 27, 44, 0.86);
+  --surface-popup: rgba(30, 33, 52, 0.96);
+  --content-primary: rgba(255,255,255,0.92);
+  --content-secondary: rgba(255,255,255,0.55);
+  --content-muted: rgba(255,255,255,0.30);
+  --border-subtle: rgba(255,255,255,0.07);
+  --border-strong: rgba(255,255,255,0.12);
+  --border-focus: rgba(149,144,196,0.64);
+  --action-primary: #9590c4;
+  --action-primary-hover: #aaa6d8;
+  --scrollbar-thumb: rgba(255,255,255,0.12);
+  --scrollbar-thumb-hover: rgba(255,255,255,0.22);
+}

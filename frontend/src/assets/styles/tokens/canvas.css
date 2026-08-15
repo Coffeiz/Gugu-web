@@ -1,0 +1,6 @@
+:root {
+  --canvas-dot-color: rgba(123, 127, 178, 0.32);
+  --canvas-connection-color: rgba(123, 127, 178, 0.56);
+  --canvas-card-radius: var(--radius-md);
+  --canvas-drawer-width: 320px;
+}

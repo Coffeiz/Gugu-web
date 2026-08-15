@@ -1,0 +1,35 @@
+:root {
+  --palette-purple-500: #7b7fb2;
+  --palette-purple-400: #9590c4;
+  --palette-pink-400: #c4afc8;
+  --palette-cyan-400: #7ab8c8;
+  --palette-gray-050: #f5f6fa;
+  --palette-gray-100: #e8e9ee;
+  --palette-gray-300: #bfc4d2;
+  --palette-gray-900: #1e2028;
+  --alpha-white-08: rgba(255, 255, 255, 0.08);
+  --alpha-white-38: rgba(255, 255, 255, 0.38);
+  --alpha-white-56: rgba(255, 255, 255, 0.56);
+  --alpha-white-70: rgba(255, 255, 255, 0.70);
+  --alpha-white-76: rgba(255, 255, 255, 0.76);
+  --alpha-black-08: rgba(0, 0, 0, 0.08);
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+  --shadow-rest: 0 4px 16px rgba(80, 90, 110, 0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
+  --shadow-hover: 0 8px 28px rgba(80, 90, 110, 0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
+  --shadow-popup: 0 8px 28px rgba(80, 90, 110, 0.14), inset 0 1px 0 rgba(255,255,255,0.95);
+  --scrollbar-size-compact: 3px;
+  --scrollbar-size-default: 5px;
+  --scrollbar-size-editor: 8px;
+}

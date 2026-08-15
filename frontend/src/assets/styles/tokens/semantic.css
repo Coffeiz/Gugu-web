@@ -1,0 +1,26 @@
+:root {
+  --surface-page: var(--bg-gradient);
+  --surface-glass: var(--glass-bg);
+  --surface-glass-hover: var(--glass-bg-hover);
+  --surface-panel: var(--panel-bg);
+  --surface-popup: rgba(255, 255, 255, 0.72);
+  --surface-card: var(--glass-bg);
+  --surface-drag-proxy: var(--glass-bg);
+  --content-primary: var(--text-primary);
+  --content-secondary: var(--text-secondary);
+  --content-muted: color-mix(in srgb, var(--text-secondary) 72%, transparent);
+  --content-on-accent: #fff;
+  --border-subtle: rgba(255, 255, 255, 0.42);
+  --border-strong: var(--glass-border);
+  --border-focus: rgba(123, 127, 178, 0.45);
+  --action-primary: var(--color-primary);
+  --action-primary-hover: var(--color-primary-hover);
+  --status-success: var(--color-success);
+  --status-warning: var(--color-warning);
+  --status-danger: #c85a5a;
+  --layer-sidebar: 10;
+  --layer-topbar: 20;
+  --layer-popup: 100;
+  --layer-modal: 200;
+  --layer-drag: 300;
+}

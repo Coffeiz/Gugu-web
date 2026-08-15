@@ -1,0 +1,9 @@
+:root {
+  --card-radius: var(--radius-md);
+  --card-shadow: var(--shadow-rest);
+  --card-shadow-hover: var(--shadow-hover);
+  --popup-radius: var(--radius-md);
+  --popup-shadow: var(--shadow-popup);
+  --control-height-sm: 32px;
+  --control-height-md: 38px;
+}

@@ -1,34 +1,18 @@
-/* ── 咕咕 设计变量 ── */
+/* 兼容入口：业务样式暂时仍可从这里导入，实际令牌按层位于 tokens/。 */
+@import './tokens/index.css';
+
 :root {
-  --bg-gradient: linear-gradient(160deg, #e8e9ee 0%, #d8dae4 35%, #bfc4d2 65%, #9aa2b8 100%);
-  --glass-bg: rgba(255, 255, 255, 0.56);
-  --glass-bg-hover: rgba(255, 255, 255, 0.70);
-  --glass-border: rgba(255, 255, 255, 0.76);
   --glass-blur: blur(20px);
-  --popup-blur: blur(12px);   /* 小弹窗统一模糊(右键/排序/日期/活动表单/通知等)——改这里全站生效 */
-  /* 大型模态框的遮罩、玻璃面与卡片位移动画共用同一节奏，避免各层到位时间不一致。 */
+  --popup-blur: blur(12px);
   --modal-enter-duration: 0.24s;
   --modal-leave-duration: 0.18s;
   --modal-enter-easing: cubic-bezier(0.4, 0, 0.2, 1);
   --modal-leave-easing: cubic-bezier(0.4, 0, 1, 1);
-  --glass-shadow: 0 4px 16px rgba(80,90,110,0.08), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
-  --glass-shadow-lg: 0 8px 28px rgba(80,90,110,0.11), inset 0 1px 0 rgba(255,255,255,0.98), inset 1px 0 0 rgba(255,255,255,0.65);
-  --panel-bg: rgba(238,240,246,0.9);
-  --color-primary: #7b7fb2;
-  --color-secondary: #c4afc8;
-  --color-tertiary: #7ab8c8;
-  --color-success: #5a9e88;
-  --color-warning: #b07858;
-  --text-primary: #1e2028;
-  --text-secondary: #8a8fa8;
-  /* 咕咕正文文字（GuguChat 小窗消息 / 通知气泡等共用，颜色用 --text-primary）*/
-  --gugu-body-size: 13px;
+  --glass-shadow: var(--shadow-rest);
+  --glass-shadow-lg: var(--shadow-hover);
+  --gugu-body-size: var(--font-size-md);
   --gugu-body-line: 1.5;
-  --radius-sm: 10px;
-  --radius-md: 14px;
-  --radius-lg: 18px;
   --sidebar-width: 220px;
-  /* 工作台浮动控件统一的视口安全边距与画布工具栏厚度。 */
   --floating-edge: 28px;
   --canvas-toolbar-height: 50px;
   --font-sans: 'PingFang SC', 'Segoe UI', 'Helvetica Neue', sans-serif;

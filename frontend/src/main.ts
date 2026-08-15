@@ -14,7 +14,9 @@ import router from './router'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import { installEnterDirective } from '@/directives/enter'
+import { initializeTheme } from '@/composables/useTheme'
 
+initializeTheme()
 setupInteractionRuntime()
 
 const app = createApp(App)

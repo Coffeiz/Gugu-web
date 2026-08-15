@@ -579,15 +579,15 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 1：令牌基础层
 
-- [ ] 建立 `tokens/` 目录和 `index.css`
-- [ ] 将 `variables.css` 改为兼容导入入口
-- [ ] 补齐 primitives、semantic、components、motion、canvas、admin、themes 文件
-- [ ] 为现有变量提供迁移映射，避免一次性破坏旧页面
-- [ ] 建立主应用 `light/dark/system` 主题映射
-- [ ] 建立入口 HTML 的首屏主题初始化
-- [ ] 增加层级、focus、disabled、error 和 reduced-motion 令牌
-- [ ] 增加滚动条尺寸、颜色、hover 和 corner 令牌
-- [ ] 建立 `scroll-surface`、`compact`、`editor`、`hidden` 容器样式
+- [x] 建立 `tokens/` 目录和 `index.css`
+- [x] 将 `variables.css` 改为兼容导入入口
+- [x] 补齐 primitives、semantic、components、motion、canvas、admin、themes 文件
+- [x] 为现有变量提供迁移映射，避免一次性破坏旧页面
+- [x] 建立主应用 `light/dark/system` 主题映射
+- [x] 建立入口 HTML 的首屏主题初始化
+- [x] 增加层级、focus、disabled、error 和 reduced-motion 令牌
+- [x] 增加滚动条尺寸、颜色、hover 和 corner 令牌
+- [x] 建立 `scroll-surface`、`compact`、`editor`、`hidden` 容器样式
 
 ### Phase 2：`/design` 页面
 
