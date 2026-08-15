@@ -57,6 +57,21 @@
   --status-danger-bg: color-mix(in srgb, var(--status-danger) 14%, transparent);
   --status-info-bg: color-mix(in srgb, var(--status-info) 14%, transparent);
 
+  /* Public color vocabulary.
+     Keep palette/iris/pearl as implementation details; pages and docs use these names. */
+  --color-bg: var(--surface-page);
+  --color-surface: var(--surface-card-solid);
+  --color-surface-soft: var(--surface-glass);
+  --color-text: var(--content-primary);
+  --color-muted: var(--content-secondary);
+  --color-line: var(--border-default);
+  --color-primary: var(--action-primary);
+  --color-primary-hover: var(--action-primary-hover);
+  --color-success: var(--status-success);
+  --color-warning: var(--status-warning);
+  --color-danger: var(--status-danger);
+  --color-info: var(--status-info);
+
   /* Elevation: four product levels, not decorative presets. */
   --elevation-card: var(--theme-shadow-1);
   --elevation-card-hover: var(--theme-shadow-2);
