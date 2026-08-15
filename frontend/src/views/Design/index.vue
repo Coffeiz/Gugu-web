@@ -94,7 +94,8 @@ async function handleCopy(token: DesignToken) {
 <style scoped>
 .design-page { height: 100%; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 40px 32px 72px; color: var(--content-primary); background: var(--surface-page); font-family: var(--font-sans); }
 .design-inner { width: min(1180px, 100%); margin: 0 auto; }
-.design-header { display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); padding-bottom: 28px; border-bottom: 1px solid var(--border-subtle); }
+.design-header { position: relative; display: flex; align-items: end; justify-content: space-between; gap: var(--space-4); padding-bottom: 28px; }
+.design-header::after { content: ''; position: absolute; right: 0; bottom: 0; left: 0; height: 1px; background: var(--divider-line); }
 .eyebrow, .section-heading span { color: var(--content-secondary); font-size: var(--font-size-xs); letter-spacing: .12em; text-transform: uppercase; }
 h1 { margin: 5px 0; font-size: 32px; line-height: 1.15; } .subtitle { color: var(--content-secondary); font-size: var(--font-size-sm); }
 .token-section { position: relative; padding: 32px 0; }
