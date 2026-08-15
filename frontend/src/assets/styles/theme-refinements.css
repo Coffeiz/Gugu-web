@@ -19,6 +19,7 @@
 html[data-theme='dark'][data-family] {
   --surface-hover-tint: transparent;
   --surface-glass-hover: var(--surface-glass);
+  --elevation-card-hover: var(--elevation-card);
   --card-hover-overlay: transparent;
   --card-surface-bg-hover: var(--surface-card-solid);
   --card-surface-border-hover: var(--border-strong);
