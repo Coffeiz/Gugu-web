@@ -102,6 +102,10 @@ const relationAnchors = computed<Record<string, RelationAnchorSides>>(() => {
   Object.assign(result, optimisticRelationAnchors.value)
   return result
 })
+function runtimeObjectIdForNode(nodeId: number): string | null {
+  const item = store.canvasItems.find(current => current.nodeId === nodeId)
+  return item ? mindCanvasObjectId(item) : null
+}
 watch(activeCanvasId, () => {
   optimisticRelationAnchors.value = {}
 })
@@ -257,10 +261,12 @@ async function removeRelation(id: number) {
     return
   }
   const relation = store.canvasRelations.find(current => current.id === id)
+  const sourceObjectId = relation ? runtimeObjectIdForNode(relation.srcNodeId) : null
+  const targetObjectId = relation ? runtimeObjectIdForNode(relation.dstNodeId) : null
   await store.removeCanvasRelation(id)
   deleteOptimisticRelationAnchor(id)
-  if (relation) {
-    runtime.deleteNodeConnectionsBetween(`mind:${relation.srcNodeId}`, `mind:${relation.dstNodeId}`)
+  if (sourceObjectId && targetObjectId) {
+    runtime.deleteNodeConnectionsBetween(sourceObjectId, targetObjectId)
   }
 }
 /** 贴纸边缘圆点拖到另一张贴纸上松手时触发，见 MindCanvas.vue 的 onConnectDragStart。 */
@@ -286,10 +292,15 @@ async function linkNodes(srcNodeId: number, dstNodeId: number, sides: RelationAn
     const normalized = normalizeSides(current.srcNodeId)
     if (existingSides?.srcSide === normalized.srcSide && existingSides.dstSide === normalized.dstSide) return
   }
+  const sourceObjectId = runtimeObjectIdForNode(srcNodeId)
+  const targetObjectId = runtimeObjectIdForNode(dstNodeId)
+  // Runtime identity 可能包含乐观插入时的 clientKey；找不到本体时不能退回用
+  // nodeId 猜一个不同的 identity，否则回滚/重连会留下 Runtime 幽灵连接。
+  if (!sourceObjectId || !targetObjectId) return
   const runtimeConnection = {
-    sourceObjectId: mindCanvasObjectId({ nodeId: srcNodeId }),
+    sourceObjectId,
     sourcePortId: sides.srcSide,
-    targetObjectId: mindCanvasObjectId({ nodeId: dstNodeId }),
+    targetObjectId,
     targetPortId: sides.dstSide,
   }
   const optimistic = store.addOptimisticCanvasRelation(srcNodeId, dstNodeId)
