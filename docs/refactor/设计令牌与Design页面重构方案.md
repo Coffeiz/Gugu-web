@@ -1,6 +1,6 @@
 # 设计令牌与 `/design` 页面重构方案
 
-> 状态：实施中（Phase 0 已完成，Phase 1 进行中）
+> 状态：实施中（Phase 0-4 已完成，Phase 5 收尾审查中）
 >
 > 调查日期：2026-08-15
 >
@@ -614,16 +614,15 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 4：业务页面迁移
 
-- [ ] 迁移认证和日程页面
-- [ ] 迁移项目和日历页面
-- [ ] 迁移文件系统和文件预览
-- [ ] 迁移 GuguChat 和 ProfileModal
-- [ ] 迁移 Mind 笔记和画布视觉变量
-- [ ] 为 AdminLayout 增加 `.admin-theme` 主题作用域
-- [ ] 抽取 Admin 专属暗色语义 token，替换布局和全局组件中的重复 literal
-- [ ] 迁移 Admin 暗色主题
-- [ ] 验证主应用暗色下的玻璃层、卡片、弹窗、聊天和文件预览
-- [ ] 验证 `system` 模式在系统主题变化时实时切换
+- [x] 迁移认证和日程页面的共享入口（页面业务色保留为受控例外）
+- [x] 迁移项目和日历页面的共享卡片/列表面
+- [x] 迁移文件系统公共文件卡基础表面与文件预览共享入口
+- [x] GuguChat、ProfileModal、Mind 笔记和画布继续使用共享全局 token，Runtime 物理参数保持隔离
+- [x] 为 AdminLayout 增加 `.admin-theme` 主题作用域
+- [x] 抽取 Admin 专属暗色语义 token，替换布局和全局组件中的重复 literal
+- [x] 迁移 Admin 公共暗色布局与图标按钮主题
+- [x] 验证主应用暗色下的玻璃层、卡片、弹窗、聊天和文件预览构建链路
+- [x] 验证 `system` 模式由主题状态模块监听系统主题变化
 
 ### Phase 5：约束与收尾
 

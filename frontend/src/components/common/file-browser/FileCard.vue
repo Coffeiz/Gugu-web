@@ -67,9 +67,9 @@ defineProps({
    这里只画本卡片专属的底色/边框/圆角/静止&悬停阴影这些「值」，动画节奏交给全局那份。 */
 .fc-card {
   position: relative;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(255,255,255,0.9);
-  border-radius: 14px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--card-radius);
   corner-shape: round;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
   min-height: 122px;
@@ -78,8 +78,8 @@ defineProps({
 /* 画布文件引用与活动/项目引用共用系统对象的玻璃基线；文件库卡片仍保留原本更实的白底。 */
 .fc-card.canvas-mode {
   overflow: visible;
-  background: var(--glass-bg);
-  border-color: var(--glass-border);
+  background: var(--surface-glass);
+  border-color: var(--border-strong);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
 }
@@ -154,7 +154,7 @@ defineProps({
 
 .fc-label { padding: 0 13px 13px; flex: 1; min-width: 0; }
 .fc-name {
-  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
+  font-size: var(--font-size-sm); font-weight: 600; color: var(--content-primary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
