@@ -29,11 +29,11 @@ const themes: Array<{ value: ThemePreference; label: string }> = [
 </script>
 
 <style scoped>
-.theme-controls { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-2); margin-left:auto; }
-.control-cluster { display:flex; align-items:center; gap:var(--space-1-5); }
-.control-label { color:var(--content-tertiary); font-size:var(--font-size-micro); font-weight:var(--font-weight-medium); letter-spacing:var(--tracking-label); }
-.segmented { display:flex; gap:2px; padding:3px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); }
-.segmented button { min-width:64px; height:28px; border:0; border-radius:8px; padding:0 10px; color:var(--content-secondary); background:transparent; cursor:pointer; font:var(--font-weight-semibold) var(--font-size-micro) var(--font-sans); transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast); }
+.theme-controls { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:var(--space-sm); margin-left:auto; }
+.control-cluster { display:flex; align-items:center; gap:var(--space-xs); }
+.control-label { color:var(--content-tertiary); font-size:var(--font-size-xs); font-weight:var(--font-weight-medium); letter-spacing:var(--tracking-label); }
+.segmented { display:flex; gap:var(--space-xs); padding:var(--space-xs); border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); }
+.segmented button { min-width:64px; height:28px; border:0; border-radius:var(--radius-xs); padding:0 var(--space-sm); color:var(--content-secondary); background:transparent; cursor:pointer; font:var(--font-weight-semibold) var(--font-size-xs) var(--font-sans); transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast); }
 .segmented button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .segmented button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
 .segmented button:focus-visible { outline:none; box-shadow:var(--control-focus-shadow); }
