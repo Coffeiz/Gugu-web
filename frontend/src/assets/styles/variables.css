@@ -1,5 +1,7 @@
 /* Compatibility entry. New component styles should consume semantic/component tokens directly. */
 @import './tokens/index.css';
+@import './scrollbars.css';
+@import './design-overrides.css';
 
 :root {
   --glass-blur: blur(20px);
@@ -12,13 +14,4 @@
   --glass-shadow-lg: var(--elevation-card-hover);
   --gugu-body-size: var(--font-size-md);
   --gugu-body-line: var(--line-height-body);
-}
-
-/* product.css declares the named scroll timeline; scroll-driven CSS animations need an auto
-   duration so their active interval fills the 0→32px attachment range instead of collapsing. */
-@supports (animation-timeline: scroll()) {
-  html[data-theme][data-family] .topbar .glass-bg,
-  html[data-theme][data-family] .topbar.glass-card {
-    animation-duration: auto;
-  }
 }
