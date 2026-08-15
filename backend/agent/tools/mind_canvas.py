@@ -688,7 +688,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_add_canvas_node", label="放置画布节点",
-            description="把当前用户的项目、文件或日历活动引用放入画布。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 计算矩形，不能与已有节点重叠，并默认保留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
+            description="把当前用户的项目、文件或日历活动引用放入画布。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 计算矩形，节点在上、下、左、右任一方向相邻时都不能重叠，并默认保留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -705,7 +705,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_update_canvas_node", label="调整画布节点",
-            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 留出至少 150px 边缘间距，采用中心点排布时至少保持 750px 中心距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
+            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 在上、下、左、右任一方向留出至少 150px 边缘间距，采用中心点排布时至少保持 750px 中心距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -802,7 +802,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_batch_canvas", label="批量编排画布",
-            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。批量放置仍必须按每个节点的 layout.effective_size 做矩形避让，节点不得重叠且默认留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
+            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。批量放置仍必须按每个节点的 layout.effective_size 做矩形避让，节点在上、下、左、右任一方向相邻时都不得重叠且默认留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
             input_schema={
                 "type": "object",
                 "properties": {
