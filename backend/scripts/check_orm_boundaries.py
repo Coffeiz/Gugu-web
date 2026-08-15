@@ -84,7 +84,7 @@ def scan() -> list[Finding]:
                     if isinstance(node.func, ast.Attribute) and name in ORM_METHODS \
                             and _is_session_receiver(node.func):
                         findings.append(Finding("orm-method", area, rel, node.lineno, _source_line(lines, node.lineno)))
-                    elif name in ORM_CONSTRUCTORS:
+                    elif isinstance(node.func, ast.Name) and name in ORM_CONSTRUCTORS:
                         findings.append(Finding("orm-constructor", area, rel, node.lineno, _source_line(lines, node.lineno)))
 
                 if isinstance(node, ast.ImportFrom) and node.module == "app.models":
@@ -130,11 +130,57 @@ def scan_added_lines(base: str) -> list[str]:
     return violations
 
 
+def scan_agent_boundary() -> list[Finding]:
+    """检查 Agent 工具是否仍直接依赖 ORM。
+
+    这是阶段 P1 的严格守卫：Agent 工具可以编排调用 Service，但不能成为 ORM 的第二个入口。
+    """
+    findings: list[Finding] = []
+    root = SCAN_ROOTS["agent"]
+    for path in sorted(root.rglob("*.py")):
+        if "__pycache__" in path.parts or path.name.startswith("._"):
+            continue
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except SyntaxError as exc:
+            findings.append(Finding("syntax-error", "agent", str(path.relative_to(BACKEND)), exc.lineno or 0, str(exc)))
+            continue
+        rel = str(path.relative_to(BACKEND))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and (
+                node.module == "sqlalchemy"
+                or node.module == "app.models"
+                or node.module == "app.core.ownership"
+            ):
+                findings.append(Finding("agent-direct-import", "agent", rel, node.lineno, _source_line(lines, node.lineno)))
+            if isinstance(node, ast.Call):
+                name = _call_name(node)
+                if isinstance(node.func, ast.Attribute) and name in (ORM_METHODS - {"commit", "rollback"}) and _is_session_receiver(node.func):
+                    findings.append(Finding("agent-orm-method", "agent", rel, node.lineno, _source_line(lines, node.lineno)))
+                elif isinstance(node.func, ast.Name) and name in ORM_CONSTRUCTORS:
+                    findings.append(Finding("agent-orm-constructor", "agent", rel, node.lineno, _source_line(lines, node.lineno)))
+            if isinstance(node, ast.Name) and node.id == "get_owned":
+                findings.append(Finding("agent-ownership-helper", "agent", rel, node.lineno, _source_line(lines, node.lineno)))
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", dest="as_json")
     parser.add_argument("--diff-base", help="阶段 1：只检查相对该 Git ref 新增的高风险 ORM 行")
+    parser.add_argument("--agent-strict", action="store_true", help="P1：禁止 Agent 工具直接依赖 ORM")
     args = parser.parse_args()
+    if args.agent_strict:
+        findings = scan_agent_boundary()
+        if findings:
+            print("❌ Agent ORM 边界失败：Agent 工具仍直接依赖 ORM，请迁移到 Service：")
+            for finding in findings:
+                print(f"  {finding.path}:{finding.line} [{finding.category}] {finding.detail}")
+            return 1
+        print("✅ Agent ORM 边界通过：Agent 工具未直接依赖 ORM")
+        return 0
     if args.diff_base:
         violations = scan_added_lines(args.diff_base)
         if violations:
