@@ -13,6 +13,8 @@
   --theme-border-hairline: rgba(255,255,255,.30); --theme-border-subtle: rgba(255,255,255,.42); --theme-border-default: rgba(255,255,255,.62); --theme-border-strong: rgba(255,255,255,.76); --theme-border-hover: rgba(255,255,255,.92);
   --theme-highlight-rest: rgba(255,255,255,.95); --theme-highlight-side: rgba(255,255,255,.55); --theme-highlight-hover: rgba(255,255,255,.98); --theme-highlight-hover-side: rgba(255,255,255,.65);
   --theme-action-primary: #7b7fb2; --theme-action-hover: #6b6fa0; --theme-action-pressed: #5d618e; --theme-selection: rgba(123,127,178,.14); --theme-focus: rgba(123,127,178,.42);
+  /* 29d2bdc navigation selection: bright glass, not a purple-filled pill. */
+  --theme-sidebar-active-bg: rgba(255,255,255,.38); --theme-sidebar-active-fg: #6b6fa0; --theme-sidebar-active-border: rgba(255,255,255,.62); --theme-sidebar-active-highlight: rgba(255,255,255,.85);
   --theme-success: #5a9e88; --theme-warning: #b07858; --theme-danger: #c85a5a; --theme-info: #6f9eaa;
   --theme-shadow-1: 0 2px 8px rgba(80,90,110,.055),inset 0 1px 0 rgba(255,255,255,.72);
   --theme-shadow-2: 0 6px 18px rgba(80,90,110,.10),inset 0 1px 0 rgba(255,255,255,.86);
@@ -39,6 +41,7 @@
   --theme-border-hairline: rgba(255,255,255,.045); --theme-border-subtle: rgba(255,255,255,.07); --theme-border-default: rgba(255,255,255,.10); --theme-border-strong: rgba(255,255,255,.12); --theme-border-hover: rgba(255,255,255,.18);
   --theme-highlight-rest: rgba(255,255,255,.12); --theme-highlight-side: rgba(255,255,255,.06); --theme-highlight-hover: rgba(255,255,255,.16); --theme-highlight-hover-side: rgba(255,255,255,.08);
   --theme-action-primary: #9590c4; --theme-action-hover: #aaa6d8; --theme-action-pressed: #847fb4; --theme-selection: rgba(149,144,196,.16); --theme-focus: rgba(149,144,196,.42);
+  --theme-sidebar-active-bg: rgba(255,255,255,.09); --theme-sidebar-active-fg: #c2bee3; --theme-sidebar-active-border: rgba(255,255,255,.14); --theme-sidebar-active-highlight: rgba(255,255,255,.14);
   --theme-success: #80b4a2; --theme-warning: #cea07f; --theme-danger: #df8585; --theme-info: #8bc7d6;
   --theme-shadow-1: 0 2px 8px rgba(0,0,0,.15),inset 0 1px 0 rgba(255,255,255,.05); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.075);
   --theme-shadow-3: 0 14px 38px rgba(0,0,0,.29),inset 0 1px 0 rgba(255,255,255,.10); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.38),inset 0 1px 0 rgba(255,255,255,.12);
@@ -49,35 +52,42 @@
   --theme-project-shadow: 0 2px 8px rgba(0,0,0,.16); --theme-project-hover-shadow: 0 7px 20px rgba(0,0,0,.24); --theme-project-sheen-rest: rgba(255,255,255,.035); --theme-project-highlight-rest: rgba(255,255,255,.075); --theme-project-sheen-hover: rgba(255,255,255,.08); --theme-project-sheen-hover-mid: rgba(255,255,255,.02); --theme-project-highlight-hover: rgba(255,255,255,.12);
 }
 
+/* V2 follows the quieter token.html treatment: solid neutral surfaces, light borders and
+   conventional shadows. It is intentionally not a second glass/neumorphic skin. */
 :root[data-family='v2'][data-theme='light'] {
   color-scheme: light;
   --theme-page: radial-gradient(900px 560px at 78% -8%,rgba(132,121,178,.10),transparent 62%),radial-gradient(700px 440px at 18% 110%,rgba(113,158,170,.08),transparent 65%),linear-gradient(180deg,#f5f3f6,#eeecf0);
-  --theme-sidebar: rgba(248,246,249,.84); --theme-base: rgba(250,249,251,.82); --theme-glass: rgba(252,251,253,.72); --theme-glass-hover: rgba(255,255,255,.88); --theme-card-solid: #fbfafc;
-  --theme-soft: rgba(62,54,72,.045); --theme-soft-hover: rgba(62,54,72,.072); --theme-raised: rgba(255,255,255,.88); --theme-floating: rgba(253,252,254,.84); --theme-scrim: rgba(31,27,36,.22); --theme-column: rgba(255,255,255,.16);
+  --theme-sidebar: rgba(248,246,249,.90); --theme-base: #f7f5f8; --theme-glass: rgba(252,251,253,.76); --theme-glass-hover: rgba(255,255,255,.90); --theme-card-solid: #fbfafc;
+  --theme-soft: rgba(62,54,72,.040); --theme-soft-hover: rgba(62,54,72,.065); --theme-raised: #ffffff; --theme-floating: rgba(253,252,254,.94); --theme-scrim: rgba(31,27,36,.22); --theme-column: rgba(255,255,255,.16);
   --theme-content-primary: #29262e; --theme-content-secondary: #6f6975; --theme-content-tertiary: #99929f; --theme-content-disabled: #b9b3bd; --theme-content-inverse: #fff;
-  --theme-border-hairline: rgba(42,35,49,.055); --theme-border-subtle: rgba(42,35,49,.085); --theme-border-default: rgba(42,35,49,.125); --theme-border-strong: rgba(42,35,49,.18); --theme-border-hover: rgba(42,35,49,.24);
-  --theme-highlight-rest: rgba(255,255,255,.72); --theme-highlight-side: rgba(255,255,255,.45); --theme-highlight-hover: rgba(255,255,255,.88); --theme-highlight-hover-side: rgba(255,255,255,.58);
-  --theme-action-primary: #7067a5; --theme-action-hover: #625994; --theme-action-pressed: #554d83; --theme-selection: rgba(112,103,165,.115); --theme-focus: rgba(112,103,165,.30);
+  --theme-border-hairline: rgba(42,35,49,.055); --theme-border-subtle: rgba(42,35,49,.08); --theme-border-default: rgba(42,35,49,.115); --theme-border-strong: rgba(42,35,49,.15); --theme-border-hover: rgba(42,35,49,.22);
+  --theme-highlight-rest: rgba(255,255,255,.38); --theme-highlight-side: rgba(255,255,255,.20); --theme-highlight-hover: rgba(255,255,255,.48); --theme-highlight-hover-side: rgba(255,255,255,.28);
+  --theme-action-primary: #7067a5; --theme-action-hover: #625994; --theme-action-pressed: #554d83; --theme-selection: rgba(112,103,165,.10); --theme-focus: rgba(112,103,165,.30);
+  --theme-sidebar-active-bg: rgba(112,103,165,.095); --theme-sidebar-active-fg: #625994; --theme-sidebar-active-border: rgba(112,103,165,.10); --theme-sidebar-active-highlight: transparent;
   --theme-success: #4d7f6a; --theme-warning: #936d42; --theme-danger: #a75251; --theme-info: #607b9d;
-  --theme-shadow-1: 0 1px 2px rgba(40,34,47,.025),0 4px 12px rgba(40,34,47,.045); --theme-shadow-2: 0 2px 4px rgba(40,34,47,.035),0 10px 28px rgba(40,34,47,.075); --theme-shadow-3: 0 4px 10px rgba(40,34,47,.055),0 18px 52px rgba(40,34,47,.12); --theme-shadow-4: 0 10px 24px rgba(40,34,47,.08),0 28px 72px rgba(40,34,47,.15);
+  --theme-shadow-1: 0 1px 2px rgba(40,34,47,.025),0 3px 10px rgba(40,34,47,.035);
+  --theme-shadow-2: 0 2px 5px rgba(40,34,47,.035),0 8px 20px rgba(40,34,47,.055);
+  --theme-shadow-3: 0 6px 18px rgba(40,34,47,.075),0 16px 38px rgba(40,34,47,.08);
+  --theme-shadow-4: 0 12px 30px rgba(40,34,47,.11),0 28px 64px rgba(40,34,47,.12);
   --theme-brand-gradient: linear-gradient(145deg,#6d64a0,#bd7e95); --theme-fab-gradient: linear-gradient(135deg,#6d64a0,#8178b2); --theme-scrollbar-thumb: rgba(112,103,165,.22); --theme-scrollbar-thumb-hover: rgba(112,103,165,.38); --theme-divider: linear-gradient(90deg,transparent,rgba(42,35,49,.085) 20%,rgba(42,35,49,.085) 80%,transparent);
-  --theme-topbar-bg: rgba(255,255,255,.12); --theme-topbar-bg-hover: rgba(255,255,255,.18); --theme-topbar-border: rgba(42,35,49,.07); --theme-topbar-shadow: 0 2px 10px rgba(40,34,47,.025); --theme-topbar-shadow-hover: 0 4px 14px rgba(40,34,47,.05);
+  --theme-topbar-bg: rgba(251,250,252,.72); --theme-topbar-bg-hover: rgba(251,250,252,.82); --theme-topbar-border: rgba(42,35,49,.055); --theme-topbar-shadow: 0 2px 10px rgba(40,34,47,.025); --theme-topbar-shadow-hover: 0 4px 14px rgba(40,34,47,.04);
   --theme-project-overlay-start: rgba(255,255,255,.90); --theme-project-overlay-end: rgba(255,255,255,1); --theme-project-border: rgba(42,35,49,.07); --theme-project-hover-border: rgba(42,35,49,.11); --theme-project-shadow: 0 2px 8px rgba(40,34,47,.055); --theme-project-hover-shadow: 0 7px 20px rgba(40,34,47,.09); --theme-project-sheen-rest: rgba(255,255,255,.10); --theme-project-highlight-rest: rgba(255,255,255,.72); --theme-project-sheen-hover: rgba(255,255,255,.42); --theme-project-sheen-hover-mid: rgba(255,255,255,.05); --theme-project-highlight-hover: rgba(255,255,255,.88);
 }
 
 :root[data-family='v2'][data-theme='dark'] {
   color-scheme: dark;
   --theme-page: radial-gradient(900px 560px at 80% -10%,rgba(130,116,180,.115),transparent 62%),radial-gradient(760px 480px at 16% 110%,rgba(88,133,143,.09),transparent 66%),linear-gradient(180deg,#1c1921,#17151b);
-  --theme-sidebar: rgba(25,23,30,.86); --theme-base: rgba(31,28,36,.78); --theme-glass: rgba(34,31,40,.70); --theme-glass-hover: rgba(43,39,49,.92); --theme-card-solid: #24212a;
-  --theme-soft: rgba(255,255,255,.045); --theme-soft-hover: rgba(255,255,255,.075); --theme-raised: rgba(43,39,49,.92); --theme-floating: rgba(39,35,45,.88); --theme-scrim: rgba(0,0,0,.50); --theme-column: rgba(255,255,255,.018);
+  --theme-sidebar: rgba(25,23,30,.92); --theme-base: #201d25; --theme-glass: rgba(34,31,40,.78); --theme-glass-hover: rgba(43,39,49,.94); --theme-card-solid: #24212a;
+  --theme-soft: rgba(255,255,255,.04); --theme-soft-hover: rgba(255,255,255,.065); --theme-raised: #2b2731; --theme-floating: rgba(39,35,45,.96); --theme-scrim: rgba(0,0,0,.50); --theme-column: rgba(255,255,255,.018);
   --theme-content-primary: #f0edf3; --theme-content-secondary: #aaa3af; --theme-content-tertiary: #7f7885; --theme-content-disabled: #5e5962; --theme-content-inverse: #17151b;
-  --theme-border-hairline: rgba(255,255,255,.045); --theme-border-subtle: rgba(255,255,255,.075); --theme-border-default: rgba(255,255,255,.11); --theme-border-strong: rgba(255,255,255,.17); --theme-border-hover: rgba(255,255,255,.22);
-  --theme-highlight-rest: rgba(255,255,255,.08); --theme-highlight-side: rgba(255,255,255,.045); --theme-highlight-hover: rgba(255,255,255,.12); --theme-highlight-hover-side: rgba(255,255,255,.07);
-  --theme-action-primary: #a49acb; --theme-action-hover: #b4abd6; --theme-action-pressed: #9187bd; --theme-selection: rgba(164,154,203,.15); --theme-focus: rgba(164,154,203,.34);
+  --theme-border-hairline: rgba(255,255,255,.045); --theme-border-subtle: rgba(255,255,255,.075); --theme-border-default: rgba(255,255,255,.105); --theme-border-strong: rgba(255,255,255,.145); --theme-border-hover: rgba(255,255,255,.20);
+  --theme-highlight-rest: rgba(255,255,255,.045); --theme-highlight-side: rgba(255,255,255,.025); --theme-highlight-hover: rgba(255,255,255,.07); --theme-highlight-hover-side: rgba(255,255,255,.04);
+  --theme-action-primary: #a49acb; --theme-action-hover: #b4abd6; --theme-action-pressed: #9187bd; --theme-selection: rgba(164,154,203,.14); --theme-focus: rgba(164,154,203,.34);
+  --theme-sidebar-active-bg: rgba(164,154,203,.12); --theme-sidebar-active-fg: #c7c0e2; --theme-sidebar-active-border: rgba(164,154,203,.10); --theme-sidebar-active-highlight: transparent;
   --theme-success: #82ad99; --theme-warning: #c5a175; --theme-danger: #d28683; --theme-info: #91a7c1;
-  --theme-shadow-1: 0 1px 2px rgba(0,0,0,.12),0 5px 14px rgba(0,0,0,.16); --theme-shadow-2: 0 3px 8px rgba(0,0,0,.18),0 14px 34px rgba(0,0,0,.22); --theme-shadow-3: 0 8px 18px rgba(0,0,0,.24),0 24px 60px rgba(0,0,0,.30); --theme-shadow-4: 0 12px 28px rgba(0,0,0,.30),0 34px 84px rgba(0,0,0,.36);
+  --theme-shadow-1: 0 2px 8px rgba(0,0,0,.14); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.20); --theme-shadow-3: 0 14px 38px rgba(0,0,0,.26); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.34);
   --theme-brand-gradient: linear-gradient(145deg,#a49acb,#bd7e95); --theme-fab-gradient: linear-gradient(135deg,#9187bd,#a49acb); --theme-scrollbar-thumb: rgba(164,154,203,.24); --theme-scrollbar-thumb-hover: rgba(164,154,203,.40); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.075) 20%,rgba(255,255,255,.075) 80%,transparent);
-  --theme-topbar-bg: rgba(255,255,255,.014); --theme-topbar-bg-hover: rgba(255,255,255,.025); --theme-topbar-border: rgba(255,255,255,.045); --theme-topbar-shadow: 0 2px 10px rgba(0,0,0,.10); --theme-topbar-shadow-hover: 0 4px 14px rgba(0,0,0,.16);
+  --theme-topbar-bg: rgba(36,33,42,.74); --theme-topbar-bg-hover: rgba(42,38,48,.84); --theme-topbar-border: rgba(255,255,255,.05); --theme-topbar-shadow: 0 2px 10px rgba(0,0,0,.10); --theme-topbar-shadow-hover: 0 4px 14px rgba(0,0,0,.15);
   --theme-project-overlay-start: rgba(32,29,38,.88); --theme-project-overlay-end: rgba(36,33,42,.98); --theme-project-border: rgba(255,255,255,.075); --theme-project-hover-border: rgba(255,255,255,.12); --theme-project-shadow: 0 2px 8px rgba(0,0,0,.18); --theme-project-hover-shadow: 0 7px 20px rgba(0,0,0,.26); --theme-project-sheen-rest: rgba(255,255,255,.03); --theme-project-highlight-rest: rgba(255,255,255,.07); --theme-project-sheen-hover: rgba(255,255,255,.075); --theme-project-sheen-hover-mid: rgba(255,255,255,.018); --theme-project-highlight-hover: rgba(255,255,255,.11);
 }
 
