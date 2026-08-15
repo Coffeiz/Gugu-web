@@ -55,6 +55,10 @@ _DEFAULT_ITEM_SIZES = {
     "event": (220, 96),
 }
 
+# 画布布局安全约束，供语义锚点和 Agent 排布提示共同使用。
+_SAFE_EDGE_GAP = 150
+_SAFE_CENTER_DISTANCE = 750
+
 
 def _json_object(raw: str | None) -> dict[str, Any]:
     try:
@@ -118,7 +122,8 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
                 "effective_size": {"w": effective_w, "h": effective_h},
                 "default_size": {"w": default_w, "h": default_h},
                 "size_source": "explicit" if item.w is not None or item.h is not None else "default",
-                "recommended_gap": 40,
+                "recommended_gap": _SAFE_EDGE_GAP,
+                "recommended_center_distance": _SAFE_CENTER_DISTANCE,
             },
             "collapsed": item.collapsed,
             "z": item.z,
@@ -333,11 +338,11 @@ async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position
         if near_item is None:
             raise ValueError("找不到要靠近的画布节点")
         near_w = near_item.w or 220
-        return float(near_item.x + near_w + 40 + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
+        return float(near_item.x + near_w + _SAFE_EDGE_GAP + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
     items = await get_canvas_last_item(db, user_id, canvas.id)
     if items is None:
         return camera_x + 40, camera_y + 40
-    return float(items.x + (items.w or 220) + 40), float(items.y)
+    return float(items.x + (items.w or 220) + _SAFE_EDGE_GAP), float(items.y)
 
 
 async def _mind_create_canvas(db, user_id, args: dict):
@@ -683,7 +688,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_add_canvas_node", label="放置画布节点",
-            description="把当前用户的项目、文件或日历活动引用放入画布。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 计算矩形，不能与已有节点重叠，并默认保留至少 40px 间距。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
+            description="把当前用户的项目、文件或日历活动引用放入画布。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 计算矩形，不能与已有节点重叠，并默认保留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。先使用 mind_search_placeable_nodes 解析对象；普通 note 和未知 node_id 不允许放入。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -700,7 +705,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_update_canvas_node", label="调整画布节点",
-            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 留出约 40px 间距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
+            description="调整已放置节点的位置、大小、层级或折叠状态；按其它节点的 layout.effective_size 留出至少 150px 边缘间距，采用中心点排布时至少保持 750px 中心距，避免重叠；只改变画布视图，不改变原项目、文件或活动。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -797,7 +802,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_batch_canvas", label="批量编排画布",
-            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。批量放置仍必须按每个节点的 layout.effective_size 做矩形避让，节点不得重叠且默认留 40px 间距。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
+            description="在一个事务内批量放置项目/文件/活动引用、调整布局和创建 related 连接。批量放置仍必须按每个节点的 layout.effective_size 做矩形避让，节点不得重叠且默认留至少 150px 边缘间距；采用中心点排布时至少保持 750px 中心距。最多 20 个操作；失败会整批回滚，使用 request_id 重试可复用已有对象。删除类操作请改用单独工具确认。",
             input_schema={
                 "type": "object",
                 "properties": {

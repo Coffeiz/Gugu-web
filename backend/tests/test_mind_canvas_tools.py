@@ -246,7 +246,8 @@ async def test_relation_tools_read_and_update_canvas_connection_sides(db, user_a
     canvas_view = await _mind_get_canvas(db, user_a.id, {"canvas_id": canvas.id})
     first_node = next(node for node in canvas_view["nodes"] if node["node_id"] == first.id)
     assert first_node["layout"]["effective_size"] == {"w": 244, "h": 148}
-    assert first_node["layout"]["recommended_gap"] == 40
+    assert first_node["layout"]["recommended_gap"] == 150
+    assert first_node["layout"]["recommended_center_distance"] == 750
     assert canvas_view["relations"][0]["source_side"] == "right"
     assert canvas_view["relations"][0]["target_side"] == "left"
 
