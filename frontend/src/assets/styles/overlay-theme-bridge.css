@@ -1,0 +1,107 @@
+/* Shared form / Teleport surfaces that are outside their page subtree. Token-only bridge. */
+html[data-theme][data-family] .todo-pop {
+  color: var(--content-primary);
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
+}
+html[data-theme][data-family] .todo-pop .tp-title,
+html[data-theme][data-family] .todo-pop .tp-name,
+html[data-theme][data-family] .todo-pop .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .todo-pop .tp-count,
+html[data-theme][data-family] .todo-pop .tp-empty { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .todo-pop .tp-check {
+  color: var(--content-on-accent);
+  background: transparent;
+  border-color: var(--border-default);
+}
+html[data-theme][data-family] .todo-pop .tp-check.checked {
+  background: var(--action-primary);
+  border-color: var(--action-primary);
+}
+html[data-theme][data-family] .todo-pop .tp-del { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop .tp-del:hover {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
+html[data-theme][data-family] .todo-pop .tp-add {
+  color: var(--content-secondary);
+  background: transparent;
+  border-color: var(--border-subtle);
+}
+html[data-theme][data-family] .todo-pop .tp-add:hover {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+
+html[data-theme][data-family] .event-form-body .popup-title { color: var(--content-primary); }
+html[data-theme][data-family] .event-form-body .popup-close-btn { color: var(--content-secondary); }
+html[data-theme][data-family] .event-form-body .popup-close-btn:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .event-form-body .popup-save {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .event-form-body .popup-delete {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border-color: color-mix(in srgb,var(--status-warning) 30%,transparent);
+}
+html[data-theme][data-family] .event-form-body .popup-delete:hover {
+  background: color-mix(in srgb,var(--status-warning) 20%,transparent);
+  border-color: var(--status-warning);
+}
+
+html[data-theme][data-family] .event-form-body .popup-input,
+html[data-theme][data-family] .event-form-body .popup-textarea,
+html[data-theme][data-family] .event-form-body .time-box,
+html[data-theme][data-family] .event-form-body .lead-select {
+  color: var(--content-primary);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+html[data-theme][data-family] .event-form-body .popup-input:focus,
+html[data-theme][data-family] .event-form-body .popup-textarea:focus,
+html[data-theme][data-family] .event-form-body .time-box:focus-within {
+  background: var(--control-bg-hover);
+  border-color: var(--border-focus);
+  box-shadow: var(--control-focus-shadow);
+}
+html[data-theme][data-family] .event-form-body .time-dash,
+html[data-theme][data-family] .event-form-body .allday-toggle,
+html[data-theme][data-family] .event-form-body .reminder-label { color: var(--content-secondary); }
+html[data-theme][data-family] .event-form-body .nextday-tag {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .event-form-body .reminder-section { border-top-color: var(--border-subtle); }
+html[data-theme][data-family] .event-form-body .reminder-del { color: var(--status-warning); }
+html[data-theme][data-family] .event-form-body .reminder-del:hover { background: var(--status-warning-bg); }
+html[data-theme][data-family] .event-form-body .reminder-add-toggle {
+  color: var(--content-secondary);
+  background: transparent;
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .event-form-body .reminder-add-toggle:hover,
+html[data-theme][data-family] .event-form-body .reminder-test-bar:hover {
+  color: var(--content-primary);
+  background: var(--action-soft-hover);
+  border-color: var(--border-focus);
+}
+html[data-theme][data-family] .event-form-body .reminder-test-bar {
+  color: var(--content-secondary);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .event-form-body .chan-chip {
+  color: var(--content-secondary);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+html[data-theme][data-family] .event-form-body .chan-chip.on {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+  border-color: var(--action-outline);
+}
