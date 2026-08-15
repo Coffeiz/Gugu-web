@@ -51,7 +51,11 @@ defineExpose({ svgEl: computed(() => svgRef.value) })
   align-items: center;
   justify-content: center;
   box-shadow: var(--gugu-fab-shadow);
-  transition: transform .2s var(--motion-ease-standard), box-shadow .2s var(--motion-ease-standard);
+  transition:
+    transform var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .ai-fab:hover {
   transform: scale(1.08);
