@@ -108,7 +108,7 @@ async def delete_canvas_note(db, user_id, node_id, version):
     return True
 
 
-async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="related"):
+async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="related", *, commit=True):
     items = (await db.execute(select(MindCanvasItem).where(
         MindCanvasItem.canvas_id == canvas_id,
         MindCanvasItem.user_id == user_id,
@@ -128,7 +128,10 @@ async def connect_nodes(db, user_id, canvas_id, source_id, target_id, rel_type="
         relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=rel_type)
     except ValueError as exc:
         return None, str(exc)
-    await db.commit()
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
     await db.refresh(relation)
     return relation, None
 
@@ -258,3 +261,60 @@ async def search_placeable_entities(db, user_id, selected, normalized, mode, lim
         ).order_by(CalendarEvent.created_at.desc()).limit(limit))).scalars().all()
         matches.extend(("event", row) for row in rows)
     return matches
+
+
+async def batch_canvas_operations(db, user_id, canvas, operations, request_id, *, resolve_position, summarize):
+    """执行画布批量放置、布局和连接；任一操作失败都回滚整批。"""
+    results = []
+    try:
+        for index, operation in enumerate(operations):
+            if not isinstance(operation, dict):
+                raise ValueError(f"第 {index + 1} 个操作格式不正确")
+            kind = operation.get("kind")
+            if kind == "add_node":
+                ref_type, ref_id = operation.get("ref_type"), operation.get("ref_id")
+                if ref_type not in {"project", "file", "event"} or not isinstance(ref_id, int):
+                    raise ValueError(f"第 {index + 1} 个放置操作缺少有效引用")
+                node, _ = await get_or_create_reference_node(db, user_id, ref_type, ref_id)
+                item = await get_canvas_item_by_node(db, user_id, canvas.id, node.id)
+                created = item is None
+                if item is None:
+                    x, y = await resolve_position(db, user_id, canvas, node, operation.get("position"))
+                    item = MindCanvasItem(user_id=user_id, canvas_id=canvas.id, node_id=node.id, x=x, y=y, z=0)
+                    db.add(item)
+                    await db.flush()
+                results.append({"index": index, "kind": kind, "created": created, "node": summarize(node, item)})
+            elif kind == "update_item":
+                item_id = operation.get("item_id")
+                if not isinstance(item_id, int):
+                    raise ValueError(f"第 {index + 1} 个布局操作缺少 item_id")
+                item = await get_canvas_item(db, user_id, canvas.id, item_id)
+                if item is None:
+                    raise ValueError(f"第 {index + 1} 个布局操作找不到节点")
+                fields = {key: operation[key] for key in ("x", "y", "w", "h", "z", "collapsed") if key in operation}
+                for key in ("x", "y", "w", "h"):
+                    if key in fields and (not isinstance(fields[key], (int, float)) or isinstance(fields[key], bool) or (key in ("w", "h") and fields[key] <= 0)):
+                        raise ValueError(f"第 {index + 1} 个布局操作包含无效 {key}")
+                if not fields:
+                    raise ValueError(f"第 {index + 1} 个布局操作没有修改字段")
+                await db.execute(update(MindCanvasItem).where(MindCanvasItem.id == item.id).values(**fields, updated_at=now_utc()))
+                await db.flush()
+                await db.refresh(item)
+                node = await get_owned(db, MindNode, item.node_id, user_id)
+                results.append({"index": index, "kind": kind, "updated": True, "node": summarize(node, item)})
+            elif kind == "connect":
+                source_id, target_id = operation.get("source_node_id"), operation.get("target_node_id")
+                if not isinstance(source_id, int) or not isinstance(target_id, int):
+                    raise ValueError(f"第 {index + 1} 个连接操作缺少节点")
+                relation, error = await connect_nodes(db, user_id, canvas.id, source_id, target_id, commit=False)
+                if error:
+                    raise ValueError(f"第 {index + 1} 个连接操作{error}")
+                await db.flush()
+                results.append({"index": index, "kind": kind, "relation_id": relation.id, "created_or_reused": True})
+            else:
+                raise ValueError(f"不支持的批量操作 {kind or '空操作'}；删除请使用单独工具确认")
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        return {"error": str(exc), "request_id": request_id, "rolled_back": True}
+    return {"canvas_id": canvas.id, "request_id": request_id, "operations": results, "atomic": True}
