@@ -62,6 +62,25 @@ html[data-theme][data-family] .gs-panel {
   color: var(--content-primary);
 }
 
+/* ProjectCard keeps its business-owned project-color gradient; chrome/elevation come from tokens. */
+html[data-theme][data-family] .proj-card {
+  border-color: var(--project-card-border);
+  border-radius: var(--project-card-radius);
+  box-shadow: var(--project-card-shadow);
+}
+html[data-theme][data-family] .proj-card:hover {
+  border-color: var(--project-card-hover-border);
+  box-shadow: var(--project-card-hover-shadow);
+}
+html[data-theme][data-family] .proj-card::before {
+  background: var(--project-card-sheen-rest);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-rest);
+}
+html[data-theme][data-family] .proj-card::after {
+  background: var(--project-card-sheen-hover);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
+}
+
 /* Gugu window: same tokens used by Design/GuguChatMock.vue. */
 html[data-theme][data-family] .chat-window {
   border-color: var(--gugu-chat-border);
