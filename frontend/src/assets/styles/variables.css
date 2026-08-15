@@ -4,6 +4,7 @@
 @import './scrollbars.css';
 @import './design-overrides.css';
 @import './theme-adoption.css';
+@import './design-theme-fixes.css';
 
 :root {
   --glass-blur: blur(20px);
