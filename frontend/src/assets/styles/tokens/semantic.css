@@ -90,9 +90,6 @@
   --app-background: var(--surface-page);
   --column-bg: var(--surface-column);
   --divider-line: var(--theme-divider);
-  --scrollbar-track: transparent;
-  --scrollbar-thumb: var(--theme-scrollbar-thumb);
-  --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover);
   --control-border: var(--border-subtle);
   --success-fg: var(--status-success);
 

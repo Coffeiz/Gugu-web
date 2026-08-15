@@ -5,12 +5,8 @@
  * beginning, so overflow appearing later never changes content width. On overlay-scrollbar systems
  * the browser naturally paints above content and the reserved gutter collapses to the platform rule.
  */
-:root {
-  --scrollbar-safe-inset: var(--space-sm);
-}
-
 html[data-theme][data-family] * {
-  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 html[data-theme][data-family] .scroll-surface,
@@ -28,13 +24,13 @@ html[data-theme][data-family] *::-webkit-scrollbar {
 }
 
 html[data-theme][data-family] *::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--scrollbar-track);
   margin-block: var(--scrollbar-safe-inset);
   margin-inline: var(--scrollbar-safe-inset);
 }
 
 html[data-theme][data-family] *::-webkit-scrollbar-thumb {
-  min-height: 24px;
+  min-height: var(--scrollbar-min-thumb);
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: var(--scrollbar-thumb);
@@ -48,7 +44,7 @@ html[data-theme][data-family] *::-webkit-scrollbar-thumb:hover {
 
 html[data-theme][data-family] *::-webkit-scrollbar-corner,
 html[data-theme][data-family] *::-webkit-scrollbar-button {
-  background: transparent;
+  background: var(--scrollbar-corner);
 }
 
 html[data-theme][data-family] *::-webkit-scrollbar-button {

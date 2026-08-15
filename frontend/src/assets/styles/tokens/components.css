@@ -50,9 +50,17 @@
   --topbar-shadow: var(--theme-topbar-shadow);
   --topbar-shadow-hover: var(--theme-topbar-shadow-hover);
   --topbar-blur: 16px;
-  --topbar-title-size: var(--font-size-lg);
-  --topbar-meta-size: var(--font-size-xs);
+  --topbar-title-size: var(--font-size-xl);
+  --topbar-meta-size: var(--font-size-sm);
   --topbar-height: 52px;
+
+  /* Scrollbar: one visual contract for page and component scroll surfaces. */
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--theme-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover);
+  --scrollbar-corner: transparent;
+  --scrollbar-safe-inset: var(--space-sm);
+  --scrollbar-min-thumb: 24px;
 
   /* Project cards: exact Gugu horizontal project-colour gradient and real hover motion. */
   --project-card-gradient-start: var(--theme-project-overlay-start);

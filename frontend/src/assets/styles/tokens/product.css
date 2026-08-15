@@ -29,11 +29,11 @@ html[data-theme][data-family] .sidebar .badge { background: color-mix(in srgb,va
    DefaultLayout owns geometry and behaviour. The token layer only changes GlassBg paint/elevation;
    no scroll timeline or layout override is allowed here. */
 html[data-theme][data-family] .topbar {
-  --gb-tint: var(--topbar-bg);
+  --gb-tint: var(--surface-glass);
   box-shadow: var(--topbar-shadow);
 }
 html[data-theme][data-family] .topbar:hover {
-  --gb-tint: var(--topbar-bg-hover);
+  --gb-tint: var(--surface-glass-hover);
   box-shadow: var(--topbar-shadow-hover);
 }
 html[data-theme][data-family] .topbar .topbar-title h1 { font-size: var(--topbar-title-size); }
