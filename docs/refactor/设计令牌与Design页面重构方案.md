@@ -1,6 +1,6 @@
 # 设计令牌与 `/design` 页面重构方案
 
-> 状态：待实施
+> 状态：实施中（Phase 0 已完成，Phase 1 进行中）
 >
 > 调查日期：2026-08-15
 >
@@ -566,16 +566,16 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 0：基线与契约
 
-- [ ] 确认 `/design` 的访问范围
-- [ ] 确认主应用与 Admin 的主题边界
-- [ ] 确认基础色、字号、间距、圆角和阴影候选尺度
-- [ ] 将间距、圆角和字体大小各自控制在 4 档
-- [ ] 建立历史间距、字号和圆角值到标准档位的映射表
-- [ ] 记录动态业务色、画布物理参数和第三方组件变量的例外规则
-- [ ] 确认令牌命名规则和废弃变量规则
-- [ ] 盘点 AdminLayout、Admin 全局样式和各 Admin 页面中的暗色 literal、重复组件样式与局部滚动条
-- [ ] 确认 Admin 以默认暗色运行，不参与主应用 `light/dark/system` 切换
-- [ ] 确认 Admin 共享基础尺度、独立语义 surface/content/border/shadow 的边界
+- [x] 确认 `/design` 的访问范围：登录用户可直接访问，入口不污染业务导航
+- [x] 确认主应用与 Admin 的主题边界
+- [x] 确认基础色、字号、间距、圆角和阴影候选尺度
+- [x] 将间距、圆角和字体大小各自控制在 4 档
+- [x] 建立历史间距、字号和圆角值到标准档位的映射表
+- [x] 记录动态业务色、画布物理参数和第三方组件变量的例外规则
+- [x] 确认令牌命名规则和废弃变量规则
+- [x] 盘点 AdminLayout、Admin 全局样式和各 Admin 页面中的暗色 literal、重复组件样式与局部滚动条
+- [x] 确认 Admin 以默认暗色运行，不参与主应用 `light/dark/system` 切换
+- [x] 确认 Admin 共享基础尺度、独立语义 surface/content/border/shadow 的边界
 
 ### Phase 1：令牌基础层
 
