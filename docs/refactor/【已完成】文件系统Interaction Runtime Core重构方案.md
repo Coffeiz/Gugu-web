@@ -5,8 +5,8 @@
 | 项目 | 内容 |
 | --- | --- |
 | 状态 | 🟢 文件系统迁移已完成（Phase 0–5，2026-08-11）：Runtime Demo、文件库主页面与项目编辑卡的单卡/多选入口均已接入统一 Vue API；旧拖拽生命周期、失效状态、临时探针和重复 Action 解析已清理 |
-| 重构分支 | `codex-filesystem-core-rebuild` |
-| 基线 | Gugu-web 当前迁移提交 `4559ad89`；Runtime 当前基线 `952ac10` |
+| 重构分支 | 已完成；当前相关维护在 `codex/canvas-stage1` |
+| 基线 | Gugu-web 当前分支 HEAD `b157a995`；Runtime 当前分支 HEAD `f908d65`；未提交修改以两仓库工作树为准 |
 | 关联仓库 | `gugu-interaction-runtime` |
 | 目标 | 文件页和项目文件抽屉只通过 Runtime Core API 接入交互 |
 

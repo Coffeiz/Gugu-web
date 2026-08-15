@@ -148,7 +148,7 @@ function centerFor(item: MindCanvasItem) {
   const { w, h } = geometry(item)
   return { x: item.x + w / 2, y: item.y + h / 2 }
 }
-// 强制绑定：卡片拖拽/落地飞行途中会带一点 rotateZ 摆动（见 usePhysicsDrag.ts 的 frame()），
+// 强制绑定：卡片拖拽/落地飞行途中会带一点 rotateZ 摆动，
 // 但 onFollow 吐出来的只是不含旋转的纯几何中心，下面按轴对齐算出来的锚点在摆动瞬间会跟连接点
 // 实际渲染的位置错开（卡片越大、摆动角度越大，错得越明显）。宁可每帧多测一次量，也不去重建
 // 一份旋转矩阵——直接量拖拽系统唯一的连接点管理层（.phys-conn-dot-manager，

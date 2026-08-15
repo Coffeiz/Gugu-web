@@ -198,17 +198,6 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   opacity: 0;
 }
 
-/* 拖拽系统把生命周期投影成稳定的 DOM class。附加交互在抓起、landing 和 regrab
-   期间必须统一失效，避免按钮/连接点从克隆体或落地目标中闪出；揭示完成后由本体
-   自己恢复 hover 显示。 */
-:global(.phys-drag-clone) .card-affordances,
-:global(.phys-landing-content) .card-affordances,
-:global(.phys-drag-source) .card-affordances,
-:global(.phys-drag-source-placeholder) .card-affordances {
-  pointer-events: none !important;
-  opacity: 0 !important;
-}
-
 /* Runtime 通过临时类管理跨 Vue 克隆的附加交互。inline 模式使用 display:contents，
    所以隐藏根节点本身不可靠，必须直接压制其子按钮和连接点；卡片主体视觉不受影响。 */
 :global(.runtime-affordances-hidden) {

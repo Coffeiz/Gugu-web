@@ -1,4 +1,9 @@
-import type { FlipOptions } from './flip'
+export interface FlipOptions {
+  duration?: number
+  easing: string
+  onBeforePlay?: () => void
+  isActive?: () => boolean
+}
 
 export type FlipKey = string | number
 export type FlipResult = 'finished' | 'cancelled' | 'stale' | 'skipped'

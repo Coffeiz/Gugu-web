@@ -13,7 +13,7 @@ export function setupInteractionRuntime(): void {
     affordances: { selector: '[data-card-affordances]' },
     groupVisual: 'default',
     motion: { enabled: true },
-    // 抓取对齐沿用咕咕旧版（main 分支 usePhysicsDrag.ts）看板卡片的
+    // 抓取对齐沿用看板卡片既有的
     // centerGrab:true 手感：卡片几何中心对齐指针，再往下偏 12px 做出
     // "被拎着"的悬垂感，不是简单的居中或按点击位置对齐。
     grabAlign: { offsetY: 12 },
