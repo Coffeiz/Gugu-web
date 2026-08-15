@@ -50,6 +50,10 @@ html[data-theme='dark'][data-family] {
   --calendar-grid-line: var(--border-subtle);
   --calendar-grid-line-strong: var(--border-subtle);
   --calendar-cell-hover-bg: transparent;
+  --calendar-today-cell-bg: var(--color-accent-faint);
+  --calendar-range-cell-bg: var(--selection-bg);
+  --calendar-selected-cell-bg: var(--selection-bg);
+  --calendar-range-edge-bg: var(--action-soft-hover);
   --calendar-weekend-hover-bg: var(--calendar-weekend-bg);
   --calendar-chip-hover-overlay: transparent;
   --calendar-capsule-hover-overlay: transparent;

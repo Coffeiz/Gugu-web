@@ -258,15 +258,15 @@ html[data-theme][data-family] .cal-page .wv-dnum { color: var(--content-primary)
 html[data-theme][data-family] .cal-page .month-cell::before,
 html[data-theme][data-family] .cal-page .wv-dhead::after,
 html[data-theme][data-family] .cal-page .wv-ad-hover { background: var(--action-soft); }
-html[data-theme][data-family] .cal-page .month-cell.is-today,
+html[data-theme][data-family] .cal-page .month-cell.is-today { background: var(--calendar-today-cell-bg); }
+html[data-theme][data-family] .cal-page .month-cell.is-selected { background: var(--calendar-selected-cell-bg); }
+html[data-theme][data-family] .cal-page .month-cell.in-range { background: var(--calendar-range-cell-bg); }
 html[data-theme][data-family] .cal-page .wv-aco.today { background: var(--color-accent-faint); }
-html[data-theme][data-family] .cal-page .month-cell.is-selected,
-html[data-theme][data-family] .cal-page .month-cell.in-range,
 html[data-theme][data-family] .cal-page .wv-dhead.selected::before,
 html[data-theme][data-family] .cal-page .wv-ad-sel,
 html[data-theme][data-family] .cal-page .wv-selected { background: var(--selection-bg); }
 html[data-theme][data-family] .cal-page .month-cell.range-start,
-html[data-theme][data-family] .cal-page .month-cell.range-end { background: var(--action-soft-hover); }
+html[data-theme][data-family] .cal-page .month-cell.range-end { background: var(--calendar-range-edge-bg); }
 html[data-theme][data-family] .cal-page .month-cell.is-weekend,
 html[data-theme][data-family] .cal-page .wv-aco.weekend { background: var(--status-danger-bg); }
 html[data-theme][data-family] .cal-page .weekday-hdr.weekend,
