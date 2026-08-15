@@ -1,6 +1,6 @@
 # 思维画布咕咕工具 PRD
 
-> 状态：Phase 0 已完成，Phase 1 待实施
+> 状态：Phase 1 已完成，Phase 2 待实施
 > 创建：2026-08-15
 > 最近更新：2026-08-15
 > 关联文档：[`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md)、[`思维面板/数据模型草案.md`](../思维面板/数据模型草案.md)、[`思维面板/实现方案.md`](../思维面板/实现方案.md)
@@ -574,12 +574,14 @@ request_id?: string
 
 ### Phase 1：只读工具
 
-- [ ] 实现 `mind_list_canvases`；
-- [ ] 实现 `mind_get_canvas`；
-- [ ] 实现 `mind_search_canvas`；
-- [ ] 实现 `mind_search_placeable_nodes`；
-- [ ] 返回 camera、viewport 和可见性摘要；
-- [ ] 增加当前用户和跨用户隔离测试。
+- [x] 实现 `mind_list_canvases`；
+- [x] 实现 `mind_get_canvas`；
+- [x] 实现 `mind_search_canvas`；
+- [x] 实现 `mind_search_placeable_nodes`；
+- [x] 返回 camera、viewport 和可见性摘要；
+- [x] 增加当前用户和跨用户隔离测试。
+
+Phase 1 实现位置：`backend/agent/tools/mind_canvas.py`，测试位置：`backend/tests/test_mind_canvas_tools.py`。普通 `note` 的排除、跨用户画布隔离、引用对象归属、视口 camera 返回和已有引用标记均有回归覆盖。
 
 ### Phase 2：创建和放置
 
