@@ -1,0 +1,48 @@
+/* Cross-family public color roles and dark-surface highlight refinement.
+ * Keep family values in themes.css; this layer exposes stable product vocabulary and fixes legacy
+ * hard-coded white highlights that are too bright once the app is in a dark resolved theme.
+ */
+:root {
+  --color-accent: var(--action-primary);
+  --color-accent-hover: var(--action-primary-hover);
+  --color-accent-muted: color-mix(in srgb, var(--action-primary) 16%, var(--surface-soft));
+  --color-accent-faint: color-mix(in srgb, var(--action-primary) 8%, transparent);
+  --highlight-soft: var(--border-highlight);
+  --highlight-muted: color-mix(in srgb, var(--border-highlight) 58%, transparent);
+}
+
+html[data-theme='dark'][data-family] {
+  /* Dark UI should read from local contrast, not white paint. These aliases intentionally stay
+     translucent and slightly family-tinted. */
+  --color-accent-muted: color-mix(in srgb, var(--action-primary) 18%, var(--surface-raised));
+  --highlight-soft: color-mix(in srgb, var(--action-primary) 12%, rgba(255,255,255,.06));
+  --highlight-muted: color-mix(in srgb, var(--action-primary) 7%, rgba(255,255,255,.035));
+}
+
+/* Legacy popup/user surfaces still contain literal white highlights in scoped/global CSS.
+   Override them only in resolved dark mode until those components are fully tokenized. */
+html[data-theme='dark'][data-family] .settings-popup {
+  background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
+  border-color: var(--border-default);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item {
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before {
+  background: var(--color-accent-faint);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep {
+  background: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .topbar .btn-ghost-custom,
+html[data-theme='dark'][data-family] .sample-topbar .sample-ghost {
+  --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
+  box-shadow: var(--topbar-btn-shadow) !important;
+}
+
+html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover,
+html[data-theme='dark'][data-family] .sample-topbar .sample-ghost:hover {
+  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 3px 10px rgba(0,0,0,.16) !important;
+}
