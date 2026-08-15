@@ -185,7 +185,7 @@ const emit = defineEmits<{
 .event-chip { height: 18px; box-sizing: border-box; font-size: 10px; font-weight: 500; padding: 0 7px; border-radius: 99px; border: 1px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; }
 .event-chip.chip-proj, .event-chip.chip-ev-click { cursor: grab; }
 .chip-more-btn { height: 16px; box-sizing: border-box; font-size: 10px; font-weight: 500; padding: 0 7px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.35); background: rgba(123,127,178,0.1); color: rgb(101,104,146); cursor: pointer; font-family: var(--font-sans); white-space: nowrap; display: flex; align-items: center; }
-.bars-layer { position: absolute; inset: 0; pointer-events: none; }
+.bars-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 .project-bar { position: absolute; height: 16px; border: 1px solid transparent; display: flex; align-items: center; padding: 0 6px; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; box-sizing: border-box; pointer-events: auto; cursor: grab; }
 .project-bar.bar-dragging { opacity: 0.6; }
 .project-bar.bar-start { border-radius: 99px 0 0 99px; padding-left: 8px; }
