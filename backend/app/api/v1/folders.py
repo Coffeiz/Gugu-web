@@ -16,6 +16,7 @@ from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
+from app.services.files.browser import folder_download_rows
 
 router = APIRouter(prefix="/folders", tags=["folders"])
 
@@ -143,39 +144,18 @@ async def download_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder or folder.deleted_at is not None:
+    download = await folder_download_rows(db, current_user.id, fid)
+    if download is None:
         raise HTTPException(404, "文件夹不存在")
+    folder, file_rows = download
 
     storage = get_storage()
     buf = io.BytesIO()
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        queue = [(fid, folder.name)]
-        while queue:
-            current_id, path_prefix = queue.pop(0)
-
-            files = (await db.execute(
-                select(File).where(
-                    File.folder_id == current_id,
-                    File.user_id == current_user.id,
-                    File.deleted_at.is_(None),
-                )
-            )).scalars().all()
-            for f in files:
-                data = await storage.get(f.storage_key)
-                arc_name = f"{path_prefix}/{f.display_name}.{f.ext.lower()}"
-                zf.writestr(arc_name, data)
-
-            subfolders = (await db.execute(
-                select(Folder).where(
-                    Folder.parent_id == current_id,
-                    Folder.user_id == current_user.id,
-                    Folder.deleted_at.is_(None),
-                )
-            )).scalars().all()
-            for sub in subfolders:
-                queue.append((sub.id, f"{path_prefix}/{sub.name}"))
+        for file, arc_name in file_rows:
+            data = await storage.get(file.storage_key)
+            zf.writestr(arc_name, data)
 
     buf.seek(0)
     filename = quote(f"{folder.name}.zip")

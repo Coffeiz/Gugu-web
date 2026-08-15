@@ -159,3 +159,35 @@ async def get_file_tree_rows(db: AsyncSession, user_id: int):
         )
     )
     return project_file_rows.all(), project_rows.scalars().all(), personal_count.scalar_one()
+
+
+async def folder_download_rows(db: AsyncSession, user_id: int, folder_id: int):
+    """读取当前用户文件夹下载所需的文件行及其归档路径。"""
+    from app.core.ownership import get_owned
+
+    folder = await get_owned(db, Folder, folder_id, user_id)
+    if not folder or folder.deleted_at is not None:
+        return None
+
+    rows = []
+    queue = [(folder.id, folder.name)]
+    while queue:
+        current_id, path_prefix = queue.pop(0)
+        files = (await db.execute(
+            select(File).where(
+                File.folder_id == current_id,
+                File.user_id == user_id,
+                File.deleted_at.is_(None),
+            )
+        )).scalars().all()
+        rows.extend((file, f"{path_prefix}/{file.display_name}.{file.ext.lower()}") for file in files)
+
+        subfolders = (await db.execute(
+            select(Folder).where(
+                Folder.parent_id == current_id,
+                Folder.user_id == user_id,
+                Folder.deleted_at.is_(None),
+            )
+        )).scalars().all()
+        queue.extend((sub.id, f"{path_prefix}/{sub.name}") for sub in subfolders)
+    return folder, rows

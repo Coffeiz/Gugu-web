@@ -5,6 +5,7 @@
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1 import folders as folders_api
 from app.core.errors import Conflict, Invalid, NotFound
@@ -108,3 +109,10 @@ async def test_move_version_conflict(db, user_a):
     with pytest.raises(Conflict):
         await folders_api.move_folder(a.id, FolderMove(parent_id=b.id, version=999),
                                       current_user=user_a, origin=None, db=db)
+
+
+async def test_folder_download_rejects_other_user_folder(db, user_a, user_b):
+    folder = await _create(db, user_b, "私有文件夹")
+    with pytest.raises(HTTPException) as error:
+        await folders_api.download_folder(folder.id, current_user=user_a, db=db)
+    assert error.value.status_code == 404
