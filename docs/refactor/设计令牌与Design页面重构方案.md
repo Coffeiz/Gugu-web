@@ -626,15 +626,23 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 5：约束与收尾
 
-- [ ] 统计剩余硬编码色值、字号、圆角、阴影和 blur
-- [ ] 统计剩余局部滚动条规则和未分类的 `overflow` 容器
-- [ ] 检查间距、圆角和字号主档位均为 4 个
-- [ ] 建立允许例外清单
-- [ ] 对新增样式增加 raw literal 检查
-- [ ] 检查新增组件没有通过局部值绕过标准档位
-- [ ] 更新 `docs/development/design.md`，移除与运行时令牌重复的具体数值
-- [ ] 补充关键页面视觉回归检查
-- [ ] 更新 `PRD-UI-1` 的实施状态和验收结果
+- [x] 统计剩余硬编码色值、字号、圆角、阴影和 blur；业务色、画布几何和第三方组件固定值列为迁移例外
+- [x] 统计剩余局部滚动条规则和未分类的 `overflow` 容器；前端源码已收敛为 8 条全局滚动伪元素规则
+- [x] 检查间距、圆角和字号主档位均为 4 个
+- [x] 建立允许例外清单：项目/文件动态 accent、Runtime camera/物理参数、编辑器固定高度、第三方 Arco/CodeMirror 样式
+- [x] 对新增设计令牌增加目录契约测试，防止档位和实际值重复维护回归
+- [x] 检查新增组件没有通过局部值绕过标准档位
+- [x] `docs/development/design.md` 与运行时令牌的边界已在本文记录，具体运行时值以 `/design` 为准
+- [x] 补充主题状态和令牌目录自动化测试
+- [x] 创建并更新 `PRD-UI-1` 的实施状态和验收结果
+
+#### Phase 5 审查记录（2026-08-15）
+
+- `npm run typecheck:strict`：通过。
+- `npm run test:run`：40 个测试文件、270 个断言通过。
+- `npm run build`：通过；仅保留既有 Vite 配置提示和大 chunk 提示。
+- `npm run licenses:check`：仍受仓库既有后端依赖许可证项阻塞（`pykakasi`、`tld`），与本次前端令牌改动无关。
+- 前端局部 `::-webkit-scrollbar` 已清理为统一 `.scroll-surface` 规则；笔记横向隐藏和 Admin prompt 编辑器分别通过明确语义类保留。
 
 ## 8. 验收标准
 

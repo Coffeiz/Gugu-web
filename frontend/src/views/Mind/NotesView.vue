@@ -12,7 +12,7 @@
          便签以外的玻璃卡空白区域可以直接左右拖动切日期，跟顶部日期滑杆手感一致
          （见 onColumnsPointerDown 及以下三个函数）——原生 overflow-x:auto 只吃触控板横扫/
          滚动条，鼠标点了拖并不会自己动，这段手感需要自己接。 -->
-    <div ref="scrollRef" class="rec-hscroll" @wheel="onWheel" @scroll="onScroll" @pointerdown="onColumnsPointerDown">
+    <div ref="scrollRef" class="rec-hscroll scroll-surface scroll-surface--hidden" @wheel="onWheel" @scroll="onScroll" @pointerdown="onColumnsPointerDown">
       <div v-if="store.loading && !store.loaded" class="rec-loading">加载中…</div>
       <NoteTimeline
         v-else
@@ -933,7 +933,6 @@ async function onDelete(note: MindNote) {
   user-select: none;
 }
 .rec-hscroll:active { cursor: grabbing; }
-.rec-hscroll::-webkit-scrollbar { display: none; }
 /* 便签本体不该显得能拖（它自己有点击进编辑等交互），光标退回默认；文字选取也要选回来 */
 .rec-hscroll :deep(.note-card) { cursor: default; user-select: text; }
 

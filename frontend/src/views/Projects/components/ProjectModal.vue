@@ -41,7 +41,7 @@
           </div>
 
           <!-- 可滚动内容区 -->
-          <div class="left-content">
+          <div class="left-content scroll-surface scroll-surface--compact">
             <ProjectInfoPanel
               v-model:client="localClient"
               v-model:start-date="localStartDate"
@@ -765,9 +765,6 @@ const filePanelContext = {
   display: flex; flex-direction: column; gap: 0; min-height: 0;
   scrollbar-gutter: stable;
 }
-.left-content::-webkit-scrollbar { width: 3px; }
-.left-content::-webkit-scrollbar-track { background: transparent; }
-.left-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 
 .section { display: flex; flex-direction: column; gap: 5px; padding: 8px 0; }
 .section-label {

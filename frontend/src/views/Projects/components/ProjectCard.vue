@@ -132,7 +132,7 @@
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
-      <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list">
+      <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
              :class="{ 'tp-ghost': tpDrag === i }"
              :draggable="editingTp !== t.id"
@@ -530,8 +530,6 @@ async function setPriority(n: number) {
 .tp-title { font-size: 13px; font-weight: 700; color: #1e2028; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
-.tp-list::-webkit-scrollbar { width: 3px; }
-.tp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
 .tp-item:hover { background: rgba(0,0,0,0.04); }
 .tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

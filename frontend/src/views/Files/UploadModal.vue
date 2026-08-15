@@ -87,7 +87,7 @@
               <span class="label-hint">选填</span>
             </label>
 
-            <div class="proj-list">
+            <div class="proj-list scroll-surface scroll-surface--compact">
               <!-- 不关联 -->
               <button class="select-btn" :class="{ active: selectedId === null }" @click="selectedId = null">不关联</button>
 
@@ -639,8 +639,6 @@ label {
   max-height: 200px; overflow-y: auto;
   padding-right: 2px;
 }
-.proj-list::-webkit-scrollbar { width: 3px; }
-.proj-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 99px; }
 
 .status-label {
   display: flex; align-items: center; gap: 5px;
