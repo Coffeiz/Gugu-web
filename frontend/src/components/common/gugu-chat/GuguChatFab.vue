@@ -15,13 +15,8 @@
 
 <script setup lang="ts">
 /**
- * 悬浮球：纯展示 + 点击转发。转圈/涟漪/打字跳动都是外部状态（audioStore.file、
- * spinningBack、fabJumping、rippleActive）驱动的视觉反应，不在这里持有。
- *
- * svgEl 通过 defineExpose 暴露——audioStop() 的转场归位动画需要直接操作这个
- * SVG 元素的 transform/transition（读当前旋转角度、算最短路径转回 0 度），
- * 这段是一次性的 DOM 动画序列，不适合抽成响应式状态，仍由持有 onBeforeStop
- * 回调的一方（GuguChat.vue）直接操作。
+ * 悬浮球：纯展示 + 点击转发。转圈/涟漪/打字跳动都是外部状态驱动。
+ * Design 页的 GuguChatMock 与这里共享同一组 --gugu-fab-* 令牌，避免样板另画一套。
  */
 import { ref, computed } from 'vue'
 
@@ -42,29 +37,41 @@ defineExpose({ svgEl: computed(() => svgRef.value) })
 
 <style scoped>
 .ai-fab {
-  position: fixed; bottom: var(--floating-edge); right: var(--floating-edge);
-  isolation: isolate; width: 50px; height: 50px; border-radius: 50%;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); border: none;
-  cursor: pointer;   /* z-index 由 :style 动态(fabZ)：默认在窗口带之上，大窗口展开时压到其下 */
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 18px rgba(123,127,178,0.32), inset 0 1px 0 rgba(255,255,255,0.45);
-  transition: transform 0.2s, box-shadow 0.2s;
+  position: fixed;
+  bottom: var(--floating-edge);
+  right: var(--floating-edge);
+  isolation: isolate;
+  width: var(--gugu-fab-size);
+  height: var(--gugu-fab-size);
+  border-radius: 50%;
+  background: var(--gugu-fab-bg);
+  border: 1px solid var(--gugu-fab-border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: var(--gugu-fab-shadow);
+  transition: transform .2s var(--motion-ease-standard), box-shadow .2s var(--motion-ease-standard);
 }
-.ai-fab:hover { transform: scale(1.08); box-shadow: 0 7px 24px rgba(123,127,178,0.42), inset 0 1px 0 rgba(255,255,255,0.5); }
+.ai-fab:hover {
+  transform: scale(1.08);
+  box-shadow: var(--gugu-fab-hover-shadow);
+}
+.ai-fab:focus-visible { outline: none; box-shadow: var(--gugu-fab-hover-shadow), var(--control-focus-shadow); }
 .ai-fab svg { position: relative; z-index: 1; }
 .ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
 @keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .ai-fab--playing::before, .ai-fab--playing::after {
-  content: ''; position: absolute; inset: 0; border-radius: 50%;
-  border: 1.5px solid rgba(123,127,178,0.75); pointer-events: none;
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--gugu-fab-ripple);
+  pointer-events: none;
   animation: fab-ripple 3.6s ease-out infinite;
 }
 .ai-fab--playing::after { animation-delay: 1.8s; }
-@keyframes fab-ripple { 0% { transform: scale(0.4); opacity: 0.8; } 100% { transform: scale(1.55); opacity: 0; } }
-@keyframes fab-typing {
-  0%   { transform: translateY(0); }
-  50%  { transform: translateY(-2px); }
-  100% { transform: translateY(0); }
-}
-.ai-fab--typing { animation: fab-typing 0.2s linear 1; }
+@keyframes fab-ripple { 0% { transform: scale(.4); opacity: .8; } 100% { transform: scale(1.55); opacity: 0; } }
+@keyframes fab-typing { 0% { transform: translateY(0); } 50% { transform: translateY(-2px); } 100% { transform: translateY(0); } }
+.ai-fab--typing { animation: fab-typing .2s linear 1; }
 </style>
