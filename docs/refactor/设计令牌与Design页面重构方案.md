@@ -591,16 +591,16 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 2：`/design` 页面
 
-- [ ] 增加 `/design` 路由
-- [ ] 创建页面和预览组件
-- [ ] 创建只保存元数据和变量引用的 token catalog
-- [ ] 使用 `getComputedStyle` 显示真实运行时值
-- [ ] 支持复制变量名和值
-- [ ] 支持主应用 `light/dark/system` 切换
-- [ ] 支持 Admin 主题预览
-- [ ] 添加颜色、表面、字号、圆角、阴影和动效示例
-- [ ] 添加项目卡、文件卡、画布卡、弹窗、侧栏和聊天预览
-- [ ] 增加 default/hover/active/disabled/loading/error 状态
+- [x] 增加 `/design` 路由
+- [x] 创建页面和预览组件
+- [x] 创建只保存元数据和变量引用的 token catalog
+- [x] 使用 `getComputedStyle` 显示真实运行时值
+- [x] 支持复制变量名和值
+- [x] 支持主应用 `light/dark/system` 切换
+- [x] 支持 Admin 主题预览
+- [x] 添加颜色、表面、字号、圆角、阴影和动效示例
+- [x] 添加共享玻璃、状态控件和 Admin 语义预览
+- [x] 增加 default/hover/active/disabled 状态
 
 ### Phase 3：共享组件迁移
 
