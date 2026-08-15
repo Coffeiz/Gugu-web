@@ -365,7 +365,9 @@ function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 
   connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
 function onConnectionDragMove(event: PointerEvent) {
-  runtime.updateNodeConnection(screenToWorld(event.clientX, event.clientY))
+  // Runtime connection state uses viewport coordinates, matching getBoundingClientRect()
+  // and hitNodePort(); only the business-side preview line uses world coordinates.
+  runtime.updateNodeConnection({ x: event.clientX, y: event.clientY })
   updateConnectionTarget(event)
 }
 function onConnectionDragEnd(event: PointerEvent) {
