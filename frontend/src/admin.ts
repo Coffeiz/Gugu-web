@@ -10,7 +10,7 @@ import router from './router/admin'
 import { installEnterDirective } from '@/directives/enter'
 import { initializeTheme } from '@/composables/useTheme'
 
-initializeTheme('dark')
+initializeTheme('dark', 'glass')
 
 const app = createApp(AdminApp)
 

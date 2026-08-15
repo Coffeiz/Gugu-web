@@ -12,6 +12,7 @@ describe('主题令牌状态', () => {
   afterEach(() => {
     localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-family')
     vi.resetModules()
   })
 
@@ -39,5 +40,17 @@ describe('主题令牌状态', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
     expect(useTheme().preference.value).toBe('system')
     expect(window.matchMedia).toHaveBeenCalledWith('(prefers-color-scheme: dark)')
+  })
+
+  it('切换主题家族会持久化并更新根节点属性', async () => {
+    installMatchMedia()
+    const { initializeTheme, useTheme } = await import('./useTheme')
+    initializeTheme()
+
+    useTheme().setFamily('v2')
+
+    expect(localStorage.getItem('gugu-theme-family')).toBe('v2')
+    expect(document.documentElement.dataset.family).toBe('v2')
+    expect(useTheme().family.value).toBe('v2')
   })
 })
