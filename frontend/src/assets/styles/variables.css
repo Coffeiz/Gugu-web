@@ -3,6 +3,7 @@
 @import './theme-refinements.css';
 @import './scrollbars.css';
 @import './design-overrides.css';
+@import './theme-adoption.css';
 
 :root {
   --glass-blur: blur(20px);
