@@ -1,24 +1,21 @@
-/* Cross-family public color roles and dark-surface highlight refinement.
- * Keep family values in themes.css; this layer exposes stable product vocabulary and fixes legacy
- * hard-coded white highlights that are too bright once the app is in a dark resolved theme.
+/* Cross-family public color roles and adaptive highlight refinement.
+ * Theme-family files provide raw values; long-lived product components consume only these stable
+ * roles so dark mode never needs a literal white highlight patched into individual pages.
  */
 :root {
   --color-accent: var(--action-primary);
   --color-accent-hover: var(--action-primary-hover);
   --color-accent-muted: color-mix(in srgb, var(--action-primary) 16%, var(--surface-soft));
   --color-accent-faint: color-mix(in srgb, var(--action-primary) 8%, transparent);
-  --highlight-soft: var(--border-highlight);
-  --highlight-muted: color-mix(in srgb, var(--border-highlight) 58%, transparent);
+
+  --highlight-strong: var(--theme-highlight-rest);
+  --highlight-side: var(--theme-highlight-side);
+  --highlight-soft: color-mix(in srgb, var(--theme-highlight-rest) 72%, transparent);
+  --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
 }
 
-html[data-theme='dark'][data-family] {
-  --color-accent-muted: color-mix(in srgb, var(--action-primary) 18%, var(--surface-raised));
-  --highlight-soft: color-mix(in srgb, var(--action-primary) 12%, rgba(255,255,255,.06));
-  --highlight-muted: color-mix(in srgb, var(--action-primary) 7%, rgba(255,255,255,.035));
-}
-
-/* Legacy popup/user surfaces still contain literal white highlights in scoped/global CSS.
-   Override them only in resolved dark mode until those components are fully tokenized. */
+/* Legacy popup/user surfaces still contain light-theme literals in scoped/global CSS. Keep their
+   product contract here until those components are fully tokenized. */
 html[data-theme='dark'][data-family] .settings-popup,
 html[data-theme='dark'][data-family] .notif-popup {
   background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
@@ -62,12 +59,12 @@ html[data-theme='dark'][data-family] .pm-nav-divider {
   background: var(--divider-line);
 }
 
-html[data-theme='dark'][data-family] .topbar .btn-ghost-custom,
-html[data-theme='dark'][data-family] .sample-topbar .sample-ghost {
+html[data-theme][data-family] .topbar .btn-ghost-custom,
+html[data-theme][data-family] .sample-topbar .sample-ghost {
   --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
   box-shadow: var(--topbar-btn-shadow) !important;
 }
-html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover,
-html[data-theme='dark'][data-family] .sample-topbar .sample-ghost:hover {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 3px 10px rgba(0,0,0,.16) !important;
+html[data-theme][data-family] .topbar .btn-ghost-custom:hover,
+html[data-theme][data-family] .sample-topbar .sample-ghost:hover {
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
 }
