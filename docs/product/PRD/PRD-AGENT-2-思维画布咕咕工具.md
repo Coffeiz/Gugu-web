@@ -596,12 +596,16 @@ Phase 2 共用领域入口位于 `backend/app/core/mind_canvas.py`；创建/放�
 
 ### Phase 3：编辑和连接
 
-- [ ] 实现 `mind_update_canvas_node`；
-- [ ] 实现 `mind_remove_canvas_node`；
-- [ ] 实现画布便签更新和删除；
-- [ ] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
-- [ ] 增加关系归一、重复连接、自连接和并发测试；
-- [ ] 接入确认门和操作结果回显。
+- [x] 实现 `mind_update_canvas_node`；
+- [x] 实现 `mind_remove_canvas_node`；
+- [x] 实现画布便签更新和删除；
+- [x] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
+- [x] 增加关系归一、重复连接、自连接和并发测试；
+- [x] 接入确认门和操作结果回显。
+
+Phase 3 已完成。节点布局更新只改变画布视图项；移除视图项不会删除原始节点。画布便签使用
+版本号乐观锁，删除会软删正文并清理对应视图项；删除便签和关系均经过二次确认。关系创建
+复用 `upsert_relation()`，默认 `related`、无向归一且幂等。
 
 ### Phase 4：多步编排
 

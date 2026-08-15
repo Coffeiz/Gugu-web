@@ -42,7 +42,10 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     "restore_note": "mind", "undo_last_gugu_note": "mind",
     # 思维画布 Agent 工具
     "mind_create_canvas": "mind", "mind_create_canvas_note": "mind",
-    "mind_add_canvas_node": "mind",
+    "mind_add_canvas_node": "mind", "mind_update_canvas_node": "mind",
+    "mind_remove_canvas_node": "mind", "mind_update_canvas_note": "mind",
+    "mind_delete_canvas_note": "mind", "mind_connect_nodes": "mind",
+    "mind_disconnect_nodes": "mind",
 }
 
 

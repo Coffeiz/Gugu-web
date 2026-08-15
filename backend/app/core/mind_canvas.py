@@ -5,10 +5,11 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from app.core.ownership import get_owned
-from app.models import CalendarEvent, File, MindNode, Project
+from app.models import CalendarEvent, File, MindCanvasItem, MindNode, Project
+from app.core.tz import now_utc
 
 _REF_TARGETS = {
     "project": (Project, "name"),
@@ -73,3 +74,24 @@ async def get_or_create_reference_node(db, user_id, ref_type: str, ref_id: int) 
     db.add(node)
     await db.flush()
     return node, True
+
+
+async def soft_delete_canvas_note(db, node_id: int, user_id, client_version: int) -> bool:
+    """原子软删画布便签，并移除其视图项；正文节点保留以便审计/恢复。"""
+    from app.core.mind import _as_uuid
+    result = await db.execute(
+        update(MindNode).where(
+            MindNode.id == node_id,
+            MindNode.user_id == _as_uuid(user_id),
+            MindNode.kind == "canvas_note",
+            MindNode.version == client_version,
+            MindNode.deleted_at.is_(None),
+        ).values(deleted_at=now_utc(), updated_at=now_utc(), version=MindNode.version + 1)
+    )
+    if result.rowcount != 1:
+        return False
+    await db.execute(delete(MindCanvasItem).where(
+        MindCanvasItem.node_id == node_id,
+        MindCanvasItem.user_id == _as_uuid(user_id),
+    ))
+    return True

@@ -9,10 +9,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import and_, false, func, or_, select
+from sqlalchemy import and_, false, func, or_, select, update
 
 from app.core.mind import content_hash, to_plain_text, validate_note_color
-from app.core.mind_canvas import get_or_create_reference_node
+from app.core.mind import update_node_atomic
+from app.core.mind_canvas import get_or_create_reference_node, soft_delete_canvas_note
+from app.core.ownership import get_owned
+from app.core.tz import now_utc
 from app.models import CalendarEvent, File, MindCanvasItem, MindMap, MindNode, MindRelation, Project
 from app.search.query import keyword_condition, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -467,6 +470,168 @@ async def _mind_add_canvas_node(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "node": _node_summary(node, item), "created": True}
 
 
+async def _canvas_item(db, user_id, canvas_id: int, item_id: int):
+    return await db.scalar(select(MindCanvasItem).where(
+        MindCanvasItem.id == item_id,
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+    ))
+
+
+async def _mind_update_canvas_node(db, user_id, args: dict):
+    canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
+    if not isinstance(canvas_id, int) or not isinstance(item_id, int):
+        return {"error": "需要提供 canvas_id 和 item_id"}
+    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+        return {"error": "画布不存在"}
+    item = await _canvas_item(db, user_id, canvas_id, item_id)
+    if item is None:
+        return {"error": "画布节点不存在"}
+    fields = {}
+    for key in ("x", "y", "w", "h"):
+        if key in args:
+            value = args[key]
+            if not _finite_number(value) or (key in ("w", "h") and value <= 0):
+                return {"error": f"{key} 必须是有效的正数" if key in ("w", "h") else f"{key} 必须是有效数字"}
+            fields[key] = float(value)
+    if "z" in args:
+        if not isinstance(args["z"], int):
+            return {"error": "z 必须是整数"}
+        fields["z"] = args["z"]
+    if "collapsed" in args:
+        if not isinstance(args["collapsed"], bool):
+            return {"error": "collapsed 必须是布尔值"}
+        fields["collapsed"] = args["collapsed"]
+    if not fields:
+        return {"error": "至少提供一个要修改的布局字段"}
+    values = dict(fields)
+    values["updated_at"] = now_utc()
+    await db.execute(update(MindCanvasItem).where(
+        MindCanvasItem.id == item.id,
+        MindCanvasItem.canvas_id == canvas_id,
+        MindCanvasItem.user_id == user_id,
+    ).values(**values))
+    await db.commit()
+    await db.refresh(item)
+    node = await get_owned(db, MindNode, item.node_id, user_id)
+    return {"canvas_id": canvas_id, "node": _node_summary(node, item), "updated": True}
+
+
+async def _mind_remove_canvas_node(db, user_id, args: dict):
+    canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
+    if not isinstance(canvas_id, int) or not isinstance(item_id, int):
+        return {"error": "需要提供 canvas_id 和 item_id"}
+    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+        return {"error": "画布不存在"}
+    item = await _canvas_item(db, user_id, canvas_id, item_id)
+    if item is None:
+        return {"error": "画布节点不存在"}
+    node_id = item.node_id
+    await db.delete(item)
+    await db.commit()
+    return {"canvas_id": canvas_id, "removed_item_id": item_id, "node_id": node_id, "node_preserved": True}
+
+
+async def _mind_update_canvas_note(db, user_id, args: dict):
+    node_id, version = args.get("node_id"), args.get("version")
+    if not isinstance(node_id, int) or not isinstance(version, int):
+        return {"error": "更新画布便签必须提供 node_id 和 version"}
+    node = await db.scalar(select(MindNode).where(
+        MindNode.id == node_id, MindNode.user_id == user_id,
+        MindNode.kind == "canvas_note", MindNode.deleted_at.is_(None),
+    ))
+    if node is None:
+        return {"error": "找不到这条画布便签"}
+    fields = {}
+    if "title" in args:
+        if not isinstance(args["title"], str) or len(args["title"].strip()) > 300:
+            return {"error": "便签标题格式不正确"}
+        fields["title"] = args["title"].strip() or "新便签"
+    if "content" in args:
+        if not isinstance(args["content"], str):
+            return {"error": "便签正文必须是文本"}
+        fields["content_md"] = args["content"]
+    if "color" in args:
+        try:
+            fields["color"] = validate_note_color(args["color"])
+        except ValueError as exc:
+            return {"error": str(exc)}
+    if not fields:
+        return {"error": "至少提供一个要修改的字段"}
+    if not await update_node_atomic(db, node_id, user_id, version, fields):
+        await db.rollback()
+        return {"error": "画布便签已被其他端修改，请先重新读取后再更新"}
+    await db.commit()
+    await db.refresh(node)
+    return {"node": _node_summary(node), "updated": True}
+
+
+async def _mind_delete_canvas_note(db, user_id, args: dict):
+    from agent.security import confirm
+    node_id, version = args.get("node_id"), args.get("version")
+    if not isinstance(node_id, int) or not isinstance(version, int):
+        return {"error": "删除画布便签必须提供 node_id 和 version"}
+    node = await db.scalar(select(MindNode).where(
+        MindNode.id == node_id, MindNode.user_id == user_id,
+        MindNode.kind == "canvas_note", MindNode.deleted_at.is_(None),
+    ))
+    if node is None:
+        return {"error": "找不到这条画布便签"}
+    blocked = confirm.needs_confirmation(args, f"将删除画布便签「{node.title or '未命名'}」，并从画布移除其视图项", user_id)
+    if blocked is not None:
+        return blocked
+    if not await soft_delete_canvas_note(db, node_id, user_id, version):
+        await db.rollback()
+        return {"error": "画布便签已被其他端修改，请先重新读取后再删除"}
+    await db.commit()
+    return {"deleted_node_id": node_id, "can_restore": True}
+
+
+async def _mind_connect_nodes(db, user_id, args: dict):
+    from app.core.mind import upsert_relation
+    canvas_id, source_id, target_id = args.get("canvas_id"), args.get("source_node_id"), args.get("target_node_id")
+    if not all(isinstance(value, int) for value in (canvas_id, source_id, target_id)):
+        return {"error": "需要提供 canvas_id、source_node_id 和 target_node_id"}
+    if await _get_owned_canvas(db, user_id, canvas_id) is None:
+        return {"error": "画布不存在"}
+    ids = (source_id, target_id)
+    items = (await db.execute(select(MindCanvasItem).where(
+        MindCanvasItem.canvas_id == canvas_id, MindCanvasItem.user_id == user_id,
+        MindCanvasItem.node_id.in_(ids),
+    ))).scalars().all()
+    if {item.node_id for item in items} != set(ids):
+        return {"error": "两个节点都必须已经放在同一张画布上"}
+    nodes = (await db.execute(select(MindNode).where(
+        MindNode.id.in_(ids), MindNode.user_id == user_id,
+        MindNode.kind.in_(("ref", "canvas_note")), MindNode.deleted_at.is_(None),
+    ))).scalars().all()
+    if len(nodes) != 2:
+        return {"error": "只能连接画布便签或业务引用节点"}
+    try:
+        relation = await upsert_relation(db, user_id, source_id, target_id, rel_type=args.get("type") or "related")
+    except ValueError as exc:
+        return {"error": str(exc)}
+    await db.commit()
+    await db.refresh(relation)
+    return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True}
+
+
+async def _mind_disconnect_nodes(db, user_id, args: dict):
+    from agent.security import confirm
+    relation_id = args.get("relation_id")
+    if not isinstance(relation_id, int):
+        return {"error": "需要提供 relation_id"}
+    relation = await db.scalar(select(MindRelation).where(MindRelation.id == relation_id, MindRelation.user_id == user_id))
+    if relation is None:
+        return {"error": "关联不存在"}
+    blocked = confirm.needs_confirmation(args, f"将删除节点关联 {relation.src_node_id} ↔ {relation.dst_node_id}", user_id)
+    if blocked is not None:
+        return blocked
+    await db.delete(relation)
+    await db.commit()
+    return {"deleted_relation_id": relation_id}
+
+
 class MindCanvasSkill(BaseSkill):
     name = "mind_canvas"
     tools = [
@@ -583,6 +748,86 @@ class MindCanvasSkill(BaseSkill):
             },
             handler=_mind_add_canvas_node,
             mutates=True,
+        ),
+        Tool(
+            name="mind_update_canvas_node", label="调整画布节点",
+            description="调整已放置节点的位置、大小、层级或折叠状态；只改变画布视图，不改变原项目、文件或活动。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"}, "item_id": {"type": "integer"},
+                    "x": {"type": "number"}, "y": {"type": "number"},
+                    "w": {"type": "number", "exclusiveMinimum": 0}, "h": {"type": "number", "exclusiveMinimum": 0},
+                    "z": {"type": "integer"}, "collapsed": {"type": "boolean"},
+                },
+                "required": ["canvas_id", "item_id"],
+            },
+            handler=_mind_update_canvas_node,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_remove_canvas_node", label="移除画布节点",
+            description="从指定画布移除节点视图；不会删除项目、文件、活动或画布便签正文。",
+            input_schema={
+                "type": "object",
+                "properties": {"canvas_id": {"type": "integer"}, "item_id": {"type": "integer"}},
+                "required": ["canvas_id", "item_id"],
+            },
+            handler=_mind_remove_canvas_node,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_update_canvas_note", label="修改画布便签",
+            description="按 node_id 和 version 修改画布专属便签；不能修改普通时间流 note。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "integer"}, "version": {"type": "integer"},
+                    "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                    "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
+                },
+                "required": ["node_id", "version"],
+            },
+            handler=_mind_update_canvas_note,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_delete_canvas_note", label="删除画布便签",
+            description="删除画布专属便签并移除其画布视图；执行前必须先展示影响并获得确认。",
+            input_schema={
+                "type": "object",
+                "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": ["node_id", "version"],
+            },
+            handler=_mind_delete_canvas_note,
+            mutates=True,
+            destructive=True,
+        ),
+        Tool(
+            name="mind_connect_nodes", label="连接画布节点",
+            description="连接同一张画布中已经放置的画布便签或业务引用节点；默认 related 且幂等。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"}, "source_node_id": {"type": "integer"},
+                    "target_node_id": {"type": "integer"}, "type": {"type": "string", "enum": ["related"]},
+                },
+                "required": ["canvas_id", "source_node_id", "target_node_id"],
+            },
+            handler=_mind_connect_nodes,
+            mutates=True,
+        ),
+        Tool(
+            name="mind_disconnect_nodes", label="断开画布连接",
+            description="删除一条画布节点关联；执行前必须先展示影响并获得确认。",
+            input_schema={
+                "type": "object",
+                "properties": {"relation_id": {"type": "integer"}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": ["relation_id"],
+            },
+            handler=_mind_disconnect_nodes,
+            mutates=True,
+            destructive=True,
         ),
     ]
 

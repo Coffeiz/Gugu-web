@@ -14,6 +14,12 @@ from agent.tools.mind_canvas import (
     _mind_list_canvases,
     _mind_search_canvas,
     _mind_search_placeable_nodes,
+    _mind_update_canvas_node,
+    _mind_remove_canvas_node,
+    _mind_update_canvas_note,
+    _mind_delete_canvas_note,
+    _mind_connect_nodes,
+    _mind_disconnect_nodes,
 )
 
 
@@ -167,3 +173,67 @@ async def test_add_canvas_node_creates_ref_reuses_it_and_rejects_note(db, user_a
     note = await _node(db, user_a, kind="note", title="时间流笔记")
     rejected = await _mind_add_canvas_node(db, user_a.id, {"canvas_id": canvas.id, "node_id": note.id})
     assert "只能把项目、文件或活动引用节点放入画布" in rejected["error"]
+
+
+async def test_update_and_remove_canvas_item_only_change_view(db, user_a):
+    canvas = await _canvas(db, user_a)
+    node = await _node(db, user_a, title="可移动便签")
+    item = await _item(db, user_a, canvas, node)
+
+    updated = await _mind_update_canvas_node(db, user_a.id, {
+        "canvas_id": canvas.id, "item_id": item.id, "x": 120, "y": 240,
+        "w": 320, "collapsed": True,
+    })
+    assert updated["updated"] is True
+    assert updated["node"]["position"] == {"x": 120.0, "y": 240.0}
+    assert updated["node"]["size"] == {"w": 320.0, "h": None}
+    removed = await _mind_remove_canvas_node(db, user_a.id, {"canvas_id": canvas.id, "item_id": item.id})
+    assert removed["node_preserved"] is True
+    assert await db.get(MindNode, node.id) is not None
+
+
+async def test_update_canvas_note_uses_version_and_rejects_timeline_note(db, user_a):
+    canvas = await _canvas(db, user_a)
+    canvas_note = await _node(db, user_a, kind="canvas_note", title="旧标题", content="旧正文")
+    result = await _mind_update_canvas_note(db, user_a.id, {
+        "node_id": canvas_note.id, "version": canvas_note.version,
+        "title": "新标题", "content": "新正文", "color": "blue",
+    })
+    assert result["updated"] is True
+    assert result["node"]["title"] == "新标题"
+    timeline_note = await _node(db, user_a, kind="note", title="时间流")
+    rejected = await _mind_update_canvas_note(db, user_a.id, {"node_id": timeline_note.id, "version": 1, "title": "不应修改"})
+    assert "画布便签" in rejected["error"]
+
+
+async def test_connect_is_idempotent_and_requires_same_canvas(db, user_a):
+    canvas = await _canvas(db, user_a)
+    first = await _node(db, user_a, title="第一节点")
+    second = await _node(db, user_a, title="第二节点")
+    await _item(db, user_a, canvas, first)
+    await _item(db, user_a, canvas, second, x=200)
+    created = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id,
+    })
+    reused = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id, "source_node_id": second.id, "target_node_id": first.id,
+    })
+    assert created["relation_id"] == reused["relation_id"]
+    assert reused["created_or_reused"] is True
+
+
+async def test_delete_canvas_note_and_disconnect_require_confirmation(db, user_a):
+    canvas = await _canvas(db, user_a)
+    note = await _node(db, user_a, kind="canvas_note", title="待删除")
+    item = await _item(db, user_a, canvas, note)
+    blocked = await _mind_delete_canvas_note(db, user_a.id, {"node_id": note.id, "version": note.version})
+    assert json.loads(blocked)["needs_confirm"] is True
+    assert await db.get(MindNode, note.id) is not None
+
+    first = await _node(db, user_a, title="连接一")
+    second = await _node(db, user_a, title="连接二")
+    await _item(db, user_a, canvas, first, x=100)
+    await _item(db, user_a, canvas, second, x=300)
+    relation = await _mind_connect_nodes(db, user_a.id, {"canvas_id": canvas.id, "source_node_id": first.id, "target_node_id": second.id})
+    blocked_relation = await _mind_disconnect_nodes(db, user_a.id, {"relation_id": relation["relation_id"]})
+    assert json.loads(blocked_relation)["needs_confirm"] is True
