@@ -1,0 +1,49 @@
+/* Mind workspace contracts: timeline paper, capture/editor surfaces and canvas environment.
+   The note palette mixes product identity colors into the current theme surface, so the same
+   stored note color has a deliberate light and dark rendering without component-side branches. */
+:root {
+  --mind-canvas-bg: var(--surface-card-solid);
+  --mind-canvas-dot: var(--canvas-dot-color);
+  --mind-toolbar-bg: var(--glass-card-background);
+  --mind-toolbar-border: var(--glass-card-border);
+
+  --note-surface: color-mix(in srgb,var(--surface-card-solid) 72%,transparent);
+  --note-surface-editing: var(--surface-raised);
+  --note-border: var(--border-default);
+  --note-highlight: var(--border-highlight);
+  --note-shadow: var(--card-shadow);
+  --note-shadow-hover: var(--card-shadow-hover);
+  --note-divider: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --note-hover-overlay: var(--card-hover-overlay);
+  --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));
+
+  --note-paper-amber: color-mix(in srgb,var(--project-sand) 18%,var(--surface-card-solid));
+  --note-paper-coral: color-mix(in srgb,var(--project-coral) 16%,var(--surface-card-solid));
+  --note-paper-blue: color-mix(in srgb,var(--project-blue) 18%,var(--surface-card-solid));
+  --note-paper-teal: color-mix(in srgb,var(--status-info) 18%,var(--surface-card-solid));
+  --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 8%,var(--surface-card-solid));
+
+  --capture-bg: color-mix(in srgb,var(--surface-glass) 88%,transparent);
+  --capture-bg-expanded: var(--surface-raised);
+  --capture-border: var(--border-strong);
+  --capture-highlight: var(--border-highlight);
+  --capture-shadow: var(--elevation-popup);
+
+  --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 70%,transparent);
+  --mind-picker-bg: var(--surface-popup);
+  --mind-picker-border: var(--popup-border);
+  --mind-picker-shadow: var(--popup-shadow);
+}
+
+html[data-theme='dark'][data-family] {
+  /* Dark notes stay chromatic but are mixed mostly into the dark solid card surface; this avoids
+     the light-mode pastel RGB values becoming glowing slabs at night. */
+  --note-surface: color-mix(in srgb,var(--surface-card-solid) 94%,transparent);
+  --note-paper-amber: color-mix(in srgb,var(--project-sand) 20%,var(--surface-card-solid));
+  --note-paper-coral: color-mix(in srgb,var(--project-coral) 18%,var(--surface-card-solid));
+  --note-paper-blue: color-mix(in srgb,var(--project-blue) 20%,var(--surface-card-solid));
+  --note-paper-teal: color-mix(in srgb,var(--status-info) 20%,var(--surface-card-solid));
+  --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 10%,var(--surface-card-solid));
+  --capture-bg: color-mix(in srgb,var(--surface-glass) 90%,var(--surface-base));
+  --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
+}
