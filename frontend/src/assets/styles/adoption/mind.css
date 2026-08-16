@@ -147,27 +147,7 @@ html[data-theme][data-family] .project-skeleton {
   box-shadow: inset 0 1px 0 var(--border-highlight);
 }
 
-/* Canvas object cards. Project references consume the board project-card contract; file references
-   deliberately need no rule here because FileRefCard renders the actual shared FileCard component. */
-html[data-theme][data-family] .pr-card,
-html[data-theme][data-family] .pr-missing {
-  border-color: var(--project-card-border);
-  box-shadow: var(--project-card-shadow);
-}
-html[data-theme][data-family] .pr-card { background: var(--surface-card-solid); }
-html[data-theme][data-family] .pr-card::before {
-  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--pr-project-color);
-}
-html[data-theme][data-family] .pr-card:hover {
-  border-color: var(--project-card-hover-border);
-  box-shadow: var(--project-card-hover-shadow);
-}
-/* Deleted project snapshots have a legacy inline light gradient without a color custom property.
-   In dark mode prefer the project-card surface over leaving a white tombstone on the canvas. */
+/* Canvas project roots already consume the project-card token contract in project-card-visual.css.
+   Keep only the genuinely theme-specific legacy snapshot fallback and label treatment here. */
 html[data-theme='dark'][data-family] .pr-missing { background: var(--surface-card-solid) !important; }
 html[data-theme][data-family] .pr-kind { color: var(--selection-fg); background: var(--selection-bg); }
-
-html[data-theme][data-family] .entity-sticker {
-  box-shadow: var(--card-shadow), inset 0 1px 0 var(--glass-card-border), inset 1px 0 0 var(--border-subtle);
-}
-html[data-theme][data-family] .entity-sticker:hover { box-shadow: var(--card-shadow-hover); }
