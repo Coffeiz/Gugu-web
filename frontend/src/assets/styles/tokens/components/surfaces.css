@@ -17,6 +17,28 @@
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
 
+  /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
+     paint and cadence comes from this one contract. */
+  --popup-surface-bg: var(--surface-popup);
+  --popup-surface-border: var(--popup-border);
+  --popup-surface-highlight: var(--border-highlight);
+  --popup-surface-shadow: var(--popup-shadow);
+  --popup-surface-blur: var(--popup-blur);
+  --popup-surface-radius: var(--radius-sm);
+  --popup-surface-padding: 4px;
+  --popup-item-fg: var(--content-primary);
+  --popup-item-fg-muted: var(--content-secondary);
+  --popup-item-bg-hover: var(--surface-soft-hover);
+  --popup-item-bg-active: var(--selection-bg);
+  --popup-item-fg-active: var(--selection-fg);
+  --popup-item-danger: var(--status-danger);
+  --popup-item-danger-bg-hover: var(--status-danger-bg);
+  --popup-divider: var(--border-subtle);
+  --popup-enter-duration: var(--motion-hover-control);
+  --popup-leave-duration: var(--motion-hover-micro);
+  --popup-enter-easing: var(--motion-ease-enter);
+  --popup-leave-easing: var(--motion-ease-standard);
+
   /* Text / date / project form fields. Keep geometry in the consuming component and share only
      theme-sensitive paint + interaction so existing compact/large inputs preserve their layout. */
   --input-bg: var(--surface-raised);
