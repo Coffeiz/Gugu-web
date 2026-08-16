@@ -28,7 +28,11 @@ html[data-theme][data-family] .drp-clear:hover {
   color: var(--content-primary);
   background: var(--option-bg-hover);
 }
-html[data-theme][data-family] .drp-hint span.active,
+/* 阶段提示只用前景色表达当前选择阶段，不复用 selection-bg；后者是可点击选中面，
+   放在纯文本 hint 上会形成没有交互语义的紫色底块。 */
+html[data-theme][data-family] .drp-hint span.active {
+  color: var(--selection-fg);
+}
 html[data-theme][data-family] .drp-today,
 html[data-theme][data-family] .drp-day.today:not(.sel-start):not(.sel-end),
 html[data-theme][data-family] .drp-year-btn.this-year:not(.selected) {
@@ -39,8 +43,18 @@ html[data-theme][data-family] .drp-day.in-range {
   color: var(--content-primary);
   background: var(--calendar-range-cell-bg);
 }
+/* 日期端点的主填充放到 ::before，区间连接层继续留在 ::after 的下一层；
+   这样 range 只补圆角外侧的连接，不会再盖住 sel-start / sel-end 自身的一半。 */
 html[data-theme][data-family] .drp-day.sel-start,
-html[data-theme][data-family] .drp-day.sel-end,
+html[data-theme][data-family] .drp-day.sel-end {
+  color: var(--content-on-accent);
+  background: transparent;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .drp-day.sel-start::before,
+html[data-theme][data-family] .drp-day.sel-end::before {
+  background: var(--action-primary-bg);
+}
 html[data-theme][data-family] .drp-year-btn.selected {
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
