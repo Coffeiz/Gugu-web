@@ -1,0 +1,136 @@
+/* Shared popover adoption: context menus, sort menus, user menus and date pickers all consume the
+   same surface/item/motion contract. Component CSS may keep geometry; theme-sensitive paint lives here. */
+html[data-theme][data-family] :is(
+  .popup-menu,
+  .popup-menu-dark,
+  .settings-popup,
+  .notif-popup,
+  .dp-popup,
+  .drp-popup
+) {
+  color: var(--popup-item-fg);
+  background: var(--popup-surface-bg);
+  border-color: var(--popup-surface-border);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+
+/* Mind's calendar previously forced an opaque light-only RGB after Teleport. Keep its no-blur
+   special case, but let the shared popup surface choose light/dark paint. */
+html[data-theme][data-family] .mind-cal-popup {
+  color: var(--popup-item-fg) !important;
+  background: var(--popup-surface-bg) !important;
+  border-color: var(--popup-surface-border) !important;
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html[data-theme][data-family] :is(.popup-menu-item, .popup-menu-dark .popup-menu-item) {
+  color: var(--popup-item-fg);
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] :is(.popup-menu-item, .popup-menu-dark .popup-menu-item):hover:not(:disabled) {
+  color: var(--popup-item-fg);
+  background: var(--popup-item-bg-hover);
+}
+html[data-theme][data-family] :is(.popup-menu-item, .popup-menu-dark .popup-menu-item).active {
+  color: var(--popup-item-fg-active);
+  background: var(--popup-item-bg-active);
+}
+html[data-theme][data-family] :is(.popup-menu-item, .popup-menu-dark .popup-menu-item).danger {
+  color: var(--popup-item-danger);
+}
+html[data-theme][data-family] :is(.popup-menu-item, .popup-menu-dark .popup-menu-item).danger:hover:not(:disabled) {
+  color: var(--popup-item-danger);
+  background: var(--popup-item-danger-bg-hover);
+}
+html[data-theme][data-family] :is(.popup-menu-sep, .popup-menu-dark .popup-menu-sep) {
+  background: var(--popup-divider);
+}
+html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-menu-shortcut) {
+  color: var(--popup-item-fg-muted);
+}
+
+/* DatePicker trigger follows the same input/control paint as other form pickers. */
+html[data-theme][data-family] .dp-input {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .dp-input:hover {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
+}
+html[data-theme][data-family] .dp-input.open {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .dp-input.placeholder span { color: var(--input-placeholder); }
+html[data-theme][data-family] .dp-icon { color: var(--content-secondary); }
+
+html[data-theme][data-family] :is(.dp-period, .dp-day, .dp-year-btn) { color: var(--content-primary); }
+html[data-theme][data-family] :is(.dp-nav, .dp-wh, .dp-clear) { color: var(--content-secondary); }
+html[data-theme][data-family] :is(.dp-period, .dp-nav, .dp-day, .dp-year-btn, .dp-clear, .dp-today) {
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .dp-period-caret {
+  transition: transform var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .dp-period:hover,
+html[data-theme][data-family] .dp-nav:hover,
+html[data-theme][data-family] .dp-day:hover:not(.selected),
+html[data-theme][data-family] .dp-year-btn:hover:not(.selected),
+html[data-theme][data-family] .dp-clear:hover {
+  color: var(--content-primary);
+  background: var(--popup-item-bg-hover);
+}
+html[data-theme][data-family] .dp-day.other { color: var(--content-tertiary); }
+html[data-theme][data-family] .dp-day.weekend:not(.selected):not(.today) { color: var(--calendar-weekend-fg); }
+html[data-theme][data-family] .dp-day.today:not(.selected),
+html[data-theme][data-family] .dp-year-btn.this-year:not(.selected),
+html[data-theme][data-family] .dp-today {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .dp-day.selected,
+html[data-theme][data-family] .dp-year-btn.selected {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .dp-footer { border-top-color: var(--popup-divider); }
+html[data-theme][data-family] .dp-today:hover { background: var(--action-soft-hover); }
+
+/* Shared popover cadence. Keep the geometry subtle so right-click, sort and calendar feel related. */
+html[data-theme][data-family] :is(.menu-pop-enter-active, .dp-pop-enter-active, .popup-enter-active, .notif-pop-enter-active) {
+  transition:
+    opacity var(--popup-enter-duration) var(--popup-enter-easing),
+    transform var(--popup-enter-duration) var(--popup-enter-easing);
+}
+html[data-theme][data-family] :is(.menu-pop-leave-active, .dp-pop-leave-active, .popup-leave-active, .notif-pop-leave-active) {
+  transition:
+    opacity var(--popup-leave-duration) var(--popup-leave-easing),
+    transform var(--popup-leave-duration) var(--popup-leave-easing);
+}
+html[data-theme][data-family] :is(.menu-pop-enter-from, .menu-pop-leave-to, .dp-pop-enter-from, .dp-pop-leave-to) {
+  opacity: 0;
+  transform: scale(.96) translateY(-2px);
+}
+html[data-theme][data-family] :is(.popup-enter-from, .popup-leave-to, .notif-pop-enter-from, .notif-pop-leave-to) {
+  opacity: 0;
+  transform: translateY(4px) scale(.98);
+}
