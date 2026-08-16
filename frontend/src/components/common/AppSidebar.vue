@@ -41,10 +41,25 @@
     <div class="user-card" :class="{ open: settingsOpen }" @click.stop="settingsOpen = !settingsOpen">
       <div class="avatar"><img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" /><template v-else>{{ userInitial }}</template></div>
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
-      <div class="theme-mode-quick" role="group" aria-label="明暗模式" @click.stop>
-        <button title="亮色" :class="{ active: preference === 'light' }" @click="setTheme('light')"><PhSun :size="13" weight="bold" /></button>
-        <button title="暗色" :class="{ active: preference === 'dark' }" @click="setTheme('dark')"><PhMoon :size="13" weight="bold" /></button>
-        <button title="跟随系统" :class="{ active: preference === 'system' }" @click="setTheme('system')"><PhDesktop :size="13" weight="bold" /></button>
+      <div class="theme-mode-quick" role="group" aria-label="主题模式" @click.stop>
+        <button
+          :title="resolved === 'light' ? '当前显示：亮色' : '切换到亮色'"
+          :class="{ active: preference === 'light', current: resolved === 'light' }"
+          :aria-pressed="preference === 'light'"
+          @click="setTheme('light')"
+        ><PhSun :size="13" weight="bold" /></button>
+        <button
+          :title="resolved === 'dark' ? '当前显示：暗色' : '切换到暗色'"
+          :class="{ active: preference === 'dark', current: resolved === 'dark' }"
+          :aria-pressed="preference === 'dark'"
+          @click="setTheme('dark')"
+        ><PhMoon :size="13" weight="bold" /></button>
+        <button
+          :title="`跟随系统（当前显示：${resolved === 'dark' ? '暗色' : '亮色'}）`"
+          :class="{ active: preference === 'system' }"
+          :aria-pressed="preference === 'system'"
+          @click="setTheme('system')"
+        ><PhDesktop :size="13" weight="bold" /></button>
       </div>
 
       <Transition name="popup">
@@ -97,7 +112,7 @@ const router = useRouter()
 const projectStore = useProjectStore()
 const uiStore = useUiStore()
 const authStore = useAuthStore()
-const { preference, setTheme } = useTheme()
+const { preference, resolved, setTheme } = useTheme()
 
 const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
@@ -154,8 +169,10 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .avatar { width:32px; height:32px; border-radius:50%; background:linear-gradient(135deg,#7b7fb2,#7ab8c8); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:700; color:white; flex-shrink:0; overflow:hidden; box-shadow:0 2px 8px rgba(123,127,178,.35); }
 .avatar-img { width:100%; height:100%; object-fit:cover; border-radius:50%; }.user-info { flex:1; min-width:0; overflow:hidden; }.user-name { font-size:13px; font-weight:600; line-height:1.5; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .theme-mode-quick { flex-shrink:0; display:flex; gap:2px; padding:2px; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-soft); }
-.theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-xs); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-fast),background var(--motion-fast),box-shadow var(--motion-fast); }
-.theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
+.theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-xs); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
+.theme-mode-quick button.current { color:var(--selection-fg); }
+.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
 .soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { margin-left:auto; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; }
 </style>
