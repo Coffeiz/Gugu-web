@@ -403,7 +403,6 @@ function onConnectionMiddleMouseMove(event: MouseEvent) {
     clientX: event.clientX,
     clientY: event.clientY,
   })) {
-    // 相机移动后同一屏幕指针对应的世界坐标已经变化，立即重算 draft 目标，不等下一帧。
     updateConnectionTarget(event)
   }
 }
@@ -443,16 +442,23 @@ function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 
   window.addEventListener('pointermove', onConnectionDragMove)
   window.addEventListener('pointerup', onConnectionDragEnd)
   window.addEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.addEventListener('mouseup', onConnectionPrimaryMouseUp, true)
   connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
 function onConnectionDragMove(event: PointerEvent) {
   runtime.updateNodeConnection({ x: event.clientX, y: event.clientY })
   updateConnectionTarget(event)
 }
-function onConnectionDragEnd(event: PointerEvent) {
+function onConnectionPrimaryMouseUp(event: MouseEvent) {
+  if (event.button !== 0 || !connectionDrag.active) return
+  onConnectionDragEnd(event)
+}
+function onConnectionDragEnd(event: ClientPoint) {
+  if (!connectionDrag.active) return
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
   window.removeEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.removeEventListener('mouseup', onConnectionPrimaryMouseUp, true)
   endConnectionMiddlePan(event)
   cancelAnimationFrame(connSpringRaf)
   const originNodeId = connectionDrag.originNodeId
@@ -569,6 +575,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
   window.removeEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.removeEventListener('mouseup', onConnectionPrimaryMouseUp, true)
   window.removeEventListener('mousemove', onConnectionMiddleMouseMove, true)
   window.removeEventListener('mouseup', onConnectionMiddleMouseUp, true)
   if (connectionMiddlePanActive) {
