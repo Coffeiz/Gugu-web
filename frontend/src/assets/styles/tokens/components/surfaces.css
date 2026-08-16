@@ -45,3 +45,9 @@
   --subpanel-bg: var(--surface-soft);
   --subpanel-border: var(--border-subtle);
 }
+
+html[data-theme='dark'][data-family] {
+  /* A dark raised surface is too close to the track; use a soft light-neutral thumb without
+     reintroducing the pure-white modal highlight problem this pass is removing. */
+  --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
+}
