@@ -160,13 +160,11 @@ function onCardClick() {
      抄 .glass-card），靠 scoped 属性选择器的更高特异度稳赢，不依赖两个全局类在样式表里
      谁先谁后。 */
   transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.25s ease, background 0.25s ease;
-  /* 静止态阴影本体跟文件/项目卡统一（0 2px 8px rgba(80,90,110,.07)，见 .proj-card），不用
-     .glass-card 默认的 --glass-shadow（那份是给工具条/侧栏这类"浮层面板"用的，深浅跟卡片
-     不是一回事）——四种贴纸摆一起静止时才不会看出深浅不一样。玻璃质感（内高光/描边）仍
-     由 .glass-card 提供，这里只覆盖投影本体。 */
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07), inset 0 1px 0 rgba(255,255,255,0.95), inset 1px 0 0 rgba(255,255,255,0.55);
+  /* 静止态阴影属于活动卡自身材质，直接消费主题 token；不再由 adoption 层二次覆盖同一个
+     selector。玻璃背景/描边仍由 .glass-card 提供。 */
+  box-shadow: var(--card-shadow), inset 0 1px 0 var(--glass-card-border), inset 1px 0 0 var(--border-subtle);
 }
-.entity-sticker:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
+.entity-sticker:hover { box-shadow: var(--card-shadow-hover); }
 /* "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明一份。
    tombstone 不再叠 opacity/grayscale——快照要看起来"活动还在"，跟项目卡/文件卡统一，
    "已删除"单靠 .es-deleted 那行文字说明就够了，不用整卡变灰变暗。 */
