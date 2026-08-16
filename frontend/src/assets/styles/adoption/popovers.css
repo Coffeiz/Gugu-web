@@ -65,6 +65,9 @@ html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-
 html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
   background: transparent;
 }
+html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled) {
+  background: transparent;
+}
 html[data-theme][data-family] .settings-popup .popup-menu-item::before {
   background: var(--popup-item-bg-hover);
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
