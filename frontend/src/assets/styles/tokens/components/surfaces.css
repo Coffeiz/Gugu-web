@@ -27,6 +27,7 @@
   --input-border: var(--border-default);
   --input-border-hover: var(--border-hover);
   --input-border-focus: var(--border-focus);
+  --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
   --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-sm);
 
