@@ -1,0 +1,78 @@
+/* Shared source-clean adoption for legacy global classes. New components should consume the
+   component contracts directly; these selectors keep existing markup theme-aware during migration. */
+html[data-theme][data-family] .panel-left {
+  background: var(--panel-glass-bg);
+  border-right-color: var(--panel-glass-border);
+  box-shadow: var(--panel-glass-shadow);
+}
+
+html[data-theme][data-family] .bm-card {
+  border-color: var(--modal-card-border);
+  box-shadow: var(--modal-card-shadow),
+              inset 0 1px 0 var(--modal-card-highlight),
+              inset 1px 0 0 var(--modal-card-side-highlight);
+}
+
+html[data-theme][data-family] .popup-menu {
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: var(--popup-shadow);
+}
+html[data-theme][data-family] .popup-close-btn:hover,
+html[data-theme][data-family] .popup-menu-item:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+}
+html[data-theme][data-family] .popup-menu-sep { background: var(--panel-divider); }
+
+html[data-theme][data-family] .form-input,
+html[data-theme][data-family] .title-edit-input,
+html[data-theme][data-family] .rename-input-inline {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  caret-color: var(--action-primary);
+}
+html[data-theme][data-family] .form-input:hover,
+html[data-theme][data-family] .title-edit-input:hover,
+html[data-theme][data-family] .rename-input-inline:hover { border-color: var(--input-border-hover); }
+html[data-theme][data-family] .form-input:focus,
+html[data-theme][data-family] .title-edit-input:focus,
+html[data-theme][data-family] .rename-input-inline:focus {
+  color: var(--input-fg);
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] input::placeholder,
+html[data-theme][data-family] textarea::placeholder { color: var(--input-placeholder); }
+
+html[data-theme='light'][data-family] input[type='date'],
+html[data-theme='light'][data-family] input[type='datetime-local'],
+html[data-theme='light'][data-family] input[type='time'],
+html[data-theme='light'][data-family] input[type='month'] { color-scheme: light; }
+html[data-theme='dark'][data-family] input[type='date'],
+html[data-theme='dark'][data-family] input[type='datetime-local'],
+html[data-theme='dark'][data-family] input[type='time'],
+html[data-theme='dark'][data-family] input[type='month'] { color-scheme: dark; }
+
+/* Generic multi-choice capsule. Profile currently uses .pm-style-chip; future consumers can use
+   .choice-chip directly and get the exact same contract. */
+html[data-theme][data-family] .choice-chip,
+html[data-theme][data-family] .pm-style-chip {
+  color: var(--choice-chip-fg);
+  background: var(--choice-chip-bg);
+  border-color: var(--choice-chip-border);
+  border-radius: var(--choice-chip-radius);
+}
+html[data-theme][data-family] .choice-chip:hover,
+html[data-theme][data-family] .pm-style-chip:hover {
+  color: var(--choice-chip-fg-hover);
+  background: var(--choice-chip-bg-hover);
+  border-color: var(--choice-chip-border-hover);
+}
+html[data-theme][data-family] .choice-chip.active,
+html[data-theme][data-family] .pm-style-chip.active {
+  color: var(--choice-chip-fg-active);
+  background: var(--choice-chip-bg-active);
+  border-color: var(--choice-chip-border-active);
+}
