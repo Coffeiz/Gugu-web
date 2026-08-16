@@ -19,6 +19,7 @@
       <div class="kanban-card-list">
         <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isProjectDetached(String(project.id))">
           <ProjectCard
+            v-memo="[project.id, project.status, project.currentStage, project.progress, project.stages, project.doneAt, project._stageBeforeDone, project.fileCount, project.priority, project.name, project.client, project.color, project.startDate, project.deadline, project.version]"
             :project="project"
             @click="$emit('card-click', project)"
           />
