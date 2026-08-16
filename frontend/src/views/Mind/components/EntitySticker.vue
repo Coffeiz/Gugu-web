@@ -156,8 +156,11 @@ function onCardClick() {
 </script>
 
 <style scoped>
-/* 活动卡自己拥有结构与玻璃材质；不再同时挂 glass-card 再用 scoped CSS 覆盖同一批
-   radius/transition/shadow。hover 位移与 hover shadow 仅复用 hover-card-fx 行为。 */
+/* 活动卡与 FileCard.canvas-mode 共用同一套系统对象玻璃基线。
+   这里不再额外叠 inset 1px 描边：--card-shadow 在 Glass 暗色主题里本身已经包含顶部高光，
+   再补一层顶部/左侧 inset 会在画布连续缩放时栅格化成肉眼可见的 1px 双边/叠影。
+   同时把静止/hover 全部收敛到语义 token，让 Runtime 在 dark 模式关闭 dragGlass 后，
+   grabbing -> landing 可以直接从抓取阴影插值回目标卡真实的主题表面。 */
 .entity-sticker {
   position: absolute;
   box-sizing: border-box;
@@ -168,20 +171,20 @@ function onCardClick() {
   cursor: pointer;
   user-select: none;
   touch-action: none;
-  border: 1px solid var(--glass-card-border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--mind-canvas-card-radius);
   corner-shape: round;
-  background: var(--glass-card-background);
-  box-shadow:
-    var(--card-shadow),
-    inset 0 1px 0 var(--glass-card-border),
-    inset 1px 0 0 var(--border-subtle);
-  backdrop-filter: var(--mind-system-card-blur);
-  -webkit-backdrop-filter: var(--mind-system-card-blur);
+  background: var(--surface-glass);
+  box-shadow: var(--card-shadow);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
+/* 全局 hover-card-fx 的阴影是历史固定色，只适合亮色卡。活动卡显式使用主题阴影，
+   与项目/文件卡一样在暗色模式消费 --card-shadow-hover，避免 hover/grabbing 看起来像另一种材质。 */
 .entity-sticker:hover {
-  background: var(--glass-card-background-hover);
-  border-color: var(--glass-card-border-hover);
+  background: var(--surface-glass-hover);
+  border-color: var(--border-hover);
+  box-shadow: var(--card-shadow-hover);
 }
 
 .es-head { display: flex; align-items: center; gap: 6px; color: var(--color-primary); }
