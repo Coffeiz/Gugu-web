@@ -1,6 +1,8 @@
 import type { TraceRun } from '../types'
 
-const BASE = import.meta.env.VITE_LOOPSCOPE_API_URL ?? 'http://127.0.0.1:4320/api'
+// 前端和 API 通常由同一台 devserver 提供；通过 Vite 同源代理访问，避免浏览器把
+// 127.0.0.1 解析成本机而不是远端 devserver。
+const BASE = import.meta.env.VITE_LOOPSCOPE_API_URL ?? '/loopscope-api'
 
 export async function listTraceSessions() {
   const r = await fetch(`${BASE}/sessions`)

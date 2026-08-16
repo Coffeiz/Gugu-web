@@ -86,7 +86,7 @@ watch(
 )
 
 const selected = computed(() => props.runs.find(r => r.id === selectedId.value) ?? null)
-const usage = computed<TokenUsage>(() => selected.value?.usage ?? selected.value?.attributes?.tokens ?? {})
+const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const modelLabel = computed(() => {
@@ -95,6 +95,54 @@ const modelLabel = computed(() => {
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+
+function resolveUsage(run: TraceRun | null): TokenUsage {
+  if (!run) return {}
+  const candidates = [run.usage, run.attributes?.tokens]
+  for (const candidate of candidates) {
+    const normalized = normalizeUsage(candidate)
+    if (Object.keys(normalized).length) return normalized
+  }
+
+  const total = (run.spans ?? []).reduce<TokenUsage>((sum, span) => {
+    const usage = normalizeUsage(span.usage)
+    const impact = span.token_impact ?? {}
+    sum.input = (sum.input ?? 0) + (usage.input ?? Number(impact.prompt_tokens_estimate ?? impact.estimated_input_tokens ?? 0))
+    sum.output = (sum.output ?? 0) + (usage.output ?? Number(impact.output_tokens_estimate ?? 0))
+    sum.cache_read = (sum.cache_read ?? 0) + (usage.cache_read ?? 0)
+    sum.cache_write = (sum.cache_write ?? 0) + (usage.cache_write ?? 0)
+    return sum
+  }, {})
+  if (total.input || total.output || total.cache_read || total.cache_write) {
+    total.fresh_input = Math.max((total.input ?? 0) - (total.cache_read ?? 0), 0)
+    total.total = (total.input ?? 0) + (total.output ?? 0)
+    total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
+  }
+  return total
+}
+
+function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {
+  if (!value || typeof value !== 'object') return {}
+  const input = number(value.input ?? value.input_tokens ?? value.prompt_tokens)
+  const output = number(value.output ?? value.output_tokens ?? value.completion_tokens)
+  const cacheRead = number(value.cache_read ?? value.cache_read_input_tokens ?? value.prompt_cache_hit_tokens)
+  const cacheWrite = number(value.cache_write ?? value.cache_write_input_tokens)
+  const fresh = number(value.fresh_input)
+  const total = number(value.total)
+  if (![input, output, cacheRead, cacheWrite, fresh, total].some(v => v !== undefined)) return {}
+  return {
+    input, output, cache_read: cacheRead, cache_write: cacheWrite,
+    fresh_input: fresh ?? (input !== undefined ? Math.max(input - (cacheRead ?? 0), 0) : undefined),
+    total: total ?? (input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined),
+    cache_ratio: input ? (cacheRead ?? 0) / input : 0,
+  }
+}
+
+function number(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value)
+  return undefined
+}
 
 function shortRun(id: string) { return id.length > 17 ? `${id.slice(0, 11)}…${id.slice(-4)}` : id }
 function runTime(sec: number) { return new Date(sec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }

@@ -227,8 +227,8 @@ onUnmounted(() => window.removeEventListener('loopscope:bootstrap', onBootstrap)
 </script>
 
 <style scoped>
-.workspace { min-height:100vh; display:grid; grid-template-columns:250px minmax(0,1fr); }
-.sessions { border-right:1px solid var(--border-subtle); padding:24px 14px; background:rgba(255,255,255,.34); }
+.workspace { height:100vh; min-height:0; display:grid; grid-template-columns:250px minmax(0,1fr); overflow:hidden; }
+.sessions { min-height:0; overflow-y:auto; overflow-x:hidden; border-right:1px solid var(--border-subtle); padding:24px 14px; background:rgba(255,255,255,.34); }
 .sessions header,.session-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 h1,h2 { margin:3px 0 0; font-size:18px; }
 .eyebrow { font-size:10px; letter-spacing:.11em; color:var(--content-tertiary); font-weight:600; }
@@ -239,7 +239,7 @@ h1,h2 { margin:3px 0 0; font-size:18px; }
 .source,.sid { font-size:10px; color:var(--content-tertiary); font-family:var(--font-mono); }
 .source { padding:3px 5px; background:var(--surface-soft); border-radius:5px; }
 .session-title { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }
-.session-stage { min-width:0; height:100vh; display:grid; grid-template-rows:auto minmax(0,1fr) auto auto; overflow:hidden; }
+.session-stage { min-width:0; min-height:0; height:100%; display:grid; grid-template-rows:auto minmax(0,1fr) auto auto; overflow:hidden; }
 .session-head { padding:20px 28px 14px; border-bottom:1px solid var(--border-subtle); }
 .head-actions { display:flex; align-items:center; gap:8px; }
 .view-switch,.mode-switch { display:flex; background:var(--surface-soft); border-radius:10px; padding:3px; }
