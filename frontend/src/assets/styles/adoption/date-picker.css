@@ -1,0 +1,57 @@
+/* DateSpanPicker is shared by new/edit project forms and teleports its popup to body, so theme it
+   here rather than duplicating modal-specific dark selectors. */
+html[data-theme][data-family] .drp-popup {
+  color: var(--content-primary);
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: var(--popup-shadow), inset 0 1px 0 var(--modal-card-highlight);
+}
+html[data-theme][data-family] .drp-period,
+html[data-theme][data-family] .drp-day,
+html[data-theme][data-family] .drp-year-btn {
+  color: var(--content-primary);
+}
+html[data-theme][data-family] :is(.drp-icon, .drp-nav, .drp-hint, .drp-wh, .drp-clear) {
+  color: var(--content-secondary);
+}
+html[data-theme][data-family] :is(.drp-period, .drp-nav, .drp-day, .drp-year-btn, .drp-clear, .drp-today) {
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .drp-period:hover,
+html[data-theme][data-family] .drp-nav:hover,
+html[data-theme][data-family] .drp-day:hover:not(.sel-start):not(.sel-end),
+html[data-theme][data-family] .drp-year-btn:hover:not(.selected),
+html[data-theme][data-family] .drp-clear:hover {
+  color: var(--content-primary);
+  background: var(--option-bg-hover);
+}
+html[data-theme][data-family] .drp-hint span.active,
+html[data-theme][data-family] .drp-today,
+html[data-theme][data-family] .drp-day.today:not(.sel-start):not(.sel-end),
+html[data-theme][data-family] .drp-year-btn.this-year:not(.selected) {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .drp-day.in-range {
+  color: var(--content-primary);
+  background: var(--calendar-range-cell-bg);
+}
+html[data-theme][data-family] .drp-day.sel-start,
+html[data-theme][data-family] .drp-day.sel-end,
+html[data-theme][data-family] .drp-year-btn.selected {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .drp-day.sel-start.in-range-right::after,
+html[data-theme][data-family] .drp-day.sel-end.in-range-left::after {
+  background: var(--calendar-range-cell-bg);
+}
+html[data-theme][data-family] .drp-footer { border-top-color: var(--panel-divider); }
+html[data-theme][data-family] .drp-today:hover { background: var(--action-soft-hover); }
+html[data-theme][data-family] .drp-day.other { color: var(--content-tertiary); }
+html[data-theme][data-family] .drp-day.weekend:not(.sel-start):not(.sel-end):not(.today),
+html[data-theme][data-family] .drp-day.in-range.weekend { color: var(--calendar-weekend-fg); }
