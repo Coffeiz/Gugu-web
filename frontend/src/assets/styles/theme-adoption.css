@@ -4,14 +4,14 @@
  * without changing business logic or interaction ownership.
  */
 
-/* ── Sidebar quick theme toggle: one icon, click switches resolved light/dark. ─────────────── */
+/* ── Sidebar quick theme toggle: one icon showing the currently rendered mode. ─────────────── */
 html[data-theme][data-family] .theme-mode-quick {
   padding: 0;
   border: 0;
   background: transparent;
 }
 html[data-theme][data-family] .theme-mode-quick button {
-  display: none;
+  display: grid;
   width: 28px;
   height: 28px;
   color: var(--control-fg);
@@ -19,10 +19,6 @@ html[data-theme][data-family] .theme-mode-quick button {
   border: 1px solid var(--control-border);
   border-radius: var(--control-radius);
   box-shadow: inset 0 1px 0 var(--highlight-muted);
-}
-html[data-theme='light'][data-family] .theme-mode-quick button:nth-child(2),
-html[data-theme='dark'][data-family] .theme-mode-quick button:nth-child(1) {
-  display: grid;
 }
 html[data-theme][data-family] .theme-mode-quick button:hover {
   color: var(--control-fg-strong);
