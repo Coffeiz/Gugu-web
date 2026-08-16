@@ -29,6 +29,7 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .nav-hist-btn,
   .pm-nav-hist-btn,
   .select-all-btn,
+  .empty-trash-btn,
   .btn-confirm-sm,
   .btn-cancel-sm
 ) {
@@ -56,6 +57,7 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .new-folder-btn,
   .sort-btn,
   .select-all-btn,
+  .empty-trash-btn,
   .btn-confirm-sm
 ) {
   display: inline-flex;
@@ -89,6 +91,7 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .nav-hist-btn,
   .pm-nav-hist-btn,
   .select-all-btn,
+  .empty-trash-btn,
   .btn-confirm-sm,
   .btn-cancel-sm
 ):hover:not(:disabled) {
@@ -213,7 +216,7 @@ html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.bc-drop-target,
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-arrow, .bc-sep) {
   color: var(--file-toolbar-fg);
-  opacity: .55;
+  opacity: 1;
   flex-shrink: 0;
 }
 
@@ -259,27 +262,12 @@ html[data-theme][data-family] .file-browser-toolbar .storage-text {
   font-weight: var(--font-weight-medium);
 }
 
-/* Destructive Trash action is the only intentional foreground exception. Its geometry still
- * follows the toolbar contract; danger colour remains semantic rather than becoming a random red. */
+/* Destructive Trash action is the only intentional foreground exception. Geometry/typography
+ * inherit the same base control rule above; only semantic danger paint differs. */
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn {
-  box-sizing: border-box;
-  height: var(--file-toolbar-control-height);
-  min-height: var(--file-toolbar-control-height);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 0 10px;
-  border: 1px solid color-mix(in srgb,var(--status-danger) 30%,transparent);
-  border-radius: var(--file-toolbar-radius);
-  background: var(--status-danger-bg);
   color: var(--status-danger);
-  font-family: var(--font-sans);
-  font-size: var(--file-toolbar-font-size);
-  font-weight: var(--file-toolbar-font-weight);
-  line-height: 1;
-  white-space: nowrap;
-  cursor: pointer;
+  background: var(--status-danger-bg);
+  border-color: color-mix(in srgb,var(--status-danger) 30%,transparent);
 }
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn:hover {
   color: var(--status-danger);
