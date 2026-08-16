@@ -66,7 +66,6 @@ import {
   takeRelationRuntimeConnection as takeRuntimeConnection,
   transferRelationRuntimeConnection as transferRuntimeConnection,
 } from './utils/relationRuntimeRegistry'
-import { beginRuntimeCanvasProbe, markRuntimeCanvasProbe, measureRuntimeCanvasProbe } from '@/utils/runtimePerformanceProbe'
 
 type CanvasRefItem = MindRefSuggestItem & { type: 'project' | 'file' | 'event' }
 
@@ -431,15 +430,7 @@ async function addProjectAtScreen(projectId: number, center: { x: number; y: num
   return target
 }
 async function onItemMoved(item: MindCanvasItem) {
-  const probe = beginRuntimeCanvasProbe('store-update')
   await store.bringCanvasItemToFront(item.id, item.x, item.y)
-  if (probe) {
-    markRuntimeCanvasProbe(probe, 'store-end')
-    measureRuntimeCanvasProbe(probe, 'store-callback', 'start', 'store-end')
-    await nextTick()
-    markRuntimeCanvasProbe(probe, 'vue-flush-end')
-    measureRuntimeCanvasProbe(probe, 'vue-flush', 'store-end', 'vue-flush-end')
-  }
 }
 </script>
 

@@ -58,7 +58,6 @@ import NoteSticker from './NoteSticker.vue'
 import ProjectRefCard from './ProjectRefCard.vue'
 import RelationLayer from './RelationLayer.vue'
 import { cacheCanvasItemSize, measuredCanvasItemSize, migrateCanvasItemSize } from '../utils/canvasItemMeasurements'
-import { beginRuntimeCanvasProbe, logRuntimeCanvasProbe, markRuntimeCanvasProbe, measureRuntimeCanvasProbe } from '@/utils/runtimePerformanceProbe'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -149,16 +148,6 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   emit('itemMoved', item)
 }
 
-function finishRuntimeMoveProbe(probe: ReturnType<typeof beginRuntimeCanvasProbe>) {
-  if (!probe) return
-  markRuntimeCanvasProbe(probe, 'business-end')
-  measureRuntimeCanvasProbe(probe, 'business-callback', 'start', 'business-end')
-  void nextTick(() => {
-    markRuntimeCanvasProbe(probe, 'vue-flush-end')
-    measureRuntimeCanvasProbe(probe, 'vue-flush', 'business-end', 'vue-flush-end')
-  })
-}
-
 function renderedItemSize(item: MindCanvasItem): { w: number; h: number } | null {
   const element = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
   if (!element || !element.isConnected) return null
@@ -172,17 +161,8 @@ function renderedItemSize(item: MindCanvasItem): { w: number; h: number } | null
 
 function onRuntimeMove(action: MoveAction) {
   if (!action.objectId.startsWith('mind:')) return
-  logRuntimeCanvasProbe('business-move-enter', {
-    objectId: action.objectId,
-    toSurfaceId: action.toSurfaceId,
-    hasPoint: Boolean(action.point),
-  })
-  const probe = beginRuntimeCanvasProbe('pointerup')
   const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
-  if (!item) {
-    finishRuntimeMoveProbe(probe)
-    return
-  }
+  if (!item) return
   if (action.toSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) {
     if (item.node.refType === 'project') {
       const projectId = item.node.refId
@@ -201,13 +181,9 @@ function onRuntimeMove(action: MoveAction) {
       }
       emit('returnToDrawer', item)
     }
-    finishRuntimeMoveProbe(probe)
     return
   }
-  if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) {
-    finishRuntimeMoveProbe(probe)
-    return
-  }
+  if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) return
   const velocity = action.releaseVelocity
   const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
   const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
@@ -216,7 +192,6 @@ function onRuntimeMove(action: MoveAction) {
     ?? measuredCanvasItemSize(measuredSizes, measuredSizesByClientKey, item)
     ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
-  finishRuntimeMoveProbe(probe)
 }
 
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
@@ -249,13 +224,11 @@ const landingObjectNodeIds = new Map<string, number>()
 const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
-const landingProbeObjects = new Set<string>()
 function onRuntimeVisual(event: RuntimeEvent) {
   if (event.type === 'move-visual-end') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
     landingObjectNodeIds.delete(event.objectId)
-    landingProbeObjects.delete(event.objectId)
     if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
     if (nodeId == null) return
     landingPositions.delete(nodeId)
@@ -275,13 +248,6 @@ function onRuntimeVisual(event: RuntimeEvent) {
   const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   if (event.phase === 'landing') {
-    if (!landingProbeObjects.has(event.objectId)) {
-      logRuntimeCanvasProbe('landing-position-first-update', { objectId: event.objectId, nodeId })
-      const probe = beginRuntimeCanvasProbe('landing-position')
-      markRuntimeCanvasProbe(probe, 'position-update')
-      measureRuntimeCanvasProbe(probe, 'first-position-update', 'start', 'position-update')
-      landingProbeObjects.add(event.objectId)
-    }
     landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
     landingNodeIds.add(nodeId)
     if (hoveredNodeId.value === nodeId) hoveredNodeId.value = null
@@ -548,10 +514,8 @@ onMounted(() => {
       origin: () => ({ left: camera.x, top: camera.y }),
     },
   })
-  logRuntimeCanvasProbe('runtime-action-bound')
   stopRuntimeActions = runtime.onAction(action => {
     if (action.type === 'move') {
-      logRuntimeCanvasProbe('runtime-move-received', { objectId: action.objectId, toSurfaceId: action.toSurfaceId })
       onRuntimeMove(action as MoveAction)
     }
   })

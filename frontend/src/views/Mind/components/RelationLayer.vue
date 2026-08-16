@@ -26,7 +26,6 @@ import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { relationCurvePath } from '@/utils/canvasRelationGeometry'
-import { beginRuntimeCanvasProbe, markRuntimeCanvasProbe, measureRuntimeCanvasProbe } from '@/utils/runtimePerformanceProbe'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -160,8 +159,6 @@ const departingRelations = ref<{
 }[]>([])
 const immediateDepartures = new Set<number>()
 let departingRaf = 0
-let relationProbeNodeId: number | null = null
-let relationProbeCount = 0
 
 function pruneAnchorSideCache() {
   const retained = new Set([
@@ -237,14 +234,6 @@ watch(
 const visibleRelations = computed(() => {
   void renderTick.value
   void props.visualFrame
-  if (props.activeVisualNodeId !== relationProbeNodeId) {
-    relationProbeNodeId = props.activeVisualNodeId
-    relationProbeCount = 0
-  }
-  const relationProbe = props.activeVisualNodeId != null && relationProbeCount < 8
-    ? beginRuntimeCanvasProbe('relation-recompute')
-    : null
-  if (relationProbe) relationProbeCount++
 
   const liveIds = new Set<number>()
   const live = props.relations.flatMap((relation) => {
@@ -278,10 +267,6 @@ const visibleRelations = computed(() => {
   })
 
   const result = [...live, ...departing]
-  if (relationProbe) {
-    markRuntimeCanvasProbe(relationProbe, 'end')
-    measureRuntimeCanvasProbe(relationProbe, 'computed', 'start', 'end')
-  }
   return result
 })
 
