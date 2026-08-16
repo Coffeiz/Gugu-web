@@ -48,11 +48,6 @@ html[data-theme][data-family] .ne-tool:hover,
 html[data-theme][data-family] .ne-style-item:hover { background: var(--action-soft); }
 html[data-theme][data-family] .ne-tool.on,
 html[data-theme][data-family] .ne-style-item.on { background: var(--selection-bg); }
-html[data-theme][data-family] .cs-dot {
-  border-color: var(--border-strong);
-  box-shadow: var(--elevation-card);
-}
-html[data-theme][data-family] .cs-dot.active { box-shadow: 0 0 0 2px var(--action-primary),var(--elevation-card); }
 html[data-theme='dark'][data-family] .cs-none {
   background: repeating-conic-gradient(var(--surface-soft) 0% 25%,var(--surface-raised) 0% 50%) 0 0 / 6px 6px;
 }
