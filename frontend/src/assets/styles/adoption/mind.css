@@ -1,10 +1,6 @@
 /* Mind workspace theme adoption. File references already render FileCard.vue and therefore inherit
    the file-card dark contract; do not duplicate file-card styling here. */
 html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); }
-html[data-theme][data-family] .mind-canvas {
-  background-color: var(--mind-canvas-bg);
-  background-image: radial-gradient(circle,var(--mind-canvas-dot) 6.5%,transparent 7%);
-}
 
 /* Notes timeline */
 html[data-theme][data-family] .tl-col {
