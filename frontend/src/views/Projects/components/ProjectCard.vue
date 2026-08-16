@@ -3,7 +3,7 @@
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :data-card="String(project.id)"
-    :style="{ '--project-color': project.color, background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
+    :style="{ '--project-color': project.color }"
     :class="{ 'file-drag-over': fileDragOver }"
     @click="emit('click')"
     @dragenter.prevent="onFileDragEnter"

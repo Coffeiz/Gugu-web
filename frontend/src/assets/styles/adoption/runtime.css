@@ -9,22 +9,33 @@ html[data-theme='dark'][data-family] [data-runtime-proxy-content='true'] {
   -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
 }
 
-/* Preserve card identity while grabbing instead of flattening every proxy into one neutral slab. */
-html[data-theme='dark'][data-family] .drawer-project-card[data-runtime-proxy-content='true'],
-html[data-theme='dark'][data-family] .proj-card[data-runtime-proxy-content='true'] {
-  background:
-    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
-    var(--project-color) !important;
-  border-color: var(--project-card-border) !important;
-}
-html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true'] {
-  background: var(--surface-card-solid) !important;
-  border-color: var(--project-card-border) !important;
-}
-html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']::before {
+/* Preserve card identity after grabbing. The grab-start/grabbing phases are handled by the
+   shared glass rule below so all project-card variants have the same pickup visual. */
+html[data-theme='dark'][data-family] .drawer-project-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']),
+html[data-theme='dark'][data-family] .proj-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
   background:
     linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
     var(--pr-project-color) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
+  background: var(--surface-card-solid) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing'])::before {
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--pr-project-color) !important;
+}
+
+/* Runtime writes the glass background inline. Remove only the card identity layers during
+   pickup; otherwise the project-page gradient/highlight masks the same glass used by canvas. */
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  background-image: none !important;
+}
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::before,
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::after {
+  opacity: 0 !important;
 }
 
 html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {

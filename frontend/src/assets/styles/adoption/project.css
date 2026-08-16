@@ -226,7 +226,7 @@ html[data-theme][data-family] .drawer-project-card {
   border-color: var(--project-card-border);
   background:
     linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
-    var(--project-color) !important;
+    var(--pr-project-color) !important;
   box-shadow: var(--project-card-shadow);
 }
 html[data-theme][data-family] .drawer-project-card:hover {
