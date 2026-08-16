@@ -4,9 +4,10 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from . import __version__
 from .storage import TraceStore
 
-app = FastAPI(title="LoopScope", version="0.1.0")
+app = FastAPI(title="LoopScope", version=__version__)
 cors_origins = [
     "http://127.0.0.1:4319",
     "http://localhost:4319",
@@ -29,7 +30,7 @@ store = TraceStore()
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": "0.1.0", "db": str(store.path)}
+    return {"ok": True, "version": __version__, "db": str(store.path)}
 
 
 @app.post("/api/collector/runs")

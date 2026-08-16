@@ -85,6 +85,12 @@
   --trace-tool: #76a7b2;
   --trace-guard: #ba9365;
   --trace-output: #7b9d7d;
+  --trace-database: #66917d;
+  --trace-file: #7d8eb7;
+  --trace-memory: #a980ad;
+  --trace-history: #b28759;
+  --trace-cache: #8a80ba;
+  --trace-state: #98909d;
   --trace-error: #bd7c6d;
   --trace-running: #8a80ba;
 }

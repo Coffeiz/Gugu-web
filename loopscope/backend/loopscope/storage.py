@@ -25,6 +25,12 @@ class TraceStore:
         conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
+    @staticmethod
+    def _ensure_column(db: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+        cols = {row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in cols:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
     def init(self) -> None:
         with self._connect() as db:
             db.executescript("""
@@ -47,6 +53,7 @@ class TraceStore:
               input_json TEXT NOT NULL,
               output_json TEXT NOT NULL,
               attributes_json TEXT NOT NULL,
+              usage_json TEXT NOT NULL DEFAULT '{}',
               raw_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_runs_session_started
@@ -64,11 +71,21 @@ class TraceStore:
               input_json TEXT NOT NULL,
               output_json TEXT NOT NULL,
               attributes_json TEXT NOT NULL,
+              code_json TEXT NOT NULL DEFAULT '{}',
+              usage_json TEXT NOT NULL DEFAULT '{}',
+              token_impact_json TEXT NOT NULL DEFAULT '{}',
               ordinal INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_spans_run_ordinal
               ON spans(run_id, ordinal);
+            CREATE INDEX IF NOT EXISTS idx_spans_parent
+              ON spans(run_id, parent_span_id, ordinal);
             """)
+            # 0.1 SQLite 直接原地升级：不要求开发者删库，已有 Run 仍能读取。
+            self._ensure_column(db, "runs", "usage_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(db, "spans", "code_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(db, "spans", "usage_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(db, "spans", "token_impact_json", "TEXT NOT NULL DEFAULT '{}'")
 
     @staticmethod
     def _dump(value: Any) -> str:
@@ -90,7 +107,7 @@ class TraceStore:
         ended = payload.get("ended_at")
         user_input = payload.get("input") or {}
         title_source = str(user_input.get("user_message") or payload.get("title") or "").strip()
-        title = (title_source[:48] or f"Session {payload.get('external_session_id') or session_key}")
+        title = title_source[:48] or f"Session {payload.get('external_session_id') or session_key}"
         spans = payload.get("spans") or []
 
         with self._connect() as db:
@@ -115,8 +132,8 @@ class TraceStore:
             db.execute(
                 """INSERT OR REPLACE INTO runs
                    (id, session_key, trace_id, status, started_at, ended_at, duration_ms,
-                    input_json, output_json, attributes_json, raw_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    input_json, output_json, attributes_json, usage_json, raw_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id,
                     session_key,
@@ -128,6 +145,7 @@ class TraceStore:
                     self._dump(payload.get("input")),
                     self._dump(payload.get("output")),
                     self._dump(payload.get("attributes")),
+                    self._dump(payload.get("usage")),
                     self._dump(payload),
                 ),
             )
@@ -136,8 +154,9 @@ class TraceStore:
                 db.execute(
                     """INSERT INTO spans
                        (id, run_id, parent_span_id, kind, name, status, started_at, ended_at,
-                        duration_ms, input_json, output_json, attributes_json, ordinal)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        duration_ms, input_json, output_json, attributes_json,
+                        code_json, usage_json, token_impact_json, ordinal)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         str(span.get("id") or f"{run_id}:{ordinal}"),
                         run_id,
@@ -151,6 +170,9 @@ class TraceStore:
                         self._dump(span.get("input")),
                         self._dump(span.get("output")),
                         self._dump(span.get("attributes")),
+                        self._dump(span.get("code")),
+                        self._dump(span.get("usage")),
+                        self._dump(span.get("token_impact")),
                         ordinal,
                     ),
                 )
@@ -171,7 +193,7 @@ class TraceStore:
             rows = db.execute(
                 "SELECT * FROM runs WHERE session_key=? ORDER BY started_at ASC", (session_key,)
             ).fetchall()
-        return [self._run_row(r, include_spans=False) for r in rows]
+        return [self._run_row(r) for r in rows]
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -181,15 +203,16 @@ class TraceStore:
             spans = db.execute(
                 "SELECT * FROM spans WHERE run_id=? ORDER BY ordinal", (run_id,)
             ).fetchall()
-        run = self._run_row(row, include_spans=False)
+        run = self._run_row(row)
         run["spans"] = [self._span_row(s) for s in spans]
         return run
 
-    def _run_row(self, row: sqlite3.Row, include_spans: bool) -> dict[str, Any]:
+    def _run_row(self, row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
         d["input"] = self._load(d.pop("input_json"))
         d["output"] = self._load(d.pop("output_json"))
         d["attributes"] = self._load(d.pop("attributes_json"))
+        d["usage"] = self._load(d.pop("usage_json", "{}"))
         d.pop("raw_json", None)
         return d
 
@@ -198,4 +221,7 @@ class TraceStore:
         d["input"] = self._load(d.pop("input_json"))
         d["output"] = self._load(d.pop("output_json"))
         d["attributes"] = self._load(d.pop("attributes_json"))
+        d["code"] = self._load(d.pop("code_json", "{}"))
+        d["usage"] = self._load(d.pop("usage_json", "{}"))
+        d["token_impact"] = self._load(d.pop("token_impact_json", "{}"))
         return d

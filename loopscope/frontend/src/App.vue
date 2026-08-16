@@ -8,6 +8,7 @@
       <nav class="nav">
         <RouterLink to="/">Conversation</RouterLink>
         <RouterLink to="/tokens">Design Tokens</RouterLink>
+        <RouterLink to="/changelog">Changelog</RouterLink>
         <RouterLink to="/settings">Settings</RouterLink>
       </nav>
       <div class="rail-foot">

@@ -55,6 +55,8 @@
 const trace=[
   {name:'Input',var:'--trace-input'},{name:'Context',var:'--trace-context'},{name:'LLM',var:'--trace-llm'},
   {name:'Tool',var:'--trace-tool'},{name:'Guard',var:'--trace-guard'},{name:'Output',var:'--trace-output'},
+  {name:'Database',var:'--trace-database'},{name:'Prompt file',var:'--trace-file'},{name:'Memory',var:'--trace-memory'},
+  {name:'History',var:'--trace-history'},{name:'Cache',var:'--trace-cache'},{name:'State',var:'--trace-state'},
   {name:'Error',var:'--trace-error'},{name:'Running',var:'--trace-running'},
 ]
 const sizes=['--font-size-xs','--font-size-sm','--font-size-md','--font-size-lg','--font-size-xl']
