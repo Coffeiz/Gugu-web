@@ -36,6 +36,12 @@ html[data-theme][data-family] .note-card.canvas-mode.tint-teal { background: var
 html[data-theme][data-family] .note-card.canvas-mode:not(.tint-amber):not(.tint-coral):not(.tint-blue):not(.tint-teal) {
   background: var(--note-paper-default-canvas);
 }
+/* 画布便签去掉 ::after 的 1px 顶部 inset 高光：Glass 主题的 --card-shadow（--note-shadow）
+   本身已含 inset 0 1px 0 顶部高光，加上真实 border 后顶部同一条边最多叠三层 1px 线，
+   相机缩放到 80%/90% 这类非整数比例时栅格化成肉眼可见的双边/叠影（同 EntitySticker
+   6b4b9bb8 的结论）。时间流便签不在相机变换下渲染，保留纸卡顶部高光原设计；
+   hover 提亮走 ::after 的 background，不受影响。 */
+html[data-theme][data-family] .note-card.canvas-mode::after { box-shadow: none; }
 html[data-theme][data-family] .nc-title-input,
 html[data-theme][data-family] .nc-head:has(+ .nc-body) { border-bottom-color: var(--note-divider); }
 html[data-theme][data-family] .nc-icon:hover,
