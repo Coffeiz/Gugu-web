@@ -73,6 +73,7 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--
 }
 
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--modal {
+  position: absolute;
   z-index: var(--scrollbar-overlay-modal-z-index);
 }
 
