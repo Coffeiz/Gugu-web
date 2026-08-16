@@ -13,7 +13,7 @@ html[data-theme][data-family] .project-modal-root .modal-right {
   box-shadow: var(--file-dialog-panel-shadow);
 }
 html[data-theme][data-family] .project-modal-root .right-header {
-  border-bottom: 1px solid var(--file-dialog-divider);
+  border-bottom: 1px solid var(--file-dialog-toolbar-divider);
 }
 html[data-theme][data-family] .project-modal-root .file-browser-toolbar {
   --gb-tint: var(--file-dialog-toolbar-tint);
