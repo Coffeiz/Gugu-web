@@ -662,12 +662,7 @@ const filePanelContext = {
 </script>
 
 <style scoped>
-:deep(.drp-input) {
-  background: rgba(255,255,255,0.5);
-}
-:deep(.drp-input:hover) {
-  background: rgba(255,255,255,0.75);
-}
+/* .drp-input 已由 DateSpanPicker.vue scoped 直接消费 --input-* token，不再需要 :deep 覆盖 */
 
 .modal {
   display: flex;
@@ -779,14 +774,14 @@ const filePanelContext = {
 .col-divider { border: none; height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%); margin: 0; }
 
 .field-input {
-  width: 100%; padding: 9px 12px; box-sizing: border-box;
-  border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
-  background: rgba(255,255,255,0.5); font-size: 13px;
-  font-family: var(--font-sans); color: var(--text-primary);
-  outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%; padding: 8px 11px; box-sizing: border-box;
+  border: 1px solid var(--input-border); border-radius: var(--control-radius);
+  background: var(--input-bg); font-size: 13px;
+  font-family: var(--font-sans); color: var(--input-fg);
+  outline: none; transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
-.field-input:hover { border-color: rgba(123,127,178,0.35); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.08); }
-.field-input:focus { border-color: rgba(123,127,178,0.4); background: rgba(255,255,255,0.75); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 3px rgba(123,127,178,0.1); }
+.field-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
+.field-input:focus { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
 
 /* 状态 */
 .status-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
