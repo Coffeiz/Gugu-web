@@ -61,9 +61,15 @@ html[data-theme='dark'][data-family] .note-card.tint-coral[data-runtime-proxy-co
 html[data-theme='dark'][data-family] .note-card.tint-blue[data-runtime-proxy-content='true'] { background: var(--note-paper-blue) !important; }
 html[data-theme='dark'][data-family] .note-card.tint-teal[data-runtime-proxy-content='true'] { background: var(--note-paper-teal) !important; }
 
+/* 活动卡本体静止态是低 alpha 玻璃（--surface-glass + --glass-blur）；代理若映射到
+   接近不透明的 --surface-card-solid，会在 grabbing/landing 全程与本体材质脱节，
+   直到 reveal 本体才突然恢复半透明。代理必须沿用本体真实静止材质，
+   抓取增强只保留 Runtime 提供的阴影。 */
 html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content='true'] {
-  background: var(--surface-card-solid) !important;
+  background: var(--surface-glass) !important;
   border-color: var(--border-strong) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
 }
 
 /* Shared file/folder cards keep their existing card contract; only replace Runtime's white glass. */
