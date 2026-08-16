@@ -1,9 +1,5 @@
-@import './primitives.css';
-@import './themes.css';
-@import './semantic.css';
-@import './components.css';
-@import './motion.css';
-@import './canvas.css';
-@import './product.css';
-@import './interaction-refinements.css';
-@import './interactive-surface-fixes.css';
+/* Token architecture: foundations -> family theme values -> semantic roles -> component contracts. */
+@import './foundation/index.css';
+@import './themes/index.css';
+@import './semantic/index.css';
+@import './components/index.css';
