@@ -8,6 +8,7 @@
   --mind-canvas-dot: var(--canvas-dot-color);
   --mind-toolbar-bg: var(--glass-card-background);
   --mind-toolbar-border: var(--glass-card-border);
+  --mind-system-card-blur: var(--glass-blur);
 
   /* Legacy light paper values from the original Notes/Canvas implementation. */
   --note-surface: rgba(255,255,255,.56);
@@ -53,6 +54,12 @@
   --mind-relation-line: rgba(104,111,164,.35);
   --mind-relation-line-draft: rgba(123,127,178,.85);
   --mind-relation-line-danger: rgba(200,90,90,.8);
+}
+
+/* Mono keeps system-object cards solid/no-blur without requiring those cards to inherit the generic
+   .glass-card class and its unrelated radius/transition/shadow ownership. */
+html[data-family='v2'] {
+  --mind-system-card-blur: none;
 }
 
 html[data-theme='dark'][data-family] {
