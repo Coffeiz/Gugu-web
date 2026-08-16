@@ -1,0 +1,47 @@
+/* Shared floating surface / modal / input / choice contracts.
+   Components consume these roles; light/dark differences come from semantic theme values. */
+:root {
+  --panel-glass-bg: var(--surface-glass);
+  --panel-glass-border: var(--border-default);
+  --panel-glass-highlight: var(--border-highlight);
+  --panel-glass-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
+  --panel-glass-shadow: inset -1px 0 0 var(--panel-glass-side-highlight);
+  --panel-glass-blur: blur(24px);
+  --panel-content-bg: var(--surface-panel);
+  --panel-divider: var(--border-subtle);
+
+  --modal-card-bg: var(--surface-floating);
+  --modal-card-border: var(--border-strong);
+  --modal-card-highlight: var(--border-highlight);
+  --modal-card-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
+  --modal-card-shadow: var(--elevation-window);
+  --modal-overlay-bg: var(--surface-scrim);
+
+  --input-bg: var(--surface-raised);
+  --input-bg-focus: var(--surface-floating);
+  --input-fg: var(--content-primary);
+  --input-placeholder: var(--content-tertiary);
+  --input-border: var(--border-default);
+  --input-border-hover: var(--border-hover);
+  --input-border-focus: var(--border-focus);
+  --input-focus-shadow: var(--control-focus-shadow);
+  --input-radius: var(--radius-sm);
+
+  --choice-chip-bg: transparent;
+  --choice-chip-bg-hover: var(--action-soft);
+  --choice-chip-bg-active: var(--selection-bg);
+  --choice-chip-fg: var(--content-secondary);
+  --choice-chip-fg-hover: var(--content-primary);
+  --choice-chip-fg-active: var(--selection-fg);
+  --choice-chip-border: var(--border-default);
+  --choice-chip-border-hover: var(--action-outline);
+  --choice-chip-border-active: var(--action-outline);
+  --choice-chip-radius: var(--radius-pill);
+
+  --switch-track-bg: color-mix(in srgb,var(--content-primary) 18%,transparent);
+  --switch-track-bg-active: var(--action-primary);
+  --switch-thumb-bg: var(--surface-raised);
+
+  --subpanel-bg: var(--surface-soft);
+  --subpanel-border: var(--border-subtle);
+}
