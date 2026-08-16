@@ -59,9 +59,11 @@ html[data-theme='dark'][data-family] {
   --capture-bg: color-mix(in srgb,var(--surface-base) 88%,transparent);
   --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
 
-  /* Keep relations visible on dark canvas without turning into a bright neon stroke. */
+  /* Starting a new connection marks all existing relations of the origin node as highlighted.
+     Keep that interaction state chromatically neutral on dark canvas so dragging one line does not
+     flash every already-existing relation attached to the card. The draft line remains distinct. */
   --mind-relation-line: color-mix(in srgb,var(--content-secondary) 42%,transparent);
-  --mind-relation-line-highlight: color-mix(in srgb,var(--action-primary) 72%,var(--content-secondary));
+  --mind-relation-line-highlight: var(--mind-relation-line);
   --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 68%,var(--content-secondary));
   --mind-relation-line-danger: color-mix(in srgb,var(--status-danger) 72%,var(--content-secondary));
 }
