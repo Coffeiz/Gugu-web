@@ -511,9 +511,9 @@ label {
 .proj-list {
   display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 6px; overflow-y: auto;
   max-height: none; padding-right: 6px;
-  /* OverlayScrollbar reads this as an inset from the host's right edge; negative moves the thumb
-     outward so the visible track sits 4px to the right instead of over the project pills. */
-  --scrollbar-overlay-right-offset: -4px;
+  /* OverlayScrollbar uses `right = host inset - offset`, so positive 4px moves the thumb outward
+     to the right, away from the project pills. */
+  --scrollbar-overlay-right-offset: 4px;
 }
 .status-label {
   display: flex; align-items: center; gap: 5px; padding: 2px 2px 0;
