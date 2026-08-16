@@ -1,0 +1,42 @@
+/* 画布与抽屉项目卡共用同一套根材质。
+   结构内容由 ProjectCardBody 提供，Runtime 只接管生命周期和代理，不再让两个入口各自
+   维护一份 sheen、阴影和抓取/落地阶段样式。 */
+.mind-project-card {
+  box-sizing: border-box;
+  font-family: var(--font-sans);
+  background: rgb(255, 255, 255);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 14px;
+  corner-shape: round;
+  box-shadow: 0 2px 8px rgba(80, 90, 110, 0.07);
+  user-select: none;
+}
+
+.mind-project-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(to right, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 1) 40%), var(--pr-project-color);
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.25s ease-out;
+}
+
+.mind-project-card > .project-card-body {
+  position: relative;
+  z-index: 1;
+}
+
+.mind-project-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.mind-project-card[data-runtime-phase="grab-start"]::before {
+  opacity: 0;
+}
+
+.mind-project-card[data-runtime-phase="landing"]::before {
+  opacity: 1;
+}
+
+.mind-project-card:hover {
+  box-shadow: 0 6px 18px rgba(80, 90, 110, 0.13);
+}

@@ -53,9 +53,7 @@ html[data-theme='dark'][data-family] .proj-card:hover::after,
 html[data-theme='dark'][data-family] .sample-project-card:hover::after,
 html[data-theme='dark'][data-family] .fc-card:hover::after,
 html[data-theme='dark'][data-family] .folder-card:hover::after,
-html[data-theme='dark'][data-family] .task-card:hover::after,
-html[data-theme='dark'][data-family] .cal-chip:hover::after,
-html[data-theme='dark'][data-family] .cal-chip.bar-hovered::after {
+html[data-theme='dark'][data-family] .task-card:hover::after {
   opacity: 0 !important;
 }
 

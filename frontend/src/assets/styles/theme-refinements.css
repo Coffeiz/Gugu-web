@@ -55,8 +55,6 @@ html[data-theme='dark'][data-family] {
   --calendar-selected-cell-bg: var(--selection-bg);
   --calendar-range-edge-bg: var(--action-soft-hover);
   --calendar-weekend-hover-bg: var(--calendar-weekend-bg);
-  --calendar-chip-hover-overlay: transparent;
-  --calendar-capsule-hover-overlay: transparent;
   --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
 }
 
