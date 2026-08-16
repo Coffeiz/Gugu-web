@@ -14,7 +14,8 @@
  * 服务端/canvas 预模糊成图片资源，用 `background: url(...); background-attachment: fixed`（视口锚定
  * 对齐、不加 CSS filter，因 filter 与 fixed 冲突）。只改这一处，所有用了 GlassBg 的地方自动跟随。
  *
- * 可调（宿主上设 CSS 变量）：--gb-tint 磨砂 tint，默认 var(--surface-glass)。
+ * 可调（宿主上设 CSS 变量）：--gb-tint 磨砂 tint，默认 var(--surface-glass)；
+ * --gb-highlight-strong / --gb-highlight-side 可按局部组件契约关闭或替换高光。
  */
 </script>
 
@@ -40,7 +41,7 @@
   background: var(--gb-tint, var(--surface-glass));
   transition: background 0.25s ease;
   box-shadow:
-    inset 0 1px 0 var(--highlight-strong),
-    inset 1px 0 0 var(--highlight-side);
+    inset 0 1px 0 var(--gb-highlight-strong, var(--highlight-strong)),
+    inset 1px 0 0 var(--gb-highlight-side, var(--highlight-side));
 }
 </style>
