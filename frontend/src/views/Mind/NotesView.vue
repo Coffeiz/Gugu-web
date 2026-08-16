@@ -275,6 +275,7 @@ function snapToNearestColumn() {
 // 手感跟顶部日期滑杆一致：拖动期间 1:1 跟手，松手按速度带一点惯性再吸附到最近的日期列中心，
 // 复用同一套 followCardsTo 阻尼弹簧，不用另起一套缓动。
 let colDragging = false
+let colDragHoverEl: HTMLElement | null = null
 let colDragStartX = 0
 let colDragStartScrollLeft = 0
 let colDragVelocity = 0   // px/ms 指数滑动平均
@@ -312,6 +313,9 @@ function onColumnsPointerDown(e: PointerEvent) {
   if (cols0) cols0.style.transition = 'none'
   // 拖动期间禁掉整页的文字选取——单单挡住 pointerdown 的默认行为不够，鼠标按下不动之后
   // 再小幅移动，部分浏览器仍会把它判成拖选文字（尤其经过便签正文这类可选文本时）。
+  // 拖拽期间 pointer capture 会吞掉 :hover 伪类，手动给目标列挂 dragging 保持 hover 视觉。
+  colDragHoverEl = (e.target as HTMLElement).closest<HTMLElement>('.tl-col')
+  colDragHoverEl?.classList.add('dragging')
   document.body.style.userSelect = 'none'
   window.addEventListener('pointermove', onColumnsPointerMove)
   window.addEventListener('pointerup', onColumnsPointerUp)
@@ -375,6 +379,8 @@ function onColumnsPointerUp() {
   window.removeEventListener('pointermove', onColumnsPointerMove)
   window.removeEventListener('pointerup', onColumnsPointerUp)
   document.body.style.userSelect = ''
+  colDragHoverEl?.classList.remove('dragging')
+  colDragHoverEl = null
   if (!colDragging) return
   colDragging = false
   const cols = timelineColsEl()

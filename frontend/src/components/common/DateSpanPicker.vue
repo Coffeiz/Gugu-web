@@ -1,6 +1,6 @@
 <template>
   <div class="drp-wrap" ref="wrapRef">
-    <div class="drp-input" :class="{ 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
+    <div class="drp-input" :class="{ open, 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
       <svg class="drp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
         <path d="M4 1v2M10 1v2M1 6h12"/>
@@ -278,15 +278,27 @@ watch(() => props.startDate, v => {
 
 <style scoped>
 .drp-wrap { position: relative; width: 100%; }
+/* 与 DatePicker.dp-input / TimeInput.boxed 同一套描边输入框契约（--input-* token）。
+   此前这里没有任何 border/background 声明，adoption 层只补 border-color——
+   没有 border-style 时 border-color 不生效，表现为无描边的裸文字行。 */
 .drp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 9px 12px;
+  /* 几何与 DatePicker.dp-input / 普通输入框（popup-input）逐字一致：8px 11px + 13px，
+     保证同一表单里高度和视觉节奏相同。 */
+  padding: 8px 11px;
+  border: 1px solid var(--input-border);
   border-radius: var(--control-radius);
-  font-size: var(--font-size-md);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  font-size: 13px;
   cursor: pointer; user-select: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
+.drp-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
+.drp-input.open { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
 .drp-input.placeholder span { opacity: 0.6; }
-.drp-icon { flex-shrink: 0; }
+.drp-input.placeholder, .drp-input.placeholder span { color: var(--input-placeholder); }
+.drp-icon { flex-shrink: 0; color: var(--input-placeholder); }
 .drp-sep { opacity: 0.4; }
 .drp-end-placeholder { opacity: 0.5; }
 </style>

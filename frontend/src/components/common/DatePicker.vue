@@ -267,26 +267,29 @@ watch(() => props.modelValue, v => {
 <style scoped>
 .dp-wrap { position: relative; width: 100%; }
 
+/* 与 DateSpanPicker.drp-input / TimeInput.boxed 同一套描边输入框契约（--input-* token）。 */
 .dp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 8px 11px;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(0,0,0,0.1);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-sm, 10px);
-  font-size: 13px; color: var(--text-primary, #1e2028);
+  font-size: 13px; color: var(--input-fg);
   cursor: pointer; user-select: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .dp-input:hover {
-  border-color: rgba(123,127,178,0.35);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.08);
+  border-color: var(--input-border-hover);
+  background: var(--input-bg-hover);
+  box-shadow: var(--input-hover-shadow);
 }
 .dp-input.open {
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+  border-color: var(--input-border-focus);
+  background: var(--input-bg-focus);
+  box-shadow: var(--input-focus-shadow);
 }
-.dp-input.placeholder span { color: var(--text-secondary, #8a8fa8); opacity: 0.6; font-size: 13px; }
-.dp-icon { color: var(--text-secondary, #8a8fa8); flex-shrink: 0; }
+.dp-input.placeholder span { color: var(--input-placeholder); opacity: 0.6; font-size: 13px; }
+.dp-icon { color: var(--input-placeholder); flex-shrink: 0; }
 </style>
 
 <style>
