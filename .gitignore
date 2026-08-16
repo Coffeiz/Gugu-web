@@ -73,6 +73,8 @@ backup/
 # 构建产物 / 大字体资源
 gugu-backend-*.tar.gz
 docs/smiley-sans/
+# pip install -e 产生的 egg-info（LoopScope 后端本地安装产物）
+loopscope/backend/*.egg-info/
 
 # 性能 trace / 抓的日志（大文件，勿提交）
 /logs/

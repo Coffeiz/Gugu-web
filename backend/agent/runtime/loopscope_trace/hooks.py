@@ -184,12 +184,22 @@ def ensure_hooks() -> None:
                 async for kind, value in original_round(client, ctx, round_messages):
                     if kind == "done":
                         final = value
+                        # 外层主循环收到 ("done", …) 会立即 break、不再消费本生成器,
+                        # 所以 usage 必须在这里（yield 之前）就落地,不能放在循环结束后。
+                        if span:
+                            details = _round_result(final, getattr(driver, "api_format", ""))
+                            span.usage = _jsonable(details.get("usage") or {})
+                            span.finish(details)
+                            run.add_usage(span.usage)
                     yield kind, value
-                if span:
-                    details = _round_result(final, getattr(driver, "api_format", ""))
-                    span.usage = _jsonable(details.get("usage") or {})
-                    span.finish(details)
-                    run.add_usage(span.usage)
+            except (GeneratorExit, asyncio.CancelledError):
+                # 外层提前 break/取消时生成器在此被关闭——不是本轮失败,不标 error。
+                # 注意 Python 3.14 下 async for 在 try 里提前退出会把关闭推迟到
+                # GC 才执行,注入的可能是 CancelledError 而非 GeneratorExit,
+                # 两者都要当「取消」处理。
+                if span and span.status == "running":
+                    span.finish({"error_type": "cancelled"}, status="cancelled")
+                raise
             except BaseException as exc:
                 if span:
                     span.finish({"error_type": type(exc).__name__}, status="error")

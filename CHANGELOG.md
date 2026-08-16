@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **LoopScope 用量监控显示真实消耗**：修复 LLM 轮次实际 token 用量（Input / Output / Cache read / Fresh input / Total）一直显示为 0 的问题，改用实测 usage 展示；中途取消的轮次会立即标记为 cancelled，不再悬挂为 running。
+
 ## [0.21.0] - 2026-08-15
 
 ### 清理
