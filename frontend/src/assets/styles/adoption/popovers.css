@@ -11,9 +11,13 @@ html[data-theme][data-family] :is(
   color: var(--popup-item-fg);
   background: var(--popup-surface-bg);
   border-color: var(--popup-surface-border);
+  border-radius: var(--popup-surface-radius);
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
   backdrop-filter: var(--popup-surface-blur);
   -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+html[data-theme][data-family] :is(.popup-menu, .popup-menu-dark) {
+  padding: var(--popup-surface-padding);
 }
 
 /* Mind's calendar previously forced an opaque light-only RGB after Teleport. Keep its no-blur
@@ -22,6 +26,7 @@ html[data-theme][data-family] .mind-cal-popup {
   color: var(--popup-item-fg) !important;
   background: var(--popup-surface-bg) !important;
   border-color: var(--popup-surface-border) !important;
+  border-radius: var(--popup-surface-radius) !important;
   box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -53,6 +58,37 @@ html[data-theme][data-family] :is(.popup-menu-sep, .popup-menu-dark .popup-menu-
 }
 html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-menu-shortcut) {
   color: var(--popup-item-fg-muted);
+}
+
+/* Sidebar settings keeps an edge-to-edge pseudo-element hover layer. Theme that layer instead of
+   stacking the generic item hover underneath it. */
+html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
+  background: transparent;
+}
+html[data-theme][data-family] .settings-popup .popup-menu-item::before {
+  background: var(--popup-item-bg-hover);
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled)::before {
+  background: var(--popup-item-danger-bg-hover);
+}
+html[data-theme][data-family] .settings-popup .popup-menu-sep { background: var(--popup-divider); }
+
+/* Sort trigger is a control, while the menu itself is the shared ContextMenu above. */
+html[data-theme][data-family] .sort-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .sort-btn:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
 }
 
 /* DatePicker trigger follows the same input/control paint as other form pickers. */
