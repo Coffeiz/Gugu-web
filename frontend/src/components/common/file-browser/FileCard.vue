@@ -64,14 +64,11 @@ defineProps({
    scoped 样式编译后带 data-v 属性选择器、特异度比 global.css 那份纯类选择器高，会整体
    压过它、连带把 transform 的过渡一起吃掉，悬停上浮就变成瞬间跳变、没有非线性缓动
    （踩过：FileCard.vue 抽出来时补了这句 transition，直接把文件库卡片的位移过渡吃没了）。
-   这里只画本卡片专属的底色/边框/圆角/静止&悬停阴影这些「值」，动画节奏交给全局那份。 */
+   这里只保留圆角、布局和文件/画布专属状态，主题表面值由 adoption 层统一提供。 */
 .fc-card {
   position: relative;
-  background: var(--surface-card);
-  border: 1px solid var(--border-strong);
   border-radius: var(--card-radius);
   corner-shape: round;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
   min-height: 122px;
   display: flex; flex-direction: column;
 }
@@ -83,19 +80,10 @@ defineProps({
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
 }
-.fc-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 6px 18px rgba(80,90,110,0.13);
-  background: rgba(255,255,255,0.86);
-}
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移（跟文件库/画布引用两处的默认手感
    刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
    特异度覆盖回去，不需要 !important。 */
 .fc-card.no-lift:hover { transform: none; }
-.fc-card.selected {
-  border-color: rgba(123,127,178,0.55);
-  background: rgba(255,255,255,0.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
-}
 /* 选中覆盖层：::before 覆盖整张卡（含图片卡白色标签区），::after 在缩略图上额外叠加 */
 .fc-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
@@ -154,9 +142,9 @@ defineProps({
 
 .fc-label { padding: 0 13px 13px; flex: 1; min-width: 0; }
 .fc-name {
-  font-size: var(--font-size-sm); font-weight: 600; color: var(--content-primary);
+  font-size: var(--font-size-sm); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fc-meta { font-size: 9px; line-height: 1.15; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
+.fc-meta { font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 </style>

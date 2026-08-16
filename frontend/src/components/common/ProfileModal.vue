@@ -285,7 +285,6 @@ async function doDeleteAccount() {
 
 .pm-nav-divider {
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%);
   margin: 6px 4px;
 }
 
@@ -294,14 +293,11 @@ async function doDeleteAccount() {
   width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
   border: 1px solid transparent; background: none;
   font-size: 14px; font-family: var(--font-sans);
-  color: #767980; cursor: pointer; text-align: left;
+  cursor: pointer; text-align: left;
   transition: all 0.15s;
 }
-.pm-nav-item:hover { background: rgba(123,127,178,0.08); color: var(--text-primary); }
 .pm-nav-item.active {
-  background: rgba(255,255,255,0.38); color: #6b6fa0;
-  font-weight: 700; border-color: rgba(255,255,255,0.62);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85);
+  font-weight: 700;
 }
 
 .pm-nav-spacer { flex: 1; }
@@ -310,27 +306,22 @@ async function doDeleteAccount() {
   display: flex; align-items: center; gap: 9px;
   padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
   cursor: pointer; font-size: 14px; font-family: var(--font-sans);
-  color: #767980; background: none; width: 100%;
+  background: none; width: 100%;
   transition: all 0.15s;
 }
-.pm-logout:hover,
-.pm-logout.pm-danger-nav:hover { background: rgba(196,80,80,0.08); color: #c45050; border-color: rgba(196,80,80,0.18); }
 
 /* 注销账号二次确认弹窗——视觉上照抄 BaseModal 的 .bm-overlay/.bm-card（背景/模糊/边框/阴影），
    但不用 BaseModal 本体：BaseModal 卡片自带「点击置顶」，两个 BaseModal 叠着会抢 z，见上方模板注释 */
 .pm-confirm-overlay {
   position: fixed; inset: 0;
-  background: rgba(20, 22, 30, 0.3);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
 }
 .pm-confirm-box {
   width: 100%; max-width: 380px; padding: 22px;
-  background: var(--panel-bg);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid rgba(255,255,255,0.72); border-radius: 20px;
-  box-shadow: 0 24px 64px rgba(20,25,50,0.2), inset 0 1px 0 rgba(255,255,255,0.95);
+  border: 1px solid transparent; border-radius: 20px;
   display: flex; flex-direction: column; gap: 12px;
 }
 
@@ -356,28 +347,24 @@ async function doDeleteAccount() {
 
 .pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }
 .pm-confirm-desc { font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
-.pm-confirm-desc strong { color: #c45050; }
 .pm-confirm-input { width: 100%; box-sizing: border-box; }
 .pm-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .btn-cancel {
-  padding: 7px 16px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.1);
-  background: none; color: var(--text-secondary); font-size: 13px;
+  padding: 7px 16px; border-radius: 8px; border: 1px solid transparent;
+  font-size: 13px;
   font-family: var(--font-sans); cursor: pointer; transition: all 0.15s;
 }
-.btn-cancel:hover { background: rgba(0,0,0,0.04); color: var(--text-primary); }
 
 /* 右侧内容 */
 .pm-content {
   display: flex; flex-direction: column; min-height: 0;
-  background: var(--panel-bg);
   backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98);
 }
 
 .pm-content-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 26px 16px;
-  border-bottom: 1px solid rgba(0,0,0,0.06); flex-shrink: 0;
+  border-bottom: 1px solid transparent; flex-shrink: 0;
 }
 .pm-content-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 
@@ -388,7 +375,7 @@ async function doDeleteAccount() {
   font-size: 11px; font-weight: 700; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 2px;
 }
-.pm-sep { height: 1px; background: rgba(0,0,0,0.06); margin: 0 26px; }
+.pm-sep { height: 1px; margin: 0 26px; }
 
 .pm-field {
   display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 14px;
@@ -402,14 +389,12 @@ async function doDeleteAccount() {
 .pm-field-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .pm-field-hint { font-size: 12px; color: var(--text-secondary); }
 
-.form-input.modified { border-color: rgba(123,127,178,0.4); }
 .pm-uid { color: var(--text-secondary); }
 .pm-static {
   font-size: 13px; color: var(--text-secondary); padding: 7px 2px;
 }
 .pm-coming {
-  font-size: 11px; font-weight: 600; color: rgba(30,32,40,0.3);
-  background: rgba(0,0,0,0.05); padding: 3px 10px; border-radius: 20px;
+  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
 }
 
 .pm-style-group {
@@ -430,37 +415,35 @@ async function doDeleteAccount() {
 /* 飞书绑定 */
 .pm-bind-btn {
   padding: 6px 16px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: #fff;
   font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.25); transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.15s, transform 0.15s;
 }
 .pm-bind-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
 .pm-bind-btn:disabled { opacity: 0.4; cursor: default; }
 .pm-danger-btn {
   padding: 6px 16px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #b25a5a, #c47070); color: #fff;
   font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(178,90,90,0.25); transition: opacity 0.15s, transform 0.15s;
+  transition: opacity 0.15s, transform 0.15s;
 }
 .pm-danger-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
 .pm-danger-btn:disabled { opacity: 0.4; cursor: default; }
 .pm-bind-btn.off {
-  background: transparent; color: var(--text-secondary);
-  border: 1px solid rgba(0,0,0,0.12); box-shadow: none;
+  background: transparent;
+  border: 1px solid transparent;
 }
 .pm-qr-box {
   margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 16px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06); border-radius: 12px;
+  padding: 16px; border: 1px solid transparent; border-radius: 12px;
 }
 .pm-qr-canvas { border-radius: 8px; background: #fff; }
 .pm-qr-hint { font-size: 12px; color: var(--text-secondary); text-align: center; }
-.pm-qr-hint a { color: #7b7fb2; font-weight: 600; }
+.pm-qr-hint a { font-weight: 600; }
 
 /* QQ BYO：机器人列表 + 表单 */
 .pm-bot-item {
   margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
   padding: 9px 12px; border-radius: 10px;
-  background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
+  border: 1px solid transparent;
 }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
 .pm-bot-group-row {
@@ -469,7 +452,7 @@ async function doDeleteAccount() {
   gap: 10px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(120, 125, 160, 0.12);
+  border-top: 1px solid transparent;
 }
 .pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
 .pm-bot-tools-row { align-items: center; }
@@ -480,7 +463,7 @@ async function doDeleteAccount() {
 }
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
-.pm-bot-tag { font-size: 10px; font-weight: 600; color: #b8860b; background: rgba(212,160,23,0.14); padding: 1px 6px; border-radius: 5px; }
+.pm-bot-tag { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; }
 .pm-bot-appid { font-size: 11px; color: var(--text-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 开关按钮：和「定时任务」页同一套 .switch/.slider（checkbox 原生开关，样式统一）——
@@ -493,8 +476,8 @@ async function doDeleteAccount() {
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
 .switch.sm { width: 32px; height: 19px; }
 .switch input { opacity: 0; width: 0; height: 0; }
-.switch .slider { position: absolute; inset: 0; background: rgba(0,0,0,0.18); border-radius: 22px; transition: 0.2s; cursor: pointer; }
-.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.switch .slider { position: absolute; inset: 0; border-radius: 22px; transition: 0.2s; cursor: pointer; }
+.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; border-radius: 50%; transition: 0.2s; }
 .switch.sm .slider::before { height: 13px; width: 13px; }
 .switch input:checked + .slider { background: var(--color-primary); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
@@ -504,45 +487,38 @@ async function doDeleteAccount() {
 .pm-add-bot {
   margin-top: 8px; width: 100%; padding: 8px; border-radius: 9px; cursor: pointer;
   font-size: 13px; color: var(--text-secondary);
-  border: 1px dashed rgba(0,0,0,0.15); background: none;
+  border: 1px dashed transparent; background: none;
 }
-.pm-add-bot:hover { color: #7b7fb2; border-color: rgba(123,127,178,0.4); }
 .pm-bot-form {
   margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
-  padding: 12px; border-radius: 10px; background: rgba(0,0,0,0.02); border: 1px solid rgba(0,0,0,0.06);
+  padding: 12px; border-radius: 10px; border: 1px solid transparent;
 }
 .pm-bot-input {
   width: 100%; padding: 8px 11px; border-radius: 8px; font-size: 13px;
-  border: 1px solid rgba(0,0,0,0.1); background: #fff; color: var(--text-primary); outline: none;
+  border: 1px solid transparent; outline: none;
 }
-.pm-bot-input:focus { border-color: rgba(123,127,178,0.5); }
 .pm-bot-check { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-text-link {
   margin-top: 8px; background: none; border: none; cursor: pointer;
   font-size: 12px; color: var(--text-secondary); text-decoration: underline; padding: 0;
 }
-.pm-text-link:hover { color: #7b7fb2; }
 .pm-qr-cancel {
   font-size: 12px; color: var(--text-secondary); background: none; border: none;
   cursor: pointer; text-decoration: underline;
 }
-.pm-qr-err { margin-top: 10px; font-size: 12px; color: #c85a5a; }
+.pm-qr-err { margin-top: 10px; font-size: 12px; }
 
 .pm-footer {
   display: flex; align-items: center; justify-content: flex-end;
   gap: 8px; padding-top: 4px;
 }
 .pm-msg { font-size: 12px; margin-right: auto; }
-.pm-msg.ok  { color: #3a8870; }
-.pm-msg.err { color: #c85a5a; }
 
 .pm-save-btn {
   padding: 7px 22px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  color: white; font-size: 13px; font-weight: 600;
+  font-size: 13px; font-weight: 600;
   font-family: var(--font-sans); cursor: pointer;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.28);
   transition: opacity 0.15s, transform 0.15s;
 }
 .pm-save-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
@@ -570,11 +546,8 @@ async function doDeleteAccount() {
 .pm-quota-row { display: flex; align-items: center; justify-content: space-between; }
 .pm-quota-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
 .pm-quota-pct { font-size: 12px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.pm-quota-pct.pct-warn   { color: rgba(180,130,40,0.9); }
-.pm-quota-pct.pct-danger { color: rgba(200,70,70,0.9); }
 .pm-quota-bar {
   height: 6px; border-radius: 99px;
-  background: rgba(0,0,0,0.07);
   overflow: hidden;
 }
 .pm-quota-fill {

@@ -60,23 +60,6 @@ html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-
   color: var(--popup-item-fg-muted);
 }
 
-/* Sidebar settings keeps an edge-to-edge pseudo-element hover layer. Theme that layer instead of
-   stacking the generic item hover underneath it. */
-html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
-  background: transparent;
-}
-html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled) {
-  background: transparent;
-}
-html[data-theme][data-family] .settings-popup .popup-menu-item::before {
-  background: var(--popup-item-bg-hover);
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
-}
-html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled)::before {
-  background: var(--popup-item-danger-bg-hover);
-}
-html[data-theme][data-family] .settings-popup .popup-menu-sep { background: var(--popup-divider); }
-
 /* 保留 settings-popup 旧版视觉契约：它的侧栏菜单 hover 是边缘铺满的伪元素高光，
    不跟随普通 popup 的实体表面和通用菜单背景。 */
 html[data-theme][data-family] .settings-popup {
