@@ -70,6 +70,13 @@ function bind(element: HTMLElement) {
   if (element.classList.contains('scroll-surface--editor')) thumb.classList.add('overlay-scrollbar--editor')
   if (element.classList.contains('col-body')) thumb.classList.add('overlay-scrollbar--column')
   if (element.closest('.project-modal-root')) thumb.classList.add('overlay-scrollbar--modal')
+  // Most offsets are owned by thumb variants (column/drawer). A specific scroll surface may opt in
+  // through the same token; copy only non-zero surface values so the root 0px default does not
+  // overwrite those thumb-variant contracts.
+  const surfaceRightOffset = parseFloat(getComputedStyle(element).getPropertyValue('--scrollbar-overlay-right-offset'))
+  if (Number.isFinite(surfaceRightOffset) && Math.abs(surfaceRightOffset) > 0.01) {
+    thumb.style.setProperty('--scrollbar-overlay-right-offset', `${surfaceRightOffset}px`)
+  }
   // 抽屉和聊天窗一样是独立的浮动滚动宿主。把滑块挂进宿主后，它会跟随宿主的
   // transform/width 动画移动；否则会先挂到 body，以浏览器右边为参照闪入抽屉。
   const owner = element.closest<HTMLElement>('.chat-window, .drawer-shell, .bm-card')
