@@ -92,6 +92,9 @@ export function setupInteractionRuntime(): void {
       return MIND_CANVAS_LANDING_Z_INDEX
     },
     affordances: { selector: '[data-card-affordances]' },
+    // 画布和抽屉使用同一份项目卡结构。跨 Surface landing 保留拖拽代理的单层材质，
+    // 不把抽屉根节点的 backdrop-filter:none 当成另一份目标内容套回代理，避免松手瞬间丢失 blur。
+    disableTargetVisualMorph: true,
     camera: { enabled: true },
     releaseMode: 'physical',
     // 画布单独限制释放速度；该档案只在 free Surface 上读取，

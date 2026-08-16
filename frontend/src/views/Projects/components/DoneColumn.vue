@@ -13,7 +13,7 @@
         <span class="col-count">{{ projects.length }}</span>
       </div>
     </div>
-    <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact"><DoneLayout ref="doneLayoutRef" :projects="projects" :ownership-version="ownershipVersion" @card-click="$emit('card-click', $event)" /></div>
+    <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact"><DoneLayout ref="doneLayoutRef" :projects="projects" :ownership-version-for="ownershipVersionFor" :is-project-detached="isProjectDetached" @card-click="$emit('card-click', $event)" /></div>
   </div>
 </template>
 
@@ -26,7 +26,8 @@ import DoneLayout from './done/DoneLayout.vue'
 
 const props = defineProps({
   projects: { type: Array as PropType<Project[]>, default: () => [] },
-  ownershipVersion: { type: Number, default: 0 },
+  ownershipVersionFor: { type: Function as PropType<(projects: Project[]) => number>, required: true },
+  isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
 })
 defineEmits(['card-click', 'open-archived'])
 const colBodyRef = ref<HTMLElement | null>(null)

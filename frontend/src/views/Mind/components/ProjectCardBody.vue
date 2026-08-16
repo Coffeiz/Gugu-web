@@ -50,6 +50,7 @@ import { PhCheck } from '@phosphor-icons/vue'
 import SegBar from '@/components/common/SegBar.vue'
 import { useProjectCardBasics } from '@/composables/useProjectCardBasics'
 import type { Project } from '@/types/project'
+import './project-card-visual.css'
 
 const props = defineProps({
   project: { type: Object as PropType<Project>, required: true },

@@ -281,30 +281,18 @@ watch(() => props.startDate, v => {
 .drp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 9px 12px;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(0,0,0,0.1);
-  border-radius: 10px;
-  font-size: 13px; color: var(--text-primary, #1e2028);
+  border-radius: var(--control-radius);
+  font-size: var(--font-size-md);
   cursor: pointer; user-select: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.drp-input:hover {
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.08);
-}
-.drp-input.placeholder span { color: var(--text-secondary, #8a8fa8); opacity: 0.6; }
-.drp-icon { color: var(--text-secondary, #8a8fa8); flex-shrink: 0; }
+.drp-input.placeholder span { opacity: 0.6; }
+.drp-icon { flex-shrink: 0; }
 .drp-sep { opacity: 0.4; }
-.drp-end-placeholder { color: var(--text-secondary, #8a8fa8); opacity: 0.5; }
+.drp-end-placeholder { opacity: 0.5; }
 </style>
 
 <style>
 .drp-popup {
-  background: var(--panel-bg);
-  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255,255,255,0.78);
-  border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);
   padding: 12px; user-select: none;
 }
 
@@ -314,65 +302,56 @@ watch(() => props.startDate, v => {
 }
 .drp-period {
   display: flex; align-items: center; gap: 4px;
-  font-size: 13px; font-weight: 700; color: #1e2028;
+  font-size: var(--font-size-md); font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   transition: background 0.12s, color 0.12s;
 }
-.drp-period:hover { background: rgba(123,127,178,0.1); color: #7b7fb2; }
 .drp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
 .drp-period-caret.up { transform: rotate(180deg); }
 .drp-nav {
   width: 26px; height: 26px; border-radius: 7px;
   border: none; background: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  color: #8a8fa8; transition: background 0.12s;
+  transition: background 0.12s;
 }
-.drp-nav:hover { background: rgba(0,0,0,0.07); }
 
 /* 阶段提示 */
 .drp-hint {
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  font-size: 11px; font-weight: 600; color: #8a8fa8;
+  font-size: var(--font-size-sm); font-weight: 600;
   margin-bottom: 8px; letter-spacing: 0.03em;
 }
-.drp-hint span.active { color: #7b7fb2; }
 
 .drp-weekrow {
   display: grid; grid-template-columns: repeat(7, 1fr);
   margin-bottom: 4px;
 }
-.drp-wh { text-align: center; font-size: 10px; font-weight: 600; color: #8a8fa8; padding: 2px 0; }
+.drp-wh { text-align: center; font-size: 10px; font-weight: 600; padding: 2px 0; }
 
 .drp-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
 .drp-day {
   aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
   border: none; background: none; cursor: pointer; padding: 0;
-  font-size: 11px; font-weight: 500; color: #1e2028; line-height: 1;
+  font-size: var(--font-size-sm); font-weight: 500; line-height: 1;
   border-radius: 7px; transition: background 0.1s, color 0.1s;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   position: relative;
 }
-.drp-day:hover:not(.sel-start):not(.sel-end) { background: rgba(123,127,178,0.12); }
-.drp-day.other { color: #8a8fa8; opacity: 0.4; }
-.drp-day.weekend:not(.sel-start):not(.sel-end):not(.today) { color: #b07080; }
 .drp-day.today:not(.sel-start):not(.sel-end) {
-  background: rgba(123,127,178,0.15); color: #7b7fb2; font-weight: 700;
+  font-weight: 700;
 }
 
 /* 区间 */
 .drp-day.in-range {
-  background: rgba(123,127,178,0.13); border-radius: 0; color: #1e2028;
+  border-radius: 0;
 }
-.drp-day.in-range.weekend { color: #b07080; }
 
 /* 起止端点 */
 .drp-day.sel-start, .drp-day.sel-end {
-  background: linear-gradient(135deg,#7b7fb2,#9590c4);
-  color: white; font-weight: 700;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.32);
+  font-weight: 700;
   border-radius: 7px; z-index: 1;
 }
 
@@ -380,7 +359,7 @@ watch(() => props.startDate, v => {
 .drp-day.sel-start.in-range-right::after,
 .drp-day.sel-end.in-range-left::after {
   content: ''; position: absolute; top: 0; bottom: 0; width: 50%;
-  background: rgba(123,127,178,0.13); z-index: -1;
+  z-index: -1;
 }
 .drp-day.sel-start.in-range-right::after { right: 0; border-radius: 0; }
 .drp-day.sel-end.in-range-left::after    { left: 0;  border-radius: 0; }
@@ -389,20 +368,17 @@ watch(() => props.startDate, v => {
 .drp-year-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 2px 0 4px; }
 .drp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
-  font-size: 12px; font-weight: 500; color: #1e2028; cursor: pointer;
+  font-size: var(--font-size-sm); font-weight: 500; cursor: pointer;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: background 0.1s, color 0.1s;
 }
-.drp-year-btn:hover:not(.selected) { background: rgba(123,127,178,0.12); }
-.drp-year-btn.this-year:not(.selected) { background: rgba(123,127,178,0.15); color: #7b7fb2; font-weight: 700; }
+.drp-year-btn.this-year:not(.selected) { font-weight: 700; }
 .drp-year-btn.selected {
-  background: linear-gradient(135deg,#7b7fb2,#9590c4);
-  color: white; font-weight: 700; box-shadow: 0 2px 8px rgba(123,127,178,0.32);
+  font-weight: 700;
 }
 
 .drp-footer {
   display: flex; justify-content: space-between;
   margin-top: 8px; padding-top: 8px;
-  border-top: 1px solid rgba(0,0,0,0.06);
 }
 .drp-clear, .drp-today {
   font-size: 11px; font-weight: 600;
@@ -410,10 +386,7 @@ watch(() => props.startDate, v => {
   cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   transition: background 0.12s;
 }
-.drp-clear { background: none; color: #8a8fa8; }
-.drp-clear:hover { background: rgba(0,0,0,0.06); color: #1e2028; }
-.drp-today { background: rgba(123,127,178,0.12); color: #7b7fb2; }
-.drp-today:hover { background: rgba(123,127,178,0.22); }
+.drp-clear { background: none; }
 
 .drp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .drp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }

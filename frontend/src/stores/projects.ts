@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import { projectsApi, eventsApi } from '@/services/api'
+import { CLIENT_ID, projectsApi, eventsApi } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
 import { mapProjectResponse, type Project, type ProjectStage, type ProjectStatus } from '@/types/project'
 import {
@@ -319,7 +319,12 @@ export const useProjectStore = defineStore('projects', () => {
 
   // 实时：咕咕/IM 改了项目或日历事件 → 只要主列表加载过，即使为空也刷新。
   const live = useLiveStore()
-  watch(() => live.rev.projects, () => { if (projectsLoaded.value) fetchProjects() })
+  watch(() => live.projectEvent, (event) => {
+    // 本页已经应用了乐观更新并消费了 API 响应；跳过自己的 SSE 回声，避免再次
+    // 拉取整份项目列表。其它标签页、Gugu/IM（origin 为空）仍然正常刷新。
+    if (event?.origin === CLIENT_ID) return
+    if (projectsLoaded.value) fetchProjects()
+  })
   watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 
   return {

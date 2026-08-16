@@ -54,6 +54,12 @@ html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--
   position: absolute;
 }
 
+/* 画布抽屉是独立浮动面板，滑块必须在 shell 内定位，跟随抽屉的宽度/位移动画。 */
+html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--drawer {
+  position: absolute;
+  --scrollbar-overlay-right-offset: 4px;
+}
+
 html[data-theme][data-family] [data-overlay-scrollbar-thumb].overlay-scrollbar--compact {
   width: var(--scrollbar-size-compact);
 }

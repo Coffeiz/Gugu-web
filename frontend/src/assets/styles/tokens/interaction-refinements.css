@@ -66,20 +66,20 @@ html[data-theme][data-family] .topbar .btn-primary-custom {
 }
 /* Restore the intended light upload affordance instead of inheriting a generic surface hover. */
 html[data-theme='light'][data-family] .topbar .btn-ghost-custom:hover {
-  background: rgba(255,255,255,.72) !important;
-  border-color: rgba(255,255,255,.88) !important;
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 3px 10px rgba(80,90,110,.12) !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom {
-  background: var(--surface-soft) !important;
-  border-color: var(--border-default) !important;
-  color: var(--content-secondary) !important;
+  background: var(--action-secondary-bg) !important;
+  border-color: var(--action-secondary-border) !important;
+  color: var(--action-secondary-fg) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.06) !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover {
-  background: var(--surface-soft-hover) !important;
-  border-color: var(--border-hover) !important;
-  color: var(--content-primary) !important;
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
+  color: var(--action-secondary-fg-hover) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10) !important;
 }
 
@@ -237,15 +237,6 @@ html[data-theme][data-family] .sched-page .btn-primary {
     color var(--hover-motion-control),
     opacity var(--hover-motion-control),
     transform var(--hover-motion-control);
-}
-html[data-theme='dark'][data-family] .sched-page .btn-primary {
-  background: color-mix(in srgb,var(--surface-raised) 22%,var(--action-primary) 78%);
-  box-shadow: 0 3px 12px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.10);
-}
-html[data-theme='dark'][data-family] .sched-page .btn-primary:hover {
-  opacity: 1;
-  background: color-mix(in srgb,var(--surface-raised) 14%,var(--action-primary-hover) 86%);
-  box-shadow: 0 5px 16px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.13);
 }
 
 /* ── Sidebar logo + Gugu FAB ── */

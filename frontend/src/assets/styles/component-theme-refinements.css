@@ -9,7 +9,7 @@ html[data-theme][data-family] .fc-card,
 html[data-theme][data-family] .folder-card,
 html[data-theme][data-family] .task-card,
 html[data-theme][data-family] .sample-project-card {
-  transition: var(--card-motion) !important;
+  transition: var(--card-motion);
 }
 html[data-theme][data-family] .fc-card::after,
 html[data-theme][data-family] .folder-card::after {
@@ -29,7 +29,7 @@ html[data-theme][data-family] .cal-chip::after {
 /* ScheduleCard previously animated ::after from a bottom gradient to a flat fill. That made the
    hover look like light travelled vertically through the card. It is now one opacity layer. */
 html[data-theme][data-family] .task-card {
-  transition: var(--card-motion) !important;
+  transition: var(--card-motion);
 }
 html[data-theme][data-family] .task-card::after {
   background: var(--card-hover-overlay) !important;
@@ -53,9 +53,7 @@ html[data-theme='dark'][data-family] .proj-card:hover::after,
 html[data-theme='dark'][data-family] .sample-project-card:hover::after,
 html[data-theme='dark'][data-family] .fc-card:hover::after,
 html[data-theme='dark'][data-family] .folder-card:hover::after,
-html[data-theme='dark'][data-family] .task-card:hover::after,
-html[data-theme='dark'][data-family] .cal-chip:hover::after,
-html[data-theme='dark'][data-family] .cal-chip.bar-hovered::after {
+html[data-theme='dark'][data-family] .task-card:hover::after {
   opacity: 0 !important;
 }
 
@@ -64,7 +62,8 @@ html[data-theme][data-family] .topbar .btn-primary-custom,
 html[data-theme][data-family] .sample-topbar .sample-primary,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn,
 html[data-theme][data-family] .event-form-body .popup-save,
-html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm,
+html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
 }
@@ -72,8 +71,10 @@ html[data-theme][data-family] .topbar .btn-primary-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-primary:hover,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
-html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover,
+html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
   background: var(--action-primary-bg-hover) !important;
+  box-shadow: var(--elevation-card-hover) !important;
 }
 
 /* ── Calendar grid / weekend fidelity ──────────────────────────────────────────────── */
@@ -278,7 +279,7 @@ html[data-theme][data-family] .folder-card {
   background: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 6%,var(--surface-card-solid)) !important;
   border-color: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 14%,var(--border-strong)) !important;
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow) !important;
-  transition: var(--card-motion) !important;
+  transition: var(--card-motion);
 }
 html[data-theme][data-family] .folder-card:hover {
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover) !important;

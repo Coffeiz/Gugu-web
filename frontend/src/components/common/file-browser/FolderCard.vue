@@ -58,27 +58,10 @@ defineProps({
   position: relative;
   min-height: 122px;
   border-radius: 14px;
-  background: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,0.82));
-  border: 1px solid color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,0.92));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 1px 5px rgba(80,90,110,0.06);
-}
-.folder-card:hover {
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 7px 22px rgba(80,90,110,0.12);
-}
-.folder-card.selected {
-  border-color: rgba(123,127,178,0.55);
-  background: rgba(255,255,255,0.92);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 0 0 2px rgba(123,127,178,0.28);
 }
 .folder-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
-  background: rgba(123,127,178,0.14);
-}
-.folder-card.pre-selected {
-  border-color: rgba(123,127,178,0.38);
-  background: rgba(123,127,178,0.05);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 0 0 1.5px rgba(123,127,178,0.12);
 }
 .fd-icon-area {
   height: 90px; flex-shrink: 0;
@@ -93,11 +76,11 @@ defineProps({
 }
 .fd-label { padding: 0 13px 13px; }
 .fd-name {
-  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
+  font-size: 11.5px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fd-count { font-size: 9px; line-height: 1.15; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
+.fd-count { font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 .fd-hover-actions {
   position: absolute; top: 8px; right: 8px; z-index: 3;
   display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;

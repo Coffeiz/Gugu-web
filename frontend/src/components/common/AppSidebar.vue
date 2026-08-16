@@ -43,23 +43,11 @@
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
       <div class="theme-mode-quick" role="group" aria-label="主题模式" @click.stop>
         <button
-          :title="resolved === 'light' ? '当前显示：亮色' : '切换到亮色'"
-          :class="{ active: preference === 'light', current: resolved === 'light' }"
-          :aria-pressed="preference === 'light'"
-          @click="setTheme('light')"
-        ><PhSun :size="13" weight="bold" /></button>
-        <button
-          :title="resolved === 'dark' ? '当前显示：暗色' : '切换到暗色'"
-          :class="{ active: preference === 'dark', current: resolved === 'dark' }"
-          :aria-pressed="preference === 'dark'"
-          @click="setTheme('dark')"
-        ><PhMoon :size="13" weight="bold" /></button>
-        <button
-          :title="`跟随系统（当前显示：${resolved === 'dark' ? '暗色' : '亮色'}）`"
-          :class="{ active: preference === 'system' }"
-          :aria-pressed="preference === 'system'"
-          @click="setTheme('system')"
-        ><PhDesktop :size="13" weight="bold" /></button>
+          :title="themeModeTitle"
+          aria-label="切换主题模式"
+          :aria-pressed="true"
+          @click="cycleTheme"
+        ><PhDesktop v-if="preference === 'system'" :size="13" weight="bold" /><PhSun v-else-if="resolved === 'light'" :size="13" weight="bold" /><PhMoon v-else :size="13" weight="bold" /></button>
       </div>
 
       <Transition name="popup">
@@ -116,7 +104,15 @@ const { preference, resolved, setTheme } = useTheme()
 
 const userLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const userInitial = computed(() => (userLabel.value[0] ?? '?').toUpperCase())
+const currentModeLabel = computed(() => resolved.value === 'dark' ? '暗色' : '亮色')
+const themeModeTitle = computed(() => preference.value === 'system'
+  ? `当前显示：${currentModeLabel.value}（跟随系统）`
+  : `当前显示：${currentModeLabel.value}，点击切换`)
 const feedbackOpen = ref(false)
+
+function cycleTheme() {
+  setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
+}
 
 function handleLogout() { authStore.logout(); router.push('/login') }
 

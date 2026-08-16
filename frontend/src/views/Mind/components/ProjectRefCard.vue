@@ -7,7 +7,7 @@
   <div
     v-if="project"
     ref="cardEl"
-    class="pr-card hover-card-fx"
+    class="mind-project-card pr-card hover-card-fx"
     :class="{ connecting, 'connection-target': !!connectionTargetSide }"
     :style="cardStyle"
     :data-node-id="item.nodeId"
@@ -27,7 +27,7 @@
       <template #connect />
     </CardAffordances>
   </div>
-  <div v-else ref="missingRef" class="pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
+  <div v-else ref="missingRef" class="mind-project-card pr-missing hover-card-fx" :class="{ connecting, 'connection-target': !!connectionTargetSide }" :style="missingStyle" :data-node-id="item.nodeId" :data-canvas-item-id="item.id" :data-project-id="item.node.refId" @pointerdown.stop="onPointerDown" @click.stop="onOpen"
     @mouseenter="onEnter" @mouseleave="onLeave">
     <span class="pr-kind">项目</span>
     <div class="pr-name" :style="{ color: snapshotNameColor }">{{ item.node.title || '未命名项目' }}</div>
@@ -135,6 +135,7 @@ const { nameColor: snapshotNameColor, isUrgent: snapshotIsUrgent, fmtDate, deadl
 const cardEl = ref<HTMLElement | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
+let lastMeasuredSize: { w: number; h: number } | null = null
 function emitMeasuredSize() {
   // observeCard() 观察的是 cardEl.value ?? missingRef.value（项目被删后本体元素不存在，
   // 观察墓碑态自己），这里量尺寸却一直只读 cardEl.value——墓碑态下 cardEl 恒为 null，
@@ -146,10 +147,16 @@ function emitMeasuredSize() {
   const rect = card.getBoundingClientRect()
   if (rect.width < 10 || rect.height < 10) return
   const scale = props.scale || 1
-  emit('measured', props.item, { w: rect.width / scale, h: rect.height / scale })
+  const measured = { w: rect.width / scale, h: rect.height / scale }
+  if (lastMeasuredSize
+    && Math.abs(lastMeasuredSize.w - measured.w) < 0.01
+    && Math.abs(lastMeasuredSize.h - measured.h) < 0.01) return
+  lastMeasuredSize = measured
+  emit('measured', props.item, measured)
 }
 function observeCard() {
   cardResizeObserver?.disconnect()
+  lastMeasuredSize = null
   const card = cardEl.value ?? missingRef.value
   if (!card) return
   cardResizeObserver = new ResizeObserver(emitMeasuredSize)
@@ -194,34 +201,15 @@ function onOpen() {
    自身背景永远贴合自己的盒子形状，overflow 管的是会溢出盒子的子元素/内容，不影响这点）。
    "正在建立关联"的虚线描边走 global.css 共用的 .connecting 规则，不再各卡自己声明。 */
 .pr-card, .pr-missing {
-  position: absolute; box-sizing: border-box; user-select: none; cursor: pointer;
-  font-family: var(--font-sans);
-  background: rgb(255,255,255);
-  border-radius: 14px;
-  corner-shape: round;
-  border: 1px solid rgba(255,255,255,0.72);
-  box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  position: absolute; cursor: pointer;
   overflow: visible;
 }
-.pr-card::before {
-  content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), var(--pr-project-color);
-  pointer-events: none; z-index: 0;
-  transition: opacity 0.25s ease-out;
-}
-.pr-card > :not(.card-affordances) { position: relative; z-index: 1; }
-/* 抓取态只显示 runtime 提供的毛玻璃底；landing 阶段恢复本体渐变，仍由同一张卡片完成
-   单层过渡，不再把整张项目卡拆成两份 opacity 交叉层。 */
-.pr-card.is-grabbed:not([data-runtime-phase="landing"])::before,
-.pr-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
-.pr-card[data-runtime-phase="landing"]::before { opacity: 1; }
 /* 悬停抬起/阴影加深走全局 .hover-card-fx（已加在模板类名里），但 scoped 样式编译后会带
    [data-v-xxx] 属性选择器，跟上面 .pr-card 静止态 box-shadow 那条一样特异度（类+属性选择
    器），跟全局 .hover-card-fx:hover（类+伪类，同样两级）打平——打平时看两份样式表谁在最终
    产物里排得靠后，不保真。FileCard.vue/EntitySticker.vue 都各自在 scoped 规则里重申一遍
    :hover 的阴影值来稳赢（不依赖顺序），这里补上同一份，否则会出现"看着没有 hover 阴影"
    （静止态那条声明打赢了 hover 态）。 */
-.pr-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 /* SegBar.vue 自己的 @click.stop/@mousedown.stop 只挡 click/mousedown 这两种事件冒泡，挡不住
    CSS :active 伪类——按住进度条时鼠标底下的所有祖先（含 .pr-card 自己）都会同时进入 :active
    态，即使点击不会真的冒泡触发拖拽/翻开项目，卡片还是会跟着抖一下"按下"动画。全局

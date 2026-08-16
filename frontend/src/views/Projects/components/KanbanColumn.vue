@@ -15,11 +15,11 @@
     </div>
 
     <div ref="colBodyRef" class="col-body scroll-surface scroll-surface--compact">
-      <!-- 位移动画统一由 Runtime FLIP 驱动；保留 TransitionGroup 仅作为渲染容器，
-           避免新建项目按钮继续被旧的 0.18s CSS move 动画单独推动。 -->
-      <TransitionGroup tag="div" name="kanban-card-list" class="kanban-card-list" :css="false">
-        <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isDetached(String(project.id))">
+      <!-- 位移动画统一由 Runtime FLIP 驱动，这里不需要 TransitionGroup 的位置捕获。 -->
+      <div class="kanban-card-list">
+        <Teleport v-for="project in projects" :key="project.id" to="body" :disabled="!isProjectDetached(String(project.id))">
           <ProjectCard
+            v-memo="[project.id, project.status, project.currentStage, project.progress, project.stages, project.doneAt, project._stageBeforeDone, project.fileCount, project.priority, project.name, project.client, project.color, project.startDate, project.deadline, project.version]"
             :project="project"
             @click="$emit('card-click', project)"
           />
@@ -30,14 +30,13 @@
           </svg>
           <span class="add-card-text">新建项目</span>
         </button>
-      </TransitionGroup>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
-import { runtime } from '@/interaction/runtime'
 import { useSurface } from '@/interaction/runtime/vue'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
@@ -45,7 +44,7 @@ import type { Project } from '@/types/project'
 const props = defineProps({
   column:   { type: Object, required: true },
   projects: { type: Array as PropType<Project[]>, default: () => [] },
-  ownershipVersion: { type: Number, default: 0 },
+  isProjectDetached: { type: Function as PropType<(projectId: string) => boolean>, required: true },
 })
 defineEmits(['card-click', 'add-project'])
 const colBodyRef = ref<HTMLElement | null>(null)
@@ -59,10 +58,6 @@ const { elementRef: columnRef } = useSurface({
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位
 // （跟 gugu-interaction-runtime demo 的 KanbanBoard.vue 是同一套接线）。
-function isDetached(projectId: string): boolean {
-  props.ownershipVersion
-  return runtime.isControlled(projectId)
-}
 
 const colColors: Record<string, string> = { pending: '#d46b6b', active: '#c9943a' }
 const colColor  = colColors[props.column.key] ?? '#9e9fc4'

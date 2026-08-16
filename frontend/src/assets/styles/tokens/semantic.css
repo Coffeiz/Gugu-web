@@ -50,6 +50,15 @@
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
+  /* Secondary action: a quieter sibling of the primary fill. Used by topbar "上传文件" and
+     other secondary toolbar actions. Light keeps a translucent glass fill; resolved dark mode
+     derives a surface-based fill in theme-refinements.css. */
+  --action-secondary-bg: rgba(255,255,255,.52);
+  --action-secondary-bg-hover: rgba(255,255,255,.72);
+  --action-secondary-border: rgba(255,255,255,.78);
+  --action-secondary-border-hover: rgba(255,255,255,.88);
+  --action-secondary-fg: var(--content-secondary);
+  --action-secondary-fg-hover: var(--content-primary);
   --selection-bg: var(--theme-selection);
   --selection-fg: var(--theme-action-hover);
   --focus-ring: var(--theme-focus);
