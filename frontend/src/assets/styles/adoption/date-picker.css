@@ -16,7 +16,9 @@ html[data-theme][data-family] :is(.drp-period, .drp-nav, .drp-day, .drp-year-btn
 }
 html[data-theme][data-family] .drp-period:hover,
 html[data-theme][data-family] .drp-nav:hover,
-html[data-theme][data-family] .drp-day:hover:not(.sel-start):not(.sel-end),
+/* 区间内部已经由 --calendar-range-cell-bg 表达连续选区，不再叠 option hover。
+   之前 hover 会临时覆盖 range 背景，移开后再经 transition 回退，形成双层/残留感。 */
+html[data-theme][data-family] .drp-day:hover:not(.sel-start):not(.sel-end):not(.in-range),
 html[data-theme][data-family] .drp-year-btn:hover:not(.selected),
 html[data-theme][data-family] .drp-clear:hover {
   color: var(--content-primary);
