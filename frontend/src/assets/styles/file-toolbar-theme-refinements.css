@@ -1,52 +1,302 @@
-/* File-browser toolbar pieces are split across slot content and shared child components. Keep the
- * whole visual toolbar on one token contract, including breadcrumb, storage and Trash actions. */
-html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn,
-html[data-theme][data-family] .file-browser-toolbar .bc-item {
-  color: var(--control-fg);
-  background: transparent;
+/* FileBrowserToolbar contains slot content and several shared child components, so its visual
+ * contract lives here once instead of being repeated in Files/Project pages and each child.
+ * Both light and dark consume the same semantic tokens; theme files only change token values. */
+html[data-theme][data-family] .file-browser-toolbar {
+  --file-toolbar-control-height: var(--control-sm);
+  --file-toolbar-icon-size: 13px;
+  --file-toolbar-fg: var(--control-fg);
+  --file-toolbar-fg-hover: var(--control-fg-strong);
+  --file-toolbar-bg: var(--control-bg);
+  --file-toolbar-bg-hover: var(--control-bg-hover);
+  --file-toolbar-border: var(--control-border);
+  --file-toolbar-border-hover: var(--control-border-hover);
+  --file-toolbar-radius: var(--control-radius);
+  --file-toolbar-font-size: var(--font-size-sm);
+  --file-toolbar-font-weight: var(--font-weight-semibold);
+  --pill-bg: var(--segmented-pill-bg);
+  --pill-radius: var(--control-radius);
+  --pill-shadow: var(--segmented-pill-shadow);
+  color: var(--file-toolbar-fg);
 }
-html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn:hover:not(:disabled),
-html[data-theme][data-family] .file-browser-toolbar .bc-item:hover:not(.active) {
-  color: var(--control-fg-strong);
-  background: var(--action-soft);
-}
-html[data-theme][data-family] .file-browser-toolbar .bc-item.active {
-  color: var(--content-primary);
-  background: transparent;
-}
-html[data-theme][data-family] .file-browser-toolbar .bc-item.bc-drop-target {
-  color: var(--selection-fg);
-  background: var(--selection-bg);
-}
-html[data-theme][data-family] .file-browser-toolbar .bc-arrow { color: var(--content-tertiary); }
 
-html[data-theme][data-family] .file-browser-toolbar .storage-bar-bg { background: var(--surface-soft); }
-html[data-theme][data-family] .file-browser-toolbar .storage-text { color: var(--content-tertiary); }
+/* Regular toolbar controls: one foreground, one height, one radius and one surface contract. */
+html[data-theme][data-family] .file-browser-toolbar :is(
+  .file-paste-button,
+  .sel-mode-btn,
+  .new-folder-btn,
+  .sort-btn,
+  .close-btn,
+  .nav-hist-btn,
+  .pm-nav-hist-btn,
+  .select-all-btn,
+  .btn-confirm-sm,
+  .btn-cancel-sm
+) {
+  box-sizing: border-box;
+  min-height: var(--file-toolbar-control-height);
+  height: var(--file-toolbar-control-height);
+  border: 1px solid var(--file-toolbar-border);
+  border-radius: var(--file-toolbar-radius);
+  background: var(--file-toolbar-bg);
+  color: var(--file-toolbar-fg);
+  box-shadow: none;
+  font-family: var(--font-sans);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(
+  .file-paste-button,
+  .new-folder-btn,
+  .sort-btn,
+  .select-all-btn,
+  .btn-confirm-sm
+) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(
+  .sel-mode-btn,
+  .close-btn,
+  .nav-hist-btn,
+  .pm-nav-hist-btn,
+  .btn-cancel-sm
+) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--file-toolbar-control-height);
+  min-width: var(--file-toolbar-control-height);
+  padding: 0;
+  flex-shrink: 0;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(
+  .file-paste-button,
+  .sel-mode-btn,
+  .new-folder-btn,
+  .sort-btn,
+  .close-btn,
+  .nav-hist-btn,
+  .pm-nav-hist-btn,
+  .select-all-btn,
+  .btn-confirm-sm,
+  .btn-cancel-sm
+):hover:not(:disabled) {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--file-toolbar-bg-hover);
+  border-color: var(--file-toolbar-border-hover);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):disabled {
+  color: var(--content-disabled);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+  opacity: 1;
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:disabled {
+  color: var(--content-disabled);
+  cursor: default;
+  opacity: 1;
+}
 
-html[data-theme][data-family] .file-browser-toolbar .select-all-btn {
-  color: var(--action-primary);
-  background: var(--control-bg);
-  border: 1px solid var(--control-border);
-  box-shadow: inset 0 1px 0 var(--highlight-muted);
+/* Primary toolbar glyphs share one rendered size even when component props still carry old 12/14px values. */
+html[data-theme][data-family] .file-browser-toolbar .file-paste-button > svg,
+html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .new-folder-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .close-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .pm-nav-hist-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn > svg,
+html[data-theme][data-family] .file-browser-toolbar .sort-btn > svg:not(.sort-dir-icon) {
+  width: var(--file-toolbar-icon-size);
+  height: var(--file-toolbar-icon-size);
+  flex-shrink: 0;
 }
-html[data-theme][data-family] .file-browser-toolbar .select-all-btn:not(.on):hover {
-  color: var(--control-fg-strong);
-  background: var(--control-bg-hover);
-  border-color: var(--control-border-hover);
+html[data-theme][data-family] .file-browser-toolbar .sort-dir-icon {
+  color: inherit;
+  flex-shrink: 0;
 }
+
+/* Selection/view state is expressed by the surface, not a second foreground colour. */
+html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn.on,
 html[data-theme][data-family] .file-browser-toolbar .select-all-btn.on {
-  color: var(--selection-fg);
+  color: var(--file-toolbar-fg);
   background: var(--selection-bg);
   border-color: var(--action-outline);
   box-shadow: var(--elevation-card);
 }
+html[data-theme][data-family] .file-browser-toolbar .view-toggle {
+  height: var(--file-toolbar-control-height);
+  padding: 0;
+  gap: 0;
+  flex-shrink: 0;
+  border-radius: var(--file-toolbar-radius);
+  background: var(--segmented-track-bg);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button {
+  box-sizing: border-box;
+  width: var(--file-toolbar-control-height);
+  height: var(--file-toolbar-control-height);
+  padding: 0;
+  border: none;
+  border-radius: var(--file-toolbar-radius);
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button:hover,
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button.on {
+  color: var(--file-toolbar-fg);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button:not(.on):hover {
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar .view-toggle button > svg {
+  width: var(--file-toolbar-icon-size);
+  height: var(--file-toolbar-icon-size);
+  flex-shrink: 0;
+}
+
+/* Breadcrumb/navigation follows the same foreground and control height. */
+html[data-theme][data-family] .file-browser-toolbar :is(.breadcrumb, .file-breadcrumb) {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
+  box-sizing: border-box;
+  min-height: var(--file-toolbar-control-height);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--file-toolbar-radius);
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+  white-space: nowrap;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg):hover:not(.active):not(.bc-cur) {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.active, .bc-cur) {
+  color: var(--file-toolbar-fg);
+  background: transparent;
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.bc-drop-target, .bc-seg.bc-drop-target) {
+  color: var(--file-toolbar-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.bc-arrow, .bc-sep) {
+  color: var(--file-toolbar-fg);
+  opacity: .55;
+  flex-shrink: 0;
+}
+
+/* Inline new-folder editor uses the same 30px control geometry and shared input tokens. */
+html[data-theme][data-family] .file-browser-toolbar .new-folder-inline {
+  height: var(--file-toolbar-control-height);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input {
+  box-sizing: border-box;
+  width: 120px;
+  height: var(--file-toolbar-control-height);
+  padding: 0 9px;
+  border: 1px solid var(--input-border);
+  border-radius: var(--file-toolbar-radius);
+  background: var(--input-bg);
+  color: var(--input-fg);
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--file-toolbar-font-size);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input:hover {
+  border-color: var(--input-border-hover);
+  background: var(--input-bg-hover);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input:focus {
+  border-color: var(--input-border-focus);
+  background: var(--input-bg-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .file-browser-toolbar .new-folder-input::placeholder {
+  color: var(--input-placeholder);
+}
+
+/* Storage is information, but its text still uses the toolbar foreground instead of a third grey. */
+html[data-theme][data-family] .file-browser-toolbar .storage-pill {
+  height: var(--file-toolbar-control-height);
+  color: var(--file-toolbar-fg);
+}
+html[data-theme][data-family] .file-browser-toolbar .storage-bar-bg { background: var(--surface-soft); }
+html[data-theme][data-family] .file-browser-toolbar .storage-text {
+  color: var(--file-toolbar-fg);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--font-weight-medium);
+}
+
+/* Destructive Trash action is the only intentional foreground exception. Its geometry still
+ * follows the toolbar contract; danger colour remains semantic rather than becoming a random red. */
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn {
-  color: var(--status-danger);
+  box-sizing: border-box;
+  height: var(--file-toolbar-control-height);
+  min-height: var(--file-toolbar-control-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb,var(--status-danger) 30%,transparent);
+  border-radius: var(--file-toolbar-radius);
   background: var(--status-danger-bg);
-  border-color: color-mix(in srgb,var(--status-danger) 30%,transparent);
+  color: var(--status-danger);
+  font-family: var(--font-sans);
+  font-size: var(--file-toolbar-font-size);
+  font-weight: var(--file-toolbar-font-weight);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
 }
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn:hover {
   color: var(--status-danger);
   background: color-mix(in srgb,var(--status-danger) 20%,transparent);
   border-color: var(--status-danger);
+}
+
+/* Project editor has later generic close-button adoption rules; this extra context keeps the
+ * shared file-toolbar contract authoritative without !important. */
+html[data-theme][data-family] .project-modal-root .file-browser-toolbar .close-btn {
+  color: var(--file-toolbar-fg);
+  background: var(--file-toolbar-bg);
+  border-color: var(--file-toolbar-border);
+  box-shadow: none;
+}
+html[data-theme][data-family] .project-modal-root .file-browser-toolbar .close-btn:hover {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--file-toolbar-bg-hover);
+  border-color: var(--file-toolbar-border-hover);
 }
