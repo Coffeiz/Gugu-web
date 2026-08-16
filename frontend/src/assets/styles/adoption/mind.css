@@ -1,0 +1,178 @@
+/* Mind workspace theme adoption. File references already render FileCard.vue and therefore inherit
+   the file-card dark contract; do not duplicate file-card styling here. */
+html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); }
+html[data-theme][data-family] .mind-canvas {
+  background-color: var(--mind-canvas-bg);
+  background-image: radial-gradient(circle,var(--mind-canvas-dot) 6.5%,transparent 7%);
+}
+
+/* Notes timeline */
+html[data-theme][data-family] .tl-col {
+  --glass-card-background: var(--mind-timeline-bg);
+  --glass-card-border: var(--border-default);
+  --glass-card-shadow: var(--card-shadow);
+}
+html[data-theme][data-family] .tl-count {
+  color: var(--content-secondary);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .note-card {
+  color: var(--content-primary);
+  background: var(--note-surface);
+  border-color: var(--note-border);
+  box-shadow: var(--note-shadow);
+}
+html[data-theme][data-family] .note-card::after {
+  background: transparent;
+  box-shadow: inset 0 1px 0 var(--note-highlight);
+}
+html[data-theme][data-family] .note-card:not(.editing):hover { box-shadow: var(--note-shadow-hover); }
+html[data-theme][data-family] .note-card:not(.editing):hover::after { background: var(--note-hover-overlay); }
+html[data-theme][data-family] .note-card.editing { background: var(--note-surface-editing); }
+html[data-theme][data-family] .note-card.tint-amber,
+html[data-theme][data-family] .note-card.canvas-mode.tint-amber { background: var(--note-paper-amber); }
+html[data-theme][data-family] .note-card.tint-coral,
+html[data-theme][data-family] .note-card.canvas-mode.tint-coral { background: var(--note-paper-coral); }
+html[data-theme][data-family] .note-card.tint-blue,
+html[data-theme][data-family] .note-card.canvas-mode.tint-blue { background: var(--note-paper-blue); }
+html[data-theme][data-family] .note-card.tint-teal,
+html[data-theme][data-family] .note-card.canvas-mode.tint-teal { background: var(--note-paper-teal); }
+html[data-theme][data-family] .note-card.canvas-mode:not(.tint-amber):not(.tint-coral):not(.tint-blue):not(.tint-teal) {
+  background: var(--note-paper-default-canvas);
+}
+html[data-theme][data-family] .nc-title-input,
+html[data-theme][data-family] .nc-head:has(+ .nc-body) { border-bottom-color: var(--note-divider); }
+html[data-theme][data-family] .nc-icon:hover,
+html[data-theme][data-family] .nc-done-btn:hover,
+html[data-theme][data-family] .ne-tool:hover,
+html[data-theme][data-family] .ne-style-item:hover { background: var(--action-soft); }
+html[data-theme][data-family] .ne-tool.on,
+html[data-theme][data-family] .ne-style-item.on { background: var(--selection-bg); }
+html[data-theme][data-family] .cs-dot {
+  border-color: var(--border-strong);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .cs-dot.active { box-shadow: 0 0 0 2px var(--action-primary),var(--elevation-card); }
+html[data-theme='dark'][data-family] .cs-none {
+  background: repeating-conic-gradient(var(--surface-soft) 0% 25%,var(--surface-raised) 0% 50%) 0 0 / 6px 6px;
+}
+
+/* Bottom capture/editor surface */
+html[data-theme][data-family] .capture-bar {
+  background: var(--capture-bg);
+  border-color: var(--capture-border);
+  box-shadow: var(--capture-shadow), inset 0 1px 0 var(--capture-highlight);
+}
+html[data-theme][data-family] .capture-bar.expanded { background: var(--capture-bg-expanded); }
+html[data-theme][data-family] .cb-kbd { border-color: var(--border-subtle); }
+html[data-theme][data-family] .cb-title-input { border-bottom-color: var(--note-divider); }
+html[data-theme][data-family] .cb-foot { border-top-color: var(--note-divider); }
+html[data-theme][data-family] .cb-hint code { background: var(--action-soft); }
+html[data-theme][data-family] .cb-min:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .cb-save {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+}
+html[data-theme][data-family] .cb-save:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+
+html[data-theme][data-family] .ne-picker {
+  background: var(--mind-picker-bg);
+  border-color: var(--mind-picker-border);
+  box-shadow: var(--mind-picker-shadow);
+}
+html[data-theme][data-family] .ne-pick-item:hover,
+html[data-theme][data-family] .ne-pick-item.on { background: var(--action-soft); }
+html[data-theme][data-family] .ne-link-input input {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .ne-link-input input:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .ne-link-ok { color: var(--choice-chip-fg-active); background: var(--choice-chip-bg-active); }
+html[data-theme][data-family] .ne-link-ok:hover { background: var(--choice-chip-bg-hover); }
+html[data-theme][data-family] .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode { box-shadow: 0 0 0 2px var(--focus-ring); }
+
+/* Mind page filter */
+html[data-theme][data-family] .mind-filter {
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .mind-filter:focus-within {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .mind-tab.on { color: var(--selection-fg); }
+html[data-theme][data-family] .mf-clear:hover { background: var(--control-bg-hover); }
+
+/* Canvas toolbar/drawer controls use shared control surfaces. */
+html[data-theme][data-family] .canvas-toolbar button:hover,
+html[data-theme][data-family] .np-head button:hover,
+html[data-theme][data-family] .cd-toggle:hover { background: var(--action-soft); }
+html[data-theme][data-family] .canvas-toolbar button.active,
+html[data-theme][data-family] .cd-toggle.active { background: var(--selection-bg); }
+html[data-theme][data-family] .tool-divider { background: var(--border-subtle); }
+html[data-theme][data-family] .np-search {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .np-search:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .np-note:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .canvas-create-card {
+  color: var(--content-secondary);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
+}
+html[data-theme][data-family] .canvas-create-card:hover {
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
+}
+html[data-theme][data-family] .canvas-item:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .canvas-item.active {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .project-group-title { color: var(--content-secondary); }
+html[data-theme][data-family] .project-group-title:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .project-group-title > span:nth-last-child(2) { color: var(--content-tertiary); }
+html[data-theme][data-family] .project-group-chevron { color: var(--content-disabled); }
+html[data-theme][data-family] .project-skeleton {
+  background: var(--surface-soft);
+  box-shadow: inset 0 1px 0 var(--border-highlight);
+}
+
+/* Canvas object cards. Project references consume the board project-card contract; file references
+   deliberately need no rule here because FileRefCard renders the actual shared FileCard component. */
+html[data-theme][data-family] .pr-card,
+html[data-theme][data-family] .pr-missing {
+  border-color: var(--project-card-border);
+  box-shadow: var(--project-card-shadow);
+}
+html[data-theme][data-family] .pr-card { background: var(--surface-card-solid); }
+html[data-theme][data-family] .pr-card::before {
+  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--pr-project-color);
+}
+html[data-theme][data-family] .pr-card:hover {
+  border-color: var(--project-card-hover-border);
+  box-shadow: var(--project-card-hover-shadow);
+}
+/* Deleted project snapshots have a legacy inline light gradient without a color custom property.
+   In dark mode prefer the project-card surface over leaving a white tombstone on the canvas. */
+html[data-theme='dark'][data-family] .pr-missing { background: var(--surface-card-solid) !important; }
+html[data-theme][data-family] .pr-kind { color: var(--selection-fg); background: var(--selection-bg); }
+
+html[data-theme][data-family] .entity-sticker {
+  box-shadow: var(--card-shadow), inset 0 1px 0 var(--glass-card-border), inset 1px 0 0 var(--border-subtle);
+}
+html[data-theme][data-family] .entity-sticker:hover { box-shadow: var(--card-shadow-hover); }
