@@ -1,8 +1,4 @@
-/* Canvas-only affordances that sit above project/file/note/entity cards. */
-html[data-theme][data-family] .card-affordances__actions > button:hover {
-  color: var(--action-primary);
-  background: var(--action-soft-hover);
-}
+/* Canvas-only controls that still need theme adoption. CardAffordances owns its own action/port paint. */
 html[data-theme][data-family] .ci-btn:hover {
   color: var(--action-primary);
   background: var(--action-soft-hover);
