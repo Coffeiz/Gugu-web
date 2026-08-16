@@ -176,8 +176,8 @@ function onCardClick() {
     var(--card-shadow),
     inset 0 1px 0 var(--glass-card-border),
     inset 1px 0 0 var(--border-subtle);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--mind-system-card-blur);
+  -webkit-backdrop-filter: var(--mind-system-card-blur);
 }
 .entity-sticker:hover {
   background: var(--glass-card-background-hover);
