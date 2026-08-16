@@ -1,0 +1,156 @@
+/* Project-domain theme adoption. Project forms use shared input/option contracts; project cards use
+   the existing board card contract so canvas/drawer copies do not invent another dark design. */
+
+/* New/edit project modal surface details. */
+html[data-theme][data-family] .proj-header::after {
+  box-shadow: inset 0 1px 0 var(--panel-glass-highlight);
+}
+html[data-theme][data-family] .modal-right {
+  background: var(--panel-content-bg);
+  box-shadow: inset 0 1px 0 var(--panel-glass-highlight);
+}
+html[data-theme][data-family] :is(.modal-header, .proj-header, .modal-footer) {
+  border-color: var(--panel-divider);
+}
+html[data-theme][data-family] :is(.col-divider, .tpl-divider) {
+  border-color: var(--panel-divider);
+  background: var(--panel-divider);
+}
+
+/* Project status/options. Keep status identity in the foreground/dot; the selectable surface itself
+   follows one theme contract instead of carrying light-only white/black alpha fills. */
+html[data-theme][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn, .add-stage-btn) {
+  color: var(--option-fg);
+  background: var(--option-bg);
+  border-color: var(--option-border);
+  box-shadow: var(--option-shadow);
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] :is(.status-btn, .tpl-trigger, .tpl-save-btn, .np-todo-add-btn, .add-stage-btn):hover:not(:disabled) {
+  color: var(--option-fg-hover);
+  background: var(--option-bg-hover);
+  border-color: var(--option-border-hover);
+}
+html[data-theme][data-family] .status-btn.active {
+  color: var(--option-fg-active);
+  background: var(--option-bg-active);
+  border-color: var(--option-border-active);
+}
+
+html[data-theme][data-family] .tpl-panel {
+  color: var(--content-primary);
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: var(--popup-shadow), inset 0 1px 0 var(--modal-card-highlight);
+}
+html[data-theme][data-family] .tpl-item { border-color: var(--border-subtle); }
+html[data-theme][data-family] .tpl-item:hover { background: var(--option-bg-hover); }
+html[data-theme][data-family] :is(.tpl-apply, .tpl-rename-btn, .tpl-del-btn, .del-btn, .np-todo-del) {
+  color: var(--content-secondary);
+}
+html[data-theme][data-family] :is(.tpl-rename-btn, .del-btn, .np-todo-del):hover {
+  color: var(--content-primary);
+  background: var(--option-bg-hover);
+}
+html[data-theme][data-family] .tpl-del-btn:hover,
+html[data-theme][data-family] .np-todo-del:hover {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+}
+
+html[data-theme][data-family] .np-todo-check {
+  color: var(--content-on-accent);
+  background: var(--option-bg);
+  border-color: var(--option-border);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .np-todo-check:hover { border-color: var(--option-border-hover); }
+html[data-theme][data-family] .np-todo-check.checked {
+  background: var(--action-primary-bg);
+  border-color: transparent;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .stage-num { color: var(--content-secondary); background: var(--option-bg); }
+html[data-theme][data-family] .stage-num--active { color: var(--selection-fg); background: var(--selection-bg); }
+
+/* Project colour swatches keep their content colour, but the ring/highlight follows theme borders. */
+html[data-theme][data-family] .color-chip {
+  border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+  transition:
+    transform var(--motion-hover-control) var(--motion-ease-emphasis),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .color-chip:hover { border-color: var(--border-hover); }
+html[data-theme][data-family] .color-chip.active {
+  border-color: var(--action-primary);
+  box-shadow: 0 0 0 2px var(--selection-bg), inset 0 1px 0 var(--highlight-muted);
+}
+
+/* Project files panel collapsed-column control. */
+html[data-theme][data-family] .col-toggle-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  box-shadow: var(--elevation-card);
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .col-toggle-btn:hover {
+  color: var(--action-primary);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
+  box-shadow: var(--elevation-card-hover);
+}
+
+/* Canvas + drawer project references share the board project's dark typography. nameColor is an
+   inline light-card colour derived from the project colour, so dark mode deliberately overrides it. */
+html[data-theme='dark'][data-family] :is(.proj-card, .pr-card, .pr-missing, .drawer-project-card) .proj-name,
+html[data-theme='dark'][data-family] .pr-missing .pr-name {
+  color: var(--content-primary) !important;
+}
+html[data-theme='dark'][data-family] :is(.proj-card, .pr-card, .pr-missing, .drawer-project-card) :is(
+  .proj-client,
+  .proj-stage,
+  .date-range,
+  .progress-num,
+  .file-badge,
+  .pr-client,
+  .pr-dates,
+  .pr-deleted
+) {
+  color: var(--content-secondary);
+}
+html[data-theme='dark'][data-family] :is(.proj-card, .pr-card, .drawer-project-card) .file-badge {
+  background: var(--surface-soft);
+}
+html[data-theme='dark'][data-family] :is(.proj-card, .pr-card, .drawer-project-card) .done-label {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--status-success) 34%,transparent);
+}
+
+/* Drawer card already consumes --project-card-*; keep its actual dark surface identical to the
+   board contract even if an older scoped/inline light declaration wins before this adoption layer. */
+html[data-theme][data-family] .drawer-project-card {
+  border-color: var(--project-card-border);
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--project-color) !important;
+  box-shadow: var(--project-card-shadow);
+}
+html[data-theme][data-family] .drawer-project-card:hover {
+  border-color: var(--project-card-hover-border);
+  box-shadow: var(--project-card-hover-shadow);
+}
