@@ -94,3 +94,16 @@ html[data-theme][data-family] .event-form-body .chan-chip.on {
   background: var(--selection-bg);
   border-color: var(--action-outline);
 }
+
+/* ImageViewer 的 toolbar 属性只在组件内定义一次；主题层只重映射它消费的局部变量。
+   放在全局 bridge 而不是 scoped :global() 中，确保 html 的 theme/family 条件直接参与层叠。 */
+html[data-theme='dark'][data-family] .iv-wrap {
+  --iv-toolbar-bg: color-mix(in srgb, var(--surface-floating) 90%, transparent);
+  --iv-toolbar-filter: var(--popup-surface-blur);
+  --iv-toolbar-border: var(--border-strong);
+  --iv-toolbar-shadow: var(--elevation-popup), inset 0 1px 0 var(--modal-card-highlight);
+  --iv-toolbar-fg: var(--content-secondary);
+  --iv-toolbar-hover-bg: var(--option-bg-hover);
+  --iv-toolbar-hover-fg: var(--action-primary);
+  --iv-toolbar-pct-hover-fg: var(--content-primary);
+}
