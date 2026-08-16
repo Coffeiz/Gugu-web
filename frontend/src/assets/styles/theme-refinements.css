@@ -33,13 +33,19 @@ html[data-theme='dark'][data-family] {
   --gugu-chat-session-hover: transparent;
 
   /* Dark primary fills are intentionally quieter than the foreground accent. This is the shared
-     fill for topbar primary actions and calendar current-date markers. */
-  --action-primary-bg: linear-gradient(135deg,
-    color-mix(in srgb,var(--action-primary) 46%,var(--surface-base)),
-    color-mix(in srgb,var(--action-primary) 62%,var(--surface-base)));
-  --action-primary-bg-hover: linear-gradient(135deg,
-    color-mix(in srgb,var(--action-primary) 54%,var(--surface-base)),
-    color-mix(in srgb,var(--action-primary) 70%,var(--surface-base)));
+     fill for topbar primary actions and calendar current-date markers.
+     Kept as flat color-mix (not a gradient) so the background-color transition animates on hover —
+     CSS cannot interpolate between two gradients. */
+  --action-primary-bg: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
+  --action-primary-bg-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
+
+  /* Dark secondary actions use surface-based fills instead of the light glass literals. */
+  --action-secondary-bg: var(--surface-soft);
+  --action-secondary-bg-hover: var(--surface-soft-hover);
+  --action-secondary-border: var(--border-default);
+  --action-secondary-border-hover: var(--border-hover);
+  --action-secondary-fg: var(--content-secondary);
+  --action-secondary-fg-hover: var(--content-primary);
 
   /* Project cards keep lift/shadow feedback, but no extra sheen flash in dark mode. */
   --project-card-sheen-hover: transparent;
@@ -80,6 +86,11 @@ html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before,
 html[data-theme='dark'][data-family] .notif-item:hover,
 html[data-theme='dark'][data-family] .notif-item.unread {
   background: var(--color-accent-faint);
+}
+/* settings-popup 菜单项用 ::before 伪元素做 hover 高亮，需覆盖 surfaces.css 的通用
+   .popup-menu-item:hover 背景，避免两层高亮叠加。 */
+html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
+  background: transparent;
 }
 html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep,
 html[data-theme='dark'][data-family] .notif-header {

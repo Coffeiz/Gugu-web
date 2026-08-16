@@ -47,7 +47,7 @@
 /** 无限画布：平移/缩放 + 贴纸绝对定位渲染，相机数学委托给 useMindCanvas.ts；贴纸拖拽统一走
  *  interaction runtime，这里只负责相机、建立关联的拖拽手势
  *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import './canvas-card-effects.css'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
@@ -60,6 +60,7 @@ import NoteSticker from './NoteSticker.vue'
 import ProjectRefCard from './ProjectRefCard.vue'
 import RelationLayer from './RelationLayer.vue'
 import { cacheCanvasItemSize, measuredCanvasItemSize, migrateCanvasItemSize } from '../utils/canvasItemMeasurements'
+import { beginRuntimeCanvasProbe, logRuntimeCanvasProbe, markRuntimeCanvasProbe, measureRuntimeCanvasProbe } from '@/utils/runtimePerformanceProbe'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -139,6 +140,16 @@ function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   emit('itemMoved', item)
 }
 
+function finishRuntimeMoveProbe(probe: ReturnType<typeof beginRuntimeCanvasProbe>) {
+  if (!probe) return
+  markRuntimeCanvasProbe(probe, 'business-end')
+  measureRuntimeCanvasProbe(probe, 'business-callback', 'start', 'business-end')
+  void nextTick(() => {
+    markRuntimeCanvasProbe(probe, 'vue-flush-end')
+    measureRuntimeCanvasProbe(probe, 'vue-flush', 'business-end', 'vue-flush-end')
+  })
+}
+
 /**
  * 读取当前画布卡片的布局尺寸。offset 尺寸不包含画布 camera transform、抓取倾斜和
  * landing 代理的视觉缩放，正好是落点换算需要的世界尺寸。乐观节点换成真实 nodeId
@@ -157,8 +168,17 @@ function renderedItemSize(item: MindCanvasItem): { w: number; h: number } | null
 
 function onRuntimeMove(action: MoveAction) {
   if (!action.objectId.startsWith('mind:')) return
+  logRuntimeCanvasProbe('business-move-enter', {
+    objectId: action.objectId,
+    toSurfaceId: action.toSurfaceId,
+    hasPoint: Boolean(action.point),
+  })
+  const probe = beginRuntimeCanvasProbe('pointerup')
   const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
-  if (!item) return
+  if (!item) {
+    finishRuntimeMoveProbe(probe)
+    return
+  }
   const nodeId = item.nodeId
   if (action.toSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) {
     if (item.node.refType === 'project') {
@@ -178,9 +198,13 @@ function onRuntimeMove(action: MoveAction) {
       }
       emit('returnToDrawer', item)
     }
+    finishRuntimeMoveProbe(probe)
     return
   }
-  if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) return
+  if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID || !action.point) {
+    finishRuntimeMoveProbe(probe)
+    return
+  }
   const velocity = action.releaseVelocity
   const coastX = velocity ? Math.max(-260, Math.min(260, velocity.x * 0.12)) : 0
   const coastY = velocity ? Math.max(-260, Math.min(260, velocity.y * 0.12)) : 0
@@ -189,6 +213,7 @@ function onRuntimeMove(action: MoveAction) {
     ?? measuredCanvasItemSize(measuredSizes, measuredSizesByClientKey, item)
     ?? itemSize(item)
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
+  finishRuntimeMoveProbe(probe)
 }
 
 /** 卡片尺寸变化时同步给 RelationLayer；拖动中的位置由 Runtime 代理事件提供。 */
@@ -231,6 +256,7 @@ const activeVisualNodeId = ref<number | null>(null)
 // 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
 // 不能把它提前识别成可吸附目标。
 const landingNodeIds = reactive(new Set<number>())
+const landingProbeObjects = new Set<string>()
 /** Runtime 代理的实际屏幕盒是连接线在拖动/落地期间唯一可信的临时几何来源。
  * 这里只覆盖 RelationLayer 的位置，不写回 item.x/y，也不参与卡片动画。 */
 function onRuntimeVisual(event: RuntimeEvent) {
@@ -238,6 +264,7 @@ function onRuntimeVisual(event: RuntimeEvent) {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
     landingObjectNodeIds.delete(event.objectId)
+    landingProbeObjects.delete(event.objectId)
     if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
     if (nodeId == null) return
     landingPositions.delete(nodeId)
@@ -257,6 +284,13 @@ function onRuntimeVisual(event: RuntimeEvent) {
   const center = screenToWorld(event.rect.x + event.rect.width / 2, event.rect.y + event.rect.height / 2)
   const { w, h } = measuredSizes.get(nodeId) ?? itemSize(item)
   if (event.phase === 'landing') {
+    if (!landingProbeObjects.has(event.objectId)) {
+      logRuntimeCanvasProbe('landing-position-first-update', { objectId: event.objectId, nodeId })
+      const probe = beginRuntimeCanvasProbe('landing-position')
+      markRuntimeCanvasProbe(probe, 'position-update')
+      measureRuntimeCanvasProbe(probe, 'first-position-update', 'start', 'position-update')
+      landingProbeObjects.add(event.objectId)
+    }
     landingPositions.set(nodeId, { x: center.x - w / 2, y: center.y - h / 2 })
     landingNodeIds.add(nodeId)
     if (hoveredNodeId.value === nodeId) hoveredNodeId.value = null
@@ -471,8 +505,12 @@ onMounted(() => {
       origin: () => ({ left: camera.x, top: camera.y }),
     },
   })
+  logRuntimeCanvasProbe('runtime-action-bound')
   stopRuntimeActions = runtime.onAction(action => {
-    if (action.type === 'move') onRuntimeMove(action as MoveAction)
+    if (action.type === 'move') {
+      logRuntimeCanvasProbe('runtime-move-received', { objectId: action.objectId, toSurfaceId: action.toSurfaceId })
+      onRuntimeMove(action as MoveAction)
+    }
   })
   stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
   updateViewportSizeAndEmit()

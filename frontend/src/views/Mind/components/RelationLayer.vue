@@ -4,13 +4,13 @@
          必须都还在画布上才算有效关系，摘掉一端立刻被过滤掉）——没有 TransitionGroup 的
          v-for 没法接住这次删除的过渡，SVG 没有布局流，也不需要 FLIP 位置捕获那一套，
          补一层最简单的透明度淡出就够了。 -->
-    <TransitionGroup tag="g" name="rel">
+    <g>
       <g v-for="rel in visibleRelations" :key="rel.id" class="rel-group" :style="rel.opacity != null ? { opacity: rel.opacity } : undefined" @pointerdown.stop @click.stop="removeByClick(rel.id)">
         <!-- 可见曲线（默认弱化）叠一条透明加粗路径专门吃点击——细线本身只有 1.6px，直接点很难点中 -->
         <path class="rel-hit" :d="rel.d" fill="none" />
         <path class="rel-visible" :class="{ highlighted: rel.highlighted }" :d="rel.d" fill="none" />
       </g>
-    </TransitionGroup>
+    </g>
     <!-- 正在从贴纸边缘的连接点拖一条新关系出来时的跟手预览线，不吃点击、不参与已有关系列表 -->
     <path v-if="draft" class="rel-draft" :d="draftPath" fill="none" />
   </svg>
@@ -27,6 +27,7 @@
 import { computed, onBeforeUnmount, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { itemSize, pickAnchorSide, type AnchorSide, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { beginRuntimeCanvasProbe, markRuntimeCanvasProbe, measureRuntimeCanvasProbe } from '@/utils/runtimePerformanceProbe'
 
 const props = defineProps({
   items: { type: Array as PropType<MindCanvasItem[]>, required: true },
@@ -237,6 +238,8 @@ function resolveSides(relation: MindRelation, src: MindCanvasItem, dst: MindCanv
 const departingRelations = ref<{ relation: MindRelation; src: MindCanvasItem; dst: MindCanvasItem; since: number }[]>([])
 const immediateDepartures = new Set<number>()
 let departingRaf = 0
+let relationProbeNodeId: number | null = null
+let relationProbeCount = 0
 function pruneAnchorSideCache() {
   const retained = new Set([
     ...props.relations.map(relation => relation.id),
@@ -318,10 +321,23 @@ watch(
 const visibleRelations = computed(() => {
   void renderTick.value   // 悬停抬起过渡期间的心跳依赖，见 pumpHoverFrames
   void props.visualFrame
+  if (props.activeVisualNodeId !== relationProbeNodeId) {
+    relationProbeNodeId = props.activeVisualNodeId
+    relationProbeCount = 0
+  }
+  const relationProbe = props.activeVisualNodeId != null && relationProbeCount < 8
+    ? beginRuntimeCanvasProbe('relation-recompute')
+    : null
+  if (relationProbe) relationProbeCount++
+  const liveIds = new Set<number>()
   const live = props.relations.flatMap((relation) => {
+    // API/乐观关系切换期间可能短暂出现重复记录；关系 id 是渲染身份，不能把重复项交给
+    // SVG 渲染树，否则会触发重复节点并让离场动画绑定到不确定的关系。
+    if (liveIds.has(relation.id)) return []
     const src = itemByNodeId.value.get(relation.srcNodeId)
     const dst = itemByNodeId.value.get(relation.dstNodeId)
     if (!src || !dst) return []
+    liveIds.add(relation.id)
     const sides = resolveSides(relation, src, dst)
     const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
     const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
@@ -330,16 +346,23 @@ const visibleRelations = computed(() => {
     return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted, opacity: undefined as number | undefined }]
   })
   const now = performance.now()
-  const departing = departingRelations.value.map(({ relation, src, dst, since }) => {
+  const departing = departingRelations.value.flatMap(({ relation, src, dst, since }) => {
+    // relation 在淡出窗口内恢复为 live 时，live 节点优先，避免同一个 key 同时出现两次。
+    if (liveIds.has(relation.id)) return []
     const sides = resolveSides(relation, src, dst)
     const from = anchorFor(src, sides.srcSide, props.landingPositions.get(src.nodeId))
     const to = anchorFor(dst, sides.dstSide, props.landingPositions.get(dst.nodeId))
     // 松手即开始线性淡出，全程跟着 anchorFor 量到的实时位置走，不是先原样展示完飞行
     // 全程、落地那一刻才突然开始淡。
     const opacity = Math.max(0, 1 - (now - since) / DEPARTING_FADE_MS)
-    return { id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted: false, opacity }
+    return [{ id: relation.id, d: sidePath(from, sides.srcSide, to, sides.dstSide), highlighted: false, opacity }]
   })
-  return [...live, ...departing]
+  const result = [...live, ...departing]
+  if (relationProbe) {
+    markRuntimeCanvasProbe(relationProbe, 'end')
+    measureRuntimeCanvasProbe(relationProbe, 'computed', 'start', 'end')
+  }
+  return result
 })
 
 // 拖出连线时的预览线跟建好之后的实线走同一个 sidePath——之前预览线单独用一套"横向鼓包"的
