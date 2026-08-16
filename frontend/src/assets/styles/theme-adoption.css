@@ -56,13 +56,12 @@ html[data-theme][data-family] .topbar .btn-primary-custom:hover {
 /* ── Projects ─────────────────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .proj-card {
   color: var(--content-primary);
-  background-image: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
+  background: var(--surface-card-solid);
   border-color: var(--project-card-border) !important;
   box-shadow: var(--project-card-shadow) !important;
 }
 html[data-theme][data-family] .proj-card::before {
-  background: var(--project-card-sheen-rest) !important;
-  box-shadow: inset 0 1px 0 var(--project-card-highlight-rest) !important;
+  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
 }
 html[data-theme][data-family] .proj-card::after {
   background: var(--project-card-sheen-hover) !important;

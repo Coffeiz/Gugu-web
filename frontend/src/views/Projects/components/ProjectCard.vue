@@ -428,6 +428,7 @@ async function setPriority(n: number) {
   border-radius: var(--radius-md);
   corner-shape: squircle;
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  background: var(--surface-card-solid);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
      这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
@@ -463,10 +464,14 @@ async function setPriority(n: number) {
   position: absolute; inset: 0;
   border-radius: inherit;
   corner-shape: squircle;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, transparent 50%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
   pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.25s ease-out;
 }
+.proj-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.proj-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
+.proj-card[data-runtime-phase="landing"]::before { opacity: 1; }
 /* 悬停增强高光：linear-gradient 不能做 transition 插值，改用 opacity 淡入淡出 */
 .proj-card::after {
   content: '';
@@ -485,7 +490,7 @@ async function setPriority(n: number) {
 .proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
 
-.card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
 
 .proj-name {
@@ -606,6 +611,7 @@ async function setPriority(n: number) {
 
 /* ── 推进按钮（圆角靠父级 overflow:hidden 裁剪）── */
 .card-advance {
+  position: relative; z-index: 1;
   width: 42px; flex-shrink: 0; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none;
