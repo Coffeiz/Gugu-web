@@ -1,5 +1,6 @@
 import { runtime } from './index'
 import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_CANVAS_DRAG_Z_INDEX, MIND_CANVAS_LANDING_Z_INDEX, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
+import { TOP_Z } from '@/composables/windowz'
 
 let initialized = false
 let themeVisualObserver: MutationObserver | null = null
@@ -73,6 +74,10 @@ export function setupInteractionRuntime(): void {
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
     proxyLayout: listProxyLayout,
+    // 文件可能从 20000+ 的 BaseModal 窗口中拖出。Runtime 默认 proxy 层级只有 1000，
+    // 会被项目编辑卡压住；统一使用 windowz 的 TOP_Z 拖拽压顶带，不再另写魔法数。
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
   })
   runtime.registerObjectType('folder-item', {
     defaultVisualMode: 'detach',
@@ -82,6 +87,8 @@ export function setupInteractionRuntime(): void {
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
     proxyLayout: listProxyLayout,
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
   })
   const registerMindObjectType = (objectType: string) => runtime.registerObjectType(objectType, {
     defaultVisualMode: 'detach',
