@@ -7,8 +7,7 @@
       @click.stop="emit('toggle-selection')" title="多选模式">
       <PhCheckSquare :size="13" weight="bold" />
     </button>
-    <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1"
-      style="--pill-bg: rgba(255,255,255,0.85); --pill-radius: 6px">
+    <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
       <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
         <PhSquaresFour :size="13" weight="bold" />
       </button>
@@ -80,6 +79,8 @@ watch(() => props.showNewFolder, value => {
 </script>
 
 <style scoped>
+/* 工具栏组件只负责布局。所有按钮/图标/文字/输入框的尺寸与主题 paint
+   统一由 file-toolbar-theme-refinements.css 管理，避免子组件和页面各写一份。 */
 .file-browser-toolbar {
   display: flex;
   align-items: center;
@@ -91,42 +92,9 @@ watch(() => props.showNewFolder, value => {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.sel-mode-btn {
+.new-folder-inline {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: rgba(255,255,255,.58);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.sel-mode-btn.on { color: var(--color-primary); background: rgba(123,127,178,.14); }
-.sel-mode-btn:hover { color: var(--text-primary); background: rgba(0,0,0,.06); }
-.new-folder-inline { display: flex; align-items: center; gap: 5px; }
-.new-folder-inline .new-folder-input {
-  width: 120px; height: 28px; box-sizing: border-box;
-  padding: 0 9px; border: 1px solid rgba(0,0,0,.08); border-radius: 7px;
-  background: rgba(255,255,255,.7); font-size: 12px; font-family: inherit;
-  color: var(--text-primary); outline: none;
-}
-.new-folder-inline .new-folder-input:focus { border-color: rgba(123,127,178,.4); }
-.btn-confirm-sm, .btn-cancel-sm {
-  height: 28px; box-sizing: border-box;
-  border: none;
-  border-radius: 7px;
-  padding: 0 10px;
-  font-size: 11px;
-  cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.btn-confirm-sm { background: var(--color-primary); color: #fff; }
-.btn-confirm-sm:disabled { opacity: .5; cursor: default; }
-.btn-cancel-sm {
-  background: rgba(0,0,0,.07); color: var(--text-secondary);
-  width: 28px; padding: 0;
+  gap: 5px;
 }
 </style>
