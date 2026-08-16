@@ -1,6 +1,6 @@
 /* Mind workspace contracts: timeline paper, capture/editor surfaces and canvas environment.
-   The note palette mixes product identity colors into the current theme surface, so the same
-   stored note color has a deliberate light and dark rendering without component-side branches. */
+   Light note values intentionally preserve the original product palette; dark variants resolve
+   separately so dark-mode work never shifts the established light paper colours. */
 :root {
   /* Preserve the original Mind canvas paper in light mode. It is intentionally a product surface,
      not the generic solid-card surface: the old blue-grey canvas gives the dot grid depth. */
@@ -9,7 +9,8 @@
   --mind-toolbar-bg: var(--glass-card-background);
   --mind-toolbar-border: var(--glass-card-border);
 
-  --note-surface: color-mix(in srgb,var(--surface-card-solid) 72%,transparent);
+  /* Legacy light paper values from the original Notes/Canvas implementation. */
+  --note-surface: rgba(255,255,255,.56);
   --note-surface-editing: var(--surface-raised);
   --note-border: var(--border-default);
   --note-highlight: var(--border-highlight);
@@ -19,11 +20,11 @@
   --note-hover-overlay: var(--card-hover-overlay);
   --note-new-highlight: color-mix(in srgb,var(--action-primary) 20%,var(--note-surface));
 
-  --note-paper-amber: color-mix(in srgb,var(--project-sand) 18%,var(--surface-card-solid));
-  --note-paper-coral: color-mix(in srgb,var(--project-coral) 16%,var(--surface-card-solid));
-  --note-paper-blue: color-mix(in srgb,var(--project-blue) 18%,var(--surface-card-solid));
-  --note-paper-teal: color-mix(in srgb,var(--status-info) 18%,var(--surface-card-solid));
-  --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 8%,var(--surface-card-solid));
+  --note-paper-amber: rgb(255,246,231);
+  --note-paper-coral: rgb(255,236,233);
+  --note-paper-blue: rgb(224,239,251);
+  --note-paper-teal: rgb(229,248,250);
+  --note-paper-default-canvas: rgba(255,252,238,.97);
 
   --capture-bg: color-mix(in srgb,var(--surface-glass) 88%,transparent);
   --capture-bg-expanded: var(--surface-raised);
@@ -35,6 +36,12 @@
   --mind-picker-bg: var(--surface-popup);
   --mind-picker-border: var(--popup-border);
   --mind-picker-shadow: var(--popup-shadow);
+
+  /* Canvas semantic relation colours. */
+  --mind-relation-line: rgba(104,111,164,.35);
+  --mind-relation-line-highlight: rgba(123,127,178,.9);
+  --mind-relation-line-draft: rgba(123,127,178,.85);
+  --mind-relation-line-danger: rgba(200,90,90,.8);
 }
 
 html[data-theme='dark'][data-family] {
@@ -51,4 +58,10 @@ html[data-theme='dark'][data-family] {
   --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 10%,var(--surface-card-solid));
   --capture-bg: color-mix(in srgb,var(--surface-base) 88%,transparent);
   --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
+
+  /* Keep relations visible on dark canvas without turning into a bright neon stroke. */
+  --mind-relation-line: color-mix(in srgb,var(--content-secondary) 42%,transparent);
+  --mind-relation-line-highlight: color-mix(in srgb,var(--action-primary) 72%,var(--content-secondary));
+  --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 68%,var(--content-secondary));
+  --mind-relation-line-danger: color-mix(in srgb,var(--status-danger) 72%,var(--content-secondary));
 }
