@@ -3,14 +3,6 @@ html[data-theme][data-family] .card-affordances__actions > button:hover {
   color: var(--action-primary);
   background: var(--action-soft-hover);
 }
-html[data-theme][data-family] .conn-dot::before {
-  border-color: var(--surface-raised);
-  background: var(--action-primary);
-  box-shadow: var(--elevation-card);
-}
-html[data-theme][data-family] .conn-dot-active::before {
-  box-shadow: 0 0 0 3px var(--selection-bg),var(--elevation-card);
-}
 html[data-theme][data-family] .ci-btn:hover {
   color: var(--action-primary);
   background: var(--action-soft-hover);
