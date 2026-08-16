@@ -1,0 +1,48 @@
+/* Interaction Runtime owns proxy geometry and motion. Its current dragGlass implementation still
+   writes a legacy light glass background/border inline; the product host supplies the paint through
+   --runtime-drag-* so grabbing remains consistent with the active theme without page-specific hacks. */
+html[data-theme='dark'][data-family] [data-runtime-proxy-content='true'] {
+  color: var(--content-primary) !important;
+  background: var(--runtime-drag-glass-bg) !important;
+  border-color: var(--runtime-drag-glass-border) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter) !important;
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
+}
+
+/* Preserve card identity while grabbing instead of flattening every proxy into one neutral slab. */
+html[data-theme='dark'][data-family] .drawer-project-card[data-runtime-proxy-content='true'],
+html[data-theme='dark'][data-family] .proj-card[data-runtime-proxy-content='true'] {
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--project-color) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true'] {
+  background: var(--surface-card-solid) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']::before {
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--pr-project-color) !important;
+}
+
+html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {
+  background: var(--note-surface) !important;
+  border-color: var(--note-border) !important;
+}
+html[data-theme='dark'][data-family] .note-card.tint-amber[data-runtime-proxy-content='true'] { background: var(--note-paper-amber) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-coral[data-runtime-proxy-content='true'] { background: var(--note-paper-coral) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-blue[data-runtime-proxy-content='true'] { background: var(--note-paper-blue) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-teal[data-runtime-proxy-content='true'] { background: var(--note-paper-teal) !important; }
+
+html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content='true'] {
+  background: var(--surface-card-solid) !important;
+  border-color: var(--border-strong) !important;
+}
+
+/* Shared file/folder cards keep their existing card contract; only replace Runtime's white glass. */
+html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {
+  background-color: var(--surface-card-solid) !important;
+  border-color: var(--border-strong) !important;
+}
