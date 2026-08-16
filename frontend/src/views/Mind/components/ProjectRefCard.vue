@@ -135,6 +135,7 @@ const { nameColor: snapshotNameColor, isUrgent: snapshotIsUrgent, fmtDate, deadl
 const cardEl = ref<HTMLElement | null>(null)
 const missingRef = ref<HTMLElement | null>(null)
 let cardResizeObserver: ResizeObserver | null = null
+let lastMeasuredSize: { w: number; h: number } | null = null
 function emitMeasuredSize() {
   // observeCard() 观察的是 cardEl.value ?? missingRef.value（项目被删后本体元素不存在，
   // 观察墓碑态自己），这里量尺寸却一直只读 cardEl.value——墓碑态下 cardEl 恒为 null，
@@ -146,10 +147,16 @@ function emitMeasuredSize() {
   const rect = card.getBoundingClientRect()
   if (rect.width < 10 || rect.height < 10) return
   const scale = props.scale || 1
-  emit('measured', props.item, { w: rect.width / scale, h: rect.height / scale })
+  const measured = { w: rect.width / scale, h: rect.height / scale }
+  if (lastMeasuredSize
+    && Math.abs(lastMeasuredSize.w - measured.w) < 0.01
+    && Math.abs(lastMeasuredSize.h - measured.h) < 0.01) return
+  lastMeasuredSize = measured
+  emit('measured', props.item, measured)
 }
 function observeCard() {
   cardResizeObserver?.disconnect()
+  lastMeasuredSize = null
   const card = cardEl.value ?? missingRef.value
   if (!card) return
   cardResizeObserver = new ResizeObserver(emitMeasuredSize)
