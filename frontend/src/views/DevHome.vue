@@ -46,6 +46,7 @@ function openExternal(tool: DevToolEntry) {
   if (!target) return
   const expectedOrigin = new URL(tool.href).origin
   const token = localStorage.getItem('user_token') ?? ''
+  let timer: number | undefined
 
   const onMessage = (event: MessageEvent) => {
     if (event.source !== target || event.origin !== expectedOrigin) return
@@ -56,15 +57,16 @@ function openExternal(tool: DevToolEntry) {
       token,
     }, expectedOrigin)
     window.removeEventListener('message', onMessage)
+    if (timer !== undefined) window.clearInterval(timer)
   }
   window.addEventListener('message', onMessage)
 
   // ready 可能在 opener listener 建立前到达；短暂重复 ping 只传给精确 origin。
   let tries = 0
-  const timer = window.setInterval(() => {
+  timer = window.setInterval(() => {
     tries += 1
     if (target.closed || tries > 20) {
-      window.clearInterval(timer)
+      if (timer !== undefined) window.clearInterval(timer)
       window.removeEventListener('message', onMessage)
       return
     }
@@ -127,7 +129,7 @@ function openExternal(tool: DevToolEntry) {
   border-radius: var(--radius-md);
   background: var(--surface-card);
   box-shadow: var(--elevation-card);
-  transition: transform .18s var(--ease-standard), box-shadow .18s var(--ease-standard), border-color .18s var(--ease-standard);
+  transition: transform .18s var(--motion-ease-standard), box-shadow .18s var(--motion-ease-standard), border-color .18s var(--motion-ease-standard);
 }
 .tool-card:hover {
   transform: translateY(-2px);
