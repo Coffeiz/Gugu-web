@@ -2,7 +2,9 @@
    The note palette mixes product identity colors into the current theme surface, so the same
    stored note color has a deliberate light and dark rendering without component-side branches. */
 :root {
-  --mind-canvas-bg: var(--surface-card-solid);
+  /* Preserve the original Mind canvas paper in light mode. It is intentionally a product surface,
+     not the generic solid-card surface: the old blue-grey canvas gives the dot grid depth. */
+  --mind-canvas-bg: #e8ebf3;
   --mind-canvas-dot: var(--canvas-dot-color);
   --mind-toolbar-bg: var(--glass-card-background);
   --mind-toolbar-border: var(--glass-card-border);
@@ -36,6 +38,9 @@
 }
 
 html[data-theme='dark'][data-family] {
+  /* Dark canvas keeps the current dark treatment; only the light fallback above is restored. */
+  --mind-canvas-bg: var(--surface-card-solid);
+
   /* Dark notes stay chromatic but are mixed mostly into the dark solid card surface; this avoids
      the light-mode pastel RGB values becoming glowing slabs at night. */
   --note-surface: color-mix(in srgb,var(--surface-card-solid) 94%,transparent);
