@@ -373,7 +373,7 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "可选标题"},
+                    "title": {"type": "string", "description": "可选标题；仅用于搜索与列表索引，便签卡片上用户不可见。用户可见的标题必须写成 blocks 中第一个 heading 块（渲染为正文首行 # 标题）"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "可选；null 为默认纸色，其余值必须选现有色板"},
                     "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"受限内容块数组；不得传任意 Markdown 或 HTML。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "可选，带时区的 ISO 8601 时间；只能是现在或过去"},
@@ -392,7 +392,7 @@ class MindSkill(BaseSkill):
                 "properties": {
                     "node_id": {"type": "integer", "description": "来自读取结果的便签 ID"},
                     "version": {"type": "integer", "description": "来自读取结果的当前版本"},
-                    "title": {"type": ["string", "null"], "description": "标题；null 清空标题"},
+                    "title": {"type": ["string", "null"], "description": "标题；null 清空标题。仅用于搜索与列表索引，便签卡片上用户不可见；用户可见标题请改为 blocks 第一个 heading 块"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
                     "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"整篇替换的受限内容块；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
                     "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"追加到笔记末尾的受限内容块；不能与 blocks 同时传。结构同 blocks，见其说明。{_BLOCKS_SCHEMA_HELP}"},

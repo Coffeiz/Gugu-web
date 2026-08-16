@@ -784,7 +784,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"},
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
@@ -847,7 +847,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"}, "version": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
@@ -926,7 +926,7 @@ class MindCanvasSkill(BaseSkill):
                             "node_id": {"type": "integer"}, "version": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
-                            "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                            "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
                             "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                             "x": {"type": "number"}, "y": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
