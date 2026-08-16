@@ -89,6 +89,9 @@ html[data-theme][data-family] .settings-popup .popup-menu-item.danger {
 html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled)::before {
   background: rgba(200, 90, 90, .1);
 }
+html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled) {
+  background: transparent;
+}
 html[data-theme][data-family] .settings-popup .popup-menu-sep {
   background: rgba(0, 0, 0, .06);
   margin: 3px 0;

@@ -19,7 +19,7 @@ html[data-theme][data-family] .popup-menu {
   box-shadow: var(--popup-shadow);
 }
 html[data-theme][data-family] .popup-close-btn:hover,
-html[data-theme][data-family] .popup-menu-item:hover:not(:disabled) {
+html[data-theme][data-family] .popup-menu-item:not(.danger):hover:not(:disabled) {
   background: var(--control-bg-hover);
 }
 html[data-theme][data-family] .popup-menu-sep { background: var(--panel-divider); }
