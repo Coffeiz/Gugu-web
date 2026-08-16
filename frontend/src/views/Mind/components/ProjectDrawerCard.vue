@@ -5,7 +5,7 @@
     data-layout-role="card"
     :data-layout-key="`project:${project.id}`"
     :data-project-id="project.id"
-    :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
+    :style="{ '--project-color': project.color }"
     @pointerdown.stop="onPointerDown"
     @click.stop="emit('add')"
   >
@@ -84,37 +84,45 @@ const { onPointerDown } = useMindRuntimeObject({
 </script>
 
 <style scoped>
+/* Canvas drawer projects consume the same project-card contract as the board/design sample.
+   The drawer keeps only its canvas-specific geometry/interaction here. */
 .drawer-project-card {
   position: relative;
   box-sizing: border-box;
   align-self: center;
   width: 240px;
-  border: 1px solid rgba(255,255,255,.72);
-  border-radius: var(--radius-md);
-  box-shadow: 0 2px 8px rgba(80,90,110,.07);
   overflow: hidden;
   cursor: grab;
   user-select: none;
   font-family: var(--font-sans);
-  /* 与项目页 .proj-card 保持同一条悬停曲线。这里必须包含 transform；否则本地 transition
-     会覆盖全局 hover-card-fx，却让 -2px 抬起没有过渡、看起来像瞬间跳起。 */
-  transition: transform .25s cubic-bezier(.34,1.2,.64,1),
-              box-shadow .25s ease, background .25s ease-out,
-              opacity .25s ease, border-color .25s ease;
+  border: 1px solid var(--project-card-border);
+  border-radius: var(--project-card-radius);
+  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%), var(--project-color);
+  box-shadow: var(--project-card-shadow);
+  transition: var(--project-card-motion);
+}
+.drawer-project-card::before,
+.drawer-project-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
 }
 .drawer-project-card::before {
-  content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(to bottom, rgba(255,255,255,.12) 0%, transparent 50%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.9); pointer-events: none;
-  transition: opacity .25s ease;
+  background: var(--project-card-sheen-rest);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-rest);
 }
 .drawer-project-card::after {
-  content: ''; position: absolute; inset: 0; border-radius: inherit;
-  background: linear-gradient(to bottom, rgba(255,255,255,.55) 0%, rgba(255,255,255,.08) 45%, transparent 100%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,1); opacity: 0;
-  transition: opacity .25s ease; pointer-events: none;
+  opacity: 0;
+  background: var(--project-card-sheen-hover);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
+  transition: var(--card-overlay-motion);
 }
-.drawer-project-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,.13); }
+.drawer-project-card:hover {
+  border-color: var(--project-card-hover-border);
+  box-shadow: var(--project-card-hover-shadow);
+}
 .drawer-project-card:hover::after { opacity: 1; }
 .drawer-project-card:active { cursor: grabbing; }
 
