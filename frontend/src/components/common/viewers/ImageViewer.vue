@@ -133,7 +133,8 @@ defineExpose({ scale, tx, ty })
 
 <style scoped>
 .iv-wrap {
-  /* 亮色值保持原设计不变；暗色只重映射这些局部视觉 token，避免重复写 toolbar 属性。 */
+  /* 亮色默认值保持原设计；暗色只在 overlay-theme-bridge.css 重映射这些变量。
+     toolbar 本身始终只有下面一套属性声明，不再维护亮/暗两份组件 CSS。 */
   --iv-toolbar-bg: rgba(255, 255, 255, 0.68);
   --iv-toolbar-filter: blur(18px);
   --iv-toolbar-border: rgba(255, 255, 255, 0.82);
@@ -155,18 +156,6 @@ defineExpose({ scale, tx, ty })
   background: rgba(230, 232, 240, 0.5);
   user-select: none;
   overflow: visible;
-}
-
-/* 仅暗色重映射工具栏材质；亮色继续使用上面的原始值。 */
-:global(html[data-theme='dark'][data-family]) .iv-wrap {
-  --iv-toolbar-bg: color-mix(in srgb, var(--surface-floating) 90%, transparent);
-  --iv-toolbar-filter: var(--popup-surface-blur);
-  --iv-toolbar-border: var(--border-strong);
-  --iv-toolbar-shadow: var(--elevation-popup), inset 0 1px 0 var(--modal-card-highlight);
-  --iv-toolbar-fg: var(--content-secondary);
-  --iv-toolbar-hover-bg: var(--option-bg-hover);
-  --iv-toolbar-hover-fg: var(--action-primary);
-  --iv-toolbar-pct-hover-fg: var(--content-primary);
 }
 
 .iv-img {
