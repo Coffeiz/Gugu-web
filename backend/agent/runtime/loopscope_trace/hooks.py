@@ -113,10 +113,13 @@ def ensure_hooks() -> None:
                 "user_message": initial_user,
                 "user_id": str(user_id),
             }
+            from agent.providers import adapter_for
+            _adapter = adapter_for(ai)
             run.attributes.update({
                 "provider": getattr(ai, "provider", ""),
                 "model": getattr(ai, "model", ""),
                 "api_format": getattr(driver, "api_format", ""),
+                "cache_mode": getattr(_adapter, "cache_mode", "active"),
             })
             plain_system = system_text or ""
             try:

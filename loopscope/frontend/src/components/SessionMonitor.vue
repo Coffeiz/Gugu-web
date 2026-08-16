@@ -46,6 +46,12 @@
           <span class="cache-hit" :style="{ width: `${Math.min(cacheRatio * 100, 100)}%` }"></span>
         </div>
         <div v-if="usage.input" class="cache-legend"><span>cached {{ fmtTokens(usage.cache_read) }}</span><span>fresh {{ fmtTokens(usage.fresh_input) }}</span></div>
+        <div v-if="cacheMode === 'passive'" class="cache-hint">
+          💡 本轮使用被动前缀缓存，服务端可能已缓存前缀，但 API 不返回缓存命中统计
+        </div>
+        <div v-if="cacheMode === 'none'" class="cache-hint">
+          ℹ️ 当前模型不支持缓存机制
+        </div>
 
         <section class="span-section">
           <header class="span-section-head">
@@ -89,6 +95,7 @@ const selected = computed(() => props.runs.find(r => r.id === selectedId.value) 
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
+const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
   return [a.provider, a.model].filter(Boolean).join(' / ') || 'model unknown'
@@ -191,6 +198,7 @@ function fmtTokens(v: number | null | undefined) {
 .cache-bar { height:5px; margin-top:10px; border-radius:var(--radius-pill); overflow:hidden; background:var(--surface-soft); }
 .cache-hit { display:block; height:100%; border-radius:inherit; background:var(--action-primary); transition:width var(--motion-default) var(--motion-ease-standard); }
 .cache-legend { display:flex; justify-content:space-between; margin-top:4px; color:var(--content-tertiary); font:8px var(--font-mono); }
+.cache-hint { margin-top:8px; padding:6px 10px; border-radius:var(--radius-md); background:var(--surface-soft); color:var(--content-tertiary); font-size:10px; line-height:1.5; }
 .span-section { margin-top:24px; }
 .span-section-head { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:9px; }
 .span-section-head strong { display:block; margin-top:3px; font-size:11px; }
