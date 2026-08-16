@@ -87,7 +87,7 @@
                   weekend:           d.dow >= 5,
                 }"
                 @click.stop="pickDay(d.iso)"
-              >{{ d.date }}</button>
+              ><span class="drp-day-label">{{ d.date }}</span></button>
             </div>
 
             <div class="drp-footer">
@@ -294,7 +294,9 @@ watch(() => props.startDate, v => {
   cursor: pointer; user-select: none;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
-.drp-input:hover { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
+/* 展开态与 hover 互斥：点击打开后鼠标仍停在控件上时，不能再叠一层 hover 高光；
+   open 始终只消费 focus token，移走鼠标前后视觉保持一致。 */
+.drp-input:hover:not(.open) { border-color: var(--input-border-hover); background: var(--input-bg-hover); box-shadow: var(--input-hover-shadow); }
 .drp-input.open { border-color: var(--input-border-focus); background: var(--input-bg-focus); box-shadow: var(--input-focus-shadow); }
 .drp-input.placeholder span { opacity: 0.6; }
 .drp-input.placeholder, .drp-input.placeholder span { color: var(--input-placeholder); }
@@ -318,7 +320,6 @@ watch(() => props.startDate, v => {
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  transition: background 0.12s, color 0.12s;
 }
 .drp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
 .drp-period-caret.up { transform: rotate(180deg); }
@@ -326,7 +327,6 @@ watch(() => props.startDate, v => {
   width: 26px; height: 26px; border-radius: 7px;
   border: none; background: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.12s;
 }
 
 /* 阶段提示 */
@@ -348,10 +348,12 @@ watch(() => props.startDate, v => {
   display: flex; align-items: center; justify-content: center;
   border: none; background: none; cursor: pointer; padding: 0;
   font-size: var(--font-size-sm); font-weight: 500; line-height: 1;
-  border-radius: 7px; transition: background 0.1s, color 0.1s;
+  border-radius: 7px;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
   position: relative;
+  isolation: isolate;
 }
+.drp-day-label { position: relative; z-index: 2; }
 .drp-day.today:not(.sel-start):not(.sel-end) {
   font-weight: 700;
 }
@@ -366,12 +368,17 @@ watch(() => props.startDate, v => {
   font-weight: 700;
   border-radius: 7px; z-index: 1;
 }
+.drp-day.sel-start::before,
+.drp-day.sel-end::before {
+  content: ''; position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none; z-index: 1;
+}
 
-/* 区间与端点拼接：端点单侧延伸背景 */
+/* 区间与端点拼接：连接层在端点填充的下一层，只补圆角外侧，不覆盖选中矩形。 */
 .drp-day.sel-start.in-range-right::after,
 .drp-day.sel-end.in-range-left::after {
   content: ''; position: absolute; top: 0; bottom: 0; width: 50%;
-  z-index: -1;
+  pointer-events: none; z-index: 0;
 }
 .drp-day.sel-start.in-range-right::after { right: 0; border-radius: 0; }
 .drp-day.sel-end.in-range-left::after    { left: 0;  border-radius: 0; }
@@ -381,7 +388,7 @@ watch(() => props.startDate, v => {
 .drp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
   font-size: var(--font-size-sm); font-weight: 500; cursor: pointer;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: background 0.1s, color 0.1s;
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .drp-year-btn.this-year:not(.selected) { font-weight: 700; }
 .drp-year-btn.selected {
@@ -396,7 +403,6 @@ watch(() => props.startDate, v => {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
   cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  transition: background 0.12s;
 }
 .drp-clear { background: none; }
 
