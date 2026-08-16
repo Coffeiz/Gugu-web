@@ -1,5 +1,5 @@
 <template>
-  <BaseModal :show="show" width="520px" background="var(--modal-card-bg)" @close="handleClose">
+  <BaseModal :show="show" width="520px" background="var(--file-dialog-modal-bg)" @close="handleClose">
       <div class="modal">
         <div class="modal-header">
           <h2>上传文件</h2>
@@ -71,7 +71,7 @@
             </div>
           </div>
 
-          <div class="field" v-if="!lockedProjectId">
+          <div class="field project-field" v-if="!lockedProjectId">
             <label>
               放入项目
               <span class="label-hint">选填</span>
@@ -443,7 +443,7 @@ async function handleUpload() {
 .modal { display: contents; color: var(--content-primary); }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 24px 16px; border-bottom: 1px solid var(--panel-divider); flex-shrink: 0;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--file-dialog-divider); flex-shrink: 0;
 }
 .modal-header h2 { font-size: 16px; font-weight: 700; color: var(--content-primary); }
 .close-btn {
@@ -453,16 +453,16 @@ async function handleUpload() {
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .close-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
-.modal-body { flex: 1; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+.modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
 
 .drop-zone {
   min-height: 148px; padding: 20px; border-radius: var(--radius-md);
-  border: 1.5px dashed var(--action-outline); background: var(--surface-soft);
+  border: 1.5px dashed var(--file-dialog-drop-border); background: var(--file-dialog-drop-bg);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; cursor: pointer;
   transition: border-color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.drop-zone:hover:not(.has-files) { border-color: var(--border-focus); background: var(--action-soft); }
-.drop-zone.dragging { border-color: var(--action-primary); border-style: solid; background: var(--action-soft-hover); }
+.drop-zone:hover:not(.has-files) { border-color: var(--file-dialog-drop-border-hover); background: var(--file-dialog-drop-bg-hover); }
+.drop-zone.dragging { border-color: var(--action-primary); border-style: solid; background: var(--file-dialog-drop-bg-active); }
 .drop-zone.has-files { cursor: default; align-items: stretch; justify-content: flex-start; gap: 6px; max-height: 320px; overflow-y: auto; }
 .dz-icon { color: var(--content-secondary); opacity: .5; }
 .dz-icon.pulse { opacity: .8; color: var(--action-primary); }
@@ -473,7 +473,7 @@ async function handleUpload() {
 .file-stack, .upload-progress { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .file-row, .up-file-row {
   display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: var(--radius-sm);
-  background: var(--surface-raised); border: 1px solid var(--input-border); box-shadow: var(--elevation-card);
+  background: var(--file-dialog-item-bg); border: 1px solid var(--file-dialog-item-border); box-shadow: var(--file-dialog-item-shadow);
 }
 .up-file-row { position: relative; overflow: hidden; }
 .file-ext {
@@ -495,19 +495,26 @@ async function handleUpload() {
 .file-remove:hover { background: var(--danger-button-bg); color: var(--danger-button-fg); opacity: 1; }
 .add-more-btn {
   display: flex; align-items: center; justify-content: center; gap: 5px; width: 100%; padding: 7px;
-  border: 1.5px dashed var(--action-outline); border-radius: var(--radius-sm); background: transparent;
+  border: 1.5px dashed var(--file-dialog-drop-border); border-radius: var(--radius-sm); background: transparent;
   font: 600 11px var(--font-sans); color: var(--content-secondary); cursor: pointer; flex-shrink: 0;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.add-more-btn:hover { background: var(--action-soft); border-color: var(--border-focus); color: var(--action-primary); }
+.add-more-btn:hover { background: var(--file-dialog-drop-bg-hover); border-color: var(--file-dialog-drop-border-hover); color: var(--action-primary); }
 
 .field { display: flex; flex-direction: column; gap: 7px; }
+.project-field { flex: 1; min-height: 0; }
 label {
   display: flex; align-items: center; gap: 8px;
   font-size: 11px; font-weight: 600; color: var(--content-secondary); text-transform: uppercase; letter-spacing: .07em;
 }
 .label-hint { font-size: 10px; font-weight: 400; color: var(--content-tertiary); text-transform: none; letter-spacing: 0; }
-.proj-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow-y: auto; padding-right: 2px; }
+.proj-list {
+  display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 6px; overflow-y: auto;
+  max-height: none; padding-right: 6px;
+  /* OverlayScrollbar reads this as an inset from the host's right edge; negative moves the thumb
+     outward so the visible track sits 4px to the right instead of over the project pills. */
+  --scrollbar-overlay-right-offset: -4px;
+}
 .status-label {
   display: flex; align-items: center; gap: 5px; padding: 2px 2px 0;
   font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--content-tertiary); text-transform: uppercase;
@@ -533,7 +540,7 @@ label {
 .year-group { margin-bottom: 2px; }
 .year-label { font-size: 12px; font-weight: 700; color: var(--content-secondary); flex: 1; letter-spacing: .03em; }
 .year-label.undated { color: var(--content-tertiary); }
-.year-body { padding: 2px 0 2px 6px; border-left: 1px solid var(--panel-divider); margin-left: 6px; margin-top: 1px; }
+.year-body { padding: 2px 0 2px 6px; border-left: 1px solid var(--file-dialog-divider); margin-left: 6px; margin-top: 1px; }
 .month-group { margin-bottom: 1px; }
 .month-name { font-size: 11px; font-weight: 500; color: var(--content-secondary); flex: 1; }
 .month-folder { color: var(--content-tertiary); transition: color var(--motion-hover-control) var(--motion-ease-standard); }
@@ -542,12 +549,15 @@ label {
 .undated-chips { padding-left: 14px; }
 .select-btn {
   display: flex; align-items: center; gap: 5px; padding: 5px 12px; border-radius: var(--choice-chip-radius);
-  border: 1px solid var(--choice-chip-border); background: var(--choice-chip-bg); color: var(--choice-chip-fg);
+  border: 1px solid var(--file-dialog-choice-border); background: var(--file-dialog-choice-bg); color: var(--choice-chip-fg);
   font: 12px var(--font-sans); cursor: pointer; white-space: nowrap;
-  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.select-btn:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
-.select-btn.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
+.select-btn:hover { background: var(--file-dialog-choice-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
+.select-btn.active {
+  background: var(--file-dialog-choice-bg-active); border-color: var(--file-dialog-choice-border-active); color: var(--file-dialog-choice-fg-active);
+  box-shadow: var(--file-dialog-choice-shadow-active); font-weight: 600;
+}
 .p-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; opacity: .85; }
 .no-proj-hint { font-size: 11px; color: var(--content-tertiary); }
 .locked-hint label { margin-bottom: 4px; }
@@ -561,16 +571,16 @@ label {
 .up-fill.done { background: var(--status-success-bg); }
 .up-status { width: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; position: relative; }
 .up-done-icon { color: var(--status-success); }
-.up-spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--action-outline); border-top-color: var(--action-primary); animation: spin .7s linear infinite; }
+.up-spinner { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--file-dialog-drop-border); border-top-color: var(--action-primary); animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--panel-divider); flex-shrink: 0; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--file-dialog-divider); flex-shrink: 0; }
 .btn-cancel {
-  padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--control-border);
-  background: var(--control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;
+  padding: 8px 18px; border-radius: var(--radius-sm); border: 1px solid var(--file-dialog-control-border);
+  background: var(--file-dialog-control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.btn-cancel:hover { background: var(--control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
+.btn-cancel:hover { background: var(--file-dialog-control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 .btn-upload {
   padding: 8px 22px; border-radius: var(--radius-sm); border: none;
   background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: var(--elevation-card);
