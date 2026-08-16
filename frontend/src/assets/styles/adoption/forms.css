@@ -1,0 +1,103 @@
+/* Shared form paint adoption.
+   Components keep their own size/layout; all theme-sensitive field paint comes from --input-*.
+   This intentionally targets the established form classes rather than every input element so
+   search/composer/range/checkbox controls can keep their specialised contracts. */
+html[data-theme][data-family] :is(
+  .form-input,
+  .title-edit-input,
+  .rename-input-inline,
+  .header-name-input,
+  .field-input,
+  .stage-input,
+  .tpl-name-input,
+  .np-todo-input,
+  .drp-input,
+  .pm-bot-input
+) {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  caret-color: var(--action-primary);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard);
+}
+
+html[data-theme][data-family] :is(
+  .form-input,
+  .title-edit-input,
+  .rename-input-inline,
+  .header-name-input,
+  .field-input,
+  .stage-input,
+  .tpl-name-input,
+  .np-todo-input,
+  .drp-input,
+  .pm-bot-input
+):hover:not(:disabled) {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+}
+
+html[data-theme][data-family] :is(
+  .form-input,
+  .title-edit-input,
+  .rename-input-inline,
+  .header-name-input,
+  .field-input,
+  .stage-input,
+  .tpl-name-input,
+  .np-todo-input,
+  .drp-input,
+  .pm-bot-input
+):focus {
+  outline: none;
+  color: var(--input-fg);
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+
+html[data-theme][data-family] :is(
+  .form-input,
+  .title-edit-input,
+  .rename-input-inline,
+  .header-name-input,
+  .field-input,
+  .stage-input,
+  .tpl-name-input,
+  .np-todo-input,
+  .drp-input,
+  .pm-bot-input
+)::placeholder {
+  color: var(--input-placeholder);
+  opacity: .82;
+}
+
+/* Native selects/textareas inside modal forms use the same paint contract without changing their
+   geometry. Explicit opt-out controls can keep their own component background by class. */
+html[data-theme][data-family] .bm-card select:not(.theme-native-control),
+html[data-theme][data-family] .bm-card textarea:not(.theme-native-control) {
+  color: var(--input-fg);
+  background-color: var(--input-bg);
+  border-color: var(--input-border);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .bm-card select:not(.theme-native-control):hover,
+html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):hover {
+  background-color: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+}
+html[data-theme][data-family] .bm-card select:not(.theme-native-control):focus,
+html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):focus {
+  outline: none;
+  background-color: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
