@@ -17,7 +17,6 @@
             expanded: expandedStages.has(stage.key),
           }"
         >
-          <!-- 节点行 -->
           <div class="node-row" @mousedown="editingStage !== stage.key && startStageDrag(i, $event)">
             <div class="node-circle"
               :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: stageColor } : {}"
@@ -41,7 +40,6 @@
               <PhX :size="9" weight="bold" />
             </button>
           </div>
-          <!-- 待办列表 -->
           <ProjectTodosPanel
             :stage="stage"
             :is-last="i === displayStages.length - 1"
@@ -62,7 +60,6 @@
       </TransitionGroup>
     </div>
 
-    <!-- 拖拽虚影 -->
     <Teleport to="body">
       <div v-if="stageDrag.active" class="stage-drag-ghost-full"
         :style="{ left: stageDrag.ghostX + 'px', top: stageDrag.ghostY + 'px', width: stageDrag.ghostWidth + 'px' }">
@@ -97,13 +94,11 @@ const emit = defineEmits<{
   'update:currentStage': [key: string]
 }>()
 
-// 本地副本，同步 props 初始值
 const localStages = ref<ProjectStage[]>([])
 watch(() => props.stages, (v) => {
   localStages.value = v.map(s => ({ ...s, todos: s.todos?.map(t => ({ ...t })) ?? [] }))
 }, { immediate: true })
 
-// 通过 useProjectStages 复用阶段/待办操作编排
 const projectStages = useProjectStages({
     stages: localStages,
     saveStages: () => handleSaveStages(),
@@ -131,7 +126,6 @@ const lockedStageIndices = computed(() => {
   return projectStages.lockedStageIndices(props.currentStage)
 })
 
-// 编辑态
 const editingStage = ref<string | null>(null)
 const editingTodo = projectTodos.editingTodo
 const expandedStages = ref(new Set<string>())
@@ -140,7 +134,6 @@ const stageFlowRef = ref<HTMLElement | null>(null)
 
 const todoDrag = ref<{ stageKey: string; index: number } | null>(null)
 
-// ── 阶段拖拽 ──
 interface StageDragState {
   active: boolean
   fromIdx: number
@@ -233,7 +226,6 @@ function startStageDrag(i: number, e: MouseEvent) {
 
 onUnmounted(() => stopStageDrag?.())
 
-// ── 待办拖拽 ──
 function todoDragStart(stage: ProjectStage, ti: number) {
   todoDrag.value = { stageKey: stage.key, index: ti }
 }
@@ -271,7 +263,6 @@ function todoDragOver(stage: ProjectStage, ti: number, e: DragEvent) {
   todoDrag.value = { stageKey: stage.key, index: targetIndex }
 }
 
-// ── 编辑 ──
 function startEdit(stageKey: string) {
   editingStage.value = stageKey
   nextTick(() => stageInputRef.value?.focus())
@@ -284,7 +275,6 @@ function startEditTodo(todoId: string) {
   })
 }
 
-// ── 操作包装（调用父级回调） ──
 function handleAddStage() {
   const key = projectStages.addStage()
   nextTick(() => startEdit(key))
@@ -315,59 +305,65 @@ function handleRemoveTodo(stage: ProjectStage, id: string) {
   projectTodos.removeTodo(stage, id)
 }
 function handleToggleTodo(todo: ProjectTodo) {
-  // 阶段推进已经保存了包含本次勾选的完整草稿，普通勾选才需要单独保存。
   if (!projectTodos.toggleTodo(todo)) handleSaveTodos()
 }
 </script>
 
 <style scoped>
-/* 阶段 */
 .stages-section { flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 0; padding-bottom: 0; }
-.stages-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;
+.stages-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+/* ProjectInfoPanel's .section-label is scoped to that component, so stages must own the same
+   typography instead of accidentally falling back to browser <label> styling. */
+.stages-header .section-label {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  font-size: 10px; font-weight: 600; color: var(--content-secondary);
+  text-transform: uppercase; letter-spacing: .07em;
+}
+.stages-header .label-hint {
+  font-size: 10px; font-weight: 400; color: var(--content-tertiary);
+  text-transform: none; letter-spacing: 0;
 }
 .add-stage-btn {
-  background: none; border: none; font-size: 11px; font-weight: 600;
-  color: var(--color-primary); cursor: pointer; font-family: var(--font-sans);
-  padding: 0; text-transform: none; letter-spacing: 0;
+  background: none; border: none; padding: 0; cursor: pointer;
+  font: 600 11px var(--font-sans); color: var(--action-primary);
+  text-transform: none; letter-spacing: 0;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-.add-stage-btn:hover { opacity: 0.7; }
+.add-stage-btn:hover { color: var(--action-primary-hover); opacity: .78; }
 .stage-flow { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow-y: auto; padding: 2px 11px 4px 8px; margin-right: -3px; }
-
-.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity 0.15s; padding: 0 0 0 5px; margin-bottom: 2px; }
-.stage-node.stage-dragging { opacity: 0.15; pointer-events: none; transition: none; }
-
+.stage-node { display: flex; flex-direction: column; position: relative; cursor: grab; transition: opacity var(--motion-hover-control) var(--motion-ease-standard); padding: 0 0 0 5px; margin-bottom: 2px; }
+.stage-node.stage-dragging { opacity: .15; pointer-events: none; transition: none; }
 .node-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0; }
 .node-circle {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 1.5px solid rgba(90,95,120,0.35); background: rgba(0,0,0,0.08);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-  cursor: pointer; z-index: 1;
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; cursor: pointer; z-index: 1;
+  border: 1.5px solid var(--option-border); background: var(--option-bg);
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.stage-node.done .node-circle { background: var(--color-success); border-color: var(--color-success); }
+.stage-node.done .node-circle { background: var(--status-success); border-color: var(--status-success); }
 .stage-node.active .node-circle { border-color: transparent; }
-.stage-node.locked .node-circle { cursor: not-allowed; opacity: 0.7; }
-.stage-node.locked .node-label  { opacity: 0.6; }
-.node-num { font-size: 10px; font-weight: 700; color: #5a5f78; line-height: 1; }
-.stage-node.active .node-num { color: #fff; }
+.stage-node.locked .node-circle { cursor: not-allowed; opacity: .7; }
+.stage-node.locked .node-label { opacity: .6; }
+.node-num { font-size: 10px; font-weight: 700; color: var(--content-secondary); line-height: 1; }
+.stage-node.active .node-num { color: var(--content-on-accent); }
 .node-body { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.node-label { font-size: 13px; color: var(--text-primary); }
-.stage-node.done .node-label { color: var(--text-secondary); text-decoration: line-through; }
+.node-label { font-size: 13px; color: var(--content-primary); }
+.stage-node.done .node-label { color: var(--content-secondary); text-decoration: line-through; }
 .stage-node.active .node-label { font-weight: 600; }
-.todo-count { font-size: 10px; color: var(--text-secondary); opacity: 0.7; white-space: nowrap; }
+.todo-count { font-size: 10px; color: var(--content-tertiary); white-space: nowrap; }
 .stage-input {
-  font-size: 13px; font-family: var(--font-sans);
-  border: 1px solid rgba(123,127,178,0.4); border-radius: 6px; padding: 1px 6px;
-  background: rgba(255,255,255,0.5); outline: none; color: var(--text-primary); width: 110px;
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12);
-  transition: background 0.15s;
+  width: 110px; padding: 1px 6px; border-radius: var(--radius-xs); outline: none;
+  font: 13px var(--font-sans); color: var(--input-fg); background: var(--input-bg-focus);
+  border: 1px solid var(--input-border-focus); box-shadow: var(--input-focus-shadow);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.stage-input:hover, .stage-input:focus { background: rgba(255,255,255,0.75); }
+.stage-input:hover,
+.stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .del-stage {
-  background: none; border: none; cursor: pointer; color: var(--text-secondary);
-  opacity: 0; transition: opacity 0.15s; padding: 2px;
-  display: flex; align-items: center; flex-shrink: 0;
+  display: flex; align-items: center; flex-shrink: 0; padding: 2px;
+  background: none; border: none; cursor: pointer; color: var(--content-tertiary); opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.stage-node:hover .del-stage { opacity: 0.5; }
-.del-stage:hover { opacity: 1 !important; color: var(--color-warning); }
+.stage-node:hover .del-stage { opacity: .5; }
+.del-stage:hover { opacity: 1 !important; color: var(--danger-button-fg); }
 </style>

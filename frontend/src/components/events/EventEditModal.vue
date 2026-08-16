@@ -7,7 +7,7 @@
                       @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
     </div>
   </Transition>
-  <BaseModal v-if="!isFloating" :show="show" width="300px" background="rgba(255,255,255,0.9)" @close="close">
+  <BaseModal v-if="!isFloating" :show="show" width="300px" background="var(--modal-card-bg)" @close="close">
     <EventFormPanel :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
                     @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </BaseModal>
@@ -148,14 +148,20 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.eem-floating { position: fixed; box-sizing: border-box; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); }
+.eem-floating {
+  position: fixed; box-sizing: border-box; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain;
+  color: var(--content-primary); background: var(--popup-surface-bg);
+  backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur);
+  border: 1px solid var(--popup-surface-border); border-radius: var(--radius-lg);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+}
 .form-pop-enter-active {
-  transition: opacity var(--modal-enter-duration) var(--modal-enter-easing),
-              transform var(--modal-enter-duration) var(--modal-enter-easing);
+  transition: opacity var(--popup-enter-duration) var(--popup-enter-easing),
+              transform var(--popup-enter-duration) var(--popup-enter-easing);
 }
 .form-pop-leave-active {
-  transition: opacity var(--modal-leave-duration) var(--modal-leave-easing),
-              transform var(--modal-leave-duration) var(--modal-leave-easing);
+  transition: opacity var(--popup-leave-duration) var(--popup-leave-easing),
+              transform var(--popup-leave-duration) var(--popup-leave-easing);
 }
-.form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }
+.form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(.96) translateY(-2px); }
 </style>

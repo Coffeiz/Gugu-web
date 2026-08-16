@@ -1,8 +1,6 @@
 <template>
   <BaseModal :show="show" width="900px" height="600px" @close="$emit('close')">
     <div class="pm-layout">
-
-      <!-- 左侧导航栏 -->
       <div class="pm-nav panel-left">
         <div class="pm-user-block">
           <div class="pm-avatar" :class="{ uploading: avatarUploading }" @click="triggerAvatarUpload" title="点击更换头像">
@@ -21,88 +19,55 @@
         </div>
 
         <div class="pm-nav-divider"></div>
-
         <template v-for="item in navItems" :key="item.key">
           <div v-if="item.divider" class="pm-nav-divider"></div>
-          <button
-            v-else
-            class="pm-nav-item"
-            :class="{ active: activeNav === item.key }"
-            @click="item.key && (activeNav = item.key)"
-          >
+          <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
             <component :is="item.icon" :size="14" weight="bold" />
             {{ item.label }}
           </button>
         </template>
-
         <div class="pm-nav-spacer"></div>
-
         <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
           <PhUserMinus :size="13" weight="bold" />
           注销账号
         </button>
       </div>
 
-      <!-- 右侧内容区 -->
       <div class="pm-content">
         <div class="pm-content-header">
           <span class="pm-content-title">{{ currentNavLabel }}</span>
-          <button class="popup-close-btn" @click="$emit('close')">
-            <PhX :size="13" weight="bold" />
-          </button>
+          <button class="popup-close-btn" @click="$emit('close')"><PhX :size="13" weight="bold" /></button>
         </div>
-
         <div class="pm-content-body" ref="pmBodyRef">
-
           <KeepAlive>
-            <ProfileInfoPane
-              v-if="activeNav === 'info'"
-              :external-message="infoMsg"
-              :external-message-type="infoMsgType"
-            />
+            <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
             <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
           </KeepAlive>
-
-
-
         </div>
       </div>
     </div>
-
   </BaseModal>
 
-  <!-- 注销账号二次确认弹窗：不用 BaseModal——BaseModal 的卡片是「点哪个哪个置顶」(mousedown 领新 z)，
-       两个 BaseModal 叠着开会互相抢最顶层，点一下父面板就把它的 z 顶到这个弹窗之上（不是关闭，只是
-       盖住+蒙层还留着），得多点一次才能真正关掉。这里直接钉在 TOP_Z（跟 toast/拖拽克隆一个band，
-       "永远最顶层"），不参与常规窗口的抢位——不管父面板怎么点/怎么重新领 z，这层永远在最上面。 -->
   <Teleport to="body">
     <Transition name="pm-confirm">
     <div v-if="showDeleteAccount" class="pm-confirm-overlay" :style="{ zIndex: TOP_Z }" @click.self="closeDeleteAccount">
       <div class="pm-confirm-box">
         <p class="pm-confirm-title">确认注销账号？</p>
-        <p class="pm-confirm-desc">
-          账号及全部数据（项目、文件、日历、聊天记录、咕咕记忆等）将被<strong>永久删除</strong>，此操作不可恢复。
-        </p>
-        <input
-          v-model="deletePwd" type="password" class="form-input pm-confirm-input"
-          placeholder="输入密码确认" @keyup.enter="doDeleteAccount"
-        />
+        <p class="pm-confirm-desc">账号及全部数据（项目、文件、日历、聊天记录、咕咕记忆等）将被<strong>永久删除</strong>，此操作不可恢复。</p>
+        <input v-model="deletePwd" type="password" class="form-input pm-confirm-input" placeholder="输入密码确认" @keyup.enter="doDeleteAccount" />
         <p v-if="deleteErr" class="pm-msg err">{{ deleteErr }}</p>
         <div class="pm-confirm-actions">
           <button class="btn-cancel" @click="closeDeleteAccount">取消</button>
-          <button class="pm-danger-btn" :disabled="!deletePwd || deleting" @click="doDeleteAccount">
-            {{ deleting ? '注销中…' : '确认注销' }}
-          </button>
+          <button class="pm-danger-btn" :disabled="!deletePwd || deleting" @click="doDeleteAccount">{{ deleting ? '注销中…' : '确认注销' }}</button>
         </div>
       </div>
     </div>
     </Transition>
   </Teleport>
 
-  <!-- 头像裁切：选图后先方形裁切 + 降采样，只上传裁切结果（原图不出浏览器） -->
   <AvatarCropper :show="cropperShow" :file="cropFile" @close="closeCropper" @crop="onCropped" />
 </template>
 
@@ -123,24 +88,21 @@ import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, P
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
-
-const router     = useRouter()
-const authStore  = useAuthStore()
-
+const router = useRouter()
+const authStore = useAuthStore()
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
 const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
 
 const navItems = [
-  { key: 'info',    label: '个人信息', icon: PhUser },
+  { key: 'info', label: '个人信息', icon: PhUser },
   { key: 'account', label: '账号设置', icon: PhShieldCheck },
-  { key: 'prefs',   label: '偏好设置', icon: PhSliders },
+  { key: 'prefs', label: '偏好设置', icon: PhSliders },
   { divider: true },
-  { key: 'gugu',    label: '咕咕设置', icon: PhBird },
-  { key: 'im',      label: '接入咕咕', icon: PhChatsCircle },
+  { key: 'gugu', label: '咕咕设置', icon: PhBird },
+  { key: 'im', label: '接入咕咕', icon: PhChatsCircle },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
-
 const infoMsg = ref('')
 const infoMsgType = ref('ok')
 
@@ -154,11 +116,10 @@ watch(() => props.show, value => {
   }
 })
 
-// 头像上传：选图 → 方形裁切/降采样弹窗 → 只上传裁切结果
-const avatarInput    = ref<HTMLInputElement | null>(null)
+const avatarInput = ref<HTMLInputElement | null>(null)
 const avatarUploading = ref(false)
 const cropperShow = ref(false)
-const cropFile    = ref<File | null>(null)
+const cropFile = ref<File | null>(null)
 function triggerAvatarUpload() {
   if (avatarUploading.value) return
   avatarInput.value?.click()
@@ -166,7 +127,7 @@ function triggerAvatarUpload() {
 function onAvatarFile(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
-  input.value = ''   // 允许连续选同一文件再次触发 change
+  input.value = ''
   if (!file) return
   cropFile.value = file
   cropperShow.value = true
@@ -181,34 +142,27 @@ async function onCropped(cropped: File) {
   avatarUploading.value = true
   try {
     await authStore.uploadAvatar(cropped)
-    infoMsg.value     = '头像已更新'
+    infoMsg.value = '头像已更新'
     infoMsgType.value = 'ok'
   } catch (err) {
-    infoMsg.value     = (err as Error).message || '头像上传失败'
+    infoMsg.value = (err as Error).message || '头像上传失败'
     infoMsgType.value = 'err'
-    activeNav.value   = 'info'
+    activeNav.value = 'info'
   } finally {
     avatarUploading.value = false
   }
 }
 
-// 注销账号：需要密码二次确认，成功后清会话跳登录页（跟退出登录一样，但数据已经删了）
 const showDeleteAccount = ref(false)
 const deletePwd = ref('')
 const deleteErr = ref('')
 const deleting = ref(false)
-
-function openDeleteAccount() {
-  showDeleteAccount.value = true
-}
-
+function openDeleteAccount() { showDeleteAccount.value = true }
 function closeDeleteAccount() {
   showDeleteAccount.value = false
   deletePwd.value = ''
   deleteErr.value = ''
 }
-
-// ESC 关闭：本弹窗钉在 TOP_Z，开着时必然是最顶层，不用像 BaseModal 那样跟别的窗口比 z 才决定谁接 ESC
 function _onDeleteAccountKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') closeDeleteAccount()
 }
@@ -216,7 +170,6 @@ watch(showDeleteAccount, v => {
   if (v) document.addEventListener('keydown', _onDeleteAccountKeydown, true)
   else document.removeEventListener('keydown', _onDeleteAccountKeydown, true)
 })
-
 async function doDeleteAccount() {
   if (!deletePwd.value || deleting.value) return
   deleting.value = true
@@ -235,324 +188,175 @@ async function doDeleteAccount() {
 </script>
 
 <style>
-
-.pm-layout {
-  display: grid;
-  grid-template-columns: 210px 1fr;
-  height: 100%;
-}
-
-/* 左侧导航 — 与 AppSidebar 同风格 */
-.pm-nav {
-  display: flex; flex-direction: column;
-  padding: 20px 14px;
-  gap: 2px;
-}
-
-.pm-user-block {
-  display: flex; align-items: center; gap: 10px;
-  padding: 4px 6px 12px;
-}
+.pm-layout { display: grid; grid-template-columns: 210px 1fr; height: 100%; }
+.pm-nav { display: flex; flex-direction: column; padding: 20px 14px; gap: 2px; }
+.pm-user-block { display: flex; align-items: center; gap: 10px; padding: 4px 6px 12px; }
 .pm-avatar {
   width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #7ab8c8);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 16px; font-weight: 700; color: white;
-  position: relative; cursor: pointer; overflow: hidden;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.35);
+  background: linear-gradient(135deg,#7b7fb2,#7ab8c8); display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 700; color: white; position: relative; cursor: pointer; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(123,127,178,.35);
 }
-.pm-avatar-img {
-  width: 100%; height: 100%; object-fit: cover; border-radius: 50%;
-}
+.pm-avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
 .pm-avatar-overlay {
-  position: absolute; inset: 0; border-radius: 50%;
-  background: rgba(0,0,0,0.38);
-  display: flex; align-items: center; justify-content: center;
-  color: white; opacity: 0; transition: opacity 0.15s;
+  position: absolute; inset: 0; border-radius: 50%; background: rgba(0,0,0,.38);
+  display: flex; align-items: center; justify-content: center; color: white; opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
 .pm-avatar:hover .pm-avatar-overlay,
 .pm-avatar.uploading .pm-avatar-overlay { opacity: 1; }
-.pm-avatar-spin {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.3);
-  border-top-color: #fff;
-  animation: spin 0.7s linear infinite;
-}
+.pm-avatar-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .pm-user-info { min-width: 0; }
-.pm-name  { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pm-name { font-size: 13px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pm-email { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-.pm-nav-divider {
-  height: 1px;
-  margin: 6px 4px;
-}
-
+.pm-nav-divider { height: 1px; background: var(--divider-line); margin: 6px 4px; }
 .pm-nav-item {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 10px 12px; border-radius: var(--radius-sm);
-  border: 1px solid transparent; background: none;
-  font-size: 14px; font-family: var(--font-sans);
-  cursor: pointer; text-align: left;
-  transition: all 0.15s;
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
+  font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer; text-align: left;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-nav-item.active {
-  font-weight: 700;
-}
-
+.pm-nav-item:hover { background: var(--sidebar-item-hover); color: var(--content-primary); }
+.pm-nav-item.active { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); font-weight: 700; border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-active-shadow); }
 .pm-nav-spacer { flex: 1; }
-
 .pm-logout {
-  display: flex; align-items: center; gap: 9px;
-  padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid transparent;
-  cursor: pointer; font-size: 14px; font-family: var(--font-sans);
-  background: none; width: 100%;
-  transition: all 0.15s;
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
+  font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
+.pm-logout:hover,
+.pm-logout.pm-danger-nav:hover { background: var(--danger-button-bg); color: var(--danger-button-fg); border-color: var(--danger-button-border); }
 
-/* 注销账号二次确认弹窗——视觉上照抄 BaseModal 的 .bm-overlay/.bm-card（背景/模糊/边框/阴影），
-   但不用 BaseModal 本体：BaseModal 卡片自带「点击置顶」，两个 BaseModal 叠着会抢 z，见上方模板注释 */
 .pm-confirm-overlay {
-  position: fixed; inset: 0;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  display: flex; align-items: center; justify-content: center;
-  padding: 24px;
+  position: fixed; inset: 0; background: var(--modal-overlay-bg); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .pm-confirm-box {
-  width: 100%; max-width: 380px; padding: 22px;
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid transparent; border-radius: 20px;
-  display: flex; flex-direction: column; gap: 12px;
+  width: 100%; max-width: 380px; padding: 22px; display: flex; flex-direction: column; gap: 12px;
+  background: var(--modal-card-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--modal-card-border); border-radius: var(--radius-lg);
+  box-shadow: var(--modal-card-shadow), inset 0 1px 0 var(--modal-card-highlight);
 }
-
-/* 进场淡入淡出——照抄 BaseModal 的「玻璃 ramp」原理（机制见 BaseModal.vue 过渡段注释）：
-   进场绝不能动 opacity（会形成半透明隔离组，backdrop-filter 在动画期间采不到身后内容，
-   看起来像「淡入完才突然糊上」），改成遮罩的压暗/模糊、卡片的模糊半径本身从 0 ramp 到满值；
-   离场简单得多、直接 opacity 淡出即可（关闭瞬间模糊失效会被同步的淡出盖住，肉眼不可察）。
-   这里不用像 BaseModal 那样借 global.css——overlay 和 card 都在本组件同一个 scope 里，
-   scoped 的后代选择器直接够得到，不用全局规则。 */
-.pm-confirm-enter-active {
-  transition: background-color var(--modal-enter-duration) var(--modal-enter-easing),
-              backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
-              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
-}
-.pm-confirm-enter-from { background-color: rgba(20,22,30,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
-.pm-confirm-enter-active .pm-confirm-box {
-  transition: backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing),
-              -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing);
-}
-.pm-confirm-enter-from .pm-confirm-box { backdrop-filter: blur(0px) !important; -webkit-backdrop-filter: blur(0px) !important; }
+.pm-confirm-enter-active { transition: background-color var(--modal-enter-duration) var(--modal-enter-easing), backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing), -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing); }
+.pm-confirm-enter-from { background-color: transparent; backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); }
+.pm-confirm-enter-active .pm-confirm-box { transition: backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing), -webkit-backdrop-filter var(--modal-enter-duration) var(--modal-enter-easing); }
+.pm-confirm-enter-from .pm-confirm-box { backdrop-filter: blur(0) !important; -webkit-backdrop-filter: blur(0) !important; }
 .pm-confirm-leave-active { transition: opacity var(--modal-leave-duration) var(--modal-leave-easing); }
 .pm-confirm-leave-to { opacity: 0; }
-
-.pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0; }
-.pm-confirm-desc { font-size: 12.5px; line-height: 1.6; color: var(--text-secondary); margin: 0; }
+.pm-confirm-title { font-size: 15px; font-weight: 700; color: var(--content-primary); margin: 0; }
+.pm-confirm-desc { font-size: 12.5px; line-height: 1.6; color: var(--content-secondary); margin: 0; }
+.pm-confirm-desc strong { color: var(--status-danger); }
 .pm-confirm-input { width: 100%; box-sizing: border-box; }
 .pm-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
 .btn-cancel {
-  padding: 7px 16px; border-radius: 8px; border: 1px solid transparent;
-  font-size: 13px;
-  font-family: var(--font-sans); cursor: pointer; transition: all 0.15s;
+  padding: 7px 16px; border-radius: var(--radius-sm); border: 1px solid var(--control-border);
+  background: var(--control-bg); color: var(--control-fg); font: 13px var(--font-sans); cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
+.btn-cancel:hover { background: var(--control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 
-/* 右侧内容 */
-.pm-content {
-  display: flex; flex-direction: column; min-height: 0;
-  backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-}
-
-.pm-content-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 20px 26px 16px;
-  border-bottom: 1px solid transparent; flex-shrink: 0;
-}
-.pm-content-title { font-size: 16px; font-weight: 700; color: var(--text-primary); }
-
+.pm-content { display: flex; flex-direction: column; min-height: 0; background: var(--panel-content-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: inset 0 1px 0 var(--panel-glass-highlight); }
+.pm-content-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 26px 16px; border-bottom: 1px solid var(--panel-divider); flex-shrink: 0; }
+.pm-content-title { font-size: 16px; font-weight: 700; color: var(--content-primary); }
 .pm-content-body { flex: 1; overflow-y: auto; padding: 6px 0; scrollbar-gutter: auto; }
-
 .pm-section { padding: 20px 26px; display: flex; flex-direction: column; gap: 14px; }
-.pm-section-label {
-  font-size: 11px; font-weight: 700; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 2px;
-}
-.pm-sep { height: 1px; margin: 0 26px; }
-
-.pm-field {
-  display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 14px;
-}
-.pm-field label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-
-.pm-field-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-}
+.pm-section-label { font-size: 11px; font-weight: 700; color: var(--content-secondary); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 2px; }
+.pm-sep { height: 1px; background: var(--panel-divider); margin: 0 26px; }
+.pm-field { display: grid; grid-template-columns: 80px 1fr; align-items: center; gap: 14px; }
+.pm-field label { font-size: 13px; font-weight: 600; color: var(--content-primary); }
+.pm-field-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .pm-field-desc { display: flex; flex-direction: column; gap: 2px; }
-.pm-field-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.pm-field-hint { font-size: 12px; color: var(--text-secondary); }
+.pm-field-name { font-size: 13px; font-weight: 600; color: var(--content-primary); }
+.pm-field-hint { font-size: 12px; color: var(--content-secondary); }
+.form-input.modified { border-color: var(--action-outline); }
+.pm-uid { color: var(--content-secondary); }
+.pm-static { font-size: 13px; color: var(--content-secondary); padding: 7px 2px; }
+.pm-coming { font-size: 11px; font-weight: 600; color: var(--content-disabled); background: var(--surface-soft); padding: 3px 10px; border-radius: var(--radius-pill); }
 
-.pm-uid { color: var(--text-secondary); }
-.pm-static {
-  font-size: 13px; color: var(--text-secondary); padding: 7px 2px;
-}
-.pm-coming {
-  font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px;
-}
-
-.pm-style-group {
-  display: flex; gap: 4px; flex-shrink: 0;
-}
+.pm-style-group { display: flex; gap: 4px; flex-shrink: 0; }
 .pm-style-chip {
-  padding: 4px 11px; border-radius: 20px; border: 1px solid rgba(0,0,0,0.1);
-  background: transparent; font-size: 12px; font-weight: 500;
-  color: var(--text-secondary); cursor: pointer; font-family: var(--font-sans);
-  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  padding: 4px 11px; border-radius: var(--choice-chip-radius); border: 1px solid var(--choice-chip-border);
+  background: var(--choice-chip-bg); color: var(--choice-chip-fg); font: 500 12px var(--font-sans); cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-style-chip:hover { background: rgba(123,127,178,0.08); color: var(--text-primary); }
-.pm-style-chip.active {
-  background: rgba(123,127,178,0.14); border-color: rgba(123,127,178,0.4);
-  color: var(--color-primary); font-weight: 600;
-}
+.pm-style-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
+.pm-style-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
 
-/* 飞书绑定 */
 .pm-bind-btn {
-  padding: 6px 16px; border-radius: 8px; border: none;
-  font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
-  transition: opacity 0.15s, transform 0.15s;
+  padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
+  font: 600 12px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card);
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-bind-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
-.pm-bind-btn:disabled { opacity: 0.4; cursor: default; }
+.pm-bind-btn:hover:not(:disabled) { opacity: .9; transform: translateY(-1px); }
+.pm-bind-btn:disabled { opacity: .4; cursor: default; }
 .pm-danger-btn {
-  padding: 6px 16px; border-radius: 8px; border: none;
-  font-size: 12px; font-weight: 600; font-family: var(--font-sans); cursor: pointer;
-  transition: opacity 0.15s, transform 0.15s;
+  padding: 6px 16px; border-radius: var(--danger-button-radius); border: 1px solid var(--danger-button-border);
+  background: var(--danger-button-bg); color: var(--danger-button-fg); box-shadow: var(--danger-button-shadow);
+  font: 600 12px var(--font-sans); cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-danger-btn:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
-.pm-danger-btn:disabled { opacity: 0.4; cursor: default; }
-.pm-bind-btn.off {
-  background: transparent;
-  border: 1px solid transparent;
-}
-.pm-qr-box {
-  margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 16px; border: 1px solid transparent; border-radius: 12px;
-}
-.pm-qr-canvas { border-radius: 8px; background: #fff; }
-.pm-qr-hint { font-size: 12px; color: var(--text-secondary); text-align: center; }
-.pm-qr-hint a { font-weight: 600; }
+.pm-danger-btn:hover:not(:disabled) { background: var(--danger-button-bg-hover); border-color: var(--danger-button-border-hover); }
+.pm-danger-btn:disabled { opacity: .4; cursor: default; }
+.pm-bind-btn.off { background: var(--control-bg); color: var(--control-fg); border: 1px solid var(--control-border); box-shadow: none; }
+.pm-qr-box { margin-top: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 16px; background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); border-radius: var(--radius-md); }
+.pm-qr-canvas { border-radius: var(--radius-sm); background: #fff; }
+.pm-qr-hint { font-size: 12px; color: var(--content-secondary); text-align: center; }
+.pm-qr-hint a { color: var(--action-primary); font-weight: 600; }
 
-/* QQ BYO：机器人列表 + 表单 */
-.pm-bot-item {
-  margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
-  padding: 9px 12px; border-radius: 10px;
-  border: 1px solid transparent;
-}
+.pm-bot-item { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 9px 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
 .pm-bot-item-top { display: flex; align-items: center; gap: 10px; }
-.pm-bot-group-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid transparent;
-}
+.pm-bot-group-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--panel-divider); }
 .pm-bot-group-row .pm-field-desc { flex: 1; min-width: 0; }
 .pm-bot-tools-row { align-items: center; }
-.pm-tool-options {
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  max-width: 58%;
-}
+.pm-tool-options { justify-content: flex-end; flex-wrap: wrap; max-width: 58%; }
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.pm-bot-name { font-size: 13px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; }
-.pm-bot-tag { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px; }
-.pm-bot-appid { font-size: 11px; color: var(--text-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* 开关按钮：和「定时任务」页同一套 .switch/.slider（checkbox 原生开关，样式统一）——
-   之前自己另起一套纯色文字块（.pm-mini-toggle）没有 hover 反馈，看起来像静态标签，
-   是用户反馈"看不出能点"的根因；现在跟全站已验证过的开关视觉保持一致 */
+.pm-bot-name { font-size: 13px; font-weight: 600; color: var(--content-primary); display: flex; align-items: center; gap: 6px; }
+.pm-bot-tag { font-size: 10px; font-weight: 600; color: var(--status-warning); background: var(--status-warning-bg); padding: 1px 6px; border-radius: var(--radius-xs); }
+.pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
-.pm-switch-label { font-size: 11px; color: var(--text-secondary); }
-.pm-switch-label.on { color: var(--color-primary); font-weight: 600; }
-
+.pm-switch-label { font-size: 11px; color: var(--content-secondary); }
+.pm-switch-label.on { color: var(--action-primary); font-weight: 600; }
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
 .switch.sm { width: 32px; height: 19px; }
 .switch input { opacity: 0; width: 0; height: 0; }
-.switch .slider { position: absolute; inset: 0; border-radius: 22px; transition: 0.2s; cursor: pointer; }
-.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; border-radius: 50%; transition: 0.2s; }
+.switch .slider { position: absolute; inset: 0; background: var(--switch-track-bg); border-radius: 22px; transition: background-color var(--motion-hover-control) var(--motion-ease-standard); cursor: pointer; }
+.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: var(--switch-thumb-bg); border-radius: 50%; transition: transform var(--motion-hover-control) var(--motion-ease-standard); }
 .switch.sm .slider::before { height: 13px; width: 13px; }
-.switch input:checked + .slider { background: var(--color-primary); }
+.switch input:checked + .slider { background: var(--switch-track-bg-active); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch.sm input:checked + .slider::before { transform: translateX(13px); }
-
-.pm-bot-del { flex-shrink: 0; font-size: 12px; color: #c05050; background: none; border: none; cursor: pointer; }
-.pm-add-bot {
-  margin-top: 8px; width: 100%; padding: 8px; border-radius: 9px; cursor: pointer;
-  font-size: 13px; color: var(--text-secondary);
-  border: 1px dashed transparent; background: none;
-}
-.pm-bot-form {
-  margin-top: 8px; display: flex; flex-direction: column; gap: 8px;
-  padding: 12px; border-radius: 10px; border: 1px solid transparent;
-}
-.pm-bot-input {
-  width: 100%; padding: 8px 11px; border-radius: 8px; font-size: 13px;
-  border: 1px solid transparent; outline: none;
-}
-.pm-bot-check { font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.pm-bot-del { flex-shrink: 0; font-size: 12px; color: var(--status-danger); background: none; border: none; cursor: pointer; }
+.pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
+.pm-add-bot:hover { color: var(--action-primary); border-color: var(--action-outline); }
+.pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
+.pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; }
+.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.pm-bot-check { font-size: 12px; color: var(--content-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
-.pm-text-link {
-  margin-top: 8px; background: none; border: none; cursor: pointer;
-  font-size: 12px; color: var(--text-secondary); text-decoration: underline; padding: 0;
-}
-.pm-qr-cancel {
-  font-size: 12px; color: var(--text-secondary); background: none; border: none;
-  cursor: pointer; text-decoration: underline;
-}
-.pm-qr-err { margin-top: 10px; font-size: 12px; }
-
-.pm-footer {
-  display: flex; align-items: center; justify-content: flex-end;
-  gap: 8px; padding-top: 4px;
-}
+.pm-text-link { margin-top: 8px; background: none; border: none; cursor: pointer; font-size: 12px; color: var(--content-secondary); text-decoration: underline; padding: 0; }
+.pm-text-link:hover { color: var(--action-primary); }
+.pm-qr-cancel { font-size: 12px; color: var(--content-secondary); background: none; border: none; cursor: pointer; text-decoration: underline; }
+.pm-qr-err { margin-top: 10px; font-size: 12px; color: var(--status-danger); }
+.pm-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .pm-msg { font-size: 12px; margin-right: auto; }
+.pm-msg.ok { color: var(--status-success); }
+.pm-msg.err { color: var(--status-danger); }
+.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card); transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-save-btn:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
+.pm-save-btn:disabled { opacity: .35; cursor: default; transform: none; }
 
-.pm-save-btn {
-  padding: 7px 22px; border-radius: 8px; border: none;
-  font-size: 13px; font-weight: 600;
-  font-family: var(--font-sans); cursor: pointer;
-  transition: opacity 0.15s, transform 0.15s;
-}
-.pm-save-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
-.pm-save-btn:disabled { opacity: 0.35; cursor: default; transform: none; }
-
-/* 精力值 */
 .pm-quota-skeleton { display: flex; flex-direction: column; gap: 14px; }
-.pm-qs-pct {
-  width: 30px; height: 13px; border-radius: 6px;
-  background: linear-gradient(90deg, rgba(123,127,178,0.10) 25%, rgba(123,127,178,0.22) 50%, rgba(123,127,178,0.10) 75%);
-  background-size: 200% 100%;
-  animation: pm-shimmer 1.4s ease-in-out infinite;
-}
-.pm-qs-fill {
-  height: 100%; width: 0%; border-radius: 99px;
-  background: linear-gradient(90deg, rgba(123,127,178,0.18) 25%, rgba(123,127,178,0.35) 50%, rgba(123,127,178,0.18) 75%);
-  background-size: 200% 100%;
-  animation: pm-shimmer 1.4s ease-in-out infinite;
-}
-@keyframes pm-shimmer {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
+.pm-qs-pct { width: 30px; height: 13px; border-radius: 6px; background: linear-gradient(90deg,var(--surface-soft) 25%,var(--selection-bg) 50%,var(--surface-soft) 75%); background-size: 200% 100%; animation: pm-shimmer 1.4s ease-in-out infinite; }
+.pm-qs-fill { height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg,var(--surface-soft) 25%,var(--selection-bg) 50%,var(--surface-soft) 75%); background-size: 200% 100%; animation: pm-shimmer 1.4s ease-in-out infinite; }
+@keyframes pm-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 .pm-quota-item { display: flex; flex-direction: column; gap: 6px; }
 .pm-quota-row { display: flex; align-items: center; justify-content: space-between; }
-.pm-quota-label { font-size: 13px; font-weight: 600; color: var(--text-primary); }
-.pm-quota-pct { font-size: 12px; font-weight: 600; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.pm-quota-bar {
-  height: 6px; border-radius: 99px;
-  overflow: hidden;
-}
-.pm-quota-fill {
-  height: 100%; border-radius: 99px;
-  transition: width 0.5s cubic-bezier(0.22,1,0.36,1);
-  min-width: 2px;
-}
+.pm-quota-label { font-size: 13px; font-weight: 600; color: var(--content-primary); }
+.pm-quota-pct { font-size: 12px; font-weight: 600; color: var(--content-secondary); font-variant-numeric: tabular-nums; }
+.pm-quota-pct.pct-warn { color: var(--status-warning); }
+.pm-quota-pct.pct-danger { color: var(--status-danger); }
+.pm-quota-bar { height: 6px; border-radius: 99px; background: var(--surface-soft); overflow: hidden; }
+.pm-quota-fill { height: 100%; border-radius: 99px; transition: width .5s var(--motion-ease-enter); min-width: 2px; }
 </style>

@@ -12,7 +12,6 @@ html[data-theme][data-family] :is(
   .tpl-name-input,
   .np-todo-input,
   .drp-input,
-  .pm-bot-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ) {
   color: var(--input-fg);
@@ -36,7 +35,6 @@ html[data-theme][data-family] :is(
   .tpl-name-input,
   .np-todo-input,
   .drp-input,
-  .pm-bot-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ):hover:not(:disabled) {
   background: var(--input-bg-hover);
@@ -54,7 +52,6 @@ html[data-theme][data-family] :is(
   .tpl-name-input,
   .np-todo-input,
   .drp-input,
-  .pm-bot-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ):focus {
   outline: none;
@@ -74,7 +71,6 @@ html[data-theme][data-family] :is(
   .tpl-name-input,
   .np-todo-input,
   .drp-input,
-  .pm-bot-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 )::placeholder {
   color: var(--input-placeholder);

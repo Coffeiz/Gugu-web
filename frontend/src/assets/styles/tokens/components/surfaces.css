@@ -39,43 +39,51 @@
   --popup-enter-easing: var(--motion-ease-enter);
   --popup-leave-easing: var(--motion-ease-standard);
 
-  /* Text / date / project form fields. Keep geometry in the consuming component and share only
-     theme-sensitive paint + interaction so existing compact/large inputs preserve their layout. */
+  /* Inputs are controls, not glass panel edges. Aero light intentionally gives panels a white
+     border; deriving field borders from content/action semantics keeps the old neutral outline. */
   --input-bg: var(--surface-raised);
   --input-bg-hover: color-mix(in srgb,var(--surface-raised) 88%,var(--surface-glass-hover));
   --input-bg-focus: var(--surface-floating);
   --input-fg: var(--content-primary);
   --input-placeholder: var(--content-tertiary);
-  --input-border: var(--border-default);
-  --input-border-hover: var(--border-hover);
+  --input-border: color-mix(in srgb,var(--content-primary) 11%,transparent);
+  --input-border-hover: var(--action-outline);
   --input-border-focus: var(--border-focus);
   --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
   --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-sm);
 
-  /* Rectangular selectable options (project status/template/stage actions). Choice pills below
-     remain the capsule contract; both resolve from the same semantic action/surface roles. */
   --option-bg: var(--surface-soft);
   --option-bg-hover: var(--surface-soft-hover);
   --option-bg-active: var(--selection-bg);
   --option-fg: var(--content-secondary);
   --option-fg-hover: var(--content-primary);
   --option-fg-active: var(--selection-fg);
-  --option-border: var(--border-default);
+  --option-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --option-border-hover: var(--action-outline);
   --option-border-active: var(--action-outline);
   --option-shadow: none;
 
+  /* Preserve the original light multi-choice pill: transparent surface + neutral outline. */
   --choice-chip-bg: transparent;
   --choice-chip-bg-hover: var(--action-soft);
   --choice-chip-bg-active: var(--selection-bg);
   --choice-chip-fg: var(--content-secondary);
   --choice-chip-fg-hover: var(--content-primary);
   --choice-chip-fg-active: var(--selection-fg);
-  --choice-chip-border: var(--border-default);
+  --choice-chip-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --choice-chip-border-hover: var(--action-outline);
   --choice-chip-border-active: var(--action-outline);
   --choice-chip-radius: var(--radius-pill);
+
+  /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
+  --danger-button-bg: var(--status-danger-bg);
+  --danger-button-bg-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-fg: var(--status-danger);
+  --danger-button-border: color-mix(in srgb,var(--status-danger) 30%,transparent);
+  --danger-button-border-hover: color-mix(in srgb,var(--status-danger) 48%,transparent);
+  --danger-button-shadow: none;
+  --danger-button-radius: var(--radius-sm);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 18%,transparent);
   --switch-track-bg-active: var(--action-primary);
@@ -84,20 +92,15 @@
   --subpanel-bg: var(--surface-soft);
   --subpanel-border: var(--border-subtle);
 
-  /* Runtime owns proxy geometry/motion; the host theme owns the visual glass values. Runtime's
-     legacy inline light glass is overridden only on the proxy content root through this contract. */
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 72%,transparent);
   --runtime-drag-glass-border: var(--border-strong);
   --runtime-drag-glass-filter: blur(12px) saturate(1.15);
   --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
 
-  /* Actual overlay scrollbars and the native preview use the same hover cadence. */
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
 html[data-theme='dark'][data-family] {
-  /* A dark raised surface is too close to the track; use a soft light-neutral thumb without
-     reintroducing the pure-white modal highlight problem this pass is removing. */
   --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
   --runtime-drag-glass-border: var(--border-hover);
