@@ -37,9 +37,20 @@
   --mind-picker-border: var(--popup-border);
   --mind-picker-shadow: var(--popup-shadow);
 
+  /* Canvas connection affordances. All canvas cards intentionally share radius-md; the outside
+     dashed outline adds its offset to that radius so the expanded curve stays concentric. */
+  --mind-canvas-card-radius: var(--radius-md);
+  --mind-connection-outline-offset: 4px;
+  --mind-connection-outline-width: 2px;
+  --mind-connection-outline: rgba(123,127,178,.60);
+  --mind-connection-dot-bg: var(--color-primary);
+  --mind-connection-dot-border: rgba(255,255,255,.95);
+  --mind-connection-dot-shadow: 0 1px 4px rgba(30,35,60,.25);
+  --mind-connection-dot-ring: rgba(123,127,178,.22);
+  --mind-connection-dot-muted-opacity: .38;
+
   /* Canvas semantic relation colours. */
   --mind-relation-line: rgba(104,111,164,.35);
-  --mind-relation-line-highlight: rgba(123,127,178,.9);
   --mind-relation-line-draft: rgba(123,127,178,.85);
   --mind-relation-line-danger: rgba(200,90,90,.8);
 }
@@ -59,11 +70,16 @@ html[data-theme='dark'][data-family] {
   --capture-bg: color-mix(in srgb,var(--surface-base) 88%,transparent);
   --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
 
-  /* Starting a new connection marks all existing relations of the origin node as highlighted.
-     Keep that interaction state chromatically neutral on dark canvas so dragging one line does not
-     flash every already-existing relation attached to the card. The draft line remains distinct. */
+  /* Connection feedback keeps enough contrast on dark surfaces without falling back to a white
+     ring. Existing relations stay neutral; only the draft/outline/active port are emphasized. */
+  --mind-connection-outline: color-mix(in srgb,var(--action-primary) 58%,var(--content-secondary));
+  --mind-connection-dot-bg: color-mix(in srgb,var(--action-primary) 88%,var(--content-primary));
+  --mind-connection-dot-border: var(--surface-card-solid);
+  --mind-connection-dot-shadow: 0 1px 5px rgba(0,0,0,.45);
+  --mind-connection-dot-ring: color-mix(in srgb,var(--action-primary) 34%,transparent);
+  --mind-connection-dot-muted-opacity: .58;
+
   --mind-relation-line: color-mix(in srgb,var(--content-secondary) 42%,transparent);
-  --mind-relation-line-highlight: var(--mind-relation-line);
   --mind-relation-line-draft: color-mix(in srgb,var(--action-primary) 68%,var(--content-secondary));
   --mind-relation-line-danger: color-mix(in srgb,var(--status-danger) 72%,var(--content-secondary));
 }
