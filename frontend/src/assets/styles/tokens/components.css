@@ -50,7 +50,7 @@
   --sidebar-border: var(--border-default);
   --sidebar-highlight: var(--theme-highlight-side);
   --sidebar-label-fg: var(--content-secondary);
-  --sidebar-item-fg: color-mix(in srgb,var(--content-primary) 76%,var(--content-secondary));
+  --sidebar-item-fg: var(--color-muted);
   --sidebar-item-hover: var(--action-soft);
   --sidebar-item-active: var(--theme-sidebar-active-bg);
   --sidebar-item-active-fg: var(--theme-sidebar-active-fg);

@@ -8,6 +8,11 @@ html[data-theme][data-family] .tl-col {
   --glass-card-border: var(--border-default);
   --glass-card-shadow: var(--card-shadow);
 }
+html[data-theme][data-family] .tl-col.dragging {
+  background: var(--glass-card-background-hover);
+  border-color: var(--glass-card-border-hover);
+  box-shadow: var(--glass-card-shadow-hover);
+}
 html[data-theme][data-family] .tl-count {
   color: var(--content-secondary);
   background: var(--action-soft);

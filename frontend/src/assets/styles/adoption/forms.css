@@ -11,7 +11,6 @@ html[data-theme][data-family] :is(
   .stage-input,
   .tpl-name-input,
   .np-todo-input,
-  .drp-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 ) {
   color: var(--input-fg);
@@ -25,22 +24,9 @@ html[data-theme][data-family] :is(
     color var(--motion-hover-control) var(--motion-ease-standard);
 }
 
-html[data-theme][data-family] :is(
-  .form-input,
-  .title-edit-input,
-  .rename-input-inline,
-  .header-name-input,
-  .field-input,
-  .stage-input,
-  .tpl-name-input,
-  .np-todo-input,
-  .drp-input,
-  .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
-):hover:not(:disabled) {
-  background: var(--input-bg-hover);
-  border-color: var(--input-border-hover);
-  box-shadow: var(--input-hover-shadow);
-}
+/* .drp-input 已从这些列表移除：DateSpanPicker.vue scoped 直接消费 --input-*（与
+   DatePicker/TimeInput 同一契约）。它是 div 不触发 :focus，adoption 的 :hover
+   特异度又高于 scoped 的 .open 态，留着会覆盖展开态描边。 */
 
 html[data-theme][data-family] :is(
   .form-input,
@@ -51,9 +37,27 @@ html[data-theme][data-family] :is(
   .stage-input,
   .tpl-name-input,
   .np-todo-input,
-  .drp-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
-):focus {
+):hover:not(:disabled) {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
+}
+
+/* focus 规则必须与 hover 规则同特异度并靠源顺序取胜（都带 :not(:disabled)）；
+   否则输入框聚焦后鼠标悬停时 hover 规则压掉 focus 描边，表现为
+   "悬停时选中描边消失"。 */
+html[data-theme][data-family] :is(
+  .form-input,
+  .title-edit-input,
+  .rename-input-inline,
+  .header-name-input,
+  .field-input,
+  .stage-input,
+  .tpl-name-input,
+  .np-todo-input,
+  .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
+):focus:not(:disabled) {
   outline: none;
   color: var(--input-fg);
   background: var(--input-bg-focus);
@@ -70,7 +74,6 @@ html[data-theme][data-family] :is(
   .stage-input,
   .tpl-name-input,
   .np-todo-input,
-  .drp-input,
   .bm-card .field > input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color'])
 )::placeholder {
   color: var(--input-placeholder);

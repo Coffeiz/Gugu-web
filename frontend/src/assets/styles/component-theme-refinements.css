@@ -145,14 +145,17 @@ html[data-theme][data-family] .cap-row:hover .cap-capsule {
     inset 0 0 0 100px var(--calendar-capsule-hover-overlay),
     var(--elevation-card);
 }
-html[data-theme][data-family] .cal-page .chip-proj-tag,
-html[data-theme][data-family] .cal-page .bar-proj-tag,
-html[data-theme][data-family] .cal-sidebar .cap-tag-proj {
+/* 胶囊 tag 的 token 染色只服务暗色。亮色下这些 tag 有自己的浅色设计
+   （半透白项目 tag / 金底活动 tag，见 Calendar/MonthGrid/WeekTimeline scoped），
+   统一压成 selection/warning token 会把亮色 tag 变成深色块。 */
+html[data-theme='dark'][data-family] .cal-page .chip-proj-tag,
+html[data-theme='dark'][data-family] .cal-page .bar-proj-tag,
+html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-proj {
   color: var(--selection-fg) !important;
   background: var(--selection-bg) !important;
 }
-html[data-theme][data-family] .cal-page .chip-ev-tag,
-html[data-theme][data-family] .cal-sidebar .cap-tag-ev {
+html[data-theme='dark'][data-family] .cal-page .chip-ev-tag,
+html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-ev {
   color: var(--status-warning) !important;
   background: var(--status-warning-bg) !important;
 }

@@ -6,25 +6,9 @@ html[data-theme][data-family] .drp-popup {
   border-color: var(--popup-border);
   box-shadow: var(--popup-shadow), inset 0 1px 0 var(--modal-card-highlight);
 }
-html[data-theme][data-family] .drp-input {
-  color: var(--input-fg);
-  background: var(--input-bg);
-  border-color: var(--input-border);
-  transition:
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
-    background-color var(--motion-hover-control) var(--motion-ease-standard);
-}
-html[data-theme][data-family] .drp-input:hover {
-  border-color: var(--input-border-hover);
-  box-shadow: var(--input-hover-shadow);
-}
-html[data-theme][data-family] :is(.drp-input.placeholder span, .drp-icon, .drp-end-placeholder) {
-  color: var(--input-placeholder);
-}
-html[data-theme][data-family] .drp-period,
-html[data-theme][data-family] .drp-day,
-html[data-theme][data-family] .drp-year-btn {
+/* .drp-input 的输入框样式由 DateSpanPicker.vue scoped 直接消费 --input-* token
+   （与 DatePicker/TimeInput 同一契约），这里不再重复覆盖。 */
+html[data-theme][data-family] :is(.drp-period, .drp-day, .drp-year-btn) {
   color: var(--content-primary);
 }
 html[data-theme][data-family] :is(.drp-icon, .drp-nav, .drp-hint, .drp-wh, .drp-clear) {

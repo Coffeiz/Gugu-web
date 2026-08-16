@@ -54,21 +54,10 @@ html[data-theme][data-family] .event-form-body .popup-delete:hover {
   border-color: var(--status-warning);
 }
 
-html[data-theme][data-family] .event-form-body .popup-input,
-html[data-theme][data-family] .event-form-body .popup-textarea,
-html[data-theme][data-family] .event-form-body .time-box,
-html[data-theme][data-family] .event-form-body .lead-select {
-  color: var(--content-primary);
-  background: var(--control-bg);
-  border-color: var(--control-border);
-}
-html[data-theme][data-family] .event-form-body .popup-input:focus,
-html[data-theme][data-family] .event-form-body .popup-textarea:focus,
-html[data-theme][data-family] .event-form-body .time-box:focus-within {
-  background: var(--control-bg-hover);
-  border-color: var(--border-focus);
-  box-shadow: var(--control-focus-shadow);
-}
+/* 输入框/时间框的 token 化已由 EventFormFields.vue scoped 与 TimeInput.vue
+   直接消费 --input-* 完成（两主题同值），这里不再重复覆盖——此前本层用
+   --control-border 覆盖 scoped，glass 亮色下是纯白描边，正是活动弹窗
+   亮色输入框"看不见描边"的回归来源。 */
 html[data-theme][data-family] .event-form-body .time-dash,
 html[data-theme][data-family] .event-form-body .allday-toggle,
 html[data-theme][data-family] .event-form-body .reminder-label { color: var(--content-secondary); }

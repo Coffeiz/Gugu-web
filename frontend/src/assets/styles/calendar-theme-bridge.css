@@ -9,11 +9,13 @@ html[data-theme][data-family] .cal-ctx-menu {
 }
 html[data-theme][data-family] .overflow-popup .overflow-popup-title { color: var(--content-secondary); }
 html[data-theme='dark'][data-family] .overflow-popup .overflow-item { color: var(--content-primary) !important; }
-html[data-theme][data-family] .overflow-popup .overflow-tag {
+/* 「更多」浮层的项目/活动 tag 与胶囊 tag 同规则：仅暗色染色，
+   亮色保留 CalendarMorePopup scoped 的浅色 tag 设计。 */
+html[data-theme='dark'][data-family] .overflow-popup .overflow-tag {
   color: var(--selection-fg);
   background: var(--selection-bg);
 }
-html[data-theme][data-family] .overflow-popup .overflow-tag-ev {
+html[data-theme='dark'][data-family] .overflow-popup .overflow-tag-ev {
   color: var(--status-warning);
   background: var(--status-warning-bg);
 }
@@ -23,14 +25,16 @@ html[data-theme][data-family] .cal-ctx-menu .popup-menu-item {
 }
 html[data-theme][data-family] .cal-ctx-menu .popup-menu-item:hover { background: var(--action-soft); }
 
-html[data-theme][data-family] .cal-sidebar .ev-proj-badge,
-html[data-theme][data-family] .cal-sidebar .cap-tag-proj {
+/* 侧栏 tag/badge 染色同 component-theme-refinements 的胶囊 tag：仅暗色生效，
+   亮色保留 CalendarSidebar scoped 的浅色徽标设计。 */
+html[data-theme='dark'][data-family] .cal-sidebar .ev-proj-badge,
+html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-proj {
   color: var(--selection-fg) !important;
   background: var(--selection-bg);
   border-color: var(--action-outline);
 }
-html[data-theme][data-family] .cal-sidebar .ev-event-badge,
-html[data-theme][data-family] .cal-sidebar .cap-tag-ev {
+html[data-theme='dark'][data-family] .cal-sidebar .ev-event-badge,
+html[data-theme='dark'][data-family] .cal-sidebar .cap-tag-ev {
   color: var(--status-warning);
   background: var(--status-warning-bg);
   border-color: color-mix(in srgb,var(--status-warning) 34%,transparent);
