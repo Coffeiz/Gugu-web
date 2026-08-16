@@ -41,6 +41,7 @@ html[data-theme][data-family] :is(
 ):hover:not(:disabled) {
   background: var(--input-bg-hover);
   border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
 }
 
 html[data-theme][data-family] :is(
@@ -97,6 +98,7 @@ html[data-theme][data-family] .bm-card select:not(.theme-native-control):hover,
 html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):hover {
   background-color: var(--input-bg-hover);
   border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
 }
 html[data-theme][data-family] .bm-card select:not(.theme-native-control):focus,
 html[data-theme][data-family] .bm-card textarea:not(.theme-native-control):focus {
