@@ -6,5 +6,9 @@ html[data-theme][data-family] .rel-visible {
     stroke-width var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .rel-visible.highlighted { stroke: var(--mind-relation-line-highlight); }
+/* RelationLayer marks every existing relation of the connection origin as highlighted while a new
+   line is being drawn. On dark canvas that state should remain visually identical to the resting
+   relation; only the draft line needs emphasis. */
+html[data-theme='dark'][data-family] .rel-visible.highlighted { stroke-width: 1.5; }
 html[data-theme][data-family] .rel-group:hover .rel-visible { stroke: var(--mind-relation-line-danger); }
 html[data-theme][data-family] .rel-draft { stroke: var(--mind-relation-line-draft); }
