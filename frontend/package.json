@@ -14,6 +14,7 @@
     "test:run": "vitest run",
     "licenses:generate": "node ../scripts/licenses/generate-licenses.mjs",
     "licenses:check": "node ../scripts/licenses/check-licenses.mjs",
+    "postinstall": "node scripts/fix-runtime-link.mjs",
     "test:e2e": "playwright test",
     "gen:types": "openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts"
   },
@@ -52,6 +53,7 @@
     "codemirror": "^6.0.2",
     "dayjs": "^1.11.0",
     "dompurify": "^3.4.11",
+    "gugu-interaction-runtime": "file:../../gugu-interaction-runtime",
     "highlight.js": "^11.11.1",
     "lowlight": "^3.3.0",
     "marked": "^18.0.5",

@@ -235,10 +235,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # 前端 src/interaction/runtime/index.ts 用相对路径直接 import 同级仓库
-      # gugu-interaction-runtime 的源码（不是 npm 包），vite dev server 缺这个
-      # 兄弟目录会直接 500，导致整个 SPA 起不来——frontend/runtime 两个 job
-      # 已经这么做，e2e job 同样需要。
+      # frontend/package.json 用 file:../../gugu-interaction-runtime 本地依赖引用
+      # gugu-interaction-runtime 的构建产物 dist-lib（不发布 npm 包）。npm ci 解析
+      # 该路径时目标必须是仓库的同级兄弟目录（$GITHUB_WORKSPACE/../），因此先
+      # checkout runtime 到仓库内 gugu-interaction-runtime，再建立兄弟目录符号链接；
+      # npm 11 为 file: 依赖创建的 node_modules 符号链接可能断链，由 frontend 的
+      # postinstall 脚本 scripts/fix-runtime-link.mjs 自动修复。三个 job 都需要
+      # 相同的目录布局，e2e job 同样不能省略。
       - name: Verify Runtime repository token
         env:
           RUNTIME_TOKEN: ${{ secrets.RUNTIME_REPO_TOKEN }}
