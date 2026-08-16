@@ -2,6 +2,7 @@ import { runtime } from './index'
 import { MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_CANVAS_DRAG_Z_INDEX, MIND_CANVAS_LANDING_Z_INDEX, resolveMindLandingRect, resolveMindLandingTarget } from './canvas'
 
 let initialized = false
+let themeVisualObserver: MutationObserver | null = null
 
 /** 应用只注册对象类型与统一运动参数，具体对象和 Surface 由各自组件声明。 */
 export function setupInteractionRuntime(): void {
@@ -122,7 +123,24 @@ export function setupInteractionRuntime(): void {
   })
   registerMindObjectType(MIND_CANVAS_OBJECT_TYPE)
   registerMindObjectType(MIND_PROJECT_OBJECT_TYPE)
-  runtime.configureVisual({ dragGlass: true, layoutPresence: true })
+
+  // Runtime 的 dragGlass 是一套固定亮色 inline 视觉（白色背景/边框，且阴影是 inline
+  // !important）。亮色继续保留原来的抓起手感；暗色关闭这层 Runtime paint，让 clone
+  // 保留真实卡片的暗色视觉，再由宿主 --runtime-drag-* contract 负责主题表面。这样不需要
+  // 用业务 CSS 去对抗 inline !important，也不改 Runtime 的跟手/landing/物理算法。
+  const syncRuntimeVisualTheme = () => {
+    const dark = document.documentElement.dataset.theme === 'dark'
+    runtime.configureVisual({ dragGlass: !dark, layoutPresence: true })
+  }
+  syncRuntimeVisualTheme()
+  if (!themeVisualObserver) {
+    themeVisualObserver = new MutationObserver(syncRuntimeVisualTheme)
+    themeVisualObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+  }
+
   runtime.configureMotion({
     flip: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },
     resize: { duration: 250, easing: 'cubic-bezier(.22,1,.36,1)' },
