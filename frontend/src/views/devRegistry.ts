@@ -7,9 +7,15 @@ export interface DevToolEntry {
   external?: boolean
 }
 
+function loopScopeUrl() {
+  const configured = import.meta.env.VITE_LOOPSCOPE_URL
+  if (configured) return configured
+  return `${window.location.protocol}//${window.location.hostname}:4319`
+}
+
 export const devToolRegistry: DevToolEntry[] = [
   {
-    href: import.meta.env.VITE_LOOPSCOPE_URL ?? 'http://127.0.0.1:4319',
+    href: loopScopeUrl(),
     label: 'LoopScope',
     eyebrow: 'AGENT LOOP',
     description: '多 Session 对话、完整 AgentLoop trace、Prompt / LLM draft / Tool / Guard 节点检查。',

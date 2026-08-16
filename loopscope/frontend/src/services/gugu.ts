@@ -11,6 +11,23 @@ function normalizeBase(base: string) {
   return base.replace(/\/+$/, '')
 }
 
+function apiBase(cfg: GuguBootstrap) {
+  const configured = normalizeBase(cfg.apiBase)
+  if (typeof window === 'undefined') return configured
+
+  // 旧版 bootstrap 会把 Gugu 的 /api/v1 地址写入 sessionStorage；
+  // 独立窗口应通过自身的同源代理访问，避免跨端口 CORS 失败。
+  try {
+    const parsed = new URL(configured, window.location.origin)
+    if (parsed.pathname.endsWith('/api/v1') && parsed.origin !== window.location.origin) {
+      return `${window.location.origin}/gugu-api`
+    }
+  } catch {
+    return configured
+  }
+  return configured
+}
+
 export function saveBootstrap(value: GuguBootstrap) {
   sessionStorage.setItem(KEY, JSON.stringify({ ...value, apiBase: normalizeBase(value.apiBase) }))
   window.dispatchEvent(new CustomEvent('loopscope:bootstrap'))
@@ -36,7 +53,7 @@ function authHeaders(extra: HeadersInit = {}): HeadersInit {
 export async function listGuguSessions(): Promise<GuguSession[]> {
   const cfg = loadBootstrap()
   if (!cfg) return []
-  const r = await fetch(`${cfg.apiBase}/agent/sessions`, { headers: authHeaders() })
+  const r = await fetch(`${apiBase(cfg)}/agent/sessions`, { headers: authHeaders() })
   if (!r.ok) throw new Error(`Gugu sessions ${r.status}`)
   return r.json()
 }
@@ -44,7 +61,7 @@ export async function listGuguSessions(): Promise<GuguSession[]> {
 export async function loadMessages(sessionId: number): Promise<ChatMessage[]> {
   const cfg = loadBootstrap()
   if (!cfg) return []
-  const r = await fetch(`${cfg.apiBase}/agent/sessions/${sessionId}/messages`, { headers: authHeaders() })
+  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages`, { headers: authHeaders() })
   if (!r.ok) throw new Error(`Gugu messages ${r.status}`)
   const data = await r.json()
   return (data.messages ?? [])
@@ -61,7 +78,7 @@ export async function sendMessage(
 ): Promise<number | null> {
   const cfg = loadBootstrap()
   if (!cfg) throw new Error('尚未连接 Gugu。请从 Gugu /dev 打开 LoopScope，或在 Settings 配置。')
-  const r = await fetch(`${cfg.apiBase}/agent/chat`, {
+  const r = await fetch(`${apiBase(cfg)}/agent/chat`, {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ message, session_id: sessionId }),

@@ -77,7 +77,7 @@
       </div>
 
       <form class="composer ls-card" @submit.prevent="send">
-        <textarea v-model="draft" :disabled="sending || !connected" rows="1" placeholder="给咕咕发消息…" @keydown.enter.exact.prevent="send" />
+        <textarea v-model="draft" :disabled="sending" rows="1" placeholder="给咕咕发消息…" @keydown.enter.exact.prevent="send" />
         <div class="composer-foot">
           <span>{{ mode === 'detail' ? 'Detailed · prompt / draft / tool trace' : 'Normal conversation' }}</span>
           <button class="ls-button primary" :disabled="sending || !draft.trim() || !connected">{{ sending ? 'Running…' : 'Send' }}</button>

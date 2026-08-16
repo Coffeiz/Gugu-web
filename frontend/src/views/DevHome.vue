@@ -35,9 +35,14 @@
 import { devToolRegistry, type DevToolEntry } from './devRegistry'
 
 function absoluteApiBase() {
-  // /dev 仅存在于 Vite 开发环境；始终借当前 Gugu dev origin 的 /api 代理，
-  // 避免 LoopScope:4319 直接跨域命中 backend:8000 时额外要求后端开放 CORS。
-  return new URL('/api/v1', window.location.origin).toString().replace(/\/$/, '')
+  // 让 LoopScope 通过自己的 Vite 代理访问 Gugu，避免 4319 -> 5173/8000 的跨源 CORS。
+  const loopScopeUrl = new URL(toolHref())
+  return new URL('/gugu-api', loopScopeUrl).toString().replace(/\/$/, '')
+}
+
+function toolHref() {
+  const configured = import.meta.env.VITE_LOOPSCOPE_URL
+  return configured || `${window.location.protocol}//${window.location.hostname}:4319`
 }
 
 function openExternal(tool: DevToolEntry) {

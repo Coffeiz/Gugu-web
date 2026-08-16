@@ -7,12 +7,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from .storage import TraceStore
 
 app = FastAPI(title="LoopScope", version="0.1.0")
+cors_origins = [
+    "http://127.0.0.1:4319",
+    "http://localhost:4319",
+]
+cors_origins.extend(
+    origin.strip()
+    for origin in os.getenv("LOOPSCOPE_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:4319",
-        "http://localhost:4319",
-    ],
+    allow_origins=cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
