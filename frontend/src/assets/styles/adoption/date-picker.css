@@ -1,11 +1,5 @@
-/* DateSpanPicker is shared by new/edit project forms and teleports its popup to body, so theme it
-   here rather than duplicating modal-specific dark selectors. */
-html[data-theme][data-family] .drp-popup {
-  color: var(--content-primary);
-  background: var(--popup-background);
-  border-color: var(--popup-border);
-  box-shadow: var(--popup-shadow), inset 0 1px 0 var(--modal-card-highlight);
-}
+/* DateSpanPicker state paint. Popup surface itself is owned by adoption/popovers.css so the
+   teleported calendar has one shared surface contract instead of two competing copies. */
 /* .drp-input 的输入框样式由 DateSpanPicker.vue scoped 直接消费 --input-* token
    （与 DatePicker/TimeInput 同一契约），这里不再重复覆盖。 */
 html[data-theme][data-family] :is(.drp-period, .drp-day, .drp-year-btn) {
@@ -64,7 +58,6 @@ html[data-theme][data-family] .drp-day.sel-start.in-range-right::after,
 html[data-theme][data-family] .drp-day.sel-end.in-range-left::after {
   background: var(--calendar-range-cell-bg);
 }
-html[data-theme][data-family] .drp-footer { border-top-color: var(--panel-divider); }
 html[data-theme][data-family] .drp-today:hover { background: var(--action-soft-hover); }
 html[data-theme][data-family] .drp-day.other { color: var(--content-tertiary); }
 html[data-theme][data-family] .drp-day.weekend:not(.sel-start):not(.sel-end):not(.today),
