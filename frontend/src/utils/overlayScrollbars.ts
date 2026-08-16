@@ -132,27 +132,47 @@ function refreshAncestor(element: HTMLElement | null) {
 
 export function installOverlayScrollbars() {
   scan(document)
-  const observer = new MutationObserver((records) => {
-    records.forEach((record) => {
-      record.removedNodes.forEach(unbindTree)
-      record.addedNodes.forEach((node) => {
-        if (node instanceof HTMLElement) {
-          scan(node)
-          refreshAncestor(node.parentElement)
-        }
-      })
-      if (record.type === 'attributes' && record.target instanceof HTMLElement) {
-        record.target.querySelectorAll<HTMLElement>(SCROLL_SURFACE_SELECTOR).forEach((element) => {
-          const binding = bindings.get(element)
-          if (binding) updateThumb(element, binding)
-        })
-      }
+  let mutationFrame: number | null = null
+  let pendingRecords: MutationRecord[] = []
+
+  const withoutNestedRoots = (roots: HTMLElement[]): HTMLElement[] => {
+    const unique = [...new Set(roots)]
+    return unique.filter((root) => !unique.some((parent) => parent !== root && parent.contains(root)))
+  }
+
+  const flushMutations = (): void => {
+    mutationFrame = null
+    const records = pendingRecords
+    pendingRecords = []
+
+    const removedRoots = withoutNestedRoots(records.flatMap((record) => (
+      [...record.removedNodes].filter((node): node is HTMLElement => node instanceof HTMLElement)
+    )))
+    const addedRoots = withoutNestedRoots(records.flatMap((record) => (
+      [...record.addedNodes].filter((node): node is HTMLElement => node instanceof HTMLElement)
+    )))
+
+    removedRoots.forEach(unbindTree)
+
+    const refreshedAncestors = new Set<HTMLElement>()
+    addedRoots.forEach((node) => {
+      scan(node)
+      if (node.parentElement) refreshedAncestors.add(node.parentElement)
     })
+    refreshedAncestors.forEach(refreshAncestor)
+  }
+
+  const scheduleMutationFlush = (): void => {
+    if (mutationFrame !== null) return
+    mutationFrame = requestAnimationFrame(flushMutations)
+  }
+
+  const observer = new MutationObserver((records) => {
+    pendingRecords.push(...records)
+    scheduleMutationFlush()
   })
   observer.observe(document.body, {
     childList: true,
     subtree: true,
-    attributes: true,
-    attributeFilter: ['style'],
   })
 }
