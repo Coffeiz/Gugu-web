@@ -44,6 +44,6 @@ html[data-theme='dark'][data-family] {
   --note-paper-blue: color-mix(in srgb,var(--project-blue) 20%,var(--surface-card-solid));
   --note-paper-teal: color-mix(in srgb,var(--status-info) 20%,var(--surface-card-solid));
   --note-paper-default-canvas: color-mix(in srgb,var(--project-sand) 10%,var(--surface-card-solid));
-  --capture-bg: color-mix(in srgb,var(--surface-glass) 90%,var(--surface-base));
+  --capture-bg: color-mix(in srgb,var(--surface-base) 88%,transparent);
   --mind-timeline-bg: color-mix(in srgb,var(--surface-glass) 82%,transparent);
 }
