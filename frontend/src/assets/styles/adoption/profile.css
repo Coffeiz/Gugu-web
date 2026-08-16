@@ -1,0 +1,127 @@
+/* Profile / personal settings theme adoption. This file intentionally maps existing ProfileModal
+   classes to shared contracts instead of introducing profile-only dark literals. */
+html[data-theme][data-family] .pm-content {
+  background: var(--panel-content-bg);
+  box-shadow: inset 0 1px 0 var(--panel-glass-highlight);
+}
+html[data-theme][data-family] .pm-content-header { border-bottom-color: var(--panel-divider); }
+html[data-theme][data-family] .pm-sep { background: var(--panel-divider); }
+html[data-theme][data-family] .pm-nav-divider { background: var(--divider-line); }
+
+html[data-theme][data-family] .pm-nav-item,
+html[data-theme][data-family] .pm-logout { color: var(--content-secondary); }
+html[data-theme][data-family] .pm-nav-item:hover {
+  color: var(--content-primary);
+  background: var(--sidebar-item-hover);
+}
+html[data-theme][data-family] .pm-nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+}
+html[data-theme][data-family] .pm-logout:hover,
+html[data-theme][data-family] .pm-logout.pm-danger-nav:hover {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  border-color: color-mix(in srgb,var(--status-danger) 28%,transparent);
+}
+
+html[data-theme][data-family] .pm-confirm-overlay { background: var(--modal-overlay-bg); }
+html[data-theme][data-family] .pm-confirm-box {
+  background: var(--modal-card-bg);
+  border-color: var(--modal-card-border);
+  box-shadow: var(--modal-card-shadow), inset 0 1px 0 var(--modal-card-highlight);
+}
+html[data-theme][data-family] .pm-confirm-desc strong { color: var(--status-danger); }
+html[data-theme][data-family] .btn-cancel {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+html[data-theme][data-family] .btn-cancel:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
+}
+
+html[data-theme][data-family] .form-input.modified { border-color: var(--action-outline); }
+html[data-theme][data-family] .pm-coming {
+  color: var(--content-disabled);
+  background: var(--surface-soft);
+}
+
+html[data-theme][data-family] .pm-save-btn,
+html[data-theme][data-family] .pm-bind-btn:not(.off) {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .pm-save-btn:hover:not(:disabled),
+html[data-theme][data-family] .pm-bind-btn:hover:not(:disabled) {
+  background: var(--action-primary-bg-hover);
+}
+html[data-theme][data-family] .pm-danger-btn {
+  color: var(--content-on-accent);
+  background: color-mix(in srgb,var(--status-danger) 82%,var(--surface-raised));
+  box-shadow: 0 2px 8px color-mix(in srgb,var(--status-danger) 24%,transparent);
+}
+html[data-theme][data-family] .pm-bind-btn.off {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+
+html[data-theme][data-family] .pm-qr-box,
+html[data-theme][data-family] .pm-bot-item,
+html[data-theme][data-family] .pm-bot-form {
+  background: var(--subpanel-bg);
+  border-color: var(--subpanel-border);
+}
+html[data-theme][data-family] .pm-bot-group-row { border-top-color: var(--panel-divider); }
+html[data-theme][data-family] .pm-bot-input {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  outline: none;
+}
+html[data-theme][data-family] .pm-bot-input:hover { border-color: var(--input-border-hover); }
+html[data-theme][data-family] .pm-bot-input:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .pm-bot-input::placeholder { color: var(--input-placeholder); }
+html[data-theme][data-family] .pm-add-bot {
+  color: var(--content-secondary);
+  border-color: var(--border-default);
+}
+html[data-theme][data-family] .pm-add-bot:hover {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .pm-text-link:hover,
+html[data-theme][data-family] .pm-qr-hint a { color: var(--action-primary); }
+html[data-theme][data-family] .pm-bot-del,
+html[data-theme][data-family] .pm-qr-err,
+html[data-theme][data-family] .pm-msg.err { color: var(--status-danger); }
+html[data-theme][data-family] .pm-msg.ok { color: var(--status-success); }
+html[data-theme][data-family] .pm-bot-tag {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+}
+
+html[data-theme][data-family] .switch .slider { background: var(--switch-track-bg); }
+html[data-theme][data-family] .switch .slider::before { background: var(--switch-thumb-bg); }
+html[data-theme][data-family] .switch input:checked + .slider { background: var(--switch-track-bg-active); }
+html[data-theme][data-family] .pm-switch-label.on { color: var(--action-primary); }
+
+html[data-theme][data-family] .pm-quota-bar { background: var(--surface-soft); }
+html[data-theme][data-family] .pm-quota-pct.pct-warn { color: var(--status-warning); }
+html[data-theme][data-family] .pm-quota-pct.pct-danger { color: var(--status-danger); }
+html[data-theme][data-family] .pm-qs-pct,
+html[data-theme][data-family] .pm-qs-fill {
+  background: linear-gradient(90deg,var(--surface-soft) 25%,var(--selection-bg) 50%,var(--surface-soft) 75%);
+  background-size: 200% 100%;
+}
