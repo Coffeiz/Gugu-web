@@ -1,9 +1,11 @@
 /* 画布贴纸的共用效果：连接提示、落地揭示压制与拖拽材质统一在这里。
    拖拽克隆会 append 到 body，因此选择器必须是全局的，由 MindCanvas.vue 统一加载。 */
 
-/* 连接起点和目标都用贴合圆角的虚线边框；独立使用 after，避免和项目卡的渐变 before 底色层冲突。 */
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connecting::after,
-:is(.note-card, .entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connection-target::after {
+/* 连接起点和目标都用贴合圆角的虚线边框；独立使用 after，避免和项目卡的渐变 before 底色层冲突。
+   NoteCard 自己的 ::after 同时承担纸面高光，组件内已经有一份更高特异度的 connecting 规则，
+   因此这里不再重复匹配 .note-card。 */
+:is(.entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connecting::after,
+:is(.entity-sticker, .fr-card, .pr-card, .fr-missing, .pr-missing).connection-target::after {
   content: '';
   position: absolute;
   inset: -4px;
