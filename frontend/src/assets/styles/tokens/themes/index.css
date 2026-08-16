@@ -1,2 +1,6 @@
-/* Theme layer: family × resolved light/dark values only. */
-@import '../themes.css';
+/* Theme layer: explicit family × resolved light/dark files. */
+@import './glass-light.css';
+@import './glass-dark.css';
+@import './v2-light.css';
+@import './v2-dark.css';
+@import './compatibility.css';
