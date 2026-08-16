@@ -19,6 +19,39 @@ html[data-theme][data-family] :is(.col-divider, .tpl-divider) {
 html[data-theme][data-family] .section-row::after {
   background: linear-gradient(180deg,transparent,var(--panel-divider) 15%,var(--panel-divider) 85%,transparent);
 }
+/* Expanded project info uses a cross-divider layout; the scoped source still carries light black
+   alpha lines, so map both axes to the same panel divider contract. */
+html[data-theme][data-family] .modal.info-expanded .info-block > .section:nth-of-type(1),
+html[data-theme][data-family] .modal.info-expanded .info-block > .section:nth-of-type(2) {
+  border-bottom-color: var(--panel-divider);
+}
+html[data-theme][data-family] .modal.info-expanded .info-block > .section:nth-of-type(1)::after {
+  background: var(--panel-divider);
+}
+html[data-theme][data-family] .header-progress-bar { background: var(--surface-soft); }
+
+/* Edit-project title intentionally looks like text at rest. Shared forms own hover/focus paint,
+   while this project-specific selector keeps the transparent resting geometry. */
+html[data-theme][data-family] .proj-header .header-name-input {
+  color: var(--input-fg);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+html[data-theme][data-family] .proj-header .header-name-input:hover {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
+}
+html[data-theme][data-family] .proj-header .header-name-input:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .modal-header .header-name-input.error {
+  color: var(--status-warning);
+}
+
 html[data-theme][data-family] :is(.close-btn, .proj-close-btn) {
   color: var(--control-fg);
   background: var(--control-bg);
