@@ -26,6 +26,9 @@
   --file-dialog-panel-bg: var(--panel-bg);
   --file-dialog-panel-shadow: inset 0 1px 0 rgba(255,255,255,.98);
   --file-dialog-divider: color-mix(in srgb,var(--content-primary) 7%,transparent);
+  --file-dialog-toolbar-divider: var(--file-dialog-divider);
+  --file-dialog-close-bg: color-mix(in srgb,var(--content-primary) 5%,transparent);
+  --file-dialog-close-bg-hover: color-mix(in srgb,var(--content-primary) 10%,transparent);
   --file-dialog-drop-bg: rgba(255,255,255,.42);
   --file-dialog-drop-border: color-mix(in srgb,var(--action-primary) 35%,transparent);
   --file-dialog-drop-bg-hover: color-mix(in srgb,var(--action-primary) 4%,transparent);
@@ -140,6 +143,9 @@ html[data-theme='dark'][data-family] {
   --file-dialog-panel-bg: var(--panel-content-bg);
   --file-dialog-panel-shadow: inset 0 1px 0 var(--panel-glass-highlight);
   --file-dialog-divider: var(--border-subtle);
+  --file-dialog-toolbar-divider: transparent;
+  --file-dialog-close-bg: var(--control-bg);
+  --file-dialog-close-bg-hover: var(--control-bg-hover);
   --file-dialog-drop-bg: var(--surface-soft);
   --file-dialog-drop-border: var(--action-outline);
   --file-dialog-drop-bg-hover: var(--action-soft);
