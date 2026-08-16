@@ -63,6 +63,26 @@ const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-remi
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
   font-size: 12.5px; color: var(--content-secondary); cursor: pointer; user-select: none; white-space: nowrap;
 }
+/* The global checkbox keeps the legacy registration/task-list shape, but its light paper fill is
+   too bright inside a dark event editor. This component maps that same control to the shared
+   option/action contract without introducing another global checkbox override layer. */
+.allday-toggle input[type="checkbox"] {
+  background: var(--option-bg);
+  border-color: var(--option-border);
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+.allday-toggle input[type="checkbox"]:hover {
+  background: var(--option-bg-hover);
+  border-color: var(--option-border-hover);
+}
+.allday-toggle input[type="checkbox"]:checked {
+  background: var(--action-primary-bg);
+  border-color: transparent;
+  box-shadow: var(--elevation-card);
+}
 .time-box,
 .popup-input,
 .popup-textarea,
