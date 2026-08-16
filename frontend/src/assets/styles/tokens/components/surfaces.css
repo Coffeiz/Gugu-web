@@ -17,7 +17,10 @@
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
 
+  /* Text / date / project form fields. Keep geometry in the consuming component and share only
+     theme-sensitive paint + interaction so existing compact/large inputs preserve their layout. */
   --input-bg: var(--surface-raised);
+  --input-bg-hover: color-mix(in srgb,var(--surface-raised) 88%,var(--surface-glass-hover));
   --input-bg-focus: var(--surface-floating);
   --input-fg: var(--content-primary);
   --input-placeholder: var(--content-tertiary);
@@ -26,6 +29,19 @@
   --input-border-focus: var(--border-focus);
   --input-focus-shadow: var(--control-focus-shadow);
   --input-radius: var(--radius-sm);
+
+  /* Rectangular selectable options (project status/template/stage actions). Choice pills below
+     remain the capsule contract; both resolve from the same semantic action/surface roles. */
+  --option-bg: var(--surface-soft);
+  --option-bg-hover: var(--surface-soft-hover);
+  --option-bg-active: var(--selection-bg);
+  --option-fg: var(--content-secondary);
+  --option-fg-hover: var(--content-primary);
+  --option-fg-active: var(--selection-fg);
+  --option-border: var(--border-default);
+  --option-border-hover: var(--action-outline);
+  --option-border-active: var(--action-outline);
+  --option-shadow: none;
 
   --choice-chip-bg: transparent;
   --choice-chip-bg-hover: var(--action-soft);
@@ -44,10 +60,23 @@
 
   --subpanel-bg: var(--surface-soft);
   --subpanel-border: var(--border-subtle);
+
+  /* Runtime owns proxy geometry/motion; the host theme owns the visual glass values. Runtime's
+     legacy inline light glass is overridden only on the proxy content root through this contract. */
+  --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 72%,transparent);
+  --runtime-drag-glass-border: var(--border-strong);
+  --runtime-drag-glass-filter: blur(12px) saturate(1.15);
+  --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
+
+  /* Actual overlay scrollbars and the native preview use the same hover cadence. */
+  --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
 html[data-theme='dark'][data-family] {
   /* A dark raised surface is too close to the track; use a soft light-neutral thumb without
      reintroducing the pure-white modal highlight problem this pass is removing. */
   --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
+  --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
+  --runtime-drag-glass-border: var(--border-hover);
+  --runtime-drag-glass-shadow: 0 22px 50px rgba(0,0,0,.38);
 }
