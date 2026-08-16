@@ -582,9 +582,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .mind-canvas {
-  position: fixed; inset: 0; z-index: 0; overflow: hidden; cursor: grab; user-select: none;
-  background-color: #e8ebf3;
-  background-image: radial-gradient(circle, rgba(108, 116, 153, .34) 6.5%, transparent 7%);
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  background-color: var(--mind-canvas-bg);
+  background-image: radial-gradient(circle, var(--mind-canvas-dot) 6.5%, transparent 7%);
 }
 .mind-canvas:active { cursor: grabbing; }
 .canvas-world { position: absolute; width: 0; height: 0; transform-origin: 0 0; }
