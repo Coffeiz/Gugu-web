@@ -155,9 +155,16 @@ html[data-theme][data-family] .chat-window .chat-drop-overlay {
   border-radius: inherit;
 }
 
-/* Mono is the public name; v2 remains the compatibility data-family id. */
+/* Mono is the public name; v2 remains the compatibility data-family id.
+   Content .glass-card surfaces disable blur through the component token rather than a hard final
+   `backdrop-filter:none`. Floating chrome can then remap --glass-card-blur locally without fighting
+   this higher-specificity selector; chat/sidebar keep their independent surface contracts. */
+html[data-family='v2'] { --glass-card-blur: none; }
 html[data-family='v2'] .sidebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
-html[data-family='v2'] .glass-card:not(.topbar) { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-family='v2'] .glass-card:not(.topbar) {
+  backdrop-filter: var(--glass-card-blur);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+}
 
 /* Native controls and selections share action/focus language. */
 html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon) {
