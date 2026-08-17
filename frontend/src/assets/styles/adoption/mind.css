@@ -112,6 +112,25 @@ html[data-theme][data-family] .ne-link-ok { color: var(--choice-chip-fg-active);
 html[data-theme][data-family] .ne-link-ok:hover { background: var(--choice-chip-bg-hover); }
 html[data-theme][data-family] .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode { box-shadow: 0 0 0 2px var(--focus-ring); }
 
+/* Notes calendar trigger: component geometry stays in Mind/index.vue; paint is a Mind token contract.
+   hover excludes open so focused/open state cannot pick up a second hover surface. */
+html[data-theme][data-family] .mind-cal-picker .dp-input {
+  background: var(--mind-calendar-trigger-bg);
+  border-color: var(--mind-calendar-trigger-border);
+  box-shadow: var(--mind-calendar-trigger-shadow);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-input:hover:not(.open) {
+  background: var(--mind-calendar-trigger-bg-hover);
+  border-color: var(--mind-calendar-trigger-border-hover);
+  box-shadow: var(--mind-calendar-trigger-shadow-hover);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-input.open {
+  background: var(--mind-calendar-trigger-bg-open);
+  border-color: var(--mind-calendar-trigger-border-open);
+  box-shadow: var(--mind-calendar-trigger-shadow-open);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-icon { color: var(--mind-calendar-trigger-icon); }
+
 /* Mind page filter */
 html[data-theme][data-family] .mind-filter {
   background: var(--input-bg);
