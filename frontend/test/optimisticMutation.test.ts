@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
 import { optimisticMutation } from '@/utils/optimisticMutation'
+import { beginOptimisticIntent, withOptimisticIntent } from '@/utils/optimisticIntent'
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
 
 describe('optimisticMutation — 时序契约', () => {
   it('成功：apply → afterMutate → work → onCommit，不回滚', async () => {
@@ -28,7 +36,7 @@ describe('optimisticMutation — 时序契约', () => {
       onError: (e) => { order.push('onError'); caught = e },
     })
     expect(order).toEqual(['apply', 'afterMutate', 'work', 'rollback', 'afterMutate', 'onError'])
-    expect(caught).toBe(err)          // 原始错误对象透传给 onError
+    expect(caught).toBe(err)
   })
 
   it('onCommit 可选：不传也不报错', async () => {
@@ -47,5 +55,110 @@ describe('optimisticMutation — 时序契约', () => {
     const failRollback = vi.fn(); const failCommit = vi.fn()
     await optimisticMutation({ apply(){}, afterMutate(){}, work: async()=>{ throw new Error('x') }, rollback: failRollback, onCommit: failCommit, onError(){} })
     expect(failRollback).toHaveBeenCalledOnce(); expect(failCommit).not.toHaveBeenCalled()
+  })
+
+  it('regrab 立即 apply 新状态，但同一对象的 persistence 必须等待旧请求结算后再启动', async () => {
+    const first = deferred()
+    const second = deferred()
+    const secondStarted = deferred()
+    let state = 'A'
+    let hasSecondStarted = false
+    const key = 'test-order:file:1'
+
+    const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      rollback: () => { state = 'A' }, onError: () => {},
+    }))
+    const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'C' },
+      afterMutate: () => {},
+      work: () => { hasSecondStarted = true; secondStarted.resolve(); return second.promise },
+      rollback: () => { state = 'B' },
+      onError: () => {},
+    }))
+
+    expect(state).toBe('C')
+    expect(hasSecondStarted).toBe(false)
+    first.resolve()
+    await firstWork
+    await secondStarted.promise
+    expect(hasSecondStarted).toBe(true)
+    second.resolve()
+    await secondWork
+    expect(state).toBe('C')
+  })
+
+  it('regrab 新意图已 apply 时，旧请求失败先完成 defer/onError 收尾，再放行新 persistence', async () => {
+    const first = deferred()
+    const second = deferred()
+    const secondStarted = deferred()
+    let state = 'A'
+    let firstErrorHandled = false
+    let secondSawSettledFirst = false
+    const firstRollback = vi.fn(() => { state = 'A' })
+    const secondRollback = vi.fn(() => { state = 'B' })
+    const key = 'test-success:file:1'
+
+    const firstIntent = beginOptimisticIntent([key])
+    const firstWork = withOptimisticIntent(firstIntent, () => optimisticMutation({
+      apply: () => { state = 'B' },
+      afterMutate: () => {},
+      work: () => first.promise,
+      rollback: firstRollback,
+      onError: () => { firstErrorHandled = true },
+    }))
+    const secondIntent = beginOptimisticIntent([key])
+    const secondWork = withOptimisticIntent(secondIntent, () => optimisticMutation({
+      apply: () => { state = 'C' },
+      afterMutate: () => {},
+      work: () => { secondSawSettledFirst = firstErrorHandled; secondStarted.resolve(); return second.promise },
+      rollback: secondRollback,
+      onError: () => {},
+    }))
+
+    expect(state).toBe('C')
+    first.reject(new Error('first failed'))
+    await firstWork
+    await secondStarted.promise
+    expect(state).toBe('C')
+    expect(firstRollback).not.toHaveBeenCalled()
+    expect(firstErrorHandled).toBe(true)
+    expect(secondSawSettledFirst).toBe(true)
+
+    second.resolve()
+    await secondWork
+    expect(state).toBe('C')
+    expect(secondRollback).not.toHaveBeenCalled()
+  })
+
+  it('连续 regrab 的所有请求都失败时，rollback chain 回到最后确认状态而非中间乐观态', async () => {
+    const first = deferred()
+    const second = deferred()
+    const secondStarted = deferred()
+    let state = 'A'
+    const firstRollback = vi.fn(() => { state = 'A' })
+    const secondRollback = vi.fn(() => { state = 'B' })
+    const key = 'test-failure:file:1'
+
+    const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      rollback: firstRollback, onError: () => {},
+    }))
+    const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'C' }, afterMutate: () => {},
+      work: () => { secondStarted.resolve(); return second.promise },
+      rollback: secondRollback, onError: () => {},
+    }))
+
+    first.reject(new Error('first failed'))
+    await firstWork
+    expect(state).toBe('C')
+    await secondStarted.promise
+
+    second.reject(new Error('second failed'))
+    await secondWork
+    expect(secondRollback).toHaveBeenCalledOnce()
+    expect(firstRollback).toHaveBeenCalledOnce()
+    expect(state).toBe('A')
   })
 })

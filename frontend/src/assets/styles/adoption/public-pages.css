@@ -1,0 +1,143 @@
+/* Public unauthenticated pages keep their existing light paint in component-scoped CSS.
+   This bridge owns only resolved dark-mode paint so Login/Register can share one auth contract
+   and Privacy can consume the same semantic surface/content tokens without duplicating rules. */
+
+html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) {
+  background: var(--surface-page);
+  color: var(--content-primary);
+}
+
+html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) .glow-1 {
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb,var(--action-primary) 18%,transparent) 0%,
+    transparent 65%
+  );
+}
+
+html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page) .glow-2 {
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb,var(--action-primary-hover) 12%,transparent) 0%,
+    transparent 65%
+  );
+}
+
+html[data-theme='dark'][data-family] :is(.auth-card, .privacy-card) {
+  background: color-mix(in srgb,var(--modal-card-bg) 84%,transparent);
+  border-color: var(--modal-card-border);
+  box-shadow: var(--modal-card-shadow), inset 0 1px 0 var(--modal-card-highlight);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+
+html[data-theme='dark'][data-family] .auth-page .brand-icon {
+  background: var(--brand-gradient);
+  box-shadow: 0 6px 18px color-mix(in srgb,var(--action-primary) 30%,transparent);
+}
+
+html[data-theme='dark'][data-family] .auth-page .brand-name {
+  color: var(--content-primary);
+}
+
+html[data-theme='dark'][data-family] .auth-page :is(.brand-sub, .field label, .forgot-row a, .card-footer, .ack-label) {
+  color: var(--content-secondary);
+}
+
+html[data-theme='dark'][data-family] .auth-page :is(.card-policy, .page-footer, .page-footer a) {
+  color: var(--content-tertiary);
+}
+
+html[data-theme='dark'][data-family] .auth-page :is(.forgot-row a:hover, .card-footer a, .card-policy a:hover, .page-footer a:hover) {
+  color: var(--action-primary);
+}
+
+html[data-theme='dark'][data-family] .auth-page .field input {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  box-shadow: var(--input-hover-shadow);
+}
+
+html[data-theme='dark'][data-family] .auth-page .field input::placeholder {
+  color: var(--input-placeholder);
+}
+
+html[data-theme='dark'][data-family] .auth-page .field input:hover:not(:disabled):not(:focus) {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+}
+
+html[data-theme='dark'][data-family] .auth-page .field input:focus {
+  color: var(--input-fg);
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+
+html[data-theme='dark'][data-family] .auth-page .error-msg {
+  color: var(--status-danger);
+  background: var(--status-danger-bg);
+  border-color: color-mix(in srgb,var(--status-danger) 28%,transparent);
+}
+
+html[data-theme='dark'][data-family] .auth-page .btn-primary {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+
+html[data-theme='dark'][data-family] .auth-page .ack-box {
+  background: var(--input-bg);
+  border-color: var(--action-outline);
+}
+
+html[data-theme='dark'][data-family] .auth-page .ack-input:checked + .ack-box {
+  background: var(--action-primary-bg);
+  border-color: transparent;
+  box-shadow: var(--elevation-card);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .privacy-header {
+  background: color-mix(in srgb,var(--surface-floating) 72%,transparent);
+  border-bottom-color: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .privacy-page :is(.back-link, .header-brand) {
+  color: var(--content-secondary);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .back-link:hover {
+  color: var(--content-primary);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content :is(h1, h2, h3, p, ul, ol, td) {
+  color: var(--content-primary);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content blockquote {
+  color: var(--content-secondary);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content hr {
+  border-top-color: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content code {
+  color: var(--content-primary);
+  background: var(--surface-soft);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content th {
+  color: var(--content-primary);
+  background: var(--surface-soft);
+  border-bottom-color: var(--border-default);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content td {
+  border-bottom-color: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .privacy-page .md-content a {
+  color: var(--action-primary);
+}

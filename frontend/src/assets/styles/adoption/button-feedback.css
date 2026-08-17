@@ -1,0 +1,17 @@
+/* Global optimistic button feedback.
+   The selector is deliberately wrapped in :where() so this remains a fallback: any component with
+   an explicit active-state contract can override the transform without specificity escalation.
+   Legacy .press-fx keeps its existing positive-state owner in global.css, so generic native-button
+   feedback explicitly excludes it instead of applying the same press paint twice. */
+:where(html:not([data-button-feedback='off']) button:not(.press-fx):not(:disabled):active) {
+  transform: var(--button-press-transform, translateY(1px) scale(.985));
+  opacity: var(--button-press-opacity, .93);
+}
+
+/* .press-fx is also used by non-button interactive rows, so keep its existing global.css contract.
+   This rule owns only the preference-off state; there is intentionally no second optimistic
+   .press-fx:active declaration in this bridge. */
+html[data-button-feedback='off'] .press-fx:active {
+  transform: none;
+  opacity: 1;
+}

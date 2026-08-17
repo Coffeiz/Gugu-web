@@ -2,6 +2,7 @@ import {
   parseBreadcrumbSurfaceId,
   parseFolderSurfaceId,
 } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'
+import { beginOptimisticIntent, withOptimisticIntent } from '@/utils/optimisticIntent'
 
 type DropInfo = { droppedOn: 'folder' | 'breadcrumb' }
 
@@ -14,13 +15,16 @@ export interface FileRuntimeMoveOptions {
   clearSelection: () => void
 }
 
-type ParsedObject = { id: number; isFolder: boolean }
+type ParsedObject = { id: number; isFolder: boolean; objectId: string }
 
 /**
  * 文件域的 Runtime Action 适配层。
  *
  * Runtime 只提供对象 ID 和目标 Surface；文件 API、权限、乐观更新和回滚仍由调用方注入。
  * 文件库和项目文件区因此共享同一套 ID/Surface 解析，不再各自复制一份 Action handler。
+ *
+ * regrab 可能在上一笔持久化结束前再次产生 Action。这里仅登记“哪一笔是最新意图”，
+ * optimisticMutation 据此阻止旧请求失败时覆盖新落点；实际缓存变更仍由调用方同步 apply。
  */
 export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
   function parseObjects(objectIds: readonly string[]): ParsedObject[] {
@@ -31,7 +35,7 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
       const isFile = objectId.startsWith(filePrefix)
       if (!isFolder && !isFile) return []
       const id = Number(objectId.slice(objectId.lastIndexOf(':') + 1))
-      return Number.isNaN(id) ? [] : [{ id, isFolder }]
+      return Number.isNaN(id) ? [] : [{ id, isFolder, objectId }]
     })
   }
 
@@ -56,12 +60,23 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
       dropInfo = { droppedOn: breadcrumbTarget.droppedOn }
     }
 
-    const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
-    const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
-    await Promise.all([
-      folderIds.length > 0 ? options.moveFolders(folderIds, targetFolderId) : Promise.resolve(),
-      fileIds.length > 0 ? options.moveFiles(fileIds, targetFolderId, dropInfo) : Promise.resolve(),
-    ])
+    const folders = parsed.filter(item => item.isFolder)
+    const files = parsed.filter(item => !item.isFolder)
+    // 文件与文件夹分别进入各自的 optimisticMutation；intent 也必须分开，否则同一组拖拽里
+    // “文件请求成功、文件夹请求失败”会错误地把另一类对象的 rollback chain 一并清掉。
+    const folderWork = folders.length > 0
+      ? withOptimisticIntent(
+          beginOptimisticIntent(folders.map(item => item.objectId)),
+          () => options.moveFolders(folders.map(item => item.id), targetFolderId),
+        )
+      : Promise.resolve()
+    const fileWork = files.length > 0
+      ? withOptimisticIntent(
+          beginOptimisticIntent(files.map(item => item.objectId)),
+          () => options.moveFiles(files.map(item => item.id), targetFolderId, dropInfo),
+        )
+      : Promise.resolve()
+    await Promise.all([folderWork, fileWork])
     options.clearSelection()
   }
 

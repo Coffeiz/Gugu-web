@@ -15,5 +15,6 @@
     "vue-router": "^4.3.0",
     "vue-tsc": "~2.1.0"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "type": "module"
 }

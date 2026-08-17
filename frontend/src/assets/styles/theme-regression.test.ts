@@ -18,9 +18,18 @@ function occurrences(source: string, needle: string) {
   return source.split(needle).length - 1
 }
 
+function cssSelectors(css: string) {
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  return [...source.matchAll(/([^{}]+)\{/g)]
+    .map(match => match[1].trim())
+    .filter(Boolean)
+}
+
 const mindCss = load('./adoption/mind.css')
 const surfacesCss = load('./adoption/surfaces.css')
 const datePickerCss = load('./adoption/date-picker.css')
+const publicPagesCss = load('./adoption/public-pages.css')
+const adoptionIndexCss = load('./adoption/index.css')
 const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
 const productCss = load('./tokens/product.css')
@@ -87,5 +96,17 @@ describe('主题 CSS 回归契约', () => {
     expect(playButton).toContain('background: var(--action-primary-bg)')
     expect(playButton).toContain('color: var(--content-on-accent)')
     expect(playButton).not.toMatch(/linear-gradient|rgba?\(/i)
+  })
+
+  it('登录、注册、隐私页面只通过暗色 bridge 接管 paint，亮色 scoped 样式不被覆盖', () => {
+    expect(adoptionIndexCss).toContain("@import './public-pages.css';")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] :is(.auth-page, .privacy-page)")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .auth-page .field input")
+    expect(publicPagesCss).toContain("html[data-theme='dark'][data-family] .privacy-page .privacy-header")
+
+    const selectors = cssSelectors(publicPagesCss)
+    expect(selectors.length).toBeGreaterThan(0)
+    expect(selectors.every(selector => selector.startsWith("html[data-theme='dark'][data-family]"))).toBe(true)
+    expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 })
