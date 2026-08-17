@@ -37,6 +37,9 @@ const productCss = load('./tokens/product.css')
 const componentCss = load('./tokens/components.css')
 const componentSurfacesCss = load('./tokens/components/surfaces.css')
 const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
+const fileSelectionToolbarVue = load('../../components/common/FileSelectionToolbar.vue')
+const filesViewVue = load('../../views/Files/index.vue')
+const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
 
 describe('主题 CSS 回归契约', () => {
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
@@ -62,6 +65,32 @@ describe('主题 CSS 回归契约', () => {
     expect(fileToolbarCss).toContain('height: var(--file-toolbar-control-height)')
     expect(fileToolbarCss).toContain('width: var(--file-toolbar-icon-size)')
     expect(fileToolbarCss).not.toMatch(/border(?:-color)?\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+  })
+
+  it('文件多选工具栏只由共享组件负责 paint，并锚定项目卡非滚动容器', () => {
+    const toolbarBlock = cssBlock(fileSelectionToolbarVue, '.file-selection-toolbar')
+    expect(toolbarBlock).toContain('background: var(--popup-surface-bg)')
+    expect(toolbarBlock).toContain('border: 1px solid var(--popup-surface-border)')
+    expect(toolbarBlock).toContain('backdrop-filter: var(--popup-surface-blur)')
+    expect(toolbarBlock).toContain('color: var(--content-primary)')
+    expect(toolbarBlock).toContain('z-index: var(--layer-popup)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--control-bg)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--danger-button-bg)')
+    expect(fileSelectionToolbarVue).toContain('background: var(--popup-divider)')
+    expect(fileSelectionToolbarVue).not.toMatch(/(?:#(?:[0-9a-f]{3,8})\b|rgba?\()/i)
+    expect(fileSelectionToolbarVue).not.toContain('!important')
+    expect(fileSelectionToolbarVue).not.toContain('file-action-bar')
+
+    // 页面/项目面板不再保留历史批量栏 paint，避免共享组件之外出现第二个 owner。
+    expect(filesViewVue).not.toMatch(/\.selection-bar\b/)
+    expect(filesViewVue).not.toMatch(/\.sel-(?:count|download-btn|delete-btn|cancel-btn|action-btn|divider)\b/)
+    expect(projectFilesPanelVue).not.toMatch(/\.pm-selection-bar\b/)
+    expect(projectFilesPanelVue).not.toMatch(/\.pm-sel-/)
+
+    // 项目批量栏必须在滚动 file-content 闭合后挂载；absolute bottom 才以动态 modal-right 为基准。
+    expect(projectFilesPanelVue).toContain('</div>\n\n          <!-- 批量栏挂在 modal-right')
+    const modalRightBlock = cssBlock(projectFilesPanelVue, '.modal-right')
+    expect(modalRightBlock).toContain('position: relative')
   })
 
   it('文件卡亮色保持 0.20.4 多选层级，暗色只重映射 token 且没有 adoption paint 竞争', () => {
