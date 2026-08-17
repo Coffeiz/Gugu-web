@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import subprocess
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
@@ -96,7 +97,13 @@ def scan() -> list[Finding]:
 
 
 def scan_added_lines(base: str) -> list[str]:
-    """只检查相对 base 新增的高风险代码行，作为阶段 1 棘轮。"""
+    """只检查相对 base 新增的高风险代码行，作为阶段 1 棘轮。
+
+    这里按源码形态匹配“裸 SQLAlchemy constructor”，不能用简单的 ``"update(" in line``：
+    Agent 返回值里大量 ``result.update(...)`` / ``dict.update(...)``，它们不是 ORM。事务提交/回滚
+    也不是领域查询；当前约定是 Service 负责查询/写入与 flush，API/Agent dispatch 作为任务事务
+    边界可以 commit/rollback，因此不纳入“新增 ORM 边界”棘轮。
+    """
     diff = subprocess.run(
         ["git", "diff", "--unified=0", f"{base}...HEAD", "--", "backend/app/api/v1", "backend/agent/tools", "backend/app/services"],
         cwd=BACKEND.parent,
@@ -120,10 +127,19 @@ def scan_added_lines(base: str) -> list[str]:
         if not (current_file.startswith("backend/app/api/v1/")
                 or current_file.startswith("backend/agent/tools/")):
             continue
+        # 只匹配 select(...)/update(...)/delete(...)/insert(...) 这类裸 constructor；
+        # 前面的负向约束排除 result.update(...) 等普通对象方法。
+        bare_constructor = bool(re.search(
+            r"(?<![\w.])(select|update|delete|insert)\s*\(", code,
+        ))
+        session_orm = any(token in code for token in (
+            "db.get(", "session.get(", "self.db.get(",
+            "db.execute(", "db.delete(", "db.add(",
+        ))
         high_risk = (
             "from app.models import" in code and any(name in code for name in ("File", "Folder"))
-            or any(token in code for token in ("select(", "update(", "delete(", "insert("))
-            or any(token in code for token in ("db.get(", "session.get(", "self.db.get(", "db.commit(", "db.rollback(", "db.execute(", "db.delete(", "db.add("))
+            or bare_constructor
+            or session_orm
         )
         if high_risk:
             violations.append(f"{current_file}: {code[:160]}")
