@@ -21,7 +21,6 @@ from app.services.files.trash import (
     RestoreParentTrashError,
     permanently_delete_file,
     permanently_delete_folder,
-    top_level_deleted_folders_stmt,
     get_top_level_deleted_folder,
     list_top_level_deleted_folders,
     list_top_level_deleted_folders_with_counts,
@@ -230,12 +229,12 @@ async def cleanup_expired(db: AsyncSession) -> int:
         for fid in fids:
             delete_thumb_cache(fid)
 
-    # 过期文件夹（顶层已删、deleted_at 超过 30 天）：硬删 Folder 行——ORM cascade
-    # （Folder.children，`all, delete-orphan`）连带删掉整棵子树；子树内文件已由上面那段按
-    # 各自 deleted_at 清掉（同批软删的文件与文件夹共用同一时间戳，自然同批过期）。目录骨架的
-    # 物理清理已在原删除那一刻尽力做过（P2.2 delete()），这里只做尽力而为的收尾重试。
-    roots = (await db.execute(top_level_deleted_folders_stmt().where(
-        Folder.deleted_at <= cutoff))).scalars().all()
+    # 顶层文件夹查询归 Service；API 只做清理任务编排。为保持现有返回口径和批次语义，
+    # 先取全部顶层墓碑再按 cutoff 过滤，不再在路由层新增 db.execute/select 边界。
+    roots = [
+        root for root in await list_top_level_deleted_folders(db, None)
+        if root.deleted_at <= cutoff
+    ]
     for root in roots:
         dir_key = await folder_dir_key(db, root.user_id, root)
         await db.delete(root)
