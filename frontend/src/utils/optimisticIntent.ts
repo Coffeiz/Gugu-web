@@ -19,6 +19,7 @@ let revisionSeq = 0
 let activeIntent: OptimisticIntent | null = null
 const latestRevision = new Map<string, number>()
 const deferredRollbacks = new Map<number, DeferredRollback[]>()
+const workTails = new Map<string, Promise<void>>()
 
 export function beginOptimisticIntent(keys: readonly string[]): OptimisticIntent {
   const uniqueKeys = [...new Set(keys)]
@@ -47,6 +48,30 @@ export function captureOptimisticIntent(): OptimisticIntent | null {
 
 export function isOptimisticIntentCurrent(intent: OptimisticIntent): boolean {
   return intent.keys.every(key => latestRevision.get(key) === intent.revision)
+}
+
+/**
+ * Apply is deliberately not queued: the user must see the regrab destination immediately. Only the
+ * persistence work is serialized per object key so the server can never observe B→C before A→B.
+ * Multi-selection waits for every predecessor touching any member, then installs one shared tail for
+ * the whole group; a failure releases the queue just like a success.
+ */
+export async function runOptimisticIntentWork<T>(intent: OptimisticIntent, work: () => Promise<T>): Promise<T> {
+  const predecessors = [...new Set(
+    intent.keys
+      .map(key => workTails.get(key))
+      .filter((tail): tail is Promise<void> => tail != null),
+  )]
+  const execution = Promise.all(predecessors.map(tail => tail.catch(() => undefined))).then(work)
+  const tail = execution.then(() => undefined, () => undefined)
+  for (const key of intent.keys) workTails.set(key, tail)
+  try {
+    return await execution
+  } finally {
+    for (const key of intent.keys) {
+      if (workTails.get(key) === tail) workTails.delete(key)
+    }
+  }
 }
 
 function overlaps(left: OptimisticIntent, right: OptimisticIntent): boolean {
