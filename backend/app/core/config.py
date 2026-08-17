@@ -32,8 +32,11 @@ class DatabaseSettings(BaseModel):
     host: str = Field("localhost", description="数据库主机")
     port: int = Field(5432, description="端口")
     name: str = Field("gugu_web", description="数据库名")
-    user: str = Field("pm", description="用户名")
-    password: str = Field("pm123", description="密码")
+    user: str = Field("gugu", description="用户名")
+    # password 默认空串：业务必须从 config.override.json 显式提供；缺失会被
+    # apply_override 校验抛错，避免「默默用空密码连 DB」导致 worker 反复启动失败
+    # 又被「im:inbound 队列堆积 → 用户看不到任何回复」这种症状掩盖。
+    password: str = Field("", description="密码（必须从 config.override.json 显式提供）")
 
     @property
     def url(self) -> str:
@@ -219,8 +222,30 @@ class AppSettings(BaseSettings):
             updates: dict = {}
 
             if "db" in override:
+                # 强制要求：override["db"] 必须显式声明 password 字段，且不能是占位符/空串。
+                # 真实踩过的坑：默认值是 "pm123"，业务 config.override.json 只覆盖
+                # host/port/name/user，没写 password → 后端用 "gugu" + "pm123" 连 DB 失败 →
+                # worker 进程反复 restart → im:inbound 队列堆积 → 用户感觉「消息收不到」。
+                # 报错比静默 fail 好：进程直接拒绝启动，问题在部署阶段就暴露。
+                #
+                # 注意：必须 check override["db"] 而不是 merged.password —— 因为 pydantic-settings
+                # 会从 backend/.env 读 DB__PASSWORD 注入 self.db.password（默认是 ""，但
+                # .env 提供真实值）。如果只看 merged 结果，会把"override 没写 password
+                # 但 env 给了真值"当成通过，掩盖 override 漏配 password 这个真正的根因。
+                override_db = override["db"] or {}
+                if "password" not in override_db:
+                    raise RuntimeError(
+                        f"db.password 未在 {OVERRIDE_FILE} 中提供。"
+                        f"请在 db 节里写明真实密码（不要省略）。"
+                    )
+                override_pw = override_db["password"]
+                if not override_pw or override_pw in ("pm123", "pm"):
+                    raise RuntimeError(
+                        f"db.password 仍是占位符或空串 (当前值 {override_pw!r})。"
+                        f"请在 {OVERRIDE_FILE} 的 db 节里写明真实密码。"
+                    )
                 merged = {**self.db.model_dump(), **{
-                    k: v for k, v in override["db"].items()
+                    k: v for k, v in override_db.items()
                     if k in DatabaseSettings.model_fields
                 }}
                 updates["db"] = DatabaseSettings.model_construct(**merged)
@@ -316,6 +341,9 @@ class AppSettings(BaseSettings):
                     updates[k] = override[k]
 
             return self.model_copy(update=updates)
+        except RuntimeError:
+            # 配置校验失败（缺 password 等）：不静默降级，直接挂掉让部署阶段可见
+            raise
         except Exception as e:
             print(f"[config] override 加载失败: {e}")
             return self
