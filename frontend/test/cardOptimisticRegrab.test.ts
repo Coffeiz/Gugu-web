@@ -34,9 +34,12 @@ describe('card optimistic regrab contracts', () => {
     expect(mindStore).toContain('await mindApi.removeCanvasItem(canvasId, created.id)')
   })
 
-  it('抽屉临时卡落库后按当前 placeholder 坐标 flush，而不是重新使用首次 drop 坐标', () => {
-    expect(mindStore).toContain('if (current.x !== x || current.y !== y)')
-    expect(mindStore).toContain("mindApi.bringCanvasItemToFront(canvasId, created.id, { x: current.x, y: current.y })")
+  it('抽屉临时卡落库后循环追平 placeholder 最新坐标，不假设只发生一次 regrab', () => {
+    expect(mindStore).toContain('while (true)')
+    expect(mindStore).toContain('if (current.x === persistedX && current.y === persistedY) break')
+    expect(mindStore).toContain('const targetX = current.x')
+    expect(mindStore).toContain('const targetY = current.y')
+    expect(mindStore).toContain('mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY })')
     expect(mindStore).toContain('latestPending.cancelled')
   })
 })
