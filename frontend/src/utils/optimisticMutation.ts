@@ -17,11 +17,11 @@ import {
  *   apply() → afterMutate()
  *   成功：await work() → onCommit?()            —— 不触发 rollback
  *   失败（普通调用）：rollback() → afterMutate() → onError(e)
- *   失败（Runtime card move 已被更新意图 supersede）：暂存旧 rollback，保留最新乐观状态
+ *   失败（已被更新意图 supersede）：暂存旧 rollback，保留最新乐观状态
  *
- * Runtime card move 的 apply 仍然立即执行；只有 work 按对象串行，避免 regrab 后的新请求
- * 先于旧请求到达服务端，造成服务端最终状态被旧写反向覆盖。队列在 commit/rollback
- * bookkeeping 完整结束后才释放，下一笔 work 不会抢跑到旧事务收尾之前。
+ * 带 OptimisticIntent 的连续操作仍然立即 apply；只有 work 按 intent key 串行，避免后发请求
+ * 先于前一笔到达服务端，造成最终状态被旧写覆盖。队列在 commit/rollback bookkeeping
+ * 完整结束后才释放，下一笔 work 不会抢跑到旧事务收尾之前。
  */
 export interface OptimisticMutationOptions {
   /** 乐观改动缓存 + 任何提交前的本地状态变更（如清空选择/剪贴板）。 */
@@ -39,8 +39,8 @@ export interface OptimisticMutationOptions {
 }
 
 export async function optimisticMutation(opts: OptimisticMutationOptions): Promise<void> {
-  // Runtime Action 的 intent 只在同步调用栈里存在；必须在 apply/work 前捕获，不能跨 await
-  // 读取全局上下文。普通调用拿到 null，完整保持原来的回滚语义。
+  // intent 只在同步调用栈里存在；必须在 apply/work 前捕获，不能跨 await 读取全局上下文。
+  // 普通调用拿到 null，完整保持原来的回滚语义。
   const intent = captureOptimisticIntent()
   const { apply, work, rollback, afterMutate, onCommit, onError } = opts
   apply()
@@ -60,14 +60,14 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
       rollback()
       afterMutate()
     } else if (isOptimisticIntentCurrent(intent)) {
-      // 当前这一笔也失败：先撤自己的最新乐观状态，再按新→旧依次补做之前被 regrab
-      // 暂缓的 rollback，最终落到最后一个真正被服务端确认的状态。
+      // 当前最新意图也失败：先撤自己这一层，再按新→旧依次补做之前暂缓的 rollback，
+      // 最终落到最后一个真正被服务端确认的状态。
       rollback()
       afterMutate()
       rollbackDeferredOptimisticIntents(intent)
     } else {
-      // regrab 已经 apply 了更新落点。现在执行旧 rollback 会把新卡片位置/目录覆盖掉，
-      // 因此先暂存；后续更新意图成功时丢弃，失败时再作为 rollback chain 的一部分执行。
+      // 更新意图已经 apply。现在执行旧 rollback 会覆盖新的视觉/数据状态，因此先暂存；
+      // 后续更新意图成功时丢弃，失败时再作为 rollback chain 的一部分执行。
       deferOptimisticRollback(intent, rollback, afterMutate)
     }
     onError(e)
