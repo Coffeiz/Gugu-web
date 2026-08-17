@@ -64,6 +64,9 @@ export const useMindStore = defineStore('mind', () => {
   const invalidatedCanvasLoads = new Set<number>()
   const canvasDataSaves = new Map<number, Promise<void>>()
   const canvasZSaves = new Map<number, Promise<void>>()
+  // 抽屉→画布先创建负 id placeholder。regrab 可能发生在 createRefNode/addCanvasItem 完成前，
+  // 此时不能拿负 id 调后端；只保留前端最新位置/取消意图，等真实 item id 到手后一次性交接。
+  const pendingProjectRefCreates = new Map<number, { clientKey: string; cancelled: boolean }>()
 
   /** 时间流：按 capturedAt 分组成「一天一组」，供 NoteTimeline 渲染；筛选词命中正文才留 */
   const timeline = computed(() => {
@@ -227,11 +230,9 @@ export const useMindStore = defineStore('mind', () => {
     return item
   }
 
-  /** 抽屉拖项目进画布专用：先本地插入一张占位卡，换取拖拽落地动画立刻有真实 DOM 可交接
-   * （不用等 createRefNode + addCanvasItem 两次串行请求，克隆体才不会在空中顿住）。接口
-   * 成功后原地换成真实数据，失败则原地摘除并把错误抛给调用方。clientKey 全程不变，配合
-   * MindCanvas.vue 的 `:key="item.clientKey ?? item.id"`，换真实数据这一步不会触发 Vue
-   * 重新挂载、把正在播的落地动画/过渡状态炸掉。 */
+  /** 抽屉拖项目进画布专用：先本地插入一张占位卡，换取拖拽落地动画立刻有真实 DOM 可交接。
+   * regrab 发生在首次落库完成前时，placeholder 继续承载最新坐标；拿到真实 id 后再把最新位置
+   * 一次性 flush 到服务端。clientKey 全程不变，Runtime/Vue 都不会因 temp→real 身份切换重挂载。 */
   function addProjectRefOptimistic(canvasId: number, projectId: number, x: number, y: number) {
     const tempId = --optimisticSeq
     const clientKey = `optimistic-${tempId}`
@@ -252,20 +253,49 @@ export const useMindStore = defineStore('mind', () => {
       },
       createdAt: now, updatedAt: now,
     }
+    pendingProjectRefCreates.set(tempId, { clientKey, cancelled: false })
     canvasItems.value.push(placeholder)
 
     const ready = (async () => {
+      let persistedItemId: number | null = null
       try {
         const node = await mindApi.createRefNode('project', projectId)
-        const item = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
-        const resolved = { ...item, clientKey }
-        const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
-        if (index === -1) canvasItems.value.push(resolved)
-        else canvasItems.value[index] = resolved
+        const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
+        persistedItemId = created.id
+        const pending = pendingProjectRefCreates.get(tempId)
+        const currentIndex = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+        if (!pending || pending.cancelled || currentIndex === -1) {
+          // 用户已在 landing 中 regrab 回抽屉：本地 placeholder 已经消失。首次创建可能已经
+          // 到达服务端，所以只用真实 id 做补偿删除，绝不把卡片重新插回画布。
+          await mindApi.removeCanvasItem(canvasId, created.id)
+          pendingProjectRefCreates.delete(tempId)
+          return { ...created, clientKey }
+        }
+
+        const current = canvasItems.value[currentIndex]
+        let resolved: MindCanvasItem = { ...created, clientKey }
+        if (current.x !== x || current.y !== y) {
+          // regrab 在首次创建完成前已经把 placeholder 移到新位置。不能让 create 的旧 x/y
+          // 覆盖最新视觉意图；真实 id 到手后直接把最终坐标/置顶一次性落库。
+          const moved = await mindApi.bringCanvasItemToFront(canvasId, created.id, { x: current.x, y: current.y })
+          resolved = { ...moved, clientKey }
+        }
+        const latestPending = pendingProjectRefCreates.get(tempId)
+        const latestIndex = canvasItems.value.findIndex(item => item.clientKey === clientKey)
+        if (!latestPending || latestPending.cancelled || latestIndex === -1) {
+          await mindApi.removeCanvasItem(canvasId, created.id)
+          pendingProjectRefCreates.delete(tempId)
+          return resolved
+        }
+        canvasItems.value[latestIndex] = resolved
+        pendingProjectRefCreates.delete(tempId)
         return resolved
       } catch (error) {
         const index = canvasItems.value.findIndex(current => current.clientKey === clientKey)
         if (index !== -1) canvasItems.value.splice(index, 1)
+        pendingProjectRefCreates.delete(tempId)
+        // 创建已成功但后续最新位置 flush 失败时，不能在服务端留下一个本地已撤掉的孤儿卡。
+        if (persistedItemId != null) await mindApi.removeCanvasItem(canvasId, persistedItemId).catch(() => {})
         throw error
       }
     })()
@@ -326,6 +356,10 @@ export const useMindStore = defineStore('mind', () => {
       y: item.id === itemId ? y : item.y,
       z,
     }))
+    // 抽屉 placeholder 还没有服务端 id。regrab 的位置已同步写入本地，等首次 create 返回
+    // 真实 id 后 addProjectRefOptimistic 会读取这里的最新 x/y 再 flush；禁止把负 id 发给 API。
+    if (pendingProjectRefCreates.has(itemId)) return
+
     const previous = canvasZSaves.get(canvasId) ?? Promise.resolve()
     const save = previous.catch(() => undefined).then(async () => {
       try {
@@ -394,9 +428,14 @@ export const useMindStore = defineStore('mind', () => {
     if (canvasId == null || index === -1) return Promise.resolve()
     const item = canvasItems.value[index]
     const relations = canvasRelations.value
+    const pending = pendingProjectRefCreates.get(itemId)
+    if (pending) pending.cancelled = true
     canvasItems.value.splice(index, 1)
     const nodeIds = new Set(canvasItems.value.map(current => current.nodeId))
     canvasRelations.value = canvasRelations.value.filter(rel => nodeIds.has(rel.srcNodeId) && nodeIds.has(rel.dstNodeId))
+    // 首次 drawer→canvas 仍在落库时 regrab 回抽屉：本地移除就是最新乐观状态，不能向 API
+    // 发送负 id。pending create 若随后拿到真实 id，会负责补偿删除那个真实 item。
+    if (pending) return Promise.resolve()
     return mindApi.removeCanvasItem(canvasId, itemId).catch(error => {
       window.setTimeout(() => {
         if (activeCanvasId.value !== canvasId || canvasItems.value.some(current => current.id === item.id)) return
