@@ -96,9 +96,8 @@ watch(() => route.path, (path) => {
 }
 :deep(.mind-cal-picker .dp-input span) { display: none; }
 
-/* 椭圆胶囊：尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆；底色改毛玻璃
-   （跟画布自己那套 CanvasToolbar/CanvasSidebar 的 .glass-card 语言统一），浮在内容上方的
-   观感靠这份 blur + 阴影，不用额外挪动布局位置。 */
+/* 椭圆胶囊：尺寸对齐日历页的月/周切换（.view-toggle），只把圆角换成全圆；基础视觉
+   保留原方案，Mono/V2 的浮动 chrome 材质由 adoption/mind.css 统一重映射。 */
 .mind-tabs {
   gap: 2px; padding: 2px;
   border-radius: 999px;
@@ -117,15 +116,14 @@ watch(() => route.path, (path) => {
   transition: color 0.15s;
 }
 .mind-tab:hover { color: var(--color-primary); }
-.mind-tab.on { color: #5a5e86; }
 
+/* Theme-sensitive filter paint lives in adoption/mind.css; this component owns geometry only. */
 .mind-filter {
   display: flex; align-items: center; gap: 6px;
   width: 200px; height: 40px; box-sizing: border-box;
   margin-right: 14px; padding: 0 12px;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: rgba(255,255,255,0.52);
-  border: 1px solid rgba(255,255,255,0.75);
 }
 .mf-icon { flex-shrink: 0; color: var(--text-secondary); opacity: 0.7; }
 .mind-filter input {
@@ -138,7 +136,4 @@ watch(() => route.path, (path) => {
   border: none; border-radius: 4px; background: none;
   color: var(--text-secondary); cursor: pointer;
 }
-.mf-clear:hover { background: rgba(0,0,0,0.06); }
-
-.mind-body { flex: 1; min-height: 0; }
 </style>
