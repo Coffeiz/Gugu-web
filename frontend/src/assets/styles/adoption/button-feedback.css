@@ -1,27 +1,16 @@
 /* Global optimistic button feedback.
    The selector is deliberately wrapped in :where() so this remains a fallback: any component with
-   an explicit active-state contract can override it without specificity escalation. Individual
-   buttons may tune the response through --button-press-* tokens. */
+   an explicit active-state contract can override the transform without specificity escalation.
+   Individual buttons may tune the response through --button-press-* tokens. */
 :where(html:not([data-button-feedback='off']) button:not(:disabled):active) {
-  scale: var(--button-press-scale, .985);
-  translate: 0 var(--button-press-translate-y, 1px);
+  transform: var(--button-press-transform, translateY(1px) scale(.985));
   opacity: var(--button-press-opacity, .93);
 }
 
-/* Legacy .press-fx used transform for the same press response. Keep its hover/shadow behaviour,
-   but route the pressed state through the global contract so it neither doubles the 1px shift nor
-   ignores the user-level switch. The higher specificity intentionally wins over global.css's old
-   .press-fx:active declaration while remaining scoped to this preference. */
-html[data-button-feedback='optimistic'] .press-fx:active {
-  transform: none;
-  scale: var(--button-press-scale, .985);
-  translate: 0 var(--button-press-translate-y, 1px);
-  opacity: var(--button-press-opacity, .93);
-}
-
+/* Legacy .press-fx already declares the same active transform later in global.css. Keep that class
+   as a compatibility path, but make the off preference authoritative so legacy callers cannot
+   bypass the global switch. */
 html[data-button-feedback='off'] .press-fx:active {
   transform: none;
-  scale: 1;
-  translate: 0 0;
   opacity: 1;
 }
