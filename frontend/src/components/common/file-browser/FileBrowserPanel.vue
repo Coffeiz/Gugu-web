@@ -76,4 +76,18 @@ defineEmits<{
   min-width: 0;
   min-height: 0;
 }
+
+/* 文件库工具栏宿主几何。Files/index.vue 里的旧祖先 scoped 规则已经跨不过
+   FileBrowserPanel -> FileBrowserToolbar 两层组件边界；把 v0.20.4 的真实 52px 外框
+   放到直接父组件，既恢复高度，也避免依赖失效的祖先样式。 */
+.files-toolbar {
+  height: 52px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  gap: 12px;
+  justify-content: space-between;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+}
 </style>
