@@ -10,6 +10,19 @@
   --mind-toolbar-border: var(--glass-card-border);
   --mind-system-card-blur: var(--glass-blur);
 
+  /* Notes page calendar trigger: preserve the exact legacy light appearance while giving dark
+     mode its own token mapping below. The page component only owns the circular geometry. */
+  --mind-calendar-trigger-bg: rgba(255,255,255,.52);
+  --mind-calendar-trigger-border: rgba(255,255,255,.75);
+  --mind-calendar-trigger-shadow: none;
+  --mind-calendar-trigger-bg-hover: rgba(255,255,255,.75);
+  --mind-calendar-trigger-border-hover: rgba(255,255,255,.90);
+  --mind-calendar-trigger-shadow-hover: none;
+  --mind-calendar-trigger-bg-open: rgba(255,255,255,.75);
+  --mind-calendar-trigger-border-open: rgba(255,255,255,.90);
+  --mind-calendar-trigger-shadow-open: none;
+  --mind-calendar-trigger-icon: var(--color-primary);
+
   /* Legacy light paper values from the original Notes/Canvas implementation. */
   --note-surface: rgba(255,255,255,.56);
   --note-surface-editing: var(--surface-raised);
@@ -65,6 +78,18 @@ html[data-family='v2'] {
 html[data-theme='dark'][data-family] {
   /* Dark canvas keeps the current dark treatment; only the light fallback above is restored. */
   --mind-canvas-bg: var(--surface-card-solid);
+
+  /* The notes calendar trigger uses the same input contract as DatePicker in dark mode, but keeps
+     the Mind-specific circular geometry and accent icon. */
+  --mind-calendar-trigger-bg: var(--input-bg);
+  --mind-calendar-trigger-border: var(--input-border);
+  --mind-calendar-trigger-shadow: none;
+  --mind-calendar-trigger-bg-hover: var(--input-bg-hover);
+  --mind-calendar-trigger-border-hover: var(--input-border-hover);
+  --mind-calendar-trigger-shadow-hover: var(--input-hover-shadow);
+  --mind-calendar-trigger-bg-open: var(--input-bg-focus);
+  --mind-calendar-trigger-border-open: var(--input-border-focus);
+  --mind-calendar-trigger-shadow-open: var(--input-focus-shadow);
 
   /* Dark notes stay chromatic but are mixed mostly into the dark solid card surface; this avoids
      the light-mode pastel RGB values becoming glowing slabs at night. */
