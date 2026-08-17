@@ -5,17 +5,19 @@ function load(relativePath: string) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 }
 
-const filesPage = load('../../views/Files/index.vue')
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
+const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
-  it('文件库恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
-    expect(filesPage).toContain('height: 52px; box-sizing: border-box;')
+  it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
+    expect(browserPanel).toContain('height: 52px;')
+    expect(browserPanel).toContain('padding: 0 16px;')
+    expect(browserPanel).toContain('gap: 12px;')
     expect(browserToolbar).not.toContain('height: 52px;')
     expect(projectToolbar).toContain('height: 52px;')
     expect(projectToolbar).toContain('box-sizing: border-box;')
