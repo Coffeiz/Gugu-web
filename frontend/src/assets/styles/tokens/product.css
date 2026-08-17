@@ -147,7 +147,7 @@ html[data-theme][data-family] .chat-window .chat-input-row {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-html[data-theme][data-family] .chat-window .send-btn { background: var(--brand-gradient); }
+html[data-theme][data-family] .chat-window .send-btn { background: var(--gugu-chat-send-bg); }
 html[data-theme][data-family] .chat-window .chat-drop-overlay {
   color: var(--action-primary);
   background: var(--gugu-chat-drop-bg);
