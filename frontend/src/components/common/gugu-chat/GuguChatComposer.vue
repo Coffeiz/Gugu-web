@@ -190,9 +190,13 @@ defineExpose({
 .exp-send-btn { width: 32px; height: 32px; border-radius: 9px; }
 
 /* ── 通用发送按钮 ── */
+/* 背景色不进这里、留给全局 token 接管：tokens/product.css 提供基础色，
+   theme-adoption.css 在暗色主题下用专门的 --gugu-chat-send-bg 覆盖，
+   避免 brand-gradient 在暗色下过于刺眼。scoped 硬编码背景会导致
+   跟全局 token 抢覆盖权——删掉，本组件只管尺寸/形状/交互。 */
 .send-btn {
   width: 28px; height: 28px; border-radius: 8px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
+  color: white;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   transition: transform 0.15s; flex-shrink: 0;
 }

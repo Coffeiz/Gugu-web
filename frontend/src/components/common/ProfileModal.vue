@@ -337,16 +337,6 @@ async function doDeleteAccount() {
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-text-link { margin-top: 8px; background: none; border: none; cursor: pointer; font-size: 12px; color: var(--content-secondary); text-decoration: underline; padding: 0; }
 .pm-text-link:hover { color: var(--action-primary); }
-
-/* 个人设置整页关闭按钮按压下沉：子页里大量「小设置按钮 / 文字按钮 / chip」
-   是设置项本身，按下沉会让「这一栏在响应」变成「这一栏被点错了」。覆盖全局
-   button-feedback 的 :where() 默认（特异度 0,0,1）—— 用 (0,1,1) 的容器前缀
-   稳定赢过。focus/disabled 都保留交互性，只 reset 按压的位移和变淡。 */
-.pm-layout button:not(:disabled):active,
-.pm-layout .pm-layout button:not(:disabled):active {
-  transform: none;
-  opacity: 1;
-}
 .pm-qr-cancel { font-size: 12px; color: var(--content-secondary); background: none; border: none; cursor: pointer; text-decoration: underline; }
 .pm-qr-err { margin-top: 10px; font-size: 12px; color: var(--status-danger); }
 .pm-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding-top: 4px; }
