@@ -1,8 +1,7 @@
 /**
- * Runtime card moves may be regrabbed while the previous persistence request is still in flight.
- * This tiny synchronous context lets optimistic mutations know whether the request that is settling
- * still represents the user's latest intent. It deliberately carries no business state: Runtime
- * owns the interaction transaction; stores/caches still own apply/rollback.
+ * 快速连续的乐观 UI 意图（例如 Runtime regrab、设置按钮连续切换）可能在上一笔持久化
+ * 尚未结束时就产生更新意图。这个同步上下文只负责标记「当前结算的请求是否仍代表用户
+ * 最新意图」并按 key 排序持久化；它不携带业务状态，具体 apply / rollback 仍由调用方拥有。
  */
 export interface OptimisticIntent {
   readonly revision: number
@@ -51,13 +50,11 @@ export function isOptimisticIntentCurrent(intent: OptimisticIntent): boolean {
 }
 
 /**
- * Apply is deliberately not queued: the user must see the regrab destination immediately. Only the
- * persistence turn is serialized per object key so the server can never observe B→C before A→B.
+ * Apply 故意不排队：用户必须立即看到最新意图。只有 persistence 按 key 串行，确保服务端
+ * 观察到的写入顺序与用户操作顺序一致，不会因为网络完成顺序反转把旧状态写到最后。
  *
- * The returned release callback is intentionally separate from acquisition. optimisticMutation
- * calls it only after success commit / failure rollback bookkeeping has finished, so the next work
- * cannot race ahead in the microtask gap between `work()` settling and the previous transaction's
- * rollback-chain update.
+ * release 与 acquire 分开：optimisticMutation 只会在上一笔 commit / rollback bookkeeping
+ * 全部完成后释放队列，下一笔 work 不会抢跑进旧事务收尾的 microtask 间隙。
  */
 export async function acquireOptimisticIntentWork(intent: OptimisticIntent): Promise<() => void> {
   const predecessors = [...new Set(
@@ -67,8 +64,7 @@ export async function acquireOptimisticIntentWork(intent: OptimisticIntent): Pro
   )]
   let releaseTail!: () => void
   const tail = new Promise<void>(resolve => { releaseTail = resolve })
-  // Install our tail before the first await so a third regrab queues behind this intent even while
-  // this one itself is still waiting for its predecessor.
+  // 首个 await 前就挂上自己的 tail；即使当前意图还在等前驱，第三个更新意图也会正确排在它后面。
   for (const key of intent.keys) workTails.set(key, tail)
   await Promise.all(predecessors.map(previous => previous.catch(() => undefined)))
 
@@ -89,8 +85,8 @@ function overlaps(left: OptimisticIntent, right: OptimisticIntent): boolean {
 }
 
 /**
- * A stale request failed after a newer regrab already applied. Its rollback must not run yet: doing
- * so would overwrite the newer visual/data state. Keep the closure until a newer request settles.
+ * 旧请求失败时更新意图已经 apply，不能立刻 rollback 覆盖新 UI。先暂存旧 rollback；等更新
+ * 意图结算后，成功就丢弃，失败才按新→旧补做，最终回到最后一个服务端确认状态。
  */
 export function deferOptimisticRollback(
   intent: OptimisticIntent,
@@ -103,8 +99,8 @@ export function deferOptimisticRollback(
 }
 
 /**
- * A successful absolute move establishes a newer confirmed baseline. Any deferred rollback at or
- * before this revision for the same objects is obsolete and must never run later.
+ * 更新意图成功即建立新的 confirmed baseline；同一 key 上更早的 deferred rollback 已经过时，
+ * 后续无论再发生什么都不能重新执行它们。
  */
 export function commitOptimisticIntent(intent: OptimisticIntent): void {
   for (const [revision, entries] of deferredRollbacks) {
@@ -116,9 +112,8 @@ export function commitOptimisticIntent(intent: OptimisticIntent): void {
 }
 
 /**
- * The latest intent failed too. The caller first performs its own local rollback (D→C), then this
- * function replays older deferred failures newest-to-oldest (C→B→A), restoring the last confirmed
- * state instead of stopping on an optimistic intermediate that never reached the server.
+ * 最新意图也失败：调用方先撤销自己这一层（D→C），再从新到旧重放之前 deferred 的失败
+ * （C→B→A），避免停在一个从未被服务端确认过的中间乐观状态。
  */
 export function rollbackDeferredOptimisticIntents(intent: OptimisticIntent): void {
   const revisions = [...deferredRollbacks.keys()]
