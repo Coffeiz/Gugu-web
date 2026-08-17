@@ -332,9 +332,9 @@ html[data-theme][data-family] .task-card .link { color: var(--content-secondary)
 html[data-theme][data-family] .task-card .tc-payload { color: var(--content-secondary); background: var(--surface-soft); }
 html[data-theme][data-family] .task-card .link:hover { color: var(--content-primary); }
 html[data-theme][data-family] .task-card .link.danger:hover { color: var(--status-danger); }
-html[data-theme][data-family] .task-card .slider { background: var(--border-strong); }
-html[data-theme][data-family] .task-card .slider::before { background: var(--surface-raised); }
-html[data-theme][data-family] .task-card .switch input:checked + .slider { background: var(--action-primary); }
+/* task-card 的 switch 轨道/滑块不再单独覆盖：--switch-track-bg/-thumb-bg token
+   已按主题提供同值（亮色 surface-raised / 暗色 78% 提亮），单独写 border-strong
+   反而在暗色下变成亮白轨道。 */
 
 /* ── GuguChat 暗色契约 ───────────────────────────────────────────────────────────────
    旧聊天组件仍有少量亮色硬编码；暗色主题统一改消费与令牌页样板相同的 contract。 */
@@ -391,10 +391,8 @@ html[data-theme='dark'][data-family] .chat-window .msg-voice {
   border-color: var(--border-subtle);
   box-shadow: var(--elevation-card);
 }
-html[data-theme='dark'][data-family] .chat-window .msg.user .msg-bubble {
-  color: var(--content-on-accent);
-  background: var(--gugu-chat-user-bg);
-}
+/* 用户气泡暗色由 tokens/components.css 的 --gugu-chat-user-bg 暗色覆盖统一提供，
+   product.css 的双主题规则已消费该 token，这里不再重复声明。 */
 html[data-theme='dark'][data-family] .chat-window .msg.member .msg-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-quoted {
   color: var(--content-secondary);

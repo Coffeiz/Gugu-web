@@ -116,81 +116,85 @@ async function submit() {
 </script>
 
 <style scoped>
+/* 全套表面消费语义 token（modal-card / option / input / action），与其他弹窗
+   （ScheduleFormModal、活动弹窗）同一契约，亮暗主题自动适配。 */
 .modal-mask {
   position: fixed; inset: 0;   /* z-index 由 :style 动态(打开时盖当前最顶窗口) */
-  background: rgba(0,0,0,0.25);
+  background: var(--scrim);
   display: flex; align-items: center; justify-content: center;
 }
 .modal-card {
   width: 400px;
-  background: rgba(255,255,255,0.82);
+  background: var(--modal-card-bg);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.76);
+  border: 1px solid var(--modal-card-border);
   border-radius: 18px; padding: 28px 28px 24px;
-  box-shadow: 0 20px 60px rgba(80,90,110,0.16),
-              inset 0 1px 0 rgba(255,255,255,0.95);
+  box-shadow: var(--modal-card-shadow),
+              inset 0 1px 0 var(--modal-card-highlight);
 }
 .modal-header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 20px;
 }
-.modal-title { font-size: 15px; font-weight: 700; color: #1e2028; }
+.modal-title { font-size: 15px; font-weight: 700; color: var(--content-primary); }
 .modal-close {
   background: none; border: none; font-size: 14px;
-  color: #aaa; cursor: pointer; padding: 2px 6px;
+  color: var(--content-secondary); cursor: pointer; padding: 2px 6px;
   border-radius: 6px; transition: background 0.15s;
 }
-.modal-close:hover { background: rgba(0,0,0,0.06); color: #555; }
+.modal-close:hover { background: var(--action-soft); color: var(--content-primary); }
 
 .cat-row { display: flex; gap: 8px; margin-bottom: 14px; }
 .cat-btn {
   flex: 1; padding: 7px 0;
   display: flex; align-items: center; justify-content: center; gap: 5px;
-  background: rgba(255,255,255,0.6);
-  border: 1px solid rgba(200,204,220,0.6);
+  background: var(--option-bg);
+  border: 1px solid var(--option-border);
   border-radius: 9px; font-size: 12px; font-weight: 600; cursor: pointer;
-  color: #6b7280; transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
+  color: var(--option-fg); transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.cat-btn:hover { background: rgba(255,255,255,0.85); }
+.cat-btn:hover { background: var(--option-bg-hover); border-color: var(--option-border-hover); }
 .cat-btn.active {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border-color: transparent; color: white;
-  box-shadow: 0 3px 10px rgba(123,127,178,0.3);
+  background: var(--action-primary-bg);
+  border-color: transparent; color: var(--content-on-accent);
+  box-shadow: var(--elevation-card);
 }
 
 .feedback-textarea {
   width: 100%; padding: 10px 12px; resize: none;
-  background: rgba(255,255,255,0.7);
-  border: 1px solid rgba(200,204,220,0.6);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 10px; font-size: 13px;
-  font-family: var(--font-sans); color: #1e2028;
+  font-family: var(--font-sans); color: var(--input-fg);
   outline: none; transition: border-color 0.15s, box-shadow 0.15s;
   box-sizing: border-box;
 }
-.feedback-textarea:focus {
-  border-color: rgba(123,127,178,0.5);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+/* 与 hover 同特异度、源顺序在后：聚焦后悬停不丢 focus 描边。 */
+.feedback-textarea:hover:not(:disabled) { background: var(--input-bg-hover); border-color: var(--input-border-hover); }
+.feedback-textarea:focus:not(:disabled) {
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
 }
-.feedback-textarea::placeholder { color: #b0b4c4; }
+.feedback-textarea::placeholder { color: var(--input-placeholder); }
 
 .char-count {
-  text-align: right; font-size: 11px; color: #b0b4c4;
+  text-align: right; font-size: 11px; color: var(--content-tertiary);
   margin-top: 4px; margin-bottom: 14px;
 }
 
 .error-msg {
-  font-size: 12px; color: #c05050; margin-bottom: 10px;
+  font-size: 12px; color: var(--status-danger); margin-bottom: 10px;
   padding: 7px 11px; border-radius: 8px;
-  background: rgba(200,80,80,0.08); border: 1px solid rgba(200,80,80,0.15);
+  background: var(--status-danger-bg); border: 1px solid color-mix(in srgb,var(--status-danger) 22%,transparent);
 }
 
 .submit-btn {
   width: 100%; padding: 10px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   border: none; border-radius: 10px;
-  font-size: 13px; font-weight: 600; color: white;
+  font-size: 13px; font-weight: 600; color: var(--content-on-accent);
   cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 14px rgba(123,127,178,0.3);
+  box-shadow: var(--elevation-card);
 }
 .submit-btn:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
 .submit-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -200,13 +204,13 @@ async function submit() {
 }
 .done-icon {
   width: 48px; height: 48px; border-radius: 50%; margin: 0 auto 14px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: white;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
+  font-size: 20px; color: var(--content-on-accent);
+  box-shadow: var(--elevation-card);
 }
-.done-text { font-size: 15px; font-weight: 700; color: #1e2028; margin-bottom: 6px; }
-.done-sub  { font-size: 13px; color: #8a8fa8; }
+.done-text { font-size: 15px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
+.done-sub  { font-size: 13px; color: var(--content-secondary); }
 
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.18s; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
