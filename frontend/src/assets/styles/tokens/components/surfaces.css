@@ -59,7 +59,6 @@
   --file-card-bg-hover: rgba(255,255,255,.86);
   --file-card-border-hover: rgba(255,255,255,.90);
   --file-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 6px 18px rgba(80,90,110,.13);
-  --file-card-hover-sheen: rgba(255,255,255,.15);
   --file-card-bg-selected: rgba(255,255,255,.92);
   --file-card-border-selected: rgba(123,127,178,.55);
   --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
@@ -195,7 +194,6 @@ html[data-theme='dark'][data-family] {
   --file-card-bg-hover: var(--surface-raised);
   --file-card-border-hover: var(--border-hover);
   --file-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover);
-  --file-card-hover-sheen: var(--highlight-muted);
   --file-card-bg-selected: var(--surface-raised);
   --file-card-border-selected: var(--action-outline);
   --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
