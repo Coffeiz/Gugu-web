@@ -231,7 +231,10 @@ defineExpose({
 
 /* ── 单一布局 ── */
 .chat-window { display: flex; }
-.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* 与 ProjectModal 的 .left-content 一样，承载 overflow flex child 的中间层必须允许
+   在视口变矮时收缩到内容最小高度以下；否则消息列表虽然有 overflow-y:auto，
+   祖先的 min-height:auto 仍会把它按内容高度撑住，再被 .chat-window 裁掉。 */
+.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 
 .chat-header {
   display: flex; align-items: center; gap: 9px;
@@ -284,7 +287,7 @@ defineExpose({
 
 /* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue，需要 :deep() 穿透 */
 :deep(.chat-messages) {
-  flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative;
 }
 .chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
