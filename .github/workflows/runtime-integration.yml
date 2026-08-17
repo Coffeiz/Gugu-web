@@ -52,6 +52,13 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # frontend 的 file:../../gugu-interaction-runtime 会在 npm ci 时触发 Runtime 的
+      # prepare/build:lib。每个 job 都是独立 runner，不能依赖 runtime job 已安装过的
+      # node_modules；先在当前 job 安装 Runtime devDependencies，确保 prepare 能找到 Vite。
+      - name: Install Runtime dependencies for local link
+        working-directory: gugu-interaction-runtime
+        run: npm ci --no-audit --no-fund
+
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci --no-audit --no-fund
@@ -309,6 +316,10 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Runtime dependencies for local link
+        working-directory: gugu-interaction-runtime
+        run: npm ci --no-audit --no-fund
 
       - name: Install frontend dependencies
         working-directory: frontend
