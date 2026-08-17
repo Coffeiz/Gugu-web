@@ -1,3 +1,5 @@
+import { captureOptimisticIntent, isOptimisticIntentCurrent } from './optimisticIntent'
+
 /**
  * 乐观更新骨架——纯高阶函数：把「乐观改缓存 → 刷新视图 → 试提交 / 失败回滚」的固定时序
  * 收成一处，各站点的具体副作用（改什么、回滚什么、成功后刷不刷用量、错误怎么报）全由回调注入，
@@ -7,7 +9,8 @@
  * 时序契约（由单测锁定）：
  *   apply() → afterMutate()
  *   成功：await work() → onCommit?()            —— 不触发 rollback
- *   失败：rollback() → afterMutate() → onError(e)
+ *   失败（普通调用）：rollback() → afterMutate() → onError(e)
+ *   失败（Runtime card move 已被更新意图 supersede）：保留最新乐观状态 → onError(e)
  */
 export interface OptimisticMutationOptions {
   /** 乐观改动缓存 + 任何提交前的本地状态变更（如清空选择/剪贴板）。 */
@@ -25,6 +28,9 @@ export interface OptimisticMutationOptions {
 }
 
 export async function optimisticMutation(opts: OptimisticMutationOptions): Promise<void> {
+  // Runtime Action 的 intent 只在同步调用栈里存在；必须在 apply/work 前捕获，不能跨 await
+  // 读取全局上下文。普通调用拿到 null，完整保持原来的回滚语义。
+  const intent = captureOptimisticIntent()
   const { apply, work, rollback, afterMutate, onCommit, onError } = opts
   apply()
   afterMutate()
@@ -32,8 +38,12 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
     await work()
     onCommit?.()
   } catch (e) {
-    rollback()
-    afterMutate()
+    // regrab 会立刻产生一个更新的逻辑落点。旧请求此时失败，只能报告失败，不能把缓存
+    // 回滚到旧起点并覆盖新 Action 已经 apply 的状态；最新那一笔如果也失败，会正常回滚。
+    if (!intent || isOptimisticIntentCurrent(intent)) {
+      rollback()
+      afterMutate()
+    }
     onError(e)
   }
 }
