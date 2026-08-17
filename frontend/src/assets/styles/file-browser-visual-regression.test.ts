@@ -7,6 +7,7 @@ function load(relativePath: string) {
 
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
+const surfacesAdoption = load('./adoption/surfaces.css')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
@@ -39,5 +40,6 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderCard).toContain('--folder-card-bg-selected: var(--surface-raised);')
     expect(folderCard).toContain('--folder-card-checkbox-bg: var(--surface-raised);')
     expect(folderCard).not.toContain('!important')
+    expect(surfacesAdoption).not.toContain('.folder-card')
   })
 })
