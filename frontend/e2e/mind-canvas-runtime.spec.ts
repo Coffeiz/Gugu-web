@@ -47,7 +47,9 @@ async function readChromeStyle(locator: Locator): Promise<ChromeStyle> {
     return {
       background: style.backgroundColor,
       border: style.borderTopColor,
-      backdrop: style.backdropFilter || style.webkitBackdropFilter || 'none',
+      // Chromium（当前 E2E 项目）支持标准 backdropFilter；只读标准属性可避免
+      // 测试本身依赖浏览器私有 CSSStyleDeclaration 扩展。
+      backdrop: style.backdropFilter || 'none',
     }
   })
 }
