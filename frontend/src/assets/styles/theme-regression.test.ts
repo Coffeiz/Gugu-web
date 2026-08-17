@@ -32,8 +32,11 @@ const publicPagesCss = load('./adoption/public-pages.css')
 const adoptionIndexCss = load('./adoption/index.css')
 const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
+const themeAdoptionCss = load('./theme-adoption.css')
 const productCss = load('./tokens/product.css')
 const componentCss = load('./tokens/components.css')
+const componentSurfacesCss = load('./tokens/components/surfaces.css')
+const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
 
 describe('主题 CSS 回归契约', () => {
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
@@ -59,6 +62,37 @@ describe('主题 CSS 回归契约', () => {
     expect(fileToolbarCss).toContain('height: var(--file-toolbar-control-height)')
     expect(fileToolbarCss).toContain('width: var(--file-toolbar-icon-size)')
     expect(fileToolbarCss).not.toMatch(/border(?:-color)?\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+  })
+
+  it('文件卡亮色保持 0.20.4 多选层级，暗色只重映射 token 且没有 adoption paint 竞争', () => {
+    // 0.20.4 light baseline：普通文件整卡 .14；图片在整卡层之上再加 .28 缩略图层。
+    expect(componentSurfacesCss).toContain('--file-card-bg: rgba(255,255,255,.72);')
+    expect(componentSurfacesCss).toContain('--file-card-bg-hover: rgba(255,255,255,.86);')
+    expect(componentSurfacesCss).toContain('--file-card-bg-selected: rgba(255,255,255,.92);')
+    expect(componentSurfacesCss).toContain('--file-card-border-selected: rgba(123,127,178,.55);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-overlay: rgba(123,127,178,.14);')
+    expect(componentSurfacesCss).toContain('--file-card-selection-thumb-overlay: rgba(123,127,178,.28);')
+    expect(componentSurfacesCss).toContain('--file-card-preselection-thumb-overlay: rgba(123,127,178,.16);')
+
+    // FileCard 是唯一实体 paint owner；普通文件和图片文件继续消费不同层级的选中 token。
+    expect(fileCardVue).toContain('background: var(--file-card-bg);')
+    expect(fileCardVue).toContain('background: var(--file-card-bg-selected);')
+    expect(fileCardVue).toContain('background: var(--file-card-selection-overlay);')
+    expect(fileCardVue).toContain('background: var(--file-card-selection-thumb-overlay);')
+    expect(fileCardVue).not.toMatch(/background:\s*rgba\(123,127,178/i)
+    expect(fileCardVue).not.toContain('!important')
+
+    // 暗色保持同一状态结构，只替换 surface / edge / overlay 语义，不复制一份 selector。
+    const darkTokens = cssBlock(componentSurfacesCss, "html[data-theme='dark'][data-family]")
+    expect(darkTokens).toContain('--file-card-bg: var(--surface-card-solid);')
+    expect(darkTokens).toContain('--file-card-bg-selected: var(--surface-raised);')
+    expect(darkTokens).toContain('--file-card-border-selected: var(--action-outline);')
+    expect(darkTokens).toContain('--file-card-selection-overlay: var(--selection-bg);')
+    expect(darkTokens).toContain('--file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);')
+
+    // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。
+    expect(themeAdoptionCss).not.toMatch(/html\[data-theme[^\n]*\.fc-card/)
+    expect(surfacesCss).not.toMatch(/html\[data-family='v2'\][^{]*\.fc-card/)
   })
 
   it('Mono 内容卡关闭 blur、画布浮动 chrome 通过同一 glass-card token 恢复 blur', () => {
