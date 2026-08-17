@@ -15,8 +15,8 @@
         <span class="nav-label">工作台</span>
         <NavItem to="/projects" :icon="PhStack">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
         <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
-        <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
         <NavItem to="/mind" :icon="PhGraph">思维</NavItem>
+        <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
       </div>
 
       <div class="nav-divider"></div>
