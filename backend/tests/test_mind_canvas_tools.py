@@ -349,7 +349,8 @@ async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db
     second = await _mind_batch_canvas(db, user_a.id, request)
     assert first["atomic"] is True
     assert first["operations"][0]["created"] is True
-    assert second["operations"][0]["created"] is False
+    # 幂等重放：同 request_id + 同 payload → 返回首次缓存结果
+    assert second == first
 
     failed = await _mind_batch_canvas(db, user_a.id, {"canvas_id": canvas.id, "request_id": "batch-rollback", "operations": [
         {"kind": "add_node", "ref_type": "project", "ref_id": project.id},
@@ -367,6 +368,52 @@ async def test_batch_canvas_is_atomic_and_reference_operations_are_idempotent(db
     ]})
     assert failed["rolled_back"] is True
     assert await db.scalar(select(MindNode).where(MindNode.ref_type == "project", MindNode.ref_id == rollback_project_id)) is None
+
+
+async def test_batch_idempotency_conflict_on_different_payload(db, user_a):
+    """同 request_id + 不同 payload → idempotency_conflict=True。"""
+    canvas = await _canvas(db, user_a)
+    project_a = Project(user_id=user_a.id, name="项目A")
+    project_b = Project(user_id=user_a.id, name="项目B")
+    db.add_all([project_a, project_b])
+    await db.commit()
+    await db.refresh(project_a)
+    await db.refresh(project_b)
+
+    req_a = {"canvas_id": canvas.id, "request_id": "idem-conflict", "operations": [
+        {"kind": "add_node", "ref_type": "project", "ref_id": project_a.id, "position": {"x": 0, "y": 0}},
+    ]}
+    req_b = {"canvas_id": canvas.id, "request_id": "idem-conflict", "operations": [
+        {"kind": "add_node", "ref_type": "project", "ref_id": project_b.id, "position": {"x": 100, "y": 100}},
+    ]}
+    first = await _mind_batch_canvas(db, user_a.id, req_a)
+    assert first["atomic"] is True
+    conflict = await _mind_batch_canvas(db, user_a.id, req_b)
+    assert conflict["idempotency_conflict"] is True
+
+
+async def test_batch_idempotent_replay_create_note_only_one_row(db, user_a):
+    """同 request_id 重放 create_note → 数据库只有一份 note。"""
+    canvas = await _canvas(db, user_a)
+    req = {"canvas_id": canvas.id, "request_id": "idem-note", "operations": [
+        {"kind": "create_note", "title": "幂等便签", "content": "内容"},
+    ]}
+    first = await _mind_batch_canvas(db, user_a.id, req)
+    assert first["atomic"] is True
+    assert first["operations"][0]["created"] is True
+    node_id = first["operations"][0]["node"]["node_id"]
+
+    second = await _mind_batch_canvas(db, user_a.id, req)
+    assert second == first
+
+    # 数据库中只有一份 note
+    notes = (await db.execute(select(MindNode).where(
+        MindNode.user_id == user_a.id,
+        MindNode.kind == "canvas_note",
+        MindNode.title == "幂等便签",
+    ))).scalars().all()
+    assert len(notes) == 1
+    assert notes[0].id == node_id
 
 
 async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db, user_a):
@@ -456,3 +503,39 @@ async def test_canvas_crud_arrays_and_batch_delete_are_limited_and_confirmed(db,
     deleted_batch = await _mind_batch_canvas(db, user_id, delete_request)
     assert deleted_batch["atomic"] is True
     assert deleted_batch["operations"][0]["deleted_node_id"] == batch_node["node_id"]
+
+
+async def test_empty_canvas_auto_placement_uses_world_coordinates(db, user_a):
+    """空画布 auto placement 应该用 world = -camera/scale + margin，而不是直接用 camera。"""
+    data = {"x": 600, "y": 400, "scale": 1.0, "viewport": {"width": 1200, "height": 800}}
+    canvas = await _canvas(db, user_a, data=data)
+    batch = await _mind_batch_canvas(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "request_id": "auto-place-empty",
+        "operations": [
+            {"kind": "create_note", "title": "首张便签", "content": "测试"},
+        ],
+    })
+    assert batch["atomic"] is True
+    pos = batch["operations"][0]["node"]["position"]
+    # world_x = -600/1 + 40 = -560, world_y = -400/1 + 40 = -360
+    assert pos["x"] == -560.0
+    assert pos["y"] == -360.0
+
+
+async def test_empty_canvas_auto_placement_with_scale(db, user_a):
+    """空画布 scale != 1 时 auto placement 坐标仍然正确。"""
+    data = {"x": 600, "y": 400, "scale": 0.5, "viewport": {"width": 1200, "height": 800}}
+    canvas = await _canvas(db, user_a, data=data)
+    batch = await _mind_batch_canvas(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "request_id": "auto-place-scale",
+        "operations": [
+            {"kind": "create_note", "title": "缩放便签", "content": "测试"},
+        ],
+    })
+    assert batch["atomic"] is True
+    pos = batch["operations"][0]["node"]["position"]
+    # world_x = -600/0.5 + 40 = -1160, world_y = -400/0.5 + 40 = -760
+    assert pos["x"] == -1160.0
+    assert pos["y"] == -760.0

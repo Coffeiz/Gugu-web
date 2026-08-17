@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.23,<1"]
 
 [project.scripts]
 loopscope = "loopscope.main:run"

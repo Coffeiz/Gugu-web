@@ -36,12 +36,12 @@ from app.services.mind_canvas import (
     list_existing_reference_nodes,
     search_placeable_entities,
     search_canvas_nodes,
-    batch_canvas_operations,
     remove_canvas_item,
     update_canvas_item,
     update_canvas_note,
     update_relation_anchor,
 )
+from app.services.mind_canvas_batch import batch_canvas_operations
 from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
@@ -210,9 +210,9 @@ async def _mind_get_canvas(db, user_id, args: dict):
     }
     if not include_nodes:
         return result
-    rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit)
-    result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in rows]
-    result["truncated"] = len(rows) >= limit
+    rows = await list_canvas_nodes(db, user_id, canvas.id, limit=limit + 1)
+    result["nodes"] = [_node_summary(node, item, include_content=include_content) for item, node in rows[:limit]]
+    result["truncated"] = len(rows) > limit
     if include_relations:
         node_ids = [node.id for _, node in rows]
         if node_ids:
@@ -247,7 +247,7 @@ async def _mind_search_canvas(db, user_id, args: dict):
     selected = [item for item in (args.get("types") or list(_CANVAS_TYPES)) if item in _CANVAS_TYPES]
     rows = await search_canvas_nodes(
         db, user_id, canvas_id, selected=selected, normalized=normalized,
-        mode=args.get("mode"), limit=limit,
+        mode=args.get("mode"), limit=limit + 1,
     )
     return {
         "canvas_id": canvas_id,
@@ -256,9 +256,9 @@ async def _mind_search_canvas(db, user_id, args: dict):
         "count": len(rows),
         "matches": [
             _node_summary(node, item, include_content=args.get("include_content") is True)
-            for item, node in rows
+            for item, node in rows[:limit]
         ],
-        "truncated": len(rows) >= limit,
+        "truncated": len(rows) > limit,
     }
 
 
@@ -299,7 +299,7 @@ async def _mind_search_placeable_nodes(db, user_id, args: dict):
 
     matches: list[dict[str, Any]] = []
     for ref_type, row in await search_placeable_entities(
-        db, user_id, selected, normalized, args.get("mode"), candidate_limit,
+        db, user_id, selected, normalized, args.get("mode"), candidate_limit + 1,
     ):
         matches.append(_placeable_summary(
             row, existing_by_key.get((ref_type, row.id)), items_by_key.get((ref_type, row.id)), ref_type,
@@ -368,7 +368,10 @@ async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position
         return float(near_item.x + near_w + _SAFE_EDGE_GAP + (position.get("offset_x", 0) or 0)), float(near_item.y + (position.get("offset_y", 0) or 0))
     items = await get_canvas_last_item(db, user_id, canvas.id)
     if items is None:
-        return camera_x + 40, camera_y + 40
+        # 空画布：camera 是屏幕偏移量，world = -camera/scale + margin
+        world_x = -camera_x / scale + 40
+        world_y = -camera_y / scale + 40
+        return world_x, world_y
     return float(items.x + (items.w or 220) + _SAFE_EDGE_GAP), float(items.y)
 
 
