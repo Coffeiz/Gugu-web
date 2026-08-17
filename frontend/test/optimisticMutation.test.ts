@@ -57,6 +57,36 @@ describe('optimisticMutation — 时序契约', () => {
     expect(failRollback).toHaveBeenCalledOnce(); expect(failCommit).not.toHaveBeenCalled()
   })
 
+  it('regrab 立即 apply 新状态，但同一对象的 persistence 必须等待旧请求结算后再启动', async () => {
+    const first = deferred()
+    const second = deferred()
+    let state = 'A'
+    let secondStarted = false
+    const key = 'test-order:file:1'
+
+    const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'B' }, afterMutate: () => {}, work: () => first.promise,
+      rollback: () => { state = 'A' }, onError: () => {},
+    }))
+    const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
+      apply: () => { state = 'C' },
+      afterMutate: () => {},
+      work: () => { secondStarted = true; return second.promise },
+      rollback: () => { state = 'B' },
+      onError: () => {},
+    }))
+
+    expect(state).toBe('C')
+    expect(secondStarted).toBe(false)
+    first.resolve()
+    await firstWork
+    await Promise.resolve()
+    expect(secondStarted).toBe(true)
+    second.resolve()
+    await secondWork
+    expect(state).toBe('C')
+  })
+
   it('regrab 新意图已 apply 时，旧请求失败不覆盖新状态；新请求成功后丢弃旧 rollback', async () => {
     const first = deferred()
     const second = deferred()
