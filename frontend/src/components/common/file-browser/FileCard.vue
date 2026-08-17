@@ -58,21 +58,24 @@ defineProps({
 </script>
 
 <style scoped>
-/* transition / transform 仍由 global.css 统一负责，FileCard 只拥有 paint + 自身几何。
-   这样不会用 scoped transition 覆盖全局的非线性 hover 手感；主题差异全部经 file-card token
-   进入这里，adoption 层不再直接重画 .fc-card。亮色 token 明确锁定 v0.20.4。 */
+/* global.css 继续唯一拥有 fc-card 的结构、transition/transform 和 hover ::after 高光；
+   这里唯一拥有文件卡 paint 与文件专属状态。这样不会产生 scoped/global 的 transition 竞争，
+   也不会让 adoption 再用高特异性覆盖。亮色 file-card token 明确锁定 v0.20.4。 */
 .fc-card {
-  position: relative;
   background: var(--file-card-bg);
   border: 1px solid var(--file-card-border);
-  border-radius: var(--card-radius);
-  corner-shape: round;
   box-shadow: var(--file-card-shadow);
   min-height: 122px;
-  display: flex; flex-direction: column;
   color: var(--content-primary);
 }
-.fc-card::after { background: var(--file-card-hover-sheen); }
+/* 画布文件引用先定义自己的玻璃基线；hover / selected 状态写在后面，因此状态始终优先于 mode 基线。 */
+.fc-card.canvas-mode {
+  overflow: visible;
+  background: var(--surface-glass);
+  border-color: var(--border-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
 .fc-card:hover {
   background: var(--file-card-bg-hover);
   border-color: var(--file-card-border-hover);
@@ -82,14 +85,6 @@ defineProps({
   background: var(--file-card-bg-selected);
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
-}
-/* 画布文件引用与活动/项目引用共用系统对象的玻璃基线；文件库卡片仍保留原本更实的白底。 */
-.fc-card.canvas-mode {
-  overflow: visible;
-  background: var(--surface-glass);
-  border-color: var(--border-strong);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移（跟文件库/画布引用两处的默认手感
    刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
