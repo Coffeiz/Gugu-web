@@ -53,3 +53,13 @@ const {
   PM_SORT_OPTIONS, pmSortKey, pmSortDir, onPmSortSelect, closeProjectModal, runtimeScope,
 } = props.context
 </script>
+
+<style scoped>
+/* 项目文件工具栏只补宿主几何；内部 control paint/尺寸继续由共享
+   file-toolbar-theme-refinements.css 唯一负责。 */
+.file-browser-toolbar {
+  height: 52px;
+  box-sizing: border-box;
+  padding: 0 12px 0 16px;
+}
+</style>
