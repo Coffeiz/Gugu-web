@@ -381,7 +381,9 @@ html[data-theme='dark'][data-family] .chat-window .exp-send-btn,
 html[data-theme='dark'][data-family] .chat-window .mv-btn,
 html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
   color: var(--content-on-accent);
-  background: var(--brand-gradient);
+  /* 暗色下用专门 token，不用 brand-gradient——后者在暗色面板里太亮
+     且色相跟周边窗体撞色。 */
+  background: var(--gugu-chat-send-bg);
 }
 html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file,
