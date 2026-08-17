@@ -3,10 +3,10 @@
        按钮、消息列表与输入框的唯一 DOM 所有权收在这里；GuguChatBindDialog 与
        GuguChatSidebar 通过插槽由父组件填充（它们的 ref 由父组件持有，供 useChatImConnect
        使用）。 -->
-  <!-- win-grow 排除 resizing：大/小窗位形切换的瞬间 .chat-window 的 top 还需要 0.42s 缓动做纵向过渡，
-       一旦带上 win-grow 会把 top 的 transition 撤掉，窗口会瞬间从大窗高跳到小窗高（横轴仍走缓动，纵轴跳一下）。
-       resizing 在 markResizing() / 过渡结束 / 600ms 兜底 时机清掉，回归流式 top 即时跟随。 -->
-  <div class="chat-window" :class="{ 'win-grow': streaming && !expanded && !resizing }" :style="windowStyle" ref="windowEl"
+  <!-- top/left/right/bottom 的 0.42s 过渡只属于用户主动的大窗↔小窗切换。
+       浏览器 viewport resize、流式小窗增高和其它普通几何更新不带 is-layout-resizing，
+       因而直接跟随 layout；避免滚动容器/原生 scrollbar 追着旧几何缓动。 -->
+  <div class="chat-window" :class="{ 'is-layout-resizing': resizing }" :style="windowStyle" ref="windowEl"
     @mousedown.capture="onRaiseChat"
     @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
 
@@ -177,7 +177,6 @@ defineExpose({
   border-radius: 20px;
   overflow: hidden;
   box-shadow: 0 24px 64px rgba(20,25,50,0.18);
-  will-change: top, left, right, bottom;
   isolation: isolate;   /* 独立层叠上下文：z-index/合成跟页面其余部分互不干扰，展开/收起动画时不牵连外部重绘 */
 }
 .chat-window::after {
@@ -198,17 +197,11 @@ defineExpose({
   will-change: backdrop-filter;   /* 提示浏览器单独准备合成层，容器随窗口变尺寸时少一点现算的突兀感 */
 }
 
-/* 位移过渡放在 CSS，不放 inline style（避免覆盖 Vue transition 的 opacity/transform） */
-.chat-window {
+/* 只有用户主动大/小窗切换才做几何缓动；普通 viewport resize 直接同步 layout。 */
+.chat-window.is-layout-resizing {
+  will-change: top, left, right, bottom;
   transition: top 0.42s cubic-bezier(0.16, 1, 0.3, 1),
               left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
-              bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
-}
-/* 小窗流式增高：top 即时跟随内容（去掉 0.42s 缓动，否则窗口高度滞后于出字、一跳一跳）。
-   left/right/bottom 保留缓动用于开关/位移动画；流式中它们不变，无副作用。 */
-.chat-window.win-grow {
-  transition: left 0.42s cubic-bezier(0.16, 1, 0.3, 1),
               right 0.42s cubic-bezier(0.16, 1, 0.3, 1),
               bottom 0.42s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -231,10 +224,7 @@ defineExpose({
 
 /* ── 单一布局 ── */
 .chat-window { display: flex; }
-/* 与 ProjectModal 的 .left-content 一样，承载 overflow flex child 的中间层必须允许
-   在视口变矮时收缩到内容最小高度以下；否则消息列表虽然有 overflow-y:auto，
-   祖先的 min-height:auto 仍会把它按内容高度撑住，再被 .chat-window 裁掉。 */
-.chat-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 .chat-header {
   display: flex; align-items: center; gap: 9px;
@@ -287,7 +277,7 @@ defineExpose({
 
 /* 消息列表容器与内部结构渲染于 GuguChatMessageList.vue，需要 :deep() 穿透 */
 :deep(.chat-messages) {
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; position: relative;
+  flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
 .chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
