@@ -13,8 +13,15 @@ html[data-theme][data-family] .file-browser-toolbar {
   --file-toolbar-radius: var(--control-radius);
   --file-toolbar-font-size: var(--font-size-sm);
   --file-toolbar-font-weight: var(--font-weight-semibold);
+
+  /* v0.20.4 view toggle geometry: 28px items inside a 2px inset track, with a real moving pill. */
+  --file-view-toggle-item-size: 28px;
+  --file-view-toggle-inset: 2px;
+  --file-view-toggle-gap: 2px;
+  --file-view-toggle-track-radius: 8px;
+  --file-view-toggle-pill-radius: 6px;
   --pill-bg: var(--segmented-pill-bg);
-  --pill-radius: var(--control-radius);
+  --pill-radius: var(--file-view-toggle-pill-radius);
   --pill-shadow: var(--segmented-pill-shadow);
   color: var(--file-toolbar-fg);
 }
@@ -130,7 +137,8 @@ html[data-theme][data-family] .file-browser-toolbar .sort-dir-icon {
   flex-shrink: 0;
 }
 
-/* Selection/view state is expressed by the surface, not a second foreground colour. */
+/* Selection state uses the shared control contract. View mode is intentionally different: v0.20.4
+ * used an inset segmented track with one moving pill, not two selected-looking control buttons. */
 html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn.on,
 html[data-theme][data-family] .file-browser-toolbar .select-all-btn.on {
   color: var(--file-toolbar-fg);
@@ -139,20 +147,21 @@ html[data-theme][data-family] .file-browser-toolbar .select-all-btn.on {
   box-shadow: var(--elevation-card);
 }
 html[data-theme][data-family] .file-browser-toolbar .view-toggle {
-  height: var(--file-toolbar-control-height);
-  padding: 0;
-  gap: 0;
+  box-sizing: border-box;
+  height: calc(var(--file-view-toggle-item-size) + var(--file-view-toggle-inset) * 2);
+  padding: var(--file-view-toggle-inset);
+  gap: var(--file-view-toggle-gap);
   flex-shrink: 0;
-  border-radius: var(--file-toolbar-radius);
+  border-radius: var(--file-view-toggle-track-radius);
   background: var(--segmented-track-bg);
 }
 html[data-theme][data-family] .file-browser-toolbar .view-toggle button {
   box-sizing: border-box;
-  width: var(--file-toolbar-control-height);
-  height: var(--file-toolbar-control-height);
+  width: var(--file-view-toggle-item-size);
+  height: var(--file-view-toggle-item-size);
   padding: 0;
   border: none;
-  border-radius: var(--file-toolbar-radius);
+  border-radius: var(--file-view-toggle-pill-radius);
   background: transparent;
   color: var(--file-toolbar-fg);
   display: inline-flex;
@@ -220,7 +229,7 @@ html[data-theme][data-family] .file-browser-toolbar :is(.bc-arrow, .bc-sep) {
   flex-shrink: 0;
 }
 
-/* Inline new-folder editor uses the same 30px control geometry and shared input tokens. */
+/* Inline new-folder editor uses the same shared control geometry and input tokens. */
 html[data-theme][data-family] .file-browser-toolbar .new-folder-inline {
   height: var(--file-toolbar-control-height);
 }
