@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
+import { captureOptimisticIntent } from '@/utils/optimisticIntent'
 
 describe('useFileRuntimeMove', () => {
   function setup(scope = 'files') {
@@ -56,5 +57,51 @@ describe('useFileRuntimeMove', () => {
     expect(moveFolders).not.toHaveBeenCalled()
     expect(moveFiles).not.toHaveBeenCalled()
     expect(clearSelection).not.toHaveBeenCalled()
+  })
+
+  it('文件与文件夹分别获得自己的 optimistic intent，不互相清理 rollback chain', async () => {
+    const seen: Array<{ kind: string; keys: readonly string[]; revision: number }> = []
+    const adapter = useFileRuntimeMove({
+      scope: 'files',
+      browserSurfaceId: 'files:surface:browser',
+      resolveBreadcrumbTarget: () => null,
+      moveFolders: async () => {
+        const intent = captureOptimisticIntent()
+        if (intent) seen.push({ kind: 'folder', keys: intent.keys, revision: intent.revision })
+      },
+      moveFiles: async () => {
+        const intent = captureOptimisticIntent()
+        if (intent) seen.push({ kind: 'file', keys: intent.keys, revision: intent.revision })
+      },
+      clearSelection: () => {},
+    })
+
+    await adapter.handleAction(['files:folder:5', 'files:file:7'], 'files:surface:folder:9')
+
+    expect(seen).toHaveLength(2)
+    expect(seen.find(item => item.kind === 'folder')?.keys).toEqual(['files:folder:5'])
+    expect(seen.find(item => item.kind === 'file')?.keys).toEqual(['files:file:7'])
+    expect(seen[0].revision).not.toBe(seen[1].revision)
+  })
+
+  it('同一卡片 regrab 后产生更高 revision，第二次 Action 成为最新意图', async () => {
+    const revisions: number[] = []
+    const adapter = useFileRuntimeMove({
+      scope: 'files',
+      browserSurfaceId: 'files:surface:browser',
+      resolveBreadcrumbTarget: () => null,
+      moveFolders: async () => {},
+      moveFiles: async () => {
+        const intent = captureOptimisticIntent()
+        if (intent) revisions.push(intent.revision)
+      },
+      clearSelection: () => {},
+    })
+
+    await adapter.handleAction(['files:file:7'], 'files:surface:folder:9')
+    await adapter.handleAction(['files:file:7'], 'files:surface:folder:10')
+
+    expect(revisions).toHaveLength(2)
+    expect(revisions[1]).toBeGreaterThan(revisions[0])
   })
 })
