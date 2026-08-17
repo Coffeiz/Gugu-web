@@ -4,6 +4,7 @@ import {
   deferOptimisticRollback,
   isOptimisticIntentCurrent,
   rollbackDeferredOptimisticIntents,
+  runOptimisticIntentWork,
 } from './optimisticIntent'
 
 /**
@@ -17,6 +18,9 @@ import {
  *   成功：await work() → onCommit?()            —— 不触发 rollback
  *   失败（普通调用）：rollback() → afterMutate() → onError(e)
  *   失败（Runtime card move 已被更新意图 supersede）：暂存旧 rollback，保留最新乐观状态
+ *
+ * Runtime card move 的 apply 仍然立即执行；只有 work 按对象串行，避免 regrab 后的新请求
+ * 先于旧请求到达服务端，造成服务端最终状态被旧写反向覆盖。
  */
 export interface OptimisticMutationOptions {
   /** 乐观改动缓存 + 任何提交前的本地状态变更（如清空选择/剪贴板）。 */
@@ -41,7 +45,8 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
   apply()
   afterMutate()
   try {
-    await work()
+    if (intent) await runOptimisticIntentWork(intent, work)
+    else await work()
     if (intent) commitOptimisticIntent(intent)
     onCommit?.()
   } catch (e) {
