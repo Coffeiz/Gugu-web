@@ -45,6 +45,10 @@ export const useProjectStore = defineStore('projects', () => {
   // 所有请求都带着同一个旧 version。confirmed 是服务端最后确认的快照，失败就从这里回滚。
   const confirmedProjects = new Map<number, Project>()
   const projectWrites = new Map<number, Promise<void>>()
+  // optimistic revision 在“请求排队”时就递增，而不是等请求真正发出。这样 landing 中 regrab
+  // 产生第二次 move 后，第一笔请求即使随后失败，也知道自己已经不是最新用户意图，不能回滚
+  // 第二次 move 已经同步写进 projects 的状态。
+  const projectWriteRevisions = new Map<number, number>()
   const delayedProjectUpdates = new Map<number, {
     fields: Partial<Project>
     timer: ReturnType<typeof setTimeout> | null
@@ -157,6 +161,8 @@ export const useProjectStore = defineStore('projects', () => {
   }
 
   async function _patchProject(id: number, payload: Partial<Project>) {
+    const revision = (projectWriteRevisions.get(id) ?? 0) + 1
+    projectWriteRevisions.set(id, revision)
     const previous = projectWrites.get(id) ?? Promise.resolve()
     const write = previous.catch(() => undefined).then(async () => {
       const project = projects.value.find(item => item.id === id)
@@ -169,10 +175,17 @@ export const useProjectStore = defineStore('projects', () => {
         rememberConfirmed(mapProjectResponse(updated))
         const current = projects.value.find(item => item.id === id)
         if (current) {
+          // 即使这笔已被 regrab 的新写入 supersede，version 仍必须推进：排队中的下一笔请求
+          // 要拿服务端刚确认的新版本。其它服务端字段只能由最新 revision 回填，否则旧响应会
+          // 覆盖新 move 的乐观状态（doneAt 是跨 pending/active/done 最明显的一处）。
           current.version = updated.version
-          current.doneAt = updated.doneAt
+          if (projectWriteRevisions.get(id) === revision) current.doneAt = updated.doneAt
         }
       } catch (e) {
+        const isLatestIntent = projectWriteRevisions.get(id) === revision
+        // A→B 尚未确认时 regrab 到 C：A→B 的失败不能把 C 回滚成 A。最新一笔如果失败
+        // 仍按 confirmed 快照回滚，因此单次拖拽和最终失败的原语义保持不变。
+        if (!isLatestIntent) return
         restoreConfirmed(id)
         if ((e as { status?: number }).status === 409) {
           await fetchProjects()
@@ -187,6 +200,9 @@ export const useProjectStore = defineStore('projects', () => {
       await write
     } finally {
       if (projectWrites.get(id) === write) projectWrites.delete(id)
+      if (projectWriteRevisions.get(id) === revision && projectWrites.get(id) !== write) {
+        projectWriteRevisions.delete(id)
+      }
     }
   }
 
