@@ -1,0 +1,79 @@
+/* Interaction Runtime owns proxy geometry and motion. Its current dragGlass implementation still
+   writes a legacy light glass background/border inline; the product host supplies the paint through
+   --runtime-drag-* so grabbing remains consistent with the active theme without page-specific hacks. */
+html[data-theme='dark'][data-family] [data-runtime-proxy-content='true'] {
+  color: var(--content-primary) !important;
+  background: var(--runtime-drag-glass-bg) !important;
+  border-color: var(--runtime-drag-glass-border) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter) !important;
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
+}
+
+/* Preserve card identity after grabbing. The grab-start/grabbing phases are handled by the
+   shared glass rule below so all project-card variants have the same pickup visual. */
+html[data-theme='dark'][data-family] .drawer-project-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']),
+html[data-theme='dark'][data-family] .proj-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--pr-project-color) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing']) {
+  background: var(--surface-card-solid) !important;
+  border-color: var(--project-card-border) !important;
+}
+html[data-theme='dark'][data-family] .pr-card[data-runtime-proxy-content='true']:not([data-runtime-phase='grab-start']):not([data-runtime-phase='grabbing'])::before {
+  background:
+    linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),
+    var(--pr-project-color) !important;
+}
+
+/* Runtime writes the glass background inline. Remove only the card identity layers during
+   pickup; otherwise the project-page gradient/highlight masks the same glass used by canvas. */
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
+  background-image: none !important;
+}
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::before,
+html[data-theme][data-family] :is(.drawer-project-card, .proj-card, .pr-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])::after {
+  opacity: 0 !important;
+}
+
+/* 双层 landing 会把源卡复制成直接子层，并移除它自己的 Runtime phase。通过
+   代理根的 landing phase 识别这层，继续保留源层的 Runtime 毛玻璃，只让目标层
+   的项目渐变负责淡入，避免底色在 pointerup 后瞬间切换。 */
+html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card {
+  background-image: none !important;
+  border-color: var(--runtime-drag-glass-border) !important;
+  backdrop-filter: var(--runtime-drag-glass-filter) !important;
+  -webkit-backdrop-filter: var(--runtime-drag-glass-filter) !important;
+}
+html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card::before,
+html[data-theme][data-family] [data-runtime-proxy-content='true'][data-runtime-phase='landing'] > .proj-card::after {
+  opacity: 0 !important;
+}
+
+html[data-theme='dark'][data-family] .note-card[data-runtime-proxy-content='true'] {
+  background: var(--note-surface) !important;
+  border-color: var(--note-border) !important;
+}
+html[data-theme='dark'][data-family] .note-card.tint-amber[data-runtime-proxy-content='true'] { background: var(--note-paper-amber) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-coral[data-runtime-proxy-content='true'] { background: var(--note-paper-coral) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-blue[data-runtime-proxy-content='true'] { background: var(--note-paper-blue) !important; }
+html[data-theme='dark'][data-family] .note-card.tint-teal[data-runtime-proxy-content='true'] { background: var(--note-paper-teal) !important; }
+
+/* 活动卡本体静止态是低 alpha 玻璃（--surface-glass + --glass-blur）；代理若映射到
+   接近不透明的 --surface-card-solid，会在 grabbing/landing 全程与本体材质脱节，
+   直到 reveal 本体才突然恢复半透明。代理必须沿用本体真实静止材质，
+   抓取增强只保留 Runtime 提供的阴影。 */
+html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content='true'] {
+  background: var(--surface-glass) !important;
+  border-color: var(--border-strong) !important;
+  backdrop-filter: var(--glass-blur) !important;
+  -webkit-backdrop-filter: var(--glass-blur) !important;
+}
+
+/* Shared file/folder cards keep their existing card contract; only replace Runtime's white glass. */
+html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {
+  background-color: var(--surface-card-solid) !important;
+  border-color: var(--border-strong) !important;
+}

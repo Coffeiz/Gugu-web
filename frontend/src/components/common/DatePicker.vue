@@ -102,8 +102,8 @@ const props = defineProps({
   max: { type: String, default: '' },
   // 提供时只有这些日期可选（其余全部禁用）——例如「只能跳到有记录的那天」
   allowedDates: { type: Array, default: null },
-  // Teleport 到 body 后不再是宿主的 DOM 后代，父级 scoped 样式够不到 .dp-popup，
-  // 需要单独测试/覆盖某个具体用法的弹层样式时（比如去掉 backdrop-filter）用这个传类名进来
+  // Teleport 到 body 后不再是宿主的 DOM 后代；需要给某个用法附加语义类名用于定位、
+  // 测试或交互识别时从这里传入，主题表面统一由 adoption/popovers.css 负责。
   popupClass: { type: [String, Array, Object], default: null },
   // 「清除」在纯跳转场景里没有意义（清空等于什么都不做，只是关掉弹层）；补录日期这类
   // 真的把字段清空有意义的场景保留默认显示
@@ -267,39 +267,35 @@ watch(() => props.modelValue, v => {
 <style scoped>
 .dp-wrap { position: relative; width: 100%; }
 
+/* 与 DateSpanPicker.drp-input / TimeInput.boxed 同一套描边输入框契约（--input-* token）。 */
 .dp-input {
   display: flex; align-items: center; justify-content: center; gap: 7px;
   padding: 8px 11px;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(0,0,0,0.1);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-sm, 10px);
-  font-size: 13px; color: var(--text-primary, #1e2028);
+  font-size: 13px; color: var(--input-fg);
   cursor: pointer; user-select: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .dp-input:hover {
-  border-color: rgba(123,127,178,0.35);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.08);
+  border-color: var(--input-border-hover);
+  background: var(--input-bg-hover);
+  box-shadow: var(--input-hover-shadow);
 }
 .dp-input.open {
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+  border-color: var(--input-border-focus);
+  background: var(--input-bg-focus);
+  box-shadow: var(--input-focus-shadow);
 }
-.dp-input.placeholder span { color: var(--text-secondary, #8a8fa8); opacity: 0.6; font-size: 13px; }
-.dp-icon { color: var(--text-secondary, #8a8fa8); flex-shrink: 0; }
+.dp-input.placeholder span { color: var(--input-placeholder); opacity: 0.6; font-size: 13px; }
+.dp-icon { color: var(--input-placeholder); flex-shrink: 0; }
 </style>
 
 <style>
-.dp-popup {
-  background: var(--panel-bg);
-  backdrop-filter: var(--popup-blur);
-  -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255,255,255,0.78);
-  border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);
-  padding: 12px;
-  user-select: none;
-}
+/* Popup and calendar paint live in adoption/popovers.css. This block owns geometry/typography only,
+   so Teleport consumers cannot accumulate a second light-only theme layer. */
+.dp-popup { padding: 12px; user-select: none; }
 
 .dp-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -307,23 +303,19 @@ watch(() => props.modelValue, v => {
 }
 .dp-period {
   display: flex; align-items: center; gap: 4px;
-  font-size: 13px; font-weight: 700; color: #1e2028;
+  font-size: 13px; font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  transition: background 0.12s, color 0.12s;
 }
-.dp-period:hover { background: rgba(123,127,178,0.1); color: #7b7fb2; }
 .dp-period-range { letter-spacing: 0.5px; }
-.dp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
+.dp-period-caret { opacity: 0.5; flex-shrink: 0; }
 .dp-period-caret.up { transform: rotate(180deg); }
 .dp-nav {
   width: 26px; height: 26px; border-radius: 7px;
   border: none; background: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  color: #8a8fa8; transition: background 0.12s;
 }
-.dp-nav:hover { background: rgba(0,0,0,0.07); }
 
 .dp-weekrow {
   display: grid; grid-template-columns: repeat(7, 1fr);
@@ -331,7 +323,7 @@ watch(() => props.modelValue, v => {
 }
 .dp-wh {
   text-align: center; font-size: 10px; font-weight: 600;
-  color: #8a8fa8; padding: 2px 0;
+  padding: 2px 0;
 }
 
 .dp-grid {
@@ -342,24 +334,14 @@ watch(() => props.modelValue, v => {
   aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
   border: none; background: none; cursor: pointer; padding: 0;
-  font-size: 11px; font-weight: 500; color: #1e2028; line-height: 1;
+  font-size: 11px; font-weight: 500; line-height: 1;
   border-radius: 7px;
-  transition: background 0.1s, color 0.1s;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
-.dp-day:hover:not(.selected) { background: rgba(123,127,178,0.12); }
-.dp-day.other { color: #8a8fa8; opacity: 0.4; }
-.dp-day.weekend:not(.selected):not(.today) { color: #b07080; }
-.dp-day.today:not(.selected) {
-  background: rgba(123,127,178,0.15);
-  color: #7b7fb2; font-weight: 700;
-}
+.dp-day.other { opacity: 0.4; }
+.dp-day.today:not(.selected) { font-weight: 700; }
 .dp-day.disabled { opacity: 0.25; cursor: not-allowed; pointer-events: none; }
-.dp-day.selected {
-  background: linear-gradient(135deg,#7b7fb2,#9590c4);
-  color: white; font-weight: 700;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.32);
-}
+.dp-day.selected { font-weight: 700; }
 
 /* 年份网格 */
 .dp-year-grid {
@@ -368,38 +350,26 @@ watch(() => props.modelValue, v => {
 }
 .dp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
-  font-size: 12px; font-weight: 500; color: #1e2028; cursor: pointer;
+  font-size: 12px; font-weight: 500; cursor: pointer;
   font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  transition: background 0.1s, color 0.1s;
 }
-.dp-year-btn:hover:not(.selected) { background: rgba(123,127,178,0.12); }
-.dp-year-btn.this-year:not(.selected) {
-  background: rgba(123,127,178,0.15);
-  color: #7b7fb2; font-weight: 700;
-}
-.dp-year-btn.selected {
-  background: linear-gradient(135deg,#7b7fb2,#9590c4);
-  color: white; font-weight: 700;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.32);
-}
+.dp-year-btn.this-year:not(.selected),
+.dp-year-btn.selected { font-weight: 700; }
 
 .dp-footer {
   display: flex; justify-content: space-between;
   margin-top: 8px; padding-top: 8px;
-  border-top: 1px solid rgba(0,0,0,0.06);
+  border-top: 1px solid transparent;
 }
 .dp-clear, .dp-today {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
   cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
-  transition: background 0.12s;
 }
-.dp-clear { background: none; color: #8a8fa8; }
-.dp-clear:hover { background: rgba(0,0,0,0.06); color: #1e2028; }
+.dp-clear { background: none; }
 /* 「清除」隐藏时 today 独自留在 footer 里，margin-left:auto 保它一直贴右边，不因为
    justify-content:space-between 只剩一个子元素就跳到左边 */
-.dp-today { margin-left: auto; background: rgba(123,127,178,0.12); color: #7b7fb2; }
-.dp-today:hover { background: rgba(123,127,178,0.22); }
+.dp-today { margin-left: auto; }
 
 .dp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .dp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }

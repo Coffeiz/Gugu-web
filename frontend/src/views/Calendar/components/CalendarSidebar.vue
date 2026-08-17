@@ -78,7 +78,7 @@ const addButton = ref<HTMLElement | null>(null)
 .cal-done { opacity: 0.45; }
 .cal-done:hover { opacity: 0.7; }
 .cal-done-mark { display: inline-flex; vertical-align: middle; margin-left: 3px; color: #6f7098; }
-.cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
+.cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }

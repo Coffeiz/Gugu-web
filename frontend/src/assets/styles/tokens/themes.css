@@ -1,0 +1,2 @@
+/* Compatibility entry. Theme values now live in ./themes/{glass,v2}-{light,dark}.css. */
+@import './themes/index.css';

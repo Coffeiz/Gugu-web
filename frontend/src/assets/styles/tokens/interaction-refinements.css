@@ -1,0 +1,350 @@
+/* Interaction/theme refinements.
+   Keep container-surface hover separate from interactive object feedback and route every
+   touched hover transition through the shared hover motion durations. */
+
+:root {
+  --hover-motion-micro: var(--motion-hover-micro) var(--motion-ease-standard);
+  --hover-motion-control: var(--motion-hover-control) var(--motion-ease-standard);
+  --hover-motion-card: var(--motion-hover-card) var(--motion-ease-standard);
+  --interactive-hover-bg: var(--surface-soft-hover);
+  --interactive-hover-border: var(--border-hover);
+  --selected-pill-bg: var(--segmented-pill-bg);
+  --selected-pill-shadow: var(--segmented-pill-shadow);
+}
+
+:root[data-theme='dark'] {
+  /* Dark topbar / toolbar shells stay visually still. Child controls remain interactive. */
+  --topbar-bg-hover: var(--topbar-bg);
+  --topbar-shadow-hover: var(--topbar-shadow);
+
+  /* Content-object feedback must remain visible in dark mode. */
+  --surface-hover-tint: rgba(255,255,255,.075);
+  --card-hover-overlay: rgba(255,255,255,.075);
+  --calendar-cell-hover-bg: rgba(255,255,255,.065);
+  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 11%,transparent);
+  --calendar-chip-hover-overlay: rgba(255,255,255,.075);
+  --calendar-capsule-hover-overlay: rgba(255,255,255,.085);
+  --gugu-chat-session-hover: var(--sidebar-item-hover);
+
+  /* Selected pills need to read as selected against dark tracks. */
+  --segmented-pill-bg: color-mix(in srgb,var(--surface-raised) 78%,var(--action-primary) 22%);
+  --segmented-pill-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 2px 8px rgba(0,0,0,.24);
+  --selected-pill-bg: var(--segmented-pill-bg);
+  --selected-pill-shadow: var(--segmented-pill-shadow);
+
+  /* Dark FAB keeps depth, but removes the coloured outer glow. */
+  --gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 28%,var(--action-primary) 72%);
+  --gugu-fab-shadow: 0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
+  --gugu-fab-hover-shadow: 0 6px 20px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.16);
+}
+
+/* ── Topbar: shell is quiet in dark; both child buttons animate in both themes. ── */
+html[data-theme][data-family] .topbar {
+  transition: box-shadow var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .topbar:hover {
+  --gb-tint: var(--glass-bg);
+  box-shadow: var(--topbar-shadow);
+}
+html[data-theme][data-family] .topbar .btn-ghost-custom {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    color var(--hover-motion-control),
+    transform var(--hover-motion-control),
+    opacity var(--hover-motion-control) !important;
+}
+html[data-theme][data-family] .topbar .btn-primary-custom {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    color var(--hover-motion-control),
+    transform var(--hover-motion-control),
+    opacity var(--hover-motion-control) !important;
+}
+/* Restore the intended light upload affordance instead of inheriting a generic surface hover. */
+html[data-theme='light'][data-family] .topbar .btn-ghost-custom:hover {
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 3px 10px rgba(80,90,110,.12) !important;
+}
+html[data-theme='dark'][data-family] .topbar .btn-ghost-custom {
+  background: var(--action-secondary-bg) !important;
+  border-color: var(--action-secondary-border) !important;
+  color: var(--action-secondary-fg) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06) !important;
+}
+html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover {
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
+  color: var(--action-secondary-fg-hover) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10) !important;
+}
+
+/* ── Calendar toolbar shell + controls ── */
+html[data-theme][data-family] .cal-toolbar {
+  transition: box-shadow var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .cal-toolbar:hover {
+  --gb-tint: var(--glass-bg);
+  box-shadow: var(--glass-card-shadow);
+}
+html[data-theme][data-family] .cal-toolbar .nav-btn,
+html[data-theme][data-family] .cal-toolbar .period-btn,
+html[data-theme][data-family] .cal-toolbar .today-btn,
+html[data-theme][data-family] .cal-toolbar .view-toggle button {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .cal-toolbar .nav-btn:hover,
+html[data-theme='dark'][data-family] .cal-toolbar .period-btn:hover {
+  background: var(--surface-soft-hover);
+}
+html[data-theme='dark'][data-family] .cal-toolbar .today-btn {
+  background: var(--surface-soft);
+  border-color: var(--border-default);
+}
+html[data-theme='dark'][data-family] .cal-toolbar .today-btn:hover {
+  background: var(--surface-soft-hover);
+  border-color: var(--border-hover);
+  color: var(--content-primary);
+}
+
+/* Every SegmentedControl gets the same selected-state contrast. Caller --pill-bg still wins. */
+html[data-theme][data-family] .seg-control .seg-pill {
+  background: var(--pill-bg, var(--selected-pill-bg));
+  box-shadow: var(--pill-shadow, var(--selected-pill-shadow));
+}
+html[data-theme][data-family] .seg-control .seg-pill.ready {
+  transition:
+    transform var(--motion-hover-card) var(--motion-ease-emphasis),
+    width var(--motion-hover-card) var(--motion-ease-emphasis),
+    background-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .cal-toolbar .view-toggle {
+  background: color-mix(in srgb,var(--surface-soft) 86%,transparent);
+  border: 1px solid var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .cal-toolbar .view-toggle button.on {
+  color: var(--content-primary);
+}
+
+/* ── Calendar cells / capsules ── */
+html[data-theme][data-family] .month-cell {
+  transition: background-color var(--hover-motion-micro);
+}
+html[data-theme][data-family] .month-cell::before {
+  background: var(--calendar-cell-hover-bg);
+  transition: opacity var(--hover-motion-micro);
+}
+html[data-theme][data-family] .month-cell:hover::before,
+html[data-theme][data-family] .month-cell.cell-hovered::before {
+  opacity: 1;
+}
+html[data-theme][data-family] .month-cell.is-weekend::before {
+  background: var(--calendar-weekend-hover-bg);
+}
+/* Dim contents, not the cell itself, so outside-month hover is as strong as current-month hover. */
+html[data-theme][data-family] .month-cell.other-month {
+  opacity: 1;
+}
+html[data-theme][data-family] .month-cell.other-month > * {
+  opacity: .30;
+  transition: opacity var(--hover-motion-control);
+}
+html[data-theme][data-family] .month-cell.other-month:hover > * {
+  opacity: .44;
+}
+html[data-theme][data-family] .event-chip,
+html[data-theme][data-family] .project-bar,
+html[data-theme][data-family] .cap-capsule {
+  transition:
+    box-shadow var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+html[data-theme][data-family] .event-chip:hover,
+html[data-theme][data-family] .project-bar:hover,
+html[data-theme][data-family] .cap-capsule:hover {
+  box-shadow: inset 0 0 0 999px var(--calendar-capsule-hover-overlay);
+}
+
+/* Sidebar event/project rows: ordinary and completed items share the same highlight contract. */
+html[data-theme][data-family] .cal-sidebar .sidebar-ev,
+html[data-theme][data-family] .cal-sidebar .cap-capsule {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+html[data-theme][data-family] .cal-sidebar .sidebar-ev:hover {
+  box-shadow: inset 0 0 0 999px var(--calendar-capsule-hover-overlay), var(--elevation-card-hover);
+}
+html[data-theme='dark'][data-family] .cal-sidebar .sidebar-ev {
+  background: color-mix(in srgb,var(--surface-raised) 72%,transparent);
+  border-color: var(--border-default);
+}
+html[data-theme][data-family] .cal-sidebar .cal-done {
+  transition: opacity var(--hover-motion-control), box-shadow var(--hover-motion-control);
+}
+html[data-theme][data-family] .cal-sidebar .cal-done:hover {
+  opacity: .72;
+}
+
+/* ── Schedules ── */
+html[data-theme][data-family] .task-card {
+  background: color-mix(in srgb,var(--surface-raised) 78%,transparent);
+  border-color: var(--border-default);
+  box-shadow: var(--elevation-card);
+  transition:
+    transform var(--motion-hover-card) var(--motion-ease-emphasis),
+    box-shadow var(--hover-motion-card),
+    background-color var(--hover-motion-card),
+    border-color var(--hover-motion-card),
+    opacity var(--hover-motion-control);
+}
+html[data-theme][data-family] .task-card::after {
+  background: var(--card-hover-overlay);
+  opacity: 0;
+  box-shadow: inset 0 1px 0 var(--border-highlight);
+  transition: opacity var(--hover-motion-card);
+}
+html[data-theme][data-family] .task-card:hover {
+  background: var(--surface-raised);
+  border-color: var(--border-hover);
+  box-shadow: var(--elevation-card-hover);
+}
+html[data-theme][data-family] .task-card:hover::after { opacity: 1; }
+html[data-theme][data-family] .task-card .link {
+  transition: color var(--hover-motion-control), opacity var(--hover-motion-control);
+}
+html[data-theme][data-family] .sched-page .btn-primary {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    color var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+
+/* ── Sidebar logo + Gugu FAB ── */
+html[data-theme][data-family] .sidebar .logo-icon {
+  transition: background-color var(--hover-motion-control), box-shadow var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .sidebar .logo-icon {
+  background: color-mix(in srgb,var(--surface-raised) 28%,var(--action-primary) 72%);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+}
+html[data-theme][data-family] .gugu-fab {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+
+/* ── GuguChat session rows ── */
+html[data-theme][data-family] .exp-session-item {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control);
+}
+html[data-theme][data-family] .exp-session-item:hover {
+  color: var(--content-primary);
+  background: var(--gugu-chat-session-hover);
+}
+html[data-theme='dark'][data-family] .exp-session-item:hover {
+  background: var(--sidebar-item-hover);
+}
+html[data-theme][data-family] .exp-new-session-btn,
+html[data-theme][data-family] .exp-session-del {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+
+/* ── Floating preview + drawer preview ── */
+html[data-theme][data-family] .fpw-btn,
+html[data-theme][data-family] .fpw-nav,
+html[data-theme][data-family] .fp-action-btn {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+html[data-theme='dark'][data-family] .fpw-root,
+html[data-theme='dark'][data-family] .fpw-info-win,
+html[data-theme='dark'][data-family] .fp-panel,
+html[data-theme='dark'][data-family] .fp-info-win {
+  background: color-mix(in srgb,var(--surface-floating) 96%,transparent);
+  border-color: var(--border-default);
+  box-shadow: var(--elevation-window);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .fpw-title,
+html[data-theme='dark'][data-family] .fpw-info-title,
+html[data-theme='dark'][data-family] .fp-header,
+html[data-theme='dark'][data-family] .fp-info-title {
+  background: color-mix(in srgb,var(--surface-raised) 82%,transparent);
+  border-color: var(--border-subtle);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .fpw-body,
+html[data-theme='dark'][data-family] .fp-body {
+  background: color-mix(in srgb,var(--surface-base) 88%,#000 12%);
+}
+/* Text/document viewers should follow the shell; image/PDF pixels remain untouched. */
+html[data-theme='dark'][data-family] .fpw-body:has(.tv-wrap) {
+  background: var(--surface-base);
+}
+html[data-theme='dark'][data-family] .fpw-btn:hover,
+html[data-theme='dark'][data-family] .fp-action-btn:hover {
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .fpw-close:hover,
+html[data-theme='dark'][data-family] .fp-close-btn:hover {
+  background: var(--status-danger-bg);
+  color: var(--status-danger);
+}
+html[data-theme='dark'][data-family] .fpw-nav {
+  background: color-mix(in srgb,var(--surface-floating) 86%,transparent);
+  border-color: var(--border-default);
+  box-shadow: 0 4px 16px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.08);
+}
+html[data-theme='dark'][data-family] .fpw-nav:hover {
+  background: var(--surface-raised);
+  border-color: var(--border-hover);
+  box-shadow: 0 5px 18px rgba(0,0,0,.30), inset 0 1px 0 rgba(255,255,255,.11);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --hover-motion-micro: 0ms var(--motion-ease-standard);
+    --hover-motion-control: 0ms var(--motion-ease-standard);
+    --hover-motion-card: 0ms var(--motion-ease-standard);
+  }
+}

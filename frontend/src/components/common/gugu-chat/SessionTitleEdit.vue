@@ -108,6 +108,8 @@ function cancel() {
 .exp-session-title-wrap {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 2px;
+  padding-right: 26px;
+  box-sizing: border-box;
 }
 /* 标题：纯文本，无 hover 浮出效果（侧边栏模式，按内容收缩，wrap 用 flex: 1 撑满） */
 .exp-session-title {
@@ -142,10 +144,14 @@ function cancel() {
 }
 /* 重命名按钮：跟删除按钮一样，无背景无阴影，hover 时轻微背景 */
 .exp-session-rename-btn {
-  width: 20px; height: 20px; border-radius: 5px; border: none;
+  width: 22px; height: 22px; border-radius: var(--radius-xs); border: none;
   background: none; color: var(--text-secondary);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; flex-shrink: 0;
+  cursor: pointer; opacity: 0; line-height: 1;
+  position: absolute;
+  top: 50%; right: 34px;
+  transform: translateY(-50%);
+  transition: opacity 0.15s, background 0.15s; flex-shrink: 0;
 }
 .exp-session-rename-btn:hover { background: rgba(123,127,178,0.12); color: var(--text-primary); }
 .exp-session-rename-btn svg { display: block; }

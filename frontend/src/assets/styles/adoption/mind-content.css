@@ -1,0 +1,70 @@
+/* Rich note content is shared by read-only previews and TipTap. Keep its structural typography in
+   mind-content.css; theme-sensitive color/surface roles live here. */
+html[data-theme][data-family] .md-preview code:not(pre code),
+html[data-theme][data-family] .ne-body .ProseMirror code:not(pre code) { background: var(--action-soft); }
+html[data-theme][data-family] .md-preview .np-quote,
+html[data-theme][data-family] .ne-body .ProseMirror blockquote { border-left-color: var(--action-outline); }
+html[data-theme][data-family] .md-preview .np-code-block,
+html[data-theme][data-family] .ne-body .ProseMirror .ne-codeblock { background: var(--surface-soft); }
+html[data-theme][data-family] .md-preview .np-code-lang,
+html[data-theme][data-family] .ne-body .ProseMirror .ne-codeblock-lang { border-bottom-color: var(--border-subtle); }
+html[data-theme][data-family] .md-preview .np-hr,
+html[data-theme][data-family] .ne-body .ProseMirror hr { background: var(--border-default); }
+html[data-theme][data-family] .mind-ref { color: var(--selection-fg); background: var(--selection-bg); }
+html[data-theme][data-family] .mind-ref:hover { background: var(--action-soft-hover); }
+html[data-theme][data-family] .mind-ref.mind-ref-missing,
+html[data-theme][data-family] .mind-ref.mind-ref-missing:hover { color: var(--content-secondary); background: var(--surface-soft); }
+
+/* Syntax roles remain recognizable in both families without a light-only #1e2028 variable token. */
+html[data-theme][data-family] .md-preview .np-code .hljs-keyword,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-keyword,
+html[data-theme][data-family] .md-preview .np-code .hljs-literal,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-literal,
+html[data-theme][data-family] .md-preview .np-code .hljs-selector-tag,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-selector-tag,
+html[data-theme][data-family] .md-preview .np-code .hljs-tag,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-tag { color: var(--action-primary-hover); }
+html[data-theme][data-family] .md-preview .np-code .hljs-string,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-string,
+html[data-theme][data-family] .md-preview .np-code .hljs-regexp,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-regexp,
+html[data-theme][data-family] .md-preview .np-code .hljs-symbol,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-symbol,
+html[data-theme][data-family] .md-preview .np-code .hljs-bullet,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-bullet,
+html[data-theme][data-family] .md-preview .np-code .hljs-addition,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-addition { color: var(--status-success); }
+html[data-theme][data-family] .md-preview .np-code .hljs-comment,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-comment,
+html[data-theme][data-family] .md-preview .np-code .hljs-quote,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-quote,
+html[data-theme][data-family] .md-preview .np-code .hljs-meta,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-meta { color: var(--content-tertiary); }
+html[data-theme][data-family] .md-preview .np-code .hljs-number,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-number,
+html[data-theme][data-family] .md-preview .np-code .hljs-attr,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-attr,
+html[data-theme][data-family] .md-preview .np-code .hljs-attribute,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-attribute,
+html[data-theme][data-family] .md-preview .np-code .hljs-deletion,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-deletion { color: var(--status-warning); }
+html[data-theme][data-family] .md-preview .np-code .hljs-variable,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-variable,
+html[data-theme][data-family] .md-preview .np-code .hljs-template-variable,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-template-variable { color: var(--content-primary); }
+html[data-theme][data-family] .md-preview .np-code .hljs-function,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-function,
+html[data-theme][data-family] .md-preview .np-code .hljs-name,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-name,
+html[data-theme][data-family] .md-preview .np-code .hljs-type,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-type,
+html[data-theme][data-family] .md-preview .np-code .hljs-params,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-params,
+html[data-theme][data-family] .md-preview .np-code .hljs-title,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-title,
+html[data-theme][data-family] .md-preview .np-code .hljs-section,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-section,
+html[data-theme][data-family] .md-preview .np-code .hljs-selector-id,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-selector-id,
+html[data-theme][data-family] .md-preview .np-code .hljs-selector-class,
+html[data-theme][data-family] .ne-body .ProseMirror pre .hljs-selector-class { color: var(--status-info); }

@@ -6,27 +6,30 @@ from datetime import timedelta
 import json
 import random
 
-from sqlalchemy import func, select, update
-
 from app.core.project_colors import PROJECT_COLOR_PRESETS
 from app.core.projects import (
     build_project, find_project_stage, next_project_stage_key, next_project_todo_number,
     normalize_project_stages, replace_project_stages, update_project_atomic,
 )
 from app.core.tz import now_utc
-from app.models import File, Project
+from app.services.projects import (
+    add_project,
+    count_project_files,
+    delete_project,
+    find_project_rows,
+    get_user_project,
+    list_active_project_names,
+    list_agent_projects,
+    project_colors,
+)
 
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_projects(db, user_id, args: dict):
-    stmt = select(Project).where(
-        Project.user_id == user_id,
-        Project.archived == bool(args.get("archived", False)),
-    ).order_by(Project.updated_at.desc())
-    result = await db.execute(stmt)
-    projects = result.scalars().all()
+    projects = await list_agent_projects(
+        db, user_id, archived=bool(args.get("archived", False)))
     if args.get("status"):
         projects = [p for p in projects if p.status == args["status"]]
     return [
@@ -87,9 +90,7 @@ _DEFAULT_STAGES = [
 
 
 async def _pick_unused_color(db, user_id) -> str:
-    rows = (await db.execute(
-        select(Project.color).where(Project.user_id == user_id)
-    )).scalars().all()
+    rows = await project_colors(db, user_id)
     used = set(rows)
     unused = [c for c in PROJECT_COLOR_PRESETS if c not in used]
     pool = unused if unused else PROJECT_COLOR_PRESETS
@@ -121,9 +122,8 @@ async def _create_project(db, user_id, args: dict):
         })
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
-    db.add(p)
+    await add_project(db, p)
     await db.commit()
-    await db.refresh(p)
     return {"success": True, "project_id": p.id, "name": p.name,
             "stages": [s["label"] for s in stages]}
 
@@ -214,13 +214,7 @@ async def _delete_project(db, user_id, args: dict):
         return _err
 
     # 不可逆 → 删除二次确认保底
-    file_cnt = (await db.execute(
-        select(func.count(File.id)).where(
-            File.project_id == p.id,
-            File.user_id == user_id,
-            File.deleted_at.is_(None),
-        )
-    )).scalar() or 0
+    file_cnt = await count_project_files(db, user_id, p.id)
     summary = f"将永久删除项目「{p.name}」" + (f"及其 {file_cnt} 个文件" if file_cnt else "") + "，此操作不可恢复"
     blocked = confirm.needs_confirmation(args, summary, user_id)
     if blocked is not None:
@@ -228,22 +222,14 @@ async def _delete_project(db, user_id, args: dict):
 
     pid, pname = p.id, p.name
     # 文件软删（置 deleted_at），文件夹随项目 FK CASCADE 自动删
-    await db.execute(
-        update(File)
-        .where(File.project_id == pid, File.user_id == user_id, File.deleted_at.is_(None))
-        .values(deleted_at=now_utc())
-    )
-    await db.delete(p)
+    await delete_project(db, user_id, p, now_utc())
     await db.commit()
     return {"success": True, "deleted_project_id": pid, "name": pname}
 
 
 # ── 阶段/待办辅助 ──
 async def _fetch(db, user_id, project_id):
-    r = await db.execute(
-        select(Project).where(Project.id == project_id, Project.user_id == user_id)
-    )
-    return r.scalars().first()
+    return await get_user_project(db, user_id, project_id)
 
 
 async def _resolve_project(db, user_id, args):
@@ -258,17 +244,9 @@ async def _resolve_project(db, user_id, args):
     name = args.get("project")
     if name:
         name = str(name).strip()
-        rows = (await db.execute(
-            select(Project).where(Project.user_id == user_id, Project.name == name)
-        )).scalars().all()
+        rows = await find_project_rows(db, user_id, name)
         if not rows:
-            rows = (await db.execute(
-                select(Project).where(Project.user_id == user_id, Project.name.ilike(f"%{name}%"))
-            )).scalars().all()
-        if not rows:
-            avail = (await db.execute(
-                select(Project.name).where(Project.user_id == user_id, Project.archived == False)
-            )).scalars().all()
+            avail = await list_active_project_names(db, user_id)
             return None, json.dumps({"error": f"未找到名为「{name}」的项目",
                                      "available_projects": sorted(set(avail))[:20]})
         pool = [p for p in rows if not p.archived] or rows
@@ -291,7 +269,6 @@ async def _commit_project_intent(db, project, user_id, fields: dict):
         await db.rollback()
         return json.dumps({"error": "项目刚被其他端修改，请重试"})
     await db.commit()
-    await db.refresh(project)
     return None
 
 

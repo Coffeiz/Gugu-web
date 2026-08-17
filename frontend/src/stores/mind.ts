@@ -32,6 +32,16 @@ function plainOf(md: string): string {
   return md.replace(/\[\[[a-z_]+:\d+\|([^\]]*)\]\]/g, '$1')
 }
 
+/** API 列表是关系实体的边界；同一 id 只允许进入前端一次，避免 SVG TransitionGroup 收到重复 key。 */
+export function normalizeCanvasRelations(relations: MindRelation[]): MindRelation[] {
+  const seen = new Set<number>()
+  return relations.filter(relation => {
+    if (seen.has(relation.id)) return false
+    seen.add(relation.id)
+    return true
+  })
+}
+
 let optimisticSeq = 0
 let optimisticRelationSeq = 0
 
@@ -193,7 +203,7 @@ export const useMindStore = defineStore('mind', () => {
       if (!isCurrentRequest || requestSeq !== canvasLoadSeq || invalidatedCanvasLoads.has(id) || !stillExists) return false
       activeCanvasId.value = id
       canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
-      canvasRelations.value = relations
+      canvasRelations.value = normalizeCanvasRelations(relations)
       return true
     } finally {
       if (pendingCanvasLoads.get(id) === requestSeq) pendingCanvasLoads.delete(id)
@@ -461,7 +471,7 @@ export const useMindStore = defineStore('mind', () => {
   }
 
   /** 记住这张画布上次的平移/缩放，下次打开时回到用户离开时的视角。 */
-  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number }) {
+  async function saveCanvasView(id: number, view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } }) {
     await updateCanvasData(id, view)
   }
 

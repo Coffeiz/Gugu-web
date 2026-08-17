@@ -5,7 +5,7 @@
             <ProjectFileToolbar :context="props.context" />
           </template>
 
-          <div class="file-content" :ref="bindPmGridEl" style="position:relative" @mousedown="onPmGridMouseDown"
+          <div class="file-content scroll-surface" :ref="bindPmGridEl" style="position:relative" @mousedown="onPmGridMouseDown"
             @click="onPmContentClick"
             @contextmenu.prevent.self="openPmCtx('empty', null, $event)"
             @dragenter.prevent="onPmDragEnter"
@@ -351,7 +351,7 @@ const {
 
 .right-header {
   height: 52px; box-sizing: border-box;
-  padding: 0 12px 0 16px; border-bottom: 1px solid rgba(0,0,0,0.07);
+  padding: 0 12px 0 16px;
   display: flex; align-items: center; gap: 8px; flex-shrink: 0;
 }
 .right-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }

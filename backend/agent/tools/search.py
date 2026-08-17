@@ -24,10 +24,8 @@ import random
 from app.core.tz import local_day_start_utc
 
 import httpx
-from sqlalchemy import func, select
-
 from app.core.config import get_settings
-from app.models import SearchUsage
+from app.services.search import count_daily_search_usage, get_user_daily_search_limit, record_search_usage
 from agent.tools.base import BaseSkill, Tool
 
 _TAVILY_URL = "https://api.tavily.com/search"
@@ -235,6 +233,13 @@ async def _searxng_search(db, user_id, args: dict):
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
         ) as client:
             resp = await client.get(f"{base}/search", params=params)
+    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
+        # SearXNG 已明确不可用时直接切换深度研究，避免模型在同一轮里重复调用
+        # 已超时的 web_search。deep_research 自己负责配额和错误回执。
+        return await _deep_research(db, user_id, {
+            "query": query,
+            "max_results": max_results,
+        })
     except Exception as e:
         return {"error": f"通用搜索暂时失败（{type(e).__name__}）；可改用 deep_research 深度研究兜底"}
     if resp.status_code == 403:
@@ -316,20 +321,12 @@ async def _deep_research(db, user_id, args: dict):
         return json.dumps({"error": "需要提供搜索关键词 query"})
 
     # ── 每日次数配额（None=不限制；优先用户个人配置，否则回落全局）──
-    from app.models import User as _User
-    _user_obj = await db.get(_User, user_id)   # ownership-exempt: 按本人 id 取本人 User 行，无归属语义
-    limit = (
-        _user_obj.search_limit_daily
-        if _user_obj and _user_obj.search_limit_daily is not None
-        else settings.quota.default_search_limit_daily
-    )
+    limit = await get_user_daily_search_limit(db, user_id)
+    if limit is None:
+        limit = settings.quota.default_search_limit_daily
     if limit is not None:
         day_start = local_day_start_utc()
-        used = (await db.execute(
-            select(func.count(SearchUsage.id)).where(
-                SearchUsage.user_id == user_id, SearchUsage.created_at >= day_start
-            )
-        )).scalar() or 0
+        used = await count_daily_search_usage(db, user_id, day_start)
         if used >= limit:
             return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找仍可用 web_search"})
 
@@ -352,8 +349,7 @@ async def _deep_research(db, user_id, args: dict):
         return json.dumps({"error": f"深度研究失败：{str(e)[:100]}"})
 
     # 记一次用量（成功才记，计入每日配额）
-    db.add(SearchUsage(user_id=user_id, query=query[:500]))
-    await db.commit()
+    await record_search_usage(db, user_id, query)
 
     results = [
         {"title": r.get("title"), "url": r.get("url"), "content": r.get("content")}

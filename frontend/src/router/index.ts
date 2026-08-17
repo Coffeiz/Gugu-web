@@ -32,6 +32,12 @@ const routes: RouteRecordRaw[] = [
     name: 'Privacy',
     component: () => import('@/views/Privacy.vue'),
   },
+  {
+    path: '/design',
+    name: 'DesignTokens',
+    component: () => import('@/views/Design/index.vue'),
+    meta: { requiresAuth: true, title: 'Design Tokens' },
+  },
 
   // ── 主 App（需要用户登录）──
   {

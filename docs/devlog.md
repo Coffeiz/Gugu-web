@@ -1,5 +1,39 @@
 # 咕咕 · 早期开发记录
 
+## 2026-08-17 · 修复 LoopScope 用量监控全为 0
+
+### 现象
+
+LoopScope 顶部用量格全为 0（Input / Output / Cache read / Fresh input / Total），而下方 LLM span 卡片有 `~` 前缀的 token_impact 估算。即 usage 从未落地，span 只有估算没有实测。
+
+### 根因
+
+`agent/core.py` 的 `_run_loop` 收到 `("done", value)` 后立即 `break`，不再消费 `driver.run_round` 这个生成器的剩余部分。而 `hooks.py` 的 `traced_round` 把「记录 usage」的代码放在 `async for` 循环结束之后（循环正常走完才执行），外层提前 break 导致生成器被提前关闭，该段代码永远执行不到——所以 `span.usage`、`run.add_usage()` 全部没跑，监控拿到 0。
+
+### 修复（两层）
+
+1. **hooks.py**：`traced_round` 收到 `kind == "done"` 时，在 yield done 之前就把 usage 落地——设置 `span.usage`、`span.finish(...)`、`run.add_usage(...)`。即使外层立即 break，数据也已经写入。同时把 `except GeneratorExit` 扩成 `except (GeneratorExit, asyncio.CancelledError)`。
+2. **core.py**：流式中途取消（`_im_cancelled` 命中）时，`_run_loop` 原来直接 `return`，把 `run_round` 生成器丢给 GC。
+
+### Python 3.14 的坑（排查中发现）
+
+`async for` 在 `try` 块内提前退出（break/return）时，生成器的 close 被推迟到 GC 才执行，注入的异常可能是 `GeneratorExit` 也可能是 `asyncio.CancelledError`（取决于 frame 状态）。只 `except GeneratorExit` 会漏掉 CancelledError 的情况；且不主动关生成器的话，span 会一直挂着 `running` 直到 GC。因此取消路径改为显式 `await _round_gen.aclose()`，同步注入 GeneratorExit，`traced_round` 立即把 span 标成 `cancelled`，不再等 GC。
+
+### 回归测试
+
+新增 `tests/test_loopscope_usage.py`：
+
+- `test_usage_lands_before_done_break`：fake `_stream_round` 产出 token/final，断言 `run.usage` 与 LLM span 的 usage == 期望 7 键 dict，span 状态为 success。防的是「外层收到 done 即 break，usage 永远不落地」。
+- `test_mid_stream_abort_marks_span_cancelled`：fake 流产出 30 个 token，`_im_cancelled` 第二次返回 True，断言 span 状态立即为 cancelled（而非 running）。防的是「中途取消后 span 挂着 running 直到 GC」。
+
+`test_core_loop_characterization.py` 13 个用例全绿，无回归。
+
+## 2026-08-16 · Runtime 卡片主题过渡不再抢占交互动画
+
+`component-theme-refinements.css` 的卡片主题规则曾用 `transition: ... !important` 覆盖 Runtime 在抓取、FLIP 和 landing 生命周期中写入的过渡。现在保留同一组 `--card-motion` 主题动效，但移除卡片本体 transition 的强制优先级；伪元素 hover 层仍保留自己的过渡。
+
+回归说明：抽屉卡片拖出/拖入时，兄弟卡片应继续执行 FLIP，grabbing 阴影应连续交接到 landing；主题 hover 动效仍保持不变。
+
 ## 2026-08-06 · 视频链路 PR 审查收尾（P2 后续优化 + P3 文档修正）
 
 PR #7 视频链路审查确认 3 个 P1 已修复（事件循环阻塞、竖屏长边、超限回退），全量 701 测试通过。另有两个非阻塞项：

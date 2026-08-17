@@ -82,6 +82,22 @@ async def test_list_trash_folders_excludes_live(db, user_a):
     assert out == []
 
 
+async def test_trash_folder_endpoints_isolate_other_users(db, user_a, user_b):
+    folder, _ = await _mk_folder_with_file(db, user_b, "他人的回收站")
+    await folders_api.delete_folder(folder.id, current_user=user_b, origin=None, db=db)
+
+    assert await trash_api.list_trash_folders(current_user=user_a, db=db) == []
+
+    with pytest.raises(HTTPException) as contents_error:
+        await trash_api.list_trash_folder_contents(folder.id, current_user=user_a, db=db)
+    assert contents_error.value.status_code == 404
+
+    with pytest.raises(HTTPException) as delete_error:
+        await trash_api.hard_delete_folder(folder.id, current_user=user_a, origin=None, db=db)
+    assert delete_error.value.status_code == 404
+    assert await db.get(Folder, folder.id) is not None
+
+
 async def test_list_trash_folder_contents_returns_children(db, user_a):
     parent, parent_file = await _mk_folder_with_file(db, user_a, "可展开")
     child = await FileService(db).create_folder(

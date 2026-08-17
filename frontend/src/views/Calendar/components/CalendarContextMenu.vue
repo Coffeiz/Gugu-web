@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+    <Transition name="menu-pop">
       <div v-if="open" ref="menu" class="popup-menu cal-ctx-menu" :style="{ position: 'fixed', left: position.x + 'px', top: position.y + 'px', zIndex: 3000, minWidth: '110px' }">
         <button v-if="context?.type === 'week-column'" class="popup-menu-item" @click="$emit('add-event')"><PhCalendarPlus :size="13" weight="bold" />新建活动</button>
         <button v-else class="popup-menu-item" @click="$emit('add-project')"><PhFolderPlus :size="13" weight="bold" />新建项目</button>

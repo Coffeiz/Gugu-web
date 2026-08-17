@@ -5,27 +5,23 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Folder, Project, User
+from app.models import Project, User
 from app.schemas import FolderCopy, FolderCreate, FolderMove, FolderRename, FolderResponse
 from app.core.security import get_current_user, get_client_id
 from app.core.ownership import get_owned
 from app.core import events
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
+from app.services.files.browser import (
+    file_count_for_folder,
+    folder_download_rows,
+    list_folder_rows_with_file_counts,
+)
 
 router = APIRouter(prefix="/folders", tags=["folders"])
-
-
-async def _file_count(folder_id: int, db: AsyncSession) -> int:
-    return (await db.execute(
-        select(func.count()).select_from(File).where(
-            File.folder_id == folder_id, File.deleted_at.is_(None)  # 排除回收站，否则删文件后计数不降
-        )
-    )).scalar_one()
 
 
 # ── GET /folders/all ─────────────────────────────────────────────────────────
@@ -35,35 +31,15 @@ async def list_all_folders(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folders = (await db.execute(
-        select(Folder)
-        .where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None))
-        .order_by(Folder.created_at)
-    )).scalars().all()
-
-    if not folders:
-        return []
-
-    counts_res = await db.execute(
-        select(File.folder_id, func.count().label("cnt"))
-        .where(
-            File.folder_id.in_([f.id for f in folders]),
-            File.deleted_at.is_(None),
-        )
-        .group_by(File.folder_id)
-    )
-    count_map = {row.folder_id: row.cnt for row in counts_res}
+    folder_rows = await list_folder_rows_with_file_counts(
+        db, current_user.id, all_folders=True)
 
     return [
         FolderResponse(
-            id=f.id,
-            project_id=f.project_id,
-            parent_id=f.parent_id,
-            name=f.name,
-            file_count=count_map.get(f.id, 0),
-            version=f.version,
+            id=f.id, project_id=f.project_id, parent_id=f.parent_id,
+            name=f.name, file_count=file_count, version=f.version,
         )
-        for f in folders
+        for f, file_count in folder_rows
     ]
 
 
@@ -81,37 +57,13 @@ async def list_folders(
         if not proj:
             raise HTTPException(404, "项目不存在")
 
-    stmt = (
-        select(Folder)
-        .where(Folder.user_id == current_user.id, Folder.deleted_at.is_(None))
-        .order_by(Folder.created_at)
-    )
-    if project_id is not None:
-        stmt = stmt.where(Folder.project_id == project_id)
-    else:
-        stmt = stmt.where(Folder.project_id.is_(None))
-
-    if parent_id is not None:
-        stmt = stmt.where(Folder.parent_id == parent_id)
-    else:
-        stmt = stmt.where(Folder.parent_id.is_(None))
-
-    folders = (await db.execute(stmt)).scalars().all()
-
-    counts_res = await db.execute(
-        select(File.folder_id, func.count().label("cnt"))
-        .where(
-            File.folder_id.in_([f.id for f in folders]),
-            File.deleted_at.is_(None),  # 排除回收站，否则删文件后文件夹计数不降（与 /folders/all 一致）
-        )
-        .group_by(File.folder_id)
-    )
-    count_map = {row.folder_id: row.cnt for row in counts_res}
+    folder_rows = await list_folder_rows_with_file_counts(
+        db, current_user.id, project_id=project_id, parent_id=parent_id)
 
     return [
         FolderResponse(id=f.id, project_id=f.project_id, parent_id=f.parent_id,
-                       name=f.name, file_count=count_map.get(f.id, 0), version=f.version)
-        for f in folders
+                       name=f.name, file_count=file_count, version=f.version)
+        for f, file_count in folder_rows
     ]
 
 
@@ -143,39 +95,18 @@ async def download_folder(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folder = await get_owned(db, Folder, fid, current_user.id)
-    if not folder or folder.deleted_at is not None:
+    download = await folder_download_rows(db, current_user.id, fid)
+    if download is None:
         raise HTTPException(404, "文件夹不存在")
+    folder, file_rows = download
 
     storage = get_storage()
     buf = io.BytesIO()
 
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        queue = [(fid, folder.name)]
-        while queue:
-            current_id, path_prefix = queue.pop(0)
-
-            files = (await db.execute(
-                select(File).where(
-                    File.folder_id == current_id,
-                    File.user_id == current_user.id,
-                    File.deleted_at.is_(None),
-                )
-            )).scalars().all()
-            for f in files:
-                data = await storage.get(f.storage_key)
-                arc_name = f"{path_prefix}/{f.display_name}.{f.ext.lower()}"
-                zf.writestr(arc_name, data)
-
-            subfolders = (await db.execute(
-                select(Folder).where(
-                    Folder.parent_id == current_id,
-                    Folder.user_id == current_user.id,
-                    Folder.deleted_at.is_(None),
-                )
-            )).scalars().all()
-            for sub in subfolders:
-                queue.append((sub.id, f"{path_prefix}/{sub.name}"))
+        for file, arc_name in file_rows:
+            data = await storage.get(file.storage_key)
+            zf.writestr(arc_name, data)
 
     buf.seek(0)
     filename = quote(f"{folder.name}.zip")
@@ -201,7 +132,7 @@ async def rename_folder(
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
-    cnt = await _file_count(folder.id, db)
+    cnt = await file_count_for_folder(db, current_user.id, folder.id)
     return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name,
                           file_count=cnt, version=folder.version)
 
@@ -224,7 +155,7 @@ async def move_folder(
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
-    cnt = await _file_count(folder.id, db)
+    cnt = await file_count_for_folder(db, current_user.id, folder.id)
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
@@ -244,7 +175,7 @@ async def copy_folder(
     await db.commit()
     await db.refresh(folder)
     await events.publish(current_user.id, "files", origin=origin)
-    cnt = await _file_count(folder.id, db)
+    cnt = await file_count_for_folder(db, current_user.id, folder.id)
     return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)

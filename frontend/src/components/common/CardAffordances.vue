@@ -81,6 +81,20 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   pointer-events: none;
 }
 
+/* 连接起点/目标的外围虚线属于 affordance 本身，而不是宿主卡片材质。这样四种画布卡只画
+   一份连接反馈，也不会再跟 NoteCard/ProjectCard 各自的 ::before/::after 表面层抢 ownership。
+   外扩 4px 后半径同步增加 4px，保证虚线和卡片圆角是同心曲线。 */
+.card-affordances.connecting::after,
+.card-affordances.connection-target::after {
+  content: '';
+  position: absolute;
+  inset: calc(0px - var(--mind-connection-outline-offset));
+  border: var(--mind-connection-outline-width) dashed var(--mind-connection-outline);
+  border-radius: calc(var(--mind-canvas-card-radius) + var(--mind-connection-outline-offset));
+  corner-shape: round;
+  pointer-events: none;
+}
+
 .card-affordances.is-actions-inline {
   position: static !important;
   inset: auto !important;
@@ -97,7 +111,7 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   gap: 3px;
   opacity: 0;
   pointer-events: auto;
-  transition: opacity 0.15s;
+  transition: opacity var(--motion-hover-control);
 }
 
 .card-affordances.hovering .card-affordances__actions {
@@ -125,13 +139,13 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--content-secondary);
   cursor: pointer;
 }
 
 .card-affordances__actions > :deep(button:hover) {
-  background: rgba(123, 127, 178, 0.16);
-  color: var(--color-primary);
+  background: var(--action-soft-hover);
+  color: var(--action-primary);
 }
 
 .card-affordances__connect {
@@ -158,12 +172,12 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
   content: '';
   position: absolute;
   inset: 10px;
-  border: 2px solid #fff;
+  border: 2px solid var(--mind-connection-dot-border);
   border-radius: 50%;
-  background: var(--color-primary, #7b7fb2);
-  box-shadow: 0 1px 4px rgba(30, 35, 60, 0.25);
+  background: var(--mind-connection-dot-bg);
+  box-shadow: var(--mind-connection-dot-shadow);
   opacity: 0;
-  transition: opacity 0.15s, transform 0.15s, box-shadow 0.15s;
+  transition: opacity var(--motion-hover-control), transform var(--motion-hover-control), box-shadow var(--motion-hover-control);
 }
 
 .card-affordances.hovering .conn-dot::before,
@@ -174,7 +188,7 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
 
 .card-affordances.connecting .conn-dot::before,
 .card-affordances.connection-target .conn-dot::before {
-  opacity: 0.38;
+  opacity: var(--mind-connection-dot-muted-opacity);
 }
 
 .conn-dot-left { left: -17px; }
@@ -183,7 +197,7 @@ const { hovering, connecting, targetSide, dragging, landing, revealing, nodeId }
 .conn-dot-active::before {
   opacity: 1 !important;
   transform: scale(1.28);
-  box-shadow: 0 0 0 3px rgba(123, 127, 178, 0.22), 0 1px 5px rgba(30, 35, 60, 0.3);
+  box-shadow: 0 0 0 3px var(--mind-connection-dot-ring), var(--mind-connection-dot-shadow);
 }
 
 .conn-dot:hover::before {

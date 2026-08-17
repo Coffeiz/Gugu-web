@@ -23,6 +23,9 @@ class ProviderAdapter:
     supports_active_cache: Callable[[str], bool]       # (model_name) -> bool
     supports_thinking_toggle: bool
     auth_headers: Callable[[object], dict]             # (ai) -> 额外鉴权头
+    # 缓存可观测性：'active' = API 返回 cache_read_input_tokens / prompt_cache_hit_tokens（主动缓存）
+    # 'passive' = 服务端可能缓存但 API 不报告（如 MiniMax M3 被动前缀缓存）；'none' = 无缓存能力。
+    cache_mode: str = "active"
     # 这个 provider 的流式调用里，额外算「瞬时可重试」的异常类型（在 core.py 的
     # 基础 anthropic.*Error 之外追加）。默认空——只有已知会有怪癖的 provider 才加。
     transient_exceptions: tuple = field(default_factory=tuple)
@@ -44,6 +47,7 @@ _MINIMAX = ProviderAdapter(
     supports_active_cache=lambda model: (model or "").lower().startswith("minimax-m2"),
     supports_thinking_toggle=False,
     auth_headers=lambda ai: {},
+    cache_mode="passive",  # M3 被动前缀缓存，API 不返回 cache_read_input_tokens
     # IndexError/KeyError：MiniMax 偶发返回空/异常的流式响应，anthropic SDK 解析时越界
     # （原有白名单，见 core.py _stream_round 里的注释）。
     # AttributeError：SDK 内部 accumulate_event() 遇到 usage=None 的事件时未判空崩溃
@@ -60,6 +64,7 @@ _MIMO = ProviderAdapter(
     supports_thinking_toggle=True,
     # 小米 MiMo：用 `api-key` 头，不是 Bearer（迁自原 openai_default_headers/anthropic_default_headers）。
     auth_headers=lambda ai: {"api-key": getattr(ai, "api_key", "") or ""},
+    cache_mode="none",  # MiMo 不支持任何缓存机制
 )
 
 _DEEPSEEK = ProviderAdapter(
@@ -68,6 +73,7 @@ _DEEPSEEK = ProviderAdapter(
     supports_active_cache=lambda model: True,
     supports_thinking_toggle=True,
     auth_headers=lambda ai: {},
+    cache_mode="active",  # prompt_cache_hit_tokens 明确报告
 )
 
 _REGISTRY: dict[str, ProviderAdapter] = {

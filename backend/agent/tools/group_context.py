@@ -1,13 +1,11 @@
 """只搜索当前 QQ 群会话的短期上下文，不触碰用户其他对话。"""
 
-from sqlalchemy import desc, select
-
 from agent.im.imctx import get_im
 from agent.memory.scoped_store import read_scope_json
 from agent.memory.scopes import MemoryScope
 from agent.tools.base import BaseSkill, Tool
-from app.models import ConversationMessage, ConversationSession
-from app.search.query import keyword_condition, normalize_mode, normalize_queries
+from app.services.group_context import live_speaker_index, search_group_messages
+from app.search.query import normalize_mode, normalize_queries
 
 
 async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> list[tuple]:
@@ -17,23 +15,7 @@ async def _live_speaker_index(db, user_id, platform: str, bot_id, chat_id) -> li
     不能被反思任务的更新节奏拖慢（见 PRD-IM-8 Phase 2.5）。表本身受
     MESSAGE_RETENTION_LIMIT（500~600 条）限制，全量查一遍成本很低。
     """
-    rows = (await db.execute(
-        select(
-            ConversationMessage.platform_user_id,
-            ConversationMessage.platform_user_name,
-            ConversationMessage.created_at,
-        )
-        .join(ConversationSession, ConversationSession.id == ConversationMessage.session_id)
-        .where(
-            ConversationSession.user_id == user_id,
-            ConversationSession.source == platform,
-            ConversationSession.bot_id == bot_id,
-            ConversationSession.chat_type == "group",
-            ConversationSession.chat_id == chat_id,
-            ConversationMessage.role == "user",
-            ConversationMessage.platform_user_id.is_not(None),
-        )
-    )).all()
+    rows = await live_speaker_index(db, user_id, platform, bot_id, chat_id)
     return rows
 
 
@@ -209,25 +191,9 @@ async def _group_context_search(db, user_id, args: dict):
         if resolved.get("error"):
             return resolved
         speaker_id = resolved.get("platform_user_id")
-    query = (
-        select(ConversationMessage)
-        .join(ConversationSession, ConversationMessage.session_id == ConversationSession.id)
-        .where(
-            ConversationSession.user_id == user_id,
-            ConversationSession.source == "qq",
-            ConversationSession.bot_id == im.get("channel_id"),
-            ConversationSession.chat_id == im["chat_id"],
-            ConversationMessage.content_json.is_(None),
-        )
-        # 同一批消息可能拥有相同时间戳，用自增 id 保证倒序取回后再翻转时稳定按发送顺序返回。
-        .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
-        .limit(limit)
+    rows = await search_group_messages(
+        db, user_id, im["chat_id"], im.get("channel_id"), speaker_id, search_queries, mode, limit,
     )
-    if speaker_id:
-        query = query.where(ConversationMessage.platform_user_id == speaker_id)
-    if search_queries:
-        query = query.where(keyword_condition([ConversationMessage.content], search_queries, mode))
-    rows = (await db.execute(query)).scalars().all()
     return {
         "keyword": keyword,
         "queries": search_queries,

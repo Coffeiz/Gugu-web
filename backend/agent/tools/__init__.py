@@ -15,6 +15,7 @@ from agent.tools.search import SearchSkill
 from agent.tools.global_search import GlobalSearchSkill
 from agent.tools.group_context import GroupContextSkill
 from agent.tools.mind import MindSkill
+from agent.tools.mind_canvas import MindCanvasSkill
 from agent.tools.conversations import ConversationsSkill
 from agent.tools.im import IMSkill
 from agent.tools.scheduled_tasks import ScheduledTasksSkill
@@ -27,6 +28,7 @@ __all__ = [
     "OverviewSkill", "TrashSkill", "MemorySkill", "SearchSkill",
     "GlobalSearchSkill",
     "MindSkill",
+    "MindCanvasSkill",
     "ConversationsSkill", "IMSkill", "ScheduledTasksSkill",
     "WebSkill", "MetaSkill",
 ]

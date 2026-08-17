@@ -341,7 +341,7 @@
 
         <div class="prompt-editor-wrap">
           <textarea
-            class="prompt-textarea"
+            class="prompt-textarea scroll-surface scroll-surface--editor"
             v-model="promptContent"
             placeholder="输入系统提示词模板…"
             spellcheck="false"
@@ -2536,11 +2536,6 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 }
 .prompt-textarea::placeholder { color: rgba(255,255,255,0.2); }
 /* 暗色滚动条 + 去掉右下角横竖交汇处的白块（scrollbar-corner 默认是白的） */
-.prompt-textarea::-webkit-scrollbar { width: 10px; height: 10px; }
-.prompt-textarea::-webkit-scrollbar-track { background: transparent; }
-.prompt-textarea::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 6px; }
-.prompt-textarea::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
-.prompt-textarea::-webkit-scrollbar-corner { background: transparent; }
 .prompt-textarea { scrollbar-color: rgba(255,255,255,0.18) transparent; }  /* Firefox */
 
 .placeholder-panel {

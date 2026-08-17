@@ -465,20 +465,6 @@ defineExpose({ rootEl: cardRef })
 .note-card:not(.editing):hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .note-card:not(.editing):hover::after { background: rgba(255,255,255,0.2); }
 
-/* 连接态的虚线必须包在卡片外沿；显式覆盖本组件的高光层规则，避免 scoped
-   的 .note-card::after 把全局连接样式留在卡片内部。 */
-.note-card.connecting::after,
-.note-card.connection-target::after {
-  content: '';
-  position: absolute;
-  inset: -4px;
-  border: 2px dashed rgba(123, 127, 178, 0.6);
-  border-radius: inherit;
-  background: transparent;
-  box-shadow: none;
-  pointer-events: none;
-}
-
 .note-card.editing { background: rgba(255,255,255,0.9); }
 /* 光标还没定位到该去的地方之前（默认落点/上一次残留选区）先藏起来，不让这个过渡态被看见——
    比如正文开头是待办，进编辑态那一瞬容易先"亮"一下待办的默认焦点样式再跳到该定的位置。

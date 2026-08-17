@@ -8,9 +8,7 @@ from datetime import datetime, timedelta
 
 from app.core.tz import now_ctx
 
-from sqlalchemy import func, select
-
-from app.models import CalendarEvent, Client, File, Project
+from app.services.overview import dashboard_counts, upcoming_rows
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -20,25 +18,7 @@ async def _get_upcoming(db, user_id, args: dict):
     until = (now_ctx() + timedelta(days=days)).strftime("%Y-%m-%d")
 
     # 近期截止的未完成项目
-    proj_rows = (await db.execute(
-        select(Project).where(
-            Project.user_id == user_id,
-            Project.archived == False,
-            Project.status != "done",
-            Project.deadline.is_not(None),
-            Project.deadline >= today,
-            Project.deadline <= until,
-        )
-    )).scalars().all()
-
-    # 近期日历事件
-    ev_rows = (await db.execute(
-        select(CalendarEvent).where(
-            CalendarEvent.user_id == user_id,
-            CalendarEvent.date >= today,
-            CalendarEvent.date <= until,
-        )
-    )).scalars().all()
+    proj_rows, ev_rows = await upcoming_rows(db, user_id, today, until)
 
     items = (
         [{"kind": "project_deadline", "date": p.deadline, "title": p.name,
@@ -51,31 +31,15 @@ async def _get_upcoming(db, user_id, args: dict):
 
 
 async def _get_dashboard_stats(db, user_id, args: dict):
-    async def _count(stmt):
-        return (await db.execute(stmt)).scalar() or 0
-
     today = now_ctx().strftime("%Y-%m-%d")
-    base_proj = select(func.count(Project.id)).where(
-        Project.user_id == user_id, Project.archived == False)
-
-    pending = await _count(base_proj.where(Project.status == "pending"))
-    active = await _count(base_proj.where(Project.status == "active"))
-    done = await _count(base_proj.where(Project.status == "done"))
-    upcoming_events = await _count(
-        select(func.count(CalendarEvent.id)).where(
-            CalendarEvent.user_id == user_id, CalendarEvent.date >= today))
-    files = await _count(
-        select(func.count(File.id)).where(
-            File.user_id == user_id, File.deleted_at.is_(None)))
-    clients = await _count(
-        select(func.count(Client.id)).where(Client.user_id == user_id))
+    counts = await dashboard_counts(db, user_id, today)
 
     return {
-        "projects": {"pending": pending, "active": active, "done": done,
-                     "total": pending + active + done},
-        "upcoming_events": upcoming_events,
-        "files": files,
-        "clients": clients,
+        "projects": {"pending": counts["pending"], "active": counts["active"], "done": counts["done"],
+                     "total": counts["pending"] + counts["active"] + counts["done"]},
+        "upcoming_events": counts["upcoming_events"],
+        "files": counts["files"],
+        "clients": counts["clients"],
     }
 
 

@@ -267,7 +267,10 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
             groups.append({"type": "note", "label": "便签", "items": [
                 {"id": n.id,
                  "title": n.title or _snippet_for_queries(n.content_plain, search_queries) or "无标题便签",
-                 "subtitle": _snippet_for_queries(n.content_plain, search_queries)}
+                 "subtitle": _snippet_for_queries(n.content_plain, search_queries),
+                 # Agent 的 update_note 需要乐观锁版本；搜索结果必须能直接作为更新输入，
+                 # 不能逼调用方猜 version 或先用失败请求探测版本。
+                 "version": n.version}
                 for n in rows
             ]})
 

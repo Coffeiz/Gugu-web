@@ -3,7 +3,7 @@
     <div class="canvas-world" :style="worldStyle">
       <RelationLayer
         :key="canvasKey ?? 'none'"
-        :items="relationItems" :relations="visibleRelations" :highlight-node-id="connectionDrag.originNodeId"
+        :items="relationItems" :relations="visibleRelations"
         :draft="connectionDrag.active ? { from: connectionDrag.from, to: connectionDrag.to, fromSide: connectionDrag.originSide, toSide: connectionDrag.targetSide } : null"
         :landing-positions="landingPositions" :measured-sizes="measuredSizes" :relation-anchors="relationAnchors"
         :hovered-node-id="hoveredNodeId" :visual-frame="runtimeVisualFrame" :active-visual-node-id="activeVisualNodeId" :screen-to-world="screenToWorld"
@@ -44,16 +44,14 @@
 </template>
 
 <script setup lang="ts">
-/** 无限画布：平移/缩放 + 贴纸绝对定位渲染，相机数学委托给 useMindCanvas.ts；贴纸拖拽统一走
- *  interaction runtime，这里只负责相机、建立关联的拖拽手势
- *  编排（贴纸边缘圆点拖到另一张贴纸上，见 onConnectDragStart 一带）。 */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
-import './canvas-card-effects.css'
+/** 无限画布：相机负责平移/缩放；对象拖拽统一走 interaction runtime；这里编排关系拖拽。 */
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
+import { relationEnvelope } from '@/utils/canvasRelationGeometry'
 import EntitySticker from './EntitySticker.vue'
 import FileRefCard from './FileRefCard.vue'
 import NoteSticker from './NoteSticker.vue'
@@ -74,7 +72,7 @@ const emit = defineEmits<{
   (e: 'linkNodes', srcNodeId: number, dstNodeId: number, sides: RelationAnchorSides, runtimeConnection: NodeConnectionEndpoint): void
   (e: 'openRef', item: MindCanvasItem): void
   (e: 'itemMoved', item: MindCanvasItem): void
-  (e: 'viewChange', view: { x: number; y: number; scale: number }): void
+  (e: 'viewChange', view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } }): void
 }>()
 
 const viewportRef = ref<HTMLElement | null>(null)
@@ -90,25 +88,37 @@ const worldStyle = computed(() => ({ transform: `translate3d(${camera.x}px, ${ca
 watch(() => props.items, items => {
   items.forEach(item => migrateCanvasItemSize(measuredSizes, measuredSizesByClientKey, item))
 }, { immediate: true })
-// 贴纸和连线只渲染在视口附近。420px 缓冲给边缘拖拽、连线和快速平移留出余量；缓冲按
-// 屏幕像素定义，缩放时换算成世界坐标，因此不会在不同倍率下改变可见范围的体感。
+
+// 卡片和关系共用同一个缓冲视口，避免各自重新计算一套 window geometry。
 const WINDOW_BUFFER_PX = 420
+const bufferedWorldViewport = computed(() => {
+  if (!viewportSize.width || !viewportSize.height) return null
+  return worldViewport({ ...camera, ...viewportSize }, WINDOW_BUFFER_PX)
+})
+const itemByNodeId = computed(() => new Map(props.items.map(item => [item.nodeId, item])))
 const visibleItems = computed(() => {
-  // 首次挂载前还没有 DOM 尺寸，先保守地完整渲染一帧，不能把画布误判为空。
-  if (!viewportSize.width || !viewportSize.height) return props.items
-  const viewport = worldViewport({ ...camera, ...viewportSize }, WINDOW_BUFFER_PX)
+  const viewport = bufferedWorldViewport.value
+  if (!viewport) return props.items
   return props.items.filter(item => {
     const { w, h } = measuredSizes.get(item.nodeId) ?? itemSize(item)
     return overlapsWorldRect({ x: item.x, y: item.y, w, h }, viewport)
   })
 })
 const visibleRelations = computed(() => {
-  const visibleNodeIds = new Set(visibleItems.value.map(item => item.nodeId))
-  // 只要一端还在窗口里，线就必须保留并延伸向远处节点；否则用户会看到可见卡片的关联
-  // 突然消失。两端都在窗口外的线才不画。远端卡片本身仍不挂载，只把它的几何数据交给 SVG。
-  return props.relations.filter(relation =>
-    visibleNodeIds.has(relation.srcNodeId) || visibleNodeIds.has(relation.dstNodeId),
-  )
+  const viewport = bufferedWorldViewport.value
+  if (!viewport) return props.relations
+  return props.relations.filter(relation => {
+    const src = itemByNodeId.value.get(relation.srcNodeId)
+    const dst = itemByNodeId.value.get(relation.dstNodeId)
+    if (!src || !dst) return false
+    const srcSize = measuredSizes.get(src.nodeId) ?? itemSize(src)
+    const dstSize = measuredSizes.get(dst.nodeId) ?? itemSize(dst)
+    const envelope = relationEnvelope(
+      { x: src.x, y: src.y, w: srcSize.w, h: srcSize.h },
+      { x: dst.x, y: dst.y, w: dstSize.w, h: dstSize.h },
+    )
+    return overlapsWorldRect(envelope, viewport)
+  })
 })
 const relationItems = computed(() => {
   const neededNodeIds = new Set(visibleItems.value.map(item => item.nodeId))
@@ -118,8 +128,7 @@ const relationItems = computed(() => {
   }
   return props.items.filter(item => neededNodeIds.has(item.nodeId))
 })
-// 点阵背景要跟着世界一起平移/缩放，才能看出"画布真的在动"（而不是贴纸飘在一张静止的纸上）；
-// 点阵本身画在 viewport 层（没有 canvas-world 的 scale 会拉伸成椭圆），故背景尺寸也要乘 scale 才能对齐。
+
 const bgStyle = computed(() => {
   const size = 28 * camera.scale
   return {
@@ -132,18 +141,13 @@ function onViewportPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
   startPan(event)
 }
-/** Runtime 在松手时给出最终世界位置，这里只负责更新模型并通知页面持久化。 */
+
 function onItemMoved(item: MindCanvasItem, x: number, y: number) {
   item.x = x
   item.y = y
   emit('itemMoved', item)
 }
 
-/**
- * 读取当前画布卡片的布局尺寸。offset 尺寸不包含画布 camera transform、抓取倾斜和
- * landing 代理的视觉缩放，正好是落点换算需要的世界尺寸。乐观节点换成真实 nodeId
- * 的交接窗口里，measuredSizes 可能还没有迁移完成，因此这里必须优先读活 DOM。
- */
 function renderedItemSize(item: MindCanvasItem): { w: number; h: number } | null {
   const element = document.querySelector<HTMLElement>(`[data-canvas-item-id="${item.id}"]`)
   if (!element || !element.isConnected) return null
@@ -159,7 +163,6 @@ function onRuntimeMove(action: MoveAction) {
   if (!action.objectId.startsWith('mind:')) return
   const item = props.items.find(current => mindCanvasObjectId(current) === action.objectId)
   if (!item) return
-  const nodeId = item.nodeId
   if (action.toSurfaceId === MIND_PROJECT_DRAWER_SURFACE_ID) {
     if (item.node.refType === 'project') {
       const projectId = item.node.refId
@@ -191,7 +194,6 @@ function onRuntimeMove(action: MoveAction) {
   onItemMoved(item, center.x - w / 2, center.y - h / 2)
 }
 
-/** 卡片尺寸变化时同步给 RelationLayer；拖动中的位置由 Runtime 代理事件提供。 */
 function onItemMeasured(item: MindCanvasItem, size: { w: number; h: number }) {
   cacheCanvasItemSize(measuredSizes, measuredSizesByClientKey, item, size)
 }
@@ -205,16 +207,13 @@ function updateViewportSize() {
   viewportSize.width = viewport.clientWidth
   viewportSize.height = viewport.clientHeight
 }
+function updateViewportSizeAndEmit() {
+  updateViewportSize()
+  emitViewChange()
+}
 
-// 悬浮抬起（见各贴纸组件的 .hover-card-fx）用纯 CSS transform，SVG 连线不知道 DOM 层面的
-// :hover 状态，得靠贴纸自己上报——不然抬起来的卡片和还锚在旧位置的连线会错位一截。只记
-// 「当前悬浮的是哪一张」（同一时间只有一张会真的抬起，鼠标只会停在一张卡片上），RelationLayer
-// 收到 nodeId 后按同一个像素量自己算偏移量（见其 hoverLift）。
 const hoveredNodeId = ref<number | null>(null)
 function onItemHover(item: MindCanvasItem, hovering: boolean) {
-  // 本体在落地阶段已经提前写到最终坐标、但视觉仍由克隆接管。此时浏览器可能对透明本体
-  // 继续派发 hover；不能让 RelationLayer 又把端点抬回去，等落地完成后的真实 mouseenter
-  // 再恢复即可。
   if (landingNodeIds.has(item.nodeId)) return
   if (hovering) hoveredNodeId.value = item.nodeId
   else if (hoveredNodeId.value === item.nodeId) hoveredNodeId.value = null
@@ -224,11 +223,7 @@ const landingPositions = reactive(new Map<number, { x: number; y: number }>())
 const landingObjectNodeIds = new Map<string, number>()
 const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
-// 有键就代表这张卡还在克隆落地阶段：透明本体已经在最终坐标，但视觉卡片尚未落下，连线拖拽
-// 不能把它提前识别成可吸附目标。
 const landingNodeIds = reactive(new Set<number>())
-/** Runtime 代理的实际屏幕盒是连接线在拖动/落地期间唯一可信的临时几何来源。
- * 这里只覆盖 RelationLayer 的位置，不写回 item.x/y，也不参与卡片动画。 */
 function onRuntimeVisual(event: RuntimeEvent) {
   if (event.type === 'move-visual-end') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
@@ -257,16 +252,11 @@ function onRuntimeVisual(event: RuntimeEvent) {
     landingNodeIds.add(nodeId)
     if (hoveredNodeId.value === nodeId) hoveredNodeId.value = null
   } else {
-    // active 阶段的代理会随卡片 rotateZ 摆动，端点必须由 RelationLayer 读取真实 dot；
-    // landing 阶段才使用这份轴对齐插值位置，避免把旋转中的连接点压回卡片中线。
     landingPositions.delete(nodeId)
   }
 }
 
-// ── 建立关联：从贴纸边缘的圆点按住拖出一条线，松手落在另一张贴纸上就建立关系 ──────────
-// （原来是"点连接按钮进入选目标模式、再点一下目标"的两步点击，现在是一步拖拽，更符合
-// 直接操作直觉；起点/终点都用世界坐标画在 RelationLayer 的预览线上，跟真实关系线同一套
-// 渲染管线，不用另起一层。）
+// ── 建立关联 ────────────────────────────────────────────────────────────────
 const connectionDrag = reactive({
   active: false,
   originNodeId: null as number | null,
@@ -274,15 +264,13 @@ const connectionDrag = reactive({
   targetNodeId: null as number | null,
   targetSide: null as ('left' | 'right' | null),
   from: { x: 0, y: 0 },
-  to: { x: 0, y: 0 },   // 弹簧跟随后的渲染位置（画出来的线用这个，带一点弹性的"给"）
+  to: { x: 0, y: 0 },
 })
-// 预览线不是死板地焊死在指针上——用二阶弹簧追指针，松开圆点或改变方向时
-// 能看出线头带一点惯性甩动，像真牵了一根有弹性的线，不是几何上精确却毫无生气的跟手直线。
-let connSpringTarget = { x: 0, y: 0 }   // 指针当前的原始世界坐标（弹簧追的目标）
+let connSpringTarget = { x: 0, y: 0 }
 let connSpringVel = { x: 0, y: 0 }
 let connSpringRaf = 0
 let connSpringLastT: number | null = null
-const CONN_SPRING = 900   // 比卡片拖拽的弹簧硬得多——终究是根线，不该像卡片一样肉呼呼地拖沓
+const CONN_SPRING = 900
 const CONN_DAMP = 2 * 0.7 * Math.sqrt(CONN_SPRING)
 function connSpringFrame(now: number) {
   let dt = connSpringLastT === null ? 1 / 60 : (now - connSpringLastT) / 1000
@@ -294,8 +282,12 @@ function connSpringFrame(now: number) {
     rem -= h
     const ax = CONN_SPRING * (connSpringTarget.x - connectionDrag.to.x) - CONN_DAMP * connSpringVel.x
     const ay = CONN_SPRING * (connSpringTarget.y - connectionDrag.to.y) - CONN_DAMP * connSpringVel.y
-    connSpringVel.x += ax * h; connSpringVel.y += ay * h
-    connectionDrag.to = { x: connectionDrag.to.x + connSpringVel.x * h, y: connectionDrag.to.y + connSpringVel.y * h }
+    connSpringVel.x += ax * h
+    connSpringVel.y += ay * h
+    connectionDrag.to = {
+      x: connectionDrag.to.x + connSpringVel.x * h,
+      y: connectionDrag.to.y + connSpringVel.y * h,
+    }
   }
   const origin = props.items.find(current => current.nodeId === connectionDrag.originNodeId)
   if (origin) connectionDrag.from = connectionAnchor(origin, connectionDrag.originSide)
@@ -313,15 +305,19 @@ function connectionAnchor(item: MindCanvasItem, side: 'left' | 'right') {
     ? { w: cardRect.width / camera.scale, h: cardRect.height / camera.scale }
     : null
   if (measured) measuredSizes.set(item.nodeId, measured)
-  const point = dotRect && dotRect.width > 0 && dotRect.height > 0
+  return dotRect && dotRect.width > 0 && dotRect.height > 0
     ? screenToWorld(dotRect.left + dotRect.width / 2, dotRect.top + dotRect.height / 2)
-    : { x: item.x + (side === 'right' ? (measured?.w ?? w) : 0), y: item.y + (measured?.h ?? h) / 2 }
-  return point
+    : {
+        x: item.x + (side === 'right' ? (measured?.w ?? w) : 0),
+        y: item.y + (measured?.h ?? h) / 2,
+      }
 }
 function connectionTargetSide(nodeId: number) {
   return connectionDrag.targetNodeId === nodeId ? connectionDrag.targetSide : null
 }
-function targetAt(event: PointerEvent, originNodeId: number) {
+
+type ClientPoint = Pick<PointerEvent, 'clientX' | 'clientY'>
+function targetAt(event: ClientPoint, originNodeId: number) {
   const port = runtime.hitNodePort(
     { x: event.clientX, y: event.clientY },
     { objectType: MIND_CANVAS_OBJECT_TYPE, snapToObject: true },
@@ -334,17 +330,67 @@ function targetAt(event: PointerEvent, originNodeId: number) {
   if (nodeId === originNodeId || landingNodeIds.has(nodeId)) return null
   return { item, side: port!.side }
 }
-function updateConnectionTarget(event: PointerEvent) {
+function updateConnectionTarget(event: ClientPoint) {
   const originNodeId = connectionDrag.originNodeId
   if (originNodeId == null) return
   const target = targetAt(event, originNodeId)
-  const nextTargetNodeId = target?.item.nodeId ?? null
-  const nextTargetSide = target?.side ?? null
-  connectionDrag.targetNodeId = nextTargetNodeId
-  connectionDrag.targetSide = nextTargetSide
-  // 命中目标卡后，视觉线端弹簧吸到该侧连接点；命中/左右判定仍按原始鼠标位置。
-  connSpringTarget = target ? connectionAnchor(target.item, target.side) : screenToWorld(event.clientX, event.clientY)
+  connectionDrag.targetNodeId = target?.item.nodeId ?? null
+  connectionDrag.targetSide = target?.side ?? null
+  connSpringTarget = target
+    ? connectionAnchor(target.item, target.side)
+    : screenToWorld(event.clientX, event.clientY)
 }
+
+// 鼠标在按住左键拉关系时仍可按住中键平移。MouseEvent 会为第二个按键继续发 mousedown，
+// PointerEvent 的 pointerdown 则不会，所以这里专门监听 mousedown，但 camera 差值算法仍复用
+// useMindCanvas 的 startPan/panMove/panEnd，不维护第二套相机状态机。
+const CONNECTION_MIDDLE_PAN_ID = -1
+let connectionMiddlePanActive = false
+function onConnectionMiddleMouseDown(event: MouseEvent) {
+  if (!connectionDrag.active || event.button !== 1 || connectionMiddlePanActive) return
+  event.preventDefault()
+  connectionMiddlePanActive = true
+  startPan({
+    pointerId: CONNECTION_MIDDLE_PAN_ID,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  }, false)
+  window.addEventListener('mousemove', onConnectionMiddleMouseMove, true)
+  window.addEventListener('mouseup', onConnectionMiddleMouseUp, true)
+}
+function onConnectionMiddleMouseMove(event: MouseEvent) {
+  if (!connectionMiddlePanActive) return
+  if ((event.buttons & 4) === 0) {
+    endConnectionMiddlePan(event)
+    return
+  }
+  if (panMove({
+    pointerId: CONNECTION_MIDDLE_PAN_ID,
+    clientX: event.clientX,
+    clientY: event.clientY,
+  })) {
+    updateConnectionTarget(event)
+  }
+}
+function onConnectionMiddleMouseUp(event: MouseEvent) {
+  if (event.button !== 1) return
+  event.preventDefault()
+  endConnectionMiddlePan(event)
+}
+function endConnectionMiddlePan(point?: ClientPoint) {
+  if (!connectionMiddlePanActive) return
+  connectionMiddlePanActive = false
+  panEnd({
+    pointerId: CONNECTION_MIDDLE_PAN_ID,
+    clientX: point?.clientX ?? 0,
+    clientY: point?.clientY ?? 0,
+  })
+  window.removeEventListener('mousemove', onConnectionMiddleMouseMove, true)
+  window.removeEventListener('mouseup', onConnectionMiddleMouseUp, true)
+  emitViewChange()
+  if (point && connectionDrag.active) updateConnectionTarget(point)
+}
+
 function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 'right') {
   const origin = props.items.find(current => current.nodeId === nodeId)
   if (!origin) return
@@ -358,21 +404,28 @@ function onConnectDragStart(event: PointerEvent, nodeId: number, side: 'left' | 
   connectionDrag.to = { ...connSpringTarget }
   connSpringVel = { x: 0, y: 0 }
   connSpringLastT = null
-  // 用户按下哪一个圆点，预览线就固定从那一侧出发；不能因为鼠标划过卡片中线而悄悄换边。
   connectionDrag.from = connectionAnchor(origin, side)
   window.addEventListener('pointermove', onConnectionDragMove)
   window.addEventListener('pointerup', onConnectionDragEnd)
+  window.addEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.addEventListener('mouseup', onConnectionPrimaryMouseUp, true)
   connSpringRaf = requestAnimationFrame(connSpringFrame)
 }
 function onConnectionDragMove(event: PointerEvent) {
-  // Runtime connection state uses viewport coordinates, matching getBoundingClientRect()
-  // and hitNodePort(); only the business-side preview line uses world coordinates.
   runtime.updateNodeConnection({ x: event.clientX, y: event.clientY })
   updateConnectionTarget(event)
 }
-function onConnectionDragEnd(event: PointerEvent) {
+function onConnectionPrimaryMouseUp(event: MouseEvent) {
+  if (event.button !== 0 || !connectionDrag.active) return
+  onConnectionDragEnd(event)
+}
+function onConnectionDragEnd(event: ClientPoint) {
+  if (!connectionDrag.active) return
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
+  window.removeEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.removeEventListener('mouseup', onConnectionPrimaryMouseUp, true)
+  endConnectionMiddlePan(event)
   cancelAnimationFrame(connSpringRaf)
   const originNodeId = connectionDrag.originNodeId
   const target = originNodeId == null ? null : targetAt(event, originNodeId)
@@ -384,8 +437,6 @@ function onConnectionDragEnd(event: PointerEvent) {
     runtime.cancelNodeConnection()
     return
   }
-  // 落点判定用真实指针位置（event.clientX/Y），不用还在弹簧里追赶的渲染位置——手感上的
-  // "弹性"只体现在线怎么画，砸没砸中目标贴纸得看指针实际在哪，不能让视觉延迟改变判定。
   const source = props.items.find(item => item.nodeId === originNodeId)
   if (!source) {
     runtime.cancelNodeConnection()
@@ -415,7 +466,12 @@ function onWheelZoom(event: WheelEvent) {
   emitViewChange()
 }
 function emitViewChange() {
-  emit('viewChange', { x: camera.x, y: camera.y, scale: camera.scale })
+  emit('viewChange', {
+    x: camera.x, y: camera.y, scale: camera.scale,
+    ...(viewportSize.width > 0 && viewportSize.height > 0
+      ? { viewport: { width: viewportSize.width, height: viewportSize.height } }
+      : {}),
+  })
 }
 function zoomAtCenterAndEmit(delta: number) {
   zoomAtCenter(delta)
@@ -423,7 +479,6 @@ function zoomAtCenterAndEmit(delta: number) {
 }
 function resetScaleAtCenterAndEmit() {
   const center = workspaceCenter()
-  // 只把倍率回到 1x：通过可见工作区中心缩放，那里对应的世界坐标不会移动。
   zoomAt(center.x, center.y, 1)
   emitViewChange()
 }
@@ -439,9 +494,6 @@ function centerOn(worldX: number, worldY: number) {
   camera.y = viewport.clientHeight / 2 - worldY
   emitViewChange()
 }
-// 画布现在贴着侧栏/顶部胶囊摆放，不再铺满整个浏览器窗口（见 .mind-canvas 定位注释）——
-// "视口正中心"不能再拿 window.innerWidth/innerHeight 算，得读画布自己的实际可见区域。
-// CanvasView.vue 新建便签/引用卡片时用这个定初始落点。
 function viewportCenter() {
   const rect = viewportRef.value?.getBoundingClientRect()
   return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : { x: 0, y: 0 }
@@ -463,11 +515,13 @@ onMounted(() => {
     },
   })
   stopRuntimeActions = runtime.onAction(action => {
-    if (action.type === 'move') onRuntimeMove(action as MoveAction)
+    if (action.type === 'move') {
+      onRuntimeMove(action as MoveAction)
+    }
   })
   stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
-  updateViewportSize()
-  viewportResizeObserver = new ResizeObserver(updateViewportSize)
+  updateViewportSizeAndEmit()
+  viewportResizeObserver = new ResizeObserver(updateViewportSizeAndEmit)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', onPointerUp)
@@ -484,32 +538,30 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('pointermove', onConnectionDragMove)
   window.removeEventListener('pointerup', onConnectionDragEnd)
+  window.removeEventListener('mousedown', onConnectionMiddleMouseDown, true)
+  window.removeEventListener('mouseup', onConnectionPrimaryMouseUp, true)
+  window.removeEventListener('mousemove', onConnectionMiddleMouseMove, true)
+  window.removeEventListener('mouseup', onConnectionMiddleMouseUp, true)
+  if (connectionMiddlePanActive) {
+    connectionMiddlePanActive = false
+    panEnd({ pointerId: CONNECTION_MIDDLE_PAN_ID, clientX: 0, clientY: 0 })
+  }
   cancelAnimationFrame(connSpringRaf)
   landingObjectNodeIds.clear()
 })
 </script>
 
 <style scoped>
-/* 画布本体（点阵背景 + 世界坐标层）就该铺满整个浏览器，包括侧栏（AppSidebar）背后那一段——
-   无限画布不该在侧栏那侧凭空截断一块，只是那段被侧栏（z-index:20，比这里的 0 高）盖住看不
-   见而已，两者天然按 z 序叠好，不用真的裁切。真正要"限制范围、别落到侧栏底下"的只是画布自己
-   悬浮的 UI 控件——画布切换面板（CanvasSidebar.vue）、底部工具条（CanvasToolbar.vue）这些
-   z-index 比侧栏低的浮层，它们各自在自己的定位里加了侧栏宽度的偏移量，不靠这里整体收窄
-   画布范围来解决。指针坐标换算见 useMindCanvas.ts 的 screenToWorld（这里始终贴视口原点，
-   偏移量为 0，那处理依然安全、只是长期是个 no-op）。 */
 .mind-canvas {
-  position: fixed; inset: 0; z-index: 0; overflow: hidden; cursor: grab; user-select: none;
-  background-color: #e8ebf3;
-  /* 点大小用百分比（不是绝对 px）：CSS 渐变的坐标解析在它自己的渲染框（=background-size 这块
-     tile）内，绝对 px 半径不随 tile 缩放改变——缩小时点距会跟着 bgStyle 变密，但点本身还是那么
-     大，反而显得更粗。改百分比后半径直接是 tile 尺寸的比例，background-size 缩小时点也跟着
-     等比变小，缩放观感才一致。 */
-  background-image: radial-gradient(circle, rgba(108, 116, 153, .34) 6.5%, transparent 7%);
-  /* background-size/position 由 bgStyle 按相机实时写入，让点阵随平移/缩放跟世界一起动 */
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  cursor: grab;
+  user-select: none;
+  background-color: var(--mind-canvas-bg);
+  background-image: radial-gradient(circle, var(--mind-canvas-dot) 6.5%, transparent 7%);
 }
 .mind-canvas:active { cursor: grabbing; }
-/* 不加 will-change:transform——它会让 Chrome 把这层提前提升成固定分辨率的合成层，缩放时
-   只是拉伸已光栅化的位图（贴纸文字/阴影糊成马赛克），而不是按新 scale 重新光栅化。缩放只在
-   离散的点击/滚轮时触发，没有逐帧动画的性能压力，去掉它换来任意缩放级别都是矢量级清晰。 */
 .canvas-world { position: absolute; width: 0; height: 0; transform-origin: 0 0; }
 </style>

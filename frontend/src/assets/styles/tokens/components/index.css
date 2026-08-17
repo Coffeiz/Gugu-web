@@ -1,0 +1,9 @@
+/* Component contract layer. Keep legacy implementation files import-compatible while exposing
+   one directory entry for new work. */
+@import '../components.css';
+@import '../canvas.css';
+@import '../product.css';
+@import '../interaction-refinements.css';
+@import '../interactive-surface-fixes.css';
+@import './surfaces.css';
+@import './mind.css';
