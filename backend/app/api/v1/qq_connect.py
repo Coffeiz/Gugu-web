@@ -31,7 +31,7 @@ router = APIRouter(prefix="/me/qq/connect", tags=["qq-connect"])
 PORTAL_HOST = os.getenv("QQ_PORTAL_HOST", "q.qq.com")
 CREATE_URL = f"https://{PORTAL_HOST}/lite/create_bind_task"
 POLL_URL = f"https://{PORTAL_HOST}/lite/poll_bind_result"
-FRONTEND = f"https://{PORTAL_HOST}/qq/openclaw/connect.html"
+FRONTEND = f"https://{PORTAL_HOST}/qqbot/openclaw/connect.html"
 SOURCE = "Gugu"
 TASK_TTL = 600  # 10 分钟
 
