@@ -34,3 +34,58 @@ test('画布首屏、项目抽屉和相机控制可用', async ({ page }) => {
   await page.getByRole('button', { name: '项目素材' }).click()
   await expect(drawer.locator('.projects-panel.visible')).toBeVisible()
 })
+
+type ChromeStyle = {
+  background: string
+  border: string
+  backdrop: string
+}
+
+async function readChromeStyle(locator: Parameters<typeof expect>[0]): Promise<ChromeStyle> {
+  return locator.evaluate((el: Element) => {
+    const style = getComputedStyle(el)
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      backdrop: style.backdropFilter || style.webkitBackdropFilter || 'none',
+    }
+  })
+}
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`Mono ${theme} 画布抽屉与工具栏保持毛玻璃且 hover 不回退`, async ({ page }) => {
+    await page.addInitScript(({ theme }) => {
+      localStorage.setItem('gugu-theme-family', 'v2')
+      localStorage.setItem('gugu-theme', theme)
+    }, { theme })
+
+    await page.goto('/mind/canvases')
+    await expect(page.locator('.canvas-page-canvas-ready')).toBeVisible({ timeout: 15000 })
+
+    const toolbar = page.locator('.canvas-toolbar')
+    const topCapsule = page.locator('.mind-tabs')
+    const drawer = page.locator('[data-layout-surface="mind:project-drawer"]')
+
+    await expect(toolbar).toBeVisible()
+    await expect(topCapsule).toBeVisible()
+    await page.getByRole('button', { name: '项目素材' }).click()
+    await expect(drawer.locator('.projects-panel.visible')).toBeVisible()
+
+    const toolbarBefore = await readChromeStyle(toolbar)
+    const drawerBefore = await readChromeStyle(drawer)
+    const capsuleStyle = await readChromeStyle(topCapsule)
+
+    for (const style of [toolbarBefore, drawerBefore]) {
+      expect(style.background).not.toBe('rgba(0, 0, 0, 0)')
+      expect(style.border).not.toBe('rgba(0, 0, 0, 0)')
+      expect(style.backdrop).not.toBe('none')
+      expect(style.backdrop).toBe(capsuleStyle.backdrop)
+    }
+
+    await toolbar.hover()
+    expect(await readChromeStyle(toolbar)).toEqual(toolbarBefore)
+
+    await drawer.hover()
+    expect(await readChromeStyle(drawer)).toEqual(drawerBefore)
+  })
+}
