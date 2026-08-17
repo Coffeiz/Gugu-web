@@ -103,19 +103,13 @@ export function useChatWindow(options: UseChatWindowOptions) {
   const fabZ = computed(() => (open.value || chatClosing.value) ? chatZ.value - 1 : 99999)
 
   // ── 位置样式 ────────────────────────────────────────────
-  // GuguChatWindow 的 0.42s top/left/right/bottom transition 只属于用户主动展开/收起。
-  // 浏览器 resize、流式小窗增高以及其它瞬时几何变化必须和 viewport 同一帧更新，否则
-  // 原生 overflow scrollbar 会跟着整个滚动容器追旧几何，看起来比 panel 慢一拍。
-  // 非主动位形过渡时用 inline transition:none 覆盖组件 CSS；resizing=true 时不写该属性，
-  // 继续复用 GuguChatWindow.vue 中唯一的一份 duration/easing，不复制动画参数。
-  const passiveGeometryStyle = computed(() => resizing.value ? {} : { transition: 'none' })
+  // 几何值只负责给出当前真实位置；是否做 0.42s 缓动由 GuguChatWindow 的
+  // is-layout-resizing class 单独决定。这样 viewport resize 永远直接跟随，而动画参数
+  // 仍只有组件 CSS 一个 owner，不在 JS 再复制 transition。
   const windowStyle = computed(() => {
     if (expanded.value) {
       const left = Math.max(SIDEBAR_W + 12, vw.value * 0.4 - 12)
-      return {
-        top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value,
-        ...passiveGeometryStyle.value,
-      }
+      return { top: '12px', right: '12px', bottom: '12px', left: `${left}px`, zIndex: chatZ.value }
     }
     return {
       top:    `${vh.value - 88 - smallH.value}px`,
@@ -123,7 +117,6 @@ export function useChatWindow(options: UseChatWindowOptions) {
       right:  'var(--floating-edge)',
       bottom: '88px',
       zIndex: chatZ.value,
-      ...passiveGeometryStyle.value,
     }
   })
 
