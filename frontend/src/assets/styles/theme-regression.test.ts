@@ -23,6 +23,8 @@ const surfacesCss = load('./adoption/surfaces.css')
 const datePickerCss = load('./adoption/date-picker.css')
 const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
+const productCss = load('./tokens/product.css')
+const componentCss = load('./tokens/components.css')
 
 describe('主题 CSS 回归契约', () => {
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
@@ -50,17 +52,27 @@ describe('主题 CSS 回归契约', () => {
     expect(fileToolbarCss).not.toMatch(/border(?:-color)?\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 
-  it('Mono 画布抽屉和工具栏直接拥有最终毛玻璃 surface，避免只改变量后被通用 glass-card 回退', () => {
+  it('Mono 内容卡关闭 blur、画布浮动 chrome 通过同一 glass-card token 恢复 blur', () => {
+    expect(componentCss).toContain('--glass-card-blur: var(--glass-blur)')
+
+    const monoFamily = cssBlock(productCss, "html[data-family='v2'] { --glass-card-blur: none;")
+    expect(monoFamily.trim()).toBe('--glass-card-blur: none;')
+
+    const monoGlassCard = cssBlock(productCss, "html[data-family='v2'] .glass-card:not(.topbar)")
+    expect(monoGlassCard).toContain('backdrop-filter: var(--glass-card-blur)')
+    expect(monoGlassCard).not.toContain('backdrop-filter: none')
+
     const chromeBlock = cssBlock(
       mindCss,
       "html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker)",
     )
     expect(chromeBlock).toContain('--glass-card-background: var(--chrome-glass-bg)')
     expect(chromeBlock).toContain('--glass-card-background-hover: var(--chrome-glass-bg)')
+    expect(chromeBlock).toContain('--glass-card-blur: var(--chrome-glass-blur)')
     expect(chromeBlock).toContain('background: var(--glass-card-background)')
     expect(chromeBlock).toContain('border-color: var(--glass-card-border)')
     expect(chromeBlock).toContain('box-shadow: var(--glass-card-shadow)')
-    expect(chromeBlock).toContain('backdrop-filter: var(--chrome-glass-blur)')
+    expect(chromeBlock).not.toContain('backdrop-filter:')
     expect(chromeBlock).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
   })
 
