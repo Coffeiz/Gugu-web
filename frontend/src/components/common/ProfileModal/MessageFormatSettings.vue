@@ -8,11 +8,9 @@
 </template>
 
 <script setup lang="ts">
-import { userBotsApi } from '@/services/api'
-
 interface MessageFormatBot { id: number; group_message_format?: string; private_message_format?: string }
 const props = defineProps<{ bot: MessageFormatBot }>()
-const emit = defineEmits<{ updated: [] }>()
+const emit = defineEmits<{ change: [scope: 'group' | 'private', mode: string] }>()
 const scopes = [
   { key: 'group', label: '群聊消息格式', hint: '兼容旧版 QQ；智能模式仅在需要时使用 Markdown' },
   { key: 'private', label: '私聊消息格式', hint: '私聊可保留 Markdown 排版' },
@@ -23,8 +21,5 @@ const options = [
   { key: 'markdown', label: '强制 Markdown' },
 ] as const
 function format(scope: 'group' | 'private'): string { return scope === 'group' ? (props.bot.group_message_format ?? 'compat') : (props.bot.private_message_format ?? 'smart') }
-async function setFormat(scope: 'group' | 'private', mode: string) {
-  await userBotsApi.update(props.bot.id, scope === 'group' ? { group_message_format: mode } : { private_message_format: mode })
-  emit('updated')
-}
+function setFormat(scope: 'group' | 'private', mode: string) { emit('change', scope, mode) }
 </script>
