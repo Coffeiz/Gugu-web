@@ -31,6 +31,26 @@ def top_level_deleted_folders_stmt(user_id=None):
     return stmt.order_by(Folder.deleted_at.desc())
 
 
+async def list_top_level_deleted_folders(db: AsyncSession, user_id):
+    """列出当前用户回收站中的全部顶层文件夹，供 API 编排与清空回收站复用。"""
+    return (await db.execute(top_level_deleted_folders_stmt(user_id))).scalars().all()
+
+
+async def list_top_level_deleted_folders_with_counts(db: AsyncSession, user_id):
+    """列出顶层回收站文件夹及其直属已删文件数，避免 API 层直接拼 ORM 查询。"""
+    folders = await list_top_level_deleted_folders(db, user_id)
+    if not folders:
+        return [], {}
+    counts = await db.execute(
+        select(File.folder_id, func.count().label("cnt")).where(
+            File.user_id == user_id,
+            File.folder_id.in_([folder.id for folder in folders]),
+            File.deleted_at.isnot(None),
+        ).group_by(File.folder_id)
+    )
+    return folders, {row.folder_id: row.cnt for row in counts}
+
+
 async def get_top_level_deleted_folder(db: AsyncSession, user_id, folder_id: int):
     """读取当前用户可见的顶层回收站文件夹。"""
     return (await db.execute(
@@ -105,8 +125,6 @@ async def list_trash_folder_contents_rows(db: AsyncSession, user_id, folder_id: 
 
 async def count_deleted_files(db: AsyncSession, user_id) -> int:
     """统计当前用户回收站文件数量，不修改事务。"""
-    from sqlalchemy import func
-
     return (await db.execute(
         select(func.count(File.id)).where(
             File.user_id == user_id,
