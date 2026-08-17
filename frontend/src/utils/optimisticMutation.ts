@@ -1,10 +1,10 @@
 import {
+  acquireOptimisticIntentWork,
   captureOptimisticIntent,
   commitOptimisticIntent,
   deferOptimisticRollback,
   isOptimisticIntentCurrent,
   rollbackDeferredOptimisticIntents,
-  runOptimisticIntentWork,
 } from './optimisticIntent'
 
 /**
@@ -20,7 +20,8 @@ import {
  *   失败（Runtime card move 已被更新意图 supersede）：暂存旧 rollback，保留最新乐观状态
  *
  * Runtime card move 的 apply 仍然立即执行；只有 work 按对象串行，避免 regrab 后的新请求
- * 先于旧请求到达服务端，造成服务端最终状态被旧写反向覆盖。
+ * 先于旧请求到达服务端，造成服务端最终状态被旧写反向覆盖。队列在 commit/rollback
+ * bookkeeping 完整结束后才释放，下一笔 work 不会抢跑到旧事务收尾之前。
  */
 export interface OptimisticMutationOptions {
   /** 乐观改动缓存 + 任何提交前的本地状态变更（如清空选择/剪贴板）。 */
@@ -44,9 +45,14 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
   const { apply, work, rollback, afterMutate, onCommit, onError } = opts
   apply()
   afterMutate()
+  let releaseIntentWork: (() => void) | null = null
   try {
-    if (intent) await runOptimisticIntentWork(intent, work)
-    else await work()
+    if (intent) {
+      releaseIntentWork = await acquireOptimisticIntentWork(intent)
+      await work()
+    } else {
+      await work()
+    }
     if (intent) commitOptimisticIntent(intent)
     onCommit?.()
   } catch (e) {
@@ -65,5 +71,8 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
       deferOptimisticRollback(intent, rollback, afterMutate)
     }
     onError(e)
+  } finally {
+    // 必须在上面的 commit / rollback / defer 全做完以后才放行下一笔持久化。
+    releaseIntentWork?.()
   }
 }
