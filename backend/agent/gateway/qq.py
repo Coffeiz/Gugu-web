@@ -127,22 +127,30 @@ async def _qq_gateway_url(token: str, sandbox: bool) -> str:
 
 
 def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
-    """依据消息体判断是否真的 @ 了机器人。
+    """依据消息体判断是否真的 @ 了本实例对应的机器人。
 
-    QQ 切到 always 接收模式后，普通消息也可能使用
-    ``GROUP_AT_MESSAGE_CREATE`` 事件名，不能再只看事件类型。旧测试或旧适配器
-    没有 ``mentions`` 字段时保留事件类型回退。
+    同一群内多个机器人时，QQ 会把 AT 消息推送给所有机器人；mentions 数组里
+    每个 bot 条目带 is_you 字段标明是否指向当前 bot 实例，只接受
+    is_you=True 的条目。旧协议或测试适配器没有 is_you 时，退回到
+    mentions 中存在任意 bot=True 即算命中。
     """
-    # QQ 的 AT 事件类型是协议层对“@机器人”的明确标记，优先于可选的
-    # mentions 数组；部分实际 payload 不带 mentions 或不带 bot 字段。
-    if event_type == "GROUP_AT_MESSAGE_CREATE":
-        return True
     if "mentions" not in data:
+        # 旧协议/适配器没有 mentions: GROUP_AT_MESSAGE_CREATE 兜底
+        if event_type == "GROUP_AT_MESSAGE_CREATE":
+            return True
         return False
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
-    return any(isinstance(item, dict) and item.get("bot") is True for item in mentions)
+    for item in mentions:
+        if not isinstance(item, dict) or item.get("bot") is not True:
+            continue
+        # 新协议: is_you 明确标识是否指向本实例
+        if "is_you" in item:
+            return item["is_you"] is True
+        # 旧协议没有 is_you, 只要 mentions 里有 bot 就算命中
+        return True
+    return False
 
 
 def _qq_bot_mention_id(data: Dict[str, Any], event_type: str) -> str:
