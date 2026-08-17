@@ -132,17 +132,21 @@ async function handleLogin() {
 }
 .field input {
   width: 100%; padding: 10px 14px;
-  background: rgba(255,255,255,0.7); border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 10px; font-size: 14px; color: #1e2028;
+  background: var(--input-bg); border: 1px solid var(--input-border);
+  border-radius: 10px; font-size: 14px; color: var(--input-fg);
   font-family: var(--font-sans); outline: none;
   box-shadow: inset 0 1px 3px rgba(80,90,110,0.06);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
-.field input:focus {
-  border-color: rgba(123,127,178,0.5);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.12), inset 0 1px 3px rgba(80,90,110,0.06);
+.field input:hover:not(:disabled) {
+  background: var(--input-bg-hover); border-color: var(--input-border-hover);
 }
-.field input::placeholder { color: #b0b4c4; }
+/* 与 hover 同特异度、源顺序在后：聚焦后悬停不丢 focus 描边。 */
+.field input:focus:not(:disabled) {
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow), inset 0 1px 3px rgba(80,90,110,0.06);
+}
+.field input::placeholder { color: var(--input-placeholder); }
 .field input:disabled { opacity: 0.5; }
 
 .forgot-row {

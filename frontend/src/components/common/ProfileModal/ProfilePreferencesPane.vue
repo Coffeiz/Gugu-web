@@ -14,12 +14,6 @@
           <button v-for="item in modes" :key="item.value" class="pm-style-chip" :class="{ active: preference === item.value }" @click="setTheme(item.value)">{{ item.label }}</button>
         </div>
       </div>
-      <div class="pm-field-row">
-        <div class="pm-field-desc"><span class="pm-field-name">按钮乐观反馈</span><span class="pm-field-hint">按下按钮时立即给出视觉响应，不等待操作完成</span></div>
-        <div class="pm-style-group">
-          <button v-for="item in buttonFeedbackOptions" :key="item.value" class="pm-style-chip" :class="{ active: buttonFeedback === item.value }" @click="setButtonFeedback(item.value)">{{ item.label }}</button>
-        </div>
-      </div>
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">语言</span><span class="pm-field-hint">界面显示语言</span></div><div class="pm-static">简体中文</div></div>
     </div>
     <div class="pm-sep"></div>
@@ -50,11 +44,9 @@
 <script setup lang="ts">
 import { usePreferencesStore } from '@/stores/preferences'
 import { useTheme, type ThemeFamily, type ThemePreference } from '@/composables/useTheme'
-import { useButtonFeedback, type ButtonFeedbackPreference } from '@/composables/useButtonFeedback'
 
 const prefsStore = usePreferencesStore()
 const { preference, family, setTheme, setFamily } = useTheme()
-const { buttonFeedback, setButtonFeedback } = useButtonFeedback()
 const families: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'glass', label: 'Aero' },
   { value: 'v2', label: 'Mono' },
@@ -63,10 +55,6 @@ const modes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: '亮色' },
   { value: 'dark', label: '暗色' },
   { value: 'system', label: '跟随系统' },
-]
-const buttonFeedbackOptions: Array<{ value: ButtonFeedbackPreference; label: string }> = [
-  { value: 'optimistic', label: '乐观' },
-  { value: 'off', label: '关闭' },
 ]
 const views = [
   { value: 'projects', label: '项目' },
