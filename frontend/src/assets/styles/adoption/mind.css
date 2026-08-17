@@ -108,6 +108,17 @@ html[data-theme][data-family] .ne-picker {
   border-color: var(--mind-picker-border);
   box-shadow: var(--mind-picker-shadow);
 }
+/* The inline toolbar is transparent by design; only the Teleported canvas toolbar owns a floating
+   surface. Its legacy light paint stays in NoteEditor.vue unchanged. Dark mode alone remaps that
+   surface to the existing Mind picker/popup contract, so there is one dark owner and no light regression. */
+html[data-theme='dark'][data-family] .ne-toolbar.ne-toolbar-floating {
+  color: var(--content-primary);
+  background: var(--mind-picker-bg);
+  border-color: var(--mind-picker-border);
+  box-shadow: var(--mind-picker-shadow);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
 html[data-theme][data-family] .ne-pick-item:hover,
 html[data-theme][data-family] .ne-pick-item.on { background: var(--action-soft); }
 html[data-theme][data-family] .ne-link-input input {
