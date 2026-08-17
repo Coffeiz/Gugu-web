@@ -6,7 +6,7 @@ html[data-theme][data-family] .panel-left {
   box-shadow: var(--panel-glass-shadow);
 }
 
-/* Mono/V2 keeps content cards flat, but app chrome still needs a translucent backdrop surface.
+/* Mono/V2 keeps content cards quieter, but app chrome still needs a translucent backdrop surface.
    This family-only bridge does not touch Aero light/dark values. */
 html[data-family='v2'] .sidebar {
   background: var(--chrome-glass-bg);
@@ -17,8 +17,8 @@ html[data-family='v2'] .sidebar {
 }
 
 /* File/Folder roots historically relied on page CSS for the actual border style and adoption only
-   supplied border-color. Mono removes shadows, so make the outline structural for this family once;
-   board/canvas file references share these roots and therefore inherit the same fix. */
+   supplied border-color. Mono's quieter elevation makes that missing outline especially visible, so
+   make it structural for this family once; board/canvas file references inherit the same fix. */
 html[data-family='v2'] :is(.fc-card, .folder-card) {
   border-style: solid;
   border-width: 1px;
