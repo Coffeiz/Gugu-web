@@ -87,10 +87,12 @@ describe('optimisticMutation — 时序契约', () => {
     expect(state).toBe('C')
   })
 
-  it('regrab 新意图已 apply 时，旧请求失败不覆盖新状态；新请求成功后丢弃旧 rollback', async () => {
+  it('regrab 新意图已 apply 时，旧请求失败先完成 defer/onError 收尾，再放行新 persistence', async () => {
     const first = deferred()
     const second = deferred()
     let state = 'A'
+    let firstErrorHandled = false
+    let secondSawSettledFirst = false
     const firstRollback = vi.fn(() => { state = 'A' })
     const secondRollback = vi.fn(() => { state = 'B' })
     const key = 'test-success:file:1'
@@ -101,13 +103,13 @@ describe('optimisticMutation — 时序契约', () => {
       afterMutate: () => {},
       work: () => first.promise,
       rollback: firstRollback,
-      onError: () => {},
+      onError: () => { firstErrorHandled = true },
     }))
     const secondIntent = beginOptimisticIntent([key])
     const secondWork = withOptimisticIntent(secondIntent, () => optimisticMutation({
       apply: () => { state = 'C' },
       afterMutate: () => {},
-      work: () => second.promise,
+      work: () => { secondSawSettledFirst = firstErrorHandled; return second.promise },
       rollback: secondRollback,
       onError: () => {},
     }))
@@ -115,8 +117,11 @@ describe('optimisticMutation — 时序契约', () => {
     expect(state).toBe('C')
     first.reject(new Error('first failed'))
     await firstWork
+    await Promise.resolve()
     expect(state).toBe('C')
     expect(firstRollback).not.toHaveBeenCalled()
+    expect(firstErrorHandled).toBe(true)
+    expect(secondSawSettledFirst).toBe(true)
 
     second.resolve()
     await secondWork
