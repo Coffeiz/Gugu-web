@@ -79,11 +79,10 @@ watch(() => props.showNewFolder, value => {
 </script>
 
 <style scoped>
-/* 共享工具栏拥有共同的 52px 外框高度；文件页与项目编辑卡只补各自的横向 padding。
-   control paint/尺寸继续由 file-toolbar-theme-refinements.css 唯一负责。 */
+/* 共享工具栏只负责内部布局。外框高度属于宿主：文件库保持 v0.20.4 的 52px，
+   项目编辑卡在自己的 toolbar host 中声明同样的高度。control paint/尺寸继续由
+   file-toolbar-theme-refinements.css 唯一负责。 */
 .file-browser-toolbar {
-  height: 52px;
-  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
