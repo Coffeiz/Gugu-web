@@ -8,7 +8,7 @@
         <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">QQ 身份绑定</span><span class="pm-field-hint">未绑定时生成验证码，在 QQ 私聊机器人发送“绑定 6 位验证码”</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? '生成中…' : '生成验证码' }}</button><div v-if="bindingCodes[bot.id]" class="pm-binding-code-result"><span class="pm-binding-code-command" title="发送给 QQ 机器人"><span class="pm-binding-code-prefix">绑定</span><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ bindingCodes[bot.id].expiresIn }} 秒内有效</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? '已复制绑定指令' : '复制绑定指令'" @click="copyBindingCode(bot.id)"><PhCheck v-if="copiedBindingBotId === bot.id" :size="12" weight="bold" /><PhCopy v-else :size="12" weight="bold" /><span>{{ copiedBindingBotId === bot.id ? '已复制' : '复制' }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">已绑定</span></div></div>
         <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">群聊回应</span><span class="pm-field-hint">开启后，咕咕会参与群聊，默认无需 @ 机器人</span></div><span class="pm-switch-wrap"><label class="switch sm"><input type="checkbox" :checked="bot.group_chat_enabled" @change="toggleGroupChat(bot)" /><span class="slider"></span></label><span class="pm-switch-label" :class="{ on: bot.group_chat_enabled }">{{ bot.group_chat_enabled ? '已开启' : '已关闭' }}</span></span></div>
         <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">回应方式</span><span class="pm-help-row"><span class="pm-field-hint">选择群消息的处理方式</span><button type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">设置方法</button></span><div v-if="helpPopBotId === bot.id" class="pm-help-pop" @click.stop><div class="pm-help-pop-title">开启全量消息接收</div><div class="pm-help-pop-step">1. 手机端 QQ 打开机器人所在的群</div><div class="pm-help-pop-step">2. 点机器人的头像进入资料页</div><div class="pm-help-pop-step">3. 点右上角「设置」</div><div class="pm-help-pop-step">4. 打开「全量消息接收」</div><div class="pm-help-pop-note">不开启时机器人只能收到 @ 消息，非 @ 消息不会进入会话记录</div></div></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ option.label }}</button></div></div>
-        <MessageFormatSettings v-if="platform.key === 'qq'" :bot="bot" @updated="loadBots" />
+        <MessageFormatSettings v-if="platform.key === 'qq'" :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
         <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群成员可用工具</span><span class="pm-field-hint">可多选；未选中的工具不会提供给群成员</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ option.label }}</button></div></div>
       </div>
     </template>
@@ -23,9 +23,16 @@ import QRCode from 'qrcode'
 import { PhCheck, PhCopy } from '@phosphor-icons/vue'
 import { fireHint } from '@/composables/useOnboarding'
 import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
+import { optimisticMutation } from '@/utils/optimisticMutation'
+import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; owner_bound?: boolean }
+type BotSettingPatch = Partial<Pick<Bot,
+  'enabled' | 'group_chat_enabled' | 'group_response_mode' | 'group_allowed_tools' |
+  'group_message_format' | 'private_message_format'
+>>
+
 const groupResponseOptions = [
   { key: 'reply_all', label: '自动回复' },
   { key: 'reply_mentions', label: '只响应 @' },
@@ -45,7 +52,72 @@ const helpPopBotId = ref<number | null>(null)
 function toggleHelpPop(botId: number) { helpPopBotId.value = helpPopBotId.value === botId ? null : botId }
 function onDocClickCloseHelp() { helpPopBotId.value = null }
 const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
-async function loadBots() { try { const result = await userBotsApi.list(); bots.value = result.items || [] } catch {} }
+
+// 「接入咕咕」设置全部走同一套 latest-intent 乐观事务：apply 永远同步发生，
+// 同 bot 同字段的 persistence 由 optimisticIntent 串行，旧失败不会回滚更新点击。
+// 不在每次成功后整表 loadBots，避免慢 GET 把更晚的本地意图覆盖回旧值。
+const pendingSettingWrites = new Set<Promise<void>>()
+let settingsRevision = 0
+let botsLoadSeq = 0
+
+function botById(botId: number): Bot | undefined { return bots.value.find(bot => bot.id === botId) }
+function patchLocalBot(botId: number, patch: BotSettingPatch) {
+  const index = bots.value.findIndex(bot => bot.id === botId)
+  if (index === -1) return
+  bots.value[index] = { ...bots.value[index], ...patch }
+}
+function trackSettingWrite(task: Promise<void>) {
+  pendingSettingWrites.add(task)
+  void task.finally(() => pendingSettingWrites.delete(task))
+}
+async function waitForSettingWrites() {
+  while (pendingSettingWrites.size) await Promise.allSettled([...pendingSettingWrites])
+}
+async function loadBots() {
+  const seq = ++botsLoadSeq
+  await waitForSettingWrites()
+  if (seq !== botsLoadSeq) return
+  const startRevision = settingsRevision
+  try {
+    const result = await userBotsApi.list()
+    if (seq !== botsLoadSeq) return
+    // GET 发出后若又发生了乐观写，即使该写很快结算，当前响应也可能读到提交前快照。
+    // 丢掉这份响应并重取，不能让旧 list 覆盖已经立即呈现给用户的新状态。
+    if (startRevision !== settingsRevision || pendingSettingWrites.size) {
+      void loadBots()
+      return
+    }
+    bots.value = result.items || []
+  } catch {}
+}
+function updateBotSetting(botId: number, patch: BotSettingPatch, fallbackError: string): Promise<void> {
+  const current = botById(botId)
+  if (!current) return Promise.resolve()
+  const fields = Object.keys(patch) as Array<keyof BotSettingPatch>
+  const backup = Object.fromEntries(fields.map(field => [field, current[field]])) as BotSettingPatch
+  const intent = beginOptimisticIntent(fields.map(field => `profile-im:${botId}:${String(field)}`))
+  connectErr.value = ''
+  const task = withOptimisticIntent(intent, () => optimisticMutation({
+    apply: () => {
+      settingsRevision++
+      patchLocalBot(botId, patch)
+    },
+    work: () => userBotsApi.update(botId, patch),
+    rollback: () => {
+      settingsRevision++
+      patchLocalBot(botId, backup)
+    },
+    afterMutate: () => {},
+    onError: error => {
+      // 被更新点击 supersede 的旧失败不再弹错误；只有当前最终意图失败才提示。
+      if (!isOptimisticIntentCurrent(intent)) return
+      connectErr.value = (error instanceof Error ? error.message : '') || fallbackError
+    },
+  }))
+  trackSettingWrite(task)
+  return task
+}
+
 async function startConnect(platform: string) { const item = platforms.find(value => value.key === platform); if (!item) return; connecting.value = platform; connectErr.value = ''; try { const result = await item.api.start(); const id = result.poll_id || result.task_id; connect.value = { platform, id }; connectHint.value = platform === 'feishu' ? '手机飞书扫码 → 授权创建机器人，授权后自动连接' : platform === 'wechat' ? '手机微信扫码 → 授权个人微信机器人，授权后自动连接' : '手机 QQ 扫码 → 选一个机器人授权，授权后自动连接'; await nextTick(); await QRCode.toCanvas(connectCanvas.value, result.scan_url, { width: 180, margin: 1 }); startPoll(item) } catch (error) { connectErr.value = (error instanceof Error ? error.message : '') || '生成二维码失败'; connect.value = null } finally { connecting.value = '' } }
 function startPoll(platform: (typeof platforms)[number]) { stopPoll(); let tries = 0; poll = setInterval(async () => { tries++; try { if (!connect.value) return; const result = await platform.api.poll(connect.value.id); if (result.status === 'success') { cancelConnect(); await loadBots(); fireHint('im_bind') } else if (result.status === 'expired') { connectErr.value = '二维码已过期，请重新扫码连接'; cancelConnect() } else if (result.status === 'fail') { connectErr.value = '连接失败：' + (result.reason || '未知'); cancelConnect() } } catch {} if (tries > 100) cancelConnect() }, 3000) }
 function stopPoll() { if (poll) { clearInterval(poll); poll = null } }
@@ -55,7 +127,7 @@ function resumePoll() {
   if (platform) startPoll(platform)
 }
 function cancelConnect() { stopPoll(); connect.value = null }
-async function toggleBot(bot: Bot) { try { await userBotsApi.update(bot.id, { enabled: !bot.enabled }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
+function toggleBot(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { enabled: !current.enabled }, '连接设置失败') }
 async function createBindingCode(bot: Bot) { bindingBotId.value = bot.id; connectErr.value = ''; try { const result = await userBotsApi.createQqBindingCode(bot.id); bindingCodes.value = { ...bindingCodes.value, [bot.id]: { code: result.code, expiresIn: result.expires_in } } } catch (error) { connectErr.value = error instanceof Error ? error.message : '生成验证码失败' } finally { bindingBotId.value = null } }
 async function copyText(text: string) {
   try {
@@ -83,23 +155,24 @@ async function copyBindingCode(botId: number) {
   copyFeedbackTimer = setTimeout(() => { copiedBindingBotId.value = null; copyFeedbackTimer = null }, 1600)
 }
 function clearCopyFeedback() { if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); copyFeedbackTimer = null; copiedBindingBotId.value = null }
-async function toggleGroupChat(bot: Bot) { try { await userBotsApi.update(bot.id, { group_chat_enabled: !bot.group_chat_enabled }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊设置失败' } }
+function toggleGroupChat(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { group_chat_enabled: !current.group_chat_enabled }, '群聊设置失败') }
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : bot.group_requires_at ? 'reply_mentions' : 'reply_all') }
-async function setGroupResponseMode(bot: Bot, mode: string) { try { await userBotsApi.update(bot.id, { group_response_mode: mode }); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '群聊回应方式设置失败' } }
+function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
 function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'image_search', 'send_file'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
-async function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
-  try {
-    const tools = new Set(groupTools(bot))
-    if (hasGroupTool(bot, option)) option.tools.forEach(t => tools.delete(t))
-    else option.tools.forEach(t => tools.add(t))
-    await userBotsApi.update(bot.id, { group_allowed_tools: [...tools] })
-    await loadBots()
-  } catch (error) {
-    connectErr.value = error instanceof Error ? error.message : '群聊工具设置失败'
-  }
+function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
+  const current = botById(bot.id)
+  if (!current) return
+  const tools = new Set(groupTools(current))
+  if (hasGroupTool(current, option)) option.tools.forEach(t => tools.delete(t))
+  else option.tools.forEach(t => tools.add(t))
+  void updateBotSetting(bot.id, { group_allowed_tools: [...tools] }, '群聊工具设置失败')
 }
-async function removeBot(bot: Bot) { if (!confirm(`删除「${bot.name}」？删除后这个机器人不再连咕咕。`)) return; try { await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
+function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
+  const patch = scope === 'group' ? { group_message_format: mode } : { private_message_format: mode }
+  void updateBotSetting(bot.id, patch, '消息格式设置失败')
+}
+async function removeBot(bot: Bot) { if (!confirm(`删除「${bot.name}」？删除后这个机器人不再连咕咕。`)) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
 onMounted(() => { loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
 onDeactivated(clearCopyFeedback)
