@@ -12,6 +12,27 @@
   --highlight-side: var(--theme-highlight-side);
   --highlight-soft: color-mix(in srgb, var(--theme-highlight-rest) 72%, transparent);
   --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
+
+  /* Floating app chrome is distinct from content cards. Aero resolves to its normal glass surface;
+     Mono/V2 remaps only this role below so cards can stay flat while navigation/drawers/toolbars
+     retain backdrop glass. */
+  --chrome-glass-bg: var(--surface-glass);
+  --chrome-glass-bg-hover: var(--surface-glass-hover);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
+}
+
+/* Mono/V2 deliberately removes card shadows, so outlines must carry card separation. Its floating
+   chrome remains translucent rather than reusing the opaque V2 content surface. */
+html[data-family='v2'] {
+  --project-card-border: var(--border-strong);
+  --project-card-hover-border: var(--border-hover);
+  --chrome-glass-bg: color-mix(in srgb,var(--surface-floating) 76%,transparent);
+  --chrome-glass-bg-hover: color-mix(in srgb,var(--surface-floating) 84%,transparent);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
 }
 
 /* Dark surfaces do not brighten on hover. Interactive controls still use control/action hover
