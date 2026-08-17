@@ -4,9 +4,10 @@ html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); 
 
 /* Floating Mind chrome is not a content card. Mono keeps its quieter card language but restores a
    translucent backdrop surface for the top mode switcher, canvas drawer, bottom toolbar and the
-   toolbar's object picker. Drawer/toolbar/picker already use .glass-card, so feed the chrome values
-   into that contract instead of competing on background directly. This also makes the high-specificity
-   dark .glass-card:hover reset resolve back to the same chrome material rather than the generic card. */
+   toolbar's object picker. Drawer/toolbar/picker are .glass-card, but unlike the working top capsule
+   and sidebar they are Teleported and otherwise depend on the later global .glass-card paint rule.
+   Keep one owner here: remap the card contract and apply that same contract to the final surface, so
+   later generic hover/reset rules still resolve to exactly the same chrome material. */
 html[data-family='v2'] .mind-tabs {
   background: var(--chrome-glass-bg);
   border-color: var(--chrome-glass-border);
@@ -21,6 +22,9 @@ html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-border-hover: var(--chrome-glass-border);
   --glass-card-shadow: var(--chrome-glass-shadow);
   --glass-card-shadow-hover: var(--chrome-glass-shadow);
+  background: var(--glass-card-background);
+  border-color: var(--glass-card-border);
+  box-shadow: var(--glass-card-shadow);
   backdrop-filter: var(--chrome-glass-blur);
   -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
