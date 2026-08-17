@@ -51,6 +51,26 @@
   --file-dialog-toolbar-highlight-strong: transparent;
   --file-dialog-toolbar-highlight-side: transparent;
 
+  /* File-card contract. Light values intentionally reproduce v0.20.4 exactly: every selected card
+     gets the .14 whole-card veil, while image thumbnails receive an additional .28 layer. */
+  --file-card-bg: rgba(255,255,255,.72);
+  --file-card-border: rgba(255,255,255,.90);
+  --file-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
+  --file-card-bg-hover: rgba(255,255,255,.86);
+  --file-card-border-hover: rgba(255,255,255,.90);
+  --file-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 6px 18px rgba(80,90,110,.13);
+  --file-card-hover-sheen: rgba(255,255,255,.15);
+  --file-card-bg-selected: rgba(255,255,255,.92);
+  --file-card-border-selected: rgba(123,127,178,.55);
+  --file-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
+  --file-card-selection-overlay: rgba(123,127,178,.14);
+  --file-card-selection-thumb-overlay: rgba(123,127,178,.28);
+  --file-card-preselection-thumb-overlay: rgba(123,127,178,.16);
+  --file-card-badge-bg: rgba(0,0,0,.04);
+  --file-card-thumb-bg: rgba(0,0,0,.05);
+  --file-card-image-badge-bg: rgba(0,0,0,.32);
+  --file-card-image-badge-fg: rgba(255,255,255,.92);
+
   /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
      paint and cadence comes from this one contract. */
   --popup-surface-bg: var(--surface-popup);
@@ -167,6 +187,25 @@ html[data-theme='dark'][data-family] {
   --file-dialog-toolbar-tint: var(--surface-glass);
   --file-dialog-toolbar-highlight-strong: var(--highlight-strong);
   --file-dialog-toolbar-highlight-side: var(--highlight-side);
+
+  /* Dark keeps the same selection hierarchy but maps surfaces/edges into the active theme. */
+  --file-card-bg: var(--surface-card-solid);
+  --file-card-border: var(--border-strong);
+  --file-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
+  --file-card-bg-hover: var(--surface-raised);
+  --file-card-border-hover: var(--border-hover);
+  --file-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover);
+  --file-card-hover-sheen: var(--highlight-muted);
+  --file-card-bg-selected: var(--surface-raised);
+  --file-card-border-selected: var(--action-outline);
+  --file-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
+  --file-card-selection-overlay: var(--selection-bg);
+  --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
+  --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
+  --file-card-badge-bg: var(--surface-soft);
+  --file-card-thumb-bg: var(--surface-soft);
+  --file-card-image-badge-bg: rgba(0,0,0,.42);
+  --file-card-image-badge-fg: var(--content-primary);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
   --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
