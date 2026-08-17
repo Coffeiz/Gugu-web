@@ -55,11 +55,8 @@ const {
 </script>
 
 <style scoped>
-/* 项目文件工具栏只补宿主几何；内部 control paint/尺寸继续由共享
-   file-toolbar-theme-refinements.css 唯一负责。 */
+/* 52px 外框高度由共享 FileBrowserToolbar 自己拥有；项目编辑卡只补自己的横向 padding。 */
 .file-browser-toolbar {
-  height: 52px;
-  box-sizing: border-box;
   padding: 0 12px 0 16px;
 }
 </style>
