@@ -55,8 +55,10 @@ const {
 </script>
 
 <style scoped>
-/* 52px 外框高度由共享 FileBrowserToolbar 自己拥有；项目编辑卡只补自己的横向 padding。 */
+/* 项目编辑卡拥有自己的 toolbar host 几何；内部 control paint/尺寸仍由共享契约负责。 */
 .file-browser-toolbar {
+  height: 52px;
+  box-sizing: border-box;
   padding: 0 12px 0 16px;
 }
 </style>
