@@ -1,4 +1,10 @@
-import { captureOptimisticIntent, isOptimisticIntentCurrent } from './optimisticIntent'
+import {
+  captureOptimisticIntent,
+  commitOptimisticIntent,
+  deferOptimisticRollback,
+  isOptimisticIntentCurrent,
+  rollbackDeferredOptimisticIntents,
+} from './optimisticIntent'
 
 /**
  * 乐观更新骨架——纯高阶函数：把「乐观改缓存 → 刷新视图 → 试提交 / 失败回滚」的固定时序
@@ -10,7 +16,7 @@ import { captureOptimisticIntent, isOptimisticIntentCurrent } from './optimistic
  *   apply() → afterMutate()
  *   成功：await work() → onCommit?()            —— 不触发 rollback
  *   失败（普通调用）：rollback() → afterMutate() → onError(e)
- *   失败（Runtime card move 已被更新意图 supersede）：保留最新乐观状态 → onError(e)
+ *   失败（Runtime card move 已被更新意图 supersede）：暂存旧 rollback，保留最新乐观状态
  */
 export interface OptimisticMutationOptions {
   /** 乐观改动缓存 + 任何提交前的本地状态变更（如清空选择/剪贴板）。 */
@@ -36,13 +42,22 @@ export async function optimisticMutation(opts: OptimisticMutationOptions): Promi
   afterMutate()
   try {
     await work()
+    if (intent) commitOptimisticIntent(intent)
     onCommit?.()
   } catch (e) {
-    // regrab 会立刻产生一个更新的逻辑落点。旧请求此时失败，只能报告失败，不能把缓存
-    // 回滚到旧起点并覆盖新 Action 已经 apply 的状态；最新那一笔如果也失败，会正常回滚。
-    if (!intent || isOptimisticIntentCurrent(intent)) {
+    if (!intent) {
       rollback()
       afterMutate()
+    } else if (isOptimisticIntentCurrent(intent)) {
+      // 当前这一笔也失败：先撤自己的最新乐观状态，再按新→旧依次补做之前被 regrab
+      // 暂缓的 rollback，最终落到最后一个真正被服务端确认的状态。
+      rollback()
+      afterMutate()
+      rollbackDeferredOptimisticIntents(intent)
+    } else {
+      // regrab 已经 apply 了更新落点。现在执行旧 rollback 会把新卡片位置/目录覆盖掉，
+      // 因此先暂存；后续更新意图成功时丢弃，失败时再作为 rollback chain 的一部分执行。
+      deferOptimisticRollback(intent, rollback, afterMutate)
     }
     onError(e)
   }
