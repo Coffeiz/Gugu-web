@@ -102,8 +102,8 @@ const props = defineProps({
   max: { type: String, default: '' },
   // 提供时只有这些日期可选（其余全部禁用）——例如「只能跳到有记录的那天」
   allowedDates: { type: Array, default: null },
-  // Teleport 到 body 后不再是宿主的 DOM 后代，父级 scoped 样式够不到 .dp-popup，
-  // 需要单独测试/覆盖某个具体用法的弹层样式时（比如去掉 backdrop-filter）用这个传类名进来
+  // Teleport 到 body 后不再是宿主的 DOM 后代；需要给某个用法附加语义类名用于定位、
+  // 测试或交互识别时从这里传入，主题表面统一由 adoption/popovers.css 负责。
   popupClass: { type: [String, Array, Object], default: null },
   // 「清除」在纯跳转场景里没有意义（清空等于什么都不做，只是关掉弹层）；补录日期这类
   // 真的把字段清空有意义的场景保留默认显示
@@ -293,13 +293,9 @@ watch(() => props.modelValue, v => {
 </style>
 
 <style>
+/* Popup geometry only. Surface/background/border/shadow/blur are owned once by
+   adoption/popovers.css so Teleport consumers cannot fall back to a light-only local paint. */
 .dp-popup {
-  background: var(--panel-bg);
-  backdrop-filter: var(--popup-blur);
-  -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255,255,255,0.78);
-  border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 12px 36px rgba(30,40,80,0.14);
   padding: 12px;
   user-select: none;
 }
