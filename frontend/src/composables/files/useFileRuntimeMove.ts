@@ -60,16 +60,23 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
       dropInfo = { droppedOn: breadcrumbTarget.droppedOn }
     }
 
-    const folderIds = parsed.filter(item => item.isFolder).map(item => item.id)
-    const fileIds = parsed.filter(item => !item.isFolder).map(item => item.id)
-    const intent = beginOptimisticIntent(parsed.map(item => item.objectId))
-    // moveFolders/moveFiles 都会在返回 Promise 前同步进入 optimisticMutation.apply()，因此只需
-    // 把这一段同步调用栈标记为当前 intent；异步期间不保留可变全局上下文。
-    const work = withOptimisticIntent(intent, () => Promise.all([
-      folderIds.length > 0 ? options.moveFolders(folderIds, targetFolderId) : Promise.resolve(),
-      fileIds.length > 0 ? options.moveFiles(fileIds, targetFolderId, dropInfo) : Promise.resolve(),
-    ]))
-    await work
+    const folders = parsed.filter(item => item.isFolder)
+    const files = parsed.filter(item => !item.isFolder)
+    // 文件与文件夹分别进入各自的 optimisticMutation；intent 也必须分开，否则同一组拖拽里
+    // “文件请求成功、文件夹请求失败”会错误地把另一类对象的 rollback chain 一并清掉。
+    const folderWork = folders.length > 0
+      ? withOptimisticIntent(
+          beginOptimisticIntent(folders.map(item => item.objectId)),
+          () => options.moveFolders(folders.map(item => item.id), targetFolderId),
+        )
+      : Promise.resolve()
+    const fileWork = files.length > 0
+      ? withOptimisticIntent(
+          beginOptimisticIntent(files.map(item => item.objectId)),
+          () => options.moveFiles(files.map(item => item.id), targetFolderId, dropInfo),
+        )
+      : Promise.resolve()
+    await Promise.all([folderWork, fileWork])
     options.clearSelection()
   }
 
