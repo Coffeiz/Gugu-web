@@ -50,10 +50,9 @@ html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {
   background: var(--control-bg-hover);
 }
 
-/* File/Folder roots historically relied on page CSS for the actual border style and adoption only
-   supplied border-color. Mono's quieter elevation makes that missing outline especially visible, so
-   make it structural for this family once; board/canvas file references inherit the same fix. */
-html[data-family='v2'] :is(.fc-card, .folder-card) {
+/* Folder cards still rely on page CSS for their border structure. FileCard.vue now owns its own
+   1px border through the file-card contract, so Mono must not declare a second fc-card border. */
+html[data-family='v2'] .folder-card {
   border-style: solid;
   border-width: 1px;
 }
