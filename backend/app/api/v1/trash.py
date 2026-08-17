@@ -3,11 +3,11 @@ from datetime import datetime, timedelta
 from app.core.tz import now_utc
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Project, Folder, User
+from app.models import File, Folder, User
 from app.schemas import (
     BatchDeleteBody,
     FileResponse,
@@ -23,6 +23,8 @@ from app.services.files.trash import (
     permanently_delete_folder,
     top_level_deleted_folders_stmt,
     get_top_level_deleted_folder,
+    list_top_level_deleted_folders,
+    list_top_level_deleted_folders_with_counts,
     list_trash_file_rows,
     list_trash_folder_contents_rows,
     empty_trash as empty_trash_service,
@@ -61,16 +63,7 @@ async def list_trash_folders(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    folders = (await db.execute(top_level_deleted_folders_stmt(current_user.id))).scalars().all()
-    if not folders:
-        return []
-    # 浅层计数：该文件夹自身直接包含、已在回收站的文件数（同现有 _file_count 的浅层惯例）
-    counts_res = await db.execute(
-        select(File.folder_id, func.count().label("cnt"))
-        .where(File.folder_id.in_([f.id for f in folders]), File.deleted_at.isnot(None))
-        .group_by(File.folder_id)
-    )
-    count_map = {row.folder_id: row.cnt for row in counts_res}
+    folders, count_map = await list_top_level_deleted_folders_with_counts(db, current_user.id)
     return [
         TrashFolderResponse(
             id=f.id, project_id=f.project_id, parent_id=f.parent_id, name=f.name,
@@ -207,7 +200,7 @@ async def empty_trash(
     origin: str | None = Depends(get_client_id),
     db: AsyncSession = Depends(get_db),
 ):
-    roots = (await db.execute(top_level_deleted_folders_stmt(current_user.id))).scalars().all()
+    roots = await list_top_level_deleted_folders(db, current_user.id)
     fids = await empty_trash_service(db, get_storage(), current_user.id, roots)
     await db.commit()
     for fid in fids:
