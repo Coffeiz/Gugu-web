@@ -52,22 +52,31 @@ export function isOptimisticIntentCurrent(intent: OptimisticIntent): boolean {
 
 /**
  * Apply is deliberately not queued: the user must see the regrab destination immediately. Only the
- * persistence work is serialized per object key so the server can never observe B→C before A→B.
- * Multi-selection waits for every predecessor touching any member, then installs one shared tail for
- * the whole group; a failure releases the queue just like a success.
+ * persistence turn is serialized per object key so the server can never observe B→C before A→B.
+ *
+ * The returned release callback is intentionally separate from acquisition. optimisticMutation
+ * calls it only after success commit / failure rollback bookkeeping has finished, so the next work
+ * cannot race ahead in the microtask gap between `work()` settling and the previous transaction's
+ * rollback-chain update.
  */
-export async function runOptimisticIntentWork<T>(intent: OptimisticIntent, work: () => Promise<T>): Promise<T> {
+export async function acquireOptimisticIntentWork(intent: OptimisticIntent): Promise<() => void> {
   const predecessors = [...new Set(
     intent.keys
       .map(key => workTails.get(key))
       .filter((tail): tail is Promise<void> => tail != null),
   )]
-  const execution = Promise.all(predecessors.map(tail => tail.catch(() => undefined))).then(work)
-  const tail = execution.then(() => undefined, () => undefined)
+  let releaseTail!: () => void
+  const tail = new Promise<void>(resolve => { releaseTail = resolve })
+  // Install our tail before the first await so a third regrab queues behind this intent even while
+  // this one itself is still waiting for its predecessor.
   for (const key of intent.keys) workTails.set(key, tail)
-  try {
-    return await execution
-  } finally {
+  await Promise.all(predecessors.map(previous => previous.catch(() => undefined)))
+
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    releaseTail()
     for (const key of intent.keys) {
       if (workTails.get(key) === tail) workTails.delete(key)
     }
