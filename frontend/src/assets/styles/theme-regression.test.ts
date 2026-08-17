@@ -68,7 +68,7 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('文件多选工具栏只由共享组件负责 paint，并锚定项目卡非滚动容器', () => {
-    const toolbarBlock = cssBlock(fileSelectionToolbarVue, '.file-selection-toolbar')
+    const toolbarBlock = cssBlock(fileSelectionToolbarVue, '\n.file-selection-toolbar {')
     expect(toolbarBlock).toContain('background: var(--popup-surface-bg)')
     expect(toolbarBlock).toContain('border: 1px solid var(--popup-surface-border)')
     expect(toolbarBlock).toContain('backdrop-filter: var(--popup-surface-blur)')
