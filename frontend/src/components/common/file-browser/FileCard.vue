@@ -58,19 +58,30 @@ defineProps({
 </script>
 
 <style scoped>
-/* .fc-card 的 transition/悬停上浮位移(transform)/::after 高光全部由
-   global.css 的通用 .fc-card 规则统一提供——这里不能再自己声明
-   transition，哪怕只是想加 box-shadow/background 的过渡：CSS transition 是覆盖式属性，
-   scoped 样式编译后带 data-v 属性选择器、特异度比 global.css 那份纯类选择器高，会整体
-   压过它、连带把 transform 的过渡一起吃掉，悬停上浮就变成瞬间跳变、没有非线性缓动
-   （踩过：FileCard.vue 抽出来时补了这句 transition，直接把文件库卡片的位移过渡吃没了）。
-   这里只保留圆角、布局和文件/画布专属状态，主题表面值由 adoption 层统一提供。 */
+/* transition / transform 仍由 global.css 统一负责，FileCard 只拥有 paint + 自身几何。
+   这样不会用 scoped transition 覆盖全局的非线性 hover 手感；主题差异全部经 file-card token
+   进入这里，adoption 层不再直接重画 .fc-card。亮色 token 明确锁定 v0.20.4。 */
 .fc-card {
   position: relative;
+  background: var(--file-card-bg);
+  border: 1px solid var(--file-card-border);
   border-radius: var(--card-radius);
   corner-shape: round;
+  box-shadow: var(--file-card-shadow);
   min-height: 122px;
   display: flex; flex-direction: column;
+  color: var(--content-primary);
+}
+.fc-card::after { background: var(--file-card-hover-sheen); }
+.fc-card:hover {
+  background: var(--file-card-bg-hover);
+  border-color: var(--file-card-border-hover);
+  box-shadow: var(--file-card-shadow-hover);
+}
+.fc-card.selected {
+  background: var(--file-card-bg-selected);
+  border-color: var(--file-card-border-selected);
+  box-shadow: var(--file-card-shadow-selected);
 }
 /* 画布文件引用与活动/项目引用共用系统对象的玻璃基线；文件库卡片仍保留原本更实的白底。 */
 .fc-card.canvas-mode {
@@ -84,26 +95,27 @@ defineProps({
    刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
    特异度覆盖回去，不需要 !important。 */
 .fc-card.no-lift:hover { transform: none; }
-/* 选中覆盖层：::before 覆盖整张卡（含图片卡白色标签区），::after 在缩略图上额外叠加 */
+/* 0.20.4 的选中层级：::before 覆盖整张卡（普通文件/图片标签区一致），图片缩略图区
+   再叠一层更深的 ::after；两层是有意的视觉差异，不合并成同一种选中色。 */
 .fc-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
-  background: rgba(123,127,178,0.14);
+  background: var(--file-card-selection-overlay);
 }
 .fc-card.selected .fc-thumb-area::after,
 .fc-card.pre-selected .fc-thumb-area::after {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none;
 }
-.fc-card.selected .fc-thumb-area::after    { background: rgba(123,127,178,0.28); }
-.fc-card.pre-selected .fc-thumb-area::after { background: rgba(123,127,178,0.16); }
+.fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
+.fc-card.pre-selected .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
 .fc-card.cut { opacity: 0.45; }
 
 .fc-ext-badge {
   position: absolute; top: 10px; left: 10px; z-index: 2;
   font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--fc-color, var(--color-primary));
-  background: rgba(0,0,0,0.04);
+  background: var(--file-card-badge-bg);
   border-radius: 4px; padding: 2px 5px; line-height: 1.5;
 }
 
@@ -126,7 +138,7 @@ defineProps({
 .fc-thumb-area {
   position: relative; height: var(--fc-area-h, 90px); flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0;
-  background: rgba(0,0,0,0.05);
+  background: var(--file-card-thumb-bg);
   /* 不常驻提升为 GPU 图层：画布缩放时，独立图层可能沿用抓取时的低分辨率纹理，
      直到 hover/合成器空闲才重栅格化，表现为图片卡先糊后清。拖拽时物理层会按需建层。 */
   mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
@@ -138,13 +150,14 @@ defineProps({
 }
 
 .fc-has-thumb .fc-label { position: relative; z-index: 1; }
-.fc-has-thumb .fc-ext-badge { background: rgba(0,0,0,0.32); color: rgba(255,255,255,0.92); }
+.fc-has-thumb .fc-ext-badge { background: var(--file-card-image-badge-bg); color: var(--file-card-image-badge-fg); }
 
 .fc-label { padding: 0 13px 13px; flex: 1; min-width: 0; }
 .fc-name {
+  color: var(--content-primary);
   font-size: var(--font-size-sm); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
-.fc-meta { font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
+.fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
 </style>
