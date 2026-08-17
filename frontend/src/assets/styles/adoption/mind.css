@@ -4,10 +4,9 @@ html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); 
 
 /* Floating Mind chrome is not a content card. Mono keeps its quieter card language but restores a
    translucent backdrop surface for the top mode switcher, canvas drawer, bottom toolbar and the
-   toolbar's object picker. Drawer/toolbar/picker are .glass-card, but unlike the working top capsule
-   and sidebar they are Teleported and otherwise depend on the later global .glass-card paint rule.
-   Keep one owner here: remap the card contract and apply that same contract to the final surface, so
-   later generic hover/reset rules still resolve to exactly the same chrome material. */
+   toolbar's object picker. Drawer/toolbar/picker are .glass-card: remap the whole component contract,
+   including --glass-card-blur. product.css owns the final Mono .glass-card backdrop declaration and
+   resolves this local token, so content cards can stay no-blur without a specificity fight here. */
 html[data-family='v2'] .mind-tabs {
   background: var(--chrome-glass-bg);
   border-color: var(--chrome-glass-border);
@@ -22,11 +21,10 @@ html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
   --glass-card-border-hover: var(--chrome-glass-border);
   --glass-card-shadow: var(--chrome-glass-shadow);
   --glass-card-shadow-hover: var(--chrome-glass-shadow);
+  --glass-card-blur: var(--chrome-glass-blur);
   background: var(--glass-card-background);
   border-color: var(--glass-card-border);
   box-shadow: var(--glass-card-shadow);
-  backdrop-filter: var(--chrome-glass-blur);
-  -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
 
 /* Notes timeline. Mono/V2 uses quieter elevation, so these content cards get a stronger real
