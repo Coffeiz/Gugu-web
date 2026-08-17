@@ -2,12 +2,6 @@
    the file-card dark contract; do not duplicate file-card styling here. */
 html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); }
 
-/* Mono/V2 content surfaces are intentionally flat, so card separation must come from a real
-   outline. File/project reference roots are handled by their shared card contracts; timeline and
-   note cards are Mind-owned and only need their family-specific border strengthened here. */
-html[data-family='v2'] .tl-col { --glass-card-border: var(--border-strong); }
-html[data-family='v2'] .note-card { border-color: var(--border-strong); }
-
 /* Floating Mind chrome is not a content card. Mono keeps its flat card language but restores a
    translucent backdrop surface for the top mode switcher, canvas drawer, bottom toolbar and the
    toolbar's object picker. One family rule covers both light/dark Mono and leaves Aero untouched. */
@@ -19,7 +13,8 @@ html[data-family='v2'] :is(.mind-tabs, .canvas-drawer, .canvas-toolbar, .note-pi
   -webkit-backdrop-filter: var(--chrome-glass-blur);
 }
 
-/* Notes timeline */
+/* Notes timeline. Mono/V2 is intentionally shadowless, so its content cards use a stronger real
+   outline for separation; file/project references inherit their own shared card contracts. */
 html[data-theme][data-family] .tl-col {
   --glass-card-background: var(--mind-timeline-bg);
   --glass-card-border: var(--border-default);
