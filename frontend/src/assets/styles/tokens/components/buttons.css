@@ -1,0 +1,24 @@
+/* Shared button press contract.
+   Every native button inherits these values through the global feedback bridge. Components may
+   override --button-press-* locally, but the defaults keep an immediate optimistic press response
+   even when a button has no dedicated interaction styling. */
+:root {
+  --button-feedback-scale: .985;
+  --button-feedback-translate-y: 1px;
+  --button-feedback-opacity: .93;
+  --button-feedback-duration: var(--motion-hover-micro, 120ms);
+  --button-feedback-easing: var(--motion-ease-standard, ease);
+
+  --button-press-scale: var(--button-feedback-scale, .985);
+  --button-press-translate-y: var(--button-feedback-translate-y, 1px);
+  --button-press-opacity: var(--button-feedback-opacity, .93);
+  --button-press-duration: var(--button-feedback-duration, 120ms);
+  --button-press-easing: var(--button-feedback-easing, ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --button-feedback-scale: 1;
+    --button-feedback-translate-y: 0px;
+  }
+}
