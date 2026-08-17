@@ -539,3 +539,44 @@ async def test_empty_canvas_auto_placement_with_scale(db, user_a):
     # world_x = -600/0.5 + 40 = -1160, world_y = -400/0.5 + 40 = -760
     assert pos["x"] == -1160.0
     assert pos["y"] == -760.0
+
+
+async def test_get_canvas_limit_1_hides_dangling_relations(db, user_a):
+    """limit=1 时不应返回指向未返回节点的 relation。"""
+    data = {"x": 0, "y": 0, "scale": 1.0, "viewport": {"width": 1200, "height": 800}}
+    canvas = await _canvas(db, user_a, data=data)
+    # 创建两个便签并连接
+    batch = await _mind_batch_canvas(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "request_id": "dangling-setup",
+        "operations": [
+            {"kind": "create_note", "title": "A", "content": ""},
+            {"kind": "create_note", "title": "B", "content": ""},
+        ],
+    })
+    node_a_id = batch["operations"][0]["node"]["node_id"]
+    node_b_id = batch["operations"][1]["node"]["node_id"]
+    from agent.tools.mind_canvas import _mind_connect_nodes
+    connect_result = await _mind_connect_nodes(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "source_node_id": node_a_id,
+        "target_node_id": node_b_id,
+        "type": "related",
+    })
+    assert "relation_id" in connect_result
+
+    # limit=1 只返回第一个节点
+    from agent.tools.mind_canvas import _mind_get_canvas
+    result = await _mind_get_canvas(db, user_a.id, {
+        "canvas_id": canvas.id,
+        "limit": 1,
+    })
+    assert len(result["nodes"]) == 1
+    assert result["truncated"] is True
+    returned_ids = {n["node_id"] for n in result["nodes"]}
+    # relations 不应包含指向未返回节点的连接
+    for rel in result.get("relations", []):
+        assert rel["source_node_id"] in returned_ids, \
+            f"relation source {rel['source_node_id']} not in returned nodes"
+        assert rel["target_node_id"] in returned_ids, \
+            f"relation target {rel['target_node_id']} not in returned nodes"

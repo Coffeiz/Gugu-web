@@ -356,10 +356,15 @@ class SkillRegistry:
         try:
             async with _sess._SessionLocal() as db:
                 result: Any = await tool.handler(db, user_id, args)
-                # Agent 一次工具调用就是一个任务事务边界。普通 Service 只负责 flush，
-                # 由这里统一提交；异常路径由上下文退出前回滚，避免半成品写入下一次调用。
+                # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
+                # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
+                # 虽然不会修改数据（校验在写入前就 return 了），但 flush 可能留下
+                # 部分状态，统一 rollback 更安全；成功路径统一 commit。
                 if db is not None:
-                    await db.commit()
+                    if isinstance(result, dict) and result.get("error"):
+                        await db.rollback()
+                    else:
+                        await db.commit()
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
