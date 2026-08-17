@@ -261,27 +261,29 @@ const todayStr = computed(() => {
   gap: 8px;
 }
 
-/* 顶栏按钮不做悬停上浮；上传文件保留较轻的玻璃阴影，新建项目走全局 press-fx 阴影。 */
+/* 顶栏按钮不做悬停上浮；上传文件走次要按钮 token，新建项目走全局 press-fx 阴影。 */
 .btn-ghost-custom {
   --topbar-btn-shadow: inset 0 1px 0 rgba(255,255,255,0.95);
-  background: rgba(255, 255, 255, 0.52) !important;
-  border: 1px solid rgba(255, 255, 255, 0.78) !important;
+  background: var(--action-secondary-bg) !important;
+  border: 1px solid var(--action-secondary-border) !important;
   border-radius: var(--radius-sm) !important;
-  color: var(--text-secondary) !important;
+  color: var(--action-secondary-fg) !important;
   box-shadow: var(--topbar-btn-shadow) !important;
   font-size: 13px; font-weight: 500;
   transition: background 0.2s ease-out, box-shadow 0.2s ease-out,
               transform 0.15s ease, opacity 0.15s ease !important;
 }
 .topbar .btn-ghost-custom:hover {
-  background: rgba(255,255,255,0.72) !important;
+  background: var(--action-secondary-bg-hover) !important;
+  border-color: var(--action-secondary-border-hover) !important;
+  color: var(--action-secondary-fg-hover) !important;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 3px 10px rgba(80,90,110,0.12) !important;
 }
 .btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .btn-primary-custom {
   --topbar-btn-shadow: 0 3px 12px rgba(123,127,178,0.3);
-  background: linear-gradient(135deg, #7b7fb2, #9590c4) !important;
+  background: var(--action-primary-bg) !important;
   border: none !important;
   border-radius: var(--radius-sm) !important;
   box-shadow: var(--topbar-btn-shadow) !important;
@@ -290,14 +292,15 @@ const todayStr = computed(() => {
               transform 0.15s ease !important;
 }
 .btn-primary-custom:hover {
+  background: var(--action-primary-bg-hover) !important;
   opacity: 0.92;
 }
 .btn-primary-custom:active { transform: translateY(1px) !important; opacity: 0.93; }
 
 .page-content {
   height: 100%;
-  overflow-y: scroll;
-  scrollbar-gutter: stable;
+  overflow-y: auto;
+  scrollbar-gutter: auto;
   padding: 128px 34px 24px 30px;
   box-sizing: border-box;
 }

@@ -1,0 +1,107 @@
+/*
+ * LoopScope-owned token snapshot.
+ * Initial values are copied from Gugu's 2026-08 design-token foundation,
+ * but this file is maintained locally and NEVER imports Gugu source files.
+ */
+:root {
+  --pearl-0: #ffffff;
+  --pearl-25: #fbfafc;
+  --pearl-50: #f7f5f8;
+  --pearl-100: #f0edf2;
+  --pearl-150: #e9e5eb;
+  --pearl-200: #e2dde5;
+  --pearl-300: #d2cbd5;
+  --pearl-500: #98909d;
+  --pearl-700: #55505a;
+  --pearl-900: #27242d;
+  --pearl-950: #19171d;
+
+  --iris-50: #f4f2fa;
+  --iris-100: #eae6f5;
+  --iris-300: #beb6da;
+  --iris-500: #8178b2;
+  --iris-600: #6d64a0;
+  --iris-700: #5b5387;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --line-height-body: 1.55;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --surface-page: #f7f5f8;
+  --surface-panel: rgba(255,255,255,.78);
+  --surface-card: rgba(255,255,255,.68);
+  --surface-soft: rgba(240,237,242,.72);
+  --surface-raised: #ffffff;
+  --content-primary: #27242d;
+  --content-secondary: #756f7a;
+  --content-tertiary: #98909d;
+  --border-subtle: rgba(85,80,90,.12);
+  --border-default: rgba(85,80,90,.18);
+  --action-primary: #6d64a0;
+  --action-primary-hover: #5b5387;
+  --action-soft: rgba(109,100,160,.10);
+  --focus-ring: rgba(109,100,160,.36);
+  --status-success: #66917d;
+  --status-warning: #b28759;
+  --status-danger: #b96462;
+  --status-info: #728aaa;
+  --elevation-card: 0 8px 24px rgba(39,36,45,.06);
+  --elevation-card-hover: 0 14px 34px rgba(39,36,45,.10);
+  --elevation-popup: 0 18px 46px rgba(39,36,45,.14);
+
+  --motion-hover-micro: 120ms;
+  --motion-hover-control: 150ms;
+  --motion-hover-card: 250ms;
+  --motion-fast: var(--motion-hover-control);
+  --motion-default: var(--motion-hover-card);
+  --motion-slow: 340ms;
+  --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-ease-emphasis: cubic-bezier(0.34, 1.2, 0.64, 1);
+  --motion-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --trace-input: #728aaa;
+  --trace-context: #8178b2;
+  --trace-llm: #a980ad;
+  --trace-tool: #76a7b2;
+  --trace-guard: #ba9365;
+  --trace-output: #7b9d7d;
+  --trace-database: #66917d;
+  --trace-file: #7d8eb7;
+  --trace-memory: #a980ad;
+  --trace-history: #b28759;
+  --trace-cache: #8a80ba;
+  --trace-state: #98909d;
+  --trace-error: #bd7c6d;
+  --trace-running: #8a80ba;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-hover-micro: 0ms;
+    --motion-hover-control: 0ms;
+    --motion-hover-card: 0ms;
+    --motion-fast: 0ms;
+    --motion-default: 0ms;
+    --motion-slow: 0ms;
+  }
+}

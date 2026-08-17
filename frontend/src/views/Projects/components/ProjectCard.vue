@@ -3,7 +3,7 @@
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
     :data-card="String(project.id)"
-    :style="{ background: `linear-gradient(to right, rgba(255,255,255,0.9) 0%, rgba(255,255,255,1) 40%), ${project.color}` }"
+    :style="{ '--project-color': project.color }"
     :class="{ 'file-drag-over': fileDragOver }"
     @click="emit('click')"
     @dragenter.prevent="onFileDragEnter"
@@ -132,7 +132,7 @@
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
         <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
       </div>
-      <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list">
+      <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
              :class="{ 'tp-ghost': tpDrag === i }"
              :draggable="editingTp !== t.id"
@@ -428,14 +428,15 @@ async function setPriority(n: number) {
   border-radius: var(--radius-md);
   corner-shape: squircle;
   box-shadow: 0 2px 8px rgba(80,90,110,0.07);
+  background: var(--surface-card-solid);
   overflow: hidden; cursor: pointer;
   /* transition 是覆盖式属性，不会跟全局 .hover-card-fx 的 transition 叠加（只有其中一份生效）——
      这里仍自带完整的一份（含 background），确保不管层叠顺序谁赢，效果都一致，不丢 background 过渡。
      transform/box-shadow 的时长要跟 .hover-card-fx 保持同一个数（见 global.css），不然这份
      本地声明会赢过全局那份、悄悄用着自己的时长——画布上项目卡跟便签/活动贴纸并排悬停时
      能看出抬起速度不一样，就是这里曾经各写各的 0.3s/0.25s 导致的。 */
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1),
-              box-shadow 0.25s ease, background 0.25s ease-out;
+  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1),
+              box-shadow var(--motion-hover-card) ease, background var(--motion-hover-card) ease-out;
   user-select: none;
 }
 .proj-card.file-drag-over {
@@ -463,10 +464,14 @@ async function setPriority(n: number) {
   position: absolute; inset: 0;
   border-radius: inherit;
   corner-shape: squircle;
-  background: linear-gradient(to bottom, rgba(255,255,255,0.12) 0%, transparent 50%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9);
+  background: linear-gradient(to right, var(--project-card-gradient-start) 0%, var(--project-card-gradient-end) 40%), var(--project-color);
   pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.25s ease-out;
 }
+.proj-card.is-grabbed:not([data-runtime-phase="landing"])::before,
+.proj-card[data-runtime-phase="grab-start"]::before { opacity: 0; }
+.proj-card[data-runtime-phase="landing"]::before { opacity: 1; }
 /* 悬停增强高光：linear-gradient 不能做 transition 插值，改用 opacity 淡入淡出 */
 .proj-card::after {
   content: '';
@@ -476,7 +481,7 @@ async function setPriority(n: number) {
   background: linear-gradient(to bottom, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0.08) 45%, transparent 100%);
   box-shadow: inset 0 1px 0 rgba(255,255,255,1);
   opacity: 0;
-  transition: opacity 0.25s ease;
+  transition: opacity var(--motion-hover-card) ease;
   pointer-events: none;
 }
 /* 抬起/按下本体效果来自全局 .hover-card-fx（模板里已加这个类）；
@@ -485,7 +490,7 @@ async function setPriority(n: number) {
 .proj-card:hover { box-shadow: 0 6px 18px rgba(80,90,110,0.13); }
 .proj-card:hover::after { opacity: 1; }
 
-.card-body { flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card-body { position: relative; z-index: 1; flex: 1; padding: 13px 13px 11px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .card-top { display: flex; align-items: flex-start; gap: 6px; }
 
 .proj-name {
@@ -530,8 +535,6 @@ async function setPriority(n: number) {
 .tp-title { font-size: 13px; font-weight: 700; color: #1e2028; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
-.tp-list::-webkit-scrollbar { width: 3px; }
-.tp-list::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
 .tp-item:hover { background: rgba(0,0,0,0.04); }
 .tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -608,10 +611,11 @@ async function setPriority(n: number) {
 
 /* ── 推进按钮（圆角靠父级 overflow:hidden 裁剪）── */
 .card-advance {
+  position: relative; z-index: 1;
   width: 42px; flex-shrink: 0; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
   background: none; border: none;
-  border-left: 1px solid rgba(0,0,0,0.07);
+  border-left: 1px solid var(--card-advance-border);
   cursor: pointer;
   color: rgba(0,0,0,0.25);
   transition: background 0.15s, color 0.15s;

@@ -1,0 +1,7 @@
+/* Native scrollbar samples/fallbacks share the same control hover cadence as overlay thumbs.
+   Application scroll surfaces normally use the overlay thumb; this covers Design previews and
+   any native fallback without duplicating a second motion duration. */
+html[data-theme][data-family] .scrollbar-preview::-webkit-scrollbar-thumb,
+html[data-theme][data-family] .design-page::-webkit-scrollbar-thumb {
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard);
+}

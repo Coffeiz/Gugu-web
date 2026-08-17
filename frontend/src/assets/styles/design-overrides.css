@@ -1,0 +1,196 @@
+/* Design route refinements that intentionally sit outside the scoped showcase component.
+ * Product Topbar behaviour stays owned by DefaultLayout/product.css; this file only adjusts the
+ * standalone Design showcase and its product mock.
+ */
+
+html[data-theme][data-family]:has(.design-page),
+body:has(.design-page) {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#app:has(.design-page) {
+  height: auto;
+  overflow: visible;
+}
+
+html[data-theme][data-family] .design-page .design-hero {
+  min-height: 58px;
+  background-color: color-mix(in srgb,var(--surface-glass) 84%,transparent);
+  border-bottom-color: var(--border-subtle);
+  box-shadow: var(--topbar-shadow);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+html[data-theme][data-family] .design-page .hero-title-row { display:block; }
+html[data-theme][data-family] .design-page .hero-title-row .eyebrow {
+  display:block;
+  color:var(--content-primary);
+  font-size:0;
+  font-weight:var(--font-weight-bold);
+  letter-spacing:.04em;
+}
+html[data-theme][data-family] .design-page .hero-title-row .eyebrow::after {
+  content:'GUGU DESIGN';
+  font-size:var(--font-size-lg);
+}
+html[data-theme][data-family] .design-page .hero-title-row h1 { display:none; }
+html[data-theme][data-family] .design-page .hero-copy > p {
+  margin-top:var(--space-sm);
+  font-size:0;
+  line-height:var(--line-height-ui);
+}
+html[data-theme][data-family] .design-page .hero-copy > p::after {
+  content:'Aero / Mono · Semantic / Component tokens 与真实产品组件共用同一套契约。';
+  color:var(--content-tertiary);
+  font-size:var(--font-size-xs);
+}
+
+html[data-theme][data-family] .design-page .theme-cell strong,
+html[data-theme][data-family] .design-page .theme-cell small,
+html[data-theme][data-family] .design-page .state-badge { font-size:0; }
+html[data-theme][data-family] .design-page .theme-cell strong::after,
+html[data-theme][data-family] .design-page .theme-cell small::after,
+html[data-theme][data-family] .design-page .state-badge::after { font-size:var(--font-size-xs); }
+html[data-theme][data-family] .design-page .theme-cell strong::after { font-size:var(--font-size-sm); }
+html[data-theme][data-family] .design-page .glass-light strong::after { content:'Aero Light'; }
+html[data-theme][data-family] .design-page .glass-dark strong::after { content:'Aero Dark'; }
+html[data-theme][data-family] .design-page .v2-light strong::after { content:'Mono Light'; }
+html[data-theme][data-family] .design-page .v2-dark strong::after { content:'Mono Dark'; }
+html[data-theme][data-family] .design-page .glass-light small::after { content:'轻透玻璃'; }
+html[data-theme][data-family] .design-page .glass-dark small::after { content:'低亮度透明层'; }
+html[data-theme][data-family] .design-page .v2-light small::after { content:'安静实体表面'; }
+html[data-theme][data-family] .design-page .v2-dark small::after { content:'低拟态深色实体'; }
+html[data-family='glass'][data-theme='light'] .design-page .state-badge::after { content:'AERO · LIGHT'; }
+html[data-family='glass'][data-theme='dark'] .design-page .state-badge::after { content:'AERO · DARK'; }
+html[data-family='v2'][data-theme='light'] .design-page .state-badge::after { content:'MONO · LIGHT'; }
+html[data-family='v2'][data-theme='dark'] .design-page .state-badge::after { content:'MONO · DARK'; }
+
+html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p { font-size:0; }
+html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p::after {
+  content:'内容色跨 Aero / Mono 保持身份。';
+  font-size:var(--font-size-xs);
+}
+
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before,
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  min-height:122px;
+  display:flex;
+  align-items:flex-end;
+  padding:var(--space-md);
+  border:1px solid var(--design-card-border);
+  border-radius:var(--design-card-radius);
+  box-shadow:var(--elevation-card);
+  color:var(--content-primary);
+  font:var(--font-weight-semibold) var(--font-size-sm) var(--font-sans);
+  white-space:pre-line;
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before {
+  content:'Accent\A --color-accent';
+  background:linear-gradient(to bottom,var(--color-accent) 0 58%,var(--design-card-bg) 58% 100%);
+}
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  content:'Muted accent\A --color-accent-muted';
+  background:linear-gradient(to bottom,var(--color-accent-muted) 0 58%,var(--design-card-bg) 58% 100%);
+}
+
+html[data-theme][data-family] .design-page .sample-board {
+  padding:118px 20px 20px;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:16px;
+}
+html[data-theme][data-family] .design-page .project-column { padding:12px 10px; }
+html[data-theme][data-family] .design-page .project-column:nth-child(3) { display:none; }
+
+html[data-theme][data-family] .design-page .sample-topbar {
+  border-color:var(--topbar-border);
+  background:var(--topbar-bg);
+  box-shadow:var(--topbar-shadow);
+}
+html[data-theme][data-family] .design-page .sample-topbar:hover {
+  background:var(--topbar-bg-hover);
+  box-shadow:var(--topbar-shadow-hover);
+}
+html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-primary {
+  color:var(--content-on-accent);
+  background:var(--brand-gradient);
+  box-shadow:var(--elevation-card);
+}
+html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-ghost {
+  color:var(--content-secondary);
+  background:color-mix(in srgb,var(--control-bg) 86%,transparent);
+  border-color:var(--control-border);
+  box-shadow:inset 0 1px 0 var(--highlight-muted);
+}
+
+html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:70; }
+html[data-theme][data-family] .design-page .sample-gugu-fab { z-index:69; }
+
+html[data-theme][data-family] .design-page .add-project {
+  width:100%;
+  min-height:96px;
+  height:96px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:var(--space-sm);
+  border:1.5px dashed var(--inline-action-border);
+  border-radius:var(--radius-md);
+  corner-shape:squircle;
+  color:var(--inline-action-fg);
+  background:var(--inline-action-bg);
+  box-shadow:none;
+  cursor:pointer;
+  font-size:0;
+  transition:border-color .18s,color .18s,background .18s;
+}
+html[data-theme][data-family] .design-page .add-project::after {
+  content:'新建项目';
+  font-size:var(--font-size-xs);
+  font-weight:var(--font-weight-semibold);
+}
+html[data-theme][data-family] .design-page .add-project:hover {
+  transform:none;
+  border-color:var(--inline-action-border-hover);
+  color:var(--inline-action-fg-hover);
+  background:var(--inline-action-bg-hover);
+  box-shadow:none;
+}
+
+html[data-theme][data-family] .design-page .scrollbar-token-layout { grid-template-columns:1fr; }
+html[data-theme][data-family] .design-page .scrollbar-preview { display:none; }
+html[data-theme][data-family] .design-page .scrollbar-style-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+html[data-theme][data-family] .design-page .scrollbar-style-card {
+  height:168px;
+  overflow-y:auto;
+  scrollbar-gutter:stable;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card .token-meta::after {
+  content:'Scroll surface\A hover thumb\A drag thumb\A safe inset\A transparent track\A stable content\A end of sample';
+  display:block;
+  margin-top:var(--space-sm);
+  padding-top:var(--space-sm);
+  border-top:1px solid var(--border-hairline);
+  color:var(--content-tertiary);
+  font-size:var(--font-size-xs);
+  line-height:2.2;
+  white-space:pre-line;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(1)::-webkit-scrollbar { width:var(--scrollbar-size-default); }
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(2)::-webkit-scrollbar { width:var(--scrollbar-size-compact); }
+html[data-theme][data-family] .design-page .scrollbar-style-card:nth-child(3)::-webkit-scrollbar { width:var(--scrollbar-size-editor); }
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-track {
+  background:transparent;
+  margin-block:var(--scrollbar-safe-inset);
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb {
+  background:var(--scrollbar-thumb);
+  border-radius:var(--radius-pill);
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-thumb-hover); }
+
+@media(max-width:900px) {
+  html[data-theme][data-family] .design-page .scrollbar-style-grid { grid-template-columns:1fr; }
+  html[data-theme][data-family] .design-page .sample-board { grid-template-columns:repeat(3,220px); overflow-x:auto; }
+}

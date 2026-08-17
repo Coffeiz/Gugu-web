@@ -133,6 +133,20 @@ defineExpose({ scale, tx, ty })
 
 <style scoped>
 .iv-wrap {
+  /* 亮色默认值保持原设计；暗色只在 overlay-theme-bridge.css 重映射这些变量。
+     toolbar 本身始终只有下面一套属性声明，不再维护亮/暗两份组件 CSS。 */
+  --iv-toolbar-bg: rgba(255, 255, 255, 0.68);
+  --iv-toolbar-filter: blur(18px);
+  --iv-toolbar-border: rgba(255, 255, 255, 0.82);
+  --iv-toolbar-shadow:
+    0 4px 16px rgba(80, 90, 110, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  --iv-toolbar-fg: var(--text-secondary);
+  --iv-toolbar-hover-bg: rgba(123, 127, 178, 0.12);
+  --iv-toolbar-hover-fg: var(--color-primary);
+  --iv-toolbar-pct-hover-fg: var(--text-primary);
+
   position: absolute;
   inset: 0;
   display: flex;
@@ -177,36 +191,33 @@ defineExpose({ scale, tx, ty })
   display: flex;
   align-items: center;
   gap: 1px;
-  background: rgba(255, 255, 255, 0.68);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(255, 255, 255, 0.82);
+  background: var(--iv-toolbar-bg);
+  backdrop-filter: var(--iv-toolbar-filter);
+  -webkit-backdrop-filter: var(--iv-toolbar-filter);
+  border: 1px solid var(--iv-toolbar-border);
   border-radius: 20px;
   padding: 3px 5px;
   pointer-events: auto;
-  box-shadow:
-    0 4px 16px rgba(80, 90, 110, 0.10),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 1px 0 0 rgba(255, 255, 255, 0.55);
+  box-shadow: var(--iv-toolbar-shadow);
 }
 .iv-tb-btn {
   width: 26px; height: 26px;
   border-radius: 50%; border: none;
-  background: transparent; color: var(--text-secondary);
+  background: transparent; color: var(--iv-toolbar-fg);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: background 0.15s, color 0.15s;
 }
 .iv-tb-btn svg { display: block; }
 .iv-tb-btn:hover {
-  background: rgba(123, 127, 178, 0.12);
-  color: var(--color-primary);
+  background: var(--iv-toolbar-hover-bg);
+  color: var(--iv-toolbar-hover-fg);
 }
 .iv-tb-pct {
   font-size: 11px; font-weight: 600;
-  color: var(--text-secondary);
+  color: var(--iv-toolbar-fg);
   min-width: 38px; text-align: center;
   cursor: pointer; letter-spacing: 0.02em;
   padding: 0 2px; transition: color 0.15s;
 }
-.iv-tb-pct:hover { color: var(--text-primary); }
+.iv-tb-pct:hover { color: var(--iv-toolbar-pct-hover-fg); }
 </style>

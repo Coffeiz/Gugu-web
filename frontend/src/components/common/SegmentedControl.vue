@@ -82,14 +82,18 @@ watch(() => props.activeIndex, () => nextTick(measure))
 .seg-pill {
   position: absolute;
   top: 0; left: 0;
-  background: var(--pill-bg, #fff);
+  background: var(--pill-bg, var(--selected-pill-bg, var(--segmented-pill-bg, #fff)));
   border-radius: var(--pill-radius, 8px);
-  box-shadow: var(--pill-shadow, 0 1px 4px rgba(60,70,100,0.12));
+  box-shadow: var(--pill-shadow, var(--selected-pill-shadow, var(--segmented-pill-shadow, 0 1px 4px rgba(60,70,100,0.12))));
   pointer-events: none;
   z-index: 0;
 }
 .seg-pill.ready {
-  transition: transform 0.24s cubic-bezier(.34,1.15,.64,1), width 0.24s cubic-bezier(.34,1.15,.64,1);
+  transition:
+    transform var(--motion-hover-card) var(--motion-ease-emphasis),
+    width var(--motion-hover-card) var(--motion-ease-emphasis),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 /* 插槽内容（按钮/RouterLink）必须盖在药丸之上——绝对定位元素默认按「先绝对定位者优先」
    的规则渲染在最上层，不管 DOM 顺序，静态定位的插槽内容反而会被压在底下。插槽内容带的是

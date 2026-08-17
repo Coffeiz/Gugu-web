@@ -5,14 +5,18 @@
 """
 import json
 
-from sqlalchemy import or_, select
-from sqlalchemy.orm import aliased
-
-from app.models import File, Folder
-from app.core.ownership import get_owned
 from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
-from app.services.storage.trash import restore_file_storage
+from app.services.files.trash import (
+    RestoreParentTrashError,
+    count_deleted_files,
+    get_deleted_file,
+    list_deleted_files,
+    list_deleted_folders,
+    permanently_delete_all_files,
+    permanently_delete_file,
+    restore_file_by_id,
+)
 from app.services.files.previews import delete_thumb_cache
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
@@ -22,21 +26,8 @@ async def _list_trash(db, user_id, args: dict):
     limit = max(1, min(int(args.get("limit", 50)), 100))
 
     # 文件夹是整体恢复单元：文件夹内的文件不再重复列出，只列独立删除的文件。
-    ParentFolder = aliased(Folder)
-    file_rows = (await db.execute(
-        select(File).outerjoin(Folder, File.folder_id == Folder.id).where(
-            File.user_id == user_id,
-            File.deleted_at.isnot(None),
-            or_(File.folder_id.is_(None), Folder.deleted_at.is_(None)),
-        ).order_by(File.deleted_at.desc()).limit(limit)
-    )).scalars().all()
-    folder_rows = (await db.execute(
-        select(Folder).outerjoin(ParentFolder, Folder.parent_id == ParentFolder.id).where(
-            Folder.user_id == user_id,
-            Folder.deleted_at.isnot(None),
-            or_(Folder.parent_id.is_(None), ParentFolder.deleted_at.is_(None)),
-        ).order_by(Folder.deleted_at.desc()).limit(limit)
-    )).scalars().all()
+    file_rows = await list_deleted_files(db, user_id, limit)
+    folder_rows = await list_deleted_folders(db, user_id, limit)
 
     items = [
         {"id": f.id, "file_id": f.id, "kind": "file", "name": f"{f.display_name}.{f.ext}",
@@ -58,13 +49,15 @@ async def _list_trash(db, user_id, args: dict):
 
 
 async def _restore_file(db, user_id, args: dict):
-    f = await get_owned(db, File, args["file_id"], user_id)
-    if not f or f.deleted_at is None:
+    try:
+        restored = await restore_file_by_id(
+            db, get_storage(), user_id, args["file_id"])
+    except RestoreParentTrashError:
+        return json.dumps({"error": "所属文件夹仍在回收站，请先恢复文件夹"})
+    if not restored:
         return json.dumps({"error": "文件不在回收站"})
-    await restore_file_storage(f, get_storage(), db)
-    f.deleted_at = None
     await db.commit()
-    return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}"}
+    return {"success": True, "file_id": args["file_id"]}
 
 
 async def _restore_folder(db, user_id, args: dict):
@@ -78,48 +71,39 @@ async def _permanent_delete(db, user_id, args: dict):
 
     # 清空整个回收站：all=true → 一次永久删除回收站里所有文件（不要逐个删）
     if args.get("all"):
-        rows = (await db.execute(
-            select(File).where(File.user_id == user_id, File.deleted_at.isnot(None))
-        )).scalars().all()
-        if not rows:
+        deleted_count = await count_deleted_files(db, user_id)
+        if not deleted_count:
             return {"success": True, "deleted_count": 0, "note": "回收站本来就是空的"}
         # 不可逆 → 二次确认保底（按数量提示）
-        blocked = confirm.needs_confirmation(args, f"将永久删除回收站里全部 {len(rows)} 个文件，删除后无法恢复", user_id)
+        blocked = confirm.needs_confirmation(args, f"将永久删除回收站里全部 {deleted_count} 个文件，删除后无法恢复", user_id)
         if blocked is not None:
             return blocked
-        fids = [f.id for f in rows]
-        for f in rows:
-            try:
-                await storage.delete(f.storage_key)
-            except Exception:
-                pass
-            await db.delete(f)
+        file_ids = await permanently_delete_all_files(db, storage, user_id)
         await db.commit()
-        for fid in fids:
+        for fid in file_ids:
             delete_thumb_cache(fid)
-        return {"success": True, "deleted_count": len(fids), "note": "回收站已清空"}
+        return {"success": True, "deleted_count": len(file_ids), "note": "回收站已清空"}
 
     # 单个永久删除
     fid = args.get("file_id")
     if not fid:
         return json.dumps({"error": "需提供 file_id（单个删除）或 all=true（清空全部）"})
-    f = await get_owned(db, File, fid, user_id)
-    if not f or f.deleted_at is None:
+    file = await get_deleted_file(db, user_id, fid)
+    if file is None:
         return json.dumps({"error": "文件不在回收站（只能永久删除回收站里的文件）"})
 
     # 不可逆 → 二次确认保底
-    blocked = confirm.needs_confirmation(args, f"将永久删除「{f.display_name}.{f.ext}」，删除后无法恢复", user_id)
+    blocked = confirm.needs_confirmation(
+        args, f"将永久删除「{file.display_name}.{file.ext}」，删除后无法恢复", user_id)
     if blocked is not None:
         return blocked
 
-    try:
-        await storage.delete(f.storage_key)
-    except Exception:
-        pass
-    delete_thumb_cache(f.id)
-    await db.delete(f)
+    deleted_id = await permanently_delete_file(db, storage, user_id, fid)
+    if deleted_id is None:
+        return json.dumps({"error": "文件不在回收站（只能永久删除回收站里的文件）"})
     await db.commit()
-    return {"success": True, "deleted_file_id": fid}
+    delete_thumb_cache(deleted_id)
+    return {"success": True, "deleted_file_id": deleted_id}
 
 
 class TrashSkill(BaseSkill):

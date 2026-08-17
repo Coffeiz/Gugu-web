@@ -9,7 +9,7 @@
     </div>
 
     <Teleport to="body">
-      <Transition name="menu-pop" :duration="{ enter: 240, leave: 180 }">
+      <Transition name="menu-pop">
         <div v-if="show" class="asel-popup popup-menu-dark" :style="popupStyle">
           <button
             v-for="opt in options" :key="opt.value"

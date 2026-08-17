@@ -36,6 +36,11 @@ export interface FileEvent {
   _t: number
 }
 
+export interface ProjectEvent {
+  origin?: string | null
+  _t: number
+}
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 // 'mind' 预留给思维面板：P1 咕咕还不写便签，后端暂不推这个资源，rev.mind 会一直是 0；
 // 等 P3 接入咕咕确认式写入后由后端开始推，笔记页/画布这边不用再改。
@@ -50,6 +55,7 @@ export const useLiveStore = defineStore('live', () => {
   const sessionEvent = ref<SessionEvent | null>(null)
   // 文件库细粒度事件（供 filesCache 消费，见上方 FileEvent 注释）
   const fileEvent = ref<FileEvent | null>(null)
+  const projectEvent = ref<ProjectEvent | null>(null)
   let _seq = 0
 
   // 同步拿 uiStore（Pinia 允许在 setup 里调其他 store）
@@ -72,6 +78,7 @@ export const useLiveStore = defineStore('live', () => {
     _catchUpTimers.forEach(clearTimeout)   // 短时间多次重连不叠加
     _catchUpTimers = RESOURCES.map((r, i) => setTimeout(() => {
       bump(r)
+      if (r === 'projects') projectEvent.value = { origin: null, _t: ++_seq }
       if (r === 'files') fileEvent.value = { op: 'refresh', origin: null, _t: ++_seq }
     }, 300 + i * 250))
   }
@@ -110,6 +117,9 @@ export const useLiveStore = defineStore('live', () => {
               const evt = JSON.parse(raw)
               const resources = evt.resources || []
               for (const r of resources) bump(r)   // 粗信号：预览窗、Trash、项目卡片计数等仍照旧消费
+              if (resources.includes('projects')) {
+                projectEvent.value = { origin: evt.origin ?? null, _t: ++_seq }
+              }
               // 文件库细粒度事件：交给 filesCache 决定回声抑制 / remove 快路径 / 合并刷新
               if (resources.includes('files')) {
                 const fo = evt.fileOp
@@ -150,7 +160,7 @@ export const useLiveStore = defineStore('live', () => {
     if (abort) { abort.abort(); abort = null }
   }
 
-  return { rev, connected, sessionEvent, fileEvent, bump, connect, disconnect }
+  return { rev, connected, sessionEvent, fileEvent, projectEvent, bump, connect, disconnect }
 })
 
 function _sleep(ms: number) {

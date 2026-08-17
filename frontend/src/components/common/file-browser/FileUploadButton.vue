@@ -23,10 +23,10 @@ const emit = defineEmits<{ select: [e: Event] }>()
 </script>
 
 <style scoped>
-.fub { cursor: pointer; color: var(--text-secondary); font-family: var(--font-sans); }
+.fub { cursor: pointer; font-family: var(--font-sans); }
 
 .fub.grid {
-  border: 1.5px dashed rgba(0,0,0,0.09);
+  border: 1.5px dashed transparent;
   /* 文件/文件夹卡片的实际网格行高约为 132.86px（90px 内容区加标签区）。
      上传入口与卡片同属 Grid 行且参与 Runtime FLIP，低于行高会在底部拖拽时
      让 scrollHeight 少几个像素，浏览器随即把 scrollTop clamp 到更小的值。 */
@@ -34,21 +34,14 @@ const emit = defineEmits<{ select: [e: Event] }>()
   display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 7px;
   font-size: 10px; font-weight: 600;
-  background: rgba(255,255,255,0.2); transition: all 0.18s;
-}
-.fub.grid:hover, .fub.grid.dragging {
-  border-color: rgba(123,127,178,0.45);
-  color: var(--color-primary); background: rgba(123,127,178,0.04);
+  transition: color 0.18s, background-color 0.18s, border-color 0.18s;
 }
 
 .fub.list {
   display: flex; align-items: center; gap: 7px; padding: 9px 10px;
   min-height: 42px; box-sizing: border-box;
   font-size: 12px; border-radius: var(--radius-sm);
-  border: 1px dashed transparent; transition: background 0.12s;
-}
-.fub.list:hover, .fub.list.dragging {
-  background: rgba(123,127,178,0.05); border-color: rgba(123,127,178,0.3); color: var(--color-primary);
+  border: 1px dashed transparent; transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .fub.list .fub-text { font-weight: 600; }
 </style>

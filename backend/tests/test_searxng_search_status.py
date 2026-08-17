@@ -1,6 +1,7 @@
 """SearXNG 空结果/引擎故障语义回归。"""
 from types import SimpleNamespace
 import logging
+import httpx
 
 import agent.tools.search as search_tools
 
@@ -177,6 +178,31 @@ async def test_web_search_surfaces_all_engine_failure_as_unavailable(monkeypatch
     assert result["search_status"]["state"] == "unavailable"
     assert result["search_status"]["requested_engines"] == ["sogou", "quark", "360search"]
     assert "这不代表没有相关结果" in result["note"]
+
+
+async def test_web_search_timeout_switches_to_deep_research(monkeypatch):
+    monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
+
+    class _TimeoutClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, params=None):
+            raise httpx.ReadTimeout("SearXNG read timeout")
+
+    async def _fallback(db, user_id, args):
+        assert args == {"query": "北京天气", "max_results": 5}
+        return {"source": "deep_research", "results": []}
+
+    monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: _TimeoutClient())
+    monkeypatch.setattr(search_tools, "_deep_research", _fallback)
+
+    result = await search_tools._searxng_search(None, 7, {"query": "北京天气"})
+
+    assert result == {"source": "deep_research", "results": []}
 
 
 async def test_image_search_reuses_status_and_keeps_results_when_degraded(monkeypatch):

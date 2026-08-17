@@ -1,0 +1,6 @@
+:root {
+  --canvas-dot-color: color-mix(in srgb, var(--action-primary) 32%, transparent);
+  --canvas-connection-color: color-mix(in srgb, var(--action-primary) 56%, transparent);
+  --canvas-card-radius: var(--radius-md);
+  --canvas-drawer-width: 320px;
+}

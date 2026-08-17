@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="zh-CN" data-family="glass" data-mode="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>咕咕 Design Tokens · Glass / V2</title>
+<style>
+/* ================================================================
+   GUGU DESIGN TOKENS · Multi-theme playground
+   Standalone concept playground
+   ---------------------------------------------------------------
+   思路：
+   1. Glass 与 V2 是并列的 theme family，不互相覆盖。
+   2. Light / Dark 是 color mode，与 theme family 正交组合。
+   3. 组件只消费 semantic/component token，不直接判断具体主题。
+   4. 项目卡保留咕咕现有“项目色 → 主体面”的渐变识别。
+   5. V2 改系统 chrome，Glass 保留原有透明层、高光与柔光语言。
+   ================================================================ */
+
+:root {
+  /* ---------- Primitive · Neutral / Pearl ---------- */
+  --pearl-0:   #ffffff;
+  --pearl-25:  #fbfafc;
+  --pearl-50:  #f7f5f8;
+  --pearl-100: #f0edf2;
+  --pearl-150: #e9e5eb;
+  --pearl-200: #e2dde5;
+  --pearl-300: #d2cbd5;
+  --pearl-400: #b8b0bd;
+  --pearl-500: #98909d;
+  --pearl-600: #756f7a;
+  --pearl-700: #55505a;
+  --pearl-800: #39353e;
+  --pearl-900: #27242d;
+  --pearl-950: #19171d;
+
+  /* ---------- Primitive · Brand / Iris ---------- */
+  --iris-50:  #f4f2fa;
+  --iris-100: #eae6f5;
+  --iris-200: #d8d2ea;
+  --iris-300: #beb6da;
+  --iris-400: #9f96c6;
+  --iris-500: #8178b2;
+  --iris-600: #6d64a0;
+  --iris-700: #5b5387;
+  --iris-800: #48426b;
+  --iris-900: #35314e;
+
+  /* ---------- Primitive · Companion colors ---------- */
+  --rose-500:   #bd7e95;
+  --cyan-500:   #6f9eaa;
+  --green-500:  #66917d;
+  --amber-500:  #b28759;
+  --red-500:    #b96462;
+  --blue-500:   #728aaa;
+
+  /* ---------- Project palette (content color, not UI chrome) ---------- */
+  --project-lilac: #8a80ba;
+  --project-rose:  #c4879f;
+  --project-sky:   #76a7b2;
+  --project-leaf:  #7b9d7d;
+  --project-sand:  #ba9365;
+  --project-coral: #bd7c6d;
+  --project-blue:  #7d8eb7;
+  --project-mauve: #a980ad;
+
+  /* ---------- Type ---------- */
+  --font-sans: "PingFang SC", "SF Pro Text", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --text-10: 10px;
+  --text-11: 11px;
+  --text-12: 12px;
+  --text-13: 13px;
+  --text-14: 14px;
+  --text-16: 16px;
+  --text-20: 20px;
+  --text-24: 24px;
+  --weight-regular: 400;
+  --weight-medium: 520;
+  --weight-semibold: 620;
+  --weight-bold: 700;
+  --tracking-label: .07em;
+
+  /* ---------- Spacing ---------- */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-3-5: 14px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* ---------- Shape ---------- */
+  --radius-1: 6px;
+  --radius-2: 9px;
+  --radius-3: 12px;
+  --radius-4: 16px;
+  --radius-5: 20px;
+  --radius-pill: 999px;
+
+  /* ---------- Motion ---------- */
+  --duration-fast: 120ms;
+  --duration-ui: 180ms;
+  --duration-float: 240ms;
+  --ease-standard: cubic-bezier(.2,.8,.2,1);
+  --ease-spring: cubic-bezier(.2,1,.28,1);
+
+  /* ---------- Layout ---------- */
+  --sidebar-width: 214px;
+  --control-sm: 30px;
+  --control-md: 36px;
+  --control-lg: 42px;
+}
+
+/* ================================================================
+   Theme family × color mode
+   The component layer consumes the SAME semantic API in all 4 states.
+   ================================================================ */
+
+/* ---------- GLASS · LIGHT · current dev visual DNA ---------- */
+:root[data-family="glass"][data-mode="light"] {
+  color-scheme: light;
+  --radius-1: 6px; --radius-2: 10px; --radius-3: 14px; --radius-4: 18px; --radius-5: 22px;
+  --surface-canvas: #d8dae4;
+  --surface-canvas-top: #e8e9ee;
+  --surface-sidebar: rgba(255,255,255,.42);
+  --surface-base: rgba(238,240,246,.90);
+  --surface-card: rgba(255,255,255,.56);
+  --surface-card-solid: rgba(255,255,255,.82);
+  --surface-soft: rgba(123,127,178,.06);
+  --surface-soft-hover: rgba(123,127,178,.10);
+  --surface-raised: rgba(255,255,255,.70);
+  --surface-floating: rgba(255,255,255,.72);
+  --surface-scrim: rgba(31,34,45,.22);
+
+  --content-primary: #1e2028;
+  --content-secondary: #8a8fa8;
+  --content-tertiary: #a3a8b9;
+  --content-disabled: #bec2cd;
+  --content-inverse: #ffffff;
+
+  --border-hairline: rgba(255,255,255,.30);
+  --border-subtle: rgba(255,255,255,.42);
+  --border-default: rgba(255,255,255,.62);
+  --border-strong: rgba(255,255,255,.76);
+  --border-highlight: rgba(255,255,255,.95);
+
+  --action-primary: #7b7fb2;
+  --action-primary-hover: #6b6fa0;
+  --action-primary-pressed: #5f638f;
+  --action-soft: rgba(123,127,178,.08);
+  --action-soft-hover: rgba(123,127,178,.14);
+  --action-outline: rgba(123,127,178,.35);
+  --selection-bg: rgba(255,255,255,.38);
+  --selection-fg: #6b6fa0;
+  --focus-ring: rgba(123,127,178,.45);
+
+  --success-fg: #4f8f7b; --success-bg: rgba(90,158,136,.12);
+  --warning-fg: #9c694d; --warning-bg: rgba(176,120,88,.13);
+  --danger-fg: #b94f4f; --danger-bg: rgba(200,90,90,.12);
+  --info-fg: #5f9dac; --info-bg: rgba(122,184,200,.13);
+
+  --shadow-1: 0 4px 16px rgba(80,90,110,.08), inset 0 1px 0 rgba(255,255,255,.95), inset 1px 0 0 rgba(255,255,255,.55);
+  --shadow-2: 0 8px 28px rgba(80,90,110,.11), inset 0 1px 0 rgba(255,255,255,.98), inset 1px 0 0 rgba(255,255,255,.65);
+  --shadow-3: 0 8px 28px rgba(80,90,110,.14), inset 0 1px 0 rgba(255,255,255,.95);
+  --shadow-focus: 0 0 0 3px rgba(123,127,178,.22);
+
+  --glass-bg: rgba(255,255,255,.56);
+  --glass-border: rgba(255,255,255,.76);
+  --glass-sheen: rgba(255,255,255,.95);
+  --glass-blur: 20px;
+  --brand-gradient: linear-gradient(135deg,#7b7fb2,#c4afc8);
+  --fab-shadow: 0 12px 28px rgba(91,92,145,.30);
+  --column-bg: rgba(255,255,255,.16);
+  --app-background: linear-gradient(160deg,#e8e9ee 0%,#d8dae4 35%,#bfc4d2 65%,#9aa2b8 100%);
+
+  /* Component contracts · topbar + project card */
+  --topbar-bg: rgba(255,255,255,.18);
+  --topbar-bg-hover: rgba(255,255,255,.26);
+  --topbar-border: rgba(255,255,255,.30);
+  --topbar-shadow: 0 3px 14px rgba(80,90,110,.032), inset 0 1px 0 rgba(255,255,255,.34);
+  --topbar-shadow-hover: 0 5px 18px rgba(80,90,110,.052), inset 0 1px 0 rgba(255,255,255,.44);
+  --topbar-blur: 16px;
+  --project-card-overlay-start: rgba(255,255,255,.90);
+  --project-card-overlay-end: rgba(255,255,255,1);
+  --project-card-border: rgba(255,255,255,.72);
+  --project-card-hover-border: rgba(255,255,255,.82);
+  --project-card-shadow: 0 2px 8px rgba(80,90,110,.07);
+  --project-card-hover-shadow: 0 6px 18px rgba(80,90,110,.13);
+  --project-card-sheen-rest: rgba(255,255,255,.12);
+  --project-card-highlight-rest: rgba(255,255,255,.90);
+  --project-card-sheen-hover: rgba(255,255,255,.55);
+  --project-card-sheen-hover-mid: rgba(255,255,255,.08);
+  --project-card-highlight-hover: rgba(255,255,255,1);
+}
+
+/* ---------- GLASS · DARK ---------- */
+:root[data-family="glass"][data-mode="dark"] {
+  color-scheme: dark;
+  --radius-1: 6px; --radius-2: 10px; --radius-3: 14px; --radius-4: 18px; --radius-5: 22px;
+  --surface-canvas: #11131f;
+  --surface-canvas-top: #0e101a;
+  --surface-sidebar: rgba(20,22,36,.74);
+  --surface-base: rgba(24,27,44,.86);
+  --surface-card: rgba(255,255,255,.05);
+  --surface-card-solid: rgba(31,34,52,.94);
+  --surface-soft: rgba(255,255,255,.04);
+  --surface-soft-hover: rgba(255,255,255,.08);
+  --surface-raised: rgba(255,255,255,.09);
+  --surface-floating: rgba(24,27,44,.88);
+  --surface-scrim: rgba(0,0,0,.50);
+
+  --content-primary: rgba(255,255,255,.92);
+  --content-secondary: rgba(255,255,255,.55);
+  --content-tertiary: rgba(255,255,255,.36);
+  --content-disabled: rgba(255,255,255,.22);
+  --content-inverse: #12141f;
+
+  --border-hairline: rgba(255,255,255,.05);
+  --border-subtle: rgba(255,255,255,.07);
+  --border-default: rgba(255,255,255,.10);
+  --border-strong: rgba(255,255,255,.12);
+  --border-highlight: rgba(255,255,255,.12);
+
+  --action-primary: #9590c4;
+  --action-primary-hover: #aaa6d8;
+  --action-primary-pressed: #847fb4;
+  --action-soft: rgba(149,144,196,.12);
+  --action-soft-hover: rgba(149,144,196,.18);
+  --action-outline: rgba(190,185,235,.32);
+  --selection-bg: rgba(149,144,196,.16);
+  --selection-fg: #b5b0df;
+  --focus-ring: rgba(149,144,196,.42);
+
+  --success-fg: #80b4a2; --success-bg: rgba(90,158,136,.17);
+  --warning-fg: #cea07f; --warning-bg: rgba(176,120,88,.18);
+  --danger-fg: #df8585; --danger-bg: rgba(200,90,90,.17);
+  --info-fg: #8bc7d6; --info-bg: rgba(122,184,200,.17);
+
+  --shadow-1: 0 4px 16px rgba(0,0,0,.16), inset 0 1px 0 rgba(255,255,255,.12), inset 1px 0 0 rgba(255,255,255,.06);
+  --shadow-2: 0 8px 28px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.16), inset 1px 0 0 rgba(255,255,255,.08);
+  --shadow-3: 0 10px 34px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.12);
+  --shadow-focus: 0 0 0 3px rgba(149,144,196,.22);
+
+  --glass-bg: rgba(255,255,255,.05);
+  --glass-border: rgba(255,255,255,.12);
+  --glass-sheen: rgba(255,255,255,.12);
+  --glass-blur: 20px;
+  --brand-gradient: linear-gradient(135deg,#9590c4,#c4afc8);
+  --fab-shadow: 0 12px 30px rgba(0,0,0,.32);
+  --column-bg: rgba(255,255,255,.018);
+  --app-background: linear-gradient(145deg,#0e101a 0%,#11131f 60%,#13152a 100%);
+
+  --topbar-bg: rgba(255,255,255,.018);
+  --topbar-bg-hover: rgba(255,255,255,.03);
+  --topbar-border: rgba(255,255,255,.05);
+  --topbar-shadow: 0 4px 16px rgba(0,0,0,.08), inset 0 1px 0 rgba(255,255,255,.025);
+  --topbar-shadow-hover: 0 6px 20px rgba(0,0,0,.11), inset 0 1px 0 rgba(255,255,255,.04);
+  --topbar-blur: 16px;
+  --project-card-overlay-start: rgba(25,27,40,.86);
+  --project-card-overlay-end: rgba(29,31,46,.98);
+  --project-card-border: rgba(255,255,255,.09);
+  --project-card-hover-border: rgba(255,255,255,.14);
+  --project-card-shadow: 0 2px 8px rgba(0,0,0,.16);
+  --project-card-hover-shadow: 0 7px 20px rgba(0,0,0,.24);
+  --project-card-sheen-rest: rgba(255,255,255,.035);
+  --project-card-highlight-rest: rgba(255,255,255,.075);
+  --project-card-sheen-hover: rgba(255,255,255,.08);
+  --project-card-sheen-hover-mid: rgba(255,255,255,.02);
+  --project-card-highlight-hover: rgba(255,255,255,.12);
+}
+
+/* ---------- V2 · LIGHT · Pearl / Ink / Iris ---------- */
+:root[data-family="v2"][data-mode="light"] {
+  color-scheme: light;
+  --radius-1: 6px; --radius-2: 9px; --radius-3: 12px; --radius-4: 16px; --radius-5: 20px;
+  --surface-canvas: #eeecf0;
+  --surface-canvas-top: #f5f3f6;
+  --surface-sidebar: rgba(248,246,249,.84);
+  --surface-base: rgba(250,249,251,.82);
+  --surface-card: rgba(255,255,255,.74);
+  --surface-card-solid: #fbfafc;
+  --surface-soft: rgba(62,54,72,.045);
+  --surface-soft-hover: rgba(62,54,72,.072);
+  --surface-raised: rgba(255,255,255,.88);
+  --surface-floating: rgba(253,252,254,.84);
+  --surface-scrim: rgba(31,27,36,.22);
+
+  --content-primary: #29262e;
+  --content-secondary: #6f6975;
+  --content-tertiary: #99929f;
+  --content-disabled: #b9b3bd;
+  --content-inverse: #ffffff;
+
+  --border-hairline: rgba(42,35,49,.055);
+  --border-subtle: rgba(42,35,49,.085);
+  --border-default: rgba(42,35,49,.125);
+  --border-strong: rgba(42,35,49,.18);
+  --border-highlight: rgba(255,255,255,.76);
+
+  --action-primary: #7067a5;
+  --action-primary-hover: #625994;
+  --action-primary-pressed: #554d83;
+  --action-soft: rgba(112,103,165,.10);
+  --action-soft-hover: rgba(112,103,165,.15);
+  --action-outline: rgba(112,103,165,.24);
+  --selection-bg: rgba(112,103,165,.115);
+  --selection-fg: #5e568d;
+  --focus-ring: rgba(112,103,165,.30);
+
+  --success-fg: #4d7f6a; --success-bg: rgba(102,145,125,.12);
+  --warning-fg: #936d42; --warning-bg: rgba(178,135,89,.13);
+  --danger-fg: #a75251; --danger-bg: rgba(185,100,98,.11);
+  --info-fg: #607b9d; --info-bg: rgba(114,138,170,.12);
+
+  --shadow-1: 0 1px 2px rgba(40,34,47,.025), 0 4px 12px rgba(40,34,47,.045);
+  --shadow-2: 0 2px 4px rgba(40,34,47,.035), 0 10px 28px rgba(40,34,47,.075);
+  --shadow-3: 0 4px 10px rgba(40,34,47,.055), 0 18px 52px rgba(40,34,47,.12);
+  --shadow-focus: 0 0 0 3px var(--focus-ring);
+
+  --glass-bg: rgba(252,251,253,.72);
+  --glass-border: rgba(255,255,255,.72);
+  --glass-sheen: rgba(255,255,255,.58);
+  --glass-blur: 22px;
+  --brand-gradient: linear-gradient(145deg,#6d64a0,#bd7e95);
+  --fab-shadow: 0 12px 28px rgba(77,65,119,.22);
+  --column-bg: rgba(255,255,255,.16);
+  --app-background:
+    radial-gradient(900px 560px at 78% -8%,rgba(132,121,178,.10),transparent 62%),
+    radial-gradient(700px 440px at 18% 110%,rgba(113,158,170,.08),transparent 65%),
+    linear-gradient(180deg,#f5f3f6,#eeecf0);
+
+  --topbar-bg: rgba(251,250,252,.34);
+  --topbar-bg-hover: rgba(251,250,252,.44);
+  --topbar-border: rgba(42,35,49,.045);
+  --topbar-shadow: 0 3px 12px rgba(40,34,47,.020);
+  --topbar-shadow-hover: 0 5px 16px rgba(40,34,47,.035);
+  --topbar-blur: 14px;
+  --project-card-overlay-start: rgba(255,255,255,.90);
+  --project-card-overlay-end: rgba(255,255,255,1);
+  --project-card-border: rgba(42,35,49,.07);
+  --project-card-hover-border: rgba(42,35,49,.11);
+  --project-card-shadow: 0 2px 8px rgba(40,34,47,.055);
+  --project-card-hover-shadow: 0 7px 20px rgba(40,34,47,.09);
+  --project-card-sheen-rest: rgba(255,255,255,.10);
+  --project-card-highlight-rest: rgba(255,255,255,.72);
+  --project-card-sheen-hover: rgba(255,255,255,.42);
+  --project-card-sheen-hover-mid: rgba(255,255,255,.05);
+  --project-card-highlight-hover: rgba(255,255,255,.88);
+}
+
+/* ---------- V2 · DARK ---------- */
+:root[data-family="v2"][data-mode="dark"] {
+  color-scheme: dark;
+  --radius-1: 6px; --radius-2: 9px; --radius-3: 12px; --radius-4: 16px; --radius-5: 20px;
+  --surface-canvas: #17151b;
+  --surface-canvas-top: #1c1921;
+  --surface-sidebar: rgba(25,23,30,.86);
+  --surface-base: rgba(31,28,36,.78);
+  --surface-card: rgba(38,34,43,.78);
+  --surface-card-solid: #24212a;
+  --surface-soft: rgba(255,255,255,.045);
+  --surface-soft-hover: rgba(255,255,255,.075);
+  --surface-raised: rgba(43,39,49,.92);
+  --surface-floating: rgba(39,35,45,.88);
+  --surface-scrim: rgba(0,0,0,.50);
+
+  --content-primary: #f0edf3;
+  --content-secondary: #aaa3af;
+  --content-tertiary: #7f7885;
+  --content-disabled: #5e5962;
+  --content-inverse: #17151b;
+
+  --border-hairline: rgba(255,255,255,.045);
+  --border-subtle: rgba(255,255,255,.075);
+  --border-default: rgba(255,255,255,.11);
+  --border-strong: rgba(255,255,255,.17);
+  --border-highlight: rgba(255,255,255,.08);
+
+  --action-primary: #a49acb;
+  --action-primary-hover: #b4abd6;
+  --action-primary-pressed: #9187bd;
+  --action-soft: rgba(164,154,203,.13);
+  --action-soft-hover: rgba(164,154,203,.19);
+  --action-outline: rgba(164,154,203,.26);
+  --selection-bg: rgba(164,154,203,.15);
+  --selection-fg: #c4bde0;
+  --focus-ring: rgba(164,154,203,.34);
+
+  --success-fg: #82ad99; --success-bg: rgba(102,145,125,.16);
+  --warning-fg: #c5a175; --warning-bg: rgba(178,135,89,.16);
+  --danger-fg: #d28683; --danger-bg: rgba(185,100,98,.16);
+  --info-fg: #91a7c1; --info-bg: rgba(114,138,170,.17);
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,.12), 0 5px 14px rgba(0,0,0,.16);
+  --shadow-2: 0 3px 8px rgba(0,0,0,.18), 0 14px 34px rgba(0,0,0,.22);
+  --shadow-3: 0 8px 18px rgba(0,0,0,.24), 0 24px 60px rgba(0,0,0,.30);
+  --shadow-focus: 0 0 0 3px var(--focus-ring);
+
+  --glass-bg: rgba(34,31,40,.70);
+  --glass-border: rgba(255,255,255,.09);
+  --glass-sheen: rgba(255,255,255,.055);
+  --glass-blur: 22px;
+  --brand-gradient: linear-gradient(145deg,#6d64a0,#bd7e95);
+  --fab-shadow: 0 12px 30px rgba(0,0,0,.34);
+  --column-bg: rgba(255,255,255,.018);
+  --app-background:
+    radial-gradient(900px 560px at 80% -10%,rgba(130,116,180,.115),transparent 62%),
+    radial-gradient(760px 480px at 16% 110%,rgba(88,133,143,.09),transparent 66%),
+    linear-gradient(180deg,#1c1921,#17151b);
+
+  --topbar-bg: rgba(39,35,45,.30);
+  --topbar-bg-hover: rgba(43,39,49,.40);
+  --topbar-border: rgba(255,255,255,.045);
+  --topbar-shadow: 0 4px 14px rgba(0,0,0,.075);
+  --topbar-shadow-hover: 0 6px 18px rgba(0,0,0,.12);
+  --topbar-blur: 14px;
+  --project-card-overlay-start: rgba(35,32,40,.88);
+  --project-card-overlay-end: rgba(38,35,44,.98);
+  --project-card-border: rgba(255,255,255,.075);
+  --project-card-hover-border: rgba(255,255,255,.12);
+  --project-card-shadow: 0 2px 8px rgba(0,0,0,.17);
+  --project-card-hover-shadow: 0 7px 20px rgba(0,0,0,.25);
+  --project-card-sheen-rest: rgba(255,255,255,.025);
+  --project-card-highlight-rest: rgba(255,255,255,.055);
+  --project-card-sheen-hover: rgba(255,255,255,.065);
+  --project-card-sheen-hover-mid: rgba(255,255,255,.015);
+  --project-card-highlight-hover: rgba(255,255,255,.10);
+}
+
+/* ================================================================
+   Component Tokens
+   ================================================================ */
+:root {
+  --card-bg: var(--surface-card);
+  --card-border: var(--border-subtle);
+  --card-shadow: var(--shadow-1);
+  --card-radius: var(--radius-3);
+  --card-hover-border: var(--border-default);
+  --card-hover-shadow: var(--shadow-2);
+
+  --panel-bg: var(--surface-base);
+  --panel-border: var(--border-subtle);
+  --panel-radius: var(--radius-4);
+
+  --popup-bg: var(--surface-floating);
+  --popup-border: var(--border-default);
+  --popup-radius: var(--radius-3);
+  --popup-shadow: var(--shadow-3);
+
+  --control-bg: var(--surface-card-solid);
+  --control-bg-hover: var(--surface-raised);
+  --control-border: var(--border-default);
+  --control-border-focus: var(--action-outline);
+  --control-radius: var(--radius-2);
+
+  --sidebar-item-hover: var(--surface-soft-hover);
+  --sidebar-item-active: var(--selection-bg);
+  --sidebar-item-active-fg: var(--selection-fg);
+}
+
+/* ================================================================
+   Demo scaffolding
+   ================================================================ */
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  min-width: 320px;
+  font-family: var(--font-sans);
+  color: var(--content-primary);
+  background: var(--app-background);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  transition: background var(--duration-float) var(--ease-standard), color var(--duration-ui) ease;
+}
+button,input { font: inherit; }
+button { color: inherit; }
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
+
+.lab-shell { max-width: 1480px; margin: 0 auto; padding: 28px; }
+.lab-header {
+  display: flex; align-items: center; gap: 18px;
+  margin-bottom: 20px;
+}
+.brand-mark {
+  width: 44px; height: 44px; border-radius: 14px;
+  display: grid; place-items: center;
+  color: #fff;
+  background: var(--brand-gradient);
+  box-shadow: 0 8px 24px rgba(94,82,145,.22), inset 0 1px 0 rgba(255,255,255,.32);
+}
+.brand-mark svg { width: 25px; height: 25px; }
+.lab-heading { min-width: 0; }
+.lab-heading h1 { margin: 0; font-size: 24px; letter-spacing: -.025em; }
+.lab-heading p { margin: 5px 0 0; font-size: 12px; color: var(--content-secondary); }
+.lab-actions { margin-left: auto; display: flex; gap: 8px; }
+.icon-btn,.seg-btn {
+  height: 34px; border-radius: var(--radius-2); border: 1px solid var(--control-border);
+  background: var(--surface-card); box-shadow: var(--shadow-1); cursor: pointer;
+  transition: .18s var(--ease-standard); backdrop-filter: blur(12px);
+}
+.icon-btn { width: 38px; display:grid; place-items:center; font-size: 15px; }
+.icon-btn:hover,.seg-btn:hover { background: var(--surface-raised); border-color: var(--border-strong); }
+
+.hero-note {
+  display:grid; grid-template-columns: 1.2fr 1fr 1fr; gap:1px;
+  background: var(--border-subtle); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-4); overflow:hidden; box-shadow:var(--shadow-1);
+  margin-bottom:20px;
+}
+.hero-note > div { padding: 16px 18px; background: var(--surface-card); backdrop-filter: blur(12px); }
+.hero-note b { display:block; font-size:12px; margin-bottom:5px; }
+.hero-note span { display:block; font-size:11px; line-height:1.55; color:var(--content-secondary); }
+.hero-note .lead b { color:var(--selection-fg); }
+
+/* Full app preview */
+.preview-frame {
+  height: 650px;
+  display: grid; grid-template-columns: var(--sidebar-width) 1fr;
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 22px;
+  background: var(--app-background);
+  box-shadow: var(--shadow-3);
+  position: relative;
+}
+.preview-sidebar {
+  padding: 22px 12px 14px;
+  background: var(--surface-sidebar);
+  border-right: 1px solid var(--border-subtle);
+  backdrop-filter: blur(var(--glass-blur));
+  display:flex; flex-direction:column;
+}
+.gugu-logo { display:flex; align-items:center; gap:9px; padding:0 10px 18px; font-weight:700; font-size:15px; }
+.gugu-logo .mini-mark {
+  width:31px;height:31px;border-radius:10px;display:grid;place-items:center;color:white;
+  background:var(--brand-gradient);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.3);
+}
+.nav-rule { height:1px;background:var(--border-hairline);margin:5px 7px 12px; }
+.nav-group { margin-bottom: 8px; }
+.nav-title { font-size:9px; font-weight:700; letter-spacing:var(--tracking-label); color:var(--content-tertiary); padding:0 10px 5px; }
+.nav-item { height:34px; display:flex; align-items:center; gap:9px; padding:0 10px; border-radius:9px; font-size:12px; color:var(--content-secondary); margin:1px 0; }
+.nav-item svg { width:14px;height:14px;opacity:.86; }
+.nav-item:hover { background:var(--sidebar-item-hover); color:var(--content-primary); }
+.nav-item.active { background:var(--sidebar-item-active); color:var(--sidebar-item-active-fg); font-weight:650; }
+.nav-badge { margin-left:auto; min-width:18px; padding:1px 5px; border-radius:999px; text-align:center; font-size:9px; background:var(--action-soft); color:var(--selection-fg); }
+.soon { margin-left:auto; font-size:8px; color:var(--content-tertiary); }
+.user-card { margin-top:auto; display:flex;align-items:center;gap:8px;padding:8px;border:1px solid var(--border-subtle);background:var(--surface-card);border-radius:11px;box-shadow:var(--shadow-1); }
+.avatar { width:29px;height:29px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:700;background:var(--brand-gradient); }
+.user-meta b { display:block;font-size:11px; }.user-meta span{font-size:9px;color:var(--content-tertiary)}
+
+.preview-main { min-width:0; position:relative; overflow:hidden; padding: 78px 18px 16px; }
+.topbar {
+  position:absolute; top:16px;left:18px;right:18px;height:50px;
+  display:flex;align-items:center;gap:12px;padding:0 14px;
+  background:var(--topbar-bg);border:1px solid var(--topbar-border);border-radius:14px;
+  box-shadow:var(--topbar-shadow);backdrop-filter:blur(var(--topbar-blur));
+  transition:background .18s var(--ease-standard),border-color .18s ease,box-shadow .18s ease;
+}
+.topbar:hover { background:var(--topbar-bg-hover); box-shadow:var(--topbar-shadow-hover); }
+.topbar-title{min-width:150px}.topbar-title b{display:block;font-size:15px}.topbar-title span{display:block;font-size:9px;color:var(--content-tertiary);margin-top:2px}
+.search { margin-left:auto; width:min(260px,32%); height:30px;display:flex;align-items:center;gap:7px;padding:0 10px;border-radius:9px;background:var(--surface-soft);border:1px solid transparent;color:var(--content-tertiary);font-size:10px; }
+.search kbd{margin-left:auto;border:1px solid var(--border-subtle);border-radius:5px;padding:1px 4px;font-size:8px;background:var(--surface-card)}
+.btn { height:30px;border-radius:8px;padding:0 10px;border:1px solid var(--border-default);background:var(--surface-card);font-size:10px;font-weight:620;cursor:pointer;box-shadow:var(--shadow-1);transition:.18s var(--ease-standard); }
+.btn:hover{transform:translateY(-1px);box-shadow:var(--shadow-2)}
+.btn.primary{border-color:transparent;background:var(--action-primary);color:white;box-shadow:0 4px 12px rgba(85,76,132,.18)}
+:root[data-mode="dark"] .btn.primary{color:var(--content-inverse)}
+
+.board-toolbar { height:38px; display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+.board-toolbar h2{font-size:12px;margin:0}.filter-chip{font-size:9px;color:var(--content-secondary);padding:5px 8px;background:var(--surface-soft);border-radius:999px;border:1px solid var(--border-hairline)}
+.board-toolbar .spacer{flex:1}.quiet{font-size:9px;color:var(--content-tertiary)}
+.kanban { height: calc(100% - 48px); display:grid; grid-template-columns:repeat(4,minmax(145px,1fr)); gap:10px; overflow:hidden; }
+.column { min-width:0; height:100%; padding:10px; border:1px solid var(--border-hairline); background:var(--column-bg); border-radius:14px; overflow:hidden; }
+.column{background:var(--column-bg)}
+.column-head{display:flex;align-items:center;gap:6px;height:26px;padding:0 3px 7px}.status-dot{width:7px;height:7px;border-radius:50%;background:var(--content-tertiary)}.status-dot.iris{background:var(--iris-500)}.status-dot.cyan{background:var(--cyan-500)}.status-dot.green{background:var(--green-500)}
+.column-head b{font-size:10px}.column-head span{font-size:9px;color:var(--content-tertiary)}
+.card-list{display:flex;flex-direction:column;gap:8px}
+.project-card {
+  position:relative; min-height:105px; padding:11px 11px 10px; overflow:hidden;
+  background:linear-gradient(to right,var(--project-card-overlay-start) 0%,var(--project-card-overlay-end) 40%),var(--project-color);
+  border:1px solid var(--project-card-border);border-radius:var(--card-radius);
+  box-shadow:var(--project-card-shadow);
+  transition:transform .25s cubic-bezier(.34,1.2,.64,1),box-shadow .25s ease,background .25s ease-out,border-color .18s ease;
+}
+.project-card:hover{transform:translateY(-2px);box-shadow:var(--project-card-hover-shadow);border-color:var(--project-card-hover-border)}
+.project-card::before {
+  content:"";position:absolute;inset:0;border-radius:inherit;
+  background:linear-gradient(to bottom,var(--project-card-sheen-rest) 0%,transparent 50%);
+  box-shadow:inset 0 1px 0 var(--project-card-highlight-rest);
+  pointer-events:none;
+}
+.project-card::after {
+  content:"";position:absolute;inset:0;border-radius:inherit;
+  background:linear-gradient(to bottom,var(--project-card-sheen-hover) 0%,var(--project-card-sheen-hover-mid) 45%,transparent 100%);
+  box-shadow:inset 0 1px 0 var(--project-card-highlight-hover);
+  opacity:0;transition:opacity .25s ease;pointer-events:none;
+}
+.project-card:hover::after{opacity:1}
+.project-top{display:flex;gap:6px;align-items:flex-start}.project-name{font-size:11px;font-weight:650;line-height:1.35;flex:1}.stars{font-size:8px;letter-spacing:-1px;color:var(--project-color)}
+.project-meta{display:flex;align-items:center;justify-content:space-between;margin-top:8px;font-size:9px;color:var(--content-tertiary)}
+.stage{padding:2px 5px;border-radius:5px;background:var(--surface-soft);color:var(--content-secondary)}
+.project-foot{display:flex;align-items:center;margin-top:10px;font-size:9px;color:var(--content-secondary)}.project-foot .pct{margin-left:auto;font-variant-numeric:tabular-nums}
+.progress{height:3px;background:var(--surface-soft);border-radius:999px;margin-top:6px;overflow:hidden}.progress i{display:block;height:100%;border-radius:inherit;background:var(--project-color)}
+.mini-card{min-height:83px}.mini-card .project-meta{margin-top:6px}.mini-card .project-foot{margin-top:8px}
+
+.gugu-fab{position:absolute;right:22px;bottom:20px;width:46px;height:46px;border-radius:16px;display:grid;place-items:center;color:white;background:var(--brand-gradient);box-shadow:0 12px 28px rgba(77,65,119,.22);border:1px solid rgba(255,255,255,.22)}
+.gugu-fab::after{content:"";position:absolute;right:5px;top:5px;width:7px;height:7px;border-radius:50%;background:#83ad99;border:2px solid rgba(255,255,255,.8)}
+
+.section { margin-top: 24px; padding: 20px; border-radius: 18px; border:1px solid var(--border-subtle); background:var(--surface-base); box-shadow:var(--shadow-1); backdrop-filter:blur(12px); }
+.section-head{display:flex;align-items:end;gap:12px;margin-bottom:14px}.section-head h2{margin:0;font-size:15px}.section-head p{margin:0;font-size:10px;color:var(--content-tertiary)}
+.section-head code{margin-left:auto;font:10px var(--font-mono);color:var(--selection-fg);background:var(--action-soft);padding:4px 7px;border-radius:6px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+.swatch-grid{display:grid;grid-template-columns:repeat(10,minmax(56px,1fr));gap:7px}.swatch{min-width:0}.swatch-color{height:58px;border-radius:10px;border:1px solid var(--border-hairline);box-shadow:inset 0 1px 0 rgba(255,255,255,.18)}.swatch label{display:block;font-size:8px;color:var(--content-tertiary);margin-top:5px;white-space:nowrap}.swatch code{display:block;font:8px var(--font-mono);color:var(--content-secondary);margin-top:2px}
+.project-palette{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}.project-chip{height:72px;border-radius:12px;position:relative;overflow:hidden;background:var(--surface-card);border:1px solid var(--border-subtle)}.project-chip i{display:block;height:37px;background:var(--c)}.project-chip span{display:block;padding:7px;font-size:8px;color:var(--content-secondary)}
+
+.semantic-list{display:grid;grid-template-columns:repeat(2,1fr);gap:7px}.semantic-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:9px;background:var(--surface-soft);border:1px solid transparent}.semantic-dot{width:20px;height:20px;border-radius:6px;background:var(--c);border:1px solid var(--border-subtle);box-shadow:var(--shadow-1)}.semantic-row code{font:9px var(--font-mono);flex:1}.semantic-row span{font-size:8px;color:var(--content-tertiary)}
+
+.control-stage{padding:16px;border-radius:14px;background:var(--surface-soft);border:1px solid var(--border-hairline);display:flex;flex-wrap:wrap;align-items:center;gap:8px}.input{height:34px;min-width:190px;display:flex;align-items:center;padding:0 10px;border:1px solid var(--control-border);border-radius:var(--control-radius);background:var(--control-bg);color:var(--content-secondary);font-size:10px;box-shadow:inset 0 1px 0 var(--border-highlight)}.input.focused{border-color:var(--control-border-focus);box-shadow:var(--shadow-focus)}
+.tag{padding:4px 7px;border-radius:999px;font-size:9px;font-weight:620}.tag.success{background:var(--success-bg);color:var(--success-fg)}.tag.warning{background:var(--warning-bg);color:var(--warning-fg)}.tag.danger{background:var(--danger-bg);color:var(--danger-fg)}.tag.info{background:var(--info-bg);color:var(--info-fg)}
+.checkbox{width:16px;height:16px;border-radius:5px;border:1px solid var(--border-strong);background:var(--surface-card-solid);display:grid;place-items:center;font-size:10px}.checkbox.checked{background:var(--action-primary);color:white;border-color:transparent}
+
+.elevation-demo{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:10px}.elev{height:108px;border-radius:14px;background:var(--surface-card-solid);border:1px solid var(--border-subtle);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px}.elev b{font-size:10px}.elev span{font-size:8px;color:var(--content-tertiary)}.elev.one{box-shadow:var(--shadow-1)}.elev.two{box-shadow:var(--shadow-2)}.elev.three{box-shadow:var(--shadow-3)}
+
+.rule-card{padding:14px;border:1px solid var(--border-subtle);border-radius:13px;background:var(--surface-card)}.rule-card strong{display:block;font-size:11px;margin-bottom:5px}.rule-card p{margin:0;font-size:9px;line-height:1.55;color:var(--content-secondary)}.rule-card em{font-style:normal;color:var(--selection-fg);font-weight:650}
+
+.code-block{position:relative;margin-top:14px;padding:14px;border-radius:13px;background:#1e1c23;color:#d9d4df;border:1px solid rgba(255,255,255,.07);overflow:auto;font:10px/1.65 var(--font-mono)}.code-block .c{color:#8e8796}.code-block .p{color:#a89fd2}.code-block .v{color:#c8b8a7}.copy-btn{position:absolute;right:8px;top:8px;background:rgba(255,255,255,.07);color:#d9d4df;border:1px solid rgba(255,255,255,.1);border-radius:7px;padding:4px 7px;font:9px var(--font-sans);cursor:pointer}
+
+.footer-note{padding:18px 2px 4px;color:var(--content-tertiary);font-size:9px;display:flex;justify-content:space-between;gap:12px}
+
+@media (max-width: 1050px){
+  .lab-shell{padding:18px}.hero-note{grid-template-columns:1fr}.preview-frame{grid-template-columns:180px 1fr}.preview-sidebar{padding-left:8px;padding-right:8px}.kanban{grid-template-columns:repeat(3,minmax(150px,1fr));overflow-x:auto}.column:last-child{display:none}.grid-3{grid-template-columns:1fr}.swatch-grid{grid-template-columns:repeat(5,1fr)}
+}
+@media (max-width: 720px){
+  .lab-header{align-items:flex-start}.lab-heading p{display:none}.preview-frame{height:560px;grid-template-columns:1fr}.preview-sidebar{display:none}.preview-main{padding-left:10px;padding-right:10px}.topbar{left:10px;right:10px}.search{display:none}.kanban{grid-template-columns:repeat(2,minmax(150px,1fr))}.column:nth-child(n+3){display:none}.grid-2{grid-template-columns:1fr}.project-palette{grid-template-columns:repeat(4,1fr)}.swatch-grid{grid-template-columns:repeat(4,1fr)}.semantic-list{grid-template-columns:1fr}.hero-note > div{padding:13px 14px}.lab-shell{padding:12px}.section{padding:14px}.lab-heading h1{font-size:19px}
+}
+
+
+/* Theme family details */
+:root[data-family="glass"] .preview-sidebar { border-right-color: var(--border-default); box-shadow: inset -1px 0 0 var(--border-highlight); }
+:root[data-family="glass"] .hero-note > div,
+:root[data-family="glass"] .section { backdrop-filter: blur(18px); }
+:root[data-family="v2"] .preview-sidebar { box-shadow: none; }
+
+.theme-controls { margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+.segmented { display:flex; gap:2px; padding:3px; border:1px solid var(--border-subtle); border-radius:11px; background:var(--surface-soft); box-shadow:var(--shadow-1); backdrop-filter:blur(14px); }
+.segmented button { height:28px; min-width:66px; padding:0 10px; border:0; border-radius:8px; background:transparent; color:var(--content-secondary); font-size:10px; font-weight:620; cursor:pointer; transition:.16s var(--ease-standard); }
+.segmented button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
+.segmented button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--shadow-1); }
+.control-label { font-size:9px; color:var(--content-tertiary); margin-right:2px; }
+.control-cluster { display:flex; align-items:center; gap:6px; }
+
+.theme-matrix { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:0 0 20px; }
+.theme-cell { text-align:left; border:1px solid var(--border-subtle); border-radius:13px; padding:10px; background:var(--surface-base); cursor:pointer; color:var(--content-primary); box-shadow:var(--shadow-1); transition:.18s var(--ease-standard); }
+.theme-cell:hover { transform:translateY(-1px); box-shadow:var(--shadow-2); }
+.theme-cell.active { outline:2px solid var(--focus-ring); outline-offset:1px; }
+.theme-cell-preview { height:48px; border-radius:9px; margin-bottom:8px; position:relative; overflow:hidden; border:1px solid rgba(127,127,127,.16); }
+.theme-cell-preview::before { content:""; position:absolute; left:8px; top:8px; bottom:8px; width:25%; border-radius:6px; background:var(--mini-side); border:1px solid var(--mini-border); }
+.theme-cell-preview::after { content:""; position:absolute; left:39%; right:8px; top:8px; height:13px; border-radius:6px; background:var(--mini-card); border:1px solid var(--mini-border); box-shadow:0 6px 0 var(--mini-card),0 12px 0 var(--mini-card); }
+.theme-cell b { display:block; font-size:10px; }.theme-cell span{display:block;font-size:8px;color:var(--content-tertiary);margin-top:2px}
+.theme-cell.glass-light .theme-cell-preview{background:linear-gradient(160deg,#e8e9ee,#9aa2b8);--mini-side:rgba(255,255,255,.42);--mini-card:rgba(255,255,255,.62);--mini-border:rgba(255,255,255,.72)}
+.theme-cell.glass-dark .theme-cell-preview{background:linear-gradient(145deg,#0e101a,#13152a);--mini-side:rgba(255,255,255,.05);--mini-card:rgba(255,255,255,.07);--mini-border:rgba(255,255,255,.12)}
+.theme-cell.v2-light .theme-cell-preview{background:linear-gradient(#f5f3f6,#eeecf0);--mini-side:rgba(248,246,249,.84);--mini-card:rgba(255,255,255,.74);--mini-border:rgba(42,35,49,.08)}
+.theme-cell.v2-dark .theme-cell-preview{background:linear-gradient(#1c1921,#17151b);--mini-side:rgba(25,23,30,.86);--mini-card:rgba(38,34,43,.78);--mini-border:rgba(255,255,255,.08)}
+
+.theme-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 7px; border-radius:999px; background:var(--action-soft); color:var(--selection-fg); font:9px var(--font-mono); }
+.theme-badge i { width:6px;height:6px;border-radius:50%;background:var(--action-primary); }
+.semantic-row .value { max-width:45%; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font:8px var(--font-mono); color:var(--content-tertiary); }
+.mode-note { font-size:9px;color:var(--content-tertiary); }
+
+@media(max-width:900px){.theme-matrix{grid-template-columns:repeat(2,1fr)}.theme-controls{width:100%;justify-content:flex-start;margin-left:62px}}
+@media(max-width:560px){.theme-matrix{grid-template-columns:1fr 1fr}.control-cluster .control-label{display:none}.segmented button{min-width:54px}.theme-controls{margin-left:0}.lab-header{flex-wrap:wrap}}
+
+</style>
+</head>
+<body>
+<div class="lab-shell">
+  <header class="lab-header">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="M20 7l2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/></svg>
+    </div>
+    <div class="lab-heading">
+      <h1>咕咕 Design Tokens</h1>
+      <p id="themeSubtitle">Glass — 保留当前 dev 的柔光、透明层与紫灰环境色。</p>
+    </div>
+    <div class="theme-controls">
+      <div class="control-cluster"><span class="control-label">主题</span><div class="segmented" id="familySwitch"><button data-family="glass" class="active">Glass</button><button data-family="v2">V2</button></div></div>
+      <div class="control-cluster"><span class="control-label">模式</span><div class="segmented" id="modeSwitch"><button data-mode="light" class="active">Light</button><button data-mode="dark">Dark</button></div></div>
+    </div>
+  </header>
+
+  <section class="hero-note">
+    <div class="lead"><b id="heroTitle1">01 · Glass 是视觉身份</b><span id="heroText1">当前咕咕的大面积半透明、白色高光描边和柔和紫灰背景完整保留，不把它当成需要被 v2 修掉的旧视觉。</span></div>
+    <div><b id="heroTitle2">02 · Light / Dark 独立于主题</b><span id="heroText2">Glass 自己拥有亮色与暗色；切到 V2 后也仍有自己的亮色与暗色。组件只消费同一套 semantic token。</span></div>
+    <div><b id="heroTitle3">03 · 同结构直接比较</b><span id="heroText3">下面的项目页、按钮、输入、状态和浮层不换 DOM，只换 token，方便判断差异究竟来自主题还是组件。</span></div>
+  </section>
+
+  <div class="theme-matrix" id="themeMatrix">
+    <button class="theme-cell glass-light active" data-family="glass" data-mode="light"><div class="theme-cell-preview"></div><b>Glass · Light</b><span>当前 dev 主视觉</span></button>
+    <button class="theme-cell glass-dark" data-family="glass" data-mode="dark"><div class="theme-cell-preview"></div><b>Glass · Dark</b><span>深色玻璃</span></button>
+    <button class="theme-cell v2-light" data-family="v2" data-mode="light"><div class="theme-cell-preview"></div><b>V2 · Light</b><span>Pearl / Ink / Iris</span></button>
+    <button class="theme-cell v2-dark" data-family="v2" data-mode="dark"><div class="theme-cell-preview"></div><b>V2 · Dark</b><span>低彩深色工作台</span></button>
+  </div>
+
+  <div class="preview-frame">
+    <aside class="preview-sidebar">
+      <div class="gugu-logo"><div class="mini-mark">咕</div><span>咕咕</span></div>
+      <div class="nav-rule"></div>
+      <div class="nav-group">
+        <div class="nav-title">工作台</div>
+        <div class="nav-item active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v4H4zM4 12h16v7H4z"/></svg>项目 <span class="nav-badge">6</span></div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>日历</div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="13" r="8"/><path d="M12 9v5l3 2M9 2h6"/></svg>定时任务</div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><path d="M8 7l3 9M16 7l-3 9M8 6h8"/></svg>思维</div>
+      </div>
+      <div class="nav-rule"></div>
+      <div class="nav-group">
+        <div class="nav-title">资源</div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h7l2 2h9v11H3z"/></svg>文件库</div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3"/><path d="M5 20c1-5 3.5-7 7-7s6 2 7 7"/></svg>客户 <span class="soon">咕了</span></div>
+        <div class="nav-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="8" cy="8" r="3"/><circle cx="17" cy="9" r="2"/><path d="M2 20c1-5 3-7 6-7s5 2 6 7M14 14c3 0 5 2 6 6"/></svg>团队 <span class="soon">咕了</span></div>
+      </div>
+      <div class="nav-rule"></div>
+      <div class="nav-group"><div class="nav-title">通知</div><div class="nav-item">◌ 通知 <span class="nav-badge">2</span></div></div>
+      <div class="user-card"><div class="avatar">C</div><div class="user-meta"><b>Coffeiz</b><span>个人空间</span></div></div>
+    </aside>
+
+    <main class="preview-main">
+      <div class="topbar">
+        <div class="topbar-title"><b>项目</b><span>2026年8月15日 · 星期六</span></div>
+        <div class="search">⌕ 搜索项目、文件、笔记 <kbd>⌘ K</kbd></div>
+        <button class="btn">⇧ 上传文件</button>
+        <button class="btn primary">＋ 新建项目</button>
+      </div>
+      <div class="board-toolbar"><h2>项目看板</h2><span class="theme-badge"><i></i><span id="liveThemeLabel">Glass · Light</span></span><span class="filter-chip">全部 12</span><span class="filter-chip">进行中 6</span><span class="spacer"></span><span class="quiet">按阶段拖动项目</span></div>
+      <div class="kanban">
+        <div class="column">
+          <div class="column-head"><i class="status-dot"></i><b>待处理</b><span>3</span></div>
+          <div class="card-list">
+            <article class="project-card" style="--project-color:var(--project-rose)"><div class="project-top"><div class="project-name">角色立绘 · 夏季版本</div><div class="stars">★★★</div></div><div class="project-meta"><span>个人创作</span><span class="stage">草图</span></div><div class="project-foot"><span>08/18 → 08/24</span><span class="pct">18%</span></div><div class="progress"><i style="width:18%"></i></div></article>
+            <article class="project-card mini-card" style="--project-color:var(--project-sand)"><div class="project-top"><div class="project-name">作品集排版</div><div class="stars">★</div></div><div class="project-meta"><span>《人生对比色》</span><span class="stage">整理</span></div><div class="project-foot"><span>08/30</span><span class="pct">8%</span></div><div class="progress"><i style="width:8%"></i></div></article>
+          </div>
+        </div>
+        <div class="column">
+          <div class="column-head"><i class="status-dot iris"></i><b>进行中</b><span>4</span></div>
+          <div class="card-list">
+            <article class="project-card" style="--project-color:var(--project-lilac)"><div class="project-top"><div class="project-name">咕咕 · 设计令牌系统</div><div class="stars">★★★</div></div><div class="project-meta"><span>Gugu</span><span class="stage">视觉规范</span></div><div class="project-foot"><span>08/12 → 08/17</span><span class="pct">62%</span></div><div class="progress"><i style="width:62%"></i></div></article>
+            <article class="project-card" style="--project-color:var(--project-sky)"><div class="project-top"><div class="project-name">桌面端交互原型</div><div class="stars">★★</div></div><div class="project-meta"><span>Gugu Desktop</span><span class="stage">原型</span></div><div class="project-foot"><span>08/20</span><span class="pct">43%</span></div><div class="progress"><i style="width:43%"></i></div></article>
+            <article class="project-card mini-card" style="--project-color:var(--project-mauve)"><div class="project-top"><div class="project-name">LoopScope 0.1</div><div class="stars">★★</div></div><div class="project-meta"><span>Agent Tooling</span><span class="stage">架构</span></div><div class="project-foot"><span>09/02</span><span class="pct">31%</span></div><div class="progress"><i style="width:31%"></i></div></article>
+          </div>
+        </div>
+        <div class="column">
+          <div class="column-head"><i class="status-dot cyan"></i><b>待确认</b><span>2</span></div>
+          <div class="card-list">
+            <article class="project-card" style="--project-color:var(--project-blue)"><div class="project-top"><div class="project-name">Interaction Runtime · Filesystem 接入</div><div class="stars">★★★</div></div><div class="project-meta"><span>Runtime</span><span class="stage">回归</span></div><div class="project-foot"><span>08/16</span><span class="pct">86%</span></div><div class="progress"><i style="width:86%"></i></div></article>
+            <article class="project-card mini-card" style="--project-color:var(--project-coral)"><div class="project-top"><div class="project-name">新官网视觉稿</div><div class="stars">★</div></div><div class="project-meta"><span>Website</span><span class="stage">Review</span></div><div class="project-foot"><span>08/19</span><span class="pct">74%</span></div><div class="progress"><i style="width:74%"></i></div></article>
+          </div>
+        </div>
+        <div class="column">
+          <div class="column-head"><i class="status-dot green"></i><b>已完成</b><span>5</span></div>
+          <div class="card-list">
+            <article class="project-card mini-card" style="--project-color:var(--project-leaf)"><div class="project-top"><div class="project-name">日历模块化重构</div><div class="stars">★★</div></div><div class="project-meta"><span>Gugu</span><span class="stage">完成</span></div><div class="project-foot"><span style="color:var(--success-fg)">✓ 已完成</span><span class="pct">100%</span></div><div class="progress"><i style="width:100%"></i></div></article>
+            <article class="project-card mini-card" style="--project-color:var(--project-sky)"><div class="project-top"><div class="project-name">文件页 Runtime-only</div><div class="stars">★★★</div></div><div class="project-meta"><span>Runtime</span><span class="stage">完成</span></div><div class="project-foot"><span style="color:var(--success-fg)">✓ 已完成</span><span class="pct">100%</span></div><div class="progress"><i style="width:100%"></i></div></article>
+          </div>
+        </div>
+      </div>
+      <div class="gugu-fab">咕</div>
+    </main>
+  </div>
+
+  <section class="section">
+    <div class="section-head"><div><h2 id="paletteTitle1">01 · Glass base palette</h2><p id="paletteDesc1">当前 dev 的紫、粉、青与蓝灰环境色，作为 Glass 的 primitive DNA。</p></div><code>primitive</code></div>
+    <div class="swatch-grid" id="neutralSwatches"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><h2 id="paletteTitle2">02 · Glass alpha & accent</h2><p id="paletteDesc2">透明白、高光边、品牌紫与 companion colors 共同构成玻璃感。</p></div><code>primitive</code></div>
+    <div class="swatch-grid" id="irisSwatches"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><h2>03 · Project colors</h2><p>真正有表现力的颜色留给项目与内容，而不是导航栏和所有玻璃面。</p></div><code>content palette</code></div>
+    <div class="project-palette" id="projectPalette"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><h2>04 · Semantic tokens</h2><p>业务组件同时不关心 theme family 与 light / dark，只消费这一层。</p></div><code>semantic</code></div>
+    <div class="grid-2">
+      <div class="semantic-list" id="semanticList"></div>
+      <div class="control-stage">
+        <button class="btn primary">主操作</button>
+        <button class="btn">次操作</button>
+        <div class="input">搜索项目、文件、笔记</div>
+        <div class="input focused">焦点输入状态</div>
+        <div class="checkbox checked">✓</div><span style="font-size:10px">已完成</span>
+        <span class="tag success">已完成</span><span class="tag warning">临近截止</span><span class="tag danger">失败</span><span class="tag info">同步中</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><h2>05 · Elevation</h2><p id="elevationDesc">Glass 使用环境高光 + 柔阴影建立层级；V2 切换后同一组件会变成更克制的 surface elevation。</p></div><code>elevation</code></div>
+    <div class="elevation-demo"><div class="elev one"><b>Resting · 1</b><span>项目卡 / 文件卡</span></div><div class="elev two"><b>Raised · 2</b><span>Hover / Popover</span></div><div class="elev three"><b>Floating · 3</b><span>Popup / Modal</span></div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><div><h2>06 · Theme contract</h2><p>两套主题共享组件 API，但可以拥有不同的视觉哲学。</p></div><code>usage</code></div>
+    <div class="grid-3">
+      <div class="rule-card"><strong>Family ≠ Mode</strong><p><em>Glass / V2</em> 定义视觉语言；<em>Light / Dark</em> 定义色彩模式。两者正交组合为 4 个状态。</p></div>
+      <div class="rule-card"><strong>One semantic contract</strong><p>组件只使用 `surface / content / border / action / status / elevation`，不直接判断自己属于 Glass 还是 V2。</p></div>
+      <div class="rule-card"><strong>Glass may stay glass</strong><p>Glass 主题允许普通卡片、Sidebar 与控制面继续半透明、高光、blur；这不是 V2 的规则泄漏。</p></div>
+      <div class="rule-card"><strong>V2 stays quieter</strong><p>V2 中普通内容面更实、更中性，<em>Glass 只表示真正浮起的层级</em>，Iris 主要承担交互语义。</p></div>
+      <div class="rule-card"><strong>Content colors survive</strong><p>项目色、日历色、画布贴纸色属于内容层，两套主题都保留；系统主题不应该吃掉用户内容颜色。</p></div>
+      <div class="rule-card"><strong>Switch at the root</strong><p>建议根节点使用 `data-family` + `data-mode`；未来新增第三主题时无需复制组件 CSS。</p></div>
+    </div>
+
+    <div class="code-block" id="tokenSnippet"><button class="copy-btn" id="copyBtn">复制当前核心令牌</button><div id="snippetBody"></div></div>
+  </section>
+
+  <div class="footer-note"><span>GUGU · Design Tokens · Glass / V2</span><span><span id="footerState">Glass · Light</span> · family × mode</span></div>
+</div>
+
+<script>
+const root = document.documentElement;
+
+const palettes = {
+  glass: {
+    aTitle:'01 · Glass base palette',
+    aDesc:'当前 dev 的紫、粉、青与蓝灰环境色，作为 Glass 的 primitive DNA。',
+    aPrefix:'glass',
+    a:[['purple-500','#7b7fb2'],['purple-400','#9590c4'],['pink-400','#c4afc8'],['cyan-400','#7ab8c8'],['gray-050','#f5f6fa'],['gray-100','#e8e9ee'],['gray-300','#bfc4d2'],['gray-500','#9aa2b8'],['gray-900','#1e2028']],
+    bTitle:'02 · Glass alpha & accent',
+    bDesc:'透明白、高光边与品牌 companion colors 共同构成现在咕咕的玻璃质感。',
+    bPrefix:'alpha',
+    b:[['white-08','rgba(255,255,255,.08)'],['white-38','rgba(255,255,255,.38)'],['white-56','rgba(255,255,255,.56)'],['white-70','rgba(255,255,255,.70)'],['white-76','rgba(255,255,255,.76)'],['white-92','rgba(255,255,255,.92)'],['black-08','rgba(0,0,0,.08)'],['focus','rgba(123,127,178,.45)']]
+  },
+  v2: {
+    aTitle:'01 · Pearl neutral scale',
+    aDesc:'V2 的低彩暖灰紫中性色：背景更安静，让插画、项目色和内容自己成为主角。',
+    aPrefix:'pearl',
+    a:[['0','#ffffff'],['25','#fbfafc'],['50','#f7f5f8'],['100','#f0edf2'],['150','#e9e5eb'],['200','#e2dde5'],['300','#d2cbd5'],['400','#b8b0bd'],['500','#98909d'],['600','#756f7a'],['700','#55505a'],['800','#39353e'],['900','#27242d'],['950','#19171d']],
+    bTitle:'02 · Iris brand scale',
+    bDesc:'Iris 从“环境色”收缩为交互色：primary、active、focus 与 selection。',
+    bPrefix:'iris',
+    b:[['50','#f4f2fa'],['100','#eae6f5'],['200','#d8d2ea'],['300','#beb6da'],['400','#9f96c6'],['500','#8178b2'],['600','#6d64a0'],['700','#5b5387'],['800','#48426b'],['900','#35314e']]
+  }
+};
+
+const projectColors = [
+  ['lilac','#8a80ba'],['rose','#c4879f'],['sky','#76a7b2'],['leaf','#7b9d7d'],
+  ['sand','#ba9365'],['coral','#bd7c6d'],['blue','#7d8eb7'],['mauve','#a980ad']
+];
+
+document.getElementById('projectPalette').innerHTML = projectColors.map(([n,v])=>`<div class="project-chip" style="--c:${v}"><i></i><span>project-${n}<br><code>${v}</code></span></div>`).join('');
+
+const semanticNames = [
+  ['surface-canvas','环境底色'],['surface-card','内容卡'],['surface-floating','浮层'],['surface-sidebar','侧栏'],
+  ['content-primary','主文字'],['content-secondary','次文字'],['border-subtle','轻边界'],['border-strong','强边界'],
+  ['action-primary','主操作'],['selection-bg','选中态'],['success-fg','成功'],['warning-fg','警告']
+];
+
+const themeCopy = {
+  glass: {
+    subtitle:'Glass — 保留当前 dev 的柔光、透明层、紫灰环境色与高光描边。',
+    hero:[
+      ['01 · Glass 是视觉身份','当前咕咕的大面积半透明、白色高光描边和柔和紫灰背景完整保留，不把它当成需要被 V2 修掉的旧视觉。'],
+      ['02 · 透明度就是层级','Sidebar、Topbar、Popup 继续使用不同强度的 glass；项目卡保留现有“项目色 → 白色”的渐变身份，不再额外改成侧边色条。'],
+      ['03 · 原样保留，再令牌化','目标不是把 Glass 改成 V2，而是把现在散落的 rgba / shadow / highlight 收回同一套 semantic contract。']
+    ],
+    elevation:'Glass 使用环境高光 + 柔阴影建立层级；Rest / Hover / Popup 都保留现在的“透、亮、浮”。'
+  },
+  v2: {
+    subtitle:'V2 · Pearl / Ink / Iris — 系统 chrome 更克制，同时保留现有项目卡的渐变身份。',
+    hero:[
+      ['01 · Surface 不再等于 Glass','普通内容面用半实色 surface；项目卡作为产品既有识别元素，继续保留“项目色 → 主体面”的渐变；真正 glass 留给 topbar、popup、聊天等悬浮层。'],
+      ['02 · Purple 不再铺满界面','Iris 主要负责 active / focus / primary action；基础 surface 回到 Pearl + Ink，让系统 chrome 后退。'],
+      ['03 · 项目颜色属于内容','项目、阶段、日历与画布内容继续鲜明；系统 UI 降低抢色，让创作者自己的内容成为最醒目的颜色。']
+    ],
+    elevation:'V2 的层级主要靠 surface + shadow 建立，默认不再要求每个边缘都有白色发光描边。'
+  }
+};
+
+function css(name){ return getComputedStyle(root).getPropertyValue('--'+name).trim(); }
+function mountSwatches(id,prefix,values){
+  document.getElementById(id).innerHTML = values.map(([n,v]) => `<div class="swatch"><div class="swatch-color" style="background:${v}"></div><label>${prefix}-${n}</label><code>${v}</code></div>`).join('');
+}
+function refreshSemantic(){
+  document.getElementById('semanticList').innerHTML = semanticNames.map(([n,d])=>{
+    const v=css(n);
+    return `<div class="semantic-row"><i class="semantic-dot" style="--c:var(--${n})"></i><code>--${n}</code><span>${d}</span><span class="value" title="${v}">${v}</span></div>`;
+  }).join('');
+}
+function buildSnippet(){
+  const names=['surface-canvas','surface-card','surface-floating','content-primary','content-secondary','border-subtle','border-strong','action-primary','selection-bg','focus-ring','shadow-1','glass-bg','glass-border'];
+  const state=`${root.dataset.family === 'glass' ? 'Glass' : 'V2'} · ${root.dataset.mode[0].toUpperCase()+root.dataset.mode.slice(1)}`;
+  const raw=`/* ${state} — 组件只消费 semantic token */\n` + names.map(n=>`--${n}: ${css(n)};`).join('\n');
+  document.getElementById('snippetBody').innerHTML = `<span class="c">/* ${state} — 组件只消费 semantic token */</span>\n` + names.map(n=>`<span class="p">--${n}</span>: <span class="v">${escapeHtml(css(n))}</span>;`).join('\n');
+  return raw;
+}
+function escapeHtml(s){return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')}
+
+function applyTheme(family,mode){
+  root.dataset.family=family; root.dataset.mode=mode;
+  document.querySelectorAll('#familySwitch button').forEach(b=>b.classList.toggle('active',b.dataset.family===family));
+  document.querySelectorAll('#modeSwitch button').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));
+  document.querySelectorAll('.theme-cell').forEach(b=>b.classList.toggle('active',b.dataset.family===family && b.dataset.mode===mode));
+  const state=`${family==='glass'?'Glass':'V2'} · ${mode==='light'?'Light':'Dark'}`;
+  document.getElementById('liveThemeLabel').textContent=state;
+  document.getElementById('footerState').textContent=state;
+  document.getElementById('themeSubtitle').textContent=themeCopy[family].subtitle;
+  themeCopy[family].hero.forEach((x,i)=>{document.getElementById(`heroTitle${i+1}`).textContent=x[0];document.getElementById(`heroText${i+1}`).textContent=x[1];});
+  document.getElementById('elevationDesc').textContent=themeCopy[family].elevation;
+  const p=palettes[family];
+  document.getElementById('paletteTitle1').textContent=p.aTitle; document.getElementById('paletteDesc1').textContent=p.aDesc;
+  document.getElementById('paletteTitle2').textContent=p.bTitle; document.getElementById('paletteDesc2').textContent=p.bDesc;
+  mountSwatches('neutralSwatches',p.aPrefix,p.a); mountSwatches('irisSwatches',p.bPrefix,p.b);
+  requestAnimationFrame(()=>{refreshSemantic();buildSnippet();});
+  try{localStorage.setItem('gugu-token-family',family);localStorage.setItem('gugu-token-mode',mode)}catch{}
+}
+
+document.getElementById('familySwitch').addEventListener('click',e=>{const b=e.target.closest('button[data-family]');if(b)applyTheme(b.dataset.family,root.dataset.mode)});
+document.getElementById('modeSwitch').addEventListener('click',e=>{const b=e.target.closest('button[data-mode]');if(b)applyTheme(root.dataset.family,b.dataset.mode)});
+document.getElementById('themeMatrix').addEventListener('click',e=>{const b=e.target.closest('.theme-cell');if(b)applyTheme(b.dataset.family,b.dataset.mode)});
+
+document.getElementById('copyBtn').addEventListener('click',async e=>{
+  const text=buildSnippet();
+  try{await navigator.clipboard.writeText(text);e.target.textContent='已复制';setTimeout(()=>e.target.textContent='复制当前核心令牌',1200)}catch{e.target.textContent='请手动复制'}
+});
+
+let family='glass',mode='light';
+try{family=localStorage.getItem('gugu-token-family')||family;mode=localStorage.getItem('gugu-token-mode')||mode}catch{}
+if(!['glass','v2'].includes(family))family='glass'; if(!['light','dark'].includes(mode))mode='light';
+applyTheme(family,mode);
+</script>
+</body>
+</html>

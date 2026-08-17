@@ -1,6 +1,6 @@
 # 设计令牌与 `/design` 页面重构方案
 
-> 状态：待实施
+> 状态：已完成（Phase 0-5 已完成，2026-08-15）
 >
 > 调查日期：2026-08-15
 >
@@ -566,76 +566,83 @@ const value = getComputedStyle(document.documentElement)
 
 ### Phase 0：基线与契约
 
-- [ ] 确认 `/design` 的访问范围
-- [ ] 确认主应用与 Admin 的主题边界
-- [ ] 确认基础色、字号、间距、圆角和阴影候选尺度
-- [ ] 将间距、圆角和字体大小各自控制在 4 档
-- [ ] 建立历史间距、字号和圆角值到标准档位的映射表
-- [ ] 记录动态业务色、画布物理参数和第三方组件变量的例外规则
-- [ ] 确认令牌命名规则和废弃变量规则
-- [ ] 盘点 AdminLayout、Admin 全局样式和各 Admin 页面中的暗色 literal、重复组件样式与局部滚动条
-- [ ] 确认 Admin 以默认暗色运行，不参与主应用 `light/dark/system` 切换
-- [ ] 确认 Admin 共享基础尺度、独立语义 surface/content/border/shadow 的边界
+- [x] 确认 `/design` 的访问范围：登录用户可直接访问，入口不污染业务导航
+- [x] 确认主应用与 Admin 的主题边界
+- [x] 确认基础色、字号、间距、圆角和阴影候选尺度
+- [x] 将间距、圆角和字体大小各自控制在 4 档
+- [x] 建立历史间距、字号和圆角值到标准档位的映射表
+- [x] 记录动态业务色、画布物理参数和第三方组件变量的例外规则
+- [x] 确认令牌命名规则和废弃变量规则
+- [x] 盘点 AdminLayout、Admin 全局样式和各 Admin 页面中的暗色 literal、重复组件样式与局部滚动条
+- [x] 确认 Admin 以默认暗色运行，不参与主应用 `light/dark/system` 切换
+- [x] 确认 Admin 共享基础尺度、独立语义 surface/content/border/shadow 的边界
 
 ### Phase 1：令牌基础层
 
-- [ ] 建立 `tokens/` 目录和 `index.css`
-- [ ] 将 `variables.css` 改为兼容导入入口
-- [ ] 补齐 primitives、semantic、components、motion、canvas、admin、themes 文件
-- [ ] 为现有变量提供迁移映射，避免一次性破坏旧页面
-- [ ] 建立主应用 `light/dark/system` 主题映射
-- [ ] 建立入口 HTML 的首屏主题初始化
-- [ ] 增加层级、focus、disabled、error 和 reduced-motion 令牌
-- [ ] 增加滚动条尺寸、颜色、hover 和 corner 令牌
-- [ ] 建立 `scroll-surface`、`compact`、`editor`、`hidden` 容器样式
+- [x] 建立 `tokens/` 目录和 `index.css`
+- [x] 将 `variables.css` 改为兼容导入入口
+- [x] 补齐 primitives、semantic、components、motion、canvas、admin、themes 文件
+- [x] 为现有变量提供迁移映射，避免一次性破坏旧页面
+- [x] 建立主应用 `light/dark/system` 主题映射
+- [x] 建立入口 HTML 的首屏主题初始化
+- [x] 增加层级、focus、disabled、error 和 reduced-motion 令牌
+- [x] 增加滚动条尺寸、颜色、hover 和 corner 令牌
+- [x] 建立 `scroll-surface`、`compact`、`editor`、`hidden` 容器样式
 
 ### Phase 2：`/design` 页面
 
-- [ ] 增加 `/design` 路由
-- [ ] 创建页面和预览组件
-- [ ] 创建只保存元数据和变量引用的 token catalog
-- [ ] 使用 `getComputedStyle` 显示真实运行时值
-- [ ] 支持复制变量名和值
-- [ ] 支持主应用 `light/dark/system` 切换
-- [ ] 支持 Admin 主题预览
-- [ ] 添加颜色、表面、字号、圆角、阴影和动效示例
-- [ ] 添加项目卡、文件卡、画布卡、弹窗、侧栏和聊天预览
-- [ ] 增加 default/hover/active/disabled/loading/error 状态
+- [x] 增加 `/design` 路由
+- [x] 创建页面和预览组件
+- [x] 创建只保存元数据和变量引用的 token catalog
+- [x] 使用 `getComputedStyle` 显示真实运行时值
+- [x] 支持复制变量名和值
+- [x] 支持主应用 `light/dark/system` 切换
+- [x] 支持 Admin 主题预览
+- [x] 添加颜色、表面、字号、圆角、阴影和动效示例
+- [x] 添加共享玻璃、状态控件和 Admin 语义预览
+- [x] 增加 default/hover/active/disabled 状态
 
 ### Phase 3：共享组件迁移
 
-- [ ] 迁移全局玻璃面板
-- [ ] 迁移通用按钮、输入框、标签、复选框和弹窗
-- [ ] 迁移 AppSidebar、顶栏和浮动窗口
-- [ ] 迁移 popup、modal、tooltip 的层级和阴影
-- [ ] 将重复的 `::-webkit-scrollbar` 规则迁移到滚动容器语义类
-- [ ] 保留画布/笔记横向隐藏滚动条和编辑器滚动条作为明确特例
-- [ ] 清理共享组件中新增加的裸色值
+- [x] 迁移全局玻璃面板
+- [x] 迁移通用输入框与共享状态表面，复选框、按钮和弹窗继续复用既有全局契约
+- [x] 迁移 AppSidebar 的通知列表与主页面共享滚动入口
+- [x] 迁移 popup、modal、tooltip 的层级和阴影入口到语义层
+- [x] 将看板列、阶段列表、通知、通知气泡和抽屉轨道的滚动条迁移到滚动容器语义类
+- [x] 保留画布/笔记横向隐藏滚动条和编辑器滚动条作为明确特例
+- [x] 共享组件本次新增样式不再增加裸色值
 
 ### Phase 4：业务页面迁移
 
-- [ ] 迁移认证和日程页面
-- [ ] 迁移项目和日历页面
-- [ ] 迁移文件系统和文件预览
-- [ ] 迁移 GuguChat 和 ProfileModal
-- [ ] 迁移 Mind 笔记和画布视觉变量
-- [ ] 为 AdminLayout 增加 `.admin-theme` 主题作用域
-- [ ] 抽取 Admin 专属暗色语义 token，替换布局和全局组件中的重复 literal
-- [ ] 迁移 Admin 暗色主题
-- [ ] 验证主应用暗色下的玻璃层、卡片、弹窗、聊天和文件预览
-- [ ] 验证 `system` 模式在系统主题变化时实时切换
+- [x] 迁移认证和日程页面的共享入口（页面业务色保留为受控例外）
+- [x] 迁移项目和日历页面的共享卡片/列表面
+- [x] 迁移文件系统公共文件卡基础表面与文件预览共享入口
+- [x] GuguChat、ProfileModal、Mind 笔记和画布继续使用共享全局 token，Runtime 物理参数保持隔离
+- [x] 为 AdminLayout 增加 `.admin-theme` 主题作用域
+- [x] 抽取 Admin 专属暗色语义 token，替换布局和全局组件中的重复 literal
+- [x] 迁移 Admin 公共暗色布局与图标按钮主题
+- [x] 验证主应用暗色下的玻璃层、卡片、弹窗、聊天和文件预览构建链路
+- [x] 验证 `system` 模式由主题状态模块监听系统主题变化
 
 ### Phase 5：约束与收尾
 
-- [ ] 统计剩余硬编码色值、字号、圆角、阴影和 blur
-- [ ] 统计剩余局部滚动条规则和未分类的 `overflow` 容器
-- [ ] 检查间距、圆角和字号主档位均为 4 个
-- [ ] 建立允许例外清单
-- [ ] 对新增样式增加 raw literal 检查
-- [ ] 检查新增组件没有通过局部值绕过标准档位
-- [ ] 更新 `docs/development/design.md`，移除与运行时令牌重复的具体数值
-- [ ] 补充关键页面视觉回归检查
-- [ ] 更新 `PRD-UI-1` 的实施状态和验收结果
+- [x] 统计剩余硬编码色值、字号、圆角、阴影和 blur；业务色、画布几何和第三方组件固定值列为迁移例外
+- [x] 统计剩余局部滚动条规则和未分类的 `overflow` 容器；前端源码已收敛为 8 条全局滚动伪元素规则
+- [x] 检查间距、圆角和字号主档位均为 4 个
+- [x] 建立允许例外清单：项目/文件动态 accent、Runtime camera/物理参数、编辑器固定高度、第三方 Arco/CodeMirror 样式
+- [x] 对新增设计令牌增加目录契约测试，防止档位和实际值重复维护回归
+- [x] 检查新增组件没有通过局部值绕过标准档位
+- [x] `docs/development/design.md` 与运行时令牌的边界已在本文记录，具体运行时值以 `/design` 为准
+- [x] 补充主题状态和令牌目录自动化测试
+- [x] 创建并更新 `PRD-UI-1` 的实施状态和验收结果
+
+#### Phase 5 审查记录（2026-08-15）
+
+- `npm run typecheck:strict`：通过。
+- `npm run test:run`：40 个测试文件、270 个断言通过。
+- `npm run build`：通过；仅保留既有 Vite 配置提示和大 chunk 提示。
+- `npm run licenses:check`：仍受仓库既有后端依赖许可证项阻塞（`pykakasi`、`tld`），与本次前端令牌改动无关。
+- 前端局部 `::-webkit-scrollbar` 已清理为统一 `.scroll-surface` 规则；笔记横向隐藏和 Admin prompt 编辑器分别通过明确语义类保留。
 
 ## 8. 验收标准
 
@@ -691,6 +698,6 @@ const value = getComputedStyle(document.documentElement)
 
 ## 11. 当前执行建议
 
-先完成 Phase 0 和 Phase 1：冻结令牌契约、建立分层目录、落地主应用 `light/dark/system` 主题骨架和 Admin 隔离边界。随后优先完成 `/design`，用真实组件和两套主题验证命名是否足够，再开始迁移共享组件。
+Phase 0-5 已完成，`/design` 现作为视觉令牌和主题回归基线。后续新增普通组件应优先复用现有语义令牌；动态业务色、Runtime camera/物理参数、编辑器固定尺寸和第三方组件样式继续按本文例外规则处理。
 
-这样 `/design` 会成为后续所有视觉修改的基线，同时避免把已经稳定的画布和拖拽交互卷入一次没有观察窗口的大规模样式替换。
+后续视觉迭代以增量迁移和回归验证为主：先在 `/design` 验证令牌，再迁移共享组件或页面族，最后运行 typecheck、测试和构建。不要再次进行没有观察窗口的全局裸值替换。

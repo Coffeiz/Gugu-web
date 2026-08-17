@@ -8,6 +8,10 @@ export const MIND_DRAWER_SURFACE_ID = MIND_PROJECT_DRAWER_SURFACE_ID
 export const MIND_CANVAS_OBJECT_TYPE = 'mind-canvas-object'
 export const MIND_PROJECT_OBJECT_TYPE = 'mind-project-object'
 export const MIND_CANVAS_OBJECT_TYPES = [MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE] as const
+/** 0.20.4 画布拖拽代理：抓取/命中抽屉时压住抽屉，仍低于顶部胶囊和聊天窗口。 */
+export const MIND_CANVAS_DRAG_Z_INDEX = 31
+/** 0.20.4 未命中抽屉时，landing 代理降到画布 UI 壳层之下。 */
+export const MIND_CANVAS_LANDING_Z_INDEX = 7
 
 /** 画布卡片的 Runtime 身份必须跨乐观插入和服务端落库保持稳定。 */
 export function mindCanvasObjectId(item: { nodeId: number; clientKey?: string }): string {

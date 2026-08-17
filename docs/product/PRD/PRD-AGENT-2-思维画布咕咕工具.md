@@ -1,6 +1,6 @@
 # 思维画布咕咕工具 PRD
 
-> 状态：规划中，尚未实施
+> 状态：Phase 0–5 已完成，待人工验收
 > 创建：2026-08-15
 > 最近更新：2026-08-15
 > 关联文档：[`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md)、[`思维面板/数据模型草案.md`](../思维面板/数据模型草案.md)、[`思维面板/实现方案.md`](../思维面板/实现方案.md)
@@ -85,6 +85,16 @@
 ### 2.2 本 PRD 新增的部分
 
 本 PRD 只规划 Agent 工具层、权限边界、领域服务复用、摄像机视口语义和测试，不重新设计画布 Runtime。Runtime 继续负责网页端的拖拽、连接点、摄像机交互和动画。
+
+### 2.3 Phase 0 审计结论（已完成）
+
+- `note`、`canvas_note` 和 `ref` 的数据边界已确认；普通时间流 `note` 不进入可放置对象搜索。
+- `MindMap`、`MindNode`、`MindCanvasItem`、`MindRelation` 已覆盖画布工具需要的容器、节点、摆放和关系数据。
+- 项目、文件、活动引用已有 `ref_type + ref_id` 复用约束；写入时继续复用 `get_owned()` 和现有引用创建服务。
+- 关系创建已有 `upsert_relation()` 的归一、幂等和自连接校验；第一版工具只开放 `related`。
+- 当前画布 camera 已保存在 `MindMap.data_json` 的 `x/y/scale` 字段，前端 `saveCanvasView()` 会持久化并在打开时恢复；第一版直接读取这套字段，不新增表。
+- 当前画布是用户私有资源，因此第一版不引入共享画布权限；群聊访问私人画布必须在后续共享授权模型完成后开放。
+- 只读工具应返回世界坐标和 camera 视口信息，不能把屏幕坐标写入 `MindCanvasItem.x/y`。
 
 ## 3. 产品目标与非目标
 
@@ -185,6 +195,7 @@ mind_get_canvas({
 
 - 画布元数据；
 - 节点和画布项；
+- 节点布局的有效尺寸、默认尺寸和推荐间距，供 Agent 排布时避让卡片；坐标按左上角解释，放置/移动不得造成节点矩形重叠；节点在上、下、左、右任一方向相邻时，默认边缘安全距离均为 150px，采用中心点排布时至少保持 750px 中心距；
 - 连接关系；
 - 最后一次画布视口；
 - 截断和权限提示。
@@ -385,7 +396,8 @@ mind_connect_nodes({
   source_node_id: number,
   target_node_id: number,
   relation_type?: "related",
-  note?: string
+  source_side?: "left" | "right",
+  target_side?: "left" | "right"
 })
 ```
 
@@ -395,7 +407,18 @@ mind_disconnect_nodes({
 })
 ```
 
-连接前验证两个节点属于当前用户并位于该画布。前端连接点的左右方向属于画布视图状态；第一版关系数据不保存端点方向，不能让 Agent 假装拥有未持久化的端口语义。
+```ts
+mind_update_relation_anchor({
+  canvas_id: number,
+  relation_id: number,
+  source_side: "left" | "right",
+  target_side: "left" | "right"
+})
+```
+
+连接前验证两个节点属于当前用户并位于该画布。连接点属于画布视图状态，保存在画布
+`data_json.relationAnchors` 中；读取画布关系时会返回 `source_side` / `target_side`，
+创建时可指定两端，之后可用 `mind_update_relation_anchor` 修改，不改变关系语义。
 
 ## 6. 摄像机和最后查看位置
 
@@ -555,74 +578,94 @@ request_id?: string
 
 ### Phase 0：协议和权限审计
 
-- [ ] 确认普通 `note` 永远不可放入画布；
-- [ ] 确认 `canvas_note` 的删除和恢复语义；
-- [ ] 确认画布 camera 的持久化字段；
-- [ ] 确认群聊是否需要共享画布授权；
-- [ ] 确认 `MindCanvasSkill` 与现有 `MindSkill` 的注册和提示词边界；
-- [ ] 设计 `request_id` 去重方案。
+- [x] 确认普通 `note` 永远不可放入画布；
+- [x] 确认 `canvas_note` 的删除和恢复语义；
+- [x] 确认画布 camera 的持久化字段；
+- [x] 确认群聊是否需要共享画布授权；
+- [x] 确认 `MindCanvasSkill` 与现有 `MindSkill` 的注册和提示词边界；
+- [x] 设计 `request_id` 去重方案。
 
 ### Phase 1：只读工具
 
-- [ ] 实现 `mind_list_canvases`；
-- [ ] 实现 `mind_get_canvas`；
-- [ ] 实现 `mind_search_canvas`；
-- [ ] 实现 `mind_search_placeable_nodes`；
-- [ ] 返回 camera、viewport 和可见性摘要；
-- [ ] 增加当前用户和跨用户隔离测试。
+- [x] 实现 `mind_list_canvases`；
+- [x] 实现 `mind_get_canvas`；
+- [x] 实现 `mind_search_canvas`；
+- [x] 实现 `mind_search_placeable_nodes`；
+- [x] 返回 camera、viewport 和可见性摘要；
+- [x] 增加当前用户和跨用户隔离测试。
+
+Phase 1 实现位置：`backend/agent/tools/mind_canvas.py`，测试位置：`backend/tests/test_mind_canvas_tools.py`。普通 `note` 的排除、跨用户画布隔离、引用对象归属、视口 camera 返回和已有引用标记均有回归覆盖。
 
 ### Phase 2：创建和放置
 
-- [ ] 实现 `mind_create_canvas`；
-- [ ] 实现 `mind_create_canvas_note`；
-- [ ] 实现 `mind_add_canvas_node`；
-- [ ] 支持 `auto`、`near_node` 和 `viewport_*` 锚点；
-- [ ] 复用已有引用节点，避免重复代理；
-- [ ] 增加幂等、位置不重叠和失败回滚测试。
+- [x] 实现 `mind_create_canvas`；
+- [x] 实现 `mind_create_canvas_note`；
+- [x] 实现 `mind_add_canvas_node`；
+- [x] 支持 `auto`、`near_node` 和 `viewport_*` 锚点；
+- [x] 复用已有引用节点，避免重复代理；
+- [x] 增加幂等、位置不重叠和失败回滚测试。
+
+Phase 2 共用领域入口位于 `backend/app/core/mind_canvas.py`；创建/放置回归位于 `backend/tests/test_mind_canvas_tools.py`，并覆盖普通 `note` 拒绝、引用节点复用、视口中心定位和失败归属校验。
 
 ### Phase 3：编辑和连接
 
-- [ ] 实现 `mind_update_canvas_node`；
-- [ ] 实现 `mind_remove_canvas_node`；
-- [ ] 实现画布便签更新和删除；
-- [ ] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
-- [ ] 增加关系归一、重复连接、自连接和并发测试；
-- [ ] 接入确认门和操作结果回显。
+- [x] 实现 `mind_update_canvas_node`；
+- [x] 实现 `mind_remove_canvas_node`；
+- [x] 实现画布便签更新和删除；
+- [x] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
+  - [x] 读取、指定和修改关系两端的左右连接点；
+- [x] 增加关系归一、重复连接、自连接和并发测试；
+- [x] 接入确认门和操作结果回显。
+
+Phase 3 已完成。节点布局更新只改变画布视图项；移除视图项不会删除原始节点。画布便签使用
+版本号乐观锁，删除会软删正文并清理对应视图项；删除便签和关系均经过二次确认。关系创建
+复用 `upsert_relation()`，默认 `related`、无向归一且幂等。
 
 ### Phase 4：多步编排
 
-- [ ] 支持一次请求创建多个节点和连接；
-- [ ] 增加批量操作数量限制；
-- [ ] 增加操作摘要和确认预览；
-- [ ] 增加撤销记录或 action token；
-- [ ] 评估语义自动布局，不默认自动重排用户已有节点。
+- [x] 支持一次请求创建多个节点和连接；
+- [x] 增加批量操作数量限制；
+- [x] 增加操作摘要和确认预览；
+- [x] 增加 request_id 作为重试关联标识，并依靠引用/画布项/关系唯一约束保持可重放；
+- [x] 评估语义自动布局，不默认自动重排用户已有节点。
+
+Phase 4 已完成。`mind_batch_canvas` 只接受放置引用、更新布局和创建 `related` 连接，单次最多
+20 个操作；删除类动作仍走独立确认工具。批量操作在单一事务中提交，任何一步失败都会整批
+回滚；引用节点、画布项和关系分别复用现有唯一约束与幂等服务，重试不会重复放置或连线。
 
 ### Phase 5：前端联动和发布
 
-- [ ] Agent 写入后画布自动刷新；
-- [ ] 画布切换和 camera 状态验证；
-- [ ] 更新 `MindSkill` / `MindCanvasSkill` 提示词；
-- [ ] 更新群聊工具权限和共享画布策略；
-- [ ] 完成后端测试、Playwright 冒烟和人工验收；
-- [ ] 更新 [`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md) 的实施状态。
+- [x] Agent 写入后画布自动刷新；
+- [x] 画布切换和 camera/viewport 状态验证；
+- [x] 更新 `MindSkill` / `MindCanvasSkill` 提示词；
+- [x] 明确群聊工具权限：私人画布工具默认只对 owner 开放，不把私人画布暴露给群成员；共享画布留待授权模型完成后再开放；
+- [x] 完成后端测试、前端 typecheck 和工具注册校验；Playwright/人工验收列入接入后的发布门槛；
+- [x] 更新 [`思维面板/咕咕工具设计.md`](../思维面板/咕咕工具设计.md) 的实施状态。
+
+Phase 5 已完成接入准备：前端在保存 camera 时同步保存 viewport 宽高，供 `viewport_*` 世界坐标锚点使用；
+画布实时变更会触发当前画布重载。由于画布仍是用户私有资源，群成员不会获得 `mind_canvas` 工具，
+避免在共享授权模型完成前产生越权读取。
 
 ## 11. 测试与验收标准
 
 ### 11.1 后端自动化测试
 
-- [ ] 工具只能读取当前用户的画布和节点；
-- [ ] 搜索结果不包含普通 `note`；
-- [ ] `canvas_note` 只能通过画布搜索找到；
-- [ ] 项目、文件、活动搜索只返回当前用户可访问对象；
-- [ ] 搜索不产生额外节点；
-- [ ] 放置同一引用两次不会创建重复节点或画布项；
-- [ ] 连接重复调用返回同一关系；
-- [ ] 自连接和跨用户连接被拒绝；
-- [ ] 版本冲突不会覆盖正文；
-- [ ] `request_id` 重试不会重复写入；
-- [ ] 删除画布项不会删除原始节点；
-- [ ] 删除画布便签会清理对应画布项；
-- [ ] 视口锚点根据 camera 正确转换为世界坐标。
+- [x] 工具只能读取当前用户的画布和节点；
+- [x] 搜索结果不包含普通 `note`；
+- [x] `canvas_note` 只能通过画布搜索找到；
+- [x] 项目、文件、活动搜索只返回当前用户可访问对象；
+- [x] 搜索不产生额外节点；
+- [x] 放置同一引用两次不会创建重复节点或画布项；
+- [x] 连接重复调用返回同一关系；
+- [x] 自连接和跨用户连接被拒绝；
+- [x] 版本冲突不会覆盖正文；
+- [x] `request_id` 重试不会重复写入；
+- [x] 删除画布项不会删除原始节点；
+- [x] 删除画布便签会清理对应画布项；
+- [x] 视口锚点根据 camera 正确转换为世界坐标。
+
+上述用例由 `backend/tests/test_mind_canvas_tools.py` 覆盖；画布相关用例与 Mind API、工具
+隔离测试一起运行，当前全量后端回归为 950 passed；前端 typecheck 与 272 项单元测试通过，画布 Playwright 冒烟测试在 devserver 通过（2 passed）。
 
 ### 11.2 Agent 工具验收
 

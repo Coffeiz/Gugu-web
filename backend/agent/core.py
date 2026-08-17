@@ -296,7 +296,8 @@ class LLMRunner:
             result = None
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             try:
-                async for _kind, _val in driver.run_round(client, ctx, messages):
+                _round_gen = driver.run_round(client, ctx, messages)
+                async for _kind, _val in _round_gen:
                     if _kind == "done":
                         result = _val
                         break
@@ -309,6 +310,11 @@ class LLMRunner:
                     _tok += 1
                     if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
                         yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                        # 显式关掉 run_round 生成器：Python 3.14 下 async for 提前退出时
+                        # close 会被推迟到 GC，LoopScope 的 span 会一直挂着 running。
+                        # aclose() 立即注入 GeneratorExit，hooks.traced_round 同步把
+                        # span 标成 cancelled，不用等 GC 才收尾。
+                        await _round_gen.aclose()
                         return
             except RetryableError as e:
                 # _stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；

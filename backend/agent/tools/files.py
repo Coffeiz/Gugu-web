@@ -8,23 +8,29 @@
 生成（create_document）：文本格式直写；docx/pdf 由 HTML、xlsx 由 CSV 经 LibreOffice
 转换（系统已装，零新依赖）。
 """
-import json
-from app.core.tz import now_utc
 from datetime import datetime
+import json
 
-from sqlalchemy import select
-
-from app.models import File, Folder, Project
-from app.core.ownership import get_owned
 from app.core.redaction import redact
+from app.core.tz import now_utc
 from app.services.storage import get_storage
 from app.services.storage.folders import resolve_folder_path
 from app.services.files.response import color_value
+from app.services.files.browser import (
+    descendant_folder_ids,
+    find_user_files_by_name,
+    find_user_folders_by_name,
+    get_user_file,
+    get_user_folder,
+    list_user_folders,
+    search_user_files,
+)
+from app.services.projects import get_user_project
 from app.services.storage.file_service.files import _fmt_size
-from app.services.storage.trash import move_file_to_trash
+from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
-from app.search.query import keyword_condition, normalize_queries
+from app.search.query import normalize_queries
 from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
@@ -124,7 +130,7 @@ async def _resolve_key(db, user_id, space, display_name, ext,
                        project_id=None, folder_id=None):
     project_name = project_year = project_month = folder_path = ""
     if space == "project" and project_id:
-        p = await get_owned(db, Project, project_id, user_id)
+        p = await get_user_project(db, user_id, project_id)
         if not p:
             raise ValueError("目标项目不存在")
         project_name = p.name
@@ -150,7 +156,7 @@ async def _location_receipt(db, user_id, space, project_id, folder_id):
     """保存/创建后的真实落点，完整路径供模型照回执转告，不再猜目录。"""
     project_name = None
     if space == "project" and project_id:
-        project = await get_owned(db, Project, project_id, user_id)
+        project = await get_user_project(db, user_id, project_id)
         project_name = project.name if project else None
     folder_path = "（根目录）"
     if folder_id:
@@ -250,14 +256,10 @@ def _target_loc(f, target: dict):
 
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
-    stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
-    if args.get("space"):
-        stmt = stmt.where(File.space == args["space"])
-    if args.get("project_id") is not None:
-        stmt = stmt.where(File.project_id == args["project_id"])
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
+    folder_id = None
     if folder_value not in (None, ""):
         try:
             folder_id = int(str(folder_value).strip().lstrip("#"))
@@ -272,21 +274,24 @@ async def _list_files(db, user_id, args: dict):
             if error:
                 return error
             folder_id = folder.id
-        stmt = stmt.where(File.folder_id == folder_id)
-    if args.get("ext"):
-        stmt = stmt.where(File.ext == args["ext"].lower().lstrip("."))
     file_queries = normalize_queries(
         args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
     )
-    if file_queries:
-        stmt = stmt.where(keyword_condition([File.display_name], file_queries, args.get("mode")))
     requested_limit = args.get("limit", 100)
     try:
         limit = max(1, min(int(requested_limit), 200))
     except (TypeError, ValueError):
         limit = 100
-    stmt = stmt.order_by(File.updated_at.desc()).limit(limit)
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await search_user_files(
+        db, user_id,
+        space=args.get("space"),
+        project_id=args.get("project_id"),
+        folder_id=folder_id,
+        ext=args.get("ext"),
+        queries=file_queries,
+        mode=args.get("mode"),
+        limit=limit,
+    )
     out = []
     for file in rows:
         folder_path = "（根目录）"
@@ -461,29 +466,25 @@ async def _create_document(db, user_id, args: dict):
     except Exception as e:
         return json.dumps({"error": f"生成失败：{str(e)[:120]}"})
 
-    storage = get_storage()
     try:
-        base_key = await _resolve_key(
-            db, user_id, space, display_name, ext,
-            project_id=project_id, folder_id=folder_id,
+        result = await FileService(db).create_file(
+            user_id,
+            space=space,
+            project_id=project_id if space == "project" else None,
+            folder_id=folder_id,
+            stage_name="",
+            mind_map_id=None,
+            display_name=display_name,
+            ext=ext,
+            mime_type=_DOC_MIME[ext],
+            data=data,
         )
-    except ValueError as e:
+    except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
-    await storage.put(final_key, data, _DOC_MIME[ext])
-
-    db_file = File(
-        user_id=user_id, display_name=final_name, ext=ext, space=space,
-        project_id=project_id if space == "project" else None,
-        folder_id=folder_id, stage_name="",
-        storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=_DOC_MIME[ext],
-    )
-    db.add(db_file)
     await db.commit()
-    await db.refresh(db_file)
+    db_file = result.file
     return {"success": True, "file_id": db_file.id,
-            "name": f"{final_name}.{ext}", "size": db_file.size,
+            "name": f"{db_file.display_name}.{db_file.ext}", "size": db_file.size,
             **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
 
@@ -496,24 +497,24 @@ async def _save_one_attach(db, user_id, meta: dict, *, space, project_id, folder
         data = await chat_attach.read_bytes(meta)
     except Exception as e:
         return False, {"name": f"{display_name}.{ext}", "error": f"读取附件失败：{str(e)[:80]}"}
-    storage = get_storage()
     try:
-        base_key = await _resolve_key(db, user_id, space, display_name, ext,
-                                      project_id=project_id, folder_id=folder_id)
-    except ValueError as e:
-        return False, {"name": f"{display_name}.{ext}", "error": str(e)}
-    final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
-    await storage.put(final_key, data, meta.get("mime") or "application/octet-stream")
-    db_file = File(
-        user_id=user_id, display_name=final_name, ext=ext, space=space,
-        project_id=project_id if space == "project" else None, folder_id=folder_id, stage_name="",
-        storage_key=final_key, size=_fmt_size(len(data)), size_bytes=len(data),
-        mime_type=meta.get("mime") or "",
-    )
-    db.add(db_file)
+        result = await FileService(db).create_file(
+            user_id,
+            space=space,
+            project_id=project_id if space == "project" else None,
+            folder_id=folder_id,
+            stage_name="",
+            mind_map_id=None,
+            display_name=display_name,
+            ext=ext,
+            mime_type=meta.get("mime") or "application/octet-stream",
+            data=data,
+        )
+    except Exception as e:
+        return False, {"name": f"{display_name}.{ext}", "error": redact(f"{type(e).__name__}: {e}")}
     await db.commit()
-    await db.refresh(db_file)
-    return True, {"file_id": db_file.id, "name": f"{final_name}.{ext}",
+    db_file = result.file
+    return True, {"file_id": db_file.id, "name": f"{db_file.display_name}.{db_file.ext}",
                   "size": db_file.size,
                   **(await _location_receipt(db, user_id, space, project_id, folder_id))}
 
@@ -640,18 +641,15 @@ async def _resolve_file(db, user_id, args):
     """按 file_id 或文件名 file 定位（仅未删除文件）；返回 (File|None, 错误JSON|None)。"""
     fid = args.get("file_id")
     if fid:
-        f = await get_owned(db, File, fid, user_id)
-        if not f or f.deleted_at is not None:
+        f = await get_user_file(db, user_id, fid)
+        if not f:
             return None, json.dumps({"error": "文件不存在"})
         return f, None
     name = args.get("file")
     if name:
         name = str(name).strip()
         base = name.rsplit(".", 1)[0] if "." in name else name
-        base_stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
-        rows = (await db.execute(base_stmt.where(File.display_name == base))).scalars().all()
-        if not rows:
-            rows = (await db.execute(base_stmt.where(File.display_name.ilike(f"%{base}%")))).scalars().all()
+        rows = await find_user_files_by_name(db, user_id, base)
         if not rows:
             return None, json.dumps({"error": f"未找到文件「{name}」"})
         if len(rows) > 1:
@@ -668,20 +666,13 @@ async def _folder_by_name(db, user_id, name, space=None, project_id=None):
     重名时优先顶层（parent_id 为空）；仍有歧义则返回候选让调用方/模型用 folder_id 指定。
     """
     name = str(name).strip()
-    stmt = select(Folder).where(Folder.user_id == user_id, Folder.name == name)
-    if space == "project" and project_id:
-        stmt = stmt.where(Folder.project_id == project_id)
-    elif space and space != "project":
-        stmt = stmt.where(Folder.project_id.is_(None))
-    rows = (await db.execute(stmt)).scalars().all()
+    rows = await find_user_folders_by_name(
+        db, user_id, name, space=space, project_id=project_id)
     if not rows:
         # 报错时只列出同项目/同空间的文件夹名，避免跨项目泄露
-        avail_stmt = select(Folder.name).where(Folder.user_id == user_id)
-        if space == "project" and project_id:
-            avail_stmt = avail_stmt.where(Folder.project_id == project_id)
-        elif space and space != "project":
-            avail_stmt = avail_stmt.where(Folder.project_id.is_(None))
-        avail = (await db.execute(avail_stmt)).scalars().all()
+        available = await list_user_folders(
+            db, user_id, project_id=project_id if space == "project" else None)
+        avail = [folder.name for folder in available]
         return None, json.dumps({"error": f"未找到名为「{name}」的文件夹",
                                  "available_folders": sorted(set(avail))})
     if len(rows) > 1:
@@ -728,43 +719,27 @@ async def _move_one(db, user_id, f, target: dict) -> dict:
                            "current_folder_id": f.folder_id})
 
     try:
-        new_key = await _resolve_key(
-            db, user_id, space, f.display_name, f.ext,
-            project_id=project_id, folder_id=folder_id,
+        result = await FileService(db).update_file(
+            user_id,
+            f.id,
+            display_name=None,
+            stage_name=target.get("stage_name") if "stage_name" in target else None,
+            folder_id=folder_id,
+            project_id=new_pid,
+            folder_set=True,
+            project_set=True,
         )
-    except ValueError as e:
+    except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-    storage = get_storage()
-    new_display = f.display_name
-    if new_key != f.storage_key:
-        new_key, new_display = await _resolve_conflict(storage, new_key, f.display_name, f.ext)
-        try:
-            await storage.rename_file(f.storage_key, new_key)
-        except Exception as e:
-            return json.dumps({"error": f"移动失败（物理文件可能已丢失）：{str(e)[:80]}"})
-        f.storage_key = new_key
-    f.display_name = new_display
-    f.space = space
-    f.project_id = new_pid
-    f.folder_id = folder_id
-    if "stage_name" in target:
-        f.stage_name = target["stage_name"]
-    f.updated_at = now_utc()
     await db.commit()
-
-    folder_name = "（根目录）"
-    if folder_id:
-        fo = await get_owned(db, Folder, folder_id, user_id)
-        folder_name = fo.name if fo else "（根目录）"
+    moved = result.file
+    folder_name = result.folder_name or "（根目录）"
     # 明确回报落点的「空间/项目/文件夹」，别只给文件夹名——否则模型无从确认到底进了哪个项目，
     # 容易自行脑补位置（曾出现移到项目根目录后谎报项目/文件名的情况）
-    project_name = None
-    if f.space == "project" and f.project_id:
-        p = await get_owned(db, Project, f.project_id, user_id)
-        project_name = p.name if p else None
-    return {"success": True, "file_id": f.id, "name": f"{f.display_name}.{f.ext}",
-            "space": f.space, "project_id": f.project_id, "project_name": project_name,
-            "folder_id": f.folder_id, "moved_to": folder_name}
+    project_name = result.project.name if result.project else None
+    return {"success": True, "file_id": moved.id, "name": f"{moved.display_name}.{moved.ext}",
+            "space": moved.space, "project_id": moved.project_id, "project_name": project_name,
+            "folder_id": moved.folder_id, "moved_to": folder_name}
 
 
 def _as_dict(r):
@@ -781,16 +756,7 @@ def _as_dict(r):
 
 async def _descendant_folder_ids(db, user_id, root_id: int) -> list[int]:
     """root_id 及其所有子孙文件夹 id（沿 parent_id 逐层 BFS）。"""
-    ids = [root_id]
-    frontier = [root_id]
-    while frontier:
-        rows = (await db.execute(
-            select(Folder.id).where(Folder.user_id == user_id, Folder.parent_id.in_(frontier))
-        )).scalars().all()
-        fresh = [i for i in rows if i not in ids]
-        ids.extend(fresh)
-        frontier = fresh
-    return ids
+    return await descendant_folder_ids(db, user_id, root_id)
 
 
 async def _resolve_target(db, user_id, target: dict):
@@ -801,7 +767,7 @@ async def _resolve_target(db, user_id, target: dict):
     folder_id = target.get("folder_id")
     fname = target.get("folder")
     if folder_id:
-        fo = await get_owned(db, Folder, folder_id, user_id)
+        fo = await get_user_folder(db, user_id, folder_id)
         if not fo:
             return None, None, None, {"error": "目标文件夹不存在"}
         return ("project" if fo.project_id else "personal"), fo.project_id, fo.id, None
@@ -863,12 +829,10 @@ async def _move_items(db, user_id, args: dict):
     # 文件夹
     for it in (args.get("folders") or []):
         if isinstance(it, int) or (isinstance(it, str) and str(it).strip().isdigit()):
-            fo = await get_owned(db, Folder, int(it), user_id)
+            fo = await get_user_folder(db, user_id, int(it))
         else:
             # 按名找：在源处可能任意空间，这里全局按名匹配（重名则提示用 id）
-            rows = (await db.execute(
-                select(Folder).where(Folder.user_id == user_id, Folder.name == str(it))
-            )).scalars().all()
+            rows = await find_user_folders_by_name(db, user_id, str(it))
             fo = rows[0] if len(rows) == 1 else None
             if len(rows) > 1:
                 failed.append({"item": it, "kind": "folder", "error": "有多个同名文件夹，请改用 folder_id"})
@@ -895,7 +859,6 @@ async def _create_folder(db, user_id, args: dict):
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
-    await db.refresh(fo)
     return {"success": True, "folder_id": fo.id, "name": fo.name}
 
 
@@ -905,8 +868,7 @@ async def _delete_file(db, user_id, args: dict):
     if _err:
         return _err
     fid = f.id; fname = f"{f.display_name}.{f.ext}"
-    await move_file_to_trash(get_storage(), f)
-    f.deleted_at = now_utc()
+    await delete_file_action(db, get_storage(), user_id, f.id, now_utc())
     await db.commit()
     return {"success": True, "file_id": fid, "name": fname,
             "note": "已移入回收站，30 天内可还原",
@@ -914,15 +876,11 @@ async def _delete_file(db, user_id, args: dict):
 
 
 async def _list_folders(db, user_id, args: dict):
-    stmt = select(Folder).where(
-        Folder.user_id == user_id,
-        Folder.deleted_at.is_(None),
+    rows = await list_user_folders(
+        db, user_id,
+        project_id=args.get("project_id"),
+        parent_id=args.get("parent_id"),
     )
-    if args.get("project_id") is not None:
-        stmt = stmt.where(Folder.project_id == args["project_id"])
-    if args.get("parent_id") is not None:
-        stmt = stmt.where(Folder.parent_id == args["parent_id"])
-    rows = (await db.execute(stmt)).scalars().all()
     out = []
     for folder in rows:
         resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
@@ -945,7 +903,7 @@ async def _find_folder(db, user_id, args: dict):
             fid = int(str(fid).strip())
         except (ValueError, TypeError):
             pass
-        fo = await get_owned(db, Folder, fid, user_id)
+        fo = await get_user_folder(db, user_id, fid)
         if not fo:
             return json.dumps({"error": "文件夹不存在"})
         return fo
@@ -1017,27 +975,16 @@ async def _copy_file(db, user_id, args: dict):
                 project_id = fo.project_id
                 space = "project"
     try:
-        base_key = await _resolve_key(db, user_id, space, f.display_name, f.ext,
-                                      project_id=project_id, folder_id=folder_id)
-    except ValueError as e:
-        return json.dumps({"error": str(e)})
-    storage = get_storage()
-    new_key, new_display = await _resolve_conflict(storage, base_key, f.display_name, f.ext)
-    try:
-        data = await storage.get(f.storage_key)
+        result = await FileService(db).copy_file(
+            user_id, f.id, folder_id=folder_id,
+            project_id=project_id if space == "project" else None,
+        )
     except Exception as e:
-        return json.dumps({"error": f"复制失败（源文件可能已丢失）：{str(e)[:80]}"})
-    await storage.put(new_key, data, f.mime_type)
-    new_file = File(
-        user_id=user_id, display_name=new_display, ext=f.ext, space=space,
-        project_id=project_id if space == "project" else None, folder_id=folder_id,
-        stage_name=f.stage_name, storage_key=new_key, size=f.size,
-        size_bytes=f.size_bytes, mime_type=f.mime_type,
-    )
-    db.add(new_file)
+        return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
     await db.commit()
-    await db.refresh(new_file)
-    return {"success": True, "file_id": new_file.id, "name": f"{new_display}.{f.ext}"}
+    new_file = result.file
+    return {"success": True, "file_id": new_file.id,
+            "name": f"{new_file.display_name}.{new_file.ext}"}
 
 
 # ── 网络图片下载（send_file 的 url 分支用）：SSRF 防护 ─────────────────────────

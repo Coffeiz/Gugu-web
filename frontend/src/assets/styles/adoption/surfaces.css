@@ -1,0 +1,142 @@
+/* Shared source-clean adoption for legacy global classes. New components should consume the
+   component contracts directly; these selectors keep existing markup theme-aware during migration. */
+html[data-theme][data-family] .panel-left {
+  background: var(--panel-glass-bg);
+  border-right-color: var(--panel-glass-border);
+  box-shadow: var(--panel-glass-shadow);
+}
+
+/* Mono/V2 keeps content cards quieter, but app chrome still needs a translucent backdrop surface.
+   This family-only bridge does not touch Aero light/dark values. */
+html[data-family='v2'] .sidebar {
+  background: var(--chrome-glass-bg);
+  border-right-color: var(--chrome-glass-border);
+  box-shadow: var(--chrome-glass-shadow);
+  backdrop-filter: var(--chrome-glass-blur);
+  -webkit-backdrop-filter: var(--chrome-glass-blur);
+}
+
+/* The mini player is floating app chrome, not a content card. Mono reuses the same chrome material
+   as the sidebar/Mind controls; Glass light keeps the component's legacy paint untouched. */
+html[data-family='v2'] .mini-player {
+  background: var(--chrome-glass-bg);
+  border-color: var(--chrome-glass-border);
+  box-shadow: var(--chrome-glass-shadow);
+  backdrop-filter: var(--chrome-glass-blur);
+  -webkit-backdrop-filter: var(--chrome-glass-blur);
+}
+html[data-family='v2'] .mini-player .mp-bars i { background: color-mix(in srgb,var(--action-primary) 72%,transparent); }
+html[data-family='v2'] .mini-player .mp-track { background: color-mix(in srgb,var(--action-primary) 14%,transparent); }
+html[data-family='v2'] .mini-player .mp-fill {
+  background: linear-gradient(to right,var(--action-primary),var(--action-primary-hover));
+}
+html[data-family='v2'] .mini-player .mp-thumb { background: var(--action-primary); }
+html[data-family='v2'] .mini-player :is(.mp-btn--pin:hover, .mp-btn--pinned:hover) {
+  color: var(--action-primary);
+  background: var(--action-soft-hover);
+}
+html[data-family='v2'] .mini-player .mp-btn--pinned { color: var(--action-primary); }
+
+/* Mono uses its family action fill; every resolved dark theme uses the quieter dark primary fill.
+   One grouped rule owns the play button so Mono-dark does not accumulate a second override. */
+html[data-family='v2'] .mini-player .mp-btn--play,
+html[data-theme='dark'][data-family] .mini-player .mp-btn--play {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card), inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {
+  color: var(--content-primary);
+  background: var(--control-bg-hover);
+}
+
+/* File/Folder roots historically relied on page CSS for the actual border style and adoption only
+   supplied border-color. Mono's quieter elevation makes that missing outline especially visible, so
+   make it structural for this family once; board/canvas file references inherit the same fix. */
+html[data-family='v2'] :is(.fc-card, .folder-card) {
+  border-style: solid;
+  border-width: 1px;
+}
+
+html[data-theme][data-family] .bm-card {
+  border-color: var(--modal-card-border);
+  box-shadow: var(--modal-card-shadow),
+              inset 0 1px 0 var(--modal-card-highlight),
+              inset 1px 0 0 var(--modal-card-side-highlight);
+}
+
+/* UploadModal still owns close-button geometry locally. Map only its paint here because the old
+   project adoption used to affect this button accidentally; keeping the mapping explicit preserves
+   that dark appearance while light returns to the original file-dialog control surface. */
+html[data-theme][data-family] .bm-card:has(.drop-zone) .modal-header .close-btn {
+  background: var(--file-dialog-close-bg);
+  color: var(--content-secondary);
+}
+html[data-theme][data-family] .bm-card:has(.drop-zone) .modal-header .close-btn:hover {
+  background: var(--file-dialog-close-bg-hover);
+  color: var(--content-primary);
+}
+
+html[data-theme][data-family] .popup-menu {
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: var(--popup-shadow);
+}
+html[data-theme][data-family] .popup-close-btn:hover,
+html[data-theme][data-family] .popup-menu-item:not(.danger):hover:not(:disabled) {
+  background: var(--control-bg-hover);
+}
+html[data-theme][data-family] .popup-menu-sep { background: var(--panel-divider); }
+
+html[data-theme][data-family] .form-input,
+html[data-theme][data-family] .title-edit-input,
+html[data-theme][data-family] .rename-input-inline {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+  caret-color: var(--action-primary);
+}
+html[data-theme][data-family] .form-input:hover,
+html[data-theme][data-family] .title-edit-input:hover,
+html[data-theme][data-family] .rename-input-inline:hover { border-color: var(--input-border-hover); }
+html[data-theme][data-family] .form-input:focus,
+html[data-theme][data-family] .title-edit-input:focus,
+html[data-theme][data-family] .rename-input-inline:focus {
+  color: var(--input-fg);
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] input::placeholder,
+html[data-theme][data-family] textarea::placeholder { color: var(--input-placeholder); }
+
+html[data-theme='light'][data-family] input[type='date'],
+html[data-theme='light'][data-family] input[type='datetime-local'],
+html[data-theme='light'][data-family] input[type='time'],
+html[data-theme='light'][data-family] input[type='month'] { color-scheme: light; }
+html[data-theme='dark'][data-family] input[type='date'],
+html[data-theme='dark'][data-family] input[type='datetime-local'],
+html[data-theme='dark'][data-family] input[type='time'],
+html[data-theme='dark'][data-family] input[type='month'] { color-scheme: dark; }
+
+/* Generic multi-choice capsule. Profile currently uses .pm-style-chip; future consumers can use
+   .choice-chip directly and get the exact same contract. */
+html[data-theme][data-family] .choice-chip,
+html[data-theme][data-family] .pm-style-chip {
+  color: var(--choice-chip-fg);
+  background: var(--choice-chip-bg);
+  border-color: var(--choice-chip-border);
+  border-radius: var(--choice-chip-radius);
+}
+html[data-theme][data-family] .choice-chip:hover,
+html[data-theme][data-family] .pm-style-chip:hover {
+  color: var(--choice-chip-fg-hover);
+  background: var(--choice-chip-bg-hover);
+  border-color: var(--choice-chip-border-hover);
+}
+html[data-theme][data-family] .choice-chip.active,
+html[data-theme][data-family] .pm-style-chip.active {
+  color: var(--choice-chip-fg-active);
+  background: var(--choice-chip-bg-active);
+  border-color: var(--choice-chip-border-active);
+}

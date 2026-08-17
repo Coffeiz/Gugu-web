@@ -1220,7 +1220,7 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 
 
 /* 侧栏 */
-.cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
+.cal-sidebar { padding: 16px; display: flex; flex-direction: column; gap: 0; overflow-y: auto; min-height: 0; scrollbar-gutter: auto; }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
@@ -1252,8 +1252,6 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .date-row { display: flex; align-items: center; gap: 8px; }
 .date-row-picker { flex: 1; min-width: 0; }
 .allday-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; white-space: nowrap; }
-.time-box { position: relative; display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; box-sizing: border-box; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
-.time-box:focus-within { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .time-dash { color: #8a8fa8; font-size: 12px; font-weight: 600; }
 .ev-type-badge {
   display: inline-block; vertical-align: middle; margin-left: 4px;
@@ -1275,48 +1273,9 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .sidebar-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 10px; }
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
-</style>
-
-<style>
-.overflow-popup {
-  background: var(--panel-bg);
-  backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur);
-  border: 1px solid rgba(255,255,255,0.82);
-  border-radius: 14px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 28px rgba(30,40,80,0.14);
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1; padding-bottom: 2px; margin-bottom: -2px; }
-.overflow-list { display: flex; flex-direction: column; gap: 4px; }
-.overflow-item {
-  display: flex; align-items: center; gap: 4px;
-  height: 22px; padding: 0 8px; border-radius: 99px;
-  border: 1px solid transparent; font-size: 10px; font-weight: 500;
-  white-space: nowrap; overflow: hidden;
-}
-.overflow-item:not(.overflow-clickable) { pointer-events: none; }
-.overflow-tag {
-  font-size: 8px; font-weight: 700; letter-spacing: 0.04em;
-  background: rgba(255,255,255,0.5);
-  border-radius: 3px; padding: 0 3px; line-height: 11px;
-  flex-shrink: 0; margin-right: 2px;
-}
-.overflow-tag-ev { background: rgba(210,175,40,0.35); color: #7a5c00; }
-.overflow-name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-
-/* 更多弹窗：transform-origin 由内联 style 控制，动画只改 opacity + scale */
-.more-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
-.more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
-.more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 
 .add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .add-event-popup.shared-event-popup { padding: 0; }
-.popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-input { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; }
-.popup-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
-.popup-textarea { width: 100%; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s; resize: none; line-height: 1.5; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }

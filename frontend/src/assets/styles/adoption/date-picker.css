@@ -1,0 +1,66 @@
+/* DateSpanPicker state paint. Popup surface itself is owned by adoption/popovers.css so the
+   teleported calendar has one shared surface contract instead of two competing copies. */
+/* .drp-input 的输入框样式由 DateSpanPicker.vue scoped 直接消费 --input-* token
+   （与 DatePicker/TimeInput 同一契约），这里不再重复覆盖。 */
+html[data-theme][data-family] :is(.drp-period, .drp-day, .drp-year-btn) {
+  color: var(--content-primary);
+}
+html[data-theme][data-family] :is(.drp-icon, .drp-nav, .drp-hint, .drp-wh, .drp-clear) {
+  color: var(--content-secondary);
+}
+html[data-theme][data-family] :is(.drp-period, .drp-nav, .drp-day, .drp-year-btn, .drp-clear, .drp-today) {
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .drp-period:hover,
+html[data-theme][data-family] .drp-nav:hover,
+/* 区间内部已经由 --calendar-range-cell-bg 表达连续选区，不再叠 option hover。
+   之前 hover 会临时覆盖 range 背景，移开后再经 transition 回退，形成双层/残留感。 */
+html[data-theme][data-family] .drp-day:hover:not(.sel-start):not(.sel-end):not(.in-range),
+html[data-theme][data-family] .drp-year-btn:hover:not(.selected),
+html[data-theme][data-family] .drp-clear:hover {
+  color: var(--content-primary);
+  background: var(--option-bg-hover);
+}
+/* 阶段提示只用前景色表达当前选择阶段，不复用 selection-bg；后者是可点击选中面，
+   放在纯文本 hint 上会形成没有交互语义的紫色底块。 */
+html[data-theme][data-family] .drp-hint span.active {
+  color: var(--selection-fg);
+}
+html[data-theme][data-family] .drp-today,
+html[data-theme][data-family] .drp-day.today:not(.sel-start):not(.sel-end),
+html[data-theme][data-family] .drp-year-btn.this-year:not(.selected) {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+}
+html[data-theme][data-family] .drp-day.in-range {
+  color: var(--content-primary);
+  background: var(--calendar-range-cell-bg);
+}
+/* 日期端点的主填充放到 ::before，区间连接层继续留在 ::after 的下一层；
+   这样 range 只补圆角外侧的连接，不会再盖住 sel-start / sel-end 自身的一半。 */
+html[data-theme][data-family] .drp-day.sel-start,
+html[data-theme][data-family] .drp-day.sel-end {
+  color: var(--content-on-accent);
+  background: transparent;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .drp-day.sel-start::before,
+html[data-theme][data-family] .drp-day.sel-end::before {
+  background: var(--action-primary-bg);
+}
+html[data-theme][data-family] .drp-year-btn.selected {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .drp-day.sel-start.in-range-right::after,
+html[data-theme][data-family] .drp-day.sel-end.in-range-left::after {
+  background: var(--calendar-range-cell-bg);
+}
+html[data-theme][data-family] .drp-today:hover { background: var(--action-soft-hover); }
+html[data-theme][data-family] .drp-day.other { color: var(--content-tertiary); }
+html[data-theme][data-family] .drp-day.weekend:not(.sel-start):not(.sel-end):not(.today),
+html[data-theme][data-family] .drp-day.in-range.weekend { color: var(--calendar-weekend-fg); }

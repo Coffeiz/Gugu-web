@@ -75,7 +75,7 @@
 
     <!-- 内容区 -->
     <div class="files-body">
-      <div class="files-main glass-card" ref="mainRef"
+      <div class="files-main glass-card scroll-surface" ref="mainRef"
         :class="{ 'is-selecting': boxStart !== null }"
         @contextmenu.prevent.self="openCtx('empty', null, $event)"
         @dragenter.prevent="onDragEnter"

@@ -1,5 +1,5 @@
 <template>
-  <div ref="trackRef" class="drawer-track" data-layout-role="track" data-layout-key="drawer-track">
+  <div ref="trackRef" class="drawer-track scroll-surface scroll-surface--compact" data-layout-role="track" data-layout-key="drawer-track">
     <slot />
   </div>
 </template>
@@ -25,7 +25,4 @@ defineExpose({ trackRef, captureLayout })
 <style scoped>
 .drawer-track { position: relative; width: 100%; min-height: 0; overflow-anchor: none; }
 .drawer-track[data-drawer-scroll] { overflow-anchor: none; }
-.drawer-track.project-list-scroll::-webkit-scrollbar { width: 3px; }
-.drawer-track.project-list-scroll::-webkit-scrollbar-track { background: transparent; }
-.drawer-track.project-list-scroll::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 </style>

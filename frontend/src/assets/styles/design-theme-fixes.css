@@ -1,0 +1,92 @@
+/* Design-page-only corrections. Keep the showcase truthful to the same product tokens. */
+
+/* Accent / muted accent / action fill are real DOM color cards in DesignSystemPage now. No
+   generated-content cards here: labels and token names stay selectable/copyable like every other
+   sample in the system-colour grid. */
+html[data-theme][data-family] .design-page .first-subsection .color-grid::before,
+html[data-theme][data-family] .design-page .first-subsection .color-grid::after {
+  content: none;
+  display: none;
+}
+
+/* Four equal interaction cards: three vertical density contracts plus an explicit X/Y overflow
+   case. All are real scroll containers, not decorative scrollbar samples. */
+html[data-theme][data-family] .design-page .scrollbar-token-layout { display:block; }
+html[data-theme][data-family] .design-page .scrollbar-demo-grid {
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:var(--design-grid-gap);
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card {
+  min-width:0;
+  height:auto;
+  overflow:hidden;
+  scrollbar-gutter:auto;
+}
+html[data-theme][data-family] .design-page .scrollbar-style-card .token-meta::after {
+  content:none;
+  display:none;
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface,
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface {
+  box-sizing:border-box;
+  width:100%;
+  height:150px;
+  overflow:auto;
+  scrollbar-gutter:stable;
+  scrollbar-color:var(--scrollbar-thumb) transparent;
+  padding:var(--space-sm);
+  background:var(--surface-soft);
+  border-bottom:1px solid var(--border-hairline);
+}
+html[data-theme][data-family] .design-page .scrollbar-overflow-content { min-width:620px; }
+html[data-theme][data-family] .design-page .scrollbar-live-surface span,
+html[data-theme][data-family] .design-page .scrollbar-overflow-content span {
+  display:block;
+  padding:var(--space-xs) var(--space-sm);
+  border-bottom:1px solid var(--border-hairline);
+  color:var(--content-secondary);
+  font-size:var(--font-size-xs);
+  line-height:var(--line-height-body);
+  white-space:nowrap;
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface span:last-child,
+html[data-theme][data-family] .design-page .scrollbar-overflow-content span:last-child { border-bottom:0; }
+
+html[data-theme][data-family] .design-page .scrollbar-density-default::-webkit-scrollbar { width:var(--scrollbar-size-default); }
+html[data-theme][data-family] .design-page .scrollbar-density-compact::-webkit-scrollbar { width:var(--scrollbar-size-compact); }
+html[data-theme][data-family] .design-page .scrollbar-density-editor::-webkit-scrollbar { width:var(--scrollbar-size-editor); }
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar {
+  width:var(--scrollbar-size-default);
+  height:var(--scrollbar-size-default);
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-track,
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-track {
+  background:transparent;
+  margin-block:var(--scrollbar-safe-inset);
+}
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-track:horizontal {
+  margin-inline:var(--scrollbar-safe-inset);
+  margin-block:0;
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-thumb,
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-thumb {
+  min-height:var(--scrollbar-min-thumb);
+  background:var(--scrollbar-thumb);
+  border-radius:var(--radius-pill);
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-thumb:hover,
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-thumb:hover {
+  background:var(--scrollbar-thumb-hover);
+}
+html[data-theme][data-family] .design-page .scrollbar-live-surface::-webkit-scrollbar-corner,
+html[data-theme][data-family] .design-page .scrollbar-overflow-surface::-webkit-scrollbar-corner { background:transparent; }
+
+html[data-theme][data-family] .design-page .action-demo { color:var(--content-on-accent); }
+
+@media(max-width:1100px) {
+  html[data-theme][data-family] .design-page .scrollbar-demo-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media(max-width:760px) {
+  html[data-theme][data-family] .design-page .scrollbar-demo-grid { grid-template-columns:1fr; }
+}

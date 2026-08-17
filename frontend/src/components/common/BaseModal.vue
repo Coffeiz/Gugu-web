@@ -2,14 +2,14 @@
   <!-- 遮罩与卡片是平级 fixed 节点（不 Teleport：fixed 同属 root stacking context，
        z 可与 body 下的预览窗等直接比较） -->
   <!-- 遮罩：固定低带（OVERLAY_Z），在一切浮动窗口之下——blur 只糊页面，糊不到预览器/聊天窗 -->
-  <Transition name="bm-ov">
+  <Transition name="bm-ov" appear>
     <div v-if="show" class="bm-overlay" :style="{ zIndex: OVERLAY_Z }" @click="$emit('close')" />
   </Transition>
   <!-- 卡片：进窗口带，点击置顶（与预览窗/聊天窗自由叠放）。
        :duration 定时收尾——进场根节点自身没有任何过渡属性（见下方过渡注释），
        不给固定时长的话 Vue 监听不到 transitionend、会立刻摘掉 enter-active，
        玻璃 ramp 就跑不完。 -->
-  <Transition name="bm" :duration="{ enter: MODAL_ENTER_MS, leave: MODAL_LEAVE_MS }">
+  <Transition name="bm" appear :duration="{ enter: MODAL_ENTER_MS, leave: MODAL_LEAVE_MS }">
     <div v-if="show" class="bm-center" :style="{ zIndex: myZ }">
       <div class="bm-card" :style="cardStyle" @mousedown.capture="raise">
         <slot />

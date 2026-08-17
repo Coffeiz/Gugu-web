@@ -6,13 +6,14 @@
         :key="col.key"
         :column="col"
         :projects="columnProjects(col.key)"
-        :ownership-version="ownershipVersion(columnProjects(col.key))"
+        :is-project-detached="isProjectDetached"
         @card-click="projectStore.openModal"
         @add-project="openNewWithStatus"
       />
       <DoneColumn
         :projects="columnProjects('done')"
-        :ownership-version="ownershipVersion(columnProjects('done'))"
+        :ownership-version-for="ownershipVersion"
+        :is-project-detached="isProjectDetached"
         @card-click="projectStore.openModal"
         @open-archived="showArchived = true"
       />
@@ -40,9 +41,17 @@ const cacheStore   = useFilesCacheStore()
 const uiStore      = useUiStore()
 const showArchived = ref(false)
 const ownershipRevisions = reactive(new Map<string, number>())
+const controlledProjectIds = reactive(new Set<string>())
 const stopOwnershipSubscription = runtime.onOwnershipChange((objectId) => {
-  ownershipRevisions.set(objectId, (ownershipRevisions.get(objectId) ?? 0) + 1)
+  const projectId = String(objectId)
+  ownershipRevisions.set(projectId, (ownershipRevisions.get(projectId) ?? 0) + 1)
+  if (runtime.isControlled(projectId)) controlledProjectIds.add(projectId)
+  else controlledProjectIds.delete(projectId)
 })
+
+function isProjectDetached(projectId: string): boolean {
+  return controlledProjectIds.has(projectId)
+}
 
 function ownershipVersion(projects: Project[]): number {
   let revision = 0
@@ -74,7 +83,7 @@ useRuntimeAction(action => {
   const projectId = Number(move.objectId)
   if (!Number.isFinite(projectId) || move.fromSurfaceId === move.toSurfaceId) return
   if (!projectStore.projects.some(project => project.id === projectId)) return
-  projectStore.moveProject(projectId, move.toSurfaceId)
+  void projectStore.moveProject(projectId, move.toSurfaceId)
 })
 onUnmounted(stopOwnershipSubscription)
 
@@ -129,6 +138,7 @@ const liveFileCounts = computed(() => {
 // 内多次调用 columnProjects() 用的是同一份缓存结果，同一个 project 对象引用，
 // 不会再凭空多出这类相邻渲染间的对象churn。
 const projectViewCache = new Map<number, { source: Project; fileCount: number; view: Project }>()
+const columnListCache = new Map<string, Project[]>()
 const columnProjectsMap = computed(() => {
   const prioVal = p => ({ high: 3, medium: 2, low: 1 }[p.priority] ?? 0)
   const grouped = new Map()
@@ -162,7 +172,21 @@ const columnProjectsMap = computed(() => {
     else if (statusKey === 'active') list.sort((a, b) => prioVal(b) - prioVal(a) || (a.deadline ?? '').localeCompare(b.deadline ?? '') || a.id - b.id)
     else list.sort((a, b) => prioVal(b) - prioVal(a) || (a.startDate ?? '').localeCompare(b.startDate ?? '') || a.id - b.id)
   }
-  return grouped
+  // 状态更新只会影响来源列和目标列；复用其它列的数组引用，避免父级 computed
+  // 重新求值时让所有 KanbanColumn/DoneColumn 都进入一次 Vue patch。
+  const stableGrouped = new Map<string, Project[]>()
+  for (const statusKey of ['pending', 'active', 'done']) {
+    const next = grouped.get(statusKey) ?? []
+    const previous = columnListCache.get(statusKey)
+    const stable = previous
+      && previous.length === next.length
+      && previous.every((project, index) => project === next[index])
+      ? previous
+      : next
+    columnListCache.set(statusKey, stable)
+    stableGrouped.set(statusKey, stable)
+  }
+  return stableGrouped
 })
 
 function columnProjects(statusKey) {

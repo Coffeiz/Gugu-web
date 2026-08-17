@@ -12,7 +12,7 @@ svg { shape-rendering: geometricPrecision; }
 .trace-list,
 .trace-detail,
 .log-table-wrap {
-  scrollbar-gutter: stable;
+  scrollbar-gutter: auto;
 }
 
 /* 全局勾选框样式：注册页确认勾选（原 .ack-box）与 markdown 预览 task list 用的同一套视觉，
@@ -55,7 +55,7 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
      不触发主线程重绘（配合 box-shadow 的 paint 属性，能显著降低 hover 时的重绘闪烁）。
      只影响渲染路径，不改变任何显示效果。 */
   will-change: transform;
-  transition: transform 0.25s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.25s ease;
+  transition: transform var(--motion-hover-card) cubic-bezier(0.34,1.2,0.64,1), box-shadow var(--motion-hover-card) ease;
 }
 .hover-card-fx:hover {
   transform: translateY(-2px);
@@ -72,7 +72,7 @@ input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
    咕咕聊天里的文件条都是这一挂——按钮/挤在气泡堆里的文件条，抬起要么跟布局不搭要么显得
    跟旁边气泡割裂，只保留点击下沉这一半效果。 */
 .press-fx {
-  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.2s ease-out;
+  transition: transform var(--motion-hover-control) ease, opacity var(--motion-hover-control) ease, box-shadow var(--motion-hover-card) ease-out;
 }
 .press-fx.press-fx:hover {
   --topbar-btn-shadow: 0 4px 14px rgba(80,90,110,0.3);
@@ -96,36 +96,35 @@ html, body, #app {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  color: var(--text-primary);
+  color: var(--content-primary);
   -webkit-font-smoothing: antialiased;
 }
 
 body {
-  background: var(--bg-gradient);
+  background: var(--surface-page);
   background-attachment: fixed;
   min-height: 100vh;
 }
 
 /* 玻璃面板工具类 */
 .glass-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: var(--glass-card-background);
+  border: 1px solid var(--glass-card-border);
   border-radius: var(--radius-lg);
   corner-shape: squircle;
-  box-shadow: var(--glass-shadow);
+  box-shadow: var(--glass-card-shadow);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  transition: background 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    background var(--glass-card-transition),
+    border-color var(--glass-card-transition),
+    box-shadow var(--glass-card-transition);
 }
 .glass-card:hover {
-  background: var(--glass-bg-hover);
-  box-shadow: var(--glass-shadow-lg);
+  background: var(--glass-card-background-hover);
+  border-color: var(--glass-card-border-hover);
+  box-shadow: var(--glass-card-shadow-hover);
 }
-
-/* 滚动条 */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: transparent; margin-top: 8px; margin-bottom: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(123,127,178,0.22); border-radius: 99px; }
 
 /* 段落间距 */
 .section-header {

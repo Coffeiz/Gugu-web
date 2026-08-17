@@ -158,40 +158,43 @@ function submit() {
 </script>
 
 <style scoped>
+/* 全套表面/边框/选中态消费语义 token（--input-* / --option-* / --action-*），与
+   TimeInput.boxed、活动弹窗输入框同一契约，亮暗主题自动适配；
+   亮色下这些 token 的原始值与旧硬编码（黑 10% 描边、白 72% 底、品牌紫渐变）几乎一致。 */
 .sched-modal { padding: 16px 18px; }
-.divider { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.07) 20%, rgba(0,0,0,0.07) 80%, transparent 100%); margin: 2px 0 10px; }
-.divider-full { margin-left: -18px; margin-right: -18px; background: rgba(0,0,0,0.07); }
-.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm); background: rgba(255,255,255,0.72); transition: border-color 0.15s, box-shadow 0.15s; }
-.title-input::placeholder { color: rgba(0,0,0,0.28); font-weight: 700; }
-.title-input:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
+.divider { height: 1px; background: var(--divider-line); margin: 2px 0 10px; }
+.divider-full { margin-left: -18px; margin-right: -18px; background: color-mix(in srgb, var(--content-primary) 8%, transparent); }
+.title-input { width: 100%; box-sizing: border-box; outline: none; font-size: 16px; font-weight: 700; color: var(--text-primary); font-family: var(--font-sans); padding: 6px 11px; margin-bottom: 10px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); transition: border-color 0.15s, box-shadow 0.15s; }
+.title-input::placeholder { color: var(--input-placeholder); font-weight: 700; }
+.title-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .field { display: block; margin-bottom: 11px; }
 .field > span { display: block; font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; }
-.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=time], .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid rgba(0,0,0,0.1); border-radius: var(--radius-sm); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
-.field input:focus, .field textarea:focus, .field select:focus, .field input[type=time]:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
+.field input[type=text], .field input:not([type]), .field textarea, .field select, .field input[type=number] { width: 100%; box-sizing: border-box; padding: 8px 11px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); font-size: 13px; font-family: var(--font-sans); color: var(--text-primary); outline: none; transition: border-color 0.15s, box-shadow 0.15s; }
+.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .field textarea { min-height: 96px; max-height: 160px; resize: none; line-height: 1.6; overflow-y: hidden; }
 .repeat-tabs { display: flex; gap: 6px; }
-.repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); font-size: 13px; font-family: var(--font-sans); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; text-align: center; }
-.repeat-tab:hover { border-color: rgba(123,127,178,0.4); }
-.repeat-tab.on { background: linear-gradient(135deg,#7b7fb2,#9590c4); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.3); }
+.repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
+.repeat-tab:hover { border-color: var(--option-border-hover); }
+.repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; box-shadow: var(--elevation-card); }
 .date-range { margin-top: 8px; }
 .date-range :deep(.dp-input) { height: 34px; box-sizing: border-box; }
 .time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
 .interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
-.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid rgba(0,0,0,0.1); background: rgba(255,255,255,0.72); color: var(--text-secondary); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
-.interval-preset:hover { border-color: rgba(123,127,178,0.4); }
-.interval-preset.on { color: #fff; border-color: transparent; background: linear-gradient(135deg,#7b7fb2,#9590c4); box-shadow: 0 2px 8px rgba(123,127,178,0.25); }
+.interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
+.interval-preset:hover { border-color: var(--option-border-hover); }
+.interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); box-shadow: var(--elevation-card); }
 .time-field input[type=number] { appearance: textfield; }
 .time-field input[type=number]::-webkit-inner-spin-button, .time-field input[type=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .chans { display: flex; gap: 18px; }
 .chk-row { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-primary); }
 .chk-input { display: none; }
-.chk-box { flex-shrink: 0; width: 16px; height: 16px; border-radius: 5px; corner-shape: squircle; border: 1.5px solid rgba(123,127,178,0.35); background: rgba(255,255,255,0.6); display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
-.chk-input:checked + .chk-box { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; box-shadow: 0 2px 8px rgba(123,127,178,0.35); }
-.form-err { color: #d05a5a; font-size: 12px; margin-bottom: 10px; }
+.chk-box { flex-shrink: 0; width: 16px; height: 16px; border-radius: 5px; corner-shape: squircle; border: 1.5px solid var(--action-outline); background: var(--control-bg); display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
+.chk-input:checked + .chk-box { background: var(--action-primary-bg); border-color: transparent; box-shadow: var(--elevation-card); }
+.form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
 .link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 3px; font-family: var(--font-sans); }
 .link:hover { color: var(--text-primary); }
-.btn-primary { padding: 8px 16px; border: none; border-radius: var(--radius-sm); background: linear-gradient(135deg, #7b7fb2, #9590c4); color: rgba(255,255,255,0.95); font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans); display: inline-flex; align-items: center; box-shadow: 0 3px 12px rgba(123,127,178,0.3); transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out; }
+.btn-primary { padding: 8px 16px; border: none; border-radius: var(--radius-sm); background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans); display: inline-flex; align-items: center; box-shadow: var(--elevation-card); transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out; }
 .btn-primary:hover { opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 </style>

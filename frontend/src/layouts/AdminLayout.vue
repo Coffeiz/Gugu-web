@@ -177,10 +177,10 @@ function handleLogout() {
 .admin-sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #0e101a 0%, #11131f 60%, #13152a 100%);
+  background: var(--surface-page);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid rgba(255,255,255,0.07);
+  border-right: 1px solid var(--border-subtle);
   overflow: hidden;
   padding: 24px 14px;
   gap: 0;
@@ -197,18 +197,18 @@ function handleLogout() {
 }
 .brand-icon {
   width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: linear-gradient(135deg, var(--palette-purple-500), var(--palette-purple-400));
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
 }
 .brand-text { line-height: 1; }
-.brand-name { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.92); }
-.brand-tag  { font-size: 10px; color: rgba(255,255,255,0.3); margin-top: 3px; }
+.brand-name { font-size: var(--font-size-lg); font-weight: 700; color: var(--content-primary); }
+.brand-tag  { font-size: var(--font-size-xs); color: var(--content-muted); margin-top: 3px; }
 
 .sidebar-rule {
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.07) 30%, rgba(255,255,255,0.07) 70%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, var(--border-subtle) 30%, var(--border-subtle) 70%, transparent 100%);
   margin: 0 4px;
 }
 
@@ -217,43 +217,40 @@ function handleLogout() {
   flex: 1; padding: 14px 0; overflow-y: auto;
   display: flex; flex-direction: column; gap: 2px;
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
-  /* scrollbar-gutter: stable 提到 global.css（Admin 后台滚动条统一规则） */
+  /* 滚动条由全局浮层契约统一管理，不为它预留布局空间。 */
 }
-.sidebar-nav::-webkit-scrollbar { width: 4px; }
-.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
-.sidebar-nav::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
 /* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
    固定不收缩，让溢出交给滚动而非挤压内容。 */
 .sidebar-nav > * { flex-shrink: 0; }
 .nav-group-label {
   font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
-  color: rgba(255,255,255,0.2); text-transform: uppercase;
+  color: var(--content-muted); text-transform: uppercase;
   padding: 0 10px; margin-bottom: 4px;
 }
 .nav-item {
   display: flex; align-items: center; gap: 9px;
-  padding: 9px 10px; border-radius: 10px;
-  font-size: 14px; color: rgba(255,255,255,0.45);
+  padding: 9px 10px; border-radius: var(--radius-sm);
+  font-size: var(--font-size-md); color: var(--content-secondary);
   text-decoration: none; cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.15s;
 }
 .nav-item:hover:not(.disabled) {
-  color: rgba(255,255,255,0.75);
-  background: rgba(255,255,255,0.06);
+  color: var(--content-primary);
+  background: var(--surface-glass);
 }
 .nav-item.active {
-  color: rgba(255,255,255,0.92);
-  background: rgba(255,255,255,0.1);
-  border-color: rgba(255,255,255,0.12);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.07);
+  color: var(--content-primary);
+  background: var(--surface-glass-hover);
+  border-color: var(--border-strong);
+  box-shadow: inset 0 1px 0 var(--border-subtle);
   font-weight: 600;
 }
-.nav-item.disabled { color: rgba(255,255,255,0.18); cursor: default; }
+.nav-item.disabled { color: var(--content-muted); cursor: default; }
 .nav-badge {
   margin-left: auto; font-size: 9px; font-weight: 600;
-  color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.05);
-  padding: 2px 6px; border-radius: 20px; letter-spacing: 0.04em;
+  color: var(--content-muted); background: var(--surface-glass);
+  padding: 2px 6px; border-radius: var(--radius-pill); letter-spacing: 0.04em;
 }
 
 /* ── 底部 ── */
@@ -261,23 +258,23 @@ function handleLogout() {
 /* 用户卡片 — 对齐前端 user-card 风格，暗色版 */
 .user-card {
   display: flex; align-items: center; gap: 10px;
-  padding: 10px; border-radius: 14px;
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.1);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+  padding: 10px; border-radius: var(--radius-md);
+  background: var(--surface-glass);
+  border: 1px solid var(--border-strong);
+  box-shadow: inset 0 1px 0 var(--border-subtle);
   transition: background 0.15s;
 }
-.user-card:hover { background: rgba(255,255,255,0.1); }
+.user-card:hover { background: var(--surface-glass-hover); }
 
 .user-avatar {
   width: 32px; height: 32px; border-radius: 50%;
-  background: linear-gradient(135deg, #7b7fb2, #7ab8c8);
+  background: linear-gradient(135deg, var(--palette-purple-500), var(--palette-cyan-400));
   display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 700; color: white; flex-shrink: 0;
+  font-size: var(--font-size-md); font-weight: 700; color: var(--content-on-accent); flex-shrink: 0;
 }
 .user-info { flex: 1; min-width: 0; overflow: hidden; }
 .user-name {
-  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75);
+  font-size: var(--font-size-md); font-weight: 600; color: var(--content-secondary);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   padding-bottom: 2px; margin-bottom: -2px;
 }
@@ -285,16 +282,16 @@ function handleLogout() {
 .logout-btn {
   width: 24px; height: 24px; border-radius: 7px;
   background: none; border: none;
-  color: rgba(255,255,255,0.28); cursor: pointer;
+  color: var(--content-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0; transition: color 0.15s;
 }
-.logout-btn:hover { color: rgba(255,255,255,0.7); }
+.logout-btn:hover { color: var(--content-primary); }
 
 /* ── 主内容区 ── */
 .admin-main {
   flex: 1;
-  background: linear-gradient(150deg, #0f1117 0%, #121626 40%, #161b30 70%, #1a1e38 100%);
+  background: var(--surface-page);
   /* 不用 background-attachment: fixed——它把渐变钉在视口，滚动时每帧重绘整块导致闪动；
      本元素本身就是视口高的滚动容器，默认 scroll 已让背景相对自身固定，视觉一致且无重绘。 */
   overflow-y: auto;

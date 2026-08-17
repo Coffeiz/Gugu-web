@@ -1,0 +1,175 @@
+/* Shared floating surface / modal / input / choice contracts.
+   Components consume these roles; light/dark differences come from semantic theme values. */
+:root {
+  --panel-glass-bg: var(--surface-glass);
+  --panel-glass-border: var(--border-default);
+  --panel-glass-highlight: var(--border-highlight);
+  --panel-glass-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
+  --panel-glass-shadow: inset -1px 0 0 var(--panel-glass-side-highlight);
+  --panel-glass-blur: blur(24px);
+  --panel-content-bg: var(--surface-panel);
+  /* Content dividers are not glass edges. Aero light's border tokens are deliberately white, so
+     keep inner separators on the old neutral ink line and restore the dark mapping below. */
+  --panel-divider: color-mix(in srgb,var(--content-primary) 6%,transparent);
+
+  --modal-card-bg: var(--surface-floating);
+  --modal-card-border: var(--border-strong);
+  --modal-card-highlight: var(--border-highlight);
+  --modal-card-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
+  --modal-card-shadow: var(--elevation-window);
+  --modal-overlay-bg: var(--surface-scrim);
+
+  /* File-dialog surface contract. UploadModal and the project editor file pane historically shared
+     the same light paper/panel system; keep those product values here instead of leaking white
+     glass-border semantics into their inner lines. Dark values are remapped 1:1 below. */
+  --file-dialog-modal-bg: var(--panel-bg);
+  --file-dialog-panel-bg: var(--panel-bg);
+  --file-dialog-panel-shadow: inset 0 1px 0 rgba(255,255,255,.98);
+  --file-dialog-divider: color-mix(in srgb,var(--content-primary) 7%,transparent);
+  --file-dialog-toolbar-divider: var(--file-dialog-divider);
+  --file-dialog-close-bg: color-mix(in srgb,var(--content-primary) 5%,transparent);
+  --file-dialog-close-bg-hover: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --file-dialog-drop-bg: rgba(255,255,255,.42);
+  --file-dialog-drop-border: color-mix(in srgb,var(--action-primary) 35%,transparent);
+  --file-dialog-drop-bg-hover: color-mix(in srgb,var(--action-primary) 4%,transparent);
+  --file-dialog-drop-border-hover: color-mix(in srgb,var(--action-primary) 60%,transparent);
+  --file-dialog-drop-bg-active: color-mix(in srgb,var(--action-primary) 7%,transparent);
+  --file-dialog-item-bg: rgba(255,255,255,.70);
+  --file-dialog-item-border: rgba(255,255,255,.88);
+  --file-dialog-item-shadow: inset 0 1px 0 rgba(255,255,255,.90);
+  --file-dialog-choice-bg: rgba(255,255,255,.72);
+  --file-dialog-choice-bg-hover: rgba(255,255,255,.90);
+  --file-dialog-choice-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --file-dialog-choice-bg-active: linear-gradient(135deg,#7b7fb2,#9590c4);
+  --file-dialog-choice-fg-active: var(--content-on-accent);
+  --file-dialog-choice-border-active: transparent;
+  --file-dialog-choice-shadow-active: 0 2px 8px rgba(123,127,178,.28);
+  --file-dialog-control-bg: rgba(255,255,255,.72);
+  --file-dialog-control-bg-hover: rgba(255,255,255,.88);
+  --file-dialog-control-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --file-dialog-toolbar-tint: transparent;
+  --file-dialog-toolbar-highlight-strong: transparent;
+  --file-dialog-toolbar-highlight-side: transparent;
+
+  /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
+     paint and cadence comes from this one contract. */
+  --popup-surface-bg: var(--surface-popup);
+  --popup-surface-border: var(--popup-border);
+  --popup-surface-highlight: var(--border-highlight);
+  --popup-surface-shadow: var(--popup-shadow);
+  --popup-surface-blur: var(--popup-blur);
+  --popup-surface-radius: var(--radius-sm);
+  --popup-surface-padding: 4px;
+  --popup-item-fg: var(--content-primary);
+  --popup-item-fg-muted: var(--content-secondary);
+  --popup-item-bg-hover: var(--surface-soft-hover);
+  --popup-item-bg-active: var(--selection-bg);
+  --popup-item-fg-active: var(--selection-fg);
+  --popup-item-danger: var(--status-danger);
+  --popup-item-danger-bg-hover: var(--status-danger-bg);
+  --popup-divider: var(--border-subtle);
+  --popup-enter-duration: var(--motion-hover-control);
+  --popup-leave-duration: var(--motion-hover-micro);
+  --popup-enter-easing: var(--motion-ease-enter);
+  --popup-leave-easing: var(--motion-ease-standard);
+
+  /* Inputs are controls, not glass panel edges. Aero light intentionally gives panels a white
+     border; deriving field borders from content/action semantics keeps the old neutral outline. */
+  --input-bg: var(--surface-raised);
+  --input-bg-hover: color-mix(in srgb,var(--surface-raised) 88%,var(--surface-glass-hover));
+  --input-bg-focus: var(--surface-floating);
+  --input-fg: var(--content-primary);
+  --input-placeholder: var(--content-tertiary);
+  --input-border: color-mix(in srgb,var(--content-primary) 11%,transparent);
+  --input-border-hover: var(--action-outline);
+  --input-border-focus: var(--border-focus);
+  --input-hover-shadow: inset 0 1px 0 var(--highlight-muted);
+  --input-focus-shadow: var(--control-focus-shadow);
+  --input-radius: var(--radius-sm);
+
+  --option-bg: var(--surface-soft);
+  --option-bg-hover: var(--surface-soft-hover);
+  --option-bg-active: var(--selection-bg);
+  --option-fg: var(--content-secondary);
+  --option-fg-hover: var(--content-primary);
+  --option-fg-active: var(--selection-fg);
+  --option-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --option-border-hover: var(--action-outline);
+  --option-border-active: var(--action-outline);
+  --option-shadow: none;
+
+  /* Preserve the original light multi-choice pill: transparent surface + neutral outline. */
+  --choice-chip-bg: transparent;
+  --choice-chip-bg-hover: var(--action-soft);
+  --choice-chip-bg-active: var(--selection-bg);
+  --choice-chip-fg: var(--content-secondary);
+  --choice-chip-fg-hover: var(--content-primary);
+  --choice-chip-fg-active: var(--selection-fg);
+  --choice-chip-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --choice-chip-border-hover: var(--action-outline);
+  --choice-chip-border-active: var(--action-outline);
+  --choice-chip-radius: var(--radius-pill);
+
+  /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
+  --danger-button-bg: var(--status-danger-bg);
+  --danger-button-bg-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-fg: var(--status-danger);
+  --danger-button-border: color-mix(in srgb,var(--status-danger) 30%,transparent);
+  --danger-button-border-hover: color-mix(in srgb,var(--status-danger) 48%,transparent);
+  --danger-button-shadow: none;
+  --danger-button-radius: var(--radius-sm);
+
+  --switch-track-bg: color-mix(in srgb,var(--content-primary) 18%,transparent);
+  --switch-track-bg-active: var(--action-primary);
+  --switch-thumb-bg: var(--surface-raised);
+
+  --subpanel-bg: var(--surface-soft);
+  --subpanel-border: color-mix(in srgb,var(--content-primary) 8%,transparent);
+
+  --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 72%,transparent);
+  --runtime-drag-glass-border: var(--border-strong);
+  --runtime-drag-glass-filter: blur(12px) saturate(1.15);
+  --runtime-drag-glass-shadow: 0 22px 50px color-mix(in srgb,var(--content-primary) 18%,transparent);
+
+  --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
+}
+
+html[data-theme='dark'][data-family] {
+  /* Preserve the existing dark contracts; the neutral light restoration above must not shift dark. */
+  --panel-divider: var(--border-subtle);
+  --subpanel-border: var(--border-subtle);
+
+  --file-dialog-modal-bg: var(--modal-card-bg);
+  --file-dialog-panel-bg: var(--panel-content-bg);
+  --file-dialog-panel-shadow: inset 0 1px 0 var(--panel-glass-highlight);
+  --file-dialog-divider: var(--border-subtle);
+  --file-dialog-toolbar-divider: transparent;
+  --file-dialog-close-bg: var(--control-bg);
+  --file-dialog-close-bg-hover: var(--control-bg-hover);
+  --file-dialog-drop-bg: var(--surface-soft);
+  --file-dialog-drop-border: var(--action-outline);
+  --file-dialog-drop-bg-hover: var(--action-soft);
+  --file-dialog-drop-border-hover: var(--border-focus);
+  --file-dialog-drop-bg-active: var(--action-soft-hover);
+  --file-dialog-item-bg: var(--surface-raised);
+  --file-dialog-item-border: var(--input-border);
+  --file-dialog-item-shadow: var(--elevation-card);
+  --file-dialog-choice-bg: var(--choice-chip-bg);
+  --file-dialog-choice-bg-hover: var(--choice-chip-bg-hover);
+  --file-dialog-choice-border: var(--choice-chip-border);
+  --file-dialog-choice-bg-active: var(--choice-chip-bg-active);
+  --file-dialog-choice-fg-active: var(--choice-chip-fg-active);
+  --file-dialog-choice-border-active: var(--choice-chip-border-active);
+  --file-dialog-choice-shadow-active: none;
+  --file-dialog-control-bg: var(--control-bg);
+  --file-dialog-control-bg-hover: var(--control-bg-hover);
+  --file-dialog-control-border: var(--control-border);
+  --file-dialog-toolbar-tint: var(--surface-glass);
+  --file-dialog-toolbar-highlight-strong: var(--highlight-strong);
+  --file-dialog-toolbar-highlight-side: var(--highlight-side);
+
+  --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
+  --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
+  --runtime-drag-glass-border: var(--border-hover);
+  --runtime-drag-glass-shadow: 0 22px 50px rgba(0,0,0,.38);
+}

@@ -4,18 +4,20 @@
 """
 import json
 
-from sqlalchemy import select
-
-from app.models import Client
-from app.core.ownership import get_owned
+from app.services.clients import (
+    create_client,
+    delete_client,
+    find_clients_by_name,
+    get_client,
+    list_clients,
+    update_client,
+)
 from agent.security import confirm
 from agent.tools.base import BaseSkill, Tool
 
 
 async def _list_clients(db, user_id, args: dict):
-    rows = (await db.execute(
-        select(Client).where(Client.user_id == user_id).order_by(Client.created_at.desc())
-    )).scalars().all()
+    rows = await list_clients(db, user_id)
     return [
         {"id": c.id, "name": c.name, "contact": c.contact,
          "email": c.email, "phone": c.phone, "notes": c.notes}
@@ -26,14 +28,11 @@ async def _list_clients(db, user_id, args: dict):
 async def _create_client(db, user_id, args: dict):
     if not args.get("name"):
         return json.dumps({"error": "客户名称必填"})
-    c = Client(
-        user_id=user_id, name=args["name"], contact=args.get("contact"),
+    c = await create_client(
+        db, user_id, name=args["name"], contact=args.get("contact"),
         email=args.get("email"), phone=args.get("phone"),
         notes=args.get("notes", ""),
     )
-    db.add(c)
-    await db.commit()
-    await db.refresh(c)
     return {"success": True, "client_id": c.id, "name": c.name}
 
 
@@ -41,20 +40,14 @@ async def _resolve_client(db, user_id, args):
     """按 client_id 或客户名 client 定位；返回 (Client|None, 错误JSON|None)。"""
     cid = args.get("client_id")
     if cid:
-        c = await get_owned(db, Client, cid, user_id)
+        c = await get_client(db, user_id, cid)
         if not c:
             return None, json.dumps({"error": "客户不存在"})
         return c, None
     name = args.get("client")
     if name:
         name = str(name).strip()
-        rows = (await db.execute(
-            select(Client).where(Client.user_id == user_id, Client.name == name)
-        )).scalars().all()
-        if not rows:
-            rows = (await db.execute(
-                select(Client).where(Client.user_id == user_id, Client.name.ilike(f"%{name}%"))
-            )).scalars().all()
+        rows = await find_clients_by_name(db, user_id, name)
         if not rows:
             return None, json.dumps({"error": f"未找到客户「{name}」"})
         if len(rows) > 1:
@@ -71,10 +64,7 @@ async def _update_client(db, user_id, args: dict):
     fields = ("name", "contact", "email", "phone", "notes")
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
         return json.dumps({"error": "没提供要修改的字段（name/contact/email/phone/notes），未改动。"})
-    for field in fields:
-        if field in args:
-            setattr(c, field, args[field])
-    await db.commit()
+    await update_client(db, c, {field: args[field] for field in fields if field in args})
     return {"success": True, "client_id": c.id, "name": c.name}
 
 
@@ -86,9 +76,7 @@ async def _delete_client(db, user_id, args: dict):
     blocked = confirm.needs_confirmation(args, summary, user_id)
     if blocked is not None:
         return blocked
-    cid, cname = c.id, c.name
-    await db.delete(c)
-    await db.commit()
+    cid, cname = await delete_client(db, c)
     return {"success": True, "deleted_client_id": cid, "name": cname}
 
 

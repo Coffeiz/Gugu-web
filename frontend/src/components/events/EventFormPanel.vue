@@ -38,15 +38,31 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-.event-form-body { display: flex; flex-direction: column; gap: 9px; padding: 16px; }
+.event-form-body { display: flex; flex-direction: column; gap: 9px; padding: 16px; color: var(--content-primary); }
 .popup-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; }
-.popup-title { font-size: 13px; font-weight: 700; color: #1e2028; }
-.popup-close-btn { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: none; border-radius: 6px; background: none; color: var(--text-secondary); cursor: pointer; }
-.popup-close-btn:hover { background: rgba(0,0,0,0.06); }
+.popup-title { font-size: 13px; font-weight: 700; color: var(--content-primary); }
+.popup-close-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: none; border-radius: var(--radius-xs);
+  background: transparent; color: var(--content-secondary); cursor: pointer;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.popup-close-btn:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
-.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
-.popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
-.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
+.popup-delete {
+  padding: 5px 12px; border-radius: var(--danger-button-radius); border: 1px solid var(--danger-button-border);
+  background: var(--danger-button-bg); color: var(--danger-button-fg);
+  font-size: 12px; cursor: pointer; font-family: var(--font-sans); font-weight: 600;
+  box-shadow: var(--danger-button-shadow);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.popup-delete:hover { background: var(--danger-button-bg-hover); border-color: var(--danger-button-border-hover); }
+.popup-save {
+  padding: 5px 14px; border-radius: var(--radius-sm); border: none;
+  background: var(--action-primary-bg); color: var(--content-on-accent);
+  font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-sans);
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard); box-shadow: var(--elevation-card);
+}
 .popup-save:disabled { opacity: 0.38; cursor: default; }
 .popup-save:not(:disabled):hover { opacity: 0.88; }
 </style>

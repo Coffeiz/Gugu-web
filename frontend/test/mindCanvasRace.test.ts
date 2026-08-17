@@ -15,7 +15,7 @@ vi.mock('@/stores/live', () => ({
   useLiveStore: () => ({ rev: { mind: 0 } }),
 }))
 
-import { useMindStore } from '@/stores/mind'
+import { normalizeCanvasRelations, useMindStore } from '@/stores/mind'
 
 const canvas = (id: number) => ({
   id,
@@ -82,5 +82,27 @@ describe('画布加载竞态', () => {
 
     expect(await first).toBe(false)
     expect(store.activeCanvasId).toBe(2)
+  })
+
+  it('加载画布时去掉重复关系，避免连线 TransitionGroup 使用重复 key', async () => {
+    const relation = {
+      id: 570,
+      srcNodeId: 1,
+      dstNodeId: 2,
+      relType: 'related' as const,
+      origin: 'user' as const,
+      status: 'confirmed' as const,
+      createdAt: '2026-08-02T00:00:00Z',
+      updatedAt: '2026-08-02T00:00:00Z',
+    }
+    api.listCanvasItems.mockResolvedValue([])
+    api.listCanvasRelations.mockResolvedValue([relation, { ...relation }])
+
+    const store = useMindStore()
+    await store.fetchCanvases()
+    await store.loadCanvas(1)
+
+    expect(store.canvasRelations).toHaveLength(1)
+    expect(normalizeCanvasRelations([relation, { ...relation }])).toEqual([relation])
   })
 })

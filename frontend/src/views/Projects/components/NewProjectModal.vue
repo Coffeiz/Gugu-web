@@ -606,17 +606,26 @@ label, .section-label {
 
 input[type="text"], input:not([type]):not(.name-input):not(.header-name-input) {
   width: 100%; padding: 8px 11px;
-  background: rgba(255,255,255,0.72);
-  border: 1px solid rgba(0,0,0,0.1);
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   border-radius: 10px;
-  font-size: 13px; color: var(--text-primary);
+  font-size: 13px; color: var(--input-fg);
   font-family: var(--font-sans); outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
   box-sizing: border-box;
+  caret-color: var(--action-primary);
 }
-input:not(.name-input):not(.header-name-input):focus {
-  border-color: rgba(123,127,178,0.4);
-  box-shadow: 0 0 0 3px rgba(123,127,178,0.1);
+input:not(.name-input):not(.header-name-input)::placeholder { color: var(--input-placeholder); }
+input:not(.name-input):not(.header-name-input):hover:not(:disabled) {
+  background: var(--input-bg-hover);
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
+}
+/* 与 hover 同特异度且源顺序在后：聚焦后悬停不丢 focus 描边。 */
+input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
 }
 
 /* ── 看板列 ── */

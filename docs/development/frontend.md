@@ -12,6 +12,10 @@
 - 复用现有组件、Store、设计变量和 `docs/development/design.md`，不要重复实现。
 - 修改完成后按风险运行 typecheck、测试，并在 devserver 验证 UI。
 
+## Runtime 动画 Ownership
+
+Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强制覆盖 `transform`、`transition`、`opacity` 等由 Runtime 控制生命周期的属性。需要保留 hover、主题或静态状态时，应使用普通优先级的 token 规则，让 Runtime 的内联状态和动画阶段可以正常接管。
+
 ## HTML 与组件边界
 
 - 不可信 HTML 必须经过 `frontend/src/utils/markdown.ts` 的消毒函数，禁止直接使用 `v-html`。

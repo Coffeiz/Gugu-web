@@ -1,0 +1,144 @@
+/* Cross-family public color roles and adaptive highlight refinement.
+ * Theme-family files provide raw values; long-lived product components consume only these stable
+ * roles so dark mode never needs a literal white highlight patched into individual pages.
+ */
+:root {
+  --color-accent: var(--action-primary);
+  --color-accent-hover: var(--action-primary-hover);
+  --color-accent-muted: color-mix(in srgb, var(--action-primary) 16%, var(--surface-soft));
+  --color-accent-faint: color-mix(in srgb, var(--action-primary) 8%, transparent);
+
+  --highlight-strong: var(--theme-highlight-rest);
+  --highlight-side: var(--theme-highlight-side);
+  --highlight-soft: color-mix(in srgb, var(--theme-highlight-rest) 72%, transparent);
+  --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
+
+  /* Floating app chrome is distinct from content cards. Aero resolves to its normal glass surface;
+     Mono/V2 remaps only this role below so cards keep their quieter solid language while
+     navigation/drawers/toolbars retain backdrop glass. */
+  --chrome-glass-bg: var(--surface-glass);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
+}
+
+/* Mono/V2 uses quieter card separation than Aero, so key content cards should not rely on elevation
+   alone. Floating chrome remains translucent rather than reusing the more solid content surface. */
+html[data-family='v2'] {
+  --project-card-border: var(--border-strong);
+  --project-card-hover-border: var(--border-hover);
+  --chrome-glass-bg: color-mix(in srgb,var(--surface-floating) 76%,transparent);
+  --chrome-glass-border: var(--border-strong);
+  --chrome-glass-shadow: var(--elevation-card);
+  --chrome-glass-blur: var(--glass-blur);
+}
+
+/* Dark surfaces do not brighten on hover. Interactive controls still use control/action hover
+   tokens, so disabling surface highlight does not remove affordance from buttons or inputs. */
+html[data-theme='dark'][data-family] {
+  --surface-hover-tint: transparent;
+  --surface-glass-hover: var(--surface-glass);
+  --elevation-card-hover: var(--elevation-card);
+  --card-hover-overlay: transparent;
+  --card-surface-bg-hover: var(--surface-card-solid);
+  --card-surface-border-hover: var(--border-strong);
+  --card-shadow-hover: var(--card-shadow);
+  --glass-card-background-hover: var(--glass-card-background);
+  --glass-card-border-hover: var(--glass-card-border);
+  --glass-card-shadow-hover: var(--glass-card-shadow);
+  --sidebar-user-bg-hover: var(--sidebar-user-bg);
+  --topbar-bg-hover: var(--topbar-bg);
+  --topbar-shadow-hover: var(--topbar-shadow);
+  --gugu-chat-session-hover: transparent;
+
+  /* Dark primary fills are intentionally quieter than the foreground accent. This is the shared
+     fill for topbar primary actions and calendar current-date markers.
+     Kept as flat color-mix (not a gradient) so the background-color transition animates on hover —
+     CSS cannot interpolate between two gradients. */
+  --action-primary-bg: color-mix(in srgb,var(--action-primary) 46%,var(--surface-base));
+  --action-primary-bg-hover: color-mix(in srgb,var(--action-primary) 54%,var(--surface-base));
+
+  /* Dark secondary actions use surface-based fills instead of the light glass literals. */
+  --action-secondary-bg: var(--surface-soft);
+  --action-secondary-bg-hover: var(--surface-soft-hover);
+  --action-secondary-border: var(--border-default);
+  --action-secondary-border-hover: var(--border-hover);
+  --action-secondary-fg: var(--content-secondary);
+  --action-secondary-fg-hover: var(--content-primary);
+
+  /* Project cards keep lift/shadow feedback, but no extra sheen flash in dark mode. */
+  --project-card-sheen-hover: transparent;
+  --project-card-highlight-hover: transparent;
+
+  /* Keep the previous dark calendar grid treatment while light mode restores the original
+     purple-grey main-branch lines. Capsule/chip/cell hover brightening is disabled with surfaces. */
+  --calendar-grid-line: var(--border-subtle);
+  --calendar-grid-line-strong: var(--border-subtle);
+  --calendar-cell-hover-bg: transparent;
+  --calendar-today-cell-bg: var(--color-accent-faint);
+  --calendar-range-cell-bg: var(--selection-bg);
+  --calendar-selected-cell-bg: var(--selection-bg);
+  --calendar-range-edge-bg: var(--action-soft-hover);
+  --calendar-weekend-hover-bg: var(--calendar-weekend-bg);
+  --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
+}
+
+/* Legacy popup/user surfaces still contain light-theme literals in scoped/global CSS. Keep their
+   product contract here until those components are fully tokenized. */
+html[data-theme='dark'][data-family] .settings-popup,
+html[data-theme='dark'][data-family] .notif-popup {
+  background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
+  border-color: var(--border-default);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item,
+html[data-theme='dark'][data-family] .notif-title,
+html[data-theme='dark'][data-family] .notif-msg,
+html[data-theme='dark'][data-family] .notif-meta.as-title {
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .notif-meta,
+html[data-theme='dark'][data-family] .notif-empty {
+  color: var(--content-tertiary);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before,
+html[data-theme='dark'][data-family] .notif-item:hover,
+html[data-theme='dark'][data-family] .notif-item.unread {
+  background: var(--color-accent-faint);
+}
+/* settings-popup 菜单项用 ::before 伪元素做 hover 高亮，需覆盖 surfaces.css 的通用
+   .popup-menu-item:hover 背景，避免两层高亮叠加。 */
+html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
+  background: transparent;
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep,
+html[data-theme='dark'][data-family] .notif-header {
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep {
+  background: var(--border-subtle);
+}
+
+html[data-theme='dark'][data-family] .pm-nav-item.active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+}
+html[data-theme='dark'][data-family] .pm-nav-item:hover {
+  color: var(--content-primary);
+  background: var(--color-accent-faint);
+}
+html[data-theme='dark'][data-family] .pm-nav-divider {
+  background: var(--divider-line);
+}
+
+html[data-theme][data-family] .topbar .btn-ghost-custom,
+html[data-theme][data-family] .sample-topbar .sample-ghost {
+  --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
+  box-shadow: var(--topbar-btn-shadow) !important;
+}
+html[data-theme][data-family] .topbar .btn-ghost-custom:hover,
+html[data-theme][data-family] .sample-topbar .sample-ghost:hover {
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
+}

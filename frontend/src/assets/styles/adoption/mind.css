@@ -1,0 +1,218 @@
+/* Mind workspace theme adoption. File references already render FileCard.vue and therefore inherit
+   the file-card dark contract; do not duplicate file-card styling here. */
+html[data-theme][data-family] .canvas-page { background: var(--mind-canvas-bg); }
+
+/* Floating Mind chrome is not a content card. Mono keeps its quieter card language but restores a
+   translucent backdrop surface for the top mode switcher, canvas drawer, bottom toolbar and the
+   toolbar's object picker. Drawer/toolbar/picker are .glass-card: remap the whole component contract,
+   including --glass-card-blur. product.css owns the final Mono .glass-card backdrop declaration and
+   resolves this local token, so content cards can stay no-blur without a specificity fight here. */
+html[data-family='v2'] .mind-tabs {
+  background: var(--chrome-glass-bg);
+  border-color: var(--chrome-glass-border);
+  box-shadow: var(--chrome-glass-shadow);
+  backdrop-filter: var(--chrome-glass-blur);
+  -webkit-backdrop-filter: var(--chrome-glass-blur);
+}
+html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker) {
+  --glass-card-background: var(--chrome-glass-bg);
+  --glass-card-background-hover: var(--chrome-glass-bg);
+  --glass-card-border: var(--chrome-glass-border);
+  --glass-card-border-hover: var(--chrome-glass-border);
+  --glass-card-shadow: var(--chrome-glass-shadow);
+  --glass-card-shadow-hover: var(--chrome-glass-shadow);
+  --glass-card-blur: var(--chrome-glass-blur);
+  background: var(--glass-card-background);
+  border-color: var(--glass-card-border);
+  box-shadow: var(--glass-card-shadow);
+}
+
+/* Notes timeline. Mono/V2 uses quieter elevation, so these content cards get a stronger real
+   outline for separation; file/project references inherit their own shared card contracts. */
+html[data-theme][data-family] .tl-col {
+  --glass-card-background: var(--mind-timeline-bg);
+  --glass-card-border: var(--border-default);
+  --glass-card-shadow: var(--card-shadow);
+}
+html[data-family='v2'] .tl-col { --glass-card-border: var(--border-strong); }
+html[data-theme][data-family] .tl-col.dragging {
+  background: var(--glass-card-background-hover);
+  border-color: var(--glass-card-border-hover);
+  box-shadow: var(--glass-card-shadow-hover);
+}
+html[data-theme][data-family] .tl-count {
+  color: var(--content-secondary);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .note-card {
+  color: var(--content-primary);
+  background: var(--note-surface);
+  border-color: var(--note-border);
+  box-shadow: var(--note-shadow);
+}
+html[data-family='v2'] .note-card { border-color: var(--border-strong); }
+html[data-theme][data-family] .note-card::after {
+  background: transparent;
+  box-shadow: inset 0 1px 0 var(--note-highlight);
+}
+html[data-theme][data-family] .note-card:not(.editing):hover { box-shadow: var(--note-shadow-hover); }
+html[data-theme][data-family] .note-card:not(.editing):hover::after { background: var(--note-hover-overlay); }
+html[data-theme][data-family] .note-card.editing { background: var(--note-surface-editing); }
+html[data-theme][data-family] .note-card.tint-amber,
+html[data-theme][data-family] .note-card.canvas-mode.tint-amber { background: var(--note-paper-amber); }
+html[data-theme][data-family] .note-card.tint-coral,
+html[data-theme][data-family] .note-card.canvas-mode.tint-coral { background: var(--note-paper-coral); }
+html[data-theme][data-family] .note-card.tint-blue,
+html[data-theme][data-family] .note-card.canvas-mode.tint-blue { background: var(--note-paper-blue); }
+html[data-theme][data-family] .note-card.tint-teal,
+html[data-theme][data-family] .note-card.canvas-mode.tint-teal { background: var(--note-paper-teal); }
+html[data-theme][data-family] .note-card.canvas-mode:not(.tint-amber):not(.tint-coral):not(.tint-blue):not(.tint-teal) {
+  background: var(--note-paper-default-canvas);
+}
+/* 画布便签去掉 ::after 的 1px 顶部 inset 高光：Glass 主题的 --card-shadow（--note-shadow）
+   本身已含 inset 0 1px 0 顶部高光，加上真实 border 后顶部同一条边最多叠三层 1px 线，
+   相机缩放到 80%/90% 这类非整数比例时栅格化成肉眼可见的双边/叠影（同 EntitySticker
+   6b4b9bb8 的结论）。时间流便签不在相机变换下渲染，保留纸卡顶部高光原设计；
+   hover 提亮走 ::after 的 background，不受影响。 */
+html[data-theme][data-family] .note-card.canvas-mode::after { box-shadow: none; }
+html[data-theme][data-family] .nc-title-input,
+html[data-theme][data-family] .nc-head:has(+ .nc-body) { border-bottom-color: var(--note-divider); }
+html[data-theme][data-family] .nc-icon:hover,
+html[data-theme][data-family] .nc-done-btn:hover,
+html[data-theme][data-family] .ne-tool:hover,
+html[data-theme][data-family] .ne-style-item:hover { background: var(--action-soft); }
+html[data-theme][data-family] .ne-tool.on,
+html[data-theme][data-family] .ne-style-item.on { background: var(--selection-bg); }
+html[data-theme='dark'][data-family] .cs-none {
+  background: repeating-conic-gradient(var(--surface-soft) 0% 25%,var(--surface-raised) 0% 50%) 0 0 / 6px 6px;
+}
+
+/* Bottom capture/editor surface */
+html[data-theme][data-family] .capture-bar {
+  background: var(--capture-bg);
+  border-color: var(--capture-border);
+  box-shadow: var(--capture-shadow), inset 0 1px 0 var(--capture-highlight);
+}
+html[data-theme][data-family] .capture-bar.expanded { background: var(--capture-bg-expanded); }
+html[data-theme][data-family] .cb-kbd { border-color: var(--border-subtle); }
+html[data-theme][data-family] .cb-title-input { border-bottom-color: var(--note-divider); }
+html[data-theme][data-family] .cb-foot { border-top-color: var(--note-divider); }
+html[data-theme][data-family] .cb-hint code { background: var(--action-soft); }
+html[data-theme][data-family] .cb-min:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .cb-save {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
+}
+html[data-theme][data-family] .cb-save:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+
+html[data-theme][data-family] .ne-picker {
+  background: var(--mind-picker-bg);
+  border-color: var(--mind-picker-border);
+  box-shadow: var(--mind-picker-shadow);
+}
+/* The inline toolbar is transparent by design; only the Teleported canvas toolbar owns a floating
+   surface. Its legacy light paint stays in NoteEditor.vue unchanged. Dark mode alone remaps that
+   surface to the existing Mind picker/popup contract, so there is one dark owner and no light regression. */
+html[data-theme='dark'][data-family] .ne-toolbar.ne-toolbar-floating {
+  color: var(--content-primary);
+  background: var(--mind-picker-bg);
+  border-color: var(--mind-picker-border);
+  box-shadow: var(--mind-picker-shadow);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+html[data-theme][data-family] .ne-pick-item:hover,
+html[data-theme][data-family] .ne-pick-item.on { background: var(--action-soft); }
+html[data-theme][data-family] .ne-link-input input {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .ne-link-input input:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .ne-link-ok { color: var(--choice-chip-fg-active); background: var(--choice-chip-bg-active); }
+html[data-theme][data-family] .ne-link-ok:hover { background: var(--choice-chip-bg-hover); }
+html[data-theme][data-family] .ne-body .ProseMirror .mind-ref.ProseMirror-selectednode { box-shadow: 0 0 0 2px var(--focus-ring); }
+
+/* Notes calendar trigger: component geometry stays in Mind/index.vue; paint is a Mind token contract.
+   hover excludes open so focused/open state cannot pick up a second hover surface. */
+html[data-theme][data-family] .mind-cal-picker .dp-input {
+  background: var(--mind-calendar-trigger-bg);
+  border-color: var(--mind-calendar-trigger-border);
+  box-shadow: var(--mind-calendar-trigger-shadow);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-input:hover:not(.open) {
+  background: var(--mind-calendar-trigger-bg-hover);
+  border-color: var(--mind-calendar-trigger-border-hover);
+  box-shadow: var(--mind-calendar-trigger-shadow-hover);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-input.open {
+  background: var(--mind-calendar-trigger-bg-open);
+  border-color: var(--mind-calendar-trigger-border-open);
+  box-shadow: var(--mind-calendar-trigger-shadow-open);
+}
+html[data-theme][data-family] .mind-cal-picker .dp-icon { color: var(--mind-calendar-trigger-icon); }
+
+/* Mind page filter */
+html[data-theme][data-family] .mind-filter {
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .mind-filter:focus-within {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .mind-tab.on { color: var(--selection-fg); }
+html[data-theme][data-family] .mf-clear:hover { background: var(--control-bg-hover); }
+
+/* Canvas toolbar/drawer controls use shared control surfaces. */
+html[data-theme][data-family] .canvas-toolbar button:hover,
+html[data-theme][data-family] .np-head button:hover,
+html[data-theme][data-family] .cd-toggle:hover { background: var(--action-soft); }
+html[data-theme][data-family] .canvas-toolbar button.active,
+html[data-theme][data-family] .cd-toggle.active { background: var(--selection-bg); }
+html[data-theme][data-family] .tool-divider { background: var(--border-subtle); }
+html[data-theme][data-family] .np-search {
+  color: var(--input-fg);
+  background: var(--input-bg);
+  border-color: var(--input-border);
+}
+html[data-theme][data-family] .np-search:focus {
+  background: var(--input-bg-focus);
+  border-color: var(--input-border-focus);
+  box-shadow: var(--input-focus-shadow);
+}
+html[data-theme][data-family] .np-note:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .canvas-create-card {
+  color: var(--content-secondary);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
+}
+html[data-theme][data-family] .canvas-create-card:hover {
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
+}
+html[data-theme][data-family] .canvas-item:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .canvas-item.active {
+  color: var(--selection-fg);
+  background: var(--selection-bg);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .project-group-title { color: var(--content-secondary); }
+html[data-theme][data-family] .project-group-title:hover { background: var(--control-bg-hover); }
+html[data-theme][data-family] .project-group-title > span:nth-last-child(2) { color: var(--content-tertiary); }
+html[data-theme][data-family] .project-group-chevron { color: var(--content-disabled); }
+html[data-theme][data-family] .project-skeleton {
+  background: var(--surface-soft);
+  box-shadow: inset 0 1px 0 var(--border-highlight);
+}
+
+/* Canvas project roots already consume the project-card token contract in project-card-visual.css.
+   Keep only the genuinely theme-specific legacy snapshot fallback and label treatment here. */
+html[data-theme='dark'][data-family] .pr-missing { background: var(--surface-card-solid) !important; }
+html[data-theme][data-family] .pr-kind { color: var(--selection-fg); background: var(--selection-bg); }

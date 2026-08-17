@@ -1,0 +1,179 @@
+/* Product adoption layer for long-lived scoped Vue styles. */
+
+/* ── Sidebar ───────────────────────────────────────────────────── */
+html[data-theme][data-family] .sidebar {
+  background: var(--sidebar-bg);
+  border-right-color: var(--sidebar-border);
+  box-shadow: inset -1px 0 0 var(--sidebar-highlight);
+  color: var(--content-primary);
+}
+html[data-theme][data-family] .sidebar .logo-icon { background: var(--brand-gradient); }
+html[data-theme][data-family] .sidebar .nav-label { color: var(--sidebar-label-fg); }
+html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
+html[data-theme][data-family] .sidebar .notif-btn:hover { color: var(--content-primary); background: var(--sidebar-item-hover); }
+html[data-theme][data-family] .sidebar .notif-btn.notif-active {
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+}
+html[data-theme][data-family] .sidebar .user-card {
+  background: var(--sidebar-user-bg);
+  border-color: var(--sidebar-user-border);
+  box-shadow: var(--sidebar-item-active-shadow);
+}
+html[data-theme][data-family] .sidebar .user-card:hover { background: var(--sidebar-user-bg-hover); }
+html[data-theme][data-family] .sidebar .badge { background: color-mix(in srgb,var(--action-primary) 42%,transparent); }
+
+/* ── Topbar ──────────────────────────────────────────────────────
+   DefaultLayout owns geometry and behaviour. The token layer only changes GlassBg paint/elevation;
+   no scroll timeline or layout override is allowed here. */
+html[data-theme][data-family] .topbar {
+  --gb-tint: var(--surface-glass);
+  box-shadow: var(--topbar-shadow);
+}
+html[data-theme][data-family] .topbar:hover {
+  --gb-tint: var(--surface-glass-hover);
+  box-shadow: var(--topbar-shadow-hover);
+}
+html[data-theme][data-family] .topbar .topbar-title h1 { font-size: var(--topbar-title-size); }
+html[data-theme][data-family] .topbar .topbar-title p {
+  color: var(--content-secondary);
+  font-size: var(--topbar-meta-size);
+}
+
+/* Search panel is a true floating surface. */
+html[data-theme][data-family] .gs-panel {
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  border-radius: var(--popup-radius);
+  box-shadow: var(--popup-shadow);
+  color: var(--content-primary);
+}
+
+/* ── Shared card feedback ──────────────────────────────────────── */
+html[data-theme][data-family] .hover-card-fx:hover { box-shadow: var(--elevation-card-hover); }
+html[data-theme][data-family] .file-list-btn:hover { color: var(--action-primary); background: var(--action-soft); }
+html[data-theme][data-family] .file-list-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
+html[data-theme][data-family] .file-card-btn { color: var(--content-secondary); background: var(--surface-raised); box-shadow: var(--elevation-card); }
+html[data-theme][data-family] .file-card-btn:hover { color: var(--content-primary); background: var(--surface-card-solid); }
+html[data-theme][data-family] .file-card-btn.del:hover { color: var(--status-danger); }
+
+/* Real ProjectCard is the reference implementation: preserve project color, sheen and exact motion. */
+html[data-theme][data-family] .proj-card {
+  background: var(--surface-card-solid);
+  border-color: var(--project-card-border);
+  border-radius: var(--project-card-radius);
+  corner-shape: squircle;
+  box-shadow: var(--project-card-shadow);
+  transition: var(--project-card-motion);
+}
+html[data-theme][data-family] .proj-card.hover-card-fx:hover {
+  transform: translateY(-2px);
+  border-color: var(--project-card-hover-border);
+  box-shadow: var(--project-card-hover-shadow);
+}
+html[data-theme][data-family] .proj-card.hover-card-fx:active:not(:has(:active)) {
+  transform: translateY(1px);
+  opacity: .93;
+}
+html[data-theme][data-family] .proj-card::before {
+  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color);
+}
+html[data-theme][data-family] .proj-card::after {
+  background: var(--project-card-sheen-hover);
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover);
+}
+
+/* ── GuguChat ───────────────────────────────────────────────────
+   Root owns the glass/background. This fixes the square compositor layer seen in small mode:
+   no child backdrop-filter is allowed to paint outside the rounded window. */
+html[data-theme][data-family] .chat-window {
+  overflow: hidden;
+  background: var(--gugu-chat-bg);
+  background-clip: padding-box;
+  border-color: var(--gugu-chat-border);
+  border-radius: var(--gugu-chat-radius);
+  corner-shape: round;
+  box-shadow: var(--gugu-chat-shadow);
+  color: var(--content-primary);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+html[data-theme][data-family] .chat-window::after {
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 var(--gugu-chat-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 52%,transparent);
+}
+html[data-theme][data-family] .chat-window .chat-main {
+  background: var(--gugu-chat-main-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-theme][data-family] .chat-window .chat-header {
+  min-height: 48px;
+  padding: 0 var(--space-md);
+  gap: var(--space-sm);
+  background: transparent;
+}
+html[data-theme][data-family] .chat-window .chat-main.is-expanded .chat-header {
+  min-height: 52px;
+  padding: 0 var(--space-lg);
+}
+html[data-theme][data-family] .chat-window .chat-title { font-size: var(--font-size-md); }
+html[data-theme][data-family] .chat-window .popup-status { font-size: var(--font-size-xs); }
+html[data-theme][data-family] .chat-window .exp-sidebar {
+  background: var(--gugu-chat-sidebar-bg);
+  border-right: 1px solid var(--gugu-chat-sidebar-border);
+}
+html[data-theme][data-family] .chat-window .msg-bubble {
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+}
+html[data-theme][data-family] .chat-window .msg.ai .msg-bubble {
+  background: var(--gugu-chat-assistant-bg);
+  border-color: var(--border-subtle);
+  border-bottom-left-radius: var(--radius-xs);
+}
+html[data-theme][data-family] .chat-window .msg.user .msg-bubble {
+  color: var(--content-on-accent);
+  background: var(--gugu-chat-user-bg);
+  border-bottom-right-radius: var(--radius-xs);
+}
+html[data-theme][data-family] .chat-window .chat-input-row {
+  border-top-color: var(--gugu-chat-header-border);
+  background: var(--gugu-chat-composer-bg);
+  box-shadow: inset 0 1px 0 color-mix(in srgb,var(--border-highlight) 70%,transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-theme][data-family] .chat-window .send-btn { background: var(--brand-gradient); }
+html[data-theme][data-family] .chat-window .chat-drop-overlay {
+  color: var(--action-primary);
+  background: var(--gugu-chat-drop-bg);
+  border-color: var(--gugu-chat-drop-border);
+  border-radius: inherit;
+}
+
+/* Mono is the public name; v2 remains the compatibility data-family id.
+   Content .glass-card surfaces disable blur through the component token rather than a hard final
+   `backdrop-filter:none`. Floating chrome can then remap --glass-card-blur locally without fighting
+   this higher-specificity selector; chat/sidebar keep their independent surface contracts. */
+html[data-family='v2'] { --glass-card-blur: none; }
+html[data-family='v2'] .sidebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-family='v2'] .glass-card:not(.topbar) {
+  backdrop-filter: var(--glass-card-blur);
+  -webkit-backdrop-filter: var(--glass-card-blur);
+}
+
+/* Native controls and selections share action/focus language. */
+html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon) {
+  border-color: var(--action-outline);
+  background: var(--surface-raised);
+}
+html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon):hover { border-color: var(--action-primary); }
+html[data-theme][data-family] input[type='checkbox']:not(.arco-checkbox-icon):checked {
+  background: var(--action-primary);
+  border-color: transparent;
+  box-shadow: 0 2px 8px color-mix(in srgb,var(--action-primary) 35%,transparent);
+}

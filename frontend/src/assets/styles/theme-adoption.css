@@ -1,0 +1,474 @@
+/* Product-wide theme adoption for legacy scoped styles.
+ * Values come from semantic/component tokens only; selectors here bridge older components until
+ * their local literals are removed. This keeps Aero / Mono and Light / Dark behaviour consistent
+ * without changing business logic or interaction ownership.
+ */
+
+/* ── Sidebar quick theme toggle: one icon showing the currently rendered mode. ─────────────── */
+html[data-theme][data-family] .theme-mode-quick {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+html[data-theme][data-family] .theme-mode-quick button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: var(--control-radius);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme][data-family] .theme-mode-quick button:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
+}
+
+/* ── Real Topbar controls ─────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .topbar .btn-ghost-custom {
+  color: var(--control-fg) !important;
+  background: var(--control-bg) !important;
+  border-color: var(--control-border) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-muted) !important;
+}
+html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
+  color: var(--control-fg-strong) !important;
+  background: var(--control-bg-hover) !important;
+  border-color: var(--control-border-hover) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
+}
+html[data-theme][data-family] .topbar .btn-primary-custom {
+  color: var(--content-on-accent) !important;
+  background: var(--brand-gradient) !important;
+  border-color: transparent !important;
+  box-shadow: var(--elevation-card) !important;
+}
+html[data-theme][data-family] .topbar .btn-primary-custom:hover {
+  box-shadow: var(--elevation-card-hover) !important;
+}
+
+/* ── Projects ─────────────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .proj-card {
+  color: var(--content-primary);
+  background: var(--surface-card-solid);
+  border-color: var(--project-card-border) !important;
+  box-shadow: var(--project-card-shadow) !important;
+}
+html[data-theme][data-family] .proj-card::before {
+  background: linear-gradient(to right,var(--project-card-gradient-start) 0%,var(--project-card-gradient-end) 40%),var(--project-color) !important;
+}
+html[data-theme][data-family] .proj-card::after {
+  background: var(--project-card-sheen-hover) !important;
+  box-shadow: inset 0 1px 0 var(--project-card-highlight-hover) !important;
+}
+html[data-theme][data-family] .proj-card:hover {
+  border-color: var(--project-card-hover-border) !important;
+  box-shadow: var(--project-card-hover-shadow) !important;
+}
+html[data-theme='dark'][data-family] .proj-card .proj-name,
+html[data-theme='dark'][data-family] .proj-card .drop-content {
+  color: var(--content-primary) !important;
+}
+html[data-theme][data-family] .proj-card .proj-client,
+html[data-theme][data-family] .proj-card .proj-stage,
+html[data-theme][data-family] .proj-card .date-range,
+html[data-theme][data-family] .proj-card .file-badge,
+html[data-theme][data-family] .proj-card .progress-num {
+  color: var(--content-secondary);
+}
+html[data-theme][data-family] .proj-card .proj-stage:hover,
+html[data-theme][data-family] .proj-card .proj-stage.open,
+html[data-theme][data-family] .proj-card .file-badge,
+html[data-theme][data-family] .proj-card .card-advance:hover {
+  background: var(--surface-soft-hover);
+}
+html[data-theme][data-family] .proj-card .card-advance:not(.card-advance-placeholder) {
+  color: var(--content-tertiary);
+}
+html[data-theme][data-family] .proj-card .card-advance:hover { color: var(--content-primary); }
+html[data-theme][data-family] .proj-card .card-advance:active { background: var(--selection-bg); }
+html[data-theme][data-family] .proj-card .star-btn { color: var(--content-tertiary); }
+html[data-theme][data-family] .proj-card .done-label {
+  color: var(--status-success);
+  background: var(--status-success-bg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--status-success) 34%,transparent);
+}
+html[data-theme][data-family] .proj-card .todo-pop {
+  color: var(--content-primary);
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
+}
+html[data-theme][data-family] .proj-card .tp-title,
+html[data-theme][data-family] .proj-card .tp-name,
+html[data-theme][data-family] .proj-card .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .proj-card .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .proj-card .tp-check { border-color: var(--border-default); color: var(--content-on-accent); }
+html[data-theme][data-family] .proj-card .tp-check.checked { background: var(--action-primary); border-color: var(--action-primary); }
+html[data-theme][data-family] .proj-card .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
+html[data-theme][data-family] .proj-card .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
+
+html[data-theme][data-family] .seg-bar .seg,
+html[data-theme][data-family] .progress-bar { background: var(--surface-soft-hover) !important; }
+
+html[data-theme][data-family] .column .add-card {
+  color: var(--inline-action-fg);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
+}
+html[data-theme][data-family] .column .add-card:hover {
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
+}
+html[data-theme][data-family] .done-col .archived-entry-mini {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+}
+html[data-theme][data-family] .done-col .year-row:hover,
+html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .done-col .year-chev,
+html[data-theme][data-family] .done-col .month-chev { color: var(--content-tertiary); }
+html[data-theme][data-family] .done-col .year-label { color: var(--content-secondary); }
+html[data-theme][data-family] .done-col .year-label.undated,
+html[data-theme][data-family] .done-col .year-cnt,
+html[data-theme][data-family] .done-col .month-cnt { color: var(--content-tertiary); }
+html[data-theme][data-family] .done-col .month-name { color: var(--content-secondary); }
+
+/* ── Files ────────────────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .fc-card {
+  color: var(--content-primary);
+  background: var(--surface-card-solid) !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
+}
+html[data-theme][data-family] .fc-card::after {
+  background: var(--highlight-muted) !important;
+}
+html[data-theme][data-family] .fc-card:hover {
+  background: var(--surface-raised) !important;
+  border-color: var(--border-hover) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover) !important;
+}
+html[data-theme][data-family] .fc-card.selected {
+  background: var(--surface-raised) !important;
+  border-color: var(--action-outline) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg) !important;
+}
+html[data-theme][data-family] .fc-card.selected::before { background: var(--selection-bg) !important; }
+html[data-theme][data-family] .fc-card .fc-ext-badge { background: var(--surface-soft); }
+html[data-theme][data-family] .fc-card .fc-thumb-area { background: var(--surface-soft); }
+html[data-theme][data-family] .fc-card .fc-name { color: var(--content-primary); }
+html[data-theme][data-family] .fc-card .fc-meta { color: var(--content-secondary); }
+
+html[data-theme][data-family] .fub.grid {
+  color: var(--inline-action-fg);
+  background: var(--inline-action-bg);
+  border-color: var(--inline-action-border);
+}
+html[data-theme][data-family] .fub.grid:hover,
+html[data-theme][data-family] .fub.grid.dragging {
+  color: var(--inline-action-fg-hover);
+  background: var(--inline-action-bg-hover);
+  border-color: var(--inline-action-border-hover);
+}
+html[data-theme][data-family] .fub.list:hover,
+html[data-theme][data-family] .fub.list.dragging {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .fub.list { color: var(--content-secondary); }
+
+/* ── Calendar ─────────────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .cal-page { color: var(--content-primary); }
+html[data-theme][data-family] .cal-toolbar .nav-btn,
+html[data-theme][data-family] .cal-toolbar .period-btn { color: var(--content-secondary); }
+html[data-theme][data-family] .cal-toolbar .period-btn { color: var(--content-primary); }
+html[data-theme][data-family] .cal-toolbar .nav-btn:hover,
+html[data-theme][data-family] .cal-toolbar .period-btn:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .cal-toolbar .today-btn {
+  color: var(--control-fg);
+  background: var(--control-bg);
+  border-color: var(--control-border);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme][data-family] .cal-toolbar .today-btn:hover {
+  color: var(--control-fg-strong);
+  background: var(--control-bg-hover);
+  border-color: var(--control-border-hover);
+}
+html[data-theme][data-family] .cal-toolbar .view-toggle { background: var(--action-soft); }
+html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--content-secondary); }
+html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
+
+html[data-theme][data-family] .cal-sidebar .add-event-btn {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .cal-sidebar .add-event-btn:hover { background: var(--action-soft-hover); border-color: var(--border-focus); }
+html[data-theme][data-family] .cal-sidebar .add-proj-btn {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  border-color: transparent;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .cal-sidebar .sidebar-ev {
+  background: var(--surface-raised);
+  border-color: var(--border-default);
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
+}
+html[data-theme][data-family] .cal-sidebar .sidebar-ev:hover { box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover); }
+html[data-theme][data-family] .cal-sidebar .sidebar-date-label,
+html[data-theme][data-family] .cal-sidebar .sidebar-ev-name { color: var(--content-primary); }
+html[data-theme][data-family] .cal-sidebar .sidebar-ev-desc,
+html[data-theme][data-family] .cal-sidebar .sidebar-empty,
+html[data-theme][data-family] .cal-sidebar .sidebar-section-title { color: var(--content-secondary); }
+html[data-theme][data-family] .cal-sidebar .sidebar-divider { background: var(--border-subtle); }
+html[data-theme][data-family] .cal-sidebar .ev-del-btn {
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border-color: color-mix(in srgb,var(--status-warning) 30%,transparent);
+}
+html[data-theme][data-family] .cal-sidebar .ev-del-btn:hover { background: color-mix(in srgb,var(--status-warning) 20%,transparent); border-color: var(--status-warning); }
+
+html[data-theme][data-family] .cal-page .weekday-hdr,
+html[data-theme][data-family] .cal-page .month-body,
+html[data-theme][data-family] .cal-page .week-row,
+html[data-theme][data-family] .cal-page .month-cell,
+html[data-theme][data-family] .cal-page .wv-head,
+html[data-theme][data-family] .cal-page .wv-allday,
+html[data-theme][data-family] .cal-page .wv-aco,
+html[data-theme][data-family] .cal-page .wv-col { border-color: var(--border-subtle); }
+html[data-theme][data-family] .cal-page .weekday-hdr,
+html[data-theme][data-family] .cal-page .wv-dow,
+html[data-theme][data-family] .cal-page .wv-allday-tag,
+html[data-theme][data-family] .cal-page .wv-hour span { color: var(--content-secondary); }
+html[data-theme][data-family] .cal-page .cell-num,
+html[data-theme][data-family] .cal-page .wv-dnum { color: var(--content-primary); }
+html[data-theme][data-family] .cal-page .month-cell::before,
+html[data-theme][data-family] .cal-page .wv-dhead::after,
+html[data-theme][data-family] .cal-page .wv-ad-hover { background: var(--action-soft); }
+html[data-theme][data-family] .cal-page .month-cell.is-today { background: var(--calendar-today-cell-bg); }
+html[data-theme][data-family] .cal-page .month-cell.is-selected { background: var(--calendar-selected-cell-bg); }
+html[data-theme][data-family] .cal-page .month-cell.in-range { background: var(--calendar-range-cell-bg); }
+html[data-theme][data-family] .cal-page .wv-aco.today { background: var(--color-accent-faint); }
+html[data-theme][data-family] .cal-page .wv-dhead.selected::before,
+html[data-theme][data-family] .cal-page .wv-ad-sel,
+html[data-theme][data-family] .cal-page .wv-selected { background: var(--selection-bg); }
+html[data-theme][data-family] .cal-page .month-cell.range-start,
+html[data-theme][data-family] .cal-page .month-cell.range-end { background: var(--calendar-range-edge-bg); }
+html[data-theme][data-family] .cal-page .month-cell.is-weekend,
+html[data-theme][data-family] .cal-page .wv-aco.weekend { background: var(--status-danger-bg); }
+html[data-theme][data-family] .cal-page .weekday-hdr.weekend,
+html[data-theme][data-family] .cal-page .wv-dhead.weekend .wv-dow { color: var(--status-danger); }
+html[data-theme][data-family] .cal-page .month-cell.is-today .cell-num,
+html[data-theme][data-family] .cal-page .wv-dnum.today {
+  color: var(--content-on-accent) !important;
+  background: var(--brand-gradient);
+}
+html[data-theme][data-family] .cal-page .chip-more-btn {
+  color: var(--selection-fg);
+  background: var(--action-soft);
+  border-color: var(--action-outline);
+}
+html[data-theme][data-family] .cal-page .chip-more-btn:hover { background: var(--action-soft-hover); }
+html[data-theme][data-family] .cal-page .wv-col {
+  background-image: linear-gradient(to bottom,var(--border-subtle) 1px,transparent 1px);
+}
+html[data-theme='dark'][data-family] .cal-page .event-chip,
+html[data-theme='dark'][data-family] .cal-page .project-bar,
+html[data-theme='dark'][data-family] .cal-page .wv-pbar,
+html[data-theme='dark'][data-family] .cal-page .wv-allday-ev,
+html[data-theme='dark'][data-family] .cal-page .wv-ev,
+html[data-theme='dark'][data-family] .cal-sidebar .sidebar-ev-name,
+html[data-theme='dark'][data-family] .cal-sidebar .cap-name {
+  color: var(--content-primary) !important;
+}
+html[data-theme][data-family] .cal-page .wv-now { background: var(--status-danger); }
+
+/* Teleported calendar surfaces. */
+html[data-theme][data-family] .cal-month-picker,
+html[data-theme][data-family] .cal-more-popup,
+html[data-theme][data-family] .cal-context-menu,
+html[data-theme][data-family] .shared-event-popup {
+  color: var(--content-primary);
+  background: var(--popup-background);
+  border-color: var(--popup-border);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
+}
+html[data-theme][data-family] .cal-month-picker .picker-year,
+html[data-theme][data-family] .cal-month-picker .picker-month { color: var(--content-primary); }
+html[data-theme][data-family] .cal-month-picker .picker-nav { color: var(--content-secondary); }
+html[data-theme][data-family] .cal-month-picker .picker-nav:hover,
+html[data-theme][data-family] .cal-month-picker .picker-month:hover { background: var(--action-soft); }
+html[data-theme][data-family] .cal-month-picker .picker-month.active {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
+}
+
+/* ── Scheduled tasks ─────────────────────────────────────────────────────────────────── */
+html[data-theme][data-family] .task-card {
+  color: var(--content-primary);
+  background: var(--surface-card);
+  border-color: var(--border-strong);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .task-card::after {
+  background: linear-gradient(to top,var(--highlight-muted),transparent 50%);
+  box-shadow: inset 0 1px 0 var(--highlight-soft);
+}
+html[data-theme][data-family] .task-card:hover { box-shadow: var(--elevation-card-hover); }
+html[data-theme][data-family] .task-card:hover::after { background: var(--highlight-muted); }
+html[data-theme][data-family] .task-card .tc-name { color: var(--content-primary); }
+html[data-theme][data-family] .task-card .tc-when,
+html[data-theme][data-family] .task-card .tc-last,
+html[data-theme][data-family] .task-card .link { color: var(--content-secondary); }
+html[data-theme][data-family] .task-card .tc-payload { color: var(--content-secondary); background: var(--surface-soft); }
+html[data-theme][data-family] .task-card .link:hover { color: var(--content-primary); }
+html[data-theme][data-family] .task-card .link.danger:hover { color: var(--status-danger); }
+html[data-theme][data-family] .task-card .slider { background: var(--border-strong); }
+html[data-theme][data-family] .task-card .slider::before { background: var(--surface-raised); }
+html[data-theme][data-family] .task-card .switch input:checked + .slider { background: var(--action-primary); }
+
+/* ── GuguChat 暗色契约 ───────────────────────────────────────────────────────────────
+   旧聊天组件仍有少量亮色硬编码；暗色主题统一改消费与令牌页样板相同的 contract。 */
+html[data-theme='dark'][data-family] .chat-window {
+  border-color: var(--gugu-chat-border);
+  box-shadow: var(--gugu-chat-shadow);
+}
+html[data-theme='dark'][data-family] .chat-window::after {
+  box-shadow: inset 0 1px 0 var(--gugu-chat-highlight),
+    inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 52%,transparent),
+    inset 0 -1px 0 color-mix(in srgb,var(--gugu-chat-highlight) 38%,transparent);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-drop-overlay {
+  color: var(--action-primary);
+  background: var(--gugu-chat-drop-bg);
+  border-color: var(--gugu-chat-drop-border);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-header,
+html[data-theme='dark'][data-family] .chat-window .chat-input-row {
+  border-color: var(--gugu-chat-header-border);
+}
+html[data-theme='dark'][data-family] .chat-window .popup-icon-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .exp-icon-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .popup-close-btn:hover {
+  background: var(--surface-soft-hover) !important;
+  color: var(--content-primary) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .popup-close-btn:hover {
+  color: var(--status-danger) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .chat-att-chip,
+html[data-theme='dark'][data-family] .chat-window .rec-cancel {
+  color: var(--action-primary);
+  background: var(--action-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .chat-att-chip.att-up {
+  color: var(--content-secondary);
+  background: var(--surface-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .send-btn,
+html[data-theme='dark'][data-family] .chat-window .exp-send-btn,
+html[data-theme='dark'][data-family] .chat-window .mv-btn,
+html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-file,
+html[data-theme='dark'][data-family] .chat-window .msg-voice {
+  color: var(--content-primary);
+  background: var(--gugu-chat-assistant-bg);
+  border-color: var(--border-subtle);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.user .msg-bubble {
+  color: var(--content-on-accent);
+  background: var(--gugu-chat-user-bg);
+}
+html[data-theme='dark'][data-family] .chat-window .msg.member .msg-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-quoted {
+  color: var(--content-secondary);
+  background: var(--surface-soft);
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .chat-window .msg-file-name,
+html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
+html[data-theme='dark'][data-family] .chat-window .mv-dur {
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .chat-window .msg-file-meta,
+html[data-theme='dark'][data-family] .chat-window .mv-dur { color: var(--content-tertiary); }
+html[data-theme='dark'][data-family] .chat-window .mv-wave i { background: var(--content-tertiary); }
+html[data-theme='dark'][data-family] .chat-window .msg-copy-btn:hover,
+html[data-theme='dark'][data-family] .chat-window .msg-file-dl:hover,
+html[data-theme='dark'][data-family] .chat-window .msg-voice:hover {
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .mini-player {
+  background: var(--gugu-chat-bg);
+  border-color: var(--gugu-chat-border);
+  box-shadow: var(--gugu-chat-shadow);
+  color: var(--content-primary);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-bars i,
+html[data-theme='dark'][data-family] .mini-player .mp-track {
+  background: var(--surface-soft-hover);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-fill,
+html[data-theme='dark'][data-family] .mini-player .mp-thumb,
+html[data-theme='dark'][data-family] .mini-player .mp-btn--play {
+  background: var(--brand-gradient);
+}
+html[data-theme='dark'][data-family] .mini-player .mp-btn--pin:hover,
+html[data-theme='dark'][data-family] .mini-player .mp-vol-btn:hover {
+  color: var(--content-primary);
+  background: var(--surface-soft-hover);
+}
+html[data-theme='dark'][data-family] .cb-overlay { background: var(--scrim); }
+html[data-theme='dark'][data-family] .cb-qr { background: var(--surface-raised); box-shadow: var(--elevation-card); }
+html[data-theme='dark'][data-family] .cb-err { color: var(--status-danger); }
+html[data-theme='dark'][data-family] .cb-cancel { color: var(--content-secondary); background: var(--action-soft); }
+html[data-theme='dark'][data-family] .cb-cancel:hover { background: var(--surface-soft-hover); }
+html[data-theme='dark'][data-family] .chat-window .rec-dot { background: var(--status-danger); }
+html[data-theme='dark'][data-family] .chat-window .rec-time { color: var(--status-danger); }
+html[data-theme='dark'][data-family] .chat-window .tool-spinner { border-color: var(--border-subtle); border-top-color: var(--action-primary); }
+html[data-theme='dark'][data-family] .chat-window .tool-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
+html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
+  color: var(--content-on-accent);
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
+}
+html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
+html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {
+  color: var(--content-primary);
+  border-color: var(--border-hover);
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px var(--border-highlight), 0 0 0 3px var(--focus-ring);
+}
+html[data-theme='dark'][data-family] .chat-window .exp-sidebar {
+  border-right-color: var(--gugu-chat-sidebar-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .panel-left {
+  border-right-color: var(--gugu-chat-sidebar-border) !important;
+  box-shadow: inset -1px 0 0 var(--gugu-chat-sidebar-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .chat-header,
+html[data-theme='dark'][data-family] .chat-window .chat-input-row {
+  border-color: var(--gugu-chat-header-border) !important;
+}
+html[data-theme='dark'][data-family] .chat-window .exp-sidebar-divider,
+html[data-theme='dark'][data-family] .chat-window .exp-group-divider {
+  background: var(--gugu-chat-sidebar-border) !important;
+}

@@ -12,10 +12,10 @@
 .icon-btn {
   width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.15s;
+  border: 1px solid var(--border-subtle); background: var(--surface-glass);
+  color: var(--content-secondary); cursor: pointer; transition: all var(--motion-fast) var(--motion-ease-standard);
 }
-.icon-btn:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.8); }
+.icon-btn:hover { background: var(--surface-glass-hover); color: var(--content-primary); }
 .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .icon-btn.spinning svg {
   animation: admin-icon-spin 0.5s ease-out;

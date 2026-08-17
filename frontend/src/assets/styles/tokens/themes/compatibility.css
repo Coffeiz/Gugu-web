@@ -1,0 +1,10 @@
+/* Compatibility aliases for existing pages while component migration proceeds. */
+:root {
+  --bg-gradient: var(--theme-page); --glass-bg: var(--surface-glass); --glass-bg-hover: var(--surface-glass-hover);
+  --glass-border: var(--theme-border-strong); --glass-border-hover: var(--theme-border-hover); --panel-bg: var(--theme-base);
+  --text-primary: var(--theme-content-primary); --text-secondary: var(--theme-content-secondary);
+  --color-primary: var(--theme-action-primary); --color-primary-hover: var(--theme-action-hover); --color-secondary: var(--color-rose-500); --color-tertiary: var(--color-cyan-500);
+  --color-success: var(--theme-success); --color-warning: var(--theme-warning);
+  --scrollbar-track: transparent; --scrollbar-thumb: var(--theme-scrollbar-thumb); --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover); --divider-line: var(--theme-divider);
+  --shadow-highlight-rest: var(--theme-highlight-rest); --shadow-highlight-side: var(--theme-highlight-side); --shadow-highlight-hover: var(--theme-highlight-hover); --shadow-highlight-hover-side: var(--theme-highlight-hover-side);
+}

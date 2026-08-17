@@ -26,8 +26,9 @@ const fillStyle = computed(() => {
 </script>
 
 <style scoped>
-.storage-pill { display: flex; align-items: center; gap: 7px; padding: 0 4px; height: 30px; flex-shrink: 0; }
-.storage-bar-bg { width: 52px; height: 3px; border-radius: 2px; flex-shrink: 0; background: rgba(0,0,0,0.07); overflow: hidden; }
+/* 这里只保留存储进度条自身的结构；toolbar 文字颜色/字号/高度由统一文件工具栏契约负责。 */
+.storage-pill { display: flex; align-items: center; gap: 7px; padding: 0 4px; flex-shrink: 0; }
+.storage-bar-bg { width: 52px; height: 3px; border-radius: 2px; flex-shrink: 0; overflow: hidden; }
 .storage-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease, background 0.4s; }
-.storage-text { font-size: 11px; color: #8a8fa8; white-space: nowrap; }
+.storage-text { white-space: nowrap; }
 </style>

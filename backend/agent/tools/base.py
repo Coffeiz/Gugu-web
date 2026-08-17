@@ -88,7 +88,8 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
 # 这些 id 键对应的模型都是 int 主键，LLM 传成字符串会让 asyncpg 抛错。统一在 dispatch 入口转 int。
 # 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
 _INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
-                "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id")
+                "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id",
+                "canvas_id", "item_id", "relation_id", "ref_id")
 
 
 def _to_int_id(v):
@@ -355,6 +356,15 @@ class SkillRegistry:
         try:
             async with _sess._SessionLocal() as db:
                 result: Any = await tool.handler(db, user_id, args)
+                # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
+                # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
+                # 虽然不会修改数据（校验在写入前就 return 了），但 flush 可能留下
+                # 部分状态，统一 rollback 更安全；成功路径统一 commit。
+                if db is not None:
+                    if isinstance(result, dict) and result.get("error"):
+                        await db.rollback()
+                    else:
+                        await db.commit()
         except Exception as e:
             diag_log(f"agent.tools.dispatch.{name}", e)          # 原始 → 受限诊断出口
             _safe = sanitize_error(f"{type(e).__name__}: {e}")

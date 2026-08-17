@@ -14,7 +14,10 @@ import router from './router'
 import DatePicker from '@/components/common/DatePicker.vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
 import { installEnterDirective } from '@/directives/enter'
+import { initializeTheme } from '@/composables/useTheme'
+import { installOverlayScrollbars } from '@/utils/overlayScrollbars'
 
+initializeTheme()
 setupInteractionRuntime()
 
 const app = createApp(App)
@@ -29,3 +32,4 @@ app.component('DatePicker', DatePicker)
 app.component('DateSpanPicker', DateSpanPicker)
 
 app.mount('#app')
+installOverlayScrollbars()

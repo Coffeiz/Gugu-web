@@ -1,0 +1,154 @@
+:root {
+  /* ── Neutral / accent foundations ─────────────────────────────── */
+  --pearl-0: #ffffff;
+  --pearl-25: #fbfafc;
+  --pearl-50: #f7f5f8;
+  --pearl-100: #f0edf2;
+  --pearl-150: #e9e5eb;
+  --pearl-200: #e2dde5;
+  --pearl-300: #d2cbd5;
+  --pearl-400: #b8b0bd;
+  --pearl-500: #98909d;
+  --pearl-600: #756f7a;
+  --pearl-700: #55505a;
+  --pearl-800: #39353e;
+  --pearl-900: #27242d;
+  --pearl-950: #19171d;
+
+  --iris-50: #f4f2fa;
+  --iris-100: #eae6f5;
+  --iris-200: #d8d2ea;
+  --iris-300: #beb6da;
+  --iris-400: #9f96c6;
+  --iris-500: #8178b2;
+  --iris-600: #6d64a0;
+  --iris-700: #5b5387;
+  --iris-800: #48426b;
+  --iris-900: #35314e;
+
+  --color-rose-500: #bd7e95;
+  --color-cyan-500: #6f9eaa;
+  --color-green-500: #66917d;
+  --color-amber-500: #b28759;
+  --color-red-500: #b96462;
+  --color-blue-500: #728aaa;
+
+  /* 内容色：项目/日历/画布属于用户内容，不随系统主题重新着色。 */
+  --project-lilac: #8a80ba;
+  --project-rose: #c4879f;
+  --project-sky: #76a7b2;
+  --project-leaf: #7b9d7d;
+  --project-sand: #ba9365;
+  --project-coral: #bd7c6d;
+  --project-blue: #7d8eb7;
+  --project-mauve: #a980ad;
+
+  /* Glass legacy palette：实现细节只留在 foundations，Design 页不直接暴露这些名字。 */
+  --palette-purple-500: #7b7fb2;
+  --palette-purple-400: #9590c4;
+  --palette-pink-400: #c4afc8;
+  --palette-cyan-400: #7ab8c8;
+  --palette-gray-050: #f5f6fa;
+  --palette-gray-100: #e8e9ee;
+  --palette-gray-300: #bfc4d2;
+  --palette-gray-500: #9aa2b8;
+  --palette-gray-900: #1e2028;
+
+  --palette-pearl-050: var(--pearl-50);
+  --palette-pearl-100: var(--pearl-100);
+  --palette-pearl-200: var(--pearl-200);
+  --palette-pearl-300: var(--pearl-300);
+  --palette-pearl-500: var(--pearl-500);
+  --palette-pearl-700: var(--pearl-700);
+  --palette-pearl-900: var(--pearl-900);
+  --palette-iris-100: var(--iris-100);
+  --palette-iris-300: var(--iris-300);
+  --palette-iris-500: var(--iris-500);
+  --palette-iris-700: var(--iris-700);
+  --palette-iris-900: var(--iris-900);
+
+  --alpha-white-04: rgba(255,255,255,.04);
+  --alpha-white-08: rgba(255,255,255,.08);
+  --alpha-white-12: rgba(255,255,255,.12);
+  --alpha-white-18: rgba(255,255,255,.18);
+  --alpha-white-24: rgba(255,255,255,.24);
+  --alpha-white-38: rgba(255,255,255,.38);
+  --alpha-white-42: rgba(255,255,255,.42);
+  --alpha-white-56: rgba(255,255,255,.56);
+  --alpha-white-62: rgba(255,255,255,.62);
+  --alpha-white-70: rgba(255,255,255,.70);
+  --alpha-white-76: rgba(255,255,255,.76);
+  --alpha-white-92: rgba(255,255,255,.92);
+  --alpha-black-04: rgba(0,0,0,.04);
+  --alpha-black-08: rgba(0,0,0,.08);
+  --alpha-black-12: rgba(0,0,0,.12);
+  --alpha-black-18: rgba(0,0,0,.18);
+
+  /* ── Typography ────────────────────────────────────────────────
+     Five sizes only. Role aliases below keep existing components source-compatible. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+
+  --font-size-micro: var(--font-size-xs);
+  --font-size-body: var(--font-size-md);
+  --font-size-title: var(--font-size-xl);
+  --font-size-display: var(--font-size-xl);
+
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.25;
+  --line-height-ui: 1.4;
+  --line-height-body: 1.55;
+  --tracking-label: .07em;
+
+  /* ── Spacing ───────────────────────────────────────────────────
+     Five reusable steps. Numeric aliases remain for old components, but they resolve
+     to these five values so the product cannot silently grow another spacing scale. */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+
+  --space-0-5: var(--space-xs);
+  --space-1: var(--space-xs);
+  --space-1-5: var(--space-xs);
+  --space-2: var(--space-sm);
+  --space-2-5: var(--space-sm);
+  --space-3-compact: var(--space-md);
+  --space-3-5: var(--space-md);
+  --space-3: var(--space-lg);
+  --space-5: var(--space-lg);
+  --space-4: var(--space-xl);
+  --space-6: var(--space-xl);
+  --space-8: var(--space-xl);
+  --space-10: var(--space-xl);
+  --space-12: var(--space-xl);
+
+  /* ── Shape ─────────────────────────────────────────────────────
+     Four geometric radii + pill = five shapes. xl is a compatibility alias. */
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+  --radius-xl: var(--radius-lg);
+
+  /* Raw geometry. Components should prefer semantic/component aliases. */
+  --sidebar-width: 220px;
+  --floating-edge: 28px;
+  --canvas-toolbar-height: 50px;
+  --control-height-sm: 30px;
+  --control-height-md: 36px;
+  --control-height-lg: 42px;
+  --scrollbar-size-compact: 3px;
+  --scrollbar-size-default: 5px;
+  --scrollbar-size-editor: 8px;
+}

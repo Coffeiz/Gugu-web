@@ -1,9 +1,6 @@
 <template>
   <Teleport to="body">
-    <Transition
-      name="menu-pop"
-      :duration="{ enter: 240, leave: 180 }"
-    >
+    <Transition name="menu-pop">
       <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
         <slot />
       </div>

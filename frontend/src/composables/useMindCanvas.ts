@@ -50,24 +50,14 @@ export function itemCenter(item: MindCanvasItem, pos?: { x: number; y: number })
   return { x: x + w / 2, y: y + h / 2 }
 }
 
-/** 贴纸边缘固定一侧的连接点（世界坐标，对应 conn-dot 的位置）——不看对方在哪，只看
- *  「要左边还是右边」这个既定结论。RelationLayer.vue 给已建立的关系用这个：出边侧只在
- *  关系第一次画出来那一刻按当时位置判一次并记住（见 RelationLayer.vue 的 anchorSideCache），
- *  之后卡片挪到哪儿都不重判——用户拖圆点连线时"从哪一侧拖出去"是明确动作，不该因为卡片
- *  后来移动位置就把端点从左边悄悄跳到右边。
- *  可选 pos：卡片落地动画期间，item.x/y 已经同步跳到最终落点（物理模块需要这份真实位置去
- *  算克隆体飞行目标），但连线不能跟着瞬间跳过去再倒退回来播动画——那样会先闪一下终点、
- *  再跳回起点重新播，很难看。这种时候调用方传入落地动画当前插值出的位置，覆盖掉 item.x/y，
- *  见 MindCanvas.vue 的 landingPositions。 */
+/** 贴纸边缘固定一侧的连接点（世界坐标，对应 conn-dot 的位置）。 */
 export function itemAnchorSide(item: MindCanvasItem, right: boolean, pos?: { x: number; y: number }) {
   const { w, h } = itemSize(item)
   const x = pos?.x ?? item.x, y = pos?.y ?? item.y
   return { x: x + (right ? w : 0), y: y + h / 2 }
 }
 
-/** 贴纸边缘的连接点（世界坐标）：朝哪边的贴纸就出哪一侧的边，靠端点朝向另一端的方位实时
- *  选左/右——只给「还没成为固定关系」的场景用（画拖拽中的预览线，见 MindCanvas.vue），
- *  跟手挪动鼠标时线该跟着换边。已建立的关系不用这个动态版本，见上面 itemAnchorSide。 */
+/** 贴纸边缘的连接点（世界坐标）：只给还没成为固定关系的场景动态选左右边。 */
 export function itemAnchor(item: MindCanvasItem, towardX: number) {
   const { w } = itemSize(item)
   const onRight = towardX > item.x + w / 2
@@ -76,26 +66,18 @@ export function itemAnchor(item: MindCanvasItem, towardX: number) {
 
 export type AnchorSide = 'left' | 'right' | 'top' | 'bottom'
 
-/** 关系在一张画布上的端点方向。关系本身是全局语义，左右从哪一侧出线则属于画布视图状态，
- *  存在 MindMap.data_json 的 relationAnchors 里。 */
+/** 关系在一张画布上的端点方向。关系本身是全局语义，左右从哪一侧出线属于画布视图状态。 */
 export interface RelationAnchorSides {
   srcSide: AnchorSide
   dstSide: AnchorSide
 }
 
-/** 已建立关系的出边侧，只在关系第一次画出来那一刻判一次（配合 RelationLayer.vue 的
- *  anchorSideCache 冻结）——只在左右两侧里选：连接点本身（conn-dot）只长在贴纸左右边，
- *  没有上/下的圆点可拖，画出来的线若从上/下边出，会跟"关系是从边缘圆点拖出来的"这个交互
- *  语言对不上（曾经按纵向错开程度选过上/下边，两张贴纸横向排布改动后线还固定拖在原来那条
- *  边，看着就是从卡片上/下方莫名其妙钻出来）。两张贴纸主要是纵向错开时的自然弧线，靠下面
- *  sidePath 的"顺着左右边法线方向探出去一段再拐"来给，不需要真的从上/下边出。 */
+/** 已建立关系的出边侧只在第一次画出来时判一次；交互只暴露左右连接点。 */
 export function pickAnchorSide(fromCenter: { x: number; y: number }, towardCenter: { x: number; y: number }): AnchorSide {
   return towardCenter.x >= fromCenter.x ? 'right' : 'left'
 }
 
-/** 贴纸四边任意一侧的连接点（世界坐标）——itemAnchorSide 的四向版本（top/bottom 目前没有
- *  调用方在用，pickAnchorSide 只会选 left/right，保留这两个分支只是让类型完整、不是死代码
- *  排查目标）。pos 覆盖的用途同 itemAnchorSide。 */
+/** 贴纸四边任意一侧的连接点（世界坐标）。 */
 export function itemAnchorAt(item: MindCanvasItem, side: AnchorSide, pos?: { x: number; y: number }): { x: number; y: number } {
   const { w, h } = itemSize(item)
   const x = pos?.x ?? item.x, y = pos?.y ?? item.y
@@ -108,6 +90,8 @@ export function itemAnchorAt(item: MindCanvasItem, side: AnchorSide, pos?: { x: 
 const MIN_SCALE = 0.45
 const MAX_SCALE = 1.7
 
+type PanInput = Pick<PointerEvent, 'pointerId' | 'clientX' | 'clientY'>
+
 export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   const camera = reactive<CanvasCamera>({ x: 0, y: 0, scale: 1 })
 
@@ -119,12 +103,7 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     camera.scale = 1
   }
 
-  // clientX/clientY 是浏览器给的视口坐标，跟 .mind-canvas 自己在视口里具体贴在哪儿无关；
-  // camera.x/y 是相对 .mind-canvas 自身左上角量的（centerView 用的是它自己的 clientWidth/
-  // clientHeight）。两者要换算，得先把 clientX/Y 减去 .mind-canvas 左上角的视口偏移——画布
-  // 现在紧挨着侧栏右缘摆放（不再铺满整个浏览器、压到侧栏底下，见 MindCanvas.vue 的
-  // .mind-canvas 定位），这份偏移不再是 0，不减会让所有指针换算出的世界坐标整体偏出侧栏宽
-  // 那么多（点哪儿都对不上，连线/拖拽落点跟着全错）。
+  // clientX/clientY 是浏览器给的视口坐标，camera.x/y 是相对 .mind-canvas 左上角的屏幕坐标。
   function screenToWorld(clientX: number, clientY: number) {
     const rect = viewportRef.value?.getBoundingClientRect()
     const localX = rect ? clientX - rect.left : clientX
@@ -143,7 +122,6 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   function workspaceCenter() {
     const viewport = viewportRef.value
     if (!viewport) return { x: 0, y: 0 }
-    // 画布铺满浏览器，但左侧被导航栏覆盖；缩放操作以可见工作区的中心为锚点。
     const sidebarWidth = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width')) || 220
     return { x: (viewport.clientWidth + sidebarWidth) / 2, y: viewport.clientHeight / 2 }
   }
@@ -159,20 +137,37 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
     zoomAt(event.clientX - rect.left, event.clientY - rect.top, camera.scale * factor)
   }
 
-  let pan: { pointerId: number; startX: number; startY: number; originX: number; originY: number } | null = null
-  function startPan(event: PointerEvent) {
-    pan = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: camera.x, originY: camera.y }
-    viewportRef.value?.setPointerCapture(event.pointerId)
+  // Pointer 平移和“连接线拖拽期间按住鼠标中键”共用这一份 camera pan 状态机。
+  // 中键路径用一个合成 pointerId 且不请求 pointer capture，避免再写第二套 x/y 差值算法。
+  let pan: {
+    pointerId: number
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+    captured: boolean
+  } | null = null
+  function startPan(event: PanInput, capturePointer = true) {
+    pan = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: camera.x,
+      originY: camera.y,
+      captured: capturePointer,
+    }
+    if (capturePointer) viewportRef.value?.setPointerCapture(event.pointerId)
   }
-  function panMove(event: PointerEvent) {
+  function panMove(event: PanInput) {
     if (pan?.pointerId !== event.pointerId) return false
     camera.x = pan.originX + event.clientX - pan.startX
     camera.y = pan.originY + event.clientY - pan.startY
     return true
   }
-  function panEnd(event: PointerEvent) {
+  function panEnd(event: PanInput) {
     if (pan?.pointerId !== event.pointerId) return false
-    viewportRef.value?.releasePointerCapture(pan.pointerId)
+    const viewport = viewportRef.value
+    if (pan.captured && viewport?.hasPointerCapture(pan.pointerId)) viewport.releasePointerCapture(pan.pointerId)
     pan = null
     return true
   }

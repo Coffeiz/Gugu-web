@@ -15,7 +15,7 @@
           <span class="nb-dot" :class="{ typing: item.typing }" />
           <div class="nb-title">{{ item.tTitle }}</div>
         </div>
-        <div v-if="item.content" class="nb-content">
+        <div v-if="item.content" class="nb-content scroll-surface scroll-surface--compact">
           <MarkdownView :text="item.tContent" />
         </div>
       </div>
@@ -226,8 +226,6 @@ function dismiss(id: number) {
 .nb-bare .nb-content::before {
   content: ''; float: right; width: 30px; height: 22px;
 }
-.nb-content::-webkit-scrollbar { width: 3px; }
-.nb-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.14); border-radius: 99px; }
 /* markdown 排版由通用组件 MarkdownView 统一提供 */
 
 /* 关闭按钮与音乐播放器 / GuguChat 一致：26px 圆角方块、透明底、hover 变红 */

@@ -12,21 +12,49 @@ from typing import Dict, List, Optional
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.search import run_global_search, _snippet
 from app.core.mind import (
-    content_hash, create_mind_note, soft_delete_mind_note, to_plain_text, update_mind_note,
-    update_node_atomic, upsert_relation,
+    content_hash, to_plain_text,
+    update_node_atomic,
 )
 from app.core.ownership import get_owned
 from app.core.security import get_current_user
 from app.core.tz import now_utc
 from app.db.session import get_db
+from app.services.mind_canvas import (
+    add_canvas_item as add_canvas_item_service,
+    bring_canvas_item_to_front as bring_canvas_item_to_front_service,
+    create_canvas_note as create_canvas_note_service,
+    create_canvas as create_canvas_service,
+    create_relation as create_relation_service,
+    delete_canvas as delete_canvas_service,
+    get_owned_canvas,
+    get_canvas_item,
+    get_canvas_node,
+    get_canvas_relation,
+    get_or_create_reference as get_or_create_reference_service,
+    list_canvas_items as list_canvas_items_service,
+    list_canvas_relations as list_canvas_relations_service,
+    list_canvases as list_canvas_service,
+    remove_canvas_item as remove_canvas_item_service,
+    disconnect_node_relation,
+    update_canvas_item as update_canvas_item_service,
+    update_canvas_note as update_canvas_note_service,
+    update_canvas as update_canvas_service,
+)
+from app.services.mind import (
+    create_note as create_note_service,
+    delete_note as delete_note_service,
+    get_live_note,
+    list_notes as list_notes_service,
+    update_note as update_note_service,
+)
 from app.models import (
     CalendarEvent, ConversationMessage, ConversationSession, File, MindCanvasItem,
-    MindMap, MindNode, MindRelation, Project, User,
+    MindMap, MindNode, MindRelation, User,
 )
 from app.schemas import (
     MindCanvasCreate, MindCanvasItemBringToFront, MindCanvasItemCreate, MindCanvasItemResponse,
@@ -57,7 +85,7 @@ def _to_resp(n: MindNode) -> MindNodeResponse:
 
 async def _get_live_note(db: AsyncSession, nid: int, user_id) -> MindNode:
     """取一条未被软删的便签；不存在 / 不归属 / 已软删都按「不存在」处理。"""
-    n = await get_owned(db, MindNode, nid, user_id)
+    n = await get_live_note(db, user_id, nid)
     if n is None or n.deleted_at is not None or n.kind != "note":
         raise HTTPException(404, "便签不存在")
     return n
@@ -71,16 +99,7 @@ async def list_notes(
     db: AsyncSession = Depends(get_db),
 ):
     """记录时间流：按 captured_at 倒序（不是 created_at——补录的想法要落在它「发生」的那天）。"""
-    rows = (await db.execute(
-        select(MindNode)
-        .where(
-            MindNode.user_id == current_user.id,
-            MindNode.kind == "note",
-            MindNode.deleted_at.is_(None),
-        )
-        .order_by(MindNode.captured_at.desc(), MindNode.id.desc())   # id 兜底，同一时刻也稳定有序
-        .limit(limit).offset(offset)
-    )).scalars().all()
+    rows = await list_notes_service(db, current_user.id, limit=limit, offset=offset)
     return [_to_resp(n) for n in rows]
 
 
@@ -91,7 +110,7 @@ async def create_note(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        n = await create_mind_note(
+        n = await create_note_service(
             db, current_user.id, content_md=body.content_md or "", title=body.title,
             color=body.color, captured_at=body.captured_at,
         )
@@ -118,7 +137,7 @@ async def update_note(
 
     # 原子 UPDATE：比较写在 WHERE 里，并发下不会互相覆盖；顺带清 indexed_at / 刷 indexed_hash
     try:
-        ok = await update_mind_note(db, nid, current_user.id, client_version, data)
+        ok = await update_note_service(db, current_user.id, nid, client_version, data)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     if not ok:
@@ -138,7 +157,7 @@ async def delete_note(
     """软删=墓碑：只写 deleted_at。节点行、它的画布项和关系全留着，图谱不静默断裂。
     真正清掉要等用户明确「清理」（那时才 DELETE 行，靠 CASCADE 连带清）。"""
     n = await _get_live_note(db, nid, current_user.id)
-    if not await soft_delete_mind_note(db, nid, current_user.id, n.version):
+    if not await delete_note_service(db, current_user.id, nid, n.version):
         await db.rollback()
         raise HTTPException(409, "便签已被其他端修改，请刷新后重试")
     await db.commit()
@@ -257,7 +276,7 @@ def _item_resp(
 
 
 async def _get_canvas(db: AsyncSession, cid: int, user_id) -> MindMap:
-    canvas = await get_owned(db, MindMap, cid, user_id)
+    canvas = await get_owned_canvas(db, user_id, cid)
     if canvas is None:
         raise HTTPException(404, "画布不存在")
     return canvas
@@ -269,10 +288,9 @@ async def list_canvases(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    stmt = select(MindMap).where(MindMap.user_id == current_user.id).order_by(MindMap.updated_at.desc())
-    if project_id is not None:
-        stmt = stmt.where(MindMap.project_id == project_id)
-    rows = (await db.execute(stmt)).scalars().all()
+    rows, _, _ = await list_canvas_service(
+        db, current_user.id, project_id=project_id, limit=200, offset=0,
+    )
     return [_canvas_resp(canvas) for canvas in rows]
 
 
@@ -283,12 +301,12 @@ async def create_canvas(
     db: AsyncSession = Depends(get_db),
 ):
     title = body.title.strip() or "未命名画布"
-    if body.project_id is not None and await get_owned(db, Project, body.project_id, current_user.id) is None:
+    canvas = await create_canvas_service(
+        db, current_user.id, title, body.project_id,
+    )
+    if canvas is None:
         raise HTTPException(404, "项目不存在")
-    canvas = MindMap(user_id=current_user.id, title=title, project_id=body.project_id)
-    db.add(canvas)
     await db.commit()
-    await db.refresh(canvas)
     return _canvas_resp(canvas)
 
 
@@ -301,12 +319,13 @@ async def update_canvas(
 ):
     canvas = await _get_canvas(db, cid, current_user.id)
     data = body.model_dump(exclude_unset=True, by_alias=False)
+    fields = {}
     if "title" in data:
-        canvas.title = (data["title"] or "").strip() or "未命名画布"
+        fields["title"] = (data["title"] or "").strip() or "未命名画布"
     if "data" in data:
-        canvas.data_json = json.dumps(data["data"], ensure_ascii=False)
+        fields["data_json"] = json.dumps(data["data"], ensure_ascii=False)
+    canvas = await update_canvas_service(db, current_user.id, cid, fields)
     await db.commit()
-    await db.refresh(canvas)
     return _canvas_resp(canvas)
 
 
@@ -317,14 +336,7 @@ async def delete_canvas(
     db: AsyncSession = Depends(get_db),
 ):
     canvas = await _get_canvas(db, cid, current_user.id)
-    # mind_canvas_items 的 canvas_id 外键虽然声明了 ON DELETE CASCADE（生产用的 Postgres
-    # 会遵守），但这里显式先删一遍——不依赖某个具体数据库后端是否真的启用了外键级联（比如
-    # 测试用的内存 SQLite 默认不强制外键），行为不该随后端换了哪种数据库而变。节点
-    # （MindNode）、关系（MindRelation）都是全局层，不因为画布被删而消失——同一节点/关系
-    # 理论上可以出现在别的画布上，画布只是"摆哪儿"的视图状态（同 remove_canvas_item 的
-    # 取舍："只删视图项，不删 MindNode 原文"）。
-    await db.execute(sa_delete(MindCanvasItem).where(MindCanvasItem.canvas_id == cid))
-    await db.delete(canvas)
+    await delete_canvas_service(db, current_user.id, cid)
     await db.commit()
 
 
@@ -335,12 +347,7 @@ async def list_canvas_items(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    rows = (await db.execute(
-        select(MindCanvasItem, MindNode)
-        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
-        .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
-        .order_by(MindCanvasItem.z, MindCanvasItem.id)
-    )).all()
+    rows = await list_canvas_items_service(db, current_user.id, cid)
     ref_data_by_node_id = await _ref_data_by_node_id(db, [node for _, node in rows], current_user.id)
     return [_item_resp(item, node, ref_data_by_node_id.get(node.id)) for item, node in rows]
 
@@ -353,25 +360,19 @@ async def add_canvas_item(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    node = await get_owned(db, MindNode, body.node_id, current_user.id)
-    if node is None or node.deleted_at is not None:
+    node = await get_canvas_node(db, current_user.id, body.node_id, deleted=False)
+    if node is None:
         raise HTTPException(404, "节点不存在")
 
-    existing = await db.scalar(select(MindCanvasItem).where(
-        MindCanvasItem.canvas_id == cid, MindCanvasItem.node_id == node.id,
-    ))
-    if existing is not None:
-        ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
-        return _item_resp(existing, node, ref_data)
-
-    item = MindCanvasItem(
-        user_id=current_user.id, canvas_id=cid, node_id=node.id,
-        x=body.x, y=body.y, w=body.w, h=body.h, z=body.z, collapsed=body.collapsed,
+    item, created = await add_canvas_item_service(
+        db, current_user.id, cid, node, body.x, body.y,
+        w=body.w, h=body.h, z=body.z, collapsed=body.collapsed,
         data_json=json.dumps(body.data, ensure_ascii=False),
     )
-    db.add(item)
+    if not created:
+        ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
+        return _item_resp(item, node, ref_data)
     await db.commit()
-    await db.refresh(item)
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
     return _item_resp(item, node, ref_data)
 
@@ -385,22 +386,15 @@ async def create_canvas_note(
 ):
     """新建画布专属便签：它是独立节点，不会混进记录时间流。"""
     await _get_canvas(db, cid, current_user.id)
-    plain = to_plain_text(body.content_md)
-    node = MindNode(
-        user_id=current_user.id, kind="canvas_note", title=body.title.strip() or "新便签",
-        content_md=body.content_md, content_plain=plain, color=body.color,
-        indexed_hash=content_hash(plain), indexed_at=None,
-    )
-    db.add(node)
-    await db.flush()  # MindCanvasItem 没有 node relationship，先拿到独立节点主键
-    item = MindCanvasItem(
-        user_id=current_user.id, canvas_id=cid, node_id=node.id,
-        x=body.x, y=body.y, w=body.w, h=body.h, z=body.z,
-    )
-    db.add(item)
+    try:
+        node, item = await create_canvas_note_service(
+            db, current_user.id, cid, body.title.strip() or "新便签",
+            body.content_md, body.color, body.x, body.y,
+            w=body.w, h=body.h, z=body.z,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     await db.commit()
-    await db.refresh(node)
-    await db.refresh(item)
     return _item_resp(item, node)
 
 
@@ -411,8 +405,8 @@ async def update_canvas_note(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    node = await get_owned(db, MindNode, nid, current_user.id)
-    if node is None or node.kind != "canvas_note" or node.deleted_at is not None:
+    node = await get_canvas_node(db, current_user.id, nid, kind="canvas_note", deleted=False)
+    if node is None:
         raise HTTPException(404, "画布便签不存在")
     data = body.model_dump(exclude_unset=True, by_alias=False)
     client_version = data.pop("version")
@@ -420,11 +414,13 @@ async def update_canvas_note(
         data["content_plain"] = to_plain_text(data["content_md"])
     if not data:
         return _to_resp(node)
-    if not await update_node_atomic(db, nid, current_user.id, client_version, data):
+    node = await update_canvas_note_service(
+        db, current_user.id, nid, client_version, data,
+    )
+    if node is False:
         await db.rollback()
         raise HTTPException(409, "画布便签已被其他端修改，请刷新后重试")
     await db.commit()
-    await db.refresh(node)
     return _to_resp(node)
 
 
@@ -438,25 +434,13 @@ async def bring_canvas_item_to_front(
 ):
     """在一个事务内置顶卡片，避免前端逐张更新 z 导致层级顺序被并发请求打乱。"""
     await _get_canvas(db, cid, current_user.id)
-    rows = (await db.execute(
-        select(MindCanvasItem, MindNode)
-        .join(MindNode, MindNode.id == MindCanvasItem.node_id)
-        .where(MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id)
-        .order_by(MindCanvasItem.z, MindCanvasItem.id)
-    )).all()
-    target = next(((item, node) for item, node in rows if item.id == iid), None)
+    target = await bring_canvas_item_to_front_service(
+        db, current_user.id, cid, iid, body.x, body.y,
+    )
     if target is None:
         raise HTTPException(404, "画布贴纸不存在")
-
-    ordered = [(item, node) for item, node in rows if item.id != iid]
-    ordered.append(target)
-    for index, (item, _) in enumerate(ordered, start=1):
-        item.z = index * 1000
-    target_item, target_node = target
-    target_item.x = body.x
-    target_item.y = body.y
     await db.commit()
-    await db.refresh(target_item)
+    target_item, target_node = target
     ref_data = (await _ref_data_by_node_id(db, [target_node], current_user.id)).get(target_node.id)
     return _item_resp(target_item, target_node, ref_data)
 
@@ -470,7 +454,7 @@ async def update_canvas_item(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    item = await get_owned(db, MindCanvasItem, iid, current_user.id)
+    item = await get_canvas_item(db, current_user.id, cid, iid)
     if item is None or item.canvas_id != cid:
         raise HTTPException(404, "画布贴纸不存在")
     node = await get_owned(db, MindNode, item.node_id, current_user.id)
@@ -479,11 +463,11 @@ async def update_canvas_item(
 
     data = body.model_dump(exclude_unset=True, by_alias=False)
     if "data" in data:
-        item.data_json = json.dumps(data.pop("data"), ensure_ascii=False)
-    for key, value in data.items():
-        setattr(item, key, value)
+        data["data_json"] = json.dumps(data.pop("data"), ensure_ascii=False)
+    item = await update_canvas_item_service(
+        db, current_user.id, cid, iid, data,
+    )
     await db.commit()
-    await db.refresh(item)
     ref_data = (await _ref_data_by_node_id(db, [node], current_user.id)).get(node.id)
     return _item_resp(item, node, ref_data)
 
@@ -496,10 +480,10 @@ async def remove_canvas_item(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    item = await get_owned(db, MindCanvasItem, iid, current_user.id)
+    item = await get_canvas_item(db, current_user.id, cid, iid)
     if item is None or item.canvas_id != cid:
         raise HTTPException(404, "画布贴纸不存在")
-    await db.delete(item)  # 只删视图项，不删 MindNode 原文
+    await remove_canvas_item_service(db, current_user.id, cid, iid)
     await db.commit()
 
 
@@ -510,16 +494,8 @@ async def list_canvas_relations(
     db: AsyncSession = Depends(get_db),
 ):
     await _get_canvas(db, cid, current_user.id)
-    node_ids = select(MindCanvasItem.node_id).where(
-        MindCanvasItem.canvas_id == cid, MindCanvasItem.user_id == current_user.id,
-    )
-    rows = (await db.execute(
-        select(MindRelation).where(
-            MindRelation.user_id == current_user.id,
-            MindRelation.src_node_id.in_(node_ids),
-            MindRelation.dst_node_id.in_(node_ids),
-        ).order_by(MindRelation.id)
-    )).scalars().all()
+    node_ids = [node.id for _, node in await list_canvas_items_service(db, current_user.id, cid)]
+    rows = await list_canvas_relations_service(db, current_user.id, node_ids)
     return [_relation_resp(rel) for rel in rows]
 
 
@@ -529,18 +505,15 @@ async def create_relation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    for nid in (body.src_node_id, body.dst_node_id):
-        if await get_owned(db, MindNode, nid, current_user.id) is None:
-            raise HTTPException(404, "节点不存在")
-    try:
-        relation = await upsert_relation(
-            db, current_user.id, body.src_node_id, body.dst_node_id,
-            allow_parallel=body.allow_parallel,
-        )
-    except ValueError as exc:
-        raise HTTPException(422, str(exc))
+    relation, error = await create_relation_service(
+        db, current_user.id, body.src_node_id, body.dst_node_id,
+        allow_parallel=body.allow_parallel,
+    )
+    if error == "节点不存在":
+        raise HTTPException(404, error)
+    if error:
+        raise HTTPException(422, error)
     await db.commit()
-    await db.refresh(relation)
     return _relation_resp(relation)
 
 
@@ -550,10 +523,10 @@ async def delete_relation(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    relation = await get_owned(db, MindRelation, rid, current_user.id)
+    relation = await get_canvas_relation(db, current_user.id, rid)
     if relation is None:
         raise HTTPException(404, "关联不存在")
-    await db.delete(relation)
+    await disconnect_node_relation(db, current_user.id, rid)
     await db.commit()
 
 
@@ -564,56 +537,14 @@ async def create_ref_node(
     db: AsyncSession = Depends(get_db),
 ):
     """把既有对象接入全局图层；同一用户/对象永远复用同一 ref 节点。"""
-    targets = {
-        "project": (Project, "name"),
-        "file": (File, "display_name"),
-        "event": (CalendarEvent, "title"),
-    }
-    target = targets.get(body.ref_type)
-    if target is None:
-        raise HTTPException(422, "不支持的引用类型")
-    model, label_attr = target
-    entity = await get_owned(db, model, body.ref_id, current_user.id)
-    if entity is None:
-        raise HTTPException(404, "引用对象不存在")
-
-    node = await db.scalar(select(MindNode).where(
-        MindNode.user_id == current_user.id,
-        MindNode.kind == "ref",
-        MindNode.ref_type == body.ref_type,
-        MindNode.ref_id == body.ref_id,
-    ))
-    if node is None:
-        # 三种引用各缓存一份「够渲染删除态快照」的极简数据（同一份「title 快照降级墓碑」
-        # 思路，见 MindNode 类注释）——被引用对象删除后，画布卡片拿不到活的记录，没有这份
-        # 缓存就只能显示一张信息全丢光的灰卡。只在创建这一刻拍照，之后原对象改这些字段
-        # 不会回填；对象还活着时，各卡片优先用实时数据（ProjectCardBody 走 projectStore、
-        # 活动卡走 _event_ref_data 实时查表），只有确认对象已删除才回退到这份快照。
-        # - project：client/status/startDate/deadline/doneAt，够画客户行+日期区，不收
-        #   stages/fileCount（数据量大、变化频繁，被删的项目也不需要还原进度条）。
-        # - file：ext，够画文件类型角标/图标（FileCard 的 .fc-ext-badge 只靠这一个字段）。
-        # - event：date/time/endTime，够画日期区（跟 _event_ref_data 缓存的字段一致，
-        #   活动没删时优先用后者的实时查询结果，两边字段对齐方便前端统一取用）。
-        ref_snapshot = None
-        if body.ref_type == "project":
-            ref_snapshot = {
-                "client": entity.client,
-                "status": entity.status,
-                "startDate": entity.start_date,
-                "deadline": entity.deadline,
-                "doneAt": entity.done_at.isoformat() if entity.done_at else None,
-            }
-        elif body.ref_type == "file":
-            ref_snapshot = {"ext": entity.ext}
-        elif body.ref_type == "event":
-            ref_snapshot = {"date": entity.date, "time": entity.time, "endTime": entity.end_time}
-        node = MindNode(
-            user_id=current_user.id, kind="ref", ref_type=body.ref_type, ref_id=body.ref_id,
-            title=getattr(entity, label_attr), content_md="", content_plain="",
-            color=getattr(entity, "color", None) if body.ref_type == "project" else None,
-            ref_snapshot=ref_snapshot,
+    try:
+        node, created = await get_or_create_reference_service(
+            db, current_user.id, body.ref_type, body.ref_id,
         )
-        db.add(node)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    if created:
         await db.commit()
-        await db.refresh(node)
     return _to_resp(node)

@@ -1,0 +1,50 @@
+/* Final surface-level exceptions: dark containers stay quiet while their controls keep feedback. */
+
+html[data-theme='dark'][data-family] .files-toolbar.glass-card {
+  --glass-card-background-hover: var(--glass-card-background, var(--surface-glass));
+  --glass-card-border-hover: var(--glass-card-border, var(--border-strong));
+  --glass-card-shadow-hover: var(--glass-card-shadow, var(--elevation-card));
+  --gb-tint: var(--glass-bg);
+  background: transparent;
+}
+html[data-theme='dark'][data-family] .files-toolbar.glass-card:hover {
+  --gb-tint: var(--glass-bg);
+  background: transparent;
+  border-color: var(--glass-card-border, var(--border-strong));
+  box-shadow: var(--glass-card-shadow, var(--elevation-card));
+}
+
+/* Inline light-mode pill overrides must not leak into dark mode. */
+html[data-theme='dark'][data-family] .seg-control {
+  --pill-bg: var(--selected-pill-bg) !important;
+  --pill-shadow: var(--selected-pill-shadow) !important;
+}
+
+html[data-theme][data-family] .files-toolbar .sel-mode-btn,
+html[data-theme][data-family] .files-toolbar .new-folder-btn,
+html[data-theme][data-family] .files-toolbar .btn-confirm-sm,
+html[data-theme][data-family] .files-toolbar .btn-cancel-sm,
+html[data-theme][data-family] .files-toolbar .close-btn {
+  transition:
+    background-color var(--hover-motion-control),
+    border-color var(--hover-motion-control),
+    color var(--hover-motion-control),
+    box-shadow var(--hover-motion-control),
+    opacity var(--hover-motion-control),
+    transform var(--hover-motion-control);
+}
+
+html[data-theme='dark'][data-family] .files-toolbar .sel-mode-btn,
+html[data-theme='dark'][data-family] .files-toolbar .new-folder-btn,
+html[data-theme='dark'][data-family] .files-toolbar .btn-cancel-sm {
+  background: var(--surface-soft);
+  border-color: var(--border-subtle);
+  color: var(--content-secondary);
+}
+html[data-theme='dark'][data-family] .files-toolbar .sel-mode-btn:hover,
+html[data-theme='dark'][data-family] .files-toolbar .new-folder-btn:hover,
+html[data-theme='dark'][data-family] .files-toolbar .btn-cancel-sm:hover {
+  background: var(--surface-soft-hover);
+  border-color: var(--border-hover);
+  color: var(--content-primary);
+}

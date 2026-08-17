@@ -51,22 +51,51 @@ const emit = defineEmits<{
 </script>
 
 <style scoped>
-.todo-list { padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px; background-image: linear-gradient(90deg, transparent 0%, rgba(0,0,0,0.06) 20%, rgba(0,0,0,0.06) 80%, transparent 100%); background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom; }
+.todo-list {
+  padding: 2px 0 8px 30px; display: flex; flex-direction: column; gap: 3px;
+  background-image: linear-gradient(90deg,transparent 0%,var(--panel-divider) 20%,var(--panel-divider) 80%,transparent 100%);
+  background-size: 100% 1px; background-repeat: no-repeat; background-position: center bottom;
+}
 .todo-list.is-last { background-image: none; }
 .todo-items { display: flex; flex-direction: column; gap: 3px; }
 .todo-item { display: flex; align-items: flex-start; gap: 6px; min-height: 24px; }
-.todo-item + .todo-item { border-top: 1px solid rgba(0,0,0,0.05); }
+.todo-item + .todo-item { border-top: 1px solid var(--panel-divider); }
 .todo-check, .todo-del { margin-top: 4px; }
-.todo-name { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow-wrap: break-word; word-break: break-word; white-space: normal; }
+.todo-name {
+  flex: 1; min-width: 0; padding: 2px 0; cursor: grab;
+  font-size: 12px; line-height: 1.5; color: var(--content-primary);
+  overflow-wrap: break-word; word-break: break-word; white-space: normal;
+}
 .todo-item:active .todo-name { cursor: grabbing; }
-.todo-ghost { opacity: 0.35; }
-.todo-check { width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0; border: 1.5px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
-.todo-check.checked { background: var(--color-success); border-color: var(--color-success); color: white; }
-.todo-input { flex: 1; font-size: 12px; font-family: var(--font-sans); color: var(--text-primary); border: 1.5px solid transparent; border-radius: 5px; background: transparent; outline: none; min-width: 0; padding: 0 5px; box-sizing: border-box; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
-.todo-input:focus { background: rgba(255,255,255,0.72); border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); }
-.todo-del { background: none; border: none; cursor: pointer; color: var(--text-secondary); opacity: 0; transition: opacity 0.15s; padding: 2px; display: flex; align-items: center; flex-shrink: 0; }
-.todo-item:hover .todo-del { opacity: 0.4; }
-.todo-del:hover { opacity: 1 !important; color: var(--color-warning); }
-.todo-add-btn { display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 10px; border-radius: 7px; border: 1px dashed rgba(0,0,0,0.15); background: rgba(255,255,255,0.62); font-size: 11px; font-weight: 500; color: var(--text-secondary); cursor: pointer; font-family: var(--font-sans); transition: all 0.15s; margin-top: 2px; margin-right: 18px; }
-.todo-add-btn:hover { border-color: var(--color-primary); color: var(--color-primary); background: rgba(255,255,255,0.75); }
+.todo-ghost { opacity: .35; }
+.todo-check {
+  width: 15px; height: 15px; border-radius: 4px; flex-shrink: 0;
+  border: 1.5px solid var(--option-border); background: var(--option-bg);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.todo-check.checked { background: var(--status-success); border-color: var(--status-success); color: var(--content-on-accent); }
+.todo-input {
+  flex: 1; min-width: 0; padding: 0 5px; box-sizing: border-box;
+  font: 12px var(--font-sans); color: var(--input-fg); background: transparent;
+  border: 1.5px solid transparent; border-radius: var(--radius-xs); outline: none;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
+}
+.todo-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.todo-input::placeholder { color: var(--input-placeholder); }
+.todo-del {
+  display: flex; align-items: center; flex-shrink: 0; padding: 2px;
+  background: none; border: none; cursor: pointer; color: var(--content-tertiary); opacity: 0;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.todo-item:hover .todo-del { opacity: .4; }
+.todo-del:hover { opacity: 1 !important; color: var(--danger-button-fg); }
+.todo-add-btn {
+  display: flex; align-items: center; gap: 4px; height: 24px; margin-top: 2px; margin-right: 18px;
+  padding: 0 10px; border-radius: var(--radius-xs); border: 1px dashed var(--option-border);
+  background: var(--option-bg); color: var(--option-fg);
+  font: 500 11px var(--font-sans); cursor: pointer;
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
+}
+.todo-add-btn:hover { border-color: var(--option-border-hover); color: var(--action-primary); background: var(--option-bg-hover); }
 </style>

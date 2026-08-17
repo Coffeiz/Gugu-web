@@ -7,7 +7,7 @@
         </button>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
-      <div v-else-if="tasks.length" class="task-grid">
+      <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
         <ScheduleCard v-for="task in tasks" :key="task.id" :task="task" :busy="busy"
           @toggle="toggle" @run="runNow" @edit="openEdit" @remove="remove" />
       </div>
@@ -64,17 +64,17 @@ async function submit(data: Record<string, any>) {
 .sched-page { height: 100%; font-family: var(--font-sans); }
 .btn-primary {
   padding: 8px 16px; border: none; border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: rgba(255,255,255,0.95);
+  background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans);
   display: inline-flex; align-items: center;
-  box-shadow: 0 3px 12px rgba(123,127,178,0.3);
+  box-shadow: var(--elevation-card);
   transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out;
 }
-.btn-primary:hover { opacity: 0.92; }
+.btn-primary:hover { background: var(--action-primary-bg-hover); opacity: 0.92; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 .panel {
-  --glass-bg: rgba(255,255,255,0.25);
-  --glass-bg-hover: rgba(255,255,255,0.25);
+  --glass-card-background: var(--column-bg);
+  --glass-card-background-hover: var(--column-bg);
   height: 100%; box-sizing: border-box;
   display: flex; flex-direction: column;
   padding: 22px 24px;

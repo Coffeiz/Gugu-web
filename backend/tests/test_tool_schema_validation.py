@@ -6,6 +6,9 @@
 import json
 
 import pytest
+from sqlalchemy import select
+
+from app.models import Project
 
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
 
@@ -108,6 +111,35 @@ async def test_additional_properties_default_allowed(db, user_a):
 
     assert payload["ok"] is True
     assert payload["args"]["future_field"] == "still allowed"
+
+
+async def test_dispatch_commits_successful_task_transaction(db, user_a):
+    async def handler(db, user_id, args):
+        project = Project(user_id=user_id, name="事务提交测试")
+        db.add(project)
+        await db.flush()
+        return {"project_id": project.id}
+
+    reg, _ = _make_registry({"type": "object"}, handler)
+    raw, _ = await reg.dispatch(user_a.id, "schema_test_tool", {})
+    project_id = json.loads(raw)["project_id"]
+
+    persisted = await db.scalar(select(Project).where(Project.id == project_id))
+    assert persisted is not None
+
+
+async def test_dispatch_rolls_back_failed_task_transaction(db, user_a):
+    async def handler(db, user_id, args):
+        db.add(Project(user_id=user_id, name="事务回滚测试"))
+        await db.flush()
+        raise RuntimeError("测试事务失败")
+
+    reg, _ = _make_registry({"type": "object"}, handler)
+    raw, _ = await reg.dispatch(user_a.id, "schema_test_tool", {})
+
+    assert json.loads(raw)["error"].startswith("工具 schema_test_tool 执行出错")
+    persisted = await db.scalar(select(Project).where(Project.name == "事务回滚测试"))
+    assert persisted is None
 
 
 async def test_explicit_additional_properties_false_rejected():

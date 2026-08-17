@@ -1,0 +1,164 @@
+:root {
+  /* Generic cards / popups */
+  --card-radius: var(--radius-md);
+  --card-shadow: var(--elevation-card);
+  --card-shadow-hover: var(--elevation-card-hover);
+  /* One motion contract for project/file/folder/schedule card surfaces. Hover tint is a separate
+     opacity layer so the whole card changes uniformly instead of animating a directional gradient. */
+  --card-motion: transform var(--motion-hover-card) cubic-bezier(.34,1.2,.64,1), box-shadow var(--motion-hover-card) ease, background-color var(--motion-hover-card) ease, border-color var(--motion-hover-card) ease;
+  --card-overlay-motion: opacity var(--motion-hover-card) ease;
+  --card-hover-overlay: var(--surface-hover-tint);
+  --card-surface-bg-hover: var(--surface-raised);
+  --card-surface-border-hover: var(--border-hover);
+  --glass-card-background: var(--surface-glass);
+  --glass-card-background-hover: var(--surface-glass-hover);
+  --glass-card-border: var(--border-strong);
+  --glass-card-border-hover: var(--border-hover);
+  --glass-card-shadow: var(--elevation-card);
+  --glass-card-shadow-hover: var(--elevation-card-hover);
+  --glass-card-blur: var(--glass-blur);
+  --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
+  --popup-background: var(--surface-popup);
+  --popup-border: var(--border-strong);
+  --popup-radius: var(--radius-md);
+  --popup-shadow: var(--elevation-popup);
+
+  /* Controls */
+  --control-sm: var(--control-height-sm);
+  --control-md: var(--control-height-md);
+  --control-lg: var(--control-height-lg);
+  --control-bg: var(--surface-raised);
+  --control-bg-hover: var(--surface-glass-hover);
+  --control-fg: var(--content-secondary);
+  --control-fg-strong: var(--content-primary);
+  --control-border: var(--border-default);
+  --control-border-hover: var(--border-hover);
+  --control-radius: var(--radius-sm);
+  --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
+  --segmented-track-bg: var(--action-soft);
+  --segmented-pill-bg: var(--control-bg);
+  --segmented-pill-shadow: var(--elevation-card);
+  /* 项目列 add-card 与设计页 add-project 的统一轻量入口契约。 */
+  --inline-action-bg: color-mix(in srgb,var(--surface-raised) 15%,transparent);
+  --inline-action-bg-hover: color-mix(in srgb,var(--surface-raised) 30%,transparent);
+  --inline-action-border: color-mix(in srgb,var(--content-primary) 10%,transparent);
+  --inline-action-border-hover: color-mix(in srgb,var(--action-primary) 35%,transparent);
+  --inline-action-fg: var(--content-secondary);
+  --inline-action-fg-hover: var(--action-primary);
+
+  /* Sidebar */
+  --sidebar-bg: var(--surface-sidebar);
+  --sidebar-border: var(--border-default);
+  --sidebar-highlight: var(--theme-highlight-side);
+  --sidebar-label-fg: var(--content-secondary);
+  --sidebar-item-fg: var(--color-muted);
+  --sidebar-item-hover: var(--action-soft);
+  --sidebar-item-active: var(--theme-sidebar-active-bg);
+  --sidebar-item-active-fg: var(--theme-sidebar-active-fg);
+  --sidebar-item-active-border: var(--theme-sidebar-active-border);
+  --sidebar-item-active-shadow: inset 0 1px 0 var(--theme-sidebar-active-highlight);
+  --sidebar-user-bg: color-mix(in srgb,var(--surface-glass) 78%,transparent);
+  --sidebar-user-bg-hover: var(--surface-glass);
+  --sidebar-user-border: var(--border-strong);
+
+  /* Topbar: transparent at rest; product.css reveals its GlassBg when content scrolls. */
+  --topbar-bg: var(--theme-topbar-bg);
+  --topbar-bg-hover: var(--theme-topbar-bg-hover);
+  --topbar-border: var(--theme-topbar-border);
+  --topbar-shadow: var(--theme-topbar-shadow);
+  --topbar-shadow-hover: var(--theme-topbar-shadow-hover);
+  --topbar-blur: 16px;
+  --topbar-title-size: var(--font-size-xl);
+  --topbar-meta-size: var(--font-size-sm);
+  --topbar-height: 52px;
+
+  /* Scrollbar: one visual contract for page and component scroll surfaces. */
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: var(--theme-scrollbar-thumb);
+  --scrollbar-thumb-hover: var(--theme-scrollbar-thumb-hover);
+  --scrollbar-corner: transparent;
+  --scrollbar-safe-inset: var(--space-sm);
+  --scrollbar-min-thumb: 24px;
+  --scrollbar-overlay-right-offset: 0px;
+  --scrollbar-column-right-offset: 4px;
+  --scrollbar-overlay-z-index: 10;
+  --scrollbar-overlay-modal-z-index: var(--layer-modal);
+  --scrollbar-overlay-transition: 120ms ease;
+  --scrollbar-overlay-track-inset: 8px;
+
+  /* Project cards: exact Gugu horizontal project-colour gradient and shared card motion. */
+  --project-card-gradient-start: var(--theme-project-overlay-start);
+  --project-card-gradient-end: var(--theme-project-overlay-end);
+  --project-card-border: var(--theme-project-border);
+  --project-card-hover-border: var(--theme-project-hover-border);
+  --project-card-shadow: var(--theme-project-shadow);
+  --project-card-hover-shadow: var(--theme-project-hover-shadow);
+  --project-card-sheen-rest: linear-gradient(to bottom,var(--theme-project-sheen-rest) 0%,transparent 50%);
+  --project-card-highlight-rest: var(--theme-project-highlight-rest);
+  --project-card-sheen-hover: linear-gradient(to bottom,var(--theme-project-sheen-hover) 0%,var(--theme-project-sheen-hover-mid) 45%,transparent 100%);
+  --project-card-highlight-hover: var(--theme-project-highlight-hover);
+  --project-card-radius: var(--radius-md);
+  --project-card-motion: var(--card-motion);
+  --done-group-border: var(--card-advance-border);
+  --card-advance-border: color-mix(in srgb,var(--content-muted) 25%,transparent);
+
+  /* Calendar: preserve the original light grid/weekend character while giving dark mode its own
+     values through theme-refinements.css. These roles must not reuse generic glass borders/status BG. */
+  --calendar-grid-line: color-mix(in srgb,var(--action-primary) 15%,transparent);
+  --calendar-grid-line-strong: color-mix(in srgb,var(--action-primary) 18%,transparent);
+  --calendar-cell-hover-bg: color-mix(in srgb,var(--action-primary) 6%,transparent);
+  --calendar-today-cell-bg: color-mix(in srgb,var(--action-primary) 7%,transparent);
+  --calendar-range-cell-bg: color-mix(in srgb,var(--action-primary) 8%,transparent);
+  --calendar-selected-cell-bg: color-mix(in srgb,var(--action-primary) 10%,transparent);
+  --calendar-range-edge-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
+  --calendar-weekend-fg: color-mix(in srgb,var(--status-danger) 85%,transparent);
+  --calendar-weekend-bg: color-mix(in srgb,var(--status-danger) 3%,transparent);
+  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 7%,transparent);
+  --calendar-weekend-selected-bg: color-mix(in srgb,var(--status-danger) 10%,transparent);
+  --calendar-weekend-date-bg: color-mix(in srgb,var(--status-danger) 15%,transparent);
+  --calendar-today-date-bg: var(--action-primary-bg);
+  --calendar-chip-hover-overlay: var(--surface-hover-tint);
+  --calendar-capsule-surface-overlay: transparent;
+  --calendar-capsule-hover-overlay: var(--surface-hover-tint);
+
+  /* Gugu FAB */
+  --gugu-fab-size: 50px;
+  --gugu-fab-bg: var(--theme-fab-gradient);
+  --gugu-fab-border: transparent;
+  --gugu-fab-shadow: 0 4px 18px color-mix(in srgb,var(--action-primary) 32%,transparent), inset 0 1px 0 rgba(255,255,255,.45);
+  --gugu-fab-hover-shadow: 0 7px 24px color-mix(in srgb,var(--action-primary) 42%,transparent), inset 0 1px 0 rgba(255,255,255,.50);
+  --gugu-fab-ripple: color-mix(in srgb,var(--action-primary) 75%,transparent);
+
+  /* Gugu chat window + conversation layout. The Design mock consumes this same contract. */
+  /* 主题 surface 已经携带旧版透明度，这里直接复用，避免二次 alpha 混合。 */
+  --gugu-chat-bg: var(--surface-base);
+  --gugu-chat-main-bg: var(--surface-base);
+  --gugu-chat-sidebar-bg: var(--surface-sidebar);
+  --gugu-chat-border: var(--border-strong);
+  --gugu-chat-highlight: var(--border-highlight);
+  --gugu-chat-radius: var(--radius-lg);
+  --gugu-chat-shadow: var(--elevation-window);
+  --gugu-chat-header-border: color-mix(in srgb,var(--content-primary) 12%,transparent);
+  --gugu-chat-sidebar-border: var(--border-subtle);
+  --gugu-chat-session-hover: var(--surface-soft-hover);
+  --gugu-chat-session-active: var(--sidebar-item-active);
+  --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);
+  --gugu-chat-caption: var(--content-tertiary);
+  --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
+  --gugu-chat-user-bg: var(--action-primary);
+  --gugu-chat-composer-bg: color-mix(in srgb,var(--surface-raised) 90%,transparent);
+  --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
+  --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);
+
+  /* Design system page. Product sample deliberately opts out of this outer shell. */
+  --design-section-gap: var(--space-xl);
+  --design-grid-gap: var(--space-md);
+  --design-section-bg: color-mix(in srgb,var(--surface-glass) 84%,transparent);
+  --design-section-border: var(--border-strong);
+  --design-section-highlight: var(--border-highlight);
+  --design-section-radius: var(--radius-lg);
+  --design-section-shadow: var(--elevation-card);
+  --design-card-bg: color-mix(in srgb,var(--surface-card-solid) 68%,transparent);
+  --design-card-border: var(--border-subtle);
+  --design-card-radius: var(--radius-md);
+}
