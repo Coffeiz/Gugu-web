@@ -79,9 +79,11 @@ watch(() => props.showNewFolder, value => {
 </script>
 
 <style scoped>
-/* 工具栏组件只负责布局。所有按钮/图标/文字/输入框的尺寸与主题 paint
-   统一由 file-toolbar-theme-refinements.css 管理，避免子组件和页面各写一份。 */
+/* 共享工具栏拥有共同的 52px 外框高度；文件页与项目编辑卡只补各自的横向 padding。
+   control paint/尺寸继续由 file-toolbar-theme-refinements.css 唯一负责。 */
 .file-browser-toolbar {
+  height: 52px;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
