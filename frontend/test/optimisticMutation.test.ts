@@ -60,8 +60,9 @@ describe('optimisticMutation — 时序契约', () => {
   it('regrab 立即 apply 新状态，但同一对象的 persistence 必须等待旧请求结算后再启动', async () => {
     const first = deferred()
     const second = deferred()
+    const secondStarted = deferred()
     let state = 'A'
-    let secondStarted = false
+    let hasSecondStarted = false
     const key = 'test-order:file:1'
 
     const firstWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
@@ -71,17 +72,17 @@ describe('optimisticMutation — 时序契约', () => {
     const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
       apply: () => { state = 'C' },
       afterMutate: () => {},
-      work: () => { secondStarted = true; return second.promise },
+      work: () => { hasSecondStarted = true; secondStarted.resolve(); return second.promise },
       rollback: () => { state = 'B' },
       onError: () => {},
     }))
 
     expect(state).toBe('C')
-    expect(secondStarted).toBe(false)
+    expect(hasSecondStarted).toBe(false)
     first.resolve()
     await firstWork
-    await Promise.resolve()
-    expect(secondStarted).toBe(true)
+    await secondStarted.promise
+    expect(hasSecondStarted).toBe(true)
     second.resolve()
     await secondWork
     expect(state).toBe('C')
@@ -90,6 +91,7 @@ describe('optimisticMutation — 时序契约', () => {
   it('regrab 新意图已 apply 时，旧请求失败先完成 defer/onError 收尾，再放行新 persistence', async () => {
     const first = deferred()
     const second = deferred()
+    const secondStarted = deferred()
     let state = 'A'
     let firstErrorHandled = false
     let secondSawSettledFirst = false
@@ -109,7 +111,7 @@ describe('optimisticMutation — 时序契约', () => {
     const secondWork = withOptimisticIntent(secondIntent, () => optimisticMutation({
       apply: () => { state = 'C' },
       afterMutate: () => {},
-      work: () => { secondSawSettledFirst = firstErrorHandled; return second.promise },
+      work: () => { secondSawSettledFirst = firstErrorHandled; secondStarted.resolve(); return second.promise },
       rollback: secondRollback,
       onError: () => {},
     }))
@@ -117,7 +119,7 @@ describe('optimisticMutation — 时序契约', () => {
     expect(state).toBe('C')
     first.reject(new Error('first failed'))
     await firstWork
-    await Promise.resolve()
+    await secondStarted.promise
     expect(state).toBe('C')
     expect(firstRollback).not.toHaveBeenCalled()
     expect(firstErrorHandled).toBe(true)
@@ -132,6 +134,7 @@ describe('optimisticMutation — 时序契约', () => {
   it('连续 regrab 的所有请求都失败时，rollback chain 回到最后确认状态而非中间乐观态', async () => {
     const first = deferred()
     const second = deferred()
+    const secondStarted = deferred()
     let state = 'A'
     const firstRollback = vi.fn(() => { state = 'A' })
     const secondRollback = vi.fn(() => { state = 'B' })
@@ -142,13 +145,15 @@ describe('optimisticMutation — 时序契约', () => {
       rollback: firstRollback, onError: () => {},
     }))
     const secondWork = withOptimisticIntent(beginOptimisticIntent([key]), () => optimisticMutation({
-      apply: () => { state = 'C' }, afterMutate: () => {}, work: () => second.promise,
+      apply: () => { state = 'C' }, afterMutate: () => {},
+      work: () => { secondStarted.resolve(); return second.promise },
       rollback: secondRollback, onError: () => {},
     }))
 
     first.reject(new Error('first failed'))
     await firstWork
     expect(state).toBe('C')
+    await secondStarted.promise
 
     second.reject(new Error('second failed'))
     await secondWork
