@@ -1051,49 +1051,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .trash-child-row.file svg { color: var(--text-tertiary); }
 .trash-folder-empty { color: var(--text-tertiary); font-size: 11px; padding: 5px 0; }
 
-/* ── 批量操作浮动栏 ── */
-.selection-bar {
-  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 16px; border-radius: 14px;
-  background: rgba(30,32,44,0.88);
-  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.22);
-  z-index: 100;
-}
-.sel-count { font-size: 12px; color: rgba(255,255,255,0.75); white-space: nowrap; }
-.sel-download-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 12px; border-radius: 8px; border: none;
-  background: rgba(255,255,255,0.15); color: white;
-  font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s;
-}
-.sel-download-btn:hover { background: rgba(255,255,255,0.25); }
-.sel-download-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.spin { animation: spin 0.9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.sel-delete-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 12px; border-radius: 8px; border: none;
-  background: rgba(200,90,90,0.85); color: white;
-  font-size: 12px; font-weight: 600; cursor: pointer; transition: background 0.15s;
-}
-.sel-delete-btn:hover { background: rgba(200,90,90,1); }
-.sel-cancel-btn {
-  padding: 6px 10px; border-radius: 8px; border: none;
-  background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.7);
-  font-size: 12px; cursor: pointer; transition: background 0.15s;
-}
-.sel-cancel-btn:hover { background: rgba(255,255,255,0.2); color: white; }
-.sel-action-btn {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 11px; border-radius: 8px; border: none;
-  background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.9);
-  font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.15s;
-}
-.sel-action-btn:hover { background: rgba(255,255,255,0.22); }
-.sel-divider { width: 1px; height: 18px; background: rgba(255,255,255,0.18); margin: 0 2px; flex-shrink: 0; }
-
 /* ── 拖拽遮罩 ── */
 .drop-overlay {
   position: absolute; inset: 0; z-index: 50;
@@ -1114,9 +1071,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .drop-hint { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 
 /* ── 动画 ── */
-.action-bar-enter-active, .action-bar-leave-active { transition: opacity 0.2s; }
-.action-bar-enter-from, .action-bar-leave-to { opacity: 0; }
-
 .drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s; }
 .drop-fade-enter-from, .drop-fade-leave-to { opacity: 0; }
 
