@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Locator } from '@playwright/test'
 
 /**
  * Mind 画布 Runtime 接入的只读 smoke 覆盖。
@@ -41,7 +41,7 @@ type ChromeStyle = {
   backdrop: string
 }
 
-async function readChromeStyle(locator: Parameters<typeof expect>[0]): Promise<ChromeStyle> {
+async function readChromeStyle(locator: Locator): Promise<ChromeStyle> {
   return locator.evaluate((el: Element) => {
     const style = getComputedStyle(el)
     return {
