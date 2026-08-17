@@ -25,14 +25,14 @@ test('画布首屏、项目抽屉和相机控制可用', async ({ page }) => {
   await toolbar.getByRole('button', { name: '缩小' }).click()
   await expect(zoomLabel).toHaveText('100%')
 
-  const drawer = page.locator('[data-layout-surface="mind:project-drawer"]')
+  const projectViewport = page.locator('[data-layout-surface="mind:project-drawer"]')
   await page.getByRole('button', { name: '项目素材' }).click()
-  await expect(drawer.locator('.projects-panel.visible')).toBeVisible()
+  await expect(projectViewport.locator('.projects-panel.visible')).toBeVisible()
   await expect(page.getByRole('button', { name: '收起' })).toBeVisible()
   await page.getByRole('button', { name: '收起' }).click()
   await expect(page.getByRole('button', { name: '项目素材' })).toBeVisible()
   await page.getByRole('button', { name: '项目素材' }).click()
-  await expect(drawer.locator('.projects-panel.visible')).toBeVisible()
+  await expect(projectViewport.locator('.projects-panel.visible')).toBeVisible()
 })
 
 type ChromeStyle = {
@@ -66,12 +66,16 @@ for (const theme of ['light', 'dark'] as const) {
 
     const toolbar = page.locator('.canvas-toolbar')
     const topCapsule = page.locator('.mind-tabs')
-    const drawer = page.locator('[data-layout-surface="mind:project-drawer"]')
+    // 真正的毛玻璃 paint 在 DrawerShell 根节点；data-layout-surface 挂在内部 viewport，
+    // 后者只负责布局/命中，拿它读 computed style 会产生“没有 blur”的假阴性。
+    const drawer = page.locator('.canvas-drawer')
+    const projectViewport = page.locator('[data-layout-surface="mind:project-drawer"]')
 
     await expect(toolbar).toBeVisible()
     await expect(topCapsule).toBeVisible()
     await page.getByRole('button', { name: '项目素材' }).click()
-    await expect(drawer.locator('.projects-panel.visible')).toBeVisible()
+    await expect(projectViewport.locator('.projects-panel.visible')).toBeVisible()
+    await expect(drawer).toBeVisible()
 
     const toolbarBefore = await readChromeStyle(toolbar)
     const drawerBefore = await readChromeStyle(drawer)
