@@ -9,6 +9,10 @@ function occurrences(source: string, needle: string) {
   return source.split(needle).length - 1
 }
 
+function withoutCssComments(source: string) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '')
+}
+
 const tokenCss = load('./tokens/components/buttons.css')
 const bridgeCss = load('./adoption/button-feedback.css')
 const globalCss = load('./global.css')
@@ -34,11 +38,13 @@ describe('按钮乐观反馈全局契约', () => {
     expect(bridgeCss).toContain('transform: var(--button-press-transform, translateY(1px) scale(.985))')
     expect(bridgeCss).not.toContain('!important')
 
-    // Legacy press-fx 的正向 active 只由 global.css 拥有；bridge 只负责全局开关关闭态。
-    expect(occurrences(globalCss, '.press-fx:active {')).toBe(1)
-    expect(occurrences(bridgeCss, '.press-fx:active')).toBe(1)
-    expect(bridgeCss).toContain("html[data-button-feedback='off'] .press-fx:active")
-    expect(bridgeCss).not.toContain("html[data-button-feedback='optimistic'] .press-fx:active")
+    // 只统计真正 CSS 规则，注释里解释 selector ownership 的文字不能被误算成第二个 owner。
+    const globalRules = withoutCssComments(globalCss)
+    const bridgeRules = withoutCssComments(bridgeCss)
+    expect(occurrences(globalRules, '.press-fx:active {')).toBe(1)
+    expect(occurrences(bridgeRules, '.press-fx:active')).toBe(1)
+    expect(bridgeRules).toContain("html[data-button-feedback='off'] .press-fx:active")
+    expect(bridgeRules).not.toContain("html[data-button-feedback='optimistic'] .press-fx:active")
   })
 
   it('全局偏好默认 optimistic，并在应用挂载前初始化且有设置入口', () => {
