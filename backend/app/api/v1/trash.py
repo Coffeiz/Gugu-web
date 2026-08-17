@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models import File, Folder, User
+from app.models import File, Project, Folder, User
 from app.schemas import (
     BatchDeleteBody,
     FileResponse,
