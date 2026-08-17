@@ -5,6 +5,7 @@ function load(relativePath: string) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 }
 
+const filesPage = load('../../views/Files/index.vue')
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
@@ -13,10 +14,11 @@ const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
-  it('共享文件工具栏恢复 52px 外框高度，项目页不重复拥有高度', () => {
-    expect(browserToolbar).toContain('height: 52px;')
-    expect(browserToolbar).toContain('box-sizing: border-box;')
-    expect(projectToolbar).not.toContain('height: 52px;')
+  it('文件库恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
+    expect(filesPage).toContain('height: 52px; box-sizing: border-box;')
+    expect(browserToolbar).not.toContain('height: 52px;')
+    expect(projectToolbar).toContain('height: 52px;')
+    expect(projectToolbar).toContain('box-sizing: border-box;')
   })
 
   it('网格/列表恢复 inset slider 几何并保留真实移动 pill', () => {
