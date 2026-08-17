@@ -139,31 +139,8 @@ html[data-theme][data-family] .done-col .month-cnt { color: var(--content-tertia
 html[data-theme][data-family] .done-col .month-name { color: var(--content-secondary); }
 
 /* ── Files ────────────────────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .fc-card {
-  color: var(--content-primary);
-  background: var(--surface-card-solid) !important;
-  border-color: var(--border-strong) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
-}
-html[data-theme][data-family] .fc-card::after {
-  background: var(--highlight-muted) !important;
-}
-html[data-theme][data-family] .fc-card:hover {
-  background: var(--surface-raised) !important;
-  border-color: var(--border-hover) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover) !important;
-}
-html[data-theme][data-family] .fc-card.selected {
-  background: var(--surface-raised) !important;
-  border-color: var(--action-outline) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg) !important;
-}
-html[data-theme][data-family] .fc-card.selected::before { background: var(--selection-bg) !important; }
-html[data-theme][data-family] .fc-card .fc-ext-badge { background: var(--surface-soft); }
-html[data-theme][data-family] .fc-card .fc-thumb-area { background: var(--surface-soft); }
-html[data-theme][data-family] .fc-card .fc-name { color: var(--content-primary); }
-html[data-theme][data-family] .fc-card .fc-meta { color: var(--content-secondary); }
-
+/* .fc-card paint now belongs to FileCard.vue and consumes --file-card-* tokens. Keep this bridge
+   only for upload-button legacy markup so theme adoption can no longer override card paint. */
 html[data-theme][data-family] .fub.grid {
   color: var(--inline-action-fg);
   background: var(--inline-action-bg);
