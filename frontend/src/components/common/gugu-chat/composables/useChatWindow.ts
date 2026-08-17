@@ -41,10 +41,29 @@ export function useChatWindow(options: UseChatWindowOptions) {
   const miniPinned = ref(localStorage.getItem(MINI_PINNED_KEY) !== 'false')
   const reopenResume = ref(localStorage.getItem(REOPEN_RESUME_KEY) === '1')
 
+  // ── 大/小窗位形过渡生命周期 ────────────────────────────
+  // viewport resize 与模式切换是两种不同事务：前者必须当帧跟随窗口，后者才允许 0.42s 缓动。
+  // 如果用户恰好在模式动画期间拖浏览器边缘，真实 window.resize 会直接结束模式动画，
+  // 让 is-layout-resizing class 在同一 Vue patch 中撤掉，避免新的 viewport 几何继续吃旧 transition。
+  let _resizeTimer: ReturnType<typeof setTimeout> | null = null
+  let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
+  function finishResizing(fitTextarea = true) {
+    resizing.value = false
+    if (_resizeTimer) { clearTimeout(_resizeTimer); _resizeTimer = null }
+    const w = options.windowRef.value
+    if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    _onResizeTransitionEnd = null
+    if (fitTextarea) options.composerRef.value?.fitTextarea?.()
+  }
+
   // 视口尺寸
   const vw = ref(window.innerWidth)
   const vh = ref(window.innerHeight)
-  function onResize() { vw.value = window.innerWidth; vh.value = window.innerHeight }
+  function onResize() {
+    vw.value = window.innerWidth
+    vh.value = window.innerHeight
+    if (resizing.value) finishResizing()
+  }
 
   // 小窗高度跟随内容：直接用 messages 真实高度算窗口该多高，到 maxH 封顶后内部滚动。
   const contentH = ref(SMALL_H)
@@ -72,26 +91,18 @@ export function useChatWindow(options: UseChatWindowOptions) {
   // 会被拖慢，定时器却按固定墙钟时间准点触发，导致 backdrop-filter/跟随在过渡还没
   // 走完时就被重新打开，看起来「闪一下」。定时器保留作兜底（万一属性没变、不会触发
   // transitionend），加了缓冲、不再和过渡时长完全对齐。
-  let _resizeTimer: ReturnType<typeof setTimeout> | null = null
-  let _onResizeTransitionEnd: ((e: TransitionEvent) => void) | null = null
   function markResizing() {
-    resizing.value = true
     if (_resizeTimer) clearTimeout(_resizeTimer)
     const w = options.windowRef.value
-    if (w && _onResizeTransitionEnd) {
-      w.removeEventListener('transitionend', _onResizeTransitionEnd)
-    }
+    if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    resizing.value = true
     _onResizeTransitionEnd = (e: TransitionEvent) => {
       if (e.target !== w) return
       if (!['top', 'left', 'right', 'bottom'].includes(e.propertyName)) return
-      resizing.value = false
-      options.composerRef.value?.fitTextarea?.()
+      finishResizing()
     }
     w?.addEventListener('transitionend', _onResizeTransitionEnd)
-    _resizeTimer = setTimeout(() => {
-      resizing.value = false
-      options.composerRef.value?.fitTextarea?.()
-    }, 600)
+    _resizeTimer = setTimeout(() => finishResizing(), 600)
   }
 
   // ── 窗口层级 ────────────────────────────────────────────
@@ -172,9 +183,7 @@ export function useChatWindow(options: UseChatWindowOptions) {
   })
   onUnmounted(() => {
     window.removeEventListener('resize', onResize)
-    if (_resizeTimer) clearTimeout(_resizeTimer)
-    const w = options.windowRef.value
-    if (w && _onResizeTransitionEnd) w.removeEventListener('transitionend', _onResizeTransitionEnd)
+    finishResizing(false)
   })
 
   return {
