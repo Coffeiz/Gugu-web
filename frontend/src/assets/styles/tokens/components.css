@@ -16,6 +16,7 @@
   --glass-card-border-hover: var(--border-hover);
   --glass-card-shadow: var(--elevation-card);
   --glass-card-shadow-hover: var(--elevation-card-hover);
+  --glass-card-blur: var(--glass-blur);
   --glass-card-transition: var(--motion-default) var(--motion-ease-standard);
   --popup-background: var(--surface-popup);
   --popup-border: var(--border-strong);
