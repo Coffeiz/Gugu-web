@@ -102,7 +102,6 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 <style scoped>
 .exp-sidebar {
   width: 210px;
-  min-height: 0;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -155,7 +154,6 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
 
 .exp-session-list {
   flex: 1;
-  min-height: 0;
   overflow-y: auto;
   padding: var(--space-md) var(--space-sm);
   display: flex;
