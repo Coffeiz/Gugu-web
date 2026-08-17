@@ -262,24 +262,30 @@ export const useMindStore = defineStore('mind', () => {
         const node = await mindApi.createRefNode('project', projectId)
         const created = await mindApi.addCanvasItem(canvasId, { nodeId: node.id, x, y, z })
         persistedItemId = created.id
-        const pending = pendingProjectRefCreates.get(tempId)
-        const currentIndex = canvasItems.value.findIndex(current => current.clientKey === clientKey)
-        if (!pending || pending.cancelled || currentIndex === -1) {
-          // 用户已在 landing 中 regrab 回抽屉：本地 placeholder 已经消失。首次创建可能已经
-          // 到达服务端，所以只用真实 id 做补偿删除，绝不把卡片重新插回画布。
-          await mindApi.removeCanvasItem(canvasId, created.id)
-          pendingProjectRefCreates.delete(tempId)
-          return { ...created, clientKey }
+        let resolved: MindCanvasItem = { ...created, clientKey }
+        let persistedX = created.x
+        let persistedY = created.y
+
+        // create 返回后仍可能连续 regrab。每次网络 flush 完都重新读取 placeholder 的最新
+        // 坐标；只有服务端位置追上当前乐观位置才结束，不能把“只支持一次 regrab”写进时序假设。
+        while (true) {
+          const pending = pendingProjectRefCreates.get(tempId)
+          const currentIndex = canvasItems.value.findIndex(current => current.clientKey === clientKey)
+          if (!pending || pending.cancelled || currentIndex === -1) {
+            await mindApi.removeCanvasItem(canvasId, created.id)
+            pendingProjectRefCreates.delete(tempId)
+            return resolved
+          }
+          const current = canvasItems.value[currentIndex]
+          if (current.x === persistedX && current.y === persistedY) break
+          const targetX = current.x
+          const targetY = current.y
+          const moved = await mindApi.bringCanvasItemToFront(canvasId, created.id, { x: targetX, y: targetY })
+          resolved = { ...moved, clientKey }
+          persistedX = targetX
+          persistedY = targetY
         }
 
-        const current = canvasItems.value[currentIndex]
-        let resolved: MindCanvasItem = { ...created, clientKey }
-        if (current.x !== x || current.y !== y) {
-          // regrab 在首次创建完成前已经把 placeholder 移到新位置。不能让 create 的旧 x/y
-          // 覆盖最新视觉意图；真实 id 到手后直接把最终坐标/置顶一次性落库。
-          const moved = await mindApi.bringCanvasItemToFront(canvasId, created.id, { x: current.x, y: current.y })
-          resolved = { ...moved, clientKey }
-        }
         const latestPending = pendingProjectRefCreates.get(tempId)
         const latestIndex = canvasItems.value.findIndex(item => item.clientKey === clientKey)
         if (!latestPending || latestPending.cancelled || latestIndex === -1) {
