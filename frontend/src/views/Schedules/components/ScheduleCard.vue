@@ -81,10 +81,10 @@ function fmtTime(iso: string) {
 .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
 .switch.sm { width: 32px; height: 19px; }
 .switch input { opacity: 0; width: 0; height: 0; }
-.slider { position: absolute; inset: 0; background: rgba(0,0,0,0.18); border-radius: 22px; transition: 0.2s; cursor: pointer; }
-.slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }
+.slider { position: absolute; inset: 0; background: var(--switch-track-bg); border-radius: 22px; transition: 0.2s; cursor: pointer; }
+.slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: var(--switch-thumb-bg); border-radius: 50%; transition: 0.2s; }
 .switch.sm .slider::before { height: 13px; width: 13px; }
-.switch input:checked + .slider { background: var(--color-primary); }
+.switch input:checked + .slider { background: var(--switch-track-bg-active); }
 .switch input:checked + .slider::before { transform: translateX(16px); }
 .switch.sm input:checked + .slider::before { transform: translateX(13px); }
 </style>

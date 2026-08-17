@@ -168,7 +168,11 @@ html[data-theme='dark'][data-family] {
   --file-dialog-toolbar-highlight-strong: var(--highlight-strong);
   --file-dialog-toolbar-highlight-side: var(--highlight-side);
 
+  --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
   --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
+  /* 暗色用户气泡不能直接用 action-primary（暗色主题下是浅亮紫）：白色文字下
+     对比不足且整块偏亮。混入深色卡面后保持品牌紫身份但收敛亮度。 */
+  --gugu-chat-user-bg: color-mix(in srgb,var(--action-primary) 68%,var(--surface-card-solid));
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
   --runtime-drag-glass-border: var(--border-hover);
   --runtime-drag-glass-shadow: 0 22px 50px rgba(0,0,0,.38);

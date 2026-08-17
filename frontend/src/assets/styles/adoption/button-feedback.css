@@ -8,6 +8,13 @@
   opacity: var(--button-press-opacity, .93);
 }
 
+/* 侧栏设置菜单项是整行菜单交互，不是按钮：按压下沉/变淡会让菜单看起来
+   "塌"一下。同用 :where 保持零特异度，靠源顺序覆盖上面的全局反馈。 */
+:where(html:not([data-button-feedback='off']) .settings-popup button.popup-menu-item:not(:disabled):active) {
+  transform: none;
+  opacity: 1;
+}
+
 /* .press-fx is also used by non-button interactive rows, so keep its existing global.css contract.
    This rule owns only the preference-off state; there is intentionally no second optimistic
    .press-fx:active declaration in this bridge. */
