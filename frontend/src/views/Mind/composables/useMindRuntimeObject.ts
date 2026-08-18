@@ -31,6 +31,14 @@ export function useMindRuntimeObject(options: {
     if (!element) return
     const objectId = getObjectId()
     if (!objectId) return
+    // ProjectRefCard（canvas）和 ProjectDrawerCard（drawer）是同一个项目对象在
+    // 两个 Surface 上的不同 DOM。CollectionPresence 的 move ownership 通过
+    // data-layout-key 识别语义对象；drawer 模板已经显式提供 key，canvas 卡只
+    // 暴露 data-project-id，因此在 Mind 的 Runtime 接入边界统一补齐，避免把
+    // data-project-id 这种业务字段耦合进通用 interaction runtime。
+    if (!element.dataset.layoutKey && element.dataset.projectId) {
+      element.dataset.layoutKey = `project:${element.dataset.projectId}`
+    }
     if (registeredObjectId !== null && registeredObjectId !== objectId) {
       stopBinding?.()
       stopResolver?.()
