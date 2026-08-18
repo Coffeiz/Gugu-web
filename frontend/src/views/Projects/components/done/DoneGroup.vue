@@ -7,7 +7,8 @@
   </template>
   <div v-else-if="group.type === 'year'" class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
     <button class="year-row" @click="$emit('toggle', group.key)">
-      <svg class="year-chev" :class="{ open: group.open }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
+      <PhCaretDown v-if="group.open" class="year-chev" :size="9" weight="bold" />
+      <PhCaretRight v-else class="year-chev" :size="9" weight="bold" />
       <span class="year-label">{{ group.label }}</span><span class="year-cnt">{{ group.children.reduce((total, child) => total + child.items.length, 0) }}</span>
     </button>
   </div>
@@ -25,7 +26,9 @@
   <template v-else>
     <div class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group">
       <button class="year-row" @click="$emit('toggle', '__undated')">
-        <svg class="year-chev" :class="{ open: isUndatedOpen }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg><span class="year-label undated">{{ group.label }}</span><span class="year-cnt">{{ group.items.length }}</span>
+        <PhCaretDown v-if="isUndatedOpen" class="year-chev" :size="9" weight="bold" />
+        <PhCaretRight v-else class="year-chev" :size="9" weight="bold" />
+        <span class="year-label undated">{{ group.label }}</span><span class="year-cnt">{{ group.items.length }}</span>
       </button>
       <div class="year-folder" data-layout-content data-layout-key="__undated" :data-layout-open="isUndatedOpen ? 'true' : 'false'">
         <DoneCardList :projects="group.items" :is-project-detached="isProjectDetached" :collection-key="group.key" @card-click="$emit('card-click', $event)" />
@@ -36,7 +39,7 @@
 
 <script setup lang="ts">
 import { type PropType } from 'vue'
-import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
+import { PhFolder, PhFolderOpen, PhCheckCircle, PhCaretRight, PhCaretDown } from '@phosphor-icons/vue'
 import type { DoneGroup } from './doneTypes'
 import DoneCardList from './DoneCardList.vue'
 
