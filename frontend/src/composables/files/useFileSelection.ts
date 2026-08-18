@@ -33,7 +33,7 @@ function createFileSelectionCoordinator(options: FileSelectionOptions) {
   const box = useBoxSelection(gridRef, {
     fileAttr: options.fileAttr ?? 'data-pm-file-id',
     folderAttr: options.folderAttr ?? 'data-pm-folder-id',
-    excludeSelector: 'button, input, .folder-card, .fc-card, label',
+    excludeSelector: 'button, input, .folder-card, .fc-card, .list-row, label',
     parseFolderId: Number,
   })
   const fileSelection = useSelectionState({ fileIds: box.selectedFileIds, folderIds: box.selectedFolderIds })
