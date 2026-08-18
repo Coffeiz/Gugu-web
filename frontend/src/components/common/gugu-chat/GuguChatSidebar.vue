@@ -182,6 +182,10 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   position: relative;
 }
 :deep(.exp-session-item.active) {
+  /* interaction-refinements owns hover paint. Remap its hover inputs locally so an active row keeps
+     the selected surface in both light and dark instead of creating a second active:hover selector. */
+  --gugu-chat-session-hover: var(--gugu-chat-session-active);
+  --sidebar-item-hover: var(--gugu-chat-session-active);
   color: var(--gugu-chat-session-active-fg);
   background: var(--gugu-chat-session-active);
   border-color: var(--sidebar-item-active-border);
