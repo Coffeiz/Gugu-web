@@ -1,0 +1,34 @@
+/* File browser selection checkbox contract.
+   Grid FileCard / FolderCard and every list row share the same semantic paint and the same check glyph.
+   FolderCard already had the correct Aero/Mono + light/dark token mapping, so the generic contract aliases
+   that proven mapping instead of inventing another theme branch. FileCard consumes compatibility aliases
+   below; list rows consume the generic names directly. */
+:root {
+  --file-browser-checkbox-bg: var(--folder-card-checkbox-bg);
+  --file-browser-checkbox-border: var(--folder-card-checkbox-border);
+  --file-browser-checkbox-bg-checked: var(--folder-card-checkbox-bg-checked);
+  --file-browser-checkbox-border-checked: var(--folder-card-checkbox-border-checked);
+  --file-browser-checkbox-fg-checked: var(--folder-card-checkbox-fg-checked);
+
+  --file-card-checkbox-bg: var(--file-browser-checkbox-bg);
+  --file-card-checkbox-border: var(--file-browser-checkbox-border);
+  --file-card-checkbox-bg-checked: var(--file-browser-checkbox-bg-checked);
+  --file-card-checkbox-border-checked: var(--file-browser-checkbox-border-checked);
+  --file-card-checkbox-fg-checked: var(--file-browser-checkbox-fg-checked);
+}
+
+/* Templates historically used two different check icons (inline path vs PhCheck). Hide both when checked
+   and render one exact glyph here, so grid/list/project/trash cannot visually drift by component choice. */
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked > svg {
+  display: none;
+}
+:where(.fc-card, .folder-card, .list-row) .sel-checkbox.checked::after {
+  content: '';
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 6l3 3 5-5' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+}

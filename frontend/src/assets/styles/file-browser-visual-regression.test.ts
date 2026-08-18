@@ -26,6 +26,8 @@ const browserToolbar = load('../../components/common/file-browser/FileBrowserToo
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const filesListView = load('../../views/Files/components/FilesListView.vue')
 const filesListRows = load('./filesListRows.css')
+const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
+const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCard.vue')
 const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 
@@ -114,11 +116,35 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
   })
 
-  it('列表行状态只有共享 rows stylesheet 一个 paint owner', () => {
+  it('网格与列表多选框共享 FolderCard 已验证的主题 token 和同一个勾形', () => {
+    expect(fileSelectionCheckbox).toContain('--file-browser-checkbox-bg: var(--folder-card-checkbox-bg);')
+    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-bg: var(--file-browser-checkbox-bg);')
+    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-fg-checked: var(--file-browser-checkbox-fg-checked);')
+    expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked > svg')
+    expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked::after')
+    expect(fileSelectionCheckbox).toContain("M2 6l3 3 5-5")
+    expect(filesListRows).toContain('color: var(--file-browser-checkbox-fg-checked);')
+    expect(filesListRows).toContain('background: var(--file-browser-checkbox-bg-checked);')
+    expect(filesListRows).not.toContain("html[data-theme='dark'][data-family] .list-row .sel-checkbox")
+  })
+
+  it('列表行状态只有共享 rows stylesheet 一个 paint/layout owner', () => {
     expect(filesListView).not.toContain('.list-row {')
     expect(filesListView).not.toContain('.sel-checkbox {')
+    expect(filesListView).not.toContain('grid-template-columns:')
     expect(filesListRows).toContain('.sel-checkbox')
     expect(filesListRows).toContain('box-shadow: none;')
+    expect(uploadGhost).not.toContain('grid-template-columns:')
+    expect(uploadGhost).not.toContain(':deep(.lr-filename)')
+  })
+
+  it('列表表头和内容共享水平节奏，项目 compact 代理不会从 0px 列溢出', () => {
+    expect(filesListRows).toContain('column-gap: 8px;')
+    expect(filesListRows).toContain('padding: 0 14px 8px;')
+    expect(filesListRows).toContain('padding: 9px 14px;')
+    expect(filesListRows).toContain('[data-runtime-compact="true"] { overflow: hidden; }')
+    expect(filesListRows).toContain('[data-runtime-compact="true"] > * { min-width: 0; }')
+    expect(filesListRows).toContain('[data-runtime-compact="true"][data-list-columns="5"] > :nth-child(n+4) { overflow: hidden; }')
   })
 
   it('多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint', () => {
