@@ -72,14 +72,14 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 </script>
 
 <style scoped>
-.im-plat-group { border-radius: var(--radius-sm); }
+.im-plat-group { display:flex; flex-direction:column; gap:2px; border-radius:var(--radius-sm); }
 .im-plat-group.im-flash { animation: imFlash 2.4s ease-out 1; }
 @keyframes imFlash {
   0%,100% { box-shadow:0 0 0 0 color-mix(in srgb,var(--action-primary) 0%,transparent); }
   14% { box-shadow:0 0 0 2px color-mix(in srgb,var(--action-primary) 55%,transparent); }
   60% { box-shadow:0 0 0 2px color-mix(in srgb,var(--action-primary) 28%,transparent); }
 }
-.im-plat { display:flex; flex-direction:column; }
+.im-plat { display:flex; flex-direction:column; gap:2px; }
 .im-plat-head {
   min-height: 36px;
   display:flex;
@@ -96,8 +96,9 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
 }
 .im-plat-head:hover { color:var(--content-primary); background:var(--gugu-chat-session-hover); }
 .im-plat-head.open { color:var(--content-primary); background:var(--surface-soft); border-color:var(--border-hairline); }
-.im-plat-chev { color:var(--content-tertiary); transition:transform .18s ease; flex-shrink:0; }
-.im-plat-chev.open { transform:rotate(-180deg); }
+/* Disclosure 统一约定：源图形默认向下，因此收起态左转 90° 指向右，展开态回到向下。 */
+.im-plat-chev { color:var(--content-tertiary); transform:rotate(-90deg); transition:transform .18s ease; flex-shrink:0; }
+.im-plat-chev.open { transform:rotate(0deg); }
 .im-plat-name { flex:1; text-align:left; font-size:var(--font-size-sm); font-weight:var(--font-weight-semibold); }
 .im-plat-badge {
   flex-shrink:0;
@@ -110,7 +111,8 @@ defineExpose({ imGroupEl: computed(() => rootRef.value) })
   line-height:1;
 }
 .im-plat-badge.on { color:var(--status-success); background:var(--status-success-bg); }
-.im-plat-body { display:flex; flex-direction:column; gap:var(--space-xs); padding:var(--space-xs) 0 var(--space-sm) var(--space-md); }
+/* IM session 是普通 session 的分组来源，不做树形缩进；平台、IM session 与相邻项统一 2px 节奏。 */
+.im-plat-body { display:flex; flex-direction:column; gap:2px; padding:0; }
 .im-connect-btn {
   width:100%;
   height:var(--control-sm);
