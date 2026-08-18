@@ -565,7 +565,10 @@ onMounted(() => {
     layout: 'free',
     camera: {
       scale: () => camera.scale,
-      origin: () => ({ left: camera.x, top: camera.y }),
+      origin: () => {
+        const p = panPosition()
+        return { left: p.x, top: p.y }
+      },
     },
   })
   stopRuntimeActions = runtime.onAction(action => {
