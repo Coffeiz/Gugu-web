@@ -19,4 +19,3 @@ const { elementRef } = useObject({ id: props.runtimeId, type: 'file-item', surfa
 const { selectedIds, previewFileIds, cbStore, handleFileClick, openCtx, fileListIcon, fileIconColor, renamingFileId, renameText, commitRename, cancelRename, startRenameFile, downloadFile, deleteSingleFile, inSelectionMode } = props.context
 </script>
 
-<style src="./filesListRows.css"></style>

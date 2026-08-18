@@ -90,26 +90,7 @@ const {
 
 <style scoped>
 /* RuntimeFileListRow/RuntimeFolderListRow and their physical clones share one row paint owner:
-   filesListRows.css. Keep only the list container/header here so scoped source order cannot race
-   selected/pre-selected/checkbox paint against the shared row stylesheet. */
-.file-list { display: flex; flex-direction: column; gap: 2px; }
-
-.lh-sortable {
-  display: flex; align-items: center; gap: 3px;
-  cursor: pointer; user-select: none; transition: color 0.12s;
-}
-.lh-sortable:hover { color: var(--text-primary); }
-.lh-sortable.active { color: var(--color-primary); }
-.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
-.lh-sortable.active .lh-arrow { opacity: 1; }
-.lh-arrow.desc { transform: rotate(180deg); }
-
-.list-head {
-  display: grid;
-  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  padding: 0 10px 8px;
-  font-size: 10px; font-weight: 600; color: var(--text-secondary);
-  text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
-}
+   filesListRows.css. The list container, header base and sortable buttons also live there;
+   this page only owns its 6-column grid widths. */
+.list-head { grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px; }
 </style>

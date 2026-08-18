@@ -1,3 +1,27 @@
+/* 列表容器：行间距 2px 让每行的 hover/选中底色互相分离，
+   文件库（.file-list）和项目编辑卡（.file-list-view）共用，禁止各视图再写一份。 */
+.file-list, .file-list-view { display: flex; flex-direction: column; gap: 2px; }
+
+/* 表头基础样式（列宽除外）：字体/分隔线/排序按钮交互，全站列表视图共用；
+   各视图只保留自己的 grid-template-columns 覆盖。 */
+.file-list .list-head, .file-list-view .list-head {
+  display: grid;
+  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
+  padding: 0 10px 8px;
+  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
+}
+.file-list .lh-sortable, .file-list-view .lh-sortable {
+  display: flex; align-items: center; gap: 3px;
+  cursor: pointer; user-select: none; transition: color 0.12s;
+}
+.file-list .lh-sortable:hover, .file-list-view .lh-sortable:hover { color: var(--text-primary); }
+.file-list .lh-sortable.active, .file-list-view .lh-sortable.active { color: var(--color-primary); }
+.file-list .lh-arrow, .file-list-view .lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
+.file-list .lh-sortable.active .lh-arrow, .file-list-view .lh-sortable.active .lh-arrow { opacity: 1; }
+.file-list .lh-arrow.desc, .file-list-view .lh-arrow.desc { transform: rotate(180deg); }
+
 :where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) {
   display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
   align-items: center; padding: 9px 10px; min-height: 42px;
@@ -33,3 +57,15 @@
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(n+5) { overflow: hidden; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(2) { white-space: nowrap; overflow: hidden; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(3) { padding-left: 6px; box-sizing: border-box; }
+
+/* ── 暗色模式：把上面的亮色 rgba 重映射为语义 token。行/表头/checkbox 的 paint 只有
+   本文件一个 owner，暗色覆盖也收在这里，最终主题层不再接管列表行样式。 ── */
+html[data-theme='dark'][data-family] .list-row:hover { background: var(--surface-hover-tint); }
+html[data-theme='dark'][data-family] .list-row.selected { background: var(--selection-bg); }
+html[data-theme='dark'][data-family] .list-row.pre-selected { background: var(--action-soft); outline-color: var(--action-outline); }
+html[data-theme='dark'][data-family] .list-row.folder-row:hover { background: var(--surface-hover-tint); }
+html[data-theme='dark'][data-family] .list-row .sel-checkbox { background: var(--surface-raised); border-color: var(--action-outline); }
+html[data-theme='dark'][data-family] .list-row .sel-checkbox.checked { background: var(--action-primary-bg); border-color: transparent; }
+html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox { background: var(--surface-raised); }
+html[data-theme='dark'][data-family] .list-head { border-color: var(--border-subtle); }
+html[data-theme='dark'][data-family] .list-row:hover .file-list-btn { color: var(--control-fg-strong); }

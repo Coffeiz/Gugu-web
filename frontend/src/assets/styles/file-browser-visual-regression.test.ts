@@ -25,7 +25,7 @@ const browserPanel = load('../../components/common/file-browser/FileBrowserPanel
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const filesListView = load('../../views/Files/components/FilesListView.vue')
-const filesListRows = load('../../views/Files/components/filesListRows.css')
+const filesListRows = load('./filesListRows.css')
 const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 

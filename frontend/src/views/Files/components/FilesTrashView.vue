@@ -59,26 +59,9 @@ const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTras
 </script>
 
 <style scoped>
-.file-list { display: flex; flex-direction: column; gap: 2px; }
-.lh-sortable { display: flex; align-items: center; gap: 3px; cursor: pointer; user-select: none; transition: color .12s; }
-.lh-sortable:hover { color: var(--text-primary); }
-.lh-sortable.active { color: var(--color-primary); }
-.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity .15s, transform .2s; }
-.lh-sortable.active .lh-arrow { opacity: 1; }
-.lh-arrow.desc { transform: rotate(180deg); }
-.list-head, .list-row { display: grid; grid-template-columns: 2fr 90px 1.2fr 56px 72px 96px; }
-.list-head { padding: 0 10px 8px; font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid rgba(0,0,0,.06); margin-bottom: 2px; }
-.list-row { align-items: center; padding: 9px 10px; min-height: 42px; border-radius: 9px; transition: background .12s; cursor: pointer; }
-.list-row:hover { background: rgba(123,127,178,.06); }
-.list-row.selected { background: rgba(123,127,178,.1); }
-.lr-name-cell, .lr-type-cell, .lr-actions { display: flex; align-items: center; min-width: 0; }
-.lr-name-cell { gap: 7px; }
-.lr-type-cell { gap: 5px; }
-.lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: .82; }
-.lr-filename { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.lr-type-text, .lr-text { font-size: 11px; color: var(--text-secondary); }
-.lr-ext { font-size: 8px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; border-radius: 3px; padding: 1px 4px; line-height: 1.5; }
-.lr-actions { justify-content: flex-end; gap: 2px; position: relative; }
+/* 容器/表头基础/行基础/.lr-* 单元格/.sel-checkbox/.sel-cb-* 全部由 filesListRows.css 唯一拥有
+   （本页根节点带 .file-list，共享选择器命中）；这里只保留回收站专属样式和自己的列宽。 */
+.list-head, .list-row { grid-template-columns: 2fr 90px 1.2fr 56px 72px 96px; }
 .days-warn { color: #c85a5a; font-weight: 600; }
 .trash-restore-btn { width: auto; display: flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--color-primary); padding: 4px 8px; }
 .trash-restore-btn:hover { background: rgba(123,127,178,.15); }
@@ -91,9 +74,4 @@ const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTras
 .trash-child-row small { margin-left: auto; margin-right: 12px; opacity: .65; }
 .trash-child-row.file svg { color: var(--text-tertiary); }
 .trash-folder-empty { color: var(--text-tertiary); font-size: 11px; padding: 5px 0; }
-.sel-checkbox { position: absolute; top: 8px; right: 8px; z-index: 3; width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(123,127,178,.55); background: rgba(255,255,255,.75); display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.lr-actions .sel-checkbox { top: 50%; right: 0; transform: translateY(-50%); }
-.sel-checkbox.checked { background: var(--color-primary,#7b7fb2); border-color: var(--color-primary,#7b7fb2); }
-.sel-cb-enter-active, .sel-cb-leave-active { transition: opacity .18s ease; }
-.sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 </style>
