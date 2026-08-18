@@ -534,8 +534,8 @@ label {
 .month-row { padding: 3px 8px; border-radius: var(--radius-xs); }
 .status-toggle:hover, .year-row:hover, .month-row:hover { background: var(--surface-soft-hover); color: var(--content-primary); }
 .status-cnt { font-size: 10px; color: var(--content-tertiary); font-weight: 400; letter-spacing: 0; text-transform: none; }
-.toggle-chev, .year-chev, .month-chev { color: var(--content-tertiary); flex-shrink: 0; transition: transform var(--motion-hover-control) var(--motion-ease-emphasis); }
-.toggle-chev.open, .year-chev.open, .month-chev.open { transform: rotate(180deg); }
+.toggle-chev, .year-chev, .month-chev { color: var(--content-tertiary); flex-shrink: 0; transform:rotate(-90deg); transition: transform var(--motion-hover-control) var(--motion-ease-emphasis); }
+.toggle-chev.open, .year-chev.open, .month-chev.open { transform: rotate(0deg); }
 .done-tree { display: flex; flex-direction: column; gap: 1px; padding-left: 4px; }
 .year-group { margin-bottom: 2px; }
 .year-label { font-size: 12px; font-weight: 700; color: var(--content-secondary); flex: 1; letter-spacing: .03em; }
