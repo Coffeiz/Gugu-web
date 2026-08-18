@@ -1,7 +1,10 @@
 /* Interaction Runtime owns proxy geometry and motion. Its current dragGlass implementation still
    writes a legacy light glass background/border inline; the product host supplies the paint through
-   --runtime-drag-* so grabbing remains consistent with the active theme without page-specific hacks. */
-html[data-theme='dark'][data-family] [data-runtime-proxy-content='true'] {
+   --runtime-drag-* so grabbing remains consistent with the active theme without page-specific hacks.
+   抓取阶段（grab-start/grabbing）覆盖代理的亮色 glass 表面；landing 阶段必须让位，
+   否则 inline !important 会阻止 Visual.ts 的 background-color morph，暗色底色
+   会一直粘到代理销毁才突然消失。 */
+html[data-theme='dark'][data-family] [data-runtime-proxy-content='true']:not([data-runtime-phase='landing']) {
   color: var(--content-primary) !important;
   background: var(--runtime-drag-glass-bg) !important;
   border-color: var(--runtime-drag-glass-border) !important;

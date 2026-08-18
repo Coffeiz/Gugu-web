@@ -33,8 +33,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .new-folder-btn,
   .sort-btn,
   .close-btn,
-  .nav-hist-btn,
-  .pm-nav-hist-btn,
   .select-all-btn,
   .empty-trash-btn,
   .btn-confirm-sm,
@@ -77,8 +75,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
 html[data-theme][data-family] .file-browser-toolbar :is(
   .sel-mode-btn,
   .close-btn,
-  .nav-hist-btn,
-  .pm-nav-hist-btn,
   .btn-cancel-sm
 ) {
   display: inline-flex;
@@ -95,8 +91,6 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   .new-folder-btn,
   .sort-btn,
   .close-btn,
-  .nav-hist-btn,
-  .pm-nav-hist-btn,
   .select-all-btn,
   .empty-trash-btn,
   .btn-confirm-sm,
@@ -106,12 +100,17 @@ html[data-theme][data-family] .file-browser-toolbar :is(
   background: var(--file-toolbar-bg-hover);
   border-color: var(--file-toolbar-border-hover);
 }
-html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):disabled {
-  color: var(--content-disabled);
-  background: transparent;
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg);
   border-color: transparent;
-  cursor: default;
-  opacity: 1;
+  box-shadow: var(--elevation-card);
+}
+html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
+  color: var(--content-on-accent);
+  background: var(--action-primary-bg-hover);
+  border-color: transparent;
+  box-shadow: var(--elevation-card-hover);
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:disabled {
   color: var(--content-disabled);
@@ -119,17 +118,63 @@ html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:disabled {
   opacity: 1;
 }
 
+/* v0.20.4 history navigation is icon-first: no persistent control surface. Only hover reveals a
+   soft background; disabled arrows simply fade. Keep it out of the generic toolbar button rule so
+   a later token adoption cannot turn it back into an always-visible pill. */
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn) {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--file-toolbar-fg);
+  box-shadow: none;
+  cursor: pointer;
+  transition:
+    color var(--motion-hover-control) var(--motion-ease-standard),
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):hover:not(:disabled) {
+  color: var(--file-toolbar-fg-hover);
+  background: var(--action-soft);
+}
+html[data-theme][data-family] .file-browser-toolbar :is(.nav-hist-btn, .pm-nav-hist-btn):disabled {
+  color: var(--file-toolbar-fg);
+  background: transparent;
+  border-color: transparent;
+  cursor: default;
+  opacity: .28;
+}
+
 /* Primary toolbar glyphs share one rendered size even when component props still carry old 12/14px values. */
 html[data-theme][data-family] .file-browser-toolbar .file-paste-button > svg,
 html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .new-folder-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .close-btn > svg,
-html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn > svg,
-html[data-theme][data-family] .file-browser-toolbar .pm-nav-hist-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .empty-trash-btn > svg,
 html[data-theme][data-family] .file-browser-toolbar .sort-btn > svg:not(.sort-dir-icon) {
   width: var(--file-toolbar-icon-size);
   height: var(--file-toolbar-icon-size);
+  flex-shrink: 0;
+}
+/* Files used 14px arrows in v0.20.4; the project file breadcrumb used 13px. */
+html[data-theme][data-family] .file-browser-toolbar .nav-hist-btn > svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+html[data-theme][data-family] .file-browser-toolbar .pm-nav-hist-btn > svg {
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
 }
 html[data-theme][data-family] .file-browser-toolbar .sort-dir-icon {

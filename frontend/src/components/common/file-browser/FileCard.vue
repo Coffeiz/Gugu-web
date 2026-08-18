@@ -20,6 +20,14 @@
       <div class="fc-meta"><slot name="meta"></slot></div>
     </div>
 
+    <Transition name="sel-cb">
+      <div v-if="selectionMode" class="sel-checkbox" :class="{ checked: selected }">
+        <svg v-if="selected" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 6l3 3 5-5" />
+        </svg>
+      </div>
+    </Transition>
+
     <slot></slot>
   </div>
 </template>
@@ -54,6 +62,7 @@ defineProps({
   cut: { type: Boolean, default: false },
   lift: { type: Boolean, default: true },   // 悬停是否上浮 2px；Dashboard 最近文件面板不要这个位移，走 no-lift
   canvasMode: { type: Boolean, default: false },
+  selectionMode: { type: Boolean, default: false },
 })
 </script>
 
@@ -62,6 +71,9 @@ defineProps({
    这里唯一拥有文件卡 paint 与文件专属状态。这样不会产生 scoped/global 的 transition 竞争，
    也不会让 adoption 再用高特异性覆盖。亮色 file-card token 明确锁定 v0.20.4。 */
 .fc-card {
+  --fc-preselection-bg: rgba(123,127,178,.06);
+  --fc-preselection-border: rgba(123,127,178,.45);
+  --fc-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);
   background: var(--file-card-bg);
   border: 1px solid var(--file-card-border);
   box-shadow: var(--file-card-shadow);
@@ -76,7 +88,7 @@ defineProps({
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
 }
-.fc-card:hover {
+.fc-card:hover:not(.selected):not(.pre-selected) {
   background: var(--file-card-bg-hover);
   border-color: var(--file-card-border-hover);
   box-shadow: var(--file-card-shadow-hover);
@@ -85,6 +97,14 @@ defineProps({
   background: var(--file-card-bg-selected);
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
+}
+/* Files/index.vue 继续拥有文件库本页的 v0.20.4 full-card preview；项目文件区过去只收到
+   thumbnail preview，普通文件没有完整预框选反馈。只补 project + light；暗色由最终 theme
+   adoption 做语义映射，因此同一 resolved theme 内没有两个 selector 同时抢 full-card paint。 */
+:global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected) {
+  background: var(--fc-preselection-bg);
+  border-color: var(--fc-preselection-border);
+  box-shadow: var(--fc-preselection-shadow);
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移（跟文件库/画布引用两处的默认手感
    刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
@@ -98,12 +118,12 @@ defineProps({
   background: var(--file-card-selection-overlay);
 }
 .fc-card.selected .fc-thumb-area::after,
-.fc-card.pre-selected .fc-thumb-area::after {
+.fc-card.pre-selected:not(.selected) .fc-thumb-area::after {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none;
 }
 .fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
-.fc-card.pre-selected .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
+.fc-card.pre-selected:not(.selected) .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
 .fc-card.cut { opacity: 0.45; }
 
 .fc-ext-badge {
@@ -155,4 +175,22 @@ defineProps({
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
 .fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
+
+/* 多选 checkbox：与 FolderCard 保持一致的位置和样式 */
+.fc-card .sel-checkbox {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 18px; height: 18px; border-radius: 5px;
+  border: 2px solid var(--file-card-checkbox-border, rgba(123,127,178,0.55));
+  background: var(--file-card-checkbox-bg, rgba(255,255,255,0.75));
+  box-shadow: none;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+}
+.fc-card .sel-checkbox.checked {
+  color: var(--file-card-checkbox-fg-checked, var(--color-primary,#7b7fb2));
+  background: var(--file-card-checkbox-bg-checked, var(--color-primary,#7b7fb2));
+  border-color: var(--file-card-checkbox-border-checked, var(--color-primary,#7b7fb2));
+}
+.sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 </style>

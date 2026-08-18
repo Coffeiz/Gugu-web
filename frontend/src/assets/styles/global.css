@@ -1,4 +1,8 @@
 @import './variables.css';
+/* 文件列表行/表头/checkbox 的唯一 paint owner：文件库、项目编辑卡、回收站共用。
+   全局引入而不是靠 Runtime 行组件挂载才加载——回收站是纯 div 列表，不渲染任何
+   Runtime 组件，若只挂在组件上回收站页会拿到一份没加载的样式表。 */
+@import './filesListRows.css';
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
