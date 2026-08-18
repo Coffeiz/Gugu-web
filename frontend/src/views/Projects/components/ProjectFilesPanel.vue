@@ -300,6 +300,7 @@ const {
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,
+  pmSortKey, pmSortDir, onPmSortSelect,
 } = props.context
 </script>
 
