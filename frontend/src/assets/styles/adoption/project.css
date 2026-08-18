@@ -47,24 +47,9 @@ html[data-theme][data-family] .modal.info-expanded .info-block > .section:nth-of
 }
 html[data-theme][data-family] .header-progress-bar { background: var(--surface-soft); }
 
-/* Edit-project title intentionally looks like text at rest. Shared forms own hover/focus paint,
-   while this project-specific selector keeps the transparent resting geometry. */
-html[data-theme][data-family] .proj-header .header-name-input {
-  color: var(--input-fg);
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-html[data-theme][data-family] .proj-header .header-name-input:hover {
-  background: var(--input-bg-hover);
-  border-color: var(--input-border-hover);
-  box-shadow: var(--input-hover-shadow);
-}
-html[data-theme][data-family] .proj-header .header-name-input:focus {
-  background: var(--input-bg-focus);
-  border-color: var(--input-border-focus);
-  box-shadow: var(--input-focus-shadow);
-}
+/* Project title paint is intentionally not overridden here. .header-name-input is part of the
+   shared form contract in forms.css, so the edit-project name now uses the same resting/hover/focus
+   background and border tokens as the other project inputs in both light and dark themes. */
 html[data-theme][data-family] .bm-card:has(.status-ball) .header-name-input.error {
   color: var(--status-warning);
 }

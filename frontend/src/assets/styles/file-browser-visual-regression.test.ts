@@ -20,7 +20,9 @@ const componentRefinements = load('./component-theme-refinements.css')
 const componentSurfaces = load('./tokens/components/surfaces.css')
 const productCss = load('./tokens/product.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
+const formsAdoption = load('./adoption/forms.css')
 const projectAdoption = load('./adoption/project.css')
+const runtimeAdoption = load('./adoption/runtime.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
@@ -30,6 +32,7 @@ const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
 const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCard.vue')
 const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
+const runtimeSetup = load('../../interaction/runtime/setup.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
@@ -138,13 +141,36 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(uploadGhost).not.toContain(':deep(.lr-filename)')
   })
 
-  it('列表表头和内容共享水平节奏，项目 compact 代理不会从 0px 列溢出', () => {
+  it('列表行布局不会再被 global reset 清零，并保留当前列排布而不是回退 20.4', () => {
+    expect(filesListRows).toContain('padding-inline: 4px;')
     expect(filesListRows).toContain('column-gap: 8px;')
     expect(filesListRows).toContain('padding: 0 14px 8px;')
     expect(filesListRows).toContain('padding: 9px 14px;')
+    expect(filesListRows).toContain(':is(.file-list .list-row, .file-list-view .list-row')
+    expect(filesListRows).not.toContain(':where(.file-list .list-row')
     expect(filesListRows).toContain('[data-runtime-compact="true"] { overflow: hidden; }')
     expect(filesListRows).toContain('[data-runtime-compact="true"] > * { min-width: 0; }')
     expect(filesListRows).toContain('[data-runtime-compact="true"][data-list-columns="5"] > :nth-child(n+4) { overflow: hidden; }')
+  })
+
+  it('列表 compact proxy 只会收窄，窄项目文件区不会抓起一帧反向变宽', () => {
+    expect((runtimeSetup.match(/width: 'min\(300px, 100%\)'/g) ?? []).length).toBe(2)
+    expect(runtimeSetup).not.toContain("width: 'min(300px, calc(100vw - 48px))'")
+  })
+
+  it('暗色 File/FolderCard grabbing 修正只作用抓取阶段，landing 重新让组件目标底色参与渐变', () => {
+    const selector = "html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
+    expect(runtimeAdoption).toContain(selector)
+    const block = cssBlock(runtimeAdoption, selector)
+    expect(block).toContain('background-color: var(--surface-card-solid) !important;')
+    expect(block).toContain('border-color: var(--border-strong) !important;')
+    expect(runtimeAdoption).not.toContain("html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {\n")
+  })
+
+  it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {
+    expect(formsAdoption).toContain('.header-name-input,')
+    expect(projectAdoption).not.toContain('.proj-header .header-name-input')
+    expect(projectAdoption).toContain('Project title paint is intentionally not overridden here')
   })
 
   it('多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint', () => {
