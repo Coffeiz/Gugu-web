@@ -19,7 +19,6 @@
 
 <script setup lang="ts">
 import { ref, type PropType } from 'vue'
-import { runtime } from '@/interaction/runtime'
 import { useSurface } from '@/interaction/runtime/vue'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
@@ -60,15 +59,18 @@ const { elementRef: columnRef } = useSurface({
 .done-col .year-row { padding:4px 6px; border-radius:6px; }
 .done-col .month-row { padding:4px 8px; border-radius:7px; }
 .done-col .year-row:hover,.done-col .month-row:hover { background:var(--surface-soft-hover); }
-.done-col .year-chev,.done-col .month-chev { color:var(--content-tertiary); transition:transform .2s; flex-shrink:0; }
-.done-col .year-chev.open,.done-col .month-chev.open { transform:rotate(180deg); }
+/* Disclosure 统一：收起向右，展开向下。SVG 源路径本身向下，因此收起态旋转 -90°。 */
+.done-col .year-chev,.done-col .month-chev { color:var(--content-tertiary); transform:rotate(-90deg); transition:transform .2s; flex-shrink:0; }
+.done-col .year-chev.open,.done-col .month-chev.open { transform:rotate(0deg); }
 .done-col .year-label { font-size:12px; font-weight:700; color:var(--content-secondary); flex:1; }
 .done-col .year-label.undated { color:var(--content-tertiary); }
 .done-col .year-cnt,.done-col .month-cnt { font-size:10px; color:var(--content-tertiary); }
 .done-col .month-name { font-size:11px; font-weight:500; color:var(--content-secondary); flex:1; }
 .done-col .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; min-height:0; }
 .done-col .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
-.done-col .year-folder { min-height:0; overflow:hidden; padding:0 0 0 6px; border-left:1px solid var(--done-group-border); margin-left:6px; margin-top:1px; box-sizing:border-box; }
+/* 年组引导线独立于内容边框：线固定在 year-row 箭头中心 x≈10.5px，子内容仍保持原来的 12px 缩进。 */
+.done-col .year-folder { position:relative; min-height:0; overflow:hidden; padding:0 0 0 12px; margin-top:1px; box-sizing:border-box; }
+.done-col .year-folder::before { content:''; position:absolute; left:10.5px; top:0; bottom:0; width:1px; background:var(--done-group-border); pointer-events:none; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) > .done-group-layout-node { visibility:hidden; }
 .done-col .done-card-list-enter-active,.done-col .done-card-list-leave-active { transition:opacity .22s ease; }
