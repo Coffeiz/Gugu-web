@@ -45,7 +45,7 @@
     >
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
-           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
+           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" :no-focus-ring="true" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
