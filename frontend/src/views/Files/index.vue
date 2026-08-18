@@ -95,9 +95,7 @@
           height: selectionRect.height + 'px',
         }"></div>
 
-        <!-- ── 内容区：目录切换由 Runtime runLayoutMutation 驱动布局事务（Phase 4），
-             不再用 Vue Transition + :key 整体销毁重建，卡片跨目录切换走 Collection
-             Presence 进入/离场，而不是重挂载。 ── -->
+        <!-- 目录切换直接替换当前投影：不保留上一目录 DOM，不做交叉淡化或 Presence 离场。 -->
         <div class="content-body">
 
         <!-- ── 回收站视图 ── -->
@@ -177,9 +175,7 @@ import { fireHint } from '@/composables/useOnboarding'
 import { useFilesCacheStore } from '@/stores/filesCache'
 import { useUiStore } from '@/stores/ui'
 import { cardBlobReadyIds } from '@/composables/useThumbCache'
-import { vLazyThumb as vLazySrc } from '@/composables/useLazyThumb'
 import { isImageExt, fileIconColor, fileListIcon } from '@/utils/fileTypes'
-import { splitName } from '@/utils/fileParse'
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import type { FileMeta, FolderMeta } from '@/stores/filesCache'
 import { type NavSeg, type FolderCard as FolderCardMeta } from '@/utils/filesNav'
@@ -190,7 +186,6 @@ import { useFileLibrarySorting } from '@/composables/files/useFileLibrarySorting
 import { useFileLibrarySelection } from '@/composables/files/useFileLibrarySelection'
 import { useFileLibraryBatchActions } from '@/composables/files/useFileLibraryBatchActions'
 import { useFileLibraryTrashActions } from '@/composables/files/useFileLibraryTrashActions'
-import { useSelectionState } from '@/composables/files/useSelectionState'
 import { useFileActions } from '@/composables/files/useFileActions'
 import { useFileLibraryContextActions } from '@/composables/files/useFileLibraryContextActions'
 import { useFileLibraryUpload } from '@/composables/files/useFileLibraryUpload'
@@ -203,7 +198,7 @@ import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
-import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import { runtime } from '@/interaction/runtime'
 import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
@@ -238,12 +233,10 @@ function syncFileDragRotation(mode: 'grid' | 'list') {
 }
 watch(viewMode, syncFileDragRotation, { immediate: true })
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
-const { folderIconStyle, folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
+const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 
-// ── Runtime Core API：浏览区 Surface 与目录切换布局事务（Phase 4） ──
-// 提前声明（早于 useFilesNav），因为 enterFolder/navigateTo/goBack/goForward 的包装
-// 需要在传给下游 composable 之前就绪；domAdapter 本身只依赖 runtime 单例，不依赖任何
-// 目录/内容状态，可以安全前移。
+// ── Runtime Core API：浏览区 Surface ──
+// Surface 继续服务真实拖拽；目录导航只更新当前目录状态，不再进入 Runtime 布局事务。
 const RUNTIME_SCOPE = 'files'
 const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
 const { elementRef: browserSurfaceRef } = useSurface({
@@ -254,7 +247,6 @@ const { elementRef: browserSurfaceRef } = useSurface({
   viewport: () => mainRef.value,
 })
 watch(mainRef, element => { browserSurfaceRef.value = element })
-const domAdapter = createVueRuntimeAdapter(runtime)
 
 /** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
 function hasActiveMove(): boolean {
@@ -268,26 +260,10 @@ function hasActiveMove(): boolean {
   return false
 }
 
-/**
- * 目录切换的布局事务包装（Phase 4）：先量当前可见卡片的位置，执行状态 mutate，
- * 等 Vue 完成 DOM patch，再播放 FLIP/Collection Presence——取代旧的
- * `<Transition mode="out-in">` 整体销毁重建。拖拽进行中拒绝导航（对齐 demo 的
- * hasActiveMove 守卫）。
- */
-async function withLayoutNav(mutate: () => void): Promise<void> {
+/** 目录切换只保留拖拽事务守卫；通过后立即切换，不创建 FLIP/Presence 离场代理。 */
+function withDirectNav(mutate: () => void): void {
   if (hasActiveMove()) return
-  const root = mainRef.value
-  if (!root) {
-    mutate()
-    return
-  }
-  const elements = Array.from(root.querySelectorAll<HTMLElement>('[data-layout-role="card"]'))
-  await domAdapter.runLayoutMutation({
-    elements,
-    root,
-    mutate,
-    waitForPatch: () => nextTick(),
-  })
+  mutate()
 }
 
 // ── 导航 ──
@@ -298,10 +274,10 @@ const {
   saveNav, enterFolder: rawEnterFolder, navigateTo: rawNavigateTo, restoreNav, pruneHistoryForFolders,
 } = useFilesNav({ loadContents, clearSelection })
 
-function enterFolder(folder: FolderCardMeta): void { void withLayoutNav(() => rawEnterFolder(folder)) }
-function navigateTo(idx: number): void { void withLayoutNav(() => rawNavigateTo(idx)) }
-function goBack(): void { void withLayoutNav(() => rawGoBack()) }
-function goForward(): void { void withLayoutNav(() => rawGoForward()) }
+function enterFolder(folder: FolderCardMeta): void { withDirectNav(() => rawEnterFolder(folder)) }
+function navigateTo(idx: number): void { withDirectNav(() => rawNavigateTo(idx)) }
+function goBack(): void { withDirectNav(() => rawGoBack()) }
+function goForward(): void { withDirectNav(() => rawGoForward()) }
 
 const { jumpToTarget, consumePendingTarget } = useFileLibraryNavigation({
   projectStore,
@@ -390,8 +366,8 @@ const selection = useFileLibrarySelection({
 const {
   selectedIds, selectedFolderKeys, selectedTrashFolderIds,
   previewFileIds, previewFolderKeys, boxStart, selectionRect,
-  onContainerMouseDown: _boxMouseDown, cancelDrag: _cancelBoxDrag,
-  clearSelection: clearSelectionImpl, flatSelectableItems, inSelectionMode, selectModeForced,
+  onContainerMouseDown: _boxMouseDown,
+  clearSelection: clearSelectionImpl, inSelectionMode,
   toggleSelectMode, toggleSelectAllTrash, allTrashSelected,
   handleFolderClick, handleFileClick, handleTrashFileClick, handleTrashFolderClick,
 } = selection
@@ -434,7 +410,7 @@ const fileUpload = useFileLibraryUpload({
   fetchStorage,
   showConflicts: conflicts => conflictDialogRef.value?.show(conflicts) ?? Promise.resolve(new Map()),
 })
-const { uploadingItems, uploadFiles, handleFileInput, onDragEnter, onDragLeave, handleDrop, isDragging } = fileUpload
+const { uploadingItems, handleFileInput, onDragEnter, onDragLeave, handleDrop, isDragging } = fileUpload
 
 // ── 预览 ──
 const previewStore = usePreviewStore()
@@ -578,13 +554,11 @@ async function moveFilesInto(fileIds: Array<number | string>, targetFolderId: nu
 // ── Runtime Core API 接入 ──
 // 单文件/单文件夹和多选拖拽都交给 Interaction Runtime；这里仅负责注册
 // Object/Surface/Target，并把 Action 转发给现有的业务移动函数。
-// RUNTIME_SCOPE / runtimeBrowserSurfaceId / domAdapter 已在文件靠前处声明（Phase 4 需要
-// 提前给 withLayoutNav 使用）。
+// RUNTIME_SCOPE / runtimeBrowserSurfaceId 在文件靠前处声明，供导航守卫与拖拽注册共用。
 
 function folderLayoutKey(f: FolderCardMeta): string {
-  // 真实文件夹卡复用 Phase 1 已全局唯一的 fileObjectId；伪文件夹卡（个人文件/项目/状态分组
-  // 等非 Runtime Object）没有该 id，仍需要一个全局唯一的 layout key 才能参与目录切换的
-  // Collection Presence 兄弟卡 FLIP，用固定前缀 + f.id 兜底。
+  // 真实文件夹卡复用全局唯一的 fileObjectId；伪文件夹卡没有 Runtime Object id，仍保留
+  // 稳定 layout key，供同目录内的 Runtime 布局/拖拽事务识别，不再用于目录切换 Presence。
   return f.type === 'folder' && f.folderId != null
     ? fileObjectId(RUNTIME_SCOPE, 'folder', f.folderId)
     : `${RUNTIME_SCOPE}:pseudo-folder:${f.id}`
@@ -615,7 +589,6 @@ useRuntimeAction(action => {
 onUnmounted(() => {
   // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
   syncFileDragRotation('grid')
-  domAdapter.dispose()
 })
 
 const folderActions = useFileLibraryFolderActions({
@@ -626,10 +599,6 @@ const {
   newFolderName, newFolderLoading, showNewFolderInput,
   createFolder, downloadFolder, deleteFolder,
 } = folderActions
-
-// ── 样式工具 ──
-// 文件类型助手（isImageExt / fileExtCategory / fileIconColor / fileListIcon）与缩略图懒加载指令
-// vLazySrc 已统一收口到 @/utils/fileTypes 和 @/composables/useLazyThumb，见顶部 import。
 
 const folderInputRef = ref<HTMLInputElement | null>(null)
 watch(showNewFolderInput, (v) => { if (v) nextTick(() => folderInputRef.value?.focus()) })
@@ -733,8 +702,7 @@ async function ctxDelete() {
   if (ctx.value.type !== 'multi-file' && !ctx.value.target) return
   const ids = ctx.value.type === 'multi-file'
     ? [...selectedIds.value] : [(ctx.value.target as FileMeta).id]
-  // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，
-  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
+  // 乐观：先从缓存移除再 loadContents。loadContents 是从缓存同步重建的，若不先 removeFiles，n  // 被删文件仍在缓存 → 视图原地不动，要等 SSE/刷新才消失（跟 deleteSingleFile 对齐，之前这条右键路径漏了）。
   const backups = ids.map(id => cacheStore.getFile(id)).filter((f): f is FileMeta => f != null)
   await optimisticMutation({
     apply: () => {
@@ -881,7 +849,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 .view-toggle {
   background: rgba(0,0,0,0.05);
   border-radius: 8px; padding: 2px; gap: 2px;
-  flex-shrink: 0;   /* 工具栏拥挤时不被挤压，否则按钮/带 viewBox 的 SVG 会缩成 2~3px（首屏/久置后布局最紧时最明显）*/
+  flex-shrink: 0;
 }
 .view-toggle button {
   width: 28px; height: 28px; border-radius: 6px; border: none;
@@ -929,7 +897,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 
 .files-main {
-  height: 100%; padding: 16px; overflow-y: auto;
+  height: 100%; padding: 16px; overflow-y: auto; overflow-x: hidden;
   box-sizing: border-box;
 }
 
@@ -941,7 +909,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   border-radius: 4px;
 }
 
-/* ── 框选拖拽中：禁用子元素 hover 动效 ── */
+/* ── 框选拖拽中：禁用子元素 hover 动效。FileCard/FolderCard 的实体 paint 在各自组件。 ── */
 .files-main.is-selecting .fc-card,
 .files-main.is-selecting :deep(.folder-card) {
   pointer-events: none;
@@ -949,107 +917,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   transition: none !important;
 }
 
-/* ── 预选中状态（拖拽未松开） ── */
-.fc-card.pre-selected {
-  border-color: rgba(123,127,178,0.45);
-  background: rgba(123,127,178,0.06);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.85), 0 0 0 1.5px rgba(123,127,178,0.15);
-}
-/* ── 网格 ── */
-.file-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
-  gap: 10px;
-  align-content: start;
-}
-
-/* ── 文件卡片 ──
-   底色/边框/hover/选中态/缩略图区/大图标/标题元信息这些基础视觉已抽到
-   components/common/FileCard.vue（含 :hover 的 box-shadow/background，跟全局
-   .hover-card-fx 的位移动效分工一致），这里只留本页专属的选择框/悬浮操作等交互态样式。 */
-.fc-ext-badge {
-  position: absolute; top: 10px; left: 10px; z-index: 2;
-  font-size: 8px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--fc-color, var(--color-primary));
-  background: rgba(0,0,0,0.04);
-  border-radius: 4px; padding: 2px 5px; line-height: 1.5;
-}
-
-/* 大图标区 */
-.fc-icon-area {
-  height: 90px;
-  flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  overflow: visible;
-}
-.fc-big-icon {
-  width: 86px; height: 86px;
-  color: var(--fc-color, var(--color-primary));
-  opacity: 0.55;
-  transform: translateY(20px);
-  mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, rgba(0,0,0,0.62) 62%, rgba(0,0,0,0.22) 80%, transparent 100%);
-  flex-shrink: 0;
-}
-
-/* .fc-thumb-area 基础布局（含选中态叠加）+ img 的 position/object-fit 已挪进
-   FileCard.vue（`.fc-thumb-area :deep(img)`）；这里只留缩略图两层（模糊占位 tiny + 淡入
-   full）本页专属的图层差异，它们是 #thumb 插槽里的内容。 */
-/* tiny：模糊放大填满，作为永久底层 */
-.fc-thumb-tiny {
-  filter: blur(10px);
-  transform: scale(1.15);
-  z-index: 1;
-}
-/* full：初始透明，加载完淡入覆盖 tiny */
-.fc-thumb-full {
-  z-index: 2;
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-.fc-thumb-full.fc-loaded { opacity: 1; }
-
-/* 底部标签（幽灵上传卡专属——真实文件卡的标签视觉已挪进 FileCard.vue） */
-.fc-label { padding: 0 13px 13px; }
-.fc-name {
-  font-size: 11.5px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
-}
-.fc-meta { font-size: 9px; color: var(--text-secondary); opacity: 0.55; margin-top: 2px; }
-
-.fc-hover-actions {
-  position: absolute; top: 8px; right: 8px; z-index: 2;
-  display: flex; gap: 3px; opacity: 0; transition: opacity 0.15s;
-}
-.fc-card:hover .fc-hover-actions { opacity: 1; }
-
-/* .rename-sizer / .rename-ghost / .rename-input-inline 已提到 global.css（全站重命名输入框共用） */
-
-/* 网格/列表上传按钮外观改由共用组件 FileUploadButton.vue 提供（跟项目文件区同一份）。 */
-
-.days-warn { color: #c85a5a; font-weight: 600; }
-
-.trash-restore-btn {
-  width: auto; display: flex; align-items: center; gap: 4px;
-  font-size: 11px; font-weight: 600;
-  color: var(--color-primary);
-  padding: 4px 8px;
-}
-.trash-restore-btn:hover { background: rgba(123,127,178,0.15); }
-.trash-expand-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 18px; padding: 0; border: 0; background: transparent;
-  color: var(--text-secondary); cursor: pointer;
-}
-.trash-expand-btn svg { transform: rotate(-90deg); transition: transform .18s ease; }
-.trash-expand-btn svg.rotated { transform: rotate(0deg); }
-.trash-folder-contents { margin: -3px 0 5px 34px; padding: 4px 0 5px 14px; border-left: 1px solid rgba(130,135,170,.22); }
-.trash-child-row { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--text-secondary); font-size: 11px; }
-.trash-child-row svg { color: var(--color-primary); flex: 0 0 auto; }
-.trash-child-row small { margin-left: auto; margin-right: 12px; opacity: .65; }
-.trash-child-row.file svg { color: var(--text-tertiary); }
-.trash-folder-empty { color: var(--text-tertiary); font-size: 11px; padding: 5px 0; }
+/* FilesGridView / FileCard / FilesTrashView 已各自拥有网格、卡片和回收站视觉；
+   页面入口不再复制这些 selector，避免模块化后形成父 scoped root 与子组件双 owner。 */
 
 /* ── 拖拽遮罩 ── */
 .drop-overlay {
@@ -1057,7 +926,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   background: rgba(232,233,238,0.82);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   border-radius: inherit;
-  corner-shape: inherit;   /* 跟随父级圆角形状（glass-card 是 squircle），否则与父级圆角不重合 → 双层圆角 */
+  corner-shape: inherit;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
 }
@@ -1070,7 +939,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .drop-hint { font-size: 16px; font-weight: 700; color: var(--text-primary); }
 
-/* ── 动画 ── */
 .drop-fade-enter-active, .drop-fade-leave-active { transition: opacity 0.18s; }
 .drop-fade-enter-from, .drop-fade-leave-to { opacity: 0; }
 
