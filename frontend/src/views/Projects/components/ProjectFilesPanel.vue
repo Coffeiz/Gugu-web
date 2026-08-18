@@ -392,11 +392,11 @@ const {
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
 /* ── 框选矩形 ── */
-.pm-selection-rect {
-  position: absolute; pointer-events: none; z-index: 30;
-  border: 1.5px solid rgba(123,127,178,0.55);
-  background: rgba(123,127,178,0.08); border-radius: 4px;
-}
+	.pm-selection-rect {
+	  position: absolute; pointer-events: none; z-index: 30;
+	  border: 1.5px solid rgba(123,127,178,0.55);
+	  background: rgba(123,127,178,0.08); border-radius: 4px;
+	}
 
 	/* ── 列表视图：只覆盖项目编辑卡的列数（5 列 vs 文件库 6 列），
 	       单元格样式（.lr-* / .sel-checkbox / .sel-cb-*）统一由 filesListRows.css 拥有，
