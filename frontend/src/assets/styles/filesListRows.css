@@ -8,9 +8,10 @@
   display: grid;
   grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
   padding: 0 10px 8px;
+  margin: 0 4px 2px;
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 .file-list .lh-sortable, .file-list-view .lh-sortable {
   display: flex; align-items: center; gap: 3px;
@@ -24,7 +25,7 @@
 
 :where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) {
   display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  align-items: center; padding: 9px 10px; min-height: 42px;
+  align-items: center; padding: 9px 10px; min-height: 42px; margin: 0 4px;
   border-radius: 9px; transition: background 0.12s; cursor: pointer;
 }
 :where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: rgba(123,127,178,0.06); }
@@ -58,14 +59,24 @@
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(2) { white-space: nowrap; overflow: hidden; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(3) { padding-left: 6px; box-sizing: border-box; }
 
+/* 拖拽代理被 cloneNode 后挂到 <html>，丢失了 .file-list / .file-list-view 祖先，
+   :where() 默认的 6 列无法匹配项目编辑卡的 5 列布局。data-list-columns 由源行携带，
+   clone 后保留，这里按列数提供独立的 grid-template-columns。 */
+.list-row[data-runtime-proxy-content][data-list-columns="5"] {
+  grid-template-columns: 1fr 80px 60px 70px 72px;
+}
+
 /* ── 暗色模式：把上面的亮色 rgba 重映射为语义 token。行/表头/checkbox 的 paint 只有
-   本文件一个 owner，暗色覆盖也收在这里，最终主题层不再接管列表行样式。 ── */
+   本文件一个 owner，暗色覆盖也收在这里，最终主题层不再接管列表行样式。
+   注意 .sel-checkbox.checked 必须在 .lr-actions .sel-checkbox 之后声明，
+   因为后者额外加了 .lr-actions 特异性，会覆盖前面的 .checked 规则。 ── */
 html[data-theme='dark'][data-family] .list-row:hover { background: var(--surface-hover-tint); }
 html[data-theme='dark'][data-family] .list-row.selected { background: var(--selection-bg); }
 html[data-theme='dark'][data-family] .list-row.pre-selected { background: var(--action-soft); outline-color: var(--action-outline); }
 html[data-theme='dark'][data-family] .list-row.folder-row:hover { background: var(--surface-hover-tint); }
-html[data-theme='dark'][data-family] .list-row .sel-checkbox { background: var(--surface-raised); border-color: var(--action-outline); }
-html[data-theme='dark'][data-family] .list-row .sel-checkbox.checked { background: var(--action-primary-bg); border-color: transparent; }
-html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox { background: var(--surface-raised); }
+html[data-theme='dark'][data-family] .list-row .sel-checkbox,
+html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox { background: var(--surface-raised); border-color: var(--action-outline); }
+html[data-theme='dark'][data-family] .list-row .sel-checkbox.checked,
+html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox.checked { background: var(--action-primary); border-color: var(--action-primary); }
 html[data-theme='dark'][data-family] .list-head { border-color: var(--border-subtle); }
 html[data-theme='dark'][data-family] .list-row:hover .file-list-btn { color: var(--control-fg-strong); }
