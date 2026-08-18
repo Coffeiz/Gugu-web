@@ -24,6 +24,7 @@ const chatSidebar = load('../../components/common/gugu-chat/GuguChatSidebar.vue'
 const chatIm = load('../../components/common/gugu-chat/GuguChatImConnect.vue')
 const interactionRefinements = load('./tokens/interaction-refinements.css')
 const doneColumn = load('../../views/Projects/components/DoneColumn.vue')
+const doneGroup = load('../../views/Projects/components/done/DoneGroup.vue')
 const archivedProjects = load('../../views/Projects/components/ArchivedProjectsModal.vue')
 const uploadModal = load('../../views/Files/UploadModal.vue')
 const canvasSidebar = load('../../views/Mind/components/CanvasSidebar.vue')
@@ -117,21 +118,32 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(active).toContain('--sidebar-item-hover: var(--gugu-chat-session-active);')
   })
 
-  it('项目已完成年组使用独立引导线，不再把 border-left 绑在 year-folder 上', () => {
+  it('项目已完成年组引导线与箭头中心严格对齐，并给月组保留安全间距', () => {
+    const root = cssBlock(doneColumn, '.done-col {')
+    expect(root).toContain('--done-year-chevron-center:10.5px')
+    expect(root).toContain('--done-year-content-indent:20px')
+
     const folder = cssBlock(doneColumn, '.done-col .year-folder {')
     expect(folder).toContain('position:relative')
+    expect(folder).toContain('padding:0 0 0 var(--done-year-content-indent)')
     expect(folder).not.toContain('border-left')
 
     const guide = cssBlock(doneColumn, '.done-col .year-folder::before {')
     expect(guide).toContain("content:''")
-    expect(guide).toContain('left:10.5px')
+    expect(guide).toContain('left:var(--done-year-chevron-center)')
+    expect(guide).toContain('transform:translateX(-50%)')
     expect(guide).toContain('width:1px')
     expect(guide).toContain('background:var(--done-group-border)')
   })
 
   it('内容 disclosure 统一为收起向右、展开向下', () => {
-    expect(doneColumn).toContain('transform:rotate(-90deg)')
-    expect(doneColumn).toContain('.done-col .year-chev.open,.done-col .month-chev.open { transform:rotate(0deg); }')
+    // 已完成年组直接按状态渲染方向图标，不再让 transform 成为第二个状态 owner。
+    expect(doneGroup).toContain('PhCaretDown v-if="group.open"')
+    expect(doneGroup).toContain('PhCaretRight v-else class="year-chev"')
+    expect(doneGroup).toContain('PhCaretDown v-if="isUndatedOpen"')
+    expect(doneColumn).not.toContain('.year-chev.open')
+    expect(doneColumn).toContain('.done-col .month-chev { transform:rotate(-90deg); transition:transform .2s; }')
+    expect(doneColumn).toContain('.done-col .month-chev.open { transform:rotate(0deg); }')
 
     expect(archivedProjects).toContain('transform: rotate(-90deg);')
     expect(archivedProjects).toContain('.year-chev.open { transform: rotate(0deg); }')
