@@ -7,10 +7,11 @@
 调用 model_validate 时触发二次 env 读取，把 override 值覆盖掉。
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
-from functools import lru_cache
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -357,9 +358,32 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
-@lru_cache
+# ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
+# 旧实现用 @lru_cache，但 lru_cache 是进程内单例——uvicorn --workers N 时，
+# Worker A 写 override.json 并 cache_clear() 只清自己的缓存，Worker B 仍在用旧值。
+# 改为每次读取时检查 OVERRIDE_FILE 的 mtime，文件变化即自动重建，无需跨进程通知。
+_settings_cache: AppSettings | None = None
+_settings_mtime: float = -1.0
+
+
 def get_settings() -> AppSettings:
-    return AppSettings().apply_override()
+    global _settings_cache, _settings_mtime
+    try:
+        current_mtime = OVERRIDE_FILE.stat().st_mtime if OVERRIDE_FILE.exists() else -1.0
+    except OSError:
+        current_mtime = -1.0
+    if _settings_cache is not None and current_mtime == _settings_mtime:
+        return _settings_cache
+    _settings_cache = AppSettings().apply_override()
+    _settings_mtime = current_mtime
+    return _settings_cache
+
+
+def invalidate_settings_cache() -> None:
+    """显式失效配置缓存（写入 override 后调用；也供 mtime 感知自动失效兜底）。"""
+    global _settings_cache, _settings_mtime
+    _settings_cache = None
+    _settings_mtime = -1.0
 
 
 async def save_override(patch: dict) -> AppSettings:
@@ -373,7 +397,7 @@ async def save_override(patch: dict) -> AppSettings:
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
     _deep_merge(existing, patch)
     OVERRIDE_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-    get_settings.cache_clear()
+    invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:
         # 延迟导入避免循环依赖；Redis 配置变更后重建共享客户端

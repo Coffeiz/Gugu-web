@@ -142,6 +142,9 @@ def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
+    if not mentions:
+        # mentions 存在但为空数组：协议未填充 bot 标记，按事件类型兜底
+        return event_type == "GROUP_AT_MESSAGE_CREATE"
     for item in mentions:
         if not isinstance(item, dict) or item.get("bot") is not True:
             continue
