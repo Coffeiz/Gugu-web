@@ -52,11 +52,11 @@
 
       <Transition name="popup">
         <div v-if="settingsOpen" class="settings-popup" @click.stop>
-          <button class="popup-menu-item" @click="feedbackOpen = true; settingsOpen = false"><PhFlag :size="13" weight="bold" />提交反馈</button>
-          <div class="popup-menu-sep"></div>
-          <button class="popup-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><PhUser :size="13" weight="bold" />个人设置</button>
-          <div class="popup-menu-sep"></div>
-          <button class="popup-menu-item danger" @click="handleLogout"><PhSignOut :size="13" weight="bold" />退出登录</button>
+          <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><PhFlag :size="13" weight="bold" />提交反馈</button>
+          <div class="settings-menu-sep"></div>
+          <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><PhUser :size="13" weight="bold" />个人设置</button>
+          <div class="settings-menu-sep"></div>
+          <button class="settings-menu-item danger" @click="handleLogout"><PhSignOut :size="13" weight="bold" />退出登录</button>
         </div>
       </Transition>
     </div>
@@ -169,17 +169,41 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .theme-mode-quick button.current { color:var(--selection-fg); }
 .theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
+/* settings-popup 保留原来的纯 translateY 淡入淡出；不要交给通用 popup scale cadence。 */
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
 .soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { margin-left:auto; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; }
 </style>
 
 <style>
-/* settings-popup 本体只拥有侧栏锚定与伪元素几何；主题 paint 全部由 adoption/popovers.css 负责。 */
-.settings-popup { position:absolute; bottom:calc(100% + 8px); left:0; right:0; z-index:100; overflow:hidden; user-select:none; }
-.settings-popup .popup-menu-item { position:relative; z-index:0; padding:9px 12px; border-radius:0; font-family:'PingFang SC','Segoe UI',sans-serif; }
-.settings-popup .popup-menu-item::before { content:''; position:absolute; z-index:-1; inset:-3px 0; opacity:0; pointer-events:none; }
-.settings-popup .popup-menu-item:hover:not(:disabled)::before { opacity:1; }
-.settings-popup .popup-menu-sep { margin:3px 0; }
+/* Settings menu is not a generic popup-menu. It keeps the historical Aero geometry/paint exactly,
+   while theme-refinements.css only remaps --settings-popup-* values for dark/Mono. This makes the
+   component the single final-paint owner and prevents generic danger:hover from stacking underneath. */
+.settings-popup {
+  position:absolute; bottom:calc(100% + 8px); left:0; right:0; z-index:100; overflow:hidden;
+  background:var(--settings-popup-bg,rgba(255,255,255,.44));
+  border:1px solid var(--settings-popup-border,rgba(255,255,255,.72));
+  border-radius:var(--radius-md);
+  box-shadow:var(--settings-popup-shadow,inset 0 1px 0 rgba(255,255,255,.95),0 4px 16px rgba(0,0,0,.08));
+  user-select:none;
+}
+.settings-popup .settings-menu-item {
+  position:relative; z-index:0;
+  display:flex; align-items:center; gap:8px; width:100%;
+  padding:9px 12px; border:none; background:transparent; border-radius:0;
+  font-size:13px; font-family:'PingFang SC','Segoe UI',sans-serif;
+  color:var(--settings-popup-item-fg,#1e2028); cursor:pointer; text-align:left; white-space:nowrap;
+}
+.settings-popup .settings-menu-item::before {
+  content:''; position:absolute; z-index:-1; inset:-3px 0;
+  background:var(--settings-popup-hover-bg,rgba(255,255,255,.55));
+  opacity:0; pointer-events:none; transition:opacity .15s ease;
+}
+.settings-popup .settings-menu-item:hover:not(:disabled) { background:transparent; }
+.settings-popup .settings-menu-item:hover:not(:disabled)::before { opacity:1; }
+.settings-popup .settings-menu-item.danger { color:var(--settings-popup-danger,#c84a4a); }
+.settings-popup .settings-menu-item.danger:hover:not(:disabled)::before { background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1)); }
+.settings-popup .settings-menu-sep { height:1px; background:var(--settings-popup-divider,rgba(0,0,0,.06)); margin:3px 0; }
+
 .notif-popup { background:rgba(255,255,255,.6); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border:1px solid rgba(255,255,255,.75); border-radius:10px; box-shadow:0 4px 20px rgba(0,0,0,.1); overflow:hidden; display:flex; flex-direction:column; }
 .notif-header { display:flex; align-items:center; justify-content:space-between; padding:13px 14px 10px; border-bottom:1px solid rgba(0,0,0,.06); }.notif-title { font-size:13px; font-weight:700; color:#1e2028; }.notif-mark-all { font-size:11px; font-weight:500; color:var(--text-secondary); background:none; border:none; cursor:pointer; font-family:'PingFang SC','Segoe UI',sans-serif; padding:2px 6px; border-radius:6px; transition:background .12s; }.notif-mark-all:hover { background:rgba(123,127,178,.1); }
 .notif-list { padding:6px; display:flex; flex-direction:column; gap:2px; flex:1; min-height:0; overflow-y:auto; }.notif-item { display:flex; align-items:flex-start; gap:10px; padding:9px 10px; border-radius:10px; cursor:pointer; transition:background .12s; position:relative; }.notif-item:hover { background:rgba(123,127,178,.07); }.notif-item.unread { background:rgba(123,127,178,.05); }.notif-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; margin-top:4px; opacity:.8; }.notif-body { flex:1; min-width:0; }.notif-msg { font-size:12px; font-weight:500; color:#1e2028; line-height:1.4; }.notif-item.unread .notif-msg { font-weight:600; }.notif-meta { font-size:11px; color:#8a8fa8; margin-top:3px; line-height:1.55; word-break:break-word; overflow-wrap:break-word; }.notif-meta.as-title { color:#1e2028; font-size:12px; margin-top:0; }.notif-badge { width:7px; height:7px; border-radius:50%; background:#7b7fb2; flex-shrink:0; margin-top:5px; }.notif-empty { padding:24px; text-align:center; font-size:12px; color:#8a8fa8; }
