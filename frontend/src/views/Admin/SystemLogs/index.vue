@@ -152,7 +152,7 @@ async function copyLog(row: any) {
 }
 
 function fmtTime(iso: string) {
-  return fmtLocalDateTime(iso, { seconds: true })   // 按查看者浏览器 tz（不是字符串截取的 UTC）
+  return fmtLocalDateTime(iso, { seconds: true })
 }
 
 function firstLine(msg: string) {
@@ -174,8 +174,6 @@ onMounted(load)
   padding: 18px 36px 0; flex-shrink: 0;
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
-
-/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 .log-table-wrap {
   flex: 1; padding: 14px 36px 0; overflow: hidden;
@@ -233,9 +231,10 @@ onMounted(load)
 .level-tag.debug   { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.3); }
 
 .expand-icon {
-  color: rgba(255,255,255,0.25); transition: transform 0.18s; justify-self: end;
+  color: rgba(255,255,255,0.25); transform: rotate(-90deg);
+  transition: transform 0.18s; justify-self: end;
 }
-.expand-icon.open { transform: rotate(180deg); color: rgba(255,255,255,0.5); }
+.expand-icon.open { transform: rotate(0deg); color: rgba(255,255,255,0.5); }
 
 .lt-traceback {
   padding: 0 16px 14px 16px;
@@ -258,7 +257,6 @@ onMounted(load)
   overflow-x: auto; white-space: pre;
 }
 
-/* 分页 */
 .pagination {
   display: flex; align-items: center; justify-content: center; gap: 12px;
   padding: 16px 36px 24px;
