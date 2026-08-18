@@ -74,9 +74,19 @@ export function useCalendarNav({ cursor, selectedDate, todayIso, weekRef, weekDa
     nextTick(() => {
       const rect = pickerAnchorRef.value?.getBoundingClientRect()
       if (!rect) return
-      const width = 220
-      const left = Math.max(8, Math.min(rect.left + rect.width / 2 - width / 2, window.innerWidth - width - 8))
-      pickerStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left + 'px', width, zIndex: 2000 }
+      // 先用预估宽度定位，避免首帧闪烁
+      const fallbackW = 220
+      const left0 = Math.max(8, Math.min(rect.left + rect.width / 2 - fallbackW / 2, window.innerWidth - fallbackW - 8))
+      pickerStyle.value = { position: 'fixed', top: rect.bottom + 6 + 'px', left: left0 + 'px', width: fallbackW, zIndex: 2000 }
+      // 再用弹窗实际渲染宽度重新居中
+      requestAnimationFrame(() => {
+        const pickerEl = document.querySelector('.cal-month-picker') as HTMLElement | null
+        if (!pickerEl) return
+        const pw = pickerEl.offsetWidth
+        if (pw === fallbackW) return
+        const left = Math.max(8, Math.min(rect.left + rect.width / 2 - pw / 2, window.innerWidth - pw - 8))
+        pickerStyle.value = { ...pickerStyle.value, left: left + 'px', width: pw }
+      })
     })
   }
 
