@@ -20,6 +20,14 @@
       <div class="fc-meta"><slot name="meta"></slot></div>
     </div>
 
+    <Transition name="sel-cb">
+      <div v-if="selectionMode" class="sel-checkbox" :class="{ checked: selected }">
+        <svg v-if="selected" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 6l3 3 5-5" />
+        </svg>
+      </div>
+    </Transition>
+
     <slot></slot>
   </div>
 </template>
@@ -54,6 +62,7 @@ defineProps({
   cut: { type: Boolean, default: false },
   lift: { type: Boolean, default: true },   // 悬停是否上浮 2px；Dashboard 最近文件面板不要这个位移，走 no-lift
   canvasMode: { type: Boolean, default: false },
+  selectionMode: { type: Boolean, default: false },
 })
 </script>
 
@@ -166,4 +175,22 @@ defineProps({
   line-height: 1.35; padding-bottom: 2px; margin-bottom: -2px;
 }
 .fc-meta { color: var(--content-secondary); font-size: 9px; line-height: 1.15; opacity: 0.55; margin-top: 2px; }
+
+/* 多选 checkbox：与 FolderCard 保持一致的位置和样式 */
+.fc-card .sel-checkbox {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 18px; height: 18px; border-radius: 5px;
+  border: 2px solid var(--file-card-checkbox-border, rgba(123,127,178,0.55));
+  background: var(--file-card-checkbox-bg, rgba(255,255,255,0.75));
+  box-shadow: none;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+}
+.fc-card .sel-checkbox.checked {
+  color: var(--file-card-checkbox-fg-checked, var(--color-primary,#7b7fb2));
+  background: var(--file-card-checkbox-bg-checked, var(--color-primary,#7b7fb2));
+  border-color: var(--file-card-checkbox-border-checked, var(--color-primary,#7b7fb2));
+}
+.sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 </style>

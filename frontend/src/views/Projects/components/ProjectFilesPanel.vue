@@ -76,7 +76,7 @@
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
                   class="hover-card-fx"
-                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
+                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
@@ -105,11 +105,6 @@
                   </template>
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
 
-                  <Transition name="sel-cb">
-                    <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                      <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
-                    </div>
-                  </Transition>
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
                     <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
                       @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
