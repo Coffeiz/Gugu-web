@@ -217,3 +217,35 @@ html[data-theme][data-family] .file-card-btn.del:hover {
   color: var(--status-danger);
   background: var(--status-danger-bg);
 }
+
+/* ── List rows: dark mode remaps the light-only rgba values to semantic tokens ── */
+html[data-theme='dark'][data-family] .list-row:hover {
+  background: var(--surface-hover-tint);
+}
+html[data-theme='dark'][data-family] .list-row.selected {
+  background: var(--selection-bg);
+}
+html[data-theme='dark'][data-family] .list-row.pre-selected {
+  background: var(--action-soft);
+  outline-color: var(--action-outline);
+}
+html[data-theme='dark'][data-family] .list-row.folder-row:hover {
+  background: var(--surface-hover-tint);
+}
+html[data-theme='dark'][data-family] .list-row .sel-checkbox {
+  background: var(--surface-raised);
+  border-color: var(--action-outline);
+}
+html[data-theme='dark'][data-family] .list-row .sel-checkbox.checked {
+  background: var(--action-primary-bg);
+  border-color: transparent;
+}
+html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox {
+  background: var(--surface-raised);
+}
+html[data-theme='dark'][data-family] .list-head {
+  border-color: var(--border-subtle);
+}
+html[data-theme='dark'][data-family] .list-row:hover .file-list-btn {
+  color: var(--control-fg-strong);
+}

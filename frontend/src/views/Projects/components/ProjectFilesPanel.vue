@@ -403,83 +403,19 @@ const {
   background: rgba(123,127,178,0.08); border-radius: 4px;
 }
 
-/* 列表视图 */
-.file-list-view { display: flex; flex-direction: column; gap: 2px; }
-
-.lh-sortable {
-  display: flex; align-items: center; gap: 3px;
-  cursor: pointer; user-select: none; transition: color 0.12s;
+/* ── 列表视图：只覆盖项目编辑卡的列数（5 列 vs 文件库 6 列），
+       单元格样式（.lr-* / .sel-checkbox / .sel-cb-*）统一由 filesListRows.css 拥有，
+       禁止在这里重复声明，避免 CSS 竞态。 ── */
+.file-list-view .list-head {
+  grid-template-columns: 1fr 80px 60px 70px 72px;
 }
-.lh-sortable:hover { color: var(--text-primary); }
-.lh-sortable.active { color: var(--color-primary); }
-.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
-.lh-sortable.active .lh-arrow { opacity: 1; }
-.lh-arrow.desc { transform: rotate(180deg); }
-
-.list-head {
-  display: grid; grid-template-columns: 1fr 80px 60px 70px 72px;
-  padding: 0 10px 6px; font-size: 10px; font-weight: 600;
-  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+.file-list-view .list-row {
+  grid-template-columns: 1fr 80px 60px 70px 72px;
 }
-.list-row {
-  display: grid; grid-template-columns: 1fr 80px 60px 70px 72px;
-  align-items: center; padding: 7px 10px; border-radius: 9px;
-  min-height: 42px;
-  cursor: pointer; transition: background 0.12s;
-}
-.list-row:hover { background: rgba(123,127,178,0.06); }
-.list-row.selected { background: rgba(123,127,178,0.1); }
-.list-row.pre-selected { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
-.folder-list-row { cursor: pointer; }
-.lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
-.lr-ext {
-  font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
-  border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5;
-}
-.lr-filename {
-  font-size: 12px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px;
-}
-.lr-text { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-.lr-actions { display: flex; gap: 2px; align-items: center; justify-content: flex-end; position: relative; }
-.list-row:hover .file-list-btn { opacity: 1; }
-
-/* 多选勾选框 */
-.sel-checkbox {
-  position: absolute; top: 6px; right: 6px; z-index: 3;
-  width: 16px; height: 16px; border-radius: 4px;
-  border: 2px solid rgba(123, 127, 178, 0.55);
-  background: rgba(255,255,255,0.75);
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-  transition: background 0.15s, border-color 0.15s;
-}
-.sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-/* 列表视图内勾选框：脱离 flex 流 */
-.lr-actions .sel-checkbox {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  background: rgba(255,255,255,0.55);
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
-.lr-actions .sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-/* 淡入淡出动画 */
-.sel-cb-enter-active, .sel-cb-leave-active {
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
-.sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
 </style>
 
 <style>
-.list-row.cut { opacity: 0.75; }
+.list-row.cut { opacity: 0.45; }
 
 .drop-overlay {
   position: absolute; inset: 0; z-index: 50;
