@@ -100,7 +100,7 @@ defineProps({
   --folder-card-checkbox-border-checked: var(--action-primary);
   --folder-card-checkbox-fg-checked: var(--content-on-accent);
 }
-.folder-card:hover { box-shadow: var(--folder-card-shadow-hover); }
+.folder-card:hover:not(.selected):not(.pre-selected) { box-shadow: var(--folder-card-shadow-hover); }
 .folder-card.selected {
   border-color: var(--folder-card-border-selected);
   background: var(--folder-card-bg-selected);
@@ -111,7 +111,7 @@ defineProps({
   pointer-events: none; border-radius: inherit;
   background: var(--folder-card-selection-overlay);
 }
-.folder-card.pre-selected {
+.folder-card.pre-selected:not(.selected) {
   border-color: var(--folder-card-border-preselected);
   background: var(--folder-card-bg-preselected);
   box-shadow: var(--folder-card-shadow-preselected);
@@ -144,6 +144,7 @@ defineProps({
   width: 18px; height: 18px; border-radius: 5px;
   border: 2px solid var(--folder-card-checkbox-border);
   background: var(--folder-card-checkbox-bg);
+  box-shadow: none;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
   transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;

@@ -3,11 +3,11 @@
   align-items: center; padding: 9px 10px; min-height: 42px;
   border-radius: 9px; transition: background 0.12s; cursor: pointer;
 }
-:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover { background: rgba(123,127,178,0.06); }
+:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: rgba(123,127,178,0.06); }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: rgba(123,127,178,0.1); }
-:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
+:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).cut { opacity: 0.45; }
-:where(.file-list .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row):hover { background: rgba(180,148,80,0.06); }
+:where(.file-list .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row):hover:not(.selected):not(.pre-selected) { background: rgba(180,148,80,0.06); }
 :where(.file-list .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: rgba(123,127,178,0.09); }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-folder-icon,
@@ -22,7 +22,7 @@
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-text { font-size: 11px; color: var(--text-secondary); }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; position: relative; }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover .file-list-btn { opacity: 1; }
-:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-checkbox { position: absolute; top: 8px; right: 8px; z-index: 3; width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(123,127,178,0.55); background: rgba(255,255,255,0.75); display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; pointer-events: none; }
+:where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-checkbox { position: absolute; top: 8px; right: 8px; z-index: 3; width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(123,127,178,0.55); background: rgba(255,255,255,0.75); box-shadow: none; display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; pointer-events: none; }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-checkbox.checked { background: var(--color-primary,#7b7fb2); border-color: var(--color-primary,#7b7fb2); }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.55); transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
 :where(.file-list .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox.checked { background: var(--color-primary,#7b7fb2); border-color: var(--color-primary,#7b7fb2); }

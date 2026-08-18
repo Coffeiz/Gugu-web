@@ -6,11 +6,17 @@ function load(relativePath: string) {
 }
 
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
+const fileCard = load('../../components/common/file-browser/FileCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
+const componentRefinements = load('./component-theme-refinements.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
+const projectAdoption = load('./adoption/project.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
+const filesListView = load('../../views/Files/components/FilesListView.vue')
+const filesListRows = load('../../views/Files/components/filesListRows.css')
+const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
@@ -43,7 +49,63 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderCard).toContain(":global(html[data-theme='dark'][data-family]) .folder-card")
     expect(folderCard).toContain('--folder-card-bg-selected: var(--surface-raised);')
     expect(folderCard).toContain('--folder-card-checkbox-bg: var(--surface-raised);')
+    expect(folderCard).toContain('.folder-card.pre-selected:not(.selected)')
+    expect(folderCard).toContain('box-shadow: none;')
     expect(folderCard).not.toContain('!important')
     expect(surfacesAdoption).not.toContain('.folder-card')
+    expect(componentRefinements).not.toContain('.folder-card.selected {')
+    expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
+  })
+
+  it('文件卡 hover/图片预框选不会覆盖 selected，项目普通文件也得到 0.20.4 full-card preview', () => {
+    expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
+    expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
+    expect(fileCard).toContain('var(--file-card-preselection-thumb-overlay)')
+    expect(fileCard).toContain(":global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected)")
+    expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
+    expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
+    expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
+  })
+
+  it('框选 preview 与已选集合视觉互斥，同时保留完整 mouseup 命中集合', () => {
+    expect(boxSelection).toContain('_latestPreview = { fileIds, folderIds }')
+    expect(boxSelection).toContain('!selectedFileIds.value.has(id)')
+    expect(boxSelection).toContain('!selectedFolderIds.value.has(id)')
+    expect(filesListRows).toContain(':hover:not(.selected):not(.pre-selected)')
+    expect(filesListRows).toContain('.pre-selected:not(.selected)')
+  })
+
+  it('列表行状态只有共享 rows stylesheet 一个 paint owner', () => {
+    expect(filesListView).not.toContain('.list-row {')
+    expect(filesListView).not.toContain('.sel-checkbox {')
+    expect(filesListRows).toContain('.sel-checkbox')
+    expect(filesListRows).toContain('box-shadow: none;')
+  })
+
+  it('多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint', () => {
+    expect(folderCard).toContain('box-shadow: none;')
+    expect(filesListRows).toContain('box-shadow: none;')
+    expect(componentRefinements).not.toContain('.sel-checkbox')
+    expect(componentRefinements).not.toContain('/* ── File toolbar')
+  })
+
+  it('路径前进回退恢复 0.20.4 icon-first hover 样式', () => {
+    expect(fileToolbar).toContain(':is(.nav-hist-btn, .pm-nav-hist-btn) {')
+    expect(fileToolbar).toContain('width: 26px;')
+    expect(fileToolbar).toContain('background: transparent;')
+    expect(fileToolbar).toContain('opacity: .28;')
+    expect(fileToolbar).toContain('.nav-hist-btn > svg')
+    expect(fileToolbar).toContain('width: 14px;')
+    expect(fileToolbar).toContain('.pm-nav-hist-btn > svg')
+    expect(fileToolbar).toContain('width: 13px;')
+  })
+
+  it('项目 stage 亮色只重映射局部 option token，上传关闭按钮复用通用 control paint', () => {
+    expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .node-circle")
+    expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-check")
+    expect(projectAdoption).toContain("html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-add-btn")
+    expect(surfacesAdoption).toContain('.bm-card:has(.drop-zone) .modal-header .close-btn')
+    expect(surfacesAdoption).toContain('background: var(--control-bg);')
+    expect(surfacesAdoption).toContain('background: var(--control-bg-hover);')
   })
 })

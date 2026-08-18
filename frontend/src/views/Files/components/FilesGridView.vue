@@ -52,7 +52,7 @@ const { contents, sortedContents, selectedFolderKeys, previewFolderKeys, inSelec
 
 <style scoped>
 .file-browser-grid.file-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:10px; align-content:start; }
-.sel-checkbox { position:absolute; top:8px; right:8px; z-index:3; width:18px; height:18px; border-radius:5px; border:2px solid rgba(123,127,178,.55); background:rgba(255,255,255,.75); display:flex; align-items:center; justify-content:center; pointer-events:none; }
+.sel-checkbox { position:absolute; top:8px; right:8px; z-index:3; width:18px; height:18px; border-radius:5px; border:2px solid rgba(123,127,178,.55); background:rgba(255,255,255,.75); box-shadow:none; display:flex; align-items:center; justify-content:center; pointer-events:none; }
 .sel-checkbox.checked { background:var(--color-primary,#7b7fb2); border-color:var(--color-primary,#7b7fb2); }
 .fc-hover-actions { position:absolute; right:8px; bottom:8px; display:flex; gap:3px; opacity:0; transition:opacity .15s; }
 .fc-card:hover .fc-hover-actions { opacity:1; }

@@ -62,6 +62,9 @@ defineProps({
    这里唯一拥有文件卡 paint 与文件专属状态。这样不会产生 scoped/global 的 transition 竞争，
    也不会让 adoption 再用高特异性覆盖。亮色 file-card token 明确锁定 v0.20.4。 */
 .fc-card {
+  --fc-preselection-bg: rgba(123,127,178,.06);
+  --fc-preselection-border: rgba(123,127,178,.45);
+  --fc-preselection-shadow: inset 0 1px 0 rgba(255,255,255,.85), 0 0 0 1.5px rgba(123,127,178,.15);
   background: var(--file-card-bg);
   border: 1px solid var(--file-card-border);
   box-shadow: var(--file-card-shadow);
@@ -76,7 +79,7 @@ defineProps({
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
 }
-.fc-card:hover {
+.fc-card:hover:not(.selected):not(.pre-selected) {
   background: var(--file-card-bg-hover);
   border-color: var(--file-card-border-hover);
   box-shadow: var(--file-card-shadow-hover);
@@ -85,6 +88,14 @@ defineProps({
   background: var(--file-card-bg-selected);
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
+}
+/* Files/index.vue 继续拥有文件库本页的 v0.20.4 full-card preview；项目文件区过去只收到
+   thumbnail preview，普通文件没有完整预框选反馈。只补 project + light；暗色由最终 theme
+   adoption 做语义映射，因此同一 resolved theme 内没有两个 selector 同时抢 full-card paint。 */
+:global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected) {
+  background: var(--fc-preselection-bg);
+  border-color: var(--fc-preselection-border);
+  box-shadow: var(--fc-preselection-shadow);
 }
 /* Dashboard 最近文件面板：只要阴影变化，不要上浮位移（跟文件库/画布引用两处的默认手感
    刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
@@ -98,12 +109,12 @@ defineProps({
   background: var(--file-card-selection-overlay);
 }
 .fc-card.selected .fc-thumb-area::after,
-.fc-card.pre-selected .fc-thumb-area::after {
+.fc-card.pre-selected:not(.selected) .fc-thumb-area::after {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none;
 }
 .fc-card.selected .fc-thumb-area::after { background: var(--file-card-selection-thumb-overlay); }
-.fc-card.pre-selected .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
+.fc-card.pre-selected:not(.selected) .fc-thumb-area::after { background: var(--file-card-preselection-thumb-overlay); }
 .fc-card.cut { opacity: 0.45; }
 
 .fc-ext-badge {
