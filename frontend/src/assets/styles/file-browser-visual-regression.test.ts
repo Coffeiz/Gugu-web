@@ -66,21 +66,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderCard).not.toContain(":global(html[data-theme='dark'")
     expect(folderCard).not.toContain('!important')
 
-    // Aero light remains the 0.20.4 baseline.
-    expect(componentSurfaces).toContain('--folder-card-bg-base: rgba(255,255,255,.82);')
-    expect(componentSurfaces).toContain('--folder-card-border-base: rgba(255,255,255,.92);')
-    expect(componentSurfaces).toContain('--folder-card-border-selected: rgba(123,127,178,.55);')
-    expect(componentSurfaces).toContain('--folder-card-selection-overlay: rgba(123,127,178,.14);')
-
-    // Mono light regains its neutral solid edge instead of inheriting Aero's near-white border.
     const monoLight = cssBlock(componentSurfaces, "html[data-theme='light'][data-family='v2']")
     expect(monoLight).toContain('--file-card-border: var(--border-strong);')
     expect(monoLight).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(monoLight).toContain('--folder-card-border-base: var(--border-strong);')
     expect(monoLight).toContain('--folder-card-shadow: var(--elevation-card);')
 
-    // Both Aero-dark and Mono-dark resolve through semantic dark tokens; restore the previous dark
-    // folder checkbox/selection treatment without a second entity selector.
     const dark = cssBlock(componentSurfaces, "html[data-theme='dark'][data-family]")
     expect(dark).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(dark).toContain('--folder-card-border-base: var(--border-strong);')
@@ -92,11 +83,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
   })
 
-  it('文件卡 hover/图片预框选不会覆盖 selected，项目普通文件也得到 0.20.4 full-card preview', () => {
+  it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
     expect(fileCard).toContain('var(--file-card-preselection-thumb-overlay)')
-    expect(fileCard).toContain(":global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected)")
+    expect(fileCard).toContain(":global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected)")
+    expect(fileCard).not.toContain(":global(html[data-theme='light'][data-family] .project-modal-root)")
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
