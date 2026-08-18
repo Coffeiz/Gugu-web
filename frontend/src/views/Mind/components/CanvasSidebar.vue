@@ -379,8 +379,8 @@ onMounted(() => {
 }
 .project-group-title:hover { background: rgba(0,0,0,.04); }
 .project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
-.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(0deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
-.project-group-chevron.open { transform: rotate(180deg); }
+.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(-90deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
+.project-group-chevron.open { transform: rotate(0deg); }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .project-status-dot.is-pending { background: #d46b6b; }
 .project-status-dot.is-active { background: #c9943a; }
