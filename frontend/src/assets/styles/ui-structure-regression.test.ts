@@ -120,7 +120,7 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
 
   it('项目已完成年组引导线与箭头中心严格对齐，并给月组保留安全间距', () => {
     const root = cssBlock(doneColumn, '.done-col {')
-    expect(root).toContain('--done-year-chevron-center:10.5px')
+    expect(root).toContain('--done-year-chevron-center:10px')
     expect(root).toContain('--done-year-content-indent:20px')
 
     const folder = cssBlock(doneColumn, '.done-col .year-folder {')
@@ -137,13 +137,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
   })
 
   it('内容 disclosure 统一为收起向右、展开向下', () => {
-    // 已完成年组直接按状态渲染方向图标，不再让 transform 成为第二个状态 owner。
-    expect(doneGroup).toContain('PhCaretDown v-if="group.open"')
-    expect(doneGroup).toContain('PhCaretRight v-else class="year-chev"')
-    expect(doneGroup).toContain('PhCaretDown v-if="isUndatedOpen"')
-    expect(doneColumn).not.toContain('.year-chev.open')
-    expect(doneColumn).toContain('.done-col .month-chev { transform:rotate(-90deg); transition:transform .2s; }')
-    expect(doneColumn).toContain('.done-col .month-chev.open { transform:rotate(0deg); }')
+    // 已完成年组与月组统一使用 FlipChevron 组件。
+    expect(doneGroup).toContain('FlipChevron :open="group.open"')
+    expect(doneGroup).toContain('FlipChevron :open="isUndatedOpen"')
+    expect(doneGroup).toContain('FlipChevron :open="group.open" :size="8"')
+    // FlipChevron 自带旋转动画，DoneColumn 不再有 .year-chev/.month-chev CSS。
 
     expect(archivedProjects).toContain('transform: rotate(-90deg);')
     expect(archivedProjects).toContain('.year-chev.open { transform: rotate(0deg); }')
