@@ -39,10 +39,8 @@
  * 不再各画各的近似样式。
  *
  * 缩略图和名称/元信息文案两处差异较大（懒加载指令 vs 手动 blob 缓存、size+createdAt vs
- * project+size），走具名插槽让各调用方自己决定内容；选中/预选/拖拽/剪切等状态样式是
- * Files/index.vue 专属的交互态，收成 props 由本组件统一画，不用调用方各自补一份
- * `:deep()` 才能扎进子组件根节点以外的后代（scoped CSS 对子组件模板内部的后代选择器
- * 本来就够不到，选中态叠加在缩略图上的 ::after 尤其如此）。
+ * project+size），走具名插槽让各调用方自己决定内容；选中/预选/拖拽/剪切等状态样式收成
+ * props 由本组件统一画，不用调用方再用跨组件 scoped selector 接管内部 paint。
  */
 import { ref, type PropType } from 'vue'
 import { fileIconColor, fileListIcon } from '@/utils/fileTypes'
@@ -55,12 +53,12 @@ defineProps({
   displayName: { type: String, required: true },
   hasThumb: { type: Boolean, default: false },
   iconSize: { type: Number as PropType<number>, default: 86 },
-  iconLift: { type: Number as PropType<number>, default: 20 },   // 大图标向下偏移量，配合渐隐蒙版做"沉底"视觉
-  areaHeight: { type: Number as PropType<number>, default: 90 }, // 缩略图/大图标区高度，两处调用方尺寸不同（86/90 vs 80/80）
+  iconLift: { type: Number as PropType<number>, default: 20 },
+  areaHeight: { type: Number as PropType<number>, default: 90 },
   selected: { type: Boolean, default: false },
   preSelected: { type: Boolean, default: false },
   cut: { type: Boolean, default: false },
-  lift: { type: Boolean, default: true },   // 悬停是否上浮 2px；Dashboard 最近文件面板不要这个位移，走 no-lift
+  lift: { type: Boolean, default: true },
   canvasMode: { type: Boolean, default: false },
   selectionMode: { type: Boolean, default: false },
 })
@@ -68,8 +66,7 @@ defineProps({
 
 <style scoped>
 /* global.css 继续唯一拥有 fc-card 的结构、transition/transform 和 hover ::after 高光；
-   这里唯一拥有文件卡 paint 与文件专属状态。这样不会产生 scoped/global 的 transition 竞争，
-   也不会让 adoption 再用高特异性覆盖。亮色 file-card token 明确锁定 v0.20.4。 */
+   这里唯一拥有文件卡 paint 与文件专属状态。亮色 file-card token 明确锁定 v0.20.4。 */
 .fc-card {
   --fc-preselection-bg: rgba(123,127,178,.06);
   --fc-preselection-border: rgba(123,127,178,.45);
@@ -98,20 +95,17 @@ defineProps({
   border-color: var(--file-card-border-selected);
   box-shadow: var(--file-card-shadow-selected);
 }
-/* Files/index.vue 继续拥有文件库本页的 v0.20.4 full-card preview；项目文件区过去只收到
-   thumbnail preview，普通文件没有完整预框选反馈。只补 project + light；暗色由最终 theme
-   adoption 做语义映射，因此同一 resolved theme 内没有两个 selector 同时抢 full-card paint。 */
-:global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected) {
+/* Full-card 预框选属于 FileCard 自己。亮色在这里统一覆盖文件库与项目文件区；暗色继续由
+   component-theme-refinements 的 dark semantic mapping 接管，因此同一 resolved theme 不会
+   有两层 selector 同时写最终 paint。 */
+:global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected) {
   background: var(--fc-preselection-bg);
   border-color: var(--fc-preselection-border);
   box-shadow: var(--fc-preselection-shadow);
 }
-/* Dashboard 最近文件面板：只要阴影变化，不要上浮位移（跟文件库/画布引用两处的默认手感
-   刻意不同）；靠比 global.css `.fc-card:hover{transform:translateY(-2px)}` 更高的 scoped
-   特异度覆盖回去，不需要 !important。 */
+/* Dashboard 最近文件面板：只要阴影变化，不要上浮位移。 */
 .fc-card.no-lift:hover { transform: none; }
-/* 0.20.4 的选中层级：::before 覆盖整张卡（普通文件/图片标签区一致），图片缩略图区
-   再叠一层更深的 ::after；两层是有意的视觉差异，不合并成同一种选中色。 */
+/* 0.20.4 的选中层级：::before 覆盖整张卡，图片缩略图区再叠一层更深的 ::after。 */
 .fc-card.selected::before {
   content: ''; position: absolute; inset: 0; z-index: 2;
   pointer-events: none; border-radius: inherit;
@@ -140,8 +134,6 @@ defineProps({
   overflow: visible;
 }
 .fc-big-icon {
-  /* 实际像素尺寸交给 iconSize prop（Phosphor 组件自己的 :size，渲染成 svg width/height 属性），
-     这里不再重复写死 width/height——写了 CSS 反而以更高优先级覆盖掉 prop，iconSize 就成了摆设。 */
   color: var(--fc-color, var(--color-primary));
   opacity: 0.55;
   transform: translateY(var(--fc-icon-lift, 20px));
@@ -154,8 +146,6 @@ defineProps({
   position: relative; height: var(--fc-area-h, 90px); flex-shrink: 0; overflow: hidden;
   border-radius: 14px 14px 0 0;
   background: var(--file-card-thumb-bg);
-  /* 不常驻提升为 GPU 图层：画布缩放时，独立图层可能沿用抓取时的低分辨率纹理，
-     直到 hover/合成器空闲才重栅格化，表现为图片卡先糊后清。拖拽时物理层会按需建层。 */
   mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
   -webkit-mask-image: linear-gradient(to bottom, black 48%, transparent 100%);
 }
