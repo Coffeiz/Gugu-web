@@ -118,6 +118,25 @@ html[data-theme='dark'][data-family] :is(
   border-color: var(--action-secondary-border-hover);
 }
 
+/* v0.20.4 stage editor light fidelity. The refactored stage/todo components consume option tokens,
+   so remap those tokens at the leaf controls instead of repainting background/border from another
+   selector. This keeps each final CSS property owned by the component and only changes theme input. */
+html[data-theme='light'][data-family] .project-modal-root .stages-section .node-circle {
+  --option-bg: color-mix(in srgb,var(--content-primary) 8%,transparent);
+  --option-border: color-mix(in srgb,var(--content-secondary) 35%,transparent);
+}
+html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-check {
+  --option-bg: color-mix(in srgb,var(--surface-raised) 70%,transparent);
+  --option-border: color-mix(in srgb,var(--content-primary) 18%,transparent);
+}
+html[data-theme='light'][data-family] .project-modal-root .stages-section .todo-add-btn {
+  --option-bg: color-mix(in srgb,var(--surface-raised) 50%,transparent);
+  --option-bg-hover: color-mix(in srgb,var(--action-primary) 6%,transparent);
+  --option-border: color-mix(in srgb,var(--content-primary) 15%,transparent);
+  --option-border-hover: var(--action-primary);
+  --option-fg: var(--content-secondary);
+}
+
 /* Project status/options. Keep status identity in the foreground/dot; the selectable surface itself
    follows one theme contract instead of carrying light-only white/black alpha fills.
    仅暗色生效：亮色下这些控件有自己的 scoped 设计（透明文字按钮/白底勾选框/

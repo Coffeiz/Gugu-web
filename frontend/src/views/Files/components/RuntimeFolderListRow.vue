@@ -20,4 +20,3 @@ const { elementRef } = useObject({ id: props.runtimeId, type: 'folder-item', sur
 const { selectedFolderKeys, previewFolderKeys, handleFolderClick, openCtx, folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, inSelectionMode } = props.context
 </script>
 
-<style src="./filesListRows.css"></style>

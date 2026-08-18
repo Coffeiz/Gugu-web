@@ -51,8 +51,8 @@
   --file-dialog-toolbar-highlight-strong: transparent;
   --file-dialog-toolbar-highlight-side: transparent;
 
-  /* File-card contract. Light values intentionally reproduce v0.20.4 exactly: every selected card
-     gets the .14 whole-card veil, while image thumbnails receive an additional .28 layer. */
+  /* File/folder card contract. Aero light intentionally reproduces v0.20.4. Theme/family variants
+     below only remap values; FileCard.vue / FolderCard.vue remain the sole paint/state owners. */
   --file-card-bg: rgba(255,255,255,.72);
   --file-card-border: rgba(255,255,255,.90);
   --file-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
@@ -69,6 +69,25 @@
   --file-card-thumb-bg: rgba(0,0,0,.05);
   --file-card-image-badge-bg: rgba(0,0,0,.32);
   --file-card-image-badge-fg: rgba(255,255,255,.92);
+
+  /* Folder accent colour is per-card (--fd-color), so only the family/theme bases live globally;
+     FolderCard derives the final 6% surface / 14% edge locally where --fd-color is available. */
+  --folder-card-bg-base: rgba(255,255,255,.82);
+  --folder-card-border-base: rgba(255,255,255,.92);
+  --folder-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
+  --folder-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 7px 22px rgba(80,90,110,.12);
+  --folder-card-bg-selected: rgba(255,255,255,.92);
+  --folder-card-border-selected: rgba(123,127,178,.55);
+  --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
+  --folder-card-selection-overlay: rgba(123,127,178,.14);
+  --folder-card-bg-preselected: rgba(123,127,178,.05);
+  --folder-card-border-preselected: rgba(123,127,178,.38);
+  --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px rgba(123,127,178,.12);
+  --folder-card-checkbox-bg: rgba(255,255,255,.75);
+  --folder-card-checkbox-border: rgba(123,127,178,.55);
+  --folder-card-checkbox-bg-checked: var(--color-primary,#7b7fb2);
+  --folder-card-checkbox-border-checked: var(--color-primary,#7b7fb2);
+  --folder-card-checkbox-fg-checked: #fff;
 
   /* Shared menu / calendar / context / sort popover. Geometry can stay component-specific; all
      paint and cadence comes from this one contract. */
@@ -153,6 +172,44 @@
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
+/* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,
+   not a .fc-card/.folder-card selector, so component state paint cannot race the family theme. */
+html[data-theme='light'][data-family='v2'] {
+  --file-card-bg: var(--surface-card-solid);
+  --file-card-border: var(--border-strong);
+  --file-card-shadow: var(--elevation-card);
+  --file-card-bg-hover: var(--surface-raised);
+  --file-card-border-hover: var(--border-hover);
+  --file-card-shadow-hover: var(--elevation-card-hover);
+  --file-card-bg-selected: var(--surface-raised);
+  --file-card-border-selected: var(--action-outline);
+  --file-card-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
+  --file-card-selection-overlay: var(--selection-bg);
+  --file-card-selection-thumb-overlay: color-mix(in srgb,var(--action-primary) 28%,transparent);
+  --file-card-preselection-thumb-overlay: color-mix(in srgb,var(--action-primary) 16%,transparent);
+  --file-card-badge-bg: var(--surface-soft);
+  --file-card-thumb-bg: var(--surface-soft);
+  --file-card-image-badge-bg: rgba(0,0,0,.34);
+  --file-card-image-badge-fg: var(--content-on-accent);
+
+  --folder-card-bg-base: var(--surface-card-solid);
+  --folder-card-border-base: var(--border-strong);
+  --folder-card-shadow: var(--elevation-card);
+  --folder-card-shadow-hover: var(--elevation-card-hover);
+  --folder-card-bg-selected: var(--surface-raised);
+  --folder-card-border-selected: var(--action-outline);
+  --folder-card-shadow-selected: 0 0 0 2px var(--selection-bg), var(--elevation-card);
+  --folder-card-selection-overlay: var(--selection-bg);
+  --folder-card-bg-preselected: var(--action-soft);
+  --folder-card-border-preselected: var(--action-outline);
+  --folder-card-shadow-preselected: 0 0 0 1px var(--selection-bg), var(--elevation-card);
+  --folder-card-checkbox-bg: var(--control-bg);
+  --folder-card-checkbox-border: var(--action-outline);
+  --folder-card-checkbox-bg-checked: var(--action-primary);
+  --folder-card-checkbox-border-checked: var(--action-primary);
+  --folder-card-checkbox-fg-checked: var(--content-on-accent);
+}
+
 html[data-theme='dark'][data-family] {
   /* Preserve the existing dark contracts; the neutral light restoration above must not shift dark. */
   --panel-divider: var(--border-subtle);
@@ -187,7 +244,8 @@ html[data-theme='dark'][data-family] {
   --file-dialog-toolbar-highlight-strong: var(--highlight-strong);
   --file-dialog-toolbar-highlight-side: var(--highlight-side);
 
-  /* Dark keeps the same selection hierarchy but maps surfaces/edges into the active theme. */
+  /* Dark keeps the same state structure but maps cards into the active family theme. Folder values
+     deliberately restore the pre-regression dark contract that used to live in adoption CSS. */
   --file-card-bg: var(--surface-card-solid);
   --file-card-border: var(--border-strong);
   --file-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
@@ -204,6 +262,23 @@ html[data-theme='dark'][data-family] {
   --file-card-thumb-bg: var(--surface-soft);
   --file-card-image-badge-bg: rgba(0,0,0,.42);
   --file-card-image-badge-fg: var(--content-primary);
+
+  --folder-card-bg-base: var(--surface-card-solid);
+  --folder-card-border-base: var(--border-strong);
+  --folder-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow);
+  --folder-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover);
+  --folder-card-bg-selected: var(--surface-raised);
+  --folder-card-border-selected: var(--action-outline);
+  --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
+  --folder-card-selection-overlay: var(--selection-bg);
+  --folder-card-bg-preselected: var(--action-soft);
+  --folder-card-border-preselected: var(--action-outline);
+  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px var(--selection-bg);
+  --folder-card-checkbox-bg: var(--control-bg);
+  --folder-card-checkbox-border: var(--action-outline);
+  --folder-card-checkbox-bg-checked: var(--action-primary-bg);
+  --folder-card-checkbox-border-checked: transparent;
+  --folder-card-checkbox-fg-checked: var(--content-on-accent);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
   --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));

@@ -96,8 +96,12 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
       return
     }
     const { fileIds, folderIds } = _getItemsInBox()
+    // _latestPreview keeps the complete hit set for mouseup semantics. The visual preview is only
+    // for not-yet-selected items: selected + pre-selected on the same card creates two competing
+    // paint states (and used to expose load-order differences in Mono folder cards).
     _latestPreview = { fileIds, folderIds }
-    previewFileIds.value = fileIds; previewFolderIds.value = folderIds
+    previewFileIds.value = new Set([...fileIds].filter(id => !selectedFileIds.value.has(id)))
+    previewFolderIds.value = new Set([...folderIds].filter(id => !selectedFolderIds.value.has(id)))
   }
 
   function _swallowClick(e: Event) { e.stopImmediatePropagation() }
@@ -142,7 +146,7 @@ export function useBoxSelection<F extends Id = Id>(containerRef: Ref<HTMLElement
 
   function cancelDrag() {
     document.removeEventListener('mousemove', _onMouseMove)
-    document.removeEventListener('mouseup',   _onMouseUp)
+    document.removeEventListener('mouseup', _onMouseUp)
     _latestPreview = { fileIds: new Set(), folderIds: new Set() }
     previewFileIds.value = new Set(); previewFolderIds.value = new Set()
     boxStart.value = null; boxEnd.value = null; _cRect = null

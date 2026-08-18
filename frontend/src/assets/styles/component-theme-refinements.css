@@ -3,23 +3,12 @@
  * colour literals live here. It loads after the legacy bridges so old scoped rules cannot reassert
  * light-only surfaces in resolved dark mode. */
 
-/* ── Shared surface / card motion ───────────────────────────────────────────────────── */
-html[data-theme][data-family] .hover-card-fx,
-html[data-theme][data-family] .fc-card,
-html[data-theme][data-family] .folder-card,
-html[data-theme][data-family] .task-card,
+/* ── Shared surface / card motion ─────────────────────────────────────────────────────
+   FileCard/FolderCard already receive their complete motion contract from global.css. Excluding
+   them here prevents the generic hover utility from becoming a second transition owner. */
+html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card),
 html[data-theme][data-family] .sample-project-card {
   transition: var(--card-motion);
-}
-html[data-theme][data-family] .fc-card::after,
-html[data-theme][data-family] .folder-card::after {
-  background: var(--card-hover-overlay) !important;
-  transition: var(--card-overlay-motion) !important;
-}
-html[data-theme][data-family] .fc-card:hover {
-  background: var(--card-surface-bg-hover) !important;
-  border-color: var(--card-surface-border-hover) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover) !important;
 }
 html[data-theme][data-family] .cal-chip::after {
   background: var(--calendar-chip-hover-overlay) !important;
@@ -43,7 +32,8 @@ html[data-theme][data-family] .task-card:hover::after {
 }
 html[data-theme][data-family] .task-card:hover { box-shadow: var(--card-shadow-hover) !important; }
 
-/* Dark mode removes surface brightening, while lift/shadow/controls remain interactive. */
+/* Dark mode removes surface brightening, while lift/shadow/controls remain interactive. File and
+   folder card paint remains component-owned; this only suppresses global.css's white hover veil. */
 html[data-theme='dark'][data-family] .glass-card:not(.topbar):not(.cal-toolbar):not(.files-toolbar):hover {
   background: var(--glass-card-background);
   border-color: var(--glass-card-border);
@@ -62,7 +52,6 @@ html[data-theme][data-family] .topbar .btn-primary-custom,
 html[data-theme][data-family] .sample-topbar .sample-primary,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn,
 html[data-theme][data-family] .event-form-body .popup-save,
-html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm,
 html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
@@ -71,7 +60,6 @@ html[data-theme][data-family] .topbar .btn-primary-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-primary:hover,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
-html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover,
 html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
   background: var(--action-primary-bg-hover) !important;
   box-shadow: var(--elevation-card-hover) !important;
@@ -198,77 +186,6 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
 
-/* ── File toolbar ───────────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn,
-html[data-theme][data-family] .file-browser-toolbar .new-folder-btn,
-html[data-theme][data-family] .file-browser-toolbar .close-btn,
-html[data-theme][data-family] .file-paste-button,
-html[data-theme][data-family] .sort-selector .sort-btn {
-  color: var(--control-fg);
-  background: var(--control-bg);
-  border-color: var(--control-border);
-  box-shadow: inset 0 1px 0 var(--highlight-muted);
-}
-html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn:hover,
-html[data-theme][data-family] .file-browser-toolbar .new-folder-btn:hover,
-html[data-theme][data-family] .file-browser-toolbar .close-btn:hover,
-html[data-theme][data-family] .file-paste-button:hover,
-html[data-theme][data-family] .sort-selector .sort-btn:hover {
-  color: var(--control-fg-strong);
-  background: var(--control-bg-hover);
-  border-color: var(--control-border-hover);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
-}
-html[data-theme][data-family] .file-paste-button,
-html[data-theme][data-family] .sort-selector .sort-btn { color: var(--action-primary); }
-html[data-theme][data-family] .file-browser-toolbar .sel-mode-btn.on {
-  color: var(--selection-fg);
-  background: var(--selection-bg);
-  border-color: var(--action-outline);
-}
-html[data-theme][data-family] .file-browser-toolbar .view-toggle {
-  --pill-bg: var(--segmented-pill-bg) !important;
-  --pill-shadow: var(--segmented-pill-shadow) !important;
-  display: inline-flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--control-radius);
-  background: var(--segmented-track-bg);
-}
-html[data-theme][data-family] .file-browser-toolbar .view-toggle button {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-xs);
-  color: var(--control-fg);
-  background: transparent;
-}
-html[data-theme][data-family] .file-browser-toolbar .view-toggle button.on { color: var(--selection-fg); }
-html[data-theme][data-family] .file-browser-toolbar .new-folder-input {
-  color: var(--content-primary);
-  background: var(--control-bg);
-  border-color: var(--control-border);
-}
-html[data-theme][data-family] .file-browser-toolbar .new-folder-input:focus {
-  border-color: var(--border-focus);
-  box-shadow: var(--control-focus-shadow);
-}
-html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
-  border: 1px solid transparent;
-  box-shadow: var(--elevation-card);
-}
-html[data-theme][data-family] .file-browser-toolbar .btn-cancel-sm {
-  color: var(--control-fg);
-  background: var(--surface-soft);
-  border: 1px solid var(--control-border);
-}
-html[data-theme][data-family] .file-browser-toolbar .btn-cancel-sm:hover {
-  color: var(--control-fg-strong);
-  background: var(--control-bg-hover);
-}
-
 /* ── Disabled navigation entries ────────────────────────────────────────────────────── */
 html[data-theme][data-family] .sidebar .soon-item { color: var(--content-disabled); }
 html[data-theme][data-family] .sidebar .soon-badge {
@@ -277,39 +194,14 @@ html[data-theme][data-family] .sidebar .soon-badge {
   border: 1px solid var(--border-hairline);
 }
 
-/* ── Folder cards ───────────────────────────────────────────────────────────────────── */
-html[data-theme][data-family] .folder-card {
-  background: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 6%,var(--surface-card-solid)) !important;
-  border-color: color-mix(in srgb,var(--fd-color,var(--content-tertiary)) 14%,var(--border-strong)) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow) !important;
-  transition: var(--card-motion);
+/* FileCard/FolderCard own their selected/pre-selected paint. Files/index still owns the exact light
+   full-card preview for the library page; dark mode needs only this semantic remap. Project light is
+   supplied by FileCard itself, so no selector overlaps there in the same resolved theme. */
+html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected) {
+  background: color-mix(in srgb,var(--action-primary) 6%,var(--surface-card-solid));
+  border-color: color-mix(in srgb,var(--action-primary) 45%,transparent);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb,var(--action-primary) 15%,transparent);
 }
-html[data-theme][data-family] .folder-card:hover {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--card-shadow-hover) !important;
-}
-html[data-theme][data-family] .folder-card.selected {
-  color: var(--content-primary);
-  background: var(--surface-raised) !important;
-  border-color: var(--action-outline) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg) !important;
-}
-html[data-theme][data-family] .folder-card.selected::before { background: var(--selection-bg) !important; }
-html[data-theme][data-family] .folder-card.pre-selected {
-  background: var(--action-soft) !important;
-  border-color: var(--action-outline) !important;
-  box-shadow: inset 0 1px 0 var(--highlight-muted), 0 0 0 1px var(--selection-bg) !important;
-}
-html[data-theme][data-family] .folder-card .fd-name { color: var(--content-primary); }
-html[data-theme][data-family] .folder-card .fd-count { color: var(--content-secondary); }
-html[data-theme][data-family] .folder-card .sel-checkbox {
-  background: var(--control-bg);
-  border-color: var(--action-outline);
-}
-html[data-theme][data-family] .folder-card .sel-checkbox.checked {
-  background: var(--action-primary-bg);
-  border-color: transparent;
-}
-html[data-theme][data-family] .folder-card .sel-checkbox.checked svg { stroke: var(--content-on-accent); }
 
 /* Folder/file hover affordances sit on top of cards and therefore need their own control contract. */
 html[data-theme][data-family] .file-card-btn {

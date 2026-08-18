@@ -54,25 +54,14 @@ defineProps({
 </script>
 
 <style scoped>
-/* FolderCard 是文件夹卡唯一 paint owner。亮色局部 token 精确复现 v0.20.4；暗色只重映射
-   token，selected / pre-selected / checkbox 的状态结构保持同一套 selector。 */
+/* FolderCard 只拥有实体结构与状态 selector；Aero/Mono × light/dark 的基线 paint 值全部来自
+   tokens/components/surfaces.css。最终 surface/edge 在卡片本地混入 --fd-color，因为文件夹
+   accent 是逐卡动态值，不能提前在 :root 上求值。 */
 .folder-card {
-  --folder-card-bg: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,.82));
-  --folder-card-border: color-mix(in srgb, var(--fd-color, #8888a0) 14%, rgba(255,255,255,.92));
-  --folder-card-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 1px 5px rgba(80,90,110,.06);
-  --folder-card-shadow-hover: inset 0 1px 0 rgba(255,255,255,.90), 0 7px 22px rgba(80,90,110,.12);
-  --folder-card-bg-selected: rgba(255,255,255,.92);
-  --folder-card-border-selected: rgba(123,127,178,.55);
-  --folder-card-shadow-selected: inset 0 1px 0 rgba(255,255,255,.98), 0 0 0 2px rgba(123,127,178,.28);
-  --folder-card-selection-overlay: rgba(123,127,178,.14);
-  --folder-card-bg-preselected: rgba(123,127,178,.05);
-  --folder-card-border-preselected: rgba(123,127,178,.38);
-  --folder-card-shadow-preselected: inset 0 1px 0 rgba(255,255,255,.90), 0 0 0 1.5px rgba(123,127,178,.12);
-  --folder-card-checkbox-bg: rgba(255,255,255,.75);
-  --folder-card-checkbox-border: rgba(123,127,178,.55);
-  --folder-card-checkbox-bg-checked: var(--color-primary, #7b7fb2);
-  --folder-card-checkbox-border-checked: var(--color-primary, #7b7fb2);
-  --folder-card-checkbox-fg-checked: #fff;
+  --folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));
+  --folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) 14%,var(--folder-card-border-base));
+  --folder-card-bg-hover: color-mix(in srgb,var(--fd-color,#8888a0) 8%,var(--folder-card-bg-base));
+  --folder-card-border-hover: color-mix(in srgb,var(--fd-color,#8888a0) 18%,var(--folder-card-border-base));
 
   position: relative;
   min-height: 122px;
@@ -82,25 +71,11 @@ defineProps({
   box-shadow: var(--folder-card-shadow);
   color: var(--content-primary);
 }
-:global(html[data-theme='dark'][data-family]) .folder-card {
-  --folder-card-bg: color-mix(in srgb, var(--surface-card-solid) 94%, var(--fd-color, var(--action-primary)) 6%);
-  --folder-card-border: color-mix(in srgb, var(--border-strong) 86%, var(--fd-color, var(--action-primary)) 14%);
-  --folder-card-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
-  --folder-card-shadow-hover: inset 0 1px 0 var(--highlight-soft), var(--elevation-card-hover);
-  --folder-card-bg-selected: var(--surface-raised);
-  --folder-card-border-selected: var(--action-outline);
-  --folder-card-shadow-selected: inset 0 1px 0 var(--highlight-soft), 0 0 0 2px var(--selection-bg);
-  --folder-card-selection-overlay: var(--selection-bg);
-  --folder-card-bg-preselected: color-mix(in srgb, var(--action-primary) 5%, var(--surface-card-solid));
-  --folder-card-border-preselected: color-mix(in srgb, var(--action-primary) 38%, transparent);
-  --folder-card-shadow-preselected: inset 0 1px 0 var(--highlight-soft), 0 0 0 1.5px color-mix(in srgb, var(--action-primary) 12%, transparent);
-  --folder-card-checkbox-bg: var(--surface-raised);
-  --folder-card-checkbox-border: var(--action-outline);
-  --folder-card-checkbox-bg-checked: var(--action-primary);
-  --folder-card-checkbox-border-checked: var(--action-primary);
-  --folder-card-checkbox-fg-checked: var(--content-on-accent);
+.folder-card:hover:not(.selected):not(.pre-selected) {
+  background: var(--folder-card-bg-hover);
+  border-color: var(--folder-card-border-hover);
+  box-shadow: var(--folder-card-shadow-hover);
 }
-.folder-card:hover { box-shadow: var(--folder-card-shadow-hover); }
 .folder-card.selected {
   border-color: var(--folder-card-border-selected);
   background: var(--folder-card-bg-selected);
@@ -111,7 +86,7 @@ defineProps({
   pointer-events: none; border-radius: inherit;
   background: var(--folder-card-selection-overlay);
 }
-.folder-card.pre-selected {
+.folder-card.pre-selected:not(.selected) {
   border-color: var(--folder-card-border-preselected);
   background: var(--folder-card-bg-preselected);
   box-shadow: var(--folder-card-shadow-preselected);
@@ -144,6 +119,7 @@ defineProps({
   width: 18px; height: 18px; border-radius: 5px;
   border: 2px solid var(--folder-card-checkbox-border);
   background: var(--folder-card-checkbox-bg);
+  box-shadow: none;
   display: flex; align-items: center; justify-content: center;
   pointer-events: none;
   transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;

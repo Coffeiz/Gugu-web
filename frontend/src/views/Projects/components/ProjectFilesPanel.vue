@@ -76,7 +76,7 @@
                 <RuntimeFileCard
                   v-for="file in sortedCurrentFiles" :key="file.id"
                   class="hover-card-fx"
-                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
+                  :card-props="{ ext: file.ext, displayName: file.displayName, hasThumb: isPmImageExt(file.ext), selected: pmSelectedFileIds.has(file.id), preSelected: pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id), selectionMode: pmInSelectionMode }"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
@@ -105,11 +105,6 @@
                   </template>
                   <template #meta>{{ file.stageName ? file.stageName + ' · ' : '' }}{{ file.size }}</template>
 
-                  <Transition name="sel-cb">
-                    <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                      <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
-                    </div>
-                  </Transition>
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
                     <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
                       @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
@@ -146,13 +141,14 @@
                 <!-- 文件夹行（当前层） -->
                 <RuntimeListRow v-for="folder in sortedCurrentFolders" :key="folder.id"
                   :runtime-id="fileObjectId(runtimeScope, 'folder', folder.id)"
-                  :runtime-type="'folder-item'"
+                  :runtime-type="'pm-folder-item'"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFolderIds.has(folder.id)"
-                  :runtime-target="{ surfaceId: folderSurfaceId(runtimeScope, folder.id), accepts: ['file-item', 'folder-item'], priority: 2 }"
+                  :runtime-target="{ surfaceId: folderSurfaceId(runtimeScope, folder.id), accepts: ['pm-file-item', 'pm-folder-item'], priority: 2 }"
                   class="list-row folder-list-row"
                   :class="{ selected: pmSelectedFolderIds.has(folder.id), 'pre-selected': pmPreviewFolderIds.has(folder.id) }"
                   :data-pm-folder-id="folder.id"
+                  data-list-columns="5"
                   data-layout-role="card" :data-layout-key="folderLayoutKey(folder)"
                   @click.stop="onPmFolderClick(folder, $event)"
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
@@ -191,13 +187,14 @@
                 <!-- 文件行（当前层） -->
                 <RuntimeListRow v-for="file in sortedCurrentFiles" :key="file.id"
                   :runtime-id="fileObjectId(runtimeScope, 'file', file.id)"
-                  :runtime-type="'file-item'"
+                  :runtime-type="'pm-file-item'"
                   :runtime-surface-id="browserSurfaceId(runtimeScope)"
                   :runtime-selected="pmSelectedFileIds.has(file.id)"
                   :runtime-abilities="['move']"
                   class="list-row"
                   :class="{ selected: pmSelectedFileIds.has(file.id), 'pre-selected': pmPreviewFileIds.has(file.id), cut: pmCbStore.type === 'cut' && pmCbStore.fileIds.includes(file.id) }"
                   :data-pm-file-id="file.id"
+                  data-list-columns="5"
                   data-layout-role="card" :data-layout-key="fileLayoutKey(file)"
                   @contextmenu.prevent.stop="openPmCtx('file', file, $event)"
                   @click.stop="pmHandleFileClick(file, $event)"
@@ -305,6 +302,7 @@ const {
   cancelRename, thumbLoadedIds, downloadFile, deleteFile, pmHandleFileClick,
   uploadingItems, dragging, handleFileDrop, handleFileInput, fileIconColor, pmDownloadingZip,
   downloadSelectedPm, pmSelCut, pmSelCopy, deleteSelectedPm, clearPmSelection, pmCbStore,
+  pmSortKey, pmSortDir, onPmSortSelect,
 } = props.context
 </script>
 
@@ -397,90 +395,24 @@ const {
 .fc-card:hover .fc-hover-actions { opacity: 1; }
 
 /* ── 框选矩形 ── */
-.pm-selection-rect {
-  position: absolute; pointer-events: none; z-index: 30;
-  border: 1.5px solid rgba(123,127,178,0.55);
-  background: rgba(123,127,178,0.08); border-radius: 4px;
-}
+	.pm-selection-rect {
+	  position: absolute; pointer-events: none; z-index: 30;
+	  border: 1.5px solid rgba(123,127,178,0.55);
+	  background: rgba(123,127,178,0.08); border-radius: 4px;
+	}
 
-/* 列表视图 */
-.file-list-view { display: flex; flex-direction: column; gap: 2px; }
-
-.lh-sortable {
-  display: flex; align-items: center; gap: 3px;
-  cursor: pointer; user-select: none; transition: color 0.12s;
-}
-.lh-sortable:hover { color: var(--text-primary); }
-.lh-sortable.active { color: var(--color-primary); }
-.lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
-.lh-sortable.active .lh-arrow { opacity: 1; }
-.lh-arrow.desc { transform: rotate(180deg); }
-
-.list-head {
-  display: grid; grid-template-columns: 1fr 80px 60px 70px 72px;
-  padding: 0 10px 6px; font-size: 10px; font-weight: 600;
-  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em;
-  border-bottom: 1px solid rgba(0,0,0,0.06);
-}
-.list-row {
-  display: grid; grid-template-columns: 1fr 80px 60px 70px 72px;
-  align-items: center; padding: 7px 10px; border-radius: 9px;
-  min-height: 42px;
-  cursor: pointer; transition: background 0.12s;
-}
-.list-row:hover { background: rgba(123,127,178,0.06); }
-.list-row.selected { background: rgba(123,127,178,0.1); }
-.list-row.pre-selected { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
-.folder-list-row { cursor: pointer; }
-.lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.lr-folder-icon, .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
-.lr-ext {
-  font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
-  border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5;
-}
-.lr-filename {
-  font-size: 12px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px;
-}
-.lr-text { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-.lr-actions { display: flex; gap: 2px; align-items: center; justify-content: flex-end; position: relative; }
-.list-row:hover .file-list-btn { opacity: 1; }
-
-/* 多选勾选框 */
-.sel-checkbox {
-  position: absolute; top: 6px; right: 6px; z-index: 3;
-  width: 16px; height: 16px; border-radius: 4px;
-  border: 2px solid rgba(123, 127, 178, 0.55);
-  background: rgba(255,255,255,0.75);
-  display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
-  transition: background 0.15s, border-color 0.15s;
-}
-.sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-/* 列表视图内勾选框：脱离 flex 流 */
-.lr-actions .sel-checkbox {
-  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  background: rgba(255,255,255,0.55);
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
-.lr-actions .sel-checkbox.checked {
-  background: var(--color-primary, #7b7fb2);
-  border-color: var(--color-primary, #7b7fb2);
-}
-/* 淡入淡出动画 */
-.sel-cb-enter-active, .sel-cb-leave-active {
-  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
-}
-.sel-cb-enter-from, .sel-cb-leave-to { opacity: 0; }
+	/* ── 列表视图：本页只拥有 5 列的列宽（vs 文件库 6 列）；容器/表头基础/单元格样式
+	       （.list-head 基础 / .lh-sortable / .lr-* / .sel-checkbox / .sel-cb-*）
+	       统一由 filesListRows.css 拥有，禁止在这里重复声明，避免 CSS 竞态。 ── */
+	.file-list-view .list-head {
+	  grid-template-columns: 1fr 80px 60px 70px 72px;
+	}
+	.file-list-view .list-row {
+	  grid-template-columns: 1fr 80px 60px 70px 72px;
+	}
 </style>
 
 <style>
-.list-row.cut { opacity: 0.75; }
-
 .drop-overlay {
   position: absolute; inset: 0; z-index: 50;
   background: rgba(232,233,238,0.82);

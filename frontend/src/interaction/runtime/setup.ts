@@ -58,12 +58,22 @@ export function setupInteractionRuntime(): void {
   // 这种短文本留了本体表格才需要的大量空白），收紧到接近内容实际宽度；日期/操作两列
   // 收到 0。这个字符串跟 FilesListView.vue 的列定义是耦合的，那边的列宽/列数一旦改动，
   // 这里要同步改。
-  // selector 只匹配 .list-row，网格视图的 FolderCard/FileCard 不带这个 class，不受影响。
-  const listProxyLayout = {
+  // selector 只匹配 .file-list .list-row（文件库），网格视图的 FolderCard/FileCard 不带
+  // 这个 class，不受影响。项目编辑卡走 pm-file-item / pm-folder-item 独立类型。
+  const fileLibraryProxyLayout = {
     compact: {
-      selector: '.list-row',
+      selector: '.file-list .list-row',
       width: 'min(300px, calc(100vw - 48px))',
       gridTemplateColumns: '1.3fr 36px 1fr 44px 0px 0px',
+    },
+  }
+  // 项目编辑卡列表视图只有 5 列（1fr 80px 60px 70px 72px），紧凑布局收为
+  // 1.3fr 36px 1fr 0px 0px——日期和操作列隐藏，前 3 列收紧到内容宽度。
+  const projectEditProxyLayout = {
+    compact: {
+      selector: '.file-list-view .list-row',
+      width: 'min(300px, calc(100vw - 48px))',
+      gridTemplateColumns: '1.3fr 36px 1fr 0px 0px',
     },
   }
   runtime.registerObjectType('file-item', {
@@ -73,7 +83,7 @@ export function setupInteractionRuntime(): void {
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
-    proxyLayout: listProxyLayout,
+    proxyLayout: fileLibraryProxyLayout,
     // 文件可能从 20000+ 的 BaseModal 窗口中拖出。Runtime 默认 proxy 层级只有 1000，
     // 会被项目编辑卡压住；统一使用 windowz 的 TOP_Z 拖拽压顶带，不再另写魔法数。
     proxyZIndex: TOP_Z,
@@ -86,7 +96,30 @@ export function setupInteractionRuntime(): void {
     motion: { enabled: true, profile: { target: targetMotionProfile } },
     preserveMoveTarget: true,
     disableTargetVisualMorph: true,
-    proxyLayout: listProxyLayout,
+    proxyLayout: fileLibraryProxyLayout,
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
+  })
+  // 项目编辑卡列表视图独立注册，compact gridTemplateColumns 匹配 5 列布局。
+  runtime.registerObjectType('pm-file-item', {
+    defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
+    groupVisual: 'default',
+    motion: { enabled: true, profile: { target: targetMotionProfile } },
+    preserveMoveTarget: true,
+    disableTargetVisualMorph: true,
+    proxyLayout: projectEditProxyLayout,
+    proxyZIndex: TOP_Z,
+    landingProxyZIndex: TOP_Z,
+  })
+  runtime.registerObjectType('pm-folder-item', {
+    defaultVisualMode: 'detach',
+    affordances: { selector: '[data-card-affordances]' },
+    groupVisual: 'default',
+    motion: { enabled: true, profile: { target: targetMotionProfile } },
+    preserveMoveTarget: true,
+    disableTargetVisualMorph: true,
+    proxyLayout: projectEditProxyLayout,
     proxyZIndex: TOP_Z,
     landingProxyZIndex: TOP_Z,
   })

@@ -51,8 +51,10 @@ html[data-theme][data-family] .gs-panel {
   color: var(--content-primary);
 }
 
-/* ── Shared card feedback ──────────────────────────────────────── */
-html[data-theme][data-family] .hover-card-fx:hover { box-shadow: var(--elevation-card-hover); }
+/* ── Shared card feedback ────────────────────────────────────────
+   FileCard/FolderCard already own hover + selected shadows. Exclude them from the generic utility
+   so a high-specificity theme selector cannot erase their selected ring on hover. */
+html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card):hover { box-shadow: var(--elevation-card-hover); }
 html[data-theme][data-family] .file-list-btn:hover { color: var(--action-primary); background: var(--action-soft); }
 html[data-theme][data-family] .file-list-btn.del:hover { color: var(--status-danger); background: var(--status-danger-bg); }
 html[data-theme][data-family] .file-card-btn { color: var(--content-secondary); background: var(--surface-raised); box-shadow: var(--elevation-card); }
