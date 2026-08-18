@@ -208,10 +208,11 @@ async function restore(id: number) {
 .year-row:hover { background: rgba(0,0,0,0.04); }
 .year-chev {
   color: rgba(0,0,0,0.2);
+  transform: rotate(-90deg);
   transition: transform 0.2s cubic-bezier(0.34,1.1,0.64,1);
   flex-shrink: 0;
 }
-.year-chev.open { transform: rotate(180deg); }
+.year-chev.open { transform: rotate(0deg); }
 .year-label { font-size: 12px; font-weight: 700; color: rgba(0,0,0,0.62); flex: 1; letter-spacing: 0.03em; }
 .year-cnt { font-size: 10px; color: rgba(0,0,0,0.38); }
 .year-body {
@@ -233,8 +234,8 @@ async function restore(id: number) {
 .month-row:hover { background: rgba(0,0,0,0.04); }
 .month-name { font-size: 11px; font-weight: 500; color: rgba(0,0,0,0.52); flex: 1; }
 .month-cnt { font-size: 10px; color: rgba(0,0,0,0.35); }
-.month-chev { color: rgba(0,0,0,0.22); transition: transform 0.16s; }
-.month-chev.open { transform: rotate(180deg); }
+.month-chev { color: rgba(0,0,0,0.22); transform:rotate(-90deg); transition: transform 0.16s; }
+.month-chev.open { transform: rotate(0deg); }
 
 /* ── 项目行 ── */
 .ap-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 0 4px 4px; min-height: 0; overflow: hidden; }
