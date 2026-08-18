@@ -96,8 +96,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onUnmounted, nextTick, toRef, type PropType } from 'vue'
-import { runtime, createVueRuntimeAdapter } from '@/interaction/runtime'
+import { ref, reactive, computed, watch, toRef, type PropType } from 'vue'
+import { runtime } from '@/interaction/runtime'
 import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
@@ -294,7 +294,6 @@ const {
 // ProjectModal 是全局单例，文件对象 ID 本身全局唯一，因此使用稳定 scope，避免 project
 // prop 切换时让静态 id 的 useSurface/useObject 失去对应关系。
 const RUNTIME_SCOPE = 'project-files'
-const domAdapter = createVueRuntimeAdapter(runtime)
 const { elementRef: pmRuntimeBrowserRef } = useSurface({
   id: makeBrowserSurfaceId(RUNTIME_SCOPE),
   type: 'file-browser',
@@ -331,13 +330,11 @@ useRuntimeAction(action => {
   suppressNextPmSelectionClick = true
   void handleRuntimeMoveAction(objectIds, action.toSurfaceId)
 })
-onUnmounted(() => domAdapter.dispose())
 
-// ── 目录切换布局事务（Phase 4）：包装 pmEnterFolder/pmNavigateTo/pmGoBack/pmGoForward，
-// 让目录切换走 runLayoutMutation（先量卡片位置 → mutate 目录状态 → 等 DOM patch → 播放
-// FLIP/Collection Presence），取代任何整体销毁重建。文件面板本来就没有 Transition
-// mode="out-in" 包裹卡片列表（见上方 410 行注释），这里只是把"怎么触发目录状态变化"
-// 接到 Runtime 布局事务上。拖拽进行中拒绝导航，对齐 demo 的 hasActiveMove 守卫。
+// ── 目录导航：与文件库保持同一契约 ──────────────────────────────────────────────
+// Runtime 继续负责真实拖拽 Object/Surface/Target；目录切换只保留“拖拽事务期间禁止销毁卡片”的
+// 守卫，通过后直接改变当前目录状态。不要把目录导航重新接回 runLayoutMutation/Collection Presence，
+// 否则上一目录的卡片会被保留成离场代理并在 file-content surface 外继续淡出。
 function hasActivePmMove(): boolean {
   const root = pmGridRef.value
   if (!root) return false
@@ -348,28 +345,16 @@ function hasActivePmMove(): boolean {
   }
   return false
 }
-async function withPmLayoutNav(mutate: () => void): Promise<void> {
+function withPmDirectNav(mutate: () => void): void {
   if (hasActivePmMove()) return
-  const root = pmGridRef.value
-  if (!root) {
-    mutate()
-    return
-  }
-  const elements = Array.from(root.querySelectorAll<HTMLElement>('[data-layout-role="card"]'))
-  await domAdapter.runLayoutMutation({
-    elements,
-    root,
-    mutate,
-    waitForPatch: () => nextTick(),
-  })
+  mutate()
 }
-function pmEnterFolderWrapped(folder: FolderMeta): void { void withPmLayoutNav(() => pmEnterFolder(folder)) }
-function pmNavigateToWrapped(idx: number): void { void withPmLayoutNav(() => pmNavigateTo(idx)) }
-function pmGoBackWrapped(): void { void withPmLayoutNav(() => pmGoBack()) }
-function pmGoForwardWrapped(): void { void withPmLayoutNav(() => pmGoForward()) }
+function pmEnterFolderWrapped(folder: FolderMeta): void { withPmDirectNav(() => pmEnterFolder(folder)) }
+function pmNavigateToWrapped(idx: number): void { withPmDirectNav(() => pmNavigateTo(idx)) }
+function pmGoBackWrapped(): void { withPmDirectNav(() => pmGoBack()) }
+function pmGoForwardWrapped(): void { withPmDirectNav(() => pmGoForward()) }
 
-// Collection Presence 标记（Phase 4）：collection 名带 projectId，与文件页的
-// 'files-browser' 互不相同，data-layout-key 复用 Phase 1 已全局唯一的 fileObjectId。
+// collection / layout key 继续供当前目录内的真实 Runtime 拖拽与布局识别使用；它们不再参与目录 Presence。
 const pmLayoutCollection = computed(() => `project-files:${props.project?.id ?? 'none'}`)
 function pmFolderLayoutKey(folder: FolderMeta): string {
   return fileObjectId(RUNTIME_SCOPE, 'folder', folder.id)
@@ -800,7 +785,7 @@ const filePanelContext = {
 .status-btn.s-done    .opt-dot { background: #5a9e88; }
 .status-btn.s-pending.active .opt-dot { background: #d46b6b; }
 .status-btn.s-active.active  .opt-dot { background: #c9943a; }
-.status-btn.s-done.active    .opt-dot { background: #5a9e88; }
+.status-btn.s-done.active .opt-dot { background: #5a9e88; }
 .status-btn.s-pending.active { background: rgba(212,107,107,0.12); border-color: rgba(212,107,107,0.5); color: #9e3e3e; }
 .status-btn.s-active.active  { background: rgba(201,148,58,0.12);  border-color: rgba(201,148,58,0.5);  color: #8a5f18; }
 .status-btn.s-done.active    { background: rgba(90,158,136,0.12);  border-color: rgba(90,158,136,0.4);  color: #2e6e5a; }
