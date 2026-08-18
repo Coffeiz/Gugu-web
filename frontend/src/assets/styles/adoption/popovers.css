@@ -48,55 +48,35 @@ html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-
   color: var(--popup-item-fg-muted);
 }
 
-/* 保留 settings-popup 旧版视觉契约：它的侧栏菜单 hover 是边缘铺满的伪元素高光，
-   不跟随普通 popup 的实体表面和通用菜单背景。 */
+/* Settings keeps its edge-to-edge pseudo-element hover geometry, but all paint comes from the same
+   popup semantic contract. This lets Aero/Mono and light/dark resolve naturally without a second
+   literal-white theme implementation. */
 html[data-theme][data-family] .settings-popup {
-  background: rgba(255, 255, 255, .44);
-  border-color: rgba(255, 255, 255, .72);
   border-radius: var(--radius-md);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 4px 16px rgba(0, 0, 0, .08);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 html[data-theme][data-family] .settings-popup .popup-menu-item {
-  color: #1e2028;
+  color: var(--popup-item-fg);
   background: transparent;
   border-radius: 0;
   transition: none;
 }
 html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
+  color: var(--popup-item-fg);
   background: transparent;
 }
 html[data-theme][data-family] .settings-popup .popup-menu-item::before {
-  background: rgba(255, 255, 255, .55);
-  transition: opacity .15s ease;
+  background: var(--popup-item-bg-hover);
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
 }
 html[data-theme][data-family] .settings-popup .popup-menu-item.danger {
-  color: #c84a4a;
+  color: var(--popup-item-danger);
 }
 html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled)::before {
-  background: rgba(200, 90, 90, .1);
-}
-html[data-theme][data-family] .settings-popup .popup-menu-item.danger:hover:not(:disabled) {
-  background: transparent;
+  background: var(--popup-item-danger-bg-hover);
 }
 html[data-theme][data-family] .settings-popup .popup-menu-sep {
-  background: rgba(0, 0, 0, .06);
+  background: var(--popup-divider);
   margin: 3px 0;
-}
-html[data-theme='dark'][data-family] .settings-popup {
-  background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
-  border-color: var(--border-default);
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
-}
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item {
-  color: var(--content-primary);
-}
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before {
-  background: var(--color-accent-faint);
-}
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep {
-  background: var(--border-subtle);
 }
 
 /* Sort trigger is a control, while the menu itself is the shared ContextMenu above. */
