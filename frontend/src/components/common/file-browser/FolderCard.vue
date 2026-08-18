@@ -60,6 +60,8 @@ defineProps({
 .folder-card {
   --folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));
   --folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) 14%,var(--folder-card-border-base));
+  --folder-card-bg-hover: color-mix(in srgb,var(--fd-color,#8888a0) 8%,var(--folder-card-bg-base));
+  --folder-card-border-hover: color-mix(in srgb,var(--fd-color,#8888a0) 18%,var(--folder-card-border-base));
 
   position: relative;
   min-height: 122px;
@@ -70,6 +72,8 @@ defineProps({
   color: var(--content-primary);
 }
 .folder-card:hover:not(.selected):not(.pre-selected) {
+  background: var(--folder-card-bg-hover);
+  border-color: var(--folder-card-border-hover);
   box-shadow: var(--folder-card-shadow-hover);
 }
 .folder-card.selected {

@@ -398,15 +398,29 @@ const {
   background: rgba(123,127,178,0.08); border-radius: 4px;
 }
 
-/* ── 列表视图：只覆盖项目编辑卡的列数（5 列 vs 文件库 6 列），
-       单元格样式（.lr-* / .sel-checkbox / .sel-cb-*）统一由 filesListRows.css 拥有，
-       禁止在这里重复声明，避免 CSS 竞态。 ── */
-.file-list-view .list-head {
-  grid-template-columns: 1fr 80px 60px 70px 72px;
-}
-.file-list-view .list-row {
-  grid-template-columns: 1fr 80px 60px 70px 72px;
-}
+	/* ── 列表视图：只覆盖项目编辑卡的列数（5 列 vs 文件库 6 列），
+	       单元格样式（.lr-* / .sel-checkbox / .sel-cb-*）统一由 filesListRows.css 拥有，
+	       禁止在这里重复声明，避免 CSS 竞态。 ── */
+	.file-list-view .list-head {
+	  display: grid;
+	  grid-template-columns: 1fr 80px 60px 70px 72px;
+	  padding: 0 10px 8px;
+	  font-size: 10px; font-weight: 600; color: var(--text-secondary);
+	  text-transform: uppercase; letter-spacing: 0.06em;
+	  border-bottom: 1px solid rgba(0,0,0,0.06); margin-bottom: 2px;
+	}
+	.file-list-view .lh-sortable {
+	  display: flex; align-items: center; gap: 3px;
+	  cursor: pointer; user-select: none; transition: color 0.12s;
+	}
+	.file-list-view .lh-sortable:hover { color: var(--text-primary); }
+	.file-list-view .lh-sortable.active { color: var(--color-primary); }
+	.file-list-view .lh-arrow { opacity: 0; flex-shrink: 0; transition: opacity 0.15s, transform 0.2s; }
+	.file-list-view .lh-sortable.active .lh-arrow { opacity: 1; }
+	.file-list-view .lh-arrow.desc { transform: rotate(180deg); }
+	.file-list-view .list-row {
+	  grid-template-columns: 1fr 80px 60px 70px 72px;
+	}
 </style>
 
 <style>
