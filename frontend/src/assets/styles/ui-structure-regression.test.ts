@@ -15,6 +15,8 @@ function cssBlock(source: string, selector: string) {
 }
 
 const filesView = load('../../views/Files/index.vue')
+const projectModal = load('../../views/Projects/components/ProjectModal.vue')
+const floatPreview = load('../../components/common/FloatPreviewWindow.vue')
 const popovers = load('./adoption/popovers.css')
 const themeRefinements = load('./theme-refinements.css')
 const appSidebar = load('../../components/common/AppSidebar.vue')
@@ -30,7 +32,7 @@ const analyticsUsage = load('../../views/Admin/Analytics/Usage.vue')
 const trashView = load('../../views/Files/components/FilesTrashView.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
-  it('文件目录导航只做直接状态切换，不再创建跨目录 Presence/FLIP 离场', () => {
+  it('文件库与项目编辑卡目录导航都直接切状态，不创建跨目录 Presence/FLIP 离场', () => {
     expect(filesView).toContain('function withDirectNav(mutate: () => void): void')
     expect(filesView).toContain('withDirectNav(() => rawEnterFolder(folder))')
     expect(filesView).toContain('withDirectNav(() => rawNavigateTo(idx))')
@@ -40,19 +42,62 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(filesView).not.toContain('runLayoutMutation')
     expect(filesView).not.toContain('withLayoutNav')
     expect(filesView).toContain('不做交叉淡化或 Presence 离场')
+
+    expect(projectModal).toContain('function withPmDirectNav(mutate: () => void): void')
+    expect(projectModal).toContain('withPmDirectNav(() => pmEnterFolder(folder))')
+    expect(projectModal).toContain('withPmDirectNav(() => pmNavigateTo(idx))')
+    expect(projectModal).toContain('withPmDirectNav(() => pmGoBack())')
+    expect(projectModal).toContain('withPmDirectNav(() => pmGoForward())')
+    expect(projectModal).not.toContain('createVueRuntimeAdapter')
+    expect(projectModal).not.toContain('domAdapter.runLayoutMutation')
+    expect(projectModal).not.toContain('async function withPmLayoutNav')
   })
 
-  it('settings-popup 只有 popover adoption 负责最终 paint，Mono 只重映射局部 token', () => {
-    const monoSettings = cssBlock(popovers, "html[data-family='v2'] .settings-popup")
-    expect(monoSettings).toContain('--popup-surface-bg: var(--surface-card-solid);')
-    expect(monoSettings).toContain('--popup-surface-highlight: transparent;')
-    expect(monoSettings).toContain('--popup-surface-blur: none;')
-    expect(monoSettings).not.toMatch(/(?:^|;)\s*(?:background|border(?:-color)?|box-shadow|backdrop-filter)\s*:/)
+  it('浮动预览拖动四边共用 125% 虚拟视口边界', () => {
+    expect(floatPreview).toContain('const DRAG_OVERSCAN_RATIO = .25')
+    expect(floatPreview).toContain('const minX = -overscanX')
+    expect(floatPreview).toContain('const minY = -overscanY')
+    expect(floatPreview).toContain('window.innerWidth + overscanX - w.value')
+    expect(floatPreview).toContain('window.innerHeight + overscanY - h.value')
+    expect(floatPreview).toContain('x.value = clamp(nextX, minX, maxX)')
+    expect(floatPreview).toContain('y.value = clamp(nextY, minY, maxY)')
+    expect(floatPreview).not.toContain('x.value = Math.max(0, dragOrig.x')
+    expect(floatPreview).not.toContain('y.value = Math.max(0, dragOrig.y')
+  })
 
-    const settingsGeometry = cssBlock(appSidebar, '.settings-popup {')
-    expect(settingsGeometry).toContain('position: absolute')
-    expect(settingsGeometry).not.toMatch(/(?:background|border(?:-color)?|box-shadow|backdrop-filter)\s*:/)
-    expect(themeRefinements).not.toMatch(/html\[data-theme='dark'\]\[data-family\]\s+\.settings-popup\s*\{/)
+  it('settings-popup 保持原组件视觉，Mono/暗色只映射 token 且 danger hover 只有一层', () => {
+    const settings = cssBlock(appSidebar, '.settings-popup {')
+    expect(settings).toContain('background:var(--settings-popup-bg,rgba(255,255,255,.44))')
+    expect(settings).toContain('border:1px solid var(--settings-popup-border,rgba(255,255,255,.72))')
+    expect(settings).toContain('box-shadow:var(--settings-popup-shadow,')
+
+    expect(appSidebar).toContain('class="settings-menu-item"')
+    expect(appSidebar).toContain('class="settings-menu-item danger"')
+    expect(appSidebar).toContain('class="settings-menu-sep"')
+    expect(appSidebar).not.toContain('class="popup-menu-item')
+    expect(appSidebar).not.toContain('class="popup-menu-sep')
+    expect(appSidebar).toContain('background:var(--settings-popup-hover-bg,rgba(255,255,255,.55))')
+    expect(appSidebar).toContain('background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1))')
+    expect(appSidebar).toContain('.settings-menu-item:hover:not(:disabled) { background:transparent; }')
+
+    // Generic popup adoption must never match settings surface/items or its original popup animation.
+    expect(popovers).not.toContain('.settings-popup')
+    expect(popovers).not.toContain('.popup-enter-active')
+    expect(popovers).not.toMatch(/:is\(\.popup-menu-item/)
+
+    const dark = cssBlock(themeRefinements, "html[data-theme='dark'][data-family]")
+    expect(dark).toContain('--settings-popup-border: var(--border-default);')
+    expect(dark).toContain('--settings-popup-hover-bg: var(--color-accent-faint);')
+    const monoLight = cssBlock(themeRefinements, "html[data-theme='light'][data-family='v2']")
+    expect(monoLight).toContain('--settings-popup-bg: var(--surface-card-solid);')
+    expect(monoLight).toContain('--settings-popup-border: var(--border-strong);')
+    expect(monoLight).toContain('--settings-popup-hover-bg: var(--surface-soft-hover);')
+    const monoDark = cssBlock(themeRefinements, "html[data-theme='dark'][data-family='v2']")
+    expect(monoDark).toContain('--settings-popup-bg: var(--surface-card-solid);')
+    expect(monoDark).toContain('--settings-popup-border: var(--border-strong);')
+
+    // Theme layer may remap variables only; it must not become a second final-paint owner.
+    expect(themeRefinements).not.toMatch(/html\[data-theme[^\n]*\]\s+\.settings-popup\s*\{/)
   })
 
   it('GuguChat IM 与普通 session 共用 2px 节奏且没有树形左缩进', () => {
