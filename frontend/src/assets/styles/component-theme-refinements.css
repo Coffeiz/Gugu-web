@@ -3,8 +3,10 @@
  * colour literals live here. It loads after the legacy bridges so old scoped rules cannot reassert
  * light-only surfaces in resolved dark mode. */
 
-/* ── Shared surface / card motion ───────────────────────────────────────────────────── */
-html[data-theme][data-family] .hover-card-fx,
+/* ── Shared surface / card motion ─────────────────────────────────────────────────────
+   FileCard/FolderCard already receive their complete motion contract from global.css. Excluding
+   them here prevents the generic hover utility from becoming a second transition owner. */
+html[data-theme][data-family] .hover-card-fx:not(.fc-card):not(.folder-card),
 html[data-theme][data-family] .sample-project-card {
   transition: var(--card-motion);
 }

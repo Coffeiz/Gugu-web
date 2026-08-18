@@ -5,10 +5,20 @@ function load(relativePath: string) {
   return readFileSync(new URL(relativePath, import.meta.url), 'utf8')
 }
 
+function cssBlock(css: string, selectorNeedle: string) {
+  const start = css.indexOf(selectorNeedle)
+  if (start < 0) throw new Error(`Missing selector: ${selectorNeedle}`)
+  const open = css.indexOf('{', start)
+  const close = css.indexOf('}', open)
+  return css.slice(open + 1, close)
+}
+
 const folderCard = load('../../components/common/file-browser/FolderCard.vue')
 const fileCard = load('../../components/common/file-browser/FileCard.vue')
 const fileToolbar = load('./file-toolbar-theme-refinements.css')
 const componentRefinements = load('./component-theme-refinements.css')
+const componentSurfaces = load('./tokens/components/surfaces.css')
+const productCss = load('./tokens/product.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
 const projectAdoption = load('./adoption/project.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
@@ -41,17 +51,37 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(segmentedControl).toContain('transform: `translate(${dx}px, ${dy}px)`')
   })
 
-  it('FolderCard 亮色锁定 0.20.4 多选视觉，暗色只重映射局部 token', () => {
-    expect(folderCard).toContain('--folder-card-bg: color-mix(in srgb, var(--fd-color, #8888a0) 6%, rgba(255,255,255,.82));')
-    expect(folderCard).toContain('--folder-card-border-selected: rgba(123,127,178,.55);')
-    expect(folderCard).toContain('--folder-card-selection-overlay: rgba(123,127,178,.14);')
-    expect(folderCard).toContain('--folder-card-bg-preselected: rgba(123,127,178,.05);')
-    expect(folderCard).toContain(":global(html[data-theme='dark'][data-family]) .folder-card")
-    expect(folderCard).toContain('--folder-card-bg-selected: var(--surface-raised);')
-    expect(folderCard).toContain('--folder-card-checkbox-bg: var(--surface-raised);')
+  it('FolderCard 只拥有状态结构和动态 accent 混合，主题值统一由 component token 提供', () => {
+    expect(folderCard).toContain('--folder-card-bg: color-mix(in srgb,var(--fd-color,#8888a0) 6%,var(--folder-card-bg-base));')
+    expect(folderCard).toContain('--folder-card-border: color-mix(in srgb,var(--fd-color,#8888a0) 14%,var(--folder-card-border-base));')
+    expect(folderCard).toContain('background: var(--folder-card-bg);')
+    expect(folderCard).toContain('border: 1px solid var(--folder-card-border);')
+    expect(folderCard).toContain('.folder-card:hover:not(.selected):not(.pre-selected)')
     expect(folderCard).toContain('.folder-card.pre-selected:not(.selected)')
-    expect(folderCard).toContain('box-shadow: none;')
+    expect(folderCard).not.toContain(":global(html[data-theme='dark'")
     expect(folderCard).not.toContain('!important')
+
+    // Aero light remains the 0.20.4 baseline.
+    expect(componentSurfaces).toContain('--folder-card-bg-base: rgba(255,255,255,.82);')
+    expect(componentSurfaces).toContain('--folder-card-border-base: rgba(255,255,255,.92);')
+    expect(componentSurfaces).toContain('--folder-card-border-selected: rgba(123,127,178,.55);')
+    expect(componentSurfaces).toContain('--folder-card-selection-overlay: rgba(123,127,178,.14);')
+
+    // Mono light regains its neutral solid edge instead of inheriting Aero's near-white border.
+    const monoLight = cssBlock(componentSurfaces, "html[data-theme='light'][data-family='v2']")
+    expect(monoLight).toContain('--file-card-border: var(--border-strong);')
+    expect(monoLight).toContain('--folder-card-bg-base: var(--surface-card-solid);')
+    expect(monoLight).toContain('--folder-card-border-base: var(--border-strong);')
+    expect(monoLight).toContain('--folder-card-shadow: var(--elevation-card);')
+
+    // Both Aero-dark and Mono-dark resolve through semantic dark tokens; restore the previous dark
+    // folder checkbox/selection treatment without a second entity selector.
+    const dark = cssBlock(componentSurfaces, "html[data-theme='dark'][data-family]")
+    expect(dark).toContain('--folder-card-bg-base: var(--surface-card-solid);')
+    expect(dark).toContain('--folder-card-border-base: var(--border-strong);')
+    expect(dark).toContain('--folder-card-checkbox-bg-checked: var(--action-primary-bg);')
+    expect(dark).toContain('--folder-card-checkbox-border-checked: transparent;')
+
     expect(surfacesAdoption).not.toContain('.folder-card')
     expect(componentRefinements).not.toContain('.folder-card.selected {')
     expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
@@ -65,6 +95,15 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
+  })
+
+  it('20.4 selected ring 在 hover 时保持，generic hover utility 不再拥有 File/FolderCard shadow/transition', () => {
+    expect(fileCard).toContain('.fc-card.selected {')
+    expect(fileCard).toContain('box-shadow: var(--file-card-shadow-selected);')
+    expect(productCss).toContain('.hover-card-fx:not(.fc-card):not(.folder-card):hover')
+    expect(productCss).not.toContain('html[data-theme][data-family] .hover-card-fx:hover { box-shadow:')
+    expect(componentRefinements).toContain('.hover-card-fx:not(.fc-card):not(.folder-card),')
+    expect(componentRefinements).not.toContain('html[data-theme][data-family] .hover-card-fx,\n')
   })
 
   it('框选 preview 与已选集合视觉互斥，同时保留完整 mouseup 命中集合', () => {
