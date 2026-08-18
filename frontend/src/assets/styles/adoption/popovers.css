@@ -54,6 +54,13 @@ html[data-theme][data-family] :is(.popup-menu-shortcut, .popup-menu-dark .popup-
 html[data-theme][data-family] .settings-popup {
   border-radius: var(--radius-md);
 }
+/* Mono content surfaces are intentionally solid and quiet. Remap only the settings-popup inputs to
+   the shared popup paint contract instead of adding a second set of final background/border rules. */
+html[data-family='v2'] .settings-popup {
+  --popup-surface-bg: var(--surface-card-solid);
+  --popup-surface-highlight: transparent;
+  --popup-surface-blur: none;
+}
 html[data-theme][data-family] .settings-popup .popup-menu-item {
   color: var(--popup-item-fg);
   background: transparent;
