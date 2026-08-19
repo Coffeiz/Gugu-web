@@ -1,6 +1,6 @@
 # Prompt Caching 优化 PRD
 
-> 状态：🚧 Phase 1 已完成（静态/动态内容分离）
+> 状态：🚧 Phase 2 实施中（上下文压缩策略）
 > 创建：2026-08-19
 > 最近更新：2026-08-19
 > 所属层：LLM / Prompt 缓存
@@ -193,7 +193,60 @@ system = [{"type": "text", "text": static_text, "cache_control": {"type": "ephem
 - 测试报告
 - 缓存率对比数据
 
-### Phase 2：内容变化检测（后续）
+### Phase 2：上下文压缩策略
+
+**时间**：2-3 天
+**目标**：实现 run 内上下文压缩，防止上下文超限，同时保持跨 call 缓存前缀一致
+
+**触发条件**：
+```
+当前上下文长度 > 用户设置的最大上下文长度 × 90%
+```
+
+**压缩目标**：
+```
+压缩到 token 预算的 20%
+```
+
+**保护范围**：
+- system 提示词：完全保留（不压缩）
+- 消息历史：按策略压缩
+
+**前缀一致性保证**：
+```python
+# 压缩后 messages 的结构
+messages = [
+    # 1. 系统上下文注入（动态内容）→ 每次重新生成
+    {"role": "user", "content": dynamic_context},
+    
+    # 2. 压缩后的摘要 → 替代原始历史
+    {"role": "user", "content": "<compacted-summary>\n{摘要内容}\n</compacted-summary>"},
+    
+    # 3. 最近的消息 → 保留最近 N 条
+    {"role": "assistant", "content": "..."},
+    {"role": "user", "content": "..."},
+    ...
+]
+```
+
+**run 内压缩流程**：
+```
+检测到超限 → 暂停当前 run → 发送"上下文压缩中" → 
+调用 LLM 生成压缩摘要 → 更新 messages → 重试 agent round
+```
+
+**范围**：
+- 修改 `backend/agent/core.py`：在 `_run_loop` 中添加压缩检测
+- 修改 `backend/agent/context/compress_conv.py`：添加 run 内压缩函数
+- 修改 `backend/agent/runner.py`：添加压缩提示发送
+
+**交付物**：
+- 压缩检测逻辑
+- 压缩执行函数
+- "上下文压缩中"提示
+- 测试验证
+
+### Phase 3：增量缓存优化（后续）
 
 **时间**：1-2 天
 **范围**：
@@ -204,18 +257,6 @@ system = [{"type": "text", "text": static_text, "cache_control": {"type": "ephem
 **交付物**：
 - 哈希缓存机制
 - 增量更新逻辑
-
-### Phase 3：多段缓存断点（后续）
-
-**时间**：1-2 天
-**范围**：
-- 利用 4 个 cache_control 断点
-- 精细化缓存控制
-- 极端场景优化
-
-**交付物**：
-- 多段缓存实现
-- 缓存命中率进一步提升
 
 ---
 
