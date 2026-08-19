@@ -28,7 +28,8 @@ from app.core.url_security import resolve_pinned_ip
 
 _log = logging.getLogger("agent.tools.web")
 
-_MAX_BODY = 4000
+_MAX_BODY = 4000          # 默认返回字符数（模型可通过 max_chars 参数调整）
+_MAX_BODY_HARD = 20000    # 硬上限：即使模型请求更多也不超过此值
 _MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）

@@ -97,19 +97,39 @@ class _AnthropicCtx:
 
 
 def _with_history_cache(messages: list) -> list:
-    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在最后一条 message 的最后一个内容块上加
+    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在**每条消息的最后一个内容块**上加
     cache_control。多轮工具循环里历史越滚越长，这样能缓存住已发生的几轮、下一轮只重算新增的块。
     返回浅拷贝、**不改原 messages**（原列表要持久化，绝不能混入 cache_control，否则下次加载历史会带着
-    旧断点、累积超过 4 个上限）。只在最后一块是 list[dict]（assistant 块 / tool_result 块）时打；
-    首轮 user 的纯字符串 content 跳过（那轮的静态部分已由 system 缓存覆盖）。"""
+    旧断点、累积超过 4 个上限）。支持 text 块和 block 块两种形式。"""
     if not messages:
         return messages
-    last = messages[-1]
-    c = last.get("content")
-    if not isinstance(c, list) or not c or not isinstance(c[-1], dict) or not c[-1].get("type"):
-        return messages
-    new_block = {**c[-1], "cache_control": {"type": "ephemeral"}}
-    return [*messages[:-1], {**last, "content": [*c[:-1], new_block]}]
+
+    # 浅拷贝 messages 列表
+    new_messages = []
+
+    for msg in messages:
+        msg = dict(msg)  # 确保是 dict
+        content = msg.get("content")
+        new_content = []
+
+        # 如果 content 是 list（块形式）
+        if isinstance(content, list):
+            if content:
+                # 只修改最后一个块
+                last_block = content[-1]
+                new_content = content[:-1] + [dict(last_block, **{"cache_control": {"type": "ephemeral"}})]
+            else:
+                new_content = content
+        # 如果 content 是字符串（纯文本形式）
+        elif isinstance(content, str):
+            new_content = [dict(content, **{"cache_control": {"type": "ephemeral"}})]
+        else:
+            new_content = content
+
+        msg["content"] = new_content
+        new_messages.append(msg)
+
+    return new_messages
 
 
 class AnthropicDriver:
