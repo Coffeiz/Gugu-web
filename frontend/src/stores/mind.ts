@@ -207,14 +207,6 @@ export const useMindStore = defineStore('mind', () => {
       activeCanvasId.value = id
       canvasItems.value = normalizeCanvasZ(items).map(({ item, z }) => ({ ...item, z }))
       canvasRelations.value = normalizeCanvasRelations(relations)
-      // 更新画布数据（包含摄像机状态等），确保 restoreView 能读到最新的 data
-      const canvasIndex = canvases.value.findIndex(canvas => canvas.id === id)
-      if (canvasIndex !== -1) {
-        const canvasData = await mindApi.listCanvases().then(list => list.find(c => c.id === id))
-        if (canvasData) {
-          canvases.value[canvasIndex] = { ...canvases.value[canvasIndex], data: canvasData.data }
-        }
-      }
       return true
     } finally {
       if (pendingCanvasLoads.get(id) === requestSeq) pendingCanvasLoads.delete(id)
