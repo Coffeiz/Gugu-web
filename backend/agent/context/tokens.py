@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 # 历史窗口默认参数（后续可接入 AgentBehaviorSettings）
-HISTORY_TOKEN_BUDGET = 3000   # 历史最多占用的估算 token
-HISTORY_MAX_MSGS = 40         # 条数安全上限（兜底 DB 查询与极端情况）
+HISTORY_TOKEN_BUDGET = 999999   # 历史最多占用的估算 token（临时取消限制）
+HISTORY_MAX_MSGS = 9999         # 条数安全上限（临时取消限制）
 
 
 def estimate_tokens(text: str) -> int:
