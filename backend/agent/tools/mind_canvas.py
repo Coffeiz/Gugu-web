@@ -691,7 +691,12 @@ async def _mind_batch_canvas(db, user_id, args: dict):
     canvas = await get_owned_canvas(db, user_id, canvas_id)
     if canvas is None:
         return {"error": "画布不存在"}
-    if any(isinstance(operation, dict) and operation.get("kind") == "delete_note" for operation in operations):
+    # 检查是否需要确认的操作（删除便签或删除画布）
+    has_delete_note = any(isinstance(operation, dict) and operation.get("kind") == "delete_note" for operation in operations)
+    # 注意：当前批量操作不支持删除画布本身，只支持删除画布内的便签/节点
+    # 如果未来添加删除画布操作，需要在这里加上确认检查
+
+    if has_delete_note:
         from agent.security import confirm
         blocked = confirm.needs_confirmation(
             args,

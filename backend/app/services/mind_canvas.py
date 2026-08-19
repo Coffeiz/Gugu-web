@@ -104,6 +104,11 @@ async def delete_canvas(db, user_id, canvas_id, *, commit=False):
         await db.commit()
     else:
         await db.flush()
+
+    # 发送实时更新事件，触发前端画布列表刷新
+    from app.core import events
+    await events.publish(user_id, "mind.canvas", "delete", {"canvas_id": canvas_id})
+
     return True
 
 

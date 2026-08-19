@@ -122,7 +122,7 @@ def _with_history_cache(messages: list) -> list:
                 new_content = content
         # 如果 content 是字符串（纯文本形式）
         elif isinstance(content, str):
-            new_content = [dict(content, **{"cache_control": {"type": "ephemeral"}})]
+            new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
         else:
             new_content = content
 
