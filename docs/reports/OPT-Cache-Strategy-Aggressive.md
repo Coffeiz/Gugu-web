@@ -17,6 +17,13 @@
 - ✅ **命中便宜** - 缓存读取按 10% 价格计费
 - ⚠️ **断点限制** - 最多 4 个显式 cache_control 断点，超出会返回 400 错误
 
+**MiniMax 特殊限制**（2026-08-19 发现）：
+- **被动缓存**（推荐）- API 自动识别，无需 cache_control，需要 ≥512 tokens
+- **主动缓存**（Anthropic 兼容）- 需要显式 cache_control
+- **关键发现**：MiniMax-M3 **不支持被动模式下的主动缓存**
+- **实测对比**：被动缓存 Round 1 cache_read=391，主动缓存 Round 1 cache_read=128
+- **结论**：对于 MiniMax-M3，使用被动缓存效果更好
+
 ## 3. 优化前的策略（保守策略）
 
 **实现位置**：`backend/agent/loop_drivers.py` 第 159-175 行
