@@ -398,6 +398,13 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
+            # 核实阶段结束：不再需要补做/强查 → 把缓冲的核实文字发给用户，退出核实模式。
+            if verify_mode and _verify_buf:
+                async for _line in genstream.typed_stream(''.join(_verify_buf)):
+                    yield _line
+            verify_mode = False
+            _verify_buf = []
+
             _final_text = result.text
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not did_mutate and not verify_mode:
