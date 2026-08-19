@@ -30,7 +30,19 @@ async def estimate_context_length(messages: list, system_text: str = "") -> int:
     """估算当前上下文总长度（tokens）。"""
     total = estimate_tokens(system_text) if system_text else 0
     for msg in messages:
-        total += msg_tokens(msg)
+        if isinstance(msg, dict):
+            # dict 类型消息（如 runner.py 构建的消息）
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # 工具结果块
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        total += estimate_tokens(block.get("text", ""))
+            elif isinstance(content, str):
+                total += estimate_tokens(content)
+        else:
+            # ORM ConversationMessage 对象
+            total += msg_tokens(msg)
     return total
 
 
@@ -81,14 +93,24 @@ async def compact_context(
     available_tokens = target_tokens
     if system_injection_idx >= 0:
         # 系统上下文注入占用一部分 token
-        injection_tokens = msg_tokens(normal_msgs[system_injection_idx])
+        inj_msg = normal_msgs[system_injection_idx]
+        inj_content = inj_msg.get("content", "") if isinstance(inj_msg, dict) else getattr(inj_msg, "content", "") or ""
+        injection_tokens = estimate_tokens(inj_content)
         available_tokens -= injection_tokens
 
     # 从最新往回保留消息
     kept_msgs = []
     used_tokens = 0
     for msg in reversed(normal_msgs):
-        msg_tokens_count = msg_tokens(msg)
+        # 同步估算单条消息的 token 数，兼容 dict 和 ORM 类型
+        msg_tokens_count = 0
+        content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "") or ""
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    msg_tokens_count += estimate_tokens(block.get("text", ""))
+        elif isinstance(content, str):
+            msg_tokens_count += estimate_tokens(content)
         if used_tokens + msg_tokens_count > available_tokens:
             break
         kept_msgs.append(msg)
@@ -120,9 +142,11 @@ async def compact_context(
                 compressible_content.append(f"{role}：{text}")
 
     if not compressible_content:
+        logger.warning("[compaction] compressible_content 为空，跳过压缩")
         return messages, False  # 没有可压缩的内容
 
     # 调用 LLM 生成压缩摘要
+    logger.info("[compaction] 调用 LLM 生成摘要，compressible_content=%d 条", len(compressible_content))
     compact_summary = await _generate_compact_summary(
         compressible_content,
         summary_msg.get("content", "") if summary_msg else None,
@@ -191,8 +215,10 @@ async def _generate_compact_summary(
     )
 
     try:
+        from app.core.config import get_settings
         from agent.memory._llm import complete_text
-        summary = await complete_text(sys_prompt, user_text, settings=None, max_tokens=COMPACT_SUMMARY_MAX_TOKENS)
+        settings = get_settings()
+        summary = await complete_text(sys_prompt, user_text, settings=settings, max_tokens=COMPACT_SUMMARY_MAX_TOKENS)
         return summary.strip() if summary else ""
     except Exception as e:
         logger.warning("[compaction] 摘要生成失败: %s", e)
