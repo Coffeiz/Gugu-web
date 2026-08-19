@@ -132,6 +132,19 @@ if system_text:
 3. **简化设计** - 放弃复杂的分组逻辑，换更简单的实现
 4. **持续监控** - 优化后需要实际数据验证效果
 
+## 9. 实测结论
+
+**MiniMax 缓存行为**：
+- ✅ run 内多轮工具调用缓存有效（cache_read 可达 65%+）
+- ❌ 跨 call 缓存完全不工作（cache_write=0, cache_read=128）
+- ❌ 即使 system text ≥512 tokens + cache_control 标记，跨 call 缓存仍不生效
+
+**Qwen-paw 缓存行为**：
+- ✅ 98.7% 缓存率来自 run 内多轮工具调用缓存
+- ❌ 跨 call 缓存也不工作（单独测试确认）
+
+**两个 provider 都不支持跨 call 缓存**，高缓存率来自 run 内多轮工具循环的累加。
+
 ---
 
 **测试人员**: ZCode
