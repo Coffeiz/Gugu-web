@@ -159,9 +159,11 @@ class AnthropicDriver:
         # prompt 缓存：激进策略（2026-08-19 优化）
         # 对比测试显示，给所有 system 块（包括记忆/项目/时间等动态内容）都标记 cache_control，
         # 比只标记稳定前缀的保守策略缓存命中率提升 20.5%（73.5% vs 61.1%）。
-        # Anthropic/MiniMax 缓存 TTL 是 5 分钟，记忆/项目等大部分内容在这个窗口内实际不变。
+        # 缓存 TTL：5 分钟（MiniMax 官方文档），每次命中自动刷新，无需额外费用。
+        # 缓存读取按 10% 计费，比重新计算便宜很多，即使缓存内容略变，重新标记的成本也低。
         # 放弃保守分组（不再区分 stable/dynamic 缓存），全部标记换更高命中率。
         # 代价：动态部分每次重写会触发 cache_write，但相对节省的 cache_read 仍然划算。
+        # 限制：最多 4 个显式 cache_control 断点（多了会 400 错误）。
         if system_text:
             stripped = _builder.strip_cache_marker(system_text)
             if supports_active_cache:

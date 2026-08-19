@@ -37,13 +37,15 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 **当前策略（2026-08-19 激进策略）**：所有 system 块统一标记 `cache_control: {type: "ephemeral"}`，不再区分 stable/dynamic 分组。
 
-**为什么放弃保守分组**：对比测试显示激进策略缓存命中率提升 20.5%（73.5% vs 61.1%），input_tokens 减少 31.7%。Anthropic/MiniMax 的缓存 TTL 是 5 分钟，记忆/项目等"动态"内容在这个窗口内大部分时间不变。
+**为什么放弃保守分组**：对比测试显示激进策略缓存命中率提升 20.5%（73.5% vs 61.1%），input_tokens 减少 31.7%。Anthropic/MiniMax 的缓存 TTL 是 5 分钟（来源：MiniMax 官方文档），记忆/项目等"动态"内容在这个窗口内大部分时间不变。
 
 **实现位置**：`backend/agent/loop_drivers.py` 第 159-175 行。
 
 **关键原则**：
 - 缓存必须**主动标记**，服务商不自动识别内容相似度
+- 缓存 TTL 5 分钟，每次命中自动刷新（MiniMax 官方文档）
 - 缓存命中按 10% 价格计费，应最大化利用率
+- 最多 4 个显式 cache_control 断点（多了会 400 错误，Anthropic 文档）
 - 通过 `split_for_cache` 的 `CACHE_BREAK` 标记仍保留兼容，但不依赖
 
 **修改缓存策略前必须**：
