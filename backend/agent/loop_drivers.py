@@ -147,27 +147,25 @@ class AnthropicDriver:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：MiniMax 前缀匹配策略（2026-08-19 修正）
-        # MiniMax 缓存机制：前缀精确匹配（tools → system → messages），
-        # 任何内容变化都会导致整个缓存失效。
-        # 因此必须用 cache_control 把 system 分为两部分：
-        #   - 静态前缀（人格/政策/工具定义等）→ 加 cache_control → 可跨 run 缓存
-        #   - 动态后缀（时间/记忆/项目状态等）→ 不加 cache_control → 每次重新计算
-        # 这样静态前缀不变时，缓存就能命中；动态内容变化不影响缓存。
+        # prompt 缓存：多段缓存策略（2026-08-19 优化）
+        # builder.py 将 system 分为 3 段：stable（不变）/ semi-stable（慢变）/ volatile（每轮变）
+        # 前 2 段加 cache_control，最后一段不加。这样记忆/项目等慢变内容也能被缓存。
         if system_text:
-            stable, dynamic = _builder.split_for_cache(system_text)
-            if dynamic and supports_active_cache:
-                # 静态前缀加 cache_control，动态后缀不加
-                system_param = [
-                    {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": dynamic},
-                ]
-            else:
-                # 不支持主动缓存时回退到普通 system 串
-                _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
-                if supports_active_cache:
-                    _sys_blk["cache_control"] = {"type": "ephemeral"}
+            parts = _builder.split_for_cache(system_text)
+            if len(parts) > 1 and supports_active_cache:
+                # 前 N-1 段加 cache_control，最后一段不加
+                system_param = []
+                for i, part in enumerate(parts):
+                    if i < len(parts) - 1:
+                        system_param.append({"type": "text", "text": part, "cache_control": {"type": "ephemeral"}})
+                    else:
+                        system_param.append({"type": "text", "text": part})
+            elif supports_active_cache:
+                # 无断点时，整块加 cache_control
+                _sys_blk = {"type": "text", "text": parts[0], "cache_control": {"type": "ephemeral"}}
                 system_param = [_sys_blk]
+            else:
+                system_param = _builder.strip_cache_marker(system_text)
         else:
             system_param = system_text
 
@@ -263,13 +261,27 @@ class OpenAIDriver:
         from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
-        # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式
-        # cache_control，去掉它还原成普通 system 串（标记仅出现在 system 消息里，每轮重建、
-        # 改它无副作用）。这段是一次性的（调用方已经把 system 拼进 messages[0]，不是走 system_text
-        # 参数——_run_openai 现状就不接 system_text，这里原样保留这个既有行为，不是本次改动引入的）。
+        # OpenAI 兼容 API（Qwen/阿里等）支持 cache_control，不再 strip 掉。
+        # 只处理旧的 CACHE_BREAK 标记（转换为数组格式的 cache_control）。
+        # 阿里文档：system content 必须是数组格式，cache_control 加在 content 块上。
         for _m in messages:
-            if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
-                _m["content"] = _builder.strip_cache_marker(_m["content"])
+            if _m.get("role") == "system":
+                content = _m.get("content")
+                if isinstance(content, str):
+                    if _builder.CACHE_BREAK in content:
+                        # 旧格式：字符串带 CACHE_BREAK 标记 → 转成数组格式
+                        stable, dynamic = content.split(_builder.CACHE_BREAK, 1)
+                        new_content = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}]
+                        if dynamic.strip():
+                            new_content.append({"type": "text", "text": dynamic})
+                        _m["content"] = new_content
+                    else:
+                        # 普通字符串 → 转成数组格式（阿里要求），加 cache_control
+                        _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                elif isinstance(content, list):
+                    # 已经是数组格式，确保最后一个块有 cache_control
+                    if content and "cache_control" not in content[-1]:
+                        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
 
         tools = registry.openai_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
@@ -313,8 +325,13 @@ class OpenAIDriver:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
                     total_out += chunk.usage.completion_tokens or 0
-                    # DeepSeek 自动上下文缓存命中（prompt_cache_hit_tokens）；非 DeepSeek 厂商无此字段 → 0
-                    total_cache += getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
+                    # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
+                    cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
+                    if not cache_hit:
+                        details = getattr(chunk.usage, "prompt_tokens_details", None)
+                        if details:
+                            cache_hit = getattr(details, "cached_tokens", 0) or 0
+                    total_cache += cache_hit
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta

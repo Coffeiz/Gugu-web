@@ -18,12 +18,19 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 CACHE_BREAK = "\x1d"
 
 
-def split_for_cache(text: str) -> tuple[str, str]:
-    """按 CACHE_BREAK 把 system 切成（稳定前缀, 动态后缀）。无标记 → (原文, '')，调用方按单块处理。"""
+def split_for_cache(text: str) -> list[str]:
+    """按 CACHE_BREAK 把 system 切成多个段。无标记 → [原文]。
+
+    builder.py 使用多个 CACHE_BREAK 将 system 分为 3 段：
+    - stable（人格/政策等，完全不变）
+    - semi-stable（记忆/项目/文件等，变化较慢）
+    - volatile（时间/消息格式等，每轮都变）
+
+    调用方根据需要给前面的段加 cache_control，最后一段不加。
+    """
     if CACHE_BREAK in text:
-        a, b = text.split(CACHE_BREAK, 1)
-        return a, b
-    return text, ""
+        return text.split(CACHE_BREAK)
+    return [text]
 
 
 def strip_cache_marker(text: str) -> str:
@@ -169,17 +176,18 @@ def build(profile: str, user_name: str, projects: list, events: list,
     except Exception:
         beh_block = ""
 
-    # 顺序不变：人格 → 本轮行为模块 → lens → 工具准则 → 内容政策 → 风格 → 技能索引 ┃ 记忆 → 来源 → 当前状态
-    # ┃ = prompt 缓存断点（插 CACHE_BREAK）：左侧「稳定前缀」一个 session 内基本不变 → 可被缓存、命中读取便宜
-    #   ~90%；右侧每轮会变（记忆写入、分钟级时间、项目/日历/文件）→ 不缓存。把「必变」的挡在缓存块外，
-    #   避免整块每分钟失效（原先整段一个 cache_control、含分钟级时间 → 几乎每次 miss）。段落顺序与语义不变。
-    stable, dynamic = [], []
+    # 缓存策略（2026-08-19 更新）：
+    # 使用多个 CACHE_BREAK 分段，每段对应不同的 cache_control 断点：
+    #   断点1（stable）：人格/政策/技能等 → session 内完全不变 → 缓存命中率最高
+    #   断点2（semi-stable）：记忆/项目/文件/日历 → 变化频率低（天/周级）
+    #   无断点（volatile）：当前时间/消息格式 → 每轮都变 → 不标记
+    #
+    # 最多 4 个断点（阿里/MiniMax 限制），当前使用 2 个。
+    stable, semi_stable, volatile = [], [], []
     if persona:
         stable.append(persona)
     if beh_block:
         stable.append(beh_block)
-    # 解读镜片（per-user lens）：紧跟行为模块、置于工具准则之前——它偏置「怎么读懂 TA」，
-    # 是最上游的感知偏好。read_memory 已渲染好（按 confidence 选话术、退休低分规则）。
     lens_block = (memory.get("lens") or "").strip()
     if lens_block:
         stable.append(lens_block)
@@ -193,25 +201,36 @@ def build(profile: str, user_name: str, projects: list, events: list,
     skills_block = _skills_index_block(skills)
     if skills_block:
         stable.append(skills_block)
+
+    # 半稳定内容：变化频率低，但不是完全不变
+    # 记忆（profile/pattern/longterm 很少变，daily 变化稍频繁但仍可缓存）
     mem_block = _memory_block(memory)
     if mem_block:
-        dynamic.append(mem_block)
+        semi_stable.append(mem_block)
+    # 项目概览、文件概览、日历事件
     src_block = _source_block(source, im_channels)
     if src_block:
-        dynamic.append(src_block)
-    if non_streaming:
-        dynamic.append(_NON_STREAMING_BLOCK)
-    dynamic.append(result)
-    if im_message_format == "compat":
-        from agent.im.message_format import compatibility_prompt
-        dynamic.insert(-1, compatibility_prompt())
+        semi_stable.append(src_block)
 
-    stable_str  = "\n\n---\n\n".join(stable)
-    dynamic_str = "\n\n---\n\n".join(dynamic)
-    if not dynamic_str:
-        return stable_str
-    # CACHE_BREAK 紧贴正常分隔符插入：拼接/strip 后与「单段 join」逐字一致，仅多一个缓存断点位置信息。
-    return stable_str + CACHE_BREAK + "\n\n---\n\n" + dynamic_str
+    # 高频变化内容：每轮都变
+    if non_streaming:
+        volatile.append(_NON_STREAMING_BLOCK)
+    volatile.append(result)
+    if im_message_format == "compat":
+        from agent.im.context_loader import compatibility_prompt
+        volatile.insert(-1, compatibility_prompt())
+
+    stable_str = "\n\n---\n\n".join(stable)
+    semi_str = "\n\n---\n\n".join(semi_stable)
+    volatile_str = "\n\n---\n\n".join(volatile)
+
+    if not volatile_str:
+        if not semi_str:
+            return stable_str
+        return stable_str + CACHE_BREAK + "\n\n---\n\n" + semi_str
+    if not semi_str:
+        return stable_str + CACHE_BREAK + "\n\n---\n\n" + volatile_str
+    return stable_str + CACHE_BREAK + "\n\n---\n\n" + semi_str + CACHE_BREAK + "\n\n---\n\n" + volatile_str
 
 
 _SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
