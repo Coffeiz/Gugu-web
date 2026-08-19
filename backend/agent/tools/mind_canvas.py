@@ -15,6 +15,7 @@ from app.services.mind_canvas import (
     connect_nodes,
     create_canvas,
     create_canvas_note,
+    delete_canvas,
     delete_canvas_note,
     disconnect_node_relation,
     get_canvas_item,
@@ -393,6 +394,24 @@ async def _mind_create_canvas(db, user_id, args: dict):
     return {"canvas": {"canvas_id": canvas.id, "title": canvas.title, "project_id": canvas.project_id}}
 
 
+async def _mind_delete_canvas(db, user_id, args: dict):
+    from agent.security import confirm
+    canvas_id = args.get("canvas_id")
+    if not isinstance(canvas_id, int):
+        return {"error": "需要提供 canvas_id"}
+    canvas = await get_owned_canvas(db, user_id, canvas_id)
+    if canvas is None:
+        return {"error": "画布不存在"}
+    title = canvas.title or "未命名画布"
+    blocked = confirm.needs_confirmation(args, f"将删除画布「{title}」（含所有便签、引用节点和连接关系）", user_id)
+    if blocked is not None:
+        return blocked
+    ok = await delete_canvas(db, user_id, canvas_id, commit=True)
+    if not ok:
+        return {"error": "删除失败"}
+    return {"deleted": True, "canvas_id": canvas_id, "title": title}
+
+
 async def _mind_create_canvas_note(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int) or await get_owned_canvas(db, user_id, canvas_id) is None:
@@ -768,6 +787,22 @@ class MindCanvasSkill(BaseSkill):
             },
             handler=_mind_create_canvas,
             mutates=True,
+        ),
+        Tool(
+            name="mind_delete_canvas", label="删除思维画布",
+            description="删除一张画布及其所有内容（便签、引用节点、连接关系全部清除）。执行前必须告知用户画布标题并获得确认。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "canvas_id": {"type": "integer"},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
+                },
+                "required": ["canvas_id"],
+            },
+            handler=_mind_delete_canvas,
+            mutates=True,
+            destructive=True,
         ),
         Tool(
             name="mind_create_canvas_note", label="创建画布便签",
