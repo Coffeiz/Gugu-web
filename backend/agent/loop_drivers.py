@@ -97,29 +97,49 @@ class _AnthropicCtx:
 
 
 def _with_history_cache(messages: list) -> list:
-    """给消息历史的每个块添加 cache_control，用于 MiniMax 前缀匹配缓存。
+    """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
 
-    MiniMax 缓存是前缀精确匹配：system + messages 构成完整的前缀。
-    给每个消息块加 cache_control 可以帮助 MiniMax 识别可缓存的边界。
-    返回浅拷贝、不改原 messages。"""
+    MiniMax/Anthropic 缓存机制是前缀匹配：
+    - 找到第一个 cache_control 标记
+    - 缓存从请求开头到该标记的所有内容
+    - 后续请求如果前缀相同，就能命中缓存
+
+    dsh 的做法（已验证 50% 缓存率）：
+    1. system 块加 cache_control（已在 prepare 中处理）
+    2. 最后一条用户消息加 cache_control（缓存完整对话历史）
+
+    这比每个块都加更有效，因为：
+    - MiniMax 只处理有限数量的 cache_control 断点
+    - 最后一条消息的 cache_control 能覆盖整个历史前缀
+    """
     if not messages:
         return messages
 
+    # 浅拷贝 messages 列表
     new_messages = []
-    for msg in messages:
+
+    for i, msg in enumerate(messages):
         msg = dict(msg)
         content = msg.get("content")
-        if isinstance(content, list):
-            new_content = [
-                {**block, "cache_control": {"type": "ephemeral"}}
-                for block in content
-            ] if content else content
-        elif isinstance(content, str):
+
+        # 只给最后一条消息的最后一个块加 cache_control
+        is_last = (i == len(messages) - 1)
+
+        if isinstance(content, list) and is_last and content:
+            # 最后一条消息：只给最后一个块加 cache_control
+            new_content = content[:-1] + [
+                {**content[-1], "cache_control": {"type": "ephemeral"}}
+            ]
+        elif isinstance(content, str) and is_last:
+            # 字符串内容转为数组，加 cache_control
             new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
         else:
+            # 其他消息不加 cache_control
             new_content = content
+
         msg["content"] = new_content
         new_messages.append(msg)
+
     return new_messages
 
 
