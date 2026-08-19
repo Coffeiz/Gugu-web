@@ -233,6 +233,127 @@ def build(profile: str, user_name: str, projects: list, events: list,
     return stable_str + CACHE_BREAK + "\n\n---\n\n" + semi_str + CACHE_BREAK + "\n\n---\n\n" + volatile_str
 
 
+def build_split(profile: str, user_name: str, projects: list, events: list,
+                memory: dict | None = None, files: dict | None = None,
+                skills: list[str] | None = None,
+                style_prefs: dict | None = None,
+                source: str | None = None, im_channels: dict | None = None,
+                user_msg: str = "", non_streaming: bool = False,
+                include_projects: bool = True, include_calendar: bool = True,
+                include_files: bool = True, include_memory: bool = True,
+                user_tz=None, im_message_format: str | None = None) -> tuple[str, str]:
+    """将 system prompt 拆分为静态部分和动态部分。
+
+    静态部分（完全不变）：人格/政策/工具定义/风格/技能索引
+    动态部分（可能变化）：记忆/项目/文件/时间/消息格式
+
+    返回 (static_text, dynamic_text)，调用方将静态部分放在 system，
+    动态部分放在 messages[0] 作为上下文注入。
+
+    这样 system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存能命中。
+    """
+    memory = memory if (include_memory and memory) else {}
+    _now = datetime.now(user_tz or LOCAL_TZ)
+    today = _now.strftime("%Y-%m-%d")
+    _wd = "一二三四五六日"[_now.weekday()]
+    now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
+    if _now.hour < 4:
+        now_str += "，深夜未眠——以日出为一天的分界"
+
+    # === 静态部分（完全不变） ===
+    static_parts = []
+
+    try:
+        persona = (_PROMPTS_DIR / "persona.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        persona = ""
+    if persona:
+        static_parts.append(persona)
+
+    try:
+        from agent import behaviors as _bh
+        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
+    except Exception:
+        beh_block = ""
+    if beh_block:
+        static_parts.append(beh_block)
+
+    lens_block = (memory.get("lens") or "").strip()
+    if lens_block:
+        static_parts.append(lens_block)
+
+    try:
+        skills_policy = (_PROMPTS_DIR / "skills.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        skills_policy = ""
+    if skills_policy:
+        static_parts.append(skills_policy)
+
+    try:
+        content_policy = (_PROMPTS_DIR / "policy.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        content_policy = ""
+    if content_policy:
+        static_parts.append(content_policy)
+
+    style_block = _style_block(style_prefs or {})
+    if style_block:
+        static_parts.append(style_block)
+
+    skills_block = _skills_index_block(skills)
+    if skills_block:
+        static_parts.append(skills_block)
+
+    # === 动态部分（可能变化） ===
+    dynamic_parts = []
+
+    mem_block = _memory_block(memory)
+    if mem_block:
+        dynamic_parts.append(mem_block)
+
+    if include_projects:
+        proj_lines = []
+        for p in projects[:25]:
+            deadline = f"截止 {p.deadline}" if p.deadline else "无截止"
+            done_cnt = sum(1 for s in p.stages if s.get("done"))
+            total_cnt = len(p.stages)
+            prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
+            proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
+        proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
+    else:
+        proj_block = "（本次任务不需要项目上下文，未加载）"
+    dynamic_parts.append(f"## 项目\n{proj_block}")
+
+    if include_calendar:
+        ev_lines = [f"- {ev.date} {ev.title}" for ev in events[:10]]
+        ev_block = "\n".join(ev_lines) if ev_lines else "暂无近期事件"
+    else:
+        ev_block = "（本次任务不需要日历上下文，未加载）"
+    dynamic_parts.append(f"## 日历\n{ev_block}")
+
+    files_block = (_files_block(files, {p.id: p.name for p in projects})
+                   if include_files else "（本次任务不需要文件上下文，未加载）")
+    dynamic_parts.append(f"## 文件\n{files_block}")
+
+    src_block = _source_block(source, im_channels)
+    if src_block:
+        dynamic_parts.append(src_block)
+
+    if non_streaming:
+        dynamic_parts.append(_NON_STREAMING_BLOCK)
+
+    dynamic_parts.append(f"当前时间：{now_str}")
+
+    if im_message_format == "compat":
+        from agent.im.context_loader import compatibility_prompt
+        dynamic_parts.append(compatibility_prompt())
+
+    static_text = "\n\n---\n\n".join(static_parts) if static_parts else ""
+    dynamic_text = "\n\n---\n\n".join(dynamic_parts) if dynamic_parts else ""
+
+    return static_text, dynamic_text
+
+
 _SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
 
 

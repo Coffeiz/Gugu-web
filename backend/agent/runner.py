@@ -369,31 +369,41 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     memory = context_data.memory
     im_channels = context_data.im_channels
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(
+
+    # 使用 build_split 将 system prompt 拆分为静态和动态部分
+    static_prompt, dynamic_context = builder.build_split(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
         im_message_format=getattr(req, "im_message_format", None),
-        user_msg=req.message,   # 行为模块软点亮（emotion-first 等）
-        non_streaming=True,     # run_collect 是 IM 专用（worker.py 调用），不流式展示给用户
+        user_msg=req.message,
+        non_streaming=True,
         user_tz=user_tz,
     )
-    system_prompt += _im_identity_block(req, history)
+    system_prompt = static_prompt
+
+    # 动态上下文通过额外内容块追加到 system prompt
+    _dynamic_extra_parts = []
+    _im_id = _im_identity_block(req, history)
+    if _im_id:
+        _dynamic_extra_parts.append(_im_id)
     if context_data.im_memory:
         from agent.im.context_loader import format_im_memory
         scope_memory = format_im_memory(context_data.im_memory, req.im_role)
         if scope_memory:
-            system_prompt += "\n\n" + scope_memory
-    if im_bridge:               # IM 新会话续接桥（见 _im_continuity_bridge）
-        system_prompt += im_bridge
-    if _proactive_lead:         # 主动推送是会话首条 assistant → sanitize 会剥掉，塞 system 兜底
-        system_prompt += "\n\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead
+            _dynamic_extra_parts.append(scope_memory)
+    if im_bridge:
+        _dynamic_extra_parts.append(im_bridge)
+    if _proactive_lead:
+        _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
-    # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
     if _summary:
-        system_prompt += compress_conv.system_block(_summary)
+        _dynamic_extra_parts.append(compress_conv.system_block(_summary))
+
+    if _dynamic_extra_parts:
+        system_prompt += "\n\n" + "\n\n".join(_dynamic_extra_parts)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -627,29 +637,43 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     memory = context_data.memory
     im_channels = context_data.im_channels
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(
+
+    # 使用 build_split 将 system prompt 拆分为静态和动态部分
+    # 静态部分放 system，动态部分放 messages[0]，实现跨 call 缓存
+    static_prompt, dynamic_context = builder.build_split(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
         user_msg=req.message,
-        non_streaming=False,     # ★ 流式：让 core.py 走流式生成路径（不走 builder._NON_STREAMING_BLOCK 抑制）
+        non_streaming=False,
         user_tz=user_tz,
     )
-    system_prompt += _im_identity_block(req, history)
+    system_prompt = static_prompt
+
+    # 动态上下文通过额外内容块追加到 system prompt
+    # 注意：这些动态内容仍然在 system 中，但通过 cache_control 策略管理缓存
+    # 当动态内容变化时，会触发缓存失效，但静态前缀仍可被缓存
+    _dynamic_extra_parts = []
+    _im_id = _im_identity_block(req, history)
+    if _im_id:
+        _dynamic_extra_parts.append(_im_id)
     if context_data.im_memory:
         from agent.im.context_loader import format_im_memory
         scope_memory = format_im_memory(context_data.im_memory, req.im_role)
         if scope_memory:
-            system_prompt += "\n\n" + scope_memory
+            _dynamic_extra_parts.append(scope_memory)
     if im_bridge:
-        system_prompt += im_bridge
+        _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
-        system_prompt += "\n\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead
+        _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
     if _summary:
-        system_prompt += compress_conv.system_block(_summary)
+        _dynamic_extra_parts.append(compress_conv.system_block(_summary))
+
+    if _dynamic_extra_parts:
+        system_prompt += "\n\n" + "\n\n".join(_dynamic_extra_parts)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -904,7 +928,7 @@ async def _run_scheduled_once(
                 im_channels = await loaders.load_im_channels(user_id)
 
         prompt_name = profile.prompt_file.removesuffix(".md")
-        system_prompt = builder.build(
+        static_prompt, _ = builder.build_split(
             prompt_name,
             user_name,
             projects,
@@ -920,6 +944,7 @@ async def _run_scheduled_once(
             include_memory=not minimal_context,
             user_tz=user_tz,
         )
+        system_prompt = static_prompt
 
         from agent.llm.llm_select import use_anthropic_for
 
