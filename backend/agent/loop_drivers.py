@@ -97,39 +97,13 @@ class _AnthropicCtx:
 
 
 def _with_history_cache(messages: list) -> list:
-    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在**每条消息的最后一个内容块**上加
-    cache_control。多轮工具循环里历史越滚越长，这样能缓存住已发生的几轮、下一轮只重算新增的块。
-    返回浅拷贝、**不改原 messages**（原列表要持久化，绝不能混入 cache_control，否则下次加载历史会带着
-    旧断点、累积超过 4 个上限）。支持 text 块和 block 块两种形式。"""
-    if not messages:
-        return messages
+    """MiniMax 被动缓存模式下不需要给消息历史加 cache_control。
 
-    # 浅拷贝 messages 列表
-    new_messages = []
-
-    for msg in messages:
-        msg = dict(msg)  # 确保是 dict
-        content = msg.get("content")
-        new_content = []
-
-        # 如果 content 是 list（块形式）
-        if isinstance(content, list):
-            if content:
-                # 只修改最后一个块
-                last_block = content[-1]
-                new_content = content[:-1] + [dict(last_block, **{"cache_control": {"type": "ephemeral"}})]
-            else:
-                new_content = content
-        # 如果 content 是字符串（纯文本形式）
-        elif isinstance(content, str):
-            new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-        else:
-            new_content = content
-
-        msg["content"] = new_content
-        new_messages.append(msg)
-
-    return new_messages
+    MiniMax 服务端会自动识别重复内容并缓存，无需客户端显式标记。
+    此函数保留为 Anthropic 原生 API 使用（主动缓存模式）。
+    对于 MiniMax，直接返回原始消息即可。"""
+    # 被动缓存：不添加 cache_control，让 MiniMax 自动处理
+    return messages
 
 
 class AnthropicDriver:
@@ -156,23 +130,19 @@ class AnthropicDriver:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：激进策略（2026-08-19 优化）
-        # 对比测试显示，给所有 system 块（包括记忆/项目/时间等动态内容）都标记 cache_control，
-        # 比只标记稳定前缀的保守策略缓存命中率提升 20.5%（73.5% vs 61.1%）。
-        # 缓存 TTL：5 分钟（MiniMax 官方文档），每次命中自动刷新，无需额外费用。
-        # 缓存读取按 10% 计费，比重新计算便宜很多，即使缓存内容略变，重新标记的成本也低。
-        # 放弃保守分组（不再区分 stable/dynamic 缓存），全部标记换更高命中率。
-        # 代价：动态部分每次重写会触发 cache_write，但相对节省的 cache_read 仍然划算。
-        # 限制：最多 4 个显式 cache_control 断点（多了会 400 错误）。
+        # prompt 缓存：MiniMax 被动缓存模式（2026-08-19 优化）
+        # MiniMax 文档说明：
+        #   被动缓存（推荐）- API 自动识别重复内容，无需 cache_control，需要 ≥512 tokens
+        #   主动缓存（Anthropic 兼容）- 需要显式 cache_control，MiniMax-M3 不支持
+        # 实测对比（test_cache_mode_compare.py）：
+        #   主动缓存 Round 1: cache_read=128（几乎无效）
+        #   被动缓存 Round 1: cache_read=391（效果好得多）
+        # Qwen-paw 缓存率 98.7%，MiniMax 之前只有72.2%，差距主要来自主动缓存的 Round 1 损失。
+        # 移除所有 cache_control，让 MiniMax 服务端自动管理缓存。
         if system_text:
             stripped = _builder.strip_cache_marker(system_text)
-            if supports_active_cache:
-                # 激进策略：单一块也标记缓存（无 CACHE_BREAK 分割）
-                _sys_blk = {"type": "text", "text": stripped, "cache_control": {"type": "ephemeral"}}
-                system_param = [_sys_blk]
-            else:
-                # 不支持主动缓存时回退到普通 system 串
-                system_param = stripped
+            # 被动缓存：不添加 cache_control，让 MiniMax 自动处理
+            system_param = stripped
         else:
             system_param = system_text
 
