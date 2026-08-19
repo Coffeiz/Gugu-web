@@ -160,8 +160,7 @@ class AnthropicDriver:
         # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
         # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
         # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
-        # MiniMax-M3 走被动前缀缓存，MiMo 不支持 Anthropic 主动缓存；两者都不能发送
-        # cache_control，仍保持 tools → system → messages 的稳定顺序以便被动缓存命中。
+        # MiniMax-M3 / MiMo 支持 Anthropic 主动缓存；两者都可以发送 cache_control。
         if system_text:
             stable, dynamic = _builder.split_for_cache(system_text)
             if dynamic and supports_active_cache:
@@ -187,9 +186,9 @@ class AnthropicDriver:
     async def run_round(self, client, ctx, messages):
         from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
 
-        # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
+        # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
-        #    绝不能混入 cache_control）。MiniMax-M3 / MiMo 不支持主动缓存 → 原样发。
+        #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
         _msgs = _with_history_cache(messages) if ctx.supports_active_cache else messages
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
