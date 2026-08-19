@@ -29,7 +29,7 @@ from app.core.url_security import resolve_pinned_ip
 _log = logging.getLogger("agent.tools.web")
 
 _MAX_BODY = 4000          # 默认返回字符数（模型可通过 max_chars 参数调整）
-_MAX_BODY_HARD = 20000    # 硬上限：即使模型请求更多也不超过此值
+_MAX_BODY_HARD = 40000    # 硬上限：即使模型请求更多也不超过此值（~10k tokens，不撑爆上下文）
 _MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）
@@ -206,12 +206,12 @@ class WebSkill(BaseSkill):
                         "读不出正文（返回 error 提示可能是 JS 渲染页面）就换 web_search/deep_research。"
                         "也供天气等技能取实时数据用——通常由 use_skill 拉到的技能说明里指示你调用。"
                         "返回 truncated=true 且 total_chars 远大于已返回长度时，可用 max_chars 参数"
-                        "请求更多内容（上限 20000）。",
+                        "请求更多内容（上限 40000）。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "完整 URL，如 https://wttr.in/Beijing?format=3"},
-                    "max_chars": {"type": "integer", "description": "返回正文的最大字符数，默认 4000，上限 20000。长文可设大些"},
+                    "max_chars": {"type": "integer", "description": "返回正文的最大字符数，默认 4000，上限 40000。长文可设大些"},
                 },
                 "required": ["url"],
             },
