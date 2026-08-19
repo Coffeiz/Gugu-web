@@ -227,6 +227,7 @@ function restoreView(id: number) {
 let viewSaveTimer: ReturnType<typeof setTimeout> | null = null
 let pendingViewSave: { id: number; view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } } } | null = null
 function onViewChange(view: { x: number; y: number; scale: number; viewport?: { width: number; height: number } }) {
+  if (!canvasReady.value) return
   const id = activeCanvasId.value
   if (id == null) return
   pendingViewSave = { id, view }

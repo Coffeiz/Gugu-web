@@ -577,7 +577,7 @@ onMounted(() => {
     }
   })
   stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
-  updateViewportSizeAndEmit()
+  updateViewportSize()
   viewportResizeObserver = new ResizeObserver(updateViewportSizeAndEmit)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
   window.addEventListener('pointermove', onPointerMove)
