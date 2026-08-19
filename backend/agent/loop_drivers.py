@@ -97,13 +97,30 @@ class _AnthropicCtx:
 
 
 def _with_history_cache(messages: list) -> list:
-    """MiniMax 被动缓存模式下不需要给消息历史加 cache_control。
+    """给消息历史的每个块添加 cache_control，用于 MiniMax 前缀匹配缓存。
 
-    MiniMax 服务端会自动识别重复内容并缓存，无需客户端显式标记。
-    此函数保留为 Anthropic 原生 API 使用（主动缓存模式）。
-    对于 MiniMax，直接返回原始消息即可。"""
-    # 被动缓存：不添加 cache_control，让 MiniMax 自动处理
-    return messages
+    MiniMax 缓存是前缀精确匹配：system + messages 构成完整的前缀。
+    给每个消息块加 cache_control 可以帮助 MiniMax 识别可缓存的边界。
+    返回浅拷贝、不改原 messages。"""
+    if not messages:
+        return messages
+
+    new_messages = []
+    for msg in messages:
+        msg = dict(msg)
+        content = msg.get("content")
+        if isinstance(content, list):
+            new_content = [
+                {**block, "cache_control": {"type": "ephemeral"}}
+                for block in content
+            ] if content else content
+        elif isinstance(content, str):
+            new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        else:
+            new_content = content
+        msg["content"] = new_content
+        new_messages.append(msg)
+    return new_messages
 
 
 class AnthropicDriver:
@@ -130,19 +147,27 @@ class AnthropicDriver:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：MiniMax 被动缓存模式（2026-08-19 优化）
-        # MiniMax 文档说明：
-        #   被动缓存（推荐）- API 自动识别重复内容，无需 cache_control，需要 ≥512 tokens
-        #   主动缓存（Anthropic 兼容）- 需要显式 cache_control，MiniMax-M3 不支持
-        # 实测对比（test_cache_mode_compare.py）：
-        #   主动缓存 Round 1: cache_read=128（几乎无效）
-        #   被动缓存 Round 1: cache_read=391（效果好得多）
-        # Qwen-paw 缓存率 98.7%，MiniMax 之前只有72.2%，差距主要来自主动缓存的 Round 1 损失。
-        # 移除所有 cache_control，让 MiniMax 服务端自动管理缓存。
+        # prompt 缓存：MiniMax 前缀匹配策略（2026-08-19 修正）
+        # MiniMax 缓存机制：前缀精确匹配（tools → system → messages），
+        # 任何内容变化都会导致整个缓存失效。
+        # 因此必须用 cache_control 把 system 分为两部分：
+        #   - 静态前缀（人格/政策/工具定义等）→ 加 cache_control → 可跨 run 缓存
+        #   - 动态后缀（时间/记忆/项目状态等）→ 不加 cache_control → 每次重新计算
+        # 这样静态前缀不变时，缓存就能命中；动态内容变化不影响缓存。
         if system_text:
-            stripped = _builder.strip_cache_marker(system_text)
-            # 被动缓存：不添加 cache_control，让 MiniMax 自动处理
-            system_param = stripped
+            stable, dynamic = _builder.split_for_cache(system_text)
+            if dynamic and supports_active_cache:
+                # 静态前缀加 cache_control，动态后缀不加
+                system_param = [
+                    {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+                    {"type": "text", "text": dynamic},
+                ]
+            else:
+                # 不支持主动缓存时回退到普通 system 串
+                _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
+                if supports_active_cache:
+                    _sys_blk["cache_control"] = {"type": "ephemeral"}
+                system_param = [_sys_blk]
         else:
             system_param = system_text
 
