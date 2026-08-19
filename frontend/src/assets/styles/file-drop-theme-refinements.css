@@ -1,0 +1,39 @@
+/* External-file drop paint refinement.
+ * Geometry and light-mode paint remain owned by the existing page/component styles.
+ * This file is dark-only and context-scoped so the generic legacy `.drop-overlay`
+ * selector cannot become a new cross-component theme owner.
+ */
+
+/* File library + project editor file browser share the same full-surface upload language. */
+html[data-theme='dark'][data-family] .files-page .files-main > .drop-overlay,
+html[data-theme='dark'][data-family] .project-modal-root .file-content > .drop-overlay {
+  background: color-mix(in srgb,var(--surface-base) 82%,transparent);
+}
+
+html[data-theme='dark'][data-family] .files-page .files-main > .drop-overlay .drop-zone-hint,
+html[data-theme='dark'][data-family] .project-modal-root .file-content > .drop-overlay .drop-zone-hint {
+  color: var(--action-primary);
+  background: color-mix(in srgb,var(--surface-floating) 90%,transparent);
+  border-color: color-mix(in srgb,var(--action-primary) 52%,var(--border-default));
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
+}
+
+html[data-theme='dark'][data-family] .files-page .files-main > .drop-overlay .drop-hint,
+html[data-theme='dark'][data-family] .project-modal-root .file-content > .drop-overlay .drop-hint {
+  color: var(--content-primary);
+}
+
+/* Project cards have a project-colour drop language rather than the browser-surface treatment.
+ * The inline light-mode hint background intentionally stays untouched. Dark mode remaps the
+ * overlay to the card surface while retaining the project's accent as a quiet tint. */
+html[data-theme='dark'][data-family] .proj-card > .drop-overlay {
+  background: color-mix(in srgb,var(--surface-card-solid) 88%,transparent) !important;
+}
+
+html[data-theme='dark'][data-family] .proj-card.file-drag-over > .drop-overlay {
+  background: color-mix(in srgb,var(--project-color) 18%,var(--surface-card-solid)) !important;
+}
+
+html[data-theme='dark'][data-family] .proj-card.file-drag-over {
+  box-shadow: 0 0 0 2px color-mix(in srgb,var(--action-primary) 56%,transparent), var(--project-card-hover-shadow) !important;
+}
