@@ -687,7 +687,24 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     anthr_initial_len = 0
     if use_anthropic:
         for h in history:
-            content = h.content_json if h.content_json is not None else format_history_content(h, req)
+            # 正确处理 content_json（可能是 list 或 string）
+            if h.content_json is not None:
+                if isinstance(h.content_json, list):
+                    # 工具调用结果（list），提取文本内容
+                    content = ""
+                    for block in h.content_json:
+                        if isinstance(block, dict):
+                            if block.get("type") == "text":
+                                content += block.get("text", "")
+                            elif block.get("type") == "tool_use":
+                                content += f"\n工具调用: {block.get('name', '')}"
+                            elif block.get("type") == "tool_result":
+                                content += f"\n工具结果: {block.get('content', '')[:200]}"
+                    content = content.strip() or json.dumps(h.content_json, ensure_ascii=False)[:500]
+                else:
+                    content = str(h.content_json)
+            else:
+                content = format_history_content(h, req)
             anthr_messages.append({"role": h.role, "content": content})
         anthr_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)})
         anthr_messages = sanitize.sanitize_messages(anthr_messages)
