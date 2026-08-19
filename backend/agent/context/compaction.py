@@ -1,0 +1,199 @@
+"""上下文压缩模块
+
+当上下文长度接近模型限制时，主动压缩历史消息，保持 system 提示词不变，
+确保跨 call 缓存前缀一致。
+
+压缩策略：
+- 触发条件：当前上下文长度 > 用户设置的最大上下文长度 × 90%
+- 压缩目标：压缩到 token 预算的 20%
+- 保护范围：system 提示词完全保留
+- 前缀一致：压缩后保持前缀一致，支持跨 call 缓存
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import AsyncGenerator
+
+from .tokens import estimate_tokens, msg_tokens
+
+logger = logging.getLogger(__name__)
+
+# 压缩配置
+COMPACTION_THRESHOLD_RATIO = 0.9  # 超过 90% 预算触发压缩
+COMPACTION_TARGET_RATIO = 0.2     # 压缩到 20%
+COMPACT_SUMMARY_MAX_TOKENS = 800  # 压缩摘要最大 token 数
+
+
+async def estimate_context_length(messages: list, system_text: str = "") -> int:
+    """估算当前上下文总长度（tokens）。"""
+    total = estimate_tokens(system_text) if system_text else 0
+    for msg in messages:
+        total += msg_tokens(msg)
+    return total
+
+
+async def compact_context(
+    messages: list,
+    system_text: str,
+    context_tokens: int,
+    session_id: int | None = None,
+    user_id: int | None = None,
+) -> tuple[list, bool]:
+    """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
+
+    策略：
+    1. 保留 system 提示词（不压缩）
+    2. 保留最近的消息（约占 20%）
+    3. 将更老的消息压缩成摘要
+    4. 返回压缩后的 messages，确保前缀一致
+    """
+    target_tokens = int(context_tokens * COMPACTION_TARGET_RATIO)
+
+    # 估算当前上下文长度
+    current_length = await estimate_context_length(messages, system_text)
+    if current_length <= context_tokens * COMPACTION_THRESHOLD_RATIO:
+        return messages, False  # 未达到阈值，不压缩
+
+    logger.info("[compaction] session=%s 上下文 %d tokens 超过阈值 %d，开始压缩",
+                session_id, current_length, int(context_tokens * COMPACTION_THRESHOLD_RATIO))
+
+    # 分离消息类型
+    summary_msg = None
+    normal_msgs = []
+
+    for msg in messages:
+        if msg.get("role") == "summary":
+            summary_msg = msg
+        else:
+            normal_msgs.append(msg)
+
+    # 计算保留的消息数量（从最新往回保留）
+    # 系统上下文注入不计入保留预算（它总是第一个消息）
+    system_injection_idx = -1
+    for i, msg in enumerate(normal_msgs):
+        if msg.get("role") == "user" and _is_system_injection(msg.get("content", "")):
+            system_injection_idx = i
+            break
+
+    # 计算可用的 token 预算
+    available_tokens = target_tokens
+    if system_injection_idx >= 0:
+        # 系统上下文注入占用一部分 token
+        injection_tokens = msg_tokens(normal_msgs[system_injection_idx])
+        available_tokens -= injection_tokens
+
+    # 从最新往回保留消息
+    kept_msgs = []
+    used_tokens = 0
+    for msg in reversed(normal_msgs):
+        msg_tokens_count = msg_tokens(msg)
+        if used_tokens + msg_tokens_count > available_tokens:
+            break
+        kept_msgs.append(msg)
+        used_tokens += msg_tokens_count
+
+    kept_msgs.reverse()
+
+    # 需要压缩的消息（在保留消息之前的）
+    if system_injection_idx >= 0:
+        compressible_msgs = normal_msgs[:system_injection_idx] + normal_msgs[system_injection_idx + 1:system_injection_idx + len(kept_msgs)]
+    else:
+        compressible_msgs = normal_msgs[:-len(kept_msgs)] if kept_msgs else normal_msgs[:-1]
+
+    # 过滤出有内容的消息用于压缩
+    compressible_content = []
+    for msg in compressible_msgs:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            # 工具结果块，提取文本
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "").strip()
+                    if text:
+                        compressible_content.append(text)
+        elif isinstance(content, str):
+            text = content.strip()
+            if text:
+                role = "用户" if msg.get("role") == "user" else "咕咕"
+                compressible_content.append(f"{role}：{text}")
+
+    if not compressible_content:
+        return messages, False  # 没有可压缩的内容
+
+    # 调用 LLM 生成压缩摘要
+    compact_summary = await _generate_compact_summary(
+        compressible_content,
+        summary_msg.get("content", "") if summary_msg else None,
+    )
+
+    if not compact_summary:
+        return messages, False  # 压缩失败，返回原消息
+
+    # 构建压缩后的消息列表
+    new_messages = []
+
+    # 保留系统上下文注入（如果存在）
+    if system_injection_idx >= 0:
+        new_messages.append(normal_msgs[system_injection_idx])
+
+    # 添加压缩摘要
+    compact_summary_msg = {
+        "role": "user",
+        "content": f"<compacted-summary>\n{compact_summary}\n</compacted-summary>"
+    }
+    new_messages.append(compact_summary_msg)
+
+    # 保留最近的消息
+    new_messages.extend(kept_msgs)
+
+    logger.info("[compaction] session=%s 压缩完成：%d 条 → %d 条，保留 %d tokens",
+                session_id, len(normal_msgs), len(new_messages), used_tokens)
+
+    return new_messages, True
+
+
+def _is_system_injection(content: str) -> bool:
+    """判断是否是系统上下文注入消息。"""
+    if not content:
+        return False
+    return content.startswith("## 项目") or content.startswith("## 日历") or content.startswith("## 文件")
+
+
+async def _generate_compact_summary(
+    content_list: list[str],
+    prev_summary: str | None = None,
+) -> str:
+    """调用 LLM 生成压缩摘要。"""
+    if not content_list:
+        return ""
+
+    # 构建压缩 prompt
+    conv_text = "\n".join(content_list)
+
+    if prev_summary:
+        user_text = (
+            f"【已有摘要（更早的对话，需与下面新增内容合并、保留全部关键信息）】\n"
+            f"{prev_summary}\n\n"
+            f"【新增对话】\n{conv_text}"
+        )
+    else:
+        user_text = conv_text
+
+    sys_prompt = (
+        "你是一个对话摘要助手。请将以下对话压缩为简洁摘要，要求：\n"
+        "1. 保留关键决定、事实和用户偏好\n"
+        "2. 保留重要的工具调用结果\n"
+        "3. 控制在 300 字以内\n"
+        "4. 使用中文，保持自然流畅\n\n"
+        "请直接输出摘要，不要添加任何前缀或说明。"
+    )
+
+    try:
+        from agent.memory._llm import complete_text
+        summary = await complete_text(sys_prompt, user_text, settings=None, max_tokens=COMPACT_SUMMARY_MAX_TOKENS)
+        return summary.strip() if summary else ""
+    except Exception as e:
+        logger.warning("[compaction] 摘要生成失败: %s", e)
+        return ""

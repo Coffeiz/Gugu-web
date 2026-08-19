@@ -292,6 +292,21 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
 
+            # 上下文压缩检测：超过 90% 预算时触发压缩
+            from agent.context import compaction, tokens
+            context_tokens = getattr(ai, "context_tokens", 256000)
+            current_length = await compaction.estimate_context_length(messages, system_text)
+            if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
+                messages, compacted = await compaction.compact_context(
+                    messages, system_text, context_tokens,
+                    session_id=session_id, user_id=user_id,
+                )
+                if compacted:
+                    logger.info("[core] 上下文已压缩，重试当前 round")
+                    round_i -= 1  # 重试当前 round
+                    continue
+
             _tok = 0
             result = None
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
