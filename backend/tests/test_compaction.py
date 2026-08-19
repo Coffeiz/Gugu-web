@@ -4,6 +4,7 @@ import pytest
 from agent.context.compaction import (
     estimate_context_length,
     compact_context,
+    verify_prefix_consistency,
     _is_system_injection,
     COMPACTION_THRESHOLD_RATIO,
     COMPACTION_TARGET_RATIO,
@@ -114,3 +115,38 @@ class TestCompactContext:
                 for c in contents
             )
             assert has_summary
+
+
+class TestVerifyPrefixConsistency:
+    def test_valid_compacted(self):
+        """验证正常压缩后的消息结构"""
+        old = [_make_msg("user", "消息1"), _make_msg("user", "消息2")]
+        new = [
+            {"role": "user", "content": "## 项目\n- test"},
+            {"role": "user", "content": "<compacted-summary>\n摘要内容\n</compacted-summary>"},
+            _make_msg("user", "消息2"),
+        ]
+        ok, reason = verify_prefix_consistency(old, new)
+        assert ok
+
+    def test_empty_messages(self):
+        """空消息列表应报错"""
+        ok, reason = verify_prefix_consistency([], [])
+        assert not ok
+        assert "空" in reason
+
+    def test_no_summary_marker(self):
+        """缺少摘要标记应报错"""
+        old = [_make_msg("user", "消息1")]
+        new = [_make_msg("user", "消息2")]
+        ok, reason = verify_prefix_consistency(old, new)
+        assert not ok
+        assert "compacted-summary" in reason
+
+    def test_summary_at_wrong_position(self):
+        """摘要在最后应报错（后面没有最近消息）"""
+        old = [_make_msg("user", "消息1")]
+        new = [{"role": "user", "content": "<compacted-summary>\n摘要\n</compacted-summary>"}]
+        ok, reason = verify_prefix_consistency(old, new)
+        assert not ok
+        assert "最近消息" in reason

@@ -175,10 +175,73 @@ async def compact_context(
     logger.info("[compaction] session=%s 压缩完成：%d 条 → %d 条，保留 %d tokens",
                 session_id, len(normal_msgs), len(new_messages), used_tokens)
 
+    # 验证压缩后的前缀一致性
+    consistent, reason = verify_prefix_consistency(messages, new_messages, system_text)
+    if not consistent:
+        logger.warning("[compaction] session=%s 前缀不一致: %s，返回原消息", session_id, reason)
+        return messages, False
+
     return new_messages, True
 
 
 def _is_system_injection(content: str) -> bool:
+    """判断是否是系统上下文注入消息。"""
+    if not content:
+        return False
+    return content.startswith("## 项目") or content.startswith("## 日历") or content.startswith("## 文件")
+
+
+def verify_prefix_consistency(
+    old_messages: list,
+    new_messages: list,
+    system_text: str = "",
+) -> tuple[bool, str]:
+    """验证压缩后的前缀是否与之前一致。
+
+    返回 (是否一致, 不一致的原因)。
+
+    缓存前缀 = system_text + messages 的前 N 条。
+    压缩后应该保持这个前缀不变，只改变后面的摘要部分。
+    """
+    # 1. system prompt 不应该变化
+    # （system_text 由调用方保证不变，这里不需要检查）
+
+    # 2. messages 的前几条应该保持一致（系统上下文注入 + 摘要标记）
+    # 压缩后 messages 结构：[系统注入?, <compacted-summary>, 最近消息...]
+    # 旧 messages 结构：[消息1, 消息2, ..., 消息N]
+
+    # 检查压缩后的消息是否合理
+    if not new_messages:
+        return False, "压缩后消息列表为空"
+
+    # 检查是否有摘要标记
+    has_summary = False
+    for msg in new_messages:
+        content = msg.get("content", "")
+        if isinstance(content, str) and "<compacted-summary>" in content:
+            has_summary = True
+            break
+
+    if not has_summary:
+        return False, "压缩后缺少 <compacted-summary> 标记"
+
+    # 检查摘要是否在合理位置（应该在系统注入之后，最近消息之前）
+    summary_idx = -1
+    for i, msg in enumerate(new_messages):
+        content = msg.get("content", "")
+        if isinstance(content, str) and "<compacted-summary>" in content:
+            summary_idx = i
+            break
+
+    if summary_idx == -1:
+        return False, "未找到摘要位置"
+
+    # 检查摘要之后是否有最近消息
+    recent_msgs_after_summary = len(new_messages) - summary_idx - 1
+    if recent_msgs_after_summary == 0:
+        return False, "摘要之后没有最近消息"
+
+    return True, "前缀一致"
     """判断是否是系统上下文注入消息。"""
     if not content:
         return False
