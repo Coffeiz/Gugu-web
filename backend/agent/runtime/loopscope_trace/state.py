@@ -176,6 +176,53 @@ def record_context_source(
     except Exception:
         pass
 
+
+def record_snapshot_event(
+    phase: str,
+    *,
+    context_epoch: int | None,
+    snapshot_hash: str | None,
+    session_info_hash: str | None,
+    covered_message_id: int | None,
+    expires_at: Any = None,
+) -> None:
+    """记录脱敏的 session snapshot 生命周期事件。
+
+    只写 hash、游标、epoch 和时间状态，不写 snapshot 正文、用户消息或业务数据。
+    没有 active LoopScope run 时静默跳过，避免影响 IM/离线任务主链路。
+    """
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    try:
+        event = {
+            "schema_version": 1,
+            "phase": phase,
+            "context_epoch": context_epoch,
+            "snapshot_hash": snapshot_hash or "",
+            "session_info_hash": session_info_hash or "",
+            "covered_message_id": covered_message_id,
+            "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else None,
+        }
+        span = _Span(
+            id=f"{run.id}:ctx{len(run.pending_context_spans)+1}",
+            kind="context",
+            name="Session snapshot",
+            started_at=_now(),
+            ended_at=_now(),
+            duration_ms=0,
+            status="success",
+            input={"snapshot": event},
+            output={"snapshot": {"phase": phase, "context_epoch": context_epoch}},
+            attributes={"context_source": True, "snapshot_event": True},
+            code=_code_ref(frame_depth=2),
+        )
+        run.pending_context_spans.append(span)
+    except Exception:
+        pass
+
 async def _post_snapshot(snapshot: dict[str, Any]) -> None:
     base = os.getenv("LOOPSCOPE_ENDPOINT", "http://127.0.0.1:4320").rstrip("/")
     url = base if base.endswith("/api/collector/runs") else f"{base}/api/collector/runs"

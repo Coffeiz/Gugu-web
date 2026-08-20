@@ -26,7 +26,8 @@ def test_adapter_for_minimax():
 
 def test_adapter_for_minimax_m2_vs_m3_cache():
     assert adapter_for(_ai(provider="minimax", model="MiniMax-M2.7")).supports_active_cache("MiniMax-M2.7")
-    assert not adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
+    # 当前 MiniMax 适配策略对 M2/M3 都使用主动缓存；被动缓存实验已废弃。
+    assert adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
 
 
 def test_adapter_for_mimo_by_provider():

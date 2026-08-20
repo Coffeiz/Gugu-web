@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 from agent.context.session_snapshot import (
@@ -17,6 +18,7 @@ from agent.context.session_snapshot import (
 )
 from agent.context.message_assembly import PromptMessages, build_messages, reminder, newly_appended
 from agent.loop_drivers import _with_history_cache
+from agent.runtime.loopscope_trace.state import _ScopeRun, _scope_run, _now
 import pytest
 
 
@@ -147,3 +149,42 @@ def test_history_cache_boundary_excludes_dynamic_tail():
     assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in cached[-1]["content"]
     assert newly_appended([{"role": "user", "content": "old"}, {"role": "assistant", "content": "new"}], 1)[0]["content"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_snapshot_trace_events_are_redacted_and_distinguish_hit_rebuild(monkeypatch):
+    """snapshot trace 只记录生命周期元数据，不携带 session 正文或观测内容。"""
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-snapshot-test", trace_id="trace-snapshot-test",
+        session_key="gugu:web:test", external_session_id="test",
+        source="web", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        calls = 0
+
+        async def load():
+            nonlocal calls
+            calls += 1
+            return {
+                "system_prompt": "system",
+                "dynamic_context": "项目正文不应进入 snapshot trace",
+                "session_info": {"projects": ["项目正文不应进入 snapshot trace"]},
+            }
+
+        session = _Session()
+        await ensure_snapshot(_Db(), session, load_context=load)
+        await ensure_snapshot(_Db(), session, load_context=load)
+    finally:
+        _scope_run.reset(token)
+
+    assert calls == 1
+    assert [span.input["snapshot"]["phase"] for span in run.pending_context_spans] == [
+        "rebuild", "hit"
+    ]
+    event = run.pending_context_spans[0].input["snapshot"]
+    assert event["schema_version"] == 1
+    assert event["snapshot_hash"] == session.snapshot_hash
+    assert event["session_info_hash"] == session.session_info_hash
+    assert "项目正文不应进入 snapshot trace" not in json.dumps(event, ensure_ascii=False)

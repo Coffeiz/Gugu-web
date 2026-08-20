@@ -1,6 +1,6 @@
 # Agent 会话快照与增量上下文架构重构方案
 
-> 状态：P0-P4 已切换到 session snapshot 主链路；本次调查确认“按 section 动态失效”仍未完成，旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。
+> 状态：P0-P5 已完成，已切换到 session snapshot 主链路；旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。
 >
 > 基线：`dev @ 77b6a0e`（2026-08-20）
 
@@ -260,6 +260,27 @@ snapshot hash：
 - 必要且经过整理的 tool result；
 - 当前 run 的时间信息。
 
+### 5.1 Snapshot trace schema
+
+LoopScope 的 snapshot 生命周期事件使用独立的 context span，schema version 为 `1`：
+
+```json
+{
+  "schema_version": 1,
+  "phase": "hit | rebuild",
+  "context_epoch": 2,
+  "snapshot_hash": "sha256",
+  "session_info_hash": "sha256",
+  "covered_message_id": 123,
+  "expires_at": "2026-08-21T12:30:00+00:00"
+}
+```
+
+该对象只写入 LoopScope trace，不写入 `ConversationMessage`、`session_context` 或模型
+messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核验；业务正文、用户
+消息、工具结果、Gateway ack、probe、cache usage 和内部 trace id 均不进入该事件。
+没有 active LoopScope run 的 IM/离线路径会静默跳过观测，不影响主链路。
+
 ## 6. 分阶段实施 TODO
 
 ### P0：数据模型与 hash
@@ -308,11 +329,19 @@ snapshot hash：
 
 ### P5：观测与验收
 
-- [ ] 明确 trace schema 与 ConversationMessage 的边界。
-- [ ] 增加 snapshot hash、covered cursor、TTL 命中/重建的脱敏 trace。
-- [ ] 增加 Web/IM、普通 run、tool round、TTL、压缩、群聊的回归测试。
-- [ ] 使用相同对话连续运行 3 轮，确认第二轮以后只新增真实消息尾部。
-- [ ] 在 LoopScope 对比 `input_tokens`、`cache_read_input_tokens` 和 snapshot hash。
+- [x] 明确 trace schema 与 ConversationMessage 的边界。
+- [x] 增加 snapshot hash、covered cursor、TTL 命中/重建的脱敏 trace。
+- [x] 增加 Web/IM、普通 run、tool round、TTL、压缩、群聊的回归测试。
+- [x] 使用相同对话连续运行 3 轮，确认第二轮以后只新增真实消息尾部。
+- [x] 在 LoopScope 对比 `input_tokens`、`cache_read_input_tokens` 和 snapshot hash。
+
+#### P5 验收记录（2026-08-21）
+
+- `backend/tests/test_session_snapshot.py`：覆盖规范化 hash、观测元数据隔离、TTL 命中/重建、checkpoint cursor、动态尾部和 cache boundary；snapshot trace 只保留 hash/cursor/epoch/TTL 元数据。
+- `backend/tests/test_core_loop_characterization.py`、`backend/tests/test_loopscope_usage.py`：覆盖 Web/runner 普通 round、tool/follow-up、LoopScope usage 和无 active run 的 IM wrapper。
+- `backend/tests/test_im_identity.py`、`backend/tests/test_scheduled_group_imctx.py`：覆盖 IM 会话与群聊上下文边界；`backend/tests/test_compaction.py`、`backend/tests/test_session_snapshot.py` 覆盖压缩和 checkpoint 重建契约。
+- 已用同一会话连续运行 3 轮核对：后续 round 保留稳定前缀，只追加真实 user/assistant/tool 消息和 dynamic tail；LoopScope 同时展示 input/cache usage 与 snapshot hash。
+- 观测事件 schema 与正文隔离回归通过；trace、probe、ack、cache usage 不进入 `ConversationMessage` 或 snapshot hash。
 
 ## 7. 验收标准
 

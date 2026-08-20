@@ -106,6 +106,24 @@ def snapshot_context(session) -> dict:
     }
 
 
+def _record_snapshot_event(session, phase: str) -> None:
+    """把 snapshot 生命周期以脱敏事件写入旁路 trace。"""
+    try:
+        from agent.runtime.trace import record_snapshot_event
+
+        record_snapshot_event(
+            phase,
+            context_epoch=getattr(session, "context_epoch", None),
+            snapshot_hash=getattr(session, "snapshot_hash", None),
+            session_info_hash=getattr(session, "session_info_hash", None),
+            covered_message_id=getattr(session, "snapshot_message_id", None),
+            expires_at=getattr(session, "snapshot_expires_at", None),
+        )
+    except Exception:
+        # 观测平面不可用时不影响上下文组装。
+        return
+
+
 def initialize_snapshot(
     session,
     *,
@@ -198,6 +216,7 @@ async def ensure_snapshot(
     """
     if snapshot_is_usable(session, now):
         session.snapshot_last_run_id = run_id or uuid4().hex
+        _record_snapshot_event(session, "hit")
         return snapshot_context(session)
 
     payload = await load_context()
@@ -217,4 +236,5 @@ async def ensure_snapshot(
         ttl=ttl,
     )
     await db.flush()
+    _record_snapshot_event(session, "rebuild")
     return snapshot_context(session)

@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 from .loopscope_trace.hooks import ensure_hooks
-from .loopscope_trace.state import _enabled, create_trace, get_trace, record_context_source, restore_trace
+from .loopscope_trace.state import (
+    _enabled,
+    create_trace,
+    get_trace,
+    record_context_source,
+    record_snapshot_event,
+    restore_trace,
+)
 
 def new_trace() -> str:
     t = create_trace()
@@ -16,4 +23,4 @@ def set_trace(t: str | None) -> str:
         ensure_hooks()
     return t
 
-__all__ = ["new_trace", "set_trace", "get_trace", "record_context_source"]
+__all__ = ["new_trace", "set_trace", "get_trace", "record_context_source", "record_snapshot_event"]

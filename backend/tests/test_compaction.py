@@ -75,12 +75,16 @@ class TestCompactContext:
         assert not compacted
         assert result == msgs
 
-    def test_above_threshold_triggers_compact(self):
+    def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
         # 构造一个足够长的消息列表来超过 90% 阈值
         # 256000 * 0.9 = 230400，每条约 50 tokens，需要约 4600 条
         # 简化测试：直接设置极小的 context_tokens
         msgs = [_make_msg("user", f"消息{i}" * 20) for i in range(100)]
+        monkeypatch.setattr(
+            "agent.context.compaction._generate_compact_summary",
+            lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
+        )
         result, compacted = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=1000)
         )
