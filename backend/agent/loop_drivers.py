@@ -264,6 +264,7 @@ class _OpenAICtx:
     temperature: float
     think_extra: dict
     model: str
+    supports_active_cache: bool
 
 
 @dataclass
@@ -326,11 +327,17 @@ class OpenAIDriver:
             elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
                 think_extra["reasoning_effort"] = ai.reasoning_effort
 
-        ctx = _OpenAICtx(tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
-                          think_extra=think_extra, model=ai.model)
+        ctx = _OpenAICtx(
+            tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
+            think_extra=think_extra, model=ai.model,
+            supports_active_cache=providers.adapter_for(ai).supports_active_cache(ai.model),
+        )
         return client, ctx
 
     async def run_round(self, client, ctx, messages):
+        # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
+        # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
+        messages = _with_history_cache(messages) if ctx.supports_active_cache else messages
         stream = await client.chat.completions.create(
             model=ctx.model,
             messages=messages,

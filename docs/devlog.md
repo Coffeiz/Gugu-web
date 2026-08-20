@@ -1947,3 +1947,9 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 从“更多”活动菜单打开编辑时先关闭菜单，避免页面捕获点击与全局弹窗状态互相干扰；活动保存、删除和提醒更新继续通过 `liveStore` 触发日历刷新。
 - `MonthGrid`、`WeekTimeline` 已成为月/周视图的样式边界，清理父页面迁移后遗留的周视图重复 CSS，避免以后修改出现双份样式来源。
 - 日历 Playwright 用例加入 runtime integration CI，并在 devserver 实际验证月视图、周视图及其切换；全量前端测试、普通/严格 typecheck 均通过。
+
+## 2026-08-21 · Prompt 缓存断点验证
+
+- OpenAI 兼容路径接入 conversation 末尾缓存断点后，Qwen 连续三轮测试的后两轮缓存命中率达到 98%+。
+- Kimi 多数轮次达到 94%+，偶发低命中随后自动恢复，暂未发现业务侧组装异常。
+- 将“Session baseline 与 conversation 分段缓存”记录为后续可选方案，待确认多断点兼容性和实际收益后再实施。

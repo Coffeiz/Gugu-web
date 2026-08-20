@@ -119,13 +119,28 @@ def ensure_hooks() -> None:
                 span.finish({"error_type": type(exc).__name__}, status="error")
             raise
 
-    async def run_loop(self, driver, user_id, messages, ai, system_text):
+    async def run_loop(self, driver, user_id, messages, ai, system_text, session_id=None):
         run = _scope_run.get()
         original_round = getattr(driver, "run_round")
         round_index = 0
         previous_prompt_estimate = 0
 
         initial_user = _extract_last_user(messages)
+        # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
+        # 但 traced_round 仍然需要完整的展示元数据。
+        plain_system = system_text or ""
+        try:
+            plain_system = context_builder.strip_cache_marker(plain_system)
+        except Exception:
+            pass
+        effective_system = plain_system or _system_message_text(messages)
+        system_location = "system_param" if plain_system else "messages[0]"
+        system_assembly = {
+            "location": system_location,
+            "digest": _prompt_digest(effective_system),
+            "tokens_estimate": _estimate_tokens(effective_system),
+            "source": "context.system_prompt" if plain_system else "context.messages[0]",
+        }
         if run:
             run.input = {
                 "user_message": initial_user,
@@ -139,19 +154,6 @@ def ensure_hooks() -> None:
                 "api_format": getattr(driver, "api_format", ""),
                 "cache_mode": getattr(_adapter, "cache_mode", "active"),
             })
-            plain_system = system_text or ""
-            try:
-                plain_system = context_builder.strip_cache_marker(plain_system)
-            except Exception:
-                pass
-            effective_system = plain_system or _system_message_text(messages)
-            system_location = "system_param" if plain_system else "messages[0]"
-            system_assembly = {
-                "location": system_location,
-                "digest": _prompt_digest(effective_system),
-                "tokens_estimate": _estimate_tokens(effective_system),
-                "source": "context.system_prompt" if plain_system else "context.messages[0]",
-            }
             system_est = _estimate_tokens(plain_system)
             messages_est = _estimate_tokens(messages)
             ctx_span = run.span(
@@ -255,7 +257,9 @@ def ensure_hooks() -> None:
 
         try:
             driver.run_round = traced_round
-            async for line in original_run_loop(self, driver, user_id, messages, ai, system_text):
+            async for line in original_run_loop(
+                self, driver, user_id, messages, ai, system_text, session_id=session_id
+            ):
                 yield line
                 if run and isinstance(line, str) and '\"_new_round\"' in line:
                     prompt = _extract_last_user(messages)

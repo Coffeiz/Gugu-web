@@ -16,16 +16,20 @@ from agent.memory.scopes import MemoryScope
 from agent.models import AgentRequest
 
 
+def format_message_time(content: str, sent_at=None) -> str:
+    """给当前消息和历史消息使用同一份稳定的时间前缀。"""
+    if sent_at is not None:
+        return f"[消息时间：{sent_at:%Y-%m-%d %H:%M}]\n{content}"
+    return content
+
+
 def format_history_content(message, request: AgentRequest) -> str:
     """给群聊历史用户消息附加稳定发言人身份。
 
     身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
-    content = message.content or ""
-    sent_at = getattr(message, "sent_at", None)
-    if sent_at is not None:
-        content = f"[消息时间：{sent_at:%Y-%m-%d %H:%M}]\n{content}"
+    content = format_message_time(message.content or "", getattr(message, "sent_at", None))
     if not request.chat_id or getattr(message, "chat_type", None) != "group":
         return content
     if getattr(message, "role", None) != "user":

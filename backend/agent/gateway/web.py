@@ -264,7 +264,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not active_before_start:
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
-            user_media=aug_media, user_tz=user_tz,
+            user_media=aug_media, user_tz=user_tz, sent_at=user_message.sent_at,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -297,7 +297,8 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, snapshot, history, is_new_session,
-                    user_content=None, user_images=None, user_media=None, user_tz=None) -> None:
+                    user_content=None, user_images=None, user_media=None, user_tz=None,
+                    sent_at=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -329,7 +330,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
-    from agent.im.context_loader import format_history_content
+    from agent.im.context_loader import format_history_content, format_message_time
     _summary, history = compress_conv.pop_summary(history)
 
     # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
@@ -354,18 +355,20 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     anthr_initial_len: int = 0
     sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
+    message_time_san = sanitize.LeadingMessageTimeSanitizer()
 
     try:
         fixed_parts = ([_ctx_injection] if _ctx_injection else [])
         if _summary:
             fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
         history_parts = [{"role": h.role, "content": h.content_json if h.content_json is not None else format_history_content(h, req)} for h in history]
+        current_text = format_message_time(user_content, sent_at)
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         if use_anthropic:
             assembly = message_assembly.build_messages(
                 fixed_parts=fixed_parts, history=history_parts,
-                current_user={"role": "user", "content": chat_attach.build_user_content(user_content, user_images, True, media=user_media)},
+                current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media)},
                 dynamic_tail=tail_parts)
             assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
             anthr_messages = assembly
@@ -375,7 +378,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             oa_messages = message_assembly.build_messages(
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
                 history=history_parts,
-                current_user={"role": "user", "content": chat_attach.build_user_content(user_content, user_images, False, media=user_media)},
+                current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
                 dynamic_tail=tail_parts)
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
@@ -404,6 +407,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 round_buf += text
                 out = text
             out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
+            out = message_time_san.feed(out)
             if out:
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})
@@ -443,6 +447,9 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
         # 冲洗清洗器残留（未触发截断时的尾部）
         tail = san.flush()
+        if tail:
+            await emit_clean(tail)
+        tail = message_time_san.flush()
         if tail:
             await emit_clean(tail)
 

@@ -233,33 +233,37 @@ class LLMRunner:
         return _pick_label(self.labels.get(name, name if default is None else default))
 
     def run(self, user_id, system_text: str, messages: list,
-            use_anthropic: bool, model_cfg=None) -> AsyncGenerator[str, None]:
+            use_anthropic: bool, model_cfg=None,
+            session_id: int | None = None) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
         if use_anthropic:
-            return self._run_anthropic(user_id, system_text, messages, ai)
-        return self._run_openai(user_id, messages, ai)
+            return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id)
+        return self._run_openai(user_id, messages, ai, session_id=session_id)
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
-                             messages: list, ai=None) -> AsyncGenerator[str, None]:
+                             messages: list, ai=None,
+                             session_id: int | None = None) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
-                                          system_text=system_text):
+                                          system_text=system_text, session_id=session_id):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
-    async def _run_openai(self, user_id, messages: list, ai=None) -> AsyncGenerator[str, None]:
+    async def _run_openai(self, user_id, messages: list, ai=None,
+                          session_id: int | None = None) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
-                                          system_text=None):
+                                          system_text=None, session_id=session_id):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
     async def _run_loop(self, driver, user_id, messages: list, ai,
-                         system_text: str | None) -> AsyncGenerator[str, None]:
+                         system_text: str | None,
+                         session_id: int | None = None) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
         调用 `driver`（`agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`）。

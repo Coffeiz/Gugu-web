@@ -48,6 +48,11 @@ def supports_anthropic_active_cache(ai) -> bool:
     return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
 
 
+def supports_openai_active_cache(ai) -> bool:
+    """当前 OpenAI 兼容模型是否支持消息级 `cache_control` 主动缓存。"""
+    return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
+
+
 def supports_thinking_toggle(ai) -> bool:
     """该模型(OpenAI 通道)是否支持 `{"thinking":{"type":...}}` 思考开关：mimo 与 deepseek 都用同一参数。
     其它 openai 兼容厂商(qwen/openai)没这参数，传了可能报错，故只对这两家发。"""

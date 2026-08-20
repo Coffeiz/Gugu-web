@@ -133,7 +133,9 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     try:
         messages = [{"role": "user", "content": "你好"}]
         runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
-        ev, text, errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
+        ev, text, errors = await drain(
+            runner._run_anthropic("u", "sys", messages, AI, session_id=388)
+        )
     finally:
         _scope_run.reset(token)
 
@@ -157,6 +159,29 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     assert assembly["system"]["reused"] is False
     assert assembly["system"]["digest"]
     assert assembly["messages"]["count"] == 1
+
+
+async def test_loopscope_wrapper_without_active_run_accepts_session_id(monkeypatch, loopscope_hooks):
+    """没有 active LoopScope run 的 IM 路径也必须能透传 session_id。"""
+    final = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="收到")],
+        usage=SimpleNamespace(input_tokens=10, output_tokens=5, cache_read_input_tokens=0),
+    )
+
+    async def fake_stream_round(client, kwargs, adapter=None):
+        yield ("token", "收到")
+        yield ("final", final)
+
+    monkeypatch.setattr(core, "_stream_round", fake_stream_round)
+    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=AI))
+    ev, text, errors = await drain(
+        runner._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], AI,
+                              session_id=388)
+    )
+
+    assert ev["_usage"] == 1
+    assert text == "收到"
+    assert errors == []
 
 
 async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hooks):

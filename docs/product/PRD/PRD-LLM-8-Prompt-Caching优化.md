@@ -2,7 +2,7 @@
 
 > 状态：🚧 Phase 2 实施中（上下文压缩策略）
 > 创建：2026-08-19
-> 最近更新：2026-08-19
+> 最近更新：2026-08-21
 > 所属层：LLM / Prompt 缓存
 > 关联模块：`backend/agent/context/builder.py`、`backend/agent/runner.py`、`backend/agent/loop_drivers.py`
 > 关联文档：[[../../reports/INVEST-Cross-Call-Prompt-Caching.md]]、[[../../reports/OPT-Cache-Strategy-Aggressive.md]]
@@ -67,6 +67,41 @@ MiniMax 缓存策略：
 ---
 
 ## 3. 方案设计
+
+### 3.0 当前验证结果（2026-08-21）
+
+OpenAI 兼容路径已接入 conversation 末尾缓存断点。实测结果：
+
+- Qwen 连续三轮测试中，后两轮缓存命中率达到 98%+；
+- Kimi 多数轮次达到 94%+，偶发轮次会暂时落到约 52%，随后恢复到 84%+ / 94%+；
+- 偶发低命中轮的消息顺序、时间格式和动态尾部结构均未发现业务侧异常。
+
+当前判断：Qwen 的优化已达到预期；Kimi 的偶发低命中更像服务端缓存分块预热或缓存块续接行为，不再继续扩大业务侧改动。
+
+### 3.0.1 可选后续：Session baseline 与 conversation 分段缓存
+
+这是观察项，不作为当前合并前置条件。
+
+目标是将缓存边界进一步拆成两段：
+
+```text
+system + session baseline [cache boundary A]
+history + current message [cache boundary B]
+dynamic stance + summary + time
+```
+
+预期收益：
+
+- baseline 不随历史消息增长而重新计算；
+- conversation 增长时只追加新的历史前缀；
+- 动态尾部变化不影响前两段缓存。
+
+实施前置条件：
+
+1. 分别确认 Qwen、Kimi、MiniMax 对多个 `cache_control` 断点的支持和计费口径；
+2. 在 LoopScope 中记录每个断点的命中范围，不能只看总 `cache_read`；
+3. 增加“历史消息增长 + 动态尾部变化”的连续多轮回归测试；
+4. 若服务端只保留最后一个有效断点，则维持当前单 conversation 断点方案，不做多断点改造。
 
 ### 3.1 第一轮：静态/动态内容分离
 

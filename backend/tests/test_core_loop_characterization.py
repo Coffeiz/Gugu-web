@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 import agent.core as core
+import agent.context.compaction as compaction
 from agent.core import LLMRunner, MAX_ROUNDS, MAX_VERIFY, _VERIFY_PROMPT
 from agent.tools import registry
 
@@ -81,6 +82,32 @@ async def drain(gen):
 
 def n_verify(messages):
     return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
+
+
+async def test_compaction_receives_session_id(monkeypatch):
+    """上下文压缩分支必须拿到当前 session，不能因 IM 长上下文触发 NameError。"""
+    patch_anthropic(monkeypatch, [msg([TX("收到")])])
+    seen = {}
+
+    async def fake_estimate(_messages, _system_text):
+        return 100
+
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None):
+        seen.update(session_id=session_id, user_id=user_id)
+        return messages, False
+
+    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    ai = SimpleNamespace(**vars(AI), context_tokens=100)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
+                                     session_id=388)
+    )
+
+    assert text == "收到"
+    assert errors == []
+    assert ev["_usage"] == 1
+    assert seen == {"session_id": 388, "user_id": "u"}
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────

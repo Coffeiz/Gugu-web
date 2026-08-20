@@ -422,6 +422,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     runner = LLMRunner(tool_names, settings)
+    # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
+    im_used_tools = False
 
     from app.core.chat_attach import build_user_content
     from agent.im.context_loader import format_current_content, format_history_content
@@ -446,7 +448,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         assembly.replace_conversation(clean_conversation)
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
-        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
+        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
+                         model_cfg=model_cfg, session_id=session_id)
     else:
         oa_messages = message_assembly.build_messages(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
@@ -454,7 +457,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
             dynamic_tail=tail_parts,
         )
-        gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
+        gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
+                         model_cfg=model_cfg, session_id=session_id)
 
     try:
         text, tin, tout, errored, sent_files, cancelled = await _collect(gen, minimax=is_minimax(model_cfg))
@@ -531,7 +535,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 对话后反思（fire-and-forget）。IM 用「工具轮次让 anthr_messages 变长」当「咕咕动作了」代理，
         # 这样「嗯」确认后真建改东西的轮也会反思（openai 路径无此代理、回落到 user_msg 判，可接受）。
-        im_used_tools = False
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
@@ -724,6 +727,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     runner = LLMRunner(tool_names, settings)
+    # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
+    im_used_tools = False
 
     from app.core.chat_attach import build_user_content
     from agent.im.context_loader import format_current_content, format_history_content
@@ -764,7 +769,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
-        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
+        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
+                         model_cfg=model_cfg, session_id=session_id)
     else:
         history_parts = [{"role": h.role, "content": format_history_content(h, req)} for h in history]
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
@@ -774,7 +780,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
             dynamic_tail=tail_parts)
-        gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
+        gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
+                         model_cfg=model_cfg, session_id=session_id)
 
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
@@ -897,7 +904,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         except Exception:
             pass
 
-        im_used_tools = False
         if profile.memory_enabled and text and context_policy.allow_memory_reflection:
             from agent.memory import reflection
             im_used_tools = use_anthropic and len(anthr_messages) > anthr_initial_len
