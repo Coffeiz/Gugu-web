@@ -244,7 +244,8 @@ async def get_greeting(
     """对话框默认问候：咕咕据近期记忆/项目/提醒生成一句。失败/空 → text=''，前端兜底池接手。"""
     from app.core.config import get_settings
     from agent import greeting
-    return {"text": await greeting.generate(db, current_user.id, get_settings())}
+    text = await greeting.generate(db, current_user.id, get_settings())
+    return {"text": text}
 
 
 @router.get("/sessions/{session_id}/messages")
@@ -445,3 +446,19 @@ async def rename_session(
     session.title_locked = True   # P1-3：手动改名后禁止自动标题覆盖
     await db.commit()
     return {"id": session.id, "title": session.title, "title_locked": session.title_locked}
+
+
+@router.post("/sessions/{session_id}/refresh-context")
+async def refresh_session_context(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """显式让下一轮重新读取一次 session snapshot。"""
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if not session:
+        raise HTTPException(404, "对话不存在")
+    from agent.context.session_snapshot import invalidate_snapshot
+    invalidate_snapshot(session)
+    await db.commit()
+    return {"id": session.id, "context_epoch": session.context_epoch, "refresh_scheduled": True}

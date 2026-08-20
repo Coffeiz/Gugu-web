@@ -303,16 +303,8 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     # === 动态部分（可能变化） ===
     dynamic_parts = []
 
-    # 相处姿态放在动态部分最前面——每次 call 可能变化
-    try:
-        from agent import behaviors as _bh
-        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
-    except Exception:
-        beh_block = ""
-    if beh_block:
-        dynamic_parts.append(beh_block)
-
-    mem_block = _memory_block(memory)
+    # summary 与 stance 属于每轮动态尾部；session info 只保留较稳定的记忆 section。
+    mem_block = _memory_block(memory, include_summary=False)
     if mem_block:
         dynamic_parts.append(mem_block)
 
@@ -359,6 +351,23 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     dynamic_text = "\n\n---\n\n".join(dynamic_parts) if dynamic_parts else ""
 
     return static_text, dynamic_text, now_str
+
+
+def dynamic_tail(memory: dict | None = None) -> list[str]:
+    """生成每轮末尾的低频 stance/summary；不混入 session 固定上下文。"""
+    memory = memory or {}
+    parts: list[str] = []
+    try:
+        from agent import behaviors as _bh
+        stance = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
+    except Exception:
+        stance = ""
+    if stance:
+        parts.append(stance)
+    summary = (memory.get("summary") or "").strip()
+    if summary:
+        parts.append("## 当前对话长期摘要\n\n" + summary)
+    return parts
 
 
 _SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}
@@ -419,7 +428,7 @@ def _style_block(prefs: dict) -> str:
             "不打发，也不靠堆 emoji 卖萌）\n\n" + "\n".join(lines))
 
 
-def _memory_block(memory: dict) -> str:
+def _memory_block(memory: dict, *, include_summary: bool = True) -> str:
     """咕咕对用户的记忆。全空时也注入一句明确声明——给"我不知道"一个锚点，防模型
     在空白处脑补共同经历（伪个性化）；不再返回空串。顺序：稳定事实 → 长期记忆 → 最近。"""
     summary = (memory.get("summary") or "").strip()
@@ -428,7 +437,7 @@ def _memory_block(memory: dict) -> str:
     longterm = (memory.get("memory") or "").strip()
     daily   = (memory.get("daily") or "").strip()
     parts = []
-    if summary:
+    if summary and include_summary:
         # 时间衰减:summary 越久没更新越不可信，按权重换不同话术（数字内部用、不喂模型）
         from agent import decay
         w = decay.weight(memory.get("summary_ts"))
@@ -448,6 +457,8 @@ def _memory_block(memory: dict) -> str:
     if daily:
         parts.append("## 最近的记忆\n\n" + daily)
     if not parts:
+        if not include_summary and summary:
+            return ""
         return ("## 关于这位用户的记忆\n\n"
                 "（暂无任何长期记忆——你对 TA 还不了解。别假装记得任何共同经历或偏好，"
                 "需要了解就直接问。）")

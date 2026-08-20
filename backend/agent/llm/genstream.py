@@ -40,13 +40,10 @@ async def begin(session_id) -> None:
 
 
 async def publish(session_id, event: dict) -> None:
-    """发一个生成事件给订阅者，并据其更新状态快照（best-effort）。"""
+    """更新生成快照并发事件；终止状态必须先写入再广播。"""
     r = get_redis()
-    try:
-        await r.publish(_ch(session_id), json.dumps(event, ensure_ascii=False))
-    except Exception:
-        return
-    # 更新快照（供刷新后重建已生成内容）
+    # 先更新快照，再广播事件。否则前端收到 done 后立即发起下一轮时，
+    # is_active() 可能仍读到上一轮的 active 状态，误订阅上一轮的频道。
     try:
         raw = await r.get(_state_key(session_id))
         st = json.loads(raw) if raw else {"text": "", "tool": "", "files": [], "done": False, "error": None}
@@ -69,6 +66,10 @@ async def publish(session_id, event: dict) -> None:
         await r.set(_state_key(session_id), json.dumps(st, ensure_ascii=False), ex=TTL)
     except Exception:
         pass
+    try:
+        await r.publish(_ch(session_id), json.dumps(event, ensure_ascii=False))
+    except Exception:
+        return
 
 
 async def end(session_id) -> None:

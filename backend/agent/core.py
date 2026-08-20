@@ -279,7 +279,8 @@ class LLMRunner:
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
-        _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
+        _request_conversation = getattr(messages, "conversation", messages)
+        _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
@@ -298,10 +299,14 @@ class LLMRunner:
             current_length = await compaction.estimate_context_length(messages, system_text)
             if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
                 yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
-                messages, compacted = await compaction.compact_context(
-                    messages, system_text, context_tokens,
+                compacted_messages, compacted = await compaction.compact_context(
+                    list(getattr(messages, "conversation", messages)), system_text, context_tokens,
                     session_id=session_id, user_id=user_id,
                 )
+                if hasattr(messages, "replace_conversation"):
+                    messages.replace_conversation(compacted_messages)
+                else:
+                    messages = compacted_messages
                 if compacted:
                     logger.info("[core] 上下文已压缩，重试当前 round")
                     round_i -= 1  # 重试当前 round

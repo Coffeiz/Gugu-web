@@ -23,6 +23,9 @@ def format_history_content(message, request: AgentRequest) -> str:
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
     content = message.content or ""
+    sent_at = getattr(message, "sent_at", None)
+    if sent_at is not None:
+        content = f"[消息时间：{sent_at:%Y-%m-%d %H:%M}]\n{content}"
     if not request.chat_id or getattr(message, "chat_type", None) != "group":
         return content
     if getattr(message, "role", None) != "user":

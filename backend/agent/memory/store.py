@@ -119,6 +119,18 @@ async def read_memory(user_id, query: str = "") -> dict:
             "stance": stance, "stance_ts": stance_ts, "lens": lens_block}
 
 
+async def read_dynamic_memory(user_id) -> dict:
+    """只读取每轮动态尾部需要的 stance/summary，不触碰完整记忆 section。"""
+    summary_doc = await _read_summary_doc(user_id)
+    stance, stance_ts = await read_stance(user_id)
+    return {
+        "summary": summary_doc["text"],
+        "summary_ts": summary_doc["ts"],
+        "stance": stance,
+        "stance_ts": stance_ts,
+    }
+
+
 async def read_summary_ts(user_id) -> float | None:
     """summary 上次更新时间（epoch）；无/解析失败返回 None（衰减件按"新鲜"处理）。"""
     return (await _read_summary_doc(user_id))["ts"]

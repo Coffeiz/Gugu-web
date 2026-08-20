@@ -115,6 +115,12 @@ def _with_history_cache(messages: list) -> list:
     if not messages:
         return messages
 
+    # PromptMessages 的动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾；
+    # 否则时间 reminder 会被包含在断点前缀中，下一轮必然失去命中。
+    cache_limit = len(getattr(messages, "conversation", messages))
+    if cache_limit <= 0:
+        return list(messages)
+
     # 浅拷贝 messages 列表
     new_messages = []
 
@@ -123,7 +129,7 @@ def _with_history_cache(messages: list) -> list:
         content = msg.get("content")
 
         # 只给最后一条消息的最后一个块加 cache_control
-        is_last = (i == len(messages) - 1)
+        is_last = (i == cache_limit - 1)
 
         if isinstance(content, list) and is_last and content:
             # 最后一条消息：只给最后一个块加 cache_control

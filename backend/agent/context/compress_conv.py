@@ -74,7 +74,7 @@ async def _run(session_id: int, user_id: int, settings, token_budget: int) -> No
 async def compress_if_needed(session_id: int, user_id: int, settings, token_budget: int) -> bool:
     """检查并执行压缩，返回是否实际执行了压缩。"""
     import app.db.session as _sess
-    from app.models import ConversationMessage
+    from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
         rows = (await db.execute(
@@ -133,7 +133,17 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
             ConversationMessage.session_id == session_id,
             ConversationMessage.role == "summary",
         ))
-        db.add(ConversationMessage(session_id=session_id, role="summary", content=summary))
+        summary_message = ConversationMessage(session_id=session_id, role="summary", content=summary)
+        db.add(summary_message)
+        await db.flush()
+        session = await db.get(ConversationSession, session_id)
+        if session is not None:
+            from agent.context.session_snapshot import checkpoint_snapshot
+            checkpoint_snapshot(
+                session,
+                [{"role": "summary", "content": summary}],
+                message_id=summary_message.id,
+            )
         await db.commit()
 
     logger.info("[compress_conv] session %s：%d 条 → summary（%d token，%s）",

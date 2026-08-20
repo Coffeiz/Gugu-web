@@ -152,6 +152,12 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     assert llm[0].status == "success", f"span 状态异常：{llm[0].status}"
     assert llm[0].usage == EXPECTED_USAGE, f"span.usage 未落地：{llm[0].usage}"
 
+    assembly = llm[0].input["assembly"]
+    assert assembly["system"]["location"] == "system_param"
+    assert assembly["system"]["reused"] is False
+    assert assembly["system"]["digest"]
+    assert assembly["messages"]["count"] == 1
+
 
 async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hooks):
     """流式中途被掐断（外层提前 return）：span 应标 cancelled，不能误标 error。

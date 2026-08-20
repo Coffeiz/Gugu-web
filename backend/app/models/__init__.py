@@ -393,6 +393,15 @@ class ConversationSession(Base):
     chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
+    context_epoch: Mapped[int] = mapped_column(Integer, default=1)
+    session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    session_info_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    snapshot_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    snapshot_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    snapshot_updated_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    snapshot_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    snapshot_last_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -421,6 +430,9 @@ class ConversationMessage(Base):
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
+    sent_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=now_utc, index=True)
+    sequence:     Mapped[Optional[int]]   = mapped_column(Integer, nullable=True)
+    run_id:       Mapped[Optional[str]]  = mapped_column(String(64), nullable=True, index=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")

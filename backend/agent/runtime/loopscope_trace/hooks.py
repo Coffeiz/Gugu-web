@@ -8,9 +8,27 @@ from typing import Any
 
 from .context import install_context_hooks
 from .state import _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace
-from .utils import _classify_followup, _code_ref, _estimate_tokens, _extract_last_user, _jsonable, _round_result
+from .utils import (
+    _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
+    _jsonable, _prompt_digest, _round_result, _system_message_text,
+)
 
 _hooks_installed = False
+
+
+def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
+    """把 provider 的 system 搬运形式还原成 LoopScope 的统一展示形式。
+
+    OpenAI 兼容接口把 system 放在 messages[0]，但 LoopScope 同时有独立的
+    system_prompt 字段。展示时保留一份即可，避免用户误以为 system_prompt
+    为空或 system 被重复组装；实际发送给 provider 的 messages 不在这里修改。
+    """
+    if system_location != "messages[0]" or not isinstance(messages, list) or not messages:
+        return _jsonable(messages)
+    first = messages[0]
+    if isinstance(first, dict) and first.get("role") == "system":
+        return _jsonable(messages[1:])
+    return _jsonable(messages)
 
 def ensure_hooks() -> None:
     global _hooks_installed
@@ -126,6 +144,14 @@ def ensure_hooks() -> None:
                 plain_system = context_builder.strip_cache_marker(plain_system)
             except Exception:
                 pass
+            effective_system = plain_system or _system_message_text(messages)
+            system_location = "system_param" if plain_system else "messages[0]"
+            system_assembly = {
+                "location": system_location,
+                "digest": _prompt_digest(effective_system),
+                "tokens_estimate": _estimate_tokens(effective_system),
+                "source": "context.system_prompt" if plain_system else "context.messages[0]",
+            }
             system_est = _estimate_tokens(plain_system)
             messages_est = _estimate_tokens(messages)
             ctx_span = run.span(
@@ -134,6 +160,10 @@ def ensure_hooks() -> None:
                 {
                     "system_prompt": plain_system,
                     "messages": _jsonable(messages),
+                    "assembly": {
+                        "system": system_assembly,
+                        "messages": {"count": len(messages) if isinstance(messages, list) else None},
+                    },
                 },
                 code=_code_ref(original_builder_build),
                 token_impact={
@@ -145,7 +175,9 @@ def ensure_hooks() -> None:
             )
             ctx_span.started_at = run.started_at
             ctx_span.finish({
-                "system_prompt": plain_system,
+                # OpenAI 兼容接口把 system 放在 messages[0]；Context span 仍展示
+                # provider 实际会消费的完整 system，避免 LoopScope 看见空值。
+                "system_prompt": effective_system,
                 "message_count": len(messages) if isinstance(messages, list) else None,
             })
             run.attach_context_spans(ctx_span.id)
@@ -163,14 +195,27 @@ def ensure_hooks() -> None:
         async def traced_round(client, ctx, round_messages):
             nonlocal round_index, previous_prompt_estimate
             round_index += 1
-            round_prompt_est = _estimate_tokens(round_messages) + (_estimate_tokens(system_text) if round_index == 1 else 0)
+            round_visible_messages = _trace_conversation_messages(round_messages, system_location)
+            round_system = effective_system
+            round_prompt_est = _estimate_tokens(round_visible_messages) + _estimate_tokens(round_system)
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
             span = run.span(
                 "llm",
                 f"LLM round {round_index}",
                 {
-                    "system_prompt": system_text if round_index == 1 else None,
-                    "messages": _jsonable(round_messages),
+                    "system_prompt": round_system,
+                    "messages": round_visible_messages,
+                    "assembly": {
+                        "system": {
+                            **system_assembly,
+                            "reused": round_index > 1,
+                            "source_round": 1,
+                        },
+                        "messages": {
+                            "count": len(round_messages) if isinstance(round_messages, list) else None,
+                            "round": round_index,
+                        },
+                    },
                 },
                 code=_code_ref(original_round),
                 token_impact={

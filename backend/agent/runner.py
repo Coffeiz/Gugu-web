@@ -10,6 +10,7 @@ from app.core.tz import now_utc, set_ctx_tz
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import AsyncGenerator, AsyncIterator, List, Tuple
 
 from sqlalchemy import delete, desc, func, select
@@ -17,7 +18,7 @@ from sqlalchemy import delete, desc, func, select
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens
+from agent.context import builder, loaders, tokens, session_snapshot, message_assembly
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
@@ -259,19 +260,37 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
 
     async with _sess._SessionLocal() as db:
-        context_data = await load_context_data(
-            db, user_id, req, profile.memory_enabled, req.message, context_policy
-        )
-        projects = context_data.projects
-        user_tz = context_data.user_tz   # 「今天」按用户时区算（Phase 3）
-        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-        events = context_data.events
-        files_overview = context_data.files_overview
-        style_prefs = context_data.style_prefs
-
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+
+        async def _load_snapshot():
+            data = await load_context_data(
+                db, user_id, req, profile.memory_enabled, req.message, context_policy
+            )
+            static_prompt, dynamic_context, _ = builder.build_split(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                data.projects, data.events, data.memory, data.files_overview,
+                skills=profile.skills, style_prefs=data.style_prefs,
+                source=getattr(req, "source", None), im_channels=data.im_channels,
+                im_message_format=getattr(req, "im_message_format", None),
+                user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
+            )
+            return {
+                "system_prompt": static_prompt,
+                "dynamic_context": dynamic_context,
+                "session_info": {"user_name": req.user_name, "source": req.source,
+                                  "chat_id": req.chat_id, "profile": profile.prompt_file},
+                "user_tz": data.user_tz,
+                "im_channels": data.im_channels,
+                "im_memory": data.im_memory,
+                "dynamic_tail": builder.dynamic_tail(data.memory),
+            }
+
+        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        user_tz = snapshot["user_tz"]
+        set_ctx_tz(user_tz)
+        context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
 
         # 历史窗口：最新若干条 → 按 token 预算从新往回裁剪
         hist_res = await db.execute(
@@ -366,23 +385,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     except Exception:
         pass
 
-    memory = context_data.memory
-    im_channels = context_data.im_channels
-    prompt_name = profile.prompt_file.removesuffix(".md")
-
-    # 使用 build_split 将 system prompt 拆分为静态和动态部分
-    # 静态部分（persona/skills/policy）放 system，跨 call 完全一致 → 缓存命中
-    # 动态部分（beh/memory/projects/time）放 messages，不污染 system prefix
-    static_prompt, dynamic_context, now_str = builder.build_split(
-        prompt_name, req.user_name, projects, events, memory, files_overview,
-        skills=profile.skills, style_prefs=style_prefs,
-        source=getattr(req, "source", None), im_channels=im_channels,
-        im_message_format=getattr(req, "im_message_format", None),
-        user_msg=req.message,
-        non_streaming=True,
-        user_tz=user_tz,
+    system_prompt = snapshot["system_prompt"]
+    dynamic_context = snapshot["dynamic_context"]
+    now_str = session_snapshot.current_time_text(user_tz)
+    dynamic_tail = builder.dynamic_tail(
+        await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
-    system_prompt = static_prompt
 
     # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
@@ -408,7 +416,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
-        _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_ctx_content}\n[/system-reminder]"}
+        _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -420,34 +428,32 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
+    fixed_parts = ([_ctx_injection] if _ctx_injection else [])
+    if _summary:
+        fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
+    history_parts = [{"role": h.role, "content": h.content_json if h.content_json is not None else format_history_content(h, req)} for h in history]
+    tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
+    tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if use_anthropic:
-        # 固定上下文放最前面
-        if _ctx_injection:
-            anthr_messages.append(_ctx_injection)
-        # summary 作为历史第一条（如有）
-        if _summary:
-            anthr_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
-        for h in history:
-            content = h.content_json if h.content_json is not None else format_history_content(h, req)
-            anthr_messages.append({"role": h.role, "content": content})
-        anthr_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)})
-        # 时间作为最后一条独立消息
-        anthr_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
+        assembly = message_assembly.build_messages(
+            fixed_parts=fixed_parts, history=history_parts,
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)},
+            dynamic_tail=tail_parts,
+        )
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
         # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
-        anthr_messages = sanitize.sanitize_messages(anthr_messages)
-        anthr_initial_len = len(anthr_messages)
+        clean_conversation = sanitize.sanitize_messages(assembly.conversation)
+        assembly.replace_conversation(clean_conversation)
+        anthr_messages = assembly
+        anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:
-        oa_messages = [{"role": "system", "content": system_prompt}]
-        if _ctx_injection:
-            oa_messages.append(_ctx_injection)
-        if _summary:
-            oa_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
-        for h in history:
-            oa_messages.append({"role": h.role, "content": format_history_content(h, req)})
-        oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
-        oa_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
+        oa_messages = message_assembly.build_messages(
+            fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
+            history=history_parts,
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
+            dynamic_tail=tail_parts,
+        )
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
     try:
@@ -470,7 +476,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         async with _sess._SessionLocal() as db2:
             if use_anthropic:
                 # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
-                for tm in sanitize.tool_rounds_only(anthr_messages[anthr_initial_len:]):
+                for tm in sanitize.tool_rounds_only(message_assembly.newly_appended(anthr_messages, anthr_initial_len)):
                     db2.add(ConversationMessage(
                         session_id=session_id, role=tm["role"],
                         content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
@@ -479,6 +485,21 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=sent_files or None))
             # 按 6h 剩余额度封顶本轮用量（精力条最多 100%，顶过线只记填满部分，超出不计 6h 与周）；已满则 (0,0) 不写
+            snapshot_session = await db2.get(ConversationSession, session_id)
+            if snapshot_session is not None:
+                await db2.flush()
+                latest_message_id = await db2.scalar(
+                    select(func.max(ConversationMessage.id)).where(
+                        ConversationMessage.session_id == session_id
+                    )
+                )
+                session_snapshot.checkpoint_snapshot(
+                    snapshot_session,
+                    [{"role": "user", "content": req.message},
+                     {"role": "assistant", "content": text}],
+                    message_id=latest_message_id,
+                    run_id=snapshot_session.snapshot_last_run_id,
+                )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:
                 db2.add(AgentUsage(
@@ -557,19 +578,33 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     )
 
     async with _sess._SessionLocal() as db:
-        context_data = await load_context_data(
-            db, user_id, req, profile.memory_enabled, req.message, context_policy
-        )
-        projects = context_data.projects
-        user_tz = context_data.user_tz   # 「今天」按用户时区算（Phase 3）
-        set_ctx_tz(user_tz)                                 # tool dispatch 深处（overview 等）也能读到
-        events = context_data.events
-        files_overview = context_data.files_overview
-        style_prefs = context_data.style_prefs
-
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+
+        async def _load_snapshot():
+            data = await load_context_data(
+                db, user_id, req, profile.memory_enabled, req.message, context_policy
+            )
+            static_prompt, dynamic_context, _ = builder.build_split(
+                profile.prompt_file.removesuffix(".md"), req.user_name,
+                data.projects, data.events, data.memory, data.files_overview,
+                skills=profile.skills, style_prefs=data.style_prefs,
+                source=getattr(req, "source", None), im_channels=data.im_channels,
+                im_message_format=getattr(req, "im_message_format", None),
+                user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
+            )
+            return {"system_prompt": static_prompt, "dynamic_context": dynamic_context,
+                    "session_info": {"user_name": req.user_name, "source": req.source,
+                                      "chat_id": req.chat_id, "profile": profile.prompt_file},
+                    "user_tz": data.user_tz, "im_channels": data.im_channels,
+                    "im_memory": data.im_memory,
+                    "dynamic_tail": builder.dynamic_tail(data.memory)}
+
+        snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
+        user_tz = snapshot["user_tz"]
+        set_ctx_tz(user_tz)
+        context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
 
         # 历史窗口
         hist_res = await db.execute(
@@ -652,22 +687,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         aug_text = (aug_text + "\n" if aug_text else "") + f"（用户发来语音，内容是：）{spoken}"
         aug_media = [m for m in aug_media if m.get("type") == "video"]
 
-    memory = context_data.memory
-    im_channels = context_data.im_channels
-    prompt_name = profile.prompt_file.removesuffix(".md")
-
-    # 使用 build_split 将 system prompt 拆分为静态和动态部分
-    # 静态部分（persona/skills/policy）放 system，跨 call 完全一致 → 缓存命中
-    # 动态部分（beh/memory/projects/time）放 messages，不污染 system prefix
-    static_prompt, dynamic_context, now_str = builder.build_split(
-        prompt_name, req.user_name, projects, events, memory, files_overview,
-        skills=profile.skills, style_prefs=style_prefs,
-        source=getattr(req, "source", None), im_channels=im_channels,
-        user_msg=req.message,
-        non_streaming=False,
-        user_tz=user_tz,
+    system_prompt = snapshot["system_prompt"]
+    dynamic_context = snapshot["dynamic_context"]
+    now_str = session_snapshot.current_time_text(user_tz)
+    dynamic_tail = builder.dynamic_tail(
+        await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
-    system_prompt = static_prompt
 
     # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
@@ -693,7 +718,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
-        _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_ctx_content}\n[/system-reminder]"}
+        _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -705,13 +730,11 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
+    fixed_parts = ([_ctx_injection] if _ctx_injection else [])
+    if _summary:
+        fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
+    history_parts = []
     if use_anthropic:
-        # 固定上下文放最前面
-        if _ctx_injection:
-            anthr_messages.append(_ctx_injection)
-        # summary 作为历史第一条（如有）
-        if _summary:
-            anthr_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
         for h in history:
             # 正确处理 content_json（可能是 list 或 string）
             if h.content_json is not None:
@@ -731,23 +754,26 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                     content = str(h.content_json)
             else:
                 content = format_history_content(h, req)
-            anthr_messages.append({"role": h.role, "content": content})
-        anthr_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)})
-        # 时间作为最后一条独立消息
-        anthr_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
-        anthr_messages = sanitize.sanitize_messages(anthr_messages)
-        anthr_initial_len = len(anthr_messages)
+            history_parts.append({"role": h.role, "content": content})
+        tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
+        tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
+        assembly = message_assembly.build_messages(
+            fixed_parts=fixed_parts, history=history_parts,
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)},
+            dynamic_tail=tail_parts)
+        assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
+        anthr_messages = assembly
+        anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:
-        oa_messages = [{"role": "system", "content": system_prompt}]
-        if _ctx_injection:
-            oa_messages.append(_ctx_injection)
-        if _summary:
-            oa_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
-        for h in history:
-            oa_messages.append({"role": h.role, "content": format_history_content(h, req)})
-        oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
-        oa_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
+        history_parts = [{"role": h.role, "content": format_history_content(h, req)} for h in history]
+        tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
+        tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
+        oa_messages = message_assembly.build_messages(
+            fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
+            history=history_parts,
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
+            dynamic_tail=tail_parts)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
 
@@ -822,7 +848,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         async with _sess._SessionLocal() as db2:
             if use_anthropic:
                 # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
-                for tm in sanitize.tool_rounds_only(anthr_messages[anthr_initial_len:]):
+                for tm in sanitize.tool_rounds_only(message_assembly.newly_appended(anthr_messages, anthr_initial_len)):
                     db2.add(ConversationMessage(
                         session_id=session_id, role=tm["role"],
                         content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
@@ -830,6 +856,21 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             if text or files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=files or None))
+            snapshot_session = await db2.get(ConversationSession, session_id)
+            if snapshot_session is not None:
+                await db2.flush()
+                latest_message_id = await db2.scalar(
+                    select(func.max(ConversationMessage.id)).where(
+                        ConversationMessage.session_id == session_id
+                    )
+                )
+                session_snapshot.checkpoint_snapshot(
+                    snapshot_session,
+                    [{"role": "user", "content": req.message},
+                     {"role": "assistant", "content": text}],
+                    message_id=latest_message_id,
+                    run_id=snapshot_session.snapshot_last_run_id,
+                )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:
                 db2.add(AgentUsage(
