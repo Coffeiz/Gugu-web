@@ -300,7 +300,7 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     prompt_name = profile.prompt_file.removesuffix(".md")
     memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
     im_channels = await loaders.load_im_channels(user_id)
-    static_prompt, _ = builder.build_split(
+    static_prompt, dynamic_context, now_str = builder.build_split(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source="web", im_channels=im_channels,
@@ -309,23 +309,34 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
     )
     system_prompt = static_prompt
 
+    # 组装动态上下文注入块（放入 messages，不进 system，保持 system prefix 跨 call 一致）
+    _dynamic_extra_parts = []
+    if dynamic_context:
+        _dynamic_extra_parts.append(dynamic_context)
+
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
-    if _summary:
-        system_prompt += compress_conv.system_block(_summary)
 
-    # 默认问候：新会话首轮把它作为「对话开场」注入 system，而不是只靠那条前导 assistant 历史——
-    # 后者会被 sanitize 的「开头必须是 user」规则剥掉（Anthropic/MiniMax 不许前导 assistant），
-    # 导致模型看不到自己已打招呼、把用户对问候的回复当成对话刚开始又重新问好。问候那条仍照常
-    # 入库（供会话回看显示），这里额外让模型「知道」它，避免重复寒暄。
+    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
+    _ctx_injection = None
+    if _dynamic_extra_parts:
+        _ctx_content = "\n\n".join(_dynamic_extra_parts)
+        _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_ctx_content}\n[/system-reminder]"}
+
+    # 默认问候：新会话首轮把它注入动态上下文（不进 system，保持 prefix 一致）
     if is_new_session and req.greeting and req.greeting.strip():
-        system_prompt += (
-            "\n\n# 本次对话的开场\n"
+        _greeting_block = (
+            "# 本次对话的开场\n"
             "用户刚打开对话框时，你已经主动对他说了下面这句开场白。**不要再重新打招呼**，"
             "顺着它、结合用户的回复自然往下接：\n"
             f"「{req.greeting.strip()}」"
         )
+        if _ctx_injection:
+            # 追加到已有的注入块
+            _ctx_injection = {"role": "user", "content": _ctx_injection["content"].rstrip() + "\n\n" + _greeting_block + "\n[/system-reminder]"}
+        else:
+            _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_greeting_block}\n[/system-reminder]"}
 
     tool_names = profile.tool_names
 
@@ -342,12 +353,20 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
 
     try:
         if use_anthropic:
+            # 固定上下文放最前面：[system-reminder] 不含时间，跨 run 前缀一致 → 缓存命中
+            if _ctx_injection:
+                anthr_messages.append(_ctx_injection)
+            # summary 作为历史第一条（如有）
+            if _summary:
+                anthr_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
             for h in history:
                 if h.content_json is not None:
                     anthr_messages.append({"role": h.role, "content": h.content_json})
                 else:
                     anthr_messages.append({"role": h.role, "content": h.content or ""})
             anthr_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, True, media=user_media)})
+            # 时间作为最后一条独立消息（唯一变化的部分）
+            anthr_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
             # 清洗历史：窗口截断/压缩可能留下孤儿 tool_result、空消息、连续同角色 → MiniMax 报
             # invalid params / SDK IndexError。发送前修正，保证合法可发（用户消息已在 stream() 独立持久化）。
             anthr_messages = sanitize.sanitize_messages(anthr_messages)
@@ -355,9 +374,14 @@ async def _generate(req, session_id, projects, events, files_overview, history, 
             gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
         else:
             oa_messages = [{"role": "system", "content": system_prompt}]
+            if _ctx_injection:
+                oa_messages.append(_ctx_injection)
+            if _summary:
+                oa_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
             for h in history:
                 oa_messages.append({"role": h.role, "content": h.content or ""})
             oa_messages.append({"role": "user", "content": chat_attach.build_user_content(user_content, user_images, False, media=user_media)})
+            oa_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，

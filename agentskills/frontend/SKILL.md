@@ -35,3 +35,17 @@ Runtime 管理的元素，其业务或主题 CSS 不得使用 `!important` 强�
 
 - 修改完成后按风险运行 typecheck、测试，并在 devserver 验证 UI。
 - 完成功能或提交前运行完整 `npm run typecheck`；涉及 strict 白名单文件用 `npm run typecheck:strict`。
+
+## PR 前本地 CI（GitHub Actions 已禁用）
+
+提交 PR 前必须在本地完成以下检查，确保不引入回归：
+
+```bash
+cd frontend
+npm run typecheck          # TypeScript 类型检查
+npm run typecheck:strict   # strict 模式（涉及 strict 白名单文件时）
+npm run test:run           # 单元测试（vitest 单次运行）
+npm run build              # 构建验证
+```
+
+全部通过后再提交 PR。不需要等待 GitHub CI——本地通过即可。

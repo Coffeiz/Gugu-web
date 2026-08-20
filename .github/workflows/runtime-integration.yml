@@ -1,5 +1,9 @@
 name: Runtime integration
 
+# 已禁用：GitHub Actions 每月额度用完，改用本地 CI。
+# PR 前请在本地运行测试，详见 agentskills/frontend/SKILL.md 和 agentskills/backend/SKILL.md。
+if: false
+
 on:
   workflow_dispatch:
   pull_request:

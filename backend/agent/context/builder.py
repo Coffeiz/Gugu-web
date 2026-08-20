@@ -270,13 +270,9 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     if persona:
         static_parts.append(persona)
 
-    try:
-        from agent import behaviors as _bh
-        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
-    except Exception:
-        beh_block = ""
-    if beh_block:
-        static_parts.append(beh_block)
+    # 注意：beh_block（相处姿态）不放在 static 中——它在不同 call 间变化
+    # （如 Query vs Companion），会破坏 MiniMax 前缀匹配缓存。
+    # beh_block 在 runner.py 中作为动态上下文注入 messages[0]。
 
     lens_block = (memory.get("lens") or "").strip()
     if lens_block:
@@ -306,6 +302,15 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
 
     # === 动态部分（可能变化） ===
     dynamic_parts = []
+
+    # 相处姿态放在动态部分最前面——每次 call 可能变化
+    try:
+        from agent import behaviors as _bh
+        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
+    except Exception:
+        beh_block = ""
+    if beh_block:
+        dynamic_parts.append(beh_block)
 
     mem_block = _memory_block(memory)
     if mem_block:
@@ -342,7 +347,9 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     if non_streaming:
         dynamic_parts.append(_NON_STREAMING_BLOCK)
 
-    dynamic_parts.append(f"当前时间：{now_str}")
+    # 时间不放在 dynamic_context 中——它会变化导致 messages 前缀断裂。
+    # 时间作为最后一条独立消息追加（在 runner.py / web.py 中处理），
+    # 这样 messages 前缀（system-reminder + history + current_msg）跨 run 一致，缓存命中。
 
     if im_message_format == "compat":
         from agent.im.context_loader import compatibility_prompt
@@ -351,7 +358,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     static_text = "\n\n---\n\n".join(static_parts) if static_parts else ""
     dynamic_text = "\n\n---\n\n".join(dynamic_parts) if dynamic_parts else ""
 
-    return static_text, dynamic_text
+    return static_text, dynamic_text, now_str
 
 
 _SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}

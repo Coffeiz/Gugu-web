@@ -185,10 +185,13 @@ async def compact_context(
 
 
 def _is_system_injection(content: str) -> bool:
-    """判断是否是系统上下文注入消息。"""
+    """判断是否是系统上下文注入消息（[system-reminder] 包裹或旧格式开头）。"""
     if not content:
         return False
-    return content.startswith("## 项目") or content.startswith("## 日历") or content.startswith("## 文件")
+    return (content.startswith("[system-reminder]")
+            or content.startswith("## 项目")
+            or content.startswith("## 日历")
+            or content.startswith("## 文件"))
 
 
 def verify_prefix_consistency(

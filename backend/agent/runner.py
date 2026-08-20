@@ -371,7 +371,9 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     prompt_name = profile.prompt_file.removesuffix(".md")
 
     # 使用 build_split 将 system prompt 拆分为静态和动态部分
-    static_prompt, dynamic_context = builder.build_split(
+    # 静态部分（persona/skills/policy）放 system，跨 call 完全一致 → 缓存命中
+    # 动态部分（beh/memory/projects/time）放 messages，不污染 system prefix
+    static_prompt, dynamic_context, now_str = builder.build_split(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
@@ -382,8 +384,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     )
     system_prompt = static_prompt
 
-    # 动态上下文通过额外内容块追加到 system prompt
+    # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
+    if dynamic_context:
+        _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
@@ -399,11 +403,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
-    if _summary:
-        _dynamic_extra_parts.append(compress_conv.system_block(_summary))
 
+    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
+    _ctx_injection = None
     if _dynamic_extra_parts:
-        system_prompt += "\n\n" + "\n\n".join(_dynamic_extra_parts)
+        _ctx_content = "\n\n".join(_dynamic_extra_parts)
+        _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_ctx_content}\n[/system-reminder]"}
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -416,10 +421,18 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     anthr_messages: list = []
     anthr_initial_len = 0
     if use_anthropic:
+        # 固定上下文放最前面
+        if _ctx_injection:
+            anthr_messages.append(_ctx_injection)
+        # summary 作为历史第一条（如有）
+        if _summary:
+            anthr_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
         for h in history:
             content = h.content_json if h.content_json is not None else format_history_content(h, req)
             anthr_messages.append({"role": h.role, "content": content})
         anthr_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)})
+        # 时间作为最后一条独立消息
+        anthr_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
         # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
         anthr_messages = sanitize.sanitize_messages(anthr_messages)
@@ -427,9 +440,14 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:
         oa_messages = [{"role": "system", "content": system_prompt}]
+        if _ctx_injection:
+            oa_messages.append(_ctx_injection)
+        if _summary:
+            oa_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
         for h in history:
             oa_messages.append({"role": h.role, "content": format_history_content(h, req)})
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
+        oa_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
 
     try:
@@ -639,8 +657,9 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     prompt_name = profile.prompt_file.removesuffix(".md")
 
     # 使用 build_split 将 system prompt 拆分为静态和动态部分
-    # 静态部分放 system，动态部分放 messages[0]，实现跨 call 缓存
-    static_prompt, dynamic_context = builder.build_split(
+    # 静态部分（persona/skills/policy）放 system，跨 call 完全一致 → 缓存命中
+    # 动态部分（beh/memory/projects/time）放 messages，不污染 system prefix
+    static_prompt, dynamic_context, now_str = builder.build_split(
         prompt_name, req.user_name, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
         source=getattr(req, "source", None), im_channels=im_channels,
@@ -650,10 +669,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     )
     system_prompt = static_prompt
 
-    # 动态上下文通过额外内容块追加到 system prompt
-    # 注意：这些动态内容仍然在 system 中，但通过 cache_control 策略管理缓存
-    # 当动态内容变化时，会触发缓存失效，但静态前缀仍可被缓存
+    # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
+    if dynamic_context:
+        _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
@@ -669,11 +688,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
-    if _summary:
-        _dynamic_extra_parts.append(compress_conv.system_block(_summary))
 
+    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
+    _ctx_injection = None
     if _dynamic_extra_parts:
-        system_prompt += "\n\n" + "\n\n".join(_dynamic_extra_parts)
+        _ctx_content = "\n\n".join(_dynamic_extra_parts)
+        _ctx_injection = {"role": "user", "content": f"[system-reminder]\n{_ctx_content}\n[/system-reminder]"}
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
@@ -686,6 +706,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     anthr_messages: list = []
     anthr_initial_len = 0
     if use_anthropic:
+        # 固定上下文放最前面
+        if _ctx_injection:
+            anthr_messages.append(_ctx_injection)
+        # summary 作为历史第一条（如有）
+        if _summary:
+            anthr_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
         for h in history:
             # 正确处理 content_json（可能是 list 或 string）
             if h.content_json is not None:
@@ -707,15 +733,23 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 content = format_history_content(h, req)
             anthr_messages.append({"role": h.role, "content": content})
         anthr_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)})
+        # 时间作为最后一条独立消息
+        anthr_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
         anthr_messages = sanitize.sanitize_messages(anthr_messages)
         anthr_initial_len = len(anthr_messages)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True, model_cfg=model_cfg)
     else:
         oa_messages = [{"role": "system", "content": system_prompt}]
+        if _ctx_injection:
+            oa_messages.append(_ctx_injection)
+        if _summary:
+            oa_messages.append({"role": "user", "content": compress_conv.system_block(_summary)})
         for h in history:
             oa_messages.append({"role": h.role, "content": format_history_content(h, req)})
         oa_messages.append({"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)})
+        oa_messages.append({"role": "user", "content": "[system-reminder]\n当前时间：%s\n[/system-reminder]" % now_str})
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False, model_cfg=model_cfg)
+
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
     minimax_stream = is_minimax(model_cfg)
@@ -945,7 +979,7 @@ async def _run_scheduled_once(
                 im_channels = await loaders.load_im_channels(user_id)
 
         prompt_name = profile.prompt_file.removesuffix(".md")
-        static_prompt, _ = builder.build_split(
+        static_prompt, _, _ = builder.build_split(
             prompt_name,
             user_name,
             projects,

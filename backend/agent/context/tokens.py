@@ -6,9 +6,9 @@
 """
 from __future__ import annotations
 
-# 历史窗口默认参数（后续可接入 AgentBehaviorSettings）
-HISTORY_TOKEN_BUDGET = 999999   # 历史最多占用的估算 token（临时取消限制）
-HISTORY_MAX_MSGS = 9999         # 条数安全上限（临时取消限制）
+# 历史窗口默认参数——实际调用时由 model_cfg.context_tokens 覆盖
+HISTORY_TOKEN_BUDGET = 120000   # 默认 token 预算（约 128K context 的 90% 留给 system + current）
+HISTORY_MAX_MSGS = 500          # 条数安全上限（防极端情况）
 
 
 def estimate_tokens(text: str) -> int:
