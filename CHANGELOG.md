@@ -7,6 +7,29 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **上下文缓存与会话快照**：为 Web/IM Agent 引入稳定的会话上下文、增量历史、压缩与 TTL 刷新策略，拆分静态前缀和动态消息区域，显著提升多轮对话的 Prompt Cache 命中率；补充跨模型缓存能力识别、回归脚本与实测报告。
+- **LoopScope 可观测性**：升级并启用 LoopScope 0.2，展示真实的 Agent run、LLM 轮次、工具调用、上下文来源和 token/cache 用量，方便定位长任务与缓存问题。
+- **画布 Agent 工具**：增加画布、节点、关系的查询与操作能力，支持通过对话创建和删除画布，并补齐工具 schema、权限边界和回归测试。
+
+### 改进
+
+- **Agent 运行链路**：统一 Web、IM 与 LoopScope 的 runner 入口，保留消息时间和附件上下文，补齐群聊上下文、消息脱敏、数据库迁移与多 worker 配置刷新支持。
+- **画布与项目交互**：持续收口 Interaction Runtime 的拖拽、landing、FLIP、连接线、摄像机和抽屉生命周期；优化画布平移与跨 Surface 落地性能，减少释放和落地过程中的布局工作。
+- **项目、文件与日历体验**：完成文件库、项目编辑区、抽屉和日历状态的 Runtime 接入与布局收口，统一列表、分组、滚动条、箭头和拖拽代理行为。
+- **主题与界面一致性**：统一 Light/Dark、Mono/V2、Glass 的 token ownership，整理聊天、设置、文件工具栏、画布浮层、项目卡和媒体控件的重复样式与 hover/边框竞态。
+
+### 修复
+
+- **Agent 可靠性**：修复创建画布后空回复、核实阶段文本丢失、工具历史 `content_json` 丢失、会话切换/新会话生成状态竞态，以及 IM runner/LoopScope 包装器参数和无活动 run 下的异常。
+- **画布同步**：修复删除画布后抽屉不刷新、跨标签页画布列表不同步、摄像机状态重置、landing 期间平移抖动和 Runtime 连接生命周期残留。
+- **缓存与数据兼容**：补充 session snapshot 数据表和移除旧平台绑定的迁移，修复模型缓存能力配置、消息时间格式化和流式输出脱敏边界。
+
+### 测试
+
+- 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`OPT-Cache-Tuning-2026-08-21.md`](docs/reports/OPT-Cache-Tuning-2026-08-21.md)。
+
 ## [0.22.0] - 2026-08-17
 
 ### 新增
