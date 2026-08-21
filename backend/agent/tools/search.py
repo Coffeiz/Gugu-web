@@ -666,7 +666,8 @@ class SearchSkill(BaseSkill):
         Tool(
             name="search_similar_images", label="相似图搜索",
             description=(
-                "根据一张图片搜索互联网中的相似图片。用户说找相似图、找同款、这张图还有哪些类似图片时使用。"
+                "根据已有图片反向搜索互联网中的相似图片。用户说搜图、搜搜这个、用这张图找同款/相似图/来源时使用；"
+                "必须提供当前附件 attach_id 或图片 image_url，不能把文字关键词当作图片输入。"
                 "当前图片用上下文中的 attach_id，网络图片用 image_url；如果刚用 image_search 找到图片，"
                 "使用对应结果的 img_src 作为 image_url。结果是相似候选，不代表确认是同一张图。"
                 "返回的 similarity 只是服务端排序等级，不是百分比、置信度或相似度 X/5；不要因分值低就直接否定候选。"
