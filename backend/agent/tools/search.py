@@ -4,9 +4,9 @@
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
 - `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
-- `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。默认只返回候选
-  （标题+来源页+图片直链 img_src+缩略图），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。真要把图发进对话/IM，
-  接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
+- `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片反向搜索相似候选。
+  默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。
+  真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
 成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
@@ -277,7 +277,7 @@ async def _searxng_search(db, user_id, args: dict):
     return _build_search_response(query, results, engines, data, kind="web")
 
 
-# ── image_search：SearXNG images 分类（通用、免费、无配额）───────────────────
+# ── image_search：关键词搜图（SearXNG，通用、免费、无配额）───────────────
 async def _searxng_image_search(db, user_id, args: dict):
     settings = get_settings()
     base = (settings.search.searxng_url or "").rstrip("/")
@@ -550,17 +550,17 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
     }
 
 
-async def _search_similar_images(db, user_id, args: dict):
+async def _image_search_by_image(db, user_id, args: dict):
     settings = get_settings()
     cfg = settings.search
     if not cfg.similar_image_enabled or not cfg.baidu_qianfan_api_key:
         return {"error": "相似图搜索尚未配置或未启用，请管理员先在 Admin 配置百度千帆 API Key"}
 
-    count = args.get("count") or cfg.similar_image_default_count
+    count = args.get("max_results") or cfg.similar_image_default_count
     try:
-        count = max(1, min(50, int(count)))
+        count = max(1, min(20, int(count)))
     except (TypeError, ValueError):
-        return {"error": "count 必须是 1 到 50 之间的整数"}
+        return {"error": "max_results 必须是 1 到 20 之间的整数"}
 
     day_start = local_day_start_utc()
     limit = cfg.similar_image_limit_daily
@@ -581,6 +581,16 @@ async def _search_similar_images(db, user_id, args: dict):
         if not result.get("results"):
             result["note"] = "没有找到相似结果"
     return result
+
+
+async def _image_search(db, user_id, args: dict):
+    """统一图片搜索入口，按 mode 分派到关键词或反向图片搜索实现。"""
+    mode = str(args.get("mode") or "text").strip().lower()
+    if mode == "text":
+        return await _searxng_image_search(db, user_id, args)
+    if mode == "image":
+        return await _image_search_by_image(db, user_id, args)
+    return {"error": "mode 必须是 text 或 image"}
 
 
 class SearchSkill(BaseSkill):
@@ -612,30 +622,47 @@ class SearchSkill(BaseSkill):
         Tool(
             name="image_search", label="图片搜索",
             description=(
-                "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
-                "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
-                "需要视觉分析时，必须再单独调用 inspect_images，并由模型自行挑选要看的候选图；每轮最多读取 3 次网络图片。"
-                "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
-                "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
+                "统一图片搜索工具。mode=text 时按文字关键词找图/配图，走自建 SearXNG；"
+                "mode=image 时根据已有图片反向搜索同款、相似图或相近风格，使用 attach_id 或 image_url，"
+                "走已配置的相似图服务。两种模式都只返回候选，不会自动读取或发送图片；需要视觉分析时再调用 inspect_images。"
+                "用户明确要看图/要一张图时，搜到后接着调用 files 技能的 send_file。"
             ),
             input_schema={
                 "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
-                    "max_results": {
-                        "type": "integer", "minimum": 1, "maximum": 20,
-                        "description": "返回候选数（默认 5，范围 1~20）",
+                "oneOf": [
+                    {
+                        "properties": {
+                            "mode": {"const": "text"},
+                            "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                            "max_results": {
+                                "type": "integer", "minimum": 1, "maximum": 20,
+                                "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
+                            },
+                        },
+                        "required": ["mode", "query"],
                     },
-                },
-                "required": ["query"],
+                    {
+                        "properties": {
+                            "mode": {"const": "image"},
+                            "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
+                            "image_url": {"type": "string", "description": "已有图片搜索结果中的图片直链"},
+                            "max_results": {
+                                "type": "integer", "minimum": 1, "maximum": 20,
+                                "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
+                            },
+                        },
+                        "required": ["mode"],
+                        "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
+                    },
+                ],
             },
-            handler=_searxng_image_search,
+            handler=_image_search,
             start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
         ),
         Tool(
             name="inspect_images", label="读取图片",
             description=(
-                "读取 image_search/search_similar_images 结果或历史消息附件并交给视觉模型分析。"
+                "读取 image_search 结果或历史消息附件并交给视觉模型分析。"
                 "搜索候选填写 result_id、img_src 或 image_url、title；"
                 "历史图片填写上下文中的 attach_id；"
                 "一次最多读取 20 张。"
@@ -653,7 +680,7 @@ class SearchSkill(BaseSkill):
                             "properties": {
                                 "result_id": {"type": "string"},
                                 "img_src": {"type": "string"},
-                                "image_url": {"type": "string", "description": "相似图搜索结果中的图片直链"},
+                                "image_url": {"type": "string", "description": "image_search 结果中的图片直链"},
                                 "attach_id": {"type": "string", "description": "历史消息中的图片附件 ID"},
                                 "title": {"type": "string"},
                             },
@@ -669,28 +696,6 @@ class SearchSkill(BaseSkill):
             },
             handler=_inspect_images,
             start_message=lambda args: random.choice(["我读取选中的图片对比一下。", "我看看这些图片。"]),
-        ),
-        Tool(
-            name="search_similar_images", label="相似图搜索",
-            description=(
-                "根据已有图片反向搜索互联网中的相似图片。用户说搜图、搜搜这个、用这张图找同款/相似图/来源时使用；"
-                "必须提供当前附件 attach_id 或图片 image_url，不能把文字关键词当作图片输入。"
-                "当前图片用上下文中的 attach_id，网络图片用 image_url；如果刚用 image_search 找到图片，"
-                "使用对应结果的 img_src 作为 image_url。结果是相似候选，不代表确认是同一张图。"
-                "返回的 similarity 只是服务端排序等级，不是百分比、置信度或相似度 X/5；不要因分值低就直接否定候选。"
-                "用户只要结果或明确说不用看图时，直接返回候选标题、URL 和排序信息，不要继续调用 inspect_images。"
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
-                    "image_url": {"type": "string", "description": "image_search 结果中的图片直链"},
-                    "count": {"type": "integer", "minimum": 1, "maximum": 50, "description": "返回结果数，默认使用 Admin 配置"},
-                },
-                "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
-            },
-            handler=_search_similar_images,
-            start_message=lambda args: random.choice(["我拿这张图找找相似结果。", "我搜一下有没有相近的图片。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",

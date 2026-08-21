@@ -194,7 +194,8 @@ def _current_platform(explicit: str | None) -> str | None:
 
 
 _ROW_META_FIELDS = {"attach_id", "name", "ext", "mime", "size", "storage_key",
-                    "kind", "duration", "img_width", "img_height"}
+                    "kind", "duration", "img_width", "img_height", "platform",
+                    "platform_message_id", "attachment_index"}
 
 
 def _extra_from_meta(meta: dict) -> dict | None:
@@ -215,6 +216,9 @@ async def _record_draft(user_id, attach_id: str, storage_key: str, meta: dict) -
     async with db_session._SessionLocal() as db:
         db.add(ChatAttachment(
             attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+            platform=meta.get("platform"),
+            platform_message_id=meta.get("platform_message_id"),
+            attachment_index=meta.get("attachment_index"),
             name=meta.get("name") or "", ext=meta.get("ext") or "",
             mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
             size=meta.get("size") or 0, duration=meta.get("duration"),
@@ -241,6 +245,9 @@ async def _record_draft_isolated(user_id, attach_id: str, storage_key: str, meta
         async with Session() as db:
             db.add(ChatAttachment(
                 attach_id=attach_id, user_id=user_id, storage_key=storage_key,
+                platform=meta.get("platform"),
+                platform_message_id=meta.get("platform_message_id"),
+                attachment_index=meta.get("attachment_index"),
                 name=meta.get("name") or "", ext=meta.get("ext") or "",
                 mime=meta.get("mime") or None, kind=meta.get("kind") or "binary",
                 size=meta.get("size") or 0, duration=meta.get("duration"),
@@ -267,19 +274,92 @@ async def try_delete_storage_if_unreferenced(user_id, storage_key: str) -> str:
     import app.db.session as db_session
     db_session.ensure_engine()
     async with db_session._SessionLocal() as db:
+        await _lock_storage_key(db, user_id, storage_key)
         still_referenced = (await db.execute(
             select(ChatAttachment.id).where(
                 ChatAttachment.user_id == user_id,
                 ChatAttachment.storage_key == storage_key,
             ).limit(1)
         )).scalar_one_or_none() is not None
-    if still_referenced:
-        return "skipped"
-    try:
-        await get_storage().delete(storage_key)
-    except Exception:
-        pass
-    return "deleted"
+        if still_referenced:
+            await db.commit()
+            return "skipped"
+        try:
+            await get_storage().delete(storage_key)
+        except Exception:
+            pass
+        await db.commit()
+        return "deleted"
+
+
+async def _lock_storage_key(db, user_id, storage_key: str) -> None:
+    """复用与物理清理共享一把事务锁；SQLite 测试环境不支持 advisory lock。"""
+    bind = db.get_bind()
+    if bind.dialect.name != "postgresql":
+        return
+    from sqlalchemy import text
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": f"chat-attachment:{user_id}:{storage_key}"},
+    )
+
+
+async def reuse_attachment(
+    user_id,
+    *,
+    platform: str,
+    platform_message_id: str,
+    attachment_index: int | None = None,
+    extra: dict | None = None,
+) -> dict | None:
+    """为引用消息创建独立附件行，共享源附件的物理 storage_key，不重新下载。"""
+    if not user_id or not platform or not platform_message_id:
+        return None
+    from app.models import ChatAttachment
+    from sqlalchemy import select
+    import uuid
+    import app.db.session as db_session
+    db_session.ensure_engine()
+    async with db_session._SessionLocal() as db:
+        query = select(ChatAttachment).where(
+            ChatAttachment.user_id == user_id,
+            ChatAttachment.platform == platform,
+            ChatAttachment.platform_message_id == platform_message_id,
+            ChatAttachment.state.in_(("draft", "attached")),
+        ).order_by(ChatAttachment.attachment_index, ChatAttachment.id).with_for_update()
+        rows = (await db.execute(query)).scalars().all()
+        if attachment_index is not None:
+            rows = [row for row in rows if row.attachment_index == attachment_index]
+        source = rows[0] if rows else None
+        if source is None:
+            await db.rollback()
+            return None
+        await _lock_storage_key(db, user_id, source.storage_key)
+        meta = _row_to_meta(source)
+        attach_id = uuid.uuid4().hex[:16]
+        merged_extra = dict(source.extra or {})
+        merged_extra.update(extra or {})
+        row = ChatAttachment(
+            attach_id=attach_id,
+            user_id=user_id,
+            storage_key=source.storage_key,
+            platform=platform,
+            platform_message_id=platform_message_id,
+            attachment_index=attachment_index,
+            name=meta.get("name") or "",
+            ext=meta.get("ext") or "",
+            mime=meta.get("mime") or None,
+            kind=meta.get("kind") or "binary",
+            size=meta.get("size") or 0,
+            duration=meta.get("duration"),
+            img_width=meta.get("img_width"),
+            img_height=meta.get("img_height"),
+            state="draft",
+            extra=merged_extra or None,
+        )
+        db.add(row)
+        await db.commit()
+        return _row_to_meta(row)
 
 
 async def claim_attachments(db, user_id, message_id: int, attach_ids: list[str]) -> None:
@@ -315,7 +395,9 @@ async def claim_attachments(db, user_id, message_id: int, attach_ids: list[str])
 async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
                 *, kind: str | None = None, ttl: int = TTL,
                 subdir: str = ".chat_staging", extra: dict | None = None,
-                platform: str | None = None) -> dict:
+                platform: str | None = None,
+                platform_message_id: str | None = None,
+                attachment_index: int | None = None) -> dict:
     """暂存一个上传文件，返回元数据（含 attach_id）。
     语音条走 kind='voice' / subdir='.voice'（见 stage_voice）。
     图片顺带探真实像素尺寸（img_width/img_height）：前端预览窗口据此直接定尺，不用再靠缩略图猜。
@@ -332,6 +414,8 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
         "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -350,11 +434,14 @@ async def stage(user_id, name: str, ext: str, mime: str | None, data: bytes,
 
 
 async def stage_voice(user_id, name: str, ext: str, mime: str | None, data: bytes,
-                      duration: float | None = None, platform: str | None = None) -> dict:
+                      duration: float | None = None, platform: str | None = None,
+                      platform_message_id: str | None = None,
+                      attachment_index: int | None = None) -> dict:
     """语音消息（IM 语音 / 网页录音）：独立 .voice/ 存储 + 30 天留存 + kind='voice' + 时长。"""
     return await stage(user_id, name, ext, mime, data, kind="voice", ttl=TTL_VOICE,
                        subdir=".voice", extra={"duration": duration} if duration is not None else None,
-                       platform=platform)
+                       platform=platform, platform_message_id=platform_message_id,
+                       attachment_index=attachment_index)
 
 
 def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
@@ -367,7 +454,9 @@ def stage_voice_sync(user_id, name: str, ext: str, mime: str | None, data: bytes
 def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
                *, kind: str | None = None, ttl: int = TTL,
                subdir: str = ".chat_staging", extra: dict | None = None,
-               platform: str | None = None) -> dict:
+               platform: str | None = None,
+               platform_message_id: str | None = None,
+               attachment_index: int | None = None) -> dict:
     """同步暂存（给 IM 网关用）。
 
     网关 handler 跑在一个**已运行的 asyncio loop** 里（lark SDK），所以不能在当前线程
@@ -391,6 +480,8 @@ def stage_sync(user_id, name: str, ext: str, mime: str | None, data: bytes,
         "attach_id": attach_id, "name": name, "ext": ext_l, "mime": mime or "",
         "size": len(data), "storage_key": storage_key, "kind": kind or _kind(ext_l),
         "platform": _current_platform(platform),
+        "platform_message_id": platform_message_id,
+        "attachment_index": attachment_index,
     }
     if meta["kind"] == "image":
         img_w, img_h = _probe_image_size(data, ext_l)
@@ -426,6 +517,9 @@ def _row_to_meta(row) -> dict:
         "mime": row.mime or "", "size": row.size, "storage_key": row.storage_key,
         "kind": row.kind, "duration": row.duration,
         "img_width": row.img_width, "img_height": row.img_height,
+        "platform": row.platform,
+        "platform_message_id": row.platform_message_id,
+        "attachment_index": row.attachment_index,
     }
     if row.extra:
         meta.update(row.extra)

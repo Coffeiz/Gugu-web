@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, message_assembly
+from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data
@@ -34,13 +34,6 @@ from agent.profiles import DefaultProfile
 
 # 后台任务引用，防止被 GC（fire-and-forget 的标题生成等）
 _bg_tasks: set = set()
-
-
-def _history_query_limit(request: AgentRequest) -> int:
-    """IM 会话（私聊/群聊）从保留池取最近 50 条，Web 会话沿用原窗口。"""
-    if request.source in IM_SOURCES:
-        return GROUP_CONTEXT_LIMIT
-    return tokens.HISTORY_MAX_MSGS
 
 
 def _im_identity_block(req: AgentRequest, history: list) -> str:
@@ -291,14 +284,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         set_ctx_tz(user_tz)
         context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
 
-        # 历史窗口：最新若干条 → 按 token 预算从新往回裁剪
-        hist_res = await db.execute(
-            select(ConversationMessage)
-            .where(ConversationMessage.session_id == session_id)
-            .order_by(ConversationMessage.created_at.desc())
-            .limit(_history_query_limit(req))
+        # 连续历史：未压缩时不再按最近 N 条滑动；压缩后从 baseline 水位继续追加。
+        history = await session_history.load_session_history(
+            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0)
         )
-        history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
@@ -601,14 +590,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         set_ctx_tz(user_tz)
         context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
 
-        # 历史窗口
-        hist_res = await db.execute(
-            select(ConversationMessage)
-            .where(ConversationMessage.session_id == session_id)
-            .order_by(ConversationMessage.created_at.desc())
-            .limit(_history_query_limit(req))
+        # 连续历史：只加载 baseline 之后的追加消息，避免每轮重新裁剪历史前缀。
+        history = await session_history.load_session_history(
+            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0)
         )
-        history = tokens.select_history(hist_res.scalars().all(), token_budget=model_cfg.context_tokens)
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 

@@ -180,14 +180,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 
-        # 历史窗口：取最新若干条（条数安全上限），再按 token 预算从新往回裁剪
-        hist_res = await db.execute(
-            select(ConversationMessage)
-            .where(ConversationMessage.session_id == session.id)
-            .order_by(ConversationMessage.created_at.desc())
-            .limit(tokens.HISTORY_MAX_MSGS)
+        # 连续历史：不再按最近 N 条滑动；压缩后从 session baseline 之后继续追加。
+        from agent.context import session_history
+        history = await session_history.load_session_history(
+            db, session.id, int(getattr(session, "baseline_message_id", 0) or 0)
         )
-        history = tokens.select_history(hist_res.scalars().all(), token_budget=settings.ai.context_tokens)
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
@@ -213,7 +210,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
 
     # 记忆控制命令（/memory /forget）：确定性短路，零 LLM、不计精力、不反思；先于配额（命令免费）
     from agent import commands as _commands
-    cmd_reply = await _commands.handle(user_id, req.message)
+    cmd_reply = await _commands.handle(user_id, req.message, session_id=session_id)
     if cmd_reply is not None:
         async with _sess._SessionLocal() as db2:
             if await db2.get(ConversationSession, session_id) is not None:

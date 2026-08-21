@@ -18,6 +18,7 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
+from agent.context import session_snapshot
 from agent.context.tokens import content_text, estimate_tokens, msg_tokens
 
 logger = logging.getLogger(__name__)
@@ -77,14 +78,18 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
     from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
+        session = await db.get(ConversationSession, session_id)
+        if session is None:
+            return False
         rows = (await db.execute(
             select(ConversationMessage)
             .where(ConversationMessage.session_id == session_id)
-            .order_by(ConversationMessage.created_at.asc())
+            .order_by(ConversationMessage.id.asc())
         )).scalars().all()
 
     prev_summary = next((m.content for m in rows if m.role == "summary"), None)
-    all_msgs = [m for m in rows if m.role != "summary"]
+    baseline_id = int(getattr(session, "baseline_message_id", 0) or 0)
+    all_msgs = [m for m in rows if m.role != "summary" and m.id > baseline_id]
     if not all_msgs:
         return False
 
@@ -139,8 +144,9 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
         await db.flush()
         session = await db.get(ConversationSession, session_id)
         if session is not None:
-            from agent.context.session_snapshot import checkpoint_snapshot
-            checkpoint_snapshot(
+            session.baseline_message_id = to_compress[-1].id
+            session.baseline_message_hash = session_snapshot.baseline_hash(to_compress)
+            session_snapshot.checkpoint_snapshot(
                 session,
                 [{"role": "summary", "content": summary}],
             )

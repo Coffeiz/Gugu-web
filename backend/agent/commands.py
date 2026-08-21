@@ -1,7 +1,8 @@
-"""斜杠记忆控制命令（用户在聊天里直接打）——确定性、零 LLM、不计精力、不触发反思。
+"""斜杠控制命令（用户在聊天里直接打）——确定性、不计精力、不触发反思。
 
 - `/memory`（/记忆 /记得）  看咕咕目前记得你哪些事（profile + pattern + 最近状态）
 - `/forget <内容>`（/忘记 /忘掉）  让咕咕忘掉对得上的那条（profile 或 pattern 都会找）
+- `/compact`（/压缩）  立即压缩当前会话的旧历史
 
 在 web `stream()` 短路返回（像配额硬拦那样 typed_stream 回一句）；IM 侧在 worker.handle()
 消费后、跑 agent 之前同样短路（飞书/QQ/微信用户同享隐私控制权，P0-5）。
@@ -9,11 +10,16 @@
 """
 from __future__ import annotations
 
+import logging
+
 from agent.memory import store
+
+logger = logging.getLogger(__name__)
 
 _PREFIX = ("/", "／")
 _MEMORY_NAMES = {"memory", "mem", "记忆", "记得", "你记得什么", "记得啥"}
 _FORGET_NAMES = {"forget", "忘记", "忘掉", "忘了"}
+_COMPACT_NAMES = {"compact", "压缩", "整理上下文"}
 
 
 def _parse(text: str):
@@ -29,8 +35,8 @@ def _parse(text: str):
     return body.strip().lower(), ""
 
 
-async def handle(user_id, text: str) -> str | None:
-    """命中记忆命令 → 返回回复文本（短路）；否则 None（照常走对话/其它命令）。"""
+async def handle(user_id, text: str, *, session_id: int | None = None) -> str | None:
+    """命中控制命令 → 返回回复文本（短路）；否则 None。"""
     name, arg = _parse(text)
     if name is None:
         return None
@@ -38,7 +44,32 @@ async def handle(user_id, text: str) -> str | None:
         return await _show_memory(user_id)
     if name in _FORGET_NAMES:
         return await _forget(user_id, arg)
+    if name in _COMPACT_NAMES:
+        return await _compact(user_id, session_id)
     return None
+
+
+async def _compact(user_id, session_id: int | None) -> str:
+    """压缩当前会话；不创建新会话，也不把命令交给主模型。"""
+    if not session_id:
+        return "当前还没有可压缩的对话。"
+    from app.core.config import get_settings
+    from agent.context import compress_conv
+
+    settings = get_settings()
+    try:
+        compacted = await compress_conv.compress_if_needed(
+            session_id,
+            user_id,
+            settings,
+            settings.ai.context_tokens,
+        )
+    except Exception:
+        logger.exception("手动压缩会话失败 session=%s", session_id)
+        return "这次压缩没有完成，请稍后再试。"
+    if compacted:
+        return "上下文已经整理好了，旧对话已压缩为摘要。"
+    return "当前上下文还没达到压缩条件，暂时不用整理。"
 
 
 async def _show_memory(user_id) -> str:

@@ -94,6 +94,11 @@ def _quoted_from_index(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
     return str(entry.get("content") or ""), list(entry.get("attachments") or [])
 
 
+def _quoted_platform_message_id(data: Dict[str, Any]) -> str:
+    """提取引用目标的稳定 QQ 消息标识，不使用签名下载 URL。"""
+    return str(_scene_ext_value(_message_scene_ext(data), "ref_msg_idx") or "")
+
+
 _QQ_API_BASE = "https://api.sgroup.qq.com"
 _QQ_SANDBOX_API_BASE = "https://sandbox.api.sgroup.qq.com"
 _QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
@@ -321,7 +326,16 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     if quoted_attachments and quoted_text == "[QQ表情]":
         quoted_text = ""
     if quoted_attachments:
-        quoted_attachments = [dict(item, quoted=True) for item in quoted_attachments]
+        quoted_source_id = _quoted_platform_message_id(data)
+        quoted_attachments = [
+            dict(
+                item,
+                quoted=True,
+                source_platform_message_id=quoted_source_id or item.get("source_platform_message_id"),
+                source_attachment_index=index,
+            )
+            for index, item in enumerate(quoted_attachments)
+        ]
     all_attachments = raw_attachments + quoted_attachments
     face_key = _qq_face_pending_key(chat_type, chat_id, sender_id)
     now = time.monotonic()
@@ -381,6 +395,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "platform_user_name": sender_name or None,
         "platform_bot_user_id": bot_platform_user_id or None,
         "message_id": msg_id,
+        "platform_message_id": _qq_message_index_key(data, chat_type, chat_id, sender_id),
         "chat_type": chat_type,
         "text": text,
         "quoted_text": quoted_text or None,

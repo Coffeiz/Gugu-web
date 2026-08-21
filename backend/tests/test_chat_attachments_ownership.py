@@ -58,6 +58,32 @@ async def test_stage_creates_draft_row(db, user_a, storage):
 
 
 @pytest.mark.asyncio
+async def test_reuse_attachment_creates_new_row_with_shared_storage_key(db, user_a, storage):
+    source = await chat_attach.stage(
+        user_a.id, "source.png", "png", "image/png", b"hello",
+        platform="qq", platform_message_id="msg-1", attachment_index=0,
+    )
+
+    reused = await chat_attach.reuse_attachment(
+        user_a.id,
+        platform="qq",
+        platform_message_id="msg-1",
+        attachment_index=0,
+        extra={"quoted": True},
+    )
+
+    assert reused is not None
+    assert reused["attach_id"] != source["attach_id"]
+    assert reused["storage_key"] == source["storage_key"]
+    assert reused["quoted"] is True
+    rows = (await db.execute(
+        select(ChatAttachment).where(ChatAttachment.platform_message_id == "msg-1")
+    )).scalars().all()
+    assert {row.attach_id for row in rows} == {source["attach_id"], reused["attach_id"]}
+    assert await storage.exists(source["storage_key"])
+
+
+@pytest.mark.asyncio
 async def test_stage_rolls_back_storage_when_db_insert_fails(db, user_a, storage, monkeypatch):
     async def _boom(*a, **kw):
         raise RuntimeError("db insert failed")

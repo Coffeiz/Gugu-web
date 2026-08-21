@@ -75,6 +75,21 @@ def message_hash(messages: list[dict]) -> str:
     return digest(normalized)
 
 
+def baseline_hash(messages: list) -> str:
+    """生成压缩 baseline 的身份 hash，不把观测元数据带入。"""
+    normalized = []
+    for message in messages:
+        raw = getattr(message, "content_json", None)
+        if raw is None:
+            raw = getattr(message, "content", "") or ""
+        normalized.append({
+            "id": getattr(message, "id", None),
+            "role": getattr(message, "role", None),
+            "content": raw,
+        })
+    return digest(normalized)
+
+
 def snapshot_is_usable(session, now: datetime | None = None,
                        context_revision: int | None = None) -> bool:
     """判断当前 session 是否已有未过期的可复用 snapshot。"""

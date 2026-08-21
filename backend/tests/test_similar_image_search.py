@@ -138,12 +138,37 @@ async def test_baidu_provider_classifies_auth_failure(monkeypatch):
     assert "bad-key" not in str(result)
 
 
-def test_similar_image_tool_is_registered_but_not_in_default_group_allowlist():
+def test_image_search_is_the_only_registered_image_search_tool():
     from agent.tools.base import registry
-    from agent.im.permissions import DEFAULT_GROUP_TOOLS
 
-    assert registry.get("search_similar_images") is not None
-    assert "search_similar_images" not in DEFAULT_GROUP_TOOLS
+    assert registry.get("image_search") is not None
+    assert registry.get("search_similar_images") is None
+
+
+@pytest.mark.asyncio
+async def test_image_search_dispatches_reverse_image_mode(monkeypatch):
+    async def fake_reverse_search(db, user_id, args):
+        return {"mode": "image", "max_results": args["max_results"]}
+
+    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
+
+    result = await search_tools._image_search(None, "user-a", {
+        "mode": "image",
+        "attach_id": "attach-1",
+        "max_results": 7,
+    })
+
+    assert result == {"mode": "image", "max_results": 7}
+
+
+def test_image_search_schema_exposes_one_tool_with_two_modes():
+    from agent.tools.base import registry
+
+    schema = registry.get("image_search").input_schema
+    assert schema["oneOf"][0]["properties"]["mode"]["const"] == "text"
+    assert schema["oneOf"][1]["properties"]["mode"]["const"] == "image"
+    assert "max_results" in schema["oneOf"][0]["properties"]
+    assert "max_results" in schema["oneOf"][1]["properties"]
 
 
 def test_similar_image_default_count_is_fifteen():

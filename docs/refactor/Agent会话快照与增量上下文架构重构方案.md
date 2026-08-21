@@ -315,9 +315,9 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 
 ### P2：增量 run
 
-- [x] 按规范化消息 hash 保存覆盖状态；普通 run 的业务 snapshot 只追加当前 run 的消息 hash，模型历史仍按 token 窗口发送以满足无状态 provider 的完整上下文要求。
+- [x] 按规范化消息 hash 保存覆盖状态；普通 run 的业务 snapshot 只追加当前 run 的消息 hash。模型历史由 `context/session_history.py` 按 session baseline 连续读取，不再使用会滑动的最近 N 条 token 窗口。
 - [x] 普通 run 不执行完整业务 loader；Web/IM 仅在新 session 或 TTL 过期时加载。
-- [x] run 完成后更新 snapshot hash 和覆盖游标，不复制完整 snapshot 正文。
+- [x] run 完成后更新 snapshot hash；压缩完成后同步更新 `baseline_message_id` / `baseline_message_hash`，不复制完整 snapshot 正文。
 - [x] Web、QQ、飞书、微信共用 `session_snapshot` 生命周期（IM 仍保留权限过滤策略）。
 
 ### P3：TTL 与显式刷新

@@ -520,7 +520,7 @@
                 type="text"
                 class="behavior-input"
                 style="width: 280px; flex-shrink:0;"
-                v-model="searchDraft.searxng_url"
+                v-model="generalSearchDraft.searxng_url"
                 placeholder="http://127.0.0.1:8888（留空=禁用）"
               />
             </div>
@@ -535,7 +535,7 @@
               type="text"
               class="behavior-input"
               style="width: 280px;"
-              v-model="searchDraft.searxng_engines"
+              v-model="generalSearchDraft.searxng_engines"
               placeholder="sogou,quark,360search"
             />
           </div>
@@ -557,7 +557,7 @@
                 type="text"
                 class="behavior-input"
                 style="width: 280px; flex-shrink:0;"
-                v-model="searchDraft.searxng_image_engines"
+                v-model="generalSearchDraft.searxng_image_engines"
                 placeholder="留空=复用文本引擎"
               />
             </div>
@@ -580,7 +580,7 @@
                 type="password"
                 class="behavior-input"
                 style="width: 280px; flex-shrink:0;"
-                v-model="searchDraft.tavily_api_key"
+                v-model="generalSearchDraft.tavily_api_key"
                 placeholder="tvly-… （留空表示不修改）"
                 autocomplete="new-password"
               />
@@ -595,7 +595,7 @@
             <input
               type="number"
               class="behavior-input"
-              v-model.number="searchDraft.max_results"
+              v-model.number="generalSearchDraft.max_results"
               min="1" max="20"
             />
           </div>
@@ -603,14 +603,14 @@
         </div>
 
         <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!searchError }">
-            <template v-if="searchSaveSource === 'general' && searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="searchSaveSource === 'general' && searchError">{{ searchError }}</template>
+          <span class="save-hint" :class="{ error: !!generalSearchError }">
+            <template v-if="generalSearchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="generalSearchError">{{ generalSearchError }}</template>
           </span>
-          <button class="btn-ghost" @click="resetSearch">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch('general')">
-            <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ searchSaving ? '保存中…' : '保存' }}
+          <button class="btn-ghost" @click="resetGeneralSearch">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: generalSearchSaving }" :disabled="generalSearchSaving" @click="saveSearch('general')">
+            <svg v-if="generalSearchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ generalSearchSaving ? '保存中…' : '保存' }}
           </button>
         </div>
       </section>
@@ -645,9 +645,9 @@
               <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.baidu_similar_images.loading" @click="testSearch('baidu_similar_images')">
                 {{ searchTest.baidu_similar_images.loading ? '测试中…' : '测试' }}
               </button>
-              <input type="checkbox" v-model="searchDraft.similar_image_enabled" title="启用百度千帆相似图搜索" />
+              <input type="checkbox" v-model="similarImageDraft.similar_image_enabled" title="启用百度千帆相似图搜索" />
               <input type="password" class="behavior-input" style="width:280px; flex-shrink:0;"
-                     v-model="searchDraft.baidu_qianfan_api_key" autocomplete="new-password"
+                     v-model="similarImageDraft.baidu_qianfan_api_key" autocomplete="new-password"
                      placeholder="百度 API Key（留空=不修改）" />
             </div>
           </div>
@@ -657,7 +657,7 @@
               <span>默认结果数</span>
               <span class="behavior-desc">范围 1～50；用户也可以在对话中指定数量</span>
             </div>
-            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_default_count" min="1" max="50" />
+            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_default_count" min="1" max="50" />
           </div>
 
           <div class="behavior-item">
@@ -665,7 +665,7 @@
               <span>每日限额</span>
               <span class="behavior-desc">按用户统计</span>
             </div>
-            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_limit_daily" min="1" />
+            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_limit_daily" min="1" />
           </div>
 
           <div class="behavior-item">
@@ -673,19 +673,19 @@
               <span>请求超时</span>
               <span class="behavior-desc">范围 5～60 秒</span>
             </div>
-            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_timeout_seconds" min="5" max="60" />
+            <input type="number" class="behavior-input" v-model.number="similarImageDraft.similar_image_timeout_seconds" min="5" max="60" />
           </div>
         </div>
 
         <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!searchError }">
-            <template v-if="searchSaveSource === 'similar' && searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="searchSaveSource === 'similar' && searchError">{{ searchError }}</template>
+          <span class="save-hint" :class="{ error: !!similarImageError }">
+            <template v-if="similarImageSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="similarImageError">{{ similarImageError }}</template>
           </span>
-          <button class="btn-ghost" @click="resetSearch">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch('similar')">
-            <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ searchSaving ? '保存中…' : '保存' }}
+          <button class="btn-ghost" @click="resetSimilarImageSearch">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: similarImageSaving }" :disabled="similarImageSaving" @click="saveSearch('similar')">
+            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ similarImageSaving ? '保存中…' : '保存' }}
           </button>
         </div>
       </section>
@@ -1878,16 +1878,46 @@ async function saveBehavior() {
   }
 }
 
-// ── 联网搜索（Tavily）────────────────────────────────────────────────────────
-const searchDraft   = reactive({ ...configStore.cfg.search })
-const searchSaving  = ref(false)
-const searchSaved   = ref(false)
-const searchError   = ref('')
-const searchSaveSource = ref<'general' | 'similar' | null>(null)
+// ── 搜索配置：联网搜索与相似图搜索分开维护，避免一个区域的保存覆盖另一区域 ──
+const generalSearchDraft = reactive({
+  tavily_api_key: configStore.cfg.search.tavily_api_key,
+  searxng_url: configStore.cfg.search.searxng_url,
+  searxng_engines: configStore.cfg.search.searxng_engines,
+  searxng_image_engines: configStore.cfg.search.searxng_image_engines,
+  max_results: configStore.cfg.search.max_results,
+})
+const similarImageDraft = reactive({
+  similar_image_enabled: configStore.cfg.search.similar_image_enabled,
+  baidu_qianfan_api_key: configStore.cfg.search.baidu_qianfan_api_key,
+  similar_image_default_count: configStore.cfg.search.similar_image_default_count,
+  similar_image_timeout_seconds: configStore.cfg.search.similar_image_timeout_seconds,
+  similar_image_limit_daily: configStore.cfg.search.similar_image_limit_daily,
+})
+const generalSearchSaving = ref(false)
+const generalSearchSaved = ref(false)
+const generalSearchError = ref('')
+const similarImageSaving = ref(false)
+const similarImageSaved = ref(false)
+const similarImageError = ref('')
 
-function resetSearch() {
-  Object.assign(searchDraft, configStore.cfg.search)
-  searchSaveSource.value = null
+function resetGeneralSearch() {
+  Object.assign(generalSearchDraft, {
+    tavily_api_key: configStore.cfg.search.tavily_api_key,
+    searxng_url: configStore.cfg.search.searxng_url,
+    searxng_engines: configStore.cfg.search.searxng_engines,
+    searxng_image_engines: configStore.cfg.search.searxng_image_engines,
+    max_results: configStore.cfg.search.max_results,
+  })
+}
+
+function resetSimilarImageSearch() {
+  Object.assign(similarImageDraft, {
+    similar_image_enabled: configStore.cfg.search.similar_image_enabled,
+    baidu_qianfan_api_key: configStore.cfg.search.baidu_qianfan_api_key,
+    similar_image_default_count: configStore.cfg.search.similar_image_default_count,
+    similar_image_timeout_seconds: configStore.cfg.search.similar_image_timeout_seconds,
+    similar_image_limit_daily: configStore.cfg.search.similar_image_limit_daily,
+  })
 }
 
 // ── 语音识别模型 ──
@@ -2250,12 +2280,12 @@ async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily' | 'bai
   t.loading = true; t.msg = ''
   try {
     const payload = target === 'tavily'
-      ? { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+      ? { target, tavily_api_key: generalSearchDraft.tavily_api_key || '' }   // 留空=用已存 key
       : target === 'baidu_similar_images'
-        ? { target, baidu_qianfan_api_key: searchDraft.baidu_qianfan_api_key || '' }
+        ? { target, baidu_qianfan_api_key: similarImageDraft.baidu_qianfan_api_key || '' }
       : target === 'searxng_images'
-        ? { target, searxng_url: searchDraft.searxng_url || '', searxng_image_engines: searchDraft.searxng_image_engines || '' }
-        : { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
+        ? { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_image_engines: generalSearchDraft.searxng_image_engines || '' }
+        : { target, searxng_url: generalSearchDraft.searxng_url || '', searxng_engines: generalSearchDraft.searxng_engines || '' }
     const res = await adminStore.authFetch('/api/v1/admin/config/test-search', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -2272,21 +2302,27 @@ async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily' | 'bai
 }
 
 async function saveSearch(source: 'general' | 'similar') {
-  searchSaving.value = true
-  searchSaveSource.value = source
-  searchSaved.value  = false
-  searchError.value  = ''
+  const similar = source === 'similar'
+  const saving = similar ? similarImageSaving : generalSearchSaving
+  const saved = similar ? similarImageSaved : generalSearchSaved
+  const error = similar ? similarImageError : generalSearchError
+  saving.value = true
+  saved.value = false
+  error.value = ''
   try {
-    await configStore.saveConfig({ search: { ...searchDraft } })
-    searchSaved.value = true
+    await configStore.saveConfig({
+      search: similar ? { ...similarImageDraft } : { ...generalSearchDraft },
+    })
+    saved.value = true
     // key 保存后后端返回 ****，清空输入回到「不修改」态
-    Object.assign(searchDraft, configStore.cfg.search)
-    setTimeout(() => { searchSaved.value = false }, 3000)
+    if (similar) resetSimilarImageSearch()
+    else resetGeneralSearch()
+    setTimeout(() => { saved.value = false }, 3000)
   } catch (e) {
-    searchError.value = (e instanceof Error ? e.message : String(e))
-    setTimeout(() => { searchError.value = '' }, 5000)
+    error.value = (e instanceof Error ? e.message : String(e))
+    setTimeout(() => { error.value = '' }, 5000)
   } finally {
-    searchSaving.value = false
+    saving.value = false
   }
 }
 
@@ -2443,7 +2479,8 @@ const tooltipStyle = computed(() => {
 onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
-  Object.assign(searchDraft, configStore.cfg.search)
+  resetGeneralSearch()
+  resetSimilarImageSearch()
   Object.assign(voiceDraft, configStore.cfg.voice)
   Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()

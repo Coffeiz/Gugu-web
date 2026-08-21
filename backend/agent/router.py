@@ -67,12 +67,14 @@ _CMD = {
     "stop": "stop", "s": "stop", "cancel": "stop", "x": "stop",
     "停": "stop", "停止": "stop", "取消": "stop", "停下": "stop",
     "status": "status", "状态": "status", "进度": "status",
+    "compact": "compact", "压缩": "compact", "整理上下文": "compact",
     "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
 }
 _HELP_TEXT = (
     "🤖 可用命令（确定性、立即生效）：\n"
     "/stop　停止当前任务\n"
     "/status　看当前进度\n"
+    "/compact　整理当前会话上下文\n"
     "/help　这份帮助"
 )
 
@@ -171,6 +173,8 @@ def decide(text: str, state: str, awaiting: bool = False,
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
     if cmd == "help":
         return {"action": "reply", "reply": _HELP_TEXT}
+    if cmd == "compact":
+        return {"action": "compact"}
 
     intent = classify(text)
 

@@ -346,11 +346,11 @@ async def finalize_im_response(platform: str, platform_user_id: str,
     )
 
 
-async def handle_im_command(user_id, message: str) -> Optional[str]:
+async def handle_im_command(user_id, message: str, session_id: Optional[int] = None) -> Optional[str]:
     """处理不需要模型的 IM 命令，返回回复文本或 ``None``。"""
     from agent import commands
 
-    return await commands.handle(user_id, message)
+    return await commands.handle(user_id, message, session_id=session_id)
 
 
 async def record_passive_im_message(request: AgentRequest, session_id: Optional[int] = None) -> int:
@@ -676,6 +676,7 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("owner_user_id") or ""),
                 str(payload.get("message_id") or ""),
                 payload.get("emoji_refs") or [],
+                str(payload.get("platform_message_id") or ""),
             )
             # faceType=3 的 ext 可能带一个文字标签；QFace 成功补图后，纯表情消息
             # 不应同时展示标签和图片。未匹配到资源时保留网关的兜底文字。
@@ -742,7 +743,7 @@ async def dispatch_im_message(payload: dict):
         trace.finish_run("success", shortcut["reply"])
         return None
 
-    cmd_reply = await handle_im_command(user_id, req.message)
+    cmd_reply = await handle_im_command(user_id, req.message, prepared.session_id)
     if cmd_reply is not None:
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)

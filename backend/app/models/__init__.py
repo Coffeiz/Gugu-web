@@ -399,6 +399,9 @@ class ConversationSession(Base):
     session_info_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     snapshot_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     snapshot_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    # 压缩后的连续历史水位：旧消息保留在数据库，但运行时只从该消息之后追加。
+    baseline_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
+    baseline_message_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -446,6 +449,7 @@ class ChatAttachment(Base):
         Index("ix_chat_attachments_state_created", "state", "created_at"),
         Index("ix_chat_attachments_user_storage", "user_id", "storage_key"),
         Index("ix_chat_attachments_message", "message_id"),
+        Index("ix_chat_attachments_platform_message", "user_id", "platform", "platform_message_id"),
         CheckConstraint(
             "(state = 'draft' AND message_id IS NULL) OR (state = 'attached' AND message_id IS NOT NULL)",
             name="ck_chat_attachments_state_message",
@@ -458,6 +462,9 @@ class ChatAttachment(Base):
     message_id:  Mapped[Optional[int]] = mapped_column(
         ForeignKey("conversation_messages.id", ondelete="CASCADE"), nullable=True, default=None)
     storage_key: Mapped[str]      = mapped_column(String(500))
+    platform: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
+    platform_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    attachment_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     name:        Mapped[str]      = mapped_column(String(300), default="")
     ext:         Mapped[str]      = mapped_column(String(20), default="")
     mime:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
