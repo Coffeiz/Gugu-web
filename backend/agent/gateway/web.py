@@ -330,7 +330,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
-    from agent.im.context_loader import format_history_content, format_message_time
+    from agent.im.context_loader import format_message_time
+    from agent.context.history import build_history_parts
     _summary, history = compress_conv.pop_summary(history)
 
     # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
@@ -361,7 +362,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         fixed_parts = ([_ctx_injection] if _ctx_injection else [])
         if _summary:
             fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
-        history_parts = [{"role": h.role, "content": h.content_json if h.content_json is not None else format_history_content(h, req)} for h in history]
+        history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
         current_text = format_message_time(user_content, sent_at)
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))

@@ -59,12 +59,12 @@ _QWEN = ProviderAdapter(
 _MINIMAX = ProviderAdapter(
     name="minimax",
     api_format="anthropic",
-    # MiniMax-M3 支持 Anthropic 主动缓存（cache_control），返回 cache_read_input_tokens。
-    # 之前测试发现 active 和 passive 没有明显区别，现在统一使用 active 获取缓存统计。
-    supports_active_cache=lambda model: (model or "").lower().startswith("minimax-m3") or (model or "").lower().startswith("minimax-m2"),
+    # MiniMax-M2.x 的主动缓存契约明确；M3 目前只确认自动/被动前缀缓存，
+    # 在没有官方 explicit cache_control 契约和真机复测前不要改请求 wire format。
+    supports_active_cache=lambda model: (model or "").lower().startswith("minimax-m2"),
     supports_thinking_toggle=False,
     auth_headers=lambda ai: {},
-    cache_mode="active",  # MiniMax-M3/M2 主动缓存
+    cache_mode="passive",  # M3 自动缓存；M2.x 由 capability 函数判定主动缓存
     # IndexError/KeyError：MiniMax 偶发返回空/异常的流式响应，anthropic SDK 解析时越界
     # （原有白名单，见 core.py _stream_round 里的注释）。
     # AttributeError：SDK 内部 accumulate_event() 遇到 usage=None 的事件时未判空崩溃

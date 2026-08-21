@@ -426,15 +426,15 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     im_used_tools = False
 
     from app.core.chat_attach import build_user_content
-    from agent.im.context_loader import format_current_content, format_history_content
-    from agent.context.tokens import content_text
+    from agent.im.context_loader import format_current_content
+    from agent.context.history import build_history_parts
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
-    history_parts = [{"role": h.role, "content": h.content_json if h.content_json is not None else format_history_content(h, req)} for h in history]
+    history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
     tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
     tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if use_anthropic:
@@ -732,22 +732,16 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     im_used_tools = False
 
     from app.core.chat_attach import build_user_content
-    from agent.im.context_loader import format_current_content, format_history_content
+    from agent.im.context_loader import format_current_content
+    from agent.context.history import build_history_parts
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
-    history_parts = []
+    history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
     if use_anthropic:
-        for h in history:
-            # 正确处理 content_json（可能是 list 或 string）
-            if h.content_json is not None:
-                content = content_text(h.content_json)
-            else:
-                content = format_history_content(h, req)
-            history_parts.append({"role": h.role, "content": content})
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         assembly = message_assembly.build_messages(
@@ -760,7 +754,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
                          model_cfg=model_cfg, session_id=session_id)
     else:
-        history_parts = [{"role": h.role, "content": format_history_content(h, req)} for h in history]
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         oa_messages = message_assembly.build_messages(

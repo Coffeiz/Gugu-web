@@ -42,8 +42,8 @@ def is_minimax(ai) -> bool:
 def supports_anthropic_active_cache(ai) -> bool:
     """当前模型是否支持 Anthropic `cache_control` 主动缓存。
 
-    MiniMax-M3 只支持被动前缀缓存，不应发送 `cache_control`；官方主动缓存文档目前仅列
-    MiniMax-M2.x。其它既有 Anthropic 路径保持历史行为，MiMo 仍明确不支持该参数。
+    MiniMax-M3 目前只确认被动/自动前缀缓存，不应发送 `cache_control`；官方主动缓存
+    契约目前仅按 M2.x 处理。其它既有 Anthropic 路径保持历史行为，MiMo 仍明确不支持该参数。
     """
     return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
 

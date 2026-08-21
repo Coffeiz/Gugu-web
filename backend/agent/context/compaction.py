@@ -92,26 +92,27 @@ async def compact_context(
         injection_tokens = estimate_tokens(inj_content)
         available_tokens -= injection_tokens
 
-    # 从最新往回保留消息
-    kept_msgs = []
-    kept_indices = []
+    # 从最新往回保留消息。工具调用和工具结果是 provider 语义上的一个原子单元，
+    # 不能只按单条 message 切预算，否则会把 tool_result 留下而把对应 tool_use
+    # 压进摘要，下一轮就会产生非法的孤儿工具消息。
+    kept_units = []
     used_tokens = 0
-    candidate_indices = [i for i in range(len(normal_msgs)) if i != system_injection_idx]
-    for index in reversed(candidate_indices):
-        msg = normal_msgs[index]
-        msg_tokens_count = estimate_tokens(message_text(msg))
-        if used_tokens + msg_tokens_count > available_tokens:
+    units = _atomic_message_units(normal_msgs, system_injection_idx)
+    for unit in reversed(units):
+        unit_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in unit)
+        if used_tokens + unit_tokens > available_tokens:
             break
-        kept_msgs.append(msg)
-        kept_indices.append(index)
-        used_tokens += msg_tokens_count
+        kept_units.append(unit)
+        used_tokens += unit_tokens
 
-    kept_msgs.reverse()
-    kept_indices.reverse()
-    if not kept_msgs and candidate_indices:
-        kept_indices = [candidate_indices[-1]]
-        kept_msgs = [normal_msgs[kept_indices[0]]]
-        used_tokens = estimate_tokens(message_text(kept_msgs[0]))
+    kept_units.reverse()
+    if not kept_units and units:
+        # 即使最新原子单元超预算也必须完整保留，不能退化成只保留其中一条。
+        kept_units = [units[-1]]
+        used_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in units[-1])
+
+    kept_indices = [i for unit in kept_units for i in unit]
+    kept_msgs = [normal_msgs[i] for i in kept_indices]
 
     # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
     kept_index_set = set(kept_indices)
@@ -171,9 +172,47 @@ async def compact_context(
     return new_messages, True
 
 
+def _block_types(message: dict) -> set[str]:
+    content = message.get("content") if isinstance(message, dict) else None
+    blocks = content if isinstance(content, list) else [content]
+    return {
+        str(block.get("type"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("type")
+    }
+
+
+def _has_tool_call(message: dict) -> bool:
+    return (
+        message.get("role") == "assistant"
+        and (bool(message.get("tool_calls")) or "tool_use" in _block_types(message))
+    )
+
+
+def _has_tool_result(message: dict) -> bool:
+    return message.get("role") == "tool" or "tool_result" in _block_types(message)
+
+
+def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> list[list[int]]:
+    """按工具往返切分 message index；普通消息仍然各自作为一个单元。"""
+    indices = [i for i in range(len(messages)) if i != excluded_index]
+    units: list[list[int]] = []
+    cursor = 0
+    while cursor < len(indices):
+        start = indices[cursor]
+        unit = [start]
+        cursor += 1
+        if _has_tool_call(messages[start]):
+            while cursor < len(indices) and _has_tool_result(messages[indices[cursor]]):
+                unit.append(indices[cursor])
+                cursor += 1
+        units.append(unit)
+    return units
+
+
 def _is_system_injection(content: str) -> bool:
     """判断是否是系统上下文注入消息（[system-reminder] 包裹或旧格式开头）。"""
-    if not content:
+    if not isinstance(content, str) or not content:
         return False
     return (content.startswith("[system-reminder]")
             or content.startswith("## 项目")

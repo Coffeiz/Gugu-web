@@ -7,9 +7,8 @@ def _model(provider: str, model: str, base_url: str = "") -> SimpleNamespace:
     return SimpleNamespace(provider=provider, model=model, base_url=base_url)
 
 
-def test_minimax_m3_uses_active_cache() -> None:
-    # 实测主动/被动缓存效果无明显差异，统一走主动缓存并保留可观测命中数。
-    assert supports_anthropic_active_cache(_model("minimax", "MiniMax-M3"))
+def test_minimax_m3_keeps_passive_cache_until_explicit_contract_is_verified() -> None:
+    assert not supports_anthropic_active_cache(_model("minimax", "MiniMax-M3"))
 
 
 def test_minimax_m2_keeps_anthropic_active_cache() -> None:

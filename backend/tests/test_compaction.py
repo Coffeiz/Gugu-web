@@ -6,6 +6,7 @@ from agent.context.compaction import (
     compact_context,
     verify_prefix_consistency,
     _is_system_injection,
+    _atomic_message_units,
     COMPACTION_THRESHOLD_RATIO,
     COMPACTION_TARGET_RATIO,
 )
@@ -18,6 +19,15 @@ def _make_msg(role: str, text: str) -> dict:
 
 def _make_tool_result(text: str) -> dict:
     return {"role": "user", "content": [{"type": "tool_result", "content": text}]}
+
+
+@pytest.fixture(autouse=True)
+def _fake_summary(monkeypatch):
+    """压缩单测只验证编排，不访问真实摘要模型。"""
+    async def fake_summary(_items, _previous=None):
+        return "测试摘要"
+
+    monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
 
 
 class TestEstimateContextLength:
@@ -168,6 +178,41 @@ class TestCompactContext:
         assert "历史二" in joined
         assert "历史三" in joined
         assert any("## 项目" in m.get("content", "") for m in result)
+
+    def test_tool_turn_is_atomic_at_compaction_boundary(self, monkeypatch):
+        captured = []
+
+        async def fake_summary(items, previous=None):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        tool_use = {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "call-1", "name": "calendar", "input": {}}],
+        }
+        tool_result = _make_tool_result("工具结果")
+        current = _make_msg("user", "当前问题")
+        # 预算故意只能容纳 current + tool_result，不能容纳完整 tool turn。
+        result, compacted = asyncio.get_event_loop().run_until_complete(
+            compact_context([_make_msg("user", "旧消息" * 20), tool_use, tool_result, current], "系统", context_tokens=50)
+        )
+        assert compacted
+        kept = result[-1:]
+        kept_text = "\n".join(message_text(item) for item in kept)
+        # tool_use 与 tool_result 必须一起进入摘要，不能留下孤儿 result。
+        assert "工具调用:calendar" in "\n".join(captured)
+        assert "工具结果" in "\n".join(captured)
+        assert "当前问题" in kept_text
+
+    def test_atomic_units_pair_anthropic_and_openai_tool_messages(self):
+        messages = [
+            {"role": "user", "content": "旧消息"},
+            {"role": "assistant", "tool_calls": [{"id": "call-1"}], "content": None},
+            {"role": "tool", "tool_call_id": "call-1", "content": "结果"},
+            {"role": "user", "content": "现在"},
+        ]
+        assert _atomic_message_units(messages) == [[0], [1, 2], [3]]
 
 
 class TestVerifyPrefixConsistency:
