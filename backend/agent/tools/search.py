@@ -497,7 +497,10 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
         ) as client:
             response = await client.post(
                 "https://qianfan.baidubce.com/v2/tools/image_similar_info",
-                headers={"Authorization": f"Bearer {api_key}"},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
                 json=payload,
             )
     except httpx.TimeoutException:
@@ -518,7 +521,13 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
     except ValueError:
         return {"error": "百度相似图搜索返回了无法解析的数据", "error_code": "upstream_error"}
 
-    raw_items = ((data.get("res_data") or {}).get("res_items") or [])
+    # 百度成功响应当前包在 result 下；兼容早期/代理层直接返回 res_data 的结构。
+    result_data = data.get("result") if isinstance(data.get("result"), dict) else data
+    raw_items = ((result_data.get("res_data") or {}).get("res_items") or [])
+    if isinstance(raw_items, dict):
+        raw_items = list(raw_items.values())
+    if not isinstance(raw_items, list):
+        raw_items = []
     results = []
     for item in raw_items[:count]:
         if not isinstance(item, dict):
@@ -533,7 +542,11 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
             "width": item.get("width"),
             "height": item.get("height"),
         })
-    return {"results": results, "request_id": data.get("requestId"), "count": len(results)}
+    return {
+        "results": results,
+        "request_id": data.get("requestId") or result_data.get("requestId"),
+        "count": len(results),
+    }
 
 
 async def _search_similar_images(db, user_id, args: dict):

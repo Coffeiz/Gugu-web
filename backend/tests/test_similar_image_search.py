@@ -91,9 +91,38 @@ async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
 
     assert result["count"] == 1
     assert result["results"][0]["detail_url"] == "https://example.test/detail"
-    assert client.request["headers"] == {"Authorization": "Bearer secret-key"}
+    assert client.request["headers"] == {
+        "Authorization": "Bearer secret-key",
+        "Content-Type": "application/json",
+    }
     assert client.request["json"]["image"] == base64.b64encode(PNG_1X1).decode("ascii")
     assert "secret-key" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_baidu_provider_reads_official_result_wrapper(monkeypatch):
+    client = _Client(_Response({
+        "code": "0",
+        "requestId": "req-wrapped",
+        "result": {
+            "res_data": {
+                "res_items": [{
+                    "title": "官方结构结果",
+                    "objurl": "https://example.test/wrapped.png",
+                    "result_page": "https://example.test/wrapped",
+                    "sim_level": 3,
+                }],
+            },
+        },
+    }))
+    monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: client)
+
+    result = await search_tools._call_baidu_similar_image(PNG_1X1, "secret-key", 1, 20)
+
+    assert result["request_id"] == "req-wrapped"
+    assert result["count"] == 1
+    assert result["results"][0]["image_url"] == "https://example.test/wrapped.png"
+    assert client.request["headers"]["Content-Type"] == "application/json"
 
 
 @pytest.mark.asyncio
