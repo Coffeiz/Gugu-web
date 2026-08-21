@@ -669,7 +669,7 @@ class SearchSkill(BaseSkill):
                 "根据一张图片搜索互联网中的相似图片。用户说找相似图、找同款、这张图还有哪些类似图片时使用。"
                 "当前图片用上下文中的 attach_id，网络图片用 image_url；如果刚用 image_search 找到图片，"
                 "使用对应结果的 img_src 作为 image_url。结果是相似候选，不代表确认是同一张图。"
-                "返回的 similarity（对应服务端 score）只是排序等级，不是事实置信度或相似度 X/5；不要因分值低就直接否定候选。"
+                "返回的 similarity 只是服务端排序等级，不是百分比、置信度或相似度 X/5；不要因分值低就直接否定候选。"
                 "用户只要结果或明确说不用看图时，直接返回候选标题、URL 和排序信息，不要继续调用 inspect_images。"
             ),
             input_schema={
