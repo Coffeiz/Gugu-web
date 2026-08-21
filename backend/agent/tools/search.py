@@ -4,7 +4,7 @@
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
 - `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
-- `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片反向搜索相似候选。
+- `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片以图搜图，返回相似候选。
   默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
@@ -585,10 +585,20 @@ async def _image_search_by_image(db, user_id, args: dict):
 
 async def _image_search(db, user_id, args: dict):
     """统一图片搜索入口，按 mode 分派到关键词或反向图片搜索实现。"""
-    mode = str(args.get("mode") or "text").strip().lower()
+    raw_mode = args.get("mode")
+    if raw_mode is None or not str(raw_mode).strip():
+        # IM 端可能仍使用旧的 image_search 参数形态。没有 mode 时，只有图片输入
+        # 而没有 query 才按反向搜索处理；其余情况保持关键词搜索的默认语义。
+        mode = "image" if (args.get("attach_id") or args.get("image_url")) and not args.get("query") else "text"
+    else:
+        mode = str(raw_mode).strip().lower()
     if mode == "text":
+        if not str(args.get("query") or "").strip():
+            return {"error": "mode=text 时需要提供搜索关键词 query"}
         return await _searxng_image_search(db, user_id, args)
     if mode == "image":
+        if not args.get("attach_id") and not args.get("image_url"):
+            return {"error": "mode=image 时需要提供 attach_id 或 image_url"}
         return await _image_search_by_image(db, user_id, args)
     return {"error": "mode 必须是 text 或 image"}
 
@@ -623,38 +633,26 @@ class SearchSkill(BaseSkill):
             name="image_search", label="图片搜索",
             description=(
                 "统一图片搜索工具。mode=text 时按文字关键词找图/配图，走自建 SearXNG；"
-                "mode=image 时根据已有图片反向搜索同款、相似图或相近风格，使用 attach_id 或 image_url，"
+                "mode=image 时根据已有图片以图搜图（也称反向搜图），查找同款、相似图或相近风格，使用 attach_id 或 image_url，"
                 "走已配置的相似图服务。两种模式都只返回候选，不会自动读取或发送图片；需要视觉分析时再调用 inspect_images。"
                 "用户明确要看图/要一张图时，搜到后接着调用 files 技能的 send_file。"
             ),
             input_schema={
                 "type": "object",
-                "oneOf": [
-                    {
-                        "properties": {
-                            "mode": {"const": "text"},
-                            "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
-                            "max_results": {
-                                "type": "integer", "minimum": 1, "maximum": 20,
-                                "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
-                            },
-                        },
-                        "required": ["mode", "query"],
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["text", "image"],
+                        "description": "搜索模式：text 按关键词搜图；image 以图搜图。省略时按输入自动判断。",
                     },
-                    {
-                        "properties": {
-                            "mode": {"const": "image"},
-                            "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
-                            "image_url": {"type": "string", "description": "已有图片搜索结果中的图片直链"},
-                            "max_results": {
-                                "type": "integer", "minimum": 1, "maximum": 20,
-                                "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
-                            },
-                        },
-                        "required": ["mode"],
-                        "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
+                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
+                    "image_url": {"type": "string", "description": "已有图片搜索结果中的图片直链"},
+                    "max_results": {
+                        "type": "integer", "minimum": 1, "maximum": 20,
+                        "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
                     },
-                ],
+                },
             },
             handler=_image_search,
             start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),

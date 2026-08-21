@@ -61,3 +61,12 @@ def test_empty_and_stringonly_messages_dropped():
     assert tool_rounds_only([]) == []
     assert tool_rounds_only([{"role": "user", "content": "普通文字"}]) == []
     assert tool_rounds_only([{"role": "assistant", "content": []}]) == []
+
+
+def test_canonical_and_openai_tool_messages_are_kept():
+    canonical_call = {"role": "assistant", "content": [{"type": "tool_call"}]}
+    canonical_result = {"role": "tool", "content": [{"type": "tool_result"}]}
+    openai_call = {"role": "assistant", "content": None, "tool_calls": [{"id": "call-1"}]}
+    assert tool_rounds_only([canonical_call, canonical_result, openai_call]) == [
+        canonical_call, canonical_result, openai_call,
+    ]

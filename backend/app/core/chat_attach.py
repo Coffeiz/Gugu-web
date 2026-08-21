@@ -1251,16 +1251,24 @@ def strip_vision_for_history(content):
 
     图片 base64 很大，若原样存进对话历史，会撑大 DB 且每轮都重新喂给模型（token 爆炸）。
     历史里留个占位即可——模型要再看会重新调 read_file。"""
-    if not isinstance(content, list):
-        return content
-    out = []
-    for blk in content:
-        if isinstance(blk, dict) and blk.get("type") in ("image", "video"):
-            label = "图片" if blk.get("type") == "image" else "视频"
-            out.append({"type": "text", "text": f"[{label}已查看]"})
-        else:
-            out.append(blk)
-    return out
+    def _strip(value):
+        if isinstance(value, list):
+            return [_strip(item) for item in value]
+        if isinstance(value, dict):
+            value_type = value.get("type")
+            if value_type in ("image", "video", "audio"):
+                label = {"image": "图片", "video": "视频", "audio": "音频"}[value_type]
+                return {"type": "text", "text": f"[{label}已查看]"}
+            # OpenAI image_url 的 data URL 也不能落入历史；远程 URL 可以保留为引用。
+            if value_type == "image_url":
+                image_url = value.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if isinstance(url, str) and url.startswith("data:"):
+                    return {"type": "text", "text": "[图片已查看]"}
+            return {key: _strip(item) for key, item in value.items()}
+        return value
+
+    return _strip(content)
 
 
 async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, model_cfg=None) -> tuple[str, list, list, list]:

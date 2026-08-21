@@ -188,7 +188,7 @@ def _block_types(message: dict) -> set[str]:
 def _has_tool_call(message: dict) -> bool:
     return (
         message.get("role") == "assistant"
-        and (bool(message.get("tool_calls")) or "tool_use" in _block_types(message))
+        and (bool(message.get("tool_calls")) or bool({"tool_use", "tool_call"} & _block_types(message)))
     )
 
 

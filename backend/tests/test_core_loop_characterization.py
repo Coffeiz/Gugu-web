@@ -25,7 +25,7 @@ import pytest
 
 import agent.core as core
 import agent.context.compaction as compaction
-from agent.core import LLMRunner, MAX_ROUNDS, MAX_VERIFY, _VERIFY_PROMPT
+from agent.core import LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, _VERIFY_PROMPT
 from agent.tools import registry
 
 
@@ -474,9 +474,10 @@ async def test_empty_reply_falls_back_after_one_retry(monkeypatch, dispatched):
 
 
 async def test_max_rounds_exhausted_reports_friendly_error(monkeypatch, dispatched):
-    """轮次撞上限（MAX_ROUNDS + MAX_VERIFY*2）→ 不报硬错误、不死循环，给一句"前面几步已经生效"的友好提示。"""
-    # 每轮都真调一个只读工具、且从不产出纯文字收尾——round_i 会一直递增到上限退出 while 循环。
-    total_rounds = MAX_ROUNDS + MAX_VERIFY * 2 + 1
+    """普通任务轮次撞上限 → 不报硬错误、不死循环，给友好提示。"""
+    # 每轮都真调一个只读工具、且从不产出纯文字收尾；核实预算没有打开时，
+    # 普通任务只能消耗 MAX_ROUNDS 轮。
+    total_rounds = MAX_ROUNDS + 1
     script = [msg([TU("get_project", str(i), {})]) for i in range(total_rounds)]
     patch_anthropic(monkeypatch, script)
     messages = [{"role": "user", "content": "反复查一下"}]
@@ -484,3 +485,16 @@ async def test_max_rounds_exhausted_reports_friendly_error(monkeypatch, dispatch
     assert ev["error"] == 1
     assert ev["_usage"] == 0   # 走的是轮次上限兜底分支，不是正常收尾
     assert any("前面几步已经生效" in d for d in errors), f"应该给出轮次上限的友好提示，实际 errors={errors!r}"
+
+
+async def test_tool_calls_exhausted_before_next_real_dispatch(monkeypatch, dispatched):
+    """实际工具调用达到 run 上限后，剩余 tool call 只补结果，不再执行真实工具。"""
+    calls = [TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)]
+    script = [msg(calls[index:index + 2]) for index in range(0, len(calls), 2)]
+    patch_anthropic(monkeypatch, script)
+    messages = [{"role": "user", "content": "查很多次"}]
+    ev, _text, errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+
+    assert len(dispatched) == MAX_TOOL_CALLS
+    assert ev["error"] == 1
+    assert any("查询步骤有点多" in detail for detail in errors)

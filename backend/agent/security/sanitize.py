@@ -248,7 +248,7 @@ def sanitize_messages(messages: list) -> list:
 
 
 def tool_rounds_only(messages: list) -> list:
-    """从「工具循环 delta」里只留真正的工具往返（assistant 的 tool_use / user 的 tool_result），
+    """从「工具循环 delta」里只留真正的工具往返（assistant 的工具调用 / 工具结果），
     丢弃 core 里守卫注入的合成控制消息和核实轮被 UI 隐藏的内心戏——它们是控制信令、不是对话：
 
     - `_VERIFY_PROMPT` / `_VERIFY_FORCE_PROMPT` / `_NARRATION_NUDGE` / `_INTENT_NUDGE` /
@@ -258,12 +258,16 @@ def tool_rounds_only(messages: list) -> list:
     这些若落进 ConversationMessage.content_json，下一轮会从 content_json 重建进 LLM 上下文、
     还被压缩/反思吃进去——每轮重复灌「【系统自检】…」白烧 token 且污染行为。最终回复另存为
     assistant text，不在此 delta 里，所以「只留带工具块的消息」不会漏掉真答复。
-    判据基于工具块存在性（tool_use / tool_result），故对 anthropic 与 openai 两种 content 形态都成立。"""
+    判据基于工具块存在性，兼容 provider wire 格式和 canonical tool_call/tool_result。
+    """
     out = []
     for m in messages:
         c = m.get("content")
-        if isinstance(c, list) and any(
-            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result") for b in c
-        ):
+        has_blocks = isinstance(c, list) and any(
+            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_call", "tool_result")
+            for b in c
+        )
+        has_openai_call = m.get("role") == "assistant" and bool(m.get("tool_calls"))
+        if has_blocks or has_openai_call or m.get("role") == "tool":
             out.append(m)
     return out

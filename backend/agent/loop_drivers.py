@@ -99,6 +99,24 @@ class _AnthropicCtx:
     model: str
 
 
+def _contains_volatile_image(value: Any) -> bool:
+    """识别会改变请求前缀的内联图片，不把其后的内容推进缓存断点。"""
+    if isinstance(value, dict):
+        if value.get("type") == "image":
+            source = value.get("source") or {}
+            if isinstance(source, dict) and source.get("type") == "base64" and source.get("data"):
+                return True
+        if value.get("type") == "image_url":
+            image_url = value.get("image_url") or {}
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if isinstance(url, str) and url.startswith("data:"):
+                return True
+        return any(_contains_volatile_image(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_volatile_image(item) for item in value)
+    return False
+
+
 def _with_history_cache(messages: list) -> list:
     """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
 
@@ -124,14 +142,25 @@ def _with_history_cache(messages: list) -> list:
     if cache_limit <= 0:
         return list(messages)
 
+    # 内联 base64 图片通常只属于本轮请求，且下一轮历史会被规范化为文本/工具记录。
+    # 因此缓存断点最多推进到图片之前，避免把不稳定的视觉 payload 纳入前缀。
+    volatile_index = next(
+        (index for index, message in enumerate(messages[:cache_limit])
+         if _contains_volatile_image(message)),
+        None,
+    )
+    stable_limit = volatile_index if volatile_index is not None else cache_limit
+
     # 保留上一请求的 checkpoint，并在本轮 conversation 末尾建立新 checkpoint。
     # PromptMessages 会在同一 run 的 tool round 之间持续追加消息；如果每次只标记
     # 最后一条，provider 可能看不到上一轮已经建立的可复用前缀。
     anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
-    latest_anchor = cache_limit - 1
-    anchor_indices.add(latest_anchor)
+    anchor_indices = {index for index in anchor_indices if 0 <= index < stable_limit}
+    latest_anchor = stable_limit - 1
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if remember_anchor is not None:
+    if latest_anchor >= 0:
+        anchor_indices.add(latest_anchor)
+    if remember_anchor is not None and volatile_index is None and latest_anchor >= 0:
         remember_anchor(latest_anchor)
 
     # 浅拷贝 messages 列表

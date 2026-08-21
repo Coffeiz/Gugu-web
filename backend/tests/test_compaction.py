@@ -222,6 +222,18 @@ class TestCompactContext:
         ]
         assert _atomic_message_units(messages) == [[0], [1, 2], [3]]
 
+    def test_atomic_units_pair_canonical_tool_messages(self):
+        messages = [
+            {"role": "assistant", "content": [{
+                "type": "tool_call", "id": "call-1", "name": "calendar", "arguments": {},
+            }]},
+            {"role": "tool", "content": [{
+                "type": "tool_result", "tool_call_id": "call-1", "content": "结果",
+            }]},
+            {"role": "user", "content": "现在"},
+        ]
+        assert _atomic_message_units(messages) == [[0, 1], [2]]
+
 
 class TestVerifyPrefixConsistency:
     def test_valid_compacted(self):

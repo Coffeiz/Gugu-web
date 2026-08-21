@@ -102,12 +102,17 @@ def _to_int_id(v):
 
 
 def _coerce_int_ids(args) -> None:
-    """就地把 args（含嵌套 target）里的整型 id 键从字符串转成 int。"""
+    """就地归一工具参数里的整型 id 和常见的结果数量。"""
     if not isinstance(args, dict):
         return
     for k in _INT_ID_KEYS:
         if k in args:
             args[k] = _to_int_id(args[k])
+    # IM 模型有时会把 JSON Schema 中的 integer 参数序列化成数字字符串。
+    # 在 schema 校验前做无损归一，避免把可执行的调用误判成输入错误；非数字字符串保持原样，
+    # 仍由对应 schema 给出明确的 type 错误。
+    if "max_results" in args:
+        args["max_results"] = _to_int_id(args["max_results"])
     tgt = args.get("target")
     if isinstance(tgt, dict):
         for k in ("project_id", "folder_id"):

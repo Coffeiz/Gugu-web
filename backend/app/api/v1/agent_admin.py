@@ -938,7 +938,7 @@ def _redact_args(v):
 
 
 def _redact_cj(blocks):
-    """content_json 块脱敏：保留 text/tool_use/tool_result 的结构与工具名，正文与结果内容打码。"""
+    """content_json 块脱敏：保留文本和工具结构，正文与工具结果内容打码。"""
     if not blocks:
         return blocks
     out = []
@@ -948,10 +948,13 @@ def _redact_cj(blocks):
         t = b.get("type")
         if t == "text":
             out.append({"type": "text", "text": _redact_text(b.get("text", ""))})
-        elif t == "tool_use":
-            out.append({"type": "tool_use", "name": b.get("name"), "input": _redact_args(b.get("input") or {})})
+        elif t in ("tool_use", "tool_call"):
+            arguments = b.get("input", b.get("arguments", {}))
+            wire_type = "tool_use" if t == "tool_use" else "tool_call"
+            argument_key = "input" if t == "tool_use" else "arguments"
+            out.append({"type": wire_type, "name": b.get("name"), argument_key: _redact_args(arguments)})
         elif t == "tool_result":
-            out.append({"type": "tool_result", "is_error": bool(b.get("is_error")), "content": "〔结果已隐藏〕"})
+            out.append({"type": t, "is_error": bool(b.get("is_error")), "content": "〔结果已隐藏〕"})
     return out
 
 

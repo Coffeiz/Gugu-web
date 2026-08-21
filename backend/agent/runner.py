@@ -286,7 +286,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
         # 连续历史：未压缩时不再按最近 N 条滑动；压缩后从 baseline 水位继续追加。
         history = await session_history.load_session_history(
-            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0)
+            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0),
+            context_tokens=model_cfg.context_tokens, session=session,
         )
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
@@ -419,6 +420,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
+    oa_messages: list = []
+    oa_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
@@ -446,6 +449,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
             dynamic_tail=tail_parts,
         )
+        oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
                          model_cfg=model_cfg, session_id=session_id)
 
@@ -467,13 +471,18 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     # ── 持久化：工具调用轮次（anthropic）+ 回复 + 用量（报错不入历史）──
     if not errored:
         async with _sess._SessionLocal() as db2:
-            if use_anthropic:
-                # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
-                for tm in sanitize.tool_rounds_only(message_assembly.newly_appended(anthr_messages, anthr_initial_len)):
-                    db2.add(ConversationMessage(
-                        session_id=session_id, role=tm["role"],
-                        content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                    ))
+            # 两种 provider 都持久化同一套 canonical tool turn；守卫注入的合成 prompt
+            # /核实内心戏不会进入 canonical 结果。
+            tool_history = message_assembly.newly_appended(
+                anthr_messages if use_anthropic else oa_messages,
+                anthr_initial_len if use_anthropic else oa_initial_len,
+            )
+            from agent.context.history import canonicalize_tool_messages
+            for tm in canonicalize_tool_messages(tool_history):
+                db2.add(ConversationMessage(
+                    session_id=session_id, role=tm["role"], content="",
+                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                ))
             if text or sent_files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=sent_files or None))
@@ -592,7 +601,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
         # 连续历史：只加载 baseline 之后的追加消息，避免每轮重新裁剪历史前缀。
         history = await session_history.load_session_history(
-            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0)
+            db, session_id, int(getattr(session, "baseline_message_id", 0) or 0),
+            context_tokens=model_cfg.context_tokens, session=session,
         )
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
@@ -713,6 +723,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
+    oa_messages: list = []
+    oa_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
@@ -737,6 +749,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
             dynamic_tail=tail_parts)
+        oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
                          model_cfg=model_cfg, session_id=session_id)
 
@@ -810,13 +823,16 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     # 持久化（跟 run_collect 一致）：写入 db + schedule_title/summary/reflection/compress
     if not errored:
         async with _sess._SessionLocal() as db2:
-            if use_anthropic:
-                # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
-                for tm in sanitize.tool_rounds_only(message_assembly.newly_appended(anthr_messages, anthr_initial_len)):
-                    db2.add(ConversationMessage(
-                        session_id=session_id, role=tm["role"],
-                        content="", content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                    ))
+            tool_history = message_assembly.newly_appended(
+                anthr_messages if use_anthropic else oa_messages,
+                anthr_initial_len if use_anthropic else oa_initial_len,
+            )
+            from agent.context.history import canonicalize_tool_messages
+            for tm in canonicalize_tool_messages(tool_history):
+                db2.add(ConversationMessage(
+                    session_id=session_id, role=tm["role"], content="",
+                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                ))
             if text or files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=files or None))

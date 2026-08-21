@@ -79,15 +79,18 @@ async def _stream_round(client, kwargs, adapter=None):
     if last:
         raise last
 
-# 工具循环最大轮次。配合「工具使用准则」(skills.md，先规划后执行、别重复验证) + 强工具
-# (create_project 带 stages/todos、set_stages 整体替换、move_items/批量 rename/edit 一次处理多个)，
-# 多步任务通常 2~3 轮就完成。设 6 给复杂任务留余量、同时收紧慢尾（封顶单条耗时）；真撞上限会友好提示「前面已生效，要不要接着做」。
-MAX_ROUNDS = 6
+# 工具循环最大轮次。普通任务和核实轮分开计数，核实预算不能放大普通任务的上限。
+MAX_ROUNDS = 8
+# 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
+MAX_TOOL_CALLS = 10
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
 
 # ── 自我核实：成功做了增删改后，立刻跑一轮核实（用查询工具查证真生效/完整），
 # 没做成/不完整就补做；最多 MAX_VERIFY 轮（每次对话回合计，非整 session），避免仅凭操作回执遗漏部分结果。
 MAX_VERIFY = 5
+# 最后一轮核实允许模型在完成最后一次查询后输出收束文本。
+MAX_VERIFY_LLM_ROUNDS = MAX_VERIFY + 1
+_TOOL_BUDGET_EXHAUSTED = "工具调用额度已用完。请不要再调用工具，直接根据已经获得的结果回复用户。"
 _VERIFY_PROMPT = (
     "【内部核验 · 请执行】你刚才执行了增删改操作。现在用对应的查询工具检查结果是否生效且完整："
     "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推）。"
@@ -288,9 +291,10 @@ class LLMRunner:
         client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 
         _mutset = _mutating_tools(self.tool_names)
-        did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
+        did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
+        tool_calls_used = 0
         _request_conversation = getattr(messages, "conversation", messages)
         _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
@@ -298,9 +302,19 @@ class LLMRunner:
         verify_mode = False; verify_fixed = False; verify_queried = False
         total_in = total_out = total_cache = 0
         compaction_attempts = 0
+        hard_budget_retries = 0
 
-        while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
-            round_i += 1
+        while True:
+            # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
+            # 最后一轮额外留给模型输出核实后的收束文本。
+            if verify_mode:
+                if verify_rounds >= MAX_VERIFY_LLM_ROUNDS:
+                    break
+                verify_rounds += 1
+            else:
+                if task_rounds >= MAX_ROUNDS:
+                    break
+                task_rounds += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
             if await _im_cancelled():
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
@@ -308,8 +322,22 @@ class LLMRunner:
 
             # 上下文压缩检测：超过 90% 预算时触发压缩
             from agent.context import compaction, tokens
+            from agent.context.budget import effective_budget, enforce_message_budget
             context_tokens = getattr(ai, "context_tokens", 256000)
             current_length = await compaction.estimate_context_length(messages, system_text)
+            safe_budget = effective_budget(context_tokens)
+            if current_length > safe_budget:
+                hard_result = enforce_message_budget(messages, system_text or "", context_tokens)
+                if hard_result.changed:
+                    current_length = await compaction.estimate_context_length(messages, system_text)
+                    _log.warning(
+                        "[core] 上下文预检超预算，执行确定性截断：before=%s after=%s dropped=%s",
+                        hard_result.before_tokens, hard_result.after_tokens,
+                        hard_result.dropped_messages,
+                    )
+                if hard_result.changed and current_length > safe_budget:
+                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                    return
             if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
                 # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
                 # 仍开始下一次摘要请求。
@@ -354,7 +382,10 @@ class LLMRunner:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
                         return
                     _log.info("[core] 上下文已压缩，重试当前 round")
-                    round_i -= 1  # 重试当前 round
+                    if verify_mode:
+                        verify_rounds -= 1
+                    else:
+                        task_rounds -= 1
                     continue
 
             _tok = 0
@@ -400,6 +431,18 @@ class LLMRunner:
                         await _round_gen.aclose()
                         return
             except RetryableError as e:
+                from agent.context.budget import enforce_message_budget, is_context_overflow_error
+                overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
+                if overflow and hard_budget_retries < 1:
+                    hard_result = enforce_message_budget(messages, system_text or "", getattr(ai, "context_tokens", 256000))
+                    if hard_result.changed:
+                        hard_budget_retries += 1
+                        if verify_mode:
+                            verify_rounds -= 1
+                        else:
+                            task_rounds -= 1
+                        _log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
+                        continue
                 # _stream_round 已经把原始异常记进受限诊断出口、也记过 WARNING 了，这里不重复记；
                 # 只根据 cause 类型挑一句降级文案给用户。
                 import anthropic
@@ -408,6 +451,17 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
+                from agent.context.budget import enforce_message_budget, is_context_overflow_error
+                if is_context_overflow_error(e) and hard_budget_retries < 1:
+                    hard_result = enforce_message_budget(messages, system_text or "", getattr(ai, "context_tokens", 256000))
+                    if hard_result.changed:
+                        hard_budget_retries += 1
+                        if verify_mode:
+                            verify_rounds -= 1
+                        else:
+                            task_rounds -= 1
+                        _log.warning("[core] provider 返回上下文超量，执行一次确定性截断重试")
+                        continue
                 # 已吐过 token 中途出错（emitted 就原样抛的路径）或其他未预期异常——按未知处理：
                 # 原始进受限诊断出口，可见日志只留类型名，不带原始 str(e)。
                 # where 里带上 provider + api_format——2026-07-14 那次 MiniMax AttributeError
@@ -440,10 +494,20 @@ class LLMRunner:
                     async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
                         yield _line
                 dispatched = []
-                for tc in result.tool_calls:
+                remaining_tool_calls = max(0, MAX_TOOL_CALLS - tool_calls_used)
+                tool_budget_exceeded = len(result.tool_calls) > remaining_tool_calls
+                for call_index, tc in enumerate(result.tool_calls):
                     label = self._label(tc.name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
+                    if call_index >= remaining_tool_calls:
+                        # 仍然为 provider 的每个 tool call 补一个结果，避免留下孤儿 tool_call；
+                        # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
+                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': tc.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
+                        continue
+                    tool_calls_used += 1
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
@@ -466,6 +530,10 @@ class LLMRunner:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
                 driver.append_tool_round(messages, result, dispatched)
+                if tool_budget_exceeded:
+                    _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
+                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
+                    return
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
                 if did_mutate and verify_count < MAX_VERIFY:

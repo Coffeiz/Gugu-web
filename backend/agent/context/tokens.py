@@ -52,11 +52,12 @@ def content_text(content) -> str:
         if block_type in {"reasoning", "reasoning_content"}:
             value = content.get("text", content.get("content", ""))
             return f"[思考]\n{content_text(value)}" if value else ""
-        if block_type == "tool_use":
+        if block_type in {"tool_use", "tool_call"}:
             name = content.get("name") or "未知工具"
-            return f"[工具调用:{name}]\n{_json_content(content.get('input', {}))}"
+            arguments = content.get("input", content.get("arguments", {}))
+            return f"[工具调用:{name}]\n{_json_content(arguments)}"
         if block_type == "tool_result":
-            tool_id = content.get("tool_use_id") or ""
+            tool_id = content.get("tool_use_id") or content.get("tool_call_id") or ""
             prefix = f"[工具结果:{tool_id}]" if tool_id else "[工具结果]"
             return f"{prefix}\n{content_text(content.get('content', ''))}"
         return _json_content({k: v for k, v in content.items() if k != "cache_control"})

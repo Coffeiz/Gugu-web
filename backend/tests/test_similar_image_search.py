@@ -161,14 +161,50 @@ async def test_image_search_dispatches_reverse_image_mode(monkeypatch):
     assert result == {"mode": "image", "max_results": 7}
 
 
-def test_image_search_schema_exposes_one_tool_with_two_modes():
+@pytest.mark.asyncio
+async def test_image_search_infers_legacy_reverse_image_mode(monkeypatch):
+    async def fake_reverse_search(db, user_id, args):
+        return {"mode": "image", "attach_id": args["attach_id"]}
+
+    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
+
+    result = await search_tools._image_search(None, "user-a", {"attach_id": "attach-1"})
+
+    assert result == {"mode": "image", "attach_id": "attach-1"}
+
+
+@pytest.mark.asyncio
+async def test_image_search_rejects_mode_without_required_input():
+    assert await search_tools._image_search(None, "user-a", {"mode": "text"}) == {
+        "error": "mode=text 时需要提供搜索关键词 query"
+    }
+    assert await search_tools._image_search(None, "user-a", {"mode": "image"}) == {
+        "error": "mode=image 时需要提供 attach_id 或 image_url"
+    }
+
+
+def test_image_search_schema_uses_flat_compatible_input():
     from agent.tools.base import registry
 
     schema = registry.get("image_search").input_schema
-    assert schema["oneOf"][0]["properties"]["mode"]["const"] == "text"
-    assert schema["oneOf"][1]["properties"]["mode"]["const"] == "image"
-    assert "max_results" in schema["oneOf"][0]["properties"]
-    assert "max_results" in schema["oneOf"][1]["properties"]
+    assert "oneOf" not in schema
+    assert schema["properties"]["mode"]["enum"] == ["text", "image"]
+    assert "query" in schema["properties"]
+    assert "attach_id" in schema["properties"]
+    assert "image_url" in schema["properties"]
+    assert schema.get("required") is None
+
+
+def test_image_search_accepts_numeric_string_result_count_after_normalization():
+    from agent.tools.base import _coerce_int_ids, build_validator, validate_input, registry
+
+    args = {"mode": "image", "attach_id": "attach-1", "max_results": "5"}
+    _coerce_int_ids(args)
+
+    assert args["max_results"] == 5
+    assert validate_input(
+        build_validator(registry.get("image_search").input_schema), args
+    ) == []
 
 
 def test_similar_image_default_count_is_fifteen():

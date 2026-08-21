@@ -183,7 +183,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 连续历史：不再按最近 N 条滑动；压缩后从 session baseline 之后继续追加。
         from agent.context import session_history
         history = await session_history.load_session_history(
-            db, session.id, int(getattr(session, "baseline_message_id", 0) or 0)
+            db, session.id, int(getattr(session, "baseline_message_id", 0) or 0),
+            context_tokens=settings.ai.context_tokens, session=session,
         )
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
@@ -351,6 +352,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     usage_tokens = {"input": 0, "output": 0}
     anthr_messages: list = []
     anthr_initial_len: int = 0
+    oa_messages: list = []
+    oa_initial_len: int = 0
     sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
     message_time_san = sanitize.LeadingMessageTimeSanitizer()
@@ -378,6 +381,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 history=history_parts,
                 current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
                 dynamic_tail=tail_parts)
+            oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
             gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
@@ -461,8 +465,14 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             async with _sess._SessionLocal() as db2:
                 sess_alive = await db2.get(ConversationSession, session_id) is not None
                 if sess_alive:
-                    # 只落真工具往返；守卫注入的合成 prompt / 核实内心戏是控制信令，不进历史（否则每轮重灌污染上下文）
-                    for tm in sanitize.tool_rounds_only(message_assembly.newly_appended(anthr_messages, anthr_initial_len)):
+                    # 两种 provider 都落同一套 canonical tool turn；守卫注入的合成 prompt /
+                    # 核实内心戏是控制信令，不进历史。
+                    tool_history = message_assembly.newly_appended(
+                        anthr_messages if use_anthropic else oa_messages,
+                        anthr_initial_len if use_anthropic else oa_initial_len,
+                    )
+                    from agent.context.history import canonicalize_tool_messages
+                    for tm in canonicalize_tool_messages(tool_history):
                         db2.add(ConversationMessage(
                             session_id=session_id, role=tm["role"], content="",
                             content_json=chat_attach.strip_vision_for_history(tm["content"]),
