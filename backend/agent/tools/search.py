@@ -41,13 +41,14 @@ from agent.tools.base import BaseSkill, Tool
 _TAVILY_URL = "https://api.tavily.com/search"
 _search_log = logging.getLogger("agent.search")
 
-# 每次模型工具循环独立计数，避免并发会话互相影响。
-_url_inspection_used: ContextVar[bool] = ContextVar("url_inspection_used", default=False)
+# 每次模型工具循环独立计数，避免并发会话互相影响；单次调用仍最多读取 20 张。
+_MAX_URL_INSPECTION_CALLS = 3
+_url_inspection_count: ContextVar[int] = ContextVar("url_inspection_count", default=0)
 
 
 def reset_image_inspection_budget() -> None:
     """开始一轮对话工具循环时重置网络图片读取额度。"""
-    _url_inspection_used.set(False)
+    _url_inspection_count.set(0)
 
 _SEARCH_QUERY_DESCRIPTION = (
     "搜索关键词。优先使用简短关键词组合，不要直接复制用户的完整问题或写成长句；"
@@ -340,13 +341,13 @@ async def _inspect_images(db, user_id, args: dict):
     has_url = any(
         isinstance(item, dict)
         and not str(item.get("attach_id") or "").strip()
-        and str(item.get("img_src") or item.get("url") or "").strip()
+        and str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
         for item in items
     )
-    if has_url and _url_inspection_used.get():
-        return {"error": "本轮对话已经读取过网络图片，请先根据已有图片结果继续分析；下一轮再读取新的网络图片"}
+    if has_url and _url_inspection_count.get() >= _MAX_URL_INSPECTION_CALLS:
+        return {"error": "本轮对话读取网络图片已达到 3 次上限，请先根据已有图片结果继续分析；下一轮再读取新的网络图片"}
     if has_url:
-        _url_inspection_used.set(True)
+        _url_inspection_count.set(_url_inspection_count.get() + 1)
 
     from agent.tools.files import inspect_image_url
 
@@ -613,7 +614,7 @@ class SearchSkill(BaseSkill):
             description=(
                 "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
                 "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
-                "需要视觉分析时，必须再单独调用 inspect_images，并由模型自行挑选要看的候选图；每轮最多读取一次网络图片。"
+                "需要视觉分析时，必须再单独调用 inspect_images，并由模型自行挑选要看的候选图；每轮最多读取 3 次网络图片。"
                 "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
                 "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
             ),

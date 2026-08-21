@@ -260,10 +260,35 @@ async def test_inspect_images_reads_only_model_selected_results(monkeypatch):
     assert seen == ["https://example.com/two.jpg", "https://example.com/five.jpg"]
     assert [item["result_id"] for item in result["_vision_images"]] == ["image-2", "image-5"]
 
-    second = await search_tools._inspect_images(None, None, {
-        "images": [{"result_id": "image-9", "img_src": "https://example.com/nine.jpg"}],
+    for index in range(2):
+        result = await search_tools._inspect_images(None, None, {
+            "images": [{"result_id": f"image-{index + 9}", "img_src": f"https://example.com/{index + 9}.jpg"}],
+        })
+        assert result["inspected_count"] == 1
+
+    fourth = await search_tools._inspect_images(None, None, {
+        "images": [{"result_id": "image-11", "img_src": "https://example.com/eleven.jpg"}],
     })
-    assert "已经读取过网络图片" in second["error"]
+    assert "达到 3 次上限" in fourth["error"]
+
+
+async def test_similar_image_url_counts_toward_three_call_budget(monkeypatch):
+    search_tools.reset_image_inspection_budget()
+
+    async def _inspect(url):
+        return {"block": {"type": "image", "source": {"type": "base64", "data": url}}}
+
+    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
+    for index in range(3):
+        result = await search_tools._inspect_images(None, None, {
+            "images": [{"result_id": str(index), "image_url": f"https://example.com/{index}.jpg"}],
+        })
+        assert result["inspected_count"] == 1
+
+    blocked = await search_tools._inspect_images(None, None, {
+        "images": [{"result_id": "4", "image_url": "https://example.com/4.jpg"}],
+    })
+    assert "达到 3 次上限" in blocked["error"]
 
 
 async def test_inspect_images_accepts_similar_image_result_url(monkeypatch):

@@ -66,7 +66,7 @@ SearXNG 搜索结果会带 `search_status.state`，不要把所有 `results=[]` 
 如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search` 或
 `search_similar_images`，再单独调用 `inspect_images`。`image_search` 候选填写
 `result_id`、`img_src`、`title`；`search_similar_images` 候选填写 `result_id`、`image_url`、
-`title`。一轮对话最多发起一次网络图片读取，单次最多读取 20 张。不需要看图时不要读取，避免额外下载和视觉输入成本。
+`title`。一轮对话最多发起 3 次网络图片读取，每次最多读取 20 张。不需要看图时不要读取，避免额外下载和视觉输入成本。
 
 ## search_similar_images 找同款后怎么处理
 
