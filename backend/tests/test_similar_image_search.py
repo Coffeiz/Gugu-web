@@ -144,3 +144,9 @@ def test_similar_image_tool_is_registered_but_not_in_default_group_allowlist():
 
     assert registry.get("search_similar_images") is not None
     assert "search_similar_images" not in DEFAULT_GROUP_TOOLS
+
+
+def test_similar_image_default_count_is_fifteen():
+    from app.core.config import SearchSettings
+
+    assert SearchSettings().similar_image_default_count == 15

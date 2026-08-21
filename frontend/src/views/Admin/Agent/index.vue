@@ -589,8 +589,53 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
-              <span>百度千帆相似图搜索</span>
-              <span class="behavior-desc">默认关闭；Web/私聊所有者可用，群成员需显式加入 Bot 工具白名单</span>
+              <span>默认返回结果数</span>
+              <span class="behavior-desc">web_search / image_search 每次搜索返回多少条，范围 1～20</span>
+            </div>
+            <input
+              type="number"
+              class="behavior-input"
+              v-model.number="searchDraft.max_results"
+              min="1" max="20"
+            />
+          </div>
+
+        </div>
+
+        <div class="card-actions">
+          <span class="save-hint" :class="{ error: !!searchError }">
+            <template v-if="searchSaveSource === 'general' && searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="searchSaveSource === 'general' && searchError">{{ searchError }}</template>
+          </span>
+          <button class="btn-ghost" @click="resetSearch">撤销修改</button>
+          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch('general')">
+            <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            {{ searchSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </section>
+
+      <!-- ── 相似图搜索 ── -->
+      <section v-if="activeTab === 'behavior'" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(218,157,111,0.15);--stroke:#da9d6f">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="8.5" cy="8.5" r="5.5"/>
+              <path d="M12.5 12.5L17 17M6.5 8.5h4M8.5 6.5v4"/>
+            </svg>
+          </div>
+          <div class="card-title-block">
+            <h3>相似图搜索</h3>
+            <p>使用百度千帆根据用户图片查找相似候选；独立于关键词图片搜索和通用联网搜索。</p>
+          </div>
+        </div>
+
+        <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>百度千帆 API Key</span>
+              <span class="behavior-desc">Web/私聊所有者可用，群成员需显式加入 Bot 工具白名单</span>
             </div>
             <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
               <span v-if="searchTest.baidu_similar_images.msg" :title="searchTest.baidu_similar_images.msg"
@@ -600,7 +645,7 @@
               <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.baidu_similar_images.loading" @click="testSearch('baidu_similar_images')">
                 {{ searchTest.baidu_similar_images.loading ? '测试中…' : '测试' }}
               </button>
-              <input type="checkbox" v-model="searchDraft.similar_image_enabled" title="启用百度相似图搜索" />
+              <input type="checkbox" v-model="searchDraft.similar_image_enabled" title="启用百度千帆相似图搜索" />
               <input type="password" class="behavior-input" style="width:280px; flex-shrink:0;"
                      v-model="searchDraft.baidu_qianfan_api_key" autocomplete="new-password"
                      placeholder="百度 API Key（留空=不修改）" />
@@ -609,15 +654,15 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
-              <span>相似图默认结果数</span>
-              <span class="behavior-desc">范围 1～50</span>
+              <span>默认结果数</span>
+              <span class="behavior-desc">范围 1～50；用户也可以在对话中指定数量</span>
             </div>
             <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_default_count" min="1" max="50" />
           </div>
 
           <div class="behavior-item">
             <div class="behavior-label">
-              <span>相似图每日限额</span>
+              <span>每日限额</span>
               <span class="behavior-desc">按用户统计</span>
             </div>
             <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_limit_daily" min="1" />
@@ -625,33 +670,20 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
-              <span>相似图请求超时</span>
+              <span>请求超时</span>
               <span class="behavior-desc">范围 5～60 秒</span>
             </div>
             <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_timeout_seconds" min="5" max="60" />
-          </div>
-
-          <div class="behavior-item">
-            <div class="behavior-label">
-              <span>默认返回结果数</span>
-              <span class="behavior-desc">每次搜索返回多少条结果</span>
-            </div>
-            <input
-              type="number"
-              class="behavior-input"
-              v-model.number="searchDraft.max_results"
-              min="1" max="20"
-            />
           </div>
         </div>
 
         <div class="card-actions">
           <span class="save-hint" :class="{ error: !!searchError }">
-            <template v-if="searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="searchError">{{ searchError }}</template>
+            <template v-if="searchSaveSource === 'similar' && searchSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
+            <template v-else-if="searchSaveSource === 'similar' && searchError">{{ searchError }}</template>
           </span>
           <button class="btn-ghost" @click="resetSearch">撤销修改</button>
-          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch">
+          <button class="btn-primary" :class="{ loading: searchSaving }" :disabled="searchSaving" @click="saveSearch('similar')">
             <svg v-if="searchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ searchSaving ? '保存中…' : '保存' }}
           </button>
@@ -1851,9 +1883,11 @@ const searchDraft   = reactive({ ...configStore.cfg.search })
 const searchSaving  = ref(false)
 const searchSaved   = ref(false)
 const searchError   = ref('')
+const searchSaveSource = ref<'general' | 'similar' | null>(null)
 
 function resetSearch() {
   Object.assign(searchDraft, configStore.cfg.search)
+  searchSaveSource.value = null
 }
 
 // ── 语音识别模型 ──
@@ -2237,8 +2271,9 @@ async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily' | 'bai
   }
 }
 
-async function saveSearch() {
+async function saveSearch(source: 'general' | 'similar') {
   searchSaving.value = true
+  searchSaveSource.value = source
   searchSaved.value  = false
   searchError.value  = ''
   try {
@@ -2497,7 +2532,6 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .card-title-block { flex: 1; }
 .card-title-block h3 { font-size: 14px; font-weight: 700; color: rgba(255,255,255,0.88); }
 .card-title-block p  { font-size: 12px; color: rgba(255,255,255,0.38); margin-top: 2px; }
-
 /* ── Provider 切换 ── */
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
 .provider-grid { }

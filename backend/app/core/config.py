@@ -150,7 +150,7 @@ class SearchSettings(BaseModel):
     max_results:    int = Field(5, description="默认返回结果数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
-    similar_image_default_count: int = Field(10, ge=1, le=50, description="相似图搜索默认返回数量")
+    similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")
     similar_image_timeout_seconds: int = Field(20, ge=5, le=60, description="相似图搜索请求超时秒数")
     similar_image_limit_daily: Optional[int] = Field(10, ge=1, description="每个用户每日相似图搜索次数上限")
 

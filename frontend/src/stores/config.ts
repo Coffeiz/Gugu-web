@@ -98,7 +98,7 @@ export const useConfigStore = defineStore('config', () => {
       max_results: 5,
       similar_image_enabled: false,
       baidu_qianfan_api_key: '',
-      similar_image_default_count: 10,
+      similar_image_default_count: 15,
       similar_image_timeout_seconds: 20,
       similar_image_limit_daily: 10,
     },
