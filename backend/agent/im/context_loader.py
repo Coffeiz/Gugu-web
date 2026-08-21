@@ -23,6 +23,25 @@ def format_message_time(content: str, sent_at=None) -> str:
     return content
 
 
+def format_attachment_refs(message) -> str:
+    """为历史消息保留轻量附件引用，不把图片内容重新塞进上下文。"""
+    files = getattr(message, "files", None)
+    if not isinstance(files, list):
+        return ""
+    refs = []
+    for item in files:
+        if not isinstance(item, dict) or not item.get("attach_id"):
+            continue
+        kind = str(item.get("kind") or "").lower()
+        ext = str(item.get("ext") or "").lower()
+        if kind != "image" and ext not in {"png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tiff", "tif"}:
+            continue
+        refs.append(f"attach_id={item['attach_id']}" + (f"，名称={item['name']}" if item.get("name") else ""))
+    if not refs:
+        return ""
+    return "\n[历史图片附件，仅在用户要求回看/分析时调用 inspect_images 读取：" + "；".join(refs) + "]"
+
+
 def format_history_content(message, request: AgentRequest) -> str:
     """给群聊历史用户消息附加稳定发言人身份。
 
@@ -30,6 +49,7 @@ def format_history_content(message, request: AgentRequest) -> str:
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
     content = format_message_time(message.content or "", getattr(message, "sent_at", None))
+    content += format_attachment_refs(message)
     if not request.chat_id or getattr(message, "chat_type", None) != "group":
         return content
     if getattr(message, "role", None) != "user":

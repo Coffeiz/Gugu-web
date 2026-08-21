@@ -281,6 +281,9 @@ class LLMRunner:
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
         from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
+        # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
+        from agent.tools import search as search_tools
+        search_tools.reset_image_inspection_budget()
         client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 
         _mutset = _mutating_tools(self.tool_names)

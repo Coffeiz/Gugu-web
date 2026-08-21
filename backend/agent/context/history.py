@@ -61,6 +61,11 @@ def _openai_history_message(message, request) -> list[dict]:
             if rendered:
                 text_parts.append(rendered)
 
+    from agent.im.context_loader import format_attachment_refs
+    attachment_refs = format_attachment_refs(message)
+    if attachment_refs:
+        text_parts.append(attachment_refs)
+
     result: list[dict] = []
     if message.role == "assistant" or tool_calls:
         assistant = {"role": "assistant", "content": "\n".join(text_parts) or None}
@@ -81,7 +86,12 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool) -> l
         content_json = getattr(message, "content_json", None)
         if use_anthropic:
             if content_json is not None:
-                parts.append({"role": message.role, "content": content_json})
+                from agent.im.context_loader import format_attachment_refs
+                attachment_refs = format_attachment_refs(message)
+                content = list(content_json) if isinstance(content_json, list) else content_json
+                if attachment_refs and isinstance(content, list):
+                    content = [*content, {"type": "text", "text": attachment_refs}]
+                parts.append({"role": message.role, "content": content})
             else:
                 from agent.im.context_loader import format_history_content
 

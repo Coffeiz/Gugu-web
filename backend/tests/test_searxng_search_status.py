@@ -230,21 +230,19 @@ async def test_image_search_reuses_status_and_keeps_results_when_degraded(monkey
     assert result["search_status"]["working_engine_count"] == 1
 
 
-async def test_image_search_can_request_visual_inspection(monkeypatch):
+async def test_image_search_only_returns_candidates_without_visual_inspection(monkeypatch):
     payload = {"results": [{"title": "cat", "img_src": "https://example.com/cat.jpg"}]}
     monkeypatch.setattr(search_tools, "get_settings", lambda: _settings())
     monkeypatch.setattr(search_tools.httpx, "AsyncClient", lambda **kwargs: _FakeClient(payload))
 
-    async def _inspect(url):
-        return {"block": {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "x"}}}
-
-    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
     result = await search_tools._searxng_image_search(None, None, {"query": "cat", "inspect_images": True})
 
-    assert result["_vision_images"][0]["title"] == "cat"
+    assert "_vision_images" not in result
+    assert result["results"][0]["img_src"] == "https://example.com/cat.jpg"
 
 
 async def test_inspect_images_reads_only_model_selected_results(monkeypatch):
+    search_tools.reset_image_inspection_budget()
     seen = []
 
     async def _inspect(url):
@@ -262,6 +260,11 @@ async def test_inspect_images_reads_only_model_selected_results(monkeypatch):
     assert seen == ["https://example.com/two.jpg", "https://example.com/five.jpg"]
     assert [item["result_id"] for item in result["_vision_images"]] == ["image-2", "image-5"]
 
+    second = await search_tools._inspect_images(None, None, {
+        "images": [{"result_id": "image-9", "img_src": "https://example.com/nine.jpg"}],
+    })
+    assert "已经读取过网络图片" in second["error"]
+
 
 async def test_inspect_images_rejects_more_than_twenty_targets():
     result = await search_tools._inspect_images(None, None, {
@@ -269,6 +272,29 @@ async def test_inspect_images_rejects_more_than_twenty_targets():
     })
 
     assert "最多读取 20 张" in result["error"]
+
+
+async def test_inspect_images_can_read_historical_attachment(monkeypatch):
+    search_tools.reset_image_inspection_budget()
+    from app.core import chat_attach
+
+    async def _get_meta(user_id, attach_id):
+        return {"attach_id": attach_id, "ext": "jpeg", "storage_key": "u/.chat_staging/x.jpeg"}
+
+    async def _read_bytes(meta):
+        return b"image-bytes"
+
+    monkeypatch.setattr(chat_attach, "get_meta", _get_meta)
+    monkeypatch.setattr(chat_attach, "read_bytes", _read_bytes)
+    monkeypatch.setattr(chat_attach, "vision_block", lambda data, ext: {
+        "type": "image", "source": {"type": "base64", "data": "x"},
+    })
+
+    result = await search_tools._inspect_images(None, "user-1", {
+        "images": [{"attach_id": "abc123", "title": "历史图片"}],
+    })
+
+    assert result["_vision_images"][0]["attach_id"] == "abc123"
 
 
 def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
@@ -281,7 +307,7 @@ def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
         assert max_results["minimum"] == 1
         assert max_results["maximum"] == 20
 
-    assert tools["image_search"].input_schema["properties"]["inspect_images"]["type"] == "boolean"
+    assert "inspect_images" not in tools["image_search"].input_schema["properties"]
     assert tools["inspect_images"].input_schema["properties"]["images"]["maxItems"] == 20
 
     deep_max = tools["deep_research"].input_schema["properties"]["max_results"]

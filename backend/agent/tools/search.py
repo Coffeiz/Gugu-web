@@ -5,7 +5,7 @@
 - `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
 - `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。默认只返回候选
-  （标题+来源页+图片直链 img_src+缩略图），**不会自动发送**；传 `inspect_images=true` 时会读取最多前三张候选图供视觉模型比较。真要把图发进对话/IM，
+  （标题+来源页+图片直链 img_src+缩略图），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。真要把图发进对话/IM，
   接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
 成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
@@ -16,7 +16,10 @@ sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 
 from datetime import datetime
 
 import asyncio
+import base64
 from collections import Counter
+from contextvars import ContextVar
+import io
 import json
 import logging
 import random
@@ -25,11 +28,26 @@ from app.core.tz import local_day_start_utc
 
 import httpx
 from app.core.config import get_settings
-from app.services.search import count_daily_search_usage, get_user_daily_search_limit, record_search_usage
+from app.core import chat_attach
+from app.services.search import (
+    count_daily_search_usage,
+    count_similar_image_usage,
+    get_user_daily_search_limit,
+    record_search_usage,
+    record_similar_image_usage,
+)
 from agent.tools.base import BaseSkill, Tool
 
 _TAVILY_URL = "https://api.tavily.com/search"
 _search_log = logging.getLogger("agent.search")
+
+# 每次模型工具循环独立计数，避免并发会话互相影响。
+_url_inspection_used: ContextVar[bool] = ContextVar("url_inspection_used", default=False)
+
+
+def reset_image_inspection_budget() -> None:
+    """开始一轮对话工具循环时重置网络图片读取额度。"""
+    _url_inspection_used.set(False)
 
 _SEARCH_QUERY_DESCRIPTION = (
     "搜索关键词。优先使用简短关键词组合，不要直接复制用户的完整问题或写成长句；"
@@ -308,21 +326,6 @@ async def _searxng_image_search(db, user_id, args: dict):
         if r.get("img_src")
     ]
     response = _build_search_response(query, results, engines, data, kind="image")
-    if args.get("inspect_images") is not True:
-        return response
-
-    # 直接读取是快捷路径，固定限制为前三张；需要模型自行挑选更多图片时使用 inspect_images 工具。
-    from agent.tools.files import inspect_image_url
-    inspected = []
-    for result in results[:3]:
-        inspected_result = await inspect_image_url(result["img_src"])
-        if inspected_result.get("block"):
-            inspected.append({"title": result.get("title"), "block": inspected_result["block"]})
-    if inspected:
-        response["_vision_images"] = inspected
-        response["inspection_note"] = f"已读取前 {len(inspected)} 张候选图片，请基于图像内容比较；其余结果仅有文字/链接信息。"
-    else:
-        response["inspection_note"] = "已请求读取候选图片，但当前模型/通道或图片格式不支持视觉读取。"
     return response
 
 
@@ -334,6 +337,17 @@ async def _inspect_images(db, user_id, args: dict):
     if len(items) > 20:
         return {"error": "一次最多读取 20 张图片，请拆成多次调用"}
 
+    has_url = any(
+        isinstance(item, dict)
+        and not str(item.get("attach_id") or "").strip()
+        and str(item.get("img_src") or item.get("url") or "").strip()
+        for item in items
+    )
+    if has_url and _url_inspection_used.get():
+        return {"error": "本轮对话已经读取过网络图片，请先根据已有图片结果继续分析；下一轮再读取新的网络图片"}
+    if has_url:
+        _url_inspection_used.set(True)
+
     from agent.tools.files import inspect_image_url
 
     inspected = []
@@ -343,15 +357,32 @@ async def _inspect_images(db, user_id, args: dict):
             failed.append({"result_id": "", "error": "图片项必须是对象"})
             continue
         result_id = str(item.get("result_id") or "").strip()
+        attach_id = str(item.get("attach_id") or "").strip()
         url = str(item.get("img_src") or item.get("url") or "").strip()
-        if not url:
-            failed.append({"result_id": result_id, "error": "缺少 img_src"})
+        if not url and not attach_id:
+            failed.append({"result_id": result_id, "error": "缺少 img_src 或 attach_id"})
             continue
-        result = await inspect_image_url(url)
+        if attach_id:
+            meta = await chat_attach.get_meta(user_id, attach_id)
+            if not meta:
+                failed.append({"result_id": result_id, "attach_id": attach_id, "error": "找不到这个历史附件，可能已被清理"})
+                continue
+            ext = str(meta.get("ext") or "").lower()
+            if ext not in chat_attach.VISION_EXTS:
+                failed.append({"result_id": result_id, "attach_id": attach_id, "error": f"附件格式 {ext or '未知'} 暂不支持识别"})
+                continue
+            try:
+                block = chat_attach.vision_block(await chat_attach.read_bytes(meta), ext)
+                result = {"block": block} if block else {"error": "附件无法解析"}
+            except Exception:
+                result = {"error": "历史附件读取失败"}
+        else:
+            result = await inspect_image_url(url)
         if result.get("block"):
             inspected.append({
                 "result_id": result_id,
-                "title": item.get("title") or result_id or "候选图片",
+                "attach_id": attach_id or None,
+                "title": item.get("title") or result_id or attach_id or "候选图片",
                 "block": result["block"],
             })
         else:
@@ -419,6 +450,125 @@ async def _deep_research(db, user_id, args: dict):
     return {"query": query, "answer": data.get("answer"), "results": results}
 
 
+async def _resolve_similar_image(user_id, args: dict) -> tuple[bytes | None, str | None]:
+    """把暂存附件或网络图片解析为百度接口需要的图片字节。"""
+    attach_id = str(args.get("attach_id") or "").strip()
+    image_url = str(args.get("image_url") or "").strip()
+    if attach_id:
+        meta = await chat_attach.get_meta(user_id, attach_id)
+        if not meta:
+            return None, "找不到这个图片附件，可能已过期"
+        if meta.get("kind") != "image":
+            return None, "指定附件不是图片"
+        ext = str(meta.get("ext") or "").lower()
+        if ext not in {"jpg", "jpeg", "png"}:
+            return None, "相似图搜索只支持 JPG 和 PNG 图片"
+        raw = await chat_attach.read_bytes(meta)
+    elif image_url:
+        from agent.tools.files import _send_file_from_url
+        result = await _send_file_from_url(None, image_url, "", stage=False)
+        if not isinstance(result, dict) or not result.get("data"):
+            return None, "网络图片下载失败，无法进行相似图搜索"
+        if result.get("ext") not in {"jpg", "jpeg", "png"}:
+            return None, "网络图片不是支持的 JPG 或 PNG 格式"
+        raw = result["data"]
+    else:
+        return None, "需要提供当前图片、附件 ID 或网络图片地址"
+
+    if len(raw) > 4 * 1024 * 1024:
+        return None, "图片超过百度接口的 4MB 限制"
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(raw)) as image:
+            if image.format not in {"JPEG", "PNG"}:
+                return None, "图片实际格式不是 JPG 或 PNG"
+            image.verify()
+    except Exception:
+        return None, "图片内容无法解析"
+    return raw, None
+
+
+async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeout_seconds: int) -> dict:
+    payload = {"image": base64.b64encode(raw).decode("ascii"), "count": count}
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=timeout_seconds, write=10.0, pool=5.0),
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                "https://qianfan.baidubce.com/v2/tools/image_similar_info",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload,
+            )
+    except httpx.TimeoutException:
+        return {"error": "相似图搜索请求超时，请稍后重试", "error_code": "upstream_timeout"}
+    except httpx.HTTPError:
+        return {"error": "相似图搜索网络连接失败，请稍后重试", "error_code": "upstream_error"}
+
+    if response.status_code in (401, 403):
+        return {"error": "百度相似图搜索鉴权失败，请管理员检查 API Key", "error_code": "upstream_auth"}
+    if response.status_code == 429:
+        return {"error": "百度相似图搜索调用频率或额度已用尽，请稍后重试", "error_code": "upstream_rate_limited"}
+    if response.status_code >= 500:
+        return {"error": "百度相似图搜索暂时不可用，请稍后重试", "error_code": "upstream_error"}
+    if response.status_code != 200:
+        return {"error": "百度相似图搜索请求失败，请管理员检查服务配置", "error_code": "upstream_error"}
+    try:
+        data = response.json()
+    except ValueError:
+        return {"error": "百度相似图搜索返回了无法解析的数据", "error_code": "upstream_error"}
+
+    raw_items = ((data.get("res_data") or {}).get("res_items") or [])
+    results = []
+    for item in raw_items[:count]:
+        if not isinstance(item, dict):
+            continue
+        results.append({
+            "title": item.get("title"),
+            "site_name": item.get("site_name"),
+            "source_url": item.get("fromurl") or item.get("result_page"),
+            "image_url": item.get("objurl"),
+            "detail_url": item.get("detail_page") or item.get("result_page"),
+            "similarity": item.get("sim_level"),
+            "width": item.get("width"),
+            "height": item.get("height"),
+        })
+    return {"results": results, "request_id": data.get("requestId"), "count": len(results)}
+
+
+async def _search_similar_images(db, user_id, args: dict):
+    settings = get_settings()
+    cfg = settings.search
+    if not cfg.similar_image_enabled or not cfg.baidu_qianfan_api_key:
+        return {"error": "相似图搜索尚未配置或未启用，请管理员先在 Admin 配置百度千帆 API Key"}
+
+    count = args.get("count") or cfg.similar_image_default_count
+    try:
+        count = max(1, min(50, int(count)))
+    except (TypeError, ValueError):
+        return {"error": "count 必须是 1 到 50 之间的整数"}
+
+    day_start = local_day_start_utc()
+    limit = cfg.similar_image_limit_daily
+    user_limit = await get_user_daily_search_limit(db, user_id)
+    if user_limit is not None:
+        limit = user_limit if limit is None else min(limit, user_limit)
+    if limit is not None and await count_similar_image_usage(db, user_id, day_start) >= limit:
+        return {"error": f"今天的相似图搜索次数已用完（上限 {limit} 次/天）"}
+
+    raw, error = await _resolve_similar_image(user_id, args)
+    if error:
+        return {"error": error}
+    result = await _call_baidu_similar_image(
+        raw, cfg.baidu_qianfan_api_key, count, cfg.similar_image_timeout_seconds,
+    )
+    if "error" not in result:
+        await record_similar_image_usage(db, user_id)
+        if not result.get("results"):
+            result["note"] = "没有找到相似结果"
+    return result
+
+
 class SearchSkill(BaseSkill):
     name = "web_search"   # 2026-07-10 前叫 "search"，跟站内 global_search 撞名太像，改名区分；
                           # 旧定时任务 tool_groups 里存的 "search" 兼容映射见 agent/runner.py
@@ -450,7 +600,7 @@ class SearchSkill(BaseSkill):
             description=(
                 "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
                 "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
-                "可传 inspect_images=true 直接读取最多前三张候选图并进行视觉比较；需要自行挑选更多候选图时，改用 inspect_images 工具。"
+                "需要视觉分析时，必须再单独调用 inspect_images，并由模型自行挑选要看的候选图；每轮最多读取一次网络图片。"
                 "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
                 "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
             ),
@@ -462,10 +612,6 @@ class SearchSkill(BaseSkill):
                         "type": "integer", "minimum": 1, "maximum": 20,
                         "description": "返回候选数（默认 5，范围 1~20）",
                     },
-                    "inspect_images": {
-                        "type": "boolean",
-                        "description": "是否直接读取最多前三张候选图片供视觉模型观察和比较；默认 false。",
-                    },
                 },
                 "required": ["query"],
             },
@@ -475,8 +621,8 @@ class SearchSkill(BaseSkill):
         Tool(
             name="inspect_images", label="读取图片",
             description=(
-                "读取 image_search 返回的指定图片并交给视觉模型分析。先调用 image_search，"
-                "再从结果中挑选需要比较的图片，填写 images 数组（result_id、img_src、title）；"
+                "读取 image_search 结果或历史消息附件并交给视觉模型分析。搜索图片填写 result_id、img_src、title；"
+                "历史图片填写上下文中的 attach_id；"
                 "一次最多读取 20 张。"
             ),
             input_schema={
@@ -492,9 +638,10 @@ class SearchSkill(BaseSkill):
                             "properties": {
                                 "result_id": {"type": "string"},
                                 "img_src": {"type": "string"},
+                                "attach_id": {"type": "string", "description": "历史消息中的图片附件 ID"},
                                 "title": {"type": "string"},
                             },
-                            "required": ["img_src"],
+                            "anyOf": [{"required": ["img_src"]}, {"required": ["attach_id"]}],
                         },
                     },
                 },
@@ -502,6 +649,25 @@ class SearchSkill(BaseSkill):
             },
             handler=_inspect_images,
             start_message=lambda args: random.choice(["我读取选中的图片对比一下。", "我看看这些图片。"]),
+        ),
+        Tool(
+            name="search_similar_images", label="相似图搜索",
+            description=(
+                "根据一张图片搜索互联网中的相似图片。用户说找相似图、找同款、这张图还有哪些类似图片时使用。"
+                "当前图片用上下文中的 attach_id，网络图片用 image_url；如果刚用 image_search 找到图片，"
+                "使用对应结果的 img_src 作为 image_url。结果是相似候选，不代表确认是同一张图。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
+                    "image_url": {"type": "string", "description": "image_search 结果中的图片直链"},
+                    "count": {"type": "integer", "minimum": 1, "maximum": 50, "description": "返回结果数，默认使用 Admin 配置"},
+                },
+                "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
+            },
+            handler=_search_similar_images,
+            start_message=lambda args: random.choice(["我拿这张图找找相似结果。", "我搜一下有没有相近的图片。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",
