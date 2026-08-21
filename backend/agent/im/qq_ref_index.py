@@ -29,10 +29,22 @@ class QQRefIndex:
         self._loaded = False
         self._line_count = 0
 
+    def _ensure_private_storage(self) -> None:
+        """创建并收紧运行时索引目录/文件权限，避免聊天数据受 umask 影响。"""
+        self._path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            self._path.parent.chmod(0o700)
+            if self._path.exists():
+                self._path.chmod(0o600)
+        except OSError:
+            # 权限收紧失败不阻断引用索引；部署检查会暴露异常权限。
+            return
+
     def _load(self) -> None:
         if self._loaded:
             return
         self._loaded = True
+        self._ensure_private_storage()
         try:
             lines = self._path.read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
@@ -65,9 +77,10 @@ class QQRefIndex:
         self._entries[key] = stored
         self._evict()
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_private_storage()
             with self._path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps({"k": key, "v": stored, "t": stored["_stored_at"]}, ensure_ascii=False) + "\n")
+            self._path.chmod(0o600)
             self._line_count += 1
             if self._line_count > max(_COMPACT_LINES, len(self._entries) * 2):
                 self._compact()
@@ -87,13 +100,14 @@ class QQRefIndex:
 
     def _compact(self) -> None:
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_private_storage()
             tmp = self._path.with_suffix(".tmp")
             now = time.time()
             with tmp.open("w", encoding="utf-8") as handle:
                 for key, value in self._entries.items():
                     handle.write(json.dumps({"k": key, "v": value, "t": now}, ensure_ascii=False) + "\n")
             tmp.replace(self._path)
+            self._path.chmod(0o600)
             self._line_count = len(self._entries)
         except OSError:
             return

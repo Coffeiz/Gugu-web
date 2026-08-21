@@ -1,5 +1,13 @@
+import pytest
+
 from agent.gateway import qq
 from agent.im.qq_ref_index import QQRefIndex, ref_index_key
+
+
+@pytest.fixture(autouse=True)
+def qq_ref_index_tmpdir(tmp_path, monkeypatch):
+    """所有 QQ 网关测试都只能写临时引用索引，禁止污染 backend/data。"""
+    monkeypatch.setenv("QQ_REF_INDEX_DIR", str(tmp_path))
 
 
 def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
@@ -340,6 +348,15 @@ def test_qq_ref_index_isolated_by_chat_scope(tmp_path, monkeypatch):
 
     assert index.get(ref_index_key("group", "group-a", "sender-b", "1"))["content"] == "A"
     assert index.get(ref_index_key("group", "group-b", "sender-a", "1")) is None
+
+
+def test_qq_ref_index_uses_private_storage_permissions(tmp_path, monkeypatch):
+    monkeypatch.setenv("QQ_REF_INDEX_DIR", str(tmp_path))
+    index = QQRefIndex(owner="owner", bot_id="bot")
+    index.set("c2c:sender:1", {"content": "测试"})
+
+    assert tmp_path.stat().st_mode & 0o777 == 0o700
+    assert next(tmp_path.glob("*.jsonl")).stat().st_mode & 0o777 == 0o600
 
 
 async def test_qq_raw_c2c_event_to_payload(monkeypatch):
