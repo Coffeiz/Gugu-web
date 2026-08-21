@@ -67,7 +67,7 @@ class ActorResolver:
                 role = access.role or "unknown"
                 allowed_tool_names = access.allowed_tool_names
                 if role == "unknown" and allowed_tool_names is None:
-                    allowed_tool_names = ["web_search", "http_get", "image_search", "send_file"]
+                    allowed_tool_names = ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
             except (ValueError, TypeError, SQLAlchemyError) as exc:
                 diag_log("im.actor_resolver", exc)
                 print(
@@ -75,7 +75,7 @@ class ActorResolver:
                     flush=True,
                 )
                 role = "unknown"
-                allowed_tool_names = ["web_search", "http_get", "image_search", "send_file"]
+                allowed_tool_names = ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
         actor = ActorContext(
             owner_user_id=owner_user_id,
             platform=platform,

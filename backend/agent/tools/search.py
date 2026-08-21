@@ -4,8 +4,8 @@
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
 - `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
-- `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。只返回候选
-  （标题+来源页+图片直链 img_src+缩略图），**不会自动发送**——真要把图发进对话/IM，
+- `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。默认只返回候选
+  （标题+来源页+图片直链 img_src+缩略图），**不会自动发送**；传 `inspect_images=true` 时会读取最多前三张候选图供视觉模型比较。真要把图发进对话/IM，
   接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
 成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
@@ -298,15 +298,76 @@ async def _searxng_image_search(db, user_id, args: dict):
 
     results = [
         {
+            "result_id": f"image-{index}",
             "title": r.get("title"),
             "url": r.get("url"),                              # 来源页（供了解出处）
             "img_src": r.get("img_src"),                       # 图片直链——发图/展示用这个
             "thumbnail": r.get("thumbnail_src") or r.get("thumbnail"),
         }
-        for r in (data.get("results") or [])[:max_results]
+        for index, r in enumerate((data.get("results") or [])[:max_results], start=1)
         if r.get("img_src")
     ]
-    return _build_search_response(query, results, engines, data, kind="image")
+    response = _build_search_response(query, results, engines, data, kind="image")
+    if args.get("inspect_images") is not True:
+        return response
+
+    # 直接读取是快捷路径，固定限制为前三张；需要模型自行挑选更多图片时使用 inspect_images 工具。
+    from agent.tools.files import inspect_image_url
+    inspected = []
+    for result in results[:3]:
+        inspected_result = await inspect_image_url(result["img_src"])
+        if inspected_result.get("block"):
+            inspected.append({"title": result.get("title"), "block": inspected_result["block"]})
+    if inspected:
+        response["_vision_images"] = inspected
+        response["inspection_note"] = f"已读取前 {len(inspected)} 张候选图片，请基于图像内容比较；其余结果仅有文字/链接信息。"
+    else:
+        response["inspection_note"] = "已请求读取候选图片，但当前模型/通道或图片格式不支持视觉读取。"
+    return response
+
+
+async def _inspect_images(db, user_id, args: dict):
+    """读取图片搜索结果中由模型挑选的图片，最多 20 张。"""
+    items = args.get("images")
+    if not isinstance(items, list) or not items:
+        return {"error": "需要提供 images 数组，填写 image_search 返回的 result_id 和 img_src"}
+    if len(items) > 20:
+        return {"error": "一次最多读取 20 张图片，请拆成多次调用"}
+
+    from agent.tools.files import inspect_image_url
+
+    inspected = []
+    failed = []
+    for item in items:
+        if not isinstance(item, dict):
+            failed.append({"result_id": "", "error": "图片项必须是对象"})
+            continue
+        result_id = str(item.get("result_id") or "").strip()
+        url = str(item.get("img_src") or item.get("url") or "").strip()
+        if not url:
+            failed.append({"result_id": result_id, "error": "缺少 img_src"})
+            continue
+        result = await inspect_image_url(url)
+        if result.get("block"):
+            inspected.append({
+                "result_id": result_id,
+                "title": item.get("title") or result_id or "候选图片",
+                "block": result["block"],
+            })
+        else:
+            failed.append({"result_id": result_id, "error": result.get("error", "图片无法读取")})
+
+    response = {
+        "requested_count": len(items),
+        "inspected_count": len(inspected),
+        "failed": failed,
+    }
+    if inspected:
+        response["_vision_images"] = inspected
+        response["inspection_note"] = f"已读取 {len(inspected)} 张指定图片，请基于图像内容分析。"
+    elif not failed:
+        response["inspection_note"] = "没有成功读取图片。"
+    return response
 
 
 # ── deep_research：Tavily（深度、有配额）─────────────────────────────────────
@@ -389,6 +450,7 @@ class SearchSkill(BaseSkill):
             description=(
                 "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
                 "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
+                "可传 inspect_images=true 直接读取最多前三张候选图并进行视觉比较；需要自行挑选更多候选图时，改用 inspect_images 工具。"
                 "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
                 "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
             ),
@@ -400,11 +462,46 @@ class SearchSkill(BaseSkill):
                         "type": "integer", "minimum": 1, "maximum": 20,
                         "description": "返回候选数（默认 5，范围 1~20）",
                     },
+                    "inspect_images": {
+                        "type": "boolean",
+                        "description": "是否直接读取最多前三张候选图片供视觉模型观察和比较；默认 false。",
+                    },
                 },
                 "required": ["query"],
             },
             handler=_searxng_image_search,
             start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
+        ),
+        Tool(
+            name="inspect_images", label="读取图片",
+            description=(
+                "读取 image_search 返回的指定图片并交给视觉模型分析。先调用 image_search，"
+                "再从结果中挑选需要比较的图片，填写 images 数组（result_id、img_src、title）；"
+                "一次最多读取 20 张。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "images": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "description": "要读取的图片结果，使用 image_search 返回的 result_id、img_src 和 title。",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "result_id": {"type": "string"},
+                                "img_src": {"type": "string"},
+                                "title": {"type": "string"},
+                            },
+                            "required": ["img_src"],
+                        },
+                    },
+                },
+                "required": ["images"],
+            },
+            handler=_inspect_images,
+            start_message=lambda args: random.choice(["我读取选中的图片对比一下。", "我看看这些图片。"]),
         ),
         Tool(
             name="deep_research", label="深度研究",

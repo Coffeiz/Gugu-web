@@ -39,7 +39,7 @@ const groupResponseOptions = [
   { key: 'record_only', label: '静默记录' },
 ] as const
 const groupToolOptions = [
-  { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图发图', tools: ['web_search', 'http_get', 'image_search', 'send_file'] },
+  { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图/读图/发图', tools: ['web_search', 'http_get', 'image_search', 'inspect_images', 'send_file'] },
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const platforms = [
@@ -158,7 +158,7 @@ function clearCopyFeedback() { if (copyFeedbackTimer) clearTimeout(copyFeedbackT
 function toggleGroupChat(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { group_chat_enabled: !current.group_chat_enabled }, '群聊设置失败') }
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : bot.group_requires_at ? 'reply_mentions' : 'reply_all') }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
-function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'image_search', 'send_file'] }
+function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'image_search', 'inspect_images', 'send_file'] }
 function hasGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]): boolean { return option.tools.every(t => groupTools(bot).includes(t)) }
 function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
   const current = botById(bot.id)

@@ -410,6 +410,16 @@ class SkillRegistry:
             content = ([{"type": "text", "text": note}] if note else []) + [block]
             return content, None
 
+        if isinstance(result, dict) and "_vision_images" in result:
+            images = result.pop("_vision_images")
+            note = result.pop("inspection_note", "")
+            content = ([{"type": "text", "text": note}] if note else [])
+            for item in images:
+                if isinstance(item, dict) and item.get("block"):
+                    content.append({"type": "text", "text": item.get("title", "候选图片")})
+                    content.append(item["block"])
+            return content, None
+
         # 工具想让模型「看视频」：同上，真正的 video content block（不是代表帧/转写），
         # 目前只有 read_file 读文件库视频（file_readers.py 的 read_video）会产生，且仅限
         # MiniMax M3 这种 Anthropic 通道原生支持视频块的 provider——OpenAI 路工具结果只能

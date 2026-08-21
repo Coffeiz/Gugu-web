@@ -173,7 +173,7 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "send_file", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "inspect_images", "send_file", "group_context_search"}
         if unsupported:
             raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
