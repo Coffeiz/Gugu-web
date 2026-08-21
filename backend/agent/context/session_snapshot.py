@@ -75,7 +75,8 @@ def message_hash(messages: list[dict]) -> str:
     return digest(normalized)
 
 
-def snapshot_is_usable(session, now: datetime | None = None) -> bool:
+def snapshot_is_usable(session, now: datetime | None = None,
+                       context_revision: int | None = None) -> bool:
     """判断当前 session 是否已有未过期的可复用 snapshot。"""
     context = getattr(session, "session_context", None)
     return bool(
@@ -83,6 +84,8 @@ def snapshot_is_usable(session, now: datetime | None = None) -> bool:
         and context.get("system_prompt") is not None
         and context.get("session_info") is not None
         and not is_expired(session, now)
+        and (context_revision is None
+             or int(context.get("context_revision", 0) or 0) == context_revision)
     )
 
 
@@ -130,6 +133,7 @@ def initialize_snapshot(
     user_tz: str | None,
     im_channels: dict | None = None,
     im_memory: dict | None = None,
+    context_revision: int = 0,
     covered_messages: list[dict] | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
@@ -153,6 +157,7 @@ def initialize_snapshot(
         "user_tz": _tz_storage_value(user_tz),
         "im_channels": im_channels or {},
         "im_memory": im_memory or {},
+        "context_revision": context_revision,
     }
     session.session_info_hash = info_hash
     session.snapshot_hash = snapshot_hash(
@@ -200,7 +205,10 @@ async def ensure_snapshot(
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
     """
-    if snapshot_is_usable(session, now):
+    from app.core.events import get_context_revision
+
+    current_revision = await get_context_revision(getattr(session, "user_id", None))
+    if snapshot_is_usable(session, now, current_revision):
         _record_snapshot_event(session, "hit")
         return snapshot_context(session)
 
@@ -213,6 +221,7 @@ async def ensure_snapshot(
         user_tz=payload.get("user_tz"),
         im_channels=payload.get("im_channels") or {},
         im_memory=payload.get("im_memory") or {},
+        context_revision=current_revision,
         covered_messages=payload.get("covered_messages") or [],
         now=now,
         ttl=ttl,

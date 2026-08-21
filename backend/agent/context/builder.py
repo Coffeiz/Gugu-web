@@ -74,7 +74,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
                 user_tz=None, im_message_format: str | None = None) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
-    静态部分（完全不变）：人格/政策/工具定义/风格/技能索引
+    静态部分（完全不变）：人格/profile policy/政策/工具定义/风格/技能索引
     动态部分（可能变化）：记忆/项目/文件/时间/消息格式
 
     返回 (static_text, dynamic_text, now_str)，调用方将静态部分放在 system，
@@ -99,6 +99,16 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
         persona = ""
     if persona:
         static_parts.append(persona)
+
+    # default.md 顶部只保留 profile 的静态行为规则；项目/日历/文件占位区由下方
+    # dynamic_parts 统一生成，避免旧模板和 canonical builder 重复注入业务数据。
+    try:
+        profile_text = (_PROMPTS_DIR / f"{profile}.md").read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        profile_text = ""
+    profile_policy = profile_text.split("\n---", 1)[0].strip()
+    if profile_policy:
+        static_parts.append(profile_policy)
 
     # 注意：beh_block（相处姿态）不放在 static 中——它在不同 call 间变化
     # （如 Query vs Companion），会破坏 MiniMax 前缀匹配缓存。

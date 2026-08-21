@@ -19,3 +19,10 @@ def test_build_default_falls_back_to_server_tz():
     today = datetime.now(LOCAL_TZ).strftime("%Y-%m-%d")
     assert today in now_str
     assert today not in dynamic
+
+
+def test_build_split_includes_default_profile_policy_in_static_prompt():
+    static, dynamic, _ = builder.build_split("default", "u", [], [])
+    assert "当前、最新、最近" in static
+    assert "先用搜索核实" in static
+    assert "当前、最新、最近" not in dynamic

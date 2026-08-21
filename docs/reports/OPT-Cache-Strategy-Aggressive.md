@@ -140,14 +140,13 @@ if system_text:
 
 **MiniMax 缓存行为**：
 - ✅ run 内多轮工具调用缓存有效（cache_read 可达 65%+）
-- ❌ 跨 call 缓存完全不工作（cache_write=0, cache_read=128）
-- ❌ 即使 system text ≥512 tokens + cache_control 标记，跨 call 缓存仍不生效
+- 当前诊断样本没有观察到稳定的跨独立 call 复用；不能据此断言 provider 不支持跨 call
 
 **Qwen-paw 缓存行为**：
 - ✅ 98.7% 缓存率来自 run 内多轮工具调用缓存
-- ❌ 跨 call 缓存也不工作（单独测试确认）
+- 当前诊断样本没有观察到稳定的跨独立 call 复用，仍需在相同模型、相同前缀和相同时间窗口下复测
 
-**两个 provider 都不支持跨 call 缓存**，高缓存率来自 run 内多轮工具循环的累加。
+本报告的高缓存率结论主要来自 run 内多轮工具循环累加；跨独立 call 的复用能力与厂商 TTL、模型路由及请求前缀有关，不能用单组 `cache_read=128` 样本概括为“不支持”。
 
 ---
 

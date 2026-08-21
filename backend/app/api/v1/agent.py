@@ -389,8 +389,10 @@ async def clear_memory(
     不再一个个列文件名：新增记忆文件时忘了加进清单会漏删，这个类别的坑一次性堵死。"""
     from agent.memory.store import _DIR
     from app.services.storage import get_storage
+    from app.core import events
     storage = get_storage()
     await storage.delete_prefix(f"{current_user.id}/{_DIR}/")
+    await events.bump_context_revision(current_user.id, "memory")
 
 
 @router.delete("/sessions/{session_id}", status_code=204)

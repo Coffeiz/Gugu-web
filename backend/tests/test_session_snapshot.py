@@ -63,6 +63,19 @@ class _Session:
     snapshot_expires_at = None
 
 
+def test_snapshot_revision_invalidates_business_context():
+    session = _Session()
+    session.session_context = {
+        "system_prompt": "system",
+        "session_info": {"v": 1},
+        "context_revision": 4,
+    }
+    session.snapshot_expires_at = datetime(2026, 8, 22, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 21, tzinfo=timezone.utc)
+    assert snapshot_is_usable(session, now, 4)
+    assert not snapshot_is_usable(session, now, 5)
+
+
 @pytest.mark.asyncio
 async def test_ensure_snapshot_loads_once_until_ttl():
     calls = 0
