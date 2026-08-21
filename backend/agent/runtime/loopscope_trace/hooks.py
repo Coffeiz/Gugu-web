@@ -121,6 +121,25 @@ def ensure_hooks() -> None:
 
     async def run_loop(self, driver, user_id, messages, ai, system_text, session_id=None):
         run = _scope_run.get()
+        if run is not None and session_id is not None:
+            # Web 在 genstream.begin 中已经完成归属；IM 没有 genstream
+            # begin/publish，而是在 worker 中通过 trace.set_trace() 恢复 pending run。
+            # 这里使用当前任务的 IM Context 完成最终归属，避免 QQ/飞书 trace
+            # 静默丢失或错误落到 gugu:web:*。
+            try:
+                from agent.im.imctx import get_im
+
+                im_context = get_im() or {}
+            except Exception:
+                im_context = {}
+            if im_context.get("platform"):
+                source = str(im_context["platform"])
+                run.source = source
+                run.session_key = f"gugu:{source}:{session_id}"
+            elif run.source == "unknown" or run.session_key.startswith("pending:"):
+                run.source = "web"
+                run.session_key = f"gugu:web:{session_id}"
+            run.external_session_id = str(session_id)
         original_round = getattr(driver, "run_round")
         round_index = 0
         previous_prompt_estimate = 0

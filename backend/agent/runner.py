@@ -427,6 +427,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     from app.core.chat_attach import build_user_content
     from agent.im.context_loader import format_current_content, format_history_content
+    from agent.context.tokens import content_text
     current_llm_text = format_current_content(aug_text, req)
     anthr_messages: list = []
     anthr_initial_len = 0
@@ -743,20 +744,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         for h in history:
             # 正确处理 content_json（可能是 list 或 string）
             if h.content_json is not None:
-                if isinstance(h.content_json, list):
-                    # 工具调用结果（list），提取文本内容
-                    content = ""
-                    for block in h.content_json:
-                        if isinstance(block, dict):
-                            if block.get("type") == "text":
-                                content += block.get("text", "")
-                            elif block.get("type") == "tool_use":
-                                content += f"\n工具调用: {block.get('name', '')}"
-                            elif block.get("type") == "tool_result":
-                                content += f"\n工具结果: {block.get('content', '')[:200]}"
-                    content = content.strip() or json.dumps(h.content_json, ensure_ascii=False)[:500]
-                else:
-                    content = str(h.content_json)
+                content = content_text(h.content_json)
             else:
                 content = format_history_content(h, req)
             history_parts.append({"role": h.role, "content": content})
@@ -990,6 +978,10 @@ async def _collect(
         if r:
             text = r
             break
+    # Web 流式出口已有同样的清洗；IM collect 也必须过滤模型偶尔复述的
+    # 内部消息时间，否则 QQ/群聊会把 [消息时间：...] 直接发给用户。
+    time_san = sanitize.LeadingMessageTimeSanitizer()
+    text = time_san.feed(text) + time_san.flush()
     result = (text, tin, tout, False, files, cancelled)
     return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
 
@@ -1026,7 +1018,7 @@ async def _run_scheduled_once(
                 im_channels = await loaders.load_im_channels(user_id)
 
         prompt_name = profile.prompt_file.removesuffix(".md")
-        static_prompt, _, _ = builder.build_split(
+        static_prompt, dynamic_context, now_str = builder.build_split(
             prompt_name,
             user_name,
             projects,
@@ -1057,7 +1049,10 @@ async def _run_scheduled_once(
         from app.core.chat_attach import build_user_content
 
         if use_anthropic:
-            messages = [{"role": "user", "content": build_user_content(prompt, [], True)}]
+            messages = _build_scheduled_messages(
+                system_prompt, dynamic_context, now_str, prompt, memory,
+                use_anthropic=True, user_content=build_user_content(prompt, [], True),
+            )
             gen = runner.run(
                 user_id,
                 system_prompt,
@@ -1066,10 +1061,10 @@ async def _run_scheduled_once(
                 model_cfg=model_cfg,
             )
         else:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ]
+            messages = _build_scheduled_messages(
+                system_prompt, dynamic_context, now_str, prompt, memory,
+                use_anthropic=False, user_content=prompt,
+            )
             gen = runner.run(
                 user_id,
                 None,
@@ -1091,6 +1086,30 @@ async def _run_scheduled_once(
         )
     finally:
         _release_model(model_cfg)
+
+
+def _build_scheduled_messages(system_prompt: str, dynamic_context: str,
+                              now_str: str, prompt: str, memory: dict,
+                              *, use_anthropic: bool, user_content=None):
+    """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
+    fixed_parts = ([session_snapshot.reminder_message(dynamic_context)]
+                   if dynamic_context else [])
+    dynamic_tail = [message_assembly.reminder(part)
+                    for part in builder.dynamic_tail(memory)]
+    dynamic_tail.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
+    if user_content is None:
+        user_content = prompt
+    if use_anthropic:
+        return message_assembly.build_messages(
+            fixed_parts=fixed_parts, history=[],
+            current_user={"role": "user", "content": user_content},
+            dynamic_tail=dynamic_tail,
+        )
+    return message_assembly.build_messages(
+        fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
+        history=[], current_user={"role": "user", "content": user_content},
+        dynamic_tail=dynamic_tail,
+    )
 
 
 async def run_scheduled_execution(user_id, user_name: str, prompt: str):

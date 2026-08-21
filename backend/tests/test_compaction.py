@@ -9,6 +9,7 @@ from agent.context.compaction import (
     COMPACTION_THRESHOLD_RATIO,
     COMPACTION_TARGET_RATIO,
 )
+from agent.context.tokens import content_text, estimate_tokens, message_text
 
 
 def _make_msg(role: str, text: str) -> dict:
@@ -45,6 +46,29 @@ class TestEstimateContextLength:
             estimate_context_length(msgs, sys_text)
         )
         assert result > 0
+
+    def test_counts_tool_use_and_result_blocks(self):
+        content = [
+            {"type": "tool_use", "name": "calendar", "input": {"date": "2026-08-21"}},
+            {"type": "tool_result", "tool_use_id": "tool-1", "content": "结果正文"},
+            {"type": "reasoning", "text": "内部推理"},
+        ]
+        assert "calendar" in content_text(content)
+        assert "结果正文" in content_text(content)
+        assert asyncio.get_event_loop().run_until_complete(
+            estimate_context_length([{"role": "assistant", "content": content}], "")
+        ) > 10
+
+    def test_counts_openai_tool_calls_field(self):
+        msg = {"role": "assistant", "content": "查询中", "tool_calls": [
+            {"id": "call-1", "type": "function", "function": {
+                "name": "calendar", "arguments": '{"date":"2026-08-21"}'
+            }}
+        ]}
+        assert "tool_calls" in message_text(msg)
+        assert asyncio.get_event_loop().run_until_complete(
+            estimate_context_length([msg], "")
+        ) > estimate_tokens("查询中")
 
 
 class TestIsSystemInjection:
@@ -119,6 +143,31 @@ class TestCompactContext:
                 for c in contents
             )
             assert has_summary
+
+    def test_compaction_covers_all_messages_between_injection_and_kept(self, monkeypatch):
+        captured = []
+
+        async def fake_summary(items, previous=None):
+            captured.extend(items)
+            return "测试摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        msgs = [
+            _make_msg("user", "历史一" * 40),
+            _make_msg("user", "## 项目\n- 当前项目"),
+            _make_msg("assistant", "历史二" * 40),
+            _make_msg("user", "历史三" * 40),
+            _make_msg("assistant", "最新消息"),
+        ]
+        result, compacted = asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, "系统", context_tokens=120)
+        )
+        assert compacted
+        joined = "\n".join(captured)
+        assert "历史一" in joined
+        assert "历史二" in joined
+        assert "历史三" in joined
+        assert any("## 项目" in m.get("content", "") for m in result)
 
 
 class TestVerifyPrefixConsistency:

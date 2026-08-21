@@ -32,11 +32,28 @@ class ProviderAdapter:
 
 
 _DEFAULT = ProviderAdapter(
+    name="unknown",
+    api_format="anthropic",
+    supports_active_cache=lambda model: False,
+    supports_thinking_toggle=False,
+    auth_headers=lambda ai: {},
+)
+
+_ANTHROPIC = ProviderAdapter(
     name="anthropic",
     api_format="anthropic",
     supports_active_cache=lambda model: True,
     supports_thinking_toggle=False,
     auth_headers=lambda ai: {},
+)
+
+_QWEN = ProviderAdapter(
+    name="qwen",
+    api_format="openai",
+    supports_active_cache=lambda model: True,
+    supports_thinking_toggle=False,
+    auth_headers=lambda ai: {},
+    cache_mode="active",
 )
 
 _MINIMAX = ProviderAdapter(
@@ -77,6 +94,8 @@ _DEEPSEEK = ProviderAdapter(
 )
 
 _REGISTRY: dict[str, ProviderAdapter] = {
+    "anthropic": _ANTHROPIC,
+    "qwen": _QWEN,
     "minimax": _MINIMAX,
     "mimo": _MIMO,
     "deepseek": _DEEPSEEK,
@@ -86,8 +105,8 @@ _REGISTRY: dict[str, ProviderAdapter] = {
 def adapter_for(ai) -> ProviderAdapter:
     """按 `ai.provider` 精确匹配；未命中时按 `ai.base_url` 关键字兜底——
     兜底口径跟原 `_is_mimo`/`_is_deepseek` 保持一致，不改变现有识别行为。
-    都没命中 → 退回 anthropic 原生 default 适配器（`transient_exceptions` 为空，
-    不会有任何 provider 专属的异常容忍）。"""
+    都没命中 → 退回 unknown 适配器；未知 provider 默认关闭主动缓存，
+    不会误发不兼容的 cache_control，也不会启用 provider 专属异常容忍。"""
     provider = (getattr(ai, "provider", "") or "").lower()
     if provider in _REGISTRY:
         return _REGISTRY[provider]

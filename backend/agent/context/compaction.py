@@ -16,7 +16,7 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from .tokens import estimate_tokens, msg_tokens
+from .tokens import estimate_tokens, message_text, msg_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,7 @@ async def estimate_context_length(messages: list, system_text: str = "") -> int:
         if isinstance(msg, dict):
             # dict 类型消息（如 runner.py 构建的消息）
             content = msg.get("content", "")
-            if isinstance(content, list):
-                # 工具结果块
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        total += estimate_tokens(block.get("text", ""))
-            elif isinstance(content, str):
-                total += estimate_tokens(content)
+            total += estimate_tokens(message_text(msg))
         else:
             # ORM ConversationMessage 对象
             total += msg_tokens(msg)
@@ -100,46 +94,39 @@ async def compact_context(
 
     # 从最新往回保留消息
     kept_msgs = []
+    kept_indices = []
     used_tokens = 0
-    for msg in reversed(normal_msgs):
-        # 同步估算单条消息的 token 数，兼容 dict 和 ORM 类型
-        msg_tokens_count = 0
-        content = msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "") or ""
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    msg_tokens_count += estimate_tokens(block.get("text", ""))
-        elif isinstance(content, str):
-            msg_tokens_count += estimate_tokens(content)
+    candidate_indices = [i for i in range(len(normal_msgs)) if i != system_injection_idx]
+    for index in reversed(candidate_indices):
+        msg = normal_msgs[index]
+        msg_tokens_count = estimate_tokens(message_text(msg))
         if used_tokens + msg_tokens_count > available_tokens:
             break
         kept_msgs.append(msg)
+        kept_indices.append(index)
         used_tokens += msg_tokens_count
 
     kept_msgs.reverse()
+    kept_indices.reverse()
+    if not kept_msgs and candidate_indices:
+        kept_indices = [candidate_indices[-1]]
+        kept_msgs = [normal_msgs[kept_indices[0]]]
+        used_tokens = estimate_tokens(message_text(kept_msgs[0]))
 
-    # 需要压缩的消息（在保留消息之前的）
-    if system_injection_idx >= 0:
-        compressible_msgs = normal_msgs[:system_injection_idx] + normal_msgs[system_injection_idx + 1:system_injection_idx + len(kept_msgs)]
-    else:
-        compressible_msgs = normal_msgs[:-len(kept_msgs)] if kept_msgs else normal_msgs[:-1]
+    # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
+    kept_index_set = set(kept_indices)
+    compressible_msgs = [
+        msg for i, msg in enumerate(normal_msgs)
+        if i != system_injection_idx and i not in kept_index_set
+    ]
 
     # 过滤出有内容的消息用于压缩
     compressible_content = []
     for msg in compressible_msgs:
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            # 工具结果块，提取文本
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    text = block.get("text", "").strip()
-                    if text:
-                        compressible_content.append(text)
-        elif isinstance(content, str):
-            text = content.strip()
-            if text:
-                role = "用户" if msg.get("role") == "user" else "咕咕"
-                compressible_content.append(f"{role}：{text}")
+        text = message_text(msg).strip()
+        if text:
+            role = "用户" if msg.get("role") == "user" else "咕咕"
+            compressible_content.append(f"{role}：{text}")
 
     if not compressible_content:
         logger.warning("[compaction] compressible_content 为空，跳过压缩")

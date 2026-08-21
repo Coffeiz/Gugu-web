@@ -28,3 +28,10 @@ def test_normal_reply_start_is_not_delayed_or_changed():
     sanitizer = LeadingMessageTimeSanitizer()
     assert sanitizer.feed("正常回复") == "正常回复"
     assert sanitizer.flush() == ""
+
+
+def test_leading_message_time_is_removed_from_im_collect_reply():
+    sanitizer = LeadingMessageTimeSanitizer()
+    text = "[消息时间：2026-08-21 07:55]\nnice，cache 也搞定了"
+    assert sanitizer.feed(text) == "nice，cache 也搞定了"
+    assert sanitizer.flush() == ""

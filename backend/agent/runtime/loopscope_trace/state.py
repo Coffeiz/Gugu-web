@@ -268,6 +268,17 @@ def create_trace() -> str:
 def restore_trace(t: str | None) -> str:
     t = (t or "").strip() or uuid.uuid4().hex[:12]
     _trace.set(t)
+    # 网关在进程 A 生成 trace id，worker 在进程 B 通过 payload 恢复它。
+    # ContextVar 不会跨进程传递，因此不能只恢复字符串；必须同时建立一个待
+    # 归属到具体 session 的 ScopeRun，后续 LLM hook 才有对象可以收尾上报。
+    if _enabled():
+        run = _scope_run.get()
+        if run is None or run.ended_at is not None:
+            _scope_run.set(_ScopeRun(
+                id=f"run-{t}-{uuid.uuid4().hex[:6]}", trace_id=t,
+                session_key=f"pending:{t}", external_session_id="",
+                source="unknown", started_at=_now(),
+            ))
     return t
 
 def get_trace() -> str:

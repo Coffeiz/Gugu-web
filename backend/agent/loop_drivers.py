@@ -288,10 +288,13 @@ class OpenAIDriver:
         from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
+        adapter = providers.adapter_for(ai)
+        supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
+
         # OpenAI 兼容 API（Qwen/阿里等）支持 cache_control，不再 strip 掉。
         # 只处理旧的 CACHE_BREAK 标记（转换为数组格式的 cache_control）。
         # 阿里文档：system content 必须是数组格式，cache_control 加在 content 块上。
-        for _m in messages:
+        for _m in messages if supports_active_cache else []:
             if _m.get("role") == "system":
                 content = _m.get("content")
                 if isinstance(content, str):
@@ -330,7 +333,7 @@ class OpenAIDriver:
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             think_extra=think_extra, model=ai.model,
-            supports_active_cache=providers.adapter_for(ai).supports_active_cache(ai.model),
+            supports_active_cache=supports_active_cache,
         )
         return client, ctx
 
