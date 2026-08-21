@@ -157,7 +157,11 @@ def decide(text: str, state: str, awaiting: bool = False,
     **保留**：斜杠命令；咕咕**在忙（思考/搜索/生成/等确认）时**的进度追问与催促 → 回一句状态、不打断；
     在忙时的取消（算了/停）→ 置取消标志中断。`awaiting`：咕咕以提问/确认收尾时「算了/不用」是回答 → 交 agent。
     """
-    busy = bool(state and state != st.IDLE)
+    # state 有短 TTL，长时间压缩/工具调用期间可能恰好过期；活跃集合是同一会话的
+    # 第二个信号。发起者仍在 active set 时，/stop 必须继续被识别为取消命令。
+    busy = bool(state and state != st.IDLE) or bool(
+        current_puid and active_puid and current_puid in active_puid
+    )
 
     cmd = parse_command(text)
     if cmd == "stop":

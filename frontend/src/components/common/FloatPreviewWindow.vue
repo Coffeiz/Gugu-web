@@ -463,6 +463,24 @@ async function handleDownload() {
 
 // ── 拖拽标题栏移动 ───────────────────────────────────────────────────────────
 let dragOrig: { mx: number; my: number; x: number; y: number } | null = null
+const DRAG_OVERSCAN_RATIO = .25
+
+function previewDragBounds() {
+  const overscanX = window.innerWidth * DRAG_OVERSCAN_RATIO
+  const overscanY = window.innerHeight * DRAG_OVERSCAN_RATIO
+  const minX = -overscanX
+  const minY = -overscanY
+  return {
+    minX,
+    maxX: Math.max(minX, window.innerWidth + overscanX - w.value),
+    minY,
+    maxY: Math.max(minY, window.innerHeight + overscanY - h.value),
+  }
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value))
+}
 
 function startDrag(e: MouseEvent) {
   if (e.button !== 0) return
@@ -473,8 +491,11 @@ function startDrag(e: MouseEvent) {
 
 function onDragMove(e: MouseEvent) {
   if (!dragOrig) return
-  x.value = Math.max(0, dragOrig.x + e.clientX - dragOrig.mx)
-  y.value = Math.max(0, dragOrig.y + e.clientY - dragOrig.my)
+  const nextX = dragOrig.x + e.clientX - dragOrig.mx
+  const nextY = dragOrig.y + e.clientY - dragOrig.my
+  const { minX, maxX, minY, maxY } = previewDragBounds()
+  x.value = clamp(nextX, minX, maxX)
+  y.value = clamp(nextY, minY, maxY)
 }
 
 function onDragUp() {

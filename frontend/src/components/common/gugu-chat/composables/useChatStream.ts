@@ -87,11 +87,16 @@ export function useChatStream(options: {
     reader: ReadableStreamDefaultReader<Uint8Array>,
     ownerSid: number | null,
     viewGeneration: number,
+    replayText = '',
   ) {
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aborted = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
+    let replaySuppressed = false
+    const displayedGreeting = ownerSid == null
+      ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
+      : ''
     const usedTools = new Set<string>()
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
@@ -150,9 +155,19 @@ export function useChatStream(options: {
             if (live()) options.setStatus(options.thinkingItem())
           } else if (evt.type === 'token') {
             if (live()) {
+              // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记
+              // 尚未来得及清掉。resume 的首个 token 是同一段 Redis snapshot，
+              // 这时跳过它；真正后续新增 token 仍正常创建/追加流式气泡。
+              if (!replaySuppressed && replayText && String(evt.content || '').trim() === replayText) {
+                replaySuppressed = true
+                continue
+              }
               options.clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
               if (aiIdx === -1) options.playIncomingMessageSfx()
-              if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+              if (aiIdx === -1) {
+                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
+                aiIdx = messages.value.length - 1
+              }
               messages.value[aiIdx].text += evt.content
               await options.scrollBottom()
             }
@@ -160,7 +175,10 @@ export function useChatStream(options: {
             if (live()) {
               options.clearStatus()
               if (aiIdx === -1) options.playIncomingMessageSfx()
-              if (aiIdx === -1) { messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true }); aiIdx = messages.value.length - 1 }
+              if (aiIdx === -1) {
+                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
+                aiIdx = messages.value.length - 1
+              }
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []
               m.files.push(evt.file)
@@ -182,9 +200,12 @@ export function useChatStream(options: {
     } finally {
       if (!detached && viewGeneration === options.getViewGeneration() && aiIdx !== -1 && messages.value[aiIdx]) {
         const m = messages.value[aiIdx]
+        // 新会话打开时默认问候已经展示在列表里。若模型仍原样复述，
+        // 丢掉这条重复流，只保留原来的问候气泡，避免用户看到两条相同回复。
+        const duplicateGreeting = Boolean(displayedGreeting && !m.files?.length && m.text.trim() === displayedGreeting)
         m.streaming = false
         m.html = renderMd(m.text)
-        if (!m.text?.trim() && !m.files?.length) {
+        if (duplicateGreeting || (!m.text?.trim() && !m.files?.length)) {
           messages.value.splice(aiIdx, 1)
         }
       }
@@ -207,7 +228,9 @@ export function useChatStream(options: {
       if (!res.ok) return
       if (viewGeneration !== options.getViewGeneration() || sessionId.value !== id) return   // 期间又切走了，丢弃
       if (!res.body) return
-      const r = await consumeStream(res.body.getReader(), id, viewGeneration)
+      const replayText = [...messages.value].reverse()
+        .find(m => m.role === 'ai' && m.text?.trim())?.text.trim() || ''
+      const r = await consumeStream(res.body.getReader(), id, viewGeneration, replayText)
       options.refreshAfterTools(r.usedTools)
     } catch { /* 续看失败/被切走中断都不打扰 */ }
     finally {
@@ -272,6 +295,11 @@ export function useChatStream(options: {
 
       const r = await consumeStream(res.body.getReader(), ownerSid, viewGeneration)
       resolvedSid = r.sid
+      // session_id 事件可能在浏览器切换/重连的边界丢失；流本身已经返回真实
+      // id，当前视图仍未切换时直接补回，确保 ownsView 成立并解除发送锁。
+      if (viewGeneration === options.getViewGeneration() && sessionId.value == null && r.sid != null) {
+        sessionId.value = r.sid
+      }
       aiIdx = r.aiIdx
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）

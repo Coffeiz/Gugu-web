@@ -1,0 +1,40 @@
+---
+name: design
+description: 产品设计规范摘要。Glassmorphism 视觉风格、色板系统、排版、交互规范、组件契约。涉及 UI 修改时参考，完整设计文档见 references/。
+---
+
+# 设计规范摘要
+
+完整设计文档见 [references/frontend-design.md](references/frontend-design.md)（前台）和 [references/admin-design.md](references/admin-design.md)（Admin 后台）。
+
+## 技术栈
+
+- 前端：Vue 3 + Vite + TypeScript + Pinia
+- 后端：FastAPI + SQLAlchemy (async) + PostgreSQL + Redis
+- 设计风格：Glassmorphism（毛玻璃）+ 冷紫灰调色板
+
+## 核心设计原则
+
+- **ToC 优先**：面向个人/小团队的项目管理工具
+- **Glassmorphism**：半透明背景 + backdrop-filter 模糊 + 微妙边框高光
+- **冷紫灰调色板**：主色 `#7b7fb2`，所有颜色通过 CSS 变量（design token）管理
+
+## 交互规范
+
+- Hover 提升：`translateY(-2px)` + 阴影加深
+- 按下回弹：`translateY(1px)` + 透明度降低
+- 拖拽代理：Interaction Runtime 管理，CSS `!important` 不得覆盖 Runtime 控制的属性
+- 模态框：`BaseModal.vue` 统一管理，scale + fade 动画
+
+## 组件规范
+
+- 按钮：圆角 8-9px，主色填充或 ghost 描边
+- 输入框：`--control-bg` 背景，focus 时 `--border-focus` 描边 + `--control-focus-shadow` 光晕
+- 卡片：`--surface-card-solid` 或毛玻璃背景，圆角 12-16px
+- 侧边栏：220px 固定宽度，Glassmorphism 背景
+
+## 新增/修改 UI 时
+
+1. 先确认使用 design token（`var(--xxx)`），不硬编码颜色
+2. 参考 references/ 中的完整设计文档了解具体页面规范
+3. 暗色模式通过 `html[data-theme='dark']` 选择器适配

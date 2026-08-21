@@ -5,6 +5,19 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 
+def test_scheduled_messages_keep_dynamic_context_and_tail():
+    from agent.runner import _build_scheduled_messages
+
+    messages = _build_scheduled_messages(
+        "稳定系统", "## 项目\n- 小北的计划", "2026-08-21（星期五）10:00",
+        "执行任务", {"stance": "温和"}, use_anthropic=False,
+    )
+    assert messages[0] == {"role": "system", "content": "稳定系统"}
+    assert "小北的计划" in messages[1]["content"]
+    assert messages.conversation[-1]["content"] == "执行任务"
+    assert "当前时间" in messages.dynamic_tail[-1]["content"]
+
+
 @pytest.mark.asyncio
 async def test_scheduled_execution_always_uses_full_loop(monkeypatch, db, user_a):
     """创建任务不再调用 LLM 选择工具，执行阶段直接使用完整工具集。

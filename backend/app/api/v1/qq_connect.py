@@ -151,6 +151,8 @@ async def poll(
     await db.commit()
     await db.refresh(bot)
     await R.get_redis().delete(_redis_key(task_id))
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
 
     # 通知 supervisor 立即重扫（失败也无所谓，下轮会同步）
     try:

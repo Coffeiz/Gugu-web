@@ -99,6 +99,14 @@ def _strip_qq_face_markers(text: str) -> str:
 
 
 def _find_quoted_element(raw_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    # QQ 适配器/不同版本协议可能把引用消息直接放在 message_reference、reference
+    # 或 quote 中；不能只依赖 message_scene + msg_elements，否则引用文字可能存在，
+    # 但引用图片不会进入附件下载和视觉输入链路。
+    for key in ("message_reference", "reference", "quote"):
+        value = raw_data.get(key)
+        if isinstance(value, dict):
+            return value
+
     msg_elements: List[Dict[str, Any]] = raw_data.get("msg_elements") or []
     if not msg_elements:
         return None
@@ -156,6 +164,7 @@ def _collect_media_attachments(value) -> list:
     def walk(item):
         if isinstance(item, dict):
             url = (item.get("url") or item.get("file_url") or item.get("download_url")
+                   or item.get("downloadUrl") or item.get("href") or item.get("file")
                    or item.get("image_url") or item.get("origin_url") or item.get("preview_url"))
             if isinstance(url, str) and url:
                 found.append({

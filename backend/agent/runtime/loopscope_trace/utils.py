@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import hashlib
 import inspect
 import json
 import os
@@ -92,6 +93,34 @@ def _estimate_tokens(value: Any) -> int:
         return estimate_tokens(text)
     except Exception:
         return 0
+
+def _prompt_digest(value: Any) -> str:
+    """给 LoopScope 标记 prompt 身份；只传摘要，不在每个 round 重复传正文。"""
+    try:
+        text = value if isinstance(value, str) else json.dumps(
+            _jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return ""
+
+def _system_message_text(messages: Any) -> str:
+    """提取 OpenAI 兼容格式的 system message，供 trace 说明真实组装位置。"""
+    if not isinstance(messages, list):
+        return ""
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "system":
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "".join(
+                str(block.get("text") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+    return ""
 
 def _usage_payload(result: Any, api_format: str = "") -> dict[str, Any]:
     if result is None:

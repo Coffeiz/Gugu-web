@@ -45,7 +45,7 @@
     >
        <section class="cd-content-panel projects-panel" :class="contentPanelClass('projects')" :aria-hidden="visiblePanel !== 'projects'">
          <div ref="projectListRef" class="cd-list project-list">
-           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" @pointerdown.stop />
+           <SearchInput v-model="projectQuery" class="project-search" placeholder="筛选项目" :no-focus-ring="true" @pointerdown.stop />
            <DrawerTrack class="project-list-scroll" data-drawer-scroll="projects">
            <div v-if="projectsLoading && !projects.length" class="project-skeletons" aria-hidden="true">
               <span v-for="index in 3" :key="index" class="project-skeleton"></span>
@@ -100,8 +100,8 @@ import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
-import { useSurface } from '@/interaction/runtime/vue'
 import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
+import { useMindFloatingSurface } from '../composables/useMindFloatingSurface'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -156,7 +156,7 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
-const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useSurface({
+const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useMindFloatingSurface({
   id: MIND_CANVAS_DRAWER_SURFACE_ID,
   type: 'mind-drawer',
   accepts: ['mind-drawer-inactive'],
@@ -169,7 +169,7 @@ const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useSurfac
     maxHeight: () => window.innerHeight * 0.55,
   },
 })
-const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useSurface({
+const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useMindFloatingSurface({
   id: MIND_PROJECT_DRAWER_SURFACE_ID,
   type: 'mind-drawer',
   accepts: () => expanded.value && panel.value === 'projects'
@@ -379,8 +379,8 @@ onMounted(() => {
 }
 .project-group-title:hover { background: rgba(0,0,0,.04); }
 .project-group-title > span:nth-last-child(2) { margin-left: auto; font-size: 10px; font-weight: 400; color: rgba(0,0,0,.38); font-variant-numeric: tabular-nums; }
-.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(0deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
-.project-group-chevron.open { transform: rotate(180deg); }
+.project-group-chevron { margin-left: 3px !important; flex-shrink: 0; color: rgba(0,0,0,.2); transform: rotate(-90deg); transition: transform .2s cubic-bezier(.22,1,.36,1); }
+.project-group-chevron.open { transform: rotate(0deg); }
 .project-status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 .project-status-dot.is-pending { background: #d46b6b; }
 .project-status-dot.is-active { background: #c9943a; }

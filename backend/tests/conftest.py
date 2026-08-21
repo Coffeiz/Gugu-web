@@ -12,7 +12,9 @@
 """
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
+from types import SimpleNamespace
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import StaticPool
 from uuid6 import uuid7
@@ -39,8 +41,26 @@ async def _reset_redis_client():
     await _redis.reset()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_local_configuration(monkeypatch, tmp_path):
+    """测试不得读取工作区里的部署 override；需要配置的用例自行替换路径。"""
+    import app.core.config as _config
+    monkeypatch.setattr(_config, "OVERRIDE_FILE", tmp_path / "no-config.override.json")
+    _config.invalidate_settings_cache()
+    yield
+    _config.invalidate_settings_cache()
+
+
 @pytest_asyncio.fixture
 async def db(monkeypatch):
+    # 测试库不应读取本地生产 override：UserBot 的加密字段只需要稳定的测试密钥，
+    # 否则写入 UserBot 会在配置校验阶段依赖真实 db.password，导致内存库测试被部署配置阻断。
+    import app.core.crypto as _crypto
+    monkeypatch.setattr(
+        _crypto,
+        "get_settings",
+        lambda: SimpleNamespace(secret_key="test-only-encryption-key"),
+    )
     engine = create_async_engine(
         "sqlite+aiosqlite://",
         poolclass=StaticPool,                    # 内存库靠同一条连接共享

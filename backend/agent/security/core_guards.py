@@ -1,4 +1,4 @@
-"""防幻觉守卫：叙事/决策拒绝/意图播报识别（PRD-LLM-1 FR-LLM-3，从 agent/core.py 搬出来）。
+"""防幻觉守卫：叙事/决策拒绝/意图播报/工具进度识别（PRD-LLM-1 FR-LLM-3）。
 
 这几个正则守卫检测的是「模型声称完成但没有对应工具回执」这三种典型模式，跟 LLM provider 完全无关——
 不管走 anthropic 格式还是 openai 格式、不管哪家厂商，主循环里都是同一套判定 + 同一句
@@ -104,3 +104,35 @@ _INTENT_NUDGE = (
     "但本轮没有调用对应工具。请现在完成工具调用，不要只停留在行动宣告。"
     "若其实需要先问用户确认或缺少信息，就直接把问题问清楚，而不是继续描述尚未发生的操作。"
 )
+
+# 工具进度守卫：有些模型会输出“正在查询”占位话术，却没有真正发起 tool call。
+# 规则集中在守卫模块，主循环只负责根据判定决定是否重试。
+_TOOL_PROGRESS_PREFIXES = (
+    "正在为你查询最新信息",
+    "正在查询最新信息",
+    "正在为你搜索最新信息",
+    "我去查一下",
+    "我去搜索一下",
+    "我来查一下",
+    "我拿这张图找找相似结果",
+)
+_TOOL_REQUIRED_NUDGE = (
+    "你上一轮只输出了进度提示，没有实际调用工具。请立即调用合适的工具完成用户请求；"
+    "如果确实无法调用工具，请明确说明原因，不要只回复“正在查询/正在搜索”。"
+)
+
+
+def _guard_text(text: str) -> str:
+    """去掉进度话术中的空白和句末标点，便于判断是否为纯占位输出。"""
+    return re.sub(r"[\s\u3000，。！？、:：….!?]+", "", text or "")
+
+
+def _could_be_tool_progress(text: str) -> bool:
+    """判断当前已收到的流式片段是否仍可能是工具进度占位话术。"""
+    normalized = _guard_text(text)
+    return bool(normalized) and any(prefix.startswith(normalized) for prefix in _TOOL_PROGRESS_PREFIXES)
+
+
+def _is_tool_progress_only(text: str) -> bool:
+    normalized = _guard_text(text)
+    return bool(normalized) and normalized in {_guard_text(p) for p in _TOOL_PROGRESS_PREFIXES}

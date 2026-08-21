@@ -2,6 +2,7 @@
   <div ref="cardRef" v-bind="attrs"
     class="proj-card hover-card-fx"
     :data-project-id="project.id"
+    :data-layout-key="`project:${project.id}`"
     :data-card="String(project.id)"
     :style="{ '--project-color': project.color }"
     :class="{ 'file-drag-over': fileDragOver }"
@@ -171,7 +172,7 @@ import { computed, ref, nextTick, useAttrs, watch, onUnmounted, type PropType } 
 import type { Project, ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStore } from '@/stores/projects'
 import { useFilesCacheStore } from '@/stores/filesCache'
-import { useObject } from '@/interaction/runtime/vue'
+import { runtime } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import { PhCheck, PhX } from '@phosphor-icons/vue'
@@ -190,11 +191,33 @@ const emit = defineEmits(['click'])
 
 const projectStore = useProjectStore()
 const projectId = String(props.project.id)
-const { elementRef: cardRef } = useObject({
+const cardRef = ref<HTMLElement | null>(null)
+const projectGeneration = runtime.objects.register({
   id: projectId,
   type: 'project-card',
-  surface: () => props.project.status,
+  surfaceId: props.project.status,
+  element: null,
   abilities: ['move'],
+})
+let stopPointerBinding: (() => void) | null = null
+watch(cardRef, (element, previous) => {
+  const current = runtime.objects.get(projectId)
+  if (current?.generation !== projectGeneration) return
+  if (element === null && current.element && current.element !== previous) return
+  stopPointerBinding?.()
+  stopPointerBinding = element ? runtime.bindObjectPointer(projectId, element) : null
+  runtime.objects.setElement(projectId, element)
+}, { flush: 'post' })
+watch(() => props.project.status, status => {
+  const current = runtime.objects.get(projectId)
+  if (current?.generation === projectGeneration) runtime.objects.setSurface(projectId, status)
+})
+onUnmounted(() => {
+  stopPointerBinding?.()
+  stopPointerBinding = null
+  if (runtime.objects.get(projectId)?.generation === projectGeneration) {
+    runtime.unregisterObjectWhenIdle(projectId, projectGeneration)
+  }
 })
 const projectRef = computed(() => props.project)
 const { currentStageLabel, curTodoTotal, curDoneCount, stageProgress, nameColor, isUrgent, fmtDate, deadlineLabel } = useProjectCardBasics(projectRef)

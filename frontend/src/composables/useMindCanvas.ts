@@ -104,11 +104,15 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   }
 
   // clientX/clientY 是浏览器给的视口坐标，camera.x/y 是相对 .mind-canvas 左上角的屏幕坐标。
+  // 普通画布 Pan 会暂时只移动 visual camera，因此这里必须优先读取 pan.currentX/Y，保证
+  // 拖动过程中坐标换算始终对应用户眼前的真实位置，而不是最后一次提交的 reactive camera。
   function screenToWorld(clientX: number, clientY: number) {
     const rect = viewportRef.value?.getBoundingClientRect()
     const localX = rect ? clientX - rect.left : clientX
     const localY = rect ? clientY - rect.top : clientY
-    return { x: (localX - camera.x) / camera.scale, y: (localY - camera.y) / camera.scale }
+    const cameraX = pan?.currentX ?? camera.x
+    const cameraY = pan?.currentY ?? camera.y
+    return { x: (localX - cameraX) / camera.scale, y: (localY - cameraY) / camera.scale }
   }
 
   function zoomAt(screenX: number, screenY: number, nextScale: number) {
@@ -138,13 +142,16 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
   }
 
   // Pointer 平移和“连接线拖拽期间按住鼠标中键”共用这一份 camera pan 状态机。
-  // 中键路径用一个合成 pointerId 且不请求 pointer capture，避免再写第二套 x/y 差值算法。
+  // 中键路径仍使用默认 commitCamera=true 实时提交；普通画布 Pan 可以传 false，把高频位移
+  // 保留在 currentX/Y，交给 MindCanvas 直接走 compositor transform。
   let pan: {
     pointerId: number
     startX: number
     startY: number
     originX: number
     originY: number
+    currentX: number
+    currentY: number
     captured: boolean
   } | null = null
   function startPan(event: PanInput, capturePointer = true) {
@@ -154,18 +161,31 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
       startY: event.clientY,
       originX: camera.x,
       originY: camera.y,
+      currentX: camera.x,
+      currentY: camera.y,
       captured: capturePointer,
     }
     if (capturePointer) viewportRef.value?.setPointerCapture(event.pointerId)
   }
-  function panMove(event: PanInput) {
+  function panMove(event: PanInput, commitCamera = true) {
     if (pan?.pointerId !== event.pointerId) return false
-    camera.x = pan.originX + event.clientX - pan.startX
-    camera.y = pan.originY + event.clientY - pan.startY
+    pan.currentX = pan.originX + event.clientX - pan.startX
+    pan.currentY = pan.originY + event.clientY - pan.startY
+    if (commitCamera) commitPan()
     return true
   }
-  function panEnd(event: PanInput) {
+  function panPosition() {
+    return pan ? { x: pan.currentX, y: pan.currentY } : { x: camera.x, y: camera.y }
+  }
+  function commitPan() {
+    if (!pan) return false
+    camera.x = pan.currentX
+    camera.y = pan.currentY
+    return true
+  }
+  function panEnd(event: PanInput, commitCamera = true) {
     if (pan?.pointerId !== event.pointerId) return false
+    if (commitCamera) commitPan()
     const viewport = viewportRef.value
     if (pan.captured && viewport?.hasPointerCapture(pan.pointerId)) viewport.releasePointerCapture(pan.pointerId)
     pan = null
@@ -174,6 +194,6 @@ export function useMindCanvas(viewportRef: Ref<HTMLElement | null>) {
 
   return {
     camera, centerView, screenToWorld, zoomAt, zoomAtCenter, workspaceCenter, onWheel,
-    startPan, panMove, panEnd,
+    startPan, panMove, panPosition, commitPan, panEnd,
   }
 }

@@ -1,5 +1,5 @@
 <template>
-  <div class="search-input" :class="{ active }">
+  <div class="search-input" :class="{ active, 'no-focus-ring': noFocusRing }">
     <PhMagnifyingGlass class="search-input-icon" :size="15" weight="bold" />
     <input
       ref="inputEl"
@@ -31,6 +31,7 @@ defineProps({
   ariaLabel: { type: String, default: '' },
   active: { type: Boolean, default: false },
   clearable: { type: Boolean, default: false },
+  noFocusRing: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue', 'focus', 'blur', 'compositionstart', 'compositionend', 'keydown', 'clear'])
 const inputEl = ref<HTMLInputElement | null>(null)
@@ -51,6 +52,7 @@ defineExpose({ focus: () => inputEl.value?.focus() })
   border-radius:var(--control-radius); transition:background var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);
 }
 .search-input:focus-within, .search-input.active { background:var(--control-bg-hover); border-color:var(--border-focus); box-shadow:var(--control-focus-shadow); }
+.search-input.no-focus-ring:focus-within, .search-input.no-focus-ring.active { box-shadow:none; }
 .search-input-icon { flex:0 0 auto; }
 .search-input:focus-within .search-input-icon, .search-input.active .search-input-icon { color:var(--action-primary); }
 .search-input-field {

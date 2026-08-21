@@ -193,7 +193,7 @@
         <span>工具调用 Top 10</span>
         <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
           {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
-          <PhCaretDown :size="11" weight="bold" :class="{ 'caret-up': toolExpanded }" />
+          <PhCaretDown :size="11" weight="bold" :class="{ open: toolExpanded }" />
         </button>
       </div>
       <div class="tool-dist" v-if="toolDist.length">
@@ -284,7 +284,6 @@ function dimIcon(key: string) {
             file: PhFile, reminder: PhBellRinging } as Record<string, any>)[key] ?? PhChats
 }
 
-// ── 曲线切片 ────────────────────────────────────────────────────────────────
 const vis = computed(() => {
   const t = trends.value
   if (!t) return null
@@ -305,7 +304,6 @@ const userRegsChart    = computed(() => ({ labels: vis.value?.labels ?? [], data
 const projDoneChart    = computed(() => ({ labels: vis.value?.labels ?? [], datasets: [mkDataset(vis.value?.project_completions ?? [], TEAL)] }))
 const projNewChart     = computed(() => ({ labels: vis.value?.labels ?? [], datasets: [mkDataset(vis.value?.project_creations ?? [], TEAL)] }))
 
-// ── 模型分布环图 ─────────────────────────────────────────────────────────────
 const donutChart = computed(() => {
   const models = usage.value?.by_model ?? []
   return {
@@ -320,7 +318,6 @@ const donutChart = computed(() => {
   }
 })
 
-// ── 会话深度（柱状）─────────────────────────────────────────────────────────
 const depthChart = computed(() => {
   const buckets = depth.value?.buckets ?? []
   return {
@@ -367,7 +364,6 @@ const barOpts = {
   },
 }
 
-// ── 数据加载 ───────────────────────────────────────────────────────────────
 async function load() {
   loading.value = true
   refreshing.value = true
@@ -405,7 +401,6 @@ onMounted(load)
 <style scoped>
 .analytics-page { min-height: 100%; padding-bottom: 56px; }
 
-/* ── header ── */
 .page-header {
   padding: 32px 36px 0;
   display: flex; align-items: flex-start; justify-content: space-between;
@@ -433,13 +428,9 @@ onMounted(load)
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
 .range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
 
-/* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
-
-/* ── states ── */
 .state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
 .state-msg.err { color: #e07070; }
 
-/* ── section label ── */
 .section-label {
   font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em;
   color: rgba(255,255,255,0.3); text-transform: uppercase;
@@ -456,10 +447,9 @@ onMounted(load)
   letter-spacing: 0;
 }
 .expand-btn:hover { color: rgba(149,144,196,1); }
-.expand-btn .caret-up { transform: rotate(180deg); }
-.expand-btn svg { transition: transform 0.2s; }
+.expand-btn svg { transform: rotate(-90deg); transition: transform 0.2s; }
+.expand-btn svg.open { transform: rotate(0deg); }
 
-/* ── cards ── */
 .cards-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 36px;
 }
@@ -479,7 +469,6 @@ onMounted(load)
 .card-unit { font-size: 13px; font-weight: 400; color: rgba(255,255,255,0.35); }
 .card-lbl  { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 7px; }
 
-/* ── charts ── */
 .charts-grid {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 0 36px;
 }
@@ -508,7 +497,6 @@ onMounted(load)
 
 .chart-wrap { height: 180px; position: relative; overflow: hidden; }
 
-/* ── tool distribution ── */
 .tool-dist { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }
 .tool-bar-row { display: flex; align-items: center; gap: 10px; }
 .tool-name {
@@ -519,7 +507,6 @@ onMounted(load)
 .tool-bar-fill  { height: 100%; border-radius: 3px; background: rgba(123,127,178,0.7); transition: width 0.3s; }
 .tool-calls { width: 44px; flex-shrink: 0; text-align: right; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5); }
 
-/* ── model section ── */
 .model-section { display: flex; gap: 24px; align-items: flex-start; padding: 0 36px; }
 .model-donut-wrap { width: 160px; flex-shrink: 0; }
 .model-table {

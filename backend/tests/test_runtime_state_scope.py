@@ -138,6 +138,23 @@ async def test_set_state_refreshes_active_ttl(fake_redis):
     assert fake_redis.ttls[key] == rt.ACTIVE_TTL
 
 
+@pytest.mark.asyncio
+async def test_refresh_activity_refreshes_state_and_active_ttl(fake_redis):
+    """长任务心跳只续期，不覆盖当前状态值。"""
+    await rt.set_state("qq", "bot-a", "group-a", "P", rt.SEARCHING)
+    await rt.mark_active("qq", "bot-a", "group-a", "P")
+    state_key = rt._skey("qq", "bot-a", "group-a", "P")
+    active_key = rt._active_key("qq", "bot-a", "group-a")
+    fake_redis.ttls[state_key] = 1
+    fake_redis.ttls[active_key] = 1
+
+    await rt.refresh_activity("qq", "bot-a", "group-a", "P")
+
+    assert fake_redis.values[state_key] == rt.SEARCHING
+    assert fake_redis.ttls[state_key] == rt.STATE_TTL
+    assert fake_redis.ttls[active_key] == rt.ACTIVE_TTL
+
+
 # ── init_activity：原子合并 clear_cancel + mark_active + set_state（PR13 复审）──
 
 @pytest.mark.asyncio

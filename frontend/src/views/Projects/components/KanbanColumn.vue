@@ -36,8 +36,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, type PropType } from 'vue'
-import { useSurface } from '@/interaction/runtime/vue'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
+import { runtime } from '@/interaction/runtime'
 import ProjectCard from './ProjectCard.vue'
 import type { Project } from '@/types/project'
 
@@ -48,12 +48,25 @@ const props = defineProps({
 })
 defineEmits(['card-click', 'add-project'])
 const colBodyRef = ref<HTMLElement | null>(null)
-const { elementRef: columnRef } = useSurface({
+const columnRef = ref<HTMLElement | null>(null)
+const columnGeneration = runtime.surfaces.register({
   id: props.column.key,
   type: 'project-column',
   accepts: ['project-card'],
   layout: 'grid',
+  element: null,
   viewport: () => colBodyRef.value,
+})
+watch(columnRef, (element, previous) => {
+  const current = runtime.surfaces.get(props.column.key)
+  if (current?.generation !== columnGeneration) return
+  if (element === null && current.element && current.element !== previous) return
+  runtime.surfaces.setElement(props.column.key, element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  if (runtime.surfaces.get(props.column.key)?.generation === columnGeneration) {
+    runtime.surfaces.unregister(props.column.key, columnGeneration)
+  }
 })
 // detach 策略专用：卡片被 Runtime 接管（抓起）时要用 <Teleport> 搬去 body，
 // 否则源节点只是 visibility:hidden，仍占着列表布局的位置，兄弟卡片没法收位

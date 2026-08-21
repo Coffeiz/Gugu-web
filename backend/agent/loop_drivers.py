@@ -61,6 +61,9 @@ class NormalizedToolCall:
 class RoundResult:
     text: str                          # 本轮纯文本正文（不含工具调用/思考）
     tool_calls: list = field(default_factory=list)   # list[NormalizedToolCall]
+    # provider 若以后能返回显式决策，可在这里填入；当前驱动以原生 tool_calls 推导。
+    # 这是运行时状态，不会写入对话历史或下一轮 prompt。
+    requires_tools: bool | None = None
     usage_in: int = 0
     usage_out: int = 0
     cache_tokens: int = 0              # 统一映射：anthropic 的 cache_read_input_tokens /
@@ -97,19 +100,64 @@ class _AnthropicCtx:
 
 
 def _with_history_cache(messages: list) -> list:
-    """给「发给 API 的 messages」打一个滚动 prompt 缓存断点：在最后一条 message 的最后一个内容块上加
-    cache_control。多轮工具循环里历史越滚越长，这样能缓存住已发生的几轮、下一轮只重算新增的块。
-    返回浅拷贝、**不改原 messages**（原列表要持久化，绝不能混入 cache_control，否则下次加载历史会带着
-    旧断点、累积超过 4 个上限）。只在最后一块是 list[dict]（assistant 块 / tool_result 块）时打；
-    首轮 user 的纯字符串 content 跳过（那轮的静态部分已由 system 缓存覆盖）。"""
+    """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
+
+    MiniMax/Anthropic 缓存机制是前缀匹配：
+    - 找到第一个 cache_control 标记
+    - 缓存从请求开头到该标记的所有内容
+    - 后续请求如果前缀相同，就能命中缓存
+
+    dsh 的做法（已验证 50% 缓存率）：
+    1. system 块加 cache_control（已在 prepare 中处理）
+    2. 最后一条用户消息加 cache_control（缓存完整对话历史）
+
+    这比每个块都加更有效，因为：
+    - MiniMax 只处理有限数量的 cache_control 断点
+    - 最后一条消息的 cache_control 能覆盖整个历史前缀
+    """
     if not messages:
         return messages
-    last = messages[-1]
-    c = last.get("content")
-    if not isinstance(c, list) or not c or not isinstance(c[-1], dict) or not c[-1].get("type"):
-        return messages
-    new_block = {**c[-1], "cache_control": {"type": "ephemeral"}}
-    return [*messages[:-1], {**last, "content": [*c[:-1], new_block]}]
+
+    # PromptMessages 的动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾；
+    # 否则时间 reminder 会被包含在断点前缀中，下一轮必然失去命中。
+    cache_limit = len(getattr(messages, "conversation", messages))
+    if cache_limit <= 0:
+        return list(messages)
+
+    # 保留上一请求的 checkpoint，并在本轮 conversation 末尾建立新 checkpoint。
+    # PromptMessages 会在同一 run 的 tool round 之间持续追加消息；如果每次只标记
+    # 最后一条，provider 可能看不到上一轮已经建立的可复用前缀。
+    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
+    latest_anchor = cache_limit - 1
+    anchor_indices.add(latest_anchor)
+    remember_anchor = getattr(messages, "remember_cache_anchor", None)
+    if remember_anchor is not None:
+        remember_anchor(latest_anchor)
+
+    # 浅拷贝 messages 列表
+    new_messages = []
+
+    for i, msg in enumerate(messages):
+        msg = dict(msg)
+        content = msg.get("content")
+
+        # 只给 conversation checkpoint 加 cache_control；动态尾部永远不加。
+        is_anchor = i in anchor_indices and i < cache_limit
+
+        if isinstance(content, list) and is_anchor and content:
+            new_content = content[:-1] + [
+                {**content[-1], "cache_control": {"type": "ephemeral"}}
+            ]
+        elif isinstance(content, str) and is_anchor:
+            new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+        else:
+            # 其他消息不加 cache_control
+            new_content = content
+
+        msg["content"] = new_content
+        new_messages.append(msg)
+
+    return new_messages
 
 
 class AnthropicDriver:
@@ -118,7 +166,6 @@ class AnthropicDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.context import builder as _builder
         from agent.llm.llm_select import supports_anthropic_active_cache, _is_mimo
         from agent.tools import registry
 
@@ -136,24 +183,12 @@ class AnthropicDriver:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：system 由 builder 拆成「稳定前缀（人格/政策/技能索引，session 内不变）┃ 动态后缀
-        # （记忆/分钟级时间/项目日历文件，每轮变）」，断点（CACHE_BREAK）在边界。缓存块只含稳定前缀 →
-        # 命中读取便宜 ~90%；动态后缀不缓存，避免整块每分钟失效。两块顺序拼接与单段逐字一致。
-        # Anthropic 顺序 tools→system→messages，故缓存块实含 tools+稳定前缀。
-        # MiniMax-M3 走被动前缀缓存，MiMo 不支持 Anthropic 主动缓存；两者都不能发送
-        # cache_control，仍保持 tools → system → messages 的稳定顺序以便被动缓存命中。
+        # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
-            stable, dynamic = _builder.split_for_cache(system_text)
-            if dynamic and supports_active_cache:
-                system_param = [
-                    {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-                    {"type": "text", "text": dynamic},
-                ]
+            if supports_active_cache:
+                system_param = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
             else:
-                _sys_blk = {"type": "text", "text": _builder.strip_cache_marker(system_text)}
-                if supports_active_cache:
-                    _sys_blk["cache_control"] = {"type": "ephemeral"}
-                system_param = [_sys_blk]
+                system_param = system_text
         else:
             system_param = system_text
 
@@ -167,9 +202,9 @@ class AnthropicDriver:
     async def run_round(self, client, ctx, messages):
         from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
 
-        # ② 给发出去的 messages 打一个滚动缓存断点（最后一条 message 的最后一个块）：多轮工具循环里
+        # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
-        #    绝不能混入 cache_control）。MiniMax-M3 / MiMo 不支持主动缓存 → 原样发。
+        #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
         _msgs = _with_history_cache(messages) if ctx.supports_active_cache else messages
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
@@ -187,7 +222,7 @@ class AnthropicDriver:
         text = "".join(b.text for b in final.content if b.type == "text")
         tool_calls = [NormalizedToolCall(id=b.id, name=b.name, input=b.input) for b in tool_blocks]
         yield ("done", RoundResult(
-            text=text, tool_calls=tool_calls,
+            text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
             raw=final.content,
@@ -226,6 +261,7 @@ class _OpenAICtx:
     temperature: float
     think_extra: dict
     model: str
+    supports_active_cache: bool
 
 
 @dataclass
@@ -239,23 +275,67 @@ class _OpenAIRaw:
     tool_calls_payload: list
 
 
+def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
+    """把工具返回的 Anthropic 视觉块转换成 OpenAI 可接受的消息。
+
+    工具 registry 为了兼容 Anthropic，会把图片放成 ``image/source`` 块。
+    OpenAI 兼容接口不能把这种块原样放进 ``role=tool``；文本结果留在 tool
+    消息里，图片作为紧随其后的 user 多模态消息交给模型。
+    """
+    if not isinstance(res, list):
+        if isinstance(res, str):
+            return res, []
+        return json.dumps(res, ensure_ascii=False), []
+
+    text_parts: list[str] = []
+    image_parts: list[dict] = []
+    for block in res:
+        if not isinstance(block, dict):
+            text_parts.append(str(block))
+            continue
+        if block.get("type") == "text":
+            value = block.get("text")
+            if value:
+                text_parts.append(str(value))
+            continue
+        if block.get("type") == "image":
+            source = block.get("source") or {}
+            if source.get("type") == "base64" and source.get("data"):
+                media = source.get("media_type") or "image/jpeg"
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media};base64,{source['data']}"},
+                })
+                continue
+        # 未知块不要直接丢失，保留一个不会破坏 OpenAI schema 的摘要。
+        text_parts.append(json.dumps(block, ensure_ascii=False))
+
+    return "\n".join(text_parts) or "工具已执行。", image_parts
+
+
 class OpenAIDriver:
     api_format = "openai"
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.context import builder as _builder
         from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
-        # system 里可能带 builder 的缓存断点标记（CACHE_BREAK）——openai 通道不支持 anthropic 式
-        # cache_control，去掉它还原成普通 system 串（标记仅出现在 system 消息里，每轮重建、
-        # 改它无副作用）。这段是一次性的（调用方已经把 system 拼进 messages[0]，不是走 system_text
-        # 参数——_run_openai 现状就不接 system_text，这里原样保留这个既有行为，不是本次改动引入的）。
-        for _m in messages:
-            if _m.get("role") == "system" and isinstance(_m.get("content"), str) and _builder.CACHE_BREAK in _m["content"]:
-                _m["content"] = _builder.strip_cache_marker(_m["content"])
+        adapter = providers.adapter_for(ai)
+        supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
+
+        # OpenAI 兼容 API 的 system 已由 message assembly 生成稳定文本，
+        # 支持主动缓存的 provider 将整个稳定 system 标记为可缓存。
+        for _m in messages if supports_active_cache else []:
+            if _m.get("role") == "system":
+                content = _m.get("content")
+                if isinstance(content, str):
+                    _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                elif isinstance(content, list):
+                    # 已经是数组格式，确保最后一个块有 cache_control
+                    if content and "cache_control" not in content[-1]:
+                        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
 
         tools = registry.openai_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
@@ -274,11 +354,17 @@ class OpenAIDriver:
             elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
                 think_extra["reasoning_effort"] = ai.reasoning_effort
 
-        ctx = _OpenAICtx(tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
-                          think_extra=think_extra, model=ai.model)
+        ctx = _OpenAICtx(
+            tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
+            think_extra=think_extra, model=ai.model,
+            supports_active_cache=supports_active_cache,
+        )
         return client, ctx
 
     async def run_round(self, client, ctx, messages):
+        # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
+        # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
+        messages = _with_history_cache(messages) if ctx.supports_active_cache else messages
         stream = await client.chat.completions.create(
             model=ctx.model,
             messages=messages,
@@ -299,8 +385,13 @@ class OpenAIDriver:
                 if getattr(chunk, "usage", None):
                     total_in  += chunk.usage.prompt_tokens or 0
                     total_out += chunk.usage.completion_tokens or 0
-                    # DeepSeek 自动上下文缓存命中（prompt_cache_hit_tokens）；非 DeepSeek 厂商无此字段 → 0
-                    total_cache += getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
+                    # 缓存命中：DeepSeek 用 prompt_cache_hit_tokens；Qwen/阿里用 prompt_tokens_details.cached_tokens
+                    cache_hit = getattr(chunk.usage, "prompt_cache_hit_tokens", 0) or 0
+                    if not cache_hit:
+                        details = getattr(chunk.usage, "prompt_tokens_details", None)
+                        if details:
+                            cache_hit = getattr(details, "cached_tokens", 0) or 0
+                    total_cache += cache_hit
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -343,7 +434,7 @@ class OpenAIDriver:
                 tool_calls.append(NormalizedToolCall(id=b["id"], name=b["name"], input={}, parse_error=True))
 
         yield ("done", RoundResult(
-            text=content, tool_calls=tool_calls,
+            text=content, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=total_in, usage_out=total_out, cache_tokens=total_cache,
             raw=_OpenAIRaw(content=content, reasoning=reasoning, tool_calls_payload=ordered),
         ))
@@ -368,8 +459,19 @@ class OpenAIDriver:
                 for b in raw.tool_calls_payload
             ],
         ))
+        visual_parts: list[dict] = []
         for tc, res in dispatched:
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": res})
+            content, images = _openai_tool_result(res)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
+            visual_parts.extend(images)
+        if visual_parts:
+            messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "工具返回了以下图片，请结合工具文字结果继续处理。",
+                }, *visual_parts],
+            })
 
     def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
         messages.append(self._asst(result.raw, result.text or assistant_fallback))

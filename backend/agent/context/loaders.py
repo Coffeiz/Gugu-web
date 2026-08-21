@@ -102,6 +102,12 @@ async def load_memory(user_id, query: str = "") -> dict:
     return await store.read_memory(user_id, query)
 
 
+async def load_dynamic_memory(user_id) -> dict:
+    """读取每轮动态尾部所需的 stance/summary，避免重新加载完整 memory。"""
+    from agent.memory import store
+    return await store.read_dynamic_memory(user_id)
+
+
 async def load_im_channels(user_id) -> dict:
     """已连接的 IM 通知渠道（imreach 有记录＝该平台可主动触达）。返回 {qq: bool, feishu: bool}。
     供 builder 注入「通知渠道连接情况」，让咕咕据实判断能否走某 IM 渠道、别瞎让用户绑。"""

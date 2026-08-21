@@ -9,6 +9,7 @@
 @import './overlay-theme-bridge.css';
 @import './component-theme-refinements.css';
 @import './file-toolbar-theme-refinements.css';
+@import './file-drop-theme-refinements.css';
 @import './adoption/index.css';
 
 :root {

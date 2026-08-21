@@ -1,27 +1,23 @@
-# Gugu-web 开发基础约定
+# Gugu-web 开发约定
 
-详细规则见 [docs/development/](docs/development/)：
+修改代码前，根据工作领域阅读对应 skill：
 
-- 前端：[frontend.md](docs/development/frontend.md)
-- 后端：[backend.md](docs/development/backend.md)
-- 前台设计：[design.md](docs/development/design.md)
-- Admin 设计：[design-admin.md](docs/development/design-admin.md)
-- 测试：[test.md](docs/development/test.md)
-- 画布 / 便签（Mind）：[mind.md](docs/development/mind.md) —— 通用「内容卡片约定」见本文件同名章节
+| Skill | 路径 | 适用场景 |
+|-------|------|---------|
+| frontend | `agentskills/frontend/SKILL.md` | Vue/TS 前端开发 |
+| backend | `agentskills/backend/SKILL.md` | Python/FastAPI 后端 |
+| canvas-mind | `agentskills/canvas-mind/SKILL.md` | 画布/便签/Mind |
+| design | `agentskills/design/SKILL.md` | UI 视觉与交互规范 |
+| testing | `agentskills/testing/SKILL.md` | 写/改测试 |
+| devserver | `agentskills/devserver/SKILL.md` | 部署/同步/运维 |
 
-修改前端、后端或视觉交互前，先阅读对应文档；写/改测试前先看测试约定。本文件只保留跨项目的基础规则。
+完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
 
 ## 调试原则
 
 - 不用 fallback/兜底掩盖真实错误，先定位根因。
 - 连续 2–3 轮静态推理仍无法定位时，改用运行时日志、性能 trace 或录屏验证。
 - 探针只用于定位问题，验证后必须清理，不要带入提交。
-
-## 测试失败处理
-
-- 测试失败时禁止直接修改断言、删除用例、增加 `skip` 或放宽校验来恢复绿色；先检查实现、测试夹具和失败堆栈，确认失败是否暴露了真实回归。
-- 回归测试必须写清楚它防止的具体行为回归，例如“文件代理拖入文件夹时保留本体内容并执行缩小淡出”，不能只写“落地成功”。
-- 只有确认产品契约已经改变，并在文档或变更说明中记录原因后，才可以同步调整测试预期；修复实现后必须保留覆盖原故障路径的测试。
 
 ## 安全规范
 
@@ -32,27 +28,6 @@
 - 外部请求复用 URL 安全校验，禁止自动跟随未经校验的重定向。
 - 不得把 token、密钥或凭据写入 URL、日志、前端响应或 Git。
 - 排查真实故障时看到的真实用户名/昵称，写代码、测试、commit message 或文档时一律换成虚构占位名（如"小北"/"moon_小北"），不得把真实用户名写进 Git 历史。
-
-## 内容卡片约定
-
-适用于所有「用户可编辑、以 Markdown 正文为主」的内容卡片（便签、画布卡片及今后新增的类型），不限于 Mind：
-
-- **用户可见标题必须写在正文首行 `# xxx`**（`#` 一到六级均可）；正文首行不是 `#` 格式的卡片，只读视图没有标题区。
-- 数据库独立字段（如 `title`）**不承担用户可见信息**：它只作为搜索、列表、索引等元数据；除非某处 UI 明确专门渲染了该字段，否则用户看不到它。
-- 创建/编辑内容时，标题的唯一落点是正文首行；不得把用户可见信息只写进独立字段。
-- 新增任何内容卡片类型前，先自查两个问题：
-  1. "这个字段用户在哪能看到？"——答不上来的字段，不许承载用户可见信息。
-  2. "用户编辑卡片时改的标题，落在哪个字段？"——必须落在正文首行，且是唯一落点，避免两处各存一份互相漂移。
-- Mind 便签的专项细节（拆标题函数、版本/软删、案例）见 [mind.md](docs/development/mind.md)。
-
-## 开发与验证流程
-
-- 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver，不在本地直接启动完整服务。
-- 前端 UI 修改优先在 devserver 浏览器验证；类型或接口修改运行 typecheck。
-- 完成功能或提交前运行完整前端 typecheck；行为/纯逻辑修改运行测试。
-- 后端变更在 devserver 运行 `PYTHONPATH=. .venv/bin/pytest`。
-- pytest 测试基座、E2E 该不该接 CI 的判断标准、本地跑 E2E 的方式，见 [test.md](docs/development/test.md)。
-- 修改网关适配器时只重启对应平台子进程，不重启整个 supervisor。
 
 ## 语言与提交
 

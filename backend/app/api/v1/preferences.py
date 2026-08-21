@@ -53,16 +53,19 @@ async def update_preferences(
 ):
     prefs = await _get_or_create(user, db)
     data = prefs.data
+    style_changed = False
     if body.lastStages is not None:
         data["last_stages"] = body.lastStages
     if body.stageTemplates is not None:
         data["stage_templates"] = body.stageTemplates
     if "replyTone" in body.model_fields_set:
+        style_changed = True
         if body.replyTone is None:
             data.pop("reply_tone", None)   # null = 重置为默认（自然）
         else:
             data["reply_tone"] = body.replyTone
     if "replyLength" in body.model_fields_set:
+        style_changed = True
         if body.replyLength is None:
             data.pop("reply_length", None) # null = 重置为默认（适中）
         else:
@@ -73,4 +76,7 @@ async def update_preferences(
         data["default_view"] = body.defaultView
     prefs.data = data
     await db.commit()
+    if style_changed:
+        from app.core import events
+        await events.bump_context_revision(user.id, "preferences")
     return _to_response(data)

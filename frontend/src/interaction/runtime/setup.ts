@@ -60,19 +60,22 @@ export function setupInteractionRuntime(): void {
   // 这里要同步改。
   // selector 只匹配 .file-list .list-row（文件库），网格视图的 FolderCard/FileCard 不带
   // 这个 class，不受影响。项目编辑卡走 pm-file-item / pm-folder-item 独立类型。
+  // 100% 相对代理 scaleShell 的抓取基准宽度，因此 compact 只会收窄，不会在窄面板里
+  // 因固定 300px 反向撑宽到超过本体。
   const fileLibraryProxyLayout = {
     compact: {
       selector: '.file-list .list-row',
-      width: 'min(300px, calc(100vw - 48px))',
+      width: 'min(300px, 100%)',
       gridTemplateColumns: '1.3fr 36px 1fr 44px 0px 0px',
     },
   }
   // 项目编辑卡列表视图只有 5 列（1fr 80px 60px 70px 72px），紧凑布局收为
   // 1.3fr 36px 1fr 0px 0px——日期和操作列隐藏，前 3 列收紧到内容宽度。
+  // 同样以 100% 作为上限，保证 split view / 窄文件区里 grabbing 首帧不超过源行宽度。
   const projectEditProxyLayout = {
     compact: {
       selector: '.file-list-view .list-row',
-      width: 'min(300px, calc(100vw - 48px))',
+      width: 'min(300px, 100%)',
       gridTemplateColumns: '1.3fr 36px 1fr 0px 0px',
     },
   }

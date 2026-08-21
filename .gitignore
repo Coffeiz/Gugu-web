@@ -52,6 +52,7 @@ Thumbs.db
 .claude/
 # 其他 agent 工具的本地目录，与本项目无关，不入仓
 .aionrs/
+.zcode/
 *.iml
 *.iws
 *.ipr
@@ -79,8 +80,13 @@ loopscope/backend/*.egg-info/
 # 性能 trace / 抓的日志（大文件，勿提交）
 /logs/
 Trace-*.json
+# 前端开发日志
+frontend/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
+
+# QQ 引用索引（运行时聊天正文、身份和媒体 URL，不入版本控制）
+/backend/data/qq-ref-index/
 
 # 部署打包产物
 backend.zip

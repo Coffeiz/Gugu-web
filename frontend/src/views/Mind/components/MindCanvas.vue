@@ -1,6 +1,7 @@
 <template>
-  <div ref="viewportRef" class="mind-canvas" :style="bgStyle" @pointerdown="onViewportPointerDown" @wheel.prevent="onWheelZoom">
-    <div class="canvas-world" :style="worldStyle">
+  <div ref="viewportRef" class="mind-canvas" :class="{ 'is-panning': viewportPanActive }" @pointerdown="onViewportPointerDown" @wheel.prevent="onWheelZoom">
+    <div ref="gridRef" class="canvas-grid" aria-hidden="true"></div>
+    <div ref="worldRef" class="canvas-world">
       <RelationLayer
         :key="canvasKey ?? 'none'"
         :items="relationItems" :relations="visibleRelations"
@@ -76,21 +77,25 @@ const emit = defineEmits<{
 }>()
 
 const viewportRef = ref<HTMLElement | null>(null)
+const gridRef = ref<HTMLElement | null>(null)
+const worldRef = ref<HTMLElement | null>(null)
+const viewportPanActive = ref(false)
 const measuredSizes = reactive(new Map<number, { w: number; h: number }>())
 const measuredSizesByClientKey = new Map<string, { w: number; h: number }>()
 const viewportSize = reactive({ width: 0, height: 0 })
 const {
   camera, centerView, screenToWorld, zoomAt, zoomAtCenter, workspaceCenter, onWheel,
-  startPan, panMove, panEnd,
+  startPan, panMove, panPosition, commitPan, panEnd,
 } = useMindCanvas(viewportRef)
 
-const worldStyle = computed(() => ({ transform: `translate3d(${camera.x}px, ${camera.y}px, 0) scale(${camera.scale})` }))
 watch(() => props.items, items => {
   items.forEach(item => migrateCanvasItemSize(measuredSizes, measuredSizesByClientKey, item))
 }, { immediate: true })
 
 // 卡片和关系共用同一个缓冲视口，避免各自重新计算一套 window geometry。
 const WINDOW_BUFFER_PX = 420
+const PAN_REBASE_PX = WINDOW_BUFFER_PX / 2
+const GRID_STEP = 28
 const bufferedWorldViewport = computed(() => {
   if (!viewportSize.width || !viewportSize.height) return null
   return worldViewport({ ...camera, ...viewportSize }, WINDOW_BUFFER_PX)
@@ -129,16 +134,51 @@ const relationItems = computed(() => {
   return props.items.filter(item => neededNodeIds.has(item.nodeId))
 })
 
-const bgStyle = computed(() => {
-  const size = 28 * camera.scale
-  return {
-    backgroundPosition: `${camera.x}px ${camera.y}px`,
-    backgroundSize: `${size}px ${size}px`,
-  }
-})
+// 普通 Pan 的视觉位置不再通过 reactive camera 每帧驱动 Vue。world 与周期网格都只写 transform，
+// 由 compositor 合成；逻辑 camera 只在跨过一半 virtualization buffer 时低频 rebase，并在
+// pointerup 最终提交。这样既不会拖出 420px 缓冲区后出现空白，也避免每个 pointermove 重跑
+// visibleItems / RelationLayer / style patch。
+function wrappedGridOffset(value: number, size: number) {
+  if (size <= 0) return 0
+  return ((value % size) + size) % size
+}
+function applyCameraVisual(x: number, y: number, scale = camera.scale) {
+  const world = worldRef.value
+  if (world) world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`
+  const grid = gridRef.value
+  if (!grid) return
+  const gridSize = GRID_STEP * scale
+  grid.style.setProperty('--mind-canvas-grid-size', `${gridSize}px`)
+  grid.style.transform = `translate3d(${wrappedGridOffset(x, gridSize)}px, ${wrappedGridOffset(y, gridSize)}px, 0)`
+}
+let panVisualRaf = 0
+let pendingPanVisual: { x: number; y: number } | null = null
+function schedulePanVisual(x: number, y: number) {
+  pendingPanVisual = { x, y }
+  if (panVisualRaf) return
+  panVisualRaf = requestAnimationFrame(() => {
+    panVisualRaf = 0
+    const next = pendingPanVisual
+    pendingPanVisual = null
+    if (next) applyCameraVisual(next.x, next.y)
+  })
+}
+function flushPanVisual(x: number, y: number) {
+  if (panVisualRaf) cancelAnimationFrame(panVisualRaf)
+  panVisualRaf = 0
+  pendingPanVisual = null
+  applyCameraVisual(x, y)
+}
+watch(
+  () => [camera.x, camera.y, camera.scale] as const,
+  ([x, y, scale]) => applyCameraVisual(x, y, scale),
+  { flush: 'sync' },
+)
 
 function onViewportPointerDown(event: PointerEvent) {
   if (event.button !== 0) return
+  viewportPanActive.value = true
+  hoveredNodeId.value = null
   startPan(event)
 }
 
@@ -456,10 +496,23 @@ function onConnectionDragEnd(event: ClientPoint) {
 }
 
 function onPointerMove(event: PointerEvent) {
-  panMove(event)
+  if (!panMove(event, false)) return
+  const visual = panPosition()
+  schedulePanVisual(visual.x, visual.y)
+  if (
+    Math.abs(visual.x - camera.x) >= PAN_REBASE_PX
+    || Math.abs(visual.y - camera.y) >= PAN_REBASE_PX
+  ) {
+    commitPan()
+  }
 }
 function onPointerUp(event: PointerEvent) {
-  if (panEnd(event)) emitViewChange()
+  if (!panMove(event, false)) return
+  const visual = panPosition()
+  flushPanVisual(visual.x, visual.y)
+  if (!panEnd(event)) return
+  viewportPanActive.value = false
+  emitViewChange()
 }
 function onWheelZoom(event: WheelEvent) {
   onWheel(event)
@@ -502,6 +555,7 @@ function viewportCenter() {
 defineExpose({ camera, centerView: centerViewAndEmit, centerOn, screenToWorld, zoomAt, zoomAtCenter: zoomAtCenterAndEmit, resetScaleAtCenter: resetScaleAtCenterAndEmit, viewportCenter })
 
 onMounted(() => {
+  applyCameraVisual(camera.x, camera.y, camera.scale)
   runtime.surfaces.register({
     id: MIND_CANVAS_SURFACE_ID,
     type: 'canvas-free',
@@ -511,7 +565,10 @@ onMounted(() => {
     layout: 'free',
     camera: {
       scale: () => camera.scale,
-      origin: () => ({ left: camera.x, top: camera.y }),
+      origin: () => {
+        const p = panPosition()
+        return { left: p.x, top: p.y }
+      },
     },
   })
   stopRuntimeActions = runtime.onAction(action => {
@@ -520,7 +577,7 @@ onMounted(() => {
     }
   })
   stopRuntimeVisual = runtime.subscribe(onRuntimeVisual)
-  updateViewportSizeAndEmit()
+  updateViewportSize()
   viewportResizeObserver = new ResizeObserver(updateViewportSizeAndEmit)
   if (viewportRef.value) viewportResizeObserver.observe(viewportRef.value)
   window.addEventListener('pointermove', onPointerMove)
@@ -546,6 +603,9 @@ onBeforeUnmount(() => {
     connectionMiddlePanActive = false
     panEnd({ pointerId: CONNECTION_MIDDLE_PAN_ID, clientX: 0, clientY: 0 })
   }
+  if (panVisualRaf) cancelAnimationFrame(panVisualRaf)
+  panVisualRaf = 0
+  pendingPanVisual = null
   cancelAnimationFrame(connSpringRaf)
   landingObjectNodeIds.clear()
 })
@@ -560,8 +620,27 @@ onBeforeUnmount(() => {
   cursor: grab;
   user-select: none;
   background-color: var(--mind-canvas-bg);
-  background-image: radial-gradient(circle, var(--mind-canvas-dot) 6.5%, transparent 7%);
 }
 .mind-canvas:active { cursor: grabbing; }
-.canvas-world { position: absolute; width: 0; height: 0; transform-origin: 0 0; }
+.canvas-grid {
+  --mind-canvas-grid-size: 28px;
+  position: absolute;
+  inset: calc(-1 * var(--mind-canvas-grid-size));
+  pointer-events: none;
+  background-image: radial-gradient(circle, var(--mind-canvas-dot) 6.5%, transparent 7%);
+  background-size: var(--mind-canvas-grid-size) var(--mind-canvas-grid-size);
+  contain: paint;
+  will-change: transform;
+}
+.canvas-world {
+  position: absolute;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+/* Pointer capture 已经把普通 Pan 的事件锁给 viewport；移动期间让 world 退出 hit-testing，避免
+   指针扫过大量图片/项目卡时额外触发 :hover、CardAffordances 和阴影动画 paint。松手后恢复，
+   不修改静止时任何 hover/transition 参数。 */
+.mind-canvas.is-panning .canvas-world { pointer-events: none; }
 </style>

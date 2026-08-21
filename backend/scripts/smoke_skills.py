@@ -27,6 +27,11 @@ from agent.profiles.default import DefaultProfile
 PASS, FAIL = [], []
 
 
+def build_prompt(*args, **kwargs):
+    static, dynamic, _ = builder.build_split(*args, **kwargs)
+    return "\n\n---\n\n".join(part for part in (static, dynamic) if part)
+
+
 def check(name, cond, extra=""):
     (PASS if cond else FAIL).append(name)
     print(f"  {'✅' if cond else '❌'} {name}" + (f"  [{extra}]" if extra and not cond else ""))
@@ -54,8 +59,8 @@ async def main():
     check("私网 10.x 拦截", _host_allowed("10.0.0.1") is False)
 
     print("【3】builder 注入「可用技能」索引")
-    sp_on = builder.build("default", "测试", [], [], {}, None, skills=["weather"])
-    sp_off = builder.build("default", "测试", [], [], {}, None)
+    sp_on = build_prompt("default", "测试", [], [], {}, None, skills=["weather"])
+    sp_off = build_prompt("default", "测试", [], [], {}, None)
     check("传 skills → 含『## 可用技能』", "## 可用技能" in sp_on)
     check("索引含 weather slug", "`weather`" in sp_on)
     check("不传 skills → 不注入", "## 可用技能" not in sp_off)

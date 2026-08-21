@@ -81,17 +81,44 @@ html[data-theme='dark'][data-family] {
   --calendar-range-edge-bg: var(--action-soft-hover);
   --calendar-weekend-hover-bg: var(--calendar-weekend-bg);
   --calendar-capsule-surface-overlay: color-mix(in srgb,var(--surface-base) 22%,transparent);
+
+  /* settings-popup retains its historical component paint; dark mode only remaps its values. */
+  --settings-popup-bg: color-mix(in srgb,var(--surface-floating) 90%,transparent);
+  --settings-popup-border: var(--border-default);
+  --settings-popup-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
+  --settings-popup-item-fg: var(--content-primary);
+  --settings-popup-hover-bg: var(--color-accent-faint);
+  --settings-popup-danger: var(--status-danger);
+  --settings-popup-danger-hover-bg: var(--status-danger-bg);
+  --settings-popup-divider: var(--border-subtle);
 }
 
-/* Legacy popup/user surfaces still contain light-theme literals in scoped/global CSS. Keep their
-   product contract here until those components are fully tokenized. */
-html[data-theme='dark'][data-family] .settings-popup,
+/* Mono settings uses the same geometry as Aero but switches only its surface vocabulary: a solid
+   neutral card plus the family border. No final paint property lives here, so there is no CSS race. */
+html[data-theme='light'][data-family='v2'] {
+  --settings-popup-bg: var(--surface-card-solid);
+  --settings-popup-border: var(--border-strong);
+  --settings-popup-shadow: var(--elevation-popup);
+  --settings-popup-item-fg: var(--content-primary);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
+  --settings-popup-danger: var(--status-danger);
+  --settings-popup-danger-hover-bg: var(--status-danger-bg);
+  --settings-popup-divider: var(--border-subtle);
+}
+html[data-theme='dark'][data-family='v2'] {
+  --settings-popup-bg: var(--surface-card-solid);
+  --settings-popup-border: var(--border-strong);
+  --settings-popup-shadow: var(--elevation-popup);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
+}
+
+/* Notification popup still contains legacy light literals in AppSidebar. settings-popup is now
+   component-owned and consumes only the --settings-popup-* values above. */
 html[data-theme='dark'][data-family] .notif-popup {
   background: color-mix(in srgb, var(--surface-floating) 90%, transparent);
   border-color: var(--border-default);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
 }
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item,
 html[data-theme='dark'][data-family] .notif-title,
 html[data-theme='dark'][data-family] .notif-msg,
 html[data-theme='dark'][data-family] .notif-meta.as-title {
@@ -101,22 +128,12 @@ html[data-theme='dark'][data-family] .notif-meta,
 html[data-theme='dark'][data-family] .notif-empty {
   color: var(--content-tertiary);
 }
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-item::before,
 html[data-theme='dark'][data-family] .notif-item:hover,
 html[data-theme='dark'][data-family] .notif-item.unread {
   background: var(--color-accent-faint);
 }
-/* settings-popup 菜单项用 ::before 伪元素做 hover 高亮，需覆盖 surfaces.css 的通用
-   .popup-menu-item:hover 背景，避免两层高亮叠加。 */
-html[data-theme][data-family] .settings-popup .popup-menu-item:hover:not(:disabled) {
-  background: transparent;
-}
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep,
 html[data-theme='dark'][data-family] .notif-header {
   border-color: var(--border-subtle);
-}
-html[data-theme='dark'][data-family] .settings-popup .popup-menu-sep {
-  background: var(--border-subtle);
 }
 
 html[data-theme='dark'][data-family] .pm-nav-item.active {

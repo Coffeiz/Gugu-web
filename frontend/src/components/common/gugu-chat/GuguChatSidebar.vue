@@ -147,7 +147,6 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   box-shadow: var(--elevation-card);
   font: var(--font-weight-semibold) var(--font-size-sm) var(--font-sans);
   cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
 .exp-new-session-btn:hover { background: var(--surface-raised); border-color: var(--border-hover); box-shadow: var(--elevation-card-hover); }
 .exp-new-session-btn:active { transform: translateY(1px); }
@@ -158,7 +157,7 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   padding: var(--space-md) var(--space-sm);
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: 2px;
 }
 .sidebar-caption {
   display: block;
@@ -181,10 +180,12 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   cursor: pointer;
   flex-shrink: 0;
   position: relative;
-  transition: background .14s ease, border-color .14s ease, color .14s ease;
 }
-:deep(.exp-session-item:hover) { color: var(--content-primary); background: var(--gugu-chat-session-hover); }
 :deep(.exp-session-item.active) {
+  /* interaction-refinements owns hover paint. Remap its hover inputs locally so an active row keeps
+     the selected surface in both light and dark instead of creating a second active:hover selector. */
+  --gugu-chat-session-hover: var(--gugu-chat-session-active);
+  --sidebar-item-hover: var(--gugu-chat-session-active);
   color: var(--gugu-chat-session-active-fg);
   background: var(--gugu-chat-session-active);
   border-color: var(--sidebar-item-active-border);
@@ -205,7 +206,6 @@ defineExpose({ imGroupEl: computed(() => imConnectRef.value?.imGroupEl ?? null) 
   justify-content: center;
   cursor: pointer;
   opacity: 0;
-  transition: opacity .15s ease, background .15s ease, color .15s ease;
   flex-shrink: 0;
 }
 :deep(.exp-session-item:hover .exp-session-rename-btn),

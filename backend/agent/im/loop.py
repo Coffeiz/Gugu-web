@@ -706,10 +706,13 @@ async def dispatch_im_message(payload: dict):
     session_scope = route.scope_id
     req.session_id = prepared.session_id
     trace_id = trace.set_trace(payload.get("trace_id"))
+    trace.bind_im_run(prepared.session_id, platform)
 
     if should_record_passive_group(req, payload):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
         await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
+        trace.bind_im_run(passive_sid, platform)
+        trace.finish_run("success")
         print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
         return None
 
@@ -722,6 +725,7 @@ async def dispatch_im_message(payload: dict):
         scope_id=session_scope,
     )
     if shortcut["action"] == "drop":
+        trace.finish_run("success")
         return None
     if shortcut["action"] in ("reply", "cancel"):
         # bot_id/scope_id 必须一起传——request_cancel() 要求 platform+bot_id+scope_id+puid
@@ -729,16 +733,19 @@ async def dispatch_im_message(payload: dict):
         # 路径的取消从来没真正生效过，QQ 主路径因为走了另一条已正确传 scope 的路径掩盖了这个问题）。
         await apply_im_shortcut_cancel(platform, puid or "", shortcut, bot_id=route.bot_id, scope_id=session_scope)
         await send_text(payload, shortcut["reply"])
+        trace.finish_run("cancelled" if shortcut["action"] == "cancel" else "success", shortcut["reply"])
         await finalize_im_response(platform, puid or "", shortcut["action"] == "cancel", shortcut["reply"])
         return None
     if shortcut["action"] == "no_permission":
         # 咕咕在跑别人的 loop，当前用户无权取消：回一句提示，不入队。
         await send_text(payload, shortcut["reply"])
+        trace.finish_run("success", shortcut["reply"])
         return None
 
     cmd_reply = await handle_im_command(user_id, req.message)
     if cmd_reply is not None:
         await send_text(payload, cmd_reply)
+        trace.finish_run("success", cmd_reply)
         return None
 
     bind_im_context(req, payload)
@@ -752,6 +759,9 @@ async def dispatch_im_message(payload: dict):
         else:
             resp = await agent_loop.run_collect(req)
             reply_text = ""
+    except BaseException:
+        trace.finish_run("error")
+        raise
     finally:
         await finish_im_activity(activity)
 
@@ -801,12 +811,14 @@ async def dispatch_im_message(payload: dict):
                 # 成员记忆是后台增强能力，不影响群聊回复。
                 pass
     if resp.cancelled:
+        trace.finish_run("cancelled")
         await finalize_im_response(platform, puid, True, "")
         return resp
 
     if platform != "feishu" or resp.files:
         reply_text = await send_agent_response(payload, resp)
 
+    trace.finish_run("success", reply_text)
     await finalize_im_response(platform, puid, False, reply_text)
     print(
         f"[im-loop] {platform} 回复(session={resp.session_id} trace={trace_id}) "

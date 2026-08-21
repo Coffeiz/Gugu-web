@@ -97,37 +97,21 @@ const statusText = computed(() => {
 .fc-ghost.error { border-color: rgba(200,90,90,0.4); background: rgba(200,90,90,0.04); }
 .fc-ghost.error .fc-ghost-fill { background: rgba(200,90,90,0.12); width: 100% !important; }
 .fc-ghost.error .fc-ghost-meta { color: rgba(200,90,90,0.85); }
+
+/* list 模式本身就是共享 .list-row：grid、padding、单元格排版全部由 filesListRows.css 拥有。
+   这里仅保留上传幽灵自己的进度层/禁交互/弱化视觉，避免项目/文件库再各维护一份列布局。 */
 .fc-ghost-row {
-  position: relative; overflow: hidden;
-  display: grid; align-items: center;
-  grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  padding: 9px 10px; min-height: 42px; border-radius: 9px;
+  position: relative;
+  overflow: hidden;
   border: 1px solid rgba(123,127,178,0.2) !important;
   background: rgba(123,127,178,0.03) !important;
-  pointer-events: none; cursor: default;
-}
-.fc-ghost-row-project {
-  grid-template-columns: 1fr 80px 60px 70px 72px;
-  padding: 7px 10px;
+  pointer-events: none;
+  cursor: default;
 }
 .fc-ghost-row .fc-ghost-fill {
   position: absolute; inset: 0; right: auto; height: 100%; pointer-events: none;
   background: rgba(123,127,178,0.08);
 }
-.fc-ghost-row :deep(.lr-name-cell) { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.fc-ghost-row :deep(.lr-file-icon) { flex-shrink: 0; opacity: 0.82; }
-.fc-ghost-row :deep(.lr-type-cell) { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.fc-ghost-row :deep(.lr-ext) {
-  font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
-  border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5;
-}
-.fc-ghost-row :deep(.lr-filename) {
-  font-size: 12px; font-weight: 600; color: var(--text-primary);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px;
-}
-.fc-ghost-row :deep(.lr-text) { font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
-.fc-ghost-row :deep(.lr-actions) { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .fc-ghost-row :deep(.lr-name-cell),
 .fc-ghost-row :deep(.lr-text),
 .fc-ghost-row :deep(.lr-type-cell) { opacity: 0.6; }

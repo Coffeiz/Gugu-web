@@ -18,9 +18,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, type PropType } from 'vue'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
-import { useSurface } from '@/interaction/runtime/vue'
 import type { Project } from '@/types/project'
 import DoneLayout from './done/DoneLayout.vue'
 
@@ -31,17 +30,30 @@ const props = defineProps({
 })
 defineEmits(['card-click', 'open-archived'])
 const colBodyRef = ref<HTMLElement | null>(null)
-const { elementRef: columnRef } = useSurface({
+const columnRef = ref<HTMLElement | null>(null)
+const columnGeneration = runtime.surfaces.register({
   id: 'done',
   type: 'project-column',
   accepts: ['project-card'],
   layout: 'grid',
+  element: null,
   viewport: () => colBodyRef.value,
+})
+watch(columnRef, (element, previous) => {
+  const current = runtime.surfaces.get('done')
+  if (current?.generation !== columnGeneration) return
+  if (element === null && current.element && current.element !== previous) return
+  runtime.surfaces.setElement('done', element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  if (runtime.surfaces.get('done')?.generation === columnGeneration) {
+    runtime.surfaces.unregister('done', columnGeneration)
+  }
 })
 </script>
 
 <style>
-.done-col { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
+.done-col { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); --done-year-chevron-center:10px; --done-year-content-indent:20px; display:flex; flex-direction:column; padding:12px 10px; gap:8px; min-height:0; overflow:hidden; }
 .done-col .col-header { display:flex; align-items:center; justify-content:space-between; padding:0 4px; flex-shrink:0; }
 .done-col .col-title { display:flex; align-items:center; gap:7px; font-size:13px; font-weight:600; color:var(--text-primary); }
 .done-col .col-dot { width:7px; height:7px; border-radius:50%; background:#5a9e88; flex-shrink:0; }
@@ -60,15 +72,17 @@ const { elementRef: columnRef } = useSurface({
 .done-col .year-row { padding:4px 6px; border-radius:6px; }
 .done-col .month-row { padding:4px 8px; border-radius:7px; }
 .done-col .year-row:hover,.done-col .month-row:hover { background:var(--surface-soft-hover); }
-.done-col .year-chev,.done-col .month-chev { color:var(--content-tertiary); transition:transform .2s; flex-shrink:0; }
-.done-col .year-chev.open,.done-col .month-chev.open { transform:rotate(180deg); }
+/* FlipChevron 组件自带旋转动画与颜色，此处只保留行级布局样式。 */
 .done-col .year-label { font-size:12px; font-weight:700; color:var(--content-secondary); flex:1; }
 .done-col .year-label.undated { color:var(--content-tertiary); }
 .done-col .year-cnt,.done-col .month-cnt { font-size:10px; color:var(--content-tertiary); }
 .done-col .month-name { font-size:11px; font-weight:500; color:var(--content-secondary); flex:1; }
 .done-col .month-folder { display:grid; grid-template-rows:1fr; overflow:hidden; transform-origin:top; min-height:0; }
 .done-col .month-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
-.done-col .year-folder { min-height:0; overflow:hidden; padding:0 0 0 6px; border-left:1px solid var(--done-group-border); margin-left:6px; margin-top:1px; box-sizing:border-box; }
+/* 年组引导线以 year-row 箭头几何中心为锚点。left 是伪元素左边缘，因此用 translateX(-50%)
+   把 1px 线的真实中心校准到 10px；子内容从 20px 开始，线右侧保留约 10px 的结构安全间距。 */
+.done-col .year-folder { position:relative; min-height:0; overflow:hidden; padding:0 0 0 var(--done-year-content-indent); margin-top:1px; box-sizing:border-box; }
+.done-col .year-folder::before { content:''; position:absolute; left:var(--done-year-chevron-center); transform:translateX(-50%); top:0; bottom:0; width:1px; background:var(--done-group-border); pointer-events:none; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) { height:0; overflow:hidden; }
 .done-col .year-folder[data-layout-open="false"]:not([data-runtime-group-animating="true"]) > .done-group-layout-node { visibility:hidden; }
 .done-col .done-card-list-enter-active,.done-col .done-card-list-leave-active { transition:opacity .22s ease; }

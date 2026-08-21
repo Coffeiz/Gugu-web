@@ -24,6 +24,7 @@ STATE_TTL = 300   # 5min 兜底：worker 崩了 / 漏清，状态自动过期回
 # 工具名 → 进入的细粒度状态（其余工具维持 THINKING）
 TOOL_STATE = {
     "web_search":      SEARCHING,
+    "inspect_images":  SEARCHING,
     "deep_research":   SEARCHING,
     "http_get":        SEARCHING,
     "create_document": GENERATING,
@@ -56,6 +57,19 @@ async def set_state(platform, bot_id, scope_id, puid, state: str) -> None:
 async def clear_state(platform, bot_id, scope_id, puid) -> None:
     if platform and bot_id and scope_id and puid:
         await get_redis().delete(_skey(platform, bot_id, scope_id, puid))
+
+
+async def refresh_activity(platform, bot_id, scope_id, puid) -> None:
+    """只刷新忙碌态 TTL，不改变当前状态值。
+
+    长时间的压缩、工具调用或上游等待期间，loop 仍然活着但可能暂时没有调用
+    ``set_state``。如果不刷新，网关会把已过期的任务当成空闲，导致 ``/stop``
+    不再写取消标志。
+    """
+    if platform and bot_id and scope_id and puid:
+        redis = get_redis()
+        await redis.expire(_skey(platform, bot_id, scope_id, puid), STATE_TTL)
+        await _refresh_active_ttl(platform, bot_id, scope_id)
 
 
 # ── 状态：网关读（QQ async / 飞书 sync）─────────────────────────────────

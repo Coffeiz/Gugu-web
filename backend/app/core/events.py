@@ -14,6 +14,10 @@ import json
 
 from app.core.redis import get_redis
 
+_CONTEXT_RESOURCES = {"projects", "calendar", "files", "memory"}
+# snapshot 新鲜度覆盖的输入比前端 SSE 资源集合更大。
+_CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im_channels"}
+
 # 改动型工具 → 受影响的前端资源。只列「会变数据」的工具（list_/get_/read_ 等只读不列）。
 # 新增改动型工具时记得在这里登记，否则网页不会实时刷新。
 RESOURCE_BY_TOOL: dict[str, str] = {
@@ -54,6 +58,31 @@ def _channel(user_id) -> str:
     return f"events:{user_id}"
 
 
+async def get_context_revision(user_id) -> int:
+    """读取用户业务上下文版本；不存在时从 0 开始。"""
+    try:
+        value = await get_redis().get(f"context-revision:{user_id}")
+        return int(value or 0)
+    except Exception:
+        return 0
+
+
+async def bump_context_revision(user_id, *resources: str) -> None:
+    """业务数据成功变更后递增版本，供 session snapshot 做新鲜度判断。"""
+    # 兼容 mind.canvas 的旧调用签名：publish(user_id, resource, action, payload)
+    # 后两个位置参数可能是字典，版本判断只消费字符串资源名。
+    resource_names = {resource for resource in resources if isinstance(resource, str)}
+    if not _CONTEXT_REVISION_SOURCES.intersection(resource_names):
+        return
+    try:
+        key = f"context-revision:{user_id}"
+        redis = get_redis()
+        await redis.incr(key)
+        await redis.expire(key, 60 * 60 * 24 * 7)
+    except Exception:
+        pass
+
+
 async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, **extra) -> None:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
@@ -68,6 +97,7 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     """
     payload: dict = {}
     res = [r for r in resources if r]
+    await bump_context_revision(user_id, *res)
     if res:
         payload["resources"] = res
     if origin:

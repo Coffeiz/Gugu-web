@@ -393,6 +393,12 @@ class ConversationSession(Base):
     chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
+    context_epoch: Mapped[int] = mapped_column(Integer, default=1)
+    session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    session_info_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    snapshot_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    snapshot_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
@@ -421,6 +427,7 @@ class ConversationMessage(Base):
     platform_user_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     platform_bot_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
+    sent_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=now_utc, index=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
@@ -648,7 +655,7 @@ class UserBot(Base):
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
-    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "send_file"])
+    group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "inspect_images", "send_file"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")

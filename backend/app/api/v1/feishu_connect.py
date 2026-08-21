@@ -136,6 +136,8 @@ async def poll(
                 await ST.save_imreach(current_user.id, "feishu", str(bot.id), None, oid)
             except Exception:
                 pass
+        from app.core import events
+        await events.bump_context_revision(current_user.id, "im_channels")
         await R.get_redis().delete(_rk(poll_id))
         try:
             await R.get_redis().publish("im:supervisor:reload", "1")

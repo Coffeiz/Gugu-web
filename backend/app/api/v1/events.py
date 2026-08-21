@@ -8,6 +8,7 @@ from app.models import CalendarEvent, User
 from app.schemas import EventCreate, EventUpdate, EventResponse
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
+from app.core import events
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -68,6 +69,7 @@ async def create_event(
     db.add(e)
     await db.commit()
     await db.refresh(e)
+    await events.publish(current_user.id, "calendar")
     return _to_resp(e)
 
 
@@ -90,6 +92,7 @@ async def update_event(
     e.version = (e.version or 1) + 1
     await db.commit()
     await db.refresh(e)
+    await events.publish(current_user.id, "calendar")
     return _to_resp(e)
 
 
@@ -108,3 +111,4 @@ async def delete_event(
         await db.delete(t)
     await db.delete(e)
     await db.commit()
+    await events.publish(current_user.id, "calendar")

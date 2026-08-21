@@ -100,6 +100,8 @@ async def create_my_bot(
     db.add(bot)
     await db.commit()
     await db.refresh(bot)
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()
     return _out(bot)
 
@@ -173,9 +175,9 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "send_file", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "inspect_images", "send_file", "search_similar_images", "group_context_search"}
         if unsupported:
-            raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
+            raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、相似图搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
     for field in ("group_message_format", "private_message_format"):
         value = getattr(body, field)
@@ -185,6 +187,8 @@ async def update_my_bot(
             setattr(bot, field, value)
     await db.commit()
     await db.refresh(bot)
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()
     return _out(bot)
 
@@ -207,4 +211,6 @@ async def delete_my_bot(
         await ST.clear_imreach(current_user.id, platform)
     except Exception:
         pass
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()

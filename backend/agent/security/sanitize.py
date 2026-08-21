@@ -15,6 +15,9 @@ import re
 # 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
 _MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
 
+_MESSAGE_TIME_LEAD = "[消息时间："
+_MESSAGE_TIME_RE = re.compile(r"^\[消息时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*")
+
 
 def _longest_suffix_prefix(s: str, marker: str) -> int:
     """返回 s 末尾与 marker 前缀重叠的最大长度（0 = 无重叠）。"""
@@ -69,6 +72,42 @@ class StreamSanitizer:
             return ""
         out = self._buf
         self._buf = ""
+        return out
+
+
+class LeadingMessageTimeSanitizer:
+    """过滤模型偶尔复述到回复开头的内部消息时间前缀。"""
+
+    def __init__(self):
+        self._buffer = ""
+        self._checked = False
+
+    def feed(self, text: str) -> str:
+        if not text or self._checked:
+            return text
+        self._buffer += text
+
+        if not self._buffer.startswith("["):
+            self._checked = True
+            out, self._buffer = self._buffer, ""
+            return out
+        if not _MESSAGE_TIME_LEAD.startswith(self._buffer) and not self._buffer.startswith(_MESSAGE_TIME_LEAD):
+            self._checked = True
+            out, self._buffer = self._buffer, ""
+            return out
+        if not _MESSAGE_TIME_RE.match(self._buffer):
+            return ""
+
+        self._checked = True
+        self._buffer = _MESSAGE_TIME_RE.sub("", self._buffer, count=1)
+        out, self._buffer = self._buffer, ""
+        return out
+
+    def flush(self) -> str:
+        if self._checked:
+            return ""
+        self._checked = True
+        out, self._buffer = self._buffer, ""
         return out
 
 

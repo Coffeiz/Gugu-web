@@ -46,7 +46,8 @@ def _read_override() -> dict:
 
 def _write_override(data: dict):
     OVERRIDE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    get_settings.cache_clear()
+    from app.core.config import invalidate_settings_cache
+    invalidate_settings_cache()
 
 
 def _mask_key(key: str) -> str:

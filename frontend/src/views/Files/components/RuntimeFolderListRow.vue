@@ -7,16 +7,34 @@
 </template>
 
 <script setup lang="ts">
-import type { PropType } from 'vue'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { PhCheck, PhDownloadSimple, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
-import { useObject, useSurface, type ObjectTargetOptions } from '@/interaction/runtime/vue'
+import { runtime, type TargetItem } from '@/interaction/runtime'
 import type { FolderCard as FolderCardMeta } from '@/utils/filesNav'
 
-const props = defineProps({ item: { type: Object as PropType<FolderCardMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeSelected: { type: Boolean, default: false }, runtimeTarget: { type: Object as PropType<ObjectTargetOptions | undefined>, default: undefined } })
+const props = defineProps({ item: { type: Object as PropType<FolderCardMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeSelected: { type: Boolean, default: false }, runtimeTarget: { type: Object as PropType<Omit<TargetItem, 'id' | 'element' | 'generation'> | undefined>, default: undefined } })
 const targetSurfaceId = props.runtimeTarget?.surfaceId ?? `${props.runtimeId}:surface`
-useSurface({ id: targetSurfaceId, type: 'file-folder', layout: 'grid', accepts: ['file-item', 'folder-item'] })
-const { elementRef } = useObject({ id: props.runtimeId, type: 'folder-item', surface: () => props.runtimeSurfaceId, abilities: () => props.runtimeAbilities, selected: () => props.runtimeSelected, target: () => props.runtimeTarget })
+const targetSurfaceGeneration = runtime.surfaces.register({ id: targetSurfaceId, type: 'file-folder', layout: 'grid', accepts: ['file-item', 'folder-item'], element: null })
+const elementRef = ref<HTMLElement | null>(null)
+const generation = runtime.objects.register({ id: props.runtimeId, type: 'folder-item', surfaceId: props.runtimeSurfaceId, abilities: [...props.runtimeAbilities], selected: props.runtimeSelected, target: props.runtimeTarget, element: null })
+let stopPointerBinding: (() => void) | null = null
+watch(() => [props.runtimeSurfaceId, props.runtimeAbilities, props.runtimeSelected, props.runtimeTarget] as const, ([surfaceId, abilities, selected, target]) => {
+  if (runtime.objects.get(props.runtimeId)?.generation !== generation) return
+  runtime.objects.update(props.runtimeId, { surfaceId, abilities: [...abilities], selected, target })
+}, { deep: true })
+watch(elementRef, (element, previous) => {
+  const current = runtime.objects.get(props.runtimeId)
+  if (current?.generation !== generation) return
+  if (element === null && current.element && current.element !== previous) return
+  stopPointerBinding?.()
+  stopPointerBinding = element ? runtime.bindObjectPointer(props.runtimeId, element) : null
+  runtime.objects.setElement(props.runtimeId, element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  stopPointerBinding?.()
+  if (runtime.objects.get(props.runtimeId)?.generation === generation) runtime.unregisterObjectWhenIdle(props.runtimeId, generation)
+  if (runtime.surfaces.get(targetSurfaceId)?.generation === targetSurfaceGeneration) runtime.surfaces.unregister(targetSurfaceId, targetSurfaceGeneration)
+})
 const { selectedFolderKeys, previewFolderKeys, handleFolderClick, openCtx, folderListIcon, folderAccentColor, renamingFolderKey, renameText, commitRename, cancelRename, startRenameFolder, downloadFolder, deleteFolder, inSelectionMode } = props.context
 </script>
-

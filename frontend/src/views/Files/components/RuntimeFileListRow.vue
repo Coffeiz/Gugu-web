@@ -8,14 +8,31 @@
 </template>
 
 <script setup lang="ts">
-import type { PropType } from 'vue'
+import { onUnmounted, ref, watch, type PropType } from 'vue'
 import { PhCheck, PhDownloadSimple, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import RenameInput from '@/components/common/file-browser/RenameInput.vue'
-import { useObject } from '@/interaction/runtime/vue'
+import { runtime } from '@/interaction/runtime'
 import type { FileMeta } from '@/stores/filesCache'
 
 const props = defineProps({ item: { type: Object as PropType<FileMeta>, required: true }, context: { type: Object as PropType<Record<string, any>>, required: true }, runtimeId: { type: String, required: true }, runtimeSurfaceId: { type: String, required: true }, runtimeAbilities: { type: Array as PropType<readonly string[]>, default: () => ['move'] }, runtimeSelected: { type: Boolean, default: false } })
-const { elementRef } = useObject({ id: props.runtimeId, type: 'file-item', surface: () => props.runtimeSurfaceId, abilities: () => props.runtimeAbilities, selected: () => props.runtimeSelected })
+const elementRef = ref<HTMLElement | null>(null)
+const generation = runtime.objects.register({ id: props.runtimeId, type: 'file-item', surfaceId: props.runtimeSurfaceId, abilities: [...props.runtimeAbilities], selected: props.runtimeSelected, element: null })
+let stopPointerBinding: (() => void) | null = null
+watch(() => [props.runtimeSurfaceId, props.runtimeAbilities, props.runtimeSelected] as const, ([surfaceId, abilities, selected]) => {
+  if (runtime.objects.get(props.runtimeId)?.generation !== generation) return
+  runtime.objects.update(props.runtimeId, { surfaceId, abilities: [...abilities], selected })
+}, { deep: true })
+watch(elementRef, (element, previous) => {
+  const current = runtime.objects.get(props.runtimeId)
+  if (current?.generation !== generation) return
+  if (element === null && current.element && current.element !== previous) return
+  stopPointerBinding?.()
+  stopPointerBinding = element ? runtime.bindObjectPointer(props.runtimeId, element) : null
+  runtime.objects.setElement(props.runtimeId, element)
+}, { flush: 'post' })
+onUnmounted(() => {
+  stopPointerBinding?.()
+  if (runtime.objects.get(props.runtimeId)?.generation === generation) runtime.unregisterObjectWhenIdle(props.runtimeId, generation)
+})
 const { selectedIds, previewFileIds, cbStore, handleFileClick, openCtx, fileListIcon, fileIconColor, renamingFileId, renameText, commitRename, cancelRename, startRenameFile, downloadFile, deleteSingleFile, inSelectionMode } = props.context
 </script>
-

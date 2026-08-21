@@ -1,20 +1,31 @@
-/* 列表容器：行间距 2px 让每行的 hover/选中底色互相分离，
-   文件库（.file-list）和项目编辑卡（.file-list-view）共用，禁止各视图再写一份。 */
-.file-list, .file-list-view { display: flex; flex-direction: column; gap: 2px; }
+@import './fileSelectionCheckbox.css';
+
+/* 列表容器：行间距 2px；4px inline inset 统一约束表头、普通行、上传行和 ghost 行的外宽。
+   不再把相同 margin 分散写到每个 child 上。文件库（.file-list）和项目编辑卡
+   （.file-list-view）共用，禁止各视图再写一份。 */
+.file-list, .file-list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-inline: 4px;
+}
 
 /* 表头基础样式（列宽除外）：字体/分隔线/排序按钮交互，全站列表视图共用；
-   各视图只保留自己的 grid-template-columns 覆盖。 */
+   各视图只保留真正不同的列轨道。表头和数据行共享相同水平 padding + column-gap，
+   否则虽然 grid-template 一样，视觉起点仍会错开。 */
 .file-list .list-head, .file-list-view .list-head {
   display: grid;
   grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  padding: 0 10px 8px;
-  margin: 0 4px 2px;
+  column-gap: 8px;
+  padding: 0 14px 8px;
+  margin: 0 0 2px;
   font-size: 10px; font-weight: 600; color: var(--text-secondary);
   text-transform: uppercase; letter-spacing: 0.06em;
   border-bottom: 1px solid rgba(0,0,0,0.06);
 }
 .file-list .lh-sortable, .file-list-view .lh-sortable {
   display: flex; align-items: center; gap: 3px;
+  min-width: 0;
   cursor: pointer; user-select: none; transition: color 0.12s;
 }
 .file-list .lh-sortable:hover, .file-list-view .lh-sortable:hover { color: var(--text-primary); }
@@ -23,60 +34,81 @@
 .file-list .lh-sortable.active .lh-arrow, .file-list-view .lh-sortable.active .lh-arrow { opacity: 1; }
 .file-list .lh-arrow.desc, .file-list-view .lh-arrow.desc { transform: rotate(180deg); }
 
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) {
+/* 这里必须用 :is 而不是 :where。filesListRows.css 由 global.css 顶部 @import，随后还有
+   `* { margin:0; padding:0 }` reset；:where 的特异度恒为 0，会被后加载的 universal reset
+   抹掉 row padding/margin，造成内容左右贴边且和表头错位。:is 保留内部 selector 的正常
+   特异度，让共享 rows stylesheet 真正拥有布局属性，同时不会改变列轨道设计。 */
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) {
   display: grid; grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px;
-  align-items: center; padding: 9px 10px; min-height: 42px; margin: 0 4px;
+  column-gap: 8px;
+  align-items: center; padding: 9px 14px; min-height: 42px; margin: 0;
   border-radius: 9px; transition: background 0.12s; cursor: pointer;
 }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: rgba(123,127,178,0.06); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: rgba(123,127,178,0.1); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).cut { opacity: 0.45; }
-:where(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row):hover:not(.selected):not(.pre-selected) { background: rgba(180,148,80,0.06); }
-:where(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: rgba(123,127,178,0.09); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-folder-icon,
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-type-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-ext { font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-type-text { font-size: 11px; color: var(--text-secondary); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-filename { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-proj-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.8; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-projname { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-text { font-size: 11px; color: var(--text-secondary); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; position: relative; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover .file-list-btn { opacity: 1; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-checkbox { position: absolute; top: 8px; right: 8px; z-index: 3; width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(123,127,178,0.55); background: rgba(255,255,255,0.75); box-shadow: none; display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s; pointer-events: none; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-checkbox.checked { background: var(--color-primary,#7b7fb2); border-color: var(--color-primary,#7b7fb2); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.55); transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox.checked { background: var(--color-primary,#7b7fb2); border-color: var(--color-primary,#7b7fb2); }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-active,
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-from,
-:where(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-to { opacity: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) > * { min-width: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover:not(.selected):not(.pre-selected) { background: rgba(123,127,178,0.06); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).selected { background: rgba(123,127,178,0.1); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).pre-selected:not(.selected) { background: rgba(123,127,178,0.06); outline: 1px solid rgba(123,127,178,0.25); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]).cut { opacity: 0.45; }
+:is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row):hover:not(.selected):not(.pre-selected) { background: rgba(180,148,80,0.06); }
+:is(.file-list .list-row.folder-row, .file-list-view .list-row.folder-row, .list-row[data-runtime-proxy-content].folder-row, .list-row[data-runtime-presence-ghost].folder-row).selected { background: rgba(123,127,178,0.09); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-name-cell { display: flex; align-items: center; gap: 7px; min-width: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-folder-icon,
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-file-icon { flex-shrink: 0; opacity: 0.82; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-type-cell { display: flex; align-items: center; gap: 5px; min-width: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-ext { font-size: 8px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 3px; padding: 1px 4px; flex-shrink: 0; line-height: 1.5; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-type-text { font-size: 11px; color: var(--text-secondary); }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-filename { font-size: 12px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; padding-bottom: 2px; margin-bottom: -2px; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-proj-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; opacity: 0.8; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-projname { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-bottom: 2px; margin-bottom: -2px; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-text { font-size: 11px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; position: relative; min-width: 0; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]):hover .file-list-btn { opacity: 1; }
+
+/* 列表选择框只有这一份 geometry/paint owner。主题颜色来自 fileSelectionCheckbox.css 的共享
+   checkbox contract；不再先画 generic checkbox、再被 .lr-actions 和 dark selector 二次覆盖。 */
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox {
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 3;
+  width: 18px; height: 18px; border-radius: 5px;
+  color: var(--file-browser-checkbox-fg-checked);
+  border: 2px solid var(--file-browser-checkbox-border);
+  background: var(--file-browser-checkbox-bg);
+  box-shadow: none;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, opacity 0.18s ease;
+  pointer-events: none;
+}
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .lr-actions .sel-checkbox.checked {
+  background: var(--file-browser-checkbox-bg-checked);
+  border-color: var(--file-browser-checkbox-border-checked);
+}
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-active,
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-active { transition: background 0.15s, border-color 0.15s, opacity 0.18s ease; }
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-enter-from,
+:is(.file-list .list-row, .file-list-view .list-row, .list-row[data-runtime-proxy-content], .list-row[data-runtime-presence-ghost]) .sel-cb-leave-to { opacity: 0; }
+
+/* compact proxy 的根和所有 grid child 都要能收缩。项目编辑卡 5 列 compact 把第 4/5 列压到
+   0px；文件库 6 列则从第 5 列开始压缩。分别按真实列数裁掉，避免 0px track 中的日期/操作内容
+   从 grabbing 卡片右侧溢出。 */
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] { overflow: hidden; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"] > * { min-width: 0; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(n+5) { overflow: hidden; }
+.list-row[data-runtime-proxy-content][data-runtime-compact="true"][data-list-columns="5"] > :nth-child(n+4) { overflow: hidden; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(2) { white-space: nowrap; overflow: hidden; }
 .list-row[data-runtime-proxy-content][data-runtime-compact="true"] > :nth-child(3) { padding-left: 6px; box-sizing: border-box; }
 
 /* 拖拽代理被 cloneNode 后挂到 <html>，丢失了 .file-list / .file-list-view 祖先，
-   :where() 默认的 6 列无法匹配项目编辑卡的 5 列布局。data-list-columns 由源行携带，
-   clone 后保留，这里按列数提供独立的 grid-template-columns。 */
+   默认 6 列无法匹配项目编辑卡的 5 列布局。data-list-columns 由源行携带，clone 后保留，
+   这里按列数提供独立的 grid-template-columns。 */
 .list-row[data-runtime-proxy-content][data-list-columns="5"] {
   grid-template-columns: 1fr 80px 60px 70px 72px;
 }
 
-/* ── 暗色模式：把上面的亮色 rgba 重映射为语义 token。行/表头/checkbox 的 paint 只有
-   本文件一个 owner，暗色覆盖也收在这里，最终主题层不再接管列表行样式。
-   注意 .sel-checkbox.checked 必须在 .lr-actions .sel-checkbox 之后声明，
-   因为后者额外加了 .lr-actions 特异性，会覆盖前面的 .checked 规则。 ── */
+/* ── 暗色模式：行/表头 paint 仍由本文件拥有；checkbox 不再需要暗色 selector，
+   fileSelectionCheckbox.css 会跟随 FolderCard 已验证的暗色 token 自动映射。 ── */
 html[data-theme='dark'][data-family] .list-row:hover { background: var(--surface-hover-tint); }
 html[data-theme='dark'][data-family] .list-row.selected { background: var(--selection-bg); }
 html[data-theme='dark'][data-family] .list-row.pre-selected { background: var(--action-soft); outline-color: var(--action-outline); }
 html[data-theme='dark'][data-family] .list-row.folder-row:hover { background: var(--surface-hover-tint); }
-html[data-theme='dark'][data-family] .list-row .sel-checkbox,
-html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox { background: var(--surface-raised); border-color: var(--action-outline); }
-html[data-theme='dark'][data-family] .list-row .sel-checkbox.checked,
-html[data-theme='dark'][data-family] .list-row .lr-actions .sel-checkbox.checked { background: var(--action-primary); border-color: var(--action-primary); }
 html[data-theme='dark'][data-family] .list-head { border-color: var(--border-subtle); }
 html[data-theme='dark'][data-family] .list-row:hover .file-list-btn { color: var(--control-fg-strong); }

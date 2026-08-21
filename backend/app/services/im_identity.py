@@ -15,7 +15,7 @@ from app.core.config import get_settings
 from app.core.tz import now_utc
 from app.models import UserBot
 
-DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "send_file"]
+DEFAULT_GROUP_ALLOWED_TOOLS: List[str] = ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
 
 
 def normalize_group_allowed_tools(configured: object) -> List[str]:
@@ -25,6 +25,9 @@ def normalize_group_allowed_tools(configured: object) -> List[str]:
     allowed = [str(name) for name in configured if isinstance(name, str)]
     if "web_search" in allowed and "http_get" not in allowed:
         allowed.insert(allowed.index("web_search") + 1, "http_get")
+    # 图片读取是图片搜索的子能力；旧白名单只授权 image_search 时自动补上，避免升级后群成员看不到新工具。
+    if "image_search" in allowed and "inspect_images" not in allowed:
+        allowed.insert(allowed.index("image_search") + 1, "inspect_images")
     return allowed
 QQ_BINDING_CODE_TTL = 600
 QQ_BINDING_CODE_MAX_ATTEMPTS = 5
