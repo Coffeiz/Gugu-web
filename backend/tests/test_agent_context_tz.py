@@ -3,6 +3,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from agent.context import builder
+from agent.context.session_snapshot import date_boundary_note
 from app.core.tz import LOCAL_TZ
 
 
@@ -26,3 +27,11 @@ def test_build_split_includes_default_profile_policy_in_static_prompt():
     assert "当前、最新、最近" in static
     assert "先用搜索核实" in static
     assert "当前、最新、最近" not in dynamic
+
+
+def test_night_date_boundary_note_is_neutral():
+    note = date_boundary_note(2)
+    assert "日出前时段" in note
+    assert "今天" in note and "明天" in note
+    assert all(word not in note for word in ("未眠", "睡觉", "早点睡", "休息"))
+    assert date_boundary_note(4) == ""

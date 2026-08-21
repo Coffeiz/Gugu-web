@@ -104,6 +104,56 @@ def _prompt_digest(value: Any) -> str:
     except Exception:
         return ""
 
+
+def _cache_diagnostics(messages: Any, ctx: Any = None) -> dict[str, Any]:
+    """返回缓存断点与工具 schema 的脱敏诊断信息。
+
+    这里只记录大小、数量、位置和摘要，不能通过这些字段还原工具定义、参数、
+    URL、图片或用户正文。诊断失败时返回空值，不影响模型请求。
+    """
+    try:
+        conversation = getattr(messages, "conversation", messages)
+        if not isinstance(conversation, list):
+            conversation = []
+        anchors = getattr(messages, "cache_anchor_indices", []) or []
+        anchors = [int(index) for index in anchors if isinstance(index, int)]
+        tools = getattr(ctx, "tools", None) or []
+        tool_json = json.dumps(
+            _jsonable(tools), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        volatile_index = None
+        try:
+            from agent.loop_drivers import _contains_volatile_image
+
+            for index, message in enumerate(conversation):
+                if _contains_volatile_image(message):
+                    volatile_index = index
+                    break
+        except Exception:
+            pass
+
+        stable_message_count = volatile_index if volatile_index is not None else len(conversation)
+        anchor_token_estimate = 0
+        if anchors:
+            last_anchor = max(anchors)
+            anchor_token_estimate = _estimate_tokens(conversation[:last_anchor + 1])
+        return {
+            "cache_supported": bool(getattr(ctx, "supports_active_cache", False)),
+            "conversation_messages": len(conversation),
+            "cache_anchor_count": len(anchors),
+            "cache_anchor_last_index": max(anchors) if anchors else None,
+            "cache_anchor_tokens_estimate": anchor_token_estimate,
+            "volatile_image_present": volatile_index is not None,
+            "volatile_image_first_index": volatile_index,
+            "stable_message_count": stable_message_count,
+            "tool_count": len(tools),
+            "tool_schema_bytes": len(tool_json.encode("utf-8")),
+            "tool_schema_tokens_estimate": _estimate_tokens(tool_json),
+            "tool_schema_digest": hashlib.sha256(tool_json.encode("utf-8")).hexdigest()[:16],
+        }
+    except Exception:
+        return {}
+
 def _system_message_text(messages: Any) -> str:
     """提取 OpenAI 兼容格式的 system message，供 trace 说明真实组装位置。"""
     if not isinstance(messages, list):

@@ -63,13 +63,14 @@ async def _compact(user_id, session_id: int | None) -> str:
             user_id,
             settings,
             settings.ai.context_tokens,
+            force=True,
         )
     except Exception:
         logger.exception("手动压缩会话失败 session=%s", session_id)
         return "这次压缩没有完成，请稍后再试。"
     if compacted:
         return "上下文已经整理好了，旧对话已压缩为摘要。"
-    return "当前上下文还没达到压缩条件，暂时不用整理。"
+    return "当前没有可整理的旧对话。"
 
 
 async def _show_memory(user_id) -> str:

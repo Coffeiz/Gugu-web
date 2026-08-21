@@ -11,6 +11,7 @@ from .state import _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace
 from .utils import (
     _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
     _jsonable, _prompt_digest, _round_result, _system_message_text,
+    _cache_diagnostics,
 )
 
 _hooks_installed = False
@@ -216,6 +217,7 @@ def ensure_hooks() -> None:
             round_system = effective_system
             round_prompt_est = _estimate_tokens(round_visible_messages) + _estimate_tokens(round_system)
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
+            cache_diag = _cache_diagnostics(round_messages, ctx)
             span = run.span(
                 "llm",
                 f"LLM round {round_index}",
@@ -232,12 +234,15 @@ def ensure_hooks() -> None:
                             "count": len(round_messages) if isinstance(round_messages, list) else None,
                             "round": round_index,
                         },
+                        "cache": cache_diag,
                     },
                 },
                 code=_code_ref(original_round),
                 token_impact={
                     "prompt_tokens_estimate": round_prompt_est,
                     "prompt_growth_estimate": growth,
+                    "tool_schema_tokens_estimate": cache_diag.get("tool_schema_tokens_estimate", 0),
+                    "cache_anchor_tokens_estimate": cache_diag.get("cache_anchor_tokens_estimate", 0),
                 },
                 round=round_index,
                 provider=getattr(ai, "provider", ""),

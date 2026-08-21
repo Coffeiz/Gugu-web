@@ -15,19 +15,6 @@ import re
 # 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
 _MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
 
-_MESSAGE_TIME_LEAD = "[消息时间："
-_MESSAGE_TIME_RE = re.compile(r"^\[消息时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*")
-
-
-def _longest_suffix_prefix(s: str, marker: str) -> int:
-    """返回 s 末尾与 marker 前缀重叠的最大长度（0 = 无重叠）。"""
-    max_overlap = min(len(s), len(marker) - 1)
-    for length in range(max_overlap, 0, -1):
-        if s.endswith(marker[:length]):
-            return length
-    return 0
-
-
 class StreamSanitizer:
     def __init__(self, minimax: bool = False):
         # `[e~[` 和 `]<]minimax` 都只在 MiniMax 流中实测过。非 MiniMax 不保留这些前缀，
@@ -75,47 +62,20 @@ class StreamSanitizer:
         return out
 
 
-class LeadingMessageTimeSanitizer:
-    """过滤模型偶尔复述到回复开头的内部消息时间前缀。"""
-
-    def __init__(self):
-        self._buffer = ""
-        self._checked = False
-
-    def feed(self, text: str) -> str:
-        if not text or self._checked:
-            return text
-        self._buffer += text
-
-        if not self._buffer.startswith("["):
-            self._checked = True
-            out, self._buffer = self._buffer, ""
-            return out
-        if not _MESSAGE_TIME_LEAD.startswith(self._buffer) and not self._buffer.startswith(_MESSAGE_TIME_LEAD):
-            self._checked = True
-            out, self._buffer = self._buffer, ""
-            return out
-        if not _MESSAGE_TIME_RE.match(self._buffer):
-            return ""
-
-        self._checked = True
-        self._buffer = _MESSAGE_TIME_RE.sub("", self._buffer, count=1)
-        out, self._buffer = self._buffer, ""
-        return out
-
-    def flush(self) -> str:
-        if self._checked:
-            return ""
-        self._checked = True
-        out, self._buffer = self._buffer, ""
-        return out
-
-
 # ── 输出 emoji 白名单过滤 ────────────────────────────────────────────────────
 # persona 要求表情极简、只标内容类别、坚决不用阴阳/情绪/暧昧表情，但 prompt 压不住模型在
 # 「活泼」语气下的 emoji 习惯（实测三层声明无效——emoji 是 token 级低层习惯，非高层语义行为）。
 # 这里在输出出口确定性兜底：白名单（功能/内容类别）外的 emoji 一律删——宁可误删一个无害图标，
 # 也不放过一个会被读成阴阳/敷衍/暧昧的脸或手势。base char 判定，连带的 VS16/ZWJ 一起处理。
+def _longest_suffix_prefix(s: str, marker: str) -> int:
+    """返回 s 末尾与 marker 前缀重叠的最大长度（0 = 无重叠）。"""
+    max_overlap = min(len(s), len(marker) - 1)
+    for length in range(max_overlap, 0, -1):
+        if s.endswith(marker[:length]):
+            return length
+    return 0
+
+
 _KEEP_EMOJI = set("✅✔☑💡📌📎📝📄📅📆🗓⏰⏳⌛🔍🔎🎉🎊📂📁🗂📊📈📉🔔💬🗨")
 # 前导可选空格一起匹配：删违规 emoji 时连它前面的空格一起吃掉，不留难看的双空格 / 行尾空格
 _EMOJI_RE = re.compile(

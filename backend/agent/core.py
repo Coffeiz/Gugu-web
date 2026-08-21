@@ -297,6 +297,9 @@ class LLMRunner:
         tool_calls_used = 0
         _request_conversation = getattr(messages, "conversation", messages)
         _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
+        # 初始用户图片只需要首轮完整发送；首轮结束后折叠成稳定文本，避免下一轮和下一次
+        # run 在同一历史位置分别出现 base64 与占位文本，导致 provider 从图片处断缓存。
+        initial_volatile_indices = loop_drivers._volatile_message_indices(messages)
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
@@ -320,25 +323,13 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
 
-            # 上下文压缩检测：超过 90% 预算时触发压缩
+            # 上下文压缩检测：先尝试 LLM 压缩，压缩无效或仍超安全预算时才截断。
             from agent.context import compaction, tokens
             from agent.context.budget import effective_budget, enforce_message_budget
             context_tokens = getattr(ai, "context_tokens", 256000)
             current_length = await compaction.estimate_context_length(messages, system_text)
             safe_budget = effective_budget(context_tokens)
-            if current_length > safe_budget:
-                hard_result = enforce_message_budget(messages, system_text or "", context_tokens)
-                if hard_result.changed:
-                    current_length = await compaction.estimate_context_length(messages, system_text)
-                    _log.warning(
-                        "[core] 上下文预检超预算，执行确定性截断：before=%s after=%s dropped=%s",
-                        hard_result.before_tokens, hard_result.after_tokens,
-                        hard_result.dropped_messages,
-                    )
-                if hard_result.changed and current_length > safe_budget:
-                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
-                    return
-            if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+            if current_length > safe_budget and compaction_attempts < 1:
                 # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
                 # 仍开始下一次摘要请求。
                 if await _im_cancelled():
@@ -374,7 +365,7 @@ class LLMRunner:
                         )
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩没有取得足够空间，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
                         return
-                    if compacted_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                    if compacted_length > safe_budget:
                         _log.error(
                             "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s after=%s",
                             current_length, compacted_length,
@@ -387,6 +378,20 @@ class LLMRunner:
                     else:
                         task_rounds -= 1
                     continue
+
+            # LLM 压缩没有执行或没有把上下文压到安全预算后，才做本地确定性截断。
+            if current_length > safe_budget:
+                hard_result = enforce_message_budget(messages, system_text or "", context_tokens)
+                if hard_result.changed:
+                    current_length = await compaction.estimate_context_length(messages, system_text)
+                    _log.warning(
+                        "[core] 上下文预检超预算，执行确定性截断：before=%s after=%s dropped=%s",
+                        hard_result.before_tokens, hard_result.after_tokens,
+                        hard_result.dropped_messages,
+                    )
+                if hard_result.changed and current_length > safe_budget:
+                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                    return
 
             _tok = 0
             result = None
@@ -481,6 +486,10 @@ class LLMRunner:
             _requires_tools = result.requires_tools
             if _requires_tools is None:
                 _requires_tools = bool(result.tool_calls)
+
+            if initial_volatile_indices:
+                loop_drivers._collapse_volatile_messages(messages, initial_volatile_indices)
+                initial_volatile_indices = set()
 
             if result.tool_calls:
                 if _progress_pending:

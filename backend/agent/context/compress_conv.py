@@ -19,6 +19,7 @@ from pathlib import Path
 from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
+from agent.context.budget import HARD_TARGET_RATIO
 from agent.context.tokens import content_text, estimate_tokens, msg_tokens
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,9 @@ _bg_tasks: set = set()
 # THRESHOLD=1.5（总量超 1.5×budget 才压，summary 只覆盖窗口之外、select_history 本就丢掉的老消息）。
 COMPRESS_THRESHOLD = 1.5    # 全量 token > budget × 此值时触发
 COMPRESS_TARGET    = 1.0    # 保留最近原文的量（占 budget）——与 select_history 对齐，不重叠
+FORCE_COMPRESS_TARGET = HARD_TARGET_RATIO  # 手动 /compact 保留统一的 20%目标
 _MAX_COMPRESS_TOKENS = 12000   # 单次喂给摘要器的原文上限（保护摘要器自身上下文；超出取最近一段，老的靠上一版 summary）
+_COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
 _SUMMARY_HEADER = "## 早前对话摘要（供参考，非最新消息）"
@@ -72,8 +75,47 @@ async def _run(session_id: int, user_id: int, settings, token_budget: int) -> No
         logger.warning("[compress_conv] session %s 压缩失败: %s", session_id, e)
 
 
-async def compress_if_needed(session_id: int, user_id: int, settings, token_budget: int) -> bool:
-    """检查并执行压缩，返回是否实际执行了压缩。"""
+async def compress_if_needed(
+    session_id: int,
+    user_id: int,
+    settings,
+    token_budget: int,
+    *,
+    force: bool = False,
+) -> bool:
+    """按 session 串行执行压缩，避免后台任务与手动命令覆盖 baseline。"""
+    from app.core import redis as redis_core
+
+    lock = redis_core.get_redis().lock(
+        f"agent:context:compress:{session_id}",
+        timeout=_COMPRESS_LOCK_TIMEOUT,
+        blocking=force,
+        blocking_timeout=15 if force else None,
+    )
+    if not await lock.acquire(blocking=force, blocking_timeout=15 if force else None):
+        logger.info("[compress_conv] session=%s 已有压缩任务运行，跳过重复任务", session_id)
+        return False
+    try:
+        return await _compress_if_needed_unlocked(
+            session_id, user_id, settings, token_budget, force=force,
+        )
+    finally:
+        await lock.release()
+
+
+async def _compress_if_needed_unlocked(
+    session_id: int,
+    user_id: int,
+    settings,
+    token_budget: int,
+    *,
+    force: bool = False,
+) -> bool:
+    """检查并执行压缩，返回是否实际执行了压缩。
+
+    ``force`` 只跳过自动阈值，并把保留窗口收窄到预算的 20%；没有可整理的
+    旧消息时仍然返回 False，避免凭空调用摘要模型。
+    """
     import app.db.session as _sess
     from app.models import ConversationMessage, ConversationSession
 
@@ -94,11 +136,11 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
         return False
 
     total = sum(msg_tokens(m) for m in all_msgs)
-    if total <= token_budget * COMPRESS_THRESHOLD:
+    if not force and total <= token_budget * COMPRESS_THRESHOLD:
         return False   # 还没到阈值
 
-    # 从最新往回保留 TARGET×budget 原文，更老的进 to_compress
-    target_keep = int(token_budget * COMPRESS_TARGET)
+    # 自动压缩保留完整窗口；手动 /compact 主动把旧内容整理到 20% 安全基线。
+    target_keep = int(token_budget * (FORCE_COMPRESS_TARGET if force else COMPRESS_TARGET))
     tail_tokens = 0
     split_idx = 0
     for i in range(len(all_msgs) - 1, -1, -1):

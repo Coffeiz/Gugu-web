@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 
 from .tokens import estimate_tokens, message_text, msg_tokens
+from .budget import HARD_TARGET_RATIO, SAFE_BUDGET_RATIO, effective_budget
 
 logger = logging.getLogger(__name__)
 
 # 压缩配置
-COMPACTION_THRESHOLD_RATIO = 0.9  # 超过 90% 预算触发压缩
-COMPACTION_TARGET_RATIO = 0.2     # 压缩到 20%
+# 保留名称供现有测试/诊断读取，实际判定统一走 budget.effective_budget。
+COMPACTION_THRESHOLD_RATIO = SAFE_BUDGET_RATIO
+COMPACTION_TARGET_RATIO = HARD_TARGET_RATIO  # 压缩到统一的 20%目标
 COMPACT_SUMMARY_MAX_TOKENS = 800  # 压缩摘要最大 token 数
 
 
@@ -56,11 +58,12 @@ async def compact_context(
 
     # 估算当前上下文长度
     current_length = await estimate_context_length(messages, system_text)
-    if current_length <= context_tokens * COMPACTION_THRESHOLD_RATIO:
+    safe_budget = effective_budget(context_tokens)
+    if current_length <= safe_budget:
         return messages, False  # 未达到阈值，不压缩
 
     logger.info("[compaction] session=%s 上下文 %d tokens 超过阈值 %d，开始压缩",
-                session_id, current_length, int(context_tokens * COMPACTION_THRESHOLD_RATIO))
+                session_id, current_length, safe_budget)
 
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。

@@ -596,19 +596,20 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.msg-file) {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer;
   max-width: 100%; box-sizing: border-box;
-  /* 和 AI 气泡同款：半透明白 + 左下角小尾巴 + 内高光，营造气泡感 */
-  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
+  /* 和 AI 气泡同款：主题化半透明表面 + 左下角小尾巴 + 内高光。 */
+  background: var(--gugu-chat-file-bg); border: 1px solid var(--gugu-chat-file-border);
   border-radius: 14px; border-bottom-left-radius: 5px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
+  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight), var(--gugu-chat-file-shadow);
   /* transform/opacity 是按下反馈(.press-fx)要用的——跟这里自己的 transition 写一起，
      避免两条规则的 transition 互相整体覆盖、丢掉其中一份 */
   transition: background 0.2s ease, box-shadow 0.25s ease,
     transform 0.15s ease, opacity 0.15s ease;
 }
 :deep(.msg-file.press-fx:hover) {
-  background: rgba(255,255,255,0.7);
-  /* 覆盖全局 .press-fx.press-fx:hover 的按钮阴影，避免文件气泡 hover 瞬间换影。 */
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14) !important;
+  background: var(--gugu-chat-file-bg-hover);
+  border-color: var(--gugu-chat-file-border-hover);
+  /* 文件气泡自己的 hover 阴影，避免全局 press-fx 规则覆盖主题。 */
+  box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight-hover), var(--gugu-chat-file-shadow-hover);
 }
 :deep(.msg-file-ext) {
   position: relative; overflow: hidden;

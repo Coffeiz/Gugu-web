@@ -4,9 +4,11 @@ from agent.loop_drivers import (
     OpenAIDriver,
     RoundResult,
     _OpenAIRaw,
+    _collapse_volatile_messages,
     _contains_volatile_image,
     _with_history_cache,
 )
+from agent.runtime.loopscope_trace.utils import _cache_diagnostics
 
 
 def _result():
@@ -85,6 +87,19 @@ def test_anthropic_base64_image_is_volatile():
     assert _contains_volatile_image(message)
 
 
+def test_initial_image_collapses_to_stable_text_after_first_round():
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": "[消息时间：2026-08-22 06:00]\\n查查这个角色"},
+        {"type": "image_url", "image_url": {
+            "url": "data:image/jpeg;base64,AAAA",
+        }},
+    ]}]
+
+    _collapse_volatile_messages(messages, {0})
+
+    assert messages[0]["content"] == "[消息时间：2026-08-22 06:00]\\n查查这个角色"
+
+
 def test_cache_checkpoint_recovers_after_image_round():
     messages = [
         {"role": "user", "content": "下一轮稳定消息"},
@@ -94,3 +109,32 @@ def test_cache_checkpoint_recovers_after_image_round():
     cached = _with_history_cache(messages)
 
     assert cached[-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_cache_diagnostics_only_exposes_sizes_and_digests():
+    class Messages(list):
+        conversation = [
+            {"role": "user", "content": "稳定正文"},
+            {"role": "user", "content": [{
+                "type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"},
+            }]},
+        ]
+        cache_anchor_indices = [0]
+
+    class Context:
+        tools = [{"name": "secret_tool", "description": "私有工具定义"}]
+        supports_active_cache = True
+
+    diagnostics = _cache_diagnostics(Messages(), Context())
+
+    assert diagnostics["cache_supported"] is True
+    assert diagnostics["conversation_messages"] == 2
+    assert diagnostics["cache_anchor_last_index"] == 0
+    assert diagnostics["volatile_image_present"] is True
+    assert diagnostics["volatile_image_first_index"] == 1
+    assert diagnostics["tool_count"] == 1
+    assert diagnostics["tool_schema_bytes"] > 0
+    assert len(diagnostics["tool_schema_digest"]) == 16
+    assert "secret_tool" not in diagnostics
+    assert "私有工具定义" not in diagnostics
+    assert "AAAA" not in str(diagnostics)

@@ -52,13 +52,8 @@ def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     assert "conversation_messages.id >" in db.last_query
 
 
-def test_load_session_history_forces_local_cutoff_and_advances_baseline():
+def test_load_session_history_does_not_cutoff_before_agent_compression():
     rows = [_Message(index, content="旧消息" * 100) for index in range(1, 6)]
-    session = _Message(99)
-    session.baseline_message_id = 0
-    result = asyncio.run(
-        load_session_history(_Db(rows), 10, context_tokens=100, session=session)
-    )
+    result = asyncio.run(load_session_history(_Db(rows), 10))
 
-    assert session.baseline_message_id == 4
-    assert [item.id for item in result] == [5]
+    assert [item.id for item in result] == [1, 2, 3, 4, 5]

@@ -340,18 +340,19 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
     assert formatted.endswith("看看项目")
 
 
-def test_current_message_time_matches_history_message_time():
+def test_history_does_not_inject_persisted_message_time():
     from datetime import datetime, timezone
     from types import SimpleNamespace
 
-    from agent.im.context_loader import format_history_content, format_message_time
+    from agent.im.context_loader import format_history_content
     from agent.models import AgentRequest
 
     request = AgentRequest(message="同一条", user_id="owner", user_name="小北")
     sent_at = datetime(2026, 8, 20, 20, 59, tzinfo=timezone.utc)
     message = SimpleNamespace(role="user", content="同一条", sent_at=sent_at)
 
-    assert format_message_time("同一条", sent_at) == format_history_content(message, request)
+    assert format_history_content(message, request) == "同一条"
+    assert "2026-08-20" not in format_history_content(message, request)
 
 
 def test_current_group_message_has_priority_sender_anchor():

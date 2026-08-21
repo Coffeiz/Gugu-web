@@ -40,3 +40,11 @@ def test_valid_history_is_not_trimmed():
     assert result == messages
     assert not stats.changed
 
+
+def test_over_budget_first_keeps_recent_twenty_messages():
+    messages = [{"role": "user", "content": f"消息 {index} " + "x" * 200} for index in range(22)]
+
+    result, stats = truncate_messages(messages, context_tokens=1200)
+
+    assert stats.changed
+    assert [item["content"].split()[1] for item in result] == [str(index) for index in range(2, 22)]

@@ -117,6 +117,31 @@ def _contains_volatile_image(value: Any) -> bool:
     return False
 
 
+def _volatile_message_indices(messages: list) -> set[int]:
+    """记录首轮请求中带内联图片的消息位置，后续只折叠这些初始图片。"""
+    return {
+        index for index, message in enumerate(messages)
+        if _contains_volatile_image(message)
+    }
+
+
+def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
+    """模型首轮消费图片后，把初始图片消息收敛为稳定文本，避免跨 round/run 断前缀。"""
+    for index in indices:
+        if index < 0 or index >= len(messages):
+            continue
+        message = messages[index]
+        content = message.get("content")
+        if not isinstance(content, list) or not _contains_volatile_image(content):
+            continue
+        text_parts = [
+            str(block.get("text"))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+        ]
+        message["content"] = "\n".join(text_parts) or "[图片已查看]"
+
+
 def _with_history_cache(messages: list) -> list:
     """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
 

@@ -287,7 +287,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         # 连续历史：未压缩时不再按最近 N 条滑动；压缩后从 baseline 水位继续追加。
         history = await session_history.load_session_history(
             db, session_id, int(getattr(session, "baseline_message_id", 0) or 0),
-            context_tokens=model_cfg.context_tokens, session=session,
         )
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
@@ -602,7 +601,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         # 连续历史：只加载 baseline 之后的追加消息，避免每轮重新裁剪历史前缀。
         history = await session_history.load_session_history(
             db, session_id, int(getattr(session, "baseline_message_id", 0) or 0),
-            context_tokens=model_cfg.context_tokens, session=session,
         )
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
@@ -956,10 +954,6 @@ async def _collect(
         if r:
             text = r
             break
-    # Web 流式出口已有同样的清洗；IM collect 也必须过滤模型偶尔复述的
-    # 内部消息时间，否则 QQ/群聊会把 [消息时间：...] 直接发给用户。
-    time_san = sanitize.LeadingMessageTimeSanitizer()
-    text = time_san.feed(text) + time_san.flush()
     result = (text, tin, tout, False, files, cancelled)
     return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
 

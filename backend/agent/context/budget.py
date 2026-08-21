@@ -11,9 +11,10 @@ from typing import Iterable
 from .tokens import estimate_tokens, message_text
 
 
-SAFE_BUDGET_RATIO = 0.85
+SAFE_BUDGET_RATIO = 0.90
 HARD_TARGET_RATIO = 0.20
 MAX_RETRY_COUNT = 1
+RECENT_MESSAGE_FALLBACK_COUNT = 20
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,27 @@ def truncate_messages(
     fixed_tokens = estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in prefix
     )
+
+    # LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息。
+    # 只有这段仍放不进安全预算，才进入下面更激进的 token 截断。
+    recent_units: list[list[dict]] = []
+    recent_count = 0
+    for unit in reversed(_units(body)):
+        recent_units.append([body[index] for index in unit])
+        recent_count += len(unit)
+        if recent_count >= RECENT_MESSAGE_FALLBACK_COUNT:
+            break
+    recent_units.reverse()
+    recent = [message for unit in recent_units for message in unit]
+    recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
+    if recent and recent_total <= safe_budget:
+        return prefix + recent, BudgetResult(
+            True,
+            before,
+            recent_total,
+            max(0, len(original) - len(prefix) - len(recent)),
+        )
+
     available = max(1, min(safe_budget - fixed_tokens, target - fixed_tokens))
 
     kept: list[list[dict]] = []

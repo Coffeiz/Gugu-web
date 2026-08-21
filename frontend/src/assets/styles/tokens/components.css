@@ -146,6 +146,14 @@
   --gugu-chat-caption: var(--content-tertiary);
   --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
   --gugu-chat-user-bg: var(--action-primary);
+  --gugu-chat-file-bg: rgba(255,255,255,.50);
+  --gugu-chat-file-border: rgba(255,255,255,.65);
+  --gugu-chat-file-highlight: rgba(255,255,255,.80);
+  --gugu-chat-file-shadow: 0 1px 3px rgba(80,80,120,.06);
+  --gugu-chat-file-bg-hover: rgba(255,255,255,.70);
+  --gugu-chat-file-border-hover: rgba(255,255,255,.78);
+  --gugu-chat-file-highlight-hover: rgba(255,255,255,.90);
+  --gugu-chat-file-shadow-hover: 0 3px 10px rgba(100,110,200,.14);
   --gugu-chat-composer-bg: color-mix(in srgb,var(--surface-raised) 90%,transparent);
   --gugu-chat-drop-bg: color-mix(in srgb,var(--action-primary) 16%,transparent);
   --gugu-chat-drop-border: color-mix(in srgb,var(--action-primary) 60%,transparent);

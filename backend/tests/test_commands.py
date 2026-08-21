@@ -16,8 +16,11 @@ async def test_compact_without_session_is_deterministic():
 
 
 @pytest.mark.asyncio
-async def test_compact_reports_threshold(monkeypatch):
+async def test_compact_forces_compression_instead_of_using_threshold(monkeypatch):
+    captured = {}
+
     async def fake_compact(*_args, **_kwargs):
+        captured.update(_kwargs)
         return False
 
     monkeypatch.setattr("agent.context.compress_conv.compress_if_needed", fake_compact)
@@ -30,7 +33,8 @@ async def test_compact_reports_threshold(monkeypatch):
 
     monkeypatch.setattr("app.core.config.get_settings", lambda: Settings())
     result = await commands.handle("user-1", "/compact", session_id=12)
-    assert result == "当前上下文还没达到压缩条件，暂时不用整理。"
+    assert captured == {"force": True}
+    assert result == "当前没有可整理的旧对话。"
 
 
 @pytest.mark.asyncio

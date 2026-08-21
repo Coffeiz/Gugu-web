@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.tz import LOCAL_TZ
+from agent.context.session_snapshot import date_boundary_note
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -54,7 +55,7 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
     if not idx:
         return ""
     lines = ["## 可用技能",
-             "下列「技能」是带触发条件的做法剧本。命中下方场景时，**先调 `use_skill` 拉取该技能详细步骤再照做**，别凭空猜。",
+             "下列「技能」是带触发条件的做法剧本。命中下方场景时，**第一工具调用必须是 `use_skill` 拉取对应技能正文**；正文加载前禁止直接调用该技能负责的业务工具。",
              "技能正文里若出现 `curl <URL>`，就用 `http_get` 工具抓那个 URL（你没有 shell，但有 `http_get`）。"]
     for s in idx:
         emoji = f"{s['emoji']} " if s.get("emoji") else ""
@@ -87,8 +88,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     today = _now.strftime("%Y-%m-%d")
     _wd = "一二三四五六日"[_now.weekday()]
     now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
-    if _now.hour < 4:
-        now_str += "，深夜未眠——以日出为一天的分界"
+    now_str += date_boundary_note(_now.hour)
 
     # === 静态部分（完全不变） ===
     static_parts = []

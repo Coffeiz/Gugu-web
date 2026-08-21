@@ -184,7 +184,6 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         from agent.context import session_history
         history = await session_history.load_session_history(
             db, session.id, int(getattr(session, "baseline_message_id", 0) or 0),
-            context_tokens=settings.ai.context_tokens, session=session,
         )
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
@@ -262,7 +261,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     if not active_before_start:
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
-            user_media=aug_media, user_tz=user_tz, sent_at=user_message.sent_at,
+            attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
+            sent_at=user_message.sent_at, user_message=user_message,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -295,8 +295,9 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 
 
 async def _generate(req, session_id, snapshot, history, is_new_session,
-                    user_content=None, user_images=None, user_media=None, user_tz=None,
-                    sent_at=None) -> None:
+                    user_content=None, user_images=None, attach_cards=None,
+                    user_media=None, user_tz=None, sent_at=None,
+                    user_message=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -307,6 +308,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
+    attach_cards = attach_cards or []
     user_media = user_media or []
     settings = get_settings()
     profile = DefaultProfile()
@@ -328,7 +330,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
-    from agent.im.context_loader import format_message_time
+    from agent.im.context_loader import format_history_content
     from agent.context.history import build_history_parts
     _summary, history = compress_conv.pop_summary(history)
 
@@ -356,14 +358,22 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     oa_initial_len: int = 0
     sent_files: list = []   # 咕咕本轮发的文件卡片，随助手消息持久化
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
-    message_time_san = sanitize.LeadingMessageTimeSanitizer()
 
     try:
         fixed_parts = ([_ctx_injection] if _ctx_injection else [])
         if _summary:
             fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
         history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
-        current_text = format_message_time(user_content, sent_at)
+        image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
+            str(card.get("kind") or "").lower() == "image" for card in attach_cards
+        )
+        # 图片首轮仍单独发送视觉块，但文字部分复用历史消息格式；首轮结束后图片
+        # 会在 core 中折叠，这样下一次 run 重建出的历史与本轮尾部保持字节一致。
+        current_text = (
+            format_history_content(user_message, req)
+            if image_only and user_message is not None
+            else user_content
+        )
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         if use_anthropic:
@@ -409,7 +419,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 round_buf += text
                 out = text
             out = sanitize.strip_disallowed_emoji(out)   # 出口兜底删白名单外 emoji（prompt 压不住）
-            out = message_time_san.feed(out)
             if out:
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})
@@ -451,10 +460,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         tail = san.flush()
         if tail:
             await emit_clean(tail)
-        tail = message_time_san.flush()
-        if tail:
-            await emit_clean(tail)
-
         # ── 持久化：工具调用中间消息 + AI 最终回复 + 用量 ──
         # 会话可能在后台生成期间被用户删掉（DELETE /sessions/{id}，合法操作）。此时：
         # 不写无依附的 message；usage 降级为 session_id=None 保住计费（与删除时 SET NULL 一致）；

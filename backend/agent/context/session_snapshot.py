@@ -11,6 +11,13 @@ from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
 DEFAULT_IDLE_TTL = timedelta(minutes=30)
 
 
+def date_boundary_note(hour: int) -> str:
+    """仅说明日出前的日期指代规则，不引导模型对用户作息做判断。"""
+    if hour >= 4:
+        return ""
+    return "；当前处于日出前时段，涉及日期时按日出边界理解：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天）"
+
+
 def _tz_storage_value(user_tz) -> str:
     """JSON 只保存 IANA 名称；服务器固定偏移统一记为 LOCAL。"""
     return getattr(user_tz, "key", None) or "LOCAL"
@@ -21,8 +28,7 @@ def current_time_text(user_tz=None) -> str:
     current = datetime.now(user_tz or LOCAL_TZ)
     weekday = "一二三四五六日"[current.weekday()]
     text = f"{current:%Y-%m-%d}（星期{weekday}）{current:%H:%M}"
-    if current.hour < 4:
-        text += "，深夜未眠——以日出为一天的分界：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天），涉及日期时请按此理解"
+    text += date_boundary_note(current.hour)
     return text
 
 
