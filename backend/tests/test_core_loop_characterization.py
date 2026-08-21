@@ -92,7 +92,7 @@ async def test_compaction_receives_session_id(monkeypatch):
     async def fake_estimate(_messages, _system_text):
         return 100
 
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None):
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
         seen.update(session_id=session_id, user_id=user_id)
         return messages, False
 
@@ -119,7 +119,7 @@ async def test_compaction_retry_uses_core_logger(monkeypatch):
     async def fake_estimate(_messages, _system_text):
         return next(lengths)
 
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None):
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
         nonlocal calls
         calls += 1
         return messages, calls == 1
@@ -146,7 +146,7 @@ async def test_compaction_stops_when_result_makes_no_progress(monkeypatch):
     async def fake_estimate(_messages, _system_text):
         return 100
 
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None):
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
         nonlocal compact_calls
         compact_calls += 1
         return messages, True
@@ -176,7 +176,7 @@ async def test_compaction_honors_cancel_after_summary(monkeypatch):
     async def fake_estimate(_messages, _system_text):
         return 100
 
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None):
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
         return messages, True
 
     monkeypatch.setattr(core, "_im_cancelled", fake_cancel)

@@ -234,6 +234,25 @@ dynamic tail 追加。
 | daily / long-term memory | 最近事件与长期沉淀 | TTL/压缩时更新 session info |
 | lens | 经过候选确认后的解读规则 | TTL/压缩时更新 system/session info |
 
+### 4.7 压缩边界实现约束
+
+压缩器只处理 conversation/message 区域，不处理 snapshot 固定前缀和 dynamic tail：
+
+```text
+snapshot prefix (system / session-info / 固定 reminder)
+        ↓ 原样保留
+message history + tool rounds + current message
+        ↓ 只压缩这里
+compacted summary + recent messages
+        ↓
+重新拼接 dynamic tail (stance / summary / current time)
+```
+
+`PromptMessages.fixed_prefix_size` 是装配层与压缩器之间的边界契约。压缩后仍通过
+`replace_conversation()` 保留 dynamic tail；snapshot 正文不复制、不进入摘要，只有
+checkpoint hash / covered message cursor 在 run 完成或压缩完成后更新。普通 list 调用的
+`fixed_prefix_size=0` 仅用于旧历史和兼容测试。
+
 反思事件不能把原始用户消息、assistant 正文或 LLM 验证日志写进可见日志，也不能把事件
 元数据放进模型 prompt；事件只负责使 section 失效。
 

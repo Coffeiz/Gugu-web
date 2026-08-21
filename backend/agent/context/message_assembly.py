@@ -7,9 +7,13 @@ from typing import Iterable
 class PromptMessages(list):
     """可变的请求消息列表：普通 append 永远插入动态尾部之前。"""
 
-    def __init__(self, conversation: Iterable[dict] = (), dynamic_tail: Iterable[dict] = ()):
+    def __init__(self, conversation: Iterable[dict] = (), dynamic_tail: Iterable[dict] = (),
+                 fixed_prefix_size: int = 0):
         tail = list(dynamic_tail)
+        conversation = list(conversation)
         self._tail_size = len(tail)
+        # snapshot/system-info 在 conversation 的最前面；压缩只能处理其后的消息区。
+        self._fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(conversation)))
         # 只供当前请求的 provider cache helper 使用，不进入消息内容或持久化数据。
         self._cache_anchor_indices: list[int] = []
         super().__init__(list(conversation) + tail)
@@ -41,6 +45,11 @@ class PromptMessages(list):
         self._cache_anchor_indices = []
 
     @property
+    def fixed_prefix_size(self) -> int:
+        """snapshot 固定前缀的消息数，不进入普通 message compaction。"""
+        return self._fixed_prefix_size
+
+    @property
     def cache_anchor_indices(self) -> list[int]:
         return list(self._cache_anchor_indices)
 
@@ -67,8 +76,9 @@ def reminder(content: str) -> dict:
 def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],
                    current_user: dict, dynamic_tail: Iterable[dict]) -> PromptMessages:
     """固定上下文、连续历史和当前消息先组成 conversation，动态内容最后追加。"""
-    conversation = list(fixed_parts) + list(history) + [current_user]
-    return PromptMessages(conversation, dynamic_tail)
+    fixed = list(fixed_parts)
+    conversation = fixed + list(history) + [current_user]
+    return PromptMessages(conversation, dynamic_tail, fixed_prefix_size=len(fixed))
 
 
 def newly_appended(messages: list, initial_conversation_len: int) -> list[dict]:

@@ -42,6 +42,7 @@ async def compact_context(
     context_tokens: int,
     session_id: int | None = None,
     user_id: int | None = None,
+    fixed_prefix_size: int = 0,
 ) -> tuple[list, bool]:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
@@ -61,11 +62,17 @@ async def compact_context(
     logger.info("[compaction] session=%s 上下文 %d tokens 超过阈值 %d，开始压缩",
                 session_id, current_length, int(context_tokens * COMPACTION_THRESHOLD_RATIO))
 
+    # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
+    # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
+    fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(messages)))
+    fixed_prefix = list(messages[:fixed_prefix_size])
+    message_history = list(messages[fixed_prefix_size:])
+
     # 分离消息类型
     summary_msg = None
     normal_msgs = []
 
-    for msg in messages:
+    for msg in message_history:
         if msg.get("role") == "summary":
             summary_msg = msg
         else:
@@ -140,7 +147,7 @@ async def compact_context(
         return messages, False  # 压缩失败，返回原消息
 
     # 构建压缩后的消息列表
-    new_messages = []
+    new_messages = list(fixed_prefix)
 
     # 保留系统上下文注入（如果存在）
     if system_injection_idx >= 0:

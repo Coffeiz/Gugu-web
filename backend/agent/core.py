@@ -325,6 +325,7 @@ class LLMRunner:
                 compacted_messages, compacted = await compaction.compact_context(
                     list(getattr(messages, "conversation", messages)), system_text, context_tokens,
                     session_id=session_id, user_id=user_id,
+                    fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                 )
                 if await _im_cancelled():
                     yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
