@@ -61,6 +61,9 @@ class NormalizedToolCall:
 class RoundResult:
     text: str                          # 本轮纯文本正文（不含工具调用/思考）
     tool_calls: list = field(default_factory=list)   # list[NormalizedToolCall]
+    # provider 若以后能返回显式决策，可在这里填入；当前驱动以原生 tool_calls 推导。
+    # 这是运行时状态，不会写入对话历史或下一轮 prompt。
+    requires_tools: bool | None = None
     usage_in: int = 0
     usage_out: int = 0
     cache_tokens: int = 0              # 统一映射：anthropic 的 cache_read_input_tokens /
@@ -219,7 +222,7 @@ class AnthropicDriver:
         text = "".join(b.text for b in final.content if b.type == "text")
         tool_calls = [NormalizedToolCall(id=b.id, name=b.name, input=b.input) for b in tool_blocks]
         yield ("done", RoundResult(
-            text=text, tool_calls=tool_calls,
+            text=text, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=final.usage.input_tokens, usage_out=final.usage.output_tokens,
             cache_tokens=getattr(final.usage, "cache_read_input_tokens", 0) or 0,
             raw=final.content,
@@ -431,7 +434,7 @@ class OpenAIDriver:
                 tool_calls.append(NormalizedToolCall(id=b["id"], name=b["name"], input={}, parse_error=True))
 
         yield ("done", RoundResult(
-            text=content, tool_calls=tool_calls,
+            text=content, tool_calls=tool_calls, requires_tools=bool(tool_calls),
             usage_in=total_in, usage_out=total_out, cache_tokens=total_cache,
             raw=_OpenAIRaw(content=content, reasoning=reasoning, tool_calls_payload=ordered),
         ))

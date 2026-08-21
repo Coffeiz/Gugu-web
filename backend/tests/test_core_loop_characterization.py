@@ -193,6 +193,23 @@ async def test_compaction_honors_cancel_after_summary(monkeypatch):
     assert errors == []
 
 
+async def test_progress_only_round_is_retried_without_leaking_placeholder(monkeypatch):
+    """模型只吐“正在查询”且没有 tool call 时，不能把占位话术当成最终回复。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("正在为你查询最新信息。")]),
+        msg([TX("查完了，结果如下。")]),
+    ])
+
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "查一下最新信息"}], AI)
+    )
+
+    assert text == "查完了，结果如下。"
+    assert "正在为你查询最新信息" not in text
+    assert ev["_new_round"] == 1
+    assert errors == []
+
+
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────
 class TU:  # tool_use
     type = "tool_use"

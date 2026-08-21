@@ -137,6 +137,7 @@ from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
+    _could_be_tool_progress, _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
 )
 
 
@@ -288,7 +289,8 @@ class LLMRunner:
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
+        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0
+        tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
         _request_conversation = getattr(messages, "conversation", messages)
         _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
@@ -358,6 +360,8 @@ class LLMRunner:
             _tok = 0
             result = None
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
+            _progress_buf: list[str] = []
+            _progress_pending = False
             try:
                 _round_gen = driver.run_round(client, ctx, messages)
                 async for _kind, _val in _round_gen:
@@ -367,7 +371,23 @@ class LLMRunner:
                     if verify_mode:
                         _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
                     else:
-                        yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                        # 对可能是“正在查询”占位话术的前缀暂存到 round 结束；如果后续
+                        # 变成正常句子则原样 flush，只有确认是纯占位且无 tool call 时丢弃。
+                        if _progress_pending:
+                            candidate = "".join(_progress_buf) + _val
+                            if _could_be_tool_progress(candidate):
+                                _progress_buf.append(_val)
+                            else:
+                                for _pending in _progress_buf:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                                _progress_buf.clear()
+                                _progress_pending = False
+                                yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                        elif _could_be_tool_progress(_val):
+                            _progress_pending = True
+                            _progress_buf.append(_val)
+                        else:
+                            yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
@@ -404,7 +424,16 @@ class LLMRunner:
             total_out += result.usage_out
             total_cache += result.cache_tokens
 
+            _requires_tools = result.requires_tools
+            if _requires_tools is None:
+                _requires_tools = bool(result.tool_calls)
+
             if result.tool_calls:
+                if _progress_pending:
+                    for _pending in _progress_buf:
+                        yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                    _progress_buf.clear()
+                    _progress_pending = False
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(tc.name in _mutset for tc in result.tool_calls):
@@ -469,6 +498,13 @@ class LLMRunner:
             _verify_buf = []
 
             _final_text = result.text
+            # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
+            # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
+            if _progress_pending and not _is_tool_progress_only(_final_text):
+                for _pending in _progress_buf:
+                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                _progress_buf.clear()
+                _progress_pending = False
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
@@ -493,6 +529,15 @@ class LLMRunner:
                     and _announces_intent(_final_text)):
                 intent_retry += 1
                 driver.append_followup(messages, result, _INTENT_NUDGE)
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+            # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
+            # 本轮都不能作为最终回复结束。当前内置驱动的 requires_tools 由 tool_calls
+            # 推导，保留该分支供支持显式决策的 provider 适配器使用。
+            if (not any_tool_called and not verify_mode and tool_intent_retry < 1
+                    and (_requires_tools is True or _is_tool_progress_only(_final_text))):
+                tool_intent_retry += 1
+                driver.append_followup(messages, result, _TOOL_REQUIRED_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
