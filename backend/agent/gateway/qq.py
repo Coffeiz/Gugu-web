@@ -38,6 +38,60 @@ _log = logging.getLogger("agent.gateway.qq")
 
 STREAM = R.IM_INBOUND_STREAM
 _ACK_COOLDOWN = 10.0   # 同一用户「文件收到啦」秒回的冷却秒数：连发多图/文件只 ack 一次，不刷屏
+_ref_indexes: dict[tuple[str, str], QQRefIndex] = {}
+
+
+def _qq_ref_index(owner: str, channel_id: str) -> QQRefIndex:
+    key = (owner, channel_id)
+    index = _ref_indexes.get(key)
+    if index is None:
+        index = QQRefIndex(owner=owner, bot_id=channel_id)
+        _ref_indexes[key] = index
+    return index
+
+
+def _qq_message_index_key(data: Dict[str, Any], chat_type: str, chat_id: str, sender_id: str) -> str:
+    ext = _message_scene_ext(data)
+    msg_idx = _scene_ext_value(ext, "msg_idx")
+    return msg_idx or str(data.get("id") or "")
+
+
+def _remember_qq_message(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
+                         chat_id: str, sender_id: str, sender_name: str) -> None:
+    msg_key = _qq_message_index_key(data, chat_type, chat_id, sender_id)
+    if not msg_key:
+        return
+    attachments = data.get("attachments") or []
+    if not isinstance(attachments, list):
+        attachments = []
+    compact_attachments = []
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        compact_attachments.append({
+            key: item[key]
+            for key in ("url", "filename", "content_type", "file_url", "download_url")
+            if item.get(key)
+        })
+    index.set(ref_index_key(chat_type, chat_id, sender_id, msg_key), {
+        "message_id": str(data.get("id") or ""),
+        "sender_id": sender_id,
+        "sender_name": sender_name,
+        "content": str(data.get("content") or "")[:200],
+        "attachments": compact_attachments,
+        "timestamp": str(data.get("timestamp") or ""),
+    })
+
+
+def _quoted_from_index(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
+                      chat_id: str, sender_id: str) -> tuple[str, list]:
+    ref_idx = _scene_ext_value(_message_scene_ext(data), "ref_msg_idx")
+    if not ref_idx:
+        return "", []
+    entry = index.get(ref_index_key(chat_type, chat_id, sender_id, ref_idx))
+    if not entry:
+        return "", []
+    return str(entry.get("content") or ""), list(entry.get("attachments") or [])
 
 
 _QQ_API_BASE = "https://api.sgroup.qq.com"
@@ -66,7 +120,10 @@ from agent.im.parsers.qq import (
     _queue_pending_qq_face,
     _qq_face_pending_key,
     _strip_qq_face_markers,
+    _message_scene_ext,
+    _scene_ext_value,
 )
+from agent.im.qq_ref_index import QQRefIndex, ref_index_key
 
 
 def _heartbeat_ack_expired(last_ack_at: float, interval: float, now: float) -> bool:
@@ -142,6 +199,9 @@ def _qq_message_mentions_bot(data: Dict[str, Any], event_type: str) -> bool:
     mentions = data.get("mentions")
     if not isinstance(mentions, list):
         return False
+    if not mentions:
+        # mentions 存在但为空数组：协议未填充 bot 标记，按事件类型兜底
+        return event_type == "GROUP_AT_MESSAGE_CREATE"
     for item in mentions:
         if not isinstance(item, dict) or item.get("bot") is not True:
             continue
@@ -246,10 +306,17 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     raw_attachments = data.get("attachments") or []
     if not isinstance(raw_attachments, list):
         raw_attachments = []
+    ref_index = _qq_ref_index(owner, channel_id)
+    # 先登记当前消息，再解析引用；这样同一条消息的 msg_idx 可以被后续私聊/群聊引用复用。
+    _remember_qq_message(ref_index, data, chat_type, chat_id, sender_id, sender_name)
     # 引用原文单独存 quoted_text，不拼进 text——runner.py 只把它喂给模型当上下文，
     # ConversationMessage.content/网页展示仍是用户自己打的话，别再把引用原文拼进正文
     # （网页气泡纯文本渲染，拼进去会把引用的 markdown 原样摊平显示得很难看，见 devlog 2026-07-10）。
     quoted_text, quoted_attachments = _extract_quoted(data)
+    if not quoted_text and not quoted_attachments:
+        quoted_text, quoted_attachments = _quoted_from_index(
+            ref_index, data, chat_type, chat_id, sender_id,
+        )
     quoted_text = _normalize_qq_faces(quoted_text)
     if quoted_attachments and quoted_text == "[QQ表情]":
         quoted_text = ""

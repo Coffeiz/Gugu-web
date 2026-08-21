@@ -7,10 +7,11 @@
 调用 model_validate 时触发二次 env 读取，把 override 值覆盖掉。
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
-from functools import lru_cache
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -147,6 +148,11 @@ class SearchSettings(BaseModel):
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
     searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
+    similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
+    baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
+    similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")
+    similar_image_timeout_seconds: int = Field(20, ge=5, le=60, description="相似图搜索请求超时秒数")
+    similar_image_limit_daily: Optional[int] = Field(10, ge=1, description="每个用户每日相似图搜索次数上限")
 
 
 class StateLabelSettings(BaseModel):
@@ -357,9 +363,32 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
-@lru_cache
+# ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
+# 旧实现用 @lru_cache，但 lru_cache 是进程内单例——uvicorn --workers N 时，
+# Worker A 写 override.json 并 cache_clear() 只清自己的缓存，Worker B 仍在用旧值。
+# 改为每次读取时检查 OVERRIDE_FILE 的 mtime，文件变化即自动重建，无需跨进程通知。
+_settings_cache: AppSettings | None = None
+_settings_mtime: float = -1.0
+
+
 def get_settings() -> AppSettings:
-    return AppSettings().apply_override()
+    global _settings_cache, _settings_mtime
+    try:
+        current_mtime = OVERRIDE_FILE.stat().st_mtime if OVERRIDE_FILE.exists() else -1.0
+    except OSError:
+        current_mtime = -1.0
+    if _settings_cache is not None and current_mtime == _settings_mtime:
+        return _settings_cache
+    _settings_cache = AppSettings().apply_override()
+    _settings_mtime = current_mtime
+    return _settings_cache
+
+
+def invalidate_settings_cache() -> None:
+    """显式失效配置缓存（写入 override 后调用；也供 mtime 感知自动失效兜底）。"""
+    global _settings_cache, _settings_mtime
+    _settings_cache = None
+    _settings_mtime = -1.0
 
 
 async def save_override(patch: dict) -> AppSettings:
@@ -373,7 +402,7 @@ async def save_override(patch: dict) -> AppSettings:
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
     _deep_merge(existing, patch)
     OVERRIDE_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-    get_settings.cache_clear()
+    invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:
         # 延迟导入避免循环依赖；Redis 配置变更后重建共享客户端

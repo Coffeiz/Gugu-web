@@ -1,5 +1,76 @@
 # 咕咕 · 早期开发记录
 
+## 2026-08-19 · 修复创建画布后 "咕咕开小差了" ValueError 错误
+
+### 现象
+
+用户创建画布后，咕咕返回 "咕咕开小差了 😵‍💫 麃烦再说一遍吗？"，实际工具调用成功但第二轮 LLM 调用失败。日志显示：
+
+```
+08-19 09:01:34 INFO [agent.traj] {"t": "tool", "tool": "mind_create_canvas", "user": "019eec39", "ok": true, "ms": 23, "args": {"title": "***"}, "trace": "cfc05e34ead3"}
+08-19 09:01:34 ERROR [agent.core] LLM 调用中途出错：ValueError
+```
+
+### 初步误判
+
+最初认为是 MiniMax API 对工具返回值中 `null` 字段（如 `project_id: null`）的容忍度问题，尝试将 `ValueError` 添加到 MiniMax 的 `transient_exceptions` 重试列表。
+
+### 根本原因
+
+通过完整链路测试，精确定位到 `agent/loop_drivers.py` 第 125 行的缓存处理逻辑错误：
+
+```python
+# 错误代码
+elif isinstance(content, str):
+    new_content = [dict(content, **{"cache_control": {"type": "ephemeral"}})]
+```
+
+当 `content` 是字符串时，`dict(content)` 会将字符串的每个字符视为键值对序列。如果字符串长度是奇数（如 `"hello"` 有 5 个字符），会抛出：
+
+```
+ValueError: dictionary update sequence element #0 has length 1; 2 is required
+```
+
+这不是 MiniMax API 的问题，而是 Anthropic 格式缓存处理的代码逻辑错误。
+
+### 修复
+
+```python
+# 修复后
+elif isinstance(content, str):
+    new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+```
+
+### 验证
+
+通过完整的 agent 链路测试（74步详细跟踪），确认：
+- ✅ 第一轮 LLM 调用成功（调用 mind_create_canvas）
+- ✅ 工具执行成功并返回结果
+- ✅ 第二轮 LLM 调用成功（接收 218 个 token）
+- ✅ 没有出现 ValueError
+
+### 调试方法
+
+创建了三个测试脚本逐步排查：
+
+1. **test_simple_valueerror.py** - 测试基础序列化和消息格式
+2. **test_minimax_null_fields.py** - 测试 MiniMax API 对 null 字段的容忍度
+3. **test_full_agent_flow.py** - 完整 agent 链路测试，精确定位错误发生位置
+
+第三步成功捕获到 ValueError 的确切位置和堆栈。
+
+### 经验教训
+
+- **逻辑错误不重试** - ValueError 通常是代码逻辑问题，重试机制无法解决
+- **让错误暴露** - 撤回重试兜底，让错误直接暴露有助于快速定位根因
+- **逐步测试** - 从简单到复杂的测试策略能有效缩小问题范围
+
+### 相关文件
+
+- `backend/agent/loop_drivers.py` - 根本原因修复
+- `backend/test_full_agent_flow.py` - 完整链路测试脚本
+- `backend/test_minimax_null_fields.py` - MiniMax API 容忍度测试
+
 ## 2026-08-17 · 修复 LoopScope 用量监控全为 0
 
 ### 现象
@@ -1876,3 +1947,9 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 从“更多”活动菜单打开编辑时先关闭菜单，避免页面捕获点击与全局弹窗状态互相干扰；活动保存、删除和提醒更新继续通过 `liveStore` 触发日历刷新。
 - `MonthGrid`、`WeekTimeline` 已成为月/周视图的样式边界，清理父页面迁移后遗留的周视图重复 CSS，避免以后修改出现双份样式来源。
 - 日历 Playwright 用例加入 runtime integration CI，并在 devserver 实际验证月视图、周视图及其切换；全量前端测试、普通/严格 typecheck 均通过。
+
+## 2026-08-21 · Prompt 缓存断点验证
+
+- OpenAI 兼容路径接入 conversation 末尾缓存断点后，Qwen 连续三轮测试的后两轮缓存命中率达到 98%+。
+- Kimi 多数轮次达到 94%+，偶发低命中随后自动恢复，暂未发现业务侧组装异常。
+- 将“Session baseline 与 conversation 分段缓存”记录为后续可选方案，待确认多断点兼容性和实际收益后再实施。

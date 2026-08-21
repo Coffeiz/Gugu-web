@@ -115,6 +115,8 @@ async def poll(
     await db.commit()
     await db.refresh(bot)
     await R.get_redis().delete(_redis_key(task_id))
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
 
     try:
         await R.get_redis().publish("im:supervisor:reload", "1")

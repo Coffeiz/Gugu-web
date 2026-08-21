@@ -87,10 +87,3 @@ const {
   folderLayoutKey, fileLayoutKey, layoutCollection,
 } = props.context
 </script>
-
-<style scoped>
-/* RuntimeFileListRow/RuntimeFolderListRow and their physical clones share one row paint owner:
-   filesListRows.css. The list container, header base and sortable buttons also live there;
-   this page only owns its 6-column grid widths. */
-.list-head { grid-template-columns: 2fr 90px 1.2fr 80px 72px 56px; }
-</style>

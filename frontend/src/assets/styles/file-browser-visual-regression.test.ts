@@ -20,14 +20,19 @@ const componentRefinements = load('./component-theme-refinements.css')
 const componentSurfaces = load('./tokens/components/surfaces.css')
 const productCss = load('./tokens/product.css')
 const surfacesAdoption = load('./adoption/surfaces.css')
+const formsAdoption = load('./adoption/forms.css')
 const projectAdoption = load('./adoption/project.css')
+const runtimeAdoption = load('./adoption/runtime.css')
 const browserPanel = load('../../components/common/file-browser/FileBrowserPanel.vue')
 const browserToolbar = load('../../components/common/file-browser/FileBrowserToolbar.vue')
 const projectToolbar = load('../../views/Projects/components/ProjectFileToolbar.vue')
 const filesListView = load('../../views/Files/components/FilesListView.vue')
 const filesListRows = load('./filesListRows.css')
+const fileSelectionCheckbox = load('./fileSelectionCheckbox.css')
+const uploadGhost = load('../../components/common/file-browser/FileUploadGhostCard.vue')
 const boxSelection = load('../../composables/useBoxSelection.ts')
 const segmentedControl = load('../../components/common/SegmentedControl.vue')
+const runtimeSetup = load('../../interaction/runtime/setup.ts')
 
 describe('文件浏览 0.20.4 视觉回归契约', () => {
   it('文件库直接宿主恢复 52px 工具栏高度，共享组件不重复拥有宿主高度', () => {
@@ -61,21 +66,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(folderCard).not.toContain(":global(html[data-theme='dark'")
     expect(folderCard).not.toContain('!important')
 
-    // Aero light remains the 0.20.4 baseline.
-    expect(componentSurfaces).toContain('--folder-card-bg-base: rgba(255,255,255,.82);')
-    expect(componentSurfaces).toContain('--folder-card-border-base: rgba(255,255,255,.92);')
-    expect(componentSurfaces).toContain('--folder-card-border-selected: rgba(123,127,178,.55);')
-    expect(componentSurfaces).toContain('--folder-card-selection-overlay: rgba(123,127,178,.14);')
-
-    // Mono light regains its neutral solid edge instead of inheriting Aero's near-white border.
     const monoLight = cssBlock(componentSurfaces, "html[data-theme='light'][data-family='v2']")
     expect(monoLight).toContain('--file-card-border: var(--border-strong);')
     expect(monoLight).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(monoLight).toContain('--folder-card-border-base: var(--border-strong);')
     expect(monoLight).toContain('--folder-card-shadow: var(--elevation-card);')
 
-    // Both Aero-dark and Mono-dark resolve through semantic dark tokens; restore the previous dark
-    // folder checkbox/selection treatment without a second entity selector.
     const dark = cssBlock(componentSurfaces, "html[data-theme='dark'][data-family]")
     expect(dark).toContain('--folder-card-bg-base: var(--surface-card-solid);')
     expect(dark).toContain('--folder-card-border-base: var(--border-strong);')
@@ -87,11 +83,12 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(componentRefinements).not.toContain('.folder-card.pre-selected {')
   })
 
-  it('文件卡 hover/图片预框选不会覆盖 selected，项目普通文件也得到 0.20.4 full-card preview', () => {
+  it('文件卡 hover/图片预框选不会覆盖 selected，亮色 full-card preview 由 FileCard 自己统一拥有', () => {
     expect(fileCard).toContain('.fc-card:hover:not(.selected):not(.pre-selected)')
     expect(fileCard).toContain('.fc-card.pre-selected:not(.selected) .fc-thumb-area::after')
     expect(fileCard).toContain('var(--file-card-preselection-thumb-overlay)')
-    expect(fileCard).toContain(":global(html[data-theme='light'][data-family] .project-modal-root) .fc-card.pre-selected:not(.selected)")
+    expect(fileCard).toContain(":global(html[data-theme='light'][data-family]) .fc-card.pre-selected:not(.selected)")
+    expect(fileCard).not.toContain(":global(html[data-theme='light'][data-family] .project-modal-root)")
     expect(componentRefinements).toContain("html[data-theme='dark'][data-family] :is(.files-page, .project-modal-root) .fc-card.pre-selected:not(.selected)")
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card:hover {')
     expect(componentRefinements).not.toContain('html[data-theme][data-family] .fc-card::after,')
@@ -114,11 +111,58 @@ describe('文件浏览 0.20.4 视觉回归契约', () => {
     expect(filesListRows).toContain('.pre-selected:not(.selected)')
   })
 
-  it('列表行状态只有共享 rows stylesheet 一个 paint owner', () => {
+  it('网格与列表多选框共享 FolderCard 已验证的主题 token 和同一个勾形', () => {
+    expect(fileSelectionCheckbox).toContain('--file-browser-checkbox-bg: var(--folder-card-checkbox-bg);')
+    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-bg: var(--file-browser-checkbox-bg);')
+    expect(fileSelectionCheckbox).toContain('--file-card-checkbox-fg-checked: var(--file-browser-checkbox-fg-checked);')
+    expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked > svg')
+    expect(fileSelectionCheckbox).toContain('.sel-checkbox.checked::after')
+    expect(fileSelectionCheckbox).toContain("M2 6l3 3 5-5")
+    expect(filesListRows).toContain('color: var(--file-browser-checkbox-fg-checked);')
+    expect(filesListRows).toContain('background: var(--file-browser-checkbox-bg-checked);')
+    expect(filesListRows).not.toContain("html[data-theme='dark'][data-family] .list-row .sel-checkbox")
+  })
+
+  it('列表行状态只有共享 rows stylesheet 一个 paint/layout owner', () => {
     expect(filesListView).not.toContain('.list-row {')
     expect(filesListView).not.toContain('.sel-checkbox {')
+    expect(filesListView).not.toContain('grid-template-columns:')
     expect(filesListRows).toContain('.sel-checkbox')
     expect(filesListRows).toContain('box-shadow: none;')
+    expect(uploadGhost).not.toContain('grid-template-columns:')
+    expect(uploadGhost).not.toContain(':deep(.lr-filename)')
+  })
+
+  it('列表行布局不会再被 global reset 清零，并保留当前列排布而不是回退 20.4', () => {
+    expect(filesListRows).toContain('padding-inline: 4px;')
+    expect(filesListRows).toContain('column-gap: 8px;')
+    expect(filesListRows).toContain('padding: 0 14px 8px;')
+    expect(filesListRows).toContain('padding: 9px 14px;')
+    expect(filesListRows).toContain(':is(.file-list .list-row, .file-list-view .list-row')
+    expect(filesListRows).not.toContain(':where(.file-list .list-row')
+    expect(filesListRows).toContain('[data-runtime-compact="true"] { overflow: hidden; }')
+    expect(filesListRows).toContain('[data-runtime-compact="true"] > * { min-width: 0; }')
+    expect(filesListRows).toContain('[data-runtime-compact="true"][data-list-columns="5"] > :nth-child(n+4) { overflow: hidden; }')
+  })
+
+  it('列表 compact proxy 只会收窄，窄项目文件区不会抓起一帧反向变宽', () => {
+    expect((runtimeSetup.match(/width: 'min\(300px, 100%\)'/g) ?? []).length).toBe(2)
+    expect(runtimeSetup).not.toContain("width: 'min(300px, calc(100vw - 48px))'")
+  })
+
+  it('暗色 File/FolderCard grabbing 修正只作用抓取阶段，landing 重新让组件目标底色参与渐变', () => {
+    const selector = "html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing'])"
+    expect(runtimeAdoption).toContain(selector)
+    const block = cssBlock(runtimeAdoption, selector)
+    expect(block).toContain('background-color: var(--surface-card-solid) !important;')
+    expect(block).toContain('border-color: var(--border-strong) !important;')
+    expect(runtimeAdoption).not.toContain("html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {\n")
+  })
+
+  it('项目名输入框不再有 project 专属透明底，统一复用共享 input contract', () => {
+    expect(formsAdoption).toContain('.header-name-input,')
+    expect(projectAdoption).not.toContain('.proj-header .header-name-input')
+    expect(projectAdoption).toContain('Project title paint is intentionally not overridden here')
   })
 
   it('多选 checkbox 无高光阴影，最终主题层不再重复接管 checkbox/folder paint', () => {

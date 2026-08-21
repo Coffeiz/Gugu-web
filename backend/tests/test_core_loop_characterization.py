@@ -24,6 +24,7 @@ from types import SimpleNamespace
 import pytest
 
 import agent.core as core
+import agent.context.compaction as compaction
 from agent.core import LLMRunner, MAX_ROUNDS, MAX_VERIFY, _VERIFY_PROMPT
 from agent.tools import registry
 
@@ -81,6 +82,132 @@ async def drain(gen):
 
 def n_verify(messages):
     return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
+
+
+async def test_compaction_receives_session_id(monkeypatch):
+    """上下文压缩分支必须拿到当前 session，不能因 IM 长上下文触发 NameError。"""
+    patch_anthropic(monkeypatch, [msg([TX("收到")])])
+    seen = {}
+
+    async def fake_estimate(_messages, _system_text):
+        return 100
+
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
+        seen.update(session_id=session_id, user_id=user_id)
+        return messages, False
+
+    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    ai = SimpleNamespace(**vars(AI), context_tokens=100)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
+                                     session_id=388)
+    )
+
+    assert text == "收到"
+    assert errors == []
+    assert ev["_usage"] == 1
+    assert seen == {"session_id": 388, "user_id": "u"}
+
+
+async def test_compaction_retry_uses_core_logger(monkeypatch):
+    """真实压缩重试不能因日志变量错误中断，尤其覆盖 IM 长上下文路径。"""
+    patch_anthropic(monkeypatch, [msg([TX("压缩后")])])
+    calls = 0
+    lengths = iter([100, 50, 50])
+
+    async def fake_estimate(_messages, _system_text):
+        return next(lengths)
+
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
+        nonlocal calls
+        calls += 1
+        return messages, calls == 1
+
+    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    ai = SimpleNamespace(**vars(AI), context_tokens=100)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
+                                     session_id=388)
+    )
+
+    assert text == "压缩后"
+    assert errors == []
+    assert calls == 1
+    assert ev["_usage"] == 1
+
+
+async def test_compaction_stops_when_result_makes_no_progress(monkeypatch):
+    """摘要没有减少上下文时，不得反复调用摘要 LLM。"""
+    patch_anthropic(monkeypatch, [msg([TX("不应调用模型")])])
+    compact_calls = 0
+
+    async def fake_estimate(_messages, _system_text):
+        return 100
+
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
+        nonlocal compact_calls
+        compact_calls += 1
+        return messages, True
+
+    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    ai = SimpleNamespace(**vars(AI), context_tokens=100)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
+                                     session_id=388)
+    )
+
+    assert compact_calls == 1
+    assert ev["error"] == 1
+    assert text == ""
+    assert errors
+
+
+async def test_compaction_honors_cancel_after_summary(monkeypatch):
+    """摘要调用返回后若用户已取消，应立即结束，不再进入模型 round。"""
+    patch_anthropic(monkeypatch, [msg([TX("不应调用模型")])])
+    cancel_checks = iter([False, False, True])
+
+    async def fake_cancel():
+        return next(cancel_checks)
+
+    async def fake_estimate(_messages, _system_text):
+        return 100
+
+    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
+        return messages, True
+
+    monkeypatch.setattr(core, "_im_cancelled", fake_cancel)
+    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    ai = SimpleNamespace(**vars(AI), context_tokens=100)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
+                                     session_id=388)
+    )
+
+    assert ev["_cancelled"] == 1
+    assert text == ""
+    assert errors == []
+
+
+async def test_progress_only_round_is_retried_without_leaking_placeholder(monkeypatch):
+    """模型只吐“正在查询”且没有 tool call 时，不能把占位话术当成最终回复。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("正在为你查询最新信息。")]),
+        msg([TX("查完了，结果如下。")]),
+    ])
+
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "查一下最新信息"}], AI)
+    )
+
+    assert text == "查完了，结果如下。"
+    assert "正在为你查询最新信息" not in text
+    assert ev["_new_round"] == 1
+    assert errors == []
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────

@@ -1060,7 +1060,7 @@ async def _list_recent_attachments(db, user_id, args: dict):
     return {"count": len(items), "items": items}
 
 
-async def _send_file_from_url(user_id, url: str, title: str):
+async def _send_file_from_url(user_id, url: str, title: str, *, stage: bool = True):
     """下载一张网络图片（如 image_search 结果的 img_src）暂存为聊天附件，返回 _artifact（attach_id 版）。
 
     下载用 streaming + 累计限流：不把整个响应读进内存再判大小（否则群成员给一个
@@ -1142,6 +1142,9 @@ async def _send_file_from_url(user_id, url: str, title: str):
     if not data:
         return json.dumps({"error": "下载到的内容是空的"}, ensure_ascii=False)
 
+    if not stage:
+        return {"data": data, "ext": ext, "mime": ctype}
+
     from app.core import chat_attach
     name = (title or "").strip()[:80] or "图片"
     meta = await chat_attach.stage(user_id, name, ext, ctype, data, kind="image")
@@ -1160,6 +1163,24 @@ async def _send_file_from_url(user_id, url: str, title: str):
             "img_height": meta.get("img_height"),
         },
     }
+
+
+async def inspect_image_url(url: str):
+    """安全下载网络图片并转换成视觉输入，不把图片发送到对话附件区。"""
+    from app.core import chat_attach
+
+    if not chat_attach.vision_ready():
+        return {"error": "当前模型/通道不支持直接读取网络图片"}
+    result = await _send_file_from_url(None, url, "", stage=False)
+    if not isinstance(result, dict) or not result.get("data"):
+        return {"error": "网络图片下载失败，无法读取"}
+    ext = result.get("ext")
+    if ext not in chat_attach.VISION_EXTS:
+        return {"error": f"图片格式 {ext} 暂不支持识别"}
+    block = chat_attach.vision_block(result["data"], ext)
+    if not block:
+        return {"error": "图片无法解析"}
+    return {"block": block}
 
 
 async def _send_file(db, user_id, args: dict):

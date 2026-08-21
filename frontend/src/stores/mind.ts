@@ -526,9 +526,11 @@ export const useMindStore = defineStore('mind', () => {
 
   // 实时：咕咕/IM 改了便签 → 时间流列表刷新；当前打开的画布也重拉，卡片上的笔记正文才能跟着更新
   // （画布卡片渲染的是 loadCanvas 拉回来的快照，不是 notes 数组本身，两处都要刷）。
+  // 画布列表也需要同步——跨标签页创建/删除画布后，抽屉列表才能实时反映最新状态。
   const live = useLiveStore()
   watch(() => live.rev.mind, () => {
     if (loaded.value) fetchNotes()
+    if (canvasesLoaded.value) fetchCanvases()
     if (activeCanvasId.value != null) loadCanvas(activeCanvasId.value)
   })
 

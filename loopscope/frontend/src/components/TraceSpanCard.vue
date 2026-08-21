@@ -20,6 +20,7 @@
 
     <div class="panel-actions">
       <button v-if="sourceContent" :class="{ active: open.content }" @click="toggle('content')">Content</button>
+      <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
       <button :class="{ active: open.input }" @click="toggle('input')">Input</button>
       <button :class="{ active: open.output }" @click="toggle('output')">Output</button>
       <button v-if="hasSource" :class="{ active: open.source }" @click="toggle('source')">Source</button>
@@ -29,6 +30,15 @@
     <section v-if="open.content && sourceContent" class="panel content-panel">
       <div class="panel-label">Included content</div>
       <pre>{{ sourceContent }}</pre>
+    </section>
+    <section v-if="open.assembly && assembly" class="panel assembly-panel">
+      <div class="assembly-grid">
+        <div><span>System</span><strong>{{ assembly.system?.location || '—' }}</strong></div>
+        <div><span>Reuse</span><strong>{{ assembly.system?.reused ? `round ${assembly.system.source_round || 1}` : 'inline' }}</strong></div>
+        <div><span>Digest</span><code>{{ assembly.system?.digest || '—' }}</code></div>
+        <div><span>Messages</span><strong>{{ assembly.messages?.count ?? '—' }}</strong></div>
+      </div>
+      <p class="assembly-note">完整 system 文本只在 Context assembly 中展示；本轮通过 digest 与来源重建实际组装关系。</p>
     </section>
     <section v-if="open.input" class="panel">
       <div class="panel-label">Input</div>
@@ -58,7 +68,7 @@ import { computed, reactive } from 'vue'
 import type { TraceSpan } from '../types'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; depth?: number }>(), { depth: 0 })
-const open = reactive<Record<string, boolean>>({ content: false, input: false, output: false, source: false, attributes: false })
+const open = reactive<Record<string, boolean>>({ content: false, assembly: false, input: false, output: false, source: false, attributes: false })
 
 function toggle(key: string) { open[key] = !open[key] }
 function fmtMs(v: number) { return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms` }
@@ -80,6 +90,10 @@ const sourceContent = computed(() => {
   if (typeof out.included === 'string') return out.included
   if (props.span.kind === 'context' && typeof out.system_prompt === 'string') return out.system_prompt
   return ''
+})
+const assembly = computed(() => {
+  const input = props.span.input as any
+  return input && typeof input === 'object' && input.assembly ? input.assembly : null
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
 const hasAttributes = computed(() => !!props.span.attributes && Object.keys(props.span.attributes).length > 0)
@@ -142,6 +156,11 @@ const tokenChips = computed(() => {
 .panel-label { margin-bottom:7px; color:var(--content-tertiary); font-size:8px; letter-spacing:.1em; text-transform:uppercase; }
 pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.58 var(--font-mono); color:var(--content-primary); }
 .content-panel pre { font-family:var(--font-sans); font-size:11px; line-height:1.65; }
+.assembly-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; }
+.assembly-grid div { min-width:0; }
+.assembly-grid span { display:block; color:var(--content-tertiary); font-size:8px; margin-bottom:3px; text-transform:uppercase; letter-spacing:.08em; }
+.assembly-grid strong,.assembly-grid code { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+.assembly-note { margin:12px 0 0; color:var(--content-tertiary); font-size:10px; line-height:1.5; }
 .source-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; }
 .source-grid div { min-width:0; }
 .source-grid span { display:block; color:var(--content-tertiary); font-size:8px; margin-bottom:3px; text-transform:uppercase; letter-spacing:.08em; }

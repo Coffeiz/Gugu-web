@@ -26,7 +26,13 @@ def test_adapter_for_minimax():
 
 def test_adapter_for_minimax_m2_vs_m3_cache():
     assert adapter_for(_ai(provider="minimax", model="MiniMax-M2.7")).supports_active_cache("MiniMax-M2.7")
-    assert not adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
+    assert adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
+
+
+def test_adapter_for_qwen_keeps_known_openai_cache_capability():
+    a = adapter_for(_ai(provider="qwen", model="qwen-max"))
+    assert a.name == "qwen"
+    assert a.supports_active_cache("qwen-max")
 
 
 def test_adapter_for_mimo_by_provider():
@@ -74,5 +80,6 @@ def test_adapter_for_unknown_provider_falls_back_to_default():
 
 def test_adapter_for_truly_unknown_provider_also_falls_back_to_default():
     a = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
-    assert a.name == "anthropic"
+    assert a.name == "unknown"
+    assert not a.supports_active_cache("")
     assert a.transient_exceptions == ()

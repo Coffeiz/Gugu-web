@@ -7,6 +7,6 @@ html[data-theme][data-family] .ci-delete:hover {
   color: var(--status-danger);
   background: var(--status-danger-bg);
 }
-html[data-theme][data-family] .project-status-dot.is-pending { background: var(--status-danger); }
-html[data-theme][data-family] .project-status-dot.is-active { background: var(--status-warning); }
-html[data-theme][data-family] .project-status-dot.is-done { background: var(--status-success); }
+html[data-theme='dark'][data-family] .project-status-dot.is-pending { background: var(--status-danger); }
+html[data-theme='dark'][data-family] .project-status-dot.is-active { background: var(--status-warning); }
+html[data-theme='dark'][data-family] .project-status-dot.is-done { background: var(--status-success); }

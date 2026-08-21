@@ -1,10 +1,14 @@
 # 开发约定索引
 
-- [前端开发约定](frontend.md)
-- [后端开发约定](backend.md)
-- [前台设计规范](design.md)
-- [Admin 设计规范](design-admin.md)
-- [测试约定](test.md)
+各领域详细约定已迁移至 `agentskills/` 目录：
+
+- [前端开发约定](../../agentskills/frontend/SKILL.md)
+- [后端开发约定](../../agentskills/backend/SKILL.md)
+- [画布/便签约定](../../agentskills/canvas-mind/SKILL.md)
+- [设计规范](../../agentskills/design/SKILL.md)（完整文档见 [references/](../../agentskills/design/references/)）
+- [测试约定](../../agentskills/testing/SKILL.md)
+- [Devserver 运维](../../agentskills/devserver/SKILL.md)
+- [许可证合规](licenses.md)
 - [本地开发约定](local.md)（仅本机，不提交）
 
-前端、后端或视觉交互修改前，先阅读对应文档；写/改测试前先看测试约定；通用基础规则见根目录 `AGENTS.md`。
+修改代码前，先阅读对应 skill；通用基础规则见根目录 `AGENTS.md`。

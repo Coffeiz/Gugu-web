@@ -43,6 +43,10 @@ async def _safe(listener: Callable, event: Event) -> None:
 
 # ── 内置 listener：记忆变更审计日志 ──
 async def _log_memory_updated(e: MemoryUpdated) -> None:
+    # 记忆是 session snapshot 的一部分；变更后让下一个 run 重新读取，而不是
+    # 继续命中旧快照。事件总线本身仍保持 best-effort，不阻塞记忆写入。
+    from app.core import events as context_events
+    await context_events.bump_context_revision(e.user_id, "memory")
     _log.info("memory.updated user=%s +%d -%d src=%s",
               str(e.user_id)[:8], e.added, e.removed, e.source)
 

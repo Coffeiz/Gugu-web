@@ -75,8 +75,10 @@ html[data-theme='dark'][data-family] .entity-sticker[data-runtime-proxy-content=
   -webkit-backdrop-filter: var(--glass-blur) !important;
 }
 
-/* Shared file/folder cards keep their existing card contract; only replace Runtime's white glass. */
-html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true'] {
+/* Shared file/folder cards only need the dark grabbing correction. As soon as Runtime changes the
+   phase to landing this selector stops matching, so the component-owned target background/border can
+   participate in Visual.ts' existing transition instead of staying frozen at the grabbing surface. */
+html[data-theme='dark'][data-family] :is(.fc-card, .folder-card)[data-runtime-proxy-content='true']:is([data-runtime-phase='grab-start'], [data-runtime-phase='grabbing']) {
   background-color: var(--surface-card-solid) !important;
   border-color: var(--border-strong) !important;
 }

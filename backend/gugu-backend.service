@@ -13,6 +13,9 @@ WorkingDirectory=__APP_DIR__
 # （libreoffice/pdftotext 等，见 app/core/doctext.py）时报 FileNotFoundError
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
+# 与 worker/supervisor 保持一致，网页请求也可继续上报 LoopScope
+Environment="LOOPSCOPE_ENABLED=1"
+Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
 ExecStart=__APP_DIR__/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure
 RestartSec=3

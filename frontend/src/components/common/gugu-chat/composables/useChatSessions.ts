@@ -98,7 +98,18 @@ export function useChatSessions(options: {
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
       options.scrollBottom(true)
-      if (data.active) options.resumeStream(id)   // 该会话后端正在生成 → 重连续看
+      // DB 持久化和 genstream.end() 不是同一个事务：生成刚完成时，接口可能短暂同时返回
+      // 「最后一条是完整 assistant」和 active=true。此时不能把已完成回复再次 resume，
+      // 否则 Redis 快照会被渲染成第二个生成气泡。只有最后一条可见消息不是完整 assistant
+      // 时，active 才代表真正尚未落库的中断生成。
+      const lastVisible = data.messages[data.messages.length - 1]
+      const staleActive = Boolean(
+        data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
+      )
+      if (staleActive) {
+      } else if (data.active) {
+        options.resumeStream(id)   // 该会话后端正在生成 → 重连续看
+      }
     } catch {}
   }
 

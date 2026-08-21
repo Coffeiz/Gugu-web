@@ -28,7 +28,8 @@ from app.core.url_security import resolve_pinned_ip
 
 _log = logging.getLogger("agent.tools.web")
 
-_MAX_BODY = 4000
+_MAX_BODY = 4000          # 默认返回字符数（模型可通过 max_chars 参数调整）
+_MAX_BODY_HARD = 40000    # 硬上限：即使模型请求更多也不超过此值（~10k tokens，不撑爆上下文）
 _MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）
@@ -103,6 +104,11 @@ async def _http_get(db, user_id, args: dict):
     url = (args.get("url") or "").strip()
     if not url:
         return {"error": "缺少 url"}
+    # 允许模型按需调整返回字符数，默认 4000，硬上限 20000
+    max_chars = _MAX_BODY
+    req_limit = args.get("max_chars")
+    if isinstance(req_limit, int) and req_limit > 0:
+        max_chars = min(req_limit, _MAX_BODY_HARD)
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     p = urlparse(url)
@@ -162,7 +168,8 @@ async def _http_get(db, user_id, args: dict):
             diag_log("agent.tools.web.http_get.pdf_extract", e)
             return {"error": redact(f"PDF 提取失败：{type(e).__name__}: {e}")}
         return {"status": status_code, "url": url, "content_type": content_type,
-                "body": text[:_MAX_BODY], "truncated": len(text) > _MAX_BODY}
+                "body": text[:max_chars], "truncated": len(text) > max_chars,
+                "total_chars": len(text)}
 
     if content_type in ("text/html", "application/xhtml+xml") or (not content_type and _looks_like_html(body_text)):
         import trafilatura
@@ -173,15 +180,17 @@ async def _http_get(db, user_id, args: dict):
                              "客户端渲染的内容）。先看 status 是否正常；status 正常但读不到正文的话，"
                              "换 web_search/deep_research 查这个主题，或换个来源"}
         return {"status": status_code, "url": url, "content_type": content_type,
-                "body": extracted[:_MAX_BODY], "truncated": len(extracted) > _MAX_BODY}
+                "body": extracted[:max_chars], "truncated": len(extracted) > max_chars,
+                "total_chars": len(extracted)}
 
     body = body_text
     return {
         "status": status_code,
         "url": url,
         "content_type": content_type,
-        "body": body[:_MAX_BODY],
-        "truncated": len(body) > _MAX_BODY,
+        "body": body[:max_chars],
+        "truncated": len(body) > max_chars,
+        "total_chars": len(body),
     }
 
 
@@ -195,11 +204,14 @@ class WebSkill(BaseSkill):
                         "markdown（去导航/广告/JS 噪音，带内联链接——想接着读某条链接就再调一次 http_get 传"
                         "那个 URL，不用重新搜）；PDF 自动提取文字；其它（JSON/纯文本等）原样返回，内容截断。"
                         "读不出正文（返回 error 提示可能是 JS 渲染页面）就换 web_search/deep_research。"
-                        "也供天气等技能取实时数据用——通常由 use_skill 拉到的技能说明里指示你调用。",
+                        "也供天气等技能取实时数据用——通常由 use_skill 拉到的技能说明里指示你调用。"
+                        "返回 truncated=true 且 total_chars 远大于已返回长度时，可用 max_chars 参数"
+                        "请求更多内容（上限 40000）。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "url": {"type": "string", "description": "完整 URL，如 https://wttr.in/Beijing?format=3"},
+                    "max_chars": {"type": "integer", "description": "返回正文的最大字符数，默认 4000，上限 40000。长文可设大些"},
                 },
                 "required": ["url"],
             },

@@ -130,8 +130,7 @@ html[data-theme][data-family] .done-col .archived-entry-mini {
 }
 html[data-theme][data-family] .done-col .year-row:hover,
 html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .done-col .year-chev,
-html[data-theme][data-family] .done-col .month-chev { color: var(--content-tertiary); }
+/* FlipChevron 组件自带颜色，不再需要外部 theme override。 */
 html[data-theme][data-family] .done-col .year-label { color: var(--content-secondary); }
 html[data-theme][data-family] .done-col .year-label.undated,
 html[data-theme][data-family] .done-col .year-cnt,

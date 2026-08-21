@@ -53,7 +53,7 @@ async def test_qq_group_unknown_uses_minimum_allowlist(db, user_a):
     access = await resolve_qq_group_access(db, bot.id, user_a.id, "member-1")
 
     assert access.role == "unknown"
-    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "send_file"]
+    assert access.allowed_tool_names == ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
 
 
 async def test_group_context_search_only_reads_current_group(db, user_a, monkeypatch):
@@ -224,7 +224,7 @@ async def test_non_qq_group_defaults_to_unknown_minimal_access(monkeypatch):
 
     assert prepared.actor.role == "unknown"
     assert prepared.request.im_role == "unknown"
-    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "image_search", "send_file"]
+    assert prepared.request.allowed_tool_names == ["web_search", "http_get", "image_search", "inspect_images", "send_file"]
     assert prepared.request.user_name == "群友"
     assert prepared.request.chat_id == "wx-group-1"
 
@@ -338,6 +338,20 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
     assert "发言人ID=member-2" in formatted
     assert "显示名=CoffeiZzz" in formatted
     assert formatted.endswith("看看项目")
+
+
+def test_current_message_time_matches_history_message_time():
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from agent.im.context_loader import format_history_content, format_message_time
+    from agent.models import AgentRequest
+
+    request = AgentRequest(message="同一条", user_id="owner", user_name="小北")
+    sent_at = datetime(2026, 8, 20, 20, 59, tzinfo=timezone.utc)
+    message = SimpleNamespace(role="user", content="同一条", sent_at=sent_at)
+
+    assert format_message_time("同一条", sent_at) == format_history_content(message, request)
 
 
 def test_current_group_message_has_priority_sender_anchor():

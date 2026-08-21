@@ -199,11 +199,13 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    timezone_changed = False
     if body.display_name is not None:
         current_user.display_name = body.display_name.strip() or None
 
     if body.timezone is not None:
         tz = body.timezone.strip()
+        timezone_changed = tz != (current_user.timezone or "")
         if not tz:
             current_user.timezone = None
         else:
@@ -222,6 +224,9 @@ async def update_profile(
         current_user.hashed_password = hash_password(body.new_password)
 
     await db.commit()
+    if timezone_changed:
+        from app.core import events
+        await events.bump_context_revision(current_user.id, "timezone")
     await db.refresh(current_user)
     return UserResponse.from_user(current_user)
 

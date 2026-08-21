@@ -1,5 +1,5 @@
 <template>
-  <div ref="trackRef" class="drawer-track scroll-surface scroll-surface--compact" data-layout-role="track" data-layout-key="drawer-track">
+  <div ref="trackRef" class="drawer-track scroll-surface scroll-surface--compact" data-layout-role="track" data-layout-key="drawer-track" data-scroll-viewport>
     <slot />
   </div>
 </template>

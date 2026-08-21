@@ -30,7 +30,7 @@ start_web() {
   /usr/bin/fuser -k "$PORT/tcp" 2>/dev/null
   sleep 2
   echo "[web] 启动 …"
-  nohup setsid "$PY" "$UV" app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 \
+  nohup setsid LOOPSCOPE_ENABLED=1 "$PY" "$UV" app.main:app --host 0.0.0.0 --port "$PORT" --workers 1 \
         >> logs/gugu-web-dev.log 2>&1 < /dev/null &
   disown 2>/dev/null || true
   sleep 6
@@ -43,7 +43,7 @@ start_worker() {
   echo "[worker] 停旧 + 启动 …"
   pkill -9 -f "python -m worker" 2>/dev/null
   sleep 1
-  nohup setsid "$PY" -m worker >> logs/gugu-worker-dev.log 2>&1 < /dev/null &
+  nohup setsid LOOPSCOPE_ENABLED=1 "$PY" -m worker >> logs/gugu-worker-dev.log 2>&1 < /dev/null &
   disown 2>/dev/null || true
   sleep 4
   grep -q "\[worker\] started" <(tail -5 logs/gugu-worker-dev.log 2>/dev/null) && echo "[worker] up" \
@@ -54,7 +54,7 @@ start_supervisor() {
   echo "[supervisor] 停旧（含 qq/feishu/wechat 网关）+ 启动 …"
   pkill -9 -f "agent.adapters.supervisor|agent.adapters.feishu|agent.adapters.qq|agent.adapters.wechat" 2>/dev/null
   sleep 1
-  nohup setsid "$PY" -m agent.adapters.supervisor >> logs/gugu-supervisor-dev.log 2>&1 < /dev/null &
+  nohup setsid LOOPSCOPE_ENABLED=1 "$PY" -m agent.adapters.supervisor >> logs/gugu-supervisor-dev.log 2>&1 < /dev/null &
   disown 2>/dev/null || true
   sleep 3
   grep -qE "网关就绪|网关启动" logs/gugu-supervisor-dev.log 2>/dev/null && echo "[supervisor] 网关已起" || echo "[supervisor] 启动中（看 logs/gugu-supervisor-dev.log）"

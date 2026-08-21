@@ -10,8 +10,8 @@ export async function listTraceSessions() {
   return r.json()
 }
 
-export async function listRuns(sessionId: number | string): Promise<TraceRun[]> {
-  const key = encodeURIComponent(`gugu:web:${sessionId}`)
+export async function listRuns(sessionId: number | string, source = 'web'): Promise<TraceRun[]> {
+  const key = encodeURIComponent(`gugu:${source}:${sessionId}`)
   const r = await fetch(`${BASE}/sessions/${key}/runs`)
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
   return r.json()

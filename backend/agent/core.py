@@ -137,6 +137,7 @@ from agent.security.core_guards import (
     _looks_like_narration, _NARRATION_NUDGE,
     _is_decision_dodge, _DECISION_NUDGE,
     _announces_intent, _INTENT_NUDGE,
+    _could_be_tool_progress, _is_tool_progress_only, _TOOL_REQUIRED_NUDGE,
 )
 
 
@@ -186,6 +187,9 @@ async def _im_cancelled() -> bool:
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return False
+    await rt.refresh_activity(
+        im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+    )
     cancelled = await rt.is_cancelled(
         im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
     )
@@ -233,33 +237,37 @@ class LLMRunner:
         return _pick_label(self.labels.get(name, name if default is None else default))
 
     def run(self, user_id, system_text: str, messages: list,
-            use_anthropic: bool, model_cfg=None) -> AsyncGenerator[str, None]:
+            use_anthropic: bool, model_cfg=None,
+            session_id: int | None = None) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
         if use_anthropic:
-            return self._run_anthropic(user_id, system_text, messages, ai)
-        return self._run_openai(user_id, messages, ai)
+            return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id)
+        return self._run_openai(user_id, messages, ai, session_id=session_id)
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
-                             messages: list, ai=None) -> AsyncGenerator[str, None]:
+                             messages: list, ai=None,
+                             session_id: int | None = None) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
-                                          system_text=system_text):
+                                          system_text=system_text, session_id=session_id):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
-    async def _run_openai(self, user_id, messages: list, ai=None) -> AsyncGenerator[str, None]:
+    async def _run_openai(self, user_id, messages: list, ai=None,
+                          session_id: int | None = None) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
-                                          system_text=None):
+                                          system_text=None, session_id=session_id):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
     async def _run_loop(self, driver, user_id, messages: list, ai,
-                         system_text: str | None) -> AsyncGenerator[str, None]:
+                         system_text: str | None,
+                         session_id: int | None = None) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
         调用 `driver`（`agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`）。
@@ -274,16 +282,22 @@ class LLMRunner:
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
         from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
+        # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
+        from agent.tools import search as search_tools
+        search_tools.reset_image_inspection_budget()
         client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; round_i = 0; empty_retry = 0
-        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0   # 真实性守卫状态
-        _user_req = _user_text(messages[-1]["content"]) if messages and messages[-1].get("role") == "user" else ""
+        any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0
+        tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
+        _request_conversation = getattr(messages, "conversation", messages)
+        _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
         total_in = total_out = total_cache = 0
+        compaction_attempts = 0
 
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
             round_i += 1
@@ -292,9 +306,62 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
 
+            # 上下文压缩检测：超过 90% 预算时触发压缩
+            from agent.context import compaction, tokens
+            context_tokens = getattr(ai, "context_tokens", 256000)
+            current_length = await compaction.estimate_context_length(messages, system_text)
+            if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
+                # 仍开始下一次摘要请求。
+                if await _im_cancelled():
+                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                    return
+                if compaction_attempts >= 1:
+                    _log.error(
+                        "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s attempts=%s",
+                        current_length, compaction_attempts,
+                    )
+                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                    return
+                yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
+                compacted_messages, compacted = await compaction.compact_context(
+                    list(getattr(messages, "conversation", messages)), system_text, context_tokens,
+                    session_id=session_id, user_id=user_id,
+                    fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                )
+                if await _im_cancelled():
+                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                    return
+                if hasattr(messages, "replace_conversation"):
+                    messages.replace_conversation(compacted_messages)
+                else:
+                    messages = compacted_messages
+                if compacted:
+                    compacted_length = await compaction.estimate_context_length(messages, system_text)
+                    compaction_attempts += 1
+                    if compacted_length >= current_length:
+                        _log.error(
+                            "[core] 上下文压缩没有取得进展，停止重复压缩：before=%s after=%s",
+                            current_length, compacted_length,
+                        )
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩没有取得足够空间，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                        return
+                    if compacted_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                        _log.error(
+                            "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s after=%s",
+                            current_length, compacted_length,
+                        )
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                        return
+                    _log.info("[core] 上下文已压缩，重试当前 round")
+                    round_i -= 1  # 重试当前 round
+                    continue
+
             _tok = 0
             result = None
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
+            _progress_buf: list[str] = []
+            _progress_pending = False
             try:
                 _round_gen = driver.run_round(client, ctx, messages)
                 async for _kind, _val in _round_gen:
@@ -304,7 +371,23 @@ class LLMRunner:
                     if verify_mode:
                         _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
                     else:
-                        yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                        # 对可能是“正在查询”占位话术的前缀暂存到 round 结束；如果后续
+                        # 变成正常句子则原样 flush，只有确认是纯占位且无 tool call 时丢弃。
+                        if _progress_pending:
+                            candidate = "".join(_progress_buf) + _val
+                            if _could_be_tool_progress(candidate):
+                                _progress_buf.append(_val)
+                            else:
+                                for _pending in _progress_buf:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                                _progress_buf.clear()
+                                _progress_pending = False
+                                yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
+                        elif _could_be_tool_progress(_val):
+                            _progress_pending = True
+                            _progress_buf.append(_val)
+                        else:
+                            yield f"data: {json.dumps({'type': 'token', 'content': _val})}\n\n"
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
@@ -341,7 +424,16 @@ class LLMRunner:
             total_out += result.usage_out
             total_cache += result.cache_tokens
 
+            _requires_tools = result.requires_tools
+            if _requires_tools is None:
+                _requires_tools = bool(result.tool_calls)
+
             if result.tool_calls:
+                if _progress_pending:
+                    for _pending in _progress_buf:
+                        yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                    _progress_buf.clear()
+                    _progress_pending = False
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
                 if verify_mode and not verify_fixed and _verify_buf and any(tc.name in _mutset for tc in result.tool_calls):
@@ -398,7 +490,21 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
 
+            # 核实阶段结束：不再需要补做/强查 → 把缓冲的核实文字发给用户，退出核实模式。
+            if verify_mode and _verify_buf:
+                async for _line in genstream.typed_stream(''.join(_verify_buf)):
+                    yield _line
+            verify_mode = False
+            _verify_buf = []
+
             _final_text = result.text
+            # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
+            # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
+            if _progress_pending and not _is_tool_progress_only(_final_text):
+                for _pending in _progress_buf:
+                    yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
+                _progress_buf.clear()
+                _progress_pending = False
             # 空回复兜底：整轮无正文、没动工具、不在核实阶段 → 先追一轮要正文，仍空给句得体兜底。
             if not _final_text.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
@@ -423,6 +529,15 @@ class LLMRunner:
                     and _announces_intent(_final_text)):
                 intent_retry += 1
                 driver.append_followup(messages, result, _INTENT_NUDGE)
+                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                continue
+            # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
+            # 本轮都不能作为最终回复结束。当前内置驱动的 requires_tools 由 tool_calls
+            # 推导，保留该分支供支持显式决策的 provider 适配器使用。
+            if (not any_tool_called and not verify_mode and tool_intent_retry < 1
+                    and (_requires_tools is True or _is_tool_progress_only(_final_text))):
+                tool_intent_retry += 1
+                driver.append_followup(messages, result, _TOOL_REQUIRED_NUDGE)
                 yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
