@@ -272,6 +272,44 @@ class _OpenAIRaw:
     tool_calls_payload: list
 
 
+def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
+    """把工具返回的 Anthropic 视觉块转换成 OpenAI 可接受的消息。
+
+    工具 registry 为了兼容 Anthropic，会把图片放成 ``image/source`` 块。
+    OpenAI 兼容接口不能把这种块原样放进 ``role=tool``；文本结果留在 tool
+    消息里，图片作为紧随其后的 user 多模态消息交给模型。
+    """
+    if not isinstance(res, list):
+        if isinstance(res, str):
+            return res, []
+        return json.dumps(res, ensure_ascii=False), []
+
+    text_parts: list[str] = []
+    image_parts: list[dict] = []
+    for block in res:
+        if not isinstance(block, dict):
+            text_parts.append(str(block))
+            continue
+        if block.get("type") == "text":
+            value = block.get("text")
+            if value:
+                text_parts.append(str(value))
+            continue
+        if block.get("type") == "image":
+            source = block.get("source") or {}
+            if source.get("type") == "base64" and source.get("data"):
+                media = source.get("media_type") or "image/jpeg"
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media};base64,{source['data']}"},
+                })
+                continue
+        # 未知块不要直接丢失，保留一个不会破坏 OpenAI schema 的摘要。
+        text_parts.append(json.dumps(block, ensure_ascii=False))
+
+    return "\n".join(text_parts) or "工具已执行。", image_parts
+
+
 class OpenAIDriver:
     api_format = "openai"
 
@@ -418,8 +456,19 @@ class OpenAIDriver:
                 for b in raw.tool_calls_payload
             ],
         ))
+        visual_parts: list[dict] = []
         for tc, res in dispatched:
-            messages.append({"role": "tool", "tool_call_id": tc.id, "content": res})
+            content, images = _openai_tool_result(res)
+            messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
+            visual_parts.extend(images)
+        if visual_parts:
+            messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "text",
+                    "text": "工具返回了以下图片，请结合工具文字结果继续处理。",
+                }, *visual_parts],
+            })
 
     def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
         messages.append(self._asst(result.raw, result.text or assistant_fallback))
