@@ -40,6 +40,7 @@ const groupResponseOptions = [
 ] as const
 const groupToolOptions = [
   { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图/读图/发图', tools: ['web_search', 'http_get', 'image_search', 'inspect_images', 'send_file'] },
+  { key: 'search_similar_images', label: '相似图搜索', tools: ['search_similar_images'] },
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
 const platforms = [

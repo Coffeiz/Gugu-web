@@ -639,11 +639,12 @@ async def test_connection(body: TestConnectionRequest):
 # ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "searxng_images", "tavily"]
+    target:          Literal["searxng", "searxng_images", "tavily", "baidu_similar_images"]
     searxng_url:     str = ""   # 留空=用已存配置
     searxng_engines: str = ""
     searxng_image_engines: str = ""
     tavily_api_key:  str = ""   # 留空=用已存配置
+    baidu_qianfan_api_key: str = ""   # 留空=用已存配置
 
 
 @router.post("/test-search")
@@ -697,6 +698,25 @@ async def test_search(body: SearchTestRequest):
         except Exception as e:
             return {"ok": False, "message": f"Key 无效或请求失败：{str(e)[:90]}"}
         return {"ok": True, "message": "OK — Tavily Key 有效（本次测试消耗 1 次调用）"}
+
+    elif body.target == "baidu_similar_images":
+        key = body.baidu_qianfan_api_key or cfg.search.baidu_qianfan_api_key
+        if not key:
+            return {"ok": False, "message": "未配置百度千帆 API Key"}
+        # 只发一个固定的 1x1 PNG 作为连通性测试，不读取用户输入，也不把图片内容写入日志。
+        probe_png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        )
+        try:
+            from agent.tools.search import _call_baidu_similar_image
+            result = await _call_baidu_similar_image(
+                probe_png, key, 1, cfg.search.similar_image_timeout_seconds,
+            )
+        except Exception:
+            return {"ok": False, "message": "百度相似图搜索测试失败，请查看受限诊断日志"}
+        if result.get("error"):
+            return {"ok": False, "message": result["error"]}
+        return {"ok": True, "message": "百度千帆相似图搜索连接正常（本次测试可能消耗 1 次调用）"}
 
     return {"ok": False, "message": "未知测试目标"}
 

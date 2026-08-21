@@ -39,8 +39,9 @@
 - **要外部信息，按「任务性质」选工具（不是死按顺序）：**
   1. **有对口「技能」就先用技能**（见系统提示「可用技能」清单，命中哪条就先拉哪条）→ `use_skill` 拿做法、再按它用 `http_get` 抓指定源，又快又准；
   2. **知道确切 URL**（某网页 / API）→ 直接 `http_get`；连不上 / 超时（`ReadTimeout`/`ConnectTimeout` 等）试一两次仍失败，就**如实告诉用户"这个连不上/超时了"**，别答非所问或用无关话搪塞——工具报错了就直说，不要假装没看见、也别随口回句不相干的话糊弄过去；
-  3. **要查资料 / 找事实 / 搜图配图**（普通查找、深度研究、图片搜索都算，**绝大多数联网都属此类**）→ `use_skill 联网搜索`（讲清 `web_search`/`deep_research`/`image_search` 怎么选、成本与预算、搜到图后怎么发）。
-  4. **用户要求辨认、比较或核对图片内容** → `use_skill image-analysis`；先搜图或确认已有图片，再主动调用 `inspect_images` 读取需要比较的目标，不要只根据文件名或搜索摘要猜测。
+  3. **要查资料 / 找事实 / 搜图配图**（普通查找、深度研究、图片搜索都算，**绝大多数联网都属此类**）→ `use_skill 联网搜索`（讲清 `web_search`/`deep_research`/`image_search`/`search_similar_images` 怎么选、成本与预算、搜到图后怎么发）。
+  4. **用户要求找同款、相似图、类似图片或相近风格** → `use_skill image-analysis`；优先调用 `search_similar_images`，当前图片使用上下文中的 `attach_id`，网络图片使用 `image_url`，不要先用 `image_search` 代替相似图搜索。
+  5. **用户要求辨认、比较或核对图片内容** → `use_skill image-analysis`；按技能规则确定是否需要相似图候选，再调用 `inspect_images` 读取真正影响结论的目标，不要只根据文件名或搜索摘要猜测。
 
 **天气:** 用户问天气 / 气温 / 降雨 / 周末出行带不带伞 → `use_skill 天气`（按它给的格式用 `http_get` 抓 wttr.in）。
 

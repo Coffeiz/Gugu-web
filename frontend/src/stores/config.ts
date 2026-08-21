@@ -3,7 +3,7 @@ import { ref, reactive } from 'vue'
 import { useAdminStore } from './admin'
 
 // 后端对密码类字段返回 "****"，前端拿到后清空，存回时跳过空值（视为"未修改"）
-const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key'])
+const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key', 'baidu_qianfan_api_key'])
 
 function sanitizeForEdit(obj: Record<string, unknown>) {
   const out: Record<string, unknown> = {}
@@ -96,6 +96,11 @@ export const useConfigStore = defineStore('config', () => {
       searxng_engines: 'sogou,quark,360search',
       searxng_image_engines: '',
       max_results: 5,
+      similar_image_enabled: false,
+      baidu_qianfan_api_key: '',
+      similar_image_default_count: 10,
+      similar_image_timeout_seconds: 20,
+      similar_image_limit_daily: 10,
     },
     smtp: {
       host: '',

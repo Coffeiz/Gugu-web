@@ -148,6 +148,11 @@ class SearchSettings(BaseModel):
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
     searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
+    similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
+    baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
+    similar_image_default_count: int = Field(10, ge=1, le=50, description="相似图搜索默认返回数量")
+    similar_image_timeout_seconds: int = Field(20, ge=5, le=60, description="相似图搜索请求超时秒数")
+    similar_image_limit_daily: Optional[int] = Field(10, ge=1, description="每个用户每日相似图搜索次数上限")
 
 
 class StateLabelSettings(BaseModel):

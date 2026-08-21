@@ -589,6 +589,50 @@
 
           <div class="behavior-item">
             <div class="behavior-label">
+              <span>百度千帆相似图搜索</span>
+              <span class="behavior-desc">默认关闭；Web/私聊所有者可用，群成员需显式加入 Bot 工具白名单</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
+              <span v-if="searchTest.baidu_similar_images.msg" :title="searchTest.baidu_similar_images.msg"
+                    :style="{ color: searchTest.baidu_similar_images.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
+                {{ searchTest.baidu_similar_images.msg }}
+              </span>
+              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.baidu_similar_images.loading" @click="testSearch('baidu_similar_images')">
+                {{ searchTest.baidu_similar_images.loading ? '测试中…' : '测试' }}
+              </button>
+              <input type="checkbox" v-model="searchDraft.similar_image_enabled" title="启用百度相似图搜索" />
+              <input type="password" class="behavior-input" style="width:280px; flex-shrink:0;"
+                     v-model="searchDraft.baidu_qianfan_api_key" autocomplete="new-password"
+                     placeholder="百度 API Key（留空=不修改）" />
+            </div>
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>相似图默认结果数</span>
+              <span class="behavior-desc">范围 1～50</span>
+            </div>
+            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_default_count" min="1" max="50" />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>相似图每日限额</span>
+              <span class="behavior-desc">按用户统计</span>
+            </div>
+            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_limit_daily" min="1" />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>相似图请求超时</span>
+              <span class="behavior-desc">范围 5～60 秒</span>
+            </div>
+            <input type="number" class="behavior-input" v-model.number="searchDraft.similar_image_timeout_seconds" min="5" max="60" />
+          </div>
+
+          <div class="behavior-item">
+            <div class="behavior-label">
               <span>默认返回结果数</span>
               <span class="behavior-desc">每次搜索返回多少条结果</span>
             </div>
@@ -2165,13 +2209,16 @@ const searchTest = reactive({
   searxng:        { loading: false, ok: false, msg: '' },
   searxng_images: { loading: false, ok: false, msg: '' },
   tavily:         { loading: false, ok: false, msg: '' },
+  baidu_similar_images: { loading: false, ok: false, msg: '' },
 })
-async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily') {
+async function testSearch(target: 'searxng' | 'searxng_images' | 'tavily' | 'baidu_similar_images') {
   const t = searchTest[target]
   t.loading = true; t.msg = ''
   try {
     const payload = target === 'tavily'
       ? { target, tavily_api_key: searchDraft.tavily_api_key || '' }   // 留空=用已存 key
+      : target === 'baidu_similar_images'
+        ? { target, baidu_qianfan_api_key: searchDraft.baidu_qianfan_api_key || '' }
       : target === 'searxng_images'
         ? { target, searxng_url: searchDraft.searxng_url || '', searxng_image_engines: searchDraft.searxng_image_engines || '' }
         : { target, searxng_url: searchDraft.searxng_url || '', searxng_engines: searchDraft.searxng_engines || '' }
