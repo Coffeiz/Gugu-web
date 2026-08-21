@@ -100,8 +100,8 @@ import DrawerTrack from './drawer/DrawerTrack.vue'
 import DrawerViewport from './drawer/DrawerViewport.vue'
 import CanvasDrawerContent from './CanvasDrawerContent.vue'
 import { runtime } from '@/interaction/runtime'
-import { useSurface } from '@/interaction/runtime/vue'
 import { MIND_CANVAS_DRAWER_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, MIND_PROJECT_OBJECT_TYPE } from '@/interaction/runtime/canvas'
+import { useMindFloatingSurface } from '../composables/useMindFloatingSurface'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -156,7 +156,7 @@ const projectGroups = computed(() => [
 // 挂载和分组自己的入场动画谁先谁后，会露出一帧还没被物理模块接管的本体，见 devlog）。
 const visibleProjectGroups = computed(() => projectGroups.value)
 const openProjectStatuses = ref(new Set<string>(['active', 'pending']))
-const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useSurface({
+const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useMindFloatingSurface({
   id: MIND_CANVAS_DRAWER_SURFACE_ID,
   type: 'mind-drawer',
   accepts: ['mind-drawer-inactive'],
@@ -169,7 +169,7 @@ const { elementRef: canvasSurfaceRef, isAnimating: canvasAnimating } = useSurfac
     maxHeight: () => window.innerHeight * 0.55,
   },
 })
-const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useSurface({
+const { elementRef: projectSurfaceRef, isAnimating: projectAnimating } = useMindFloatingSurface({
   id: MIND_PROJECT_DRAWER_SURFACE_ID,
   type: 'mind-drawer',
   accepts: () => expanded.value && panel.value === 'projects'

@@ -186,6 +186,9 @@ async def _im_cancelled() -> bool:
     im = imctx.get_im()
     if not im or not im.get("puid"):
         return False
+    await rt.refresh_activity(
+        im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+    )
     cancelled = await rt.is_cancelled(
         im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
     )
@@ -289,6 +292,7 @@ class LLMRunner:
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
         total_in = total_out = total_cache = 0
+        compaction_attempts = 0
 
         while round_i < MAX_ROUNDS + MAX_VERIFY * 2:   # 核实轮额外预算，不挤占任务的 MAX_ROUNDS
             round_i += 1
@@ -302,17 +306,48 @@ class LLMRunner:
             context_tokens = getattr(ai, "context_tokens", 256000)
             current_length = await compaction.estimate_context_length(messages, system_text)
             if current_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
+                # 仍开始下一次摘要请求。
+                if await _im_cancelled():
+                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                    return
+                if compaction_attempts >= 1:
+                    _log.error(
+                        "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s attempts=%s",
+                        current_length, compaction_attempts,
+                    )
+                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                    return
                 yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
                 compacted_messages, compacted = await compaction.compact_context(
                     list(getattr(messages, "conversation", messages)), system_text, context_tokens,
                     session_id=session_id, user_id=user_id,
                 )
+                if await _im_cancelled():
+                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
+                    return
                 if hasattr(messages, "replace_conversation"):
                     messages.replace_conversation(compacted_messages)
                 else:
                     messages = compacted_messages
                 if compacted:
-                    logger.info("[core] 上下文已压缩，重试当前 round")
+                    compacted_length = await compaction.estimate_context_length(messages, system_text)
+                    compaction_attempts += 1
+                    if compacted_length >= current_length:
+                        _log.error(
+                            "[core] 上下文压缩没有取得进展，停止重复压缩：before=%s after=%s",
+                            current_length, compacted_length,
+                        )
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩没有取得足够空间，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                        return
+                    if compacted_length > context_tokens * compaction.COMPACTION_THRESHOLD_RATIO:
+                        _log.error(
+                            "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s after=%s",
+                            current_length, compacted_length,
+                        )
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
+                        return
+                    _log.info("[core] 上下文已压缩，重试当前 round")
                     round_i -= 1  # 重试当前 round
                     continue
 

@@ -15,6 +15,8 @@ import json
 from app.core.redis import get_redis
 
 _CONTEXT_RESOURCES = {"projects", "calendar", "files", "memory"}
+# snapshot 新鲜度覆盖的输入比前端 SSE 资源集合更大。
+_CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im_channels"}
 
 # 改动型工具 → 受影响的前端资源。只列「会变数据」的工具（list_/get_/read_ 等只读不列）。
 # 新增改动型工具时记得在这里登记，否则网页不会实时刷新。
@@ -70,7 +72,7 @@ async def bump_context_revision(user_id, *resources: str) -> None:
     # 兼容 mind.canvas 的旧调用签名：publish(user_id, resource, action, payload)
     # 后两个位置参数可能是字典，版本判断只消费字符串资源名。
     resource_names = {resource for resource in resources if isinstance(resource, str)}
-    if not _CONTEXT_RESOURCES.intersection(resource_names):
+    if not _CONTEXT_REVISION_SOURCES.intersection(resource_names):
         return
     try:
         key = f"context-revision:{user_id}"

@@ -114,7 +114,8 @@ async function refreshSessions() {
 }
 async function refreshRuns() {
   if (!activeId.value) { runs.value = []; return }
-  const list = await listRuns(activeId.value).catch(() => [])
+  const source = activeSession.value?.source || 'web'
+  const list = await listRuns(activeId.value, source).catch(() => [])
   runs.value = await Promise.all(list.map(r => getRun(r.id).catch(() => r)))
 }
 async function selectSession(id: number) {

@@ -10,6 +10,9 @@ WorkingDirectory=__APP_DIR__
 # venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令时报 FileNotFoundError
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
+# supervisor 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
+Environment="LOOPSCOPE_ENABLED=1"
+Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
 ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.supervisor
 # 网关管家，死了连带网关一起没，必须自动拉起
 Restart=always

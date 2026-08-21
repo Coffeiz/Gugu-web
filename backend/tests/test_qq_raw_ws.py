@@ -1,4 +1,5 @@
 from agent.gateway import qq
+from agent.im.qq_ref_index import QQRefIndex, ref_index_key
 
 
 def test_qq_heartbeat_ack_timeout_after_two_and_a_half_intervals():
@@ -206,6 +207,48 @@ def test_qq_extracts_quoted_text_by_ref_msg_idx():
     assert attachments == []
 
 
+def test_qq_extracts_direct_quoted_image_from_message_reference():
+    data = _raw_c2c_event(
+        message_reference={
+            "content": "看看这张图",
+            "attachments": [{
+                "url": "https://cdn.example/quoted.png",
+                "filename": "quoted.png",
+                "content_type": "image/png",
+            }],
+        },
+        msg_elements=[],
+    )
+
+    text, attachments = qq._extract_quoted(data)
+
+    assert text == "看看这张图"
+    assert attachments == [{
+        "url": "https://cdn.example/quoted.png",
+        "filename": "quoted.png",
+        "content_type": "image/png",
+    }]
+
+
+def test_qq_extracts_nested_quoted_media_url():
+    data = _raw_c2c_event(
+        quote={
+            "text": "嵌套引用",
+            "attachment": {"href": "https://cdn.example/nested.jpg", "type": "image/jpeg"},
+        },
+        msg_elements=[],
+    )
+
+    text, attachments = qq._extract_quoted(data)
+
+    assert text == "嵌套引用"
+    assert attachments == [{
+        "url": "https://cdn.example/nested.jpg",
+        "filename": "引用图片.jpg",
+        "content_type": "image/jpeg",
+    }]
+
+
 def test_qq_extracts_quoted_text_with_numeric_msg_idx():
     data = _raw_c2c_event(
         msg_elements=[
@@ -269,6 +312,34 @@ def test_qq_extract_quoted_returns_empty_without_ref_msg_idx():
 
     assert text == ""
     assert attachments == []
+
+
+def test_qq_ref_index_restores_quoted_attachments_after_reopen(tmp_path, monkeypatch):
+    monkeypatch.setenv("QQ_REF_INDEX_DIR", str(tmp_path))
+    first = QQRefIndex(owner="owner", bot_id="bot")
+    key = ref_index_key("c2c", "", "sender", "msg-1")
+    first.set(key, {
+        "message_id": "message-1",
+        "sender_id": "sender",
+        "content": "原图",
+        "attachments": [{"url": "https://example.test/original.png", "filename": "original.png"}],
+    })
+
+    second = QQRefIndex(owner="owner", bot_id="bot")
+    restored = second.get(key)
+
+    assert restored is not None
+    assert restored["content"] == "原图"
+    assert restored["attachments"][0]["url"] == "https://example.test/original.png"
+
+
+def test_qq_ref_index_isolated_by_chat_scope(tmp_path, monkeypatch):
+    monkeypatch.setenv("QQ_REF_INDEX_DIR", str(tmp_path))
+    index = QQRefIndex(owner="owner", bot_id="bot")
+    index.set(ref_index_key("group", "group-a", "sender-a", "1"), {"content": "A"})
+
+    assert index.get(ref_index_key("group", "group-a", "sender-b", "1"))["content"] == "A"
+    assert index.get(ref_index_key("group", "group-b", "sender-a", "1")) is None
 
 
 async def test_qq_raw_c2c_event_to_payload(monkeypatch):

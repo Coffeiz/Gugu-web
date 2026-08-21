@@ -11,6 +11,9 @@ WorkingDirectory=__APP_DIR__
 # （libreoffice/pdftotext/ffmpeg 等）时报 FileNotFoundError
 Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="DB_STARTUP_TIMEOUT=10"
+# 开发/联调环境启用 LoopScope；没有这个变量时 worker 会静默跳过 IM trace 上报
+Environment="LOOPSCOPE_ENABLED=1"
+Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
 ExecStart=__APP_DIR__/.venv/bin/python -m worker
 # IM 大脑，死了必须立刻拉起，否则消息无限排队
 Restart=always

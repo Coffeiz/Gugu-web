@@ -59,6 +59,19 @@ async def clear_state(platform, bot_id, scope_id, puid) -> None:
         await get_redis().delete(_skey(platform, bot_id, scope_id, puid))
 
 
+async def refresh_activity(platform, bot_id, scope_id, puid) -> None:
+    """只刷新忙碌态 TTL，不改变当前状态值。
+
+    长时间的压缩、工具调用或上游等待期间，loop 仍然活着但可能暂时没有调用
+    ``set_state``。如果不刷新，网关会把已过期的任务当成空闲，导致 ``/stop``
+    不再写取消标志。
+    """
+    if platform and bot_id and scope_id and puid:
+        redis = get_redis()
+        await redis.expire(_skey(platform, bot_id, scope_id, puid), STATE_TTL)
+        await _refresh_active_ttl(platform, bot_id, scope_id)
+
+
 # ── 状态：网关读（QQ async / 飞书 sync）─────────────────────────────────
 async def get_state(platform, bot_id, scope_id, puid) -> str:
     if not (platform and bot_id and scope_id and puid):

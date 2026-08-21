@@ -231,6 +231,9 @@ async def upload_file(
     await db.refresh(f)
     if not result.was_overwrite:
         await events.publish(current_user.id, "files", origin=origin)
+    else:
+        # 覆盖上传不广播前端 files 事件，但最近更新时间/排序可能改变 snapshot 输入。
+        await events.bump_context_revision(current_user.id, "files")
 
     resp = to_related_file_response(f, result.project, result.folder_name)
     if _is_img:

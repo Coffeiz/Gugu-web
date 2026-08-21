@@ -32,6 +32,23 @@ def test_set_trace_generates_when_empty():
     assert trace.set_trace("  ") != ""   # 空白串也视为缺失、新生成
 
 
+def test_bind_im_run_assigns_session_metadata(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = trace_state._ScopeRun(
+        id="run-bind", trace_id="trace-bind", session_key="pending:trace-bind",
+        external_session_id="", source="unknown", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        trace.bind_im_run(388, "qq")
+    finally:
+        _scope_run.reset(token)
+
+    assert run.session_key == "gugu:qq:388"
+    assert run.external_session_id == "388"
+    assert run.source == "qq"
+
+
 @pytest.mark.asyncio
 async def test_finish_run_closes_non_web_scope_run(monkeypatch):
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")

@@ -96,9 +96,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, toRef, type PropType } from 'vue'
+import { ref, reactive, computed, watch, toRef, onUnmounted, type PropType } from 'vue'
 import { runtime } from '@/interaction/runtime'
-import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
@@ -292,20 +292,34 @@ const {
 
 // ── Runtime Vue API：项目文件区与文件库共用同一套对象/Surface/Target 接入 ──
 // ProjectModal 是全局单例，文件对象 ID 本身全局唯一，因此使用稳定 scope，避免 project
-// prop 切换时让静态 id 的 useSurface/useObject 失去对应关系。
+// prop 切换时让静态 Surface 注册与项目文件 DOM 保持同一生命周期。
 const RUNTIME_SCOPE = 'project-files'
-const { elementRef: pmRuntimeBrowserRef } = useSurface({
-  id: makeBrowserSurfaceId(RUNTIME_SCOPE),
+const pmRuntimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
+const pmRuntimeBrowserGeneration = runtime.surfaces.register({
+  id: pmRuntimeBrowserSurfaceId,
   type: 'file-browser',
   accepts: ['file-item', 'folder-item'],
   layout: 'grid',
+  element: null,
 })
+const pmRuntimeBrowserRef = ref<HTMLElement | null>(null)
+watch(pmRuntimeBrowserRef, (element, previous) => {
+  const current = runtime.surfaces.get(pmRuntimeBrowserSurfaceId)
+  if (current?.generation !== pmRuntimeBrowserGeneration) return
+  if (element === null && current.element && current.element !== previous) return
+  runtime.surfaces.setElement(pmRuntimeBrowserSurfaceId, element)
+}, { flush: 'post' })
 
 function bindPmGridEl(target: unknown) {
   const element = target as HTMLElement | null
   pmGridRef.value = element
   pmRuntimeBrowserRef.value = element
 }
+onUnmounted(() => {
+  if (runtime.surfaces.get(pmRuntimeBrowserSurfaceId)?.generation === pmRuntimeBrowserGeneration) {
+    runtime.surfaces.unregister(pmRuntimeBrowserSurfaceId, pmRuntimeBrowserGeneration)
+  }
+})
 
 const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
   scope: RUNTIME_SCOPE,

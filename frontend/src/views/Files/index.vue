@@ -199,7 +199,7 @@ import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
 import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
 import { runtime } from '@/interaction/runtime'
-import { useSurface, useRuntimeAction } from '@/interaction/runtime/vue'
+import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
   fileObjectId,
   browserSurfaceId as makeBrowserSurfaceId,
@@ -239,14 +239,20 @@ const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 // Surface 继续服务真实拖拽；目录导航只更新当前目录状态，不再进入 Runtime 布局事务。
 const RUNTIME_SCOPE = 'files'
 const runtimeBrowserSurfaceId = makeBrowserSurfaceId(RUNTIME_SCOPE)
-const { elementRef: browserSurfaceRef } = useSurface({
+const browserSurfaceGeneration = runtime.surfaces.register({
   id: runtimeBrowserSurfaceId,
   type: 'file-browser',
   accepts: ['file-item', 'folder-item'],
   layout: 'grid',
+  element: null,
   viewport: () => mainRef.value,
 })
-watch(mainRef, element => { browserSurfaceRef.value = element })
+watch(mainRef, (element, previous) => {
+  const current = runtime.surfaces.get(runtimeBrowserSurfaceId)
+  if (current?.generation !== browserSurfaceGeneration) return
+  if (element === null && current.element && current.element !== previous) return
+  runtime.surfaces.setElement(runtimeBrowserSurfaceId, element)
+}, { flush: 'post' })
 
 /** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
 function hasActiveMove(): boolean {
@@ -587,6 +593,9 @@ useRuntimeAction(action => {
 })
 
 onUnmounted(() => {
+  if (runtime.surfaces.get(runtimeBrowserSurfaceId)?.generation === browserSurfaceGeneration) {
+    runtime.surfaces.unregister(runtimeBrowserSurfaceId, browserSurfaceGeneration)
+  }
   // 不把列表视图的平面姿态泄漏给其它页面的 Runtime 卡片。
   syncFileDragRotation('grid')
 })

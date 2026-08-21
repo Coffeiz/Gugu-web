@@ -100,6 +100,8 @@ async def create_my_bot(
     db.add(bot)
     await db.commit()
     await db.refresh(bot)
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()
     return _out(bot)
 
@@ -185,6 +187,8 @@ async def update_my_bot(
             setattr(bot, field, value)
     await db.commit()
     await db.refresh(bot)
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()
     return _out(bot)
 
@@ -207,4 +211,6 @@ async def delete_my_bot(
         await ST.clear_imreach(current_user.id, platform)
     except Exception:
         pass
+    from app.core import events
+    await events.bump_context_revision(current_user.id, "im_channels")
     await _touch_supervisor()
