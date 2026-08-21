@@ -63,14 +63,16 @@ SearXNG 搜索结果会带 `search_status.state`，不要把所有 `results=[]` 
 
 多个候选且用户没指定要哪张时，挑最匹配关键词的第一条发；用户明确想多看几张再多发几张（IM 端一次发太多张会很吵，建议 1~3 张为宜）。
 
-如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search`，再单独调用
-`inspect_images`，把选中的 `result_id`、`img_src`、`title` 填入 `images` 数组；一轮对话最多发起一次网络图片读取，单次最多读取 20 张。不需要看图时不要读取，避免额外下载和视觉输入成本。
+如果用户要求快速辨认、比较或核对搜索到的图片，先调用 `image_search` 或
+`search_similar_images`，再单独调用 `inspect_images`。`image_search` 候选填写
+`result_id`、`img_src`、`title`；`search_similar_images` 候选填写 `result_id`、`image_url`、
+`title`。一轮对话最多发起一次网络图片读取，单次最多读取 20 张。不需要看图时不要读取，避免额外下载和视觉输入成本。
 
 ## search_similar_images 找同款后怎么处理
 
 用户说“找同款”“找相似图”“这张图还有哪些类似图片”时，优先调用
 `search_similar_images`，不要先调用 `image_search`。当前消息图片填写上下文中的 `attach_id`；如果目标是网络图片，填写可靠的
-`image_url`。工具返回的是相似候选列表；用户还要求辨认、比较候选内容时，再从候选中挑选目标调用 `inspect_images`。
+`image_url`。工具返回的是相似候选列表；用户还要求辨认角色、核对同款或比较候选内容时，必须从候选中挑选 2～5 张调用 `inspect_images`，结合图像内容判断，不能只按 similarity、标题或来源下结论。
 
 `search_similar_images` 的 `similarity` 仅用于服务端排序，不能当成百分比、置信度或“相似度 X/5”。不要因分值较低就主动否定候选；应结合标题、来源、图片内容和用户补充线索判断。用户只要结果时，直接列出标题、来源和 URL，不读取候选图。
 

@@ -266,6 +266,28 @@ async def test_inspect_images_reads_only_model_selected_results(monkeypatch):
     assert "已经读取过网络图片" in second["error"]
 
 
+async def test_inspect_images_accepts_similar_image_result_url(monkeypatch):
+    search_tools.reset_image_inspection_budget()
+    seen = []
+
+    async def _inspect(url):
+        seen.append(url)
+        return {"block": {"type": "image", "source": {"type": "base64", "data": "x"}}}
+
+    monkeypatch.setattr("agent.tools.files.inspect_image_url", _inspect)
+    result = await search_tools._inspect_images(None, None, {
+        "images": [{
+            "result_id": "similar-1",
+            "image_url": "https://example.com/similar.jpg",
+            "title": "相似候选",
+        }],
+    })
+
+    assert seen == ["https://example.com/similar.jpg"]
+    assert result["inspected_count"] == 1
+    assert result["_vision_images"][0]["result_id"] == "similar-1"
+
+
 async def test_inspect_images_rejects_more_than_twenty_targets():
     result = await search_tools._inspect_images(None, None, {
         "images": [{"result_id": str(index), "img_src": "https://example.com/x.jpg"} for index in range(21)],

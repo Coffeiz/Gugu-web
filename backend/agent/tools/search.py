@@ -333,7 +333,7 @@ async def _inspect_images(db, user_id, args: dict):
     """读取图片搜索结果中由模型挑选的图片，最多 20 张。"""
     items = args.get("images")
     if not isinstance(items, list) or not items:
-        return {"error": "需要提供 images 数组，填写 image_search 返回的 result_id 和 img_src"}
+        return {"error": "需要提供 images 数组，填写搜索结果的 result_id 和 img_src/image_url"}
     if len(items) > 20:
         return {"error": "一次最多读取 20 张图片，请拆成多次调用"}
 
@@ -358,9 +358,9 @@ async def _inspect_images(db, user_id, args: dict):
             continue
         result_id = str(item.get("result_id") or "").strip()
         attach_id = str(item.get("attach_id") or "").strip()
-        url = str(item.get("img_src") or item.get("url") or "").strip()
+        url = str(item.get("img_src") or item.get("image_url") or item.get("url") or "").strip()
         if not url and not attach_id:
-            failed.append({"result_id": result_id, "error": "缺少 img_src 或 attach_id"})
+            failed.append({"result_id": result_id, "error": "缺少 img_src、image_url 或 attach_id"})
             continue
         if attach_id:
             meta = await chat_attach.get_meta(user_id, attach_id)
@@ -634,7 +634,8 @@ class SearchSkill(BaseSkill):
         Tool(
             name="inspect_images", label="读取图片",
             description=(
-                "读取 image_search 结果或历史消息附件并交给视觉模型分析。搜索图片填写 result_id、img_src、title；"
+                "读取 image_search/search_similar_images 结果或历史消息附件并交给视觉模型分析。"
+                "搜索候选填写 result_id、img_src 或 image_url、title；"
                 "历史图片填写上下文中的 attach_id；"
                 "一次最多读取 20 张。"
             ),
@@ -645,16 +646,21 @@ class SearchSkill(BaseSkill):
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 20,
-                        "description": "要读取的图片结果，使用 image_search 返回的 result_id、img_src 和 title。",
+                        "description": "要读取的图片结果，使用搜索结果的 result_id、img_src/image_url 和 title。",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "result_id": {"type": "string"},
                                 "img_src": {"type": "string"},
+                                "image_url": {"type": "string", "description": "相似图搜索结果中的图片直链"},
                                 "attach_id": {"type": "string", "description": "历史消息中的图片附件 ID"},
                                 "title": {"type": "string"},
                             },
-                            "anyOf": [{"required": ["img_src"]}, {"required": ["attach_id"]}],
+                            "anyOf": [
+                                {"required": ["img_src"]},
+                                {"required": ["image_url"]},
+                                {"required": ["attach_id"]},
+                            ],
                         },
                     },
                 },
