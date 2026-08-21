@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from uuid import uuid4
 from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable
 
@@ -102,7 +101,6 @@ def snapshot_context(session) -> dict:
         "user_tz": resolve_tz(context.get("user_tz")) if context.get("user_tz") != "LOCAL" else LOCAL_TZ,
         "im_channels": context.get("im_channels") or {},
         "im_memory": context.get("im_memory") or {},
-        "dynamic_tail": context.get("dynamic_tail") or [],
     }
 
 
@@ -116,7 +114,6 @@ def _record_snapshot_event(session, phase: str) -> None:
             context_epoch=getattr(session, "context_epoch", None),
             snapshot_hash=getattr(session, "snapshot_hash", None),
             session_info_hash=getattr(session, "session_info_hash", None),
-            covered_message_id=getattr(session, "snapshot_message_id", None),
             expires_at=getattr(session, "snapshot_expires_at", None),
         )
     except Exception:
@@ -133,10 +130,7 @@ def initialize_snapshot(
     user_tz: str | None,
     im_channels: dict | None = None,
     im_memory: dict | None = None,
-    dynamic_tail: list[str] | None = None,
     covered_messages: list[dict] | None = None,
-    message_id: int | None = None,
-    run_id: str | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> str:
@@ -147,7 +141,11 @@ def initialize_snapshot(
         "session_info": session_info,
     }
     info_hash = digest(normalized_info)
-    session.context_epoch = (getattr(session, "context_epoch", None) or 0) + 1
+    # 新 session 的默认 epoch=1；只有已有 snapshot 的重建才递增，避免首次建立变成 2。
+    if getattr(session, "session_context", None) is None:
+        session.context_epoch = 1
+    else:
+        session.context_epoch = (getattr(session, "context_epoch", None) or 1) + 1
     session.session_context = {
         "system_prompt": system_prompt,
         "dynamic_context": dynamic_context,
@@ -155,7 +153,6 @@ def initialize_snapshot(
         "user_tz": _tz_storage_value(user_tz),
         "im_channels": im_channels or {},
         "im_memory": im_memory or {},
-        "dynamic_tail": dynamic_tail or [],
     }
     session.session_info_hash = info_hash
     session.snapshot_hash = snapshot_hash(
@@ -163,11 +160,7 @@ def initialize_snapshot(
         info_hash,
         message_hash(covered_messages or []),
     )
-    if message_id is not None:
-        session.snapshot_message_id = message_id
-    session.snapshot_updated_at = current
     session.snapshot_expires_at = current + ttl
-    session.snapshot_last_run_id = run_id
     return session.snapshot_hash
 
 
@@ -175,8 +168,6 @@ def checkpoint_snapshot(
     session,
     messages: list[dict],
     *,
-    message_id: int | None = None,
-    run_id: str | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> str:
@@ -192,11 +183,7 @@ def checkpoint_snapshot(
         getattr(session, "session_info_hash", None) or session_info_hash(context["session_info"]),
         covered_hash,
     )
-    if message_id is not None:
-        session.snapshot_message_id = message_id
-    session.snapshot_updated_at = current
     session.snapshot_expires_at = current + ttl
-    session.snapshot_last_run_id = run_id
     return session.snapshot_hash
 
 
@@ -206,7 +193,6 @@ async def ensure_snapshot(
     *,
     load_context: Callable[[], Awaitable[dict]],
     now: datetime | None = None,
-    run_id: str | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> dict:
     """返回本会话冻结的上下文；仅在首次/过期时调用业务 loader。
@@ -215,7 +201,6 @@ async def ensure_snapshot(
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
     """
     if snapshot_is_usable(session, now):
-        session.snapshot_last_run_id = run_id or uuid4().hex
         _record_snapshot_event(session, "hit")
         return snapshot_context(session)
 
@@ -228,10 +213,7 @@ async def ensure_snapshot(
         user_tz=payload.get("user_tz"),
         im_channels=payload.get("im_channels") or {},
         im_memory=payload.get("im_memory") or {},
-        dynamic_tail=payload.get("dynamic_tail") or [],
         covered_messages=payload.get("covered_messages") or [],
-        message_id=payload.get("message_id"),
-        run_id=run_id or uuid4().hex,
         now=now,
         ttl=ttl,
     )

@@ -49,7 +49,7 @@ def _wrap_context_loader(module: Any, name: str, kind: str, label: str) -> None:
 def _prompt_file_path(path: Path) -> str:
     return _display_source_path(path)
 
-def _record_builder_sources(context_builder: Any, original_build: Any, bound: inspect.BoundArguments, result: str, start: float, end: float) -> None:
+def _record_builder_sources(context_builder: Any, original_build: Any, bound: inspect.BoundArguments, result: tuple[str, str, str], start: float, end: float) -> None:
     try:
         args = bound.arguments
         profile = str(args.get("profile") or "default")
@@ -195,30 +195,23 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
                     included_value=block,
                 )
 
-        # 把稳定前缀 / 动态后缀直接列出。它不是“实际命中了多少缓存”（那看 provider usage），
-        # 而是 builder 设计上打了 cache break 后理论上稳定/动态的边界。
-        try:
-            stable, dynamic = context_builder.split_for_cache(result)
-            if stable:
-                record_context_source(
-                    "cache",
-                    "Prompt stable prefix",
-                    output={"content": stable},
-                    attributes={"cache_role": "stable_prefix"},
-                    code_target=original_build,
-                    included_value=stable,
-                )
-            if dynamic:
-                record_context_source(
-                    "cache",
-                    "Prompt dynamic suffix",
-                    output={"content": dynamic},
-                    attributes={"cache_role": "dynamic_suffix"},
-                    code_target=original_build,
-                    included_value=dynamic,
-                )
-        except Exception:
-            pass
+        # build_split 已是唯一组装入口，直接记录其真实三段返回值。
+        if isinstance(result, tuple) and len(result) == 3:
+            static_text, dynamic_text, now_text = result
+            for label, content, role in (
+                ("Prompt stable prefix", static_text, "stable_prefix"),
+                ("Prompt dynamic context", dynamic_text, "dynamic_context"),
+                ("Prompt current time", now_text, "volatile_tail"),
+            ):
+                if content:
+                    record_context_source(
+                        "cache" if role != "volatile_tail" else "context",
+                        label,
+                        output={"content": content},
+                        attributes={"cache_role": role},
+                        code_target=original_build,
+                        included_value=content,
+                    )
     except Exception:
         pass
 
@@ -234,7 +227,7 @@ def install_context_hooks(context_loaders: Any, context_builder: Any):
     ):
         _wrap_context_loader(context_loaders, name, kind=kind, label=label)
 
-    original_build = context_builder.build
+    original_build = context_builder.build_split
     if not getattr(original_build, "__loopscope_wrapped__", False):
         @functools.wraps(original_build)
         def traced_build(*args, **kwargs):
@@ -249,5 +242,5 @@ def install_context_hooks(context_loaders: Any, context_builder: Any):
                 pass
             return result
         traced_build.__loopscope_wrapped__ = True
-        context_builder.build = traced_build
+        context_builder.build_split = traced_build
     return original_build

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
-from agent.context.tokens import estimate_tokens, msg_tokens
+from agent.context.tokens import content_text, estimate_tokens, msg_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +50,8 @@ def pop_summary(history: list) -> tuple[str | None, list]:
     return summary_text, rest
 
 
-def system_block(summary_text: str) -> str:
-    """把摘要正文包成 system prompt 后缀。"""
+def summary_context_block(summary_text: str) -> str:
+    """把摘要正文包成固定历史上下文消息。"""
     return f"\n\n{_SUMMARY_HEADER}\n{summary_text}"
 
 
@@ -107,11 +107,12 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
     if not to_compress:
         return False
 
-    # 构建对话文本（只取有正文的 user/assistant；工具轮次 content 为空，自然跳过）。
+    # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
     # 超 _MAX_COMPRESS_TOKENS 时取最近一段（更老的靠上一版 summary 兜底，避免撑爆摘要器）。
     lines, acc = [], 0
     for m in reversed(to_compress):
-        text = (m.content or "").strip()
+        raw = m.content_json if m.content_json is not None else m.content
+        text = content_text(raw).strip()
         if not text:
             continue
         t = estimate_tokens(text)
@@ -142,7 +143,6 @@ async def compress_if_needed(session_id: int, user_id: int, settings, token_budg
             checkpoint_snapshot(
                 session,
                 [{"role": "summary", "content": summary}],
-                message_id=summary_message.id,
             )
         await db.commit()
 

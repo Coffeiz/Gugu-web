@@ -752,6 +752,9 @@ async def dispatch_im_message(payload: dict):
         else:
             resp = await agent_loop.run_collect(req)
             reply_text = ""
+    except BaseException:
+        trace.finish_run("error")
+        raise
     finally:
         await finish_im_activity(activity)
 
@@ -801,12 +804,14 @@ async def dispatch_im_message(payload: dict):
                 # 成员记忆是后台增强能力，不影响群聊回复。
                 pass
     if resp.cancelled:
+        trace.finish_run("cancelled")
         await finalize_im_response(platform, puid, True, "")
         return resp
 
     if platform != "feishu" or resp.files:
         reply_text = await send_agent_response(payload, resp)
 
+    trace.finish_run("success", reply_text)
     await finalize_im_response(platform, puid, False, reply_text)
     print(
         f"[im-loop] {platform} 回复(session={resp.session_id} trace={trace_id}) "

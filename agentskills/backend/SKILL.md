@@ -42,7 +42,7 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 
 **修改缓存策略前必须**：
-1. 用 `backend/test_cache_strategy_compare.py` 做对比测试
+1. 用 `backend/scripts/diagnostics/test_cache_strategy_compare.py` 做对比测试
 2. 记录到 `docs/reports/OPT-Cache-Strategy-*.md`
 3. 更新 devlog 和本节
 4. 在 LoopScope 验证 cache_ratio 提升

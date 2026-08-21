@@ -67,6 +67,11 @@ def emoji_viol(text: str) -> list[str]:
             if m.rstrip("️") not in _ALLOWED_EMOJI]
 
 
+def build_prompt(*args, **kwargs):
+    static, dynamic, _ = builder.build_split(*args, **kwargs)
+    return "\n\n---\n\n".join(part for part in (static, dynamic) if part)
+
+
 async def _run(prompt, style_prefs):
     profile = DefaultProfile()
     settings = get_settings()
@@ -79,7 +84,7 @@ async def _run(prompt, style_prefs):
         files_overview = await loaders.load_files_overview(db, _UID)
     memory = await loaders.load_memory(_UID) if profile.memory_enabled else {}
     prompt_name = profile.prompt_file.removesuffix(".md")
-    system_prompt = builder.build(
+    system_prompt = build_prompt(
         prompt_name, _UNAME, projects, events, memory, files_overview,
         skills=profile.skills, style_prefs=style_prefs,
     )
@@ -101,7 +106,7 @@ async def _run(prompt, style_prefs):
 async def main():
     # ── C 验证：空记忆是否注入声明 ──
     mem = await loaders.load_memory(_UID)
-    sys_p = builder.build("default", _UNAME, [], [], mem, None, skills=[], style_prefs=None)
+    sys_p = build_prompt("default", _UNAME, [], [], mem, None, skills=[], style_prefs=None)
     ok_c = "暂无任何长期记忆" in sys_p
     print(f"【C】空记忆声明已注入 system prompt：{'✅' if ok_c else '❌ 未注入！'}")
     print("=" * 72)

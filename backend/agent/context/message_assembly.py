@@ -10,6 +10,8 @@ class PromptMessages(list):
     def __init__(self, conversation: Iterable[dict] = (), dynamic_tail: Iterable[dict] = ()):
         tail = list(dynamic_tail)
         self._tail_size = len(tail)
+        # 只供当前请求的 provider cache helper 使用，不进入消息内容或持久化数据。
+        self._cache_anchor_indices: list[int] = []
         super().__init__(list(conversation) + tail)
 
     @property
@@ -35,6 +37,22 @@ class PromptMessages(list):
         conversation = list(messages)
         super().__setitem__(slice(None), conversation + tail)
         self._tail_size = len(tail)
+        # 压缩/替换后原有索引已经失效，下一次请求从新的 conversation 末尾建立断点。
+        self._cache_anchor_indices = []
+
+    @property
+    def cache_anchor_indices(self) -> list[int]:
+        return list(self._cache_anchor_indices)
+
+    def remember_cache_anchor(self, index: int, *, limit: int = 2) -> None:
+        """保留最近的 conversation cache checkpoint，不污染实际消息。"""
+        conversation_len = len(self.conversation)
+        if index < 0 or index >= conversation_len:
+            return
+        anchors = [item for item in self._cache_anchor_indices
+                   if 0 <= item < conversation_len and item != index]
+        anchors.append(index)
+        self._cache_anchor_indices = anchors[-limit:]
 
     def newly_appended(self, initial_conversation_len: int) -> list[dict]:
         """返回本轮新增的对话消息，不把动态尾部当成历史。"""

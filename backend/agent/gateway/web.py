@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core import chat_attach
@@ -174,7 +174,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     "session_info": {"user_name": req.user_name, "source": "web",
                                       "profile": profile.prompt_file},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
-                    "dynamic_tail": builder.dynamic_tail(memory)}
+                    }
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
         user_tz = snapshot["user_tz"]
@@ -361,7 +361,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     try:
         fixed_parts = ([_ctx_injection] if _ctx_injection else [])
         if _summary:
-            fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
+            fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
         history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
         current_text = format_message_time(user_content, sent_at)
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
@@ -477,17 +477,10 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 snapshot_session = await db2.get(ConversationSession, session_id)
                 if snapshot_session is not None:
                     await db2.flush()
-                    latest_message_id = await db2.scalar(
-                        select(func.max(ConversationMessage.id)).where(
-                            ConversationMessage.session_id == session_id
-                        )
-                    )
                     session_snapshot.checkpoint_snapshot(
                         snapshot_session,
                         [{"role": "user", "content": req.message},
                          {"role": "assistant", "content": full_reply}],
-                        message_id=latest_message_id,
-                        run_id=snapshot_session.snapshot_last_run_id,
                     )
                 # 按 6h 剩余额度封顶本轮用量：精力条最多 100%，单轮顶过线则只记填满部分、
                 # 超出（对话后半段）不计入（6h 与周都不计）；已满则 (0,0) 不写。

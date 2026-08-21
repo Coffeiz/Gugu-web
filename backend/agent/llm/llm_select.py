@@ -42,14 +42,8 @@ def is_minimax(ai) -> bool:
 def supports_anthropic_active_cache(ai) -> bool:
     """当前模型是否支持 Anthropic `cache_control` 主动缓存。
 
-    MiniMax-M3 目前只确认被动/自动前缀缓存，不应发送 `cache_control`；官方主动缓存
-    契约目前仅按 M2.x 处理。其它既有 Anthropic 路径保持历史行为，MiMo 仍明确不支持该参数。
+    MiniMax-M2.x/M3 当前均按真机复测结果发送主动缓存标记；MiMo 仍明确不支持该参数。
     """
-    return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
-
-
-def supports_openai_active_cache(ai) -> bool:
-    """当前 OpenAI 兼容模型是否支持消息级 `cache_control` 主动缓存。"""
     return providers.adapter_for(ai).supports_active_cache(getattr(ai, "model", "") or "")
 
 
@@ -74,18 +68,6 @@ def use_anthropic_for(ai) -> bool:
     if fmt == "openai":
         return False
     return is_minimax(ai) or ("anthropic" in (getattr(ai, "base_url", "") or "").lower())
-
-
-def openai_default_headers(ai) -> dict:
-    """OpenAI 兼容通道里，部分厂商鉴权头非标准。给它们补对应头，其余空（用 SDK 默认 Authorization: Bearer）。
-    - 小米 MiMo：用 `api-key: <KEY>` 头，不是 Bearer。按 provider==mimo / base_url 含 xiaomimimo 识别。"""
-    return providers.adapter_for(ai).auth_headers(ai)
-
-
-def anthropic_default_headers(ai) -> dict:
-    """Anthropic 兼容通道的非标准鉴权头。Anthropic SDK 默认发 `x-api-key`；mimo 的 anthropic 端点
-    可能要它自己的 `api-key` 头，一并补上（多发一个无害），让 mimo 走 anthropic 格式也能鉴权。"""
-    return providers.adapter_for(ai).auth_headers(ai)
 
 
 def _pick_pool(pool, mode):

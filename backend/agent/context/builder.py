@@ -4,38 +4,12 @@
 （default.md，含实时数据与记忆占位符）。persona 定义"咕咕是谁、怎么相处、何时
 主动"，模板提供"此刻的项目/日程/记忆"。
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-from app.core.tz import LOCAL_TZ, local_now
+from app.core.tz import LOCAL_TZ
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-
-
-# prompt 缓存断点标记（ASCII Group Separator，正常 prompt 文本绝不出现）：
-# build() 在「稳定前缀 ┃ 动态后缀」边界插一个，让 core 据它把 system 切成两块、
-# 只缓存稳定前缀（人格/政策/技能索引，一个 session 内不变）。两块拼接后与原单块逐字一致。
-CACHE_BREAK = "\x1d"
-
-
-def split_for_cache(text: str) -> list[str]:
-    """按 CACHE_BREAK 把 system 切成多个段。无标记 → [原文]。
-
-    builder.py 使用多个 CACHE_BREAK 将 system 分为 3 段：
-    - stable（人格/政策等，完全不变）
-    - semi-stable（记忆/项目/文件等，变化较慢）
-    - volatile（时间/消息格式等，每轮都变）
-
-    调用方根据需要给前面的段加 cache_control，最后一段不加。
-    """
-    if CACHE_BREAK in text:
-        return text.split(CACHE_BREAK)
-    return [text]
-
-
-def strip_cache_marker(text: str) -> str:
-    """去掉缓存断点标记，还原成普通 system 串（openai 路 / 不支持 cache_control 的通道用）。"""
-    return text.replace(CACHE_BREAK, "")
 
 
 # 项目状态英文枚举 → 中文（注入上下文时翻好，免得咕咕照搬英文说给用户）
@@ -89,150 +63,6 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
     return "\n".join(lines)
 
 
-def build(profile: str, user_name: str, projects: list, events: list,
-          memory: dict | None = None, files: dict | None = None,
-          skills: list[str] | None = None,
-          style_prefs: dict | None = None,
-          source: str | None = None, im_channels: dict | None = None,
-          user_msg: str = "", non_streaming: bool = False,
-          include_projects: bool = True, include_calendar: bool = True,
-          include_files: bool = True, include_memory: bool = True,
-          user_tz=None, im_message_format: str | None = None) -> str:
-    # include_* 允许少数轻量阶段关闭业务上下文；跳过时不省 header 文字，
-    # 省的是 header 底下那块真正贵的内容（最多 25 个项目 / 10 条日程 / 完整记忆）。
-    memory = memory if (include_memory and memory) else {}
-    # 「今天/现在」按用户时区（user_tz）算——异地用户看到的日期才对；user_tz=None 回退服务器 LOCAL_TZ（零行为变化）。
-    _now = datetime.now(user_tz or LOCAL_TZ)
-    today = _now.strftime("%Y-%m-%d")
-    # 当前完整时刻（含星期、时分），让咕咕知道"现在几点、星期几"，能答时间、按时段问候、排期
-    _wd = "一二三四五六日"[_now.weekday()]
-    now_str = f"{today}（星期{_wd}）{_now.strftime('%H:%M')}"
-    # 深夜（0-4 点）：用户主观上还没睡着、仍认为是"昨天"，「明天」=日历今天，「今天」=日历昨天
-    if _now.hour < 4:
-        now_str += "，深夜未眠——以日出为一天的分界：用户口中的「今天」指尚未结束的这个主观白天（日历昨天），「明天」指日出后的那天（日历今天），涉及日期时请按此理解"
-
-    if include_projects:
-        proj_lines = []
-        for p in projects[:25]:
-            deadline = f"截止 {p.deadline}" if p.deadline else "无截止"
-            done_cnt  = sum(1 for s in p.stages if s.get("done"))
-            total_cnt = len(p.stages)
-            prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
-            proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
-        proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
-    else:
-        proj_block = "（本次任务不需要项目上下文，未加载）"
-
-    if include_calendar:
-        ev_lines = [f"- {ev.date} {ev.title}" for ev in events[:10]]
-        ev_block = "\n".join(ev_lines) if ev_lines else "暂无近期事件"
-    else:
-        ev_block = "（本次任务不需要日历上下文，未加载）"
-
-    prompt_file = _PROMPTS_DIR / f"{profile}.md"
-    try:
-        template = prompt_file.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        template = "今天是 {today}。\n\n## 项目\n{projects}\n\n## 日历\n{calendar}"
-
-    files_block = (_files_block(files, {p.id: p.name for p in projects})
-                   if include_files else "（本次任务不需要文件上下文，未加载）")
-    replacements = {
-        "{today}":    today,
-        "{now}":      now_str,
-        "{name}":     user_name,
-        "{projects}": proj_block,
-        "{calendar}": ev_block,
-        "{files}":    files_block,
-    }
-    result = template
-    for key, val in replacements.items():
-        result = result.replace(key, val)
-    result = result.strip()
-
-    # persona 最先加载，所有 profile 共享
-    try:
-        persona = (_PROMPTS_DIR / "persona.md").read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        persona = ""
-
-    # 工具使用准则（Execution Policy）：行为层指引，紧跟人格、优先级高，所有 profile 共享
-    try:
-        skills_policy = (_PROMPTS_DIR / "skills.md").read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        skills_policy = ""
-
-    # 内容政策（红线）：独立维护、所有 profile 共享
-    try:
-        content_policy = (_PROMPTS_DIR / "policy.md").read_text(encoding="utf-8").strip()
-    except FileNotFoundError:
-        content_policy = ""
-
-    # 行为模块（Behavior Skills）：反思驱动 stance 软点亮（per-user + 新鲜度闸，非正则），
-    # 置于人格之后、最高优先——本轮"特别这么相处"，盖过默认倾向。`baseline` 永远在场。详见感知系统升级 §2.6。
-    try:
-        from agent import behaviors as _bh
-        beh_block = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
-    except Exception:
-        beh_block = ""
-
-    # 缓存策略（2026-08-19 更新）：
-    # 使用多个 CACHE_BREAK 分段，每段对应不同的 cache_control 断点：
-    #   断点1（stable）：人格/政策/技能等 → session 内完全不变 → 缓存命中率最高
-    #   断点2（semi-stable）：记忆/项目/文件/日历 → 变化频率低（天/周级）
-    #   无断点（volatile）：当前时间/消息格式 → 每轮都变 → 不标记
-    #
-    # 最多 4 个断点（阿里/MiniMax 限制），当前使用 2 个。
-    stable, semi_stable, volatile = [], [], []
-    if persona:
-        stable.append(persona)
-    if beh_block:
-        stable.append(beh_block)
-    lens_block = (memory.get("lens") or "").strip()
-    if lens_block:
-        stable.append(lens_block)
-    if skills_policy:
-        stable.append(skills_policy)
-    if content_policy:
-        stable.append(content_policy)
-    style_block = _style_block(style_prefs or {})
-    if style_block:
-        stable.append(style_block)
-    skills_block = _skills_index_block(skills)
-    if skills_block:
-        stable.append(skills_block)
-
-    # 半稳定内容：变化频率低，但不是完全不变
-    # 记忆（profile/pattern/longterm 很少变，daily 变化稍频繁但仍可缓存）
-    mem_block = _memory_block(memory)
-    if mem_block:
-        semi_stable.append(mem_block)
-    # 项目概览、文件概览、日历事件
-    src_block = _source_block(source, im_channels)
-    if src_block:
-        semi_stable.append(src_block)
-
-    # 高频变化内容：每轮都变
-    if non_streaming:
-        volatile.append(_NON_STREAMING_BLOCK)
-    volatile.append(result)
-    if im_message_format == "compat":
-        from agent.im.context_loader import compatibility_prompt
-        volatile.insert(-1, compatibility_prompt())
-
-    stable_str = "\n\n---\n\n".join(stable)
-    semi_str = "\n\n---\n\n".join(semi_stable)
-    volatile_str = "\n\n---\n\n".join(volatile)
-
-    if not volatile_str:
-        if not semi_str:
-            return stable_str
-        return stable_str + CACHE_BREAK + "\n\n---\n\n" + semi_str
-    if not semi_str:
-        return stable_str + CACHE_BREAK + "\n\n---\n\n" + volatile_str
-    return stable_str + CACHE_BREAK + "\n\n---\n\n" + semi_str + CACHE_BREAK + "\n\n---\n\n" + volatile_str
-
-
 def build_split(profile: str, user_name: str, projects: list, events: list,
                 memory: dict | None = None, files: dict | None = None,
                 skills: list[str] | None = None,
@@ -241,14 +71,14 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
                 user_msg: str = "", non_streaming: bool = False,
                 include_projects: bool = True, include_calendar: bool = True,
                 include_files: bool = True, include_memory: bool = True,
-                user_tz=None, im_message_format: str | None = None) -> tuple[str, str]:
+                user_tz=None, im_message_format: str | None = None) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
     静态部分（完全不变）：人格/政策/工具定义/风格/技能索引
     动态部分（可能变化）：记忆/项目/文件/时间/消息格式
 
-    返回 (static_text, dynamic_text)，调用方将静态部分放在 system，
-    动态部分放在 messages[0] 作为上下文注入。
+    返回 (static_text, dynamic_text, now_str)，调用方将静态部分放在 system，
+    动态部分放在 messages[0] 作为上下文注入，时间作为最后的独立消息。
 
     这样 system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存能命中。
     """
@@ -344,7 +174,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     # 这样 messages 前缀（system-reminder + history + current_msg）跨 run 一致，缓存命中。
 
     if im_message_format == "compat":
-        from agent.im.context_loader import compatibility_prompt
+        from agent.im.message_format import compatibility_prompt
         dynamic_parts.append(compatibility_prompt())
 
     static_text = "\n\n---\n\n".join(static_parts) if static_parts else ""

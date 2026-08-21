@@ -45,7 +45,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 
 ### FR-LLM-1：新增 `agent/providers.py` Provider 适配层（✅ 已完成）
 
-- 新增 `ProviderAdapter` dataclass：`name`/`api_format`/`supports_active_cache`（按具体型号判断的回调，如 MiniMax-M2 支持而 M3 不支持）/`supports_thinking_toggle`/`auth_headers`/`transient_exceptions`（这个 provider 的流式调用里额外算「瞬时可重试」的异常类型）。
+- 新增 `ProviderAdapter` dataclass：`name`/`api_format`/`supports_active_cache`（按具体型号判断的回调，当前 MiniMax-M2/M3 均启用主动缓存）/`supports_thinking_toggle`/`auth_headers`/`transient_exceptions`（这个 provider 的流式调用里额外算「瞬时可重试」的异常类型）。
 - 新增 `adapter_for(ai)`：按 `ai.provider` 精确匹配，未命中时按 `ai.base_url` 关键字兜底（跟现有 `_is_mimo`/`_is_deepseek` 的判定口径保持一致，不改变现有识别行为）。
 - 内置 4 份适配器：`anthropic`（default）、`minimax`、`mimo`、`deepseek`，配置值原样迁移自 `llm_select.py` 现有函数体，不新增/不删减已知的 provider 差异点。
 - **本次真正的 bug 修复点**：`minimax` 适配器的 `transient_exceptions` 从现有的 `(IndexError, KeyError)` 扩展为 `(IndexError, KeyError, AttributeError)`。仅对 MiniMax 生效——`AttributeError` 是 Python 里最泛的异常类型之一，全局放宽会把跟 MiniMax 无关的真实 bug 也一并当「重试就好」吞掉，掩盖问题、增加后续调试难度，所以严格限定在这一个 provider。
@@ -124,7 +124,7 @@ Gugu 后端接入了 Anthropic 原生模型和多家 Anthropic/OpenAI 兼容第�
 `adapter=None` 场景），测试名跟实际文件对齐如下，全部通过：
 
 - [x] `tests/test_providers.py::test_adapter_for_minimax` —— `provider="minimax"` 识别正确，`transient_exceptions` 含 `IndexError`/`KeyError`/`AttributeError`。
-- [x] `tests/test_providers.py::test_adapter_for_minimax_m2_vs_m3_cache` —— `MiniMax-M2.x` 型号 `supports_active_cache` 为真，`MiniMax-M3` 为假。
+- [x] `tests/test_providers.py::test_adapter_for_minimax_m2_vs_m3_cache` —— `MiniMax-M2.x` 与 `MiniMax-M3` 型号 `supports_active_cache` 均为真。
 - [x] `tests/test_providers.py::test_adapter_for_mimo_by_provider` —— `provider="mimo"` 识别；`supports_active_cache` 为假；`supports_thinking_toggle` 为真；`auth_headers` 含 `api-key`。
 - [x] `tests/test_providers.py::test_adapter_for_mimo_by_base_url_fallback` —— `base_url` 含 `xiaomimimo` 时兜底识别成 mimo。
 - [x] `tests/test_providers.py::test_adapter_for_mimo_auth_headers_uses_api_key` —— `auth_headers` 正确带出实际 `api_key` 值。
@@ -180,7 +180,7 @@ Context 里的说明），合并前后各跑了一遍——合并前是"钉死�
 
 - [x] MiniMax：连续对话中人工翻查一下流式输出，确认没有出现 `]<]minimax`/`[e~[` 这类文本泄漏 marker（`StreamSanitizer` 没被这次改动误伤）。
 - [x] MiniMax-M2 系列模型：正常对话几轮后翻查请求日志/后台，确认仍在使用 `cache_control` 主动缓存（如果后台有缓存命中率之类的指标，对比改动前后数值持平）。
-- [x] MiniMax-M3：同上但反过来，确认没有发送 `cache_control`（发了的话第三方接口可能直接报错，属于会立刻暴露的硬失败，不难验证）。
+- [x] MiniMax-M3：与 M2.x 一致发送 `cache_control`，由真机复测确认主动缓存策略可用。
 - [x] 小米 MiMo：鉴权确认没坏——请求能正常发出去、拿到回复，说明 `api-key` 头（而不是 `Authorization: Bearer`）确实生效了。
 - [x] 小米 MiMo / DeepSeek：触发一次需要长推理的问题，确认思考过程/思考态展示正常（`supports_thinking_toggle` 没被改动影响）。
 - [x] 后台「测试连接」入口（`app/api/v1/agent_admin.py` 对应的管理页面功能）：对 Anthropic 原生 + 至少一个第三方 provider 各测一次，确认连接测试仍能正确成功/失败反馈。

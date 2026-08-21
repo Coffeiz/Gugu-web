@@ -17,16 +17,17 @@
 - ✅ **命中便宜** - 缓存读取按 10% 价格计费
 - ⚠️ **断点限制** - 最多 4 个显式 cache_control 断点，超出会返回 400 错误
 
-**MiniMax 特殊限制**（2026-08-19 发现）：
-- **被动缓存**（推荐）- API 自动识别，无需 cache_control，需要 ≥512 tokens
-- **主动缓存**（Anthropic 兼容）- 需要显式 cache_control
-- **关键发现**：MiniMax-M3 **不支持被动模式下的主动缓存**
-- **实测对比**：被动缓存 Round 1 cache_read=391，主动缓存 Round 1 cache_read=128
-- **结论**：对于 MiniMax-M3，使用被动缓存效果更好
+**MiniMax 特殊策略**（2026-08-21 更新）：
+- MiniMax-M2.x 与 MiniMax-M3 均使用 Anthropic 主动缓存
+- 请求显式添加 `cache_control: {type: "ephemeral"}`，不依赖 provider 的隐式策略
+- M3 的主动缓存能力已通过当前真机复测确认，代码与 M2.x 统一
 
-## 3. 优化前的策略（保守策略）
+## 3. 历史策略（已废弃）
 
 **实现位置**：`backend/agent/loop_drivers.py` 第 159-175 行
+
+以下片段仅保留作历史记录，不代表当前实现。旧的 `CACHE_BREAK` / `split_for_cache`
+已在 session snapshot 重构收尾时移除。
 
 **策略**：
 ```python
@@ -46,7 +47,7 @@ system_param = [
 
 ## 4. 对比测试
 
-**测试脚本**：`backend/test_cache_strategy_compare.py`
+**测试脚本**：`backend/scripts/diagnostics/test_cache_strategy_compare.py`
 
 **测试方法**：
 1. 构造真实场景的 system 提示词（含记忆、项目、文件概览）
@@ -69,15 +70,18 @@ system_param = [
 - 激进策略：input=390, cache_read=1080, 命中率 73.5%
 - **提升：+20.5%**
 
-## 5. 实施的优化（激进策略）
+## 5. 当时实施的优化（历史记录）
 
 **修改位置**：`backend/agent/loop_drivers.py` 第 159-175 行
 
+当前实现位置仍是该模块，但现在由 `build_split()` 直接提供稳定 system 文本，动态业务
+上下文放在 messages，provider 适配器按能力决定是否添加单一主动缓存标记。
+
 **新策略**：
 ```python
-# 放弃 stable/dynamic 分组，全部标记缓存
+# 历史示意：当前代码不再调用 _builder.strip_cache_marker
 if system_text:
-    stripped = _builder.strip_cache_marker(system_text)
+    stripped = system_text
     if supports_active_cache:
         _sys_blk = {"type": "text", "text": stripped, "cache_control": {"type": "ephemeral"}}
         system_param = [_sys_blk]
@@ -122,7 +126,7 @@ if system_text:
 ## 8. 相关文件
 
 - `backend/agent/loop_drivers.py` - 缓存策略实现
-- `backend/test_cache_strategy_compare.py` - 对比测试脚本
+- `backend/scripts/diagnostics/test_cache_strategy_compare.py` - 对比诊断脚本
 - `docs/devlog.md` - debug 记录
 
 ## 9. 经验教训

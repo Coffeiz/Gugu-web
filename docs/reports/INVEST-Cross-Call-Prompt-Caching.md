@@ -123,8 +123,8 @@ messages[0] = 记忆 + 项目 + 时间  ← 动态内容在 messages 中
 - `backend/agent/loop_drivers.py` - 缓存策略实现
 - `backend/agent/context/builder.py` - system prompt 构建
 - `backend/agent/runtime/loopscope_trace/utils.py` - 缓存数据提取
-- `backend/test_cross_call_cache.py` - 跨 call 缓存测试
-- `backend/test_cache_mode_compare.py` - 缓存模式对比测试
+- `backend/scripts/diagnostics/test_cross_call_cache.py` - 跨 call 缓存诊断脚本
+- `backend/scripts/diagnostics/test_cache_mode_compare.py` - 缓存模式对比诊断脚本
 
 ---
 

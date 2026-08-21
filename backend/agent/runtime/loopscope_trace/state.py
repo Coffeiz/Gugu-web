@@ -183,12 +183,11 @@ def record_snapshot_event(
     context_epoch: int | None,
     snapshot_hash: str | None,
     session_info_hash: str | None,
-    covered_message_id: int | None,
     expires_at: Any = None,
 ) -> None:
     """记录脱敏的 session snapshot 生命周期事件。
 
-    只写 hash、游标、epoch 和时间状态，不写 snapshot 正文、用户消息或业务数据。
+    只写 hash、epoch 和时间状态，不写 snapshot 正文、用户消息或业务数据。
     没有 active LoopScope run 时静默跳过，避免影响 IM/离线任务主链路。
     """
     if not _enabled():
@@ -203,7 +202,6 @@ def record_snapshot_event(
             "context_epoch": context_epoch,
             "snapshot_hash": snapshot_hash or "",
             "session_info_hash": session_info_hash or "",
-            "covered_message_id": covered_message_id,
             "expires_at": expires_at.isoformat() if hasattr(expires_at, "isoformat") else None,
         }
         span = _Span(

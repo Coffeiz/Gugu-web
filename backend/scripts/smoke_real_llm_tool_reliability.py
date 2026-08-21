@@ -31,6 +31,11 @@ _UID = "00000000-0000-0000-0000-000000000000"
 _DEFAULT_QUERY = "Python jsonschema Draft 2020-12 官方文档"
 
 
+def build_prompt(*args, **kwargs):
+    static, dynamic, _ = builder.build_split(*args, **kwargs)
+    return "\n\n---\n\n".join(part for part in (static, dynamic) if part)
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="调用真实 LLM 验证工具契约与联网搜索链路")
     parser.add_argument(
@@ -60,7 +65,7 @@ async def _consume_real_call(query: str, expected_max_results: int, timeout: flo
     if not getattr(model_cfg, "api_key", ""):
         raise RuntimeError("当前模型没有配置 API key")
 
-    system_prompt = builder.build(
+    system_prompt = build_prompt(
         "default",
         "测试用户",
         [],

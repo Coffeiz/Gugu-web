@@ -11,10 +11,7 @@
 """
 from __future__ import annotations
 
-import asyncio
-import json
 import logging
-from typing import AsyncGenerator
 
 from .tokens import estimate_tokens, message_text, msg_tokens
 
@@ -32,7 +29,6 @@ async def estimate_context_length(messages: list, system_text: str = "") -> int:
     for msg in messages:
         if isinstance(msg, dict):
             # dict 类型消息（如 runner.py 构建的消息）
-            content = msg.get("content", "")
             total += estimate_tokens(message_text(msg))
         else:
             # ORM ConversationMessage 对象
@@ -164,7 +160,7 @@ async def compact_context(
                 session_id, len(normal_msgs), len(new_messages), used_tokens)
 
     # 验证压缩后的前缀一致性
-    consistent, reason = verify_prefix_consistency(messages, new_messages, system_text)
+    consistent, reason = validate_compacted_shape(new_messages)
     if not consistent:
         logger.warning("[compaction] session=%s 前缀不一致: %s，返回原消息", session_id, reason)
         return messages, False
@@ -220,26 +216,8 @@ def _is_system_injection(content: str) -> bool:
             or content.startswith("## 文件"))
 
 
-def verify_prefix_consistency(
-    old_messages: list,
-    new_messages: list,
-    system_text: str = "",
-) -> tuple[bool, str]:
-    """验证压缩后的前缀是否与之前一致。
-
-    返回 (是否一致, 不一致的原因)。
-
-    缓存前缀 = system_text + messages 的前 N 条。
-    压缩后应该保持这个前缀不变，只改变后面的摘要部分。
-    """
-    # 1. system prompt 不应该变化
-    # （system_text 由调用方保证不变，这里不需要检查）
-
-    # 2. messages 的前几条应该保持一致（系统上下文注入 + 摘要标记）
-    # 压缩后 messages 结构：[系统注入?, <compacted-summary>, 最近消息...]
-    # 旧 messages 结构：[消息1, 消息2, ..., 消息N]
-
-    # 检查压缩后的消息是否合理
+def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
+    """验证压缩结果包含摘要且仍保留至少一条最新消息。"""
     if not new_messages:
         return False, "压缩后消息列表为空"
 
@@ -270,11 +248,7 @@ def verify_prefix_consistency(
     if recent_msgs_after_summary == 0:
         return False, "摘要之后没有最近消息"
 
-    return True, "前缀一致"
-    """判断是否是系统上下文注入消息。"""
-    if not content:
-        return False
-    return content.startswith("## 项目") or content.startswith("## 日历") or content.startswith("## 文件")
+    return True, "压缩结构有效"
 
 
 async def _generate_compact_summary(

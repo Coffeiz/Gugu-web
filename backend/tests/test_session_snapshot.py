@@ -151,6 +151,23 @@ def test_history_cache_boundary_excludes_dynamic_tail():
     assert newly_appended([{"role": "user", "content": "old"}, {"role": "assistant", "content": "new"}], 1)[0]["content"] == "new"
 
 
+def test_history_cache_keeps_previous_checkpoint_across_round_append():
+    messages = PromptMessages(
+        [{"role": "user", "content": "fixed"}, {"role": "user", "content": "round one"}],
+        [reminder("time")],
+    )
+
+    first = _with_history_cache(messages)
+    messages.append({"role": "assistant", "content": "tool call"})
+    messages.append({"role": "user", "content": "tool result"})
+    second = _with_history_cache(messages)
+
+    assert second[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert second[3]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in second[-1]["content"]
+    assert "cache_control" not in first[-1]["content"]
+
+
 @pytest.mark.asyncio
 async def test_snapshot_trace_events_are_redacted_and_distinguish_hit_rebuild(monkeypatch):
     """snapshot trace 只记录生命周期元数据，不携带 session 正文或观测内容。"""

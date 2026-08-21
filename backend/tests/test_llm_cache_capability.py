@@ -1,14 +1,15 @@
 from types import SimpleNamespace
 
-from agent.llm.llm_select import supports_anthropic_active_cache, supports_openai_active_cache
+from agent.llm.llm_select import supports_anthropic_active_cache
+from agent.providers import adapter_for
 
 
 def _model(provider: str, model: str, base_url: str = "") -> SimpleNamespace:
     return SimpleNamespace(provider=provider, model=model, base_url=base_url)
 
 
-def test_minimax_m3_keeps_passive_cache_until_explicit_contract_is_verified() -> None:
-    assert not supports_anthropic_active_cache(_model("minimax", "MiniMax-M3"))
+def test_minimax_m3_uses_anthropic_active_cache() -> None:
+    assert supports_anthropic_active_cache(_model("minimax", "MiniMax-M3"))
 
 
 def test_minimax_m2_keeps_anthropic_active_cache() -> None:
@@ -24,8 +25,10 @@ def test_anthropic_provider_keeps_existing_active_cache_behavior() -> None:
 
 
 def test_openai_compatible_qwen_uses_active_cache() -> None:
-    assert supports_openai_active_cache(_model("qwen", "qwen3.5-flash"))
+    ai = _model("qwen", "qwen3.5-flash")
+    assert adapter_for(ai).supports_active_cache(ai.model)
 
 
 def test_openai_mimo_skips_active_cache() -> None:
-    assert not supports_openai_active_cache(_model("mimo", "MiMo-V2"))
+    ai = _model("mimo", "MiMo-V2")
+    assert not adapter_for(ai).supports_active_cache(ai.model)

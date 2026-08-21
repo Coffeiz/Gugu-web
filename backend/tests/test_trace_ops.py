@@ -3,10 +3,15 @@
 Redis 依赖的聚合读写不在此测（best-effort 旁路、异常自吞），测的是纯逻辑契约：
 trace 生成/接力/隔离、延迟分桶、工具轨迹日志带 trace 字段。
 """
+import asyncio
 import json
 import logging
 import time
 
+import pytest
+
+from agent.runtime.loopscope_trace.state import _ScopeRun, _now, _scope_run
+from agent.runtime.loopscope_trace import state as trace_state
 from agent.runtime import trace
 from app.core import opsmetrics
 
@@ -25,6 +30,28 @@ def test_set_trace_generates_when_empty():
     t = trace.set_trace(None)
     assert len(t) == 12
     assert trace.set_trace("  ") != ""   # 空白串也视为缺失、新生成
+
+
+@pytest.mark.asyncio
+async def test_finish_run_closes_non_web_scope_run(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    async def no_op_post(_snapshot):
+        return None
+    monkeypatch.setattr(trace_state, "_post_snapshot", no_op_post)
+    run = _ScopeRun(
+        id="run-im-test", trace_id="trace-im-test", session_key="pending:trace-im-test",
+        external_session_id="", source="unknown", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        trace.finish_run("success", "测试回复")
+    finally:
+        _scope_run.reset(token)
+
+    assert run.status == "success"
+    assert run.ended_at is not None
+    assert run.output_text == "测试回复"
+    await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 
 def test_bucket_edges():

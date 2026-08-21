@@ -2,9 +2,9 @@
 """
 缓存策略对比测试
 
-对比两种策略的真实效果：
-- 策略 A：当前策略（保守，只有稳定前缀标记缓存）
-- 策略 B：激进策略（所有内容都标记缓存）
+对比两种请求标记方式的真实效果：
+- 策略 A：不发送主动 cache_control（由 provider 自行判断）
+- 策略 B：将稳定 system 标记为主动缓存
 
 跑 3 轮对话，比较每轮的 cache_read_tokens 和 cache_write_tokens
 """
@@ -46,18 +46,8 @@ async def make_llm_request(messages, system_text, mark_all_cache=False):
             }
         ]
     else:
-        # 保守策略：按 CACHE_BREAK 分割，只标记前半部分
-        from agent.context.builder import split_for_cache
-        stable, dynamic = split_for_cache(system_text)
-        if dynamic:
-            system_blocks = [
-                {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
-                {"type": "text", "text": dynamic}
-            ]
-        else:
-            system_blocks = [
-                {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}
-            ]
+        # 当前 builder 已经把动态上下文移到 messages，system 本身就是稳定块。
+        system_blocks = [{"type": "text", "text": system_text}]
 
     # 给消息历史的每个块也加 cache_control
     prepared_messages = []

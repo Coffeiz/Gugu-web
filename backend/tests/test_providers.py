@@ -26,7 +26,7 @@ def test_adapter_for_minimax():
 
 def test_adapter_for_minimax_m2_vs_m3_cache():
     assert adapter_for(_ai(provider="minimax", model="MiniMax-M2.7")).supports_active_cache("MiniMax-M2.7")
-    assert not adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
+    assert adapter_for(_ai(provider="minimax", model="MiniMax-M3")).supports_active_cache("MiniMax-M3")
 
 
 def test_adapter_for_qwen_keeps_known_openai_cache_capability():

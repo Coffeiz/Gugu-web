@@ -22,7 +22,7 @@
 
 ```bash
 cd /Users/coffeiz/Desktop/workspace/Gugu-web
-python tests/minimax_cache_test.py
+python backend/scripts/diagnostics/minimax_cache_test.py
 ```
 
 ### 方式 2：在远程 devserver 上运行
@@ -30,7 +30,7 @@ python tests/minimax_cache_test.py
 ```bash
 ssh coffeiz@192.168.110.51
 cd ~/文档/Workspace/Gugu-web
-python tests/minimax_cache_test.py
+python backend/scripts/diagnostics/minimax_cache_test.py
 ```
 
 ### 方式 3：使用后台运行并查看日志
@@ -38,7 +38,7 @@ python tests/minimax_cache_test.py
 ```bash
 ssh coffeiz@192.168.110.51
 cd ~/文档/Workspace/Gugu-web
-nohup python tests/minimax_cache_test.py > /tmp/minimax_cache_test.log 2>&1 &
+nohup python backend/scripts/diagnostics/minimax_cache_test.py > /tmp/minimax_cache_test.log 2>&1 &
 sleep 10
 tail -100 /tmp/minimax_cache_test.log
 ```

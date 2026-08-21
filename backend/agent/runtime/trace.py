@@ -4,6 +4,8 @@ from __future__ import annotations
 from .loopscope_trace.hooks import ensure_hooks
 from .loopscope_trace.state import (
     _enabled,
+    _finish_run,
+    _scope_run,
     create_trace,
     get_trace,
     record_context_source,
@@ -23,4 +25,19 @@ def set_trace(t: str | None) -> str:
         ensure_hooks()
     return t
 
-__all__ = ["new_trace", "set_trace", "get_trace", "record_context_source", "record_snapshot_event"]
+
+def finish_run(status: str = "success", output_text: str = "") -> None:
+    """收尾非 Web 的 Agent run（IM/定时任务），并异步提交 LoopScope。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    if output_text:
+        run.output_text = output_text
+    _finish_run(run, status)
+
+__all__ = [
+    "new_trace", "set_trace", "finish_run", "get_trace",
+    "record_context_source", "record_snapshot_event",
+]

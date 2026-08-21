@@ -13,7 +13,7 @@ import json
 from types import SimpleNamespace
 from typing import AsyncGenerator, AsyncIterator, List, Tuple
 
-from sqlalchemy import delete, desc, func, select
+from sqlalchemy import select
 
 from app.core.config import get_settings
 from agent.security import sanitize
@@ -284,7 +284,6 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                 "user_tz": data.user_tz,
                 "im_channels": data.im_channels,
                 "im_memory": data.im_memory,
-                "dynamic_tail": builder.dynamic_tail(data.memory),
             }
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
@@ -433,7 +432,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     anthr_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
-        fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
+        fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
     history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
     tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
     tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
@@ -493,17 +492,10 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             snapshot_session = await db2.get(ConversationSession, session_id)
             if snapshot_session is not None:
                 await db2.flush()
-                latest_message_id = await db2.scalar(
-                    select(func.max(ConversationMessage.id)).where(
-                        ConversationMessage.session_id == session_id
-                    )
-                )
                 session_snapshot.checkpoint_snapshot(
                     snapshot_session,
                     [{"role": "user", "content": req.message},
                      {"role": "assistant", "content": text}],
-                    message_id=latest_message_id,
-                    run_id=snapshot_session.snapshot_last_run_id,
                 )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:
@@ -602,8 +594,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                     "session_info": {"user_name": req.user_name, "source": req.source,
                                       "chat_id": req.chat_id, "profile": profile.prompt_file},
                     "user_tz": data.user_tz, "im_channels": data.im_channels,
-                    "im_memory": data.im_memory,
-                    "dynamic_tail": builder.dynamic_tail(data.memory)}
+                    "im_memory": data.im_memory}
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
         user_tz = snapshot["user_tz"]
@@ -739,7 +730,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     anthr_initial_len = 0
     fixed_parts = ([_ctx_injection] if _ctx_injection else [])
     if _summary:
-        fixed_parts.append({"role": "user", "content": compress_conv.system_block(_summary)})
+        fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
     history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
     if use_anthropic:
         tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
@@ -847,17 +838,10 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             snapshot_session = await db2.get(ConversationSession, session_id)
             if snapshot_session is not None:
                 await db2.flush()
-                latest_message_id = await db2.scalar(
-                    select(func.max(ConversationMessage.id)).where(
-                        ConversationMessage.session_id == session_id
-                    )
-                )
                 session_snapshot.checkpoint_snapshot(
                     snapshot_session,
                     [{"role": "user", "content": req.message},
                      {"role": "assistant", "content": text}],
-                    message_id=latest_message_id,
-                    run_id=snapshot_session.snapshot_last_run_id,
                 )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:

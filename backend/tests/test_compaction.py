@@ -4,7 +4,7 @@ import pytest
 from agent.context.compaction import (
     estimate_context_length,
     compact_context,
-    verify_prefix_consistency,
+    validate_compacted_shape,
     _is_system_injection,
     _atomic_message_units,
     COMPACTION_THRESHOLD_RATIO,
@@ -124,8 +124,12 @@ class TestCompactContext:
         )
         assert compacted  # 应该触发压缩
 
-    def test_preserves_system_injection(self):
+    def test_preserves_system_injection(self, monkeypatch):
         """压缩时应保留系统上下文注入消息"""
+        monkeypatch.setattr(
+            "agent.context.compaction._generate_compact_summary",
+            lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
+        )
         msgs = [
             _make_msg("user", "你好"),
             _make_msg("user", "## 项目\n- test"),
@@ -140,8 +144,12 @@ class TestCompactContext:
         has_injection = any(isinstance(c, str) and "项目" in c for c in contents)
         assert has_injection
 
-    def test_preserves_compact_summary(self):
+    def test_preserves_compact_summary(self, monkeypatch):
         """压缩后应包含 compacted-summary"""
+        monkeypatch.setattr(
+            "agent.context.compaction._generate_compact_summary",
+            lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
+        )
         msgs = [_make_msg("user", "消息" * 100) for _ in range(50)]
         result, compacted = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=1000)
@@ -224,12 +232,12 @@ class TestVerifyPrefixConsistency:
             {"role": "user", "content": "<compacted-summary>\n摘要内容\n</compacted-summary>"},
             _make_msg("user", "消息2"),
         ]
-        ok, reason = verify_prefix_consistency(old, new)
+        ok, reason = validate_compacted_shape(new)
         assert ok
 
     def test_empty_messages(self):
         """空消息列表应报错"""
-        ok, reason = verify_prefix_consistency([], [])
+        ok, reason = validate_compacted_shape([])
         assert not ok
         assert "空" in reason
 
@@ -237,7 +245,7 @@ class TestVerifyPrefixConsistency:
         """缺少摘要标记应报错"""
         old = [_make_msg("user", "消息1")]
         new = [_make_msg("user", "消息2")]
-        ok, reason = verify_prefix_consistency(old, new)
+        ok, reason = validate_compacted_shape(new)
         assert not ok
         assert "compacted-summary" in reason
 
@@ -245,6 +253,6 @@ class TestVerifyPrefixConsistency:
         """摘要在最后应报错（后面没有最近消息）"""
         old = [_make_msg("user", "消息1")]
         new = [{"role": "user", "content": "<compacted-summary>\n摘要\n</compacted-summary>"}]
-        ok, reason = verify_prefix_consistency(old, new)
+        ok, reason = validate_compacted_shape(new)
         assert not ok
         assert "最近消息" in reason

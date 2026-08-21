@@ -329,7 +329,7 @@ messages = [
 
 ## 7. 相关资源
 
-- dsh 缓存测试：`backend/test_cross_call_cache.py`
-- Session 增量缓存测试：`backend/test_session_incremental_cache.py`
+- dsh 缓存诊断：`backend/scripts/diagnostics/test_cross_call_cache.py`
+- Session 增量缓存诊断：`backend/scripts/diagnostics/test_session_incremental_cache.py`
 - 调查报告：`docs/reports/INVEST-Cross-Call-Prompt-Caching.md`
 - 优化报告：`docs/reports/OPT-Cache-Strategy-Aggressive.md`

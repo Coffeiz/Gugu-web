@@ -61,7 +61,7 @@ def loopscope_hooks(monkeypatch):
         "publish": genstream.publish,
         "dispatch": registry.dispatch,
         "run_loop": LLMRunner._run_loop,
-        "build": getattr(context_builder, "build", None),
+        "build_split": getattr(context_builder, "build_split", None),
         "hooks_installed": loop_hooks._hooks_installed,
     }
     for name in ("load_projects", "load_user_tz", "load_events", "load_files_overview",
@@ -77,8 +77,8 @@ def loopscope_hooks(monkeypatch):
     genstream.publish = saved["publish"]
     registry.dispatch = saved["dispatch"]
     LLMRunner._run_loop = saved["run_loop"]
-    if saved["build"] is not None:
-        context_builder.build = saved["build"]
+    if saved["build_split"] is not None:
+        context_builder.build_split = saved["build_split"]
     for name in ("load_projects", "load_user_tz", "load_events", "load_files_overview",
                  "load_style_prefs", "load_memory", "load_im_channels"):
         orig = saved.get(f"loader:{name}")

@@ -148,10 +148,6 @@ def ensure_hooks() -> None:
         # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
         # 但 traced_round 仍然需要完整的展示元数据。
         plain_system = system_text or ""
-        try:
-            plain_system = context_builder.strip_cache_marker(plain_system)
-        except Exception:
-            pass
         effective_system = plain_system or _system_message_text(messages)
         system_location = "system_param" if plain_system else "messages[0]"
         system_assembly = {

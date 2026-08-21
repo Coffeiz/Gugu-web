@@ -121,6 +121,16 @@ def _with_history_cache(messages: list) -> list:
     if cache_limit <= 0:
         return list(messages)
 
+    # 保留上一请求的 checkpoint，并在本轮 conversation 末尾建立新 checkpoint。
+    # PromptMessages 会在同一 run 的 tool round 之间持续追加消息；如果每次只标记
+    # 最后一条，provider 可能看不到上一轮已经建立的可复用前缀。
+    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
+    latest_anchor = cache_limit - 1
+    anchor_indices.add(latest_anchor)
+    remember_anchor = getattr(messages, "remember_cache_anchor", None)
+    if remember_anchor is not None:
+        remember_anchor(latest_anchor)
+
     # 浅拷贝 messages 列表
     new_messages = []
 
@@ -128,16 +138,14 @@ def _with_history_cache(messages: list) -> list:
         msg = dict(msg)
         content = msg.get("content")
 
-        # 只给最后一条消息的最后一个块加 cache_control
-        is_last = (i == cache_limit - 1)
+        # 只给 conversation checkpoint 加 cache_control；动态尾部永远不加。
+        is_anchor = i in anchor_indices and i < cache_limit
 
-        if isinstance(content, list) and is_last and content:
-            # 最后一条消息：只给最后一个块加 cache_control
+        if isinstance(content, list) and is_anchor and content:
             new_content = content[:-1] + [
                 {**content[-1], "cache_control": {"type": "ephemeral"}}
             ]
-        elif isinstance(content, str) and is_last:
-            # 字符串内容转为数组，加 cache_control
+        elif isinstance(content, str) and is_anchor:
             new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
         else:
             # 其他消息不加 cache_control
@@ -155,7 +163,6 @@ class AnthropicDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.context import builder as _builder
         from agent.llm.llm_select import supports_anthropic_active_cache, _is_mimo
         from agent.tools import registry
 
@@ -173,25 +180,12 @@ class AnthropicDriver:
         else:
             thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
 
-        # prompt 缓存：多段缓存策略（2026-08-19 优化）
-        # builder.py 将 system 分为 3 段：stable（不变）/ semi-stable（慢变）/ volatile（每轮变）
-        # 前 2 段加 cache_control，最后一段不加。这样记忆/项目等慢变内容也能被缓存。
+        # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
-            parts = _builder.split_for_cache(system_text)
-            if len(parts) > 1 and supports_active_cache:
-                # 前 N-1 段加 cache_control，最后一段不加
-                system_param = []
-                for i, part in enumerate(parts):
-                    if i < len(parts) - 1:
-                        system_param.append({"type": "text", "text": part, "cache_control": {"type": "ephemeral"}})
-                    else:
-                        system_param.append({"type": "text", "text": part})
-            elif supports_active_cache:
-                # 无断点时，整块加 cache_control
-                _sys_blk = {"type": "text", "text": parts[0], "cache_control": {"type": "ephemeral"}}
-                system_param = [_sys_blk]
+            if supports_active_cache:
+                system_param = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
             else:
-                system_param = _builder.strip_cache_marker(system_text)
+                system_param = system_text
         else:
             system_param = system_text
 
@@ -284,30 +278,19 @@ class OpenAIDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.context import builder as _builder
         from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
         adapter = providers.adapter_for(ai)
         supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
 
-        # OpenAI 兼容 API（Qwen/阿里等）支持 cache_control，不再 strip 掉。
-        # 只处理旧的 CACHE_BREAK 标记（转换为数组格式的 cache_control）。
-        # 阿里文档：system content 必须是数组格式，cache_control 加在 content 块上。
+        # OpenAI 兼容 API 的 system 已由 message assembly 生成稳定文本，
+        # 支持主动缓存的 provider 将整个稳定 system 标记为可缓存。
         for _m in messages if supports_active_cache else []:
             if _m.get("role") == "system":
                 content = _m.get("content")
                 if isinstance(content, str):
-                    if _builder.CACHE_BREAK in content:
-                        # 旧格式：字符串带 CACHE_BREAK 标记 → 转成数组格式
-                        stable, dynamic = content.split(_builder.CACHE_BREAK, 1)
-                        new_content = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}]
-                        if dynamic.strip():
-                            new_content.append({"type": "text", "text": dynamic})
-                        _m["content"] = new_content
-                    else:
-                        # 普通字符串 → 转成数组格式（阿里要求），加 cache_control
-                        _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
+                    _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
                 elif isinstance(content, list):
                     # 已经是数组格式，确保最后一个块有 cache_control
                     if content and "cache_control" not in content[-1]:

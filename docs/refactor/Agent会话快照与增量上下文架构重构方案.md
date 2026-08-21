@@ -1,6 +1,6 @@
 # Agent 会话快照与增量上下文架构重构方案
 
-> 状态：P0-P5 已完成，已切换到 session snapshot 主链路；旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。
+> 状态：P0-P5 已完成，已切换到 session snapshot 主链路；旧 summary / system-reminder 仅保留为兼容格式，未再作为第二套业务上下文来源。2026-08-21 收尾清理了旧 builder、无效快照字段和临时诊断脚本。
 >
 > 基线：`dev @ 77b6a0e`（2026-08-20）
 
@@ -40,15 +40,15 @@ cache 统计永远不进入 LLM context。
 | `agent/context/builder.py` | `build_split()` 返回静态 system、动态文本、当前时间 | 动态业务数据每轮重新加载并重新序列化 |
 | `agent/runner.py` | `run_collect()` / `run_stream()` 各自组装一遍上下文 | Web/IM 两条路径存在重复编排逻辑 |
 | `agent/gateway/web.py` | Web 入口再次执行 loader、builder、reminder 组装 | 与 runner 的生命周期边界不统一 |
-| `agent/context/message_renderer.py` | 负责 reminder、当前消息和 system 注入包装 | 没有 session snapshot/checkpoint 概念 |
+| `agent/context/message_assembly.py` | 负责 reminder、当前消息和 system 注入包装 | 与 `session_snapshot` 通过统一快照生命周期协作 |
 | `agent/im/context_loader.py` | 每轮读取项目、日历、文件、记忆和渠道 | 不区分 session 初始化与普通 run |
 
 ### 2.2 历史消息与会话持久化
 
 | 模块 | 当前实现 | 缺口 |
 | --- | --- | --- |
-| `ConversationSession` | 保存标题、来源、平台和更新时间 | 没有 snapshot hash、context epoch、TTL、checkpoint cursor |
-| `ConversationMessage` | 保存 role、content、content_json、附件和群聊元数据 | 没有统一 `sent_at`，也没有 run/checkpoint 归属 |
+| `ConversationSession` | 保存标题、来源、平台、snapshot hash、context epoch 和 TTL | snapshot 元数据只用于生命周期与一致性检查 |
+| `ConversationMessage` | 保存 role、content、content_json、附件、群聊元数据和 `sent_at` | 不额外保存无业务用途的 sequence/run_id |
 | `tokens.select_history()` | 按 token 预算从数据库历史中裁剪 | 不知道 snapshot 已覆盖到哪里，无法只构造新增尾部 |
 | `compress_conv.py` | 后台将旧消息压成一条 summary | summary 和 system reminder 的生命周期耦合不清晰 |
 | `context/compaction.py` | 运行时消息列表压缩并检查前缀 | 仍把 system injection 当作普通消息特殊识别 |
@@ -127,10 +127,7 @@ context_epoch
 system_hash
 session_info_hash
 snapshot_hash
-covered_through_message_id
-covered_through_sent_at
-last_run_id
-created_at
+  created_at
 expires_at
 ```
 
@@ -139,7 +136,7 @@ expires_at
 - `system_hash`：静态 system 的规范化 hash；
 - `session_info_hash`：memory/projects/calendar/files/channel/style/lens 的整体 hash；
 - `snapshot_hash`：`system + session-info + 已覆盖历史消息` 的整体 hash；
-- `covered_through_message_id`：快照覆盖的最后一条真实消息；
+- 快照覆盖游标由规范化消息 hash 表达，不依赖额外的消息序号或 run id；
 - hash 只用于一致性检查和去重，不写入 LLM prompt。
 
 ### 3.3 Run 增量结构
@@ -176,11 +173,11 @@ Run 2 完成后:
 ### 4.2 普通 run
 
 1. 读取当前 snapshot 元数据，不重新加载项目、日历、文件和 memory。
-2. 从 `covered_through_message_id` 之后读取新增消息，并保持已有历史前缀稳定。
+2. 根据 snapshot 的规范化消息 hash 判断新增消息，并保持已有历史前缀稳定。
 3. 在历史/新消息之后追加本轮 dynamic tail（summary、stance、当前时间）。
 4. 执行 Agent loop，工具结果按正常 tool message 进入上下文。
 5. 持久化 assistant/tool 消息。
-6. 更新 snapshot 的覆盖游标和 `snapshot_hash`，不复制 snapshot 正文。
+6. 更新 snapshot 的消息 hash 和 `snapshot_hash`，不复制 snapshot 正文。
 
 ### 4.3 工具修改业务数据
 
@@ -285,8 +282,8 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 
 ### P0：数据模型与 hash
 
-- [x] 给 `ConversationSession` 增加 context epoch、snapshot hash、session-info hash、TTL 和覆盖游标。
-- [x] 给消息补齐稳定的 `sent_at`、sequence 和 run_id 字段。
+- [x] 给 `ConversationSession` 增加 context epoch、snapshot hash、session-info hash 和 TTL。
+- [x] 给消息补齐稳定的 `sent_at`；不再新增无业务用途的 sequence/run_id 元数据。
 - [x] 实现规范化 prompt hash，排除 cache_control、trace 和内部元数据。
 - [x] 增加 snapshot/checkpoint 数据库迁移，并在 devserver 回退基线后升级到新 P0 head。
 
@@ -299,7 +296,7 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 
 ### P2：增量 run
 
-- [x] 按 `snapshot_message_id` 保存覆盖游标；普通 run 的业务 snapshot 只追加当前 run 的消息 hash，模型历史仍按 token 窗口发送以满足无状态 provider 的完整上下文要求。
+- [x] 按规范化消息 hash 保存覆盖状态；普通 run 的业务 snapshot 只追加当前 run 的消息 hash，模型历史仍按 token 窗口发送以满足无状态 provider 的完整上下文要求。
 - [x] 普通 run 不执行完整业务 loader；Web/IM 仅在新 session 或 TTL 过期时加载。
 - [x] run 完成后更新 snapshot hash 和覆盖游标，不复制完整 snapshot 正文。
 - [x] Web、QQ、飞书、微信共用 `session_snapshot` 生命周期（IM 仍保留权限过滤策略）。
@@ -337,7 +334,7 @@ messages。`snapshot_hash`、`session_info_hash` 只用于观测和一致性核�
 
 #### P5 验收记录（2026-08-21）
 
-- `backend/tests/test_session_snapshot.py`：覆盖规范化 hash、观测元数据隔离、TTL 命中/重建、checkpoint cursor、动态尾部和 cache boundary；snapshot trace 只保留 hash/cursor/epoch/TTL 元数据。
+- `backend/tests/test_session_snapshot.py`：覆盖规范化 hash、观测元数据隔离、TTL 命中/重建、checkpoint hash、动态尾部和 cache boundary；snapshot trace 只保留 hash/epoch/TTL 元数据。
 - `backend/tests/test_core_loop_characterization.py`、`backend/tests/test_loopscope_usage.py`：覆盖 Web/runner 普通 round、tool/follow-up、LoopScope usage 和无 active run 的 IM wrapper。
 - `backend/tests/test_im_identity.py`、`backend/tests/test_scheduled_group_imctx.py`：覆盖 IM 会话与群聊上下文边界；`backend/tests/test_compaction.py`、`backend/tests/test_session_snapshot.py` 覆盖压缩和 checkpoint 重建契约。
 - 已用同一会话连续运行 3 轮核对：后续 round 保留稳定前缀，只追加真实 user/assistant/tool 消息和 dynamic tail；LoopScope 同时展示 input/cache usage 与 snapshot hash。
