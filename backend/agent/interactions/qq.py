@@ -59,11 +59,22 @@ def parse_interaction_event(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     actor = data.get("user") if isinstance(data.get("user"), dict) else data.get("author")
     actor = actor if isinstance(actor, dict) else {}
+    # QQ 官方 INTERACTION_CREATE 的 C2C 回调通常把操作者直接放在
+    # data.user_openid（而不是 data.user.user_openid）；群回调也可能使用
+    # group_member_openid。优先读取官方顶层字段，再兼容旧的嵌套样本。
+    platform_user_id = (
+        data.get("user_openid")
+        or data.get("group_member_openid")
+        or actor.get("user_openid")
+        or actor.get("openid")
+        or actor.get("id")
+        or resolved.get("user_id")
+    )
     return {
         "prompt_id": prompt_id,
         "token": token,
         "event_id": str(payload.get("id") or data.get("id") or "") or None,
-        "platform_user_id": str(actor.get("user_openid") or actor.get("openid") or actor.get("id") or "") or None,
+        "platform_user_id": str(platform_user_id or "") or None,
         "channel_id": str(data.get("channel_id") or payload.get("channel_id") or "") or None,
         "chat_type": "group" if data.get("group_openid") or data.get("group_id") else "c2c",
         "chat_id": str(data.get("group_openid") or data.get("group_id") or "") or None,

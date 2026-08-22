@@ -57,3 +57,16 @@ def test_qq_interaction_parser_accepts_official_resolved_button_data():
     assert event["prompt_id"] == 17
     assert event["token"] == "opaque-token"
     assert event["platform_user_id"] == "platform-user"
+
+
+def test_qq_interaction_parser_accepts_official_top_level_user_openid():
+    event = parse_interaction_event({
+        "id": "evt-top-level",
+        "data": {
+            "user_openid": "platform-user",
+            "resolved": {"button_data": "17:opaque-token"},
+        },
+    })
+    assert event["prompt_id"] == 17
+    assert event["token"] == "opaque-token"
+    assert event["platform_user_id"] == "platform-user"
