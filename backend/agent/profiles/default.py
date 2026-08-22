@@ -11,8 +11,8 @@ from agent.profiles.base import BaseProfile
 
 class DefaultProfile(BaseProfile):
     name = "default"
-    tools = ["projects", "calendar", "files", "clients", "trash", "overview", "memory", "web_search", "global_search", "group_context", "mind", "mind_canvas", "conversations", "scheduled_tasks", "web", "meta"]
-    skills = ["weather", "project-planning", "scheduled-tasks", "im-bind", "web-search", "image-analysis", "note-writing", "mind-canvas"]
+    tools = ["projects", "calendar", "files", "clients", "trash", "overview", "memory", "web_search", "global_search", "group_context", "mind", "mind_canvas", "conversations", "scheduled_tasks", "web", "meta", "shell"]
+    skills = ["weather", "project-planning", "scheduled-tasks", "im-bind", "web-search", "image-analysis", "note-writing", "mind-canvas", "shell-workspace"]
     prompt_file = "default.md"
     memory_enabled = True
     mcp_enabled = False

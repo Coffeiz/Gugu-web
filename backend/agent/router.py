@@ -75,6 +75,11 @@ _HELP_TEXT = (
     "/stop　停止当前任务\n"
     "/status　看当前进度\n"
     "/compact　整理当前会话上下文\n"
+    "/memory　查看咕咕记住的内容\n"
+    "/forget <内容>　忘记匹配的记忆\n"
+    "/workspace list　列出可绑定工作区\n"
+    "/workspace <ID>　绑定当前会话工作区\n"
+    "/workspace 解除　解除当前会话工作区\n"
     "/help　这份帮助"
 )
 

@@ -36,6 +36,34 @@ from agent.profiles import DefaultProfile
 _bg_tasks: set = set()
 
 
+async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str]) -> list[str]:
+    """工具注册前过滤 Shell；执行器仍会再次调用策略层复核。"""
+    if "shell" not in names:
+        return names
+    from agent.security.shell_policy import available_for_session
+    if await available_for_session(db, user_id, session_id):
+        return names
+    return [name for name in names if name != "shell"]
+
+
+async def _shell_context(db, user_id, session_id: int) -> str:
+    """给模型提供 Shell 工具所需的会话标识，不暴露宿主机真实路径。"""
+    from app.services.workspaces import describe_session
+    workspace = await describe_session(db, user_id, session_id)
+    if workspace is None:
+        return (
+            "\n\n## 工作区 Shell 状态\n"
+            "- 当前会话未绑定工作区，不能调用 shell。\n"
+            "- 如需执行命令，先提示用户使用 /workspace <ID> 绑定工作区。"
+        )
+    return (
+        "\n\n## 工作区 Shell 状态\n"
+        f"- 当前会话 ID：{session_id}\n"
+        f"- 当前工作区：{workspace.name}\n"
+        "- cwd 只能使用当前工作区内的相对路径；不要索要或猜测宿主机绝对路径。"
+    )
+
+
 def _im_identity_block(req: AgentRequest, history: list) -> str:
     """把 IM 身份元数据作为内部事实提供给模型，禁止模型凭熟悉感猜身份。"""
     if req.source not in IM_SOURCES:
@@ -383,6 +411,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 
     # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
+    if "shell" in profile.tool_names:
+        _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
     if dynamic_context:
         _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
@@ -411,6 +441,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
     runner = LLMRunner(tool_names, settings)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
@@ -688,6 +719,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     # 组装动态上下文注入块（放入 messages，不进 system）
     _dynamic_extra_parts = []
+    if "shell" in profile.tool_names:
+        _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
     if dynamic_context:
         _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
@@ -716,6 +749,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
+    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
     runner = LLMRunner(tool_names, settings)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
     im_used_tools = False
@@ -1021,6 +1055,8 @@ async def _run_scheduled_once(
             if tool_names_override is not None
             else profile.tool_names
         )
+        # 定时任务没有交互式 session workspace，不向模型暴露本机 Shell。
+        tool_names = [name for name in tool_names if name != "shell"]
         runner = LLMRunner(tool_names, settings)
 
         from app.core.chat_attach import build_user_content

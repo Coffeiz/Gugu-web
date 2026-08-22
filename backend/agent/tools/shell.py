@@ -1,0 +1,136 @@
+"""工作区 Shell 工具：只在权限已满足的当前会话工作区内执行。"""
+from __future__ import annotations
+
+import json
+import logging
+import time
+
+from agent.security import confirm
+from agent.security.logsafe import fingerprint
+from agent.security.shell_policy import evaluate, session_shell_lock
+from agent.sandbox import LocalWorkspaceSandbox
+from agent.tools.base import BaseSkill, Tool
+from app.services.workspaces import resolve_workspace_root
+
+logger = logging.getLogger(__name__)
+
+
+def _audit(**fields) -> None:
+    logger.info("shell_audit %s", json.dumps(fields, ensure_ascii=False, sort_keys=True))
+
+
+async def _shell(db, user_id, args: dict):
+    session_id = args.get("session_id")
+    started = time.monotonic()
+    risk = "unknown"
+    workspace_id = None
+    result = None
+    event = "completed"
+    try:
+        async with session_shell_lock(session_id):
+            result = await _run_shell(db, user_id, args)
+    except Exception:
+        event = "failed"
+        raise
+    finally:
+        if isinstance(result, dict):
+            risk = result.pop("_risk", risk)
+            workspace_id = result.pop("_workspace_id", None)
+            event = result.pop("_audit_event", event)
+        _audit(
+            event=event,
+            user_id=fingerprint(str(user_id)),
+            session_id=session_id,
+            workspace_id=workspace_id,
+            risk=risk,
+            ok=result.get("ok") if isinstance(result, dict) else False,
+            exit_code=result.get("exit_code") if isinstance(result, dict) else None,
+            timed_out=result.get("timed_out", False) if isinstance(result, dict) else False,
+            permission_revoked=result.get("permission_revoked", False) if isinstance(result, dict) else False,
+            truncated=result.get("truncated", False) if isinstance(result, dict) else False,
+            cwd_fingerprint=fingerprint(result.get("cwd", "")) if isinstance(result, dict) and result.get("cwd") else None,
+            duration_ms=round((time.monotonic() - started) * 1000, 2),
+        )
+    return result
+
+
+async def _run_shell(db, user_id, args: dict):
+    command = str(args.get("command") or "").strip()
+    session_id = args.get("session_id")
+    decision = await evaluate(
+        db, user_id, session_id, command, confirm=bool(args.get("confirm")),
+    )
+    if not decision.allowed:
+        return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
+    if decision.needs_confirmation:
+        blocked = confirm.needs_confirmation(
+            args,
+            f"将在当前工作区执行危险命令：{command}",
+            user_id,
+        )
+        if blocked is not None:
+            return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "confirmation_required"}
+
+    root = await resolve_workspace_root(db, user_id, decision.workspace_id)
+    if root is None:
+        return {"error": "当前工作区没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "denied"}
+    async def authorization_check() -> bool:
+        current = await evaluate(db, user_id, session_id, command, confirm=True)
+        return current.allowed and current.workspace_id == decision.workspace_id
+    try:
+        result = await LocalWorkspaceSandbox(root).execute(
+            command,
+            cwd=args.get("cwd", "."),
+            timeout=args.get("timeout", 30),
+            max_output_chars=args.get("max_output_chars", 12_000),
+            authorization_check=authorization_check,
+        )
+    except ValueError as exc:
+        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "rejected"}
+    return {
+        "ok": result.ok,
+        "exit_code": result.exit_code,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "timed_out": result.timed_out,
+        "truncated": result.truncated,
+        "workspace_id": decision.workspace_id,
+        "cwd": result.cwd,
+        "permission_revoked": result.permission_revoked,
+        "_risk": decision.risk.value,
+        "_workspace_id": decision.workspace_id,
+        "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
+    }
+
+
+class ShellSkill(BaseSkill):
+    name = "shell"
+    tools = [
+        Tool(
+            name="shell",
+            label="执行工作区命令",
+            description=(
+                "在当前会话已绑定的工作区内执行一条受控命令。只能使用相对 cwd，"
+                "不支持管道、重定向或命令替换；没有工作区时不要调用。先用 /workspace 查看或绑定工作区，"
+                "危险命令会先要求用户确认。session_id 必须使用系统提示提供的当前会话 ID。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "要执行的单条命令，不要拼接管道或重定向"},
+                    "session_id": {"type": "integer", "description": "当前会话 ID"},
+                    "cwd": {"type": "string", "description": "workspace 内相对目录，默认 ."},
+                    "timeout": {"type": "number", "minimum": 0.1, "maximum": 300, "description": "超时时间，秒，默认 30"},
+                    "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "输出字符上限，默认 12000"},
+                    "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
+                    "confirm_token": {"type": "string", "description": "危险命令确认凭证"},
+                },
+                "required": ["command", "session_id"],
+            },
+            handler=_shell,
+            mutates=True,
+        ),
+    ]
+
+
+ShellSkill().register()

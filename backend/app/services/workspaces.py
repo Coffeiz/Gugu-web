@@ -7,13 +7,27 @@ from __future__ import annotations
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
 
 from app.models import ConversationSession, Folder, Project, UserPreferences, Workspace
 from app.core.ownership import get_owned
+from app.core.config import get_settings
+from app.services.storage.folders import resolve_folder_path
+from app.services.storage.keys import compose_logical_path
 
 
 async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspace | None:
     return await get_owned(db, Workspace, workspace_id, user_id)
+
+
+async def list_workspaces(db: AsyncSession, user_id) -> list[Workspace]:
+    """列出当前用户可绑定的启用工作区。"""
+    result = await db.execute(
+        select(Workspace)
+        .where(Workspace.user_id == user_id, Workspace.enabled.is_(True))
+        .order_by(Workspace.updated_at.desc(), Workspace.id.desc())
+    )
+    return list(result.scalars().all())
 
 
 async def create_workspace(
@@ -69,3 +83,50 @@ async def describe_session(db: AsyncSession, user_id, session_id: int) -> Worksp
     if session is None or session.workspace_id is None:
         return None
     return await get_workspace(db, user_id, session.workspace_id)
+
+
+async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:
+    """把已归属的工作区解析为本地存储根下的真实目录。
+
+    只返回本地存储路径；远程存储后端不能被本机执行器隐式当成本地目录使用。
+    """
+    workspace = await get_workspace(db, user_id, workspace_id)
+    if workspace is None or not workspace.enabled:
+        return None
+    settings = get_settings()
+    if settings.storage.backend != "local":
+        return None
+
+    logical = None
+    if workspace.kind == "project" and workspace.project_id is not None:
+        project = await get_owned(db, Project, workspace.project_id, user_id)
+        if project is None:
+            return None
+        date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
+        logical = compose_logical_path(
+            "project", project_name=project.name, project_id=project.id,
+            project_year=date_str[:4], project_month=date_str[5:7],
+        )
+    elif workspace.kind == "folder" and workspace.folder_id is not None:
+        folder = await get_owned(db, Folder, workspace.folder_id, user_id)
+        if folder is None or folder.deleted_at is not None:
+            return None
+        resolved = await resolve_folder_path(db, user_id, folder.id, folder.project_id)
+        if not resolved:
+            return None
+        _, folder_path = resolved
+        if folder.project_id is None:
+            logical = compose_logical_path("personal", folder_path=folder_path)
+        else:
+            project = await get_owned(db, Project, folder.project_id, user_id)
+            if project is None:
+                return None
+            date_str = project.start_date or project.created_at.strftime("%Y-%m-%d")
+            logical = compose_logical_path(
+                "project", project_name=project.name, project_id=project.id,
+                project_year=date_str[:4], project_month=date_str[5:7],
+                folder_path=folder_path,
+            )
+    if not logical:
+        return None
+    return (Path(settings.storage.local_path).resolve() / str(user_id) / logical).resolve()

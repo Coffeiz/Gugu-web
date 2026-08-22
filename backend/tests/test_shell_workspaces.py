@@ -4,7 +4,7 @@ import pytest
 
 from app.core.config import AgentBehaviorSettings
 from app.models import ConversationSession, Project
-from app.services.workspaces import bind_session, create_workspace, describe_session
+from app.services.workspaces import bind_session, create_workspace, describe_session, list_workspaces
 
 
 @pytest.mark.asyncio
@@ -34,3 +34,4 @@ async def test_workspace_binding_is_owned_and_can_be_cleared(db, user_a, user_b)
     await bind_session(db, user_a.id, session.id, None)
     await db.commit()
     assert await describe_session(db, user_a.id, session.id) is None
+    assert [item.id for item in await list_workspaces(db, user_a.id)] == [workspace.id]

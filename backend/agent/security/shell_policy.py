@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import re
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -38,6 +40,25 @@ _DANGEROUS = re.compile(
     re.IGNORECASE,
 )
 _WRITE = re.compile(r"(^|[;&|()\n])\s*(mkdir|touch|cp|python|pytest|npm|pnpm|git)\b", re.IGNORECASE)
+_SESSION_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _get_session_lock(session_id: int) -> asyncio.Lock:
+    lock = _SESSION_LOCKS.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SESSION_LOCKS[session_id] = lock
+    return lock
+
+
+@asynccontextmanager
+async def session_shell_lock(session_id: int | None):
+    """串行化同一会话的工作区绑定和 Shell 执行。"""
+    if not session_id:
+        yield
+        return
+    async with _get_session_lock(int(session_id)):
+        yield
 
 
 def classify_command(command: str) -> ShellRisk:
@@ -77,3 +98,11 @@ async def evaluate(
     if risk is ShellRisk.DANGEROUS and not confirm:
         return ShellDecision(True, "危险命令需要用户确认", risk, True, workspace.id)
     return ShellDecision(True, "允许在当前工作区执行", risk, False, workspace.id)
+
+
+async def available_for_session(db: AsyncSession, user_id, session_id: int | None) -> bool:
+    """判断是否应把 Shell 工具放进本轮模型工具列表。"""
+    if not session_id:
+        return False
+    decision = await evaluate(db, user_id, session_id, "pwd")
+    return decision.allowed and not decision.needs_confirmation

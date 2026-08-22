@@ -1,10 +1,10 @@
-# 统一交互选择与动作系统
+# 统一交互选择、动作与 Agent 事件系统
 
-> 状态：协议骨架已开始实现，完整 Interaction Service 尚未开始
+> 状态：协议骨架已开始实现，Round/Tool 展示与完整 Interaction Service 尚未开始
 > 创建：2026-08-03
-> 最近更新：2026-08-03
+> 最近更新：2026-08-22
 > 所属层：LLM / Agent 交互层
-> 关联模块：`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/app/models/__init__.py`
+> 关联模块：`backend/agent/interactions/`、`backend/agent/core.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/app/models/__init__.py`、`frontend/src/components/common/gugu-chat/`
 > 平台适配：`backend/agent/gateway/qq.py`、Guguchat、网页、飞书
 > 关联文档：[[【已完成】PRD-LLM-1-provider适配层重构与core瘦身.md]]；[[【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md]]；[[../../agent/22-IM用户数据结构.md]]
 
@@ -23,6 +23,15 @@
 
 因此这不是完整选择系统，只是为后续 Keyboard 和 Guguchat 选择气泡提供稳定调用边界。
 
+当前还已建立交互协议目录的骨架：
+
+- `agent/interactions/events.py`：交互事件名和协议常量；
+- `agent/interactions/stream_events.py`：SSE 事件编码/解析；
+- `agent/interactions/confirmations.py`：确认凭证与确认交互入口；
+- `agent/security/confirm.py`：保留旧导入路径的兼容入口。
+
+这部分只整理协议边界，不改变现有 Agent Loop 的执行行为。
+
 ## 0. 目标与边界
 
 ### 0.1 目标
@@ -33,6 +42,9 @@
 - 支持自然语言输入作为按钮不可用时的兜底，但仍经过同一套动作校验。
 - 让结果表达沿用用户语气设置和咕咕人设，不暴露内部 action ID、token 或状态枚举。
 - 为 QQ Keyboard 铺路，同时让 Guguchat 成为第一等交互客户端。
+- 让一次 Agent Run 内的 Round、工具调用和工具结果可被用户理解和回看。
+- 让 Web、LoopScope 和 IM 复用同一份交互事件，不各自拼装一套工具调用状态。
+- 在“接入咕咕”设置顶部提供统一的工具信息显示偏好，所有 IM 平台遵循同一个用户级设置。
 
 ### 0.2 不在本期范围
 
@@ -41,6 +53,9 @@
 - 不让平台适配器直接执行删除文件、修改项目等业务操作。
 - 不假设所有平台都支持按钮；不支持时必须退回网页确认或自然语言输入。
 - 不实现复杂多页表单、多人协同审批和跨用户投票。
+- 不把每个 Round 拆成独立 HTTP 请求；一个用户请求仍然对应一个 Run。
+- 不把 system prompt、动态上下文、用户附件路径、签名 URL 或完整工具 JSON 默认展示给用户。
+- 不为 QQ、飞书、微信分别维护独立的工具显示开关；平台差异只影响展示能力，不改变用户偏好语义。
 
 ## 1. 交互类型
 
@@ -96,6 +111,92 @@ InteractionPrompt
 ### 1.4 form：结构化输入
 
 本期只支持少量字段：文本、数字、日期、单选。字段必须有服务端定义的类型、长度和合法值，不能把任意表单 JSON 直接交给业务层。
+
+## 1.5 Agent Round 与工具事件展示
+
+统一交互对象不仅包括“等待用户输入”的 Prompt，也包括一次 Run 内已经发生的 Agent 事件。Web 聊天和 LoopScope 应按 Round 展示，工具调用和工具结果不再伪装成普通助手文本。
+
+### 展示结构
+
+```text
+用户消息
+  └─ Run
+      ├─ Round 1
+      │   ├─ 助手中间文本
+      │   ├─ 工具调用气泡
+      │   └─ 工具结果气泡
+      ├─ Round 2
+      │   └─ 工具调用气泡
+      └─ 最终助手回复
+```
+
+工具气泡默认只显示工具名、状态和耗时，点击后再显示经过脱敏、截断的参数摘要和结果摘要。最终助手气泡不得混入工具 JSON、内部调用 ID 或未发送给用户的中间旁白。
+
+### 事件协议
+
+现有 `_new_round`、`tool_call`、`tool_done` 继续兼容；新协议逐步补充稳定的 `run_id`、`round_id`、`tool_call_id` 和 `seq`：
+
+```text
+round_start
+token
+tool_call_start
+tool_call_result
+file
+round_end
+done
+error
+_cancelled
+```
+
+统一事件协议位于 `backend/agent/interactions/`，不放入业务资源事件总线。第一阶段继续使用 SSE，未来切换 WebSocket 时复用同一套 payload。
+
+### 前端状态
+
+```text
+ChatRound
+├── id
+├── status: running | done | error
+├── messages: ChatMessage[]
+└── tools: ChatToolCall[]
+
+ChatToolCall
+├── id
+├── name / label
+├── status: running | success | error | cancelled | timeout | blocked
+├── input
+├── result
+└── duration_ms
+```
+
+`useChatStream.ts` 负责按 `run_id + round_id + seq` 归档事件；`GuguChatMessageList.vue` 负责顺序和滚动；`GuguChatRound.vue`、`GuguChatToolBubble.vue` 负责展示。
+
+### 多平台降级
+
+| 平台 | 展示方式 |
+|---|---|
+| Guguchat/Web | Round 容器、可展开工具气泡、确认按钮 |
+| LoopScope | 完整结构化事件、参数、结果和耗时 |
+| QQ/飞书/微信 | 状态文本或平台卡片，按能力降级 |
+
+平台不支持结构化交互时，必须退回自然语言确认；不能因为 UI 能力不足而阻塞 Agent 执行或绕过服务端确认门。
+
+### 1.6 工具信息显示偏好
+
+在“接入咕咕”设置区域顶部增加用户级设置：
+
+```text
+显示工具调用信息    [开 / 关]
+```
+
+设置语义：
+
+- 开启：IM 展示 Round 状态、工具名称、执行状态和简短结果摘要；详细参数和完整结果仍需点击展开或通过 LoopScope 查看。
+- 关闭：IM 不展示工具调用过程，只保留必要的“正在处理”状态和最终回复；确认按钮、错误提示和最终结果不受影响。
+- 设置对当前用户生效，QQ、飞书、微信等所有 IM 会话统一使用。
+- 设置变化只影响后续发送的交互事件，不改变已经发送的历史消息。
+- 默认关闭，避免首次接入时把聊天界面变成调试日志。
+
+建议字段名：`show_tool_interactions`。它属于用户偏好，不属于单个 `UserBot` 或平台连接配置。
 
 ## 2. 统一生命周期
 
@@ -205,6 +306,20 @@ InteractionResult
 
 业务 handler 只接收经过校验的结果，不直接解析 QQ、网页或飞书 payload。
 
+### 3.4 工具显示偏好的读取边界
+
+Agent 执行仍然产生完整的结构化工具事件；显示偏好只在出站渲染层生效：
+
+```text
+Agent Loop 产生完整事件
+        ↓
+Interaction renderer 读取用户偏好
+        ├─ show_tool_interactions=true  → 展示工具摘要/状态
+        └─ show_tool_interactions=false → 过滤工具展示，保留最终回复/必要错误
+```
+
+不能在 Agent Loop 内根据这个偏好跳过工具调用，也不能因为关闭展示而删除工具历史、影响缓存或改变工具执行结果。
+
 ## 4. 模块结构
 
 建议新增：
@@ -212,6 +327,9 @@ InteractionResult
 ```text
 backend/agent/interactions/
 ├── __init__.py
+├── events.py              # Round/Tool/Prompt 事件名和协议常量
+├── stream_events.py       # SSE 编码/解析，未来可复用于 WebSocket
+├── confirmations.py       # 确认凭证与确认交互协议入口
 ├── models.py              # Prompt、Action、Result、状态枚举
 ├── service.py             # 创建、签发、校验、消费、取消、过期
 ├── registry.py            # action handler 注册与路由
@@ -219,6 +337,15 @@ backend/agent/interactions/
 └── gateway/
     ├── base.py            # 平台无关渲染/回调接口
     └── qq.py              # QQ Keyboard payload 与 interaction event
+
+frontend/src/components/common/gugu-chat/
+├── interactions/
+│   ├── interactionTypes.ts # Prompt/Action/Round/Tool 类型
+│   ├── ChatRound.vue       # Round 容器
+│   ├── ChatToolBubble.vue  # 工具调用/结果气泡
+│   ├── ChatConfirmation.vue
+│   └── ChatChoicePanel.vue
+└── composables/useChatStream.ts # 事件归档与恢复去重
 ```
 
 边界：
@@ -228,6 +355,8 @@ backend/agent/interactions/
 - `registry` 根据 action type 找业务 handler，但 handler 必须再次做权限和资源归属检查。
 - 平台 adapter 只做 payload 转换、回调解析和结果发送。
 - Guguchat/web 前端可以直接使用同一 API，不应复制一套确认状态机。
+- `core.py`、`runner.py` 负责 Agent 执行与事件产生，不负责前端气泡布局。
+- `gateway/web.py`、`gateway/*.py` 负责传输和平台能力适配，不重新定义事件语义。
 
 ## 5. 平台适配
 
@@ -276,6 +405,8 @@ InteractionPrompt
 | QQ | Keyboard + WebSocket interaction event |
 | Guguchat | 内嵌选择气泡和表单 |
 | Web | 弹窗、下拉和确认组件 |
+
+所有 IM adapter 在渲染工具事件前读取同一个用户级 `show_tool_interactions` 偏好；不得各自缓存一份长期配置。短时缓存失效后应重新读取，确保设置变更能逐步生效。
 
 ## 6. Agent 与工具接入
 
@@ -332,13 +463,15 @@ Agent bridge 负责：
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | Phase 0：协议和状态定义 | ✅ | 确定 choice、confirm、question、form、WAITING_INPUT 和统一结果结构。 |
-| Phase 0.5：薄协议骨架 | 🔄 | 已实现选择模型和 QQ `platform_user_id` 注册动作；暂不接 Keyboard 和状态机。 |
-| Phase 1：Interaction Service | 🔲 | 建表，实现 token hash、创建、校验、原子消费、取消和过期。 |
-| Phase 2：Agent Bridge | 🔲 | 接入 Agent Loop 的等待、恢复、取消和 session 恢复。 |
-| Phase 3：Guguchat/Web | 🔲 | 先实现聊天气泡选择和网页确认，验证完整生命周期。 |
-| Phase 4：QQ Keyboard | 🔲 | 根据真实 interaction event 样本实现渲染和回调 adapter。 |
-| Phase 5：业务接入 | 🔲 | 先接 QQ 身份绑定，再接文件删除、覆盖和其他 destructive 工具。 |
-| Phase 6：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
+| Phase 0.5：交互协议骨架 | 🚧 | 已实现 `agent/interactions/` 的事件/确认入口和 QQ `platform_user_id` 注册动作；暂不接 Keyboard 和完整状态机。 |
+| Phase 1：Round/Tool 流式事件 | 🔲 | 为现有 `_new_round`、`tool_call`、`tool_done` 增加稳定事件身份，并保持旧客户端兼容。 |
+| Phase 2：Interaction Service | 🔲 | 建表，实现 token hash、创建、校验、原子消费、取消和过期。 |
+| Phase 3：Agent Bridge | 🔲 | 接入 Agent Loop 的等待、恢复、取消和 session 恢复。 |
+| Phase 4：Guguchat/Web | 🔲 | 实现 Round 容器、工具气泡、确认按钮和网页确认，验证完整生命周期。 |
+| Phase 5：统一显示偏好 | 🔲 | 在“接入咕咕”设置顶部增加 `show_tool_interactions`，接入所有 IM 出站渲染器。 |
+| Phase 6：QQ Keyboard | 🔲 | 根据真实 interaction event 样本实现渲染和回调 adapter。 |
+| Phase 7：业务接入 | 🔲 | 先接 QQ 身份绑定，再接文件删除、覆盖和其他 destructive 工具。 |
+| Phase 8：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
 
 每个阶段单独提交。任一阶段出现生命周期或权限行为差异，不进入下一阶段。
 
@@ -346,6 +479,11 @@ Agent bridge 负责：
 
 ### 10.1 自动测试
 
+- 流式事件编码/解析 round-trip，`run_id`、`round_id`、`tool_call_id` 和 `seq` 保持不变。
+- 同一 Run 的多 Round、多工具调用按序归档；并发 Run 不串线。
+- 工具开始、完成、失败、取消和超时更新同一个工具气泡。
+- 切换 Session、刷新页面和恢复流式生成不会重复创建 Round 或工具气泡。
+- `show_tool_interactions` 开启/关闭时，所有 IM 使用一致语义；关闭只影响展示，不影响工具执行和历史记录。
 - Prompt 创建、过期、取消和重复消费。
 - 错误用户、错误 Bot、错误会话和错误群不能消费 action。
 - token 只保存 hash，日志不泄露 token 或聊天原文。
@@ -358,16 +496,20 @@ Agent bridge 负责：
 
 ### 10.2 人工验收
 
-1. Agent 对不确定问题展示选项，点击后继续原问题。
-2. 点击确认/取消不会创建一条无关的新聊天任务。
-3. 刷新 Guguchat 页面后，未过期的选择仍可继续。
-4. 用户直接回复自然语言时，能正确选择或继续追问。
-5. 过期按钮不会执行操作。
-6. 其他用户点击按钮不能触发原用户的动作。
-7. QQ Keyboard 成功发送、点击回调和重复点击均符合预期。
-8. QQ 不支持按钮时能进入网页或文本兜底。
-9. 删除文件确认取消后文件不变，确认后只执行一次。
-10. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
+1. 一次多工具、多 Round 请求按 Round 顺序显示，工具调用不混入最终回复气泡。
+2. 点击工具气泡可以查看脱敏后的参数和结果摘要。
+3. Agent 对不确定问题展示选项，点击后继续原问题。
+4. 点击确认/取消不会创建一条无关的新聊天任务。
+5. 刷新 Guguchat 页面后，未过期的选择仍可继续。
+6. 用户直接回复自然语言时，能正确选择或继续追问。
+7. 过期按钮不会执行操作。
+8. 其他用户点击按钮不能触发原用户的动作。
+9. QQ Keyboard 成功发送、点击回调和重复点击均符合预期。
+10. QQ 不支持按钮时能进入网页或文本兜底。
+11. 删除文件确认取消后文件不变，确认后只执行一次。
+12. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
+13. 在“接入咕咕”设置顶部关闭工具信息后，QQ、飞书、微信都不再展示工具过程，但最终回复和确认消息仍正常发送。
+14. 重新打开设置后，工具信息恢复展示；已经发送的历史消息不被重写。
 
 ## 11. 待确认问题
 
