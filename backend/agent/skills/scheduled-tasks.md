@@ -1,6 +1,9 @@
 ---
 name: 定时任务
-description: "要设定时/周期任务、或要「到点提醒/提前X分钟叫我」时，怎么用 *_scheduled_task 建任务、cron 怎么写、渠道怎么选、日历提醒怎么配。场景：create/update/delete scheduled_task、一次性 @once、提醒。"
+description_short: 用户要设置定时提醒、周期任务或到点执行时使用。
+description_long: "要设定时/周期任务、或要「到点提醒/提前X分钟叫我」时，怎么用 *_scheduled_task 建任务、cron 怎么写、渠道怎么选、日历提醒怎么配。场景：create/update/delete scheduled_task、一次性 @once、提醒。"
+category: scheduling
+related_tools: list_scheduled_tasks, create_scheduled_task, update_scheduled_task, delete_scheduled_task
 emoji: ⏰
 ---
 

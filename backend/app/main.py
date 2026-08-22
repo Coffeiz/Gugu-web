@@ -164,6 +164,9 @@ async def lifespan(app: FastAPI):
     task.cancel()
     retry_task.cancel()
     log_task.cancel()
+    await asyncio.gather(task, retry_task, log_task, return_exceptions=True)
+    from app.db.session import dispose_engine
+    await dispose_engine()
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)

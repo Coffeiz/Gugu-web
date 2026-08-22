@@ -125,6 +125,15 @@ class ProviderAdapter:
         """返回供应商需要附加到请求的 thinking 参数；默认不附加。"""
         return {}
 
+    def build_openai_thinking_kwargs(self, ai, *, thinking: str | None = None) -> dict:
+        """返回 OpenAI SDK 调用所需的思考参数。"""
+        params = self.build_thinking_params(ai, thinking=thinking)
+        return {"extra_body": params} if params else {}
+
+    def build_anthropic_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
+        """返回 Anthropic SDK 调用所需的思考参数。"""
+        return self.build_thinking_params(ai, thinking=thinking)
+
     def build_structured_output(self, ai, schema: dict | None = None) -> dict:
         """返回结构化输出参数；默认不改变调用方行为。"""
         return {}

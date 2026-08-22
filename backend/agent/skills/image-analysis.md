@@ -1,6 +1,9 @@
 ---
 name: 图片分析
-description: "对搜索或用户提供的多张图片进行识别、比较和核对。"
+description_long: "对搜索或用户提供的多张图片进行识别、比较和核对。"
+description_short: 用户要识别、比较或核对图片内容时使用。
+category: search
+related_tools: image_search, inspect_images, web_search
 emoji: 🖼️
 ---
 

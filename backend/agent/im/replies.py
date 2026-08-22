@@ -24,9 +24,58 @@ _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
 
 
+async def _close_async_iterator(iterator) -> None:
+    """确保流式 agent 生成器退出，从而释放其内部 AsyncSession。"""
+    close = getattr(iterator, "aclose", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except Exception:
+        # 发送链路的原始异常不能被清理动作覆盖；诊断由调用方记录。
+        pass
+
+
 async def send_text(payload: dict, text: str) -> bool:
     """构造并发送一条平台无关的文本回复。"""
     return await send_reply(payload, PlatformReply.from_text(payload, text))
+
+
+async def send_interaction(payload: dict, prompt: dict) -> bool:
+    """统一发送交互提示。
+
+    目前只有 QQ 接入了原生 Keyboard；飞书和微信不尝试发送未适配的卡片或
+    按钮协议，始终把 ask_user/确认选项降级为普通文本。
+    """
+    from agent.interactions.qq import format_text_fallback
+
+    platform = payload.get("platform")
+    if platform != "qq":
+        return await send_text(payload, format_text_fallback(prompt))
+
+    text = format_text_fallback(prompt)
+    if prompt.get("options"):
+        from agent.gateway import qq
+
+        target_id = payload.get("chat_id") if payload.get("chat_type") == "group" else payload.get("platform_user_id")
+        keyboard_prompt = {
+            **prompt,
+            "platform_user_id": payload.get("platform_user_id"),
+            "native_keyboard": True,
+        }
+        # 键盘发送失败时复用同一份 QQ 降级文案，明确告诉用户可以回复序号；
+        # 不能退回平台无关的“请在网页点击”，否则 QQ 端没有可用恢复路径。
+        text = format_text_fallback(keyboard_prompt)
+        if target_id and await qq.send_keyboard(
+            target_id,
+            format_text_fallback(keyboard_prompt),
+            keyboard_prompt,
+            channel_id=payload.get("channel_id") or "",
+            msg_id=payload.get("message_id"),
+            group=payload.get("chat_type") == "group",
+        ):
+            return True
+    return await send_text(payload, text)
 
 
 async def send_reply(payload: dict, reply: PlatformReply) -> bool:
@@ -232,8 +281,13 @@ async def send_stream_with_fallback(
             # 首帧前失败才允许普通发送；已有部分帧时保留客户端已经看到的内容，
             # 不能再补发整段文本制造重复回复。
             return stream.has_sent(), response, reply_text
+        finally:
+            await _close_async_iterator(token_iter)
 
-    stream_sent, response = await send_stream(payload, token_iter)
+    try:
+        stream_sent, response = await send_stream(payload, token_iter)
+    finally:
+        await _close_async_iterator(token_iter)
     if response is None:
         response = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
 

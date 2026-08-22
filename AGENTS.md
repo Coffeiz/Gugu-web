@@ -13,6 +13,12 @@
 
 完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
 
+## Admin 前端拆分约定
+
+- 修改 `frontend/src/views/Admin/**/index.vue` 时，不得只继续堆叠模板、样式或业务逻辑；如果触及已有大入口文件，应顺手把可独立的模块、弹窗、表单区块拆到 `components/`，把状态与异步流程拆到 `composables/`，把请求和纯逻辑拆到对应 service/utils。
+- 新增 Admin 功能优先创建独立组件或 composable；`index.vue` 只保留页面布局、模块组合和流程调度。
+- 拆分时保持现有 design token、权限边界、数据流和测试覆盖，不为了拆分引入无必要的全局状态或重复 API。
+
 ## 调试原则
 
 - 不用 fallback/兜底掩盖真实错误，先定位根因。

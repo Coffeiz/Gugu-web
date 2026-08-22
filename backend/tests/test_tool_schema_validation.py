@@ -228,6 +228,21 @@ def test_validator_is_cached_without_changing_provider_schemas():
     assert reg.get("schema_test_tool") is tool
 
 
+def test_provider_schema_parity_uses_one_tool_contract():
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    reg, tool = _make_registry(schema)
+    anthropic = reg.anthropic_schemas([tool.name])[0]
+    openai = reg.openai_schemas([tool.name])[0]
+
+    assert anthropic["name"] == openai["function"]["name"] == tool.name
+    assert anthropic["description"] == openai["function"]["description"] == tool.description
+    assert anthropic["input_schema"] == openai["function"]["parameters"] == schema
+
+
 def test_all_registered_tools_have_cached_validators():
     # importing agent.tools.base 已经执行 agent.tools 包初始化并注册全部领域工具；
     # 这条测试相当于全量 schema inventory：任一历史 schema 非法会在 import/注册时先 fail-fast。

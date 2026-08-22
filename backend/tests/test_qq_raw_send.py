@@ -23,6 +23,38 @@ async def test_post_sends_markdown(monkeypatch):
     assert body["markdown"] == {"content": "你好"}
 
 
+async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((path, json_body))
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post_keyboard(
+        "bot-1", "ou_1", "请选择", "msg-1", group=False,
+        prompt={
+            "prompt_id": 17,
+            "platform_user_id": "ou_1",
+            "options": [{"id": "yes", "label": "确认", "token": "opaque-token"}],
+        },
+    )
+
+    path, body = calls[0]
+    assert path == "/v2/users/ou_1/messages"
+    assert body["msg_type"] == 0
+    assert body["content"] == "请选择"
+    button = body["keyboard"]["content"]["rows"][0]["buttons"][0]
+    assert button["action"]["type"] == 1
+    assert button["action"]["data"] == "17:opaque-token"
+    assert button["action"]["permission"] == {
+        "type": 0,
+        "specify_user_ids": ["ou_1"],
+    }
+    assert "session_id" not in repr(body)
+
+
 async def test_post_compat_mode_sends_plain_text(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []

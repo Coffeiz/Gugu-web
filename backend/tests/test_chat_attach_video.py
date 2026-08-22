@@ -94,6 +94,15 @@ def test_build_user_content_openai_video_ignores_mm_file():
     assert "data:video/mp4;base64,AAAA" in video_blk[0]["video_url"]["url"]
 
 
+def test_build_user_content_openai_image_defaults_to_auto_detail():
+    from app.core.chat_attach import build_user_content
+    content = build_user_content("看图", [{"media_type": "image/jpeg", "b64": "AAAA"}], False)
+    assert content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,AAAA", "detail": "auto"},
+    }
+
+
 # ── _minimax_video_enabled：MiniMax M3 判定 ──────────────────────────────────
 def test_minimax_video_enabled_m3():
     from types import SimpleNamespace

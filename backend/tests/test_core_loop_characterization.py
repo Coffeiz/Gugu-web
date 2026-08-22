@@ -310,6 +310,21 @@ async def test_verify_clean_pass(monkeypatch, dispatched):
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
+async def test_verify_summary_does_not_add_redundant_finalize_round(monkeypatch, dispatched):
+    """核验轮已经给出具体结果时，不再额外调用一次最终收束模型。"""
+    patch_anthropic(monkeypatch, [
+        msg([TU("create_project", "1", {})]),
+        msg([TU("get_project", "2", {})]),
+        msg([TX("项目X已创建，阶段和待办都已保存 ✅")]),
+    ])
+    messages = [{"role": "user", "content": "建个项目X"}]
+    ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+    assert "项目X已创建" in text
+    assert _FINALIZE_PROMPT not in [m.get("content") for m in messages]
+    assert n_verify(messages) == 1
+    assert ev["_usage"] == 1 and ev["error"] == 0
+
+
 async def test_verify_fix_then_reverify(monkeypatch, dispatched):
     """核实阶段发现漏项 → 只发一次「发现漏了X」说明，其余核对文字仍静默，补做后再触发一轮核实。"""
     patch_anthropic(monkeypatch, [

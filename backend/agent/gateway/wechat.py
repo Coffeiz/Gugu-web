@@ -586,4 +586,6 @@ async def send_file(to_user_id: str, file_bytes: bytes, file_name: str,
 
 
 if __name__ == "__main__":
+    from app.core.logging import setup_process_output
+    setup_process_output()
     serve()

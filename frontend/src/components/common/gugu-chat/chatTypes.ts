@@ -34,6 +34,7 @@ export interface ChatMessage {
   interaction?: {
     promptId: number
     kind: string
+    toolCallId?: string | null
     title: string
     body: string
     options: Array<{ id: string; label: string; token: string }>

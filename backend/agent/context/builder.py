@@ -76,7 +76,9 @@ def _skills_index_block(skill_names: list[str] | None) -> str:
              "技能正文里若出现 `curl <URL>`，就用 `http_get` 工具抓那个 URL（你没有 shell，但有 `http_get`）。"]
     for s in idx:
         emoji = f"{s['emoji']} " if s.get("emoji") else ""
-        when = f" — {s['when']}" if s.get("when") else ""
+        # 首轮目录只放注册 metadata 的短描述；Skill 正文仍由 use_skill 延迟加载。
+        short = s.get("description_short") or ""
+        when = f" — {short}" if short else ""
         lines.append(f"- {emoji}**{s['name']}**（`use_skill` 名：`{s['slug']}`）{when}")
     return "\n".join(lines)
 

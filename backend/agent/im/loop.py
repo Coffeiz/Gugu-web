@@ -6,6 +6,7 @@ worker 仍负责 Redis 消费、被动群消息、命令/intent shortcut 的执�
 """
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass
 from typing import Any, List, Optional
@@ -82,13 +83,16 @@ class ImActivity:
 class OwnerAgentLoop:
     """Web/owner IM 共用的完整 Agent Loop 门面。"""
 
-    async def run_collect(self, request: AgentRequest):
+    async def run_collect(self, request: AgentRequest, *, on_interaction=None):
         from agent.runner import run_collect
-        return await run_collect(request)
+        return await run_collect(request, on_interaction=on_interaction)
 
-    def run_stream(self, request: AgentRequest):
+    def run_stream(self, request: AgentRequest, *, on_interaction=None):
         from agent.runner import run_stream
-        return run_stream(request)
+        if on_interaction is None:
+            # 保持旧的测试/扩展实现兼容：未使用交互回调时不强行传新关键字。
+            return run_stream(request)
+        return run_stream(request, on_interaction=on_interaction)
 
 
 class MemberAgentLoop(OwnerAgentLoop):
@@ -649,6 +653,17 @@ async def prepare_request(
         actor_context=actor,
         im_message_format=payload.get("message_format"),
     )
+    # 临时定位 ask_user 未出现在 QQ 私聊模型工具列表的问题；不记录用户 ID 或正文。
+    print(json.dumps({
+        "probe": "runtime-ask-user-tools",
+        "phase": "request-permission",
+        "platform": platform,
+        "chatType": chat_type,
+        "role": role,
+        "allowedToolCount": len(allowed_tool_names) if allowed_tool_names is not None else None,
+        "allowedIsFull": allowed_tool_names is None,
+        "askUserAllowed": allowed_tool_names is None or "ask_user" in allowed_tool_names,
+    }, ensure_ascii=False, separators=(",", ":")), flush=True)
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 
 
@@ -753,19 +768,51 @@ async def dispatch_im_message(payload: dict):
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
+    shown_interaction_ids: set[int] = set()
+
+    async def _show_qq_interaction(interaction: dict) -> None:
+        """在共享 Runner 进入等待前，把 QQ 文本提示即时发出去。"""
+        if platform != "qq":
+            return
+        # 流式消息必须先发送 DONE 帧；QQ 在 stream_messages 尚未结束时
+        # 不会可靠展示 Inline Keyboard。流式路径由回合结束后的统一分支发送。
+        if qq_private_streaming:
+            return
+        try:
+            await _send_interaction_prompts(payload, [interaction])
+        except Exception as exc:
+            # 平台展示失败不能取消当前 Run；网页仍可从 active prompt 恢复交互。
+            from app.core.redaction import diag_log
+            diag_log("agent.im.qq.interaction_display", exc)
+            return
+        prompt_id = interaction.get("prompt_id")
+        if prompt_id is not None:
+            shown_interaction_ids.add(int(prompt_id))
+
     qq_private_streaming = False
     if platform == "qq" and payload.get("chat_type") == "c2c":
         from agent.im.message_format import resolve_private_streaming_enabled
         qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
+        # QQ 的私聊流消息在 ask_user/确认交互时会一直保持「发送中」，而
+        # Inline Keyboard 是另一条消息接口；部分 QQ 客户端在前一个 stream
+        # 未结束时不会展示键盘。启用交互提示时改走 collect，确保键盘可靠送达。
+        if qq_private_streaming and await _should_show_tool_interactions(req.user_id):
+            qq_private_streaming = False
     try:
         if platform == "feishu":
             token_iter = agent_loop.run_stream(req)
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         elif qq_private_streaming:
-            token_iter = agent_loop.run_stream(req)
+            token_iter = agent_loop.run_stream(
+                req,
+                on_interaction=_show_qq_interaction,
+            )
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         else:
-            resp = await agent_loop.run_collect(req)
+            resp = await agent_loop.run_collect(
+                req,
+                on_interaction=_show_qq_interaction if platform == "qq" else None,
+            )
             reply_text = ""
     except BaseException:
         trace.finish_run("error")
@@ -824,8 +871,14 @@ async def dispatch_im_message(payload: dict):
         return resp
 
     # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
-    if resp.interactions and await _should_show_tool_interactions(req.user_id):
-        await _send_interaction_prompts(payload, resp.interactions)
+    show_interactions = platform == "qq" or await _should_show_tool_interactions(req.user_id)
+    if resp.interactions and show_interactions:
+        pending_interactions = [
+            item for item in resp.interactions
+            if item.get("prompt_id") not in shown_interaction_ids
+        ]
+        if pending_interactions:
+            await _send_interaction_prompts(payload, pending_interactions)
 
     if platform == "qq" and qq_private_streaming and _stream_sent:
         if resp.files:
@@ -853,14 +906,7 @@ async def _should_show_tool_interactions(user_id) -> bool:
 
 async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> None:
     """发送平台可理解的交互摘要；未接入原生按钮的平台使用文本摘要。"""
-    from agent.im.replies import send_text
-    if payload.get("platform") == "qq":
-        from agent.interactions.qq import format_text_fallback
-        for item in interactions:
-            await send_text(payload, format_text_fallback(item))
-        return
-    # 飞书/微信的原生卡片 adapter 尚未进入本阶段，保持统一的可见文本语义。
+    from agent.im.replies import send_interaction
+
     for item in interactions:
-        title = str(item.get("title") or "需要确认")
-        body = str(item.get("body") or "")
-        await send_text(payload, f"{title}\n{body}\n请在网页中选择操作。")
+        await send_interaction(payload, item)

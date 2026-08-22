@@ -95,10 +95,10 @@ async def _openai(
     if json_mode:
         kwargs.update(adapter.build_structured_output(settings.ai))
     if json_mode or thinking is not None:
-        thinking_params = adapter.build_thinking_params(
+        thinking_params = adapter.build_openai_thinking_kwargs(
             settings.ai, thinking=thinking or ("disabled" if json_mode else None))
         if thinking_params:
-            kwargs["extra_body"] = thinking_params
+            kwargs.update(thinking_params)
     resp = await client.chat.completions.create(**kwargs)
     return resp.choices[0].message.content or ""
 

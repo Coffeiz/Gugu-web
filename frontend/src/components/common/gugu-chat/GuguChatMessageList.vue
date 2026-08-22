@@ -8,7 +8,7 @@
            子树重新生成——虚拟列表已经把同时挂载的行数摁在个位数附近，这里收益比之前小，
            但仍能省掉一趟不必要的 vnode diff。 -->
       <div v-for="{ row, msg } in rowsWithMsg" :key="row.index" :data-index="row.index" :ref="measureRow"
-           :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool' }]"
+           :class="['msg-virtual-row', { 'is-tool-row': msg.role === 'tool', 'is-interaction-row': msg.role === 'interaction' }]"
            :style="{ transform: `translateY(${row.start + msgsPadTop}px)` }">
         <div :class="['msg', msg.role]" :data-db-id="msg.dbId || ''"
              v-memo="[msg.role, msg.speakerLabel, msg.text, msg.html, msg.streaming, msg.roundId, msg.toolCallId, msg.toolStatus, msg.toolDurationMs, msg.toolInput, msg.toolResult, msg.files?.length, msg.files?.map(f => `${f.file_id ?? ''}:${f.attach_id ?? ''}:${f.ext ?? ''}`).join(','), msg.quotedText, copiedId === msg.id, voicePlayingId && msg.files?.some(f => f.attach_id === voicePlayingId)]">

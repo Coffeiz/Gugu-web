@@ -36,6 +36,17 @@ from agent.profiles import DefaultProfile
 _bg_tasks: set = set()
 
 
+def _capability_context(tool_names, settings):
+    """按需创建能力上下文；默认关闭，避免 RAG 接入前改变工具可见性。"""
+    agent_settings = getattr(settings, "agent", None)
+    if not getattr(agent_settings, "capability_injection_enabled", False):
+        return None
+    if getattr(agent_settings, "capability_force_full_schema", False):
+        return None
+    from agent.capabilities.injector import build_compatibility_context
+    return build_compatibility_context(tool_names)
+
+
 async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str]) -> list[str]:
     """工具注册前过滤 Shell；执行器仍会再次调用策略层复核。"""
     if "shell" not in names:
@@ -262,7 +273,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     return block
 
 
-async def run_collect(req: AgentRequest) -> AgentResponse:
+async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
     profile = DefaultProfile()
@@ -445,7 +456,13 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
-    runner = LLMRunner(tool_names, settings)
+    capability_context = _capability_context(tool_names, settings)
+    if capability_context is not None:
+        from agent.capabilities.injector import catalog_block
+        _snapshot_injection = session_snapshot.reminder_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        )
+    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
 
@@ -475,7 +492,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     if use_anthropic:
         assembly = message_assembly.build_messages(
             fixed_parts=fixed_parts, history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)},
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
         )
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
@@ -485,17 +502,19 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id)
+                         model_cfg=model_cfg, session_id=session_id,
+                         on_interaction=on_interaction)
     else:
         oa_messages = message_assembly.build_messages(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
             history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
         )
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id)
+                         model_cfg=model_cfg, session_id=session_id,
+                         on_interaction=on_interaction)
 
     try:
         text, tin, tout, errored, sent_files, cancelled, meta = await _collect(
@@ -601,7 +620,11 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
 #   ("final", AgentResponse)  — 生成结束，含完整 text/files/cancelled/session_id/tokens
 #                                session_id 来自 run_collect 同款会话创建流程（line 165-193）
 #                                持久化 / 反思 / 压缩跟 run_collect 完全一致
-async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
+async def run_stream(
+    req: AgentRequest,
+    *,
+    on_interaction=None,
+) -> AsyncIterator[tuple[str, object]]:
     """run_collect 的流式版本：逐字 yield token + 末尾 yield AgentResponse。"""
     user_id = req.user_id
     profile = DefaultProfile()
@@ -766,7 +789,13 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
-    runner = LLMRunner(tool_names, settings)
+    capability_context = _capability_context(tool_names, settings)
+    if capability_context is not None:
+        from agent.capabilities.injector import catalog_block
+        _snapshot_injection = session_snapshot.reminder_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        )
+    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
     im_used_tools = False
 
@@ -796,23 +825,25 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         assembly = message_assembly.build_messages(
             fixed_parts=fixed_parts, history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media)},
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts)
         assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id)
+                         model_cfg=model_cfg, session_id=session_id,
+                         on_interaction=on_interaction)
     else:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         oa_messages = message_assembly.build_messages(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
             history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media)},
+            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts)
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id)
+                         model_cfg=model_cfg, session_id=session_id,
+                         on_interaction=on_interaction)
 
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
@@ -1103,7 +1134,11 @@ async def _run_scheduled_once(
         )
         # 定时任务没有交互式 session workspace，不向模型暴露本机 Shell。
         tool_names = [name for name in tool_names if name != "shell"]
-        runner = LLMRunner(tool_names, settings)
+        capability_context = _capability_context(tool_names, settings)
+        if capability_context is not None:
+            from agent.capabilities.injector import catalog_block
+            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        runner = LLMRunner(tool_names, settings, capability_context=capability_context)
 
         from app.core.chat_attach import build_user_content
 

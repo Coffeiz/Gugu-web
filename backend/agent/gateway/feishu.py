@@ -981,4 +981,6 @@ async def send_text_stream(receive_id: str, token_iter, channel_id: str | None =
 
 
 if __name__ == "__main__":
+    from app.core.logging import setup_process_output
+    setup_process_output()
     serve()

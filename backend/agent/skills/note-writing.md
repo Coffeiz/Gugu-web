@@ -1,6 +1,9 @@
 ---
 name: 思维笔记
-description: 用 create_note / update_note 记笔记、写日记、笔记要带样式（加粗/列表/引用/代码块）或挂关联（项目/文件/日程）时——拿 blocks 正确写法、易错点和长内容分批写的策略
+description_short: 用户要写笔记、日记或结构化内容时使用。
+description_long: 用 create_note / update_note 记笔记、写日记、笔记要带样式（加粗/列表/引用/代码块）或挂关联（项目/文件/日程）时——拿 blocks 正确写法、易错点和长内容分批写的策略
+category: notes
+related_tools: create_note, update_note, delete_note, restore_note, undo_last_gugu_note
 emoji: 📝
 ---
 

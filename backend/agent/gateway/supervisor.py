@@ -146,6 +146,8 @@ def reconcile() -> None:
 
 
 def main() -> None:
+    from app.core.logging import setup_process_output
+    setup_process_output()
     def _sig(*_a):
         global _stop
         _stop = True

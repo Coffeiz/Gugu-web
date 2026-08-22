@@ -8,6 +8,8 @@
 """
 from types import SimpleNamespace
 
+import pytest
+
 from agent.providers import adapter_for, capability_snapshot
 
 
@@ -68,6 +70,28 @@ def test_adapter_for_deepseek_by_base_url_fallback():
     assert a.name == "deepseek"
 
 
+def test_deepseek_vision_capability_is_limited_to_vision_model():
+    adapter = adapter_for(_ai(provider="deepseek"))
+    assert adapter.capabilities("deepseek-v4-flash-vision-exp").vision
+    assert not adapter.capabilities("deepseek-v4-flash").vision
+
+
+def test_deepseek_thinking_uses_official_openai_parameter_split():
+    adapter = adapter_for(_ai(provider="deepseek"))
+    ai = SimpleNamespace(provider="deepseek", thinking="adaptive", reasoning_effort="low")
+    assert adapter.build_openai_thinking_kwargs(ai) == {
+        "extra_body": {"thinking": {"type": "enabled"}},
+        "reasoning_effort": "low",
+    }
+    assert adapter.build_openai_thinking_kwargs(
+        SimpleNamespace(provider="deepseek", thinking="disabled", reasoning_effort="max")
+    ) == {"extra_body": {"thinking": {"type": "disabled"}}}
+    assert adapter.build_anthropic_thinking_params(ai) == {
+        "thinking": {"type": "enabled"},
+        "output_config": {"effort": "low"},
+    }
+
+
 def test_adapter_for_ollama_local_and_cloud_defaults():
     adapter = adapter_for(_ai(provider="ollama", model="qwen3:8b"))
     assert adapter.name == "ollama"
@@ -108,6 +132,32 @@ def test_ollama_openai_compatibility_parameters():
         "reasoning_effort": "medium"}
     assert adapter.build_structured_output(SimpleNamespace(provider="ollama")) == {
         "response_format": {"type": "json_object"}}
+
+
+def test_local_runtime_defaults_and_conservative_capabilities():
+    adapter = adapter_for(SimpleNamespace(provider="local", local_runtime="vllm", base_url=""))
+    assert adapter.name == "local"
+    assert adapter.resolve_base_url(SimpleNamespace(
+        provider="local", local_runtime="vllm", base_url="")) == "http://127.0.0.1:8000/v1"
+    assert adapter.capabilities("local-model").tools is False
+
+
+def test_local_base_url_rejects_embedded_credentials_and_non_http():
+    adapter = adapter_for(SimpleNamespace(provider="local"))
+    with pytest.raises(ValueError):
+        adapter.resolve_base_url(SimpleNamespace(provider="local", base_url="https://user:pass@example.test/v1"))
+    with pytest.raises(ValueError):
+        adapter.resolve_base_url(SimpleNamespace(provider="local", base_url="file:///tmp/model"))
+
+
+def test_local_capability_override_is_exposed_without_credentials():
+    snapshot = capability_snapshot(SimpleNamespace(
+        provider="local", model="local-model", local_runtime="llama.cpp",
+        capability_overrides={"tools": True, "structured_json": True}, api_key="secret"))
+    assert snapshot["tools"] is True
+    assert snapshot["structured_json"] is True
+    assert snapshot["overrides"] == {"tools": True, "structured_json": True}
+    assert "api_key" not in snapshot
 
 
 def test_adapter_for_unknown_provider_falls_back_to_default():

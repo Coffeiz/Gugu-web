@@ -1,6 +1,9 @@
 ---
 name: 联网搜索
-description: "决定怎么获取外部信息：普通查找 / 深度研究 / 图片搜索。使用场景：用户要查资料、找官网文档事实新闻、要研究总结比较某件事、要找一张图/配图，或要根据已有图片找同款和相似图片。"
+description_short: 用户要查资料、新闻、官网事实或搜索图片时使用。
+description_long: "决定怎么获取外部信息：普通查找 / 深度研究 / 图片搜索。使用场景：用户要查资料、找官网文档事实新闻、要研究总结比较某件事、要找一张图/配图，或要根据已有图片找同款和相似图片。"
+category: search
+related_tools: web_search, image_search, inspect_images, deep_research
 emoji: 🔎
 ---
 

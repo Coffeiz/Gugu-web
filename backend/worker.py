@@ -352,10 +352,14 @@ async def serve():
     sched_task.cancel()
     reflection_task.cancel()
     cleanup_task.cancel()
-    await asyncio.gather(reflection_task, return_exceptions=True)
-    await asyncio.gather(cleanup_task, return_exceptions=True)
+    await asyncio.gather(
+        hb, sched_task, reflection_task, cleanup_task,
+        return_exceptions=True,
+    )
     sched.shutdown()
     await R.reset()
+    from app.db.session import dispose_engine
+    await dispose_engine()
     print("[worker] stopped", flush=True)
 
 
@@ -416,6 +420,8 @@ def _install_signals(loop):
 
 
 def main():
+    from app.core.logging import setup_process_output
+    setup_process_output()
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     _install_signals(loop)

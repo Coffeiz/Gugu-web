@@ -77,14 +77,20 @@ class AISettings(BaseModel):
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(120000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
-    reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | high | max")
+    reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
+    vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
     vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
     vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
     ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
     ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
     ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
+    deployment_mode: str = Field("cloud", description="部署方式: cloud | local")
+    local_runtime: str = Field("other", description="本地运行时: ollama | llama.cpp | vllm | other")
+    capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
+    capability_checked_at: str = Field("", description="最近一次能力检测时间")
+    capability_fingerprint: str = Field("", description="能力检测绑定的地址/模型指纹")
 
 
 class VoiceSettings(BaseModel):
@@ -112,14 +118,20 @@ class AIPresetItem(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 120000
     thinking: str = "disabled"
-    reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | high | max
+    reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
     vision: bool = False
+    vision_detail: str = "auto"
     vision_video: bool = False
     vision_audio: bool = False
     api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
     ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
     ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
     ollama_keep_alive: str = "5m"     # Ollama 模型驻留时间
+    deployment_mode: str = "cloud"
+    local_runtime: str = "other"
+    capability_overrides: dict[str, bool] = Field(default_factory=dict)
+    capability_checked_at: str = ""
+    capability_fingerprint: str = ""
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
 
@@ -133,6 +145,8 @@ class AIPresets(BaseModel):
 class AgentBehaviorSettings(BaseModel):
     # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
     shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
+    capability_injection_enabled: bool = Field(True, description="是否启用简介目录与两阶段工具声明（关闭后恢复全量工具 Schema）")
+    capability_force_full_schema: bool = Field(False, description="按需注入异常时强制恢复全量工具 Schema（紧急开关）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")

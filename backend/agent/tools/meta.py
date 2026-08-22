@@ -15,11 +15,16 @@ async def _use_skill(db, user_id, args: dict):
     name = (args.get("name") or "").strip()
     if not name:
         return {"error": "缺少技能名"}
+    slug = _skills.resolve_skill_slug(name)
     body = _skills.load_skill(name)
     if body is None:
         avail = "、".join(s["slug"] for s in _skills.skills_index())
         return {"error": f"没有名为「{name}」的技能", "available": avail}
-    return {"skill": name, "content": body}
+    return {
+        "skill": slug or name,
+        "content": body,
+        "_capability_usage": {"kind": "skill", "slug": slug or name, "loaded": True},
+    }
 
 
 async def _ask_user(db, user_id, args: dict):
@@ -32,6 +37,11 @@ async def _ask_user(db, user_id, args: dict):
         "options": args.get("options", []),
         "allow_text_input": bool(args.get("allow_text_input", False)),
     }
+
+
+async def _declare_tools(db, user_id, args: dict):
+    """把本轮工具声明交给 Runtime 校验；不直接执行任何业务操作。"""
+    return {"declared_tools": args.get("tools", [])}
 
 
 class MetaSkill(BaseSkill):
@@ -84,6 +94,25 @@ class MetaSkill(BaseSkill):
                 "additionalProperties": False,
             },
             handler=_ask_user,
+        ),
+        Tool(
+            name="declare_tools",
+            label="声明工具",
+            description="声明本轮需要的工具。Runtime 校验后，下一轮才会提供这些工具的完整 Schema。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "tools": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 12,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 80},
+                    },
+                },
+                "required": ["tools"],
+                "additionalProperties": False,
+            },
+            handler=_declare_tools,
         ),
     ]
 

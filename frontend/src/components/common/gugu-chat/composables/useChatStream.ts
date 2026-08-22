@@ -181,15 +181,31 @@ export function useChatStream(options: {
           } else if (evt.type === 'interaction_required') {
             interactionPaused = true
             if (live() && evt.prompt_id && Array.isArray(evt.options)) {
-              messages.value.push({
-                id: mkid(), role: 'interaction', text: '', time: now(),
-                runId: evt.run_id, roundId: evt.round_id,
-                interaction: {
-                  promptId: Number(evt.prompt_id), kind: String(evt.kind || 'confirm'),
-                  title: String(evt.title || '需要确认'), body: String(evt.body || ''),
-                  options: evt.options,
-                },
-              })
+              const promptId = Number(evt.prompt_id)
+              const existing = messages.value.find(item =>
+                item.role === 'interaction' && item.interaction?.promptId === promptId,
+              )
+              if (existing?.interaction) {
+                // loadSession 先恢复历史、resumeStream 再收到快照时会命中这里；
+                // 合并而不是追加，避免刷新后同一个交互出现两张卡。
+                existing.runId = evt.run_id
+                existing.roundId = evt.round_id
+                existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
+                existing.interaction.title = String(evt.title || existing.interaction.title || '需要确认')
+                existing.interaction.body = String(evt.body || existing.interaction.body || '')
+                if (!existing.interaction.resolved) existing.interaction.options = evt.options
+              } else {
+                messages.value.push({
+                  id: mkid(), role: 'interaction', text: '', time: now(),
+                  runId: evt.run_id, roundId: evt.round_id,
+                  interaction: {
+                    promptId, kind: String(evt.kind || 'confirm'),
+                    toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
+                    title: String(evt.title || '需要确认'), body: String(evt.body || ''),
+                    options: evt.options,
+                  },
+                })
+              }
               options.setStatus({ kind: 'text', label: '等待你的确认' })
               await options.scrollBottom()
             }

@@ -94,24 +94,31 @@ async def create_agent_prompt(
     payload: dict,
 ) -> tuple[InteractionPrompt, list[dict]] | None:
     """把 ``ask_user`` 的工具结果绑定到当前 Agent session。"""
-    if session_id is None or not isinstance(payload, dict):
+    from app.core.redaction import diag_log_raw
+
+    def reject(reason: str):
+        # 这里只记录固定原因，不记录标题、正文、选项或用户身份。
+        diag_log_raw("agent.interactions.ask_user.rejected", reason)
         return None
+
+    if session_id is None or not isinstance(payload, dict):
+        return reject("missing_session_or_payload")
     kind = str(payload.get("kind") or "choice")
     if kind not in {"choice", "question", "form"}:
-        return None
+        return reject("invalid_kind")
     options = payload.get("options") if isinstance(payload.get("options"), list) else []
     if kind == "choice" and not 2 <= len(options) <= 8:
-        return None
+        return reject("invalid_choice_count")
     if kind != "choice" and len(options) > 8:
-        return None
+        return reject("invalid_option_count")
     normalized = []
     for option in options:
         if not isinstance(option, dict):
-            return None
+            return reject("invalid_option_type")
         option_id = str(option.get("id") or "").strip()
         label = str(option.get("label") or "").strip()
         if not option_id or not label or len(option_id) > 64 or len(label) > 120:
-            return None
+            return reject("invalid_option_fields")
         normalized.append({"id": option_id, "label": label, "action_type": "choice"})
     title = str(payload.get("title") or "需要你的回答").strip()[:120]
     body = str(payload.get("body") or "").strip()[:1000]
@@ -123,7 +130,7 @@ async def create_agent_prompt(
     from app.db import session as db_session
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
-        return None
+        return reject("database_session_unavailable")
     async with db_session._SessionLocal() as db:
         prompt, rendered = await create_prompt(
             db,
@@ -237,7 +244,14 @@ async def consume_action(
         "prompt_id": prompt.id,
         "option_id": action.option_id,
         "value": action.option_id,
-        "text": None,
+        "text": next(
+            (
+                str(item.get("label") or action.option_id)
+                for item in (prompt.schema_json or {}).get("options", [])
+                if isinstance(item, dict) and str(item.get("id") or "") == action.option_id
+            ),
+            action.option_id,
+        ),
     }
     if prompt.kind == "confirm":
         if action.option_id == "confirm":
@@ -324,6 +338,104 @@ async def consume_text(
             "context": context, "result": result, "event_id": event_id}
 
 
+async def consume_choice_text(
+    db: AsyncSession,
+    *,
+    user_id,
+    session_id: int,
+    text: str,
+    event_id: str | None = None,
+) -> dict | None:
+    """把 IM 降级文案中的序号/选项文字消费为当前 choice Prompt。
+
+    这是原生按钮不可用时的同一条交互恢复路径。只匹配指定 session 最近的活动
+    ``choice``，不会把普通消息误当成交互，也不会跨会话消费 Prompt。
+    """
+    value = str(text or "").strip()
+    if not value or len(value) > 200:
+        return None
+    now = now_utc()
+    prompt = await db.scalar(
+        select(InteractionPrompt).where(
+            InteractionPrompt.user_id == user_id,
+            InteractionPrompt.session_id == session_id,
+            InteractionPrompt.kind == "choice",
+            InteractionPrompt.status == "active",
+            InteractionPrompt.expires_at > now,
+        ).order_by(InteractionPrompt.created_at.desc()).with_for_update()
+    )
+    if prompt is None:
+        return None
+    schema = dict(prompt.schema_json or {})
+    options = [item for item in schema.get("options", []) if isinstance(item, dict)]
+    if not options:
+        return None
+    selected = None
+    if value.isdigit():
+        index = int(value)
+        if 1 <= index <= len(options):
+            selected = options[index - 1]
+    if selected is None:
+        folded = value.casefold()
+        selected = next(
+            (
+                item for item in options
+                if folded in {
+                    str(item.get("id") or "").strip().casefold(),
+                    str(item.get("label") or "").strip().casefold(),
+                }
+            ),
+            None,
+        )
+    if selected is None:
+        return None
+    option_id = str(selected.get("id") or "").strip()
+    action = await db.scalar(
+        select(InteractionAction).where(
+            InteractionAction.prompt_id == prompt.id,
+            InteractionAction.option_id == option_id,
+            InteractionAction.status == "pending",
+            InteractionAction.expires_at > now,
+        ).with_for_update()
+    )
+    if action is None:
+        return None
+    action.status = "consumed"
+    action.consumed_at = now
+    action.consumed_event_id = event_id
+    prompt.status = "resolved"
+    prompt.resolved_at = now
+    context = dict(action.context_json or {})
+    result = {
+        "kind": prompt.kind,
+        "status": "selected",
+        "prompt_id": prompt.id,
+        "option_id": option_id,
+        "value": option_id,
+        "text": str(selected.get("label") or option_id),
+    }
+    tool_call_id = str(context.get("tool_call_id") or "")
+    if tool_call_id:
+        from app.models import ConversationMessage
+        rows = (await db.execute(
+            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
+        )).scalars().all()
+        for message in rows:
+            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
+                break
+    prompt.schema_json = {**schema, "resolved_result": result}
+    await db.commit()
+    return {
+        "prompt_id": prompt.id,
+        "session_id": prompt.session_id,
+        "kind": prompt.kind,
+        "option_id": option_id,
+        "action_type": action.action_type,
+        "context": context,
+        "result": result,
+    }
+
+
 async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
     now = now_utc()
     rows = (await db.execute(
@@ -362,6 +474,9 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             "kind": prompt.kind,
             "title": prompt.title,
             "body": prompt.body,
+            # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
+            # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
+            "tool_call_id": str((schema.get("context") or {}).get("tool_call_id") or "") or None,
             "options": options,
             "expires_at": prompt.expires_at.isoformat(),
         })
@@ -408,6 +523,9 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "kind": prompt.kind,
             "title": prompt.title,
             "body": prompt.body,
+            # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
+            # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
+            "tool_call_id": str((prompt.schema_json or {}).get("context", {}).get("tool_call_id") or "") or None,
             "options": options,
             "resolved": prompt.status != "active" or prompt.expires_at <= now,
             "selected_option_id": selected,

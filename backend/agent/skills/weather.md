@@ -1,6 +1,9 @@
 ---
 name: 天气
-description: "获取天气预报和气温信息。使用场景：用户询问天气、温度、降雨、出行建议等。支持通过 wttr.in 查询全球城市天气，无需 API Key。"
+description_short: 用户询问天气、温度、降雨或出行建议时使用。
+description_long: "获取天气预报和气温信息。使用场景：用户询问天气、温度、降雨、出行建议等。支持通过 wttr.in 查询全球城市天气，无需 API Key。"
+category: weather
+related_tools: http_get
 emoji: 🌤️
 ---
 

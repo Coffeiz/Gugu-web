@@ -41,4 +41,19 @@ def test_qq_interaction_parser_accepts_nested_event_without_logging_secrets():
         "event_id": "evt-1",
         "platform_user_id": "platform-user",
         "channel_id": None,
+        "chat_type": "c2c",
+        "chat_id": None,
     }
+
+
+def test_qq_interaction_parser_accepts_official_resolved_button_data():
+    event = parse_interaction_event({
+        "id": "evt-official",
+        "data": {
+            "user": {"user_openid": "platform-user"},
+            "resolved": {"button_data": "17:opaque-token"},
+        },
+    })
+    assert event["prompt_id"] == 17
+    assert event["token"] == "opaque-token"
+    assert event["platform_user_id"] == "platform-user"

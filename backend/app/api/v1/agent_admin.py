@@ -18,6 +18,7 @@ POST   /api/v1/admin/agent/memory/legacy-files/cleanup  → 删除指定的旧�
 """
 
 import asyncio
+import hashlib
 import json
 import time
 from app.core.tz import now_utc
@@ -25,7 +26,7 @@ import uuid as _uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, text, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,6 +80,42 @@ def _ensure_presets(override: dict) -> dict:
     return presets
 
 router = APIRouter(prefix="/admin/agent", tags=["admin"])
+
+
+@router.get("/capabilities")
+async def list_capabilities():
+    """返回 Admin 用的能力目录，不返回工具 Schema、handler 或 Skill 正文。"""
+    from agent.capabilities.index import CapabilityIndex
+
+    snapshot = CapabilityIndex.from_registries().snapshot()
+    return {
+        "generation": snapshot.generation,
+        "diagnostics": list(snapshot.diagnostics),
+        "tools": [
+            {
+                "name": item.name,
+                "description_short": item.description_short,
+                "category": item.category,
+                "permissions": list(item.permissions),
+                "platforms": list(item.platforms),
+                "related_skills": list(item.related_skills),
+                "source": item.source,
+                "enabled": item.enabled,
+            }
+            for item in snapshot.tools.values()
+        ],
+        "skills": [
+            {
+                "name": item.name,
+                "description_short": item.description_short,
+                "category": item.category,
+                "related_tools": list(item.related_tools),
+                "source": item.source,
+                "enabled": item.enabled,
+            }
+            for item in snapshot.skills.values()
+        ],
+    }
 
 PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "agent" / "prompts"
 
@@ -407,11 +444,14 @@ async def set_llm_strategy(body: StrategyUpdate):
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temperature",
                  "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
-                 "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive")
+                 "vision_detail", "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive",
+                 "deployment_mode", "local_runtime", "capability_overrides", "capability_checked_at", "capability_fingerprint")
 _AI_DEFAULTS = {"max_tokens": 4000, "temperature": 0.7, "context_tokens": 120000,
                 "thinking": "disabled", "reasoning_effort": "", "vision": False,
-                "vision_video": False, "vision_audio": False, "api_format": "",
-                "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m"}
+                "vision_detail": "auto", "vision_video": False, "vision_audio": False, "api_format": "",
+                "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m",
+                "deployment_mode": "cloud", "local_runtime": "other", "capability_overrides": {},
+                "capability_checked_at": "", "capability_fingerprint": ""}
 
 
 def _ai_segment(item: dict) -> dict:
@@ -431,12 +471,18 @@ class PresetCreate(BaseModel):
     thinking: str = "disabled"
     reasoning_effort: str = ""
     vision: bool = False
+    vision_detail: str = "auto"
     vision_video: bool = False
     vision_audio: bool = False
     api_format: str = ""
     ollama_mode: str = "local"
     ollama_api_mode: str = "native"
     ollama_keep_alive: str = "5m"
+    deployment_mode: str = "cloud"
+    local_runtime: str = "other"
+    capability_overrides: dict[str, bool] = Field(default_factory=dict)
+    capability_checked_at: str = ""
+    capability_fingerprint: str = ""
 
 
 @router.post("/llm-presets")
@@ -457,12 +503,18 @@ async def create_llm_preset(body: PresetCreate):
         "thinking": body.thinking,
         "reasoning_effort": body.reasoning_effort,
         "vision": body.vision,
+        "vision_detail": body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto",
         "vision_video": body.vision_video,
         "vision_audio": body.vision_audio,
         "api_format": body.api_format,
         "ollama_mode": body.ollama_mode,
         "ollama_api_mode": body.ollama_api_mode,
         "ollama_keep_alive": body.ollama_keep_alive,
+        "deployment_mode": body.deployment_mode,
+        "local_runtime": body.local_runtime,
+        "capability_overrides": body.capability_overrides,
+        "capability_checked_at": body.capability_checked_at,
+        "capability_fingerprint": body.capability_fingerprint,
     }
     presets["items"].append(item)
     if not presets.get("active_id"):
@@ -484,12 +536,16 @@ class PresetUpdate(BaseModel):
     thinking: str | None = None
     reasoning_effort: str | None = None
     vision: bool | None = None
+    vision_detail: str | None = None
     vision_video: bool | None = None
     vision_audio: bool | None = None
     api_format: str | None = None
     ollama_mode: str | None = None
     ollama_api_mode: str | None = None
     ollama_keep_alive: str | None = None
+    deployment_mode: str | None = None
+    local_runtime: str | None = None
+    capability_overrides: dict[str, bool] | None = None
     in_pool: bool | None = None
 
 
@@ -522,6 +578,8 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["reasoning_effort"] = body.reasoning_effort
     if body.vision is not None:
         item["vision"] = body.vision
+    if body.vision_detail is not None:
+        item["vision_detail"] = body.vision_detail if body.vision_detail in ("auto", "low", "high", "original") else "auto"
     if body.vision_video is not None:
         item["vision_video"] = body.vision_video
     if body.vision_audio is not None:
@@ -534,6 +592,14 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["ollama_api_mode"] = body.ollama_api_mode
     if body.ollama_keep_alive is not None:
         item["ollama_keep_alive"] = body.ollama_keep_alive
+    if body.deployment_mode is not None:
+        item["deployment_mode"] = body.deployment_mode
+    if body.local_runtime is not None:
+        item["local_runtime"] = body.local_runtime
+    if body.capability_overrides is not None:
+        item["capability_overrides"] = body.capability_overrides
+        item["capability_checked_at"] = ""
+        item["capability_fingerprint"] = ""
     if body.in_pool is not None:
         item["in_pool"] = body.in_pool
     if presets.get("active_id") == preset_id:
@@ -600,6 +666,118 @@ async def test_llm_preset(preset_id: str):
                 "declared_capabilities": declared_capabilities, "probe": {"status": 0}}
 
 
+def _capability_fingerprint(item: dict) -> str:
+    value = "|".join(str(item.get(key, "")) for key in ("provider", "local_runtime", "base_url", "model"))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+async def _probe_local_capabilities(item: dict) -> dict:
+    """用无副作用短请求检测本地 OpenAI 兼容服务的基础能力。"""
+    import httpx
+    from types import SimpleNamespace
+    from agent import providers
+
+    ai = SimpleNamespace(**item)
+    adapter = providers.adapter_for(ai)
+    base_url = adapter.resolve_base_url(ai).rstrip("/")
+    api_key = item.get("api_key") or "local"
+    headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+    result = {name: {"status": "未检测", "detail": ""} for name in
+              ("chat", "stream", "tools", "json_object", "json_schema", "reasoning")}
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=8, read=30, write=8, pool=5),
+                                 follow_redirects=False) as client:
+        try:
+            response = await client.get(f"{base_url}/models", headers=headers)
+            result["chat"] = {"status": "支持" if response.status_code < 400 else "检测失败",
+                              "detail": f"HTTP {response.status_code}"}
+        except Exception as exc:
+            result["chat"] = {"status": "检测失败", "detail": type(exc).__name__}
+            return result
+        payload = {"model": item.get("model", ""), "messages": [{"role": "user", "content": "回复 OK"}],
+                   "max_tokens": 4, "temperature": 0, "stream": False}
+        try:
+            response = await client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+            result["chat"] = {"status": "支持" if response.status_code < 400 else "检测失败",
+                              "detail": f"HTTP {response.status_code}"}
+        except Exception as exc:
+            result["chat"] = {"status": "检测失败", "detail": type(exc).__name__}
+        try:
+            stream_payload = {**payload, "stream": True}
+            async with client.stream("POST", f"{base_url}/chat/completions", headers=headers,
+                                     json=stream_payload) as response:
+                result["stream"] = {"status": "支持" if response.status_code < 400 else "检测失败",
+                                    "detail": f"HTTP {response.status_code}"}
+                if response.status_code < 400:
+                    async for _ in response.aiter_lines():
+                        break
+        except Exception as exc:
+            result["stream"] = {"status": "检测失败", "detail": type(exc).__name__}
+        tool_payload = {**payload, "tools": [{"type": "function", "function": {
+            "name": "probe_noop", "description": "无副作用测试工具", "parameters": {"type": "object"}}}],
+            "tool_choice": "auto"}
+        try:
+            response = await client.post(f"{base_url}/chat/completions", headers=headers, json=tool_payload)
+            result["tools"] = {"status": "支持" if response.status_code < 400 else "需服务端配置",
+                                "detail": f"HTTP {response.status_code}"}
+        except Exception as exc:
+            result["tools"] = {"status": "需服务端配置", "detail": type(exc).__name__}
+        for kind, fmt in (("json_object", {"type": "json_object"}),
+                          ("json_schema", {"type": "json_schema", "json_schema": {
+                              "name": "probe", "schema": {"type": "object"}}})):
+            try:
+                response = await client.post(f"{base_url}/chat/completions", headers=headers,
+                                             json={**payload, "response_format": fmt})
+                result[kind] = {"status": "支持" if response.status_code < 400 else "需服务端配置",
+                                "detail": f"HTTP {response.status_code}"}
+            except Exception as exc:
+                result[kind] = {"status": "需服务端配置", "detail": type(exc).__name__}
+    result["reasoning"] = {"status": "未检测", "detail": "推理字段依赖模型与服务端配置，请人工确认"}
+    return result
+
+
+@router.post("/llm-presets/{preset_id}/capabilities")
+async def probe_llm_capabilities(preset_id: str):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    if item.get("provider") == "ollama" and item.get("ollama_api_mode", "native") == "native":
+        raise HTTPException(400, "Ollama 原生模式请使用连通性/多模态检测；能力探测接口仅支持 OpenAI 兼容模式")
+    result = await _probe_local_capabilities(item)
+    fingerprint = _capability_fingerprint(item)
+    checked_at = now_utc().isoformat()
+    item["capability_checked_at"] = checked_at
+    item["capability_fingerprint"] = fingerprint
+    item["capability_probe"] = result
+    if presets.get("active_id") == preset_id:
+        override["ai"] = _ai_segment(item)
+    _write_override(override)
+    from types import SimpleNamespace
+    from agent import providers
+    return {"fingerprint": fingerprint, "checked_at": checked_at, "results": result,
+            "declared_capabilities": providers.capability_snapshot(SimpleNamespace(**item))}
+
+
+@router.put("/llm-presets/{preset_id}/capability-overrides")
+async def update_capability_overrides(preset_id: str, body: dict[str, bool]):
+    override = _read_override()
+    presets = _ensure_presets(override)
+    item = next((it for it in presets["items"] if it["id"] == preset_id), None)
+    if not item:
+        raise HTTPException(404, "预设不存在")
+    allowed = {"thinking", "structured_json", "structured_schema", "tools", "parallel_tools", "vision", "audio", "video"}
+    if any(key not in allowed or not isinstance(value, bool) for key, value in body.items()):
+        raise HTTPException(400, "能力覆盖字段或值无效")
+    item["capability_overrides"] = body
+    item["capability_checked_at"] = ""
+    item["capability_fingerprint"] = ""
+    if presets.get("active_id") == preset_id:
+        override["ai"] = _ai_segment(item)
+    _write_override(override)
+    return {"capability_overrides": body}
+
+
 async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api_format: str = "") -> list[str]:
     """向服务商请求模型列表，返回去重排序后的模型 id 列表。
 
@@ -661,6 +839,7 @@ class ModelsPreview(BaseModel):
     base_url: str = ""
     api_key: str = ""
     api_format: str = ""
+    local_runtime: str = "other"
 
 
 @router.post("/llm-presets/models-preview")
@@ -813,7 +992,8 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
             if dim == "image":
                 content = [
                     {"type": "text", "text": "这张图是什么颜色？用一个词回答。"},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_probe_png_b64()}"}},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{_probe_png_b64()}", "detail": "auto"}},
                 ]
             elif dim == "video":
                 # 用真实 mp4（video_url 块）探测视频理解。百炼/千问等对「图像列表」形式

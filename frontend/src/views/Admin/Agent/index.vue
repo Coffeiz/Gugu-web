@@ -22,6 +22,56 @@
 
     <div class="panels-wrap">
 
+      <!-- ── 能力目录 ── -->
+      <section v-if="activeTab === 'capabilities'" class="config-card capability-catalog-card">
+        <div class="capability-catalog-head">
+          <div>
+            <h3 class="presets-title">能力目录</h3>
+            <p class="presets-desc">来自 Tool / Skill Registry 的只读目录；完整 Schema 和正文只在 Agent 请求中按需注入。</p>
+          </div>
+          <button type="button" class="pca-btn" :disabled="capabilityCatalogLoading" @click="fetchCapabilityCatalog">
+            {{ capabilityCatalogLoading ? '刷新中…' : '刷新目录' }}
+          </button>
+        </div>
+        <div v-if="capabilityCatalogError" class="llm-msg llm-msg--error">{{ capabilityCatalogError }}</div>
+        <div v-else-if="capabilityCatalogLoading && !capabilityCatalog" class="presets-loading">加载中…</div>
+        <template v-else-if="capabilityCatalog">
+          <div class="capability-catalog-summary">
+            <span>工具 {{ capabilityCatalog.tools.length }}</span>
+            <span>Skill {{ capabilityCatalog.skills.length }}</span>
+            <span v-if="capabilityCatalog.diagnostics.length" class="capability-catalog-warning">
+              诊断 {{ capabilityCatalog.diagnostics.length }} 项
+            </span>
+          </div>
+          <div class="capability-catalog-group">
+            <h4>工具</h4>
+            <div class="capability-catalog-grid">
+              <div v-for="item in capabilityCatalog.tools" :key="item.name" class="capability-catalog-item">
+                <div class="capability-catalog-item-head">
+                  <code>{{ item.name }}</code>
+                  <span>{{ item.category || '未分类' }}</span>
+                </div>
+                <p>{{ item.description_short }}</p>
+                <small>{{ item.permissions.length ? `权限：${item.permissions.join('、')}` : '无额外权限声明' }}</small>
+              </div>
+            </div>
+          </div>
+          <div class="capability-catalog-group">
+            <h4>Skill</h4>
+            <div class="capability-catalog-grid">
+              <div v-for="item in capabilityCatalog.skills" :key="item.name" class="capability-catalog-item">
+                <div class="capability-catalog-item-head">
+                  <code>{{ item.name }}</code>
+                  <span>{{ item.category || '未分类' }}</span>
+                </div>
+                <p>{{ item.description_short }}</p>
+                <small>{{ item.related_tools.length ? `关联工具：${item.related_tools.join('、')}` : '未声明关联工具' }}</small>
+              </div>
+            </div>
+          </div>
+        </template>
+      </section>
+
       <!-- ── LLM 预设 ── -->
       <div v-if="activeTab === 'llm'">
         <!-- 标题行 -->
@@ -152,6 +202,16 @@
               </div>
             </div>
 
+            <div v-if="editTarget.provider === 'local'" class="modal-field">
+              <label>本地运行时</label>
+              <div class="toggle-group" style="margin-bottom:0">
+                <button v-for="runtime in LOCAL_RUNTIMES" :key="runtime.key" type="button" class="toggle-btn"
+                  :class="{ active: (editTarget.local_runtime || 'other') === runtime.key }"
+                  @click="editTarget.local_runtime = runtime.key">{{ runtime.label }}</button>
+              </div>
+              <div class="modal-hint">统一使用 OpenAI 兼容接口；工具、结构化输出等能力需检测或人工启用。</div>
+            </div>
+
             <div v-if="editTarget.provider === 'ollama'" class="modal-field">
               <label>连接方式</label>
               <div class="toggle-group" style="margin-bottom:0">
@@ -176,6 +236,10 @@
               </div>
               <div class="modal-hint">
                 原生模式使用 <code>/api/chat</code>，支持原生思考、工具调用和模型驻留；兼容模式使用 <code>/v1</code>。
+              </div>
+              <div class="modal-hint ollama-mode-warning">
+                原生模式只适用于已安装在 Ollama 中的模型（例如 <code>qwen3:8b</code>）。
+                如果使用 <code>minimax-m3</code> 等外部模型或 OpenAI 兼容服务，请切换为「OpenAI 兼容」并填写对应的 <code>/v1</code> 地址。
               </div>
               <div v-if="(editTarget.ollama_api_mode || 'native') === 'native'" class="modal-field">
                 <label>模型驻留</label>
@@ -262,15 +326,28 @@
               </button>
             </div>
 
-            <div class="modal-field modal-field--row" v-if="editTarget.provider === 'deepseek' && editTarget.thinking === 'adaptive'">
+            <div class="modal-field modal-field--row" v-if="editTarget.provider === 'deepseek'">
               <div class="thinking-label">
                 <span>思考强度</span>
-                <span class="thinking-hint">DeepSeek 思考开时生效（思考模式下 temperature 失效，强度是质量/成本旋钮）</span>
+                <span class="thinking-hint">思考开启时生效；关闭思考时先保存选择</span>
               </div>
               <div style="display:flex; gap:6px;">
-                <button type="button" class="toggle-btn" :class="{ active: !editTarget.reasoning_effort }" @click="editTarget.reasoning_effort = ''">默认</button>
-                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'high' }" @click="editTarget.reasoning_effort = 'high'">high</button>
-                <button type="button" class="toggle-btn" :class="{ active: editTarget.reasoning_effort === 'max' }" @click="editTarget.reasoning_effort = 'max'">max</button>
+                <button v-for="effort in DEEPSEEK_EFFORTS" :key="effort.key" type="button" class="toggle-btn"
+                  :disabled="editTarget.thinking !== 'adaptive'"
+                  :class="{ active: editTarget.reasoning_effort === effort.key || (!editTarget.reasoning_effort && effort.key === '') }"
+                  @click="editTarget.reasoning_effort = effort.key">{{ effort.label }}</button>
+              </div>
+            </div>
+
+            <div class="modal-field modal-field--row" v-if="editTarget.provider === 'deepseek'">
+              <div class="thinking-label">
+                <span>图片细节级别</span>
+                <span class="thinking-hint">DeepSeek Vision 的 image_url.detail；auto 自动选择，通常等价于 original</span>
+              </div>
+              <div style="display:flex; gap:6px;">
+                <button v-for="detail in IMAGE_DETAIL_LEVELS" :key="detail.key" type="button" class="toggle-btn"
+                  :class="{ active: (editTarget.vision_detail || 'auto') === detail.key }"
+                  @click="editTarget.vision_detail = detail.key">{{ detail.label }}</button>
               </div>
             </div>
 
@@ -278,6 +355,27 @@
               <div class="thinking-label">
                 <span>多模态能力</span>
                 <span class="thinking-hint">图片/视频/音频分别开关；点「检测」自动判定该维度是否支持，成功后自动开启</span>
+              </div>
+            </div>
+
+            <div v-if="editTarget.provider === 'local'" class="modal-field">
+              <div class="thinking-label">
+                <span>本地能力覆盖</span>
+                <span class="thinking-hint">仅覆盖已确认的能力；留空表示使用默认声明</span>
+              </div>
+              <div class="capability-overrides">
+                <label v-for="cap in LOCAL_CAPABILITIES" :key="cap.key" class="capability-override">
+                  <input type="checkbox" :checked="editTarget.capability_overrides?.[cap.key] === true"
+                    @change="setCapabilityOverride(cap.key, ($event.target as HTMLInputElement).checked)" />
+                  {{ cap.label }}
+                </label>
+              </div>
+              <button type="button" class="pca-btn pca-btn--sm" :disabled="editIsNew || capabilityProbeLoading"
+                @click="probeCapabilities(editTarget.id)">
+                {{ capabilityProbeLoading ? '检测中…' : '检测本地能力' }}
+              </button>
+              <div v-if="editTarget.capability_checked_at" class="modal-hint">
+                最近检测：{{ editTarget.capability_checked_at }}
               </div>
             </div>
 
@@ -1330,6 +1428,7 @@ const adminStore  = useAdminStore()
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
+  { key: 'capabilities', label: '能力目录' },
   { key: 'behavior', label: '行为配置' },
   { key: 'labels',   label: '状态命名' },
   { key: 'usage',    label: '用量统计' },
@@ -1341,11 +1440,46 @@ const activeTab = ref('llm')
 function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
+  if (key === 'capabilities' && !capabilityCatalog.value) fetchCapabilityCatalog()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
   if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
   if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
+}
+
+type CapabilityCatalogItem = {
+  name: string
+  description_short: string
+  category: string
+  permissions: string[]
+  platforms: string[]
+  related_skills: string[]
+  related_tools: string[]
+  source: string
+  enabled: boolean
+}
+const capabilityCatalog = ref<{
+  generation: number
+  diagnostics: string[]
+  tools: CapabilityCatalogItem[]
+  skills: CapabilityCatalogItem[]
+} | null>(null)
+const capabilityCatalogLoading = ref(false)
+const capabilityCatalogError = ref('')
+
+async function fetchCapabilityCatalog() {
+  capabilityCatalogLoading.value = true
+  capabilityCatalogError.value = ''
+  try {
+    const res = await adminStore.authFetch('/api/v1/admin/agent/capabilities')
+    if (!res.ok) throw new Error(`加载能力目录失败（${res.status}）`)
+    capabilityCatalog.value = await res.json()
+  } catch (error) {
+    capabilityCatalogError.value = error instanceof Error ? error.message : '加载能力目录失败'
+  } finally {
+    capabilityCatalogLoading.value = false
+  }
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
@@ -1494,10 +1628,23 @@ const PROVIDERS = [
   { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
   { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
   { key: 'qwen',      label: 'DashScope(百炼)', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
-  { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
+  { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-v4-flash-vision-exp' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
   { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },
   { key: 'ollama',    label: 'Ollama',      base_url: 'http://127.0.0.1:11434/v1',                          model: 'qwen3:8b' },
+  { key: 'local',     label: '本地兼容服务', base_url: '',                                                   model: '' },
+]
+
+const LOCAL_RUNTIMES = [
+  { key: 'llama.cpp', label: 'llama.cpp' },
+  { key: 'vllm', label: 'vLLM' },
+  { key: 'other', label: '其它兼容服务' },
+]
+const LOCAL_CAPABILITIES = [
+  { key: 'tools', label: '工具调用' },
+  { key: 'structured_json', label: 'JSON 输出' },
+  { key: 'structured_schema', label: 'JSON Schema' },
+  { key: 'thinking', label: '思考/推理' },
 ]
 
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
@@ -1517,12 +1664,25 @@ const testingId      = ref<any | null>(null)
 const activatingId   = ref<any | null>(null)
 const probingId      = ref<any | null>(null)
 const probingDim     = ref<string | null>(null)   // 弹窗内正在检测的维度（image/video/audio）
+const capabilityProbeLoading = ref(false)
 
 // 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
 const visionDims = [
   { key: 'image', label: '图片', hint: '用户发的图片直接给模型「看」' },
   { key: 'video', label: '视频', hint: '用户发的视频直接给模型「看」' },
   { key: 'audio', label: '音频', hint: '用户发的音频直接给模型「听」' },
+]
+const DEEPSEEK_EFFORTS = [
+  { key: '', label: '默认' },
+  { key: 'low', label: 'low' },
+  { key: 'high', label: 'high' },
+  { key: 'max', label: 'max' },
+]
+const IMAGE_DETAIL_LEVELS = [
+  { key: 'auto', label: 'auto' },
+  { key: 'low', label: 'low' },
+  { key: 'high', label: 'high' },
+  { key: 'original', label: 'original' },
 ]
 
 // edit modal
@@ -1622,7 +1782,7 @@ async function togglePool(p: any) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_detail: 'auto', vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m', deployment_mode: 'cloud', local_runtime: 'other', capability_overrides: {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -1631,7 +1791,7 @@ function openNewPreset() {
 
 function openEditPreset(p: any) {
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m' }
+  editTarget.value = { ...p, api_key: '', vision_detail: p.vision_detail || 'auto', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m', deployment_mode: p.deployment_mode || (p.provider === 'local' ? 'local' : 'cloud'), local_runtime: p.local_runtime || 'other', capability_overrides: p.capability_overrides || {} }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -1640,6 +1800,31 @@ function openEditPreset(p: any) {
 
 function closeModelMenuSoon() {
   window.setTimeout(() => { modelMenuOpen.value = false }, 120)
+}
+
+function setCapabilityOverride(key: string, enabled: boolean) {
+  if (!editTarget.value) return
+  const next = { ...(editTarget.value.capability_overrides || {}) }
+  if (enabled) next[key] = true
+  else delete next[key]
+  editTarget.value.capability_overrides = next
+}
+
+async function probeCapabilities(id: string) {
+  if (!id || capabilityProbeLoading.value) return
+  capabilityProbeLoading.value = true
+  try {
+    const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/capabilities`, { method: 'POST' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || '能力检测失败')
+    editTarget.value.capability_checked_at = data.checked_at || ''
+    editTarget.value.capability_fingerprint = data.fingerprint || ''
+    showMsg('本地能力检测完成')
+  } catch (e) {
+    editError.value = e instanceof Error ? e.message : '能力检测失败'
+  } finally {
+    capabilityProbeLoading.value = false
+  }
 }
 
 function selectModel(model: string) {
@@ -1665,6 +1850,7 @@ async function fetchModelList() {
           base_url: editTarget.value.base_url,
           api_key: editTarget.value.api_key,
           api_format: editTarget.value.api_format || '',
+          local_runtime: editTarget.value.local_runtime || 'other',
         }),
       })
     } else {
@@ -1690,6 +1876,7 @@ function setEditProvider(key: string) {
   editTarget.value.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
   editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+  editTarget.value.deployment_mode = key === 'local' ? 'local' : 'cloud'
   editTarget.value.ollama_mode = key === 'ollama' ? 'local' : (editTarget.value.ollama_mode || 'local')
   if (key === 'ollama') {
     editTarget.value.ollama_api_mode = editTarget.value.ollama_api_mode || 'native'
@@ -3102,15 +3289,16 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
   display: flex; align-items: center; justify-content: center;
 }
 .modal-box {
-  width: 480px; max-width: 92vw;
+  width: 640px; max-width: 92vw;
+  max-height: calc(100vh - 48px); overflow-y: auto;
   background: rgba(22,22,34,0.97);
   backdrop-filter: blur(32px); -webkit-backdrop-filter: blur(32px);
   border: 1px solid rgba(255,255,255,0.1); border-radius: 18px;
-  padding: 28px 28px 22px;
+  padding: 24px 28px 18px;
   box-shadow: 0 24px 80px rgba(0,0,0,0.5);
 }
-.modal-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); margin-bottom: 20px; }
-.modal-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.modal-title { font-size: 16px; font-weight: 700; color: rgba(255,255,255,0.88); margin-bottom: 14px; }
+.modal-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
 .modal-field label { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); text-transform: uppercase; letter-spacing: 0.07em; }
 .modal-input {
   width: 100%; padding: 9px 12px; border-radius: 9px;
@@ -3121,6 +3309,7 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .modal-input:focus { border-color: rgba(123,127,178,0.45); }
 .modal-input::placeholder { color: rgba(255,255,255,0.2); }
 .modal-hint { font-size: 11px; line-height: 1.5; color: rgba(255,255,255,0.45); }
+.modal-hint.ollama-mode-warning { color: rgba(242, 190, 126, 0.78); }
 .modal-hint code { color: rgba(123,127,178,0.9); background: rgba(123,127,178,0.12); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }
 .model-picker { position: relative; }
 .model-picker-row { display: flex; gap: 7px; align-items: center; }
@@ -3140,11 +3329,11 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .model-option-hint.error { color: #ffadad; }
 .modal-actions {
   display: flex; align-items: center; gap: 10px;
-  margin-top: 20px; padding-top: 16px;
+  margin-top: 14px; padding-top: 12px;
   border-top: 1px solid rgba(255,255,255,0.07);
 }
 .modal-actions .save-hint { flex: 1; }
-.modal-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+.modal-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
 .modal-field-row .modal-field { margin-bottom: 0; }
 .modal-field--row { flex-direction: row; align-items: center; justify-content: space-between; }
 .modal-field--row > span { font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.35); letter-spacing: 0.07em; }
@@ -3161,6 +3350,22 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* ── 决策轨迹 ── */
+.capability-catalog-card { min-height: calc(100vh - 230px); }
+.capability-catalog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.capability-catalog-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; color: rgba(255,255,255,0.58); font-size: 12px; }
+.capability-catalog-summary span { padding: 5px 9px; border: 1px solid rgba(255,255,255,0.08); border-radius: 7px; background: rgba(255,255,255,0.035); }
+.capability-catalog-warning { color: #f2be7e; }
+.capability-catalog-group { margin-top: 18px; }
+.capability-catalog-group h4 { margin: 0 0 9px; color: rgba(255,255,255,0.48); font-size: 12px; font-weight: 600; }
+.capability-catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
+.capability-catalog-item { min-width: 0; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.07); border-radius: 9px; background: rgba(255,255,255,0.025); }
+.capability-catalog-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.capability-catalog-item code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d6d8ee; font-size: 11px; }
+.capability-catalog-item-head span { flex: 0 0 auto; color: rgba(255,255,255,0.32); font-size: 10px; }
+.capability-catalog-item p { margin: 6px 0 5px; color: rgba(255,255,255,0.68); font-size: 12px; line-height: 1.5; }
+.capability-catalog-item small { display: block; overflow: hidden; color: rgba(255,255,255,0.32); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 720px) { .capability-catalog-grid { grid-template-columns: 1fr; } }
+
 .trace-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 14px; height: calc(100vh - 230px); min-height: 420px; }
 .trace-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 4px; }
 .trace-search { display: flex; gap: 6px; position: sticky; top: 0; padding-bottom: 6px; }

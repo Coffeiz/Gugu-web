@@ -56,7 +56,7 @@
 - **流式抽风重试**：MiniMax 偶发空/异常流 → `IndexError`/`KeyError` 纳入出-token-前重试。
 
 #### OpenAI 格式（`_run_openai`，deepseek / mimo / qwen / openai）
-- **思考开关**：`{"thinking":{"type":"disabled"}}`（仅 mimo/deepseek，`supports_thinking_toggle` 门控；qwen/openai 不发避免误伤），经 `extra_body`。（0.14.2 / Unreleased）
+- **思考开关**：DeepSeek 按官方 OpenAI 格式发送 `extra_body: {"thinking":{"type":"enabled/disabled"}}`，思考强度作为顶层 `reasoning_effort: low/high/max` 发送；mimo 仍使用自身的 thinking 参数。（Unreleased）
 - **`reasoning_content` 多轮回传**：流式捕获 `delta.reasoning_content`，在**所有** assistant 回填点统一带回（`_asst` 收口）——mimo/deepseek 思考+工具多轮缺它会 **400**。**模型无关**（任何吐 reasoning_content 的模型都受益）。只当轮内存回传、不入库。（0.14.2）
 - **空正文兜底**：整轮无正文（推理模型把话全放 reasoning_content / 降级无活干）→ `empty_retry` 追一轮要正文，仍空给得体兜底。**不限 mimo**。
 - **system 缓存标记**：去掉 builder 的 `CACHE_BREAK`（OpenAI 通道不支持 cache_control）。
@@ -78,10 +78,10 @@
 - **特性**：continue/stop 纪律**内化在权重**，几乎不"宣告完就停"，是守卫体系的"满分参照"。最强基座。
 
 #### DeepSeek（`deepseek-chat`，OpenAI 格式）
-- **优化**：① **思考开关生效**（之前 gate 在 mimo、DeepSeek 忽略配置）；② **思考强度 `reasoning_effort`（high/max）后台可调**——思考模式下 temperature 失效，effort 是唯一质量/成本旋钮（后台 Agent 卡片 deepseek+思考开 时显示，已核对 `views/Admin/Agent/index.vue` 该字段仅在 `provider === 'deepseek' && thinking === 'adaptive'` 时展示）；③ **反思走 `json_object` + thinking:disabled**；④ **自动上下文缓存命中监控**（`prompt_cache_hit_tokens` → `_usage.cache_read`）；⑤ `reasoning_content` 多轮回传（横切，自动受益）。（Unreleased）
+- **优化**：① **思考开关生效**；② **思考强度 `reasoning_effort`（low/high/max）后台可调**——思考模式下 temperature 失效，effort 是质量/成本旋钮；③ **DeepSeek Vision** 使用 `deepseek-v4-flash-vision-exp`，OpenAI `image_url.detail` 默认 `auto`；④ **反思走 `json_object` + thinking:disabled**；⑤ **自动上下文缓存命中监控**（`prompt_cache_hit_tokens` → `_usage.cache_read`）；⑥ `reasoning_content` 多轮回传（横切，自动受益）。（Unreleased）
 - **特性**：上下文缓存**全自动**（无需 `cache_control`），咕咕「稳定前缀在前」的 system 拆分天然吃到命中；多轮无状态、客户端重发全历史（咕咕本就如此）。
 - **坑**：思考模式忽略 temperature/top_p；`json_object` 要求 prompt 含 "json" 字样+样例（反思 prompt 已满足）。
-- **可选未做**：`reasoning_effort` 的 low/medium（映射到 high，没单列）；Tool strict 模式（beta）；前缀续写 / FIM（与咕咕场景无关）。
+- **可选未做**：Tool strict 模式（beta）；前缀续写 / FIM（与咕咕场景无关）。
 
 #### mimo / 小米（`mimo-v2.5`，OpenAI 格式，可选 Anthropic）
 - **优化**：`thinking:disabled` 防"正文全进 reasoning_content、content 空"的空气泡；`reasoning_content` 多轮回传（防 400）；反思 `json_object`；空正文兜底；`api-key` 鉴权头。

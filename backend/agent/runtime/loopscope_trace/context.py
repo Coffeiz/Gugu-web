@@ -187,10 +187,23 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
             except Exception:
                 block = ""
             if block:
+                attributes = {}
+                if label == "Skill index":
+                    skill_rows = skills if isinstance(skills, (list, tuple)) else []
+                    attributes = {
+                        "context_source": "skill_index",
+                        "source": "skills_index",
+                        "skill_count": len(skill_rows),
+                        "skill_slugs": [
+                            str(row.get("slug")) for row in skill_rows
+                            if isinstance(row, dict) and row.get("slug")
+                        ],
+                    }
                 record_context_source(
                     "context",
                     label,
                     output={"content": block},
+                    attributes=attributes,
                     code_target=original_build,
                     included_value=block,
                 )

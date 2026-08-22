@@ -27,6 +27,20 @@ interface RawToolEvent {
   createdAt: string
 }
 
+function sortTimelineMessages(items: ChatMessage[]) {
+  const isPairedInteraction = (a: ChatMessage, b: ChatMessage) =>
+    a.role === 'interaction' && b.role === 'tool' &&
+    Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
+
+  // 工具和 interaction 分属两个接口恢复。即使数据库时间精度相同，
+  // 同一工具调用也必须保持实时展示顺序，避免刷新后交互卡片跑到工具卡前面。
+  return items.sort((a, b) => {
+    if (isPairedInteraction(a, b)) return 1
+    if (isPairedInteraction(b, a)) return -1
+    return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
+  })
+}
+
 /**
  * 会话切换操作的唯一所有权：loadSession/newSession/deleteSession，以及从
  * sessions 派生的 webSessions/imSessions/currentSessionTitle。
@@ -113,9 +127,7 @@ export function useChatSessions(options: {
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
       }))
-      messages.value = [...loadedMessages, ...loadedTools].sort((a, b) =>
-        String((a as ChatMessage & { _createdAt?: string })._createdAt || '').localeCompare(String((b as ChatMessage & { _createdAt?: string })._createdAt || ''))
-      )
+      messages.value = sortTimelineMessages([...loadedMessages, ...loadedTools])
       // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
       // 因而前端不需要、也不会持久化旧 token。
       try {
@@ -130,13 +142,14 @@ export function useChatSessions(options: {
               time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
               interaction: {
                 promptId: Number(item.id), kind: String(item.kind || 'confirm'),
+                toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
                 title: String(item.title || '需要确认'), body: String(item.body || ''),
                 options: Array.isArray(item.options) ? item.options : [],
                 resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
               },
             })
           }
-          messages.value.sort((a, b) => String(a._createdAt || '').localeCompare(String(b._createdAt || '')))
+          sortTimelineMessages(messages.value)
         }
       } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       options.onContentReset(); options.resetSessionTurn()

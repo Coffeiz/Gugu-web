@@ -1,6 +1,9 @@
 ---
 name: 工作区 Shell
-when: 用户要求在当前项目中运行测试、构建、检查或整理命令时；先确认当前会话已绑定工作区
+description_short: 用户要在已绑定工作区运行检查、构建或整理命令时使用。
+description_long: 用户要求在当前项目中运行测试、构建、检查或整理命令时；先确认当前会话已绑定工作区
+category: shell
+related_tools: shell
 ---
 # 工作区 Shell
 

@@ -6,6 +6,7 @@
         <div class="title-line">
           <span class="kind" :data-kind="span.kind">{{ span.kind }}</span>
           <strong>{{ span.name }}</strong>
+          <span v-if="contextLabel" class="context-label">{{ contextLabel }}</span>
           <span class="status" :data-status="span.status">{{ span.status }}</span>
         </div>
         <div v-if="codeLabel" class="code-line" title="Python source">
@@ -97,6 +98,17 @@ const assembly = computed(() => {
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
 const hasAttributes = computed(() => !!props.span.attributes && Object.keys(props.span.attributes).length > 0)
+const contextLabel = computed(() => {
+  const source = props.span.attributes?.context_source
+  if (!source) return ''
+  const labels: Record<string, string> = {
+    tool_schema: '工具 Schema',
+    capability_catalog: '能力目录',
+    skill_index: 'Skill 索引',
+    skill_body: 'Skill 正文',
+  }
+  return labels[String(source)] || '上下文注入'
+})
 const codeLabel = computed(() => {
   const c = props.span.code
   if (!c?.file && !c?.function) return ''
@@ -146,6 +158,7 @@ const tokenChips = computed(() => {
 .kind { flex:none; font:9px var(--font-mono); text-transform:uppercase; color:var(--content-tertiary); }
 .status { flex:none; padding:2px 5px; border-radius:var(--radius-pill); font-size:8px; color:var(--content-tertiary); background:var(--surface-soft); }
 .status[data-status="error"] { color:var(--status-danger); background:color-mix(in srgb,var(--status-danger) 10%,transparent); }
+.context-label { flex:none; padding:2px 5px; border-radius:var(--radius-pill); color:var(--action-primary); background:var(--action-soft); font-size:8px; }
 .code-line { display:flex; align-items:center; gap:5px; margin-top:4px; min-width:0; color:var(--content-tertiary); font-size:9px; }
 .code-line code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .metrics { padding:10px 12px 10px 0; display:flex; align-items:center; justify-content:flex-end; gap:5px; flex-wrap:wrap; color:var(--content-tertiary); font:9px var(--font-mono); max-width:360px; }

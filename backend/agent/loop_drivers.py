@@ -76,6 +76,7 @@ class LoopDriver(Protocol):
     api_format: str
 
     def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None): ...
+    def update_tools(self, ctx, tool_names: list[str]) -> None: ...
     def run_round(self, client, ctx, messages: list) -> AsyncGenerator[tuple, None]: ...
     def append_tool_round(self, messages: list, result: RoundResult, dispatched: list) -> None: ...
     def append_followup(self, messages: list, result: RoundResult, next_content: str,
@@ -228,7 +229,7 @@ class AnthropicDriver:
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
-        thinking_param = adapter.build_thinking_params(ai)
+        thinking_param = adapter.build_anthropic_thinking_params(ai)
 
         # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
@@ -239,12 +240,28 @@ class AnthropicDriver:
         else:
             system_param = system_text
 
+        print(json.dumps({
+            "probe": "runtime-ask-user-tools",
+            "phase": "provider-tools",
+            "provider": adapter.name,
+            "model": getattr(ai, "model", ""),
+            "declaredTools": True,
+            "profileToolCount": len(tool_names),
+            "finalToolCount": len(tools),
+            "hasAskUser": "ask_user" in tool_names and any(
+                item.get("name") == "ask_user" for item in tools
+            ),
+        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         ctx = _AnthropicCtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             thinking_param=thinking_param, system_param=system_param,
             supports_active_cache=supports_active_cache, adapter=adapter, model=ai.model,
         )
         return client, ctx
+
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        ctx.tools = registry.anthropic_schemas(tool_names)
 
     async def run_round(self, client, ctx, messages):
         from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
@@ -306,7 +323,7 @@ class _OpenAICtx:
     tools: list
     max_tokens: int
     temperature: float
-    think_extra: dict
+    think_kwargs: dict
     model: str
     supports_active_cache: bool
     adapter: Any
@@ -353,7 +370,7 @@ def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
                 media = source.get("media_type") or "image/jpeg"
                 image_parts.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:{media};base64,{source['data']}"},
+                    "image_url": {"url": f"data:{media};base64,{source['data']}", "detail": "auto"},
                 })
                 continue
         # 未知块不要直接丢失，保留一个不会破坏 OpenAI schema 的摘要。
@@ -385,20 +402,38 @@ class OpenAIDriver:
                     if content and "cache_control" not in content[-1]:
                         content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
 
-        tools = registry.openai_schemas(tool_names)
+        declared = providers.capability_snapshot(ai)
+        tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
-        think_extra = adapter.build_thinking_params(ai)
+        think_kwargs = adapter.build_openai_thinking_kwargs(ai)
 
+        print(json.dumps({
+            "probe": "runtime-ask-user-tools",
+            "phase": "provider-tools",
+            "provider": adapter.name,
+            "model": getattr(ai, "model", ""),
+            "declaredTools": bool(declared.get("tools", True)),
+            "profileToolCount": len(tool_names),
+            "finalToolCount": len(tools),
+            "hasAskUser": "ask_user" in tool_names and any(
+                item.get("function", {}).get("name") == "ask_user" for item in tools
+            ),
+        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
-            think_extra=think_extra, model=ai.model,
+            think_kwargs=think_kwargs, model=ai.model,
             supports_active_cache=supports_active_cache,
             adapter=adapter,
             ai=ai,
         )
         return client, ctx
+
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        from agent import providers
+        ctx.tools = registry.openai_schemas(tool_names) if providers.capability_snapshot(ctx.ai).get("tools", True) else []
 
     async def run_round(self, client, ctx, messages):
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
@@ -412,7 +447,7 @@ class OpenAIDriver:
             temperature=ctx.temperature,
             stream=True,
             stream_options={"include_usage": True},
-            extra_body=ctx.think_extra,
+            **ctx.think_kwargs,
             **tool_params,
         )
         content = ""
@@ -594,8 +629,21 @@ class OllamaDriver:
         think: bool | str = False if getattr(ai, "thinking", "disabled") != "adaptive" else effort
         if think not in {False, "low", "medium", "high", "max"}:
             think = "medium"
+        tools = registry.openai_schemas(tool_names)
+        print(json.dumps({
+            "probe": "runtime-ask-user-tools",
+            "phase": "provider-tools",
+            "provider": adapter.name,
+            "model": getattr(ai, "model", ""),
+            "declaredTools": True,
+            "profileToolCount": len(tool_names),
+            "finalToolCount": len(tools),
+            "hasAskUser": "ask_user" in tool_names and any(
+                item.get("function", {}).get("name") == "ask_user" for item in tools
+            ),
+        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         return client, _OllamaCtx(
-            tools=registry.openai_schemas(tool_names),
+            tools=tools,
             max_tokens=ai.max_tokens,
             temperature=ai.temperature,
             model=ai.model,
@@ -603,6 +651,10 @@ class OllamaDriver:
             keep_alive=getattr(ai, "ollama_keep_alive", "5m") or "5m",
             base_url=adapter.resolve_native_base_url(ai),
         )
+
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        ctx.tools = registry.openai_schemas(tool_names)
 
     async def run_round(self, client, ctx, messages):
         payload = {

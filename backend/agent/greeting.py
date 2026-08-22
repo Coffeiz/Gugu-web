@@ -161,15 +161,14 @@ async def generate(db: AsyncSession, user_id, settings) -> str:
         _timeout = httpx.Timeout(12.0)
         if use_anthropic_for(ai):
             client = providers.build_anthropic_client(ai, _timeout)
-            extra = provider_adapter.build_thinking_params(ai)
+            extra = provider_adapter.build_anthropic_thinking_params(ai)
             resp = await client.messages.create(
                 model=ai.model, max_tokens=180,
                 messages=[{"role": "user", "content": prompt}], **extra)
             text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
         else:
             client = providers.build_openai_client(ai, _timeout)
-            thinking = provider_adapter.build_thinking_params(ai)
-            extra = {"extra_body": thinking} if thinking else {}
+            extra = provider_adapter.build_openai_thinking_kwargs(ai)
             resp = await client.chat.completions.create(
                 model=ai.model, max_tokens=180,
                 messages=[{"role": "user", "content": prompt}], **extra)

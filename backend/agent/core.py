@@ -15,7 +15,7 @@ import logging
 import random
 import re as _re_mod
 from uuid import uuid4
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, Awaitable, Callable
 
 from agent.llm import genstream
 from agent import loop_drivers
@@ -188,6 +188,54 @@ def _is_successful_tool_result(result: str) -> bool:
     return not isinstance(payload, dict) or not payload.get("error")
 
 
+def _loaded_skill_slugs(messages) -> set[str]:
+    """从 Skill 的结构化使用标记找出已经进入上下文的正文。
+
+    不扫描正文、不做关键词匹配；只读取 provider history 中 role=tool 或 tool_result
+    block 的 `_capability_usage` 标记。压缩后标记与正文一起消失，自然允许重新加载。
+    """
+    import json as _json
+
+    loaded: set[str] = set()
+
+    def read_result(value):
+        if isinstance(value, str):
+            try:
+                value = _json.loads(value)
+            except (TypeError, ValueError):
+                return
+        if not isinstance(value, dict):
+            return
+        marker = value.get("_capability_usage")
+        if isinstance(marker, dict) and marker.get("kind") == "skill" and marker.get("loaded"):
+            slug = marker.get("slug")
+            if isinstance(slug, str) and slug:
+                loaded.add(slug)
+
+    for message in getattr(messages, "conversation", messages) or []:
+        if not isinstance(message, dict):
+            continue
+        if message.get("role") == "tool":
+            read_result(message.get("content"))
+        for block in message.get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                read_result(block.get("content"))
+    return loaded
+
+
+def _is_verify_placeholder(text: str) -> bool:
+    """判断核验轮文本是否只是过程播报，而不是可以直接交付的结果摘要。"""
+    normalized = _re_mod.sub(r"[\s，。！？、,.!?：:；;‘’“”\"'`~～…]+", "", text or "")
+    if not normalized:
+        return True
+    process_phrases = (
+        "确认一下", "核实一下", "检查一下", "看一下", "查一下",
+        "正在核实", "正在检查", "正在确认", "已核实", "已确认",
+        "核对完成", "复查完成", "都核实过了", "没问题",
+    )
+    return len(normalized) <= 16 and any(phrase in normalized for phrase in process_phrases)
+
+
 def _replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
     """更新当前 Run 内存中的 pending tool result，供交互恢复后的下一轮使用。"""
     for message in messages:
@@ -259,9 +307,10 @@ async def _im_set_tool_state(tool_name: str) -> None:
 class LLMRunner:
     """provider 无关的工具循环执行器。"""
 
-    def __init__(self, tool_names: list[str], settings):
+    def __init__(self, tool_names: list[str], settings, capability_context=None):
         self.tool_names = tool_names
         self.settings = settings
+        self.capability_context = capability_context
         # 状态显示名 = 特殊状态默认 ← 各工具 label ← 用户在后台「状态命名」面板的覆盖（热读）。
         # 未覆盖的 key 自动回退默认，所以「保留默认」天然成立。
         _ov = getattr(getattr(settings, "state_labels", None), "overrides", None) or {}
@@ -273,46 +322,62 @@ class LLMRunner:
 
     def run(self, user_id, system_text: str, messages: list,
             use_anthropic: bool, model_cfg=None,
-            session_id: int | None = None) -> AsyncGenerator[str, None]:
+            session_id: int | None = None,
+            on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+            ) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
         if (getattr(ai, "provider", "") or "").lower() == "ollama" and \
                 getattr(ai, "ollama_api_mode", "native") == "native":
-            return self._run_ollama(user_id, messages, ai, session_id=session_id)
+            return self._run_ollama(user_id, messages, ai, session_id=session_id,
+                                    on_interaction=on_interaction)
         if use_anthropic:
-            return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id)
-        return self._run_openai(user_id, messages, ai, session_id=session_id)
+            return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id,
+                                       on_interaction=on_interaction)
+        return self._run_openai(user_id, messages, ai, session_id=session_id,
+                                on_interaction=on_interaction)
 
     async def _run_ollama(self, user_id, messages: list, ai=None,
-                          session_id: int | None = None) -> AsyncGenerator[str, None]:
+                          session_id: int | None = None,
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                          ) -> AsyncGenerator[str, None]:
         ai = ai if ai is not None else self.settings.ai
         async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id):
+                                          system_text=None, session_id=session_id,
+                                          on_interaction=on_interaction):
             yield line
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
                              messages: list, ai=None,
-                             session_id: int | None = None) -> AsyncGenerator[str, None]:
+                             session_id: int | None = None,
+                             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                             ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
-                                          system_text=system_text, session_id=session_id):
+                                          system_text=system_text, session_id=session_id,
+                                          on_interaction=on_interaction):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
     async def _run_openai(self, user_id, messages: list, ai=None,
-                          session_id: int | None = None) -> AsyncGenerator[str, None]:
+                          session_id: int | None = None,
+                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                          ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
-                                          system_text=None, session_id=session_id):
+                                          system_text=None, session_id=session_id,
+                                          on_interaction=on_interaction):
             yield line
 
     # ── 共享主循环（PRD-LLM-1 Phase 2）────────────────────────────────────────
     async def _run_loop(self, driver, user_id, messages: list, ai,
                          system_text: str | None,
-                         session_id: int | None = None) -> AsyncGenerator[str, None]:
+                         session_id: int | None = None,
+                         on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
+                         ) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
         OpenAI 两条格式共用同一份控制流，只在"怎么跑一轮/怎么把这轮结果写回历史"这几处
         调用 `driver`（`agent/loop_drivers.py` 的 `AnthropicDriver`/`OpenAIDriver`）。
@@ -330,7 +395,15 @@ class LLMRunner:
         # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
         from agent.tools import search as search_tools
         search_tools.reset_image_inspection_budget()
-        client, ctx = driver.prepare(self.tool_names, ai, messages, system_text)
+        initial_tool_names = self.tool_names
+        if self.capability_context is not None:
+            initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
+        client, ctx = driver.prepare(initial_tool_names, ai, messages, system_text)
+        # 只把能力上下文挂到 provider request context，供 LoopScope 记录脱敏指标；
+        # 不把目录或用户消息复制进 driver。
+        if self.capability_context is not None:
+            ctx.capability_context = self.capability_context
+        loaded_skill_slugs = _loaded_skill_slugs(messages)
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
@@ -459,6 +532,11 @@ class LLMRunner:
             _progress_buf: list[str] = []
             _progress_pending = False
             try:
+                # 每次 provider 请求前刷新 selected tools。工具调用/结果仍由下方现有
+                # append_tool_round 写入 history；这里仅更新原生 tools 参数。
+                if self.capability_context is not None:
+                    selected = self.capability_context.select_for_messages(messages)
+                    driver.update_tools(ctx, list(selected.tool_names))
                 _round_gen = driver.run_round(client, ctx, messages)
                 async for _kind, _val in _round_gen:
                     if _kind == "done":
@@ -599,7 +677,23 @@ class LLMRunner:
                     yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                        name=tc.name, label=label, input=tc.input, verify=verify_mode,
                                        status="running")
-                    res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                    # Skill 正文第一次通过 use_skill 进入 history 后，后续轮次直接复用；
+                    # 只有 history 已被压缩/截断时，才会再次真正加载正文。
+                    skill_slug = None
+                    if tc.name == "use_skill":
+                        from agent.skills import resolve_skill_slug
+                        skill_slug = resolve_skill_slug(str((tc.input or {}).get("name") or ""))
+                    if skill_slug and skill_slug in loaded_skill_slugs:
+                        res = json.dumps({
+                            "skill": skill_slug,
+                            "already_loaded": True,
+                            "message": "该技能正文已在当前上下文中，无需重复加载。",
+                        }, ensure_ascii=False)
+                        artifact = None
+                    else:
+                        res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                        if skill_slug and _is_successful_tool_result(res):
+                            loaded_skill_slugs.add(skill_slug)
                     if tc.name == "ask_user":
                         # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending
@@ -638,7 +732,37 @@ class LLMRunner:
                                     (prompt.schema_json or {}).get("allow_text_input", False)
                                 ), expires_at=prompt.expires_at.isoformat(),
                             )
+                            if on_interaction is not None:
+                                await on_interaction({
+                                    "prompt_id": prompt.id,
+                                    "kind": prompt.kind,
+                                    "title": prompt.title,
+                                    "body": prompt.body,
+                                    "options": actions,
+                                    "allow_text_input": bool(
+                                        (prompt.schema_json or {}).get("allow_text_input", False)
+                                    ),
+                                    "expires_at": prompt.expires_at.isoformat(),
+                                    "round_id": round_id,
+                                    "tool_call_id": tool_call_id,
+                                })
                             break
+                    if tc.name == "declare_tools" and self.capability_context is not None:
+                        try:
+                            declared_payload = json.loads(res) if isinstance(res, str) else res
+                        except (TypeError, ValueError):
+                            declared_payload = None
+                        declared = (
+                            declared_payload.get("declared_tools", [])
+                            if isinstance(declared_payload, dict) else []
+                        )
+                        accepted = self.capability_context.declare(declared)
+                        res = json.dumps({
+                            "declared_tools": list(accepted),
+                            "rejected_count": max(0, len(declared) - len(accepted))
+                            if isinstance(declared, list) else 0,
+                            "message": "下一轮将提供已声明工具的完整 Schema。",
+                        }, ensure_ascii=False)
                     # 统一交互桥：保留工具原有确认门，同时向 Guguchat/Web 发出按钮事件。
                     # 桥接失败不能影响工具结果写回模型，因此只在成功创建时发送事件。
                     from app.services.interactions import create_tool_confirmation
@@ -651,6 +775,12 @@ class LLMRunner:
                         dispatched.append((tc, res))
                         yield stream_event("interaction_required", round_id=round_id,
                                            tool_call_id=tool_call_id, **interaction)
+                        if on_interaction is not None:
+                            await on_interaction({
+                                **interaction,
+                                "round_id": round_id,
+                                "tool_call_id": tool_call_id,
+                            })
                         yield stream_event("tool_done", round_id=round_id,
                                            tool_call_id=tool_call_id, name=tc.name, label=label,
                                            verify=verify_mode, status="waiting")
@@ -713,8 +843,11 @@ class LLMRunner:
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
-            # 查询已完成后追加一轮专门的最终收束，避免长工具历史让模型退回通用寒暄。
-            if verify_mode and verify_queried and not finalize_pending:
+            # 核验提示已经要求模型在查询后直接总结；如果当前轮已经给出可交付的结果，
+            # 不再重复发一轮最终收束请求。只有“我确认一下/已核实”这类过程播报才需要
+            # 追加收束轮，避免它被直接展示给用户。
+            if (verify_mode and verify_queried and not finalize_pending
+                    and _is_verify_placeholder("".join(_verify_buf))):
                 finalize_pending = True
                 driver.append_followup(messages, result, _FINALIZE_PROMPT)
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)

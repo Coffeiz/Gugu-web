@@ -9,6 +9,7 @@ from app.services.interactions import (
     _hash_token,
     consume_action,
     consume_text,
+    create_agent_prompt,
     create_prompt,
     wait_for_resolution,
 )
@@ -49,6 +50,24 @@ def test_ask_user_tool_is_registered_with_bounded_schema():
     assert tool.input_schema["additionalProperties"] is False
     assert tool.input_schema["properties"]["options"]["maxItems"] == 8
     assert "title" in tool.input_schema["required"]
+
+
+def test_qq_ask_user_text_fallback_lists_options_without_exposing_tokens():
+    from agent.interactions.qq import format_text_fallback
+
+    text = format_text_fallback({
+        "title": "选一个",
+        "body": "请选择处理方式",
+        "options": [
+            {"id": "keep", "label": "保留"},
+            {"id": "remove", "label": "删除", "token": "secret-token"},
+        ],
+        "allow_text_input": False,
+    })
+    assert "1. 保留" in text
+    assert "2. 删除" in text
+    assert "请在网页点击选项" in text
+    assert "secret-token" not in text
 
 
 async def _make_interaction_session(db, user):
@@ -98,6 +117,33 @@ async def test_ask_user_button_resolves_pending_tool_result(db, user_a):
     assert '"status": "selected"' in pending_message.content_json[0]["content"]
 
 
+async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="交互回归", source="qq")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_agent_prompt(
+        user_id=user_a.id,
+        session_id=session.id,
+        tool_call_id="call-ask-user",
+        tool_name="ask_user",
+        payload={
+            "_interaction": "ask_user",
+            "kind": "choice",
+            "title": "请选择",
+            "body": "请选择下一步",
+            "options": [
+                {"id": "talk", "label": "继续聊"},
+                {"id": "sleep", "label": "去睡觉"},
+            ],
+        },
+    )
+
+    assert prompt.session_id == session.id
+    assert prompt.kind == "choice"
+    assert [item["id"] for item in actions] == ["talk", "sleep"]
+
+
 async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db, user_a):
     session, pending_message = await _make_interaction_session(db, user_a)
     prompt, actions = await create_prompt(
@@ -120,7 +166,7 @@ async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db
         "prompt_id": prompt.id,
         "option_id": "confirm",
         "value": "confirm",
-        "text": None,
+        "text": "确认",
         "confirm": True,
         "confirm_token": "signed-tool-token",
     }

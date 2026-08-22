@@ -421,6 +421,28 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         print(f"[qq:{channel_fp}] 收到 {sender_fp}: text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(all_attachments)} trace={tid}", flush=True)
 
+    # 原生键盘在部分 QQ 客户端/权限组合下可能被平台拒绝。若用户按降级文案
+    # 回复序号或选项文字，先尝试消费当前会话的活动 Prompt，避免它被当成新一轮
+    # 普通消息；没有命中活动 Prompt 时才继续正常入队。
+    if not all_attachments and not quoted_text and text:
+        interaction_result = await _consume_qq_text_choice(
+            owner=owner,
+            channel_id=channel_id,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            platform_user_id=sender_id,
+            text=text,
+            event_id=msg_id,
+        )
+        if interaction_result is not None:
+            target = chat_id if chat_type == "group" else sender_id
+            label = str(interaction_result["result"].get("text") or interaction_result["option_id"])
+            await _qq_ack(channel_id, chat_type, target, f"已选择：{label}，继续处理。", msg_id)
+            # consume_choice_text 已经把 pending prompt 标记为 resolved；原来的
+            # Agent Run 会在 wait_for_resolution() 中被唤醒并继续。这里不能再把
+            # 选项作为普通消息重新入队，否则会同时启动第二个 Run，产生重复回复。
+            return
+
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
     if not all_attachments:
@@ -455,6 +477,58 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
+async def _consume_qq_text_choice(*, owner: str, channel_id: str, chat_type: str,
+                                  chat_id: str, platform_user_id: str, text: str,
+                                  event_id: str) -> dict | None:
+    """按 QQ 会话作用域消费降级文本选项；未命中时返回 None。"""
+    from app.db import session as db_session
+    from app.models import ConversationSession
+    from app.services.interactions import consume_choice_text
+    from sqlalchemy import select
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        return None
+    try:
+        async with db_session._SessionLocal() as db:
+            filters = [
+                ConversationSession.user_id == UUID(str(owner)),
+                ConversationSession.source == "qq",
+                ConversationSession.bot_id == channel_id,
+            ]
+            if chat_type == "group":
+                filters.extend([
+                    ConversationSession.chat_type == "group",
+                    ConversationSession.chat_id == chat_id,
+                ])
+            else:
+                filters.extend([
+                    ConversationSession.chat_type == "c2c",
+                    ConversationSession.chat_id.is_(None),
+                    ConversationSession.platform_user_id == platform_user_id,
+                ])
+            session_id = await db.scalar(
+                select(ConversationSession.id)
+                .where(*filters)
+                .order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+                .limit(1)
+            )
+            if not session_id:
+                return None
+            return await consume_choice_text(
+                db,
+                session_id=int(session_id),
+                user_id=UUID(str(owner)),
+                text=text,
+                event_id=event_id or None,
+            )
+    except (LookupError, ValueError):
+        return None
+    except Exception as exc:
+        diag_log("agent.gateway.qq.interaction_text", exc)
+        return None
+
+
 async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: str) -> None:
     """消费 QQ Keyboard 回调，并以受控文本恢复原会话。"""
     from agent.interactions.qq import parse_interaction_event
@@ -484,28 +558,24 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
         return
 
     option_id = str(result.get("option_id") or "")
+    result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+    selected_text = str(result_payload.get("text") or option_id)
+    chat_type = str(event.get("chat_type") or "c2c")
+    target_id = event.get("chat_id") or event["platform_user_id"]
     await _qq_ack(
         channel_id,
-        "c2c",
-        event["platform_user_id"],
-        "已确认，继续处理。" if option_id == "confirm" else "已取消。",
+        chat_type,
+        target_id,
+        (
+            "已确认，继续处理。" if option_id == "confirm"
+            else "已取消。" if option_id == "cancel"
+            else f"已选择：{selected_text}，继续处理。"
+        ),
         event.get("event_id") or "",
     )
-    # 回到同一 session，权限与工具确认仍由 Agent/业务层再次校验；不把 token 带入下一轮。
-    payload = {
-        "platform": "qq",
-        "channel_id": channel_id,
-        "owner_user_id": owner,
-        "platform_user_id": event["platform_user_id"],
-        "message_id": event.get("event_id") or "",
-        "chat_type": "c2c",
-        "text": "确认" if option_id == "confirm" else "取消",
-        "session_id": result.get("session_id"),
-    }
-    try:
-        await R.produce(STREAM, payload)
-    except Exception as exc:
-        diag_log("agent.gateway.qq.interaction.enqueue", exc)
+    # consume_action 已经把 pending prompt 标记为 resolved；原来的 Agent Run
+    # 会在 wait_for_resolution() 中被唤醒并继续。不要把按钮结果再次入队，
+    # 否则会和原 Run 并行，造成重复回复。
 
 
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
@@ -784,7 +854,9 @@ class QQPrivateTextStream:
     async def _delayed_flush(self) -> None:
         try:
             await asyncio.sleep(0.5)
-            await self._flush()
+            # finish() 会取消这个节流任务，但不能连带取消已经开始的 HTTP
+            # 刷新链；否则收尾时的 DONE 帧可能永远发不出去，客户端会一直显示生成中。
+            await asyncio.shield(self._flush())
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -953,6 +1025,70 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
         await _qq_request(channel_id, "POST", path, json_body=body)
 
 
+def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
+    """把统一交互动作转换为 QQ 官方 Inline Keyboard payload。"""
+    from agent.interactions.qq import build_keyboard_payload
+
+    actions = build_keyboard_payload(prompt)
+    user_id = str(prompt.get("platform_user_id") or "")
+    buttons = []
+    for index, item in enumerate(actions["buttons"]):
+        buttons.append({
+            "id": f"gugu-{actions['prompt_id']}-{index + 1}",
+            "render_data": {
+                "label": item["label"][:40],
+                "visited_label": "已选择",
+                "style": 1,
+            },
+            "action": {
+                "type": 1,
+                "permission": (
+                    {"type": 0, "specify_user_ids": [user_id]}
+                    if user_id else {"type": 2}
+                ),
+                "data": item["action_data"],
+                "enter": False,
+            },
+        })
+    rows = [{"buttons": buttons[index:index + 5]} for index in range(0, len(buttons), 5)]
+    return {"content": {"rows": rows}}
+
+
+async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
+                         *, group: bool, prompt: dict[str, Any]):
+    """发送带文本说明和 Inline Keyboard 的 QQ 消息。"""
+    target = "groups" if group else "users"
+    path = f"/v2/{target}/{target_id}/messages"
+    body = {
+        # Inline Keyboard 仍是普通文本消息，必须显式声明消息类型；仅提供
+        # markdown/keyboard 而不带 msg_type 会被 QQ 拒绝，调用方随后只能退回纯文本。
+        "msg_type": 0,
+        "content": text,
+        "keyboard": _keyboard_wire_payload(prompt),
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        body["msg_id"] = msg_id
+    await _qq_request(channel_id, "POST", path, json_body=body)
+
+
+async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
+                        channel_id: str, msg_id: str | None = None,
+                        group: bool = False) -> bool:
+    """发送 QQ Keyboard；平台拒绝时返回 False，由统一出站层发送文本兜底。"""
+    for attempt in (1, 2):
+        try:
+            await _post_keyboard(channel_id, target_id, text, msg_id, group=group, prompt=prompt)
+            return True
+        except Exception as exc:
+            diag_log("agent.gateway.qq.send_keyboard", exc)
+            _send_tokens.pop(channel_id, None)
+            if attempt == 2 or not _qq_is_transient(exc):
+                return False
+            await asyncio.sleep(0.5)
+    return False
+
+
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                    channel_id: str | None = None, message_format: str | None = None) -> bool:
     """给指定用户发 C2C 被动回复（带原 msg_id）。只在失败判定为瞬时（超时/连接错/5xx/429）
@@ -1111,4 +1247,6 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
 
 
 if __name__ == "__main__":
+    from app.core.logging import setup_process_output
+    setup_process_output()
     serve()

@@ -42,7 +42,7 @@ def test_openai_tool_round_converts_anthropic_image_block():
     assert messages[2]["role"] == "user"
     assert messages[2]["content"][1] == {
         "type": "image_url",
-        "image_url": {"url": "data:image/png;base64,AAAA"},
+        "image_url": {"url": "data:image/png;base64,AAAA", "detail": "auto"},
     }
 
 

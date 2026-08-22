@@ -731,11 +731,18 @@ async def read_text(meta: dict) -> str:
         return ""
 
 
-def _vision_enabled() -> bool:
-    """当前激活模型是否支持多模态（后台探测/手动设的 ai.vision）。"""
+def _vision_enabled(model_cfg=None) -> bool:
+    """当前模型是否支持多模态。
+
+    保留后台探测/手动开关，同时信任适配器对 DeepSeek Vision 这类明确登记的
+    模型能力，避免新建预设还没点检测时把图片误当普通附件。
+    """
     try:
         from app.core.config import get_settings
-        return bool(get_settings().ai.vision)
+        from agent import providers
+        ai = model_cfg or get_settings().ai
+        capabilities = providers.adapter_for(ai).capabilities(getattr(ai, "model", "") or "")
+        return bool(getattr(ai, "vision", False)) or capabilities.vision
     except Exception:
         return False
 
@@ -1233,14 +1240,17 @@ def _fit_image_for_vision(raw: bytes, ext: str):
 
 
 def vision_ready() -> bool:
-    """vision 开 **且** 当前 provider 走 Anthropic 块格式——只有这样才能在 tool_result 里塞图片块
-    （OpenAI 路工具结果只能是纯文本）。read_file 看图据此决定能否把库里的图喂给模型。"""
+    """当前模型已开启视觉能力。
+
+    工具结果内部仍使用统一的 Anthropic 图片块；OpenAI 兼容驱动会在发送前
+    转成 ``image_url``，因此 DeepSeek Vision 也可以读取工具返回的图片。
+    """
     try:
         from app.core.config import get_settings
-        from agent.llm.llm_select import use_anthropic_for
+        from agent import providers
         s = get_settings()
-        anthropic = use_anthropic_for(s.ai)
-        return bool(s.ai.vision) and anthropic
+        capabilities = providers.adapter_for(s.ai).capabilities(getattr(s.ai, "model", "") or "")
+        return _vision_enabled() and (capabilities.vision or capabilities.api_format == "anthropic")
     except Exception:
         return False
 
@@ -1297,7 +1307,7 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     if not attach_ids:
         return base_message, [], [], []
     if model_cfg is not None:
-        vision = bool(getattr(model_cfg, "vision", False))
+        vision = _vision_enabled(model_cfg)
         video_ok = _video_enabled(model_cfg)
         audio_ok = _audio_enabled(model_cfg)
     else:
@@ -1424,11 +1434,14 @@ async def resolve_for_message(user_id, attach_ids: list, base_message: str, *, m
     return "".join(parts), cards, images, media
 
 
-def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None):
+def build_user_content(text: str, images: list, use_anthropic: bool, media: list | None = None,
+                       image_detail: str = "auto"):
     """把增广文本 + 图片块（+ mimo 音视频块）拼成发给模型的 user content。
     无图无媒体 → 纯字符串（与旧行为一致）；否则 → 内容块列表（按 provider 格式）。
     `media`（音/视频）在 OpenAI 路使用 MiMo 扩展块，在 Anthropic 路使用 MiniMax 原生块。"""
     media = media or []
+    if image_detail not in {"auto", "low", "high", "original"}:
+        image_detail = "auto"
     if not images and not media:
         return text
     if use_anthropic:
@@ -1446,7 +1459,8 @@ def build_user_content(text: str, images: list, use_anthropic: bool, media: list
     parts = [{"type": "text", "text": text}] if text else []
     for im in images:
         parts.append({"type": "image_url", "image_url": {
-            "url": f"data:{im['media_type']};base64,{im['b64']}"}})
+            "url": f"data:{im['media_type']};base64,{im['b64']}",
+            "detail": image_detail}})
     for m in media:
         data_url = f"data:{m['mime']};base64,{m['b64']}"
         if m["type"] == "audio":

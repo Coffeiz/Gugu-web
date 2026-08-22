@@ -2,6 +2,44 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_qq_stream_timer_cancel_does_not_cancel_inflight_flush(monkeypatch):
+    """finish 取消节流任务时，已开始的刷新仍必须完成，避免卡在生成中。"""
+    import asyncio
+
+    from agent.gateway import qq
+
+    stream = qq.QQPrivateTextStream("bot-1", "user-1", message_id=None, message_format=None)
+    original_sleep = asyncio.sleep
+    started = asyncio.Event()
+    release = asyncio.Event()
+    completed = asyncio.Event()
+    calls = []
+
+    async def fake_sleep(_delay):
+        return None
+
+    async def fake_flush(*_args, **_kwargs):
+        calls.append("started")
+        started.set()
+        await release.wait()
+        completed.set()
+
+    monkeypatch.setattr(qq.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(stream, "_flush", fake_flush)
+    timer = asyncio.create_task(stream._delayed_flush())
+    stream._timer = timer
+    await started.wait()
+    timer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await timer
+    release.set()
+    # shield 创建的刷新任务仍在运行，且最终能够正常完成。
+    await asyncio.wait_for(completed.wait(), timeout=1)
+    await original_sleep(0)
+    assert calls == ["started"]
+
+
+@pytest.mark.asyncio
 async def test_qq_group_reply_uses_group_target(monkeypatch):
     calls = []
 
@@ -49,6 +87,87 @@ async def test_qq_private_reply_uses_sender_target(monkeypatch):
 
     assert len(calls) == 1
     assert calls[0][0] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_interaction_uses_qq_keyboard_and_keeps_text_fallback(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_interaction
+
+    keyboard_calls = []
+    text_calls = []
+
+    async def fake_keyboard(*args, **kwargs):
+        keyboard_calls.append((args, kwargs))
+        return True
+
+    async def fake_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_text)
+    await send_interaction(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "user-1",
+         "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 17, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(keyboard_calls) == 1
+    assert text_calls == []
+    assert "session_id" not in repr(keyboard_calls[0])
+
+
+@pytest.mark.asyncio
+async def test_qq_keyboard_failure_fallback_accepts_number(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_interaction
+
+    text_calls = []
+
+    async def fake_keyboard(*args, **kwargs):
+        return False
+
+    async def fake_text(payload, text):
+        text_calls.append(text)
+        return True
+
+    monkeypatch.setattr(qq, "send_keyboard", fake_keyboard)
+    monkeypatch.setattr("agent.im.replies.send_text", fake_text)
+    await send_interaction(
+        {"platform": "qq", "chat_type": "c2c", "platform_user_id": "user-1",
+         "channel_id": "bot-1", "message_id": "msg-1"},
+        {"prompt_id": 17, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(text_calls) == 1
+    assert "1. A" in text_calls[0]
+    assert "回复选项序号或选项文字" in text_calls[0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform", ["feishu", "wechat"])
+async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, platform):
+    """飞书/微信尚未接入原生按钮，ask_user 必须直接发送文本。"""
+    from agent.im import replies
+
+    text_calls = []
+
+    async def fake_text(payload, text):
+        text_calls.append((payload, text))
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    await replies.send_interaction(
+        {"platform": platform, "chat_type": "c2c", "platform_user_id": "user-1"},
+        {"prompt_id": 18, "title": "选择", "body": "选一个",
+         "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
+    )
+
+    assert len(text_calls) == 1
+    assert "1. A" in text_calls[0][1]
 
 
 @pytest.mark.asyncio

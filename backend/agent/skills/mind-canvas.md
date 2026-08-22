@@ -1,6 +1,9 @@
 ---
 name: 思维画布
-description: "用户要查看、搜索、创建、摆放、整理、连接、删除或批量编排思维画布节点时使用。"
+description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除或批量编排思维画布节点时使用。"
+description_short: 用户要搜索、创建、整理或连接思维画布节点时使用。
+category: canvas
+related_tools: mind_list_canvases, mind_get_canvas, mind_search_canvas, mind_search_placeable_nodes, mind_create_canvas, mind_delete_canvas, mind_create_canvas_note, mind_add_canvas_node, mind_update_canvas_node, mind_remove_canvas_node, mind_update_canvas_note, mind_delete_canvas_note, mind_connect_nodes, mind_update_relation_anchor, mind_disconnect_nodes, mind_batch_canvas
 emoji: 🧠
 ---
 

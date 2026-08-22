@@ -523,7 +523,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
    用 box-sizing:border-box 保证不溢出 100% 宽度。 */
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px var(--space-xs); }
 .chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px var(--space-sm); }
-:deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row) { padding-bottom: var(--space-xs); }
+:deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row),
+:deep(.msg-virtual-row.is-interaction-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-interaction-row) { padding-bottom: var(--space-xs); }
 :deep(.msg.tool .tool-event-bubble) { margin: 0; }
 /* 状态指示气泡不在虚拟列表里，是紧跟在占位容器后面的普通流内元素，补回同款左右留白 + gap */
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }

@@ -47,7 +47,7 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
             client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
             # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
             # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
-            extra = provider_adapter.build_thinking_params(settings.ai)
+            extra = provider_adapter.build_anthropic_thinking_params(settings.ai)
             resp = await client.messages.create(
                 model=settings.ai.model,
                 max_tokens=40,
@@ -59,8 +59,7 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         else:
             import httpx
             client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
-            thinking = provider_adapter.build_thinking_params(settings.ai)
-            extra = {"extra_body": thinking} if thinking else {}
+            extra = provider_adapter.build_openai_thinking_kwargs(settings.ai)
             resp = await client.chat.completions.create(
                 model=settings.ai.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -86,7 +85,7 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         if use_anthropic:
             import httpx
             client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
-            extra = provider_adapter.build_thinking_params(settings.ai)
+            extra = provider_adapter.build_anthropic_thinking_params(settings.ai)
             resp = await client.messages.create(
                 model=settings.ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
@@ -95,8 +94,7 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         else:
             import httpx
             client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
-            thinking = provider_adapter.build_thinking_params(settings.ai)
-            extra = {"extra_body": thinking} if thinking else {}
+            extra = provider_adapter.build_openai_thinking_kwargs(settings.ai)
             resp = await client.chat.completions.create(
                 model=settings.ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
@@ -384,7 +382,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         if use_anthropic:
             assembly = message_assembly.build_messages(
                 fixed_parts=fixed_parts, history=history_parts,
-                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media)},
+                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
                 dynamic_tail=tail_parts)
             assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
             anthr_messages = assembly
@@ -397,7 +395,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             oa_messages = message_assembly.build_messages(
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
                 history=history_parts,
-                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
+                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
                 dynamic_tail=tail_parts)
             oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
             gen = runner.run(

@@ -169,7 +169,13 @@ class Tool:
     def __init__(self, name: str, description: str, input_schema: dict,
                  handler, label: str | None = None, destructive: bool = False,
                  mutates: bool = False,
-                 start_message: str | Callable[[dict], str] | None = None):
+                 start_message: str | Callable[[dict], str] | None = None,
+                 description_short: str | None = None,
+                 category: str = "",
+                 permissions: tuple[str, ...] = (),
+                 platforms: tuple[str, ...] = (),
+                 related_skills: tuple[str, ...] = (),
+                 source: str = "builtin"):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -189,6 +195,16 @@ class Tool:
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
         # 不设置 = 该工具认为自己够快，不需要这条声明。
         self.start_message = start_message
+        # Capability Registry metadata。旧工具未补齐 metadata 时由 adapter 生成诊断，
+        # 不改变既有工具 Schema 或 dispatch 语义。
+        # label 是现有工具定义中的短用户可见名称；未显式补充短描述时用它作为迁移期
+        # metadata，绝不从完整 description 截断生成。
+        self.description_short = description_short or label or name
+        self.category = category
+        self.permissions = tuple(permissions)
+        self.platforms = tuple(platforms)
+        self.related_skills = tuple(related_skills)
+        self.source = source
         # 注册时由 SkillRegistry.add() 完成 schema 自检并缓存；未注册 Tool 不允许直接 dispatch。
         self._input_validator = None
 

@@ -12,6 +12,7 @@ from .mimo import MimoAdapter
 from .minimax import MiniMaxAdapter
 from .openai import OpenAIAdapter
 from .ollama import OllamaAdapter
+from .local import LocalAdapter
 from .qwen import QwenAdapter
 
 _DEFAULT = OpenAIAdapter()
@@ -21,6 +22,7 @@ _MINIMAX = MiniMaxAdapter()
 _MIMO = MimoAdapter()
 _DEEPSEEK = DeepSeekAdapter()
 _OLLAMA = OllamaAdapter()
+_LOCAL = LocalAdapter()
 
 _REGISTRY: dict[str, ProviderAdapter] = {
     "anthropic": _ANTHROPIC,
@@ -29,6 +31,7 @@ _REGISTRY: dict[str, ProviderAdapter] = {
     "mimo": _MIMO,
     "deepseek": _DEEPSEEK,
     "ollama": _OLLAMA,
+    "local": _LOCAL,
 }
 
 
@@ -41,19 +44,27 @@ def capability_snapshot(ai) -> dict[str, object]:
     adapter = adapter_for(ai)
     model = getattr(ai, "model", "") or ""
     capabilities = adapter.capabilities(model)
+    overrides = getattr(ai, "capability_overrides", None) or {}
+    values = {field: getattr(capabilities, field) for field in (
+        "thinking", "structured_json", "structured_schema", "tools", "parallel_tools",
+        "vision", "audio", "video")}
+    for field, value in overrides.items():
+        if field in values and isinstance(value, bool):
+            values[field] = value
     return {
         "provider": adapter.name,
         "model": model,
         "api_format": capabilities.api_format,
         "cache_mode": capabilities.cache_mode,
-        "thinking": capabilities.thinking,
-        "structured_json": capabilities.structured_json,
-        "structured_schema": capabilities.structured_schema,
-        "tools": capabilities.tools,
-        "parallel_tools": capabilities.parallel_tools,
-        "vision": capabilities.vision,
-        "audio": capabilities.audio or adapter.supports_audio(model),
-        "video": capabilities.video or adapter.supports_video(model),
+        "thinking": values["thinking"],
+        "structured_json": values["structured_json"],
+        "structured_schema": values["structured_schema"],
+        "tools": values["tools"],
+        "parallel_tools": values["parallel_tools"],
+        "vision": values["vision"],
+        "audio": values["audio"],
+        "video": values["video"],
+        "overrides": {k: v for k, v in overrides.items() if k in values and isinstance(v, bool)},
     }
 
 

@@ -1,6 +1,9 @@
 ---
 name: 文件操作
-description: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
+description_long: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
+description_short: 用户要查找、创建、编辑、移动或引用文件时使用。
+category: files
+related_tools: list_files, read_file, edit_file, create_document, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file
 emoji: 📂
 ---
 

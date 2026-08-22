@@ -61,6 +61,15 @@
               <button v-if="selectedLoaded && hasMoreSpans" class="load-spans" @click="emit('load-more-spans')">加载更多</button>
             </div>
           </header>
+          <div v-if="injectionSpans.length" class="injection-overview">
+            <div class="injection-overview-head"><span class="eyebrow">INJECTION</span><span>本 Run 已注入的工具与 Skill</span></div>
+            <div class="injection-list">
+              <div v-for="item in injectionSpans" :key="item.id" class="injection-item">
+                <strong>{{ injectionLabel(item) }}</strong>
+                <span>{{ injectionSummary(item) }}</span>
+              </div>
+            </div>
+          </div>
           <div class="span-list">
             <template v-for="span in rootSpans" :key="span.id">
               <TraceSpanCard :span="span" />
@@ -112,6 +121,25 @@ const modelLabel = computed(() => {
   return [a.provider, a.model].filter(Boolean).join(' / ') || 'model unknown'
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
+const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
+  const source = span.attributes?.context_source
+  return source === 'tool_schema' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body'
+}))
+function injectionLabel(span: any) {
+  const labels: Record<string, string> = { tool_schema: '工具 Schema', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文' }
+  return labels[String(span.attributes?.context_source)] || span.name
+}
+function injectionSummary(span: any) {
+  const input = (span.input && typeof span.input === 'object' ? span.input : {}) as Record<string, any>
+  if (span.attributes?.context_source === 'tool_schema') {
+    const selected = Array.isArray(input.selected_tool_names) ? input.selected_tool_names : []
+    const count = selected.length > 0 ? selected.length : Number(input.tool_count ?? 0)
+    return `${count} 个工具`
+  }
+  if (span.attributes?.context_source === 'capability_catalog') return `${input.skill_count ?? 0} 个 Skill · ${input.catalog_count ?? 0} 项能力`
+  if (span.attributes?.context_source === 'skill_index') return `${span.attributes?.skill_count ?? 0} 个 Skill 索引`
+  return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? '复用' : '首次加载'}`
+}
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId
@@ -233,6 +261,12 @@ function fmtTokens(v: number | null | undefined) {
 .span-section { margin-top:24px; }
 .span-section-head { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:9px; }
 .span-section-head strong { display:block; margin-top:3px; font-size:11px; }
+.injection-overview { margin:0 0 10px; padding:10px 12px; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); }
+.injection-overview-head { display:flex; align-items:center; gap:8px; color:var(--content-secondary); font-size:9px; }
+.injection-list { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.injection-item { display:flex; align-items:center; gap:6px; padding:5px 7px; border:1px solid var(--border-subtle); border-radius:var(--radius-pill); background:var(--surface-card); font-size:9px; }
+.injection-item strong { color:var(--content-primary); font-weight:600; }
+.injection-item span { color:var(--content-tertiary); font-family:var(--font-mono); }
 .span-actions { display:flex; align-items:center; gap:8px; }
 .load-spans { border:1px solid var(--border-subtle); border-radius:7px; padding:4px 7px; background:var(--surface-soft); color:var(--content-secondary); font-size:9px; }
 .load-spans:hover { color:var(--content-primary); border-color:var(--border-default); }

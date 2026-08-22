@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import uuid
 from typing import Any
@@ -17,6 +18,20 @@ from .utils import (
 _hooks_installed = False
 
 
+def _tool_names_from_schemas(tools: Any) -> list[str]:
+    """从 provider 已收到的 Schema 提取名称，仅用于脱敏的数量/名称观测。"""
+    names: list[str] = []
+    for schema in tools or ():
+        if not isinstance(schema, dict):
+            continue
+        name = schema.get("name")
+        if not name and isinstance(schema.get("function"), dict):
+            name = schema["function"].get("name")
+        if isinstance(name, str) and name and name not in names:
+            names.append(name)
+    return names
+
+
 def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
     """把 provider 的 system 搬运形式还原成 LoopScope 的统一展示形式。
 
@@ -30,6 +45,25 @@ def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
     if isinstance(first, dict) and first.get("role") == "system":
         return _jsonable(messages[1:])
     return _jsonable(messages)
+
+
+def _skill_result_metadata(value: Any) -> dict[str, Any]:
+    """只提取 Skill 注入的脱敏元数据，不把正文复制到诊断 Span。"""
+    try:
+        payload = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        payload = None
+    if not isinstance(payload, dict):
+        return {}
+    body = payload.get("content")
+    if not isinstance(body, str):
+        return {"skill": str(payload.get("skill") or "")}
+    return {
+        "skill": str(payload.get("skill") or ""),
+        "content_chars": len(body),
+        "content_digest": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
+        "content_tokens_estimate": _estimate_tokens(body),
+    }
 
 def ensure_hooks() -> None:
     global _hooks_installed
@@ -114,13 +148,35 @@ def ensure_hooks() -> None:
                 tool_result, artifact = result
                 span.token_impact["result_tokens"] = _estimate_tokens(tool_result)
                 span.finish({"result": _jsonable(tool_result), "artifact": _jsonable(artifact)})
+                if name == "use_skill" and run:
+                    metadata = _skill_result_metadata(tool_result)
+                    if metadata:
+                        skill_span = run.span(
+                            "context",
+                            "Skill context injected",
+                            metadata,
+                            code=_code_ref(handler or original_dispatch),
+                            token_impact={
+                                "included_tokens": metadata.get("content_tokens_estimate", 0),
+                            },
+                            context_source="skill_body",
+                            skill=metadata.get("skill", ""),
+                            action="loaded",
+                        )
+                        skill_span.finish({
+                            "skill": metadata.get("skill", ""),
+                            "content_digest": metadata.get("content_digest", ""),
+                        })
             return result
         except BaseException as exc:
             if span:
                 span.finish({"error_type": type(exc).__name__}, status="error")
             raise
 
-    async def run_loop(self, driver, user_id, messages, ai, system_text, session_id=None):
+    async def run_loop(
+        self, driver, user_id, messages, ai, system_text, session_id=None,
+        on_interaction=None,
+    ):
         run = _scope_run.get()
         if run is not None and session_id is not None:
             # Web 在 genstream.begin 中已经完成归属；IM 没有 genstream
@@ -145,6 +201,7 @@ def ensure_hooks() -> None:
         round_index = 0
         previous_prompt_estimate = 0
         tool_schema_context_recorded = False
+        capability_context_recorded = False
 
         initial_user = _extract_last_user(messages)
         # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
@@ -213,7 +270,7 @@ def ensure_hooks() -> None:
             history.finish({"message_count": len(messages) if isinstance(messages, list) else None})
 
         async def traced_round(client, ctx, round_messages):
-            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded
+            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded
             round_index += 1
             round_visible_messages = _trace_conversation_messages(round_messages, system_location)
             round_system = effective_system
@@ -226,6 +283,16 @@ def ensure_hooks() -> None:
             cache_diag = _cache_diagnostics(round_messages, ctx, model_name)
             if run and not tool_schema_context_recorded:
                 tool_schema_context_recorded = True
+                selected_tool_names = list(
+                    getattr(
+                        getattr(getattr(ctx, "capability_context", None), "selection", None),
+                        "tool_names", (),
+                    )
+                )
+                # 兼容已注入但尚未挂载 capability context 的旧 driver/worker：
+                # 观测应反映 provider 实际收到的 Schema 数量，不因选择元数据缺失显示为 0。
+                if not selected_tool_names:
+                    selected_tool_names = _tool_names_from_schemas(getattr(ctx, "tools", None))
                 schema_tokens = int(cache_diag.get("tool_schema_tokens_estimate", 0) or 0)
                 schema_bytes = int(cache_diag.get("tool_schema_bytes", 0) or 0)
                 tool_context = run.span(
@@ -235,6 +302,7 @@ def ensure_hooks() -> None:
                         "tool_count": cache_diag.get("tool_count", 0),
                         "schema_bytes": schema_bytes,
                         "schema_digest": cache_diag.get("tool_schema_digest", ""),
+                        "selected_tool_names": selected_tool_names,
                     },
                     parent_span_id=ctx_span.id,
                     code=_code_ref(original_round),
@@ -250,6 +318,22 @@ def ensure_hooks() -> None:
                     "schema_bytes": schema_bytes,
                     "schema_tokens_estimate": schema_tokens,
                 })
+            if run and not capability_context_recorded:
+                capability_context_recorded = True
+                capability_context = getattr(ctx, "capability_context", None)
+                if capability_context is not None:
+                    from agent.capabilities.diagnostics import capability_injection_diagnostics
+                    capability_context_span = run.span(
+                        "context",
+                        "Capability catalog injected",
+                        capability_injection_diagnostics(capability_context),
+                        parent_span_id=ctx_span.id,
+                        code=_code_ref(original_round),
+                        context_source="capability_catalog",
+                    )
+                    capability_context_span.finish(
+                        capability_injection_diagnostics(capability_context)
+                    )
             span = run.span(
                 "llm",
                 f"LLM round {round_index}",
@@ -319,6 +403,7 @@ def ensure_hooks() -> None:
             driver.run_round = traced_round
             async for line in original_run_loop(
                 self, driver, user_id, messages, ai, system_text, session_id=session_id,
+                on_interaction=on_interaction,
             ):
                 yield line
                 if run and isinstance(line, str) and '\"_new_round\"' in line:
