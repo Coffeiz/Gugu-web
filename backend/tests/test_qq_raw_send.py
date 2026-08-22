@@ -48,11 +48,27 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     button = body["keyboard"]["content"]["rows"][0]["buttons"][0]
     assert button["action"]["type"] == 1
     assert button["action"]["data"] == "17:opaque-token"
-    assert button["action"]["permission"] == {
-        "type": 0,
-        "specify_user_ids": ["ou_1"],
-    }
+    assert button["action"]["permission"] == {"type": 2}
     assert "session_id" not in repr(body)
+
+
+async def test_post_keyboard_always_uses_text_with_keyboard(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    await qq._post_keyboard(
+        "bot-1", "ou_1", "请选择", "msg-1", group=False,
+        prompt={"prompt_id": 17, "options": [{"id": "yes", "label": "确认", "token": "t"}]},
+        message_format="smart",
+    )
+
+    assert calls[0]["msg_type"] == 0
+    assert calls[0]["content"] == "请选择"
+    assert "markdown" not in calls[0]
 
 
 async def test_post_compat_mode_sends_plain_text(monkeypatch):

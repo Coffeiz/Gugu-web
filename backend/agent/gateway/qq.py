@@ -1030,7 +1030,6 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
     from agent.interactions.qq import build_keyboard_payload
 
     actions = build_keyboard_payload(prompt)
-    user_id = str(prompt.get("platform_user_id") or "")
     buttons = []
     for index, item in enumerate(actions["buttons"]):
         buttons.append({
@@ -1042,10 +1041,9 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
             },
             "action": {
                 "type": 1,
-                "permission": (
-                    {"type": 0, "specify_user_ids": [user_id]}
-                    if user_id else {"type": 2}
-                ),
+                # 交互权限由服务端 prompt/session 校验；QQ C2C 对
+                # type=0 + specify_user_ids 的组合兼容性不稳定。
+                "permission": {"type": 2},
                 "data": item["action_data"],
                 "enter": False,
             },
@@ -1055,13 +1053,16 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
-                         *, group: bool, prompt: dict[str, Any]):
+                         *, group: bool, prompt: dict[str, Any],
+                         message_format: str | None = None):
     """发送带文本说明和 Inline Keyboard 的 QQ 消息。"""
     target = "groups" if group else "users"
     path = f"/v2/{target}/{target_id}/messages"
+    # QQ Inline Keyboard 必须和普通文本（msg_type=0）一起发送。
+    # 这里不能沿用会话的 smart/markdown 消息策略：QQ API 虽可能接受
+    # msg_type=2 + keyboard，但客户端不会渲染按钮，只显示正文；普通回复
+    # 仍由 _post/_post_group 按 message_format 选择 Markdown。
     body = {
-        # Inline Keyboard 仍是普通文本消息，必须显式声明消息类型；仅提供
-        # markdown/keyboard 而不带 msg_type 会被 QQ 拒绝，调用方随后只能退回纯文本。
         "msg_type": 0,
         "content": text,
         "keyboard": _keyboard_wire_payload(prompt),
@@ -1074,11 +1075,20 @@ async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str
 
 async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
                         channel_id: str, msg_id: str | None = None,
-                        group: bool = False) -> bool:
+                        group: bool = False,
+                        message_format: str | None = None) -> bool:
     """发送 QQ Keyboard；平台拒绝时返回 False，由统一出站层发送文本兜底。"""
     for attempt in (1, 2):
         try:
-            await _post_keyboard(channel_id, target_id, text, msg_id, group=group, prompt=prompt)
+            await _post_keyboard(
+                channel_id,
+                target_id,
+                text,
+                msg_id,
+                group=group,
+                prompt=prompt,
+                message_format=message_format,
+            )
             return True
         except Exception as exc:
             diag_log("agent.gateway.qq.send_keyboard", exc)
