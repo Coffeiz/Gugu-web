@@ -209,6 +209,30 @@ async def _archive_project(db, user_id, args: dict):
 
 
 async def _delete_project(db, user_id, args: dict):
+    project_ids = args.get("project_ids")
+    if project_ids is not None:
+        if not isinstance(project_ids, list) or not project_ids or len(project_ids) > 20:
+            return json.dumps({"error": "project_ids 必须是 1-20 个项目 id"})
+        projects = []
+        for pid in project_ids:
+            project = await get_user_project(db, user_id, pid)
+            if project is None:
+                return json.dumps({"error": f"项目 {pid} 不存在"})
+            projects.append(project)
+        names = "、".join(p.name for p in projects[:8]) + (f"等 {len(projects)} 个" if len(projects) > 8 else "")
+        blocked = confirm.needs_confirmation(args, f"将永久删除项目：{names}，共 {len(projects)} 个，连同其中文件，此操作不可恢复", user_id,
+                                             identity=f"delete_project:project_ids={sorted(project_ids)}")
+        if blocked is not None:
+            return blocked
+        deleted_at = now_utc()
+        results = []
+        for project in projects:
+            pid, name = project.id, project.name
+            file_count = await count_project_files(db, user_id, pid)
+            await delete_project(db, user_id, project, deleted_at)
+            results.append({"deleted_project_id": pid, "name": name, "file_count": file_count})
+        await db.commit()
+        return {"success": True, "deleted_count": len(results), "results": results}
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
@@ -588,12 +612,13 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="delete_project",
             label="删除项目",
-            description="永久删除项目（不可恢复，连带项目文件）。流程：先不带 confirm 调用 → 返回影响详情 → 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
+            description="永久删除一个或多个项目（连带项目文件，不可恢复）。单项传 project_id/project，批量传 project_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "integer", "description": "项目 ID（可选，已知时用）"},
                     "project": {"type": "string", "description": "项目名称（推荐：直接用名字，无需 id）"},
+                    "project_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20, "description": "批量删除项目 id"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
                     "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },

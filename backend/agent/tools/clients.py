@@ -69,6 +69,30 @@ async def _update_client(db, user_id, args: dict):
 
 
 async def _delete_client(db, user_id, args: dict):
+    client_ids = args.get("client_ids")
+    if client_ids is not None:
+        if not isinstance(client_ids, list) or not client_ids or len(client_ids) > 50:
+            return json.dumps({"error": "client_ids 必须是 1-50 个客户 id"})
+        clients = []
+        for cid in client_ids:
+            client = await get_client(db, user_id, cid)
+            if client is None:
+                return json.dumps({"error": f"客户 {cid} 不存在"})
+            clients.append(client)
+        names = "、".join(c.name for c in clients[:10])
+        if len(clients) > 10:
+            names += f"等 {len(clients)} 个"
+        blocked = confirm.needs_confirmation(
+            args, f"将删除客户：{names}，共 {len(clients)} 个，此操作不可恢复", user_id,
+            identity=f"delete_client:client_ids={sorted(client_ids)}")
+        if blocked is not None:
+            return blocked
+        results = []
+        for client in clients:
+            cid, name = await delete_client(db, client)
+            results.append({"deleted_client_id": cid, "name": name})
+        await db.commit()
+        return {"success": True, "deleted_count": len(results), "results": results}
     c, _err = await _resolve_client(db, user_id, args)
     if _err:
         return _err
@@ -114,6 +138,7 @@ class ClientsSkill(BaseSkill):
                 "properties": {
                     "client_id": {"type": "integer", "description": "客户 id（可选）"},
                     "client": {"type": "string", "description": "客户名称（推荐：直接用名字）"},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除客户 id"},
                     "name": {"type": "string"},
                     "contact": {"type": "string"},
                     "email": {"type": "string"},
@@ -127,12 +152,13 @@ class ClientsSkill(BaseSkill):
         ),
         Tool(
             name="delete_client", label="删除客户",
-            description="删除客户（不可恢复）。流程：先不带 confirm 调用 → 返回影响详情 → 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
+            description="删除一个或多个客户（不可恢复）。单项传 client_id/client，批量传 client_ids。批量目标一次确认，禁止逐项重复确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "client_id": {"type": "integer", "description": "客户 id（可选）"},
                     "client": {"type": "string", "description": "客户名称（推荐：直接用名字）"},
+                    "client_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除客户 id"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
                     "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },

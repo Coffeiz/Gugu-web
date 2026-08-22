@@ -63,7 +63,7 @@ class _Session:
     snapshot_expires_at = None
 
 
-def test_snapshot_revision_invalidates_business_context():
+def test_snapshot_revision_is_pending_metadata_not_hit_gate():
     session = _Session()
     session.session_context = {
         "system_prompt": "system",
@@ -72,8 +72,8 @@ def test_snapshot_revision_invalidates_business_context():
     }
     session.snapshot_expires_at = datetime(2026, 8, 22, tzinfo=timezone.utc)
     now = datetime(2026, 8, 21, tzinfo=timezone.utc)
-    assert snapshot_is_usable(session, now, 4)
-    assert not snapshot_is_usable(session, now, 5)
+    assert snapshot_is_usable(session, now)
+    assert snapshot_is_usable(session, now)
 
 
 @pytest.mark.asyncio
@@ -91,6 +91,33 @@ async def test_ensure_snapshot_loads_once_until_ttl():
     assert calls == 1
     assert first == second
     assert snapshot_is_usable(session)
+
+
+@pytest.mark.asyncio
+async def test_ensure_snapshot_keeps_hit_when_pending_revision_changes(monkeypatch):
+    calls = 0
+    revisions = iter([10])
+
+    async def revision(_user_id):
+        return next(revisions)
+
+    monkeypatch.setattr("app.core.events.get_context_revision", revision)
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        return {
+            "system_prompt": "system",
+            "snapshot_context": "memory",
+            "session_info": {"v": calls},
+        }
+
+    session = _Session()
+    await ensure_snapshot(_Db(), session, load_context=load)
+    # revision 是待应用版本，不应在未到 TTL/显式失效时打断 snapshot 命中。
+    session.session_context["context_revision"] = 11
+    await ensure_snapshot(_Db(), session, load_context=load)
+    assert calls == 1
 
 
 @pytest.mark.asyncio

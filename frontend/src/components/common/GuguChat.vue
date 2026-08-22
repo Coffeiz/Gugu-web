@@ -348,7 +348,7 @@ const {
   sessions, webSessions, imSessions, currentSessionTitle,
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
-  send, stopStreaming, resumeStream,
+  send, stopStreaming,
   scrollBottom, onMsgScroll,
   animateGreeting, clearStatus,
 } = conversation
@@ -356,16 +356,30 @@ const {
 async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
   const promptId = _msg.interaction?.promptId
   if (!promptId || !sessionId.value) return
+  if (_msg.interaction) {
+    _msg.interaction.resolved = true
+    _msg.interaction.selectedOptionId = option.id
+  }
   try {
     const token = getToken()
-    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/respond`, {
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ token: option.token }),
     })
-    if (!res.ok) return
-    await send(option.label)
-  } catch { /* 交互失败不伪造已确认状态，用户仍可重试 */ }
+    if (!res.ok) {
+      if (_msg.interaction) {
+        _msg.interaction.resolved = false
+        _msg.interaction.selectedOptionId = null
+      }
+      return
+    }
+  } catch {
+    if (_msg.interaction) {
+      _msg.interaction.resolved = false
+      _msg.interaction.selectedOptionId = null
+    }
+  }
 }
 
 watch(isTypingText, v => {

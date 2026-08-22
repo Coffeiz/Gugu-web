@@ -97,6 +97,27 @@ async def test_delete_client_with_prior_token_executes(db, user_a):
     assert await db.get(Client, c.id) is None
 
 
+async def test_batch_delete_client_uses_one_target_bound_confirmation(db, user_a):
+    first = await _mk(db, Client(user_id=user_a.id, name="批量客户一"))
+    second = await _mk(db, Client(user_id=user_a.id, name="批量客户二"))
+    args = {"client_ids": [first.id, second.id]}
+    blocked = await _delete_client(db, user_a.id, args)
+    assert _blocked(blocked)
+    token = _confirm_token(blocked)
+
+    # 确认凭证不能被换成另一组目标复用。
+    wrong = await _delete_client(db, user_a.id, {
+        "client_ids": [first.id], "confirm": True, "confirm_token": token,
+    })
+    assert _blocked(wrong)
+    result = await _delete_client(db, user_a.id, {
+        **args, "confirm": True, "confirm_token": token,
+    })
+    assert result["success"] and result["deleted_count"] == 2
+    assert await db.get(Client, first.id) is None
+    assert await db.get(Client, second.id) is None
+
+
 # ── 3. dispatch 绊线：漏接确认门的 destructive 工具必须触发 CRITICAL ──────────
 
 async def test_dispatch_tripwire_fires_on_gate_bypass(user_a, monkeypatch, caplog):

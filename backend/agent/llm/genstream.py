@@ -80,6 +80,14 @@ async def end(session_id) -> None:
         pass
 
 
+async def touch(session_id) -> None:
+    """续期活跃快照；交互等待期间没有普通事件，也不能让 Run 变成离线。"""
+    try:
+        await get_redis().expire(_state_key(session_id), TTL)
+    except Exception:
+        pass
+
+
 async def snapshot(session_id) -> dict | None:
     """取当前生成快照；无则 None（没有进行中的生成）。"""
     try:

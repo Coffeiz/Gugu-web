@@ -91,6 +91,8 @@ cache 统计永远不进入 LLM context。
   写入不会自动使相关 session snapshot 失效，下一轮可能继续读取旧内容。
 - projects、calendar、files 的 loader 注释仍描述为“每轮注入/保证最新”，但当前主链路
   已改为 session snapshot，注释与实现不一致。
+- 业务资源变化只产生待应用的 context revision，不会让普通 run 立即重建 snapshot；
+  TTL、压缩或显式刷新时才读取并吸收最新状态。
 - summary 的时间衰减文案在 builder 重建时计算；snapshot 不重建时，随时间流逝也不会重新
   计算衰减等级。
 - 当前时间已经正确放在每轮尾部，不应重新放回 snapshot 或 system 前缀。
@@ -173,7 +175,8 @@ Run 2 完成后:
 ### 4.2 普通 run
 
 1. 读取当前 snapshot 元数据，不重新加载项目、日历、文件和 memory。
-2. 根据 snapshot 的规范化消息 hash 判断新增消息，并保持已有历史前缀稳定。
+2. 根据 snapshot 的规范化消息 hash 判断新增消息，并保持已有历史前缀稳定；业务资源
+   的 context revision 只作为 pending 版本，不参与普通 hit 判断。
 3. 在历史/新消息之后追加本轮 dynamic tail（summary、stance、当前时间）。
 4. 执行 Agent loop，工具结果按正常 tool message 进入上下文。
 5. 持久化 assistant/tool 消息。
@@ -183,6 +186,10 @@ Run 2 完成后:
 
 工具结果本身进入当前对话，成为最新事实。普通 run 不重新加载 projects、calendar、files
 或 memory；模型通过本轮 tool result 和下一轮 history 看到刚刚发生的变化。
+
+业务资源变更只递增用户级 `context_revision`，用于记录 snapshot 尚未吸收的版本；
+不会立即使当前 session 失效。到 TTL、compact 或显式刷新时，重建流程直接读取最新状态，
+并把已应用版本写回 snapshot。
 
 这些 session info 只在以下时机重建：
 

@@ -5,9 +5,11 @@
 """
 from app.services.interactions import (
     consume_action,
+    consume_text,
+    create_agent_prompt,
     create_prompt,
     create_tool_confirmation,
     list_active,
 )
 
-__all__ = ["consume_action", "create_prompt", "create_tool_confirmation", "list_active"]
+__all__ = ["consume_action", "consume_text", "create_agent_prompt", "create_prompt", "create_tool_confirmation", "list_active"]

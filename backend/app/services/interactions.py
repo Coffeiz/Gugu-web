@@ -1,8 +1,10 @@
 """统一交互 Prompt/Action 生命周期服务。"""
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import hashlib
+import json
 import secrets
 
 from sqlalchemy import select, update
@@ -26,6 +28,7 @@ async def create_prompt(
     body: str,
     options: list[dict],
     context: dict | None = None,
+    allow_text_input: bool = False,
     expires_minutes: int = 10,
 ) -> tuple[InteractionPrompt, list[dict]]:
     """创建 Prompt，并返回仅用于当前响应的明文 action token。"""
@@ -55,7 +58,11 @@ async def create_prompt(
         kind=kind,
         title=title[:300],
         body=body,
-        schema_json={"options": options},
+        schema_json={
+            "options": options,
+            "allow_text_input": bool(allow_text_input),
+            "context": dict(context or {}),
+        },
         expires_at=expires_at,
     )
     db.add(prompt)
@@ -76,6 +83,113 @@ async def create_prompt(
         rendered.append({"id": action.option_id, "label": str(option.get("label") or ""), "token": token})
     await db.flush()
     return prompt, rendered
+
+
+async def create_agent_prompt(
+    *,
+    user_id,
+    session_id: int | None,
+    tool_call_id: str,
+    tool_name: str,
+    payload: dict,
+) -> tuple[InteractionPrompt, list[dict]] | None:
+    """把 ``ask_user`` 的工具结果绑定到当前 Agent session。"""
+    if session_id is None or not isinstance(payload, dict):
+        return None
+    kind = str(payload.get("kind") or "choice")
+    if kind not in {"choice", "question", "form"}:
+        return None
+    options = payload.get("options") if isinstance(payload.get("options"), list) else []
+    if kind == "choice" and not 2 <= len(options) <= 8:
+        return None
+    if kind != "choice" and len(options) > 8:
+        return None
+    normalized = []
+    for option in options:
+        if not isinstance(option, dict):
+            return None
+        option_id = str(option.get("id") or "").strip()
+        label = str(option.get("label") or "").strip()
+        if not option_id or not label or len(option_id) > 64 or len(label) > 120:
+            return None
+        normalized.append({"id": option_id, "label": label, "action_type": "choice"})
+    title = str(payload.get("title") or "需要你的回答").strip()[:120]
+    body = str(payload.get("body") or "").strip()[:1000]
+    context = {
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "allow_text_input": bool(payload.get("allow_text_input", False)),
+    }
+    from app.db import session as db_session
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        return None
+    async with db_session._SessionLocal() as db:
+        prompt, rendered = await create_prompt(
+            db,
+            user_id=user_id,
+            session_id=session_id,
+            kind=kind,
+            title=title,
+            body=body,
+            options=normalized,
+            context=context,
+            allow_text_input=bool(payload.get("allow_text_input", False)),
+        )
+        await db.commit()
+        return prompt, rendered
+
+
+async def wait_for_resolution(
+    *, user_id, prompt_id: int, timeout_seconds: float = 600, heartbeat=None,
+) -> dict | None:
+    """等待交互被消费，让原 Agent Run 在同一协程中继续。"""
+    from app.db import session as db_session
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        return None
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    next_heartbeat = 0.0
+    while asyncio.get_running_loop().time() < deadline:
+        now = asyncio.get_running_loop().time()
+        if heartbeat is not None and now >= next_heartbeat:
+            await heartbeat()
+            next_heartbeat = now + 20
+        async with db_session._SessionLocal() as db:
+            prompt = await db.scalar(select(InteractionPrompt).where(
+                InteractionPrompt.id == prompt_id,
+                InteractionPrompt.user_id == user_id,
+            ))
+            if prompt is None:
+                return None
+            schema = dict(prompt.schema_json or {})
+            resolved = schema.get("resolved_result")
+            if prompt.status == "resolved" and isinstance(resolved, dict):
+                return resolved
+            if prompt.status in {"cancelled", "expired"}:
+                return None
+        await asyncio.sleep(0.25)
+    return None
+
+
+def _replace_pending_tool_result(message, *, tool_call_id: str, result: dict) -> bool:
+    source_blocks = message.content_json
+    if not isinstance(source_blocks, list):
+        return False
+    blocks = [dict(block) if isinstance(block, dict) else block for block in source_blocks]
+    changed = False
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("type") != "tool_result":
+            continue
+        current_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
+        if current_id == tool_call_id:
+            block["content"] = json.dumps(result, ensure_ascii=False)
+            block.pop("is_error", None)
+            changed = True
+    if changed:
+        message.content_json = blocks
+    return changed
 
 
 async def consume_action(
@@ -115,6 +229,35 @@ async def consume_action(
     action.consumed_event_id = event_id
     prompt.status = "resolved"
     prompt.resolved_at = now
+    context = dict(action.context_json or {})
+    is_cancel = action.option_id == "cancel" or action.action_type == "cancel"
+    result = {
+        "kind": prompt.kind,
+        "status": "cancelled" if is_cancel else "selected",
+        "prompt_id": prompt.id,
+        "option_id": action.option_id,
+        "value": action.option_id,
+        "text": None,
+    }
+    if prompt.kind == "confirm":
+        if action.option_id == "confirm":
+            result.update({
+                "status": "confirmed",
+                "confirm": True,
+                "confirm_token": context.get("confirm_token"),
+            })
+        else:
+            result.update({"status": "cancelled", "confirm": False})
+    tool_call_id = str(context.get("tool_call_id") or "")
+    if tool_call_id:
+        from app.models import ConversationMessage
+        rows = (await db.execute(
+            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
+        )).scalars().all()
+        for message in rows:
+            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
+                break
+    prompt.schema_json = {**dict(prompt.schema_json or {}), "resolved_result": result}
     await db.commit()
     return {
         "prompt_id": prompt.id,
@@ -122,8 +265,63 @@ async def consume_action(
         "kind": prompt.kind,
         "option_id": action.option_id,
         "action_type": action.action_type,
-        "context": dict(action.context_json or {}),
+        "context": context,
+        "result": result,
     }
+
+
+async def consume_text(
+    db: AsyncSession,
+    *,
+    user_id,
+    prompt_id: int,
+    text: str,
+    event_id: str | None = None,
+) -> dict:
+    """消费允许文本回答的 Prompt；文本回答同样只能恢复一次。"""
+    now = now_utc()
+    prompt = await db.scalar(select(InteractionPrompt).where(
+        InteractionPrompt.id == prompt_id,
+        InteractionPrompt.user_id == user_id,
+    ).with_for_update())
+    if prompt is None:
+        raise LookupError("交互不存在")
+    if prompt.status != "active" or prompt.expires_at <= now:
+        prompt.status = "expired"
+        prompt.resolved_at = now
+        await db.commit()
+        raise ValueError("交互已过期")
+    if not bool((prompt.schema_json or {}).get("allow_text_input")):
+        raise ValueError("该交互不接受文本回答")
+    text = str(text or "").strip()
+    if not text or len(text) > 2000:
+        raise ValueError("回答不能为空或过长")
+    # 文本型 Prompt 可能没有 Action，context 存在 Prompt schema 的内部字段中。
+    schema = dict(prompt.schema_json or {})
+    context = dict(schema.get("context") or {})
+    result = {
+        "kind": prompt.kind,
+        "status": "answered",
+        "prompt_id": prompt.id,
+        "option_id": None,
+        "value": None,
+        "text": text,
+    }
+    tool_call_id = str(context.get("tool_call_id") or "")
+    if tool_call_id:
+        from app.models import ConversationMessage
+        rows = (await db.execute(
+            select(ConversationMessage).where(ConversationMessage.session_id == prompt.session_id)
+        )).scalars().all()
+        for message in rows:
+            if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
+                break
+    prompt.status = "resolved"
+    prompt.resolved_at = now
+    prompt.schema_json = {**schema, "resolved_result": result}
+    await db.commit()
+    return {"prompt_id": prompt.id, "session_id": prompt.session_id, "kind": prompt.kind,
+            "context": context, "result": result, "event_id": event_id}
 
 
 async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dict]:
@@ -220,7 +418,10 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
     return result
 
 
-async def create_tool_confirmation(*, user_id, session_id: int | None, tool_name: str, result) -> dict | None:
+async def create_tool_confirmation(
+    *, user_id, session_id: int | None, tool_name: str, tool_call_id: str | None = None,
+    result,
+) -> dict | None:
     """把破坏性工具的 ``needs_confirm`` 结果桥接为统一交互事件。
 
     工具仍保留原确认门和模型可见的结果；这里仅额外创建网页/IM 可消费的短时按钮。
@@ -255,6 +456,12 @@ async def create_tool_confirmation(*, user_id, session_id: int | None, tool_name
     if db_session._SessionLocal is None:
         return None
     summary = str(payload.get("summary") or payload.get("instruction") or "请确认是否继续这项操作")
+    confirm_token = payload.get("confirm_token")
+    context = {
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "confirm_token": confirm_token if isinstance(confirm_token, str) else None,
+    }
     async with db_session._SessionLocal() as db:
         prompt, actions = await create_prompt(
             db,
@@ -267,7 +474,7 @@ async def create_tool_confirmation(*, user_id, session_id: int | None, tool_name
                 {"id": "confirm", "label": "确认", "action_type": "confirm"},
                 {"id": "cancel", "label": "取消", "action_type": "cancel"},
             ],
-            context={"tool_name": tool_name},
+            context=context,
         )
         await db.commit()
         return {

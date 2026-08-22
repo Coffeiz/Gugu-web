@@ -107,6 +107,31 @@ async def _update_event(db, user_id, args: dict):
 
 
 async def _delete_event(db, user_id, args: dict):
+    event_ids = args.get("event_ids")
+    if event_ids is not None:
+        if not isinstance(event_ids, list) or not event_ids or len(event_ids) > 50:
+            return json.dumps({"error": "event_ids 必须是 1-50 个事件 id"})
+        events = []
+        for event_id in event_ids:
+            event, error = await _resolve_event(db, user_id, {"event_id": event_id})
+            if error:
+                return error
+            events.append(event)
+        reminders = [await list_event_reminders(db, user_id, event.id) for event in events]
+        names = "、".join(event.title for event in events[:10]) + (f"等 {len(events)} 个" if len(events) > 10 else "")
+        reminder_count = sum(len(items) for items in reminders)
+        blocked = confirm.needs_confirmation(
+            args, f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复", user_id,
+            identity=f"delete_event:event_ids={sorted(event_ids)}")
+        if blocked is not None:
+            return blocked
+        results = []
+        for event, event_reminders in zip(events, reminders):
+            await delete_event_with_reminders(db, user_id, event)
+            results.append({"deleted_event_id": event.id, "title": event.title,
+                            "deleted_reminders": len(event_reminders)})
+        await db.commit()
+        return {"success": True, "deleted_count": len(results), "results": results}
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
@@ -267,11 +292,12 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="delete_event",
             label="删除日历事件",
-            description="删除日历事件 / 活动（无回收站，不可恢复；会连带删除该活动自带的提醒）。流程：先不带 confirm 调用 → 返回影响详情（含将连带删除的提醒条数）→ 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
+            description="删除一个或多个日历事件/活动（无回收站，不可恢复，会连带删除活动提醒）。单项传 event_id/event，批量传 event_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "event_id": {"type": "integer", "description": "事件 ID（可选）"},
+                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除事件 id"},
                     "event": {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
                     "on_date": {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},

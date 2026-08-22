@@ -45,12 +45,17 @@ def _summary_hash(summary: str) -> str:
     return sha256(summary.encode("utf-8")).hexdigest()
 
 
-def _create_token(user_id, summary: str) -> str:
+def _identity_hash(identity: str | None) -> str | None:
+    return sha256(identity.encode("utf-8")).hexdigest() if identity else None
+
+
+def _create_token(user_id, summary: str, identity: str | None = None) -> str:
     return jwt.encode(
         {
             "sub": str(user_id),
             "role": _TOKEN_ROLE,
             "summary": _summary_hash(summary),
+            "identity": _identity_hash(identity),
             "exp": now_utc() + timedelta(minutes=_TOKEN_TTL_MINUTES),
         },
         get_settings().secret_key,
@@ -58,7 +63,7 @@ def _create_token(user_id, summary: str) -> str:
     )
 
 
-def _has_valid_token(args: dict, user_id, summary: str) -> bool:
+def _has_valid_token(args: dict, user_id, summary: str, identity: str | None = None) -> bool:
     token = args.get("confirm_token")
     if not isinstance(token, str) or not token:
         return False
@@ -70,18 +75,19 @@ def _has_valid_token(args: dict, user_id, summary: str) -> bool:
         payload.get("role") == _TOKEN_ROLE
         and payload.get("sub") == str(user_id)
         and payload.get("summary") == _summary_hash(summary)
+        and payload.get("identity") == _identity_hash(identity)
     )
 
 
-def needs_confirmation(args: dict, summary: str, user_id) -> str | None:
+def needs_confirmation(args: dict, summary: str, user_id, *, identity: str | None = None) -> str | None:
     """返回 None=已确认可执行；否则签发确认凭证并返回需确认结果。"""
-    if _truthy(args.get("confirm")) and _has_valid_token(args, user_id, summary):
+    if _truthy(args.get("confirm")) and _has_valid_token(args, user_id, summary, identity):
         return None
     return json.dumps(
         {
             "needs_confirm": True,
             "summary": summary,
-            "confirm_token": _create_token(user_id, summary),
+            "confirm_token": _create_token(user_id, summary, identity),
             "instruction": "这是不可逆操作。请把上述影响转达用户；待用户明确同意后，带 confirm=true 和本次 confirm_token 再次调用本工具执行。",
         },
         ensure_ascii=False,

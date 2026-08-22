@@ -864,6 +864,24 @@ async def _create_folder(db, user_id, args: dict):
 
 async def _delete_file(db, user_id, args: dict):
     # 软删进回收站，30 天可还原 —— 非不可逆，无需二次确认
+    file_ids = args.get("file_ids")
+    if file_ids is not None:
+        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 50:
+            return json.dumps({"error": "file_ids 必须是 1-50 个文件 id"})
+        files = []
+        for file_id in file_ids:
+            file, error = await _resolve_file(db, user_id, {"file_id": file_id})
+            if error:
+                return error
+            files.append(file)
+        results = []
+        for file in files:
+            await delete_file_action(db, get_storage(), user_id, file.id, now_utc())
+            results.append({"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
+                            "note": "已移入回收站，30 天内可还原",
+                            "_file_op": {"op": "remove", "kind": "file", "id": file.id}})
+        await db.commit()
+        return {"success": True, "deleted_count": len(results), "results": results}
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
@@ -936,6 +954,26 @@ async def _rename_folder(db, user_id, args: dict):
 
 
 async def _delete_folder(db, user_id, args: dict):
+    folder_ids = args.get("folder_ids")
+    if folder_ids is not None:
+        if not isinstance(folder_ids, list) or not folder_ids or len(folder_ids) > 50:
+            return json.dumps({"error": "folder_ids 必须是 1-50 个文件夹 id"})
+        folders = []
+        for folder_id in folder_ids:
+            folder = await _find_folder(db, user_id, {"folder_id": folder_id})
+            if isinstance(folder, str):
+                return folder
+            folders.append(folder)
+        results = []
+        try:
+            for folder in folders:
+                await FileService(db).delete_folder(user_id, folder.id)
+                results.append({"deleted_folder_id": folder.id, "name": folder.name,
+                                "_file_op": {"op": "remove", "kind": "folder", "id": folder.id}})
+            await db.commit()
+        except Exception as e:
+            return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
+        return {"success": True, "deleted_count": len(results), "results": results}
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
@@ -1438,12 +1476,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_file", label="删除文件",
-            description="删除文件（移入回收站，30 天内可还原，非永久删除）。",
+            description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，批量传 file_ids。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "file_id": {"type": "integer", "description": "文件 id（可选）"},
                     "file": {"type": "string", "description": "文件名（推荐：直接用名字，无需 id）"},
+                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除文件 id"},
                 },
                 "required": [],
             },
@@ -1481,12 +1520,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。文件夹及其内容会整体移入回收站，30 天内可恢复。同名文件夹存在于多个项目时必须传 project_id。",
+            description="删除一个或多个文件夹。单项用 name/folder_id，批量传 folder_ids。文件夹及其内容会整体移入回收站，30 天内可恢复。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "要删除的文件夹名称"},
                     "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
+                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除文件夹 id"},
                     "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
                 },
             },

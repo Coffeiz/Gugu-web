@@ -26,7 +26,7 @@ export interface ChatMessage {
   toolCallId?: string
   toolName?: string
   toolLabel?: string
-  toolStatus?: 'running' | 'success' | 'error' | 'skipped'
+  toolStatus?: 'running' | 'waiting' | 'success' | 'error' | 'skipped'
   toolInput?: unknown
   toolResult?: unknown
   toolDurationMs?: number

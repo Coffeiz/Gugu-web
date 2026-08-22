@@ -35,7 +35,7 @@
         </header>
 
         <section class="usage-grid">
-          <div class="usage-card"><span>Input</span><b>{{ fmtTokens(usage.input) }}</b><small>normalized prompt total</small></div>
+          <div class="usage-card"><span>Input</span><b>{{ fmtTokens(usage.input) }}</b><small>{{ usageSourceLabel }}</small></div>
           <div class="usage-card"><span>Output</span><b>{{ fmtTokens(usage.output) }}</b><small>generated</small></div>
           <div class="usage-card cached"><span>Cache read</span><b>{{ fmtTokens(usage.cache_read) }}</b><small>{{ cachePercent }} of input<span v-if="usage.cache_write"> · write {{ fmtTokens(usage.cache_write) }}</span></small></div>
           <div class="usage-card"><span>Fresh input</span><b>{{ fmtTokens(usage.fresh_input) }}</b><small>not from cache</small></div>
@@ -103,6 +103,7 @@ watch(
 const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
 const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
+const usageSourceLabel = computed(() => hasProviderUsage(selected.value) ? 'provider reported prompt tokens' : 'local estimate')
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
@@ -147,6 +148,15 @@ function resolveUsage(run: TraceRun | null): TokenUsage {
     total.cache_ratio = total.input ? (total.cache_read ?? 0) / total.input : 0
   }
   return total
+}
+
+function hasProviderUsage(run: TraceRun | null): boolean {
+  const runInput = number(run?.usage?.input)
+  if (runInput !== undefined && runInput > 0) return true
+  return Boolean((run?.spans ?? []).some(span => {
+    const input = number(span.usage?.input)
+    return span.kind === 'llm' && input !== undefined && input > 0
+  }))
 }
 
 function normalizeUsage(value: Record<string, any> | undefined): TokenUsage {

@@ -40,7 +40,7 @@ import type { ChatMessage } from './chatTypes'
 const props = defineProps<{ msg: ChatMessage }>()
 const expanded = ref(false)
 const statusText = computed(() => ({
-  running: '进行中', success: '已完成', error: '失败', skipped: '已跳过',
+  running: '进行中', waiting: '等待回复', success: '已完成', error: '失败', skipped: '已跳过',
 }[props.msg.toolStatus || 'running']))
 const durationText = computed(() => {
   if (props.msg.toolDurationMs == null || props.msg.toolDurationMs < 0) return ''

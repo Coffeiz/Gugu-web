@@ -36,10 +36,18 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
+    interaction_prompt_id: Optional[int] = None
+    interaction_token: Optional[str] = None
+    interaction_event_id: Optional[str] = None
 
 
 class InteractionResponseRequest(BaseModel):
     token: str
+    event_id: Optional[str] = None
+
+
+class InteractionTextRequest(BaseModel):
+    text: str
     event_id: Optional[str] = None
 
 
@@ -77,6 +85,53 @@ async def respond_interaction(
     except ValueError as exc:
         raise HTTPException(409, str(exc))
     return result
+
+
+@router.post("/interactions/{prompt_id}/resume")
+async def resume_interaction(
+    prompt_id: int,
+    body: InteractionResponseRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """消费 ask_user 回答，唤醒仍在等待中的原 Agent Run。"""
+    try:
+        result = await interactions.consume_action(
+            db,
+            user_id=current_user.id,
+            prompt_id=prompt_id,
+            token=body.token,
+            event_id=body.event_id,
+        )
+    except LookupError:
+        raise HTTPException(404, "交互不存在")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    if not result.get("context", {}).get("tool_call_id"):
+        raise HTTPException(409, "该交互不支持恢复原任务")
+    return {"ok": True, "session_id": result["session_id"]}
+
+
+@router.post("/interactions/{prompt_id}/resume-text")
+async def resume_text_interaction(
+    prompt_id: int,
+    body: InteractionTextRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """消费 ask_user 的文本回答，唤醒仍在等待中的原 Agent Run。"""
+    try:
+        result = await interactions.consume_text(
+            db, user_id=current_user.id, prompt_id=prompt_id,
+            text=body.text, event_id=body.event_id,
+        )
+    except LookupError:
+        raise HTTPException(404, "交互不存在")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    if not result.get("context", {}).get("tool_call_id"):
+        raise HTTPException(409, "该交互不支持恢复原任务")
+    return {"ok": True, "session_id": result["session_id"]}
 
 
 @router.post("/upload")
@@ -215,6 +270,9 @@ async def chat(
         attachments=body.attachments or [],
         greeting=body.greeting,
         origin=request.headers.get("X-Client-Id"),
+        interaction_prompt_id=body.interaction_prompt_id,
+        interaction_token=body.interaction_token,
+        interaction_event_id=body.interaction_event_id,
     )
     return StreamingResponse(
         web_adapter.stream(req),

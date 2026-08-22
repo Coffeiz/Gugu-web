@@ -228,6 +228,24 @@ async def _update_scheduled_task(db, user_id, args: dict):
 
 
 async def _delete_scheduled_task(db, user_id, args: dict):
+    task_ids = args.get("task_ids")
+    if task_ids is not None:
+        if not isinstance(task_ids, list) or not task_ids or len(task_ids) > 50:
+            return json.dumps({"error": "task_ids 必须是 1-50 个任务 id"})
+        tasks = []
+        for tid in task_ids:
+            task = await get_task(db, user_id, tid)
+            if task is None:
+                return json.dumps({"error": f"定时任务 {tid} 不存在"})
+            tasks.append(task)
+        names = "、".join(t.name for t in tasks[:10]) + (f"等 {len(tasks)} 个" if len(tasks) > 10 else "")
+        blocked = confirm.needs_confirmation(args, f"将删除定时任务：{names}，共 {len(tasks)} 个", user_id,
+                                             identity=f"delete_scheduled_task:task_ids={sorted(task_ids)}")
+        if blocked is not None:
+            return blocked
+        results = [dict(zip(("deleted_task_id", "name"), await delete_task(db, task))) for task in tasks]
+        await db.commit()
+        return {"success": True, "deleted_count": len(results), "results": results}
     t, err = await _resolve_task(db, user_id, args)
     if err:
         return err
@@ -302,13 +320,13 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
-            description=("删除定时任务（不可恢复）。按 task_id 或任务名 task 定位。"
-                         "流程：先不带 confirm 调用 → 返回要删的任务 → 转达用户征得明确同意 → 带 confirm=true 再调一次执行。"),
+            description="删除一个或多个定时任务（不可恢复）。单项按 task_id/task 定位，批量传 task_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "integer", "description": "任务 ID（可选）"},
                     "task":    {"type": "string", "description": "任务名（推荐：直接用名字）"},
+                    "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除任务 id"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
                     "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },

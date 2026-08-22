@@ -74,10 +74,12 @@ def reminder(content: str) -> dict:
 
 
 def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],
-                   current_user: dict, dynamic_tail: Iterable[dict]) -> PromptMessages:
+                   current_user: dict | None, dynamic_tail: Iterable[dict]) -> PromptMessages:
     """固定上下文、连续历史和当前消息先组成 conversation，动态内容最后追加。"""
     fixed = list(fixed_parts)
-    conversation = fixed + list(history) + [current_user]
+    conversation = fixed + list(history)
+    if current_user is not None:
+        conversation.append(current_user)
     return PromptMessages(conversation, dynamic_tail, fixed_prefix_size=len(fixed))
 
 

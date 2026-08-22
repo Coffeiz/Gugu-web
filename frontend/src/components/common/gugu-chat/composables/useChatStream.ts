@@ -90,7 +90,7 @@ export function useChatStream(options: {
     replayText = '',
   ) {
     const decoder = new TextDecoder()
-    let buf = '', aiIdx = -1, aborted = false
+    let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
@@ -179,6 +179,7 @@ export function useChatStream(options: {
             // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
             if (live()) options.setStatus(options.thinkingItem())
           } else if (evt.type === 'interaction_required') {
+            interactionPaused = true
             if (live() && evt.prompt_id && Array.isArray(evt.options)) {
               messages.value.push({
                 id: mkid(), role: 'interaction', text: '', time: now(),
@@ -249,7 +250,7 @@ export function useChatStream(options: {
         }
       }
     }
-    return { aiIdx, usedTools, detached, sid, aborted }
+    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused }
   }
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
@@ -342,7 +343,7 @@ export function useChatStream(options: {
       aiIdx = r.aiIdx
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-      if (aiIdx === -1 && !r.detached && !r.aborted) {
+      if (aiIdx === -1 && !r.detached && !r.aborted && !r.interactionPaused) {
         messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
         await options.scrollBottom()
       }

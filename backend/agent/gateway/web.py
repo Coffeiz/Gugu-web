@@ -298,7 +298,7 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_content=None, user_images=None, attach_cards=None,
                     user_media=None, user_tz=None, sent_at=None,
-                    user_message=None) -> None:
+                    user_message=None, resume_interaction: bool = False) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -374,14 +374,17 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             else user_content
         )
         tail_parts = []
-        message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+        message_time = (
+            session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+            if user_message is not None else None
+        )
         if message_time:
             tail_parts.append(message_time)
         tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
         if use_anthropic:
             assembly = message_assembly.build_messages(
                 fixed_parts=fixed_parts, history=history_parts,
-                current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media)},
+                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media)},
                 dynamic_tail=tail_parts)
             assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
             anthr_messages = assembly
@@ -394,7 +397,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             oa_messages = message_assembly.build_messages(
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
                 history=history_parts,
-                current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
+                current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
                 dynamic_tail=tail_parts)
             oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
             gen = runner.run(
@@ -498,11 +501,12 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 snapshot_session = await db2.get(ConversationSession, session_id)
                 if snapshot_session is not None:
                     await db2.flush()
-                    session_snapshot.checkpoint_snapshot(
-                        snapshot_session,
-                        [{"role": "user", "content": req.message},
-                         {"role": "assistant", "content": full_reply}],
-                    )
+                    if not resume_interaction:
+                        session_snapshot.checkpoint_snapshot(
+                            snapshot_session,
+                            [{"role": "user", "content": req.message},
+                             {"role": "assistant", "content": full_reply}],
+                        )
                 # 按 6h 剩余额度封顶本轮用量：精力条最多 100%，单轮顶过线则只记填满部分、
                 # 超出（对话后半段）不计入（6h 与周都不计）；已满则 (0,0) 不写。
                 _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings,
@@ -523,7 +527,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         await genstream.publish(session_id, {"type": "done"})
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
-        if is_new_session and full_reply:
+        if is_new_session and full_reply and not resume_interaction:
             title = (await _generate_title(req.message, full_reply, settings, use_anthropic) or "").strip()
             if title:
                 async with _sess._SessionLocal() as db3:
@@ -534,12 +538,12 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 await genstream.publish(session_id, {"type": "session_title", "title": title})
 
         # ── 会话「一句话总结」：新会话出一版、之后每 ~6 条刷新（供 search/续接桥；与 IM 路同一套）──
-        if full_reply:
+        if full_reply and not resume_interaction:
             from agent.runner import _schedule_summary
             _schedule_summary(req.user_id, session_id, is_new_session, settings, use_anthropic)
 
         # ── 对话后反思：提炼长期记忆（fire-and-forget）──
-        if profile.memory_enabled and full_reply:
+        if profile.memory_enabled and full_reply and not resume_interaction:
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
                                 used_tools=used_tools, session_id=session_id)

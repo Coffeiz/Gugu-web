@@ -565,8 +565,8 @@ Agent bridge 负责：
 | Phase 6：QQ Keyboard | ✅ | 增加 QQ action payload 编解码、嵌套 interaction event 解析和回调消费；未确认 QQ 原生按钮字段前使用安全文本兜底，不宣称平台已支持原生 Keyboard。 |
 | Phase 7：业务接入 | ✅ | QQ 身份绑定沿用既有 owner 校验；所有注册表 `destructive` 工具的 `needs_confirm` 统一桥接 Prompt/Action，按钮/文本确认复用原 session，非 destructive 结果不会生成危险交互。 |
 | Phase 8：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
-| Phase 9：`ask_user` 工具协议 | 🔲 | 注册内置工具，完成 choice/question/form 的 schema 校验、长度限制和统一 `InteractionResult`。 |
-| Phase 10：暂停与恢复 | 🔲 | 接入 `WAITING_INPUT`，保存 pending Run，回答后原 session 原地恢复；补齐超时、取消、重复点击和服务重启恢复。 |
+| Phase 9：`ask_user` 工具协议 | ✅ | 注册内置 `ask_user`，完成 choice/question/form 的 schema 校验、长度限制、短 token action 和统一 `InteractionResult`。 |
+| Phase 10：暂停与恢复 | ✅ | Agent 在 `ask_user` 后停止当前 Run；按钮/允许文本回答会原子消费、替换 pending tool result，并在原 session 恢复 Agent Loop；补齐过期、取消和重复消费保护。 |
 | Phase 11：多端展示 | 🔲 | Web 使用按钮/输入框交互，IM 使用平台能力或文本兜底；统一权限校验、脱敏和历史展示。 |
 
 每个阶段单独提交。任一阶段出现生命周期或权限行为差异，不进入下一阶段。

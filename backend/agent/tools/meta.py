@@ -22,6 +22,18 @@ async def _use_skill(db, user_id, args: dict):
     return {"skill": name, "content": body}
 
 
+async def _ask_user(db, user_id, args: dict):
+    """返回受控交互描述；Prompt/Action 由 Agent Loop 绑定 session 后创建。"""
+    return {
+        "_interaction": "ask_user",
+        "kind": args.get("kind", "choice"),
+        "title": args.get("title", "需要你的选择"),
+        "body": args.get("body", ""),
+        "options": args.get("options", []),
+        "allow_text_input": bool(args.get("allow_text_input", False)),
+    }
+
+
 class MetaSkill(BaseSkill):
     name = "meta"
     tools = [
@@ -38,6 +50,40 @@ class MetaSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_use_skill,
+        ),
+        Tool(
+            name="ask_user",
+            label="询问用户",
+            description=(
+                "当下一步存在多个合理选择，或缺少继续任务所必需的信息时，向用户展示结构化问题。"
+                "只用于澄清，不直接执行任何业务操作；明确的破坏性确认必须使用工具自己的确认门。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["choice", "question", "form"]},
+                    "title": {"type": "string", "maxLength": 120},
+                    "body": {"type": "string", "maxLength": 1000},
+                    "options": {
+                        "type": "array",
+                        "minItems": 0,
+                        "maxItems": 8,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "id": {"type": "string", "minLength": 1, "maxLength": 64},
+                                "label": {"type": "string", "minLength": 1, "maxLength": 120},
+                            },
+                            "required": ["id", "label"],
+                        },
+                    },
+                    "allow_text_input": {"type": "boolean"},
+                },
+                "required": ["kind", "title", "body", "options"],
+                "additionalProperties": False,
+            },
+            handler=_ask_user,
         ),
     ]
 

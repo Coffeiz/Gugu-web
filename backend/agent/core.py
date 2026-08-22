@@ -188,6 +188,28 @@ def _is_successful_tool_result(result: str) -> bool:
     return not isinstance(payload, dict) or not payload.get("error")
 
 
+def _replace_tool_result(messages, *, tool_call_id: str, result: dict) -> bool:
+    """更新当前 Run 内存中的 pending tool result，供交互恢复后的下一轮使用。"""
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        if role == "tool" and str(message.get("tool_call_id") or "") == tool_call_id:
+            message["content"] = json.dumps(result, ensure_ascii=False)
+            return True
+        blocks = message.get("content")
+        if role != "user" or not isinstance(blocks, list):
+            continue
+        for block in blocks:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                continue
+            block_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
+            if block_id == tool_call_id:
+                block["content"] = json.dumps(result, ensure_ascii=False)
+                return True
+    return False
+
+
 def _is_read_tool(name: str) -> bool:
     """返回该工具能否作为一次有效的状态观察。"""
     return name.startswith(_READ_PREFIXES) or name in _READ_TOOL_NAMES
@@ -541,6 +563,7 @@ class LLMRunner:
                     async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
                         yield _line
                 dispatched = []
+                pending_interaction = None
                 remaining_tool_calls = max(0, MAX_TOOL_CALLS - tool_calls_used)
                 tool_budget_exceeded = len(result.tool_calls) > remaining_tool_calls
                 for call_index, tc in enumerate(result.tool_calls):
@@ -577,15 +600,61 @@ class LLMRunner:
                                        name=tc.name, label=label, input=tc.input, verify=verify_mode,
                                        status="running")
                     res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                    if tc.name == "ask_user":
+                        # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
+                        # provider history，等待回答后由 interaction service 替换 pending
+                        # result，再从同一 session 继续，而不是把按钮文案伪装成新用户消息。
+                        import json as _json
+                        try:
+                            ask_payload = _json.loads(res) if isinstance(res, str) else res
+                        except (TypeError, ValueError):
+                            ask_payload = None
+                        from app.services.interactions import create_agent_prompt
+                        interaction = None
+                        if isinstance(ask_payload, dict) and ask_payload.get("_interaction") == "ask_user":
+                            interaction = await create_agent_prompt(
+                                user_id=user_id,
+                                session_id=session_id,
+                                tool_call_id=tool_call_id,
+                                tool_name=tc.name,
+                                payload=ask_payload,
+                            )
+                        if interaction is not None:
+                            prompt, actions = interaction
+                            pending_result = _json.dumps({
+                                "status": "waiting_input",
+                                "prompt_id": prompt.id,
+                            }, ensure_ascii=False)
+                            dispatched.append((tc, pending_result))
+                            pending_interaction = (prompt.id, tool_call_id)
+                            yield stream_event("tool_done", round_id=round_id,
+                                               tool_call_id=tool_call_id, name=tc.name, label=label,
+                                               verify=verify_mode, status="waiting")
+                            yield stream_event(
+                                "interaction_required", round_id=round_id,
+                                tool_call_id=tool_call_id, prompt_id=prompt.id,
+                                kind=prompt.kind, title=prompt.title, body=prompt.body,
+                                options=actions, allow_text_input=bool(
+                                    (prompt.schema_json or {}).get("allow_text_input", False)
+                                ), expires_at=prompt.expires_at.isoformat(),
+                            )
+                            break
                     # 统一交互桥：保留工具原有确认门，同时向 Guguchat/Web 发出按钮事件。
                     # 桥接失败不能影响工具结果写回模型，因此只在成功创建时发送事件。
                     from app.services.interactions import create_tool_confirmation
                     interaction = await create_tool_confirmation(
-                        user_id=user_id, session_id=session_id, tool_name=tc.name, result=res,
+                        user_id=user_id, session_id=session_id, tool_name=tc.name,
+                        tool_call_id=tool_call_id, result=res,
                     )
                     if interaction:
+                        pending_interaction = (interaction["prompt_id"], tool_call_id)
+                        dispatched.append((tc, res))
                         yield stream_event("interaction_required", round_id=round_id,
                                            tool_call_id=tool_call_id, **interaction)
+                        yield stream_event("tool_done", round_id=round_id,
+                                           tool_call_id=tool_call_id, name=tc.name, label=label,
+                                           verify=verify_mode, status="waiting")
+                        break
                     if tc.name in _mutset and _is_successful_tool_result(res):
                         did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
                         if verify_mode:
@@ -599,6 +668,23 @@ class LLMRunner:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
                 driver.append_tool_round(messages, result, dispatched)
+                if pending_interaction is not None:
+                    from app.services.interactions import wait_for_resolution
+                    prompt_id, pending_tool_call_id = pending_interaction
+                    answer = await wait_for_resolution(
+                        user_id=user_id, prompt_id=prompt_id,
+                        heartbeat=lambda: genstream.touch(session_id),
+                    )
+                    if answer is None:
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
+                        return
+                    _replace_tool_result(
+                        messages,
+                        tool_call_id=pending_tool_call_id,
+                        result=answer,
+                    )
+                    yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                    continue
                 if tool_budget_exceeded:
                     _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
                     yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"

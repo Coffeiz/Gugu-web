@@ -144,6 +144,7 @@ def ensure_hooks() -> None:
         original_round = getattr(driver, "run_round")
         round_index = 0
         previous_prompt_estimate = 0
+        tool_schema_context_recorded = False
 
         initial_user = _extract_last_user(messages)
         # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
@@ -170,8 +171,9 @@ def ensure_hooks() -> None:
                 "api_format": getattr(driver, "api_format", ""),
                 "cache_mode": getattr(_adapter, "cache_mode", "active"),
             })
-            system_est = _estimate_tokens(plain_system)
-            messages_est = _estimate_tokens(messages)
+            model_name = str(getattr(ai, "model", "") or "")
+            system_est = _estimate_tokens(plain_system, model_name)
+            messages_est = _estimate_tokens(messages, model_name)
             ctx_span = run.span(
                 "context",
                 "Context assembly & prompt",
@@ -211,13 +213,43 @@ def ensure_hooks() -> None:
             history.finish({"message_count": len(messages) if isinstance(messages, list) else None})
 
         async def traced_round(client, ctx, round_messages):
-            nonlocal round_index, previous_prompt_estimate
+            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded
             round_index += 1
             round_visible_messages = _trace_conversation_messages(round_messages, system_location)
             round_system = effective_system
-            round_prompt_est = _estimate_tokens(round_visible_messages) + _estimate_tokens(round_system)
+            model_name = str(getattr(ai, "model", "") or "")
+            round_prompt_est = (
+                _estimate_tokens(round_visible_messages, model_name)
+                + _estimate_tokens(round_system, model_name)
+            )
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
-            cache_diag = _cache_diagnostics(round_messages, ctx)
+            cache_diag = _cache_diagnostics(round_messages, ctx, model_name)
+            if run and not tool_schema_context_recorded:
+                tool_schema_context_recorded = True
+                schema_tokens = int(cache_diag.get("tool_schema_tokens_estimate", 0) or 0)
+                schema_bytes = int(cache_diag.get("tool_schema_bytes", 0) or 0)
+                tool_context = run.span(
+                    "context",
+                    "Tool schemas injected",
+                    {
+                        "tool_count": cache_diag.get("tool_count", 0),
+                        "schema_bytes": schema_bytes,
+                        "schema_digest": cache_diag.get("tool_schema_digest", ""),
+                    },
+                    parent_span_id=ctx_span.id,
+                    code=_code_ref(original_round),
+                    token_impact={
+                        "included_tokens": schema_tokens,
+                        "estimate_source": "loopscope_tokenizer",
+                    },
+                    context_source="tool_schema",
+                    api_format=getattr(driver, "api_format", ""),
+                )
+                tool_context.finish({
+                    "tool_count": cache_diag.get("tool_count", 0),
+                    "schema_bytes": schema_bytes,
+                    "schema_tokens_estimate": schema_tokens,
+                })
             span = run.span(
                 "llm",
                 f"LLM round {round_index}",
@@ -259,6 +291,14 @@ def ensure_hooks() -> None:
                         if span:
                             details = _round_result(final, getattr(driver, "api_format", ""))
                             span.usage = _jsonable(details.get("usage") or {})
+                            # 估算值用于请求开始前的可视化；LLM 返回后补上供应商实际口径，
+                            # 避免 LoopScope 把本地估算误看成 provider prompt token。
+                            provider_input = span.usage.get("input")
+                            if isinstance(provider_input, (int, float)) and provider_input > 0:
+                                span.token_impact["prompt_tokens_actual"] = int(provider_input)
+                                span.token_impact["prompt_tokens_source"] = "provider"
+                            else:
+                                span.token_impact["prompt_tokens_source"] = "estimate"
                             span.finish(details)
                             run.add_usage(span.usage)
                     yield kind, value
@@ -278,7 +318,7 @@ def ensure_hooks() -> None:
         try:
             driver.run_round = traced_round
             async for line in original_run_loop(
-                self, driver, user_id, messages, ai, system_text, session_id=session_id
+                self, driver, user_id, messages, ai, system_text, session_id=session_id,
             ):
                 yield line
                 if run and isinstance(line, str) and '\"_new_round\"' in line:

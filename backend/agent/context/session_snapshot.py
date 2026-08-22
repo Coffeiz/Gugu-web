@@ -106,8 +106,7 @@ def baseline_hash(messages: list) -> str:
     return digest(normalized)
 
 
-def snapshot_is_usable(session, now: datetime | None = None,
-                       context_revision: int | None = None) -> bool:
+def snapshot_is_usable(session, now: datetime | None = None) -> bool:
     """判断当前 session 是否已有未过期的可复用 snapshot。"""
     context = getattr(session, "session_context", None)
     return bool(
@@ -115,8 +114,6 @@ def snapshot_is_usable(session, now: datetime | None = None,
         and context.get("system_prompt") is not None
         and context.get("session_info") is not None
         and not is_expired(session, now)
-        and (context_revision is None
-             or int(context.get("context_revision", 0) or 0) == context_revision)
     )
 
 
@@ -241,13 +238,15 @@ async def ensure_snapshot(
     ``load_context`` 返回已经渲染好的 prompt 输入，避免 runner、Web 各自维护一套
     snapshot 判断。函数不提交事务，由调用方和当前消息一起提交。
     """
-    from app.core.events import get_context_revision
-
-    current_revision = await get_context_revision(getattr(session, "user_id", None))
-    if snapshot_is_usable(session, now, current_revision):
+    if snapshot_is_usable(session, now):
         _record_snapshot_event(session, "hit")
         return snapshot_context(session)
 
+    # revision 只记录本次 snapshot 已吸收的业务版本；普通业务变化先作为
+    # pending 保留，不参与 hit/rebuild 判断，避免每次记忆或项目更新都打断缓存。
+    from app.core.events import get_context_revision
+
+    current_revision = await get_context_revision(getattr(session, "user_id", None))
     payload = await load_context()
     initialize_snapshot(
         session,

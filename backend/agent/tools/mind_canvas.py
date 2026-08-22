@@ -396,6 +396,26 @@ async def _mind_create_canvas(db, user_id, args: dict):
 
 async def _mind_delete_canvas(db, user_id, args: dict):
     from agent.security import confirm
+    canvas_ids = args.get("canvas_ids")
+    if canvas_ids is not None:
+        if not isinstance(canvas_ids, list) or not canvas_ids or len(canvas_ids) > 20:
+            return {"error": "canvas_ids 必须是 1-20 个画布 id"}
+        canvases = []
+        for canvas_id in canvas_ids:
+            canvas = await get_owned_canvas(db, user_id, canvas_id)
+            if canvas is None:
+                return {"error": f"画布 {canvas_id} 不存在"}
+            canvases.append(canvas)
+        names = "、".join((c.title or "未命名画布") for c in canvases[:8]) + (f"等 {len(canvases)} 个" if len(canvases) > 8 else "")
+        blocked = confirm.needs_confirmation(args, f"将删除画布：{names}，共 {len(canvases)} 个，包含便签、引用节点和连接关系", user_id,
+                                             identity=f"mind_delete_canvas:canvas_ids={sorted(canvas_ids)}")
+        if blocked is not None:
+            return blocked
+        for canvas in canvases:
+            if not await delete_canvas(db, user_id, canvas.id, commit=False):
+                return {"error": f"画布 {canvas.id} 删除失败"}
+        await db.commit()
+        return {"success": True, "deleted_count": len(canvases), "deleted_canvas_ids": [c.id for c in canvases]}
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -660,6 +680,24 @@ async def _mind_update_relation_anchor(db, user_id, args: dict):
 
 async def _mind_disconnect_nodes(db, user_id, args: dict):
     from agent.security import confirm
+    relation_ids = args.get("relation_ids")
+    if relation_ids is not None:
+        if not isinstance(relation_ids, list) or not relation_ids or len(relation_ids) > 50:
+            return {"error": "relation_ids 必须是 1-50 个关联 id"}
+        relations = []
+        for relation_id in relation_ids:
+            relation = await get_canvas_relation(db, user_id, relation_id)
+            if relation is None:
+                return {"error": f"关联 {relation_id} 不存在"}
+            relations.append(relation)
+        blocked = confirm.needs_confirmation(args, f"将删除 {len(relations)} 条节点关联", user_id,
+                                             identity=f"mind_disconnect_nodes:relation_ids={sorted(relation_ids)}")
+        if blocked is not None:
+            return blocked
+        for relation in relations:
+            await disconnect_node_relation(db, user_id, relation.id, commit=False)
+        await db.commit()
+        return {"success": True, "deleted_count": len(relations), "deleted_relation_ids": [r.id for r in relations]}
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
@@ -795,11 +833,12 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_delete_canvas", label="删除思维画布",
-            description="删除一张画布及其所有内容（便签、引用节点、连接关系全部清除）。执行前必须告知用户画布标题并获得确认。",
+            description="删除一个或多个画布及其所有内容（便签、引用节点、连接关系全部清除）。单项传 canvas_id，批量传 canvas_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
+                    "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
                     "confirm": {"type": "boolean"},
                     "confirm_token": {"type": "string"},
                 },
@@ -933,11 +972,11 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_disconnect_nodes", label="断开画布连接",
-            description="删除一条画布节点关联；执行前必须先展示影响并获得确认。",
+            description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",
-                "properties": {"relation_id": {"type": "integer"}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
-                "required": ["relation_id"],
+                "properties": {"relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": [],
             },
             handler=_mind_disconnect_nodes,
             mutates=True,

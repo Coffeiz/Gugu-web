@@ -153,6 +153,8 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     assert len(llm) == 1
     assert llm[0].status == "success", f"span 状态异常：{llm[0].status}"
     assert llm[0].usage == EXPECTED_USAGE, f"span.usage 未落地：{llm[0].usage}"
+    assert llm[0].token_impact["prompt_tokens_actual"] == EXPECTED_USAGE["input"]
+    assert llm[0].token_impact["prompt_tokens_source"] == "provider"
 
     assembly = llm[0].input["assembly"]
     assert assembly["system"]["location"] == "system_param"
