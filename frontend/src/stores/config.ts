@@ -76,6 +76,7 @@ export const useConfigStore = defineStore('config', () => {
       dimensions: 0,
     },
     agent: {
+      shell_enabled: false,
       memory_enabled: true,
       reflection_threshold: 10,
       worker_concurrency: 16,

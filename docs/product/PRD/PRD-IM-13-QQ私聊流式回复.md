@@ -1,6 +1,6 @@
 # QQ 私聊流式回复 PRD
 
-> 状态：Phase 2 待实现
+> 状态：Phase 2 已实施，真实 QQ 客户端验证待完成
 > 创建：2026-08-21
 > 最近更新：2026-08-21
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/runner.py`
@@ -12,9 +12,9 @@
 |---|---|---|
 | 协议与范围确认 | ✅ 已完成 | QQ 官方流式接口只用于 C2C 私聊；群聊继续普通消息。 |
 | Gugu 现状盘点 | ✅ 已完成 | Agent 已有 `run_stream()`，QQ 当前主要走 `run_collect()` 后一次性发送。 |
-| QQ 流式发送适配器 | 🔲 待做 | 增加累计全文、节流、串行队列、`stream_msg_id` 和完成帧。 |
-| IM 路由接入 | 🔲 待做 | C2C 私聊按配置使用流式；群聊和关闭开关时保持现有路径。 |
-| 自动化测试 | 🔲 待做 | 覆盖协议帧、队列竞态、失败降级和群聊隔离。 |
+| QQ 流式发送适配器 | ✅ 已完成 | 增加累计全文、节流、串行队列、`stream_msg_id` 和完成帧。 |
+| IM 路由接入 | ✅ 已完成 | C2C 私聊按配置使用流式；群聊和关闭开关时保持现有路径。 |
+| 自动化测试 | ✅ 已完成 | 覆盖协议帧、序列、失败降级和普通回复不重复发送。 |
 | 真实 QQ 验证 | 🔲 待做 | 手机 QQ 与桌面 QQ 分别验证可见性、限流和异常恢复。 |
 
 ## 1. 背景与目标
@@ -42,9 +42,9 @@ QQ 官方提供 C2C `stream_messages` 接口，可以在客户端中持续更新
 
 ## 2. 功能需求
 
-### FR-QQ-1：C2C 私聊流式回复（🔲）
+### FR-QQ-1：C2C 私聊流式回复（✅）
 
-当收到 QQ C2C 私聊并且 `directStreamingEnabled=true` 时，Agent 使用现有 `run_stream()` 产生文本增量，并交给 QQ 流式发送适配器。
+当收到 QQ C2C 私聊并且 `private_streaming_enabled=true` 时，Agent 使用现有 `run_stream()` 产生文本增量，并交给 QQ 流式发送适配器。
 
 用户侧表现：
 
@@ -53,13 +53,13 @@ QQ 官方提供 C2C `stream_messages` 接口，可以在客户端中持续更新
 - 生成结束后保留最终完整文本；
 - 空回复沿用现有空回复错误处理，不创建空流。
 
-### FR-QQ-2：累计全文与节流（🔲）
+### FR-QQ-2：累计全文与节流（✅）
 
 适配器必须将文本增量累计为 `fullText`，以 `replace` 模式发送当前完整文本。默认约 500ms 刷新一次，允许在 300–500ms 范围内调整；结束时立即发送最终内容，不因节流定时器延迟完成。
 
 同一帧不能重复发送未变化的全文。节流任务不能阻塞 Agent 生成，也不能为每个 token 创建 HTTP 请求。
 
-### FR-QQ-3：流式协议生命周期（🔲）
+### FR-QQ-3：流式协议生命周期（✅）
 
 每个流式会话必须满足：
 
@@ -72,7 +72,7 @@ QQ 官方提供 C2C `stream_messages` 接口，可以在客户端中持续更新
 
 请求体使用 `input_mode=replace`、`content_type` 和 `content_raw`。队列任务执行时才读取最新 `stream_msg_id`，不能在入队时提前构造后续请求体。
 
-### FR-QQ-4：失败降级与去重（🔲）
+### FR-QQ-4：失败降级与去重（✅）
 
 发送器记录是否成功发送过流式帧：
 
@@ -85,9 +85,9 @@ QQ 官方提供 C2C `stream_messages` 接口，可以在客户端中持续更新
 
 流式接口失败不能触发第二次 Agent 生成。
 
-### FR-QQ-5：开关与群聊隔离（🔲）
+### FR-QQ-5：开关与群聊隔离（✅）
 
-新增或沿用 `directStreamingEnabled` 作为私聊流式开关：
+新增 `private_streaming_enabled` 作为 QQ Bot 的私聊流式开关：
 
 - 开启：C2C 私聊使用流式；
 - 关闭：C2C 私聊使用现有普通发送；
@@ -95,7 +95,7 @@ QQ 官方提供 C2C `stream_messages` 接口，可以在客户端中持续更新
 
 设置说明需要明确：部分 QQ 客户端可能不展示流式过程，关闭后会恢复一次性发送。
 
-### FR-QQ-6：消息落库与审计（🔲）
+### FR-QQ-6：消息落库与审计（✅）
 
 Agent 完成后仍只落库一条最终 assistant 消息，不为中间帧写多条业务消息。日志只记录 `sessionId`/目标类型、流状态、`msg_seq`、`index`、是否已有 `stream_msg_id`、重试次数和脱敏错误摘要，不记录完整回复正文。
 
@@ -129,7 +129,7 @@ interface QQTextStream {
 当前 QQ 主要路径是 `run_collect()` 后调用普通 C2C/群聊发送。接入后按以下条件选择：
 
 ```text
-message.chat_type == c2c && directStreamingEnabled
+message.chat_type == c2c && private_streaming_enabled
   -> run_stream() + QQTextStream
 else
   -> 现有 run_collect() + 普通发送
@@ -181,7 +181,7 @@ else
 
 ### 4.3 回滚
 
-关闭 `directStreamingEnabled` 即可回到现有普通发送路径；不需要回滚 Agent 或数据库结构。若发现流式客户端兼容性问题，默认关闭开关并保留协议测试。
+关闭 `private_streaming_enabled` 即可回到现有普通发送路径；不需要回滚 Agent 或数据库结构。若发现流式客户端兼容性问题，默认关闭开关并保留协议测试。
 
 ## 5. 风险与待确认问题
 

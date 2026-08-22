@@ -44,6 +44,7 @@ def _out(b: UserBot) -> dict:
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "group_message_format": b.group_message_format or "compat",
         "private_message_format": b.private_message_format or "smart",
+        "private_streaming_enabled": b.private_streaming_enabled,
         "owner_bound": bool(b.owner_platform_user_id),
     }
 
@@ -137,6 +138,7 @@ class BotUpdate(BaseModel):
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
     private_message_format: str | None = None
+    private_streaming_enabled: bool | None = None
 
 
 @router.put("/{bot_id}")
@@ -185,6 +187,8 @@ async def update_my_bot(
             if value not in {"compat", "smart", "markdown"}:
                 raise HTTPException(400, "无效的 QQ 消息格式")
             setattr(bot, field, value)
+    if body.private_streaming_enabled is not None:
+        bot.private_streaming_enabled = body.private_streaming_enabled
     await db.commit()
     await db.refresh(bot)
     from app.core import events

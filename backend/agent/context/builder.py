@@ -17,32 +17,49 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 _STATUS_ZH = {"pending": "待开始", "active": "进行中", "done": "已完成"}
 
 
-def _files_block(fo: dict | None, proj_names: dict | None = None) -> str:
-    """文件/文件夹概览文本（紧凑）。"""
-    if not fo or (not fo.get("total") and not fo.get("trash")):
+def _files_block(fo: dict | None) -> str:
+    """个人文件库概览文本：一级目录 + 最近文件。"""
+    if not fo:
         return "暂无文件"
-    _SP = {"personal": "个人", "project": "项目", "asset": "素材", "mind": "思维"}
-    pn = proj_names or {}
-    def _proj(pid):   # 项目位置用名字，不用编号（编号只在 [id=] 里供调工具）
-        return f"项目「{pn[pid]}」" if pid in pn else f"项目#{pid}"
-    by_space = fo.get("by_space") or {}
-    space_str = "、".join(f"{_SP.get(k, k)} {v}" for k, v in by_space.items()) or "无"
-    trash_n = fo.get("trash") or 0
-    # 各空间真值 + 回收站数每轮注入：用户问「几个文件 / 删了几个 / 回收站还有吗」直接据此答，不许瞎报
-    lines = [f"共 {fo.get('total', 0)} 个活跃文件（各空间：{space_str}）；回收站 {trash_n} 个。"]
     folders = fo.get("folders") or []
+    files = fo.get("files") or []
+    if not fo.get("total") and not fo.get("trash") and not folders and not files:
+        return "暂无文件"
+    trash_n = fo.get("trash") or 0
+    lines = [f"个人文件库共 {fo.get('total', 0)} 个活跃文件；回收站 {trash_n} 个。"]
     if folders:
-        lines.append("文件夹：" + "、".join(
+        lines.append("一级目录：" + "、".join(
             f"{x.get('path', x['name'])}（文件数 {x.get('file_count', 0)}）"
-            + (f"({_proj(x['project_id'])})" if x.get("project_id") else "")
             for x in folders
         ))
-    files = fo.get("files") or []
     if files:
-        lines.append(f"最近文件样本（最多 {len(files)} 个；这里只是最近更新的截断列表，不代表其它文件夹为空）：")
+        lines.append(f"最近文件（最多 {len(files)} 个；这里只是截断列表，不代表其它目录为空）：")
         for f in files:
-            loc = f.get("folder") or (_proj(f["project_id"]) if f.get("project_id") else f.get("space", ""))
+            loc = f.get("folder") or "个人文件库"
             lines.append(f"- {f['name']}（{loc}）")
+    return "\n".join(lines)
+
+
+def _project_root_folders(project) -> str:
+    roots = [
+        folder.name for folder in (getattr(project, "folders", None) or [])
+        if folder.parent_id is None and folder.deleted_at is None
+    ]
+    return "、".join(roots) if roots else "无根目录"
+
+
+def _notes_block(notes: list[dict] | None) -> str:
+    """最近一周普通笔记摘要；画布便签不在此处注入。"""
+    if not notes:
+        return "最近一周暂无笔记"
+    lines = [f"最近一周笔记（最多 {len(notes)} 条）："]
+    for note in notes:
+        title = note.get("title") or "无标题"
+        content = note.get("content") or "（无正文）"
+        captured_at = note.get("captured_at")
+        date = captured_at.strftime("%Y-%m-%d") if hasattr(captured_at, "strftime") else ""
+        suffix = f"，日期：{date}" if date else ""
+        lines.append(f"- {title}{suffix}：{content}")
     return "\n".join(lines)
 
 
@@ -72,11 +89,12 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
                 user_msg: str = "", non_streaming: bool = False,
                 include_projects: bool = True, include_calendar: bool = True,
                 include_files: bool = True, include_memory: bool = True,
-                user_tz=None, im_message_format: str | None = None) -> tuple[str, str, str]:
+                user_tz=None, im_message_format: str | None = None,
+                notes: list[dict] | None = None) -> tuple[str, str, str]:
     """将 system prompt 拆分为静态部分和动态部分。
 
     静态部分（完全不变）：人格/profile policy/政策/工具定义/风格/技能索引
-    动态部分（可能变化）：记忆/项目/文件/时间/消息格式
+    动态部分（可能变化）：记忆/项目/笔记/文件/时间/消息格式
 
     返回 (static_text, dynamic_text, now_str)，调用方将静态部分放在 system，
     动态部分放在 messages[0] 作为上下文注入，时间作为最后的独立消息。
@@ -150,12 +168,16 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
 
     if include_projects:
         proj_lines = []
-        for p in projects[:25]:
+        for p in projects:
             deadline = f"截止 {p.deadline}" if p.deadline else "无截止"
             done_cnt = sum(1 for s in p.stages if s.get("done"))
             total_cnt = len(p.stages)
             prog = f"{done_cnt}/{total_cnt}阶段" if total_cnt else "无阶段"
-            proj_lines.append(f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}（{prog}，{deadline}，客户：{p.client or '无'}）")
+            roots = _project_root_folders(p)
+            proj_lines.append(
+                f"- [id={p.id}] [{_STATUS_ZH.get(p.status, p.status)}] {p.name}"
+                f"（{prog}，{deadline}，客户：{p.client or '无'}，文件根目录：{roots}）"
+            )
         proj_block = "\n".join(proj_lines) if proj_lines else "暂无项目"
     else:
         proj_block = "（本次任务不需要项目上下文，未加载）"
@@ -167,8 +189,9 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     else:
         ev_block = "（本次任务不需要日历上下文，未加载）"
     dynamic_parts.append(f"## 日历\n{ev_block}")
+    dynamic_parts.append(f"## 笔记\n{_notes_block(notes)}")
 
-    files_block = (_files_block(files, {p.id: p.name for p in projects})
+    files_block = (_files_block(files)
                    if include_files else "（本次任务不需要文件上下文，未加载）")
     dynamic_parts.append(f"## 文件\n{files_block}")
 

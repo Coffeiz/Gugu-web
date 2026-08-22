@@ -416,6 +416,13 @@ export const preferencesApi = {
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
 }
 
+export const workspacesApi = {
+  status: () => get<{ globalEnabled: boolean; userEnabled: boolean; items: unknown[] }>('/workspaces'),
+  current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
+  bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
+  unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
+}
+
 export const notificationsApi = {
   list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
   latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）

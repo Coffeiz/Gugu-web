@@ -82,6 +82,22 @@ class UserPreferences(Base):
         self.data_json = json.dumps(value, ensure_ascii=False)
 
 
+class Workspace(Base):
+    """用户可绑定到会话的工作区声明（Phase 0-2，不执行 Shell）。"""
+    __tablename__ = "workspaces"
+
+    id:         Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name:       Mapped[str] = mapped_column(String(200))
+    kind:       Mapped[str] = mapped_column(String(20), default="folder")
+    folder_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    enabled:    Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
 # ── Project ──────────────────────────────────────────────────────────────────
 
 class Project(Base):
@@ -393,6 +409,9 @@ class ConversationSession(Base):
     chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
     context_epoch: Mapped[int] = mapped_column(Integer, default=1)
     session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
@@ -406,6 +425,7 @@ class ConversationSession(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
     owner:    Mapped["User"]                      = relationship(back_populates="conversations")
+    workspace: Mapped[Optional["Workspace"]]     = relationship()
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="session",
         order_by="ConversationMessage.created_at",

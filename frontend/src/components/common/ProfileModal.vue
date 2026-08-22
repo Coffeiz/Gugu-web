@@ -43,6 +43,7 @@
             <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
+            <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
             <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
           </KeepAlive>
@@ -82,9 +83,10 @@ import ProfileAccountPane from './ProfileModal/ProfileAccountPane.vue'
 import ProfilePreferencesPane from './ProfileModal/ProfilePreferencesPane.vue'
 import ProfileGuguPane from './ProfileModal/ProfileGuguPane.vue'
 import ProfileImPane from './ProfileModal/ProfileImPane.vue'
+import ProfileToolPermissionsPane from './ProfileModal/ProfileToolPermissionsPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
-import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
+import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle, PhWrench } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
@@ -99,6 +101,7 @@ const navItems = [
   { key: 'prefs', label: '偏好设置', icon: PhSliders },
   { divider: true },
   { key: 'gugu', label: '咕咕设置', icon: PhBird },
+  { key: 'tools', label: '工具权限', icon: PhWrench },
   { key: 'im', label: '接入咕咕', icon: PhChatsCircle },
 ]
 const activeNav = ref('info')
@@ -273,6 +276,7 @@ async function doDeleteAccount() {
 .form-input.modified { border-color: var(--action-outline); }
 .pm-uid { color: var(--content-secondary); }
 .pm-static { font-size: 13px; color: var(--content-secondary); padding: 7px 2px; }
+.pm-tool-locked { padding: 11px 12px; border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-subtle); }
 .pm-coming { font-size: 11px; font-weight: 600; color: var(--content-disabled); background: var(--surface-soft); padding: 3px 10px; border-radius: var(--radius-pill); }
 
 .pm-style-group { display: flex; gap: 4px; flex-shrink: 0; }

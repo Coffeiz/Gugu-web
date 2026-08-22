@@ -201,7 +201,38 @@ async def send_stream_with_fallback(
     payload: dict,
     token_iter: AsyncIterator[tuple[str, object]],
 ) -> Tuple[bool, AgentResponse, str]:
-    """发送流式回复；流式卡片失败时在同一回复层补发普通文本。"""
+    """发送流式回复；QQ 首帧前失败时回退普通消息，已发送部分后不重复全文。"""
+    if payload.get("platform") == "qq" and payload.get("chat_type") != "group":
+        from agent.gateway import qq
+
+        stream = qq.create_private_text_stream(
+            payload.get("platform_user_id") or "",
+            channel_id=payload.get("channel_id") or "",
+            message_id=payload.get("message_id"),
+            message_format=payload.get("message_format"),
+        )
+        response: AgentResponse | None = None
+        try:
+            async for kind, value in token_iter:
+                if kind == "token":
+                    stream.push(str(value or ""))
+                elif kind == "final" and isinstance(value, AgentResponse):
+                    response = value
+            response = response or AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
+            reply_text = _fix_loose_bold(response.text or "")
+            if not reply_text.strip():
+                reply_text = "给你～" if response.files else "嗯~在的，你说～"
+            await stream.finish(reply_text)
+            return stream.has_sent(), response, reply_text
+        except Exception:
+            response = response or AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
+            reply_text = _fix_loose_bold(response.text or "")
+            if not reply_text.strip():
+                reply_text = "给你～" if response.files else "嗯~在的，你说～"
+            # 首帧前失败才允许普通发送；已有部分帧时保留客户端已经看到的内容，
+            # 不能再补发整段文本制造重复回复。
+            return stream.has_sent(), response, reply_text
+
     stream_sent, response = await send_stream(payload, token_iter)
     if response is None:
         response = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)

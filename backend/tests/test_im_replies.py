@@ -52,6 +52,75 @@ async def test_qq_private_reply_uses_sender_target(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_qq_private_stream_uses_replace_frames_and_stream_id(monkeypatch):
+    from agent.gateway import qq
+    from agent.im.replies import send_stream_with_fallback
+
+    requests = []
+
+    async def fake_request(channel_id, method, path, *, json_body=None, **kwargs):
+        requests.append(json_body)
+        return {"stream_msg_id": "stream-1"}
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+    monkeypatch.setattr(qq, "_next_stream_seq", lambda _channel: _stream_seq())
+
+    async def events():
+        yield ("token", "你好")
+        yield ("token", "，世界")
+        from agent.models import AgentResponse
+        yield ("final", AgentResponse(text="你好，世界", session_id=1))
+
+    async def _stream_seq():
+        return 42
+
+    sent, response, text = await send_stream_with_fallback({
+        "platform": "qq", "chat_type": "c2c", "channel_id": "bot-1",
+        "platform_user_id": "user-1", "message_id": "incoming-1",
+        "message_format": "compat",
+    }, events())
+
+    assert sent is True
+    assert response.text == "你好，世界"
+    assert text == "你好，世界"
+    assert [item["input_state"] for item in requests] == [1, 10]
+    assert all(item["input_mode"] == "replace" for item in requests)
+    assert [item["index"] for item in requests] == [0, 1]
+    assert requests[0]["content_raw"] == requests[1]["content_raw"] == "你好，世界"
+    assert "stream_msg_id" not in requests[0]
+    assert requests[1]["stream_msg_id"] == "stream-1"
+    assert requests[0]["msg_seq"] == requests[1]["msg_seq"] == 42
+
+
+@pytest.mark.asyncio
+async def test_qq_private_stream_first_frame_failure_falls_back_once(monkeypatch):
+    from agent.gateway import qq
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    async def failed_request(*args, **kwargs):
+        raise qq.QQAPIError("POST", "/stream_messages", 400, {"code": 40001})
+
+    fallback = []
+    monkeypatch.setattr(qq, "_qq_request", failed_request)
+    monkeypatch.setattr(replies, "send_text", lambda payload, text: fallback.append(text))
+
+    async def events():
+        yield ("token", "失败前的内容")
+        yield ("final", AgentResponse(text="失败前的内容", session_id=1))
+
+    sent, _response, text = await replies.send_stream_with_fallback({
+        "platform": "qq", "chat_type": "c2c", "channel_id": "bot-1",
+        "platform_user_id": "user-1", "message_id": "incoming-1",
+    }, events())
+
+    assert sent is False
+    assert text == "失败前的内容"
+    # 发送器本身不重复发送；worker 会在 sent=False 时统一走一次普通回复。
+    assert fallback == []
+
+
+@pytest.mark.asyncio
 async def test_unknown_reply_target_does_not_raise(capsys):
     from agent.im.replies import send_text
 

@@ -264,6 +264,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             static_prompt, dynamic_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
+                notes=data.notes,
                 skills=profile.skills, style_prefs=data.style_prefs,
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),
@@ -584,6 +585,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             static_prompt, dynamic_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
+                notes=data.notes,
                 skills=profile.skills, style_prefs=data.style_prefs,
                 source=getattr(req, "source", None), im_channels=data.im_channels,
                 im_message_format=getattr(req, "im_message_format", None),

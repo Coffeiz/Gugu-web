@@ -753,8 +753,15 @@ async def dispatch_im_message(payload: dict):
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
+    qq_private_streaming = False
+    if platform == "qq" and payload.get("chat_type") == "c2c":
+        from agent.im.message_format import resolve_private_streaming_enabled
+        qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
     try:
         if platform == "feishu":
+            token_iter = agent_loop.run_stream(req)
+            _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
+        elif qq_private_streaming:
             token_iter = agent_loop.run_stream(req)
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         else:
@@ -816,7 +823,13 @@ async def dispatch_im_message(payload: dict):
         await finalize_im_response(platform, puid, True, "")
         return resp
 
-    if platform != "feishu" or resp.files:
+    if platform == "qq" and qq_private_streaming and _stream_sent:
+        if resp.files:
+            from agent.im.files import send_files
+            file_result = await send_files(payload, resp.files)
+            if file_result.failed:
+                await send_text(payload, file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。")
+    elif platform != "feishu" or resp.files:
         reply_text = await send_agent_response(payload, resp)
 
     trace.finish_run("success", reply_text)

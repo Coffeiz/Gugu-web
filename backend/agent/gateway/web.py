@@ -160,6 +160,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             user_tz = await loaders.load_user_tz(db, user_id)
             projects = await loaders.load_projects(db, user_id)
             events = await loaders.load_events(db, user_id, tz=user_tz)
+            notes = await loaders.load_recent_notes(db, user_id)
             files_overview = await loaders.load_files_overview(db, user_id)
             style_prefs = await loaders.load_style_prefs(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
@@ -167,6 +168,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             static_prompt, dynamic_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 projects, events, memory, files_overview,
+                notes=notes,
                 skills=profile.skills, style_prefs=style_prefs, source="web",
                 im_channels=im_channels, user_msg=req.message, user_tz=user_tz,
             )

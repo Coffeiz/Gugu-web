@@ -391,6 +391,20 @@
         </div>
 
         <div class="behavior-grid">
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>Shell 工具总开关</span>
+              <span class="behavior-desc">默认关闭。开启后仅允许本地 Admin 进入后续 Shell 能力；用户开关、工作区和沙盒仍需分别满足。</span>
+            </div>
+            <button
+              class="toggle-switch"
+              :class="{ on: agentDraft.shell_enabled }"
+              @click="agentDraft.shell_enabled = !agentDraft.shell_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
           <div class="behavior-item">
             <div class="behavior-label">
               <span>记忆系统</span>

@@ -601,6 +601,7 @@ class PreferencesResponse(CamelModel):
     replyLength:       Optional[str] = None   # medium / short / detailed
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
     defaultView:       str = "projects"       # 应用打开时的默认入口
+    shellEnabled:      bool = False            # 用户级开关，仍受管理员全局开关约束
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -609,3 +610,23 @@ class PreferencesUpdate(CamelModel):
     replyLength:       Optional[str] = None
     pmStagesExpanded:  Optional[bool] = None
     defaultView:       Optional[str] = None
+    shellEnabled:      Optional[bool] = None
+
+
+class WorkspaceCreate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["folder", "project"] = "folder"
+    folderId: Optional[int] = None
+    projectId: Optional[int] = None
+    enabled: bool = True
+
+
+class WorkspaceResponse(CamelModel):
+    id: int
+    name: str
+    kind: str
+    folderId: Optional[int] = None
+    projectId: Optional[int] = None
+    enabled: bool
+    isDefault: bool
+    boundSessionCount: int = 0

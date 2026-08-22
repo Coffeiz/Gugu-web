@@ -335,6 +335,11 @@ async def reuse_attachment(
             await db.rollback()
             return None
         await _lock_storage_key(db, user_id, source.storage_key)
+        # DB 行可能还在，但物理对象已经被外部清理或存储后端丢失；这种情况
+        # 必须按未命中处理，让 IM 入口回退到带 URL 的正常下载流程，不能制造坏引用。
+        if not await get_storage().exists(source.storage_key):
+            await db.rollback()
+            return None
         meta = _row_to_meta(source)
         attach_id = uuid.uuid4().hex[:16]
         merged_extra = dict(source.extra or {})

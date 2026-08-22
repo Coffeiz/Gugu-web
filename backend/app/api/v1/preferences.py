@@ -32,6 +32,7 @@ def _to_response(data: dict) -> PreferencesResponse:
         replyLength=data.get("reply_length"),
         pmStagesExpanded=data.get("pm_stages_expanded", False),
         defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
+        shellEnabled=bool(data.get("shell_enabled", False)),
     )
 
 
@@ -74,6 +75,8 @@ async def update_preferences(
         data["pm_stages_expanded"] = body.pmStagesExpanded
     if body.defaultView is not None and body.defaultView in _DEFAULT_VIEWS:
         data["default_view"] = body.defaultView
+    if body.shellEnabled is not None:
+        data["shell_enabled"] = body.shellEnabled
     prefs.data = data
     await db.commit()
     if style_changed:

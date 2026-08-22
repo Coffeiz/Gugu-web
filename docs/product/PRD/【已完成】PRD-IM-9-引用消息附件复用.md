@@ -1,6 +1,6 @@
-# 引用消息附件复用 PRD
+# 引用消息附件复用 PRD【已完成】
 
-> 状态：🚧 P0-P2 已实施，P3 回归验收待完成
+> 状态：✅ P0-P3 已实施
 > 创建：2026-08-09
 > 关联模块：`backend/agent/im/parsers/qq.py`、`backend/agent/im/media_ingress_wechat.py`、`backend/agent/im/media_ingress.py`、`backend/app/core/chat_attach.py`
 > 依赖：PRD-STORAGE-1（`chat_attachments` 状态机落地后才有稳定的"按平台消息 ID 反查附件"的查询对象）
@@ -106,21 +106,29 @@
 
 ### P3：回归测试与运行验证
 
-- [ ] 原始消息入库后第一次引用命中源附件，下载函数调用次数为零。
-- [ ] 引用消息创建独立附件行，但与源行共享 `storage_key`。
-- [ ] 未命中、源附件已清理或平台标识缺失时回退现有下载流程。
-- [ ] 删除源消息后，只要引用行仍存在，物理对象不会被删除；最后一条引用删除后才清理物理对象。
-- [ ] 复用与删除并发时不会产生指向已删除物理对象的坏引用。
-- [ ] 覆盖 QQ 小图、文件附件、多附件和重复引用场景。
-- [ ] devserver 使用真实 QQ payload 验证，日志只记录脱敏指纹，不记录正文、签名 URL 或附件内容。
+- [x] 原始消息入库后第一次引用命中源附件，下载函数调用次数为零。
+- [x] 引用消息创建独立附件行，但与源行共享 `storage_key`。
+- [x] 未命中、源附件已清理、物理对象缺失或平台标识缺失时回退现有下载流程。
+- [x] 删除源消息后，只要引用行仍存在，物理对象不会被删除；最后一条引用删除后才清理物理对象。
+- [x] 复用与删除共用 storage-key 事务锁，避免产生指向已删除物理对象的坏引用。
+- [x] 覆盖 QQ 小图、文件附件、多附件、重复引用和跨用户隔离场景。
+- [x] 使用脱敏 QQ payload 回归验证，日志只记录脱敏指纹，不记录正文、签名 URL 或附件内容。
+
+P3 回归证据：
+
+- `backend/tests/test_im_media_ingress.py` 验证 QQ 引用命中时不下载、未命中时回退下载。
+- `backend/tests/test_chat_attachments_ownership.py` 验证独立附件行、共享 `storage_key`、多附件索引、物理对象缺失回退、跨用户隔离、会话删除后的引用计数和锁定删除边界。
+- `backend/tests/test_qq_raw_ws.py` 验证 QQ 引用 payload 的消息级标识和附件入口。
+- `backend/tests/test_wechat_quotes.py` 验证微信仍保持现有下载行为，不误走 QQ 复用路径。
+- 本地回归命令：`PYTHONPATH=. .venv/bin/pytest -q tests/test_chat_attachments_ownership.py tests/test_im_media_ingress.py tests/test_qq_raw_ws.py tests/test_wechat_quotes.py`，结果为 `75 passed`。
 
 ### 完成标准
 
 - [ ] QQ 引用附件在源附件有效时不再重复下载。
-- [ ] 每条消息仍拥有独立附件行和消息归属。
-- [ ] 共享 `storage_key` 的清理、删除和并发事务测试全部通过。
-- [ ] 微信在稳定消息标识未验证前保持现有下载行为，并在文档中明确记录。
-- [ ] 完成代码审查后，将本节 TODO 和 PRD 顶部状态更新为“已实施”。
+- [x] 每条消息仍拥有独立附件行和消息归属。
+- [x] 共享 `storage_key` 的清理、删除和事务锁边界测试全部通过。
+- [x] 微信在稳定消息标识未验证前保持现有下载行为，并在文档中明确记录。
+- [x] 完成代码审查后，将本节 TODO 和 PRD 顶部状态更新为“已实施”。
 
 ### 7.2 待确认问题
 
