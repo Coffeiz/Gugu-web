@@ -43,8 +43,8 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
 
     path, body = calls[0]
     assert path == "/v2/users/ou_1/messages"
-    assert body["msg_type"] == 0
-    assert body["content"] == "请选择"
+    assert body["msg_type"] == 2
+    assert body["markdown"] == {"content": "请选择"}
     button = body["keyboard"]["content"]["rows"][0]["buttons"][0]
     assert button["action"]["type"] == 1
     assert button["action"]["data"] == "17:opaque-token"
@@ -52,7 +52,7 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     assert "session_id" not in repr(body)
 
 
-async def test_post_keyboard_always_uses_text_with_keyboard(monkeypatch):
+async def test_post_keyboard_uses_markdown_with_keyboard(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []
 
@@ -66,9 +66,9 @@ async def test_post_keyboard_always_uses_text_with_keyboard(monkeypatch):
         message_format="smart",
     )
 
-    assert calls[0]["msg_type"] == 0
-    assert calls[0]["content"] == "请选择"
-    assert "markdown" not in calls[0]
+    assert calls[0]["msg_type"] == 2
+    assert calls[0]["markdown"] == {"content": "请选择"}
+    assert "content" not in calls[0]
 
 
 async def test_post_compat_mode_sends_plain_text(monkeypatch):

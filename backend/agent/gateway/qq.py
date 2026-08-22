@@ -1045,7 +1045,7 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 # type=0 + specify_user_ids 的组合兼容性不稳定。
                 "permission": {"type": 2},
                 "data": item["action_data"],
-                "enter": False,
+                "unsupport_tips": "请回复选项序号或选项文字",
             },
         })
     rows = [{"buttons": buttons[index:index + 5]} for index in range(0, len(buttons), 5)]
@@ -1058,13 +1058,12 @@ async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str
     """发送带文本说明和 Inline Keyboard 的 QQ 消息。"""
     target = "groups" if group else "users"
     path = f"/v2/{target}/{target_id}/messages"
-    # QQ Inline Keyboard 必须和普通文本（msg_type=0）一起发送。
-    # 这里不能沿用会话的 smart/markdown 消息策略：QQ API 虽可能接受
-    # msg_type=2 + keyboard，但客户端不会渲染按钮，只显示正文；普通回复
-    # 仍由 _post/_post_group 按 message_format 选择 Markdown。
+    # QQ Inline Keyboard 使用 Markdown 消息类型；这是 QQNT/QwenPaw
+    # 实际可渲染按钮的组合。普通回复仍由 _post/_post_group 按
+    # message_format 选择消息类型。
     body = {
-        "msg_type": 0,
-        "content": text,
+        "msg_type": 2,
+        "markdown": {"content": text},
         "keyboard": _keyboard_wire_payload(prompt),
         "msg_seq": await _next_seq(msg_id),
     }
