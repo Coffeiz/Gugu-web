@@ -28,6 +28,9 @@ def test_collector_and_query_api(tmp_path, monkeypatch):
     assert runs[0]["id"] == "run-api-1"
     run = client.get("/api/runs/run-api-1").json()
     assert run["output"]["text"] == "world"
+    summary = client.get("/api/runs/run-api-1?include_spans=false").json()
+    assert "spans" not in summary
+    assert client.get("/api/runs/run-api-1/spans").json()["items"] == []
 
 
 def test_collector_rejects_incomplete_payload(tmp_path, monkeypatch):

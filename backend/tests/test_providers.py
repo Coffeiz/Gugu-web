@@ -8,7 +8,7 @@
 """
 from types import SimpleNamespace
 
-from agent.providers import adapter_for
+from agent.providers import adapter_for, capability_snapshot
 
 
 def _ai(provider: str = "", model: str = "", base_url: str = "") -> SimpleNamespace:
@@ -68,6 +68,48 @@ def test_adapter_for_deepseek_by_base_url_fallback():
     assert a.name == "deepseek"
 
 
+def test_adapter_for_ollama_local_and_cloud_defaults():
+    adapter = adapter_for(_ai(provider="ollama", model="qwen3:8b"))
+    assert adapter.name == "ollama"
+    assert adapter.api_format == "openai"
+    assert adapter.resolve_base_url(SimpleNamespace(provider="ollama", base_url="")) == \
+        "http://127.0.0.1:11434/api"
+    assert adapter.resolve_base_url(SimpleNamespace(provider="ollama", base_url="", ollama_mode="cloud")) == \
+        "https://ollama.com/api"
+
+
+def test_ollama_openai_compatibility_keeps_v1_endpoint():
+    adapter = adapter_for(_ai(provider="ollama"))
+    assert adapter.resolve_base_url(SimpleNamespace(
+        provider="ollama", base_url="", ollama_mode="local", ollama_api_mode="openai")) == \
+        "http://127.0.0.1:11434/v1"
+
+
+def test_ollama_native_request_builders():
+    adapter = adapter_for(_ai(provider="ollama"))
+    ai = SimpleNamespace(provider="ollama", model="qwen3:8b", api_key="", ollama_api_mode="native")
+    assert adapter.diagnostic_request(ai)["path"] == "/chat"
+    assert adapter.models_request(ai)["path"] == "/tags"
+
+
+def test_adapter_for_ollama_by_local_base_url():
+    assert adapter_for(_ai(base_url="http://127.0.0.1:11434/v1")).name == "ollama"
+
+
+def test_ollama_openai_compatibility_parameters():
+    adapter = adapter_for(_ai(provider="ollama"))
+    assert adapter.build_thinking_params(SimpleNamespace(provider="ollama", thinking="disabled")) == {
+        "reasoning_effort": "none"}
+    assert adapter.build_thinking_params(SimpleNamespace(
+        provider="ollama", thinking="adaptive", reasoning_effort="high")) == {
+        "reasoning_effort": "high"}
+    assert adapter.build_thinking_params(SimpleNamespace(
+        provider="ollama", thinking="adaptive", reasoning_effort="unsupported")) == {
+        "reasoning_effort": "medium"}
+    assert adapter.build_structured_output(SimpleNamespace(provider="ollama")) == {
+        "response_format": {"type": "json_object"}}
+
+
 def test_adapter_for_unknown_provider_falls_back_to_default():
     """未命中任何已知 provider（既不是 minimax/mimo/deepseek，base_url 也没有对应关键字）
     → 退回 default 适配器。**关键断言**：transient_exceptions 为空——没有把 MiniMax 的
@@ -83,3 +125,89 @@ def test_adapter_for_truly_unknown_provider_also_falls_back_to_default():
     assert a.name == "unknown"
     assert not a.supports_active_cache("")
     assert a.transient_exceptions == ()
+
+
+def test_provider_capabilities_and_request_builders_are_model_scoped():
+    mimo = adapter_for(_ai(provider="mimo"))
+    deepseek = adapter_for(_ai(provider="deepseek"))
+    qwen = adapter_for(_ai(provider="qwen", model="qwen3.5-flash"))
+
+    assert mimo.capabilities().structured_json
+    assert mimo.build_structured_output(_ai(provider="mimo")) == {
+        "response_format": {"type": "json_object"}}
+    assert deepseek.build_thinking_params(SimpleNamespace(provider="deepseek", thinking="disabled")) == {
+        "thinking": {"type": "disabled"}}
+    assert qwen.build_thinking_params(SimpleNamespace(provider="qwen", thinking="disabled")) == {}
+
+
+def test_provider_media_and_stream_capabilities_are_centralized():
+    mimo = adapter_for(_ai(provider="mimo"))
+    minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3"))
+
+    assert "mp3" in mimo.audio_native_exts()
+    assert minimax.supports_video("MiniMax-M3")
+    assert minimax.stream_sanitize_markers() == ("]<]minimax", "[e~[")
+
+
+def test_capability_matrix_for_supported_providers_is_explicit():
+    cases = {
+        "anthropic": {"api_format": "anthropic", "cache_mode": "active", "tools": True},
+        "qwen": {"api_format": "openai", "cache_mode": "active", "thinking": False,
+                 "structured_json": False, "tools": True},
+        "minimax": {"api_format": "anthropic", "cache_mode": "active", "tools": True},
+        "mimo": {"api_format": "openai", "cache_mode": "none", "thinking": True,
+                 "structured_json": True, "audio": True, "video": True},
+        "deepseek": {"api_format": "openai", "cache_mode": "active", "thinking": True,
+                     "structured_json": True, "tools": True},
+        "ollama": {"api_format": "openai", "cache_mode": "none", "tools": True},
+    }
+    for provider, expected in cases.items():
+        actual = capability_snapshot(_ai(provider=provider, model="MiniMax-M3" if provider == "minimax" else ""))
+        for key, value in expected.items():
+            assert actual[key] == value, (provider, key, actual)
+
+
+def test_capability_snapshot_keeps_probe_separate_and_contains_no_credentials():
+    ai = SimpleNamespace(provider="mimo", model="mimo-v2", api_key="secret-key")
+    snapshot = capability_snapshot(ai)
+    assert snapshot["provider"] == "mimo"
+    assert snapshot["model"] == "mimo-v2"
+    assert "api_key" not in snapshot
+    assert "probe" not in snapshot
+
+
+def test_request_snapshots_do_not_add_unsupported_provider_parameters():
+    qwen = adapter_for(_ai(provider="qwen"))
+    unknown = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
+    ai = SimpleNamespace(provider="qwen", thinking="adaptive")
+    assert qwen.build_thinking_params(ai) == {}
+    assert qwen.build_structured_output(ai) == {}
+    assert unknown.build_thinking_params(ai) == {}
+    assert unknown.build_structured_output(ai) == {}
+    assert unknown.build_tool_params(ai, []) == {}
+    assert unknown.build_tool_params(ai, [{"type": "function", "function": {"name": "ping"}}]) == {
+        "tools": [{"type": "function", "function": {"name": "ping"}}],
+        "tool_choice": "auto",
+    }
+
+
+def test_diagnostic_request_builder_keeps_protocol_and_auth_provider_local():
+    mimo = adapter_for(SimpleNamespace(provider="mimo"))
+    anthropic = adapter_for(SimpleNamespace(provider="anthropic"))
+    mimo_req = mimo.diagnostic_request(SimpleNamespace(provider="mimo", model="mimo-v2", api_key="k"))
+    anthropic_req = anthropic.diagnostic_request(
+        SimpleNamespace(provider="anthropic", model="claude-test", api_key="k"))
+    assert mimo_req["path"] == "/chat/completions"
+    assert mimo_req["headers"] == {"content-type": "application/json", "api-key": "k"}
+    assert anthropic_req["path"] == "/messages"
+    assert anthropic_req["headers"]["x-api-key"] == "k"
+    assert anthropic_req["payload"]["model"] == "claude-test"
+
+
+def test_models_request_builder_uses_provider_protocol_path():
+    anthropic = adapter_for(SimpleNamespace(provider="anthropic"))
+    openai = adapter_for(SimpleNamespace(provider="qwen"))
+    assert anthropic.models_request(SimpleNamespace(
+        provider="anthropic", base_url="https://api.anthropic.com", api_key="k"))["path"] == "/v1/models"
+    assert openai.models_request(SimpleNamespace(
+        provider="qwen", base_url="https://dashscope.example/v1", api_key="k"))["path"] == "/models"

@@ -28,7 +28,6 @@ from agent.llm import genstream
 from agent import quota
 from agent.context import builder, loaders, tokens, session_snapshot, message_assembly
 from agent.core import LLMRunner
-from agent.llm.llm_select import is_minimax
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
 
@@ -41,15 +40,14 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         f"用户：{user_msg[:150]}\n咕咕：{ai_reply[:300]}"
     )
     from agent import providers
-    from agent.llm.llm_select import _is_mimo
-    is_mimo = _is_mimo(settings.ai)
+    provider_adapter = providers.adapter_for(settings.ai)
     try:
         if use_anthropic:
             import httpx
             client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
             # mimo 默认开思考，30 token 会被思考块吃光、content[0] 是 thinking 块取不到 .text → 标题空。
             # 显式关思考（与正文同口径），并从 content 里挑真正的 text 块，别按下标取。
-            extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
+            extra = provider_adapter.build_thinking_params(settings.ai)
             resp = await client.messages.create(
                 model=settings.ai.model,
                 max_tokens=40,
@@ -61,7 +59,8 @@ async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic:
         else:
             import httpx
             client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
-            extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
+            thinking = provider_adapter.build_thinking_params(settings.ai)
+            extra = {"extra_body": thinking} if thinking else {}
             resp = await client.chat.completions.create(
                 model=settings.ai.model,
                 messages=[{"role": "user", "content": prompt}],
@@ -82,13 +81,12 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         f"{convo[:1500]}"
     )
     from agent import providers
-    from agent.llm.llm_select import _is_mimo
-    is_mimo = _is_mimo(settings.ai)
+    provider_adapter = providers.adapter_for(settings.ai)
     try:
         if use_anthropic:
             import httpx
             client = providers.build_anthropic_client(settings.ai, httpx.Timeout(10.0))
-            extra = {"thinking": {"type": "disabled"}} if is_mimo else {}
+            extra = provider_adapter.build_thinking_params(settings.ai)
             resp = await client.messages.create(
                 model=settings.ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
@@ -97,7 +95,8 @@ async def _generate_summary(convo: str, settings, use_anthropic: bool) -> str:
         else:
             import httpx
             client = providers.build_openai_client(settings.ai, httpx.Timeout(10.0))
-            extra = {"extra_body": {"thinking": {"type": "disabled"}}} if is_mimo else {}
+            thinking = provider_adapter.build_thinking_params(settings.ai)
+            extra = {"extra_body": thinking} if thinking else {}
             resp = await client.chat.completions.create(
                 model=settings.ai.model, max_tokens=80,
                 messages=[{"role": "user", "content": prompt}], **extra)
@@ -165,14 +164,14 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             style_prefs = await loaders.load_style_prefs(db, user_id)
             memory = await loaders.load_memory(user_id, req.message) if profile.memory_enabled else {}
             im_channels = await loaders.load_im_channels(user_id)
-            static_prompt, dynamic_context, _ = builder.build_split(
+            static_prompt, snapshot_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 projects, events, memory, files_overview,
                 notes=notes,
                 skills=profile.skills, style_prefs=style_prefs, source="web",
                 im_channels=im_channels, user_msg=req.message, user_tz=user_tz,
             )
-            return {"system_prompt": static_prompt, "dynamic_context": dynamic_context,
+            return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": "web",
                                       "profile": profile.prompt_file},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
@@ -319,29 +318,23 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     await genstream.begin(session_id)
 
     system_prompt = snapshot["system_prompt"]
-    dynamic_context = snapshot["dynamic_context"]
+    snapshot_context = snapshot["snapshot_context"]
     now_str = session_snapshot.current_time_text(user_tz)
     dynamic_tail = builder.dynamic_tail(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
 
-    # 组装动态上下文注入块（放入 messages，不进 system，保持 system prefix 跨 call 一致）
-    _dynamic_extra_parts = []
-    if dynamic_context:
-        _dynamic_extra_parts.append(dynamic_context)
+    # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
+    _snapshot_injection = (
+        session_snapshot.reminder_message(snapshot_context)
+        if snapshot_context else None
+    )
 
     # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
     from agent.im.context_loader import format_history_content
     from agent.context.history import build_history_parts
     _summary, history = compress_conv.pop_summary(history)
-
-    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容。
-    # 必须放在 history/current message 之后，避免动态变化截断缓存前缀。
-    _ctx_injection = None
-    if _dynamic_extra_parts:
-        _ctx_content = "\n\n".join(_dynamic_extra_parts)
-        _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
     # 默认问候已经在新会话创建时作为 assistant 历史消息落库，并会随 history
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
@@ -364,9 +357,12 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     try:
         fixed_parts = []
+        if _snapshot_injection:
+            fixed_parts.append(_snapshot_injection)
         if _summary:
             fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
-        history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
+        history_parts = build_history_parts(
+            history, req, use_anthropic=use_anthropic, user_tz=user_tz)
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
             str(card.get("kind") or "").lower() == "image" for card in attach_cards
         )
@@ -377,9 +373,11 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             if image_only and user_message is not None
             else user_content
         )
-        tail_parts = ([_ctx_injection] if _ctx_injection else [])
+        tail_parts = []
+        message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+        if message_time:
+            tail_parts.append(message_time)
         tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
-        tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         if use_anthropic:
             assembly = message_assembly.build_messages(
                 fixed_parts=fixed_parts, history=history_parts,
@@ -388,7 +386,10 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
             anthr_messages = assembly
             anthr_initial_len = len(assembly.conversation)
-            gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True)
+            gen = runner.run(
+                user_id, system_prompt, anthr_messages,
+                use_anthropic=True, session_id=session_id,
+            )
         else:
             oa_messages = message_assembly.build_messages(
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
@@ -396,7 +397,10 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 current_user={"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media)},
                 dynamic_tail=tail_parts)
             oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
-            gen = runner.run(user_id, None, oa_messages, use_anthropic=False)
+            gen = runner.run(
+                user_id, None, oa_messages,
+                use_anthropic=False, session_id=session_id,
+            )
 
         # 跨轮去重（流式版的 _collect 去重）：MiniMax 多轮工具调用常把上一轮文本整段重述，
         # 流式直接追加会重复显示（口语 ~ 叠成 ~~ 还会被 GFM 渲染成删除线）。这里按住本轮开头与
@@ -427,8 +431,9 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 full_reply += out
                 await genstream.publish(session_id, {"type": "token", "content": out})
 
-        minimax_stream = is_minimax(settings.ai)
-        san = sanitize.StreamSanitizer(minimax=minimax_stream)
+        from agent import providers
+        provider_adapter = providers.adapter_for(settings.ai)
+        san = sanitize.StreamSanitizer(adapter=provider_adapter)
         async for evt_str in gen:
             try:
                 evt = json.loads(evt_str[6:])
@@ -439,7 +444,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 last_round = round_buf            # 上一轮完整文本
                 round_buf  = ""
                 dedup      = bool(last_round)     # 有上一轮才需去重
-                san = sanitize.StreamSanitizer(minimax=minimax_stream)  # 新一轮重置，防止上轮 _cut 污染
+                san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置，防止上轮 _cut 污染
                 await genstream.publish(session_id, {"type": "_new_round"})
                 continue
             if etype == "_usage":

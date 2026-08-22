@@ -152,15 +152,49 @@
               </div>
             </div>
 
+            <div v-if="editTarget.provider === 'ollama'" class="modal-field">
+              <label>连接方式</label>
+              <div class="toggle-group" style="margin-bottom:0">
+                <button type="button" class="toggle-btn"
+                  :class="{ active: (editTarget.ollama_mode || 'local') === 'local' }"
+                  @click="setOllamaMode('local')">本地 Ollama</button>
+                <button type="button" class="toggle-btn"
+                  :class="{ active: editTarget.ollama_mode === 'cloud' }"
+                  @click="setOllamaMode('cloud')">Ollama Cloud</button>
+              </div>
+              <div class="modal-hint">
+                本地默认连接当前后端所在机器的 Ollama；云端需要填写 Ollama Cloud API Key。
+              </div>
+              <label style="margin-top:10px">接口模式</label>
+              <div class="toggle-group" style="margin-bottom:0">
+                <button type="button" class="toggle-btn"
+                  :class="{ active: (editTarget.ollama_api_mode || 'native') === 'native' }"
+                  @click="editTarget.ollama_api_mode = 'native'">Ollama 原生</button>
+                <button type="button" class="toggle-btn"
+                  :class="{ active: editTarget.ollama_api_mode === 'openai' }"
+                  @click="editTarget.ollama_api_mode = 'openai'">OpenAI 兼容</button>
+              </div>
+              <div class="modal-hint">
+                原生模式使用 <code>/api/chat</code>，支持原生思考、工具调用和模型驻留；兼容模式使用 <code>/v1</code>。
+              </div>
+              <div v-if="(editTarget.ollama_api_mode || 'native') === 'native'" class="modal-field">
+                <label>模型驻留</label>
+                <input v-model="editTarget.ollama_keep_alive" class="modal-input" placeholder="5m" />
+              </div>
+            </div>
+
             <div class="modal-field">
-              <label>API Key</label>
+              <label>{{ editTarget.provider === 'ollama' && (editTarget.ollama_mode || 'local') === 'local' ? 'API Key（可选）' : 'API Key' }}</label>
               <input v-model="editTarget.api_key" type="password" autocomplete="new-password"
-                placeholder="留空表示不修改" class="modal-input" />
+                :placeholder="editTarget.provider === 'ollama' && (editTarget.ollama_mode || 'local') === 'local' ? '本地 Ollama 通常留空' : '留空表示不修改'" class="modal-input" />
             </div>
 
             <div class="modal-field">
               <label>Base URL</label>
-              <input v-model="editTarget.base_url" placeholder="https://…" class="modal-input" />
+              <input v-model="editTarget.base_url" :placeholder="editTarget.provider === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://…'" class="modal-input" />
+              <div v-if="editTarget.provider === 'ollama'" class="modal-hint">
+                本地：<code>http://127.0.0.1:11434/v1</code>；云端：<code>https://ollama.com/v1</code>。地址指向运行 Gugu 后端的机器。
+              </div>
               <div v-if="editTarget.provider === 'qwen'" class="modal-hint">
                 百炼建议使用业务空间专属域名：<code>https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</code>（WorkspaceId 在控制台业务空间详情页查看）；通用域名 dashscope.aliyuncs.com 仍可用
               </div>
@@ -1463,6 +1497,7 @@ const PROVIDERS = [
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-chat' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
   { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },
+  { key: 'ollama',    label: 'Ollama',      base_url: 'http://127.0.0.1:11434/v1',                          model: 'qwen3:8b' },
 ]
 
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
@@ -1587,7 +1622,7 @@ async function togglePool(p: any) {
 
 function openNewPreset() {
   editIsNew.value  = true
-  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_video: false, vision_audio: false, api_format: '' }
+  editTarget.value = { name: '', provider: 'openai', api_key: '', base_url: PROVIDERS[0].base_url, model: PROVIDERS[0].model, max_tokens: 4000, temperature: 0.7, context_tokens: 120000, thinking: 'disabled', reasoning_effort: '', vision: false, vision_video: false, vision_audio: false, api_format: '', ollama_mode: 'local', ollama_api_mode: 'native', ollama_keep_alive: '5m' }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -1596,7 +1631,7 @@ function openNewPreset() {
 
 function openEditPreset(p: any) {
   editIsNew.value  = false
-  editTarget.value = { ...p, api_key: '' }
+  editTarget.value = { ...p, api_key: '', ollama_mode: p.ollama_mode || 'local', ollama_api_mode: p.ollama_api_mode || 'native', ollama_keep_alive: p.ollama_keep_alive || '5m' }
   editError.value  = ''
   modelOptions.value = []
   modelListError.value = ''
@@ -1655,6 +1690,22 @@ function setEditProvider(key: string) {
   editTarget.value.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
   editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
+  editTarget.value.ollama_mode = key === 'ollama' ? 'local' : (editTarget.value.ollama_mode || 'local')
+  if (key === 'ollama') {
+    editTarget.value.ollama_api_mode = editTarget.value.ollama_api_mode || 'native'
+    editTarget.value.ollama_keep_alive = editTarget.value.ollama_keep_alive || '5m'
+  }
+  modelOptions.value = []
+  modelListError.value = ''
+}
+
+function setOllamaMode(mode: 'local' | 'cloud') {
+  if (!editTarget.value || editTarget.value.provider !== 'ollama') return
+  editTarget.value.ollama_mode = mode
+  editTarget.value.base_url = mode === 'cloud'
+    ? 'https://ollama.com/v1'
+    : 'http://127.0.0.1:11434/v1'
+  if (mode === 'local') editTarget.value.api_key = ''
   modelOptions.value = []
   modelListError.value = ''
 }

@@ -58,15 +58,41 @@ export async function listGuguSessions(): Promise<GuguSession[]> {
   return r.json()
 }
 
-export async function loadMessages(sessionId: number): Promise<ChatMessage[]> {
+export interface MessagePage {
+  messages: ChatMessage[]
+  hasMore: boolean
+  oldestId: number | null
+  newestId: number | null
+}
+
+export async function loadMessagePage(
+  sessionId: number,
+  options: { limit?: number; beforeId?: number; afterId?: number } = {},
+): Promise<MessagePage> {
   const cfg = loadBootstrap()
-  if (!cfg) return []
-  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages`, { headers: authHeaders() })
+  if (!cfg) return { messages: [], hasMore: false, oldestId: null, newestId: null }
+  const query = new URLSearchParams()
+  if (options.limit !== undefined) query.set('limit', String(options.limit))
+  if (options.beforeId !== undefined) query.set('before_id', String(options.beforeId))
+  if (options.afterId !== undefined) query.set('after_id', String(options.afterId))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  const r = await fetch(`${apiBase(cfg)}/agent/sessions/${sessionId}/messages${suffix}`, { headers: authHeaders() })
   if (!r.ok) throw new Error(`Gugu messages ${r.status}`)
   const data = await r.json()
-  return (data.messages ?? [])
-    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-    .map((m: any) => ({ id: m.id, role: m.role, content: m.content ?? '', createdAt: m.createdAt }))
+  const page = data.pagination ?? {}
+  return {
+    messages: (data.messages ?? [])
+      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+      .map((m: any) => ({ id: m.id, role: m.role, content: m.content ?? '', createdAt: m.createdAt })),
+    hasMore: Boolean(page.hasMore),
+    oldestId: page.oldestId ?? null,
+    newestId: page.newestId ?? null,
+  }
+}
+
+export async function loadMessages(sessionId: number): Promise<ChatMessage[]> {
+  const page = await loadMessagePage(sessionId)
+  return page.messages
 }
 
 export type StreamEvent = Record<string, any>

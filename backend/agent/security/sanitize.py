@@ -13,13 +13,10 @@ import re
 
 # `[e~[` 已由生产流日志的 hex 确认是字面泄漏（常见形态为 "```[e~["），不是前端渲染问题。
 # 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
-_MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
-
 class StreamSanitizer:
-    def __init__(self, minimax: bool = False):
-        # `[e~[` 和 `]<]minimax` 都只在 MiniMax 流中实测过。非 MiniMax 不保留这些前缀，
-        # 避免把其它模型正常提及的文本误当内部标记而延迟或截断。
-        self._markers = _MINIMAX_TRUNCATE_MARKERS if minimax else []
+    def __init__(self, adapter=None):
+        """按 provider adapter 提供的规则清洗；没有 adapter 时保持纯文本直通。"""
+        self._markers = list(adapter.stream_sanitize_markers()) if adapter is not None else []
         self._buf = ""
         self._cut = False
 

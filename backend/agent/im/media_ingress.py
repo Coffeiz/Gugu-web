@@ -172,10 +172,13 @@ async def ingest_qq_media(
                     continue
 
                 from app.core import media_transcode
+                from app.core.config import get_settings
+                from agent import providers
 
                 is_voice = False
                 if ext not in ("mp3", "wav", "flac", "m4a", "ogg"):
-                    converted = media_transcode.to_mimo_mp3(data, ext, mime)
+                    converted = media_transcode.to_provider_audio(
+                        data, ext, mime, providers.adapter_for(get_settings().ai))
                     if converted is not None:
                         data, ext, mime, name = converted, "mp3", "audio/mpeg", (name or "语音")
                         is_voice = True

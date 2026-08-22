@@ -56,6 +56,7 @@
       :on-send="() => send()" :on-stop-streaming="stopStreaming"
       :on-copy="copyMsg" :on-toggle-voice="toggleVoice"
       :on-open-file="openFileFromChat" :on-download="downloadFile" :on-action-click="onChatActionClick"
+      :on-interaction-select="onInteractionSelect"
       :on-prompt-connect="promptConnectIM"
       :on-rename-session="renameSession"
       :on-enter-expanded="enterExpanded" :on-exit-expanded="exitExpanded"
@@ -352,6 +353,21 @@ const {
   animateGreeting, clearStatus,
 } = conversation
 
+async function onInteractionSelect(_msg: ChatMessage, option: { id: string; label: string; token: string }) {
+  const promptId = _msg.interaction?.promptId
+  if (!promptId || !sessionId.value) return
+  try {
+    const token = getToken()
+    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ token: option.token }),
+    })
+    if (!res.ok) return
+    await send(option.label)
+  } catch { /* 交互失败不伪造已确认状态，用户仍可重试 */ }
+}
+
 watch(isTypingText, v => {
   if (v) { fabJumping.value = true; setTimeout(() => { fabJumping.value = false }, 350) }
 })
@@ -491,8 +507,10 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 /* 绝对定位的行不认祖先的 padding（top:0/left:0 是相对边框盒，不是内容盒），
    横向留白（原来 .chat-messages 的左右 padding）和「gap」只能各自摆在每一行自己身上，
    用 box-sizing:border-box 保证不溢出 100% 宽度。 */
-:deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
-.chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px 12px; }
+:deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px var(--space-xs); }
+.chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px var(--space-sm); }
+:deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row) { padding-bottom: var(--space-xs); }
+:deep(.msg.tool .tool-event-bubble) { margin: 0; }
 /* 状态指示气泡不在虚拟列表里，是紧跟在占位容器后面的普通流内元素，补回同款左右留白 + gap */
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
 .chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }

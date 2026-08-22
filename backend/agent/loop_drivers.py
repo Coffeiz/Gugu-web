@@ -220,22 +220,15 @@ class AnthropicDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.llm.llm_select import supports_anthropic_active_cache, _is_mimo
+        from agent.llm.llm_select import supports_anthropic_active_cache
         from agent.tools import registry
 
         tools = registry.anthropic_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        is_mimo = _is_mimo(ai)
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
-
-        thinking_val = getattr(ai, "thinking", "disabled")
-        if is_mimo:
-            # mimo 的 thinking 取值用文档确认的 disabled；想开就不传、用其默认（避免猜它的 enable 取值）
-            thinking_param = {"thinking": {"type": "disabled"}} if thinking_val != "adaptive" else {}
-        else:
-            thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
+        thinking_param = adapter.build_thinking_params(ai)
 
         # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
@@ -316,6 +309,8 @@ class _OpenAICtx:
     think_extra: dict
     model: str
     supports_active_cache: bool
+    adapter: Any
+    ai: Any
 
 
 @dataclass
@@ -373,7 +368,6 @@ class OpenAIDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
         adapter = providers.adapter_for(ai)
@@ -395,23 +389,14 @@ class OpenAIDriver:
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
-        # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
-        # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
-        # deepseek 则省下推理 token/延迟。思考开（adaptive）则不传、用厂商默认（两家默认都是开），靠
-        # 空回复兜底。仅对支持该参数的厂商发（qwen/openai 没这参数，传了可能报错）。
-        # 思考开（adaptive）时，DeepSeek 还可带「思考强度」reasoning_effort（high/max；思考模式下
-        # temperature 失效，effort 是唯一质量/成本旋钮）。mimo 文档无此参数，故只对 deepseek 发。
-        think_extra = {}
-        if supports_thinking_toggle(ai):
-            if getattr(ai, "thinking", "disabled") != "adaptive":
-                think_extra["thinking"] = {"type": "disabled"}
-            elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
-                think_extra["reasoning_effort"] = ai.reasoning_effort
+        think_extra = adapter.build_thinking_params(ai)
 
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             think_extra=think_extra, model=ai.model,
             supports_active_cache=supports_active_cache,
+            adapter=adapter,
+            ai=ai,
         )
         return client, ctx
 
@@ -419,16 +404,16 @@ class OpenAIDriver:
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         messages = _with_history_cache(messages) if ctx.supports_active_cache else messages
+        tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         stream = await client.chat.completions.create(
             model=ctx.model,
             messages=messages,
-            tools=ctx.tools,
-            tool_choice="auto",
             max_tokens=ctx.max_tokens,
             temperature=ctx.temperature,
             stream=True,
             stream_options={"include_usage": True},
             extra_body=ctx.think_extra,
+            **tool_params,
         )
         content = ""
         reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
@@ -534,4 +519,163 @@ class OpenAIDriver:
     def append_empty_retry(self, messages, result):
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
+        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Ollama 原生（/api/chat，NDJSON）
+# ══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class _OllamaCtx:
+    tools: list
+    max_tokens: int
+    temperature: float
+    model: str
+    think: bool | str
+    keep_alive: str
+    base_url: str
+
+
+@dataclass
+class _OllamaRaw:
+    content: str
+    thinking: str
+    tool_calls_payload: list
+
+
+def _ollama_messages(messages: list) -> list:
+    """移除其它 provider 的缓存标记，保留 Ollama 原生可理解的消息字段。"""
+    result = []
+    for message in messages:
+        clean = {}
+        for key in ("role", "content", "images", "tool_calls", "thinking"):
+            if key in message:
+                clean[key] = message[key]
+        # 历史里已有 OpenAI reasoning_content 时，转换为 Ollama 的 thinking 字段。
+        if "thinking" not in clean and message.get("reasoning_content"):
+            clean["thinking"] = message["reasoning_content"]
+        if isinstance(clean.get("content"), list):
+            text_parts = []
+            images = list(clean.get("images") or [])
+            for block in clean["content"]:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    if block.get("text"):
+                        text_parts.append(str(block["text"]))
+                elif isinstance(block, dict) and block.get("type") == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if isinstance(url, str) and "," in url and url.startswith("data:"):
+                        images.append(url.split(",", 1)[1])
+                else:
+                    text_parts.append(json.dumps(block, ensure_ascii=False))
+            clean["content"] = "\n".join(text_parts)
+            if images:
+                clean["images"] = images
+        result.append(clean)
+    return result
+
+
+class OllamaDriver:
+    """Ollama 原生聊天驱动，独立于 OpenAI SDK 的兼容通道。"""
+
+    api_format = "ollama"
+
+    def prepare(self, tool_names, ai, messages, system_text):
+        import httpx
+        from agent import providers
+        from agent.tools import registry
+
+        adapter = providers.adapter_for(ai)
+        if adapter.name != "ollama":
+            raise ValueError("OllamaDriver 只能用于 Ollama provider")
+        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+        client = providers.build_ollama_client(ai, timeout)
+        effort = getattr(ai, "reasoning_effort", "") or "medium"
+        think: bool | str = False if getattr(ai, "thinking", "disabled") != "adaptive" else effort
+        if think not in {False, "low", "medium", "high", "max"}:
+            think = "medium"
+        return client, _OllamaCtx(
+            tools=registry.openai_schemas(tool_names),
+            max_tokens=ai.max_tokens,
+            temperature=ai.temperature,
+            model=ai.model,
+            think=think,
+            keep_alive=getattr(ai, "ollama_keep_alive", "5m") or "5m",
+            base_url=adapter.resolve_native_base_url(ai),
+        )
+
+    async def run_round(self, client, ctx, messages):
+        payload = {
+            "model": ctx.model,
+            "messages": _ollama_messages(messages),
+            "stream": True,
+            "think": ctx.think,
+            "keep_alive": ctx.keep_alive,
+            "options": {"temperature": ctx.temperature, "num_predict": ctx.max_tokens},
+        }
+        if ctx.tools:
+            payload["tools"] = ctx.tools
+        content = ""
+        thinking = ""
+        tool_calls = []
+        async with client.stream("POST", f"{ctx.base_url}/chat", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                message = chunk.get("message") or {}
+                text = message.get("content") or ""
+                if text:
+                    content += text
+                    yield ("token", text)
+                thinking += message.get("thinking") or ""
+                for index, call in enumerate(message.get("tool_calls") or []):
+                    function = call.get("function") or {}
+                    args = function.get("arguments") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_calls.append({
+                        "id": call.get("id") or f"ollama-call-{index}",
+                        "type": "function",
+                        "function": {"name": function.get("name", ""), "arguments": args},
+                    })
+                if chunk.get("done"):
+                    usage_in = int(chunk.get("prompt_eval_count") or 0)
+                    usage_out = int(chunk.get("eval_count") or 0)
+                    break
+            else:
+                usage_in = usage_out = 0
+
+        normalized = [NormalizedToolCall(
+            id=call["id"], name=call["function"]["name"], input=call["function"]["arguments"]
+        ) for call in tool_calls if call["function"]["name"]]
+        yield ("done", RoundResult(
+            text=content, tool_calls=normalized, requires_tools=bool(normalized),
+            usage_in=usage_in, usage_out=usage_out,
+            raw=_OllamaRaw(content=content, thinking=thinking, tool_calls_payload=tool_calls),
+        ))
+
+    def _assistant(self, raw: _OllamaRaw, text: str) -> dict:
+        message = {"role": "assistant", "content": text}
+        if raw.thinking:
+            message["thinking"] = raw.thinking
+        if raw.tool_calls_payload:
+            message["tool_calls"] = raw.tool_calls_payload
+        return message
+
+    def append_tool_round(self, messages, result, dispatched):
+        messages.append(self._assistant(result.raw, result.raw.content))
+        for tc, res in dispatched:
+            content, _images = _openai_tool_result(res)
+            messages.append({"role": "tool", "content": content})
+
+    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
+        messages.append(self._assistant(result.raw, result.text or assistant_fallback))
+        messages.append({"role": "user", "content": next_content})
+
+    def append_empty_retry(self, messages, result):
         messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})

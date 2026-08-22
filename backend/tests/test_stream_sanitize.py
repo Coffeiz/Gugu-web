@@ -1,9 +1,11 @@
 """流式输出泄漏标记必须在写入网页/历史前被截断。"""
 from agent.security.sanitize import StreamSanitizer
+from agent.providers import adapter_for
+from types import SimpleNamespace
 
 
 def test_minimax_truncates_confirmed_e_tilde_leak_across_token_boundaries():
-    sanitizer = StreamSanitizer(minimax=True)
+    sanitizer = StreamSanitizer(adapter=adapter_for(SimpleNamespace(provider="minimax")))
 
     assert sanitizer.feed("正常回复\n```python\nprint(1)\n```[e") == "正常回复\n```python\nprint(1)\n```"
     assert sanitizer.feed("~[\n后续泄漏") == ""

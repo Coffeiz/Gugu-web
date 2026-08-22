@@ -455,6 +455,59 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
+async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: str) -> None:
+    """消费 QQ Keyboard 回调，并以受控文本恢复原会话。"""
+    from agent.interactions.qq import parse_interaction_event
+    event = parse_interaction_event(data)
+    if event is None or not event.get("platform_user_id"):
+        return
+    try:
+        from app.db import session as db_session
+        from app.services.interactions import consume_action
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None:
+            return
+        result = None
+        async with db_session._SessionLocal() as db:
+            result = await consume_action(
+                db,
+                user_id=UUID(str(owner)),
+                prompt_id=event["prompt_id"],
+                token=event["token"],
+                event_id=event.get("event_id"),
+            )
+    except (LookupError, ValueError):
+        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", event.get("event_id") or "")
+        return
+    except Exception as exc:
+        diag_log("agent.gateway.qq.interaction", exc)
+        return
+
+    option_id = str(result.get("option_id") or "")
+    await _qq_ack(
+        channel_id,
+        "c2c",
+        event["platform_user_id"],
+        "已确认，继续处理。" if option_id == "confirm" else "已取消。",
+        event.get("event_id") or "",
+    )
+    # 回到同一 session，权限与工具确认仍由 Agent/业务层再次校验；不把 token 带入下一轮。
+    payload = {
+        "platform": "qq",
+        "channel_id": channel_id,
+        "owner_user_id": owner,
+        "platform_user_id": event["platform_user_id"],
+        "message_id": event.get("event_id") or "",
+        "chat_type": "c2c",
+        "text": "确认" if option_id == "confirm" else "取消",
+        "session_id": result.get("session_id"),
+    }
+    try:
+        await R.produce(STREAM, payload)
+    except Exception as exc:
+        diag_log("agent.gateway.qq.interaction.enqueue", exc)
+
+
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
     from agent.security import logsafe
 
@@ -536,6 +589,8 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                     print(f"[qq:{channel_fp}] raw WebSocket RESUMED", flush=True)
                                 elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                                     await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
+                                elif event_type == "INTERACTION_CREATE":
+                                    await _handle_qq_interaction(data, channel_id, owner)
                             elif op == _OP_RECONNECT:
                                 print(f"[qq:{channel_fp}] QQ 要求重连", flush=True)
                                 break

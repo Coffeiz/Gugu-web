@@ -7,12 +7,68 @@ from typing import Iterable
 from .tokens import content_text
 
 
+def build_chat_tool_events(messages: Iterable) -> list[dict]:
+    """把持久化的 canonical tool turn 聚合成聊天 UI 的工具气泡。"""
+    events: dict[str, dict] = {}
+    for message in messages:
+        content_json = getattr(message, "content_json", None)
+        for index, block in enumerate(_blocks(content_json)):
+            block_type = block.get("type")
+            if block_type == "tool_call":
+                call_id = str(block.get("id") or f"message-{message.id}-{index}")
+                events[call_id] = {
+                    "id": f"tool:{call_id}",
+                    "toolCallId": call_id,
+                    "toolName": str(block.get("name") or "unknown_tool"),
+                    "toolInput": block.get("arguments", {}),
+                    "toolStatus": "running",
+                    "createdAt": message.created_at,
+                }
+            elif block_type == "tool_result":
+                call_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
+                if not call_id:
+                    continue
+                event = events.setdefault(call_id, {
+                    "id": f"tool:{call_id}",
+                    "toolCallId": call_id,
+                    "toolName": "工具调用",
+                    "toolStatus": "running",
+                    "createdAt": message.created_at,
+                })
+                event["toolResult"] = block.get("content", "")
+                event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
+                event["updatedAt"] = message.created_at
+                event["toolDurationMs"] = max(
+                    0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
+                )
+    return sorted(events.values(), key=lambda item: (item["createdAt"], item["id"]))
+
+
 def _blocks(value) -> list[dict]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, dict)]
     if isinstance(value, dict):
         return [value]
     return []
+
+
+def _tool_result_is_error(block: dict) -> bool:
+    """识别 canonical/tool wire 中的失败结果，兼容旧数据未保存 is_error 的情况。"""
+    if "is_error" in block:
+        return bool(block["is_error"])
+    content = block.get("content", "")
+    values = content if isinstance(content, list) else [content]
+    for value in values:
+        if isinstance(value, dict) and value.get("error"):
+            return True
+        if isinstance(value, str):
+            try:
+                payload = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and payload.get("error"):
+                return True
+    return False
 
 
 def _openai_tool_call(block: dict) -> dict:
@@ -46,8 +102,8 @@ def _canonical_block(block: dict) -> dict | None:
             "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
             "content": block.get("content", ""),
         }
-        if "is_error" in block:
-            result["is_error"] = bool(block["is_error"])
+        if _tool_result_is_error(block):
+            result["is_error"] = True
         return result
     return None
 
@@ -74,11 +130,14 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 if normalized is not None:
                     canonical.append(normalized)
         elif role == "tool":
-            canonical.append({
+            tool_result = {
                 "type": "tool_result",
                 "tool_call_id": str(message.get("tool_call_id") or ""),
                 "content": content,
-            })
+            }
+            if _tool_result_is_error(tool_result):
+                tool_result["is_error"] = True
+            canonical.append(tool_result)
         else:
             for block in _blocks(content):
                 normalized = _canonical_block(block)
@@ -166,11 +225,30 @@ def _openai_history_message(message, request) -> list[dict]:
     return result or [{"role": message.role, "content": content_text(content_json)}]
 
 
-def build_history_parts(history: Iterable, request, *, use_anthropic: bool) -> list[dict]:
-    """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。"""
+def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
+                        user_tz=None) -> list[dict]:
+    """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
+
+    用户消息的时间 reminder 要等完整 turn（assistant/tool 结果）组装完再追加。
+    当前 run 中它位于动态尾部；下一 run 该消息进入 history 后也必须位于同一 turn
+    末尾，否则工具轮会被时间 reminder 从中间切开，破坏跨 run cache 前缀。
+    """
+    from .session_snapshot import message_time_reminder
+
     parts: list[dict] = []
+    pending_timestamp = None
     for message in history:
         content_json = getattr(message, "content_json", None)
+        blocks = _blocks(content_json)
+        is_tool_message = any(block.get("type") == "tool_result" for block in blocks)
+        is_user_message = getattr(message, "role", None) == "user" and not is_tool_message
+
+        # 新的真实 user 消息意味着上一个 turn 已经结束；时间 reminder 放在上一个
+        # turn 的最后一个 assistant/tool 消息之后，而不是紧贴旧 user 插入。
+        if is_user_message and pending_timestamp is not None:
+            parts.append(pending_timestamp)
+            pending_timestamp = None
+
         if use_anthropic:
             if content_json is not None:
                 from agent.im.context_loader import format_attachment_refs
@@ -192,4 +270,12 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool) -> l
                 parts.append({"role": message.role, "content": format_history_content(message, request)})
         else:
             parts.extend(_openai_history_message(message, request))
+
+        if is_user_message:
+            timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
+            if timestamp:
+                pending_timestamp = timestamp
+
+    if pending_timestamp is not None:
+        parts.append(pending_timestamp)
     return parts

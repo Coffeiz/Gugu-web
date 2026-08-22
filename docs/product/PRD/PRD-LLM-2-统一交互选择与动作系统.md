@@ -112,7 +112,74 @@ InteractionPrompt
 
 本期只支持少量字段：文本、数字、日期、单选。字段必须有服务端定义的类型、长度和合法值，不能把任意表单 JSON 直接交给业务层。
 
-## 1.5 Agent Round 与工具事件展示
+### 1.5 `ask_user`：模型主动询问
+
+`ask_user` 是 Agent 可调用的内置交互工具，用于在多个合理路径之间无法安全推断，或缺少继续执行所必需的信息时，向用户发出结构化问题。它只创建交互，不直接修改业务数据；用户回答会作为原工具调用的结果返回给 Agent，随后继续同一个 Run。
+
+#### 工具输入
+
+```json
+{
+  "kind": "choice",
+  "title": "选择处理方式",
+  "body": "这张图片要保存到哪里？",
+  "options": [
+    {"id": "project", "label": "放入项目"},
+    {"id": "folder", "label": "放入文件夹"},
+    {"id": "cancel", "label": "取消"}
+  ],
+  "allow_text_input": false
+}
+```
+
+约束如下：
+
+- `kind` 复用 `choice`、`question`、`form`；普通二选一确认仍使用 `confirm`，不通过 `ask_user` 绕过 destructive 确认门。
+- `title`、`body` 和选项文案由服务端限制长度；选项数量首版限制为 2～8 个。
+- `option.id` 是短且稳定的标识，客户端只提交 action token 和 `option.id`，不提交完整业务参数。
+- `allow_text_input=true` 时允许用户补充自然语言；文本仍需经过长度、内容和业务参数校验，不能直接当作已授权的操作参数。
+- 模型不应在问题可以从上下文明确推断时调用该工具，也不应把普通闲聊或简单确认包装成选择器。
+
+#### 适用边界
+
+- **`confirm`**：动作明确但有破坏性或不可逆风险，例如清空回收站。
+- **`ask_user(kind=choice)`**：下一步有多个合理分支，例如保存位置、目标项目或检索范围不同。
+- **`ask_user(kind=question)`**：缺少一个必要信息，例如无法确定用户说的是哪个文件夹。
+- **普通文本追问**：不需要按钮、且不涉及当前 Run 必须暂停的轻量澄清。
+
+`ask_user` 不替代资源归属检查、工具参数校验或 `confirm` 确认门。任何业务写入必须在用户回答后重新执行权限和资源状态校验。
+
+### 1.6 InteractionResult：回答回传
+
+按钮回答和文本回答统一转换为受限的 `InteractionResult`，并作为 `ask_user` 的工具结果交给原 Agent，不创建一条无关的新用户消息：
+
+```json
+{
+  "kind": "choice",
+  "status": "selected",
+  "prompt_id": 123,
+  "option_id": "project",
+  "value": "project",
+  "text": null
+}
+```
+
+文本回答示例：
+
+```json
+{
+  "kind": "question",
+  "status": "answered",
+  "prompt_id": 123,
+  "option_id": null,
+  "value": null,
+  "text": "放到旅行项目"
+}
+```
+
+`status` 至少包括 `selected`、`answered`、`cancelled`、`expired`。客户端不得自行拼接业务结果；服务端负责把回答绑定到 prompt、session、用户和原始 tool call。
+
+## 1.7 Agent Round 与工具事件展示
 
 统一交互对象不仅包括“等待用户输入”的 Prompt，也包括一次 Run 内已经发生的 Agent 事件。Web 聊天和 LoopScope 应按 Round 展示，工具调用和工具结果不再伪装成普通助手文本。
 
@@ -237,6 +304,32 @@ Agent / Tool 判断需要输入
 - 同一 session 只能有一个 active prompt；新 prompt 出现时旧 prompt 标记 `cancelled`。
 - 用户回答后恢复原 session，而不是新建一轮无上下文的 Agent 请求。
 - 任务已取消、超时或完成后，旧按钮点击只能得到自然语言提示，不得重新执行。
+
+### 2.3 `ask_user` 暂停流程
+
+```text
+模型调用 ask_user
+        ↓
+服务端校验 schema、session、用户和当前 Run
+        ↓
+创建 Prompt/Action，持久化 WAITING_INPUT
+        ↓
+发送 interaction_required，当前 Run 立即停止继续调用模型
+        ↓
+用户点击按钮或提交文本
+        ↓
+校验 token、session、过期时间和回答内容，原子消费 action
+        ↓
+把 InteractionResult 作为 ask_user 工具结果注入原 Run
+        ↓
+恢复 Agent Loop，继续后续判断或工具调用
+```
+
+- 等待期间不得继续发送新的 LLM 请求或执行后续工具，避免回答尚未产生时抢跑。
+- 同一 session 只允许一个 active prompt；重复调用和重复点击必须通过 `event_id`/action 状态幂等处理。
+- 首版默认等待 10 分钟，服务端允许配置但不得超过 30 分钟；超时后向 Agent 返回 `expired`，由模型决定是否结束或重新提问。
+- 用户取消、切换话题或提交不合法回答时，旧 prompt 必须结束，不能残留可执行按钮。
+- Web、QQ 等平台只负责展示和提交回答，不能直接执行 `ask_user` 背后的业务动作。
 
 ## 3. 数据模型
 
@@ -463,15 +556,18 @@ Agent bridge 负责：
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | Phase 0：协议和状态定义 | ✅ | 确定 choice、confirm、question、form、WAITING_INPUT 和统一结果结构。 |
-| Phase 0.5：交互协议骨架 | 🚧 | 已实现 `agent/interactions/` 的事件/确认入口和 QQ `platform_user_id` 注册动作；暂不接 Keyboard 和完整状态机。 |
-| Phase 1：Round/Tool 流式事件 | 🔲 | 为现有 `_new_round`、`tool_call`、`tool_done` 增加稳定事件身份，并保持旧客户端兼容。 |
-| Phase 2：Interaction Service | 🔲 | 建表，实现 token hash、创建、校验、原子消费、取消和过期。 |
-| Phase 3：Agent Bridge | 🔲 | 接入 Agent Loop 的等待、恢复、取消和 session 恢复。 |
-| Phase 4：Guguchat/Web | 🔲 | 实现 Round 容器、工具气泡、确认按钮和网页确认，验证完整生命周期。 |
-| Phase 5：统一显示偏好 | 🔲 | 在“接入咕咕”设置顶部增加 `show_tool_interactions`，接入所有 IM 出站渲染器。 |
-| Phase 6：QQ Keyboard | 🔲 | 根据真实 interaction event 样本实现渲染和回调 adapter。 |
-| Phase 7：业务接入 | 🔲 | 先接 QQ 身份绑定，再接文件删除、覆盖和其他 destructive 工具。 |
+| Phase 0.5：交互协议骨架 | ✅ | 已实现 `agent/interactions/` 的事件/确认入口和 QQ `platform_user_id` 注册动作；Keyboard 仍留给后续平台适配阶段。 |
+| Phase 1：Round/Tool 流式事件 | ✅ | `round_start`、兼容 `_new_round`、`tool_call`、`tool_done` 和 `interaction_required` 携带 `run_id/round_id/tool_call_id/seq`，旧客户端仍可消费旧事件名。 |
+| Phase 2：Interaction Service | ✅ | 建立 Prompt/Action 表和迁移，实现 token hash、创建、列表、过期校验、原子消费和 event_id 幂等字段。 |
+| Phase 3：Agent Bridge | ✅ | Agent Loop 将工具确认结果桥接为统一交互事件；按钮消费服务端 token 后复用现有会话发送链恢复下一轮，切会话/刷新可通过 active prompt 列表恢复。 |
+| Phase 4：Guguchat/Web | ✅ | 工具调用作为独立消息气泡展示，支持展开输入/结果；确认事件展示按钮并提交统一 API，保留原有状态气泡和流式正文。 |
+| Phase 5：统一显示偏好 | ✅ | “接入咕咕”设置顶部增加 `show_tool_interactions`；统一 `AgentResponse.interactions` 出口，IM 默认关闭展示且不影响工具执行。 |
+| Phase 6：QQ Keyboard | ✅ | 增加 QQ action payload 编解码、嵌套 interaction event 解析和回调消费；未确认 QQ 原生按钮字段前使用安全文本兜底，不宣称平台已支持原生 Keyboard。 |
+| Phase 7：业务接入 | ✅ | QQ 身份绑定沿用既有 owner 校验；所有注册表 `destructive` 工具的 `needs_confirm` 统一桥接 Prompt/Action，按钮/文本确认复用原 session，非 destructive 结果不会生成危险交互。 |
 | Phase 8：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
+| Phase 9：`ask_user` 工具协议 | 🔲 | 注册内置工具，完成 choice/question/form 的 schema 校验、长度限制和统一 `InteractionResult`。 |
+| Phase 10：暂停与恢复 | 🔲 | 接入 `WAITING_INPUT`，保存 pending Run，回答后原 session 原地恢复；补齐超时、取消、重复点击和服务重启恢复。 |
+| Phase 11：多端展示 | 🔲 | Web 使用按钮/输入框交互，IM 使用平台能力或文本兜底；统一权限校验、脱敏和历史展示。 |
 
 每个阶段单独提交。任一阶段出现生命周期或权限行为差异，不进入下一阶段。
 
@@ -493,6 +589,11 @@ Agent bridge 负责：
 - Guguchat/Web payload 与统一模型双向转换。
 - QQ Keyboard payload 和 interaction event 使用固定样本解析。
 - destructive handler 仍经过确认门、ownership 和幂等检查。
+- `ask_user` choice：模型调用后只生成一个 active prompt，回答前不再产生后续 LLM/tool 调用。
+- `ask_user` button：点击后只消费一次 action，并在原 session 中收到结构化 `InteractionResult`。
+- `ask_user` text：允许文本时能恢复原 Run；超长、越权或无法解析的文本不会被当作已确认参数。
+- `ask_user` timeout/cancel：过期或取消后不能执行原动作，模型收到对应状态。
+- `ask_user` reduction：问题可以从上下文确定时不生成 prompt；destructive 操作仍走 `confirm`。
 
 ### 10.2 人工验收
 
@@ -510,6 +611,8 @@ Agent bridge 负责：
 12. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
 13. 在“接入咕咕”设置顶部关闭工具信息后，QQ、飞书、微信都不再展示工具过程，但最终回复和确认消息仍正常发送。
 14. 重新打开设置后，工具信息恢复展示；已经发送的历史消息不被重写。
+15. Agent 需要在多个合理路径中选择时展示 `ask_user` 按钮；回答后继续原任务，而不是新建无关对话。
+16. 用户直接输入补充信息时，`allow_text_input` 为真才允许恢复；错误回答不会触发工具执行。
 
 ## 11. 待确认问题
 

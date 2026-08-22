@@ -33,7 +33,10 @@ def download_and_stage(client, message_id: str, owner: str, key: str, rtype: str
     duration = None
     if is_voice:
         from app.core import media_transcode
-        conv = media_transcode.to_mimo_mp3(data, ext or "opus", "audio/ogg")
+        from app.core.config import get_settings
+        from agent import providers
+        conv = media_transcode.to_provider_audio(
+            data, ext or "opus", "audio/ogg", providers.adapter_for(get_settings().ai))
         if conv is not None:
             data, ext, name = conv, "mp3", "语音"
         duration = media_transcode.probe_duration(data, ext)

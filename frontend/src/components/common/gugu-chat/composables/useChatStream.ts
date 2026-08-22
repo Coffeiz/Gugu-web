@@ -98,6 +98,8 @@ export function useChatStream(options: {
       ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
       : ''
     const usedTools = new Set<string>()
+    let currentRoundId = ''
+    const toolMessageIndexes = new Map<string, number>()
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
       if (detached || viewGeneration !== options.getViewGeneration()) {
@@ -137,10 +139,25 @@ export function useChatStream(options: {
           } else if (evt.type === 'session_title') {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
             if (s) s.title = evt.title
+          } else if (evt.type === 'round_start') {
+            currentRoundId = String(evt.round_id || `round-${toolMessageIndexes.size + 1}`)
           } else if (evt.type === '_new_round') {
-            // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
+            // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
+            if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
+            const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIndexes.size + 1}`)
+            if (live() && !evt.name?.startsWith('_')) {
+              const index = messages.value.push({
+                id: mkid(), role: 'tool', text: '', time: now(),
+                runId: evt.run_id, roundId: evt.round_id || currentRoundId,
+                toolCallId, toolName: evt.name, toolLabel: evt.label,
+                toolStatus: evt.status || 'running', toolInput: evt.input,
+                _toolStartedAt: Date.now(),
+              }) - 1
+              toolMessageIndexes.set(toolCallId, index)
+              await options.scrollBottom()
+            }
             // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
             if (live()) options.setStatus({ kind: 'text', label: evt.label || evt.name })
           } else if (evt.type === 'tool_done') {
@@ -151,8 +168,30 @@ export function useChatStream(options: {
               else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
               else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
             }
+            const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
+            const toolIndex = toolCallId ? toolMessageIndexes.get(toolCallId) : undefined
+            if (toolIndex !== undefined && messages.value[toolIndex]) {
+              messages.value[toolIndex].toolStatus = evt.status || 'success'
+              if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
+              const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
+              if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
+            }
             // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
             if (live()) options.setStatus(options.thinkingItem())
+          } else if (evt.type === 'interaction_required') {
+            if (live() && evt.prompt_id && Array.isArray(evt.options)) {
+              messages.value.push({
+                id: mkid(), role: 'interaction', text: '', time: now(),
+                runId: evt.run_id, roundId: evt.round_id,
+                interaction: {
+                  promptId: Number(evt.prompt_id), kind: String(evt.kind || 'confirm'),
+                  title: String(evt.title || '需要确认'), body: String(evt.body || ''),
+                  options: evt.options,
+                },
+              })
+              options.setStatus({ kind: 'text', label: '等待你的确认' })
+              await options.scrollBottom()
+            }
           } else if (evt.type === 'token') {
             if (live()) {
               // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记

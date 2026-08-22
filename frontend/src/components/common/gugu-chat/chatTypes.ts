@@ -3,6 +3,8 @@
 // 不强行收紧成必填。
 export interface ChatMessage {
   id: number
+  /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
+  _createdAt?: string
   dbId?: number
   role: string
   text: string
@@ -18,6 +20,26 @@ export interface ChatMessage {
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
+  // Agent 交互协议：工具调用作为独立消息行展示，不混入助手正文。
+  runId?: string
+  roundId?: string
+  toolCallId?: string
+  toolName?: string
+  toolLabel?: string
+  toolStatus?: 'running' | 'success' | 'error' | 'skipped'
+  toolInput?: unknown
+  toolResult?: unknown
+  toolDurationMs?: number
+  _toolStartedAt?: number
+  interaction?: {
+    promptId: number
+    kind: string
+    title: string
+    body: string
+    options: Array<{ id: string; label: string; token: string }>
+    resolved?: boolean
+    selectedOptionId?: string | null
+  }
 }
 
 // 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同

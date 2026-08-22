@@ -83,7 +83,7 @@ async def test_ensure_snapshot_loads_once_until_ttl():
     async def load():
         nonlocal calls
         calls += 1
-        return {"system_prompt": "system", "dynamic_context": "projects", "session_info": {"v": 1}}
+        return {"system_prompt": "system", "snapshot_context": "projects", "session_info": {"v": 1}}
 
     session = _Session()
     first = await ensure_snapshot(_Db(), session, load_context=load)
@@ -100,7 +100,7 @@ async def test_snapshot_serializes_zoneinfo_timezone_for_json():
     async def load():
         return {
             "system_prompt": "system",
-            "dynamic_context": "projects",
+            "snapshot_context": "projects",
             "session_info": {"v": 1},
             "user_tz": ZoneInfo("Asia/Shanghai"),
         }
@@ -118,12 +118,12 @@ def test_reminder_and_time_messages_have_stable_boundary():
 
 def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():
     session = _Session()
-    initialize_snapshot(session, system_prompt="system", dynamic_context="fixed",
+    initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
                         session_info={"epoch": 1}, user_tz="Asia/Shanghai")
     first = checkpoint_snapshot(session, [{"role": "user", "content": "第一轮"}])
     second = checkpoint_snapshot(session, [{"role": "user", "content": "第二轮"}])
     assert first != second
-    assert session.session_context["dynamic_context"] == "fixed"
+    assert session.session_context["snapshot_context"] == "fixed"
 
 
 def test_prompt_messages_keep_dynamic_tail_at_end_when_round_appends():
@@ -144,6 +144,25 @@ def test_prompt_messages_keep_dynamic_tail_at_end_when_round_appends():
     assert [item["content"] for item in messages.conversation][-2:] == ["tool call", "tool result"]
     assert messages[-3:] == messages.dynamic_tail
     assert messages.newly_appended(3)[-2:][0]["content"] == "tool call"
+
+
+def test_snapshot_reminder_is_fixed_before_history_and_runtime_tail():
+    snapshot = reminder("memory / projects / calendar / files")
+    messages = build_messages(
+        fixed_parts=[snapshot],
+        history=[{"role": "user", "content": "history"}],
+        current_user={"role": "user", "content": "new"},
+        dynamic_tail=[reminder("stance"), reminder("time")],
+    )
+
+    assert messages[0] == snapshot
+    assert [item["content"] for item in messages.conversation] == [
+        snapshot["content"], "history", "new",
+    ]
+    assert [item["content"] for item in messages.dynamic_tail] == [
+        "[system-reminder]\nstance\n[/system-reminder]",
+        "[system-reminder]\ntime\n[/system-reminder]",
+    ]
 
 
 def test_prompt_messages_replace_conversation_preserves_tail():
@@ -199,7 +218,7 @@ async def test_snapshot_trace_events_are_redacted_and_distinguish_hit_rebuild(mo
             calls += 1
             return {
                 "system_prompt": "system",
-                "dynamic_context": "项目正文不应进入 snapshot trace",
+                "snapshot_context": "项目正文不应进入 snapshot trace",
                 "session_info": {"projects": ["项目正文不应进入 snapshot trace"]},
             }
 

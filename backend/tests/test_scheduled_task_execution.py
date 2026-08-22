@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 
-def test_scheduled_messages_keep_dynamic_context_and_tail():
+def test_scheduled_messages_keep_snapshot_context_before_tail():
     from agent.runner import _build_scheduled_messages
 
     messages = _build_scheduled_messages(
@@ -13,8 +13,9 @@ def test_scheduled_messages_keep_dynamic_context_and_tail():
         "执行任务", {"stance": "温和"}, use_anthropic=False,
     )
     assert messages[0] == {"role": "system", "content": "稳定系统"}
-    assert messages[1] == {"role": "user", "content": "执行任务"}
-    assert any("小北的计划" in item["content"] for item in messages.dynamic_tail)
+    assert "小北的计划" in messages[1]["content"]
+    assert messages[2] == {"role": "user", "content": "执行任务"}
+    assert not any("小北的计划" in item["content"] for item in messages.dynamic_tail)
     assert "当前时间" in messages.dynamic_tail[-1]["content"]
 
 

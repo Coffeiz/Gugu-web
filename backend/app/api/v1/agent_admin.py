@@ -72,6 +72,7 @@ def _ensure_presets(override: dict) -> dict:
         "base_url": ai.get("base_url", ""),
         "model": ai.get("model", ""),
         "thinking": ai.get("thinking", "disabled"),
+        "ollama_mode": ai.get("ollama_mode", "local"),
     }
     presets = {"active_id": "default", "items": [item]}
     override["ai_presets"] = presets
@@ -365,10 +366,17 @@ async def list_llm_presets():
     presets = _ensure_presets(override)
     if not had_presets:
         _write_override(override)
-    items = [
-        {**item, "api_key": _mask_key(item.get("api_key", "")), "in_pool": bool(item.get("in_pool", False))}
-        for item in presets.get("items", [])
-    ]
+    from types import SimpleNamespace
+    from agent.providers import capability_snapshot
+    items = []
+    for item in presets.get("items", []):
+        ai = SimpleNamespace(**item)
+        items.append({
+            **item,
+            "api_key": _mask_key(item.get("api_key", "")),
+            "in_pool": bool(item.get("in_pool", False)),
+            "declared_capabilities": capability_snapshot(ai),
+        })
     return {"active_id": presets.get("active_id", ""),
             "strategy": presets.get("strategy", "active"),
             "pool_mode": presets.get("pool_mode", "random"), "items": items}
@@ -399,10 +407,11 @@ async def set_llm_strategy(body: StrategyUpdate):
 # 漏一个字段，active 模型就拿不到 → 表现为「面板保存了却不生效」。新增模型字段时只改这里。
 _AI_SYNC_KEYS = ("provider", "api_key", "base_url", "model", "max_tokens", "temperature",
                  "context_tokens", "thinking", "reasoning_effort", "vision", "vision_video",
-                 "vision_audio", "api_format")
+                 "vision_audio", "api_format", "ollama_mode", "ollama_api_mode", "ollama_keep_alive")
 _AI_DEFAULTS = {"max_tokens": 4000, "temperature": 0.7, "context_tokens": 120000,
                 "thinking": "disabled", "reasoning_effort": "", "vision": False,
-                "vision_video": False, "vision_audio": False, "api_format": ""}
+                "vision_video": False, "vision_audio": False, "api_format": "",
+                "ollama_mode": "local", "ollama_api_mode": "native", "ollama_keep_alive": "5m"}
 
 
 def _ai_segment(item: dict) -> dict:
@@ -425,6 +434,9 @@ class PresetCreate(BaseModel):
     vision_video: bool = False
     vision_audio: bool = False
     api_format: str = ""
+    ollama_mode: str = "local"
+    ollama_api_mode: str = "native"
+    ollama_keep_alive: str = "5m"
 
 
 @router.post("/llm-presets")
@@ -448,6 +460,9 @@ async def create_llm_preset(body: PresetCreate):
         "vision_video": body.vision_video,
         "vision_audio": body.vision_audio,
         "api_format": body.api_format,
+        "ollama_mode": body.ollama_mode,
+        "ollama_api_mode": body.ollama_api_mode,
+        "ollama_keep_alive": body.ollama_keep_alive,
     }
     presets["items"].append(item)
     if not presets.get("active_id"):
@@ -472,6 +487,9 @@ class PresetUpdate(BaseModel):
     vision_video: bool | None = None
     vision_audio: bool | None = None
     api_format: str | None = None
+    ollama_mode: str | None = None
+    ollama_api_mode: str | None = None
+    ollama_keep_alive: str | None = None
     in_pool: bool | None = None
 
 
@@ -510,6 +528,12 @@ async def update_llm_preset(preset_id: str, body: PresetUpdate):
         item["vision_audio"] = body.vision_audio
     if body.api_format is not None:
         item["api_format"] = body.api_format
+    if body.ollama_mode is not None:
+        item["ollama_mode"] = body.ollama_mode
+    if body.ollama_api_mode is not None:
+        item["ollama_api_mode"] = body.ollama_api_mode
+    if body.ollama_keep_alive is not None:
+        item["ollama_keep_alive"] = body.ollama_keep_alive
     if body.in_pool is not None:
         item["in_pool"] = body.in_pool
     if presets.get("active_id") == preset_id:
@@ -557,32 +581,23 @@ async def test_llm_preset(preset_id: str):
     base_url = item.get("base_url", "").rstrip("/")
     model    = item.get("model", "")
     from types import SimpleNamespace
-    from agent.llm.llm_select import use_anthropic_for
-    is_anthropic = use_anthropic_for(SimpleNamespace(provider=provider, base_url=base_url, api_format=item.get("api_format", "")))
-    _mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()   # MiMo 用 api-key 头，非标准 Bearer
+    from agent import providers
+    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_format=item.get("api_format", ""), api_key=api_key)
+    _ns.model = model
+    adapter = providers.adapter_for(_ns)
+    base_url = adapter.resolve_base_url(_ns)
+    declared_capabilities = providers.capability_snapshot(_ns)
     try:
-        if is_anthropic:
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-            if _mimo:
-                headers["api-key"] = api_key
-            url = f"{base_url}/messages"
-            payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
-        else:
-            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
-            if _mimo:
-                headers["api-key"] = api_key
-            url = f"{base_url}/chat/completions"
-            payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
+        request = adapter.diagnostic_request(_ns)
+        url = f"{base_url}{request['path']}"
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
+            resp = await client.post(url, headers=request["headers"], json=request["payload"])
         ok = resp.status_code < 500
-        return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300]}
+        return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300],
+                "declared_capabilities": declared_capabilities, "probe": {"status": resp.status_code}}
     except Exception as e:
-        return {"ok": False, "status": 0, "detail": str(e)[:300]}
+        return {"ok": False, "status": 0, "detail": str(e)[:300],
+                "declared_capabilities": declared_capabilities, "probe": {"status": 0}}
 
 
 async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api_format: str = "") -> list[str]:
@@ -598,26 +613,16 @@ async def _fetch_provider_models(base_url: str, provider: str, api_key: str, api
     from types import SimpleNamespace
 
     base_url = (base_url or "").rstrip("/")
+    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_format=api_format, api_key=api_key)
+    from agent import providers
+    adapter = providers.adapter_for(_ns)
+    base_url = adapter.resolve_base_url(_ns)
     if not base_url:
         raise HTTPException(400, "请先填写 Base URL")
-    from agent.llm.llm_select import use_anthropic_for
-
-    is_anthropic = use_anthropic_for(SimpleNamespace(
-        provider=provider, base_url=base_url, api_format=api_format,
-    ))
-    is_mimo = provider == "mimo" or "xiaomimimo" in base_url.lower()
-    headers = {"Accept": "application/json"}
-    if is_anthropic:
-        headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
-    else:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if is_mimo:
-        headers["api-key"] = api_key
-        headers.pop("Authorization", None)
-    models_path = "/models" if not is_anthropic or base_url.endswith("/v1") else "/v1/models"
+    request = adapter.models_request(_ns)
     try:
         async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
-            response = await client.get(f"{base_url}{models_path}", headers=headers)
+            response = await client.get(f"{base_url}{request['path']}", headers=request["headers"])
         if response.status_code >= 400:
             diag_log("admin.llm_preset_models.upstream", RuntimeError(
                 f"status={response.status_code} body={response.text[:500]}"))
@@ -762,11 +767,11 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
     import httpx
     from types import SimpleNamespace
     from agent import providers
-    from agent.llm.llm_select import use_anthropic_for
     _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
                           model=model, api_format=api_format)
     # 与 runner 同一判定口（含显式 api_format）
-    is_anthropic = use_anthropic_for(_ns)
+    adapter = providers.adapter_for(_ns)
+    is_anthropic = adapter.protocol_format(_ns) == "anthropic"
     # 视频理解（真实 mp4）耗时明显更长：百炼实测约 40s，图像列表形式甚至 80s+。
     # 视频探测单独放宽 read 超时，避免 25s 默认值导致前端一直"检测中"。
     read_timeout = 90.0 if dim == "video" else 25.0
@@ -775,15 +780,13 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
 
     # 视频在 Anthropic 路（MiniMax M3）是硬编码已知能力，无需探测；其余 Anthropic 路不支持视频块
     if dim == "video" and is_anthropic:
-        from app.core.chat_attach import _minimax_video_enabled
-        if _minimax_video_enabled(_ns):
+        if adapter.supports_video(model):
             return True, 200, "MiniMax M3 原生支持视频块 ✅"
         return False, 200, "Anthropic 路当前仅 MiniMax M3 支持视频块"
 
     # MiMo 的 OpenAI 扩展块（video_url / input_audio）是已知能力，直接判定，避免探测格式不匹配误判
     if not is_anthropic and dim in ("video", "audio"):
-        from agent.llm.llm_select import _is_mimo
-        if _is_mimo(_ns):
+        if (dim == "video" and adapter.supports_video(model)) or (dim == "audio" and adapter.supports_audio(model)):
             return True, 200, f"MiMo 原生支持{dim_label}输入 ✅"
 
     try:
@@ -875,11 +878,9 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
     if any(d not in ("image", "video", "audio") for d in dims):
         raise HTTPException(400, "dim 仅支持 image/video/audio")
 
-    def _write_back(d: str, supported):
-        field = "vision" if d == "image" else f"vision_{d}"
-        item[field] = supported
-        if presets.get("active_id") == preset_id:
-            override.setdefault("ai", {})[field] = supported
+    from types import SimpleNamespace
+    from agent.providers import capability_snapshot
+    declared_capabilities = capability_snapshot(SimpleNamespace(**item))
 
     if len(dims) == 1:
         d = dims[0]
@@ -887,10 +888,10 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
             item.get("provider", "openai"), item.get("api_key", ""),
             item.get("base_url", "").rstrip("/"), item.get("model", ""),
             item.get("api_format", ""), dim=d)
-        if supported is not None:   # 结论明确才落库
-            _write_back(d, supported)
-            _write_override(override)
-        return {"supported": supported, "status": sc, "detail": detail, "dim": d}
+        # 探测是一次性诊断，不覆盖预设中的静态声明；运行时能力仍由适配器决定。
+        return {"supported": supported, "status": sc, "detail": detail, "dim": d,
+                "declared_capabilities": declared_capabilities,
+                "probe": {"supported": supported, "status": sc}}
 
     results = {}
     for d in dims:
@@ -899,10 +900,8 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
             item.get("base_url", "").rstrip("/"), item.get("model", ""),
             item.get("api_format", ""), dim=d)
         results[d] = {"supported": supported, "status": sc, "detail": detail}
-        if supported is not None:
-            _write_back(d, supported)
-    _write_override(override)
-    return {"results": results}
+    return {"results": results, "declared_capabilities": declared_capabilities,
+            "probe": results}
 
 
 # IM 机器人接入：飞书 / QQ 都走「用户自带(BYO)」，在用户设置里管理

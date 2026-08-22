@@ -28,7 +28,7 @@ from agent.im.session import (
     get_or_create_session,
     session_scope_filters,
 )
-from agent.llm.llm_select import is_minimax, pick_model, release as _release_model
+from agent.llm.llm_select import pick_model, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -289,7 +289,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             data = await load_context_data(
                 db, user_id, req, profile.memory_enabled, req.message, context_policy
             )
-            static_prompt, dynamic_context, _ = builder.build_split(
+            static_prompt, snapshot_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
                 notes=data.notes,
@@ -300,7 +300,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
             )
             return {
                 "system_prompt": static_prompt,
-                "dynamic_context": dynamic_context,
+                "snapshot_context": snapshot_context,
                 "session_info": {"user_name": req.user_name, "source": req.source,
                                   "chat_id": req.chat_id, "profile": profile.prompt_file},
                 "user_tz": data.user_tz,
@@ -403,18 +403,22 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
         pass
 
     system_prompt = snapshot["system_prompt"]
-    dynamic_context = snapshot["dynamic_context"]
+    snapshot_context = snapshot["snapshot_context"]
     now_str = session_snapshot.current_time_text(user_tz)
     dynamic_tail = builder.dynamic_tail(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
 
-    # 组装动态上下文注入块（放入 messages，不进 system）
+    # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
+    _snapshot_injection = (
+        session_snapshot.reminder_message(snapshot_context)
+        if snapshot_context else None
+    )
+
+    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
     if "shell" in profile.tool_names:
         _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
-    if dynamic_context:
-        _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
@@ -431,8 +435,7 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
 
-    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容。
-    # 必须放在 history/current message 之后，避免动态变化截断缓存前缀。
+    # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
@@ -455,10 +458,18 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     oa_messages: list = []
     oa_initial_len = 0
     fixed_parts = []
+    if _snapshot_injection:
+        fixed_parts.append(_snapshot_injection)
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
-    history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
-    tail_parts = ([_ctx_injection] if _ctx_injection else [])
+    history_parts = build_history_parts(
+        history, req, use_anthropic=use_anthropic, user_tz=user_tz)
+    tail_parts = []
+    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+    if message_time:
+        tail_parts.append(message_time)
+    if _ctx_injection:
+        tail_parts.append(_ctx_injection)
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if use_anthropic:
@@ -487,7 +498,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
                          model_cfg=model_cfg, session_id=session_id)
 
     try:
-        text, tin, tout, errored, sent_files, cancelled = await _collect(gen, minimax=is_minimax(model_cfg))
+        text, tin, tout, errored, sent_files, cancelled, meta = await _collect(
+            gen, model_cfg=model_cfg, include_meta=True)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
@@ -575,7 +587,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
-                         files=sent_files, used_tools=im_used_tools)
+                         files=sent_files, used_tools=im_used_tools,
+                         interactions=meta.get("interactions", []))
 
 
 # ── 流式版本（飞书 send_text_stream 用，2026-07-09 接入）──────────────────────
@@ -613,7 +626,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
             data = await load_context_data(
                 db, user_id, req, profile.memory_enabled, req.message, context_policy
             )
-            static_prompt, dynamic_context, _ = builder.build_split(
+            static_prompt, snapshot_context, _ = builder.build_split(
                 profile.prompt_file.removesuffix(".md"), req.user_name,
                 data.projects, data.events, data.memory, data.files_overview,
                 notes=data.notes,
@@ -622,7 +635,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
             )
-            return {"system_prompt": static_prompt, "dynamic_context": dynamic_context,
+            return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": req.source,
                                       "chat_id": req.chat_id, "profile": profile.prompt_file},
                     "user_tz": data.user_tz, "im_channels": data.im_channels,
@@ -711,18 +724,22 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         aug_media = [m for m in aug_media if m.get("type") == "video"]
 
     system_prompt = snapshot["system_prompt"]
-    dynamic_context = snapshot["dynamic_context"]
+    snapshot_context = snapshot["snapshot_context"]
     now_str = session_snapshot.current_time_text(user_tz)
     dynamic_tail = builder.dynamic_tail(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
 
-    # 组装动态上下文注入块（放入 messages，不进 system）
+    # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
+    _snapshot_injection = (
+        session_snapshot.reminder_message(snapshot_context)
+        if snapshot_context else None
+    )
+
+    # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
     if "shell" in profile.tool_names:
         _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
-    if dynamic_context:
-        _dynamic_extra_parts.append(dynamic_context)
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
@@ -739,8 +756,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
 
-    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容。
-    # 必须放在 history/current message 之后，避免动态变化截断缓存前缀。
+    # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
@@ -763,10 +779,18 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     oa_messages: list = []
     oa_initial_len = 0
     fixed_parts = []
+    if _snapshot_injection:
+        fixed_parts.append(_snapshot_injection)
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
-    history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
-    tail_parts = ([_ctx_injection] if _ctx_injection else [])
+    history_parts = build_history_parts(
+        history, req, use_anthropic=use_anthropic, user_tz=user_tz)
+    tail_parts = []
+    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+    if message_time:
+        tail_parts.append(message_time)
+    if _ctx_injection:
+        tail_parts.append(_ctx_injection)
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     if use_anthropic:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
@@ -792,12 +816,14 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
-    minimax_stream = is_minimax(model_cfg)
-    san = sanitize.StreamSanitizer(minimax=minimax_stream)
+    from agent import providers
+    provider_adapter = providers.adapter_for(model_cfg)
+    san = sanitize.StreamSanitizer(adapter=provider_adapter)
     rounds: list[str] = []
     cur = ""
     tin = tout = 0
     files: list = []
+    interactions: list[dict] = []
     cancelled = False
     errored = False
     errored_text = ""
@@ -812,7 +838,7 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                 cur += san.flush()
                 rounds.append(cur)
                 cur = ""
-                san = sanitize.StreamSanitizer(minimax=minimax_stream)
+                san = sanitize.StreamSanitizer(adapter=provider_adapter)
             elif t == "_usage":
                 tin = evt.get("input", 0)
                 tout = evt.get("output", 0)
@@ -824,6 +850,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
                     yield ("token", token)
             elif t == "file" and evt.get("file"):
                 files.append(evt["file"])
+            elif t == "interaction_required":
+                interactions.append({
+                    key: evt[key]
+                    for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id")
+                    if key in evt
+                })
             elif t == "_cancelled":
                 cancelled = True
                 break
@@ -836,7 +868,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     if cancelled:
         yield ("final", AgentResponse(text="", session_id=session_id,
-                                      tokens_in=tin, tokens_out=tout, cancelled=True))
+                                      tokens_in=tin, tokens_out=tout, cancelled=True,
+                                      interactions=interactions))
         return
 
     if not errored:
@@ -923,11 +956,12 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
 
     yield ("final", AgentResponse(text=text, session_id=session_id, tokens_in=tin,
                                   tokens_out=tout, files=files, cancelled=False,
-                                  used_tools=im_used_tools))
+                                  used_tools=im_used_tools, interactions=interactions))
 
 
 async def _collect(
-    gen: AsyncGenerator[str, None], minimax: bool = False, include_meta: bool = False,
+    gen: AsyncGenerator[str, None], include_meta: bool = False,
+    model_cfg=None,
 ) -> Tuple:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
@@ -939,12 +973,15 @@ async def _collect(
     完整答案收在最后一轮，这里只取 rounds[-1]（若为空则回退到最近一条非空轮次，不让用户
     啥也没收到）。
     """
-    san = sanitize.StreamSanitizer(minimax=minimax)
+    from agent import providers
+    provider_adapter = providers.adapter_for(model_cfg) if model_cfg is not None else None
+    san = sanitize.StreamSanitizer(adapter=provider_adapter)
     rounds: list[str] = []   # 每轮文本分开存
     cur = ""
     tin = tout = 0
     files: list = []
     tool_names: list[str] = []
+    interactions: list[dict] = []
     mutated = False
     cancelled = False
     async for evt_str in gen:
@@ -957,7 +994,7 @@ async def _collect(
             cur += san.flush()
             rounds.append(cur)
             cur = ""
-            san = sanitize.StreamSanitizer(minimax=minimax)  # 新一轮重置清洗器
+            san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置清洗器
         elif t == "_usage":
             tin = evt.get("input", 0)
             tout = evt.get("output", 0)
@@ -977,13 +1014,21 @@ async def _collect(
             tool = _tool_registry.get(name)
             if tool is not None and tool.mutates:
                 mutated = True
+        elif t == "interaction_required":
+            # token 只在当前事件中短暂存在，不能写入日志或历史；平台 adapter 负责决定是否展示。
+            interactions.append({
+                key: evt[key]
+                for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id")
+                if key in evt
+            })
         elif t == "_cancelled":
             cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
             break
         elif t == "error":
             detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
             result = (detail, tin, tout, True, files, False)
-            return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
+            meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
+            return result + (meta,) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
 
@@ -994,7 +1039,8 @@ async def _collect(
             text = r
             break
     result = (text, tin, tout, False, files, cancelled)
-    return result + ({"tool_names": tool_names, "mutated": mutated},) if include_meta else result
+    meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
+    return result + (meta,) if include_meta else result
 
 
 async def _run_scheduled_once(
@@ -1029,7 +1075,7 @@ async def _run_scheduled_once(
                 im_channels = await loaders.load_im_channels(user_id)
 
         prompt_name = profile.prompt_file.removesuffix(".md")
-        static_prompt, dynamic_context, now_str = builder.build_split(
+        static_prompt, snapshot_context, now_str = builder.build_split(
             prompt_name,
             user_name,
             projects,
@@ -1063,7 +1109,7 @@ async def _run_scheduled_once(
 
         if use_anthropic:
             messages = _build_scheduled_messages(
-                system_prompt, dynamic_context, now_str, prompt, memory,
+                system_prompt, snapshot_context, now_str, prompt, memory,
                 use_anthropic=True, user_content=build_user_content(prompt, [], True),
             )
             gen = runner.run(
@@ -1075,7 +1121,7 @@ async def _run_scheduled_once(
             )
         else:
             messages = _build_scheduled_messages(
-                system_prompt, dynamic_context, now_str, prompt, memory,
+                system_prompt, snapshot_context, now_str, prompt, memory,
                 use_anthropic=False, user_content=prompt,
             )
             gen = runner.run(
@@ -1088,7 +1134,7 @@ async def _run_scheduled_once(
 
         collected = await _collect(
             gen,
-            minimax=is_minimax(model_cfg),
+            model_cfg=model_cfg,
             include_meta=include_meta,
         )
         text, _, _, errored, files, _, *meta = collected
@@ -1101,13 +1147,13 @@ async def _run_scheduled_once(
         _release_model(model_cfg)
 
 
-def _build_scheduled_messages(system_prompt: str, dynamic_context: str,
+def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
                               now_str: str, prompt: str, memory: dict,
                               *, use_anthropic: bool, user_content=None):
     """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
-    fixed_parts = []
-    dynamic_tail = ([session_snapshot.reminder_message(dynamic_context)]
-                     if dynamic_context else [])
+    fixed_parts = ([session_snapshot.reminder_message(snapshot_context)]
+                   if snapshot_context else [])
+    dynamic_tail = []
     dynamic_tail.extend(message_assembly.reminder(part)
                          for part in builder.dynamic_tail(memory))
     dynamic_tail.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))

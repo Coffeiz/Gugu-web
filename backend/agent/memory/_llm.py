@@ -82,7 +82,6 @@ async def _openai(
 ) -> str:
     import httpx
     from agent import providers
-    from agent.llm.llm_select import supports_thinking_toggle
 
     client = providers.build_openai_client(
         settings.ai, httpx.Timeout(connect=10.0, read=40.0, write=10.0, pool=5.0))
@@ -92,15 +91,14 @@ async def _openai(
         max_tokens=max_tokens,
         temperature=temperature,
     )
-    # 结构化输出：mimo / deepseek 都支持 response_format=json_object → 开 JSON 模式让正文必为合法 JSON，
-    # 比纯靠 prompt + _parse_json 抠更稳。并显式关思考（thinking:disabled，两家同一参数）——否则 reasoning 与正文
-    # 共用 max_completion_tokens 预算，反思这种大 JSON 容易被推理挤到截断。仅这两家开（别的 openai 兼容厂商
-    # 支持度不一，避免误伤）；其余仍走 prompt + _parse_json 容错。
-    if supports_thinking_toggle(settings.ai):
-        if json_mode:
-            kwargs["response_format"] = {"type": "json_object"}
-        if json_mode or thinking is not None:
-            kwargs["extra_body"] = {"thinking": {"type": thinking or "disabled"}}
+    adapter = providers.adapter_for(settings.ai)
+    if json_mode:
+        kwargs.update(adapter.build_structured_output(settings.ai))
+    if json_mode or thinking is not None:
+        thinking_params = adapter.build_thinking_params(
+            settings.ai, thinking=thinking or ("disabled" if json_mode else None))
+        if thinking_params:
+            kwargs["extra_body"] = thinking_params
     resp = await client.chat.completions.create(**kwargs)
     return resp.choices[0].message.content or ""
 

@@ -11,9 +11,12 @@ from app.services.files.trash import (
     RestoreParentTrashError,
     count_deleted_files,
     get_deleted_file,
+    get_top_level_deleted_folder,
     list_deleted_files,
     list_deleted_folders,
+    list_top_level_deleted_folders,
     permanently_delete_all_files,
+    permanently_delete_folder,
     permanently_delete_file,
     restore_file_by_id,
 )
@@ -72,19 +75,56 @@ async def _permanent_delete(db, user_id, args: dict):
     # 清空整个回收站：all=true → 一次永久删除回收站里所有文件（不要逐个删）
     if args.get("all"):
         deleted_count = await count_deleted_files(db, user_id)
-        if not deleted_count:
+        folders = await list_top_level_deleted_folders(db, user_id)
+        if not deleted_count and not folders:
             return {"success": True, "deleted_count": 0, "note": "回收站本来就是空的"}
         # 不可逆 → 二次确认保底（按数量提示）
-        blocked = confirm.needs_confirmation(args, f"将永久删除回收站里全部 {deleted_count} 个文件，删除后无法恢复", user_id)
+        blocked = confirm.needs_confirmation(
+            args,
+            f"将永久删除回收站里全部 {deleted_count} 个文件和 {len(folders)} 个文件夹，删除后无法恢复",
+            user_id,
+        )
         if blocked is not None:
             return blocked
         file_ids = await permanently_delete_all_files(db, storage, user_id)
+        folder_file_ids = []
+        folder_ids = []
+        # 文件先清理，文件夹再按顶层恢复单元删除；其子文件夹会级联移除。
+        for folder in folders:
+            folder_file_ids.extend(await permanently_delete_folder(db, storage, folder))
+            folder_ids.append(folder.id)
         await db.commit()
-        for fid in file_ids:
+        for fid in {*file_ids, *folder_file_ids}:
             delete_thumb_cache(fid)
-        return {"success": True, "deleted_count": len(file_ids), "note": "回收站已清空"}
+        return {
+            "success": True,
+            "deleted_count": len(file_ids) + len(folder_file_ids),
+            "deleted_file_count": len(file_ids) + len(folder_file_ids),
+            "deleted_folder_count": len(folder_ids),
+            "note": "回收站已清空（文件和文件夹均已删除）",
+        }
 
-    # 单个永久删除
+    # 单个永久删除：文件夹必须用 folder_id，不能把文件夹 id 当作 file_id。
+    folder_id = args.get("folder_id")
+    if folder_id:
+        folder = await get_top_level_deleted_folder(db, user_id, folder_id)
+        if folder is None:
+            return json.dumps({"error": "文件夹不在回收站（只能永久删除回收站里的顶层文件夹）"})
+        blocked = confirm.needs_confirmation(
+            args, f"将永久删除文件夹「{folder.name}」及其全部内容，删除后无法恢复", user_id)
+        if blocked is not None:
+            return blocked
+        deleted_ids = await permanently_delete_folder(db, storage, folder)
+        await db.commit()
+        for deleted_id in deleted_ids:
+            delete_thumb_cache(deleted_id)
+        return {
+            "success": True,
+            "deleted_folder_id": folder_id,
+            "deleted_file_count": len(deleted_ids),
+        }
+
+    # 单个永久删除文件
     fid = args.get("file_id")
     if not fid:
         return json.dumps({"error": "需提供 file_id（单个删除）或 all=true（清空全部）"})
@@ -139,12 +179,13 @@ class TrashSkill(BaseSkill):
         ),
         Tool(
             name="permanent_delete", label="永久删除",
-            description="永久删除回收站里的文件（不可恢复）。删单个传 file_id；**要清空整个回收站就传 all=true，一次全清，绝不要逐个 file_id 删**。流程：先不带 confirm 调用 → 返回影响详情（含数量）→ 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
+            description="永久删除回收站里的文件或顶层文件夹（不可恢复）。删文件传 file_id，删文件夹传 folder_id；**要清空整个回收站就传 all=true，一次清理文件和文件夹，绝不要逐个 file_id 删**。流程：先不带 confirm 调用 → 返回影响详情和确认凭证 → 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "file_id": {"type": "integer", "description": "要永久删除的单个文件 id"},
-                    "all": {"type": "boolean", "description": "true=清空回收站全部文件（一次清，不用逐个删）"},
+                    "folder_id": {"type": "integer", "description": "要永久删除的单个顶层回收站文件夹 id（含其全部内容）"},
+                    "all": {"type": "boolean", "description": "true=清空回收站全部文件和文件夹（一次清，不用逐个删）"},
                     "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
                     "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },

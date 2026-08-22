@@ -62,7 +62,7 @@ def test_project_root_folder_is_rendered():
     assert builder._project_root_folders(Project()) == "项目资料"
 
 
-def test_recent_notes_are_rendered_as_dynamic_context():
+def test_recent_notes_are_rendered_as_snapshot_context():
     dynamic = builder.build_split(
         "default", "u", [], [], notes=[{
             "title": "今天的记录", "content": "完成了上下文整理",

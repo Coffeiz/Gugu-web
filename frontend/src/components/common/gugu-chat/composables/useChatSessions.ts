@@ -1,5 +1,6 @@
 import { nextTick, computed, type Ref } from 'vue'
-import { agentApi } from '@/services/api'
+import { agentApi, getToken } from '@/services/api'
+import { API_BASE } from '../chatConstants'
 import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
@@ -12,6 +13,17 @@ interface RawSessionMessage {
   quotedText?: string
   platformUserId?: string | null
   platformUserName?: string | null
+  createdAt: string
+}
+
+interface RawToolEvent {
+  id: string
+  toolCallId: string
+  toolName: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolStatus?: ChatMessage['toolStatus']
+  toolDurationMs?: number
   createdAt: string
 }
 
@@ -79,7 +91,7 @@ export function useChatSessions(options: {
       options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
       // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
       // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-      messages.value = data.messages.map((m: RawSessionMessage) => {
+      const loadedMessages = data.messages.map((m: RawSessionMessage) => {
         const speaker = options.resolveSpeaker(m.role, m.platformUserId, m.platformUserName)
         return {
           id: mkid(),
@@ -92,8 +104,41 @@ export function useChatSessions(options: {
           files: m.files && m.files.length ? m.files : undefined,
           quotedText: m.quotedText || undefined,
           time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+          _createdAt: m.createdAt,
         }
       })
+      const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
+        id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+        toolCallId: event.toolCallId, toolName: event.toolName,
+        toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
+        toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
+      }))
+      messages.value = [...loadedMessages, ...loadedTools].sort((a, b) =>
+        String((a as ChatMessage & { _createdAt?: string })._createdAt || '').localeCompare(String((b as ChatMessage & { _createdAt?: string })._createdAt || ''))
+      )
+      // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
+      // 因而前端不需要、也不会持久化旧 token。
+      try {
+        const interactionRes = await fetch(`${API_BASE}/agent/sessions/${id}/interactions`, {
+          headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+        })
+        if (interactionRes.ok) {
+          const interactionData = await interactionRes.json()
+          for (const item of (interactionData.items || [])) {
+            messages.value.push({
+              id: mkid(), role: 'interaction', text: '', _createdAt: item.created_at,
+              time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              interaction: {
+                promptId: Number(item.id), kind: String(item.kind || 'confirm'),
+                title: String(item.title || '需要确认'), body: String(item.body || ''),
+                options: Array.isArray(item.options) ? item.options : [],
+                resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
+              },
+            })
+          }
+          messages.value.sort((a, b) => String(a._createdAt || '').localeCompare(String(b._createdAt || '')))
+        }
+      } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度

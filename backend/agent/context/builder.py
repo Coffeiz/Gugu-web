@@ -202,9 +202,10 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     if non_streaming:
         dynamic_parts.append(_NON_STREAMING_BLOCK)
 
-    # 时间不放在 dynamic_context 中——它会变化导致 messages 前缀断裂。
+    # 时间不放在 snapshot_context 中——它会变化导致 messages 前缀断裂。
     # 时间作为最后一条独立消息追加（在 runner.py / web.py 中处理），
-    # 这样 messages 前缀（system-reminder + history + current_msg）跨 run 一致，缓存命中。
+    # snapshot 生成的 memory/projects/calendar/files/source 会作为固定前缀；
+    # 每轮只把 stance、摘要变化和当前时间放到 history 之后，保持缓存断点稳定。
 
     if im_message_format == "compat":
         from agent.im.message_format import compatibility_prompt

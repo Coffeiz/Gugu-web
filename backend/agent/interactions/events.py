@@ -8,6 +8,11 @@ ROUND_START = "round_start"
 ROUND_END = "round_end"
 TOOL_CALL_START = "tool_call_start"
 TOOL_CALL_RESULT = "tool_call_result"
+INTERACTION_REQUIRED = "interaction_required"
+# 兼容现有 Web/IM 网关：这些事件仍沿用旧名称，但 payload 已带统一身份字段。
+LEGACY_NEW_ROUND = "_new_round"
+LEGACY_TOOL_CALL = "tool_call"
+LEGACY_TOOL_DONE = "tool_done"
 TOKEN = "token"
 FILE = "file"
 DONE = "done"
@@ -19,6 +24,10 @@ __all__ = [
     "ROUND_END",
     "TOOL_CALL_START",
     "TOOL_CALL_RESULT",
+    "INTERACTION_REQUIRED",
+    "LEGACY_NEW_ROUND",
+    "LEGACY_TOOL_CALL",
+    "LEGACY_TOOL_DONE",
     "TOKEN",
     "FILE",
     "DONE",

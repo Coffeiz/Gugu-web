@@ -140,6 +140,8 @@
   --gugu-chat-shadow: var(--elevation-window);
   --gugu-chat-header-border: color-mix(in srgb,var(--content-primary) 12%,transparent);
   --gugu-chat-sidebar-border: var(--border-subtle);
+  --gugu-chat-user-highlight: var(--border-highlight);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --gugu-chat-session-hover: var(--surface-soft-hover);
   --gugu-chat-session-active: var(--sidebar-item-active);
   --gugu-chat-session-active-fg: var(--sidebar-item-active-fg);

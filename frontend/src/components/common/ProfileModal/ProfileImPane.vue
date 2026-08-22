@@ -1,6 +1,14 @@
 <template>
   <div class="pm-section">
-    <div class="pm-section-label">接入咕咕</div>
+    <div class="pm-section-label">消息偏好</div>
+    <div class="pm-bot-group-row pm-interaction-preference-row">
+      <div class="pm-field-desc"><span class="pm-field-name">显示工具调用信息</span><span class="pm-field-hint">在 QQ、飞书、微信等 IM 中显示工具执行状态；关闭不影响工具执行和最终回复</span></div>
+      <span class="pm-switch-wrap"><label class="switch sm"><input type="checkbox" :checked="preferences.showToolInteractions" @change="toggleToolInteractions" /><span class="slider"></span></label><span class="pm-switch-label" :class="{ on: preferences.showToolInteractions }">{{ preferences.showToolInteractions ? '已开启' : '已关闭' }}</span></span>
+    </div>
+  </div>
+  <div class="pm-sep"></div>
+  <div class="pm-section">
+    <div class="pm-section-label">即时通讯</div>
     <template v-for="platform in platforms" :key="platform.key">
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ platform.label }}</span><span class="pm-field-hint">{{ platform.hint }}</span></div><button v-if="!botsOf(platform.key).length" class="pm-bind-btn" :disabled="connecting === platform.key" @click="startConnect(platform.key)">{{ connecting === platform.key ? '生成中…' : '扫码连接' }}</button><span v-else class="pm-field-hint pm-bound-tag">已连接 · 删除后可重连</span></div>
       <div v-for="bot in botsOf(platform.key)" :key="bot.id" class="pm-bot-item">
@@ -29,6 +37,7 @@ import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@
 import { optimisticMutation } from '@/utils/optimisticMutation'
 import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
+import { usePreferencesStore } from '@/stores/preferences'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
@@ -45,6 +54,7 @@ const groupToolOptions = [
   { key: 'web_search', label: '联网搜索 + 网页阅读 + 搜图/读图/发图', tools: ['web_search', 'http_get', 'image_search', 'inspect_images', 'send_file'] },
   { key: 'group_context_search', label: '群上下文搜索', tools: ['group_context_search'] },
 ] as const
+const preferences = usePreferencesStore()
 const platforms = [
   { key: 'feishu', label: '飞书（自带机器人）', api: feishuConnectApi, hint: '手机飞书扫码 → 授权创建机器人，咕咕自动连接，私聊它直接管项目/文件/日程' },
   { key: 'qq', label: 'QQ（自带机器人）', api: qqConnectApi, hint: '手机 QQ 扫码 → 选一个机器人授权，咕咕自动连接，私聊或在群里 @它管理项目/文件/日程' },
@@ -62,6 +72,10 @@ const connecting = ref(''); const connect = ref<{ platform: string; id: string }
 const pendingSettingWrites = new Set<Promise<void>>()
 let settingsRevision = 0
 let botsLoadSeq = 0
+
+function toggleToolInteractions() {
+  void preferences.saveShowToolInteractions(!preferences.showToolInteractions)
+}
 
 function botById(botId: number): Bot | undefined { return bots.value.find(bot => bot.id === botId) }
 function patchLocalBot(botId: number, patch: BotSettingPatch) {
@@ -180,7 +194,7 @@ function togglePrivateStreaming(bot: Bot) {
   if (current) void updateBotSetting(bot.id, { private_streaming_enabled: current.private_streaming_enabled === false }, '私聊流式设置失败')
 }
 async function removeBot(bot: Bot) { if (!confirm(`删除「${bot.name}」？删除后这个机器人不再连咕咕。`)) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
-onMounted(() => { loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
+onMounted(() => { void preferences.fetch(); loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
 onDeactivated(clearCopyFeedback)
 onDeactivated(onDocClickCloseHelp)
@@ -188,6 +202,12 @@ onActivated(resumePoll)
 </script>
 
 <style scoped>
+.pm-interaction-preference-row {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
 .pm-binding-code {
   flex-shrink: 0;
   display: flex;

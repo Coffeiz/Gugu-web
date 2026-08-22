@@ -1,4 +1,6 @@
 <template>
+  <GuguChatToolBubble v-if="msg.role === 'tool'" :msg="msg" />
+  <GuguChatInteraction v-else-if="msg.role === 'interaction'" :msg="msg" @select="(selectedMsg, option) => $emit('interactionSelect', selectedMsg, option)" />
   <!-- 群聊左侧消息标发言人：ai 标"咕咕"，群成员标 platformUserName。只在
        群聊会话里显示，1:1 对话左侧默认就是咕咕，不额外占地方。 -->
   <div v-if="isGroupSession && msg.role !== 'user'" class="msg-speaker">{{ msg.role === 'ai' ? '咕咕' : msg.speakerLabel }}</div>
@@ -47,7 +49,7 @@
     </div>
     </template>
   </div>
-  <div class="msg-footer">
+  <div v-if="msg.role !== 'tool' && msg.role !== 'interaction'" class="msg-footer">
     <span class="msg-time">{{ msg.time }}</span>
     <button class="msg-copy-btn" @click="$emit('copy', msg)" title="复制">
       <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
@@ -65,6 +67,8 @@
  */
 import { PhPause, PhPlay, PhCheck, PhCopy } from '@phosphor-icons/vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import GuguChatToolBubble from './GuguChatToolBubble.vue'
+import GuguChatInteraction from './GuguChatInteraction.vue'
 import type { ChatMessage, ChatFile } from './chatTypes'
 import { renderMd, renderMdStream } from './markdown'
 import {
@@ -86,6 +90,7 @@ defineEmits<{
   openFile: [file: ChatFile]
   download: [file: ChatFile]
   actionClick: [e: MouseEvent]
+  interactionSelect: [msg: ChatMessage, option: { id: string; label: string; token: string }]
 }>()
 
 const vLazyThumb = makeLazyThumbDirective('card')

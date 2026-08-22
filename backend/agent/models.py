@@ -47,3 +47,4 @@ class AgentResponse:
     files: list = field(default_factory=list)   # 咕咕要发的文件卡片（file_id/name/ext…），平台 adapter 据此发文件
     cancelled: bool = False                      # 用户中途「算了」→ 工具循环被取消，worker 据此不再补发回复
     used_tools: bool = False                     # 本轮是否实际经过工具调用，供 IM 记忆触发策略使用
+    interactions: list = field(default_factory=list)  # 可选交互提示；由平台 adapter 决定是否展示

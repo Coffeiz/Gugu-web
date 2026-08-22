@@ -46,13 +46,21 @@ def list_sessions():
 
 
 @app.get("/api/sessions/{session_key:path}/runs")
-def list_runs(session_key: str):
-    return store.list_runs(session_key)
+def list_runs(session_key: str, limit: int = 20, before: float | None = None):
+    return store.list_runs(session_key, limit=limit, before=before)
+
+
+@app.get("/api/runs/{run_id}/spans")
+def list_spans(run_id: str, limit: int = 100, offset: int = 0):
+    result = store.list_spans(run_id, limit=limit, offset=offset)
+    if result is None:
+        raise HTTPException(404, "run not found")
+    return result
 
 
 @app.get("/api/runs/{run_id}")
-def get_run(run_id: str):
-    run = store.get_run(run_id)
+def get_run(run_id: str, include_spans: bool = True):
+    run = store.get_run(run_id, include_spans=include_spans)
     if run is None:
         raise HTTPException(404, "run not found")
     return run

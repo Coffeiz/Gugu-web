@@ -823,6 +823,10 @@ async def dispatch_im_message(payload: dict):
         await finalize_im_response(platform, puid, True, "")
         return resp
 
+    # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
+    if resp.interactions and await _should_show_tool_interactions(req.user_id):
+        await _send_interaction_prompts(payload, resp.interactions)
+
     if platform == "qq" and qq_private_streaming and _stream_sent:
         if resp.files:
             from agent.im.files import send_files
@@ -840,3 +844,23 @@ async def dispatch_im_message(payload: dict):
         flush=True,
     )
     return resp
+
+
+async def _should_show_tool_interactions(user_id) -> bool:
+    from agent.interactions.preferences import show_tool_interactions
+    return await show_tool_interactions(user_id)
+
+
+async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> None:
+    """发送平台可理解的交互摘要；未接入原生按钮的平台使用文本摘要。"""
+    from agent.im.replies import send_text
+    if payload.get("platform") == "qq":
+        from agent.interactions.qq import format_text_fallback
+        for item in interactions:
+            await send_text(payload, format_text_fallback(item))
+        return
+    # 飞书/微信的原生卡片 adapter 尚未进入本阶段，保持统一的可见文本语义。
+    for item in interactions:
+        title = str(item.get("title") or "需要确认")
+        body = str(item.get("body") or "")
+        await send_text(payload, f"{title}\n{body}\n请在网页中选择操作。")

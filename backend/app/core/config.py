@@ -66,7 +66,7 @@ class StorageSettings(BaseModel):
 
 
 class AISettings(BaseModel):
-    provider: str = Field("qwen", description="AI 提供方: qwen | openai | deepseek | minimax | anthropic")
+    provider: str = Field("qwen", description="AI 提供方: qwen | openai | ollama | deepseek | minimax | anthropic")
     api_key: str = Field("", description="API Key")
     base_url: str = Field(
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -82,6 +82,9 @@ class AISettings(BaseModel):
     vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
     vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
+    ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
+    ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
+    ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
 
 
 class VoiceSettings(BaseModel):
@@ -114,6 +117,9 @@ class AIPresetItem(BaseModel):
     vision_video: bool = False
     vision_audio: bool = False
     api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
+    ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
+    ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
+    ollama_keep_alive: str = "5m"     # Ollama 模型驻留时间
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
 

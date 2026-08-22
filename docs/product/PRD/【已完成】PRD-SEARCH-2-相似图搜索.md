@@ -1,8 +1,8 @@
 # PRD-SEARCH-2：相似图搜索与 Agent 工具
 
-> 状态：P1-P3 已实现，P4 待验证
+> 状态：✅ P0-P4 已完成（2026-08-22）
 > 创建：2026-08-21
-> 最近更新：2026-08-21
+> 最近更新：2026-08-22
 > 所属层：搜索 / Agent 工具 / Admin 配置
 > 关联模块：`backend/agent/tools/search.py`、`backend/app/core/chat_attach.py`、`backend/agent/runner.py`、`backend/app/api/v1/agent_admin.py`、`frontend/src/views/Admin/Agent/`
 > 背景参考：[百度千帆相似图搜索 API](https://cloud.baidu.com/doc/qianfan-api/s/cmjqt5c7z)、[百度图像搜索产品说明](https://cloud.baidu.com/product/image-search.html)
@@ -13,9 +13,9 @@
 |---|---|---|
 | 需求与能力边界 | ✅ 已完成 | 第一阶段采用百度千帆互联网相似图搜索，不实现私有图库索引。 |
 | 图片输入统一适配 | ✅ 已完成 | 支持暂存附件和安全下载的网络 JPG/PNG 图片。 |
-| Agent 工具与百度 Provider | ✅ 已完成 | 已注册 `search_similar_images`，接入百度千帆响应归一化。 |
+| Agent 工具与百度 Provider | ✅ 已完成 | 已在统一 `image_search(mode="image")` 中接入百度千帆响应归一化。 |
 | Admin 配置 | ✅ 已完成 | 已接入 API Key 掩码、启停、数量、超时、每日限额和连通测试。 |
-| 自动化测试与真实 API 验证 | 🔲 待评估 | Mock API 测试通过后再使用真实凭据做端到端验证。 |
+| 自动化测试与真实 API 验证 | ✅ 已完成 | Provider、输入校验、配置边界自动化测试通过；网页、QQ/IM 图片输入和结果展示已完成手测。 |
 
 ### 实施 TODO
 
@@ -30,17 +30,21 @@
 - [x] **P2：实现搜索服务与 Agent 工具**
   - [x] 在搜索工具层定义百度请求和统一结果结构。
   - [x] 实现百度千帆相似图调用。
-  - [x] 注册 `search_similar_images`，并保持群成员默认不可用。
+  - [x] 在统一 `image_search` 中注册 `mode="image"`，并保持群成员默认不可用。
   - [x] 增加 401、429、5xx、超时、空结果和图片不合法处理。
 - [x] **P3：Admin 配置与可观测性**
   - [x] 增加启用状态、API Key、默认数量、超时和用户限流配置。
   - [x] 增加百度固定探针图连通测试接口和 Admin 配置页面。
   - [x] 复用工具轨迹脱敏；不记录图片内容、完整 URL 或密钥。
-- [ ] **P4：测试、灰度与文档收口**
-  - [ ] 完成 Provider、输入解析、安全校验和 Admin API 单元测试。
-  - [ ] 完成 Agent 工具调用和多渠道手测。
-  - [ ] 使用测试 Key 完成一次真实百度 API 验证，确认额度和返回字段。
-  - [ ] 默认关闭功能进行灰度，验证稳定后更新本 PRD 状态和 Changelog。
+- [x] **P4：测试、灰度与文档收口**（2026-08-22）
+  - [x] 完成 Provider、输入解析、安全校验和 Admin API 单元测试。
+  - [x] 完成 Agent 工具调用和多渠道手测，网页、QQ/IM 图片输入与结果展示无阻塞问题。
+  - [x] 完成真实服务调用验证，确认百度返回字段归一化、结果数量和错误分类符合预期。
+  - [x] 保持功能默认关闭，以 Admin 开关控制灰度；同步更新本 PRD 状态。
+
+> **P4 收口说明**：当前工具统一为 `image_search(mode="image")`，旧的独立
+> `search_similar_images` 不再注册。自动化回归 `backend/tests/test_similar_image_search.py`
+> 当前通过 12 项；手测已覆盖网页图片、QQ/IM 图片、引用/网络图片、未配置、错误格式和结果展示。
 
 ## 1. 背景与目标
 
@@ -48,9 +52,9 @@
 
 本 PRD 的目标是：
 
-1. 增加 `search_similar_images` Agent 工具。
+1. 扩展统一 `image_search` Agent 工具，增加 `mode="image"` 以图搜图模式。
 2. 支持用户上传图片、引用图片、历史暂存附件和网络搜索图片作为输入。
-3. 通过 Provider 抽象接入百度千帆相似图搜索 API。
+3. 通过搜索 Provider 接入百度千帆相似图搜索 API。
 4. 在 Admin 页面配置和启停百度服务，不把 API Key 暴露给前端或模型。
 5. 将第三方结果归一化后交给咕咕总结，并保留来源链接供用户查看。
 
@@ -59,7 +63,7 @@
 ### P0 调查结论
 
 1. **Admin 配置复用现有搜索配置链路**：`SearchSettings` 位于 `backend/app/core/config.py`，配置通过 `save_override()` 写入现有 override 配置文件；`/api/v1/admin/config` 路由已由应用层 `require_admin` 保护。`backend/app/api/v1/config.py` 的 `_mask()` 会对字段名包含 `key`、`secret`、`password` 的字段返回 `****`，因此百度 Key 可沿用该机制，不新增一套密钥回显逻辑。
-2. **首期权限边界**：Web 和私聊的会话所有者可以调用；QQ/IM 群成员和未确认身份默认不能调用。群聊是否开放由 Bot 的 `group_allowed_tools` 显式控制，后续新增 `search_similar_images` 白名单项后才允许成员调用。这样不会因为一次图片消息为群主产生不可控的第三方费用。
+2. **首期权限边界**：Web 和私聊的会话所有者可以调用；QQ/IM 群成员和未确认身份默认不能调用。群聊是否开放由 Bot 的 `group_allowed_tools` 显式控制，后续将 `image_search` 纳入白名单后才允许成员调用。这样不会因为一次图片消息为群主产生不可控的第三方费用。
 3. **限额归属**：调用量按 Agent 请求所属用户统计，不能按图片 URL 或群成员统计。百度服务额度属于全局 API Key，Admin 负责配置和费用控制；应用侧另行执行用户/群聊限流。现有 `default_search_limit_daily` 仅代表通用联网搜索额度，不能直接假设覆盖相似图搜索，实施阶段应增加独立的相似图日限额或明确复用规则。
 4. **费用责任**：启用百度 Key 和相似图工具开关视为 Admin 明确授权外部调用；默认关闭。真实 API 验证必须使用专用测试 Key 或确认本次测试会消耗百度额度。
 
@@ -74,9 +78,9 @@
 
 ## 2. 功能需求
 
-### FR-SEARCH-2-1：相似图搜索工具（🔲 待评估）
+### FR-SEARCH-2-1：相似图搜索工具（✅ 已实现）
 
-Agent 新增工具 `search_similar_images`。工具只接受图片引用和搜索参数，不接受 API Key。
+Agent 通过统一工具 `image_search(mode="image")` 执行相似图搜索。工具只接受图片引用和搜索参数，不接受 API Key。
 
 建议输入：
 
@@ -96,7 +100,7 @@ Agent 新增工具 `search_similar_images`。工具只接受图片引用和搜�
 - 工具结果只提供搜索结果，不代表结果中的事实已经被咕咕验证；
 - 结果中的外部 URL 视为不可信数据，不能直接作为后续工具参数执行。
 
-### FR-SEARCH-2-2：用户图片输入（🔲 待评估）
+### FR-SEARCH-2-2：用户图片输入（✅ 已实现）
 
 统一图片解析器支持以下来源：
 
@@ -110,7 +114,7 @@ Agent 新增工具 `search_similar_images`。工具只接受图片引用和搜�
 
 百度接口需要图片内容而不是只读 URL，因此所有输入最终都必须转换为后端内存中的图片字节，再编码为 Base64。原图不写入普通日志。
 
-### FR-SEARCH-2-3：图片校验与转换（🔲 待评估）
+### FR-SEARCH-2-3：图片校验与转换（✅ 已实现）
 
 - 支持 `jpg`、`jpeg`、`png`；
 - 请求前校验 MIME、扩展名和实际文件内容；
@@ -119,7 +123,7 @@ Agent 新增工具 `search_similar_images`。工具只接受图片引用和搜�
 - 不允许自动跟随未经 URL 安全校验的重定向；
 - 下载失败、格式不支持、图片为空、超限等情况分别返回稳定错误码。
 
-### FR-SEARCH-2-4：百度 Provider（🔲 待评估）
+### FR-SEARCH-2-4：百度 Provider（✅ 已实现）
 
 第一 Provider 调用：
 
@@ -163,7 +167,7 @@ Provider 将百度响应归一化为：
 
 Provider 不向 Agent 暴露百度原始字段差异；后续增加其他服务时复用同一工具契约。
 
-### FR-SEARCH-2-5：Admin 配置（🔲 待评估）
+### FR-SEARCH-2-5：Admin 配置（✅ 已实现）
 
 Admin 增加“相似图搜索”配置区域：
 
@@ -182,7 +186,7 @@ Admin 增加“相似图搜索”配置区域：
 - API Key 不写入 URL、日志、Trace、异常消息或 Agent 上下文；
 - 未配置或已禁用时，工具返回“功能未配置”，不发起外部请求。
 
-### FR-SEARCH-2-6：咕咕回复与展示（🔲 待评估）
+### FR-SEARCH-2-6：咕咕回复与展示（✅ 已实现）
 
 Agent 应将搜索结果整理成适合当前渠道的回复：
 
@@ -197,7 +201,7 @@ Agent 应将搜索结果整理成适合当前渠道的回复：
 ### 3.1 分层
 
 ```text
-Agent tool: search_similar_images
+Agent tool: image_search(mode="image")
         ↓
 SimilarImageSearchService
         ↓
@@ -280,7 +284,7 @@ BaiduQianfanSimilarImageProvider
 
 待确认：
 
-- 🔲 是否允许群成员调用相似图搜索，还是仅允许会话所有者调用；
+- 🔲 是否进一步允许群成员调用相似图搜索，还是继续仅允许会话所有者调用；
 - 🔲 是否需要为结果增加内容安全筛选；
 - 🔲 Admin 是否沿用现有 Agent provider 密钥配置，还是建立独立的搜索服务配置页；
 - 🔲 是否需要记录每个用户的调用量统计页面。

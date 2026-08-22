@@ -200,7 +200,7 @@ def _record_builder_sources(context_builder: Any, original_build: Any, bound: in
             static_text, dynamic_text, now_text = result
             for label, content, role in (
                 ("Prompt stable prefix", static_text, "stable_prefix"),
-                ("Prompt dynamic context", dynamic_text, "dynamic_context"),
+                ("Prompt snapshot context", dynamic_text, "snapshot_context"),
                 ("Prompt current time", now_text, "volatile_tail"),
             ):
                 if content:

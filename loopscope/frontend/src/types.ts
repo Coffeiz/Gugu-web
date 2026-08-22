@@ -82,9 +82,16 @@ export interface TraceRun {
   started_at: number
   ended_at?: number | null
   duration_ms?: number | null
-  input: Record<string, any>
-  output: Record<string, any>
+  input?: Record<string, any>
+  output?: Record<string, any>
   attributes: Record<string, any>
   usage?: TokenUsage
   spans?: TraceSpan[]
+}
+
+export interface TraceSpanPage {
+  items: TraceSpan[]
+  hasMore: boolean
+  offset: number
+  limit: number
 }

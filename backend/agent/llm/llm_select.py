@@ -62,12 +62,7 @@ def use_anthropic_for(ai) -> bool:
     除非 base_url 里带 anthropic 字样」，跟 `_DEFAULT` 代表的「真正的 anthropic 原生」语义不是
     一回事，硬delegate 会让不认识的第三方厂商被误判成走 anthropic 格式。所以这条只复用
     `is_minimax`（已经是委托版本），其余判定逻辑原样保留。"""
-    fmt = (getattr(ai, "api_format", "") or "").lower()
-    if fmt == "anthropic":
-        return True
-    if fmt == "openai":
-        return False
-    return is_minimax(ai) or ("anthropic" in (getattr(ai, "base_url", "") or "").lower())
+    return providers.adapter_for(ai).protocol_format(ai) == "anthropic"
 
 
 def _pick_pool(pool, mode):

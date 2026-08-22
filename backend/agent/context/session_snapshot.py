@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from app.core.tz import now_utc, resolve_tz, LOCAL_TZ
@@ -35,6 +35,16 @@ def current_time_text(user_tz=None) -> str:
 def reminder_message(content: str) -> dict:
     """生成不带观测元数据的固定 reminder 消息。"""
     return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+
+
+def message_time_reminder(sent_at, user_tz=None) -> dict | None:
+    """把用户消息时间作为不可变的独立 reminder，按用户时区格式化。"""
+    if sent_at is None:
+        return None
+    if sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=timezone.utc)
+    local_time = sent_at.astimezone(user_tz or LOCAL_TZ)
+    return reminder_message(local_time.strftime("%m-%d %H:%M"))
 
 
 def time_message(user_tz=None) -> dict:
@@ -120,7 +130,12 @@ def snapshot_context(session) -> dict:
     context = getattr(session, "session_context", None) or {}
     return {
         "system_prompt": str(context.get("system_prompt") or ""),
-        "dynamic_context": str(context.get("dynamic_context") or ""),
+        # 兼容旧 session_context；新快照统一使用能表达生命周期的字段名。
+        "snapshot_context": str(
+            context.get("snapshot_context")
+            or context.get("dynamic_context")
+            or ""
+        ),
         "session_info": context.get("session_info") or {},
         "user_tz": resolve_tz(context.get("user_tz")) if context.get("user_tz") != "LOCAL" else LOCAL_TZ,
         "im_channels": context.get("im_channels") or {},
@@ -149,7 +164,7 @@ def initialize_snapshot(
     session,
     *,
     system_prompt: str,
-    dynamic_context: str,
+    snapshot_context: str,
     session_info: dict,
     user_tz: str | None,
     im_channels: dict | None = None,
@@ -173,7 +188,7 @@ def initialize_snapshot(
         session.context_epoch = (getattr(session, "context_epoch", None) or 1) + 1
     session.session_context = {
         "system_prompt": system_prompt,
-        "dynamic_context": dynamic_context,
+        "snapshot_context": snapshot_context,
         "session_info": session_info,
         "user_tz": _tz_storage_value(user_tz),
         "im_channels": im_channels or {},
@@ -237,7 +252,11 @@ async def ensure_snapshot(
     initialize_snapshot(
         session,
         system_prompt=str(payload.get("system_prompt") or ""),
-        dynamic_context=str(payload.get("dynamic_context") or ""),
+        snapshot_context=str(
+            payload.get("snapshot_context")
+            or payload.get("dynamic_context")
+            or ""
+        ),
         session_info=payload.get("session_info") or {},
         user_tz=payload.get("user_tz"),
         im_channels=payload.get("im_channels") or {},

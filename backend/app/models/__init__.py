@@ -456,6 +456,42 @@ class ConversationMessage(Base):
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
 
 
+class InteractionPrompt(Base):
+    """等待用户选择/确认的短时交互提示。"""
+
+    __tablename__ = "interaction_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="confirm")
+    title: Mapped[str] = mapped_column(String(300), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    schema_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class InteractionAction(Base):
+    """Prompt 下的单次动作；数据库只保存动作 token 的摘要。"""
+
+    __tablename__ = "interaction_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prompt_id: Mapped[int] = mapped_column(ForeignKey("interaction_prompts.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    action_type: Mapped[str] = mapped_column(String(30), default="choice")
+    option_id: Mapped[str] = mapped_column(String(100), default="")
+    context_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    consumed_event_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
 # ── 聊天附件所有权（PRD-STORAGE-1 Phase A）──────────────────────────────────────
 # DB 是所有权真相来源，state 只有 draft/attached 两态（不设 DELETING 中间态，见
 # PRD 第 2 节 FR-STORAGE-1-1）。storage_key 允许被多条行共享（PRD-IM-9 引用复用场景），

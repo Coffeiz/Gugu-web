@@ -1,6 +1,9 @@
 /* Shared floating surface / modal / input / choice contracts.
    Components consume these roles; light/dark differences come from semantic theme values. */
 :root {
+  /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
+  --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --panel-glass-bg: var(--surface-glass);
   --panel-glass-border: var(--border-default);
   --panel-glass-highlight: var(--border-highlight);
@@ -212,6 +215,8 @@ html[data-theme='light'][data-family='v2'] {
 
 html[data-theme='dark'][data-family] {
   /* Preserve the existing dark contracts; the neutral light restoration above must not shift dark. */
+  --gugu-chat-user-highlight: color-mix(in srgb,var(--border-highlight) 82%,transparent);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --panel-divider: var(--border-subtle);
   --subpanel-border: var(--border-subtle);
 

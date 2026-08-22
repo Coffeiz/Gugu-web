@@ -188,29 +188,72 @@ class TraceStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def list_runs(self, session_key: str) -> list[dict[str, Any]]:
+    def list_runs(
+        self, session_key: str, limit: int = 20, before: float | None = None
+    ) -> list[dict[str, Any]]:
+        limit = min(max(int(limit), 1), 100)
         with self._connect() as db:
+            filters = ["session_key=?"]
+            params: list[Any] = [session_key]
+            if before is not None:
+                filters.append("started_at < ?")
+                params.append(before)
             rows = db.execute(
-                "SELECT * FROM runs WHERE session_key=? ORDER BY started_at ASC", (session_key,)
+                f"SELECT * FROM runs WHERE {' AND '.join(filters)} "
+                "ORDER BY started_at DESC LIMIT ?",
+                (*params, limit),
             ).fetchall()
-        return [self._run_row(r) for r in rows]
+        return [self._run_summary(r) for r in reversed(rows)]
 
-    def get_run(self, run_id: str) -> dict[str, Any] | None:
+    def get_run(self, run_id: str, include_spans: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return None
-            spans = db.execute(
-                "SELECT * FROM spans WHERE run_id=? ORDER BY ordinal", (run_id,)
-            ).fetchall()
+            spans = []
+            if include_spans:
+                spans = db.execute(
+                    "SELECT * FROM spans WHERE run_id=? ORDER BY ordinal", (run_id,)
+                ).fetchall()
         run = self._run_row(row)
-        run["spans"] = [self._span_row(s) for s in spans]
+        if include_spans:
+            run["spans"] = [self._span_row(s) for s in spans]
         return run
+
+    def list_spans(self, run_id: str, limit: int = 100, offset: int = 0) -> dict[str, Any] | None:
+        limit = min(max(int(limit), 1), 200)
+        offset = max(int(offset), 0)
+        with self._connect() as db:
+            exists = db.execute("SELECT 1 FROM runs WHERE id=?", (run_id,)).fetchone()
+            if exists is None:
+                return None
+            rows = db.execute(
+                "SELECT * FROM spans WHERE run_id=? ORDER BY ordinal LIMIT ? OFFSET ?",
+                (run_id, limit + 1, offset),
+            ).fetchall()
+        has_more = len(rows) > limit
+        items = rows[:limit]
+        return {
+            "items": [self._span_row(row) for row in items],
+            "offset": offset,
+            "limit": limit,
+            "hasMore": has_more,
+        }
 
     def _run_row(self, row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
         d["input"] = self._load(d.pop("input_json"))
         d["output"] = self._load(d.pop("output_json"))
+        d["attributes"] = self._load(d.pop("attributes_json"))
+        d["usage"] = self._load(d.pop("usage_json", "{}"))
+        d.pop("raw_json", None)
+        return d
+
+    def _run_summary(self, row: sqlite3.Row) -> dict[str, Any]:
+        """返回 runs 列表所需的轻量摘要，详情和 spans 由 get_run 按需加载。"""
+        d = dict(row)
+        d.pop("input_json", None)
+        d.pop("output_json", None)
         d["attributes"] = self._load(d.pop("attributes_json"))
         d["usage"] = self._load(d.pop("usage_json", "{}"))
         d.pop("raw_json", None)

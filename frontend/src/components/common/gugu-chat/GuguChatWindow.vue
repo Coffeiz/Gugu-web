@@ -60,6 +60,7 @@
         :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
+        @interaction-select="onInteractionSelect"
       />
 
       <!-- 输入框 -->
@@ -136,6 +137,7 @@ const props = defineProps<{
   onOpenFile: (file: ChatFile) => void
   onDownload: (file: ChatFile) => void
   onActionClick: (e: MouseEvent) => void
+  onInteractionSelect: (msg: ChatMessage, option: { id: string; label: string; token: string }) => void
   onPromptConnect: () => void
   onRenameSession: (id: number, title: string) => void
   onEnterExpanded: () => void
@@ -284,6 +286,7 @@ defineExpose({
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }
 :deep(.msg-virtual-row) { position: absolute; top: 0; left: 0; width: 100%; box-sizing: border-box; padding: 0 13px 8px; }
 .chat-main.is-expanded :deep(.msg-virtual-row) { padding: 0 24px 12px; }
+:deep(.msg-virtual-row.is-tool-row), .chat-main.is-expanded :deep(.msg-virtual-row.is-tool-row) { padding-bottom: var(--space-xs); }
 :deep(.chat-messages > .msg) { margin: 8px 13px 12px; }
 .chat-main.is-expanded :deep(.chat-messages > .msg) { margin: 12px 24px 20px; }
 

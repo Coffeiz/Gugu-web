@@ -14,6 +14,7 @@ import json
 import logging
 import random
 import re as _re_mod
+from uuid import uuid4
 from typing import AsyncGenerator
 
 from agent.llm import genstream
@@ -21,6 +22,7 @@ from agent import loop_drivers
 from agent.tools import registry
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
+from agent.interactions.stream_events import encode_event
 
 _log = logging.getLogger("agent.core")
 
@@ -99,6 +101,14 @@ _VERIFY_PROMPT = (
     "核验过程属于内部步骤，不要把“核对完成”“复查完成”“已确认”等过程标签当成最终回复。"
     "核实后直接总结这次实际做了什么、哪些成功、哪些没做成及原因；数量、文件名、位置和失败原因只能来自工具回执。"
     "表达沿用用户当前的风格偏好和咕咕人设：偏正式时克制准确，偏活泼时自然亲近，偏简短时收束，偏详细时补充必要上下文；不要套用固定口号，也不要把结果写成生硬的逐项统计表。"
+)
+
+# 核验查询完成后单独给一轮最终收束，避免模型在长工具历史末尾退回通用寒暄。
+_FINALIZE_PROMPT = (
+    "【内部最终收束】工具操作和结果核验已经完成。现在只生成给用户看的最终回复："
+    "根据本轮用户原始请求、已执行的操作和最新核验结果，直接总结实际完成了什么；"
+    "不要再次寒暄，不要说‘在呢’‘怎么了’‘收到’等泛化话，也不要提及工具、核验或内部提示。"
+    "如果操作已成功，明确说明结果；如果有失败或未完成，说明具体原因。"
 )
 
 # 核实轮只给出"确认/没问题"、却没调用查询工具时，强制再追一轮查询（防止遗漏实际状态）
@@ -244,9 +254,19 @@ class LLMRunner:
             session_id: int | None = None) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
+        if (getattr(ai, "provider", "") or "").lower() == "ollama" and \
+                getattr(ai, "ollama_api_mode", "native") == "native":
+            return self._run_ollama(user_id, messages, ai, session_id=session_id)
         if use_anthropic:
             return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id)
         return self._run_openai(user_id, messages, ai, session_id=session_id)
+
+    async def _run_ollama(self, user_id, messages: list, ai=None,
+                          session_id: int | None = None) -> AsyncGenerator[str, None]:
+        ai = ai if ai is not None else self.settings.ai
+        async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai,
+                                          system_text=None, session_id=session_id):
+            yield line
 
     # ── Anthropic（MiniMax / Anthropic）─────────────────────────────────────
     async def _run_anthropic(self, user_id, system_text: str,
@@ -303,9 +323,24 @@ class LLMRunner:
         # 自我核实阶段：一旦进入就持续到收尾（含其查证用的 get_* 轮）。期间模型文字先缓冲——
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
+        finalize_pending = False
         total_in = total_out = total_cache = 0
         compaction_attempts = 0
         hard_budget_retries = 0
+        run_id = f"run-{uuid4().hex[:16]}"
+        round_number = 0
+        event_seq = 0
+
+        def stream_event(event_type: str, **payload) -> str:
+            """统一给兼容 SSE 事件补上可追踪身份；不写入用户正文或工具参数日志。"""
+            nonlocal event_seq
+            event_seq += 1
+            return encode_event(
+                event_type,
+                run_id=run_id,
+                seq=event_seq,
+                **payload,
+            )
 
         while True:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
@@ -395,6 +430,9 @@ class LLMRunner:
 
             _tok = 0
             result = None
+            round_number += 1
+            round_id = f"round-{round_number}"
+            yield stream_event("round_start", round_id=round_id)
             _verify_buf = []   # 核实轮缓冲区：先攒着，回合结束按"有没有补做"决定 flush 还是丢弃
             _progress_buf: list[str] = []
             _progress_pending = False
@@ -512,29 +550,51 @@ class LLMRunner:
                     if call_index >= remaining_tool_calls:
                         # 仍然为 provider 的每个 tool call 补一个结果，避免留下孤儿 tool_call；
                         # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': tc.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                        yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                           name=tc.name, label=label, input=tc.input, verify=verify_mode,
+                                           status="skipped")
+                        yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                           name=tc.name, label=label, verify=verify_mode, status="skipped")
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
                     tool_calls_used += 1
                     if tc.parse_error:
                         # OpenAI 路专属：工具参数 JSON 被截断解析失败——别拿空参跑，改回一条错误
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
-                        yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': {}, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
-                        yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                        tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                        yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                           name=tc.name, label=label, input={}, verify=verify_mode,
+                                           status="invalid")
+                        yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                           name=tc.name, label=label, verify=verify_mode, status="error")
                         dispatched.append((tc, loop_drivers.TOOL_ARGS_TRUNCATED_ERROR))
                         continue
                     await _im_set_tool_state(tc.name)
                     # 自检轮工具照常显示，但打 verify 标记：前端凭 verify 收尾不冒「生成中」点点（否则回复完还在转、像卡住）
-                    yield f"data: {json.dumps({'type': 'tool_call', 'name': tc.name, 'label': label, 'input': tc.input, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                    tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
+                    yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
+                                       name=tc.name, label=label, input=tc.input, verify=verify_mode,
+                                       status="running")
                     res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                    # 统一交互桥：保留工具原有确认门，同时向 Guguchat/Web 发出按钮事件。
+                    # 桥接失败不能影响工具结果写回模型，因此只在成功创建时发送事件。
+                    from app.services.interactions import create_tool_confirmation
+                    interaction = await create_tool_confirmation(
+                        user_id=user_id, session_id=session_id, tool_name=tc.name, result=res,
+                    )
+                    if interaction:
+                        yield stream_event("interaction_required", round_id=round_id,
+                                           tool_call_id=tool_call_id, **interaction)
                     if tc.name in _mutset and _is_successful_tool_result(res):
                         did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
                     elif verify_mode and _is_read_tool(tc.name):
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
-                    yield f"data: {json.dumps({'type': 'tool_done', 'name': tc.name, 'label': label, 'verify': verify_mode}, ensure_ascii=False)}\n\n"
+                    yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
+                                       name=tc.name, label=label, verify=verify_mode,
+                                       status="success" if _is_successful_tool_result(res) else "error")
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
@@ -551,7 +611,7 @@ class LLMRunner:
                     verify_mode = True
                     verify_queried = False
                     messages.append({"role": "user", "content": _VERIFY_PROMPT})
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
             # 自我核实：① 理论上工具结果后会立即注入核实 prompt；这里保留为轮次封顶等
@@ -564,7 +624,14 @@ class LLMRunner:
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
                 driver.append_followup(messages, result, _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT)
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                continue
+
+            # 查询已完成后追加一轮专门的最终收束，避免长工具历史让模型退回通用寒暄。
+            if verify_mode and verify_queried and not finalize_pending:
+                finalize_pending = True
+                driver.append_followup(messages, result, _FINALIZE_PROMPT)
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
             # 核实阶段结束：不再需要补做/强查 → 把缓冲的核实文字发给用户，退出核实模式。
@@ -587,7 +654,7 @@ class LLMRunner:
                 if empty_retry < 1:
                     empty_retry += 1
                     driver.append_empty_retry(messages, result)
-                    yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                    yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
                 fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
                 async for _line in genstream.typed_stream(fb):   # 空回复兜底也走逐字流式
@@ -599,14 +666,14 @@ class LLMRunner:
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
                 driver.append_followup(messages, result, _NARRATION_NUDGE)
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
             if (not any_tool_called and not verify_mode and intent_retry < 1
                     and _announces_intent(_final_text)):
                 intent_retry += 1
                 driver.append_followup(messages, result, _INTENT_NUDGE)
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
             # 本轮都不能作为最终回复结束。当前内置驱动的 requires_tools 由 tool_calls
@@ -615,16 +682,16 @@ class LLMRunner:
                     and (_requires_tools is True or _is_tool_progress_only(_final_text))):
                 tool_intent_retry += 1
                 driver.append_followup(messages, result, _TOOL_REQUIRED_NUDGE)
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, _final_text)):
                 decision_retry += 1
                 driver.append_followup(messages, result, _DECISION_NUDGE)
-                yield f"data: {json.dumps({'type': '_new_round'})}\n\n"
+                yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
-            # 即时复查时，前面还没有生成过最终说明；保留读回后的确认给用户，
+            # 即时复查时，前面还没有生成过最终说明；保留最终收束轮的确认给用户，
             # 复查过程中的文字仍然一直缓冲、不显示。
             if verify_mode and verify_queried and _final_text.strip():
                 async for _line in genstream.typed_stream(_final_text):

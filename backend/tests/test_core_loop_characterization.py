@@ -25,7 +25,9 @@ import pytest
 
 import agent.core as core
 import agent.context.compaction as compaction
-from agent.core import LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, _VERIFY_PROMPT
+from agent.core import (
+    LLMRunner, MAX_ROUNDS, MAX_TOOL_CALLS, MAX_VERIFY, _FINALIZE_PROMPT, _VERIFY_PROMPT,
+)
 from agent.tools import registry
 
 
@@ -295,7 +297,8 @@ async def test_verify_clean_pass(monkeypatch, dispatched):
     patch_anthropic(monkeypatch, [
         msg([TX("好的"), TU("create_project", "1", {})]),          # R1 建（带字）
         msg([TX("我来核实一下"), TU("get_project", "2", {})]),     # R2 核实：查（只读）
-        msg([TX("建好了项目X，3阶段5待办都在 ✅")]),                 # R3 读回后的最终确认
+        msg([TX("我确认一下结果")]),                                  # R3 核验轮文字（静默）
+        msg([TX("建好了项目X，3阶段5待办都在 ✅")]),                 # R4 最终收束回复
     ])
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
@@ -303,6 +306,7 @@ async def test_verify_clean_pass(monkeypatch, dispatched):
     assert "我来核实一下" not in text, "核实过程文字没被抑制"
     assert "get_project" in dispatched
     assert n_verify(messages) == 1
+    assert _FINALIZE_PROMPT in [m.get("content") for m in messages]
     assert ev["_usage"] == 1 and ev["error"] == 0
 
 
@@ -313,14 +317,15 @@ async def test_verify_fix_then_reverify(monkeypatch, dispatched):
         msg([TU("get_project", "2", {})]),                         # R2 核实：查（只读，无字）
         msg([TX("发现漏了一个待办，补一下"), TU("add_todo", "3", {})]),  # R3 发现+补 → 说明应发出
         msg([TU("get_project", "4", {})]),                         # R4 补做后立即复查
-        msg([TX("都核实过了")]),                                    # R5 读回后的最终确认
+        msg([TX("都核实过了")]),                                    # R5 核验轮文字（静默）
+        msg([TX("项目已补全，所有内容都核实通过")]),                 # R6 最终收束回复
     ])
     messages = [{"role": "user", "content": "建个项目"}]
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     assert "好的" in text
     assert "发现漏了一个待办" in text, f"补做说明没发出来：{text!r}"
     assert "add_todo" in dispatched
-    assert "都核实过了" in text
+    assert "项目已补全" in text
     assert n_verify(messages) == 2, f"应注入 2 次系统自检（补做触发再核实），实际 {n_verify(messages)}"
     assert ev["_usage"] == 1 and ev["error"] == 0
 
@@ -343,6 +348,7 @@ async def test_mind_get_counts_as_verify_observation(monkeypatch, dispatched):
     patch_anthropic(monkeypatch, [
         msg([TU("create_note", "1", {})]),
         msg([TU("mind_get", "2", {})]),
+        msg([TX("我确认一下笔记")]),
         msg([TX("笔记已记录")]),
     ])
     messages = [{"role": "user", "content": "记一条笔记"}]
@@ -389,11 +395,12 @@ async def test_openai_clean_pass_matches_anthropic(monkeypatch, dispatched):
     patch_openai(monkeypatch, [
         _tool_chunks("create_project", "好的"),   # R1 建
         _tool_chunks("get_project", "核对中"),     # R2 核实查（只读）
-        _text_chunks("建好啦项目X ✅"),             # R3 读回后的最终确认
+        _text_chunks("我确认一下结果"),             # R3 核验轮文字（静默）
+        _text_chunks("项目X 已创建并核验完成 ✅"),  # R4 最终收束回复
     ])
     messages = [{"role": "user", "content": "建个项目X"}]
     ev, text, _errors = await drain(make_runner()._run_openai("u", messages, AI))
-    assert "建好啦项目X" in text
+    assert "项目X 已创建并核验完成" in text
     assert "核对中" not in text
     assert "get_project" in dispatched
     assert ev["_usage"] == 1 and ev["error"] == 0

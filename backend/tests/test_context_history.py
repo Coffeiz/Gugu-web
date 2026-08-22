@@ -1,8 +1,10 @@
 """provider 间历史消息适配回归测试。"""
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
-from agent.context.history import build_history_parts, canonicalize_tool_messages
+from agent.context.history import build_chat_tool_events, build_history_parts, canonicalize_tool_messages
 
 
 def _message(role, content_json):
@@ -15,6 +17,50 @@ def _message(role, content_json):
         platform_user_id=None,
         platform_user_name=None,
     )
+
+
+def test_user_message_time_is_a_stable_separate_reminder_in_history():
+    from agent.models import AgentRequest
+
+    message = SimpleNamespace(
+        role="user", content="测试", content_json=None,
+        sent_at=datetime(2026, 8, 22, 7, 22, tzinfo=timezone.utc),
+        chat_type=None, platform_user_id=None, platform_user_name=None,
+    )
+
+    result = build_history_parts(
+        [message], AgentRequest(message="", user_id="owner", user_name="小北"),
+        use_anthropic=True,
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    assert result == [
+        {"role": "user", "content": "测试"},
+        {"role": "user", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"},
+    ]
+
+
+def test_user_message_time_stays_after_complete_tool_turn():
+    from agent.models import AgentRequest
+
+    user = SimpleNamespace(
+        role="user", content="删掉文件夹", content_json=None,
+        sent_at=datetime(2026, 8, 22, 7, 22, tzinfo=timezone.utc),
+        chat_type=None, platform_user_id=None, platform_user_name=None,
+    )
+    assistant = _message("assistant", [{
+        "type": "tool_call", "id": "call-1", "name": "list_folders", "arguments": {},
+    }])
+    result = _message("user", [{
+        "type": "tool_result", "tool_call_id": "call-1", "content": "[]",
+    }])
+    result = build_history_parts(
+        [user, assistant, result], AgentRequest(message="", user_id="owner", user_name="小北"),
+        use_anthropic=False, user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    assert [item["role"] for item in result] == ["user", "assistant", "tool", "user"]
+    assert result[-1]["content"] == "[system-reminder]\n08-22 15:22\n[/system-reminder]"
 
 
 def test_anthropic_history_keeps_native_tool_blocks():
@@ -70,6 +116,50 @@ def test_canonical_history_keeps_openai_tool_calls_when_content_is_null():
     assert result[0]["content"][0] == {
         "type": "tool_call", "id": "call-1", "name": "weather", "arguments": "{}",
     }
+
+
+def test_chat_tool_events_restore_call_and_result_as_one_bubble():
+    from datetime import datetime, timezone
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    result_created = datetime(2026, 8, 22, 7, 0, 1, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=10, created_at=created,
+        content_json=[{"type": "tool_call", "id": "call-1", "name": "weather", "arguments": {"city": "南京"}}],
+    )
+    result = SimpleNamespace(
+        id=11, created_at=result_created,
+        content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "晴天"}],
+    )
+    assert build_chat_tool_events([assistant, result]) == [{
+        "id": "tool:call-1", "toolCallId": "call-1", "toolName": "weather",
+        "toolInput": {"city": "南京"}, "toolResult": "晴天", "toolStatus": "success",
+        "createdAt": created, "updatedAt": result_created, "toolDurationMs": 1000,
+    }]
+
+
+def test_chat_tool_events_restores_legacy_error_result_as_error():
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    result_created = datetime(2026, 8, 22, 7, 0, 1, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=12, created_at=created,
+        content_json=[{"type": "tool_call", "id": "call-2", "name": "permanent_delete", "arguments": {}}],
+    )
+    result = SimpleNamespace(
+        id=13, created_at=result_created,
+        content_json=[{"type": "tool_result", "tool_call_id": "call-2",
+                       "content": '{"error":"文件夹不在回收站"}'}],
+    )
+    events = build_chat_tool_events([assistant, result])
+    assert events[0]["toolStatus"] == "error"
+
+
+def test_canonical_history_marks_legacy_error_tool_result():
+    result = canonicalize_tool_messages([{
+        "role": "tool", "tool_call_id": "call-3",
+        "content": '{"error":"删除失败"}',
+    }])
+    assert result[0]["content"][0]["is_error"] is True
 
 
 def test_canonical_tool_turn_is_rendered_for_both_wire_formats():

@@ -18,11 +18,13 @@ from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, User, UserBot
+from app.services import interactions
 
 from agent.llm import genstream
 from agent.gateway import web as web_adapter
 from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest
+from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -36,6 +38,47 @@ class ChatRequest(BaseModel):
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
 
 
+class InteractionResponseRequest(BaseModel):
+    token: str
+    event_id: Optional[str] = None
+
+
+@router.get("/sessions/{session_id}/interactions")
+async def list_session_interactions(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """列出会话交互历史；活动项带一次性 token，历史项只用于恢复气泡。"""
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "会话不存在")
+    return {"items": await interactions.list_history(db, user_id=current_user.id, session_id=session_id)}
+
+
+@router.post("/interactions/{prompt_id}/respond")
+async def respond_interaction(
+    prompt_id: int,
+    body: InteractionResponseRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """消费一次交互动作，返回 Agent bridge 用的受控结果。"""
+    try:
+        result = await interactions.consume_action(
+            db,
+            user_id=current_user.id,
+            prompt_id=prompt_id,
+            token=body.token,
+            event_id=body.event_id,
+        )
+    except LookupError:
+        raise HTTPException(404, "交互不存在")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    return result
+
+
 @router.post("/upload")
 async def upload_attachment(
     file: UploadFile = FastAPIFile(...),
@@ -44,6 +87,8 @@ async def upload_attachment(
 ):
     """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
     from app.core import media_transcode
+    from app.core.config import get_settings
+    from agent import providers
     data = await file.read()
     if len(data) > _MAX_ATTACH_BYTES:
         raise HTTPException(400, "文件太大（聊天附件上限 10MB）")
@@ -53,7 +98,8 @@ async def upload_attachment(
     # 语音录音：浏览器多录成 webm/opus（mimo 不收）→ 转成 mp3 再暂存，让 mimo 能听。
     # m4a(Safari)/ogg(Firefox) 是 mimo 原生格式、免转；缺 ffmpeg 则原样、退文字提示。
     if (ext or "").lower() not in ("mp3", "wav", "flac", "m4a", "ogg"):
-        conv = media_transcode.to_mimo_mp3(data, ext, file.content_type)
+        conv = media_transcode.to_provider_audio(data, ext, file.content_type,
+                                                 providers.adapter_for(get_settings().ai))
         if conv is not None:
             data, ext = conv, "mp3"
     mime = "audio/mpeg" if ext == "mp3" else file.content_type
@@ -251,27 +297,58 @@ async def get_greeting(
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: int,
+    limit: int = 50,
+    before_id: Optional[int] = None,
+    after_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
-    res = await db.execute(
-        select(ConversationMessage)
-        .where(
-            ConversationMessage.session_id == session_id,
-            ConversationMessage.content_json.is_(None),  # 过滤工具中间消息（tool_use/tool_result）
-            ConversationMessage.role != "summary",       # 过滤对话压缩摘要（注入 system prompt，不进对话气泡）
-        )
-        .order_by(ConversationMessage.created_at)
+    limit = min(max(limit, 1), 200)
+    base_filters = (
+        ConversationMessage.session_id == session_id,
+        ConversationMessage.content_json.is_(None),  # 过滤工具中间消息（tool_use/tool_result）
+        ConversationMessage.role != "summary",       # 过滤对话压缩摘要（注入 system prompt，不进对话气泡）
     )
-    msgs = res.scalars().all()
+    statement = select(ConversationMessage).where(*base_filters)
+    if before_id is not None:
+        statement = statement.where(ConversationMessage.id < before_id).order_by(
+            desc(ConversationMessage.id)
+        )
+    elif after_id is not None:
+        statement = statement.where(ConversationMessage.id > after_id).order_by(
+            ConversationMessage.id
+        )
+    else:
+        statement = statement.order_by(desc(ConversationMessage.id))
+    statement = statement.limit(limit)
+    res = await db.execute(statement)
+    msgs = list(res.scalars().all())
+    if before_id is None and after_id is None:
+        msgs.reverse()
+
+    has_more = False
+    if msgs:
+        older_probe = await db.execute(
+            select(ConversationMessage.id)
+            .where(*base_filters, ConversationMessage.id < msgs[0].id)
+            .limit(1)
+        )
+        has_more = older_probe.first() is not None
     mention_names = {
         str(message.platform_user_id): message.platform_user_name
         for message in msgs
         if message.platform_user_id and message.platform_user_name
     }
+    tool_rows = (await db.execute(
+        select(ConversationMessage).where(
+            ConversationMessage.session_id == session_id,
+            ConversationMessage.content_json.is_not(None),
+        ).order_by(ConversationMessage.id)
+    )).scalars().all()
+    tool_events = build_chat_tool_events(tool_rows)
     for message in msgs:
         if message.platform_bot_user_id:
             mention_names[message.platform_bot_user_id] = "咕咕"
@@ -301,6 +378,12 @@ async def get_session_messages(
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
+        "pagination": {
+            "limit": limit,
+            "hasMore": has_more,
+            "oldestId": msgs[0].id if msgs else None,
+            "newestId": msgs[-1].id if msgs else None,
+        },
         "messages": [
             {"id": m.id, "role": m.role,
              "content": render_content(m.content),
@@ -311,6 +394,11 @@ async def get_session_messages(
              "platformBotUserId": m.platform_bot_user_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
+        ],
+        "toolEvents": [
+            {**event, "createdAt": iso_utc(event["createdAt"]),
+             **({"updatedAt": iso_utc(event["updatedAt"])} if event.get("updatedAt") else {})}
+            for event in tool_events
         ],
     }
 

@@ -23,6 +23,7 @@ import uuid
 from app.core.redis import get_redis, get_redis_sync
 from app.core.tz import now_utc
 from app.services.storage import get_storage
+from agent.providers.mimo import MimoAdapter
 
 DRAFT_TTL = 48 * 3600   # 草稿（未发送）暂存 TTL，见 PRD-STORAGE-1 §4；草稿孤儿清理按这个值扫
 
@@ -54,7 +55,8 @@ TEXT_EXTS = {
 }
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "heif", "tiff", "tif"}
 # 音 / 视频理解：MiMo 使用 OpenAI 扩展块，MiniMax M3 使用 Anthropic 原生 video 块。
-AUDIO_EXTS = {"mp3", "wav", "flac", "m4a", "ogg"}              # mimo 原生收，免转
+# MiMo 原生音频格式由 provider 适配器统一维护，避免和 media_transcode 重复定义。
+AUDIO_EXTS = set(MimoAdapter().audio_native_exts())
 VIDEO_EXTS = {"mp4", "mov", "avi", "wmv", "mkv"}
 # 非 mimo 原生的音频（IM 语音 / 浏览器录音常见）：算「音频」但要先转 mp3 才能喂 mimo（需服务器装 ffmpeg）
 TRANSCODE_AUDIO_EXTS = {"amr", "silk", "sil", "slk", "opus", "aac", "wma", "webm", "3gp", "3gpp"}
@@ -746,12 +748,12 @@ def _video_enabled(model_cfg=None) -> bool:
         if model_cfg is not None:
             if not getattr(model_cfg, "vision_video", False):
                 return False
-            return (not use_anthropic_for(model_cfg)) or _minimax_video_enabled(model_cfg)
+            return video_transport_for(model_cfg) != "none"
         from app.core.config import get_settings
         ai = get_settings().ai
         if not getattr(ai, "vision_video", False):
             return False
-        return (not use_anthropic_for(ai)) or _minimax_video_enabled(ai)
+        return video_transport_for(ai) != "none"
     except Exception:
         return False
 
@@ -776,11 +778,18 @@ def _audio_enabled(model_cfg=None) -> bool:
 
 
 def _minimax_video_enabled(model_cfg) -> bool:
-    """MiniMax 仅 M3 消息通道支持视频 content block。"""
-    provider = (getattr(model_cfg, "provider", "") or "").lower()
-    model = (getattr(model_cfg, "model", "") or "").lower()
-    base_url = (getattr(model_cfg, "base_url", "") or "").lower()
-    return (provider == "minimax" or "minimaxi.com" in base_url) and "m3" in model
+    """兼容旧调用：查询适配器声明的 Anthropic 视频传输能力。"""
+    from agent import providers
+    adapter = providers.adapter_for(model_cfg)
+    model = getattr(model_cfg, "model", "") or ""
+    return adapter.media_transport(model) == "anthropic"
+
+
+def video_transport_for(model_cfg) -> str:
+    """返回当前模型的视频块协议；供聊天附件和 read_file 共用。"""
+    from agent import providers
+    adapter = providers.adapter_for(model_cfg)
+    return adapter.media_transport(getattr(model_cfg, "model", "") or "")
 
 
 # ── 视频探测 / 压缩 / mm_file 上传 ───────────────────────────────────────────
@@ -1130,8 +1139,8 @@ async def prepare_video_media(raw: bytes, mime: str, name: str, model_cfg,
     if duration >= VIDEO_DURATION_MAX_SECONDS:
         raise ValueError("这条视频太长（超过 120 秒上限），没法直接看")
 
-    minimax = _minimax_video_enabled(model_cfg) if model_cfg is not None else False
-    if minimax:
+    transport = video_transport_for(model_cfg) if model_cfg is not None else "none"
+    if transport == "anthropic":
         payload, payload_mime = raw, mime
         if _should_compress_video(probe, size):
             compressed = await _compress_video_cached(raw, probe, storage_key, user_id, model_cfg)
@@ -1228,8 +1237,9 @@ def vision_ready() -> bool:
     （OpenAI 路工具结果只能是纯文本）。read_file 看图据此决定能否把库里的图喂给模型。"""
     try:
         from app.core.config import get_settings
+        from agent.llm.llm_select import use_anthropic_for
         s = get_settings()
-        anthropic = (s.ai.provider == "minimax") or ("anthropic" in (s.ai.base_url or "").lower())
+        anthropic = use_anthropic_for(s.ai)
         return bool(s.ai.vision) and anthropic
     except Exception:
         return False

@@ -1,25 +1,25 @@
 <template>
   <div class="session-monitor">
-    <aside class="run-list">
+    <aside class="run-list" @scroll="onRunListScroll">
       <div class="run-list-head">
         <span class="eyebrow">RUNS</span>
-        <button class="refresh" title="刷新" @click="$emit('refresh')">↻</button>
       </div>
       <button
         v-for="run in runs"
         :key="run.id"
         class="run-row"
         :class="{ active: run.id === selectedId }"
-        @click="selectedId = run.id"
+        @click="selectRun(run.id)"
       >
         <span class="run-dot" :data-status="run.status"></span>
         <span class="run-main"><b>{{ shortRun(run.id) }}</b><small>{{ runTime(run.started_at) }}</small></span>
         <em>{{ fmtMs(run.duration_ms) }}</em>
       </button>
       <div v-if="!runs.length" class="empty-run">这个 Session 还没有 Trace。</div>
+      <div v-else-if="loadingMore" class="loading-more">正在加载更早 Run…</div>
     </aside>
 
-    <section class="run-detail">
+    <section ref="runDetailEl" class="run-detail">
       <div v-if="!selected" class="monitor-empty">
         <strong>没有可查看的 Run</strong>
         <span>发送一条消息后，这里会出现完整 AgentLoop。</span>
@@ -55,8 +55,11 @@
 
         <section class="span-section">
           <header class="span-section-head">
-            <div><span class="eyebrow">AGENT LOOP</span><strong>{{ selected.spans?.length ?? 0 }} spans</strong></div>
-            <span class="hint">Input / Output / Source 可分别展开</span>
+            <div><span class="eyebrow">AGENT LOOP</span><strong>{{ selectedLoaded ? `${selected.spans?.length ?? 0} spans` : '详情加载中…' }}</strong></div>
+            <div class="span-actions">
+              <span class="hint">{{ selectedLoaded ? 'Input / Output / Source 可分别展开' : '正在按需读取 Span' }}</span>
+              <button v-if="selectedLoaded && hasMoreSpans" class="load-spans" @click="emit('load-more-spans')">加载更多</button>
+            </div>
           </header>
           <div class="span-list">
             <template v-for="span in rootSpans" :key="span.id">
@@ -77,21 +80,28 @@ import { computed, ref, watch } from 'vue'
 import type { TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
 
-const props = defineProps<{ runs: TraceRun[]; focusRunId?: string }>()
-defineEmits<{ refresh: [] }>()
+const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
+const emit = defineEmits<{ select: [runId: string]; 'load-more': []; 'load-more-spans': [] }>()
+const hasMoreSpans = computed(() => Boolean(props.hasMoreSpans))
+const loadingMore = ref(false)
+const runDetailEl = ref<HTMLElement | null>(null)
+function getScrollTop() { return runDetailEl.value?.scrollTop ?? 0 }
+function setScrollTop(value: number) { if (runDetailEl.value) runDetailEl.value.scrollTop = value }
+defineExpose({ getScrollTop, setScrollTop })
 
 const selectedId = ref('')
 watch(
   () => [props.runs, props.focusRunId] as const,
   ([runs, focus]) => {
     if (!runs.length) { selectedId.value = ''; return }
-    if (focus && runs.some(r => r.id === focus)) { selectedId.value = focus; return }
-    if (!runs.some(r => r.id === selectedId.value)) selectedId.value = runs[runs.length - 1].id
+    if (focus && runs.some(r => r.id === focus)) { selectRun(focus); return }
+    if (!runs.some(r => r.id === selectedId.value)) selectRun(runs[runs.length - 1].id)
   },
   { immediate: true, deep: true },
 )
 
-const selected = computed(() => props.runs.find(r => r.id === selectedId.value) ?? null)
+const selected = computed(() => props.details?.[selectedId.value] ?? props.runs.find(r => r.id === selectedId.value) ?? null)
+const selectedLoaded = computed(() => Boolean(props.details?.[selectedId.value]?.spans))
 const usage = computed<TokenUsage>(() => resolveUsage(selected.value))
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
@@ -102,6 +112,17 @@ const modelLabel = computed(() => {
 })
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+function selectRun(runId: string) {
+  if (selectedId.value !== runId) selectedId.value = runId
+  emit('select', runId)
+}
+function onRunListScroll(event: Event) {
+  const element = event.currentTarget as HTMLElement
+  if (element.scrollHeight - element.scrollTop - element.clientHeight > 80 || loadingMore.value) return
+  loadingMore.value = true
+  emit('load-more')
+  window.setTimeout(() => { loadingMore.value = false }, 500)
+}
 
 function resolveUsage(run: TraceRun | null): TokenUsage {
   if (!run) return {}
@@ -169,7 +190,6 @@ function fmtTokens(v: number | null | undefined) {
 .run-list { min-height:0; overflow:auto; padding:16px 10px; border-right:1px solid var(--border-subtle); background:color-mix(in srgb,var(--surface-panel) 56%,transparent); }
 .run-list-head { display:flex; align-items:center; justify-content:space-between; padding:0 7px 8px; }
 .eyebrow { font-size:8px; letter-spacing:.12em; color:var(--content-tertiary); font-weight:600; }
-.refresh { width:26px; height:26px; border:1px solid var(--border-subtle); border-radius:8px; background:var(--surface-raised); color:var(--content-secondary); }
 .run-row { width:100%; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:7px; align-items:center; padding:8px; border:1px solid transparent; border-radius:10px; background:transparent; text-align:left; color:var(--content-secondary); }
 .run-row:hover,.run-row.active { background:var(--surface-raised); border-color:var(--border-subtle); }
 .run-row.active { box-shadow:var(--elevation-card); color:var(--content-primary); }
@@ -180,6 +200,7 @@ function fmtTokens(v: number | null | undefined) {
 .run-main small { display:block; margin-top:2px; color:var(--content-tertiary); font-size:8px; }
 .run-row em { font-style:normal; font:8px var(--font-mono); color:var(--content-tertiary); }
 .empty-run { padding:28px 10px; color:var(--content-tertiary); font-size:10px; text-align:center; }
+.loading-more { padding:8px; color:var(--content-tertiary); font-size:9px; text-align:center; }
 .run-detail { min-width:0; min-height:0; overflow:auto; padding:22px 24px 48px; }
 .monitor-empty { height:100%; min-height:320px; display:grid; place-items:center; align-content:center; gap:7px; color:var(--content-secondary); }
 .monitor-empty span { font-size:11px; }
@@ -202,8 +223,11 @@ function fmtTokens(v: number | null | undefined) {
 .span-section { margin-top:24px; }
 .span-section-head { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:9px; }
 .span-section-head strong { display:block; margin-top:3px; font-size:11px; }
+.span-actions { display:flex; align-items:center; gap:8px; }
+.load-spans { border:1px solid var(--border-subtle); border-radius:7px; padding:4px 7px; background:var(--surface-soft); color:var(--content-secondary); font-size:9px; }
+.load-spans:hover { color:var(--content-primary); border-color:var(--border-default); }
 .hint { color:var(--content-tertiary); font-size:9px; }
-.span-list { display:grid; gap:8px; max-width:1080px; }
+.span-list { display:grid; gap:8px; width:100%; }
 .child-spans { display:grid; gap:6px; }
 @media(max-width:1050px){ .usage-grid{grid-template-columns:repeat(3,1fr)} }
 @media(max-width:760px){ .session-monitor{grid-template-columns:1fr}.run-list{display:flex;gap:6px;border-right:0;border-bottom:1px solid var(--border-subtle);overflow:auto}.run-list-head{display:none}.run-row{min-width:150px}.usage-grid{grid-template-columns:repeat(2,1fr)} }

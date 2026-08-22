@@ -1,6 +1,6 @@
 # GuguChat 窗口展开/收起动画重绘优化 PRD
 
-> 状态：🔲 待评估（Phase 0 排查与低风险优化已完成，Phase 1 方案未选定）
+> 状态：⏸️ 暂不实施（现状性能已满足需求，保留低风险优化；后续如出现新的可复现瓶颈再重启评估）
 > 创建：2026-08-06
 > 最近更新：2026-08-06
 > 关联模块：`frontend/src/components/common/GuguChat.vue`、`frontend/src/components/common/gugu-chat/GuguChatComposer.vue`、`frontend/src/components/common/gugu-chat/GuguChatMessageList.vue`
@@ -13,8 +13,8 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 0：问题排查 + 低风险合成层提示 | ✅ 已完成 | 定位到问题根源（见第 3 节），给 `.chat-window` 加 `isolation: isolate`、`.chat-main` 加 `will-change: backdrop-filter`，纯提示性质，不改变行为，已随本次会话提交。 |
-| Phase 1：展开/收起动画改造方案选定 | 🔲 待评估 | 方案 A（transform + FLIP 硬做）与方案 B（交叉淡化）两个候选已评估，尚未选定，见第 3、5 节。 |
-| Phase 2：方案实施 | 🔲 待评估 | 依赖 Phase 1 选定方案后才能排期。 |
+| Phase 1：展开/收起动画改造方案选定 | ⏸️ 暂不实施 | 主要性能问题已由 Markdown 优化和消息列表虚拟化解决，暂不为潜在收益引入 FLIP 或交叉淡化的视觉风险。 |
+| Phase 2：方案实施 | ⏸️ 暂不实施 | 没有新的可复现卡顿证据前不实施；现有布局动画保持不变。 |
 
 ---
 
@@ -46,13 +46,13 @@
 - `.chat-main` 加 `will-change: backdrop-filter`：提示浏览器为该属性单独准备合成层。
 - 纯提示性质，不改变任何行为/样式表现，预期只能带来有限改善，不能根治。
 
-### FR-PERF-2：ResizeObserver 读写合并（🔲 待评估，可独立于 FR-PERF-3 单独推进）
+### FR-PERF-2：ResizeObserver 读写合并（⏸️ 暂不实施）
 
 - `enterExpanded`/`exitExpanded` 的 `ResizeObserver` 回调改为只写 `el.scrollTop = 999999`，不在回调内读回 `el.scrollTop`；`lastTop` 挪到动画结束（`ResizeObserver.disconnect()` 那一刻）统一读一次。
 - 不改变滚动跟随的最终效果（动画期间本就是程序化强制滚底，不存在"用户上翻"需要 `lastTop` 实时更新的场景）。
 - 风险低、不涉及视觉效果，可以不等 Phase 1 方案定案就先落地——之前已经写过一版（见本 PRD 头部背景参考），后续可以直接重新应用。
 
-### FR-PERF-3：展开/收起动画改造（🔲 待评估，需先选定方案）
+### FR-PERF-3：展开/收起动画改造（⏸️ 暂不实施）
 
 两个候选方案，详见第 3 节技术方案：
 
@@ -134,7 +134,11 @@
 
 ### 待确认问题
 
-- 🔲 是否采用方案 B（交叉淡化）替代当前"长大"动画——需要确认能接受动画观感从位移变为切换这个取舍。
-- 🔲 FR-PERF-2（ResizeObserver 读写合并）是否单独先落地——该修复不改变任何视觉效果、风险最低，可以不等方案 A/B 定案就先做。
+- ⏸️ 方案 B（交叉淡化）不再推进：当前没有足够的用户可感知收益来抵消动画观感变化。
+- ⏸️ FR-PERF-2（ResizeObserver 读写合并）不单独推进：当前未观察到由它造成的实际卡顿；如后续 trace 重新证明它成为热点，再单独恢复评估。
 - ✅ 已确认：不做 GuguChat 主体的 Canvas/WebGL 化，不做自研 GPU 渲染引擎。结论依据：DOM 型界面脱离浏览器原生排版/输入/可访问性能力后自建成本远超收益，且该重绘问题本质是合成层开销而非绘制复杂度，换渲染方式并不能绕开。
 - ✅ 已确认：项目页面、思维笔记面板暂不纳入本次优化范围——项目页面（`ProjectFilesPanel.vue`）已有类似问题的历史修复先例，思维笔记面板结构类似但未观察到实际问题，留待各自独立立项。
+
+### 当前结论
+
+本 PRD 暂不继续实施。此前主要性能问题来自 Markdown 渲染和消息列表缺少虚拟滚动，相关优化完成后 GuguChat 已达到当前使用场景所需的流畅度。窗口尺寸动画和 ResizeObserver 读写合并仍属于潜在优化，不应在缺少新的可复现性能证据时扩大修改范围。

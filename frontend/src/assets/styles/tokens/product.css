@@ -141,6 +141,7 @@ html[data-theme][data-family] .chat-window .msg.user .msg-bubble {
   color: var(--content-on-accent);
   background: var(--gugu-chat-user-bg);
   border-bottom-right-radius: var(--radius-xs);
+  box-shadow: var(--gugu-chat-user-shadow);
 }
 html[data-theme][data-family] .chat-window .chat-input-row {
   border-top-color: var(--gugu-chat-header-border);
