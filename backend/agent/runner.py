@@ -400,7 +400,8 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
 
-    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
+    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容。
+    # 必须放在 history/current message 之后，避免动态变化截断缓存前缀。
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
@@ -421,11 +422,12 @@ async def run_collect(req: AgentRequest) -> AgentResponse:
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = ([_ctx_injection] if _ctx_injection else [])
+    fixed_parts = []
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
     history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
-    tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
+    tail_parts = ([_ctx_injection] if _ctx_injection else [])
+    tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if use_anthropic:
         assembly = message_assembly.build_messages(
@@ -702,7 +704,8 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     from agent.context import compress_conv
     _summary, history = compress_conv.pop_summary(history)
 
-    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容
+    # 动态上下文注入消息：用 [system-reminder] 包裹，LLM 理解为系统上下文而非对话内容。
+    # 必须放在 history/current message 之后，避免动态变化截断缓存前缀。
     _ctx_injection = None
     if _dynamic_extra_parts:
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
@@ -723,12 +726,13 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = ([_ctx_injection] if _ctx_injection else [])
+    fixed_parts = []
     if _summary:
         fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
     history_parts = build_history_parts(history, req, use_anthropic=use_anthropic)
+    tail_parts = ([_ctx_injection] if _ctx_injection else [])
+    tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     if use_anthropic:
-        tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         assembly = message_assembly.build_messages(
             fixed_parts=fixed_parts, history=history_parts,
@@ -740,7 +744,6 @@ async def run_stream(req: AgentRequest) -> AsyncIterator[tuple[str, object]]:
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
                          model_cfg=model_cfg, session_id=session_id)
     else:
-        tail_parts = [message_assembly.reminder(part) for part in dynamic_tail]
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
         oa_messages = message_assembly.build_messages(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
@@ -1064,10 +1067,11 @@ def _build_scheduled_messages(system_prompt: str, dynamic_context: str,
                               now_str: str, prompt: str, memory: dict,
                               *, use_anthropic: bool, user_content=None):
     """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
-    fixed_parts = ([session_snapshot.reminder_message(dynamic_context)]
-                   if dynamic_context else [])
-    dynamic_tail = [message_assembly.reminder(part)
-                    for part in builder.dynamic_tail(memory)]
+    fixed_parts = []
+    dynamic_tail = ([session_snapshot.reminder_message(dynamic_context)]
+                     if dynamic_context else [])
+    dynamic_tail.extend(message_assembly.reminder(part)
+                         for part in builder.dynamic_tail(memory))
     dynamic_tail.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if user_content is None:
         user_content = prompt
