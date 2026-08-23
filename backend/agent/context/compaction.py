@@ -45,6 +45,7 @@ async def compact_context(
     session_id: int | None = None,
     user_id: int | None = None,
     fixed_prefix_size: int = 0,
+    overhead_tokens: int = 0,
 ) -> tuple[list, bool]:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
@@ -54,16 +55,18 @@ async def compact_context(
     3. 将更老的消息压缩成摘要
     4. 返回压缩后的 messages，确保前缀一致
     """
-    target_tokens = int(context_tokens * COMPACTION_TARGET_RATIO)
+    available_context = max(1, int(context_tokens) - max(0, int(overhead_tokens)))
+    target_tokens = int(available_context * COMPACTION_TARGET_RATIO)
 
     # 估算当前上下文长度
-    current_length = await estimate_context_length(messages, system_text)
-    safe_budget = effective_budget(context_tokens)
-    if current_length <= safe_budget:
+    current_length = overhead_tokens + await estimate_context_length(messages, system_text)
+    safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
+    input_length = current_length - overhead_tokens
+    if input_length <= safe_budget:
         return messages, False  # 未达到阈值，不压缩
 
-    logger.info("[compaction] session=%s 上下文 %d tokens 超过阈值 %d，开始压缩",
-                session_id, current_length, safe_budget)
+    logger.info("[compaction] session=%s 输入 %d tokens 超过预算 %d（含额外开销=%d），开始压缩",
+                session_id, input_length, safe_budget, overhead_tokens)
 
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。

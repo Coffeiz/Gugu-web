@@ -182,7 +182,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 连续历史：不再按最近 N 条滑动；压缩后从 session baseline 之后继续追加。
         from agent.context import session_history
         history = await session_history.load_session_history(
-            db, session.id, int(getattr(session, "baseline_message_id", 0) or 0),
+            db, session.id, session_snapshot.history_baseline(session),
         )
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化

@@ -180,6 +180,7 @@ async def _compress_if_needed_unlocked(
             session_snapshot.checkpoint_snapshot(
                 session,
                 [{"role": "summary", "content": summary}],
+                baseline_message_id=session.baseline_message_id,
             )
             # compact 是安全刷新点：下一轮重新读取最新的业务 snapshot，
             # 但不在后台压缩任务中直接加载整套上下文。

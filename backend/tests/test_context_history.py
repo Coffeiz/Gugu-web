@@ -229,3 +229,29 @@ def test_history_recursively_replaces_nested_image_payloads():
 
     nested = result[0]["content"][0]["content"][0]
     assert nested == {"type": "text", "text": "[图片已查看]"}
+
+
+def test_anthropic_history_accepts_legacy_tool_use_id_and_drops_missing_id_result():
+    assistant = _message("assistant", [{
+        "type": "tool_call", "id": "call-legacy", "name": "weather", "arguments": {},
+    }])
+    legacy_result = _message("user", [{
+        "type": "tool_result", "tool_use_id": "call-legacy", "content": "晴天",
+    }])
+    malformed_result = _message("user", [{
+        "type": "tool_result", "content": "缺少调用 id",
+    }])
+
+    parts = build_history_parts(
+        [assistant, legacy_result, malformed_result], None, use_anthropic=True,
+    )
+
+    assert parts[1]["content"] == [{
+        "type": "tool_result", "tool_use_id": "call-legacy", "content": "晴天",
+    }]
+    assert all(
+        block.get("tool_use_id")
+        for message in parts
+        for block in message.get("content", [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    )

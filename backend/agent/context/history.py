@@ -169,9 +169,14 @@ def _anthropic_history_blocks(content_json) -> list[dict]:
                 "name": block.get("name"), "input": block.get("arguments", {}),
             })
         elif block_type == "tool_result":
+            tool_use_id = block.get("tool_call_id") or block.get("tool_use_id")
+            # 没有调用 id 的异常结果无法交给 Anthropic 配对，直接丢弃，避免
+            # 发送 tool_use_id=null 触发 BadRequestError。
+            if not tool_use_id:
+                continue
             result = {
                 "type": "tool_result",
-                "tool_use_id": block.get("tool_call_id"),
+                "tool_use_id": tool_use_id,
                 "content": block.get("content", ""),
             }
             if "is_error" in block:

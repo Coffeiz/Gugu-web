@@ -455,10 +455,24 @@ class LLMRunner:
 
             # 上下文压缩检测：先尝试 LLM 压缩，压缩无效或仍超安全预算时才截断。
             from agent.context import compaction, tokens
-            from agent.context.budget import effective_budget, enforce_message_budget
+            from agent.context.budget import (
+                effective_budget,
+                enforce_message_budget,
+                estimate_tool_schema_tokens,
+            )
             context_tokens = getattr(ai, "context_tokens", 256000)
+            overhead_tokens = (
+                estimate_tool_schema_tokens(getattr(ctx, "tools", None))
+            )
+            if overhead_tokens >= int(context_tokens or 0):
+                _log.error(
+                    "[core] 工具 schema 已超过模型上下文上限：schema_tokens=%s context_tokens=%s",
+                    overhead_tokens, context_tokens,
+                )
+                yield f"data: {json.dumps({'type': 'error', 'detail': '当前工具配置已超过模型处理上限，请减少启用的工具后再试～'}, ensure_ascii=False)}\n\n"
+                return
             current_length = await compaction.estimate_context_length(messages, system_text)
-            safe_budget = effective_budget(context_tokens)
+            safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
             if current_length > safe_budget and compaction_attempts < 1:
                 # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
                 # 仍开始下一次摘要请求。
@@ -477,6 +491,7 @@ class LLMRunner:
                     list(getattr(messages, "conversation", messages)), system_text, context_tokens,
                     session_id=session_id, user_id=user_id,
                     fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                    overhead_tokens=overhead_tokens,
                 )
                 if await _im_cancelled():
                     yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
@@ -490,28 +505,28 @@ class LLMRunner:
                     compaction_attempts += 1
                     if compacted_length >= current_length:
                         _log.error(
-                            "[core] 上下文压缩没有取得进展，停止重复压缩：before=%s after=%s",
+                            "[core] 上下文压缩没有取得进展，转入确定性截断：before=%s after=%s",
                             current_length, compacted_length,
                         )
-                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩没有取得足够空间，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
-                        return
-                    if compacted_length > safe_budget:
+                    elif compacted_length > safe_budget:
                         _log.error(
-                            "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s after=%s",
+                            "[core] 上下文压缩后仍超过预算，转入确定性截断：before=%s after=%s",
                             current_length, compacted_length,
                         )
-                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
-                        return
-                    _log.info("[core] 上下文已压缩，重试当前 round")
-                    if verify_mode:
-                        verify_rounds -= 1
                     else:
-                        task_rounds -= 1
-                    continue
+                        _log.info("[core] 上下文已压缩，重试当前 round")
+                        if verify_mode:
+                            verify_rounds -= 1
+                        else:
+                            task_rounds -= 1
+                        continue
 
             # LLM 压缩没有执行或没有把上下文压到安全预算后，才做本地确定性截断。
             if current_length > safe_budget:
-                hard_result = enforce_message_budget(messages, system_text or "", context_tokens)
+                hard_result = enforce_message_budget(
+                    messages, system_text or "", context_tokens,
+                    overhead_tokens=overhead_tokens,
+                )
                 if hard_result.changed:
                     current_length = await compaction.estimate_context_length(messages, system_text)
                     _log.warning(
@@ -519,7 +534,7 @@ class LLMRunner:
                         hard_result.before_tokens, hard_result.after_tokens,
                         hard_result.dropped_messages,
                     )
-                if hard_result.changed and current_length > safe_budget:
+                if current_length > safe_budget:
                     yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
                     return
 
@@ -577,7 +592,12 @@ class LLMRunner:
                 from agent.context.budget import enforce_message_budget, is_context_overflow_error
                 overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
                 if overflow and hard_budget_retries < 1:
-                    hard_result = enforce_message_budget(messages, system_text or "", getattr(ai, "context_tokens", 256000))
+                    hard_result = enforce_message_budget(
+                        messages, system_text or "", getattr(ai, "context_tokens", 256000),
+                        overhead_tokens=(
+                            estimate_tool_schema_tokens(getattr(ctx, "tools", None))
+                        ),
+                    )
                     if hard_result.changed:
                         hard_budget_retries += 1
                         if verify_mode:
@@ -596,7 +616,12 @@ class LLMRunner:
             except Exception as e:
                 from agent.context.budget import enforce_message_budget, is_context_overflow_error
                 if is_context_overflow_error(e) and hard_budget_retries < 1:
-                    hard_result = enforce_message_budget(messages, system_text or "", getattr(ai, "context_tokens", 256000))
+                    hard_result = enforce_message_budget(
+                        messages, system_text or "", getattr(ai, "context_tokens", 256000),
+                        overhead_tokens=(
+                            estimate_tool_schema_tokens(getattr(ctx, "tools", None))
+                        ),
+                    )
                     if hard_result.changed:
                         hard_budget_retries += 1
                         if verify_mode:

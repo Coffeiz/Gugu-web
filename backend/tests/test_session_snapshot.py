@@ -153,6 +153,28 @@ def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():
     assert session.session_context["snapshot_context"] == "fixed"
 
 
+def test_snapshot_records_history_baseline_without_dropping_context_metadata():
+    session = _Session()
+    session.baseline_message_id = 12
+    initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
+                        session_info={"epoch": 1}, user_tz="Asia/Shanghai")
+
+    checkpoint_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_id=18)
+
+    assert session.session_context["history_baseline_message_id"] == 18
+    assert session.session_context["context_revision"] == 0
+
+
+def test_history_baseline_never_moves_back_from_session_watermark():
+    session = _Session()
+    session.baseline_message_id = 20
+    session.session_context = {"history_baseline_message_id": 12}
+
+    from agent.context.session_snapshot import history_baseline
+
+    assert history_baseline(session) == 20
+
+
 def test_prompt_messages_keep_dynamic_tail_at_end_when_round_appends():
     messages = build_messages(
         fixed_parts=[{"role": "user", "content": "session"}],

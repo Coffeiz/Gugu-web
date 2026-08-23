@@ -13,7 +13,7 @@ from app.models import CalendarEvent, File, Folder, MindNode, Project, User
 from app.services.storage.folders import resolve_folder_path
 
 PERSONAL_FILES_RECENT_LIMIT = 20
-PROJECT_CONTEXT_LIMITS = {"pending": 5, "active": 10, "done": 10}
+PROJECT_CONTEXT_LIMITS = {"pending": 5, "active": 10, "done": 3}
 NOTE_CONTEXT_LIMIT = 20
 
 

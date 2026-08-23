@@ -87,7 +87,7 @@ def n_verify(messages):
 
 
 async def test_compaction_receives_session_id(monkeypatch):
-    """上下文压缩分支必须拿到当前 session，不能因 IM 长上下文触发 NameError。"""
+    """上下文压缩分支拿到 session 后，预算仍超限时不得继续调用 provider。"""
     patch_anthropic(monkeypatch, [msg([TX("收到")])])
     seen = {}
 
@@ -106,9 +106,9 @@ async def test_compaction_receives_session_id(monkeypatch):
                                      session_id=388)
     )
 
-    assert text == "收到"
-    assert errors == []
-    assert ev["_usage"] == 1
+    assert text == ""
+    assert errors
+    assert ev.get("_usage", 0) == 0
     assert seen == {"session_id": 388, "user_id": "u"}
 
 

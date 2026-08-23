@@ -1,6 +1,6 @@
 """上下文超量时的确定性截断测试。"""
 
-from agent.context.budget import effective_budget, truncate_messages
+from agent.context.budget import effective_budget, estimate_tool_schema_tokens, truncate_messages
 from agent.context.tokens import estimate_tokens, message_text
 
 
@@ -48,3 +48,24 @@ def test_over_budget_first_keeps_recent_twenty_messages():
 
     assert stats.changed
     assert [item["content"].split()[1] for item in result] == [str(index) for index in range(2, 22)]
+
+
+def test_tool_schema_reservation_is_included_in_hard_budget():
+    """工具 schema 很大时，历史不能占满模型的完整 context window。"""
+    tools = [{
+        "name": "large_tool",
+        "description": "工具说明" * 300,
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
+    }]
+    overhead = estimate_tool_schema_tokens(tools)
+    messages = [{"role": "user", "content": "历史消息 " * 300}]
+
+    result, stats = truncate_messages(
+        messages,
+        context_tokens=2500,
+        overhead_tokens=overhead,
+    )
+
+    assert overhead > 0
+    assert stats.changed
+    assert stats.after_tokens <= overhead + effective_budget(2500, reserved_tokens=overhead) + 10

@@ -138,7 +138,15 @@ def _uses(blocks) -> set:
 
 
 def _results(blocks) -> set:
-    return {b["tool_use_id"] for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result"}
+    # 旧历史或异常 provider 响应可能留下没有 id 的 tool_result。它不是可配对的
+    # 工具结果，不能让发送前清洗本身因 KeyError 中断 worker。
+    return {
+        tool_id
+        for b in blocks
+        if isinstance(b, dict)
+        and b.get("type") == "tool_result"
+        and (tool_id := b.get("tool_use_id") or b.get("tool_call_id"))
+    }
 
 
 def sanitize_messages(messages: list) -> list:
@@ -173,7 +181,8 @@ def sanitize_messages(messages: list) -> list:
                 if b.get("id") in valid_use.get(idx, ()):
                     kept.append(b)
             elif isinstance(b, dict) and b.get("type") == "tool_result":
-                if b.get("tool_use_id") in valid_res.get(idx, ()):
+                tool_id = b.get("tool_use_id") or b.get("tool_call_id")
+                if tool_id in valid_res.get(idx, ()):
                     kept.append(b)
             else:
                 kept.append(b)
@@ -189,7 +198,7 @@ def sanitize_messages(messages: list) -> list:
             norm[0]["content"] = [
                 b for b in norm[0]["content"]
                 if not (isinstance(b, dict) and b.get("type") == "tool_result"
-                        and b.get("tool_use_id") in dropped_uses)
+                        and (b.get("tool_use_id") or b.get("tool_call_id")) in dropped_uses)
             ]
             if not norm[0]["content"]:
                 norm.pop(0)

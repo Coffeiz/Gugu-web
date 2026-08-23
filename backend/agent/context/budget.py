@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Iterable
 
 from .tokens import estimate_tokens, message_text
@@ -26,11 +27,31 @@ class BudgetResult:
     oversized_item: bool = False
 
 
-def effective_budget(context_tokens: int, *, safety_ratio: float = SAFE_BUDGET_RATIO) -> int:
-    """返回给完整请求（含 system、工具定义和输出预留）的本地安全预算。"""
-    value = max(1, int(context_tokens or 0))
+def effective_budget(
+    context_tokens: int,
+    *,
+    safety_ratio: float = SAFE_BUDGET_RATIO,
+    reserved_tokens: int = 0,
+) -> int:
+    """返回 system + history 可用的安全预算。
+
+    ``reserved_tokens`` 预留给 provider 工具 schema 和模型输出，避免只按
+    conversation 估算后仍把超大的完整请求发送给模型。
+    """
+    value = max(1, int(context_tokens or 0) - max(0, int(reserved_tokens or 0)))
     ratio = min(0.95, max(0.5, float(safety_ratio)))
     return max(1, int(value * ratio))
+
+
+def estimate_tool_schema_tokens(tools) -> int:
+    """估算本轮工具 schema 大小，不记录工具定义内容。"""
+    if not tools:
+        return 0
+    try:
+        payload = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        payload = str(tools)
+    return estimate_tokens(payload)
 
 
 def _blocks(message: dict) -> list[dict]:
@@ -121,23 +142,26 @@ def truncate_messages(
     *,
     fixed_prefix_size: int = 0,
     target_ratio: float = HARD_TARGET_RATIO,
+    overhead_tokens: int = 0,
 ) -> tuple[list[dict], BudgetResult]:
     """在不调用 LLM 的前提下截断消息，返回新列表和统计结果。
 
     固定前缀和最新完整工具单元优先保留；其余从最旧单元开始丢弃。
     """
     original = list(messages)
-    before = estimate_tokens(system_text) + sum(
+    before = overhead_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in original
     )
-    safe_budget = effective_budget(context_tokens)
-    if before <= safe_budget:
+    safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
+    if before - overhead_tokens <= safe_budget:
         return original, BudgetResult(False, before, before, 0)
 
     prefix_size = max(0, min(int(fixed_prefix_size), len(original)))
     prefix = original[:prefix_size]
     body = original[prefix_size:]
-    target = max(1, int(max(0.1, min(0.5, target_ratio)) * max(1, int(context_tokens))))
+    target = max(1, int(max(0.1, min(0.5, target_ratio)) * max(
+        1, int(context_tokens) - max(0, int(overhead_tokens))
+    )))
     fixed_tokens = estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in prefix
     )
@@ -188,14 +212,20 @@ def truncate_messages(
         kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
 
     result = prefix + [message for unit in kept for message in unit]
-    after = estimate_tokens(system_text) + sum(
+    after = overhead_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in result
     )
     dropped = max(0, len(original) - len(result))
     return result, BudgetResult(True, before, after, dropped, oversized_item=oversized)
 
 
-def enforce_message_budget(messages, system_text: str, context_tokens: int) -> BudgetResult:
+def enforce_message_budget(
+    messages,
+    system_text: str,
+    context_tokens: int,
+    *,
+    overhead_tokens: int = 0,
+) -> BudgetResult:
     """就地应用强制截断，兼容 PromptMessages 的动态尾部。"""
     conversation = list(getattr(messages, "conversation", messages))
     truncated, result = truncate_messages(
@@ -203,6 +233,7 @@ def enforce_message_budget(messages, system_text: str, context_tokens: int) -> B
         system_text,
         context_tokens,
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+        overhead_tokens=overhead_tokens,
     )
     if not result.changed:
         return result

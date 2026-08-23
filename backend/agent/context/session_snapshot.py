@@ -137,7 +137,25 @@ def snapshot_context(session) -> dict:
         "user_tz": resolve_tz(context.get("user_tz")) if context.get("user_tz") != "LOCAL" else LOCAL_TZ,
         "im_channels": context.get("im_channels") or {},
         "im_memory": context.get("im_memory") or {},
+        "history_baseline_message_id": int(
+            context.get("history_baseline_message_id")
+            or getattr(session, "baseline_message_id", 0)
+            or 0
+        ),
     }
+
+
+def history_baseline(session) -> int:
+    """返回 snapshot 与压缩水位中较新的历史边界。
+
+    旧 session 没有 snapshot 边界时回退到 ``baseline_message_id``；不能凭空
+    丢弃未进入 summary 的历史，因此默认 0 仍表示完整连续历史。
+    """
+    context = getattr(session, "session_context", None) or {}
+    return max(
+        int(getattr(session, "baseline_message_id", 0) or 0),
+        int(context.get("history_baseline_message_id", 0) or 0),
+    )
 
 
 def _record_snapshot_event(session, phase: str) -> None:
@@ -191,6 +209,7 @@ def initialize_snapshot(
         "im_channels": im_channels or {},
         "im_memory": im_memory or {},
         "context_revision": context_revision,
+        "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
     }
     session.session_info_hash = info_hash
     session.snapshot_hash = snapshot_hash(
@@ -206,11 +225,13 @@ def checkpoint_snapshot(
     session,
     messages: list[dict],
     *,
+    baseline_message_id: int | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> str:
     """将本轮新增消息纳入 snapshot hash，并刷新 idle TTL。"""
     context = snapshot_context(session)
+    stored_context = dict(getattr(session, "session_context", None) or {})
     current = now or now_utc()
     covered_hash = digest({
         "previous_snapshot": session.snapshot_hash or "",
@@ -221,6 +242,13 @@ def checkpoint_snapshot(
         getattr(session, "session_info_hash", None) or session_info_hash(context["session_info"]),
         covered_hash,
     )
+    context["history_baseline_message_id"] = int(
+        getattr(session, "baseline_message_id", 0)
+        if baseline_message_id is None
+        else baseline_message_id
+    )
+    stored_context["history_baseline_message_id"] = context["history_baseline_message_id"]
+    session.session_context = stored_context
     session.snapshot_expires_at = current + ttl
     return session.snapshot_hash
 

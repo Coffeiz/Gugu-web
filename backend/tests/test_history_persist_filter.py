@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from agent.security.sanitize import tool_rounds_only
+from agent.security.sanitize import sanitize_messages, tool_rounds_only
 
 
 def _assistant_tool_use(uid="t1", name="create_project"):
@@ -70,3 +70,23 @@ def test_canonical_and_openai_tool_messages_are_kept():
     assert tool_rounds_only([canonical_call, canonical_result, openai_call]) == [
         canonical_call, canonical_result, openai_call,
     ]
+
+
+def test_sanitize_drops_tool_result_without_id_without_raising():
+    messages = [
+        {"role": "user", "content": "开始"},
+        _assistant_tool_use("call-1"),
+        _user_tool_result("call-1"),
+        {"role": "user", "content": [{"type": "tool_result", "content": "坏数据"}]},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert len(cleaned) == 3
+    assert cleaned[2]["content"][-1]["tool_use_id"] == "call-1"
+    assert all(
+        block.get("tool_use_id")
+        for message in cleaned
+        for block in message["content"]
+        if block.get("type") == "tool_result"
+    )

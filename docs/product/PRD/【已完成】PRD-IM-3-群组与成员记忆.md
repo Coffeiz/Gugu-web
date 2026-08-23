@@ -335,7 +335,7 @@ reflection_cursor
 
 ### 5.6 压缩
 
-复用 `memory/compress.py` 的 daily→memory 思路，但 prompt、scope 和输入字段必须独立。群组长期记忆同样保留重要历史和时间脉络，压缩输出上限为 15000 tokens；普通闲聊可以合并，不要求逐条保留：
+复用 `agent/memory/daily_compaction.py` 的固定批次 daily→memory 编排，但 prompt、scope 和输入字段仍保持独立。群组长期记忆同样保留重要历史和时间脉络，压缩输出上限为 15000 tokens；普通闲聊可以合并，不要求逐条保留。群组保留窗口仍为最近 500 条，每次只处理最多 100 条，尚未处理的旧记录继续保留，避免一次性把全部积压内容交给模型：
 
 ```text
 group daily.md → group memory.md
