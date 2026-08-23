@@ -31,6 +31,22 @@ _log = logging.getLogger("agent.core")
 _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 
 
+def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
+    """取得固定 Adapter 的业务参数。
+
+    规范协议是 ``call_tool(name, arguments)``。部分模型会把目标工具的
+    参数错误展开到 ``call_tool`` 顶层，例如 ``{name: "http_get", url: ...}``。
+    这里只移除 Adapter 自己的 ``name``，把其余字段交给目标工具原有的
+    schema 校验；不在这里猜测或放宽目标工具契约。
+    """
+    if not isinstance(tool_input, dict):
+        return {}
+    arguments = tool_input.get("arguments")
+    if isinstance(arguments, dict):
+        return arguments
+    return {key: value for key, value in tool_input.items() if key != "name"}
+
+
 async def _stream_round(client, kwargs, adapter=None):
     """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
     yield ('token', delta) 逐字；结束 yield ('final', message)。
@@ -263,19 +279,23 @@ def _is_read_tool(name: str) -> bool:
     return name.startswith(_READ_PREFIXES) or name in _READ_TOOL_NAMES
 
 
-async def _im_cancelled() -> bool:
-    """IM 路：用户中途发「算了」→ 网关置了取消标志。web 路无 imctx，恒 False。"""
+async def _im_cancelled(session_id: int | None = None) -> bool:
+    """检查 IM 与 Web 的生成取消标记。
+
+    Web 生成脱离 HTTP 请求运行，不能依赖请求断开来取消；它通过 genstream 的
+    session cancel key 在 round/token 边界协作停止。IM 仍保留原有取消来源。
+    """
     from agent.im import imctx
     from agent.runtime import runtime_state as rt
     im = imctx.get_im()
-    if not im or not im.get("puid"):
-        return False
-    await rt.refresh_activity(
-        im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
-    )
-    cancelled = await rt.is_cancelled(
-        im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
-    )
+    cancelled = False
+    if im and im.get("puid"):
+        await rt.refresh_activity(
+            im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+        )
+        cancelled = await rt.is_cancelled(
+            im["platform"], im.get("channel_id") or "", im.get("chat_id") or im["puid"], im["puid"]
+        )
     if cancelled:
         # 取消标志命中、即将掐断 loop：记录确认（puid 指纹脱敏），供排查「取消是否真的
         # 中断了生成」。只在真正命中时打，不会刷屏。
@@ -285,7 +305,9 @@ async def _im_cancelled() -> bool:
             "agent.core.im_cancelled_hit",
             f"platform={im['platform']} puid={fingerprint(im['puid'])}",
         )
-    return cancelled
+    if cancelled or session_id is None:
+        return cancelled
+    return await genstream.is_cancelled(session_id)
 
 
 async def _im_set_tool_state(tool_name: str) -> None:
@@ -323,6 +345,7 @@ class LLMRunner:
     def run(self, user_id, system_text: str, messages: list,
             use_anthropic: bool, model_cfg=None,
             session_id: int | None = None,
+            session=None,
             on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
             ) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
@@ -330,20 +353,25 @@ class LLMRunner:
         if (getattr(ai, "provider", "") or "").lower() == "ollama" and \
                 getattr(ai, "ollama_api_mode", "native") == "native":
             return self._run_ollama(user_id, messages, ai, session_id=session_id,
+                                    session=session,
                                     on_interaction=on_interaction)
         if use_anthropic:
             return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id,
+                                       session=session,
                                        on_interaction=on_interaction)
         return self._run_openai(user_id, messages, ai, session_id=session_id,
+                                session=session,
                                 on_interaction=on_interaction)
 
     async def _run_ollama(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
+                          session=None,
                           on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
                           ) -> AsyncGenerator[str, None]:
         ai = ai if ai is not None else self.settings.ai
         async for line in self._run_loop(loop_drivers.OllamaDriver(), user_id, messages, ai,
                                           system_text=None, session_id=session_id,
+                                          session=session,
                                           on_interaction=on_interaction):
             yield line
 
@@ -351,24 +379,28 @@ class LLMRunner:
     async def _run_anthropic(self, user_id, system_text: str,
                              messages: list, ai=None,
                              session_id: int | None = None,
+                             session=None,
                              on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
                              ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.AnthropicDriver(), user_id, messages, ai,
                                           system_text=system_text, session_id=session_id,
+                                          session=session,
                                           on_interaction=on_interaction):
             yield line
 
     # ── OpenAI ──────────────────────────────────────────────────────────────
     async def _run_openai(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
+                          session=None,
                           on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
                           ) -> AsyncGenerator[str, None]:
         settings = self.settings
         ai = ai if ai is not None else settings.ai
         async for line in self._run_loop(loop_drivers.OpenAIDriver(), user_id, messages, ai,
                                           system_text=None, session_id=session_id,
+                                          session=session,
                                           on_interaction=on_interaction):
             yield line
 
@@ -376,6 +408,7 @@ class LLMRunner:
     async def _run_loop(self, driver, user_id, messages: list, ai,
                          system_text: str | None,
                          session_id: int | None = None,
+                         session=None,
                          on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None
                          ) -> AsyncGenerator[str, None]:
         """工具调用/核实阶段状态机/三条防幻觉守卫/空回复兜底/轮次上限——Anthropic 和
@@ -404,6 +437,10 @@ class LLMRunner:
         if self.capability_context is not None:
             ctx.capability_context = self.capability_context
         loaded_skill_slugs = _loaded_skill_slugs(messages)
+        # 当前用户消息是本轮 run 的保护边界。压缩时只处理它之前的历史，
+        # 工具调用/结果追加后仍通过对象身份找到同一个起点。
+        _run_conversation = getattr(messages, "conversation", messages)
+        _run_start_message = _run_conversation[-1] if _run_conversation else None
 
         _mutset = _mutating_tools(self.tool_names)
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
@@ -449,7 +486,7 @@ class LLMRunner:
                     break
                 task_rounds += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
-            if await _im_cancelled():
+            if await _im_cancelled(session_id):
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
 
@@ -476,7 +513,7 @@ class LLMRunner:
             if current_length > safe_budget and compaction_attempts < 1:
                 # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
                 # 仍开始下一次摘要请求。
-                if await _im_cancelled():
+                if await _im_cancelled(session_id):
                     yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                     return
                 if compaction_attempts >= 1:
@@ -487,13 +524,20 @@ class LLMRunner:
                     yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
                     return
                 yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
+                _current_conversation = getattr(messages, "conversation", messages)
+                _protected_from = next(
+                    (index for index, item in enumerate(_current_conversation)
+                     if item is _run_start_message),
+                    max(0, len(_current_conversation) - 1),
+                )
                 compacted_messages, compacted = await compaction.compact_context(
                     list(getattr(messages, "conversation", messages)), system_text, context_tokens,
                     session_id=session_id, user_id=user_id,
                     fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                     overhead_tokens=overhead_tokens,
+                    protected_from=_protected_from,
                 )
-                if await _im_cancelled():
+                if await _im_cancelled(session_id):
                     yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                     return
                 if hasattr(messages, "replace_conversation"):
@@ -523,9 +567,16 @@ class LLMRunner:
 
             # LLM 压缩没有执行或没有把上下文压到安全预算后，才做本地确定性截断。
             if current_length > safe_budget:
+                _current_conversation = getattr(messages, "conversation", messages)
+                _protected_from = next(
+                    (index for index, item in enumerate(_current_conversation)
+                     if item is _run_start_message),
+                    max(0, len(_current_conversation) - 1),
+                )
                 hard_result = enforce_message_budget(
                     messages, system_text or "", context_tokens,
                     overhead_tokens=overhead_tokens,
+                    protected_from=_protected_from,
                 )
                 if hard_result.changed:
                     current_length = await compaction.estimate_context_length(messages, system_text)
@@ -580,7 +631,7 @@ class LLMRunner:
                     # 流式途中也协作检查取消：单轮长回答没有「下一轮」，只能在这里掐断；
                     # 退出生成器会关闭 stream、断开上游请求，真正停掉生成（不是只丢弃后续 token）
                     _tok += 1
-                    if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled():
+                    if _tok % _CANCEL_CHECK_EVERY == 0 and await _im_cancelled(session_id):
                         yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                         # 显式关掉 run_round 生成器：Python 3.14 下 async for 提前退出时
                         # close 会被推迟到 GC，LoopScope 的 span 会一直挂着 running。
@@ -596,6 +647,11 @@ class LLMRunner:
                         messages, system_text or "", getattr(ai, "context_tokens", 256000),
                         overhead_tokens=(
                             estimate_tool_schema_tokens(getattr(ctx, "tools", None))
+                        ),
+                        protected_from=next(
+                            (index for index, item in enumerate(getattr(messages, "conversation", messages))
+                             if item is _run_start_message),
+                            max(0, len(getattr(messages, "conversation", messages)) - 1),
                         ),
                     )
                     if hard_result.changed:
@@ -620,6 +676,11 @@ class LLMRunner:
                         messages, system_text or "", getattr(ai, "context_tokens", 256000),
                         overhead_tokens=(
                             estimate_tool_schema_tokens(getattr(ctx, "tools", None))
+                        ),
+                        protected_from=next(
+                            (index for index, item in enumerate(getattr(messages, "conversation", messages))
+                             if item is _run_start_message),
+                            max(0, len(getattr(messages, "conversation", messages)) - 1),
                         ),
                     )
                     if hard_result.changed:
@@ -727,21 +788,21 @@ class LLMRunner:
                         artifact = None
                     else:
                         if adapter_target is not None:
-                            from agent.tools.base import set_dispatch_session_id, reset_dispatch_session_id
-                            _dispatch_token = set_dispatch_session_id(session_id)
+                            from agent.tools.base import set_dispatch_session, reset_dispatch_session
+                            _dispatch_token = set_dispatch_session(session_id, session)
                             try:
                                 res, artifact = await registry.dispatch(
-                                    user_id, adapter_target, tc.input.get("arguments", {})
+                                    user_id, adapter_target, _resolve_adapter_arguments(tc.input)
                                 )
                             finally:
-                                reset_dispatch_session_id(_dispatch_token)
+                                reset_dispatch_session(_dispatch_token)
                         else:
-                            from agent.tools.base import set_dispatch_session_id, reset_dispatch_session_id
-                            _dispatch_token = set_dispatch_session_id(session_id)
+                            from agent.tools.base import set_dispatch_session, reset_dispatch_session
+                            _dispatch_token = set_dispatch_session(session_id, session)
                             try:
                                 res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
                             finally:
-                                reset_dispatch_session_id(_dispatch_token)
+                                reset_dispatch_session(_dispatch_token)
                         if skill_slug and _is_successful_tool_result(res):
                             loaded_skill_slugs.add(skill_slug)
                     if tc.name == "ask_user":

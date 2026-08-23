@@ -210,7 +210,7 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
     # 第一处在轮开始前的检查要放行，第二处（流式途中 _tok % 24 == 0）再掐断
     calls = {"n": 0}
 
-    async def fake_cancel():
+    async def fake_cancel(_session_id=None):
         calls["n"] += 1
         return calls["n"] >= 2
 

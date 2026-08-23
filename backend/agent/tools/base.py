@@ -20,6 +20,7 @@ from agent.tools.tool_contract import SchemaError, build_validator, invalid_inpu
 _traj_log = logging.getLogger("agent.traj")
 _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
+_dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
 
 
 def set_dispatch_session_id(session_id: int | None):
@@ -31,8 +32,25 @@ def reset_dispatch_session_id(token) -> None:
     _dispatch_session_id.reset(token)
 
 
+def set_dispatch_session(session_id: int | None, session=None):
+    """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
+    id_token = _dispatch_session_id.set(session_id)
+    session_token = _dispatch_session.set(session)
+    return id_token, session_token
+
+
+def reset_dispatch_session(token) -> None:
+    id_token, session_token = token
+    _dispatch_session_id.reset(id_token)
+    _dispatch_session.reset(session_token)
+
+
 def current_dispatch_session_id() -> int | None:
     return _dispatch_session_id.get()
+
+
+def current_dispatch_session():
+    return _dispatch_session.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；
@@ -150,6 +168,10 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     from agent.im import imctx
     payload = imctx.to_send_payload()
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
+        return
+    im = imctx.get_im()
+    if im and im.get("show_tool_interactions"):
+        # 已有独立工具气泡时，慢进度声明会重复描述同一件事。
         return
     if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return

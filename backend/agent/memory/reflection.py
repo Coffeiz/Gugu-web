@@ -435,8 +435,12 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 数据"的教训同源）。best-effort，记日志失败不影响主流程。
         if summary and summary != existing_summary.strip():
             try:
-                _memdiff_log.info("summary user=%s old=%r new=%r",
-                                   str(user_id)[:8], existing_summary.strip(), summary)
+                from agent.security.logsafe import fingerprint
+                _memdiff_log.info(
+                    "summary user_fp=%s old_len=%d new_len=%d old_fp=%s new_fp=%s",
+                    fingerprint(str(user_id)), len(existing_summary.strip()), len(summary),
+                    fingerprint(existing_summary.strip()), fingerprint(summary),
+                )
             except Exception:
                 pass
             await store.write_summary(user_id, summary)
@@ -445,6 +449,10 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
             # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
             from agent.memory import compress
             await compress.compact(user_id, settings)
+            from agent import events
+            events.publish(events.types.RagIndexUpdated(
+                user_id=user_id, source_type="memory", source_id="daily", operation="upsert",
+            ))
         # lens（解读先验）gated 学习：hint 多数轮为空；候选须复现才提拔成规则。顺带做退休维护。
         from agent.memory import lens
         await lens.observe(user_id, out.get("lens_hint"))
@@ -454,6 +462,20 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
+        try:
+            from agent.security.logsafe import fingerprint
+            _memdiff_log.info(
+                "[memory-reflection-audit] phase=completed scope=owner user_fp=%s "
+                "session_id=%s summary_changed=%s daily=%s profile_ops=%s pattern_ops=%s",
+                fingerprint(str(user_id)),
+                session_id,
+                bool(summary and summary != existing_summary.strip()),
+                bool(daily_note),
+                bool(p_add is not None or p_rem is not None),
+                bool(f_add is not None or f_rem is not None or legacy),
+            )
+        except Exception:
+            pass
     except Exception:
         return False  # 反思是锦上添花，任何失败都不能影响对话
     return True

@@ -1,6 +1,6 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：Memory 单来源 Knowledge RAG 已接入统一召回、被动 history 注入和 LoopScope 诊断；全量主动召回与 RAG history 生命周期列入 Phase 4，跨来源 RAG 后置实施。
+> 状态：Phase 4 全量主动召回与 RAG history 生命周期已完成；跨来源 RAG 后置实施。
 > Capability RAG 后置于 `PRD-LLM-9` 固定 Adapter Tool 完成之后。
 > 创建：2026-08-04
 > 最近更新：2026-08-24
@@ -19,7 +19,7 @@
 | Phase 1：Memory 内容摘要与分块召回 | ✅ 已完成 | Memory adapter、稳定切片、中文字符 n-gram BM25、可替换的 `IndexStore` 协议、内存 upsert/invalidate、版本去重和 `search_memory` 已落地；支持空结果、limit 上限、scope 与旧版本失效；已补自动化测试 | IM scope 后置到多来源阶段 |
 | Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 多来源统一索引管线和生产规模升级移至 Phase 5/6 |
 | Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | 跨来源 Retriever 和 Capability RAG 后置到 Phase 5/6；群聊 scope 规则在 Phase 4 落地 |
-| Phase 4：全量主动召回与 History 生命周期 | 🔲 待实施 | 已确定自动召回默认 BM25；正则/轻量规则只作为 Embedding 升级信号和明显非记忆请求的排除信号；Embedding 仅在 BM25 无命中或低质量且存在缓存向量时启用；owner 私聊与群聊共用 Retriever/BM25，群聊只改变候选 scope 与 ACL | 每条用户消息执行低成本 BM25；按内容 hash、chunk/version 和有效 history 去重；将自动 RAG 结果作为当前消息后的 canonical knowledge-context history 保存，后续 Run 复用；同一 Run 的后续 round 复用本轮结果；完成群共享记忆、当前发言人群友记忆、开关和 scope 隔离；群聊总输出仍限制 3000 字符；压缩时与普通 history 一起处理，TTL 只刷新 snapshot，不重写旧 RAG；LoopScope 展示策略、scope、命中数和是否注入 |
+| Phase 4：全量主动召回与 History 生命周期 | ✅ 已完成 | 每条用户消息统一执行 BM25；owner、group、member 共用 `UnifiedRetriever` 与 `MemoryAdapter`，群聊通过 scope、ACL 和两个记忆开关隔离；自动结果放在当前用户消息后的动态尾部，并保存为 canonical `knowledge-context`；按正文 hash 去重，LoopScope 记录模式、scope digest、命中数和注入状态 | 无；Embedding 仍只作为显式/限定条件召回能力，跨来源 RAG 后置 |
 | Phase 5：跨来源混合召回 | 🔲 待实施 | 已确定项目、文件、日记、画布、对话等来源沿用 `SourceAdapter`、scope、切片和预算契约；首版不做独立 Ranking/Reranker | 接入第二个来源并验证去重、引用和跨来源排序；补 `global_search`、`search_conversations` 与领域召回工具的职责边界回归 |
 | Phase 6：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；已明确不记录原始敏感正文，且保留专用工具和回滚路径 | 建立不含真实敏感正文的查询—相关文档标注集，比较 Recall@K、Precision@K、P95 延迟和越权率；仅对明确的跨来源知识问题灰度启用；按文档量、索引更新延迟和并发量评估 pgvector/HNSW/独立搜索服务；验证 owner、平台、bot、群组和项目 scope 隔离 |
 

@@ -15,6 +15,7 @@ import logging
 
 from .tokens import estimate_tokens, message_text, msg_tokens
 from .budget import HARD_TARGET_RATIO, SAFE_BUDGET_RATIO, effective_budget
+from .audit import summary_change
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,7 @@ async def compact_context(
     user_id: int | None = None,
     fixed_prefix_size: int = 0,
     overhead_tokens: int = 0,
+    protected_from: int | None = None,
 ) -> tuple[list, bool]:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
@@ -84,6 +86,13 @@ async def compact_context(
         else:
             normal_msgs.append(msg)
 
+    # 当前 run 模式下，protected_from 之后的消息是本轮用户输入、工具调用和结果，
+    # 必须整体保留；摘要只处理它之前的历史。普通调用保持旧的“从最新往回保留”语义。
+    protected_messages: list[dict] | None = None
+    if protected_from is not None:
+        protected_relative = max(0, int(protected_from) - fixed_prefix_size)
+        protected_messages = list(normal_msgs[protected_relative:])
+
     # 计算保留的消息数量（从最新往回保留）
     # 系统上下文注入不计入保留预算（它总是第一个消息）
     system_injection_idx = -1
@@ -101,34 +110,49 @@ async def compact_context(
         injection_tokens = estimate_tokens(inj_content)
         available_tokens -= injection_tokens
 
+    # 当前 run 的受保护后缀不参与历史保留窗口计算，直接原样带回。
+    if protected_messages is not None:
+        kept_msgs = protected_messages
+        kept_indices = set(range(max(0, len(normal_msgs) - len(protected_messages)), len(normal_msgs)))
+        compressible_msgs = [
+            msg for i, msg in enumerate(normal_msgs)
+            if i != system_injection_idx and i not in kept_indices
+        ]
+        kept_units = []
+        used_tokens = sum(estimate_tokens(message_text(msg)) for msg in kept_msgs)
+    else:
+        kept_msgs = []
+        compressible_msgs = []
+
     # 从最新往回保留消息。工具调用和工具结果是 provider 语义上的一个原子单元，
     # 不能只按单条 message 切预算，否则会把 tool_result 留下而把对应 tool_use
     # 压进摘要，下一轮就会产生非法的孤儿工具消息。
-    kept_units = []
-    used_tokens = 0
-    units = _atomic_message_units(normal_msgs, system_injection_idx)
-    for unit in reversed(units):
-        unit_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in unit)
-        if used_tokens + unit_tokens > available_tokens:
-            break
-        kept_units.append(unit)
-        used_tokens += unit_tokens
+    if protected_messages is None:
+        kept_units = []
+        used_tokens = 0
+        units = _atomic_message_units(normal_msgs, system_injection_idx)
+        for unit in reversed(units):
+            unit_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in unit)
+            if used_tokens + unit_tokens > available_tokens:
+                break
+            kept_units.append(unit)
+            used_tokens += unit_tokens
 
-    kept_units.reverse()
-    if not kept_units and units:
-        # 即使最新原子单元超预算也必须完整保留，不能退化成只保留其中一条。
-        kept_units = [units[-1]]
-        used_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in units[-1])
+        kept_units.reverse()
+        if not kept_units and units:
+            # 即使最新原子单元超预算也必须完整保留，不能退化成只保留其中一条。
+            kept_units = [units[-1]]
+            used_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in units[-1])
 
-    kept_indices = [i for unit in kept_units for i in unit]
-    kept_msgs = [normal_msgs[i] for i in kept_indices]
+        kept_indices = [i for unit in kept_units for i in unit]
+        kept_msgs = [normal_msgs[i] for i in kept_indices]
 
-    # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
-    kept_index_set = set(kept_indices)
-    compressible_msgs = [
-        msg for i, msg in enumerate(normal_msgs)
-        if i != system_injection_idx and i not in kept_index_set
-    ]
+        # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
+        kept_index_set = set(kept_indices)
+        compressible_msgs = [
+            msg for i, msg in enumerate(normal_msgs)
+            if i != system_injection_idx and i not in kept_index_set
+        ]
 
     # 过滤出有内容的消息用于压缩
     compressible_content = []
@@ -151,6 +175,17 @@ async def compact_context(
 
     if not compact_summary:
         return messages, False  # 压缩失败，返回原消息
+
+    summary_change(
+        source="inline_compaction",
+        old=(summary_msg or {}).get("content") if summary_msg else None,
+        new=compact_summary,
+        session_id=session_id,
+        before_messages=len(messages),
+        after_messages=len(fixed_prefix) + 1 + len(kept_msgs),
+        input_tokens=input_length,
+        safe_budget=safe_budget,
+    )
 
     # 构建压缩后的消息列表
     new_messages = list(fixed_prefix)

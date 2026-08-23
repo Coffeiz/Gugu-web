@@ -52,6 +52,38 @@ def test_format_im_memory_does_not_inject_platform_user_for_unknown():
     assert text == ""
 
 
+def test_group_and_platform_user_memory_can_be_rendered_independently():
+    from agent.im.context_loader import format_group_memory, format_platform_user_memory
+
+    data = {
+        "group": {"summary": "群内决定", "profile": "产品讨论群"},
+        "platform_user": {"profile": "成员自述做插画"},
+    }
+    group = format_group_memory(data)
+    member = format_platform_user_memory(data)
+    assert "群内决定" in group
+    assert "成员自述做插画" not in group
+    assert "成员自述做插画" in member
+    assert "群内决定" not in member
+
+
+def test_format_im_memory_uses_owner_injection_budget():
+    from agent.im.context_loader import format_im_memory
+    from agent.memory.store import MEMORY_INJECT_CHARS
+
+    text = format_im_memory({
+        "group": {"summary": "群摘要", "profile": "群画像"},
+        "platform_user": {
+            "summary": "成员摘要",
+            "profile": [{"text": "画像一"}],
+            "pattern": [{"text": "模式" + "很长" * MEMORY_INJECT_CHARS}],
+        },
+    }, "member")
+    personal = text.split("### 当前发言人的平台记忆", 1)[1]
+    assert len(personal) <= MEMORY_INJECT_CHARS + 120
+    assert "成员摘要" in personal
+
+
 def test_group_daily_policy_and_markdown_roundtrip():
     from agent.memory.im_reflection import (
         GROUP_DAILY_COMPACT_AT,

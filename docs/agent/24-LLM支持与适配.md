@@ -52,6 +52,9 @@
 #### Anthropic 格式（`_run_anthropic`，minimax / anthropic / mimo-anthropic）
 - **prompt 缓存**：system 拆「稳定前缀（人格/政策/技能索引，打 `cache_control: ephemeral`）┃ 动态后缀（记忆/分钟时间，不缓存）」+ **多轮工具滚动缓存断点**；`cache_read_input_tokens` 统计。**例外：mimo 的 anthropic 端点不支持缓存，不发 `cache_control`**。（0.14.1）
 - **思考**：`thinking:{type:"adaptive"}`（Anthropic 原生），thinking blocks 多轮**原样回传**（`content_dicts` 含 thinking）。
+- **历史兼容边界（2026-08-24）**：thinking 可能带模型专属签名，不做跨 provider 迁移。
+  会话记录最近使用的 provider/API 格式；检测到切换时一次性移除历史中的旧 thinking
+  块并持久化，保留文本与工具往返，同配置不重复处理。详见[上下文架构与扩展指南](32-上下文架构与扩展指南.md)。
 - **工具**：`registry.anthropic_schemas`；`sanitize.sanitize_messages` 清孤儿 `tool_use`/`tool_result`、空块、None 字段（MiniMax 严格校验，否则 `400 text is not set`）。
 - **流式抽风重试**：MiniMax 偶发空/异常流 → `IndexError`/`KeyError` 纳入出-token-前重试。
 

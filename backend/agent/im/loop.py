@@ -342,7 +342,7 @@ async def remember_im_reach(
         pass
 
 
-def bind_im_context(request: AgentRequest, payload: dict) -> None:
+def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interactions: bool = False) -> None:
     """把当前请求的 IM 路由和权限快照绑定到工具侧 ContextVar。"""
     from agent.im import imctx
 
@@ -356,6 +356,7 @@ def bind_im_context(request: AgentRequest, payload: dict) -> None:
         payload.get("context_token", ""),
         request.allowed_tool_names,
         request.im_role,
+        show_tool_interactions,
     )
 
 
@@ -510,7 +511,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
     if request.chat_id and recorded_message_id:
         try:
             from agent.memory.reflection_jobs import observe_group_message, observe_member_message
-            from agent.memory.scopes import MemoryScope
+            from agent.memory.scopes import MemoryScope, member_scope_id
 
             group_scope = MemoryScope(
                     request.user_id,
@@ -532,7 +533,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                         request.source or "qq",
                         str(request.platform_bot_id or ""),
                         "platform-user",
-                        str(request.platform_user_id),
+                        member_scope_id(request.chat_id, request.platform_user_id),
                     ),
                     recorded_message_id,
                     message_row.created_at,
@@ -687,17 +688,6 @@ async def prepare_request(
         im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
         im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
     )
-    # 临时定位 ask_user 未出现在 QQ 私聊模型工具列表的问题；不记录用户 ID 或正文。
-    print(json.dumps({
-        "probe": "runtime-ask-user-tools",
-        "phase": "request-permission",
-        "platform": platform,
-        "chatType": chat_type,
-        "role": role,
-        "allowedToolCount": len(allowed_tool_names) if allowed_tool_names is not None else None,
-        "allowedIsFull": allowed_tool_names is None,
-        "askUserAllowed": allowed_tool_names is None or "ask_user" in allowed_tool_names,
-    }, ensure_ascii=False, separators=(",", ":")), flush=True)
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 
 
@@ -793,10 +783,30 @@ async def dispatch_im_message(payload: dict):
         trace.finish_run("success", shortcut["reply"])
         return None
 
+    # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
+    # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
+    from agent import commands as _commands
+    command_name, _ = _commands.parse(
+        req.message,
+        allow_leading_mention=bool(payload.get("group_mentioned")),
+    )
+    if command_name is not None:
+        import app.db.session as _db_session
+        from agent.im.session import get_or_create_session
+
+        if _db_session._engine is None:
+            _db_session._build_engine()
+        async with _db_session._SessionLocal() as command_db:
+            command_state = await get_or_create_session(command_db, req, user_id)
+            await command_db.commit()
+        req.session_id = command_state.session.id
+        await persist_im_session(platform, route.bot_id, session_scope, req.session_id, group=route.is_group)
+        trace.bind_im_run(req.session_id, platform)
+
     cmd_reply = await handle_im_command(
         user_id,
         req.message,
-        prepared.session_id,
+        req.session_id,
         allow_leading_mention=bool(payload.get("group_mentioned")),
     )
     if cmd_reply is not None:
@@ -804,13 +814,12 @@ async def dispatch_im_message(payload: dict):
         trace.finish_run("success", cmd_reply)
         return None
 
-    bind_im_context(req, payload)
+    show_tool_interactions = await _should_show_tool_interactions(req.user_id)
+    bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
     shown_interaction_ids: set[int] = set()
-    show_tool_interactions = await _should_show_tool_interactions(req.user_id)
-
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
         if not show_tool_interactions:
@@ -899,7 +908,7 @@ async def dispatch_im_message(payload: dict):
         if req.im_member_memory_enabled and prepared.actor.role == "member" and req.platform_user_id:
             try:
                 from agent.memory.reflection_jobs import observe_member_activity
-                from agent.memory.scopes import MemoryScope
+                from agent.memory.scopes import MemoryScope, member_scope_id
 
                 await observe_member_activity(
                     MemoryScope(
@@ -907,7 +916,7 @@ async def dispatch_im_message(payload: dict):
                         req.source or "qq",
                         str(req.platform_bot_id or ""),
                         "platform-user",
-                        str(req.platform_user_id),
+                        member_scope_id(req.chat_id, req.platform_user_id),
                     ),
                     resp.session_id,
                     str(req.platform_user_id),

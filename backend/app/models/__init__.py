@@ -422,6 +422,10 @@ class ConversationSession(Base):
     # 压缩后的连续历史水位：旧消息保留在数据库，但运行时只从该消息之后追加。
     baseline_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
     baseline_message_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 最近一次发送历史所使用的 provider/API 格式。切换时只触发一次历史 thinking 清理，
+    # 不把 provider 专属签名写回 canonical history。
+    history_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    history_api_format: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 

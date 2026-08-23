@@ -434,9 +434,11 @@ export const notificationsApi = {
 
 export const agentApi = {
   listSessions:    ()                  => get('/agent/sessions'),
+  listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
   greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
+  cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
   // 知道属于哪个会话才能 loadSession + 定位滚动
   getMessageLocation: (messageId: number) => get<{ id: number; sessionId: number }>(`/agent/messages/${messageId}`),

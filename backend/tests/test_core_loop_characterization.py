@@ -172,7 +172,7 @@ async def test_compaction_honors_cancel_after_summary(monkeypatch):
     patch_anthropic(monkeypatch, [msg([TX("不应调用模型")])])
     cancel_checks = iter([False, False, True])
 
-    async def fake_cancel():
+    async def fake_cancel(_session_id=None):
         return next(cancel_checks)
 
     async def fake_estimate(_messages, _system_text):

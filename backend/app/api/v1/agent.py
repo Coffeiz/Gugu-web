@@ -298,6 +298,22 @@ async def resume_stream(
     )
 
 
+@router.post("/sessions/{session_id}/cancel")
+async def cancel_stream(
+    session_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """请求停止该用户会话的后台 Web 生成，取消在 Agent round/token 边界生效。"""
+    session = await get_owned(db, ConversationSession, session_id, current_user.id)
+    if session is None:
+        raise HTTPException(404, "会话不存在")
+    active = await genstream.is_active(session_id)
+    if active:
+        await genstream.request_cancel(session_id)
+    return {"ok": True, "active": active}
+
+
 @router.get("/sessions")
 async def list_sessions(
     current_user: User = Depends(get_current_user),
@@ -340,6 +356,14 @@ async def get_ui_labels(current_user: User = Depends(get_current_user)):
         return [p.strip() for p in re.split(r"[|\n]", raw or "") if p.strip()]
 
     return {"thinking": _split(merged.get("_thinking", ""))}
+
+
+@router.get("/commands")
+async def get_commands(current_user: User = Depends(get_current_user)):
+    """返回聊天输入框使用的规范斜杠命令菜单。"""
+    from agent.commands.help import command_menu
+
+    return {"commands": command_menu()}
 
 
 @router.get("/greeting")

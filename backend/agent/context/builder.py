@@ -163,8 +163,9 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     # === 动态部分（可能变化） ===
     dynamic_parts = []
 
-    # summary 与 stance 属于每轮动态尾部；session info 只保留较稳定的记忆 section。
-    mem_block = _memory_block(memory, include_summary=False)
+    # summary 属于 snapshot 前置上下文：在快照建立/过期/压缩时读取一次，避免作为
+    # 最后一条 role=user 动态消息被误判成当前请求。stance 仍由每轮动态尾部注入。
+    mem_block = _memory_block(memory, include_summary=True)
     if mem_block:
         dynamic_parts.append(mem_block)
 
@@ -220,7 +221,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
 
 
 def dynamic_tail(memory: dict | None = None) -> list[str]:
-    """生成每轮末尾的低频 stance/summary；不混入 session 固定上下文。"""
+    """生成每轮末尾的低频 stance；长期 summary 已由 snapshot 前置上下文承载。"""
     memory = memory or {}
     parts: list[str] = []
     try:
@@ -230,9 +231,6 @@ def dynamic_tail(memory: dict | None = None) -> list[str]:
         stance = ""
     if stance:
         parts.append(stance)
-    summary = (memory.get("summary") or "").strip()
-    if summary:
-        parts.append("## 当前对话长期摘要\n\n" + summary)
     return parts
 
 

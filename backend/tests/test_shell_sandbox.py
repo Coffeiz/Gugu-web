@@ -33,6 +33,36 @@ def test_local_sandbox_truncates_output_and_rejects_escape(tmp_path):
     assert result.truncated
     with pytest.raises(ValueError, match="超出 workspace"):
         asyncio.run(sandbox.execute("pwd", cwd="../"))
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute("ls .."))
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute("find ../.. -maxdepth 1"))
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute("ls --directory=../"))
+    with pytest.raises(ValueError, match="绝对路径"):
+        asyncio.run(sandbox.execute("ls /tmp"))
+    with pytest.raises(ValueError, match="绝对路径"):
+        asyncio.run(sandbox.execute("cat /etc/passwd"))
+
+
+def test_local_sandbox_rejects_symlink_argument_escape(tmp_path):
+    outside = tmp_path.parent / "shell-file-outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret", encoding="utf-8")
+    link = tmp_path / "outside"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (NotImplementedError, OSError):
+        pytest.skip("当前平台不支持目录软链接")
+    sandbox = LocalWorkspaceSandbox(tmp_path)
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute("cat outside/secret.txt"))
+
+
+def test_local_sandbox_rejects_windows_style_traversal(tmp_path):
+    sandbox = LocalWorkspaceSandbox(tmp_path)
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute(r"ls ..\\..\\secret"))
 
 
 def test_local_sandbox_rechecks_authorization_during_execution(tmp_path):

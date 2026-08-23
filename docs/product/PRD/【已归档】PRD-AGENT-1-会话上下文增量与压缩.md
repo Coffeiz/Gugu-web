@@ -1,6 +1,6 @@
 # PRD-AGENT-1 会话上下文增量与压缩
 
-> 💡 **讨论稿阶段，未实现。** 本文描述咕咕对话上下文从“每个用户回合重新装配 + 最近历史窗口 + 文本摘要”演进到“每个 Session 拥有持久上下文、持续增量追加、按预算滚动压缩、按 revision 刷新业务真值”的目标方案。
+> 💡 本文保留为上下文增量与压缩的总体 PRD。当前实现细节以 [`上下文预算与 Baseline 设计`](../../../agent/context/context-budget-baseline-design.md) 为准，尤其是“运行中硬预算 + run 完成后 90% 后台 checkpoint”的双阈值策略。
 >
 > 状态：Phase 0 待评估
 > 创建：2026-08-08
@@ -18,7 +18,7 @@
 
 **Context 属于 Session，不属于一次 Agent Loop。**
 
-Session 创建时完成一次上下文 Bootstrap；之后用户消息、assistant 回复、tool call、tool result、状态变化持续追加到同一份 Session Context。达到 token 水位后，将较老事件滚动压缩成结构化 `CompactedSessionState`，保留最近原始事件继续工作。
+Session 创建时完成一次上下文 Bootstrap；之后用户消息、assistant 回复、tool call、tool result、状态变化持续追加到同一份 Session Context。运行中的 provider 请求达到硬预算时，只压缩当前 run 之前的历史，保护当前 run 的消息链继续工作；run 完成后达到 90% 软阈值时，再异步创建 checkpoint，下一条用户消息消费该 checkpoint。
 
 项目 / 日历 / 文件等业务数据仍以数据库为 Source of Truth，但不再每轮无条件重载：Session 持有带 revision 的缓存，自身 tool mutation 直接 patch，外部变化通过 revision / invalidation 选择性刷新。
 
@@ -595,6 +595,17 @@ tool_call
 
 可以丢过程，不可以丢结果状态。
 
+### 9.3 运行中压缩与完成后 checkpoint
+
+压缩分为两个时机，不能共用一个模糊的“达到阈值”定义：
+
+1. **运行中硬预算**：每次 tool result 追加后、准备进入下一轮 provider 请求前重新估算。若达到模型实际可用上限，只压缩当前 run 之前的历史；当前 run 的用户消息、tool call、tool result 和最终输出作为受保护后缀继续保留。
+2. **run 完成后软预算**：本轮已经向用户输出完成后，若 session 上下文达到 90% 软阈值，后台创建压缩 checkpoint；低于 90% 不重复压缩。
+
+当前 run 的消息必须正常写入历史。若当前 run 自身包含超过模型上限的单条 tool result，则对该结果做字段级截断或摘要化，不能只压缩更早的历史。
+
+后台 checkpoint 不阻塞已经完成的回复。下一条用户消息到达时，若 checkpoint 正在运行则等待同一个任务；压缩任务必须携带消息水位并使用 session 级锁，禁止旧 checkpoint 覆盖新消息产生的 baseline。
+
 ---
 
 ## 10. Context Budget
@@ -623,7 +634,9 @@ model_window
 = available session context budget
 ```
 
-达到 `compact_threshold` 后滚动压缩到 `target_after_compact`。
+运行中达到模型硬上限时先保护当前 run 并压缩旧历史；run 完成后达到 `compact_threshold=90%` 才异步创建 checkpoint，checkpoint 完成后滚动压缩到 `target_after_compact`。
+
+因此 90% 是后台维护阈值，不是允许 provider 请求首次撞上限的边界；provider 请求前仍必须使用扣除 schema、输出空间和安全余量后的硬预算。
 
 第一版阈值可配置，不要求一次得到最优值；必须先增加可观测指标。
 
@@ -875,9 +888,9 @@ Session 生命周期 > Agent Loop 生命周期
 
 一次 Loop 结束不能等于 Context 结束。
 
-### 原则 B：Append first, Compact later
+### 原则 B：Append first, Compact at a safe boundary
 
-能增量追加就追加；达到预算才做滚动压缩，不每轮重新总结。
+能增量追加就追加。运行中只在进入下一轮 provider 请求前、确实达到硬预算时压缩旧历史；run 完成后达到 90% 才后台创建 checkpoint，不在每轮重新总结。
 
 ### 原则 C：Cache is not Truth
 

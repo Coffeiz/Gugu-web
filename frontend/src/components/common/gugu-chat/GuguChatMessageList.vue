@@ -105,29 +105,6 @@ watch(() => props.sessionId, async () => {
   await nextTick()
   virtualizer.value.measure()
 }, { flush: 'post' })
-function logSessionPaint(phase: string) {
-  const el = messagesEl.value
-  console.info('[runtime-chat-session-paint-probe]', JSON.stringify({
-    phase,
-    settling: props.sessionSettling,
-    messageCount: props.messages.length,
-    scrollTop: el?.scrollTop ?? null,
-    scrollHeight: el?.scrollHeight ?? null,
-    clientHeight: el?.clientHeight ?? null,
-    virtualTotalSize: virtualTotalSize.value,
-    visibility: el ? getComputedStyle(el).visibility : null,
-  }))
-}
-watch(() => props.sessionSettling, async (settling) => {
-  await nextTick()
-  logSessionPaint(settling ? 'settling' : 'visible')
-  if (!settling) {
-    requestAnimationFrame(() => {
-      logSessionPaint('visible-raf1')
-      requestAnimationFrame(() => logSessionPaint('visible-raf2'))
-    })
-  }
-}, { flush: 'post' })
 function measureRow(el: Element | ComponentPublicInstance | null) { if (el) virtualizer.value.measureElement(el as Element) }
 
 // 只有真正挂进视口 ± overscan 的消息才需要解析 markdown——不在 loadSession 时就把

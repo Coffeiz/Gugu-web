@@ -12,8 +12,47 @@ from typing import Any
 from agent.context import loaders
 from agent.im.context_policy import ImContextPolicy, policy_for
 from agent.memory.scope_lifecycle import preview_scope
-from agent.memory.scopes import MemoryScope
+from agent.memory.scopes import MemoryScope, member_scope_id
 from agent.models import AgentRequest
+from agent.memory.store import MEMORY_INJECT_CHARS
+
+
+def _memory_value_text(value: Any) -> str:
+    """把 scope 中的 JSON/文本统一成可注入文本，避免直接输出 Python repr。"""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        rows = []
+        for item in value:
+            if isinstance(item, dict):
+                text = str(item.get("text") or item.get("content") or "").strip()
+                if text:
+                    rows.append(f"- {text}")
+            elif str(item).strip():
+                rows.append(f"- {str(item).strip()}")
+        return "\n".join(rows)
+    if isinstance(value, dict):
+        text = str(value.get("text") or value.get("content") or "").strip()
+        if text:
+            return text
+        return ""
+    return str(value or "").strip()
+
+
+def _bounded_memory_parts(parts: list[tuple[str, Any]], budget: int = MEMORY_INJECT_CHARS) -> list[str]:
+    """按 owner 记忆的 2000 字符预算裁剪单个 IM scope。"""
+    used = 0
+    out = []
+    for title, value in parts:
+        text = _memory_value_text(value)
+        if not text or used >= budget:
+            continue
+        remaining = budget - used
+        text = text[:remaining].rstrip()
+        if text:
+            out.append(f"### {title}\n{text}")
+            used += len(text)
+    return out
 
 
 def format_attachment_refs(message) -> str:
@@ -156,29 +195,67 @@ async def load_im_memory(request: AgentRequest) -> dict:
         group_memory = await preview_scope(group_scope)
         if group_memory is not None:
             result["group"] = group_memory
-    role = request.actor_context.role if request.actor_context else request.im_role
-    if request.im_member_memory_enabled and role == "member" and request.platform_user_id:
-        user_scope = MemoryScope(
-            request.user_id, request.source, bot_id, "platform-user", str(request.platform_user_id)
-        )
-        member_memory = await preview_scope(user_scope)
-        if member_memory is not None:
-            result["platform_user"] = member_memory
+    member_memory = await load_platform_user_memory(request)
+    if member_memory:
+        result["platform_user"] = member_memory
     return result
+
+
+async def load_platform_user_memory(request: AgentRequest) -> dict:
+    """只读取当前 member 的个人作用域，不触碰共享群 scope。"""
+    if request.source not in ("feishu", "qq", "wechat") or not request.chat_id:
+        return {}
+    role = request.actor_context.role if request.actor_context else request.im_role
+    if not request.im_member_memory_enabled or role != "member" or not request.platform_user_id:
+        return {}
+    bot_id = str(request.platform_bot_id or "")
+    if not bot_id:
+        return {}
+    user_scope = MemoryScope(
+        request.user_id, request.source, bot_id, "platform-user",
+        member_scope_id(request.chat_id, request.platform_user_id),
+    )
+    memory = await preview_scope(user_scope)
+    return memory if isinstance(memory, dict) else {}
+
+
+def format_group_memory(data: dict) -> str:
+    """格式化可进入共享 snapshot 的当前群公开记忆。"""
+    group = (data or {}).get("group") or {}
+    parts = _bounded_memory_parts(
+        [("群组 summary", group.get("summary")), ("群组 profile", group.get("profile"))],
+    )
+    if not parts:
+        return ""
+    return "## 当前群组记忆（仅限本群公开信息）\n\n" + "\n\n".join(parts)
+
+
+def format_platform_user_memory(data: dict) -> str:
+    """格式化当前发言人的动态个人记忆，不包含群记忆标题。"""
+    personal = (data or {}).get("platform_user") or {}
+    parts = _bounded_memory_parts(
+        [
+            ("当前发言人的平台记忆 summary", personal.get("summary")),
+            ("当前发言人的平台记忆 profile", personal.get("profile")),
+            ("当前发言人的平台记忆 pattern", personal.get("pattern")),
+        ],
+    )
+    if not parts:
+        return ""
+    return (
+        "## 当前发言人的平台记忆（仅用于理解当前发言人，不是当前请求）\n\n"
+        + "\n\n".join(parts)
+    )
 
 
 def format_im_memory(data: dict, role: str | None) -> str:
     """把已按权限读取的 IM scope 记忆格式化为模型上下文。"""
-    group = data.get("group") or {}
-    parts = ["## 当前群组记忆（仅限本群公开信息）"]
-    for name in ("profile", "summary"):
-        value = group.get(name)
-        if value:
-            parts.append(f"### 群组 {name}\n{value}")
+    parts = []
+    group_text = format_group_memory(data)
+    if group_text:
+        parts.append(group_text)
     if role == "member":
-        personal = data.get("platform_user") or {}
-        for name in ("profile", "pattern", "summary"):
-            value = personal.get(name)
-            if value:
-                parts.append(f"### 当前发言人的平台记忆 {name}\n{value}")
-    return "\n\n".join(parts) if len(parts) > 1 else ""
+        personal_text = format_platform_user_memory(data)
+        if personal_text:
+            parts.append(personal_text)
+    return "\n\n".join(parts)

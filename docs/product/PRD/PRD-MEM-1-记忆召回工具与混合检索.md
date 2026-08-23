@@ -16,8 +16,8 @@ IM scope 权限和工具行为。未来跨来源召回复用 RAG-1 的内部 Ret
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 1：owner 私聊记忆召回工具 | 🔲 待实现 | `pattern`、`daily`、`memory` 的 BM25 召回 |
-| Phase 2：embedding 混合召回 | 🔲 待实现 | 配置 embedding 后 BM25 + cosine 合并排序 |
+| Phase 1：owner 私聊记忆召回工具 | 🟡 基础 BM25 已实现 | `pattern`、`daily`、`memory` 已通过 RAG-1 Memory adapter 和 `search_memory` 接入；embedding 混合、IM scope 和持久化索引后置 |
+| Phase 2：embedding 混合召回 | 🟡 基础能力已实现 | 使用已有同模型向量缓存与 BM25 混合；缺缓存、未启用或失败时退回 BM25，持久化索引后置 |
 | Phase 3：IM scope 权限 | 🔲 待实现 | owner 跨群、member 当前群隔离 |
 | Phase 4：与历史 session 检索共用底层 | 🔲 待评估 | 保持工具边界不合并，复用检索服务 |
 | Phase 5：自动化测试与灰度 | 🔲 待实现 | 权限、排序、预算和无 embedding 回退测试 |

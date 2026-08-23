@@ -22,6 +22,10 @@ from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import read_scope, read_scope_json, write_scope_file, write_scope_json
 from agent.memory.scopes import MemoryScope
 
+import logging
+
+_reflection_log = logging.getLogger("agent.memory.reflection")
+
 
 GROUP_DAILY_COMPACT_AT = 1000
 GROUP_DAILY_KEEP_RECENT = 500
@@ -102,7 +106,14 @@ async def _messages_for_job(db, job):
     if job.scope_type == "group":
         query = query.where(ConversationSession.chat_type == "group", ConversationSession.chat_id == job.scope_id)
     else:
-        query = query.where(ConversationMessage.platform_user_id == job.scope_id)
+        from agent.memory.scopes import split_member_scope_id
+        group_id, member_id = split_member_scope_id(job.scope_id)
+        query = query.where(ConversationMessage.platform_user_id == member_id)
+        if group_id:
+            query = query.where(
+                ConversationSession.chat_type == "group",
+                ConversationSession.chat_id == group_id,
+            )
     return (await db.execute(query.order_by(ConversationMessage.id))).scalars().all()
 
 
@@ -280,6 +291,18 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
             job.locked_at = None
             job.updated_at = now
             await db.commit()
+            from agent.security.logsafe import fingerprint
+            _reflection_log.info(
+                "[memory-reflection-audit] phase=completed job_id=%s scope_type=%s "
+                "scope_id_fp=%s source=%s bot_id_fp=%s messages=%d reason=%s",
+                job.id,
+                scope.scope_type,
+                fingerprint(scope.scope_id),
+                scope.platform,
+                fingerprint(scope.bot_id),
+                len(messages),
+                job.reason or "",
+            )
             return True
         except Exception as exc:
             await _mark_failure(db, job, exc)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import shlex
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from collections.abc import Awaitable, Callable
 _SHELL_META = set(";&|<>$`()\n\r")
 _MAX_TIMEOUT = 300
 _MAX_OUTPUT = 120_000
+_PATH_SEPARATOR_RE = re.compile(r"[\\/]+")
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,33 @@ class LocalWorkspaceSandbox:
             raise ValueError("cwd 必须是目录")
         return resolved
 
+    def _validate_workspace_argv(self, argv: list[str], workdir: Path) -> None:
+        """阻止 workspace 命令通过参数访问 workspace 外的路径。
+
+        ``cwd`` 校验无法覆盖 ``ls ..``、``cat /etc/passwd`` 这类参数路径。
+        当前本机执行器没有 OS 级容器，因此先对显式路径做 fail-closed 预检；
+        system scope 使用 root 为 ``/``，不受这条 workspace 边界限制。
+        """
+        if self.root == Path("/"):
+            return
+        for raw_value in argv[1:]:
+            value = raw_value.split("=", 1)[1] if "=" in raw_value else raw_value
+            if not value or value.startswith("-") and "/" not in value and "\\" not in value:
+                continue
+            if value.startswith("~") or Path(value).is_absolute() or value.startswith(("/", "\\")):
+                raise ValueError("workspace 命令不能使用绝对路径或用户目录路径")
+            parts = [part for part in _PATH_SEPARATOR_RE.split(value) if part]
+            if ".." in parts:
+                raise ValueError("命令路径超出 workspace 范围")
+            # 只对显式路径形态解析，避免把普通参数当成文件名处理。
+            if "/" not in value and "\\" not in value and not value.startswith("."):
+                continue
+            candidate = (workdir / value).resolve(strict=False)
+            try:
+                candidate.relative_to(self.root)
+            except ValueError as exc:
+                raise ValueError("命令路径超出 workspace 范围") from exc
+
     @staticmethod
     def _parse_command(command: str) -> list[str]:
         text = (command or "").strip()
@@ -83,6 +112,7 @@ class LocalWorkspaceSandbox:
     ) -> ShellResult:
         argv = self._parse_command(command)
         workdir = self._resolve_cwd(cwd)
+        self._validate_workspace_argv(argv, workdir)
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars), _MAX_OUTPUT))
 

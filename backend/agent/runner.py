@@ -21,7 +21,7 @@ from agent import quota
 from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
-from agent.im.context_loader import load_context_data
+from agent.im.context_loader import load_context_data, load_platform_user_memory
 from agent.im.permissions import filter_tool_names
 from agent.im.session import (
     GROUP_CONTEXT_LIMIT,
@@ -42,28 +42,14 @@ def _capability_context(tool_names, settings):
     return build_fixed_adapter_context(tool_names)
 
 
-async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str]) -> list[str]:
+async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str], *, session=None) -> list[str]:
     """工具注册前过滤 Shell；执行器仍会再次调用策略层复核。"""
     if "shell" not in names:
         return names
     from agent.security.shell_policy import available_for_session
-    if await available_for_session(db, user_id, session_id):
+    if await available_for_session(db, user_id, session_id, session=session):
         return names
     return [name for name in names if name != "shell"]
-
-
-async def _shell_context(db, user_id, session_id: int) -> str:
-    """给模型提供 Shell 工具所需的派生范围，不暴露宿主机真实路径。"""
-    from app.services.workspaces import describe_session, get_session_shell_scope
-    workspace = await describe_session(db, user_id, session_id)
-    scope = await get_session_shell_scope(db, user_id, session_id)
-    return (
-        "\n\n## Shell 状态\n"
-        f"- 当前范围：{scope}\n"
-        + (f"- 当前工作区：{workspace.name}\n" if workspace else "")
-        + "- 范围由当前会话是否绑定工作区自动决定；cwd 只能使用当前范围内的相对路径；"
-        "不要索要或猜测宿主机绝对路径。"
-    )
 
 
 def _im_identity_block(req: AgentRequest, history: list) -> str:
@@ -191,6 +177,16 @@ async def _gen_summary_bg(user_id, session_id, force: bool, settings, use_anthro
         async with _sess._SessionLocal() as db:
             s = await db.get(ConversationSession, session_id)
             if s:
+                from agent.context.audit import session_scope, summary_change
+                audit_scope = session_scope(s)
+                audit_scope.pop("source", None)
+                summary_change(
+                    source="conversation_session_summary_bg",
+                    old=s.summary,
+                    new=summary,
+                    trigger="force" if force else "periodic",
+                    **audit_scope,
+                )
                 s.summary = summary
                 await db.commit()
     except Exception:
@@ -286,6 +282,8 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        from agent.context import compress_conv
+        await compress_conv.wait_for_checkpoint(session_id)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -300,6 +298,11 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=True, user_tz=data.user_tz,
             )
+            from agent.im.context_loader import format_group_memory
+            group_memory = (data.im_memory or {}).get("group") or {}
+            group_block = format_group_memory({"group": group_memory})
+            if group_block:
+                snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
             return {
                 "system_prompt": static_prompt,
                 "snapshot_context": snapshot_context,
@@ -307,18 +310,35 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                                   "chat_id": req.chat_id, "profile": profile.prompt_file},
                 "user_tz": data.user_tz,
                 "im_channels": data.im_channels,
-                "im_memory": data.im_memory,
+                # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
+                "im_memory": {"group": group_memory},
+                "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory),
             }
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
-        context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
+        # 兼容旧 snapshot：旧版本把群记忆放在动态尾部，首次命中时临时补到前缀，
+        # 避免 TTL 到期前短暂丢失群公开记忆；新 snapshot 不会走这里。
+        from agent.im.context_loader import format_group_memory
+        _legacy_group = format_group_memory({"group": (snapshot.get("im_memory") or {}).get("group") or {}})
+        if _legacy_group and "## 当前群组记忆（仅限本群公开信息）" not in (snapshot.get("snapshot_context") or ""):
+            snapshot["snapshot_context"] = f"{snapshot.get('snapshot_context') or ''}\n\n---\n\n{_legacy_group}"
+        member_memory = await load_platform_user_memory(req)
+        context_data = SimpleNamespace(im_memory={
+            "group": (snapshot.get("im_memory") or {}).get("group") or {},
+            "platform_user": member_memory,
+        })
 
         # 连续历史：未压缩时不再按最近 N 条滑动；压缩后从 baseline 水位继续追加。
         history = await session_history.load_session_history(
             db, session_id, session_snapshot.history_baseline(session),
         )
+        from agent.context.provider_history import clean_persisted_history, prepare_session
+        _, strip_thinking = prepare_session(session, model_cfg)
+        if strip_thinking:
+            clean_persisted_history(history)
+            strip_thinking = False
         # 主动推送（定时任务/活动提醒）若是会话首条 assistant（前导，sanitize 会剥掉）→ 记下来塞进 system，
         # 让咕咕知道「自己刚主动发了啥」、能接住用户对它的回复（如新闻速览后用户回「4」）。
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
@@ -419,16 +439,9 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
 
     # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
-    if "shell" in profile.tool_names:
-        _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
-    if context_data.im_memory:
-        from agent.im.context_loader import format_im_memory
-        scope_memory = format_im_memory(context_data.im_memory, req.im_role)
-        if scope_memory:
-            _dynamic_extra_parts.append(scope_memory)
     if im_bridge:
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
@@ -446,7 +459,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
-    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
+    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
     capability_context = _capability_context(tool_names, settings)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
@@ -467,8 +480,14 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
     oa_initial_len = 0
     fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
     history_parts = build_history_parts(
-        history, req, use_anthropic=use_anthropic, user_tz=user_tz)
+        history, req, use_anthropic=use_anthropic, user_tz=user_tz,
+        strip_thinking=strip_thinking)
+    from agent.rag.injection import build_automatic_rag_context
+    rag_context = await build_automatic_rag_context(
+        req, req.message, history=history, snapshot_text=snapshot_context,
+    )
     tail_parts = []
+    tail_parts.extend(rag_context["tail"])
     message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
     if message_time:
         tail_parts.append(message_time)
@@ -489,7 +508,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id,
+                         model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
     else:
         oa_messages = message_assembly.build_messages(
@@ -500,7 +519,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         )
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id,
+                         model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
 
     try:
@@ -524,6 +543,11 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         async with _sess._SessionLocal() as db2:
             # 两种 provider 都持久化同一套 canonical tool turn；守卫注入的合成 prompt
             # /核实内心戏不会进入 canonical 结果。
+            for block in rag_context.get("blocks", []):
+                db2.add(ConversationMessage(
+                    session_id=session_id, role="user", content="",
+                    content_json=[block],
+                ))
             tool_history = message_assembly.newly_appended(
                 anthr_messages if use_anthropic else oa_messages,
                 anthr_initial_len if use_anthropic else oa_initial_len,
@@ -555,6 +579,12 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                     model=model_cfg.model, provider=model_cfg.provider,
                 ))
             await db2.commit()
+
+        from agent.context import compress_conv
+        compress_conv.schedule_checkpoint(
+            session_id, user_id, settings,
+            getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+        )
 
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
         # 闲置后「重新聊天」=新会话，原来要在回复后再串行等一次 LLM 起标题才返回 → 慢一倍，这里去掉。
@@ -642,6 +672,8 @@ async def run_stream(
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        from agent.context import compress_conv
+        await compress_conv.wait_for_checkpoint(session_id)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -656,21 +688,41 @@ async def run_stream(
                 im_message_format=getattr(req, "im_message_format", None),
                 user_msg=req.message, non_streaming=False, user_tz=data.user_tz,
             )
+            from agent.im.context_loader import format_group_memory
+            group_memory = (data.im_memory or {}).get("group") or {}
+            group_block = format_group_memory({"group": group_memory})
+            if group_block:
+                snapshot_context = f"{snapshot_context}\n\n---\n\n{group_block}"
             return {"system_prompt": static_prompt, "snapshot_context": snapshot_context,
                     "session_info": {"user_name": req.user_name, "source": req.source,
                                       "chat_id": req.chat_id, "profile": profile.prompt_file},
                     "user_tz": data.user_tz, "im_channels": data.im_channels,
-                    "im_memory": data.im_memory}
+                    # 共享 snapshot 只保存当前群公开记忆；成员个人记忆按请求动态读取。
+                    "im_memory": {"group": group_memory},
+                    "memory_summary_hash": session_snapshot.memory_summary_hash(data.memory)}
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
-        context_data = SimpleNamespace(im_memory=snapshot["im_memory"])
+        from agent.im.context_loader import format_group_memory
+        _legacy_group = format_group_memory({"group": (snapshot.get("im_memory") or {}).get("group") or {}})
+        if _legacy_group and "## 当前群组记忆（仅限本群公开信息）" not in (snapshot.get("snapshot_context") or ""):
+            snapshot["snapshot_context"] = f"{snapshot.get('snapshot_context') or ''}\n\n---\n\n{_legacy_group}"
+        member_memory = await load_platform_user_memory(req)
+        context_data = SimpleNamespace(im_memory={
+            "group": (snapshot.get("im_memory") or {}).get("group") or {},
+            "platform_user": member_memory,
+        })
 
         # 连续历史：只加载 baseline 之后的追加消息，避免每轮重新裁剪历史前缀。
         history = await session_history.load_session_history(
             db, session_id, session_snapshot.history_baseline(session),
         )
+        from agent.context.provider_history import clean_persisted_history, prepare_session
+        _, strip_thinking = prepare_session(session, model_cfg)
+        if strip_thinking:
+            clean_persisted_history(history)
+            strip_thinking = False
         _nonsumm = [h for h in history if getattr(h, "role", None) != "summary"]
         _proactive_lead = _nonsumm[0].content if _nonsumm and _nonsumm[0].role == "assistant" else ""
 
@@ -759,16 +811,9 @@ async def run_stream(
 
     # 组装本轮动态上下文注入块（放入 history 之后，不进 system）
     _dynamic_extra_parts = []
-    if "shell" in profile.tool_names:
-        _dynamic_extra_parts.append(await _shell_context(db, user_id, session_id))
     _im_id = _im_identity_block(req, history)
     if _im_id:
         _dynamic_extra_parts.append(_im_id)
-    if context_data.im_memory:
-        from agent.im.context_loader import format_im_memory
-        scope_memory = format_im_memory(context_data.im_memory, req.im_role)
-        if scope_memory:
-            _dynamic_extra_parts.append(scope_memory)
     if im_bridge:
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
@@ -786,7 +831,7 @@ async def run_stream(
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
-    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names)
+    tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
     capability_context = _capability_context(tool_names, settings)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
@@ -807,8 +852,14 @@ async def run_stream(
     oa_initial_len = 0
     fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
     history_parts = build_history_parts(
-        history, req, use_anthropic=use_anthropic, user_tz=user_tz)
+        history, req, use_anthropic=use_anthropic, user_tz=user_tz,
+        strip_thinking=strip_thinking)
+    from agent.rag.injection import build_automatic_rag_context
+    rag_context = await build_automatic_rag_context(
+        req, req.message, history=history, snapshot_text=snapshot_context,
+    )
     tail_parts = []
+    tail_parts.extend(rag_context["tail"])
     message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
     if message_time:
         tail_parts.append(message_time)
@@ -825,7 +876,7 @@ async def run_stream(
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id,
+                         model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
     else:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
@@ -836,7 +887,7 @@ async def run_stream(
             dynamic_tail=tail_parts)
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id,
+                         model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
 
 
@@ -923,6 +974,11 @@ async def run_stream(
     # 持久化（跟 run_collect 一致）：写入 db + schedule_title/summary/reflection/compress
     if not errored:
         async with _sess._SessionLocal() as db2:
+            for block in rag_context.get("blocks", []):
+                db2.add(ConversationMessage(
+                    session_id=session_id, role="user", content="",
+                    content_json=[block],
+                ))
             tool_history = message_assembly.newly_appended(
                 anthr_messages if use_anthropic else oa_messages,
                 anthr_initial_len if use_anthropic else oa_initial_len,
@@ -952,6 +1008,12 @@ async def run_stream(
                     model=model_cfg.model, provider=model_cfg.provider,
                 ))
             await db2.commit()
+
+        from agent.context import compress_conv
+        compress_conv.schedule_checkpoint(
+            session_id, user_id, settings,
+            getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+        )
 
         if is_new_session and text:
             _schedule_title(user_id, session_id, req.message, text, settings, use_anthropic)

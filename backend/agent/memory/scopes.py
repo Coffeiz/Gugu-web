@@ -13,6 +13,17 @@ from urllib.parse import quote
 IM_MEMORY_TYPES: Tuple[str, ...] = ("group", "platform-user")
 
 
+def member_scope_id(group_id: object, platform_user_id: object) -> str:
+    """把群和发言人绑定进旧的 scope_id 字段，兼容现有 DB schema。"""
+    return f"{str(group_id).strip()}:{str(platform_user_id).strip()}"
+
+
+def split_member_scope_id(scope_id: object) -> tuple[str, str]:
+    value = str(scope_id or "")
+    group_id, separator, member_id = value.partition(":")
+    return (group_id, member_id) if separator else ("", value)
+
+
 def _component(value: object, field: str) -> str:
     text = str(value or "").strip()
     if not text or text in {".", ".."} or "/" in text or "\\" in text or "\x00" in text:

@@ -4,7 +4,7 @@ import pytest
 
 from agent.capabilities.injector import catalog_block
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
-from agent.core import LLMRunner, _loaded_skill_slugs
+from agent.core import LLMRunner, _loaded_skill_slugs, _resolve_adapter_arguments
 from agent.tools.meta import _use_skill
 from agent.capabilities.diagnostics import capability_injection_diagnostics
 from agent.runtime.loopscope_trace.hooks import _skill_result_metadata
@@ -22,6 +22,18 @@ def test_catalog_contains_short_descriptions_only():
     assert "联网查找资料" in block
     assert "input_schema" not in block
     assert "call_tool" in block
+
+
+def test_fixed_adapter_preserves_nested_and_flattened_business_arguments():
+    assert _resolve_adapter_arguments({
+        "name": "http_get",
+        "arguments": {"url": "https://example.com"},
+    }) == {"url": "https://example.com"}
+    assert _resolve_adapter_arguments({
+        "name": "http_get",
+        "url": "https://example.com",
+    }) == {"url": "https://example.com"}
+    assert _resolve_adapter_arguments({"name": "http_get"}) == {}
 
 
 def test_capability_diagnostics_are_redacted_to_metrics():

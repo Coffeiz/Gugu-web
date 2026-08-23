@@ -6,6 +6,7 @@
 import json
 
 from agent.memory import store
+from agent.rag.service import search_memory
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -46,6 +47,27 @@ async def _remember(db, user_id, args: dict):
     return {"success": True, "target": target, "remembered": text}
 
 
+async def _search_memory(db, user_id, args: dict):
+    query = str(args.get("query") or "").strip()
+    source = str(args.get("source") or "all").strip().lower()
+    scope = str(args.get("scope") or "auto").strip().lower()
+    strategy = str(args.get("strategy") or "auto").strip().lower()
+    if source not in {"all", "profile", "pattern", "daily", "memory"}:
+        return {"error": "source 只能是 all、profile、pattern、daily 或 memory"}
+    if strategy not in {"auto", "bm25", "embedding"}:
+        return {"error": "strategy 只能是 auto、bm25 或 embedding"}
+    try:
+        limit = int(args.get("limit", 5) or 5)
+    except (TypeError, ValueError):
+        return {"error": "limit 必须是 1 到 10 的整数"}
+    if not 1 <= limit <= 10:
+        return {"error": "limit 必须是 1 到 10 的整数"}
+    try:
+        return await search_memory(user_id, query, scope=scope, source=source, strategy=strategy, limit=limit)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
 class MemorySkill(BaseSkill):
     name = "memory"
     tools = [
@@ -71,6 +93,26 @@ class MemorySkill(BaseSkill):
             },
             handler=_remember,
             mutates=True,
+        ),
+        Tool(
+            name="search_memory", label="搜索记忆",
+            description=(
+                "按关键词搜索过去的事件、对话背景、近期记录和长期记忆。"
+                "用户询问以前讨论过什么、某个决定的背景或历史记忆时使用；"
+                "不用于搜索项目、文件或完整聊天记录。当前仅支持 owner 私人记忆的 BM25 召回。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "要检索的关键词或短语"},
+                    "scope": {"type": "string", "enum": ["auto", "private_memory"], "description": "记忆范围，默认 auto"},
+                    "source": {"type": "string", "enum": ["all", "profile", "pattern", "daily", "memory"], "description": "记忆来源，默认 all"},
+                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时自动退回 BM25"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},
+                },
+                "required": ["query"],
+            },
+            handler=_search_memory,
         ),
     ]
 

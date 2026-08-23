@@ -180,6 +180,8 @@ owner 的个人记忆可以继续读取和写入；群内公开内容只能写�
 
 owner 在群里主动调用个人项目、文件、日程、记忆或其他私人工具，视为授权将本次请求所需结果回复到当前群。不增加二次确认，也不主动扩展到 owner 未请求的其他私人内容。owner 仍使用完整 Agent Loop；member 和 unknown 永远不能借用 owner 权限。
 
+当前群的公开记忆进入共享会话 snapshot 前缀，在 snapshot 首次建立、TTL 到期或压缩 checkpoint 时重新读取；普通记忆版本变化只记录 pending revision，不会让每一轮缓存失效。snapshot 只保存 group scope，不保存任何 platform-user 内容。
+
 ### 4.2 member
 
 member 使用轻量 Member Loop：
@@ -193,6 +195,8 @@ member 使用轻量 Member Loop：
 
 默认不读取当前群完整 `memory.md`，避免把较长历史和敏感群内背景直接暴露给成员；是否开放群长期记忆由群策略单独决定。member 永远不读取 owner 的 profile、pattern、summary、memory、项目、文件和日程。
 
+当前发言人的 `platform-user` 记忆按请求动态读取，放在当前用户消息之前的独立 reminder 中，不写入群 session 的 snapshot 或历史消息。它与群公开记忆分别做权限判断和预算控制：每个 scope 最多注入 2000 字符，超出按 summary → profile → pattern 的顺序截断。
+
 ### 4.3 unknown
 
 ```text
@@ -202,6 +206,8 @@ member 使用轻量 Member Loop：
 ```
 
 unknown 只是身份解析失败时的兜底角色，不代表群外陌生人。unknown 可以读取当前群 profile/summary 和最近消息，但不加载 platform-user 个人记忆、不触发 platform-user 写入，并使用最小工具白名单。
+
+群公开记忆只在 snapshot 重建时更新；成员个人记忆不参与共享 snapshot，避免同一群 session 因不同成员发言而互相泄漏。
 
 ### 4.4 历史消息格式
 
@@ -288,7 +294,7 @@ reflection_cursor
 | 整理后保留 | 500 条 | 整理成功后保留较宽的近期群记录，适应多人群的消息量 |
 | 失败硬上限 | 1200 条 | 整理失败时保留原始 daily，超过上限也不得静默删除；应进入失败告警/补偿流程 |
 
-容量参数只控制群组记忆文件，不改变数据库短期消息保留的 500 条上限，也不等于上下文注入预算。上下文加载器默认使用最近消息和与当前问题相关的群组记忆，不能因为 daily 保留 500 条就把 500 条全文塞入每次 Agent 请求。
+容量参数只控制群组记忆文件，不改变数据库短期消息保留的 500 条上限，也不等于上下文注入预算。群公开记忆与 platform-user 记忆各自最多注入 2000 字符；群公开记忆进入 snapshot 前缀，成员记忆按当前发言人动态注入，不能因为 daily 保留 500 条就把 500 条全文塞入每次 Agent 请求。
 
 反思快照只取已落库且带平台用户身份的 `user` 消息；assistant/tool 消息不作为 group/member 长期记忆来源，避免把 owner 的私人工具结果或系统内部中间结果写入 IM 记忆。需要展示模型回复时，仍由当前会话历史负责，不由长期记忆反思复刻。
 

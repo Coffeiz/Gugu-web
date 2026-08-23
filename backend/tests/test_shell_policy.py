@@ -88,7 +88,7 @@ async def test_unbound_session_does_not_become_global_shell(monkeypatch):
     monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True))
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
     assert not decision.allowed
-    assert decision.reason == "管理员未开启系统 Shell"
+    assert decision.reason == "当前会话没有可用的 Shell 范围"
 
 
 @pytest.mark.asyncio
@@ -115,6 +115,79 @@ async def test_unbound_session_uses_system_scope(monkeypatch):
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
     assert decision.allowed
     assert decision.scope.value == "system"
+
+
+@pytest.mark.asyncio
+async def test_existing_session_object_avoids_stale_im_session_id(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="off")
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 999, "pwd", session=db.session)
+
+    assert decision.allowed
+    assert decision.scope.value == "system"
+
+
+@pytest.mark.asyncio
+async def test_system_scope_off_falls_back_to_personal_scope(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="off")
+    settings = _settings(shell=True)
+    settings.agent.shell_personal_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_personal_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+
+    assert decision.allowed
+    assert decision.scope.value == "personal"
+
+
+@pytest.mark.asyncio
+async def test_shell_master_switch_off_blocks_personal_fallback(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="off")
+    settings = _settings(shell=False)
+    settings.agent.shell_personal_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_personal_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+
+    assert not decision.allowed
+    assert decision.reason == "管理员未开启 Shell 工具"
+
+
+@pytest.mark.asyncio
+async def test_workspace_scope_does_not_depend_on_system_switch(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.agent.shell_workspace_enabled = True
+    settings.agent.shell_system_enabled = False
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+
+    assert decision.allowed
+    assert decision.scope.value == "workspace"
+
+
+@pytest.mark.asyncio
+async def test_workspace_scope_requires_user_permission(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _false())
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+
+    assert not decision.allowed
+    assert decision.reason == "用户未开启工作区 Shell"
 
 
 async def _true():

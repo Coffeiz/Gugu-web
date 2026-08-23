@@ -47,12 +47,16 @@ export function useChatStream(options: {
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
+  onContentReset?: () => void
 }) {
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
 
   const streaming = ref(false)
   const abortCtrl = ref<AbortController | null>(null)
+  // 新会话首轮在 session_id SSE 到达前仍是 null；记录后台生成归属，
+  // 让中断按钮不会因为前端尚未切换 sessionId 而漏发取消请求。
+  let activeSessionId: number | null = null
   // 生成中发的消息，排队等流式结束后接着发。每条都带上入队那一刻的 sessionId/
   // viewGeneration——切会话/新建会话时 useChatSessions 会调 clearPendingQueue()
   // 清空，但万一切换和这里的消费之间有竞态，消费前再核对一次身份，防止把
@@ -63,7 +67,9 @@ export function useChatStream(options: {
 
   function stopStreaming() {
     pendingQueue.value = []   // 停止=放弃排队中的消息
+    const id = activeSessionId ?? sessionId.value
     abortCtrl.value?.abort()
+    if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
   }
 
   function clearPendingQueue() {
@@ -89,6 +95,7 @@ export function useChatStream(options: {
     viewGeneration: number,
     replayText = '',
   ) {
+    const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
@@ -156,6 +163,7 @@ export function useChatStream(options: {
               resolvePendingSession(evt.session_id)
             }
             sid = evt.session_id
+            activeSessionId = evt.session_id
             if (isNew) await options.fetchSessions()
           } else if (evt.type === 'session_title') {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
@@ -310,6 +318,38 @@ export function useChatStream(options: {
         }
       }
     }
+    // 工具执行成功后，后端可能已经持久化最终 assistant 消息，但最后一段 SSE
+    // 正文在连接收尾竞态中没有被浏览器消费到。此时不能直接显示“没有回复”，
+    // 先用本轮工具执行期间创建的最新 assistant 消息恢复视图。
+    if (aiIdx === -1 && usedTools.size && sid != null && !detached && !aborted && !interactionPaused
+        && viewGeneration === options.getViewGeneration()) {
+      try {
+        const recovered = await agentApi.getMessages(String(sid))
+        const latest = [...(recovered.messages || [])].reverse().find((item: any) =>
+          item.role === 'assistant' &&
+          (item.content?.trim() || item.files?.length) &&
+          (!item.createdAt || Date.parse(item.createdAt) >= streamStartedAt - 60_000),
+        )
+        if (latest && live()) {
+          const messageId = mkid()
+          messages.value.push({
+            id: messageId,
+            dbId: latest.id,
+            role: 'ai',
+            text: latest.content || '',
+            html: latest.content ? renderMd(latest.content) : null,
+            files: latest.files?.length ? latest.files : undefined,
+            quotedText: latest.quotedText || undefined,
+            time: new Date(latest.createdAt || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+            _createdAt: latest.createdAt,
+            _timelineOrder: latest.timelineOrder ?? latest.id,
+          })
+          sortLiveTimeline()
+          aiIdx = messages.value.findIndex(item => item.id === messageId)
+          await options.scrollBottom()
+        }
+      } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
+    }
     return { aiIdx, usedTools, detached, sid, aborted, interactionPaused }
   }
 
@@ -317,6 +357,7 @@ export function useChatStream(options: {
   async function resumeStream(id: number) {
     if (streaming.value) return            // 本地正在发/看，不重复连
     const viewGeneration = options.getViewGeneration()
+    activeSessionId = id
     const token = getToken()
     abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
@@ -338,6 +379,7 @@ export function useChatStream(options: {
       if (viewGeneration === options.getViewGeneration() && sessionId.value === id) {
         options.clearStatus(); streaming.value = false; abortCtrl.value = null
       }
+      if (activeSessionId === id) activeSessionId = null
     }
   }
 
@@ -348,9 +390,16 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     if (!text && !atts.length) return
     if (fromInput) {
+      const isNewCommand = /^\/new\s*$/i.test(text)
       _sessionTurn++
-      messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-        files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+      if (isNewCommand && !streaming.value) {
+        // /new 本身是控制命令，不成为新上下文的一部分；后端也会删除它的持久消息。
+        messages.value = []
+        options.onContentReset?.()
+      } else {
+        messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+          files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+      }
       options.inputText.value = ''
       options.pendingAtt.value = []
       options.composerRef.value?.resetHeight()
@@ -372,6 +421,7 @@ export function useChatStream(options: {
     await options.scrollBottom()
     const token = getToken()
     const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+    activeSessionId = ownerSid
     const viewGeneration = options.getViewGeneration()
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
     let aiIdx = -1
@@ -435,6 +485,7 @@ export function useChatStream(options: {
         // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
         await options.scrollBottom()
       }
+      if (activeSessionId === resolvedSid) activeSessionId = null
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)
       // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）。

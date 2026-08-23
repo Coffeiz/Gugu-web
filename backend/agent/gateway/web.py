@@ -9,8 +9,18 @@ import asyncio
 import calendar as _cal  # noqa: F401  (保留与原实现一致的导入位置)
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+
+def _stuck_probe(session_id, phase: str, started_at: float | None = None, **fields) -> None:
+    """临时定位 Web 生成卡点；只记录固定阶段和耗时，不记录正文。"""
+    payload = {"phase": phase, "sessionId": str(session_id)}
+    if started_at is not None:
+        payload["durationMs"] = round((time.monotonic() - started_at) * 1000, 1)
+    payload.update(fields)
+    logger.warning("[runtime-web-stuck-probe] %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
@@ -173,6 +183,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                     "session_info": {"user_name": req.user_name, "source": "web",
                                       "profile": profile.prompt_file},
                     "user_tz": user_tz, "im_channels": im_channels, "im_memory": {},
+                    "memory_summary_hash": session_snapshot.memory_summary_hash(memory),
                     }
 
         snapshot = await session_snapshot.ensure_snapshot(db, session, load_context=_load_snapshot)
@@ -184,6 +195,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         history = await session_history.load_session_history(
             db, session.id, session_snapshot.history_baseline(session),
         )
+        from agent.context.provider_history import clean_persisted_history, prepare_session
+        _, strip_thinking = prepare_session(session, settings.ai)
+        if strip_thinking:
+            clean_persisted_history(history)
+            strip_thinking = False
 
         # 聊天附件：文本读内容注入给模型，图片/二进制给提示；卡片随用户消息持久化
         aug_text, attach_cards, aug_images, aug_media = await chat_attach.resolve_for_message(
@@ -258,10 +274,15 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     pubsub = await genstream.open_subscription(session_id)
     active_before_start = await genstream.is_active(session_id)
     if not active_before_start:
+        # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
+        # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
+        await genstream.begin(session_id)
+        _stuck_probe(session_id, "generation-begun")
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
+            strip_thinking=strip_thinking,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -296,7 +317,8 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
 async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_content=None, user_images=None, attach_cards=None,
                     user_media=None, user_tz=None, sent_at=None,
-                    user_message=None, resume_interaction: bool = False) -> None:
+                    user_message=None, resume_interaction: bool = False,
+                    strip_thinking: bool = False) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -304,6 +326,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     持久化/反思仍用 req.message 原文）。
     """
     user_id = req.user_id
+    generate_started_at = time.monotonic()
+    _stuck_probe(session_id, "generate-enter")
     set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
@@ -312,8 +336,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     settings = get_settings()
     profile = DefaultProfile()
     import app.db.session as _sess
-
-    await genstream.begin(session_id)
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
@@ -354,6 +376,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     use_anthropic = use_anthropic_for(settings.ai)
 
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
+    _stuck_probe(session_id, "before-runner", generate_started_at,
+                 toolCount=len(tool_names), hasCapabilityContext=capability_context is not None)
     full_reply = ""
     usage_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     anthr_messages: list = []
@@ -364,9 +388,19 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     try:
+        rag_started_at = time.monotonic()
+        _stuck_probe(session_id, "before-rag")
         fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
         history_parts = build_history_parts(
-            history, req, use_anthropic=use_anthropic, user_tz=user_tz)
+            history, req, use_anthropic=use_anthropic, user_tz=user_tz,
+            strip_thinking=strip_thinking)
+        from agent.rag.injection import build_automatic_rag_context
+        rag_context = await build_automatic_rag_context(
+            req, req.message, history=history, snapshot_text=snapshot_context,
+        )
+        _stuck_probe(session_id, "after-rag", rag_started_at,
+                     injected=bool(rag_context.get("injected")),
+                     scopeCount=len(rag_context.get("scope_hits") or []))
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
             str(card.get("kind") or "").lower() == "image" for card in attach_cards
         )
@@ -377,7 +411,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             if image_only and user_message is not None
             else user_content
         )
-        tail_parts = []
+        tail_parts = list(rag_context["tail"])
         message_time = (
             session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
             if user_message is not None else None
@@ -441,6 +475,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         from agent import providers
         provider_adapter = providers.adapter_for(settings.ai)
         san = sanitize.StreamSanitizer(adapter=provider_adapter)
+        _stuck_probe(session_id, "runner-created", generate_started_at)
         async for evt_str in gen:
             try:
                 evt = json.loads(evt_str[6:])
@@ -491,6 +526,11 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 if sess_alive:
                     # 两种 provider 都落同一套 canonical tool turn；守卫注入的合成 prompt /
                     # 核实内心戏是控制信令，不进历史。
+                    for block in rag_context.get("blocks", []):
+                        db2.add(ConversationMessage(
+                            session_id=session_id, role="user", content="",
+                            content_json=[block],
+                        ))
                     tool_history = message_assembly.newly_appended(
                         anthr_messages if use_anthropic else oa_messages,
                         anthr_initial_len if use_anthropic else oa_initial_len,
@@ -557,9 +597,12 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                                 used_tools=used_tools, session_id=session_id)
 
     except BaseException as e:
+        _stuck_probe(session_id, "generate-exception", generate_started_at,
+                     errorType=type(e).__name__)
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
         await genstream.publish(session_id, {"type": "error", "message": msg})
     finally:
+        _stuck_probe(session_id, "generate-finally", generate_started_at)
         await genstream.end(session_id)

@@ -10,7 +10,7 @@ import logging
 from collections import defaultdict
 from typing import Awaitable, Callable
 
-from agent.events.types import Event, MemoryUpdated
+from agent.events.types import Event, MemoryUpdated, RagIndexUpdated
 
 _log = logging.getLogger("agent.events")
 _listeners: dict[type, list[Callable[[Event], Awaitable]]] = defaultdict(list)
@@ -47,8 +47,19 @@ async def _log_memory_updated(e: MemoryUpdated) -> None:
     # 继续命中旧快照。事件总线本身仍保持 best-effort，不阻塞记忆写入。
     from app.core import events as context_events
     await context_events.bump_context_revision(e.user_id, "memory")
+    publish(RagIndexUpdated(
+        user_id=e.user_id, source_type="memory", source_id="memory", operation="upsert",
+    ))
     _log.info("memory.updated user=%s +%d -%d src=%s",
               str(e.user_id)[:8], e.added, e.removed, e.source)
 
 
+async def _log_rag_index_updated(e: RagIndexUpdated) -> None:
+    if e.source_type == "memory":
+        from agent.rag.pipeline import handle_memory_index_event
+        await handle_memory_index_event(e)
+    _log.info("rag.index.%s user=%s source=%s", e.operation, str(e.user_id)[:8], e.source_type)
+
+
 subscribe(MemoryUpdated, _log_memory_updated)
+subscribe(RagIndexUpdated, _log_rag_index_updated)

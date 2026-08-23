@@ -25,6 +25,14 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 - 跨用户数据查询使用 `app/core/ownership.py` 的 `get_owned()`。
 - 外部请求设置超时、重试边界和 URL 安全校验，不盲目重试非幂等操作。
 
+## 工具权限与提示词边界
+
+- 工具是否可用、可用范围、用户/会话权限、功能开关、权限回落和确认要求，必须由代码决定：注册表过滤、请求权限快照、dispatch 校验和 destructive confirm gate 是唯一事实来源。
+- 除 `backend/agent/prompts/policy.md` 外，禁止把运行时工具权限写入模型提示词。`skills.md`、Skill 正文、工具 description、context builder、动态 reminder、RAG 注入和历史包装都不得注入“当前用户拥有/没有某工具”“当前范围是 workspace/system/personal”“权限不足时回落到某范围”等运行时权限事实。
+- `policy.md` 只能描述稳定的行为原则，例如“没有真实工具回执不得声称完成”；不得写入某个用户、会话或平台当前的具体权限状态，也不得替代码决定工具范围。
+- 工具不可用时，优先在工具注册/调用前阻断并返回结构化结果；不要依赖模型读取提示词自行判断权限，也不要通过 prompt 让模型自行切换、扩大或回落权限。
+- 修改工具、Skill 或上下文组装时，必须检查是否新增了权限语义注入；发现重复权限提示词应删除，而不是继续叠加文案。
+
 ## 本地验证
 
 - 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver。

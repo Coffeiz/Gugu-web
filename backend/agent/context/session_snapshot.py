@@ -65,11 +65,22 @@ def session_info_hash(session_info: dict) -> str:
     return digest({"session_info": session_info})
 
 
-def snapshot_hash(system_hash: str, session_hash: str, covered_message_hash: str) -> str:
+def memory_summary_hash(memory: dict | None) -> str:
+    """返回长期摘要的稳定指纹；只用于快照版本，不保存摘要正文。"""
+    memory = memory or {}
+    return digest({
+        "summary": str(memory.get("summary") or "").strip(),
+        "summary_ts": memory.get("summary_ts"),
+    })
+
+
+def snapshot_hash(system_hash: str, session_hash: str, covered_message_hash: str,
+                  snapshot_context_hash: str = "") -> str:
     return digest({
         "system_hash": system_hash,
         "session_info_hash": session_hash,
         "covered_message_hash": covered_message_hash,
+        "snapshot_context_hash": snapshot_context_hash,
     })
 
 
@@ -137,12 +148,23 @@ def snapshot_context(session) -> dict:
         "user_tz": resolve_tz(context.get("user_tz")) if context.get("user_tz") != "LOCAL" else LOCAL_TZ,
         "im_channels": context.get("im_channels") or {},
         "im_memory": context.get("im_memory") or {},
+        "memory_summary_hash": str(context.get("memory_summary_hash") or ""),
         "history_baseline_message_id": int(
             context.get("history_baseline_message_id")
             or getattr(session, "baseline_message_id", 0)
             or 0
         ),
     }
+
+
+def _set_rag_snapshot_context(text: str | None) -> None:
+    """把 snapshot 的实际注入文本同步到当前请求，供 RAG 去重。"""
+    try:
+        from agent.rag.context import set_snapshot_context
+        set_snapshot_context(text)
+    except Exception:
+        # RAG 观测/去重状态不可用时不影响主上下文组装。
+        pass
 
 
 def history_baseline(session) -> int:
@@ -185,6 +207,7 @@ def initialize_snapshot(
     im_channels: dict | None = None,
     im_memory: dict | None = None,
     context_revision: int = 0,
+    memory_summary_hash: str = "",
     covered_messages: list[dict] | None = None,
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
@@ -209,13 +232,17 @@ def initialize_snapshot(
         "im_channels": im_channels or {},
         "im_memory": im_memory or {},
         "context_revision": context_revision,
+        "memory_summary_hash": memory_summary_hash,
+        "snapshot_context_hash": digest(snapshot_context),
         "history_baseline_message_id": int(getattr(session, "baseline_message_id", 0) or 0),
     }
+    _set_rag_snapshot_context(snapshot_context)
     session.session_info_hash = info_hash
     session.snapshot_hash = snapshot_hash(
         digest(system_prompt),
         info_hash,
         message_hash(covered_messages or []),
+        digest(snapshot_context),
     )
     session.snapshot_expires_at = current + ttl
     return session.snapshot_hash
@@ -268,7 +295,9 @@ async def ensure_snapshot(
     """
     if snapshot_is_usable(session, now):
         _record_snapshot_event(session, "hit")
-        return snapshot_context(session)
+        context = snapshot_context(session)
+        _set_rag_snapshot_context(context["snapshot_context"])
+        return context
 
     # revision 只记录本次 snapshot 已吸收的业务版本；普通业务变化先作为
     # pending 保留，不参与 hit/rebuild 判断，避免每次记忆或项目更新都打断缓存。
@@ -288,6 +317,7 @@ async def ensure_snapshot(
         user_tz=payload.get("user_tz"),
         im_channels=payload.get("im_channels") or {},
         im_memory=payload.get("im_memory") or {},
+        memory_summary_hash=str(payload.get("memory_summary_hash") or ""),
         context_revision=current_revision,
         covered_messages=payload.get("covered_messages") or [],
         now=now,

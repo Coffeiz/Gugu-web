@@ -13,6 +13,8 @@ from .tokens import estimate_tokens, message_text
 
 
 SAFE_BUDGET_RATIO = 0.90
+# run 完成后的后台 checkpoint 阈值；运行中的 provider 预检仍使用硬预算。
+POST_RUN_CHECKPOINT_RATIO = 0.90
 HARD_TARGET_RATIO = 0.20
 MAX_RETRY_COUNT = 1
 RECENT_MESSAGE_FALLBACK_COUNT = 20
@@ -143,6 +145,7 @@ def truncate_messages(
     fixed_prefix_size: int = 0,
     target_ratio: float = HARD_TARGET_RATIO,
     overhead_tokens: int = 0,
+    protected_from: int | None = None,
 ) -> tuple[list[dict], BudgetResult]:
     """在不调用 LLM 的前提下截断消息，返回新列表和统计结果。
 
@@ -159,12 +162,18 @@ def truncate_messages(
     prefix_size = max(0, min(int(fixed_prefix_size), len(original)))
     prefix = original[:prefix_size]
     body = original[prefix_size:]
+    protected_tail: list[dict] = []
+    if protected_from is not None:
+        protected_relative = max(0, int(protected_from) - prefix_size)
+        protected_tail = body[protected_relative:]
+        body = body[:protected_relative]
     target = max(1, int(max(0.1, min(0.5, target_ratio)) * max(
         1, int(context_tokens) - max(0, int(overhead_tokens))
     )))
     fixed_tokens = estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in prefix
     )
+    fixed_tokens += sum(estimate_tokens(message_text(message)) for message in protected_tail)
 
     # LLM 压缩失败或压缩请求本身超限时，先保留最近 20 条完整消息。
     # 只有这段仍放不进安全预算，才进入下面更激进的 token 截断。
@@ -179,7 +188,7 @@ def truncate_messages(
     recent = [message for unit in recent_units for message in unit]
     recent_total = fixed_tokens + sum(estimate_tokens(message_text(message)) for message in recent)
     if recent and recent_total <= safe_budget:
-        return prefix + recent, BudgetResult(
+        return prefix + recent + protected_tail, BudgetResult(
             True,
             before,
             recent_total,
@@ -211,7 +220,7 @@ def truncate_messages(
         oversized = sum(estimate_tokens(message_text(message)) for message in latest) > latest_budget
         kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
 
-    result = prefix + [message for unit in kept for message in unit]
+    result = prefix + [message for unit in kept for message in unit] + protected_tail
     after = overhead_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in result
     )
@@ -225,6 +234,7 @@ def enforce_message_budget(
     context_tokens: int,
     *,
     overhead_tokens: int = 0,
+    protected_from: int | None = None,
 ) -> BudgetResult:
     """就地应用强制截断，兼容 PromptMessages 的动态尾部。"""
     conversation = list(getattr(messages, "conversation", messages))
@@ -234,6 +244,7 @@ def enforce_message_budget(
         context_tokens,
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
         overhead_tokens=overhead_tokens,
+        protected_from=protected_from,
     )
     if not result.changed:
         return result

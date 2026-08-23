@@ -25,9 +25,10 @@
 | 范围 | 根目录 | 说明 |
 |---|---|---|
 | `workspace` | 当前工作区 | 保留原有行为，要求绑定启用的工作区 |
-| `system` | 系统根目录 | 未绑定工作区时的默认范围；必须由 Admin 和用户分别开启 |
+| `personal` | 用户个人文件目录 | 未绑定工作区且 system 未开放时的回落范围；必须由 Admin 和用户分别开启 |
+| `system` | 系统根目录 | 未绑定工作区时的优先范围；必须由 Admin 和用户分别开启 |
 
-Admin 对范围提供总开关。绑定 workspace 的会话自动使用 `workspace`；解除绑定后自动切换为 `system`。如果 system 权限未开启，Shell 直接不可用，不自动降级到 personal。Shell 工具的会话 ID由执行器注入，模型不能自行指定。
+`shell_enabled` 是所有范围共用的总开关。绑定 workspace 的会话自动使用 `workspace`；解除绑定后优先使用 `system`，system 任一开关未开启时回落到 `personal`。只有总开关关闭时才会禁用所有 Shell。Shell 工具的会话 ID由执行器注入，模型不能自行指定。
 
 ### 3.1 当前阶段：权限与执行器基础
 
@@ -35,7 +36,7 @@ Admin 对范围提供总开关。绑定 workspace 的会话自动使用 `workspa
 - 关闭时完全不注册 Shell 工具，并在 dispatch 层拒绝旧请求。
 - 开启后仍需同时满足对应范围的用户开关和会话绑定状态；system 仍需额外的危险命令确认门。
 - “本机执行”仅指使用当前系统用户权限，不等于 root、`sudo` 或系统级权限。
-- 工作区和个人范围不接受宿主机绝对路径，不允许根目录外访问；系统范围仅在独立 Admin/用户开关均开启时可用。
+- 工作区和个人范围不接受宿主机绝对路径，不允许根目录外访问；系统范围仅在独立 Admin/用户开关均开启时优先使用。
 - 保留执行超时、输出大小、后台进程和敏感路径等边界。
 - 危险命令另设独立的 Admin 总开关和用户个人开关，两个开关默认关闭。
 - 危险命令即使两个开关都开启，仍必须经过现有逐次确认门。
@@ -53,10 +54,10 @@ Admin 对范围提供总开关。绑定 workspace 的会话自动使用 `workspa
 - Admin 可以全局开启/关闭 Shell 能力。
 - Admin 关闭时，所有用户禁止使用，用户页面不显示 Shell 设置。
 - 用户可以在个人设置中开启/关闭自己的 Shell 能力。
-- 新会话默认不绑定工作区，此时自动匹配 system；没有 system 权限时禁止使用。
+- 新会话默认不绑定工作区，此时优先匹配 system；没有 system 权限但 personal 权限满足时回落到 personal。
 - 用户或咕咕可以为当前 session 绑定、切换、解除工作区。
 - 工作区可以来自文件库文件夹或项目。
-- 未绑定工作区但 system 权限未满足时，不向 Agent 暴露 Shell 工具。
+- 未绑定工作区且 system/personal 权限都未满足时，不向 Agent 暴露 Shell 工具。
 - 仅允许在当前 workspace 真实目录及其子目录内执行命令。
 - 本机执行器默认断网能力由命令策略控制；容器阶段再提供强制网络隔离。
 - 危险命令必须经过确认门。
@@ -65,7 +66,7 @@ Admin 对范围提供总开关。绑定 workspace 的会话自动使用 `workspa
 ### 4.2 当前阶段不做
 
 - 不开放宿主机 root shell，也不把宿主机 root 作为普通 Shell 能力开放。
-- 不开放 system scope。
+- system scope 受独立 Admin/用户开关控制；关闭 system 不影响 workspace/personal。
 - 不允许通过参数访问任意宿主机目录、Docker socket 或提权接口。
 - 不支持任意远程主机执行。
 - 不在当前阶段实现 Docker/Podman、macOS Seatbelt 或 Windows AppContainer。
@@ -140,8 +141,10 @@ shell_allowed = settings.agent.shell_enabled and is_local_admin(request)
 shell_allowed = (
     admin_shell_enabled
     and user_shell_enabled
-    and session.workspace_id is not None
-    and workspace_enabled
+    and (
+        (session.workspace_id is not None and workspace_enabled)
+        or (session.workspace_id is None and (system_enabled or personal_enabled))
+    )
 )
 ```
 
@@ -157,10 +160,15 @@ shell_allowed = (
 shell_allowed = (
     admin_shell_enabled
     and user_shell_enabled
-    and session.workspace_id is not None
-    and workspace_enabled
+    and (
+        (session.workspace_id is not None and workspace_enabled)
+        or (session.workspace_id is None and (system_enabled or personal_enabled))
+    )
 )
 ```
+
+未绑定工作区时，服务端优先选择 `system`；只有 system 任一开关未满足时才尝试 `personal`。
+关闭 `shell_system_enabled` 不会关闭工作区或个人目录 Shell；只有 `shell_enabled` 总开关会关闭全部范围。
 
 Admin 关闭总开关时：
 
@@ -177,8 +185,10 @@ dangerous_allowed = (
     and admin_dangerous_shell_enabled
     and user_shell_enabled
     and user_dangerous_shell_enabled
-    and session.workspace_id is not None
-    and workspace_enabled
+    and (
+        (session.workspace_id is not None and workspace_enabled)
+        or (session.workspace_id is None and (system_enabled or personal_enabled))
+    )
 )
 ```
 
@@ -302,6 +312,29 @@ network：策略层默认拒绝联网命令
 
 Docker/Podman 不属于当前首版交付。后续只实现 `ShellSandbox` 的另一种后端，提供非 root、只读根文件系统、workspace 单独挂载、默认断网、资源限制和容器销毁。Docker/Podman 不可用时，不能自动回退到更高权限的宿主机执行器。
 
+### 9.3 Phase 5 可用性评估（2026-08-24）
+
+| 检查项 | 结果 | 结论 |
+|---|---|---|
+| devserver 操作系统 | Linux 7.0.0 x86_64 | 满足首版 Docker 后端目标平台 |
+| Docker | 29.1.3，可通过 `/var/run/docker.sock` 访问 | 技术上可接入，但当前是 rootful daemon，不能直接作为不受限的 Agent 子进程入口 |
+| Podman | 未安装 | 本阶段不选 Podman |
+| cgroup | cgroup v2 | 可实现 CPU、内存和进程数限制 |
+| 隔离能力 | AppArmor、seccomp、overlayfs、user namespace 可用 | 满足容器安全基线的必要条件，但仍需显式配置，不代表默认安全 |
+| 资源 | 4 CPU、约 7.8 GiB 内存 | 可运行轻量命令容器 |
+| 磁盘 | 根分区约 50G，剩余约 1.4G（98% 已用） | 当前阻塞项，不能安全拉取新镜像或建立 workspace 临时层 |
+| Docker 存量 | 镜像约 13.14G，构建缓存约 8.7G | 需要清理或单独规划容器存储配额 |
+
+**评估结论：部分可用，暂不启用。** Docker 运行时和 Linux 隔离能力已具备，容器版执行器的接口适配难度不高；但 rootful Docker socket 和磁盘余量是两个上线前阻塞项。当前不能把 Docker socket 暴露给 Agent，也不能在磁盘未清理前自动拉取基础镜像。
+
+**Phase 5 开始前必须完成：**
+
+1. 为 Gugu-web 准备独立的 rootless Docker daemon，或使用受限的专用执行服务，避免业务进程直接持有 rootful Docker socket。
+2. 清理 Docker build cache/无用镜像并预留容器存储空间；至少保证基础镜像、workspace 临时层和输出缓冲有明确配额。
+3. 固定基础镜像 digest，禁止工具根据用户输入选择镜像、挂载路径、特权模式或 Docker socket。
+4. 明确容器参数：非 root 用户、`--read-only` 根文件系统、workspace 单独可写挂载、默认 `--network=none`、tmpfs 大小、CPU/内存/PID 限制和强制销毁。
+5. 先用 `hello-world`/最小固定镜像完成 smoke test，再实现 `DockerSandbox`；Docker 不可用时必须返回明确错误，不能回退 `LocalWorkspaceSandbox`。
+
 ## 10. 命令风险策略
 
 ### 10.1 safe
@@ -411,7 +444,7 @@ backend/tests/test_workspace_binding.py
 - [x] 在执行前验证 workspace 用户归属、启用状态和真实根目录。
 - [x] 增加 `/workspace` 命令，支持查看当前绑定、`list` 列出可绑定工作区、绑定和解除绑定。
 - [x] 移除 `/shell` 命令和会话范围写入 API，避免 Shell 状态与 workspace 绑定分叉。
-- [x] 系统范围使用独立策略，不复用工作区路径；personal 保留为用户权限配置，不作为会话自动降级目标。
+- [x] 系统范围使用独立策略，不复用工作区路径；system 未开放时，未绑定会话回落 personal。
 
 ### Phase 3：工具注册与模型提示
 
@@ -429,7 +462,7 @@ backend/tests/test_workspace_binding.py
 - [x] 记录结构化审计，不记录完整命令、输出、Token 或敏感路径。
 - [x] 增加同一 session 串行锁，避免 workspace 切换与执行竞态。
 - [x] Admin 按范围提供总开关；关闭的范围在个人设置中直接隐藏。
-- [x] 增加 workspace 派生、system 默认、旧 shell_scope 忽略和权限拒绝回归测试。
+- [x] 增加 workspace 派生、system 优先/personal 回落、总开关、旧 shell_scope 忽略和权限拒绝回归测试。
 
 - [x] Admin 页面增加总开关。
 - [x] Admin 页面增加危险 Shell 命令总开关，默认关闭。
@@ -439,9 +472,11 @@ backend/tests/test_workspace_binding.py
 - [x] 补权限、路径逃逸、软链接、危险命令、超时、输出超限和并发测试。
 - [ ] 在 devserver 完成本机执行 smoke test。
 
-### Phase 5：隔离增强（不阻塞首版）
+### Phase 5：隔离增强（评估完成，实施待资源整改）
 
-- [ ] 评估 Docker/Podman 在 devserver 的可用性和资源成本。
+- [x] 评估 Docker/Podman 在 devserver 的可用性和资源成本；Docker 可用，Podman 未安装，磁盘余量暂时阻塞实施。
+- [ ] 清理 devserver Docker 存储并建立容器存储配额。
+- [ ] 准备 rootless Docker 或受限专用执行服务，移除业务进程对 rootful Docker socket 的直接依赖。
 - [ ] 实现容器版 `ShellSandbox`，复用 Phase 1 的接口和测试。
 - [ ] 增加非 root、只读根文件系统、workspace 挂载、断网和资源限制。
 - [ ] 对比本机执行器与容器执行器的权限差异，决定默认后端。

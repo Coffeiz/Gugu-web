@@ -1,6 +1,7 @@
 """compaction 模块单元测试"""
 import asyncio
 import pytest
+from agent.context import compress_conv
 from agent.context.compaction import (
     estimate_context_length,
     compact_context,
@@ -212,6 +213,59 @@ class TestCompactContext:
         assert "工具调用:calendar" in "\n".join(captured)
         assert "工具结果" in "\n".join(captured)
         assert "当前问题" in kept_text
+
+    def test_protected_current_run_is_not_sent_to_summary(self, monkeypatch):
+        """运行中压缩只整理本轮开始前的历史，当前 tool 链保持完整。"""
+        captured = []
+
+        async def fake_summary(items, previous=None):
+            captured.extend(items)
+            return "历史摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+        current = _make_msg("user", "本轮问题")
+        tool_use = {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": "call-1", "name": "search", "input": {}}],
+        }
+        tool_result = _make_tool_result("本轮工具结果")
+        messages = [_make_msg("user", "旧历史" * 80), current, tool_use, tool_result]
+        result, compacted = asyncio.get_event_loop().run_until_complete(
+            compact_context(
+                messages,
+                "系统",
+                context_tokens=80,
+                protected_from=1,
+            )
+        )
+
+        assert compacted
+        captured_text = "\n".join(captured)
+        assert "旧历史" in captured_text
+        assert "本轮问题" not in captured_text
+        assert "本轮工具结果" not in captured_text
+        result_text = "\n".join(message_text(item) for item in result)
+        assert "本轮问题" in result_text
+        assert "本轮工具结果" in result_text
+
+    def test_post_run_checkpoint_is_coalesced_and_uses_soft_budget(self, monkeypatch):
+        """同一 session 的 run 完成 checkpoint 只启动一次，并使用 90%软阈值。"""
+        calls = []
+
+        async def fake_compress(session_id, user_id, settings, token_budget, *, force=False):
+            calls.append((session_id, user_id, token_budget, force))
+            return False
+
+        monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compress)
+
+        async def exercise():
+            compress_conv._checkpoint_tasks.clear()
+            compress_conv.schedule_checkpoint(88, "user", object(), 1000)
+            compress_conv.schedule_checkpoint(88, "user", object(), 1000)
+            await compress_conv.wait_for_checkpoint(88)
+
+        asyncio.get_event_loop().run_until_complete(exercise())
+        assert calls == [(88, "user", 900, False)]
 
     def test_atomic_units_pair_anthropic_and_openai_tool_messages(self):
         messages = [

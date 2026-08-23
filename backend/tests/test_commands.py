@@ -21,7 +21,7 @@ async def test_immediate_stream_emits_one_complete_token():
 def test_help_lists_all_commands():
     result = router.decide("/help", "idle")
     assert result["action"] == "reply"
-    for command in ("/stop", "/status", "/compact", "/memory", "/forget", "/workspace"):
+    for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
 
 
@@ -63,7 +63,7 @@ async def test_compact_without_session_is_deterministic():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [
-    "/compact help", "/memory help", "/forget help", "/workspace help",
+    "/compact help", "/new help", "/memory help", "/forget help", "/workspace help",
 ])
 async def test_each_command_supports_help(text):
     result = await commands.handle("user-1", text)
@@ -108,3 +108,13 @@ async def test_compact_reports_success(monkeypatch):
     monkeypatch.setattr("app.core.config.get_settings", lambda: Settings())
     result = await commands.handle("user-1", "/compact", session_id=12)
     assert result == "上下文已经整理好了，旧对话已压缩为摘要。"
+
+
+def test_new_is_parsed_as_a_control_command():
+    assert commands.parse("/new") == ("new", "")
+    assert commands.parse("/new help") == ("new", "help")
+
+
+@pytest.mark.asyncio
+async def test_new_without_session_is_deterministic():
+    assert await commands.handle("user-1", "/new") == "当前还没有可重置的对话。"

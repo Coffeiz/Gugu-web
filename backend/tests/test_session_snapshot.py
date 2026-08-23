@@ -33,6 +33,16 @@ def test_snapshot_hash_includes_each_prefix_component():
     assert base != snapshot_hash("system-b", "session-a", "messages-a")
     assert base != snapshot_hash("system-a", "session-b", "messages-a")
     assert base != snapshot_hash("system-a", "session-a", "messages-b")
+    assert base != snapshot_hash("system-a", "session-a", "messages-a", "context-b")
+
+
+def test_memory_summary_hash_is_content_and_timestamp_based():
+    from agent.context.session_snapshot import memory_summary_hash
+
+    first = memory_summary_hash({"summary": "状态", "summary_ts": 1})
+    assert first == memory_summary_hash({"summary": "状态", "summary_ts": 1})
+    assert first != memory_summary_hash({"summary": "更新后的状态", "summary_ts": 1})
+    assert first != memory_summary_hash({"summary": "状态", "summary_ts": 2})
 
 
 def test_message_hash_excludes_observability_metadata():

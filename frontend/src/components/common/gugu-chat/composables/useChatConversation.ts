@@ -319,6 +319,7 @@ export function useChatConversation(options: {
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
     playIncomingMessageSfx: options.playIncomingMessageSfx,
+    onContentReset: options.onContentReset,
   })
   const { streaming, abortCtrl, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
 

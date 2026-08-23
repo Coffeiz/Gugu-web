@@ -93,17 +93,19 @@ async def evaluate(
     command: str,
     *,
     confirm: bool = False,
+    session: ConversationSession | None = None,
 ) -> ShellDecision:
     """计算最终 Shell 权限；范围由会话绑定状态派生。"""
     risk = classify_command(command)
     if not get_settings().agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
     if not session_id:
-        return ShellDecision(False, "当前会话未选择 Shell 范围", risk)
-    session = await db.get(ConversationSession, session_id)
+        return ShellDecision(False, "当前会话不可用", risk)
+    if session is None:
+        session = await db.get(ConversationSession, session_id)
     if not session or session.user_id != user_id:
         return ShellDecision(False, "会话不存在", risk)
-    # Shell 范围只由会话是否绑定工作区派生。旧 shell_scope 字段保留用于迁移兼容，
+    # Shell 范围由会话绑定状态和独立范围开关共同派生。旧 shell_scope 字段保留用于迁移兼容，
     # 但不再参与授权，避免命令状态与会话绑定状态分叉。
     scope = ShellScope.WORKSPACE if session.workspace_id is not None else ShellScope.SYSTEM
     workspace = None
@@ -118,10 +120,14 @@ async def evaluate(
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
     elif scope is ShellScope.SYSTEM:
-        if not getattr(get_settings().agent, "shell_system_enabled", False):
-            return ShellDecision(False, "管理员未开启系统 Shell", risk, scope=scope)
-        if not await effective_shell_system_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启系统 Shell", risk, scope=scope)
+        # 未绑定工作区时优先使用 system；system 关闭后回落到 personal，
+        # 不让系统范围开关意外阻断个人目录 Shell。
+        if getattr(get_settings().agent, "shell_system_enabled", False) and await effective_shell_system_enabled(db, user_id):
+            pass
+        elif getattr(get_settings().agent, "shell_personal_enabled", False) and await effective_shell_personal_enabled(db, user_id):
+            scope = ShellScope.PERSONAL
+        else:
+            return ShellDecision(False, "当前会话没有可用的 Shell 范围", risk, scope=scope)
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
             return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)
@@ -132,9 +138,15 @@ async def evaluate(
     return ShellDecision(True, f"允许在 {scope.value} 范围执行", risk, False, workspace.id if workspace else None, scope)
 
 
-async def available_for_session(db: AsyncSession, user_id, session_id: int | None) -> bool:
+async def available_for_session(
+    db: AsyncSession,
+    user_id,
+    session_id: int | None,
+    *,
+    session: ConversationSession | None = None,
+) -> bool:
     """判断是否应把 Shell 工具放进本轮模型工具列表。"""
     if not session_id:
         return False
-    decision = await evaluate(db, user_id, session_id, "pwd")
+    decision = await evaluate(db, user_id, session_id, "pwd", session=session)
     return decision.allowed and not decision.needs_confirmation

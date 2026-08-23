@@ -178,7 +178,7 @@ def ensure_hooks() -> None:
 
     async def run_loop(
         self, driver, user_id, messages, ai, system_text, session_id=None,
-        on_interaction=None,
+        session=None, on_interaction=None,
     ):
         run = _scope_run.get()
         if run is not None and session_id is not None:
@@ -426,6 +426,7 @@ def ensure_hooks() -> None:
             driver.run_round = traced_round
             async for line in original_run_loop(
                 self, driver, user_id, messages, ai, system_text, session_id=session_id,
+                session=session,
                 on_interaction=on_interaction,
             ):
                 yield line

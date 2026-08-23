@@ -30,13 +30,35 @@ def _state_key(session_id) -> str:
     return f"genstream:state:{session_id}"
 
 
+def _cancel_key(session_id) -> str:
+    return f"genstream:cancel:{session_id}"
+
+
 async def begin(session_id) -> None:
     """开始一轮生成：初始化空快照 + 标记活跃。"""
     state = {"text": "", "tool": "", "files": [], "done": False, "error": None}
     try:
-        await get_redis().set(_state_key(session_id), json.dumps(state, ensure_ascii=False), ex=TTL)
+        r = get_redis()
+        await r.delete(_cancel_key(session_id))
+        await r.set(_state_key(session_id), json.dumps(state, ensure_ascii=False), ex=TTL)
     except Exception:
         pass
+
+
+async def request_cancel(session_id) -> None:
+    """请求停止后台生成，由生成 loop 在安全边界消费。"""
+    try:
+        await get_redis().set(_cancel_key(session_id), "1", ex=TTL)
+    except Exception:
+        pass
+
+
+async def is_cancelled(session_id) -> bool:
+    """读取 Web/跨请求生成取消标记；Redis 暂时不可用时保持 fail-open。"""
+    try:
+        return bool(await get_redis().get(_cancel_key(session_id)))
+    except Exception:
+        return False
 
 
 async def publish(session_id, event: dict) -> None:
@@ -75,7 +97,7 @@ async def publish(session_id, event: dict) -> None:
 async def end(session_id) -> None:
     """生成结束：清掉活跃快照（回复此时已持久化，之后从 DB 读）。"""
     try:
-        await get_redis().delete(_state_key(session_id))
+        await get_redis().delete(_state_key(session_id), _cancel_key(session_id))
     except Exception:
         pass
 

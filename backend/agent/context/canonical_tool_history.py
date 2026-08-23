@@ -20,7 +20,7 @@ def schema_digest(schema: dict) -> str:
 
 
 _CANONICAL_EVENT_TYPES = frozenset({
-    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery",
+    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
 })
 
 
@@ -216,6 +216,8 @@ def event_text(block: dict) -> str:
     if kind == "tool-discovery":
         names = ", ".join(str(item) for item in block.get("tool_names") or ())
         return f"[canonical tool-discovery]\n可用工具：{names}"
+    if kind == "knowledge-context":
+        return str(block.get("text") or "")
     return ""
 
 
@@ -230,7 +232,7 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
             event_lines: list[str] = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") in {
-                    "tool-schema", "skill-schema", "tool-discovery",
+                    "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
                 }:
                     text = event_text(block)
                     if text:

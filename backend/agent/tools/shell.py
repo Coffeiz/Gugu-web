@@ -5,9 +5,12 @@ import json
 import logging
 import time
 
+import app.db.session as _db_session
+
 from agent.security import confirm
 from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
+from agent.tools.base import current_dispatch_session
 from agent.sandbox import LocalWorkspaceSandbox
 from agent.tools.base import BaseSkill, Tool
 from app.services.workspaces import resolve_shell_root
@@ -62,6 +65,7 @@ async def _run_shell(db, user_id, args: dict):
     session_id = args.get("_session_id")
     decision = await evaluate(
         db, user_id, session_id, command, confirm=bool(args.get("confirm")),
+        session=current_dispatch_session(),
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
@@ -78,8 +82,31 @@ async def _run_shell(db, user_id, args: dict):
     if root is None:
         return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
     async def authorization_check() -> bool:
-        current = await evaluate(db, user_id, session_id, command, confirm=True)
-        return current.allowed and current.workspace_id == decision.workspace_id and current.scope == decision.scope
+        """在独立事务中复核权限。
+
+        沙盒会在命令执行期间并发调用这个回调；不能复用外层 handler 的
+        AsyncSession。AsyncSession 不是并发安全对象，共用它会让一次查询的失败
+        事务污染下一次复核，最终把正常命令误报为 PendingRollbackError。
+        """
+        _db_session.ensure_engine()
+        async with _db_session._SessionLocal() as auth_db:
+            try:
+                current = await evaluate(
+                    auth_db,
+                    user_id,
+                    session_id,
+                    command,
+                    confirm=True,
+                    session=current_dispatch_session(),
+                )
+                return (
+                    current.allowed
+                    and current.workspace_id == decision.workspace_id
+                    and current.scope == decision.scope
+                )
+            except Exception:
+                await auth_db.rollback()
+                return False
     try:
         result = await LocalWorkspaceSandbox(root).execute(
             command,

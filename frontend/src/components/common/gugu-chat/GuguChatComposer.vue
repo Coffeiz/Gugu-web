@@ -58,7 +58,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import Icon from '@/components/common/Icon.vue'
-import { CHAT_COMMANDS, type ChatCommandOption } from './chatCommands'
+import { loadChatCommands, type ChatCommandOption } from './chatCommands'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -92,12 +92,13 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [value: string] }>()
 const commandMenuVisible = ref(false)
 const commandIndex = ref(0)
+const chatCommands = ref<ChatCommandOption[]>([])
 const inputRowEl = ref<HTMLElement | null>(null)
 function commandsForValue(value: string) {
   const match = value.match(/^\/([^\s]*)$/)
   if (!match) return []
   const query = match[1].toLowerCase()
-  return CHAT_COMMANDS.filter(item => item.command.slice(1).startsWith(query))
+  return chatCommands.value.filter(item => item.command.slice(1).startsWith(query))
 }
 const filteredCommands = computed(() => commandsForValue(props.modelValue))
 
@@ -150,7 +151,13 @@ function onOutsidePointerdown(event: PointerEvent) {
   commandMenuVisible.value = false
 }
 
-onMounted(() => document.addEventListener('pointerdown', onOutsidePointerdown, true))
+onMounted(() => {
+  document.addEventListener('pointerdown', onOutsidePointerdown, true)
+  void loadChatCommands().then((items) => { chatCommands.value = items }).catch(() => {
+    // 命令注册表不可用时不展示过期的本地列表，避免把不存在的命令提示给用户。
+    chatCommands.value = []
+  })
+})
 onUnmounted(() => document.removeEventListener('pointerdown', onOutsidePointerdown, true))
 
 const fileInput   = ref<HTMLInputElement | null>(null)

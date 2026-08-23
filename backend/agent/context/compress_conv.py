@@ -1,4 +1,4 @@
-"""对话历史压缩：按当前请求实际组装上下文触发，或由 ``/compact`` 主动执行。
+"""对话历史压缩：run 完成后按软预算后台 checkpoint，或由 ``/compact`` 主动执行。
 
 手动/请求内触发时，把"超出保留窗口的最老一批"压成摘要。**滚动**：把上一版 summary
 一并喂给摘要器合并，不从头重压。
@@ -13,25 +13,29 @@ assistant，且要交替）。见 `pop_summary`。
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
 from sqlalchemy import delete, select
 
 from agent.context import session_snapshot
-from agent.context.budget import HARD_TARGET_RATIO
+from agent.context.budget import HARD_TARGET_RATIO, POST_RUN_CHECKPOINT_RATIO
 from agent.context.tokens import content_text, estimate_tokens, msg_tokens
+from agent.context.audit import session_scope, summary_change
 
 logger = logging.getLogger(__name__)
 
 # 手动压缩的默认窗口仍保留，自动请求预算由 agent.core 的实际组装长度统一判定。
-COMPRESS_TARGET    = 1.0    # 保留最近原文的量（占 budget）——与 select_history 对齐，不重叠
+# 后台 checkpoint 保留软预算以内的最近原文；硬预算 fallback 使用统一的 20%目标。
+CHECKPOINT_KEEP_TARGET = 1.0
 FORCE_COMPRESS_TARGET = HARD_TARGET_RATIO  # 手动 /compact 保留统一的 20%目标
 _MAX_COMPRESS_TOKENS = 12000   # 单次喂给摘要器的原文上限（保护摘要器自身上下文；超出取最近一段，老的靠上一版 summary）
 _COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
 _SUMMARY_HEADER = "## 早前对话摘要（供参考，非最新消息）"
+_checkpoint_tasks: dict[int, asyncio.Task] = {}
 
 
 def pop_summary(history: list) -> tuple[str | None, list]:
@@ -92,6 +96,57 @@ async def compress_if_needed(
         await lock.release()
 
 
+def schedule_checkpoint(
+    session_id: int,
+    user_id: int,
+    settings,
+    context_tokens: int,
+) -> None:
+    """在 run 完成后按 90% 软阈值后台创建 checkpoint。"""
+    if not session_id:
+        return
+    existing = _checkpoint_tasks.get(session_id)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        compress_if_needed(
+            session_id,
+            user_id,
+            settings,
+            max(1, int(context_tokens * POST_RUN_CHECKPOINT_RATIO)),
+            force=False,
+        ),
+        name=f"context-checkpoint:{session_id}",
+    )
+    _checkpoint_tasks[session_id] = task
+
+    def _cleanup(done: asyncio.Task) -> None:
+        if _checkpoint_tasks.get(session_id) is done:
+            _checkpoint_tasks.pop(session_id, None)
+        try:
+            done.exception()
+        except (asyncio.CancelledError, Exception):
+            # 后台 checkpoint 失败不影响已经完成的 run；下一条消息仍会硬预检。
+            pass
+
+    task.add_done_callback(_cleanup)
+
+
+async def wait_for_checkpoint(session_id: int | None) -> None:
+    """下一条消息消费同一个 checkpoint，避免与后台任务并发读取/写 baseline。"""
+    if not session_id:
+        return
+    task = _checkpoint_tasks.get(session_id)
+    if task is None:
+        return
+    try:
+        await task
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("[compress_conv] session=%s 后台 checkpoint 失败", session_id)
+
+
 async def _compress_if_needed_unlocked(
     session_id: int,
     user_id: int,
@@ -128,8 +183,8 @@ async def _compress_if_needed_unlocked(
     if not force and total <= token_budget:
         return False   # 仅供显式调用方使用；正常请求不会走数据库累计判定
 
-    # 自动压缩保留完整窗口；手动 /compact 主动把旧内容整理到 20% 安全基线。
-    target_keep = int(token_budget * (FORCE_COMPRESS_TARGET if force else COMPRESS_TARGET))
+    # 后台 checkpoint 保留软预算以内的完整窗口；手动 /compact 主动把旧内容整理到 20% 安全基线。
+    target_keep = int(token_budget * (FORCE_COMPRESS_TARGET if force else CHECKPOINT_KEEP_TARGET))
     tail_tokens = 0
     split_idx = 0
     for i in range(len(all_msgs) - 1, -1, -1):
@@ -186,6 +241,20 @@ async def _compress_if_needed_unlocked(
             # 但不在后台压缩任务中直接加载整套上下文。
             session_snapshot.invalidate_snapshot(session)
         await db.commit()
+
+    audit_scope = session_scope(session)
+    # summary_change 的 source 是审计事件名，不能与会话自身的 source 字段重复传入。
+    audit_scope.pop("source", None)
+    summary_change(
+        source="persistent_compaction",
+        old=prev_summary,
+        new=summary,
+        trigger="force" if force else "budget",
+        baseline_before=baseline_id,
+        baseline_after=to_compress[-1].id,
+        compressed_messages=len(to_compress),
+        **audit_scope,
+    )
 
     logger.info("[compress_conv] session %s：%d 条 → summary（%d token，%s）",
                 session_id, len(to_compress), estimate_tokens(summary),

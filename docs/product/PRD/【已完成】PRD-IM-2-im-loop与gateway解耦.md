@@ -207,6 +207,8 @@ member/unknown 消息进入独立的 `MemberContext`：
 
 - 作用域必须包含 `owner_user_id + platform + bot_id + group_id` 或 `owner_user_id + platform + bot_id + platform_user_id`；同一 Bot 下同一 platform-user 的个人记忆可以跨群共享。
 - `MemberLoop` 只接收当前群的公开群记忆、当前发言人的轻量平台用户记忆和带发言人元数据的近期消息窗口。
+- 群公开记忆进入共享 session snapshot 前缀，仅在 snapshot 建立、TTL 到期或压缩 checkpoint 时刷新；platform-user 记忆按当前发言人动态注入，不进入共享 snapshot 或历史。
+- 群 scope 与 platform-user scope 分别使用 2000 字符注入预算；snapshot hash 覆盖群记忆渲染结果，版本变化先挂起，不逐轮打断缓存。
 - `OwnerAgentLoop` 可以读取 owner 个人记忆，但群内公开内容只写入当前群 scope。
 - 群内称呼、角色、关系、分工、决定和协作事项只能写入当前 group scope，不能借助 platform-user scope 跨群传播。
 - owner 在群内主动调用个人工具即授权将本次请求所需结果回复到当前群，不额外扩展读取无关私人内容。
