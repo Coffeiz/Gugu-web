@@ -1,0 +1,239 @@
+# Admin 页面模块化重构方案
+
+> 状态：审查完成，待执行
+>
+> 更新时间：2026-08-23
+
+## 1. 审查结论
+
+当前 Admin 重构尚未完成，不能标记为已完成。现状如下：
+
+| 区域 | 当前规模 | 当前状态 |
+| --- | ---: | --- |
+| `Admin/Agent/index.vue` | 3456 行 | 仍是模板、状态、请求、轮询、表单、图表和弹窗的单体入口 |
+| `Admin/StorageAudit/index.vue` | 684 行 | 入口偏大，包含查询、筛选、表格和详情流程 |
+| `Admin/Quota/index.vue` | 652 行 | 入口偏大，包含配额状态、编辑和保存流程 |
+| `Admin/Config/index.vue` | 557 行 | 配置字段、保存和状态展示仍集中 |
+| `Admin/Analytics/index.vue` | 455 行 | 已有 `_shared.ts`，但页面仍负责图表状态和请求编排 |
+| `Admin/Users/index.vue` | 460 行 | 用户列表、筛选、编辑和权限流程集中 |
+| 其余 Admin 页面 | 188–391 行 | 暂不作为第一优先级，但需要重复组件审查 |
+
+目前仅发现一处 Agent 子组件：
+
+```text
+frontend/src/views/Admin/Agent/components/LocalCapabilityOverrides.vue
+```
+
+尚未形成 Agent 专属 `composables/`、`api/` 或 service 层。当前入口中仍直接存在以下职责：
+
+- 能力目录加载；
+- 状态文案加载、筛选和保存；
+- 决策轨迹列表、详情和步骤解析；
+- LLM 预设 CRUD、激活、测试、模型列表和能力探测；
+- 系统提示词加载、切换、占位符插入和保存；
+- 行为、搜索、语音、Embedding 配置及测试；
+- 个人记忆维护和 IM 记忆维护轮询；
+- 用量查询、月份切换、图表计算和 tooltip；
+- 页面级生命周期和所有轮询清理。
+
+## 2. 重构目标
+
+将 Admin 页面入口降为“页面壳 + Tab/路由 + 模块组合 + 页面级生命周期调度”。
+
+功能模块的职责边界：
+
+- `components/`：展示、表单、表格、弹窗和图表；
+- `composables/`：模块状态、请求流程、保存、轮询和交互；
+- `api.ts` 或 `services/`：Admin 请求封装、响应类型和错误转换；
+- `utils/`：纯数据解析、格式化、图表计算和校验。
+
+重构不改变 API、权限、配置 schema、用户文案和现有交互。视觉改版、接口改名和全局状态重构不纳入本计划。
+
+## 3. 目标目录
+
+```text
+frontend/src/views/Admin/
+├── Agent/
+│   ├── index.vue                         # 页面壳、Tab、模块组合
+│   ├── api.ts                            # Agent Admin 请求
+│   ├── components/
+│   │   ├── CapabilityCatalogPanel.vue
+│   │   ├── LlmPresetsPanel.vue
+│   │   ├── LlmPresetEditor.vue
+│   │   ├── PromptPanel.vue
+│   │   ├── StateLabelsPanel.vue
+│   │   ├── BehaviorConfigPanel.vue
+│   │   ├── SearchConfigPanel.vue
+│   │   ├── VoiceConfigPanel.vue
+│   │   ├── EmbeddingConfigPanel.vue
+│   │   ├── MemoryMaintenancePanel.vue
+│   │   ├── ImMemoryMaintenancePanel.vue
+│   │   ├── UsagePanel.vue
+│   │   ├── TracePanel.vue
+│   │   └── LocalCapabilityOverrides.vue # 已存在，保留并完善类型
+│   ├── composables/
+│   │   ├── useCapabilityCatalog.ts
+│   │   ├── useLlmPresets.ts
+│   │   ├── usePromptConfig.ts
+│   │   ├── useStateLabels.ts
+│   │   ├── useAgentConfig.ts
+│   │   ├── useSearchConfig.ts
+│   │   ├── useVoiceConfig.ts
+│   │   ├── useEmbeddingConfig.ts
+│   │   ├── useMemoryMaintenance.ts
+│   │   ├── useImMemoryMaintenance.ts
+│   │   ├── useUsage.ts
+│   │   └── useTrace.ts
+│   └── utils/
+│       ├── traceSteps.ts
+│       └── usageChart.ts
+├── Analytics/
+│   ├── components/                       # 图表、筛选器、详情
+│   └── composables/
+├── Config/
+│   ├── components/                       # 通用配置字段/分组
+│   └── composables/
+└── ...
+```
+
+目录不要求一次性创建。只有在模块迁移并通过验证后才保留新文件，禁止新旧实现长期并行。
+
+## 4. 执行批次
+
+### Phase 0：边界与基线
+
+- 固定当前 Admin 功能清单、权限边界和 API 清单；
+- 为 Agent 各 Tab 建立最小冒烟路径；
+- 记录当前 `index.vue` 行数、typecheck、build 和定向手测基线；
+- 确认 `LocalCapabilityOverrides.vue` 的 props/emits 类型，不扩散 `any`。
+
+验收：不改行为，基线检查可重复执行。
+
+### Phase 1：低风险只读模块
+
+先迁移不直接修改核心配置的模块：
+
+1. `CapabilityCatalogPanel` + `useCapabilityCatalog`；
+2. `TracePanel` + `useTrace` + `utils/traceSteps.ts`；
+3. `UsagePanel` + `useUsage` + `utils/usageChart.ts`。
+
+要求：请求、筛选、步骤解析和图表计算离开入口；组件只消费 typed props/state。
+
+### Phase 2：提示词与状态文案
+
+- `PromptPanel` + `usePromptConfig`；
+- `StateLabelsPanel` + `useStateLabels`；
+- 把占位符插入、缓存、保存错误和成功状态封装在对应 composable；
+- 保留文本区域、切换和保存行为不变。
+
+### Phase 3：配置表单
+
+按一个配置域一个提交边界迁移：
+
+1. 行为配置；
+2. 搜索配置；
+3. 语音配置；
+4. Embedding 配置。
+
+每个模块独立维护 draft、reset、saving、saved、error 和 test 状态，禁止多个模块共享可变 draft。
+
+### Phase 4：LLM 预设
+
+这是风险最高的批次，拆成：
+
+- `LlmPresetsPanel`：列表、策略、并发、分流；
+- `LlmPresetEditor`：新建/编辑弹窗；
+- `useLlmPresets`：CRUD、激活、测试、模型列表、能力探测；
+- `Agent/api.ts`：统一请求和错误处理。
+
+先迁移只读列表，再迁移编辑弹窗，最后迁移激活/删除/测试。迁移期间只能有一个状态源，禁止旧入口和新 composable 同时写预设。
+
+### Phase 5：记忆维护
+
+- `MemoryMaintenancePanel` + `useMemoryMaintenance`；
+- `ImMemoryMaintenancePanel` + `useImMemoryMaintenance`；
+- 预览、进度、轮询、确认整理和失败状态全部由各自 composable 管理；
+- `onUnmounted` 必须停止所有 timer/poll；
+- 入口不得直接读取计划内部结构或操作轮询句柄。
+
+### Phase 6：Agent 入口收口
+
+- 删除迁移区块的旧模板、旧 ref、旧请求和旧轮询；
+- `index.vue` 只保留页面布局、Tab 定义、模块组合和页面级初始化；
+- 统一 API 错误显示和 loading 状态命名；
+- 进行一次重复逻辑、重复 CSS、重复请求和 `any` 类型审查。
+
+### Phase 7：其他 Admin 页面
+
+按规模和复用价值处理：
+
+1. `StorageAudit`、`Quota`、`Config`；
+2. `Users`、`Analytics`；
+3. 其余页面按重复组件情况拆分。
+
+优先提取页面内真实复用的表格、筛选栏、详情面板和配置字段，不为了目录数量制造抽象。
+
+## 5. API、状态与生命周期约定
+
+- 组件不直接拼接 `/api/v1/admin/...` URL；
+- API 层统一处理认证、JSON 解析、非 2xx 错误和脱敏错误文案；
+- composable 对外返回明确的 `data/loading/saving/error` 和动作函数；
+- 轮询统一返回 `start/stop`，并在 `onUnmounted`、Tab 离开和请求失败时停止；
+- 模块间只通过 props/emits 或明确的 composable 返回值通信；
+- 不新增全局 store 保存局部 Admin 表单；
+- 密钥只保留后端脱敏值，禁止写入日志、URL、前端持久化或提交；
+- 保持 Admin 权限检查和现有 `adminStore.authFetch` 语义。
+
+## 6. 测试与验收
+
+每批迁移后执行：
+
+```bash
+cd frontend
+npm run typecheck
+npm run typecheck:strict
+npm run test:run
+```
+
+涉及构建或入口收口时追加：
+
+```bash
+npm run build
+```
+
+定向手测至少覆盖：
+
+- LLM 预设新建、编辑、测试、激活、删除和模型列表；
+- 提示词/行为/搜索/语音/Embedding 保存、重置和错误提示；
+- 个人记忆与 IM 记忆预览、轮询、确认整理和页面离开；
+- 能力目录刷新、决策轨迹筛选/详情、用量月份切换和图表悬停；
+- Admin 权限不足、接口失败、重复点击和快速切 Tab；
+- 其他 Admin 页面拆分后原有列表、筛选、编辑和弹窗流程。
+
+完成标准：
+
+- `Agent/index.vue` 不再包含模块级请求、表单保存、轮询和图表计算；
+- 入口目标控制在 300 行以内（若超出，需说明保留的页面编排原因）；
+- 每个模块只有一套状态源；
+- 无未清理的临时迁移模板、重复 API、重复轮询和调试探针；
+- typecheck、build、自动化测试和定向手测通过；
+- 其他 Admin 入口完成一次重复组件与重复请求审查。
+
+## 7. 回滚与提交策略
+
+- 每个 Phase 拆成可独立回滚的小提交；
+- 一个提交只迁移一个功能域，不混入视觉改版和接口改名；
+- 发现行为差异时只回滚当前批次；
+- 新组件验收后立即删除对应旧逻辑，不保留永久 fallback；
+- 完成一批后再更新本方案的状态和变更记录。
+
+## 8. 当前未完成项
+
+- [ ] Phase 0 基线和冒烟路径；
+- [ ] Agent 只读模块拆分；
+- [ ] 提示词、状态文案和配置表单拆分；
+- [ ] LLM 预设拆分；
+- [ ] 记忆维护拆分；
+- [ ] Agent 入口收口；
+- [ ] 其他 Admin 大入口审查与拆分；
+- [ ] 完整自动化测试和文档验收。
