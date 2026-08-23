@@ -4,7 +4,8 @@
 > 创建：2026-08-04
 > 最近更新：2026-08-23
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
-> 前置文档：[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
+> 首个试点：[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)
+> 前置文档：[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 > 协作文档：[`PRD-LLM-9-工具与Skill注册制及按需注入.md`](./PRD-LLM-9-工具与Skill注册制及按需注入.md)
 
 ## 0. 实施状态
@@ -17,6 +18,10 @@
 | Phase 3：统一召回工具 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口，但没有 Knowledge RAG 的 `rag_recall`；Capability RAG 推荐后置于 `PRD-LLM-9` Phase 6 |
 | Phase 4：跨来源混合召回 | 🔲 待评估 | 多来源合并、去重、引用和上下文预算；首版不做独立 Ranking/Reranker |
 | Phase 5：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；真实数据标注集、生产灰度和权限回归尚未完成 |
+
+实施顺序：先按 `PRD-MEM-1` 完成 Memory 单来源闭环，再扩展项目、文件、日记、画布和
+对话等来源。Memory PRD 是本 PRD 的落地子方案，不是另一套 RAG 基础设施；公共契约
+（IndexDocument、scope、version、切片、预算、回退和诊断）以本文件为唯一来源。
 
 补充说明：已完成离线虚拟数据压测，结果见 [RAG 意图与召回压测报告](./report/RAG-意图与召回压测报告.md)。压测验证了 BM25、真实 Embedding 缓存和 LLM 意图判断的链路，但不等同于生产 Knowledge RAG 已经接入。
 
@@ -473,13 +478,17 @@ PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
 - 对比 BM25、embedding 和混合召回的 Recall@K、命中率和延迟；
 - 验证不同 scope 下不会出现越权结果。
 
-### Phase 1：单一来源试点
+### Phase 1：Memory 单一来源试点
 
-先选择记忆或对话作为试点，验证摘要、分块、索引更新和删除追踪，再扩展其他来源。
+按 `PRD-MEM-1` 实现 `pattern`、`daily`、`memory` 的摘要/分块、BM25 召回、可选
+Embedding 混合、版本失效和 `search_memory` 工具。先验证记忆专用 scope 和预算，
+再扩展其他来源；不在本阶段实现跨来源 `rag_recall`。
 
 ### Phase 2：多来源灰度
 
-只对明确要求跨来源检索的请求启用 `rag_recall`，记录命中数量、召回耗时、回退原因和用户纠正，不记录原始敏感正文。
+Memory 试点通过后，才对明确要求跨来源检索的请求启用 `rag_recall`；
+`search_memory` 继续作为记忆专用入口保留。记录命中数量、召回耗时、回退原因和用户纠正，
+不记录原始敏感正文。
 
 ### Phase 3：正式接入
 
@@ -619,7 +628,7 @@ backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估�
 
 待确认：
 
-- 🔲 首个试点来源选择记忆还是历史对话。
+- ✅ 首个试点来源确定为 Memory，具体落地见 `PRD-MEM-1`。
 - 🔲 首个试点是显式 `rag_recall` 工具，还是由 Agent 在特定意图下自动触发；建议先显式工具，便于观测和回滚。
 - 🔲 选择具体中文分词依赖，并确定动态词库的更新触发方式。
 - 🔲 `IndexDocument` 的首版存储是复用业务数据库表，还是先使用 worker 可重建的本地索引；建议先复用数据库元数据和可重建索引，避免过早引入新服务。

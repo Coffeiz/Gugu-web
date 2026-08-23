@@ -1,10 +1,15 @@
 # 记忆召回工具与混合检索 PRD
 
-> 状态：设计完成，待实现
+> 状态：设计完成，待实现（RAG-1 的 Memory 试点子 PRD）
 > 创建：2026-08-04
-> 最近更新：2026-08-04
+> 最近更新：2026-08-23
 > 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/global_search.py`
-> 关联文档：[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
+> 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
+
+本 PRD 是 `PRD-RAG-1` 的首个单来源落地方案，只负责 Memory 来源和记忆专用
+`search_memory` 工具。通用 `IndexDocument`、切片、索引版本、BM25/Embedding
+基础设施、结果预算和诊断字段以 RAG-1 为准；本文件只补充记忆来源的字段映射、
+IM scope 权限和工具行为。未来跨来源召回使用 `rag_recall`，不在本文件中复制实现。
 
 ## 0. 实施状态
 
@@ -15,6 +20,10 @@
 | Phase 3：IM scope 权限 | 🔲 待实现 | owner 跨群、member 当前群隔离 |
 | Phase 4：与历史 session 检索共用底层 | 🔲 待评估 | 保持工具边界不合并，复用检索服务 |
 | Phase 5：自动化测试与灰度 | 🔲 待实现 | 权限、排序、预算和无 embedding 回退测试 |
+
+阶段映射：Phase 1～3 是 RAG-1 的 Memory 单来源试点；Phase 4～5 对应 RAG-1
+的查询边界、质量验证和灰度要求。公共契约变化时先更新 RAG-1，再同步本 PRD 的
+Memory 映射，不另起一套协议。
 
 ## 1. 背景与目标
 
@@ -127,6 +136,22 @@ owner_user_id + platform + bot_id + scope_type + scope_id
 三类工具可以共用 `RecallService` 的 BM25 评分和结果预算，但每个工具独立做 ownership、scope 和返回内容校验。
 
 ## 3. 技术方案
+
+### 3.0 与统一 RAG 的契约边界
+
+Memory 文档进入统一索引时，按 RAG-1 的 `IndexDocument` 映射：
+
+| Memory 字段 | RAG 字段 |
+|---|---|
+| `pattern` / `daily` / `memory` | `source_type=memory`、`source_id` |
+| 记忆作用域 | `scope.owner_user_id`、`platform`、`bot_id`、`group_id` |
+| 条目更新时间 | `updated_at` |
+| 条目内容指纹 | `version` |
+| 条目正文片段 | `summary` / `content` |
+
+切片、索引失效、版本去重、结果条数/字符预算和诊断字段不在本 PRD 重新定义，
+统一遵循 RAG-1。`search_memory` 可以复用同一 `RecallService`，但仍独立执行
+Memory 的 scope 校验和结果脱敏。
 
 ### 3.1 检索文档构建
 
