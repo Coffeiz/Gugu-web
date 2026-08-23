@@ -278,7 +278,7 @@ const html = sanitizeHtml(marked(md) as string)
 .md-content :deep(li) { margin-bottom: 3px; }
 .md-content :deep(strong) { font-weight: 600; }
 .md-content :deep(code) {
-  font-family: monospace; font-size: 12px;
+  font-family: var(--font-family-mono); font-size: 12px;
   background: rgba(0,0,0,0.05); border-radius: 4px;
   padding: 1px 5px;
 }

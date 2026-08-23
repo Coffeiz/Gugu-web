@@ -9,13 +9,15 @@ from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import ConversationSession, User, Workspace
-from app.schemas import WorkspaceCreate, WorkspaceResponse
+from app.schemas import WorkspaceCreate, WorkspaceResponse, WorkspaceUpdate
 from app.services.workspaces import (
     bind_session,
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
     get_workspace,
+    delete_workspace,
+    update_workspace,
 )
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -64,6 +66,42 @@ async def add_workspace(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return _response(row)
+
+
+@router.patch("/{workspace_id}", response_model=WorkspaceResponse)
+async def edit_workspace(
+    workspace_id: int, body: WorkspaceUpdate,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await update_workspace(
+            db, user.id, workspace_id, name=body.name, enabled=body.enabled,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    count = (await db.execute(
+        select(func.count(ConversationSession.id)).where(
+            ConversationSession.user_id == user.id,
+            ConversationSession.workspace_id == workspace_id,
+        )
+    )).scalar_one()
+    await db.commit()
+    return _response(row, count)
+
+
+@router.delete("/{workspace_id}")
+async def remove_workspace(
+    workspace_id: int,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    try:
+        await delete_workspace(db, user.id, workspace_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return {"ok": True, "workspaceId": workspace_id}
 
 
 @router.post("/{workspace_id}/bind/{session_id}", response_model=WorkspaceResponse)

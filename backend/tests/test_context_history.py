@@ -132,10 +132,38 @@ def test_chat_tool_events_restore_call_and_result_as_one_bubble():
         content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "晴天"}],
     )
     assert build_chat_tool_events([assistant, result]) == [{
-        "id": "tool:call-1", "toolCallId": "call-1", "toolName": "weather",
+        "id": "tool:call-1", "toolCallId": "call-1", "timelineOrder": 10, "toolName": "weather",
+        "toolLabel": "weather",
         "toolInput": {"city": "南京"}, "toolResult": "晴天", "toolStatus": "success",
         "createdAt": created, "updatedAt": result_created, "toolDurationMs": 1000,
     }]
+
+
+def test_chat_tool_events_restore_registered_tool_label():
+    from datetime import datetime, timezone
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=14, created_at=created,
+        content_json=[{"type": "tool_call", "id": "call-image", "name": "image_search", "arguments": {}}],
+    )
+    events = build_chat_tool_events([assistant])
+    assert events[0]["toolName"] == "image_search"
+    assert events[0]["toolLabel"] == "图片搜索"
+    assert events[0]["timelineOrder"] == 14
+
+
+def test_chat_tool_events_restore_legacy_anthropic_tool_use():
+    from datetime import datetime, timezone
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=15, created_at=created,
+        content_json=[{"type": "tool_use", "id": "call-image", "name": "image_search", "input": {}}],
+    )
+    events = build_chat_tool_events([assistant])
+    assert events[0]["toolLabel"] == "图片搜索"
+    assert events[0]["toolInput"] == {}
 
 
 def test_chat_tool_events_restores_legacy_error_result_as_error():

@@ -26,15 +26,16 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
         content_json = getattr(message, "content_json", None)
         for index, block in enumerate(_blocks(content_json)):
             block_type = block.get("type")
-            if block_type == "tool_call":
+            if block_type in ("tool_call", "tool_use"):
                 call_id = str(block.get("id") or f"message-{message.id}-{index}")
+                tool_name = str(block.get("name") or "unknown_tool")
                 events[call_id] = {
                     "id": f"tool:{call_id}",
                     "toolCallId": call_id,
                     "timelineOrder": message.id,
-                    "toolName": str(block.get("name") or "unknown_tool"),
-                    "toolLabel": _tool_label(str(block.get("name") or "unknown_tool")),
-                    "toolInput": block.get("arguments", {}),
+                    "toolName": tool_name,
+                    "toolLabel": _tool_label(tool_name),
+                    "toolInput": block.get("arguments", block.get("input", {})),
                     "toolStatus": "running",
                     "createdAt": message.created_at,
                 }

@@ -15,6 +15,15 @@ marked.use({
       // 复制按钮不写内联 onclick——DOMPurify 会剥掉所有 on* 属性；改由 onChatActionClick 事件委托处理
       return `<div class="md-code-block"><div class="md-code-header"><span class="md-code-lang">${label}</span><button class="md-copy-btn" type="button">复制</button></div><pre><code class="hljs language-${language}">${highlighted}</code></pre></div>`
     }
+    // 搜索结果图片经常来自有防盗链策略的站点。禁止携带聊天页面 Referer，避免图片
+    // 在模型回复里只显示 alt 文本；其余 URL 仍交给聊天 HTML 的 DOMPurify 白名单清洗。
+    const renderImage = r.image
+    r.image = function (this: unknown, token: Tokens.Image) {
+      return renderImage.call(this, token).replace(
+        '<img ',
+        '<img loading="lazy" decoding="async" referrerpolicy="no-referrer" ',
+      )
+    }
     return r
   })(),
 })

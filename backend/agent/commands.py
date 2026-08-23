@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 
+from agent.command_text import normalize_command_text
 from agent.memory import store
 
 logger = logging.getLogger(__name__)
@@ -24,9 +25,9 @@ _COMPACT_NAMES = {"compact", "压缩", "整理上下文"}
 _WORKSPACE_NAMES = {"workspace", "工作区", "工作空间"}
 
 
-def _parse(text: str):
+def _parse(text: str, *, allow_leading_mention: bool = False):
     """拆 `/cmd 参数`（半/全角斜杠与空格都认）。非斜杠 → (None, None)。"""
-    t = (text or "").strip()
+    t = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
     if t[:1] not in _PREFIX:
         return None, None
     body = t[1:].strip()
@@ -37,9 +38,10 @@ def _parse(text: str):
     return body.strip().lower(), ""
 
 
-async def handle(user_id, text: str, *, session_id: int | None = None) -> str | None:
+async def handle(user_id, text: str, *, session_id: int | None = None,
+                 allow_leading_mention: bool = False) -> str | None:
     """命中控制命令 → 返回回复文本（短路）；否则 None。"""
-    name, arg = _parse(text)
+    name, arg = _parse(text, allow_leading_mention=allow_leading_mention)
     if name is None:
         return None
     if name in _MEMORY_NAMES:
@@ -74,7 +76,7 @@ async def _compact(user_id, session_id: int | None) -> str:
         return "这次压缩没有完成，请稍后再试。"
     if compacted:
         return "上下文已经整理好了，旧对话已压缩为摘要。"
-    return "当前没有可整理的旧对话。"
+    return "当前历史还不够长，暂时无需整理上下文。"
 
 
 async def _workspace(user_id, session_id: int | None, arg: str) -> str:

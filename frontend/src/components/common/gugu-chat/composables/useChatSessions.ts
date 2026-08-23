@@ -7,6 +7,7 @@ import type GuguChatComposer from '../GuguChatComposer.vue'
 
 interface RawSessionMessage {
   id: number
+  timelineOrder?: number
   role: string
   content: string
   files?: ChatFile[]
@@ -20,6 +21,8 @@ interface RawToolEvent {
   id: string
   toolCallId: string
   toolName: string
+  toolLabel?: string
+  timelineOrder?: number
   toolInput?: unknown
   toolResult?: unknown
   toolStatus?: ChatMessage['toolStatus']
@@ -35,6 +38,9 @@ function sortTimelineMessages(items: ChatMessage[]) {
   // 工具和 interaction 分属两个接口恢复。即使数据库时间精度相同，
   // 同一工具调用也必须保持实时展示顺序，避免刷新后交互卡片跑到工具卡前面。
   return items.sort((a, b) => {
+    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
+      return a._timelineOrder - b._timelineOrder
+    }
     if (isPairedInteraction(a, b)) return 1
     if (isPairedInteraction(b, a)) return -1
     return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
@@ -127,11 +133,14 @@ export function useChatSessions(options: {
           quotedText: m.quotedText || undefined,
           time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
           _createdAt: m.createdAt,
+          _timelineOrder: m.timelineOrder ?? m.id,
         }
       })
       const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
         id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
         toolCallId: event.toolCallId, toolName: event.toolName,
+        toolLabel: event.toolLabel,
+        _timelineOrder: event.timelineOrder,
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
       }))

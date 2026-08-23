@@ -9,7 +9,7 @@
     </button>
     <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
       <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
-        <Icon name="navigation.grid" :size="13" />
+        <Icon name="navigation.apps" :size="13" />
       </button>
       <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" title="列表视图">
         <Icon name="navigation.list" :size="13" />
@@ -25,6 +25,9 @@
       <button class="btn-confirm-sm" :disabled="folderLoading" @click="emit('create-folder')">确定</button>
       <button class="btn-cancel-sm" @click="cancelFolder">✕</button>
     </div>
+    <button v-if="showNewWorkspaceButton" class="new-folder-btn workspace-btn" :class="{ 'workspace-remove-btn': workspaceExists }" :title="workspaceExists ? '解除当前文件夹的工作区' : '使用当前文件夹添加工作区'" @click.stop="emit('create-workspace')">
+      <Icon :name="workspaceExists ? 'action.delete' : 'admin.stack'" :size="13" />{{ workspaceExists ? '删除工作区' : '添加工作区' }}
+    </button>
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
     <slot name="trailing" />
@@ -47,6 +50,8 @@ const props = defineProps({
   showSelection: { type: Boolean, default: true },
   showViewToggle: { type: Boolean, default: true },
   showNewFolderButton: { type: Boolean, default: true },
+  showNewWorkspaceButton: Boolean,
+  workspaceExists: Boolean,
   showSort: { type: Boolean, default: true },
   viewMode: { type: String as PropType<'grid' | 'list'>, default: 'grid' },
   showNewFolder: Boolean,
@@ -64,6 +69,7 @@ const emit = defineEmits<{
   'update:show-new-folder': [value: boolean]
   'update:new-folder-name': [value: string]
   'create-folder': []
+  'create-workspace': []
   'sort-select': [value: any]
   close: []
 }>()
@@ -98,4 +104,6 @@ watch(() => props.showNewFolder, value => {
   align-items: center;
   gap: 5px;
 }
+.workspace-remove-btn { color: var(--danger-button-fg); }
+.workspace-remove-btn:hover { color: var(--danger-button-fg); }
 </style>

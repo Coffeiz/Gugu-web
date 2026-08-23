@@ -138,6 +138,8 @@
   --popup-item-bg-hover: var(--surface-soft-hover);
   --popup-item-bg-active: var(--selection-bg);
   --popup-item-fg-active: var(--selection-fg);
+  --popup-item-padding: 7px 9px;
+  --popup-item-radius: var(--radius-xs);
   --popup-item-danger: var(--status-danger);
   --popup-item-danger-bg-hover: var(--status-danger-bg);
   --popup-divider: var(--border-subtle);
@@ -182,6 +184,18 @@
   --choice-chip-border-hover: var(--action-outline);
   --choice-chip-border-active: var(--action-outline);
   --choice-chip-radius: var(--radius-pill);
+  --choice-chip-min-height: var(--control-height-sm);
+  --choice-chip-padding: 0 11px 2px;
+  --choice-chip-line-height: var(--line-height-ui);
+
+  --workspace-card-bg: var(--surface-soft);
+  --workspace-card-bg-hover: var(--surface-soft-hover);
+  --workspace-card-border: var(--border-subtle);
+  --workspace-card-border-hover: var(--border-hover);
+  --workspace-card-shadow: var(--elevation-card);
+  --workspace-card-shadow-hover: var(--elevation-card-hover);
+  --workspace-badge-bg: var(--selection-bg);
+  --workspace-badge-fg: var(--content-secondary);
 
   /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
   --danger-button-bg: var(--status-danger-bg);

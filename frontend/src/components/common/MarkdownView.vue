@@ -53,7 +53,7 @@ const rendered = computed(() =>
 .md-view :deep(li > ul), .md-view :deep(li > ol) { margin: 2px 0; }
 
 .md-view :deep(code) {
-  font-family: var(--font-mono, 'JetBrains Mono', ui-monospace, monospace);
+  font-family: var(--font-mono, var(--font-family-mono));
   font-size: 0.88em; background: rgba(123,127,178,0.12);
   color: var(--color-primary); border-radius: 5px; padding: 1px 5px;
 }

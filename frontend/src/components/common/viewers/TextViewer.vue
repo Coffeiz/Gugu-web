@@ -252,7 +252,7 @@ async function loadCmExtensions(ext: string, source = '') {
     '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
     '&.cm-focused': { outline: 'none' },
     '.cm-content': {
-      fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace",
+      fontFamily: "var(--font-family-mono)",
       textDecoration: 'none', whiteSpace: 'pre-wrap',
     },
     '.cm-line, .cm-line *': { textDecoration: 'none !important', whiteSpace: 'pre-wrap' },
@@ -600,7 +600,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   flex: 1; width: 100%; box-sizing: border-box;
   border: none; outline: none; resize: none;
   padding: 20px 24px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
   line-height: 1.7; color: #383a42; background: #fff;
 }
@@ -631,7 +631,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 }
 .tv-edit-md-wrap :deep(.cm-content) {
   padding: 20px 24px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   line-height: 1.7;
 }
 .tv-edit-md-wrap :deep(.cm-gutters) {
@@ -670,7 +670,7 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 .tv-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
   line-height: 1.7;
 }
@@ -730,7 +730,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 
 /* 行内代码 */
 .tv-md :deep(code) {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.875em;
   background: rgba(100, 110, 200, 0.08);
   border-radius: 4px;
@@ -752,7 +752,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   overflow-x: auto;
   background: none;
   color: #383a42;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: 13px;
   line-height: 1.65;
 }
@@ -767,7 +767,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: rgba(60, 65, 100, 0.4);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   pointer-events: none;
   user-select: none;
 }

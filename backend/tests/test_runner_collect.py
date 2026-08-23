@@ -78,6 +78,37 @@ async def test_collect_preserves_and_emits_tool_events_in_order():
     assert [event["seq"] for event in result[-1]["tool_events"]] == [3, 4]
 
 
+async def test_collect_keeps_multiple_rounds_and_run_boundaries():
+    """回归：多 Round 的工具事件按 seq 保留，不能把相邻 Run 串成一条 IM 进度。"""
+    async def stream():
+        for event in (
+            {"type": "tool_call", "run_id": "run-a", "round_id": 1, "seq": 1,
+             "name": "web_search", "status": "running"},
+            {"type": "tool_done", "run_id": "run-a", "round_id": 1, "seq": 2,
+             "name": "web_search", "status": "success", "result": "第一轮"},
+            {"type": "tool_call", "run_id": "run-a", "round_id": 2, "seq": 3,
+             "name": "weather", "status": "running"},
+            {"type": "tool_done", "run_id": "run-a", "round_id": 2, "seq": 4,
+             "name": "weather", "status": "success", "result": "第二轮"},
+            {"type": "token", "content": "完成"},
+        ):
+            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+
+    emitted = []
+
+    async def capture(event):
+        emitted.append(event)
+
+    result = await _collect(stream(), include_meta=True, on_tool_event=capture)
+    assert [(event["run_id"], event["round_id"], event["seq"])
+            for event in emitted] == [
+                ("run-a", 1, 1), ("run-a", 1, 2),
+                ("run-a", 2, 3), ("run-a", 2, 4),
+            ]
+    assert [(event["round_id"], event["seq"])
+            for event in result[-1]["tool_events"]] == [(1, 1), (1, 2), (2, 3), (2, 4)]
+
+
 def test_tool_event_text_does_not_expose_input_schema():
     event = {
         "type": "tool_done", "name": "web_search", "label": "搜索资料",

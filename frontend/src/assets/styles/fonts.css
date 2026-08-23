@@ -1,0 +1,24 @@
+/* Web 字体资源层：字体族 token 只引用这里注册的产品字体，不在组件内写资源 URL。 */
+@font-face {
+  font-family: 'Gugu Source Han Sans SC';
+  src: url('/fonts/web/source-han-sans-sc-regular.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Gugu Source Han Sans SC';
+  src: url('/fonts/web/source-han-sans-sc-medium.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Gugu Source Han Sans SC';
+  src: url('/fonts/web/source-han-sans-sc-bold.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}

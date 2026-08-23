@@ -115,6 +115,13 @@ html[data-theme='dark'][data-family] input[type='month'] { color-scheme: dark; }
    .choice-chip directly and get the exact same contract. */
 html[data-theme][data-family] .choice-chip,
 html[data-theme][data-family] .pm-style-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-height: var(--choice-chip-min-height);
+  padding: var(--choice-chip-padding);
+  line-height: var(--choice-chip-line-height);
   color: var(--choice-chip-fg);
   background: var(--choice-chip-bg);
   border-color: var(--choice-chip-border);

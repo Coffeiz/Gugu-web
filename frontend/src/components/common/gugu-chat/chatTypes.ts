@@ -5,6 +5,8 @@ export interface ChatMessage {
   id: number
   /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
   _createdAt?: string
+  /** 持久化/实时统一的时间线顺序；旧消息缺失时回退到 createdAt。 */
+  _timelineOrder?: number
   dbId?: number
   role: string
   text: string

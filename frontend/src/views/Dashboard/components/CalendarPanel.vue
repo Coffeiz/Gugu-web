@@ -503,7 +503,7 @@ function darkenHex(hex: string, amount = 0.60) {
 }
 .picker-month {
   padding: 6px 0; border-radius: 8px; border: none;
-  font-size: 12px; font-weight: 500; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-size: 12px; font-weight: 500; font-family: var(--font-family-ui);
   cursor: pointer; background: none; color: #1e2028;
   transition: all 0.12s;
 }
@@ -529,22 +529,22 @@ function darkenHex(hex: string, amount = 0.60) {
 .dash-popup-input {
   width: 100%; padding: 7px 10px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68);
-  font-size: 12px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028;
+  font-size: 12px; font-family: var(--font-family-ui); color: #1e2028;
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
 }
 .dash-popup-input:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .dash-popup-textarea {
   width: 100%; padding: 7px 10px; border-radius: 9px;
   border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68);
-  font-size: 12px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028;
+  font-size: 12px; font-family: var(--font-family-ui); color: #1e2028;
   outline: none; box-sizing: border-box; transition: border-color 0.15s, box-shadow 0.15s;
   resize: none; line-height: 1.5;
 }
 .dash-popup-textarea:focus { border-color: rgba(123,127,178,0.55); box-shadow: 0 0 0 3px rgba(123,127,178,0.12); background: rgba(255,255,255,0.85); }
 .dash-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
-.dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
+.dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: var(--font-family-ui); transition: background 0.12s; }
 .dash-popup-cancel:hover { background: rgba(0,0,0,0.06); }
-.dash-popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
+.dash-popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .dash-popup-save:disabled { opacity: 0.38; cursor: default; }
 .dash-popup-save:not(:disabled):hover { opacity: 0.88; }
 .dash-form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }

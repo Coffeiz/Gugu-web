@@ -6,7 +6,7 @@
       <template v-else>
         <div v-if="globalEnabled" class="pm-tool-rows">
           <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell 工具</span><span class="pm-field-hint">允许咕咕在你明确绑定的工作区中执行受控命令；新对话默认不会绑定工作区。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellEnabled }" type="button" :aria-pressed="prefsStore.shellEnabled" aria-label="切换 Shell 工具权限" @click="prefsStore.saveShellEnabled(!prefsStore.shellEnabled)"><span class="toggle-knob" /></button></div>
-          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">允许危险命令进入确认流程；每次具体操作仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellDangerousEnabled, disabled: !dangerousGlobalEnabled }" type="button" :disabled="!dangerousGlobalEnabled" :aria-pressed="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @click="prefsStore.saveShellDangerousEnabled(!prefsStore.shellDangerousEnabled)"><span class="toggle-knob" /></button></div>
+          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；每次具体操作仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellDangerousEnabled, disabled: !dangerousGlobalEnabled }" type="button" :disabled="!dangerousGlobalEnabled" :aria-pressed="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @click="prefsStore.saveShellDangerousEnabled(!prefsStore.shellDangerousEnabled)"><span class="toggle-knob" /></button></div>
           <div v-if="!dangerousGlobalEnabled" class="pm-field-hint pm-tool-subhint">管理员尚未开启危险 Shell 命令。</div>
         </div>
       </template>

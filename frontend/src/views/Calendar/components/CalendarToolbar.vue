@@ -48,6 +48,6 @@ const periodButton = ref<HTMLElement | null>(null)
 .cal-toolbar .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 .cal-toolbar .toolbar-right { display: flex; align-items: center; gap: 8px; }
 .cal-toolbar .view-toggle { gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
-.cal-toolbar .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: color 0.15s; }
+.cal-toolbar .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: var(--font-family-ui); transition: color 0.15s; }
 .cal-toolbar .view-toggle button.on { color: #5a5e86; }
 </style>

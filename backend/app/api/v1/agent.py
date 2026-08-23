@@ -457,6 +457,7 @@ async def get_session_messages(
         },
         "messages": [
             {"id": m.id, "role": m.role,
+             "timelineOrder": m.id,
              "content": render_content(m.content),
              "files": m.files or [],
              "quotedText": m.quoted_text,

@@ -128,6 +128,7 @@ async def decide_im_shortcut(
     has_attachments: bool = False,
     bot_id: str = "",
     scope_id: str = "",
+    allow_leading_mention: bool = False,
 ) -> dict:
     """根据当前 IM 状态判断是否需要在入队前短路。"""
     if has_attachments:
@@ -155,6 +156,7 @@ async def decide_im_shortcut(
         text, state, awaiting,
         current_puid=platform_user_id,
         active_puid=active_puid,
+        allow_leading_mention=allow_leading_mention,
     )
     if dec.get("action") == "cancel":
         # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
@@ -177,6 +179,7 @@ def decide_im_shortcut_sync(
     has_attachments: bool = False,
     bot_id: str = "",
     scope_id: str = "",
+    allow_leading_mention: bool = False,
 ) -> dict:
     """同步 Gateway 回调使用的 intent shortcut 决策。"""
     if has_attachments:
@@ -202,6 +205,7 @@ def decide_im_shortcut_sync(
         text, state, awaiting,
         current_puid=platform_user_id,
         active_puid=active_puid,
+        allow_leading_mention=allow_leading_mention,
     )
     if dec.get("action") == "cancel":
         from agent.security.logsafe import fingerprint
@@ -371,11 +375,17 @@ async def finalize_im_response(platform: str, platform_user_id: str,
     )
 
 
-async def handle_im_command(user_id, message: str, session_id: Optional[int] = None) -> Optional[str]:
+async def handle_im_command(user_id, message: str, session_id: Optional[int] = None,
+                            *, allow_leading_mention: bool = False) -> Optional[str]:
     """处理不需要模型的 IM 命令，返回回复文本或 ``None``。"""
     from agent import commands
 
-    return await commands.handle(user_id, message, session_id=session_id)
+    return await commands.handle(
+        user_id,
+        message,
+        session_id=session_id,
+        allow_leading_mention=allow_leading_mention,
+    )
 
 
 async def record_passive_im_message(request: AgentRequest, session_id: Optional[int] = None) -> int:
@@ -760,6 +770,7 @@ async def dispatch_im_message(payload: dict):
         has_attachments=bool(req.attachments),
         bot_id=route.bot_id,
         scope_id=session_scope,
+        allow_leading_mention=bool(payload.get("group_mentioned")),
     )
     if shortcut["action"] == "drop":
         trace.finish_run("success")
@@ -779,7 +790,12 @@ async def dispatch_im_message(payload: dict):
         trace.finish_run("success", shortcut["reply"])
         return None
 
-    cmd_reply = await handle_im_command(user_id, req.message, prepared.session_id)
+    cmd_reply = await handle_im_command(
+        user_id,
+        req.message,
+        prepared.session_id,
+        allow_leading_mention=bool(payload.get("group_mentioned")),
+    )
     if cmd_reply is not None:
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)

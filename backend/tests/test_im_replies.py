@@ -171,6 +171,48 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform", "payload", "markdown"),
+    [
+        ("qq", {"chat_type": "group", "message_format": "compat"}, False),
+        ("feishu", {"chat_type": "group"}, True),
+        ("wechat", {"chat_type": "c2c"}, True),
+    ],
+)
+async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypatch, platform, payload, markdown):
+    """回归：QQ 群聊使用纯文本结果，飞书/微信降级为 Markdown；输入不能泄露到结果消息。"""
+    from agent.im import replies
+
+    sent = []
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    await replies.send_tool_event(
+        {"platform": platform, "platform_user_id": "member-1", **payload},
+        {"type": "tool_call", "label": "联网搜索", "input": {"query": "不应出现在结果"}},
+    )
+    await replies.send_tool_event(
+        {"platform": platform, "platform_user_id": "member-1", **payload},
+        {"type": "tool_done", "label": "联网搜索", "status": "success",
+         "result": {"items": ["结果"]}},
+    )
+
+    assert len(sent) == 2 if markdown else 1
+    if markdown:
+        assert "**输入**" in sent[0]
+    result_text = sent[-1]
+    assert "不应出现在结果" not in result_text
+    if markdown:
+        assert "**输出**" in result_text
+        assert "结果" in result_text
+    else:
+        assert result_text == "✅ 联网搜索完成"
+
+
+@pytest.mark.asyncio
 async def test_qq_private_stream_uses_replace_frames_and_stream_id(monkeypatch):
     from agent.gateway import qq
     from agent.im.replies import send_stream_with_fallback

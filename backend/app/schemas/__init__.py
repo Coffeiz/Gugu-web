@@ -624,6 +624,11 @@ class WorkspaceCreate(CamelModel):
     enabled: bool = True
 
 
+class WorkspaceUpdate(CamelModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    enabled: Optional[bool] = None
+
+
 class WorkspaceResponse(CamelModel):
     id: int
     name: str

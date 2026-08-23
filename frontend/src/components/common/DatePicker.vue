@@ -306,7 +306,7 @@ watch(() => props.modelValue, v => {
   font-size: 13px; font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }
 .dp-period-range { letter-spacing: 0.5px; }
 .dp-period-caret { opacity: 0.5; flex-shrink: 0; }
@@ -336,7 +336,7 @@ watch(() => props.modelValue, v => {
   border: none; background: none; cursor: pointer; padding: 0;
   font-size: 11px; font-weight: 500; line-height: 1;
   border-radius: 7px;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }
 .dp-day.other { opacity: 0.4; }
 .dp-day.today:not(.selected) { font-weight: 700; }
@@ -351,7 +351,7 @@ watch(() => props.modelValue, v => {
 .dp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
   font-size: 12px; font-weight: 500; cursor: pointer;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }
 .dp-year-btn.this-year:not(.selected),
 .dp-year-btn.selected { font-weight: 700; }
@@ -364,7 +364,7 @@ watch(() => props.modelValue, v => {
 .dp-clear, .dp-today {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
-  cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  cursor: pointer; font-family: var(--font-family-ui);
 }
 .dp-clear { background: none; }
 /* 「清除」隐藏时 today 独自留在 footer 里，margin-left:auto 保它一直贴右边，不因为

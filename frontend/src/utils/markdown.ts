@@ -45,7 +45,10 @@ export function sanitizeHtml(html: string): string {
 // URI 白名单 = DOMPurify 默认协议 + gugu（不删默认项，只加一个）。
 const _CHAT_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|gugu):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 export function sanitizeChatHtml(html: string): string {
-  return DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'], ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP })
+  return DOMPurify.sanitize(String(html ?? ''), {
+    ADD_ATTR: ['target', 'loading', 'decoding', 'referrerpolicy'],
+    ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP,
+  })
 }
 
 export function renderMarkdown(text: string | null | undefined): string {

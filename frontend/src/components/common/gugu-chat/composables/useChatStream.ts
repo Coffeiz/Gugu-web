@@ -100,6 +100,17 @@ export function useChatStream(options: {
     const usedTools = new Set<string>()
     let currentRoundId = ''
     const toolMessageIndexes = new Map<string, number>()
+    let timelineOrder = messages.value.reduce(
+      (max, message) => Math.max(max, message._timelineOrder ?? 0),
+      0,
+    )
+    const nextTimelineOrder = () => ++timelineOrder
+    const sortLiveTimeline = () => {
+      messages.value.sort((a, b) => {
+        if (a._timelineOrder == null || b._timelineOrder == null) return 0
+        return a._timelineOrder - b._timelineOrder
+      })
+    }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
       if (detached || viewGeneration !== options.getViewGeneration()) {
@@ -148,14 +159,17 @@ export function useChatStream(options: {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
             const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIndexes.size + 1}`)
             if (live() && !evt.name?.startsWith('_')) {
-              const index = messages.value.push({
-                id: mkid(), role: 'tool', text: '', time: now(),
+              const messageId = mkid()
+              messages.value.push({
+                id: messageId, role: 'tool', text: '', time: now(),
+                _timelineOrder: nextTimelineOrder(),
                 runId: evt.run_id, roundId: evt.round_id || currentRoundId,
                 toolCallId, toolName: evt.name, toolLabel: evt.label,
                 toolStatus: evt.status || 'running', toolInput: evt.input,
                 _toolStartedAt: Date.now(),
-              }) - 1
-              toolMessageIndexes.set(toolCallId, index)
+              })
+              sortLiveTimeline()
+              toolMessageIndexes.set(toolCallId, messages.value.findIndex(item => item.id === messageId))
               await options.scrollBottom()
             }
             // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
@@ -197,6 +211,7 @@ export function useChatStream(options: {
               } else {
                 messages.value.push({
                   id: mkid(), role: 'interaction', text: '', time: now(),
+                  _timelineOrder: nextTimelineOrder(),
                   runId: evt.run_id, roundId: evt.round_id,
                   interaction: {
                     promptId, kind: String(evt.kind || 'confirm'),
@@ -205,6 +220,7 @@ export function useChatStream(options: {
                     options: evt.options,
                   },
                 })
+                sortLiveTimeline()
               }
               options.setStatus({ kind: 'text', label: '等待你的确认' })
               await options.scrollBottom()
@@ -221,8 +237,10 @@ export function useChatStream(options: {
               options.clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
-                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
-                aiIdx = messages.value.length - 1
+                const messageId = mkid()
+                messages.value.push({ id: messageId, role: 'ai', text: '', time: now(), streaming: true, _timelineOrder: nextTimelineOrder() })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
               messages.value[aiIdx].text += evt.content
               await options.scrollBottom()
@@ -232,8 +250,10 @@ export function useChatStream(options: {
               options.clearStatus()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
-                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
-                aiIdx = messages.value.length - 1
+                const messageId = mkid()
+                messages.value.push({ id: messageId, role: 'ai', text: '', time: now(), streaming: true, _timelineOrder: nextTimelineOrder() })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []

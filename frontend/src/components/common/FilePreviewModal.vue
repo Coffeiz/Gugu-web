@@ -476,7 +476,7 @@ watch(() => props.show, v => { if (!v) showInfo.value = false })
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
-.fp-info-mono { font-family: monospace; font-size: 11px; }
+.fp-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
 .info-pop-enter-active,
 .info-pop-leave-active { transition: opacity 0.12s ease, transform 0.12s ease; }
 .info-pop-enter-from,

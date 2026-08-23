@@ -10,6 +10,8 @@
         :show-selection="showSelection"
         :show-view-toggle="showViewToggle"
         :show-new-folder-button="showNewFolderButton"
+        :show-new-workspace-button="showNewWorkspaceButton"
+        :workspace-exists="workspaceExists"
         :show-sort="showSort"
         :view-mode="viewMode"
         :show-new-folder="showNewFolder"
@@ -25,6 +27,7 @@
         @update:show-new-folder="$emit('update:show-new-folder', $event)"
         @update:new-folder-name="$emit('update:new-folder-name', $event)"
         @create-folder="$emit('create-folder')"
+        @create-workspace="$emit('create-workspace')"
         @sort-select="$emit('sort-select', $event)"
         @close="$emit('close')"
       >
@@ -48,6 +51,8 @@ defineProps({
   showSelection: { type: Boolean, default: true },
   showViewToggle: { type: Boolean, default: true },
   showNewFolderButton: { type: Boolean, default: true },
+  showNewWorkspaceButton: Boolean,
+  workspaceExists: Boolean,
   showSort: { type: Boolean, default: true },
   viewMode: { type: String as PropType<'grid' | 'list'>, default: 'grid' },
   showNewFolder: Boolean,
@@ -66,6 +71,7 @@ defineEmits<{
   'update:show-new-folder': [value: boolean]
   'update:new-folder-name': [value: string]
   'create-folder': []
+  'create-workspace': []
   'sort-select': [value: any]
   close: []
 }>()

@@ -224,7 +224,7 @@ onUnmounted(() => { sse?.close() })
 .lt-main {
   display: grid; grid-template-columns: 96px 72px 1fr;
   padding: 6px 16px; align-items: baseline; gap: 0;
-  font-size: 12px; font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-size: 12px; font-family: var(--font-family-mono);
 }
 
 .lt-row.lvl-error   .col-msg { color: rgba(240,120,120,0.9); }

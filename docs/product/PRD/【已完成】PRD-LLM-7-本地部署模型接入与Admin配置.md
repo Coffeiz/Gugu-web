@@ -249,5 +249,5 @@ Admin 的模型配置增加部署方式：`云端供应商`、`本地部署`。�
 - [x] 补充 Admin 模型列表、连通性测试和密钥脱敏接口的 HTTP handler 回归测试。
 - [x] 补充本地运行时错误分类测试：鉴权失败、参数不兼容、能力未启用。
 - [x] 补充多模型切换后能力检测结果不复用的 fingerprint freshness 回归测试。
-- [ ] 在 devserver 完成 Ollama 普通聊天、流式回复和工具调用手测。
-- [ ] 完成云端 Provider 回归验证后，再将 PRD-LLM-7 标记为整体完成。
+- [x] 在 devserver 完成 Ollama 普通聊天、流式回复和工具调用手测。
+- [x] 完成云端 Provider 回归验证后，再将 PRD-LLM-7 标记为整体完成。

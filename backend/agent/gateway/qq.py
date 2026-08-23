@@ -483,6 +483,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             "qq", sender_id, text,
             bot_id=channel_id,
             scope_id=chat_id or sender_id,
+            allow_leading_mention=chat_type == "group" and mentioned,
         )
         if dec["action"] == "cancel":
             await apply_im_shortcut_cancel(

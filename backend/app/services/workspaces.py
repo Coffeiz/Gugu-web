@@ -55,6 +55,41 @@ async def create_workspace(
     return workspace
 
 
+async def update_workspace(
+    db: AsyncSession, user_id, workspace_id: int, *,
+    name: str | None = None, enabled: bool | None = None,
+) -> Workspace:
+    workspace = await get_workspace(db, user_id, workspace_id)
+    if workspace is None:
+        raise LookupError("工作区不存在")
+    if name is not None:
+        normalized = name.strip()
+        if not normalized:
+            raise ValueError("工作区名称不能为空")
+        workspace.name = normalized
+    if enabled is not None:
+        workspace.enabled = enabled
+    await db.flush()
+    return workspace
+
+
+async def delete_workspace(db: AsyncSession, user_id, workspace_id: int) -> None:
+    workspace = await get_workspace(db, user_id, workspace_id)
+    if workspace is None:
+        raise LookupError("工作区不存在")
+    # 显式解除绑定，确保测试数据库与生产数据库的 ON DELETE 行为一致。
+    sessions = (await db.execute(
+        select(ConversationSession).where(
+            ConversationSession.user_id == user_id,
+            ConversationSession.workspace_id == workspace.id,
+        )
+    )).scalars().all()
+    for session in sessions:
+        session.workspace_id = None
+    await db.delete(workspace)
+    await db.flush()
+
+
 async def bind_session(db: AsyncSession, user_id, session_id: int, workspace_id: int | None) -> ConversationSession:
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None:

@@ -1,3 +1,4 @@
+@import './fonts.css';
 @import './variables.css';
 /* 文件列表行/表头/checkbox 的唯一 paint owner：文件库、项目编辑卡、回收站共用。
    全局引入而不是靠 Runtime 行组件挂载才加载——回收站是纯 div 列表，不渲染任何

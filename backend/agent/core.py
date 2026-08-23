@@ -664,7 +664,8 @@ class LLMRunner:
                                            name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
                                            status="skipped")
                         yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=effective_tool_name, label=label, verify=verify_mode, status="skipped")
+                                           name=effective_tool_name, label=label, verify=verify_mode,
+                                           status="skipped", result=_TOOL_BUDGET_EXHAUSTED)
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
                     tool_calls_used += 1
@@ -676,7 +677,8 @@ class LLMRunner:
                                            name=effective_tool_name, label=label, input={}, verify=verify_mode,
                                            status="invalid")
                         yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=effective_tool_name, label=label, verify=verify_mode, status="error")
+                                           name=effective_tool_name, label=label, verify=verify_mode,
+                                           status="error", result=loop_drivers.TOOL_ARGS_TRUNCATED_ERROR)
                         dispatched.append((tc, loop_drivers.TOOL_ARGS_TRUNCATED_ERROR))
                         continue
                     await _im_set_tool_state(effective_tool_name)
@@ -736,7 +738,7 @@ class LLMRunner:
                             pending_interaction = (prompt.id, tool_call_id)
                             yield stream_event("tool_done", round_id=round_id,
                                                tool_call_id=tool_call_id, name=effective_tool_name, label=label,
-                                               verify=verify_mode, status="waiting")
+                                               verify=verify_mode, status="waiting", result=pending_result)
                             yield stream_event(
                                 "interaction_required", round_id=round_id,
                                 tool_call_id=tool_call_id, prompt_id=prompt.id,
@@ -780,7 +782,7 @@ class LLMRunner:
                             })
                         yield stream_event("tool_done", round_id=round_id,
                                            tool_call_id=tool_call_id, name=effective_tool_name, label=label,
-                                           verify=verify_mode, status="waiting")
+                                           verify=verify_mode, status="waiting", result=res)
                         break
                     if effective_tool_name in _mutset and _is_successful_tool_result(res):
                         did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
@@ -790,7 +792,8 @@ class LLMRunner:
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
                                        name=effective_tool_name, label=label, verify=verify_mode,
-                                       status="success" if _is_successful_tool_result(res) else "error")
+                                       status="success" if _is_successful_tool_result(res) else "error",
+                                       result=res)
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))

@@ -124,7 +124,7 @@ function cleanupDetailTransition(element: Element) {
 .tool-event-detail { padding: 10px 12px 11px; border-top: 1px solid var(--border-default); background: var(--surface-raised); color: var(--content-secondary); }
 .tool-event-section + .tool-event-section { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-default); }
 .tool-event-caption { display: block; margin-bottom: 4px; color: var(--content-tertiary); font-size: var(--font-size-xs); font-weight: 600; }
-pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre { max-height: 180px; margin: 0; overflow: auto; color: var(--content-primary); white-space: pre-wrap; word-break: break-word; font: var(--font-size-xs)/var(--line-height-body) var(--font-family-mono); }
 .tool-detail-shell { min-height: 0; overflow: hidden; }
 .tool-detail-shell > .tool-event-detail { min-height: 0; overflow: hidden; }
 @keyframes tool-pulse { 50% { opacity: .35; } }

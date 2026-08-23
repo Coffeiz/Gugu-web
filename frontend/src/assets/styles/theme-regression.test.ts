@@ -40,8 +40,24 @@ const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
 const fileSelectionToolbarVue = load('../../components/common/FileSelectionToolbar.vue')
 const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
+const primitivesCss = load('./tokens/primitives.css')
+const fontsCss = load('./fonts.css')
 
 describe('主题 CSS 回归契约', () => {
+  it('字体资源层与字体族 token 保持单一契约', () => {
+    expect((fontsCss.match(/@font-face\s*\{/g) ?? [])).toHaveLength(3)
+    expect(fontsCss).toContain("font-family: 'Gugu Source Han Sans SC';")
+    expect(fontsCss).toContain("source-han-sans-sc-regular.woff2")
+    expect(fontsCss).toContain("source-han-sans-sc-medium.woff2")
+    expect(fontsCss).toContain("source-han-sans-sc-bold.woff2")
+    expect(primitivesCss).toContain('--font-family-body: "Gugu Source Han Sans SC", var(--font-system-sans);')
+    expect(primitivesCss).toContain('--font-family-ui: var(--font-family-body);')
+    expect(primitivesCss).toContain('--font-family-heading: var(--font-family-body);')
+    expect(primitivesCss).toContain('--font-family-mono: var(--font-system-mono);')
+    expect(primitivesCss).toContain('--font-sans: var(--font-family-ui);')
+    expect(primitivesCss).toContain('--font-mono: var(--font-family-mono);')
+  })
+
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
     expect(datePickerCss).toContain(
       '.drp-day:hover:not(.sel-start):not(.sel-end):not(.in-range)',

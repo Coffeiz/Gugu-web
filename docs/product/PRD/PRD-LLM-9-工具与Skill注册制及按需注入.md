@@ -47,13 +47,13 @@
 | 工具注册 | `agent.tools.base.SkillRegistry` 已能注册 `Tool`、按领域 Skill 聚合、校验 JSON Schema、生成 OpenAI/Anthropic Schema、统一 dispatch。 | 可以复用执行注册表，但它目前只是工具执行 registry，不是统一 Capability Registry。 |
 | 工具 metadata | `Tool` 已提供短描述、category、source、权限和关联 Skill metadata；category 缺省时由现有工具组派生。 | 继续由注册 adapter 校验，不复制 89 个工具名称清单。 |
 | 默认工具规模 | `DefaultProfile` 当前启用 17 个工具组，共 89 个工具；OpenAI Schema 序列化约 62,178 字符，Anthropic 约 59,626 字符。 | “每轮减少 80k 字符”不能作为固定承诺；可确认的是当前每轮会重复注入约 60k 字符的工具 Schema，另有消息、记忆和 Skill 文案。 |
-| Skill 注册 | `agent/skills/*.md` 通过 frontmatter 扫描，`skills_index()` 返回 `slug/name/when/emoji`；`use_skill` 按需加载正文。 | 已有“Skill 正文渐进式加载”，但 metadata 仍使用 `description`/`when` 兼容字段，且没有统一 registry。 |
+| Skill 注册 | `agent/skills/*.md` 通过 frontmatter 扫描，`skills_index()` 返回 `slug/name/description_short/description_long/emoji`；`use_skill` 按需加载正文。 | 注册表负责目录发现和关联校验，常驻提示词不再复制普通 Skill 触发指针。 |
 | Skill 规模 | 默认 Profile 启用 10 个 Markdown Skill；短描述均已控制在 100 个 Unicode 字符以内，长触发说明迁移到 `description_long`。 | 注册期校验短描述；正文和长说明不进入首轮能力目录。 |
 | Profile | `BaseProfile.tool_names` 通过工具组展开；`skills` 是独立 slug 列表。 | 当前存在两套能力声明，Phase 1 要增加 adapter，而不是立即删除 Profile。 |
-| Prompt 组装 | `builder._skills_index_block()` 会把 9 个 Skill 的索引放进静态 Prompt；常驻 `prompts/skills.md` 还维护主动指针；完整工具 Schema 不由 builder 生成。 | Skill 短目录、常驻指针和工具 Schema 需要明确职责，避免三处重复描述同一能力。 |
+| Prompt 组装 | `builder._skills_index_block()` 会把注册 Skill 的短描述索引放进静态 Prompt；常驻 `prompts/skills.md` 只保留全局行为协议和少量高优先级例外；完整工具 Schema 不由 builder 生成。 | Skill metadata、常驻协议和工具 Schema 各自负责目录发现、全局约束与执行契约，避免重复描述。 |
 | Schema 注入 | `AnthropicDriver`、`OpenAIDriver`、`OllamaDriver` 都调用 `registry.*_schemas(tool_names)`；`tool_names` 来自 Profile 加 IM 白名单和 shell 过滤，没有 Capability RAG。 | Phase 3 的真正改造点在 runner/driver 之间的调用契约，不是只改 Prompt builder。 |
 | 权限 | IM 入口通过 `filter_tool_names()` 做模型可见工具裁剪，dispatch 再通过 `can_use_tool()` 做第二道检查；shell 还有工作区过滤。 | Capability RAG 查询必须复用现有权限结果，不能自行复制权限逻辑或仅靠隐藏目录实现安全控制。 |
-| Skill 与工具关联 | 目前主要依赖 `prompts/skills.md` 的主动指针和 Skill 正文中的手写工具名；工具 registry 只记录“工具组 → 工具名”，不记录 Markdown Skill 关联。 | 需要先建立关联 metadata，再逐步删除重复指针；关联错误必须在启动/快照构建时暴露。 |
+| Skill 与工具关联 | Skill frontmatter 通过 `related_tools` 声明关联工具；工具 registry 与 Capability Index 负责校验，Skill 正文负责具体做法。 | 不再在 `skills.md` 维护普通技能指针；仅保留图片识别等不能依赖普通索引显著性的高优先级例外。 |
 | LoopScope | 已有 `LLM round` 的 `tool_count`、Schema 字节数、估算 token 和 digest；另有独立的 `Tool schemas injected` context span。 | 观测层已有基础，但它记录的是当前全量 Schema，不代表“已筛选”；Phase 4 需要新增 catalog/selected/omitted 指标。 |
 | 测试 | 已覆盖 Tool JSON Schema 注册/dispatch、Provider Schema 保持不变、Capability Registry、selector、按需注入和 Skill 使用标记回归。 | Phase 4 继续补齐 Provider parity、权限和 emergency switch；RAG 召回质量归 Phase 6。 |
 
@@ -75,7 +75,7 @@
 当前工具和 Skill 有两套并行组织方式：
 
 - 工具由 `BaseSkill` 聚合，工具实例进入全局 `SkillRegistry`，并能生成 Anthropic/OpenAI 两种 Schema。
-- Skill 是 `backend/agent/skills/*.md`，通过 frontmatter 解析 `name`、`description`/`when`，由 `skills_index()` 提供索引，再通过 `use_skill` 加载正文。
+- Skill 是 `backend/agent/skills/*.md`，通过 frontmatter 解析 `name`、`description_short`、`description_long` 等注册 metadata，由 `skills_index()` 提供索引，再通过 `use_skill` 加载正文。
 - `builder.py` 会把常驻提示词、Skill 索引和动态上下文组装到 Agent 上下文。
 - 当前完整工具 Schema 会按 profile 组合后进入模型请求。工具 Schema 数量较多时，每轮都会重复传输大量参数定义。
 
@@ -700,7 +700,7 @@ backend/agent/capabilities/
 | `backend/tests/test_loop_driver_vision.py` | Phase 3 | 增加三类 Provider 对 selected Schema 的 parity 回归。 |
 | `backend/tests/test_core_loop_characterization.py` | Phase 3 | 验证新工具上下文不改变共享 Agent Loop、核验、重试和工具调用顺序。 |
 | `backend/tests/test_tool_schema_validation.py` | Phase 1～3 | 增加 registry adapter、未加载工具和按需 Schema 不影响 dispatch 校验的测试。 |
-| `backend/tests/test_agent_prompt_language.py` | Phase 2～4 | 验证短描述目录、Skill 主动规则和不泄露内部能力名的 Prompt 约束。 |
+| `backend/tests/test_agent_prompt_language.py` | Phase 2～4 | 验证短描述目录、高优先级技能例外和不泄露内部能力名的 Prompt 约束。 |
 
 #### 明确不应改动职责的文件
 

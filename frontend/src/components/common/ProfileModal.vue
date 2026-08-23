@@ -44,6 +44,7 @@
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
             <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
+            <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
             <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
           </KeepAlive>
@@ -84,6 +85,7 @@ import ProfilePreferencesPane from './ProfileModal/ProfilePreferencesPane.vue'
 import ProfileGuguPane from './ProfileModal/ProfileGuguPane.vue'
 import ProfileImPane from './ProfileModal/ProfileImPane.vue'
 import ProfileToolPermissionsPane from './ProfileModal/ProfileToolPermissionsPane.vue'
+import ProfileWorkspacesPane from './ProfileModal/ProfileWorkspacesPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
 import Icon from '@/components/common/Icon.vue'
@@ -101,8 +103,9 @@ const navItems = [
   { key: 'prefs', label: '偏好设置', icon: 'user.settings' },
   { divider: true },
   { key: 'gugu', label: '咕咕设置', icon: 'user.gugu' },
-  { key: 'tools', label: '工具权限', icon: 'admin.wrench' },
   { key: 'im', label: '接入咕咕', icon: 'communication.chat' },
+  { key: 'tools', label: '工具权限', icon: 'admin.wrench' },
+  { key: 'workspaces', label: '工作区', icon: 'admin.folder' },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
@@ -220,7 +223,7 @@ async function doDeleteAccount() {
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer; text-align: left;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-nav-item:hover { background: var(--sidebar-item-hover); color: var(--content-primary); }
+.pm-nav-item:hover:not(.active) { background: var(--sidebar-item-hover); color: var(--content-primary); }
 .pm-nav-item.active { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); font-weight: 700; border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-active-shadow); }
 .pm-nav-spacer { flex: 1; }
 .pm-logout {
@@ -279,9 +282,9 @@ async function doDeleteAccount() {
 .pm-tool-locked { padding: 11px 12px; border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-subtle); }
 .pm-coming { font-size: 11px; font-weight: 600; color: var(--content-disabled); background: var(--surface-soft); padding: 3px 10px; border-radius: var(--radius-pill); }
 
-.pm-style-group { display: flex; gap: 4px; flex-shrink: 0; }
+.pm-style-group { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 .pm-style-chip {
-  padding: 4px 11px; border-radius: var(--choice-chip-radius); border: 1px solid var(--choice-chip-border);
+  border-radius: var(--choice-chip-radius); border: 1px solid var(--choice-chip-border);
   background: var(--choice-chip-bg); color: var(--choice-chip-fg); font: 500 12px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
@@ -318,7 +321,7 @@ async function doDeleteAccount() {
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--content-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: var(--status-warning); background: var(--status-warning-bg); padding: 1px 6px; border-radius: var(--radius-xs); }
-.pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: var(--font-family-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--content-secondary); }
 .pm-switch-label.on { color: var(--action-primary); font-weight: 600; }

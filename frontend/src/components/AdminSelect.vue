@@ -2,15 +2,12 @@
   <div class="asel-wrap" ref="wrapRef">
     <div class="asel-trigger" :class="{ open: show }" :style="{ minWidth: triggerMinW + 'px' }" @click="toggle">
       <span :class="{ placeholder: !modelValue }">{{ selectedLabel }}</span>
-      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round" class="asel-chevron" :class="{ up: show }">
-        <path d="M3 6l5 5 5-5"/>
-      </svg>
+      <FlipChevron :open="show" :size="11" class="asel-chevron" />
     </div>
 
     <Teleport to="body">
       <Transition name="menu-pop">
-        <div v-if="show" class="asel-popup popup-menu-dark" :style="popupStyle">
+        <div v-if="show" class="asel-popup popup-menu-dark asel-popup--model-list" :style="popupStyle">
           <button
             v-for="opt in options" :key="opt.value"
             class="popup-menu-item"
@@ -25,6 +22,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
+import FlipChevron from '@/components/common/FlipChevron.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -110,8 +108,23 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 .asel-trigger span { flex: 1; }
 .placeholder { color: rgba(255,255,255,0.28); }
 
-.asel-chevron { color: rgba(255,255,255,0.35); flex-shrink: 0; transition: transform 0.15s; }
-.asel-chevron.up { transform: rotate(180deg); }
+.asel-chevron { color: var(--popup-item-fg-muted); }
 
 .asel-popup { min-width: 120px; }
+.asel-popup--model-list {
+  padding: var(--popup-surface-padding);
+  border: 1px solid var(--popup-surface-border);
+  border-radius: var(--popup-surface-radius);
+  background: var(--popup-surface-bg);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+.asel-popup--model-list .popup-menu-item {
+  display: block;
+  width: 100%;
+  padding: var(--popup-item-padding);
+  border-radius: var(--popup-item-radius);
+  text-align: left;
+}
 </style>

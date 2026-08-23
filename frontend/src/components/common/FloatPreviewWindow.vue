@@ -770,7 +770,7 @@ onUnmounted(() => {
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
-.fpw-info-mono { font-family: monospace; font-size: 11px; }
+.fpw-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
 
 /* ── 弹窗动画 ── */
 .info-pop-enter-active,

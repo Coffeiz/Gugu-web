@@ -319,7 +319,7 @@ watch(() => props.startDate, v => {
   font-size: var(--font-size-md); font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }
 .drp-period-caret { opacity: 0.5; flex-shrink: 0; transition: transform 0.15s; }
 .drp-period-caret.up { transform: rotate(180deg); }
@@ -349,7 +349,7 @@ watch(() => props.startDate, v => {
   border: none; background: none; cursor: pointer; padding: 0;
   font-size: var(--font-size-sm); font-weight: 500; line-height: 1;
   border-radius: 7px;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
   position: relative;
   isolation: isolate;
 }
@@ -388,7 +388,7 @@ watch(() => props.startDate, v => {
 .drp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
   font-size: var(--font-size-sm); font-weight: 500; cursor: pointer;
-  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  font-family: var(--font-family-ui);
 }
 .drp-year-btn.this-year:not(.selected) { font-weight: 700; }
 .drp-year-btn.selected {
@@ -402,7 +402,7 @@ watch(() => props.startDate, v => {
 .drp-clear, .drp-today {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
-  cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
+  cursor: pointer; font-family: var(--font-family-ui);
 }
 .drp-clear { background: none; }
 

@@ -23,6 +23,7 @@
 不真的取消；发起者本人取消则正常中断。
 """
 from agent.runtime import runtime_state as st
+from agent.command_text import normalize_command_text
 
 # intent
 PROGRESS = "progress"
@@ -84,9 +85,9 @@ _HELP_TEXT = (
 )
 
 
-def parse_command(text: str) -> str | None:
+def parse_command(text: str, *, allow_leading_mention: bool = False) -> str | None:
     """识别 `/stop` 这类斜杠命令；半角/全角斜杠都认。非命令返回 None。"""
-    t = (text or "").strip()
+    t = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
     if t[:1] not in ("/", "／"):
         return None
     return _CMD.get(t[1:].strip().lower())
@@ -147,7 +148,8 @@ def reply_awaits_answer(text: str) -> bool:
 
 
 def decide(text: str, state: str, awaiting: bool = False,
-           *, current_puid: str | None = None, active_puid: set | None = None) -> dict:
+           *, current_puid: str | None = None, active_puid: set | None = None,
+           allow_leading_mention: bool = False) -> dict:
     """返回 {action, reply?}。action：'reply'(短路直接回) / 'cancel'(置取消标志+回) /
     'no_permission'(无权取消，回一句提示) / 'agent'(入队给主 Agent)。
 
@@ -170,7 +172,7 @@ def decide(text: str, state: str, awaiting: bool = False,
         current_puid and active_puid and current_puid in active_puid
     )
 
-    cmd = parse_command(text)
+    cmd = parse_command(text, allow_leading_mention=allow_leading_mention)
     if cmd == "stop":
         return ({"action": "cancel", "reply": "🛑 已停止当前任务"} if busy
                 else {"action": "reply", "reply": "现在没有在跑的任务哦～"})
