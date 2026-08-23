@@ -6,7 +6,7 @@
         <p class="page-desc">来自用户的 Bug 报告、功能建议和其他反馈</p>
       </div>
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
@@ -17,7 +17,7 @@
         :class="{ active: filter === c.value }"
         @click="filter = c.value; page = 1; load()"
       >
-        <component :is="c.icon" :size="13" weight="bold" />
+        <Icon :name="c.icon" size="xs" />
         {{ c.label }}
       </button>
     </div>
@@ -46,13 +46,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
-import { PhArrowClockwise, PhList, PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 
 const categoryOptions = [
-  { value: '',           icon: PhList,            label: '全部' },
-  { value: 'bug',        icon: PhWarningOctagon,  label: 'Bug' },
-  { value: 'suggestion', icon: PhLightbulb,  label: '建议' },
-  { value: 'other',      icon: PhChatCircle, label: '其他' },
+  { value: '',           icon: 'action.list',            label: '全部' },
+  { value: 'bug',        icon: 'status.warning-octagon',  label: 'Bug' },
+  { value: 'suggestion', icon: 'admin.lightbulb',  label: '建议' },
+  { value: 'other',      icon: 'communication.chat', label: '其他' },
 ]
 
 const items    = ref<any[]>([])

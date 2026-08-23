@@ -31,7 +31,7 @@
           <p class="sa-card-sub">扫描物理对象与 File 表：幽灵记录（DB 有、文件丢）+ 孤儿文件（文件在、DB 无）</p>
         </div>
         <button class="sa-btn" :disabled="fileScanning" @click="scanFiles">
-          <PhMagnifyingGlass :size="15" weight="bold" />
+          <Icon name="action.search" size="sm" />
           {{ fileScanning ? '对账中…' : '扫描' }}
         </button>
       </div>
@@ -126,7 +126,7 @@
         <div class="sa-card-head-right">
           <input v-model.trim="userId" class="sa-input" placeholder="用户 ID（留空 = 全量）" @keyup.enter="scanDirs()" />
           <button class="sa-btn" :disabled="dirScanning" @click="scanDirs()">
-            <PhMagnifyingGlass :size="15" weight="bold" />
+            <Icon name="action.search" size="sm" />
             {{ dirScanning ? '对账中…' : '扫描' }}
           </button>
         </div>
@@ -136,8 +136,8 @@
 
       <template v-if="dirReport">
         <div class="fd-banner" :class="dirReport.healthy ? 'ok' : 'alert'">
-          <PhCheckCircle v-if="dirReport.healthy" :size="18" weight="fill" />
-          <PhWarningCircle v-else :size="18" weight="fill" />
+          <Icon v-if="dirReport.healthy" name="status.check-circle" size="md" />
+          <Icon v-else name="status.warning" size="md" />
           <span v-if="dirReport.healthy">目录一致，无缺失、无孤儿、无位置漂移。</span>
           <span v-else>
             发现
@@ -172,7 +172,7 @@
         </div>
 
         <div v-if="dirLastFix" class="fd-fix-result">
-          <PhCheckCircle :size="15" weight="fill" />
+          <Icon name="status.check-circle" size="sm" />
           上次修复：补齐 <b>{{ dirLastFix.created }}</b> 个缺失目录，清理 <b>{{ dirLastFix.removed }}</b> 个孤儿目录，
           搬迁 <b>{{ dirLastFix.relocated }}</b> 个位置不一致文件。
         </div>
@@ -211,7 +211,7 @@
 
         <div v-if="!dirReport.healthy" class="fd-actions">
           <button class="sa-btn primary" :disabled="dirFixing" @click="repairDirs()">
-            <PhWrench :size="15" weight="bold" />
+            <Icon name="admin.wrench" size="sm" />
             {{ dirFixBtnLabel }}
           </button>
           <span class="fd-actions-note">修复在服务端重新扫描后执行——补缺失总是安全；孤儿/位置搬迁仅在勾选确认后才动。</span>
@@ -227,7 +227,7 @@
           <p class="sa-card-sub">咕咕记忆存储格式升级（如 summary.md+summary.ts → summary.json）不会自动删旧文件，只有新文件已确认写过才判定可清；避免误删还没迁移的原始数据。</p>
         </div>
         <button class="sa-btn" :disabled="memScanning" @click="scanLegacyMemory">
-          <PhMagnifyingGlass :size="15" weight="bold" />
+          <Icon name="action.search" size="sm" />
           {{ memScanning ? '扫描中…' : '扫描' }}
         </button>
       </div>
@@ -270,7 +270,6 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PhMagnifyingGlass, PhCheckCircle, PhWarningCircle, PhWrench } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
 const adminStore = useAdminStore()

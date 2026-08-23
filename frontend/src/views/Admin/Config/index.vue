@@ -158,7 +158,7 @@
       <section id="sec-smtp" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(90,184,153,0.12);--stroke:#5ab899">
-            <PhEnvelopeSimple :size="18" />
+            <Icon name="admin.mail" size="md" />
           </div>
           <div class="card-title-block">
             <h3>邮件系统</h3>
@@ -226,7 +226,6 @@
 
 <script setup lang="ts">
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
-import { PhEnvelopeSimple } from '@phosphor-icons/vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from './components/ConfigField.vue'
@@ -490,7 +489,7 @@ async function testSmtp() {
 }
 .conn-preview {
   font-size: 11px; color: rgba(255,255,255,0.25);
-  font-family: 'SF Mono', 'Consolas', monospace;
+  font-family: var(--font-family-mono);
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .test-area { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -516,7 +515,7 @@ async function testSmtp() {
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.09); border-radius: 14px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
-  position: sticky; bottom: 0;
+  position: sticky; bottom: 12px;
 }
 .save-hint { flex: 1; font-size: 12px; color: #5ab899; display: flex; align-items: center; gap: 5px; }
 .save-hint.muted { color: rgba(255,255,255,0.3); }

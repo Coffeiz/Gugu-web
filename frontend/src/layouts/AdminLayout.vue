@@ -25,84 +25,84 @@
       <nav class="sidebar-nav">
         <div class="nav-group-label">配置</div>
         <div class="nav-item" :class="{ active: isActive('/config') }" role="link" tabindex="0" @click="go('/config')">
-          <PhGear :size="14" />
+          <Icon name="admin.settings" size="sm" />
           系统配置
         </div>
         <div class="nav-item" :class="{ active: isActive('/agent') }" role="link" tabindex="0" @click="go('/agent')">
-          <PhRobot :size="14" />
+          <Icon name="admin.robot" size="sm" />
           Agent 配置
         </div>
-        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><PhSlidersHorizontal :size="14" />行为配置</div>
-        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-usage') }" role="link" tabindex="0" @click="go('/agent-usage')"><PhChartLine :size="14" />Agent 用量</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><Icon name="admin.sliders" size="sm" />行为配置</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-usage') }" role="link" tabindex="0" @click="go('/agent-usage')"><Icon name="admin.analytics" size="sm" />Agent 用量</div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">数据</div>
         <div class="nav-item" :class="{ active: isActive('/analytics') }" role="link" tabindex="0" @click="go('/analytics')">
-          <PhChartLine :size="14" />
+          <Icon name="admin.analytics" size="sm" />
           数据总览
         </div>
         <div class="nav-item" :class="{ active: isActive('/analytics-usage') }" role="link" tabindex="0" @click="go('/analytics-usage')">
-          <PhChartBar :size="14" />
+          <Icon name="admin.bar-chart" size="sm" />
           使用分析
         </div>
         <div class="nav-item" :class="{ active: isActive('/perception') }" role="link" tabindex="0" @click="go('/perception')">
-          <PhBrain :size="14" />
+          <Icon name="admin.brain" size="sm" />
           感知诊断
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">管理</div>
         <div class="nav-item" :class="{ active: isActive('/feedback') }" role="link" tabindex="0" @click="go('/feedback')">
-          <PhFlag :size="14" />
+          <Icon name="admin.flag" size="sm" />
           用户反馈
         </div>
         <div class="nav-item" :class="{ active: isActive('/users') }" role="link" tabindex="0" @click="go('/users')">
-          <PhUsers :size="14" />
+          <Icon name="communication.team" size="sm" />
           用户管理
         </div>
         <div class="nav-item" :class="{ active: isActive('/quota') }" role="link" tabindex="0" @click="go('/quota')">
-          <PhStack :size="14" />
+          <Icon name="admin.stack" size="sm" />
           配额管理
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运维</div>
         <div class="nav-item" :class="{ active: isActive('/services') }" role="link" tabindex="0" @click="go('/services')">
-          <PhPulse :size="14" />
+          <Icon name="admin.pulse" size="sm" />
           服务状态
         </div>
         <div class="nav-item" :class="{ active: isActive('/ops') }" role="link" tabindex="0" @click="go('/ops')">
-          <PhGauge :size="14" />
+          <Icon name="admin.gauge" size="sm" />
           运维监控
         </div>
         <div class="nav-item" :class="{ active: isActive('/storage-audit') }" role="link" tabindex="0" @click="go('/storage-audit')">
-          <PhFolderSimpleDashed :size="14" />
+          <Icon name="admin.folder" size="sm" />
           存储对账
         </div>
         <div class="nav-item" :class="{ active: isActive('/storage-monitor') }" role="link" tabindex="0" @click="go('/storage-monitor')">
-          <PhChartLine :size="14" />
+          <Icon name="admin.analytics" size="sm" />
           存储监控
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运营</div>
         <div class="nav-item" :class="{ active: isActive('/notifications') }" role="link" tabindex="0" @click="go('/notifications')">
-          <PhBellRinging :size="14" />
+          <Icon name="admin.bell" size="sm" />
           通知发布
         </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">日志</div>
         <div class="nav-item" :class="{ active: isActive('/audit-log') }" role="link" tabindex="0" @click="go('/audit-log')">
-          <PhClipboard :size="14" />
+          <Icon name="admin.clipboard" size="sm" />
           操作日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/system-logs') }" role="link" tabindex="0" @click="go('/system-logs')">
-          <PhTerminal :size="14" />
+          <Icon name="admin.terminal" size="sm" />
           系统日志
         </div>
         <div class="nav-item" :class="{ active: isActive('/debug') }" role="link" tabindex="0" @click="go('/debug')">
-          <PhBug :size="14" />
+          <Icon name="admin.bug" size="sm" />
           Debug 日志
         </div>
       </nav>
@@ -116,7 +116,7 @@
             <div class="user-name">{{ adminStore.adminUser?.username ?? 'Admin' }}</div>
           </div>
           <button class="logout-btn" title="退出登录" @click="handleLogout">
-            <PhSignOut :size="14" />
+            <Icon name="user.sign-out" size="sm" />
           </button>
         </div>
       </div>
@@ -132,11 +132,6 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
-import {
-  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge, PhSlidersHorizontal,
-  PhFolderSimpleDashed,
-} from '@phosphor-icons/vue'
 
 const route = useRoute()
 const router = useRouter()

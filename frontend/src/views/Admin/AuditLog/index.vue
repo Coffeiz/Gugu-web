@@ -33,7 +33,7 @@
           导出 CSV
         </button>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -108,7 +108,6 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const actionOptions = [
   { value: '',       label: '全部操作' },
@@ -291,7 +290,7 @@ onMounted(load)
 .col-time { color: rgba(255,255,255,0.35); white-space: nowrap; font-size: 12px; }
 .col-user { color: rgba(255,255,255,0.8); font-weight: 500; }
 .col-desc { color: rgba(255,255,255,0.55); }
-.col-ip   { color: rgba(255,255,255,0.3); font-size: 12px; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; }
+.col-ip   { color: rgba(255,255,255,0.3); font-size: 12px; font-family: var(--font-family-mono); }
 
 .tag {
   display: inline-block; padding: 2px 8px; border-radius: 20px;

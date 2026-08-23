@@ -6,7 +6,7 @@
         <p class="ops-sub">分类别存储占用趋势——数据由定时任务每天落一条快照，不是实时统计（PRD-STORAGE-2）</p>
       </div>
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
@@ -46,7 +46,6 @@ import { Line } from 'vue-chartjs'
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler,
 } from 'chart.js'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import { buildStorageTrend, formatSnapshotDate, type StorageSnapshot } from './storageChart'
 

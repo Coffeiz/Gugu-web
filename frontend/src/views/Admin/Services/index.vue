@@ -11,7 +11,7 @@
           <span class="dep" :class="deps.db ? 'ok' : 'bad'">DB {{ deps.db ? '通' : '断' }}</span>
         </span>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -70,7 +70,6 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
 const adminStore = useAdminStore()

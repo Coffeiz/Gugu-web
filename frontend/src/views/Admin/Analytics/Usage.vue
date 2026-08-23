@@ -16,7 +16,7 @@
             @click="setRange(r.days)">{{ r.label }}</button>
         </div>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -34,7 +34,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhFolderPlus :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
+                <Icon name="file.folder-add" size="xs" class="ct-icon ic-teal-raw"/>
                 新建项目
               </div>
               <div class="chart-stats">
@@ -57,7 +57,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhCheckCircle :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
+                <Icon name="status.check-circle" size="xs" class="ct-icon ic-teal-raw"/>
                 项目完成
               </div>
               <div class="chart-stats">
@@ -80,7 +80,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhRobot :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
+                <Icon name="admin.robot" size="xs" class="ct-icon ic-blue-raw"/>
                 Agent 调用
               </div>
               <div class="chart-stats">
@@ -108,7 +108,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhLightning :size="14" weight="bold" class="ct-icon ic-amber-raw"/>
+                <Icon name="admin.pulse" size="xs" class="ct-icon ic-amber-raw"/>
                 Token 消耗
               </div>
               <div class="chart-stats">
@@ -136,7 +136,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhUserPlus :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
+                <Icon name="user.settings" size="xs" class="ct-icon ic-teal-raw" />
                 用户注册
               </div>
               <div class="chart-stats">
@@ -160,7 +160,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhChats :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
+                <Icon name="communication.chat" size="xs" class="ct-icon ic-blue-raw" />
                 会话深度分布
               </div>
               <div class="chart-stats">
@@ -182,7 +182,7 @@
       <div class="section-label">周活跃维度<span class="sl-hint">近 7 天「操作过」的去重用户（纯浏览未埋点、不含）</span></div>
       <div class="cards-grid col5">
         <div class="card" v-for="d in dimensions" :key="d.key">
-          <div class="card-icon ic-blue"><component :is="dimIcon(d.key)" :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon :name="dimIcon(d.key)" size="md" /></div>
           <div class="card-val">{{ d.users }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">{{ d.label }}</div>
         </div>
@@ -193,7 +193,7 @@
         <span>工具调用 Top 10</span>
         <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
           {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
-          <PhCaretDown :size="11" weight="bold" :class="{ open: toolExpanded }" />
+          <Icon name="action.down" size="xs" :class="{ open: toolExpanded }" />
         </button>
       </div>
       <div class="tool-dist" v-if="toolDist.length">
@@ -243,10 +243,6 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, BarElement, ArcElement, Tooltip, Filler
 } from 'chart.js'
-import {
-  PhUserPlus, PhFolders, PhFolderPlus, PhCheckCircle, PhRobot, PhLightning,
-  PhChats, PhCaretDown, PhCalendarBlank, PhFile, PhBellRinging, PhArrowClockwise,
-} from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
@@ -280,8 +276,8 @@ const visibleTools = computed(() =>
 const dimensions = computed(() => dims.value?.dimensions ?? [])
 
 function dimIcon(key: string) {
-  return ({ chat: PhChats, project: PhFolders, calendar: PhCalendarBlank,
-            file: PhFile, reminder: PhBellRinging } as Record<string, any>)[key] ?? PhChats
+  return ({ chat: 'communication.chat', project: 'admin.folders', calendar: 'navigation.calendar',
+            file: 'file.document', reminder: 'admin.bell' } as Record<string, string>)[key] ?? 'communication.chat'
 }
 
 const vis = computed(() => {

@@ -19,7 +19,7 @@
         @input="onSearch"
       />
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
       <span class="toolbar-count" v-if="!loading">{{ items.length }} 位用户</span>
     </div>
@@ -134,7 +134,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 

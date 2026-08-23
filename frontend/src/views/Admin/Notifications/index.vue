@@ -75,7 +75,7 @@
         <div class="history-header">
           <span class="compose-title">发送历史</span>
           <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" title="刷新">
-            <PhArrowClockwise :size="15" weight="bold" />
+            <Icon name="action.refresh" size="sm" />
           </button>
         </div>
 
@@ -103,7 +103,6 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import { showAppNotice } from '@/composables/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
@@ -286,7 +285,7 @@ onMounted(loadHistory)
 .md-nb :deep(ul), .md-nb :deep(ol) { margin: 4px 0 6px; padding-left: 18px; }
 .md-nb :deep(li) { margin: 2px 0; }
 .md-nb :deep(li > p) { margin: 0; }
-.md-nb :deep(code) { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; background: rgba(123,127,178,0.15); color: #5256ab; padding: 1px 5px; border-radius: 5px; }
+.md-nb :deep(code) { font-family: var(--font-family-mono); font-size: 11px; background: rgba(123,127,178,0.15); color: #5256ab; padding: 1px 5px; border-radius: 5px; }
 .md-nb :deep(pre) { margin: 6px 0; padding: 9px 11px; border-radius: 9px; background: rgba(20,22,40,0.07); overflow-x: auto; }
 .md-nb :deep(pre code) { background: none; color: #2b2d3c; padding: 0; font-size: 11px; line-height: 1.5; }
 .md-nb :deep(blockquote) { margin: 6px 0; padding: 2px 0 2px 10px; border-left: 2.5px solid rgba(123,127,178,0.45); color: rgba(40,44,62,0.5); }

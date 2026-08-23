@@ -98,7 +98,7 @@
         <span class="section-label">用户覆盖</span>
         <span class="section-desc">单独设置配额的用户，优先级高于全局默认</span>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="loadUsers(true)" title="刷新">
-          <PhArrowClockwise :size="14" weight="bold" />
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
 
@@ -279,7 +279,6 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useQuotaAdmin } from './useQuotaAdmin'
 
 const adminStore  = useAdminStore()

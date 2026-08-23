@@ -17,7 +17,7 @@
         </div>
         <button class="dl-btn" @click="exportData" :disabled="exporting">{{ exporting ? '导出中…' : '导出数据' }}</button>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -59,22 +59,22 @@
       <div class="section-label">总览</div>
       <div class="cards-grid">
         <div class="card">
-          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.active_users }}</div>
           <div class="card-lbl">活跃用户（≥{{ data.min_events }} 轮）</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ data.perc_total }}</div>
           <div class="card-lbl">观察数 · 纠正 {{ data.misperc_total }}</div>
         </div>
         <div class="card" :class="rateCard(data.perception_misperc_rate)">
-          <div class="card-icon ic-amber"><PhPulse :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ pct(data.perception_misperc_rate) }}</div>
           <div class="card-lbl">感知误判率（仅误读·宏平均）</div>
         </div>
         <div class="card" :class="{ 'card-active': (data.avg_ambiguity ?? 0) > ambigHi }">
-          <div class="card-icon ic-amber"><PhBrain :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="admin.brain" size="md" /></div>
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
         </div>
@@ -157,7 +157,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
-import { PhUsers, PhChats, PhPulse, PhBrain, PhArrowClockwise } from '@phosphor-icons/vue'
 
 interface PerceptionData {
   active_users?: number

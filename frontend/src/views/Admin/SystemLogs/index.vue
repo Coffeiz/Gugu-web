@@ -10,7 +10,7 @@
     <div class="toolbar">
       <AdminSelect v-model="filterLevel" :options="levelOptions" style="width:140px" />
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
       <span class="toolbar-count" v-if="filtered.length">{{ filtered.length }} 条</span>
     </div>
@@ -79,7 +79,6 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
-import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 
@@ -218,7 +217,7 @@ onMounted(load)
 }
 
 .col-time   { color: rgba(255,255,255,0.3); font-variant-numeric: tabular-nums; }
-.col-module { color: rgba(255,255,255,0.45); font-family: 'SF Mono','Fira Code',monospace; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-module { color: rgba(255,255,255,0.45); font-family: var(--font-family-mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .col-msg    { color: rgba(255,255,255,0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .level-tag {
@@ -251,7 +250,7 @@ onMounted(load)
 .lt-traceback pre {
   margin: 0; padding: 12px 14px; border-radius: 8px;
   background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.07);
-  font-family: 'SF Mono','Fira Code','Consolas',monospace;
+  font-family: var(--font-family-mono);
   font-size: 11px; line-height: 1.6;
   color: rgba(240,120,120,0.85);
   overflow-x: auto; white-space: pre;

@@ -16,7 +16,7 @@
             @click="setRange(r.days)">{{ r.label }}</button>
         </div>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+          <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -33,7 +33,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <PhPulse :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
+                <Icon name="admin.pulse" size="xs" class="ct-icon ic-blue-raw" />
                 日活跃用户
               </div>
               <div class="chart-stats">
@@ -105,12 +105,12 @@
       <div class="section-label">项目留存<span class="sl-hint">重复创建 = 真的在用；一周后仍在推进 = 项目黏性</span></div>
       <div class="cards-grid col3">
         <div class="card">
-          <div class="card-icon ic-blue"><PhFolders :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
           <div class="card-val">{{ rm.created_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">创建过项目</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-teal"><PhFolderPlus :size="16" weight="bold"/></div>
+          <div class="card-icon ic-teal"><Icon name="file.folder-add" size="md" /></div>
           <div class="card-val">{{ rm.second_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">创建过第 2 个项目</div>
           <div class="card-sub" v-if="rm.created_project_users">
@@ -118,7 +118,7 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-icon ic-amber"><PhSpinnerGap :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
           <div class="card-val">{{ rm.week_active_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">注册满一周仍有进行中项目</div>
         </div>
@@ -149,17 +149,17 @@
       <div class="section-label">对话</div>
       <div class="cards-grid col3">
         <div class="card">
-          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
           <div class="card-lbl">总量</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhMonitor :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
           <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
           <div class="card-lbl">网页对话</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhDeviceMobile :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
           <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
           <div class="card-lbl">IM 对话</div>
         </div>
@@ -169,45 +169,45 @@
       <div class="section-label">用户 · 项目</div>
       <div class="cards-grid">
         <div class="card">
-          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.users.total.toLocaleString() }}</div>
           <div class="card-lbl">注册用户</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhUserPlus :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="user.settings" size="md" /></div>
           <div class="card-val">{{ data.users.new_30d }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">新增（30 天）</div>
           <div class="card-sub">7 天内 +{{ data.users.new_7d }} 人</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhPulse :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
           <div class="card-val">{{ data.users.wau }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">周活跃（WAU）</div>
           <div class="card-sub">30 天活跃 {{ data.users.active_30d }} 人</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhChatsCircle :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
           <div class="card-val">{{ pct(data.im_bots.adoption_rate) }}<span class="card-unit">%</span></div>
           <div class="card-lbl">IM 接入率</div>
           <div class="card-sub">{{ data.im_bots.users_with_bot }} 人已接入</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><PhFolders :size="16" weight="bold"/></div>
+          <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
           <div class="card-val">{{ data.projects.total.toLocaleString() }}</div>
           <div class="card-lbl">项目总量</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-muted"><PhClock :size="16" weight="bold"/></div>
+          <div class="card-icon ic-muted"><Icon name="admin.time" size="md" /></div>
           <div class="card-val">{{ data.projects.pending }}</div>
           <div class="card-lbl">待开始</div>
         </div>
         <div class="card card-active">
-          <div class="card-icon ic-amber"><PhSpinnerGap :size="16" weight="bold"/></div>
+          <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
           <div class="card-val">{{ data.projects.active }}</div>
           <div class="card-lbl">进行中</div>
         </div>
         <div class="card card-done">
-          <div class="card-icon ic-teal"><PhCheckCircle :size="16" weight="bold"/></div>
+          <div class="card-icon ic-teal"><Icon name="status.check-circle" size="md" /></div>
           <div class="card-val">{{ data.projects.done }}</div>
           <div class="card-lbl">已完成</div>
           <div class="card-sub" v-if="data.projects.total">
@@ -227,11 +227,6 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, Tooltip, Filler
 } from 'chart.js'
-import {
-  PhUsers, PhUserPlus, PhPulse, PhChatsCircle, PhFolders, PhFolderPlus,
-  PhClock, PhSpinnerGap, PhCheckCircle, PhChats, PhMonitor, PhDeviceMobile,
-  PhArrowClockwise,
-} from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts,
