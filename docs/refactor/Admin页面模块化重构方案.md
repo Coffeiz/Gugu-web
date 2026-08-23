@@ -1,6 +1,6 @@
 # Admin 页面模块化重构方案
 
-> 状态：TODO 执行中（Phase 0、Phase 1.1–1.2、Phase 2 已完成）
+> 状态：TODO 执行中（Phase 0、Phase 1.1–1.3、Phase 2 已完成）
 >
 > 更新时间：2026-08-23
 
@@ -294,13 +294,13 @@ npm run build
 
 - [x] Phase 0：完成 Admin 入口规模、目录、职责和验证基线审查；
 - [x] Phase 1.1：能力目录迁移至 `Agent/capabilities/`，请求与状态由 `useCapabilityCatalog` 管理；
-- [ ] Phase 1.2：决策轨迹迁移至 `Agent/observability/`；
-- [ ] Phase 1.3：用量统计迁移至 `Agent/observability/`；
+- [x] Phase 1.2：决策轨迹迁移至 `Agent/observability/`；
+- [x] Phase 1.3：用量统计迁移至 `Agent/observability/`；
 
 ## 9. 当前未完成项
 
-- [ ] Agent 只读模块拆分（用量统计仍待完成）；
-- [ ] 提示词、状态文案和配置表单拆分；
+- [x] Agent 只读模块拆分（能力目录、决策轨迹、用量统计）；
+- [x] 提示词、状态文案拆分；
 - [ ] LLM 预设拆分；
 - [ ] 记忆维护拆分；
 - [ ] Agent 入口收口；

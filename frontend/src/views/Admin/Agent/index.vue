@@ -978,11 +978,12 @@
       <StateLabelsPanel v-if="activeTab === 'labels'" />
 
       <!-- ── 用量统计 ── -->
+      <UsagePanel v-if="activeTab === 'usage'" />
+      <!--
       <div v-if="activeTab === 'usage'">
         <div v-if="usageLoading && !usage" class="usage-loading">加载中…</div>
         <template v-else-if="usage">
 
-          <!-- 汇总卡片 -->
           <div class="usage-summary">
             <div class="usage-stat-card">
               <div class="usc-label">今日对话</div>
@@ -1001,10 +1002,8 @@
             </div>
           </div>
 
-          <!-- 折线图 -->
           <div class="config-card chart-card">
             <div class="chart-header">
-              <!-- 指标切换 -->
               <div class="metric-tabs">
                 <button v-for="m in metrics" :key="m.key"
                   class="metric-tab" :class="{ active: activeMetric === m.key }"
@@ -1014,7 +1013,6 @@
                   {{ activeModel }}
                 </span>
               </div>
-              <!-- 月份切换 -->
               <div class="month-nav">
                 <button class="month-arrow" :disabled="monthIndex >= usage.months.length - 1"
                   @click="switchMonth(1)">
@@ -1028,7 +1026,6 @@
               </div>
             </div>
 
-            <!-- SVG 折线图 -->
             <div class="chart-wrap" ref="chartWrap" :style="usageLoading ? 'opacity:0.5;transition:opacity 0.15s' : 'opacity:1;transition:opacity 0.15s'">
               <svg class="line-chart" :width="CHART_W" :height="CHART_H">
                 <defs>
@@ -1043,21 +1040,17 @@
                   </filter>
                 </defs>
 
-                <!-- 网格线（只画横线，更干净） -->
                 <line v-for="(y, i) in gridYs.slice(1)" :key="'gy'+i"
                   :x1="PAD_L" :y1="y" :x2="chartRight" :y2="y"
                   stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
 
-                <!-- 底部基线 -->
                 <line :x1="PAD_L" :y1="CHART_H - PAD_B"
                   :x2="chartRight" :y2="CHART_H - PAD_B"
                   stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
 
-                <!-- 填充区域 -->
                 <path v-if="chartPoints.length > 1"
                   :d="fillPath" :fill="`url(#grad-${activeMetric})`"/>
 
-                <!-- 折线 -->
                 <path v-if="chartPoints.length > 1"
                   :d="linePath"
                   fill="none" stroke="rgba(149,144,196,0.15)" stroke-width="4"
@@ -1067,13 +1060,11 @@
                   fill="none" stroke="rgba(169,164,216,0.75)" stroke-width="1.2"
                   stroke-linecap="round" stroke-linejoin="round"/>
 
-                <!-- hover 竖线 -->
                 <line v-if="hoverIdx >= 0"
                   :x1="chartPoints[hoverIdx].x" :y1="PAD_T"
                   :x2="chartPoints[hoverIdx].x" :y2="CHART_H - PAD_B"
                   stroke="rgba(255,255,255,0.1)" stroke-width="1" stroke-dasharray="4 4"/>
 
-                <!-- 数据点（只在 hover 时显示高亮点） -->
                 <g v-if="hoverIdx >= 0 && chartPoints[hoverIdx]">
                   <circle
                     :cx="chartPoints[hoverIdx].x" :cy="chartPoints[hoverIdx].y" r="5"
@@ -1083,7 +1074,6 @@
                     fill="#a9a4d8" stroke="rgba(13,13,20,0.9)" stroke-width="1.5"/>
                 </g>
 
-                <!-- 不可见的 hover 感应区（每列宽条） -->
                 <rect v-for="(pt, i) in chartPoints" :key="'hr'+i"
                   :x="pt.x - hoverColW / 2" :y="PAD_T"
                   :width="hoverColW" :height="CHART_H - PAD_T - PAD_B"
@@ -1091,20 +1081,17 @@
                   @mouseenter="hoverIdx = i" @mouseleave="hoverIdx = -1"
                   style="cursor:crosshair"/>
 
-                <!-- X 轴标签 -->
                 <text v-for="(pt, i) in xLabels" :key="'xl'+i"
                   :x="pt.x" :y="CHART_H - PAD_B + 13"
                   text-anchor="middle" font-size="9" fill="rgba(255,255,255,0.18)"
                   font-family="system-ui,sans-serif">{{ pt.label }}</text>
 
-                <!-- Y 轴标签 -->
                 <text v-for="(v, i) in gridValues.slice(0, -1)" :key="'yv'+i"
                   :x="PAD_L - 7" :y="gridYs[i] + 3"
                   text-anchor="end" font-size="9" fill="rgba(255,255,255,0.18)"
                   font-family="system-ui,sans-serif">{{ fmtNum(v) }}</text>
               </svg>
 
-              <!-- Tooltip -->
               <Transition name="tt">
                 <div v-if="hoverIdx >= 0 && chartPoints[hoverIdx]"
                   class="chart-tooltip"
@@ -1119,7 +1106,6 @@
             </div>
           </div>
 
-          <!-- 按模型分组 -->
           <div class="config-card" v-if="usage.by_model.length">
             <div class="card-head">
               <div class="card-title-block">
@@ -1157,7 +1143,7 @@
           </div>
 
         </template>
-      </div>
+      </div>-->
 
       <!-- ── 决策轨迹（只读调试）── -->
       <TracePanel v-if="activeTab === 'trace'" />
@@ -1171,6 +1157,7 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
 import TracePanel from './observability/components/TracePanel.vue'
+import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
@@ -1196,7 +1183,6 @@ const activeTab = ref('llm')
 function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
-  if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
 }
 
@@ -2090,7 +2076,7 @@ async function saveSearch(source: 'general' | 'similar') {
   }
 }
 
-// ── 用量统计 ──────────────────────────────────────────────────────────────
+/* PHASE1_USAGE_OLD_BEGIN
 const usage        = ref<any | null>(null)
 const usageLoading = ref(false)
 
@@ -2239,6 +2225,7 @@ const tooltipStyle = computed(() => {
   }
 })
 
+PHASE1_USAGE_OLD_END */
 // ── 初始化 ────────────────────────────────────────────────────────────────
 onMounted(async () => {
   await configStore.fetchConfig()
