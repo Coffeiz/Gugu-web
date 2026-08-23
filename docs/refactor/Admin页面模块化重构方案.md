@@ -49,44 +49,76 @@ frontend/src/views/Admin/Agent/components/LocalCapabilityOverrides.vue
 
 重构不改变 API、权限、配置 schema、用户文案和现有交互。视觉改版、接口改名和全局状态重构不纳入本计划。
 
-## 3. 目标目录
+## 3. Agent 设置区域与目标目录
+
+Agent 页面作为 Admin 下独立的“Agent 设置区域”，边界固定在：
+
+```text
+路由：/admin/agent
+入口：frontend/src/views/Admin/Agent/index.vue
+权限：沿用现有 Admin 权限与 adminStore.authFetch
+```
+
+不新增全局 Agent Store，也不把 Agent 配置组件放入 `frontend/src/components/common`。只有确认跨 Admin 页面复用后，才将纯 UI 组件上移。
+
+内部按功能域分目录，避免继续形成一个扁平的大组件目录：
 
 ```text
 frontend/src/views/Admin/
 ├── Agent/
 │   ├── index.vue                         # 页面壳、Tab、模块组合
-│   ├── api.ts                            # Agent Admin 请求
-│   ├── components/
-│   │   ├── CapabilityCatalogPanel.vue
-│   │   ├── LlmPresetsPanel.vue
-│   │   ├── LlmPresetEditor.vue
-│   │   ├── PromptPanel.vue
-│   │   ├── StateLabelsPanel.vue
-│   │   ├── BehaviorConfigPanel.vue
-│   │   ├── SearchConfigPanel.vue
-│   │   ├── VoiceConfigPanel.vue
-│   │   ├── EmbeddingConfigPanel.vue
-│   │   ├── MemoryMaintenancePanel.vue
-│   │   ├── ImMemoryMaintenancePanel.vue
-│   │   ├── UsagePanel.vue
-│   │   ├── TracePanel.vue
-│   │   └── LocalCapabilityOverrides.vue # 已存在，保留并完善类型
-│   ├── composables/
-│   │   ├── useCapabilityCatalog.ts
-│   │   ├── useLlmPresets.ts
+│   ├── api/                              # Agent 设置区域专属请求
+│   │   ├── capabilities.ts
+│   │   ├── llmPresets.ts
+│   │   ├── prompts.ts
+│   │   ├── memory.ts
+│   │   └── observability.ts
+│   ├── capabilities/                     # 能力目录与本地能力覆盖
+│   │   ├── components/
+│   │   │   ├── CapabilityCatalogPanel.vue
+│   │   │   └── LocalCapabilityOverrides.vue
+│   │   └── useCapabilityCatalog.ts
+│   ├── models/                           # LLM 预设、模型列表和能力探测
+│   │   ├── components/
+│   │   │   ├── LlmPresetsPanel.vue
+│   │   │   ├── LlmPresetEditor.vue
+│   │   │   └── ProviderCapabilityProbe.vue
+│   │   └── useLlmPresets.ts
+│   ├── prompting/                        # 系统提示词与状态文案
+│   │   ├── components/
+│   │   │   ├── PromptPanel.vue
+│   │   │   └── StateLabelsPanel.vue
 │   │   ├── usePromptConfig.ts
-│   │   ├── useStateLabels.ts
+│   │   └── useStateLabels.ts
+│   ├── runtime-config/                   # 行为、搜索、语音、Embedding
+│   │   ├── components/
+│   │   │   ├── BehaviorConfigPanel.vue
+│   │   │   ├── SearchConfigPanel.vue
+│   │   │   ├── VoiceConfigPanel.vue
+│   │   │   └── EmbeddingConfigPanel.vue
 │   │   ├── useAgentConfig.ts
 │   │   ├── useSearchConfig.ts
 │   │   ├── useVoiceConfig.ts
-│   │   ├── useEmbeddingConfig.ts
+│   │   └── useEmbeddingConfig.ts
+│   ├── memory/                           # 个人记忆与 IM 记忆维护
+│   │   ├── components/
+│   │   │   ├── MemoryMaintenancePanel.vue
+│   │   │   └── ImMemoryMaintenancePanel.vue
 │   │   ├── useMemoryMaintenance.ts
-│   │   ├── useImMemoryMaintenance.ts
+│   │   └── useImMemoryMaintenance.ts
+│   ├── observability/                    # 用量与决策轨迹
+│   │   ├── components/
+│   │   │   ├── UsagePanel.vue
+│   │   │   └── TracePanel.vue
+│   │   ├── utils/
+│   │   │   ├── traceSteps.ts
+│   │   │   └── usageChart.ts
 │   │   ├── useUsage.ts
 │   │   └── useTrace.ts
-│   └── utils/
-│       ├── traceSteps.ts
-│       └── usageChart.ts
+│   └── shared/                           # 仅限 Agent 区域内部复用的 UI/类型
+│       ├── components/
+│       ├── types.ts
+│       └── formatters.ts
 ├── Analytics/
 │   ├── components/                       # 图表、筛选器、详情
 │   └── composables/
@@ -96,7 +128,16 @@ frontend/src/views/Admin/
 └── ...
 ```
 
-目录不要求一次性创建。只有在模块迁移并通过验证后才保留新文件，禁止新旧实现长期并行。
+目录不要求一次性创建。每个功能域迁移时再创建对应目录；只有在模块迁移并通过验证后才保留新文件，禁止新旧实现长期并行。
+
+### Agent 设置区域的边界规则
+
+- `Agent/index.vue` 只负责页面标题、Tab、模块挂载和页面级初始化；
+- `Agent/api/` 只负责 Agent Admin API，不承载响应式状态；
+- 功能域目录内部可以有自己的 components/composable/utils，但不能直接修改其他功能域的 ref；
+- `shared/` 只放 Agent 区域内至少被两个功能域复用的内容，避免过早成为全局杂物目录；
+- 其他 Admin 页面不得直接 import Agent 功能域内部实现；如需复用，先提炼到明确的 Admin common 组件并补测试；
+- 路由、导航标题和权限标识保持不变，目录拆分不改变外部 URL。
 
 ## 4. 执行批次
 
