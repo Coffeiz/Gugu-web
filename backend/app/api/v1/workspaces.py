@@ -15,6 +15,8 @@ from app.services.workspaces import (
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
+    effective_shell_personal_enabled,
+    effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
     update_workspace,
@@ -45,8 +47,13 @@ async def list_workspaces(
     )).all())
     return {
         "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "workspaceGlobalEnabled": bool(get_settings().agent.shell_workspace_enabled),
+        "personalGlobalEnabled": bool(get_settings().agent.shell_personal_enabled),
+        "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
+        "userPersonalEnabled": await effective_shell_personal_enabled(db, user.id),
+        "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
     }
@@ -145,4 +152,20 @@ async def current_workspace(
     if row is None:
         raise HTTPException(status_code=404, detail="会话不存在")
     workspace = await get_workspace(db, user.id, row.workspace_id) if row.workspace_id else None
-    return {"sessionId": session_id, "workspace": _response(workspace) if workspace else None}
+    return {"sessionId": session_id, "shellScope": row.shell_scope or ("workspace" if workspace else "off"), "workspace": _response(workspace) if workspace else None}
+
+
+@router.put("/session/{session_id}/shell-scope")
+async def set_shell_scope(
+    session_id: int, body: dict,
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    from app.services.workspaces import set_session_shell_scope
+    try:
+        row = await set_session_shell_scope(db, user.id, session_id, str(body.get("scope") or "off"))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return {"sessionId": row.id, "shellScope": row.shell_scope}

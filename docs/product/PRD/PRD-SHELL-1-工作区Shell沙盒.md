@@ -16,15 +16,28 @@
 
 ## 3. 版本策略
 
-本 PRD 按执行链路拆成六个阶段。先完成权限和工作区基础，再落地本机执行器，最后补工具注册、确认门、审计和回归测试。每一阶段都保持可独立验证，不提前暴露尚未实现的 Shell 工具。
+本 PRD 按执行链路拆成六个阶段。先完成权限和执行范围基础，再落地本机执行器，最后补工具注册、确认门、审计和回归测试。每一阶段都保持可独立验证，不提前暴露尚未实现的 Shell 工具。
+
+### 执行范围
+
+会话通过 `shell_scope` 明确选择执行范围，不能用“未绑定工作区”隐式推断全局权限：
+
+| 范围 | 根目录 | 说明 |
+|---|---|---|
+| `off` | 无 | 默认值，工具不注入也不能执行 |
+| `workspace` | 当前工作区 | 保留原有行为，要求绑定启用的工作区 |
+| `personal` | 当前用户的文件库根目录 | 个人 Agent 场景，不要求绑定工作区 |
+| `system` | 系统根目录 | 最高权限，必须由 Admin、用户和会话分别开启；默认关闭 |
+
+Admin 对各范围分别提供总开关。Admin 未开启的范围不会出现在个人设置中，而不是仅显示为不可点击。用户使用 `/shell workspace|personal|system|off` 选择当前会话范围；解除工作区绑定不会自动开启其他范围。
 
 ### 3.1 当前阶段：权限与执行器基础
 
 - Admin 总开关默认关闭。
 - 关闭时完全不注册 Shell 工具，并在 dispatch 层拒绝旧请求。
-- 开启后仍需同时满足用户开关和 session 工作区绑定。
+- 开启后仍需同时满足对应范围的用户开关和 session `shell_scope`；`personal` 不需要工作区绑定，`system` 仍需额外的危险命令确认门。
 - “本机执行”仅指使用当前系统用户权限，不等于 root、`sudo` 或系统级权限。
-- 本机执行器不接受宿主机绝对路径，不允许工作区外访问。
+- 工作区和个人范围不接受宿主机绝对路径，不允许根目录外访问；系统范围仅在独立 Admin/用户开关均开启时可用。
 - 保留执行超时、输出大小、后台进程和敏感路径等边界。
 - 危险命令另设独立的 Admin 总开关和用户个人开关，两个开关默认关闭。
 - 危险命令即使两个开关都开启，仍必须经过现有逐次确认门。
@@ -374,9 +387,9 @@ backend/tests/test_workspace_binding.py
 ### Phase 0：权限与契约冻结
 
 - [x] 增加 Admin `shell_enabled` 总开关，默认 `false`（配置模型、Admin 行为配置页已接入）。
-- [x] 明确工具不可见条件：Admin 关闭、用户关闭、session 未绑定 workspace 任一成立时均不注册。
+- [x] 明确工具不可见条件：Admin 总开关关闭、对应范围关闭、用户范围开关关闭或 session scope 为 `off` 时均不注册。
 - [x] 开关变更后立即刷新配置，不依赖重启（复用现有 override 热更新）。
-- [x] 限制当前实现只使用当前系统用户权限，不开放 root/system scope。
+- [x] 将 `workspace`、`personal`、`system` 作为独立范围；`system` 默认关闭且不等同于 root 提权。
 - [x] 冻结输入、输出、错误脱敏和审计字段。
 
 ### Phase 1：本机执行器核心
@@ -394,18 +407,21 @@ backend/tests/test_workspace_binding.py
 - [x] 支持文件夹和项目转换为 workspace，并解析真实根目录。
 - [x] 增加用户 `shell_enabled` 偏好（复用 `user_preferences` JSON）。
 - [x] 增加 `ConversationSession.workspace_id` 及迁移。
+- [x] 增加 `ConversationSession.shell_scope` 及迁移，旧工作区绑定按 `workspace` 兼容。
 - [x] 新会话默认不绑定 workspace。
 - [x] 实现工作区列表、创建、绑定和解除绑定 API。
 - [x] 在执行前验证 workspace 用户归属、启用状态和真实根目录。
 - [x] 增加 `/workspace` 命令，支持查看当前绑定、`list` 列出可绑定工作区、绑定和解除绑定。
+- [x] 增加 `/shell` 命令，支持选择 `workspace`、`personal`、`system`、`off`。
+- [x] 增加个人文件库根目录解析；系统范围使用独立策略，不复用工作区路径。
 
 ### Phase 3：工具注册与模型提示
 
 - [x] 注册 `shell` 工具 schema 和统一返回值。
-- [x] 仅在全局开关、用户开关、session workspace 均满足时向模型暴露工具。
+- [x] 仅在总开关、对应范围 Admin 开关、用户范围开关和 session scope 均满足时向模型暴露工具。
 - [x] 增加 `shell-workspace` 技能和 `prompts/skills.md` 主动指针。
-- [x] 在动态提示词中显示当前 workspace 名称、相对 cwd 和权限状态。
-- [x] 明确模型规则：先确认 workspace，再执行；不能猜测默认目录；不能自行扩大范围。
+- [x] 在动态提示词中显示当前 Shell 范围、workspace 名称、相对 cwd 和权限状态。
+- [x] 明确模型规则：先确认 Shell 范围再执行；不能猜测默认目录；不能自行扩大范围。
 
 ### Phase 4：风险控制与审计（已完成本地执行器范围）
 
@@ -414,6 +430,8 @@ backend/tests/test_workspace_binding.py
 - [x] dispatch、执行器启动前和执行过程中再次校验权限快照；撤权后终止进程组。
 - [x] 记录结构化审计，不记录完整命令、输出、Token 或敏感路径。
 - [x] 增加同一 session 串行锁，避免 workspace 切换与执行竞态。
+- [x] Admin 按范围提供总开关；关闭的范围在个人设置中直接隐藏。
+- [x] 增加个人范围、系统范围和未选择范围的回归测试。
 
 - [x] Admin 页面增加总开关。
 - [x] Admin 页面增加危险 Shell 命令总开关，默认关闭。

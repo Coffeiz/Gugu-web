@@ -191,6 +191,19 @@
             </button>
           </div>
 
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
+            <div class="behavior-label"><span>工作区 Shell</span><span class="behavior-desc">允许在已绑定工作区内执行受控命令。</span></div>
+            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_workspace_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_workspace_enabled" @click="agentDraft.shell_workspace_enabled = !agentDraft.shell_workspace_enabled; saveBehavior()"><span class="toggle-knob" /></button>
+          </div>
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
+            <div class="behavior-label"><span>个人目录 Shell</span><span class="behavior-desc">允许用户在自己的文件目录中使用 Shell，不需要绑定工作区。</span></div>
+            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_personal_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_personal_enabled" @click="agentDraft.shell_personal_enabled = !agentDraft.shell_personal_enabled; saveBehavior()"><span class="toggle-knob" /></button>
+          </div>
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
+            <div class="behavior-label"><span>系统范围 Shell</span><span class="behavior-desc">允许访问系统范围，风险最高；建议仅本地管理员使用。</span></div>
+            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_system_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_system_enabled" @click="agentDraft.shell_system_enabled = !agentDraft.shell_system_enabled; saveBehavior()"><span class="toggle-knob" /></button>
+          </div>
+
           <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
               <span>危险 Shell 命令</span>

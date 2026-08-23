@@ -10,7 +10,7 @@ from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
 from agent.sandbox import LocalWorkspaceSandbox
 from agent.tools.base import BaseSkill, Tool
-from app.services.workspaces import resolve_workspace_root
+from app.services.workspaces import resolve_shell_root
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ async def _shell(db, user_id, args: dict):
     started = time.monotonic()
     risk = "unknown"
     workspace_id = None
+    scope = None
     result = None
     event = "completed"
     try:
@@ -36,12 +37,14 @@ async def _shell(db, user_id, args: dict):
         if isinstance(result, dict):
             risk = result.pop("_risk", risk)
             workspace_id = result.pop("_workspace_id", None)
+            scope = result.pop("_scope", None)
             event = result.pop("_audit_event", event)
         _audit(
             event=event,
             user_id=fingerprint(str(user_id)),
             session_id=session_id,
             workspace_id=workspace_id,
+            scope=scope,
             risk=risk,
             ok=result.get("ok") if isinstance(result, dict) else False,
             exit_code=result.get("exit_code") if isinstance(result, dict) else None,
@@ -71,12 +74,12 @@ async def _run_shell(db, user_id, args: dict):
         if blocked is not None:
             return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "confirmation_required"}
 
-    root = await resolve_workspace_root(db, user_id, decision.workspace_id)
+    root = await resolve_shell_root(db, user_id, decision.scope.value, decision.workspace_id)
     if root is None:
-        return {"error": "当前工作区没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "denied"}
+        return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
     async def authorization_check() -> bool:
         current = await evaluate(db, user_id, session_id, command, confirm=True)
-        return current.allowed and current.workspace_id == decision.workspace_id
+        return current.allowed and current.workspace_id == decision.workspace_id and current.scope == decision.scope
     try:
         result = await LocalWorkspaceSandbox(root).execute(
             command,
@@ -86,7 +89,7 @@ async def _run_shell(db, user_id, args: dict):
             authorization_check=authorization_check,
         )
     except ValueError as exc:
-        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "rejected"}
+        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "rejected"}
     return {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -95,10 +98,12 @@ async def _run_shell(db, user_id, args: dict):
         "timed_out": result.timed_out,
         "truncated": result.truncated,
         "workspace_id": decision.workspace_id,
+        "scope": decision.scope.value,
         "cwd": result.cwd,
         "permission_revoked": result.permission_revoked,
         "_risk": decision.risk.value,
         "_workspace_id": decision.workspace_id,
+        "_scope": decision.scope.value,
         "_audit_event": "permission_revoked" if result.permission_revoked else "completed",
     }
 
@@ -108,11 +113,11 @@ class ShellSkill(BaseSkill):
     tools = [
         Tool(
             name="shell",
-            label="执行工作区命令",
+            label="执行 Shell 命令",
             description=(
-                "在当前会话已绑定的工作区内执行一条受控命令。只能使用相对 cwd，"
-                "不支持管道、重定向或命令替换；没有工作区时不要调用。先用 /workspace 查看或绑定工作区，"
-                "危险命令会先要求用户确认。session_id 必须使用系统提示提供的当前会话 ID。"
+                "在当前会话选定的 Shell 范围内执行一条受控命令。范围可能是工作区、个人文件目录或系统；"
+                "只能使用相对 cwd，不支持管道、重定向或命令替换。危险命令会先要求用户确认；"
+                "没有可用 Shell 范围时不要调用。session_id 必须使用系统提示提供的当前会话 ID。"
             ),
             input_schema={
                 "type": "object",

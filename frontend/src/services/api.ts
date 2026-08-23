@@ -417,13 +417,14 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; userEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; workspaceGlobalEnabled: boolean; personalGlobalEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userPersonalEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
   bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
+  setShellScope: (sessionId: number, scope: 'off' | 'workspace' | 'personal' | 'system') => request('PUT', `/workspaces/session/${sessionId}/shell-scope`, { scope }),
 }
 
 export const notificationsApi = {

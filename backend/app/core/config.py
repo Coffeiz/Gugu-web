@@ -145,6 +145,9 @@ class AIPresets(BaseModel):
 class AgentBehaviorSettings(BaseModel):
     # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
     shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
+    shell_workspace_enabled: bool = Field(True, description="是否允许 Shell 访问已绑定工作区")
+    shell_personal_enabled: bool = Field(False, description="是否允许 Shell 访问用户个人文件目录")
+    shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
     shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")

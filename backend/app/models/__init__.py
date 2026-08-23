@@ -412,6 +412,7 @@ class ConversationSession(Base):
     workspace_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    shell_scope: Mapped[str] = mapped_column(String(20), default="off", server_default="off")
     # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
     context_epoch: Mapped[int] = mapped_column(Integer, default=1)
     session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)

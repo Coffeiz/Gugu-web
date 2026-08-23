@@ -4,6 +4,7 @@
 - `/forget <内容>`（/忘记 /忘掉）  让咕咕忘掉对得上的那条（profile 或 pattern 都会找）
 - `/compact`（/压缩）  立即压缩当前会话的旧历史
 - `/workspace`（/工作区）  查看、绑定或解除当前会话工作区
+- `/shell`（/命令行）  选择当前会话的 Shell 范围：workspace / personal / system / off
 
 在 web `stream()` 短路返回（像配额硬拦那样 typed_stream 回一句）；IM 侧在 worker.handle()
 消费后、跑 agent 之前同样短路（飞书/QQ/微信用户同享隐私控制权，P0-5）。
@@ -23,6 +24,7 @@ _MEMORY_NAMES = {"memory", "mem", "记忆", "记得", "你记得什么", "记得
 _FORGET_NAMES = {"forget", "忘记", "忘掉", "忘了"}
 _COMPACT_NAMES = {"compact", "压缩", "整理上下文"}
 _WORKSPACE_NAMES = {"workspace", "工作区", "工作空间"}
+_SHELL_NAMES = {"shell", "命令行", "终端"}
 
 
 def _parse(text: str, *, allow_leading_mention: bool = False):
@@ -52,6 +54,8 @@ async def handle(user_id, text: str, *, session_id: int | None = None,
         return await _compact(user_id, session_id)
     if name in _WORKSPACE_NAMES:
         return await _workspace(user_id, session_id, arg)
+    if name in _SHELL_NAMES:
+        return await _shell_scope(user_id, session_id, arg)
     return None
 
 
@@ -124,6 +128,30 @@ async def _workspace(user_id, session_id: int | None, arg: str) -> str:
                 return str(exc)
             await db.commit()
             return f"已将当前会话绑定到工作区 {workspace_id}。"
+
+
+async def _shell_scope(user_id, session_id: int | None, arg: str) -> str:
+    if not session_id:
+        return "当前还没有会话，暂时不能选择 Shell 范围。"
+    from app.db import session as db_session
+    from agent.security.shell_policy import session_shell_lock
+    from app.services.workspaces import get_session_shell_scope, set_session_shell_scope
+    aliases = {"工作区": "workspace", "workspace": "workspace", "个人": "personal", "personal": "personal", "全局": "system", "系统": "system", "system": "system", "off": "off", "none": "off", "关闭": "off"}
+    value = (arg or "").strip().lower()
+    async with session_shell_lock(session_id):
+        async with db_session._SessionLocal() as db:
+            if not value:
+                return f"当前 Shell 范围：{await get_session_shell_scope(db, user_id, session_id)}。可选 workspace、personal、system、off。"
+            scope = aliases.get(value)
+            if scope is None:
+                return "用法：/shell 查看，/shell workspace、/shell personal、/shell system 或 /shell off。"
+            try:
+                await set_session_shell_scope(db, user_id, session_id, scope)
+            except (LookupError, ValueError) as exc:
+                return str(exc)
+            await db.commit()
+            labels = {"off": "关闭", "workspace": "当前工作区", "personal": "个人文件目录", "system": "系统范围"}
+            return f"已将当前会话 Shell 范围设为：{labels[scope]}。"
 
 
 async def _show_memory(user_id) -> str:

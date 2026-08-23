@@ -96,11 +96,13 @@ async def bind_session(db: AsyncSession, user_id, session_id: int, workspace_id:
         raise LookupError("会话不存在")
     if workspace_id is None:
         session.workspace_id = None
+        session.shell_scope = "off"
     else:
         workspace = await get_workspace(db, user_id, workspace_id)
         if workspace is None or not workspace.enabled:
             raise LookupError("工作区不存在或已停用")
         session.workspace_id = workspace.id
+        session.shell_scope = "workspace"
     await db.flush()
     return session
 
@@ -111,6 +113,20 @@ async def effective_shell_enabled(db: AsyncSession, user_id) -> bool:
         select(UserPreferences).where(UserPreferences.user_id == user_id)
     )).scalar_one_or_none()
     return bool(prefs and prefs.data.get("shell_enabled", False))
+
+
+async def effective_shell_personal_enabled(db: AsyncSession, user_id) -> bool:
+    prefs = (await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == user_id)
+    )).scalar_one_or_none()
+    return bool(prefs and prefs.data.get("shell_personal_enabled", False))
+
+
+async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
+    prefs = (await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == user_id)
+    )).scalar_one_or_none()
+    return bool(prefs and prefs.data.get("shell_system_enabled", False))
 
 
 async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
@@ -127,6 +143,28 @@ async def describe_session(db: AsyncSession, user_id, session_id: int) -> Worksp
     if session is None or session.workspace_id is None:
         return None
     return await get_workspace(db, user_id, session.workspace_id)
+
+
+async def get_session_shell_scope(db: AsyncSession, user_id, session_id: int) -> str:
+    session = await get_owned(db, ConversationSession, session_id, user_id)
+    if session is None:
+        raise LookupError("会话不存在")
+    if session.shell_scope == "off" and session.workspace_id is not None:
+        return "workspace"
+    return session.shell_scope or "off"
+
+
+async def set_session_shell_scope(db: AsyncSession, user_id, session_id: int, scope: str) -> ConversationSession:
+    if scope not in {"off", "workspace", "personal", "system"}:
+        raise ValueError("Shell 范围无效")
+    session = await get_owned(db, ConversationSession, session_id, user_id)
+    if session is None:
+        raise LookupError("会话不存在")
+    if scope == "workspace" and session.workspace_id is None:
+        raise ValueError("当前会话未绑定工作区")
+    session.shell_scope = scope
+    await db.flush()
+    return session
 
 
 async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:
@@ -174,3 +212,23 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
     if not logical:
         return None
     return (Path(settings.storage.local_path).resolve() / str(user_id) / logical).resolve()
+
+
+async def resolve_personal_shell_root(db: AsyncSession, user_id) -> Path | None:
+    """用户个人文件根目录；个人 Shell 不得把用户目录外的路径当作工作区。"""
+    settings = get_settings()
+    if settings.storage.backend != "local":
+        return None
+    root = (Path(settings.storage.local_path).resolve() / str(user_id)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+async def resolve_shell_root(db: AsyncSession, user_id, scope: str, workspace_id: int | None) -> Path | None:
+    if scope == "workspace":
+        return await resolve_workspace_root(db, user_id, workspace_id) if workspace_id else None
+    if scope == "personal":
+        return await resolve_personal_shell_root(db, user_id)
+    if scope == "system":
+        return Path("/").resolve()
+    return None

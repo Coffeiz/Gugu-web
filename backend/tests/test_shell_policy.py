@@ -15,15 +15,21 @@ def test_shell_risk_scans_the_whole_command():
 
 
 class _PolicyDB:
+    def __init__(self):
+        self.session = SimpleNamespace(user_id="user-1", workspace_id=7, shell_scope="workspace")
+
     async def get(self, model, identifier):
         if model.__name__ == "ConversationSession":
-            return SimpleNamespace(user_id="user-1", workspace_id=7)
+            return self.session
         return SimpleNamespace(user_id="user-1", enabled=True, id=7)
 
 
 def _settings(*, shell=True, dangerous=False):
     return SimpleNamespace(agent=SimpleNamespace(
         shell_enabled=shell,
+        shell_workspace_enabled=True,
+        shell_personal_enabled=False,
+        shell_system_enabled=False,
         shell_dangerous_enabled=dangerous,
     ))
 
@@ -66,6 +72,45 @@ async def test_dangerous_shell_keeps_confirmation_gate(monkeypatch):
 
     assert pending.allowed and pending.needs_confirmation
     assert confirmed.allowed and not confirmed.needs_confirmation
+
+
+@pytest.mark.asyncio
+async def test_unbound_session_does_not_become_global_shell(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="off")
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True))
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    assert not decision.allowed
+    assert decision.scope.value == "off"
+
+
+@pytest.mark.asyncio
+async def test_personal_scope_requires_admin_and_user_switches(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="personal")
+    settings = _settings(shell=True)
+    settings.agent.shell_personal_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_personal_enabled", lambda *_: _true())
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    assert decision.allowed
+    assert decision.scope.value == "personal"
+    settings.agent.shell_personal_enabled = False
+    denied = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    assert not denied.allowed
+
+
+@pytest.mark.asyncio
+async def test_system_scope_is_separate_from_personal_scope(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="system")
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    assert decision.allowed
+    assert decision.scope.value == "system"
 
 
 async def _true():

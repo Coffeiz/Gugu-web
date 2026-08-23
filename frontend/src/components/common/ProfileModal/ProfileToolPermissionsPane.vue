@@ -5,14 +5,15 @@
       <div v-if="loading" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">正在读取权限状态</span></div><div class="pm-static">—</div></div>
       <template v-else>
         <div v-if="globalEnabled" class="pm-tool-rows">
-          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell 工具</span><span class="pm-field-hint">允许咕咕在你明确绑定的工作区中执行受控命令；新对话默认不会绑定工作区。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellEnabled }" type="button" :aria-pressed="prefsStore.shellEnabled" aria-label="切换 Shell 工具权限" @click="prefsStore.saveShellEnabled(!prefsStore.shellEnabled)"><span class="toggle-knob" /></button></div>
-          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；每次具体操作仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellDangerousEnabled, disabled: !dangerousGlobalEnabled }" type="button" :disabled="!dangerousGlobalEnabled" :aria-pressed="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @click="prefsStore.saveShellDangerousEnabled(!prefsStore.shellDangerousEnabled)"><span class="toggle-knob" /></button></div>
-          <div v-if="!dangerousGlobalEnabled" class="pm-field-hint pm-tool-subhint">管理员尚未开启危险 Shell 命令。</div>
+          <div v-if="workspaceGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">工作区 Shell</span><span class="pm-field-hint">允许咕咕在当前会话绑定的工作区中执行受控命令。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellEnabled }" type="button" :aria-pressed="prefsStore.shellEnabled" aria-label="切换工作区 Shell 权限" @click="prefsStore.saveShellEnabled(!prefsStore.shellEnabled)"><span class="toggle-knob" /></button></div>
+          <div v-if="personalGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">个人目录 Shell</span><span class="pm-field-hint">允许咕咕在你的个人文件目录中工作，不需要绑定工作区。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellPersonalEnabled }" type="button" :aria-pressed="prefsStore.shellPersonalEnabled" aria-label="切换个人目录 Shell 权限" @click="prefsStore.saveShellPersonalEnabled(!prefsStore.shellPersonalEnabled)"><span class="toggle-knob" /></button></div>
+          <div v-if="systemGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">系统范围 Shell</span><span class="pm-field-hint">允许访问系统范围；请只在明确需要时开启，危险命令仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellSystemEnabled }" type="button" :aria-pressed="prefsStore.shellSystemEnabled" aria-label="切换系统 Shell 权限" @click="prefsStore.saveShellSystemEnabled(!prefsStore.shellSystemEnabled)"><span class="toggle-knob" /></button></div>
+          <div v-if="dangerousGlobalEnabled" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；每次具体操作仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellDangerousEnabled }" type="button" :aria-pressed="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @click="prefsStore.saveShellDangerousEnabled(!prefsStore.shellDangerousEnabled)"><span class="toggle-knob" /></button></div>
         </div>
       </template>
     </div>
     <div class="pm-sep"></div>
-    <div class="pm-section"><div class="pm-section-label">说明</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-hint">开启个人开关不会自动授权系统目录，也不会自动选择工作区。实际使用还需要会话绑定一个可用工作区。</span></div></div></div>
+    <div class="pm-section"><div class="pm-section-label">说明</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-hint">开启个人开关不会自动执行命令。需要在当前会话使用 /shell personal、/shell workspace 或 /shell system 选择范围；/shell off 可关闭。</span></div></div></div>
   </div>
 </template>
 <script setup lang="ts">
@@ -22,8 +23,11 @@ import { workspacesApi } from '@/services/api'
 const prefsStore = usePreferencesStore()
 const loading = ref(true)
 const globalEnabled = ref(false)
+const workspaceGlobalEnabled = ref(false)
+const personalGlobalEnabled = ref(false)
+const systemGlobalEnabled = ref(false)
 const dangerousGlobalEnabled = ref(false)
-onMounted(async () => { try { const status = await workspacesApi.status(); globalEnabled.value = status.globalEnabled; dangerousGlobalEnabled.value = status.dangerousGlobalEnabled } finally { loading.value = false } })
+onMounted(async () => { try { const status = await workspacesApi.status(); globalEnabled.value = status.globalEnabled; workspaceGlobalEnabled.value = status.workspaceGlobalEnabled; personalGlobalEnabled.value = status.personalGlobalEnabled; systemGlobalEnabled.value = status.systemGlobalEnabled; dangerousGlobalEnabled.value = status.dangerousGlobalEnabled } finally { loading.value = false } })
 </script>
 
 <style>
