@@ -9,7 +9,8 @@
 本 PRD 是 `PRD-RAG-1` 的首个单来源落地方案，只负责 Memory 来源和记忆专用
 `search_memory` 工具。通用 `IndexDocument`、切片、索引版本、BM25/Embedding
 基础设施、结果预算和诊断字段以 RAG-1 为准；本文件只补充记忆来源的字段映射、
-IM scope 权限和工具行为。未来跨来源召回使用 `rag_recall`，不在本文件中复制实现。
+IM scope 权限和工具行为。未来跨来源召回复用 RAG-1 的内部 Retriever/Service，
+不新增 `rag_recall` Agent 工具，也不在本文件中复制通用索引实现。
 
 ## 0. 实施状态
 
@@ -50,6 +51,7 @@ Memory 映射，不另起一套协议。
   "query": "之前讨论过的部署方案",
   "scope": "auto",
   "source": "all",
+  "strategy": "auto",
   "limit": 5
 }
 ```
@@ -59,7 +61,12 @@ Memory 映射，不另起一套协议。
 - `query`：必填，由 LLM 提炼成适合检索的关键词或短语。
 - `scope`：`auto`、`current_group`、`all_my_groups`、`private_memory`；后端必须按身份权限二次校验。
 - `source`：`pattern`、`daily`、`memory`、`all`。
+- `strategy`：`auto`、`bm25`、`embedding`、`ilike`。`auto` 由后端按配置和查询特征选择；
+  `embedding` 未配置或不可用时必须退回 BM25，`ilike` 只做数据库子串匹配，不承诺语义相关性。
 - `limit`：默认 5，后端强制限制为 1～10，不能由模型扩大上限。
+
+默认建议使用 `auto`。只有排查召回、精确查找或离线对比时，才由 Agent 显式指定策略；
+后端仍需强制执行 scope、结果数量、字符预算和超时限制。
 
 返回结果包含：
 

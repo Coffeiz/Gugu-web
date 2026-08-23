@@ -1,6 +1,7 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：基础设施部分就绪，Knowledge RAG 尚未接入；Capability RAG 后置于 `PRD-LLM-9` Phase 5 固定 Adapter Tool 完成之后。
+> 状态：基础设施部分就绪，Knowledge RAG 尚未接入；本 PRD 不新增面向 Agent 的主动召回工具。
+> Capability RAG 后置于 `PRD-LLM-9` 固定 Adapter Tool 完成之后。
 > 创建：2026-08-04
 > 最近更新：2026-08-23
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
@@ -15,7 +16,7 @@
 | Phase 0：数据源与权限协议 | 🟡 部分具备 | 各业务已有 ownership/scope 校验，但统一文档的 source、scope、版本和删除事件协议尚未落地 |
 | Phase 1：内容摘要与分块接口 | 🔲 未开始 | 目前没有生产 SourceAdapter、统一摘要或分块产物 |
 | Phase 2：统一索引管线 | 🟡 部分具备 | 已有记忆 embedding/cache 原语和离线 BM25；没有统一持久化索引、异步 upsert/invalidate 管线 |
-| Phase 3：统一召回工具 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口，但没有 Knowledge RAG 的 `rag_recall`；Capability RAG 推荐后置于 `PRD-LLM-9` Phase 6 |
+| Phase 3：统一召回服务 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口；Knowledge RAG 仍未接入统一 Retriever/Service |
 | Phase 4：跨来源混合召回 | 🔲 待评估 | 多来源合并、去重、引用和上下文预算；首版不做独立 Ranking/Reranker |
 | Phase 5：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；真实数据标注集、生产灰度和权限回归尚未完成 |
 
@@ -34,7 +35,7 @@
 | `agent.memory.embedding` | 独立配置 embedding、模型 tag、向量生成、cosine 和失败退回词法；当前主要服务 memory/pattern | 可复用的向量基础设施，不代表已有跨来源索引 |
 | `agent.capabilities` | `CapabilityIndex`、`RegistryCapabilitySelector`、`CapabilityToolContext` 已提供注册快照、权限交集和候选接口 | 是 PRD-LLM-9 的能力注册基础；当前 selector 没有 BM25/Embedding 召回，默认仍保留授权工具全集 |
 | `bench_rag_virtual.py` | 离线虚拟文档 BM25、Embedding 和意图判断压测 | 评估工具，不是生产索引或召回服务 |
-| Knowledge RAG | 未发现生产 `SourceAdapter`、`IndexPipeline`、持久化 BM25 index、`rag_recall` 或跨来源 retriever | 本 PRD 的主体仍待实施 |
+| Knowledge RAG | 未发现生产 `SourceAdapter`、`IndexPipeline`、持久化 BM25 index 或跨来源 retriever | 本 PRD 的主体仍待实施 |
 
 当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续 Phase 6 联动。
 
@@ -242,25 +243,15 @@ chunk_id = document_id + version + position
 - 向量是可重建缓存，模型切换后按 model tag 失效并重建；
 - 缓存至少记录模型标识、维度、文本指纹和向量，不能把向量当作主数据。
 
-### FR-RAG-4：统一召回工具（未实现）
+### FR-RAG-4：统一召回服务（未实现）
 
-未来提供 `rag_recall`：
+RAG-1 只提供内部 Retriever/Service、索引和结果契约，不新增面向 Agent 的
+Agent 工具。当前面向 Agent 的记忆入口由 `PRD-MEM-1` 的 `search_memory`
+承载，并通过 `strategy=auto|bm25|embedding|ilike` 选择检索策略；未来其他来源
+可以复用同一服务，再由对应领域工具决定是否暴露。
 
-```json
-{
-  "query": "这个项目之前讨论过的部署方案",
-  "sources": ["project", "conversation", "file", "memory"],
-  "limit": 8
-}
-```
-
-后端强制限制返回数量、总字符数和可访问 scope。结果至少包含：
-
-- 来源类型和对象标题；
-- 摘要或相关片段；
-- 更新时间；
-- 可用于后续精确读取的对象引用；
-- 是否还有更多结果。
+内部服务结果至少包含来源类型、对象标题、摘要或片段、更新时间、对象引用和
+`has_more`，同时强制执行 scope、数量和总字符预算。
 
 ### FR-RAG-5：权限和隔离（部分具备；统一索引前置过滤未实现）
 
@@ -312,7 +303,7 @@ Capability Registry      → Capability IndexDocument ↗
                                       ↓
                         RAG Retriever / Capability Retriever
                               ↓                 ↓
-                         rag_recall      tool candidates
+                    domain tool consumers    tool candidates
 ```
 
 其中 `tool candidates` 只供 `PRD-LLM-9` Phase 6 的 selector 生成推荐提示；它不会生成 Provider 原生业务工具 Schema，也不会替换 Phase 5 的固定 `call_tool` Adapter Tool。
@@ -353,7 +344,7 @@ canonical history 与已有 tool round
         ↓
 当前 user message
         ↓
-call_tool(name="rag_recall")
+domain tool（当前为 search_memory）
         ↓
 canonical tool-result（摘要、片段、来源引用、更新时间）
         ↓
@@ -364,12 +355,12 @@ Provider adapter 重建当前模型所需的合法消息
 
 约束：
 
-- `rag_recall` 的完整结果只进入当前 round 的 canonical `tool-result`，不进入 snapshot；
+- 召回结果只进入当前 round 的 canonical `tool-result`，不进入 snapshot；
 - 后续 round 若仍需要该结果，由已有 tool history 继承，不重复拼装到 system reminder；
 - 新 Run 是否保留历史由普通 conversation history/compaction 决定，不建立 RAG 专用永久快照；
 - 结果返回摘要和有限片段，不返回原始文件二进制或全量正文；
 - 工具 Schema 以 canonical `tool-schema` history event 保存；Provider 只注册固定 Adapter Tool，Capability RAG 的候选元数据不混入 Knowledge RAG 结果；
-- 若未来增加自动召回，也必须复用同一个 `rag_recall` 结果结构，不能在业务入口复制一套 system 注入逻辑；
+- 若未来增加自动召回，也必须复用同一个内部召回结果结构，不能在业务入口复制一套 system 注入逻辑；
 - LoopScope 只记录 namespace、source_type、候选数、命中数、耗时、版本和脱敏 digest，不记录完整敏感正文。
 
 因此，RAG 不应该成为新的 `[system-reminder]` 来源。`[system-reminder]` 继续只承载 session snapshot 和确有必要的动态运行状态；知识检索结果使用 canonical tool round，保证消息边界、缓存前缀和 compaction 语义稳定。RAG 不得重新引入第二套 Prompt 拼装策略。
@@ -482,11 +473,11 @@ PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
 
 按 `PRD-MEM-1` 实现 `pattern`、`daily`、`memory` 的摘要/分块、BM25 召回、可选
 Embedding 混合、版本失效和 `search_memory` 工具。先验证记忆专用 scope 和预算，
-再扩展其他来源；不在本阶段实现跨来源 `rag_recall`。
+再扩展其他来源；不在本阶段实现跨来源 Agent 工具。
 
 ### Phase 2：多来源灰度
 
-Memory 试点通过后，才对明确要求跨来源检索的请求启用 `rag_recall`；
+Memory 试点通过后，才对明确要求跨来源检索的请求接入对应领域工具；
 `search_memory` 继续作为记忆专用入口保留。记录命中数量、召回耗时、回退原因和用户纠正，
 不记录原始敏感正文。
 
@@ -513,7 +504,7 @@ Memory 试点通过后，才对明确要求跨来源检索的请求启用 `rag_r
 - [ ] 实现可测试的 BM25/中文分词组件；离线脚本中的简化实现不能直接复制到生产。
 - [ ] 实现语义优先的切片器，验证目标/硬上限、overlap、稳定顺序和相邻 chunk 合并。
 - [ ] 先采用数据库/本地可控存储完成 upsert、invalidate、按 scope 查询和版本去重。
-- [ ] 增加 `rag_recall` 最小工具，只返回摘要、片段、来源引用、更新时间和分数。
+- [ ] 为首个领域工具（当前为 `search_memory`）接入统一召回服务，只返回摘要、片段、来源引用、更新时间和分数。
 - [ ] 为 scope、删除后不可见、版本更新和空结果增加自动化测试。
 
 ### P2：异步更新与查询预算
@@ -529,11 +520,11 @@ Memory 试点通过后，才对明确要求跨来源检索的请求启用 `rag_r
 - [ ] 在单来源质量达标后，再接入第二个来源，验证去重、引用和跨来源排序。
 - [ ] 建立不含真实敏感正文的查询—相关文档标注集，比较 Recall@K、Precision@K、延迟和越权率。
 - [ ] 不在本阶段实现 reranker；如未来重新评估，必须以独立 PRD 和真实标注集证明收益。
-- [ ] 对 `global_search`、`search_conversations` 和 `rag_recall` 的职责边界做回归测试。
+- [ ] 对 `global_search`、`search_conversations` 和领域召回工具的职责边界做回归测试。
 
 ### P4：灰度和规模升级
 
-- [ ] 仅对明确的跨来源知识问题灰度调用 `rag_recall`，保留专用工具兜底。
+- [ ] 仅对明确的跨来源知识问题灰度启用对应领域工具，保留专用工具兜底。
 - [ ] 根据文档量、P95 延迟、索引更新延迟和并发量，决定是否引入 pgvector/HNSW/独立搜索服务。
 - [ ] 验证不同 owner、平台、bot、群组和项目 scope 的隔离；完成灰度开关和回滚方案。
 
@@ -563,13 +554,13 @@ backend/agent/rag/
 ### 需要新建的工具、任务和测试文件
 
 ```text
-backend/agent/tools/rag.py                 # `rag_recall` 工具和参数/结果契约
+backend/agent/rag/service.py               # 统一内部召回服务和结果契约
 backend/agent/tasks/rag_index.py           # 摘要、分块、upsert/invalidate 的异步任务
 backend/tests/test_rag_models.py           # 文档、scope、版本和引用模型
 backend/tests/test_rag_lexical.py          # 中文/英文/混合词法召回
 backend/tests/test_rag_scope.py             # owner、项目、群组、平台隔离
 backend/tests/test_rag_index.py             # 幂等更新、删除、旧版本失效、重试
-backend/tests/test_rag_recall.py            # 工具输出、预算、空结果和回退
+backend/tests/test_rag_service.py           # 服务输出、预算、空结果和回退
 backend/tests/test_rag_adapters.py          # 首个来源 adapter 的摘要/分块契约
 backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估脚本（可选）
 ```
@@ -580,7 +571,7 @@ backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估�
 
 | 文件 | 修改内容 | 阶段 |
 |---|---|---|
-| `backend/agent/tools/__init__.py` 或工具注册入口 | 注册 `rag_recall`，不修改 `global_search` 的精确搜索语义 | P1 |
+| `backend/agent/tools/__init__.py` 或领域工具入口 | 由 `search_memory` 等领域工具接入统一服务，不修改 `global_search` 的精确搜索语义 | P1 |
 | `backend/agent/events/types.py`、`backend/agent/events/bus.py` | 增加 `rag.index.upsert/invalidate` 事件或等价内部事件；SSE 通知与索引失效分开 | P0/P2 |
 | `backend/app/core/ownership.py` | 只复用/补齐统一 scope 查询所需的 ownership helper，不把权限判断复制到 RAG | P0 |
 | `backend/app/core/events.py` | 在业务 mutation 已有事件链上接入 snapshot/index invalidation 的独立分支 | P2 |
@@ -629,7 +620,7 @@ backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估�
 待确认：
 
 - ✅ 首个试点来源确定为 Memory，具体落地见 `PRD-MEM-1`。
-- 🔲 首个试点是显式 `rag_recall` 工具，还是由 Agent 在特定意图下自动触发；建议先显式工具，便于观测和回滚。
+- ✅ 首个试点通过显式 `search_memory` 工具调用，RAG 层本身不主动触发 Agent 工具。
 - 🔲 选择具体中文分词依赖，并确定动态词库的更新触发方式。
 - 🔲 `IndexDocument` 的首版存储是复用业务数据库表，还是先使用 worker 可重建的本地索引；建议先复用数据库元数据和可重建索引，避免过早引入新服务。
 - 🔲 内容变更后的 freshness SLA：同步使旧文档不可见、异步生成新版本，还是允许短暂旧结果；建议前者。
