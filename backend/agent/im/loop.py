@@ -83,16 +83,37 @@ class ImActivity:
 class OwnerAgentLoop:
     """Web/owner IM 共用的完整 Agent Loop 门面。"""
 
-    async def run_collect(self, request: AgentRequest, *, on_interaction=None):
+    async def run_collect(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
         from agent.runner import run_collect
-        return await run_collect(request, on_interaction=on_interaction)
+        kwargs = {"on_interaction": on_interaction}
+        if on_tool_event is not None:
+            kwargs["on_tool_event"] = on_tool_event
+        return await run_collect(request, **kwargs)
 
-    def run_stream(self, request: AgentRequest, *, on_interaction=None):
+    def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
         from agent.runner import run_stream
-        if on_interaction is None:
+        if on_interaction is None and on_tool_event is None:
             # 保持旧的测试/扩展实现兼容：未使用交互回调时不强行传新关键字。
             return run_stream(request)
-        return run_stream(request, on_interaction=on_interaction)
+        kwargs = {}
+        if on_interaction is not None:
+            kwargs["on_interaction"] = on_interaction
+        if on_tool_event is not None:
+            kwargs["on_tool_event"] = on_tool_event
+        try:
+            return run_stream(request, **kwargs)
+        except TypeError as exc:
+            # 旧的外部 Loop 替身/扩展可能还没有工具事件回调；只对明确的
+            # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
+            if "on_tool_event" not in str(exc):
+                raise
+            kwargs.pop("on_tool_event", None)
+            try:
+                return run_stream(request, **kwargs)
+            except TypeError as legacy_exc:
+                if "on_interaction" not in str(legacy_exc):
+                    raise
+                return run_stream(request)
 
 
 class MemberAgentLoop(OwnerAgentLoop):
@@ -769,6 +790,14 @@ async def dispatch_im_message(payload: dict):
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
     shown_interaction_ids: set[int] = set()
+    show_tool_interactions = await _should_show_tool_interactions(req.user_id)
+
+    async def _show_tool_event(event: dict) -> None:
+        """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
+        if not show_tool_interactions:
+            return
+        from agent.im.replies import send_tool_event
+        await send_tool_event(payload, event)
 
     async def _show_qq_interaction(interaction: dict) -> None:
         """在共享 Runner 进入等待前，把 QQ 文本提示即时发出去。"""
@@ -796,22 +825,24 @@ async def dispatch_im_message(payload: dict):
         # QQ 的私聊流消息在 ask_user/确认交互时会一直保持「发送中」，而
         # Inline Keyboard 是另一条消息接口；部分 QQ 客户端在前一个 stream
         # 未结束时不会展示键盘。启用交互提示时改走 collect，确保键盘可靠送达。
-        if qq_private_streaming and await _should_show_tool_interactions(req.user_id):
+        if qq_private_streaming and show_tool_interactions:
             qq_private_streaming = False
     try:
         if platform == "feishu":
-            token_iter = agent_loop.run_stream(req)
+            token_iter = agent_loop.run_stream(req, on_tool_event=_show_tool_event)
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         elif qq_private_streaming:
             token_iter = agent_loop.run_stream(
                 req,
                 on_interaction=_show_qq_interaction,
+                on_tool_event=_show_tool_event,
             )
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         else:
             resp = await agent_loop.run_collect(
                 req,
                 on_interaction=_show_qq_interaction if platform == "qq" else None,
+                on_tool_event=_show_tool_event,
             )
             reply_text = ""
     except BaseException:
@@ -871,7 +902,7 @@ async def dispatch_im_message(payload: dict):
         return resp
 
     # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
-    show_interactions = platform == "qq" or await _should_show_tool_interactions(req.user_id)
+    show_interactions = show_tool_interactions
     if resp.interactions and show_interactions:
         pending_interactions = [
             item for item in resp.interactions

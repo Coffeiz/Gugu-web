@@ -1,8 +1,8 @@
 # 统一交互选择、动作与 Agent 事件系统
 
-> 状态：协议骨架已开始实现，Round/Tool 展示与完整 Interaction Service 尚未开始
+> 状态：Web/LoopScope 与 IM 的 Round/Tool 事件链路已接入；真实平台验收待完成
 > 创建：2026-08-03
-> 最近更新：2026-08-22
+> 最近更新：2026-08-23
 > 所属层：LLM / Agent 交互层
 > 关联模块：`backend/agent/interactions/`、`backend/agent/core.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/app/models/__init__.py`、`frontend/src/components/common/gugu-chat/`
 > 平台适配：`backend/agent/gateway/qq.py`、Guguchat、网页、飞书
@@ -22,6 +22,10 @@
 - 暂不发送 Keyboard，不保存选择状态，不处理点击回调、过期和重复消费。
 
 因此这不是完整选择系统，只是为后续 Keyboard 和 Guguchat 选择气泡提供稳定调用边界。
+
+当前还存在一个展示边界：Agent Loop 已产生 `tool_call/tool_done` 事件，Web 可以通过 SSE
+消费并展示；IM 非流式与流式路径现在都可按用户偏好独立发送普通工具状态消息，最终回复仍
+保持独立出站。真实平台的多轮样本和刷新恢复行为仍需在 devserver 验收。
 
 当前还已建立交互协议目录的骨架：
 
@@ -247,7 +251,41 @@ ChatToolCall
 
 平台不支持结构化交互时，必须退回自然语言确认；不能因为 UI 能力不足而阻塞 Agent 执行或绕过服务端确认门。
 
-### 1.6 工具信息显示偏好
+### IM 独立出站契约
+
+IM 不把工具过程拼进最终助手文本，也不把中间旁白当作最终回复。一次 Run 的出站顺序必须
+保持 `run_id + round_id + seq`：
+
+```text
+用户消息
+  ↓
+Round 开始/处理中（可选状态消息）
+  ↓
+tool_call_start：独立工具调用消息
+  ↓
+tool_call_result：独立工具完成/失败消息
+  ↓
+下一个 Round 的工具事件……
+  ↓
+最终助手回复：独立的最终消息
+```
+
+约束：
+
+- 每个工具调用前后都必须经过 IM 出站适配器，不能只在 Web SSE 中发布。
+- 工具调用消息至少包含工具显示名和运行状态；默认不包含完整 schema、内部 ID、原始参数
+  或未经脱敏的结果。结果摘要按平台长度限制截断。
+- 多工具同一 Round 按 `seq` 串行发送；不同 Round 不得因为异步发送而倒序。
+- 非流式 IM 也必须遵守该协议，不能因为 `run_collect()` 而只发送最终回复。
+- QQ、飞书、微信可以把“处理中/完成”渲染成文本或平台卡片，但不能丢弃事件语义。
+- `ask_user`、destructive confirm 和错误提示属于交互/控制消息，继续走各自的交互出口，
+  不与普通工具结果合并。
+- 工具显示开关关闭时，过滤普通工具过程消息；工具仍然执行、进入历史并保留最终回复。
+
+实现上允许平台在同一条“工具进度消息”上更新状态，但对用户语义仍必须表现为独立的
+工具消息单元，且最终回复不能覆盖或吞掉该单元。
+
+### 1.8 工具信息显示偏好
 
 在“接入咕咕”设置区域顶部增加用户级设置：
 
@@ -257,8 +295,8 @@ ChatToolCall
 
 设置语义：
 
-- 开启：IM 展示 Round 状态、工具名称、执行状态和简短结果摘要；详细参数和完整结果仍需点击展开或通过 LoopScope 查看。
-- 关闭：IM 不展示工具调用过程，只保留必要的“正在处理”状态和最终回复；确认按钮、错误提示和最终结果不受影响。
+- 开启：IM 展示独立的 Round 状态、工具名称、执行状态和简短结果摘要；详细参数和完整结果仍需点击展开或通过 LoopScope 查看。
+- 关闭：IM 不展示普通工具调用过程，只保留必要的“正在处理”状态、确认/选择交互、错误提示和最终回复。
 - 设置对当前用户生效，QQ、飞书、微信等所有 IM 会话统一使用。
 - 设置变化只影响后续发送的交互事件，不改变已经发送的历史消息。
 - 默认关闭，避免首次接入时把聊天界面变成调试日志。
@@ -561,13 +599,35 @@ Agent bridge 负责：
 | Phase 2：Interaction Service | ✅ | 建立 Prompt/Action 表和迁移，实现 token hash、创建、列表、过期校验、原子消费和 event_id 幂等字段。 |
 | Phase 3：Agent Bridge | ✅ | Agent Loop 将工具确认结果桥接为统一交互事件；按钮消费服务端 token 后复用现有会话发送链恢复下一轮，切会话/刷新可通过 active prompt 列表恢复。 |
 | Phase 4：Guguchat/Web | ✅ | 工具调用作为独立消息气泡展示，支持展开输入/结果；确认事件展示按钮并提交统一 API，保留原有状态气泡和流式正文。 |
-| Phase 5：统一显示偏好 | ✅ | “接入咕咕”设置顶部增加 `show_tool_interactions`；统一 `AgentResponse.interactions` 出口，IM 默认关闭展示且不影响工具执行。 |
+| Phase 5：统一显示偏好 | ✅ | 用户级 `show_tool_interactions` 已统一控制普通工具状态和交互提示的 IM 展示；关闭只影响展示，不影响执行、历史和最终回复。 |
 | Phase 6：QQ Keyboard | ✅ | 增加 QQ action payload 编解码、官方 Inline Keyboard wire payload、嵌套 interaction event 解析和回调消费；平台拒绝时复用统一文本兜底。 |
 | Phase 7：业务接入 | ✅ | QQ 身份绑定沿用既有 owner 校验；所有注册表 `destructive` 工具的 `needs_confirm` 统一桥接 Prompt/Action，按钮/文本确认复用原 session，非 destructive 结果不会生成危险交互。 |
 | Phase 8：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
 | Phase 9：`ask_user` 工具协议 | ✅ | 注册内置 `ask_user`，完成 choice/question/form 的 schema 校验、长度限制、短 token action 和统一 `InteractionResult`。 |
 | Phase 10：暂停与恢复 | ✅ | Agent 在 `ask_user` 后停止当前 Run；按钮/允许文本回答会原子消费、替换 pending tool result，并在原 session 恢复 Agent Loop；补齐过期、取消和重复消费保护。 |
 | Phase 11：多端展示 | ✅ | Web 使用按钮/输入框交互；QQ 已在 ask_user 挂起点即时发送脱敏文本提示并列出编号选项，未确认原生按钮字段时保留网页点击兜底；统一权限校验、同一 Run 等待恢复和历史展示。 |
+| Phase 12：IM Round/Tool 独立出站 | 🟡 | `tool_call/tool_done` 已从 Agent 事件收集到统一 IM 出站协议，按 Run/Round/Seq 串行发送工具状态与结果；统一应用显示开关，修复 QQ 强制展示和非流式只发最终回复的问题。代码与自动回归已完成，真实平台人工验收待 devserver 验证。 |
+
+### Phase 12 实施 TODO
+
+- [x] **A：统一事件收集**：扩展 `AgentResponse` 或等价的运行结果结构，保留每个 Round 的
+  `round_id`、`tool_call_id`、`seq`、工具显示名、状态、耗时和脱敏结果摘要；不能只保留
+  `tool_names` 统计。
+- [x] **B：统一 IM 出站接口**：在 `agent/im/replies.py` 增加平台无关的工具事件发送入口，
+  由它负责顺序、截断、脱敏和错误隔离；Agent Loop 不直接调用 QQ/飞书/微信 API。
+- [x] **C：非流式路径**：`run_collect()` 和 `agent/im/loop.py` 在工具开始、完成/失败和最终
+  回复之间按序发送独立消息，不能等收集结束后只调用一次 `send_agent_response()`。
+- [x] **D：流式路径**：QQ 私聊、飞书流式路径消费工具事件；群聊和不支持流式的平台仍走同一
+  事件协议的文本/卡片降级，不因传输模式不同而丢事件。
+- [x] **E：显示偏好修正**：所有平台统一读取 `show_tool_interactions`；删除
+  `platform == "qq"` 这类绕过用户开关的条件。普通工具过程受开关控制，`ask_user`/confirm、
+  必要错误和最终结果保持原语义。
+- [x] **F：并发与顺序**：同一 Run 使用发送队列或序列号保证事件不倒序；多个工具并发执行时，
+  按事件 `seq` 发送，不让后完成的结果覆盖先发的调用消息。
+- [ ] **G：回归测试**：已补事件顺序、结果摘要和输入隔离回归；仍需补齐多 Round、多平台 IM mock，以及
+  QQ 群聊、飞书/微信降级、开关开闭和 `ask_user` 不受影响等场景。
+- [ ] **H：文档与人工验收**：待 devserver 补充真实平台消息样本，确认“工具调用前后独立消息 + 最终回复独立消息”
+  的顺序，并验证刷新/历史恢复不会重复发送 IM 工具消息。
 
 每个阶段单独提交。任一阶段出现生命周期或权限行为差异，不进入下一阶段。
 
@@ -616,11 +676,20 @@ Agent bridge 负责：
 - `show_tool_interactions` 关闭时仍不发送 IM 交互提示，但不影响 Prompt 创建、Agent 等待、网页恢复和历史记录。
 - QQ 原生 Keyboard 使用官方 Inline Keyboard payload；按钮权限优先限制为当前平台用户，服务端仍以 owner/action token 做最终校验。
 - QQ、飞书、微信的交互发送都从 `send_interaction()` 出口进入；只有 QQ 尝试原生 Keyboard，其他平台直接复用同一份文本兜底，平台 adapter 不复制 ask_user 文案。
+
 12. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
 13. 在“接入咕咕”设置顶部关闭工具信息后，QQ、飞书、微信都不再展示工具过程，但最终回复和确认消息仍正常发送。
 14. 重新打开设置后，工具信息恢复展示；已经发送的历史消息不被重写。
 15. Agent 需要在多个合理路径中选择时展示 `ask_user` 按钮；回答后继续原任务，而不是新建无关对话。
 16. 用户直接输入补充信息时，`allow_text_input` 为真才允许恢复；错误回答不会触发工具执行。
+
+### 10.4 Phase 12 验收口径
+
+- 开启工具信息后，一次包含多个工具和多个 Round 的 IM 请求能看到按顺序分开的工具调用消息、
+  工具结果消息和最终回复消息。
+- 关闭工具信息后，普通工具消息不发送，但工具执行结果、历史记录、最终回复和交互确认不受影响。
+- QQ 不再因平台名称被强制打开或关闭该开关；QQ、飞书、微信对同一用户偏好采用一致语义。
+- 工具事件发送失败只能记录受限诊断并继续最终回复，不能让 Agent Run 失败或重复执行工具。
 
 ## 11. 待确认问题
 

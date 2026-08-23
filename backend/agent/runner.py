@@ -268,7 +268,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     return block
 
 
-async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentResponse:
+async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
     profile = DefaultProfile()
@@ -509,7 +509,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
 
     try:
         text, tin, tout, cache_read, cache_write, errored, sent_files, cancelled, meta = await _collect(
-            gen, model_cfg=model_cfg, include_meta=True)
+            gen, model_cfg=model_cfg, include_meta=True, on_tool_event=on_tool_event)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
@@ -596,7 +596,19 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
                          cache_read=cache_read, cache_write=cache_write,
                          files=sent_files, used_tools=im_used_tools,
-                         interactions=meta.get("interactions", []))
+                         interactions=meta.get("interactions", []),
+                         tool_events=meta.get("tool_events", []))
+
+
+async def _notify_tool_event(callback, event: dict) -> None:
+    """通知 IM 工具状态展示；展示失败只写受限诊断，不影响 Agent 执行。"""
+    if callback is None:
+        return
+    try:
+        await callback(event)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.tool_event_display", exc)
 
 
 # ── 流式版本（飞书 send_text_stream 用，2026-07-09 接入）──────────────────────
@@ -613,6 +625,7 @@ async def run_stream(
     req: AgentRequest,
     *,
     on_interaction=None,
+    on_tool_event=None,
 ) -> AsyncIterator[tuple[str, object]]:
     """run_collect 的流式版本：逐字 yield token + 末尾 yield AgentResponse。"""
     user_id = req.user_id
@@ -840,6 +853,7 @@ async def run_stream(
     tin = tout = cache_read = cache_write = 0
     files: list = []
     interactions: list[dict] = []
+    tool_events: list[dict] = []
     cancelled = False
     errored = False
     errored_text = ""
@@ -866,6 +880,10 @@ async def run_stream(
                     yield ("token", token)
             elif t == "file" and evt.get("file"):
                 files.append(evt["file"])
+            elif t in {"tool_call", "tool_done"}:
+                tool_event = dict(evt)
+                tool_events.append(tool_event)
+                await _notify_tool_event(on_tool_event, tool_event)
             elif t == "interaction_required":
                 interactions.append({
                     key: evt[key]
@@ -885,7 +903,7 @@ async def run_stream(
     if cancelled:
         yield ("final", AgentResponse(text="", session_id=session_id,
                                       tokens_in=tin, tokens_out=tout, cancelled=True,
-                                      interactions=interactions))
+                                      interactions=interactions, tool_events=tool_events))
         return
 
     if not errored:
@@ -969,12 +987,13 @@ async def run_stream(
 
     yield ("final", AgentResponse(text=text, session_id=session_id, tokens_in=tin,
                                   tokens_out=tout, files=files, cancelled=False,
-                                  used_tools=im_used_tools, interactions=interactions))
+                                  used_tools=im_used_tools, interactions=interactions,
+                                  tool_events=tool_events))
 
 
 async def _collect(
     gen: AsyncGenerator[str, None], include_meta: bool = False,
-    model_cfg=None,
+    model_cfg=None, on_tool_event=None,
 ) -> Tuple:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
@@ -995,6 +1014,7 @@ async def _collect(
     files: list = []
     tool_names: list[str] = []
     interactions: list[dict] = []
+    tool_events: list[dict] = []
     mutated = False
     cancelled = False
     async for evt_str in gen:
@@ -1018,6 +1038,9 @@ async def _collect(
         elif t == "file" and evt.get("file"):
             files.append(evt["file"])   # 咕咕用 send_file 工具要发的文件
         elif t == "tool_call":
+            tool_event = dict(evt)
+            tool_events.append(tool_event)
+            await _notify_tool_event(on_tool_event, tool_event)
             name = str(evt.get("name") or "")
             if name and name not in tool_names:
                 tool_names.append(name)
@@ -1036,13 +1059,18 @@ async def _collect(
                 for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id")
                 if key in evt
             })
+        elif t == "tool_done":
+            tool_event = dict(evt)
+            tool_events.append(tool_event)
+            await _notify_tool_event(on_tool_event, tool_event)
         elif t == "_cancelled":
             cancelled = True   # 用户中途「算了」：停止收集，网关已回「先不继续」，worker 不再补发
             break
         elif t == "error":
             detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
             result = (detail, tin, tout, cache_read, cache_write, True, files, False)
-            meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
+            meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
+                    "tool_events": tool_events}
             return result + (meta,) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
@@ -1054,7 +1082,8 @@ async def _collect(
             text = r
             break
     result = (text, tin, tout, cache_read, cache_write, False, files, cancelled)
-    meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
+    meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
+            "tool_events": tool_events}
     return result + (meta,) if include_meta else result
 
 

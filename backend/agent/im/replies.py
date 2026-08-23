@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import re
 from typing import AsyncIterator, Tuple
 
@@ -77,6 +78,78 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
         ):
             return True
     return await send_text(payload, text)
+
+
+def _tool_result_summary(result: object, limit: int = 320) -> str:
+    """生成适合 IM 展示的短结果摘要，不把工具参数或内部结构直接发给用户。"""
+    if result is None:
+        return ""
+    if isinstance(result, str):
+        text = result
+    else:
+        try:
+            text = json.dumps(result, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(result)
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _tool_code_block(value: object, *, language: str = "json", limit: int = 1600) -> str:
+    """把工具输入/输出放入有限长度的代码块，避免结构化内容破坏消息排版。"""
+    if isinstance(value, str):
+        text = value
+        language = "text"
+    else:
+        try:
+            text = json.dumps(value, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            text = str(value)
+    if len(text) > limit:
+        text = text[:limit - 1] + "…"
+    return f"```{language}\n{text}\n```"
+
+
+def format_tool_event(event: dict, *, markdown: bool = True) -> str:
+    """把工具事件转换成统一语义块，再按平台能力渲染。"""
+    label = str(event.get("label") or event.get("name") or "工具").strip()
+    event_type = str(event.get("type") or "")
+    status = str(event.get("status") or "")
+    if not markdown:
+        if event_type == "tool_call":
+            return ""
+        if status in {"success", "ok"}:
+            return f"✅ {label}完成"
+        if status == "waiting":
+            return f"⏳ {label}等待确认"
+        return f"⚠️ {label}未完成"
+
+    title = f"### 🔧 {label}"
+    if event_type == "tool_call":
+        body = [title, "**状态**：执行中"]
+        if "input" in event:
+            body.extend(("**输入**", _tool_code_block(event.get("input"))))
+        return "\n\n".join(body)
+    if status == "waiting":
+        return f"{title}\n\n**状态**：等待确认"
+    status_text = "已完成" if status in {"success", "ok"} else "未完成"
+    body = [title, f"**状态**：{status_text}"]
+    if event.get("result") is not None:
+        body.extend(("**输出**", _tool_code_block(event.get("result"))))
+    return "\n\n".join(body)
+
+
+async def send_tool_event(payload: dict, event: dict) -> bool:
+    """独立发送一条工具状态消息；显示策略由 IM Loop 在调用前决定。"""
+    from agent.outbound import sanitize_outbound
+    is_qq_plain = (
+        payload.get("platform") == "qq"
+        and payload.get("message_format") != "markdown"
+    )
+    text = format_tool_event(event, markdown=not is_qq_plain)
+    if not text:
+        return True
+    return await send_text(payload, sanitize_outbound(text))
 
 
 async def send_reply(payload: dict, reply: PlatformReply) -> bool:
