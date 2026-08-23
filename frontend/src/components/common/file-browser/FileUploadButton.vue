@@ -31,9 +31,14 @@ const emit = defineEmits<{ select: [e: Event] }>()
      让 scrollHeight 少几个像素，浏览器随即把 scrollTop clamp 到更小的值。 */
   border-radius: 14px; corner-shape: round; overflow: hidden; min-height: 133px;
   display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 7px;
-  font-size: 10px; font-weight: 600;
+  align-items: center; justify-content: center; gap: 8px;
+  font-size: 11px; font-weight: 600;
   transition: color 0.18s, background-color 0.18s, border-color 0.18s;
+}
+.fub.grid .app-icon {
+  width: 22px;
+  height: 22px;
+  font-size: 22px;
 }
 
 .fub.list {
