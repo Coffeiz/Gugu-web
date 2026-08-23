@@ -78,6 +78,15 @@ async def effective_shell_enabled(db: AsyncSession, user_id) -> bool:
     return bool(prefs and prefs.data.get("shell_enabled", False))
 
 
+async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
+    """读取用户危险 Shell 命令开关；它不能绕过 Admin 开关或确认门。"""
+    result = await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == user_id)
+    )
+    prefs = result.scalar_one_or_none()
+    return bool(prefs and prefs.data.get("shell_dangerous_enabled", False))
+
+
 async def describe_session(db: AsyncSession, user_id, session_id: int) -> Workspace | None:
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None or session.workspace_id is None:

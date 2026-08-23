@@ -417,7 +417,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; userEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; userEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; items: unknown[] }>('/workspaces'),
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
   bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),

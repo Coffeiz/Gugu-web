@@ -4,8 +4,11 @@
       <div class="pm-section-label">工具权限</div>
       <div v-if="loading" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">正在读取权限状态</span></div><div class="pm-static">—</div></div>
       <template v-else>
-        <div v-if="!globalEnabled" class="pm-tool-locked"><div class="pm-field-name">Shell 工具</div><div class="pm-field-hint">管理员尚未开启 Shell 工具，你的个人开关暂不可用。</div></div>
-        <div v-else class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell 工具</span><span class="pm-field-hint">允许咕咕在你明确绑定的工作区中执行受控命令；新对话默认不会绑定工作区。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellEnabled }" type="button" :aria-pressed="prefsStore.shellEnabled" aria-label="切换 Shell 工具权限" @click="prefsStore.saveShellEnabled(!prefsStore.shellEnabled)"><span class="toggle-knob" /></button></div>
+        <div v-if="globalEnabled" class="pm-tool-rows">
+          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">Shell 工具</span><span class="pm-field-hint">允许咕咕在你明确绑定的工作区中执行受控命令；新对话默认不会绑定工作区。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellEnabled }" type="button" :aria-pressed="prefsStore.shellEnabled" aria-label="切换 Shell 工具权限" @click="prefsStore.saveShellEnabled(!prefsStore.shellEnabled)"><span class="toggle-knob" /></button></div>
+          <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">危险 Shell 命令</span><span class="pm-field-hint">允许危险命令进入确认流程；每次具体操作仍需确认。</span></div><button class="toggle-switch" :class="{ on: prefsStore.shellDangerousEnabled, disabled: !dangerousGlobalEnabled }" type="button" :disabled="!dangerousGlobalEnabled" :aria-pressed="prefsStore.shellDangerousEnabled" aria-label="切换危险 Shell 命令权限" @click="prefsStore.saveShellDangerousEnabled(!prefsStore.shellDangerousEnabled)"><span class="toggle-knob" /></button></div>
+          <div v-if="!dangerousGlobalEnabled" class="pm-field-hint pm-tool-subhint">管理员尚未开启危险 Shell 命令。</div>
+        </div>
       </template>
     </div>
     <div class="pm-sep"></div>
@@ -19,7 +22,8 @@ import { workspacesApi } from '@/services/api'
 const prefsStore = usePreferencesStore()
 const loading = ref(true)
 const globalEnabled = ref(false)
-onMounted(async () => { try { globalEnabled.value = (await workspacesApi.status()).globalEnabled } finally { loading.value = false } })
+const dangerousGlobalEnabled = ref(false)
+onMounted(async () => { try { const status = await workspacesApi.status(); globalEnabled.value = status.globalEnabled; dangerousGlobalEnabled.value = status.dangerousGlobalEnabled } finally { loading.value = false } })
 </script>
 
 <style>
@@ -51,4 +55,7 @@ onMounted(async () => { try { globalEnabled.value = (await workspacesApi.status(
 }
 .toggle-switch.on .toggle-knob { transform: translateX(16px); }
 .toggle-switch:focus-visible { outline: 2px solid var(--action-outline); outline-offset: 2px; }
+.toggle-switch.disabled { cursor: not-allowed; opacity: .55; }
+.pm-tool-rows { display: flex; flex-direction: column; gap: 14px; }
+.pm-tool-subhint { display: block; margin-top: -6px; }
 </style>

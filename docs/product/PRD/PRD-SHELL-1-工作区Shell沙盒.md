@@ -26,6 +26,8 @@
 - “本机执行”仅指使用当前系统用户权限，不等于 root、`sudo` 或系统级权限。
 - 本机执行器不接受宿主机绝对路径，不允许工作区外访问。
 - 保留执行超时、输出大小、后台进程和敏感路径等边界。
+- 危险命令另设独立的 Admin 总开关和用户个人开关，两个开关默认关闭。
+- 危险命令即使两个开关都开启，仍必须经过现有逐次确认门。
 
 ### 3.2 后续阶段：隔离增强
 
@@ -156,6 +158,28 @@ Admin 关闭总开关时：
 - 用户之前的个人开关保留但不生效；
 - Admin 重新开启后恢复之前保存的个人开关。
 
+危险命令使用独立的双重开关，不与普通 Shell 工具开关混用：
+
+```python
+dangerous_allowed = (
+    admin_shell_enabled
+    and admin_dangerous_shell_enabled
+    and user_shell_enabled
+    and user_dangerous_shell_enabled
+    and session.workspace_id is not None
+    and workspace_enabled
+)
+```
+
+判定规则：
+
+- Admin 未开启 Shell 工具时，危险命令和普通 Shell 都不可用；
+- Admin 未开启危险 Shell 命令时，危险命令硬拒绝；
+- 用户未开启危险 Shell 命令时，危险命令硬拒绝；
+- 双方开关都开启后，危险命令仍返回 `needs_confirmation`，不得由开关绕过逐次确认；
+- `confirm=true` 只能通过已经开启的危险权限和既有确认门，不能绕过任一开关；
+- Admin 关闭危险开关时保留用户原有个人设置，重新开启后恢复其状态。
+
 ## 7. Agent 工具设计
 
 ### 7.1 工具名
@@ -196,6 +220,15 @@ shell
 ### 7.4 没有工作区时
 
 Shell 工具不注册。用户要求执行命令时，咕咕应提示先选择或绑定工作区，不得自行猜测默认目录。
+
+### 7.5 危险命令开关
+
+危险命令设置分别位于：
+
+- Admin Agent 设置页：`shell_dangerous_enabled`，控制系统是否允许危险命令进入确认流程；
+- 用户工具权限设置：`shell_dangerous_enabled`，控制当前用户是否允许危险命令进入确认流程。
+
+用户页面只在 Admin 已开启 Shell 工具时显示 Shell 设置；危险命令开关在 Admin 未开启危险命令时保持禁用，并明确提示管理员限制。设置页面不能代替服务端策略校验。
 
 ## 8. 工作区操作
 
@@ -299,6 +332,8 @@ git reset、git clean、覆盖性迁移
 - 是否联网；
 - 预期影响。
 
+危险命令开关关闭时，在确认门之前直接拒绝；即使请求携带 `confirm=true`，也不能绕过 Admin 或用户开关。
+
 ## 11. 目录与职责
 
 ```text
@@ -381,7 +416,9 @@ backend/tests/test_workspace_binding.py
 - [x] 增加同一 session 串行锁，避免 workspace 切换与执行竞态。
 
 - [x] Admin 页面增加总开关。
+- [x] Admin 页面增加危险 Shell 命令总开关，默认关闭。
 - [x] 用户页面增加独立工具权限区域，并显示全局开关状态。
+- [x] 用户页面增加危险 Shell 命令个人开关，默认关闭，并受 Admin 总开关限制。
 - [x] 工作区状态与当前会话绑定 API 客户端入口。
 - [x] 补权限、路径逃逸、软链接、危险命令、超时、输出超限和并发测试。
 - [ ] 在 devserver 完成本机执行 smoke test。

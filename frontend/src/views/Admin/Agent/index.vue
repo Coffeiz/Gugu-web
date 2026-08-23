@@ -402,6 +402,24 @@
             </button>
           </div>
 
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>危险 Shell 命令</span>
+              <span class="behavior-desc">默认关闭。开启后危险命令仍需用户逐次确认，不会绕过确认门。</span>
+            </div>
+            <button
+              type="button"
+              class="toggle-switch"
+              :class="{ on: agentDraft.shell_dangerous_enabled, disabled: !agentDraft.shell_enabled }"
+              :disabled="!agentDraft.shell_enabled"
+              aria-label="切换危险 Shell 命令"
+              :aria-pressed="agentDraft.shell_dangerous_enabled"
+              @click="agentDraft.shell_dangerous_enabled = !agentDraft.shell_dangerous_enabled; saveBehavior()"
+            >
+              <span class="toggle-knob" />
+            </button>
+          </div>
+
           <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
             <div class="behavior-label">
               <span>记忆系统</span>

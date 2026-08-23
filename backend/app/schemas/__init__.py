@@ -601,6 +601,7 @@ class PreferencesResponse(CamelModel):
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
     defaultView:       str = "projects"       # 应用打开时的默认入口
     shellEnabled:      bool = False            # 用户级开关，仍受管理员全局开关约束
+    shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
 
 class PreferencesUpdate(CamelModel):
@@ -611,6 +612,7 @@ class PreferencesUpdate(CamelModel):
     pmStagesExpanded:  Optional[bool] = None
     defaultView:       Optional[str] = None
     shellEnabled:      Optional[bool] = None
+    shellDangerousEnabled: Optional[bool] = None
     showToolInteractions: Optional[bool] = None
 
 

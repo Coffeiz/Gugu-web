@@ -10,7 +10,13 @@ from app.core.security import get_current_user
 from app.db.session import get_db
 from app.models import ConversationSession, User, Workspace
 from app.schemas import WorkspaceCreate, WorkspaceResponse
-from app.services.workspaces import bind_session, create_workspace, effective_shell_enabled, get_workspace
+from app.services.workspaces import (
+    bind_session,
+    create_workspace,
+    effective_shell_dangerous_enabled,
+    effective_shell_enabled,
+    get_workspace,
+)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -37,7 +43,9 @@ async def list_workspaces(
     )).all())
     return {
         "globalEnabled": bool(get_settings().agent.shell_enabled),
+        "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
+        "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
     }
 

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models import ConversationSession, Workspace
-from app.services.workspaces import effective_shell_enabled
+from app.services.workspaces import effective_shell_dangerous_enabled, effective_shell_enabled
 
 
 class ShellRisk(StrEnum):
@@ -95,8 +95,13 @@ async def evaluate(
     workspace = await db.get(Workspace, session.workspace_id)
     if not workspace or workspace.user_id != user_id or not workspace.enabled:
         return ShellDecision(False, "工作区不存在或已停用", risk)
-    if risk is ShellRisk.DANGEROUS and not confirm:
-        return ShellDecision(True, "危险命令需要用户确认", risk, True, workspace.id)
+    if risk is ShellRisk.DANGEROUS:
+        if not get_settings().agent.shell_dangerous_enabled:
+            return ShellDecision(False, "管理员未开启危险 Shell 命令", risk)
+        if not await effective_shell_dangerous_enabled(db, user_id):
+            return ShellDecision(False, "用户未开启危险 Shell 命令", risk)
+        if not confirm:
+            return ShellDecision(True, "危险命令需要用户确认", risk, True, workspace.id)
     return ShellDecision(True, "允许在当前工作区执行", risk, False, workspace.id)
 
 
