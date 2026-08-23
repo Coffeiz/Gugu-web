@@ -1,6 +1,6 @@
 # Admin 页面模块化重构方案
 
-> 状态：审查完成，待执行
+> 状态：Phase 0 完成，Phase 1（能力目录）完成，继续迁移中
 >
 > 更新时间：2026-08-23
 
@@ -268,9 +268,15 @@ npm run build
 - 新组件验收后立即删除对应旧逻辑，不保留永久 fallback；
 - 完成一批后再更新本方案的状态和变更记录。
 
-## 8. 当前未完成项
+## 8. 当前进度
 
-- [ ] Phase 0 基线和冒烟路径；
+- [x] Phase 0：完成 Admin 入口规模、目录、职责和验证基线审查；
+- [x] Phase 1.1：能力目录迁移至 `Agent/capabilities/`，请求与状态由 `useCapabilityCatalog` 管理；
+- [ ] Phase 1.2：决策轨迹迁移至 `Agent/observability/`；
+- [ ] Phase 1.3：用量统计迁移至 `Agent/observability/`；
+
+## 9. 当前未完成项
+
 - [ ] Agent 只读模块拆分；
 - [ ] 提示词、状态文案和配置表单拆分；
 - [ ] LLM 预设拆分；

@@ -23,54 +23,7 @@
     <div class="panels-wrap">
 
       <!-- ── 能力目录 ── -->
-      <section v-if="activeTab === 'capabilities'" class="config-card capability-catalog-card">
-        <div class="capability-catalog-head">
-          <div>
-            <h3 class="presets-title">能力目录</h3>
-            <p class="presets-desc">来自 Tool / Skill Registry 的只读目录；完整 Schema 和正文只在 Agent 请求中按需注入。</p>
-          </div>
-          <button type="button" class="pca-btn" :disabled="capabilityCatalogLoading" @click="fetchCapabilityCatalog">
-            {{ capabilityCatalogLoading ? '刷新中…' : '刷新目录' }}
-          </button>
-        </div>
-        <div v-if="capabilityCatalogError" class="llm-msg llm-msg--error">{{ capabilityCatalogError }}</div>
-        <div v-else-if="capabilityCatalogLoading && !capabilityCatalog" class="presets-loading">加载中…</div>
-        <template v-else-if="capabilityCatalog">
-          <div class="capability-catalog-summary">
-            <span>工具 {{ capabilityCatalog.tools.length }}</span>
-            <span>Skill {{ capabilityCatalog.skills.length }}</span>
-            <span v-if="capabilityCatalog.diagnostics.length" class="capability-catalog-warning">
-              诊断 {{ capabilityCatalog.diagnostics.length }} 项
-            </span>
-          </div>
-          <div class="capability-catalog-group">
-            <h4>工具</h4>
-            <div class="capability-catalog-grid">
-              <div v-for="item in capabilityCatalog.tools" :key="item.name" class="capability-catalog-item">
-                <div class="capability-catalog-item-head">
-                  <code>{{ item.name }}</code>
-                  <span>{{ item.category || '未分类' }}</span>
-                </div>
-                <p>{{ item.description_short }}</p>
-                <small>{{ item.permissions.length ? `权限：${item.permissions.join('、')}` : '无额外权限声明' }}</small>
-              </div>
-            </div>
-          </div>
-          <div class="capability-catalog-group">
-            <h4>Skill</h4>
-            <div class="capability-catalog-grid">
-              <div v-for="item in capabilityCatalog.skills" :key="item.name" class="capability-catalog-item">
-                <div class="capability-catalog-item-head">
-                  <code>{{ item.name }}</code>
-                  <span>{{ item.category || '未分类' }}</span>
-                </div>
-                <p>{{ item.description_short }}</p>
-                <small>{{ item.related_tools.length ? `关联工具：${item.related_tools.join('、')}` : '未声明关联工具' }}</small>
-              </div>
-            </div>
-          </div>
-        </template>
-      </section>
+      <CapabilityCatalogPanel v-if="activeTab === 'capabilities'" />
 
       <!-- ── LLM 预设 ── -->
       <div v-if="activeTab === 'llm'">
@@ -1412,6 +1365,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
+import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1436,46 +1390,11 @@ const activeTab = ref('llm')
 function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
-  if (key === 'capabilities' && !capabilityCatalog.value) fetchCapabilityCatalog()
   if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
   if (key === 'trace'   && traceSessions.value.length === 0) fetchTraceSessions()
   if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
   if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
-}
-
-type CapabilityCatalogItem = {
-  name: string
-  description_short: string
-  category: string
-  permissions: string[]
-  platforms: string[]
-  related_skills: string[]
-  related_tools: string[]
-  source: string
-  enabled: boolean
-}
-const capabilityCatalog = ref<{
-  generation: number
-  diagnostics: string[]
-  tools: CapabilityCatalogItem[]
-  skills: CapabilityCatalogItem[]
-} | null>(null)
-const capabilityCatalogLoading = ref(false)
-const capabilityCatalogError = ref('')
-
-async function fetchCapabilityCatalog() {
-  capabilityCatalogLoading.value = true
-  capabilityCatalogError.value = ''
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/capabilities')
-    if (!res.ok) throw new Error(`加载能力目录失败（${res.status}）`)
-    capabilityCatalog.value = await res.json()
-  } catch (error) {
-    capabilityCatalogError.value = error instanceof Error ? error.message : '加载能力目录失败'
-  } finally {
-    capabilityCatalogLoading.value = false
-  }
 }
 
 // ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
@@ -3355,22 +3274,6 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* ── 决策轨迹 ── */
-.capability-catalog-card { min-height: calc(100vh - 230px); }
-.capability-catalog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
-.capability-catalog-summary { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; color: rgba(255,255,255,0.58); font-size: 12px; }
-.capability-catalog-summary span { padding: 5px 9px; border: 1px solid rgba(255,255,255,0.08); border-radius: 7px; background: rgba(255,255,255,0.035); }
-.capability-catalog-warning { color: #f2be7e; }
-.capability-catalog-group { margin-top: 18px; }
-.capability-catalog-group h4 { margin: 0 0 9px; color: rgba(255,255,255,0.48); font-size: 12px; font-weight: 600; }
-.capability-catalog-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; }
-.capability-catalog-item { min-width: 0; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.07); border-radius: 9px; background: rgba(255,255,255,0.025); }
-.capability-catalog-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.capability-catalog-item code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #d6d8ee; font-size: 11px; }
-.capability-catalog-item-head span { flex: 0 0 auto; color: rgba(255,255,255,0.32); font-size: 10px; }
-.capability-catalog-item p { margin: 6px 0 5px; color: rgba(255,255,255,0.68); font-size: 12px; line-height: 1.5; }
-.capability-catalog-item small { display: block; overflow: hidden; color: rgba(255,255,255,0.32); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 720px) { .capability-catalog-grid { grid-template-columns: 1fr; } }
-
 .trace-wrap { display: grid; grid-template-columns: 300px 1fr; gap: 14px; height: calc(100vh - 230px); min-height: 420px; }
 .trace-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-right: 4px; }
 .trace-search { display: flex; gap: 6px; position: sticky; top: 0; padding-bottom: 6px; }
