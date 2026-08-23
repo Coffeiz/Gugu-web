@@ -1,6 +1,6 @@
 # Admin 页面模块化重构方案
 
-> 状态：TODO 执行中（Phase 0、Phase 1.1–1.3、Phase 2 已完成）
+> 状态：TODO 执行中（Phase 0、Phase 1.1–1.3、Phase 2、Phase 3 已完成）
 >
 > 更新时间：2026-08-23
 
@@ -10,7 +10,7 @@
 
 | 区域 | 当前规模 | 当前状态 |
 | --- | ---: | --- |
-| `Admin/Agent/index.vue` | 约 3300 行 | 已完成能力目录、决策轨迹、提示词、状态文案拆分；配置表单、LLM、记忆和用量仍待迁移 |
+| `Admin/Agent/index.vue` | 约 3300 行 | 已完成能力目录、决策轨迹、提示词、状态文案和配置表单状态/请求拆分；LLM、记忆和部分展示模板仍待迁移 |
 | `Admin/StorageAudit/index.vue` | 684 行 | 入口偏大，包含查询、筛选、表格和详情流程 |
 | `Admin/Quota/index.vue` | 652 行 | 入口偏大，包含配额状态、编辑和保存流程 |
 | `Admin/Config/index.vue` | 557 行 | 配置字段、保存和状态展示仍集中 |
@@ -147,7 +147,7 @@ frontend/src/views/Admin/
 - **Phase 3：配置表单**：行为、搜索、语音、Embedding 都依赖 `configStore.cfg` 初始化并通过 `configStore.saveConfig` 提交；搜索/语音/Embedding 另有测试接口。迁移时必须按配置域隔离 draft 和 saving/error/test 状态，不能把 `configStore` 的响应式对象直接跨模块共享。
 - **Phase 4：LLM 预设**：耦合最重，包含预设列表、策略/池模式、并发配置、CRUD、激活/删除、模型列表、能力探测、视觉探测和新建/编辑 Teleport 弹窗；预设 API 与 `configStore` 并发配置同时存在。应先拆只读列表，再拆编辑器，最后迁移操作流程，并保持唯一状态源。
 
-本轮只执行 Phase 2；Phase 3、4 的耦合记录作为后续拆分边界，不提前改动行为。
+本轮完成 Phase 3 的配置状态与请求流程收口；Phase 4 的耦合记录作为后续拆分边界，不提前改动 LLM 行为。
 
 ### [x] Phase 0：边界与基线
 
@@ -162,13 +162,13 @@ frontend/src/views/Admin/
 
 - [x] 1.1 能力目录：`CapabilityCatalogPanel` + `useCapabilityCatalog`；
 - [x] 1.2 决策轨迹：`TracePanel` + `useTrace` + `utils/traceSteps.ts`；
-- [ ] 1.3 用量统计：`UsagePanel` + `useUsage` + `utils/usageChart.ts`。
+- [x] 1.3 用量统计：`UsagePanel` + `useUsage` + `utils/usageChart.ts`。
 
 先迁移不直接修改核心配置的模块：
 
 - [x] 能力目录迁移完成；
 - [x] 决策轨迹迁移；
-- [ ] 用量统计迁移。
+- [x] 用量统计迁移。
 
 要求：请求、筛选、步骤解析和图表计算离开入口；组件只消费 typed props/state。
 
@@ -181,7 +181,7 @@ frontend/src/views/Admin/
 
 已完成：`prompting/PromptPanel.vue` + `usePromptConfig`、`prompting/StateLabelsPanel.vue` + `useStateLabels`，入口不再维护这两个模块的请求和表单状态。
 
-### [ ] Phase 3：配置表单
+### [x] Phase 3：配置表单
 
 按一个配置域一个提交边界迁移：
 
@@ -191,6 +191,8 @@ frontend/src/views/Admin/
 4. Embedding 配置。
 
 每个模块独立维护 draft、reset、saving、saved、error 和 test 状态，禁止多个模块共享可变 draft。
+
+已完成：`runtime-config/useAgentRuntimeConfig` 收口行为、搜索、语音、Embedding 四个配置域的 draft、保存、重置、连通测试和错误状态；入口只消费 composable 返回值。为保持现有布局与交互稳定，四个展示区块暂留在入口模板，后续可在不改变状态边界的前提下继续拆为展示组件。
 
 ### [ ] Phase 4：LLM 预设
 

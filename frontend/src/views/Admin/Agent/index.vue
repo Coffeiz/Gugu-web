@@ -1160,6 +1160,7 @@ import TracePanel from './observability/components/TracePanel.vue'
 import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
+import { useAgentRuntimeConfig } from './runtime-config/useAgentRuntimeConfig'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1168,6 +1169,8 @@ import ConfigField from '../Config/components/ConfigField.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
+const runtimeConfig = useAgentRuntimeConfig()
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, embeddingDraft, embeddingSaving, embeddingSaved, embeddingError, embTest, resetEmbedding, saveEmbedding, testEmbedding, searchTest, testSearch, saveSearch } = runtimeConfig
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
@@ -1602,7 +1605,7 @@ async function probeVision(id: any, dim?: string) {
   }
 }
 
-// ── 行为配置 ──────────────────────────────────────────────────────────────
+/* PHASE3_RUNTIME_CONFIG_OLD_BEGIN
 const agentDraft    = reactive({ ...configStore.cfg.agent })
 const behaviorSaving = ref(false)
 const behaviorSaved  = ref(false)
@@ -1783,6 +1786,7 @@ async function testEmbedding() {
   }
 }
 
+PHASE3_RUNTIME_CONFIG_OLD_END */
 // 向量重建（换模型后批量重算，后台跑 + 轮询进度）
 const rebuild = reactive({ running: false, done: 0, total: 0, msg: '', error: false })
 let rebuildTimer: ReturnType<typeof setInterval> | null = null
@@ -1805,7 +1809,7 @@ async function pollRebuild() {
     } else {
       rebuild.running = false; stopRebuildPoll()
     }
-  } catch { /* 忽略单次轮询失败 */ }
+  } catch { }
 }
 async function startRebuild() {
   rebuild.msg = ''; rebuild.error = false
@@ -1868,7 +1872,7 @@ async function pollMemCleanup() {
     } else {
       memCleanup.running = false; stopMemCleanupPoll()
     }
-  } catch { /* 忽略单次轮询失败 */ }
+  } catch { }
 }
 async function startMemCleanupPreview() {
   memCleanup.msg = ''; memCleanup.error = false; memCleanup.applyMsg = ''; memCleanup.expanded = false
@@ -2018,6 +2022,7 @@ async function applyImMemoryMaintenance() {
   }
 }
 
+/* PHASE3_SEARCH_OLD_BEGIN
 // ── 搜索连通测试（SearXNG / Tavily）──
 const searchTest = reactive({
   searxng:        { loading: false, ok: false, msg: '' },
@@ -2076,6 +2081,7 @@ async function saveSearch(source: 'general' | 'similar') {
   }
 }
 
+PHASE3_SEARCH_OLD_END */
 /* PHASE1_USAGE_OLD_BEGIN
 const usage        = ref<any | null>(null)
 const usageLoading = ref(false)
