@@ -15,19 +15,19 @@
       <span v-else class="ci-title">{{ (localTitles.get(canvas.id) ?? canvas.title) || '未命名画布' }}</span>
       <div class="ci-actions">
         <button :disabled="savingIds.has(canvas.id)" :title="editingId === canvas.id ? '确认' : '重命名'" class="ci-btn" @mousedown.prevent @click.stop="editingId === canvas.id ? commitRename(canvas.id) : startRename(canvas)">
-          <PhCheck v-if="editingId === canvas.id" :size="11" weight="bold" />
-          <PhPencilSimple v-else :size="11" weight="bold" />
+          <Icon v-if="editingId === canvas.id" name="status.success" :size="11" />
+          <Icon v-else name="action.edit" :size="11" />
         </button>
-        <button :disabled="savingIds.has(canvas.id)" title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><PhTrash :size="11" weight="bold" /></button>
+        <button :disabled="savingIds.has(canvas.id)" title="删除画布" class="ci-btn ci-delete" @click.stop="remove(canvas)"><Icon name="action.delete" :size="11" /></button>
       </div>
     </div>
-    <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><PhPlus :size="14" weight="bold" />新建画布</button>
+    <button class="canvas-create-card" data-layout-key="canvas-create" @click="emit('create')"><Icon name="action.add" :size="14" />新建画布</button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUpdate, onUpdated, ref, type PropType } from 'vue'
-import { PhCheck, PhPencilSimple, PhPlus, PhTrash } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { showAppError } from '@/composables/useAppToast'

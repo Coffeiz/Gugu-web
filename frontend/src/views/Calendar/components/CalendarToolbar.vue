@@ -2,12 +2,12 @@
   <div class="cal-toolbar glass-card">
     <GlassBg />
     <div class="toolbar-left">
-      <button class="nav-btn" @click="$emit('prev')"><PhCaretLeft :size="14" weight="bold" /></button>
+      <button class="nav-btn" @click="$emit('prev')"><Icon name="action.back" :size="14" /></button>
       <button ref="periodButton" class="period-btn" @click="$emit('toggle-picker', periodButton)">
         <span>{{ periodLabel }}</span>
-        <PhCaretDown :size="11" weight="bold" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
+        <Icon name="action.down" :size="11" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
       </button>
-      <button class="nav-btn" @click="$emit('next')"><PhCaretRight :size="14" weight="bold" /></button>
+      <button class="nav-btn" @click="$emit('next')"><Icon name="action.next" :size="14" /></button>
     </div>
     <div class="toolbar-right">
       <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1" style="--pill-radius: 7px">
@@ -23,8 +23,7 @@
 import { ref } from 'vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import { PhCaretLeft, PhCaretRight, PhCaretDown } from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 defineProps<{ periodLabel: string; viewMode: 'month' | 'week'; pickerOpen: boolean }>()
 defineEmits<{
   prev: []

@@ -32,6 +32,8 @@
           <PhRobot :size="14" />
           Agent 配置
         </div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><PhSlidersHorizontal :size="14" />行为配置</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-usage') }" role="link" tabindex="0" @click="go('/agent-usage')"><PhChartLine :size="14" />Agent 用量</div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">数据</div>
@@ -132,7 +134,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
   PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhUsers,
-  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
+  PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge, PhSlidersHorizontal,
   PhFolderSimpleDashed,
 } from '@phosphor-icons/vue'
 
@@ -215,6 +217,7 @@ function handleLogout() {
   margin-right: -14px; padding-right: 14px;   /* 延伸到侧边栏右边缘，滚动条贴边 */
   /* 滚动条由全局浮层契约统一管理，不为它预留布局空间。 */
 }
+.nav-sub { padding-left: 28px; font-size: 12px; color: var(--content-muted); }
 /* 出现滚动条时，flex column 会把 1px 高的分割线（及其它子项）压缩至 0 使其消失——
    固定不收缩，让溢出交给滚动而非挤压内容。 */
 .sidebar-nav > * { flex-shrink: 0; }

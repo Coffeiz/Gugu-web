@@ -16,7 +16,7 @@ export function useUsage() {
     finally { usageLoading.value = false }
   }
   function fmtNum(n: number | null | undefined) { if (n == null) return '0'; if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`; if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`; return String(n) }
-  const metrics = [{ key: 'calls', label: '对话次数', unit: '次' }, { key: 'tokens_in', label: '输入 tokens', unit: '' }, { key: 'tokens_out', label: '输出 tokens', unit: '' }]
+  const metrics = [{ key: 'calls', label: '对话次数', unit: '次' }, { key: 'tokens_in', label: '输入 tokens', unit: '' }, { key: 'tokens_out', label: '输出 tokens', unit: '' }, { key: 'cache_read', label: '命中缓存', unit: '' }, { key: 'cache_write', label: '写入缓存', unit: '' }]
   const monthIndex = computed(() => usage.value?.months?.indexOf(usage.value.month) ?? 0)
   const chartPoints = computed(() => { const data = usage.value?.daily || []; const values = data.map((d: any) => d[activeMetric.value] ?? 0); const max = Math.max(...values, 1); const step = (chartWidth.value - PAD_L - PAD_R) / Math.max(values.length - 1, 1); return values.map((value: number, i: number) => ({ x: PAD_L + i * step, y: PAD_T + (1 - value / max) * (CHART_H - PAD_T - PAD_B) })) })
   function smoothPath(points: any[]) { if (points.length < 2) return ''; let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`; for (let i = 1; i < points.length; i++) { const x = ((points[i - 1].x + points[i].x) / 2).toFixed(1); d += ` C ${x} ${points[i - 1].y.toFixed(1)} ${x} ${points[i].y.toFixed(1)} ${points[i].x.toFixed(1)} ${points[i].y.toFixed(1)}` } return d }

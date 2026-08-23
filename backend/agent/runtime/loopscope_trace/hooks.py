@@ -8,7 +8,10 @@ import uuid
 from typing import Any
 
 from .context import install_context_hooks
-from .state import _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace
+from .state import (
+    _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace,
+    record_adapter_call, record_adapter_result, record_canonical_event_stats,
+)
 from .utils import (
     _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
     _jsonable, _prompt_digest, _round_result, _system_message_text,
@@ -281,6 +284,16 @@ def ensure_hooks() -> None:
             )
             growth = max(round_prompt_est - previous_prompt_estimate, 0) if previous_prompt_estimate else 0
             cache_diag = _cache_diagnostics(round_messages, ctx, model_name)
+            from agent.context.canonical_tool_history import canonical_event_stats
+            canonical_stats = canonical_event_stats(round_messages)
+            if run:
+                record_canonical_event_stats(run, canonical_stats)
+                record_adapter_call(
+                    run,
+                    provider=str(getattr(ai, "provider", "") or "unknown"),
+                    api_format=str(getattr(driver, "api_format", "") or "unknown"),
+                    canonical_event_count=int(canonical_stats.get("count", 0) or 0),
+                )
             if run and not tool_schema_context_recorded:
                 tool_schema_context_recorded = True
                 selected_tool_names = list(
@@ -351,6 +364,11 @@ def ensure_hooks() -> None:
                             "round": round_index,
                         },
                         "cache": cache_diag,
+                        "canonical_events": canonical_stats,
+                        "adapter": {
+                            "provider": getattr(ai, "provider", ""),
+                            "api_format": getattr(driver, "api_format", ""),
+                        },
                     },
                 },
                 code=_code_ref(original_round),
@@ -385,6 +403,7 @@ def ensure_hooks() -> None:
                                 span.token_impact["prompt_tokens_source"] = "estimate"
                             span.finish(details)
                             run.add_usage(span.usage)
+                            record_adapter_result(run, "success")
                     yield kind, value
             except (GeneratorExit, asyncio.CancelledError):
                 # 外层提前 break/取消时生成器在此被关闭——不是本轮失败,不标 error。
@@ -393,10 +412,14 @@ def ensure_hooks() -> None:
                 # 两者都要当「取消」处理。
                 if span and span.status == "running":
                     span.finish({"error_type": "cancelled"}, status="cancelled")
+                if run:
+                    record_adapter_result(run, "cancelled")
                 raise
             except BaseException as exc:
                 if span:
                     span.finish({"error_type": type(exc).__name__}, status="error")
+                if run:
+                    record_adapter_result(run, "error")
                 raise
 
         try:

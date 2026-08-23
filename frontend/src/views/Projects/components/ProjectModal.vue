@@ -8,13 +8,13 @@
              且两边都有删除按钮离太近容易误触），多选栏自己有取消/删除，先隐藏这组项目级按钮 -->
         <div v-if="!pmInSelectionMode" class="float-actions">
           <button class="save-float-btn" @click="closeProjectModal" title="保存并关闭">
-            <PhCheck :size="14" weight="bold" />
+            <Icon name="status.success" :size="14" />
           </button>
           <button class="archive-float-btn" @click="handleArchive" title="归档此项目（可逆，随时可在「已归档」里恢复）">
-            <PhArchive :size="14" weight="bold" />
+            <Icon name="action.archive" :size="14" />
           </button>
           <button class="del-float-btn" @click="handleDelete" title="删除此项目">
-            <PhTrash :size="14" weight="bold" />
+            <Icon name="action.delete" :size="14" />
           </button>
         </div>
 
@@ -116,9 +116,7 @@ import { fireHint } from '@/composables/useOnboarding'
 import ProjectModalShell from '@/views/Projects/components/ProjectModalShell.vue'
 import UploadConflictDialog, { type ConflictItem, type ConflictDecision } from '@/components/common/UploadConflictDialog.vue'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
-import {
-  PhCheck, PhTrash, PhArchive,
-} from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import FileInfoPopup from '@/components/common/FileInfoPopup.vue'
 import FileBrowserContextMenu from '@/components/common/file-browser/FileBrowserContextMenu.vue'
 import FileBrowserContextMenuContent from '@/components/common/file-browser/FileBrowserContextMenuContent.vue'

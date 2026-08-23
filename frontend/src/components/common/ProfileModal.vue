@@ -8,7 +8,7 @@
             <template v-else>{{ initial }}</template>
             <div class="pm-avatar-overlay">
               <span v-if="avatarUploading" class="pm-avatar-spin"></span>
-              <PhCamera v-else :size="13" weight="bold" />
+              <Icon v-else name="user.camera" size="sm" tone="inherit" />
             </div>
           </div>
           <input ref="avatarInput" type="file" accept="image/*" style="display:none" @change="onAvatarFile" />
@@ -22,13 +22,13 @@
         <template v-for="item in navItems" :key="item.key">
           <div v-if="item.divider" class="pm-nav-divider"></div>
           <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
-            <component :is="item.icon" :size="14" weight="bold" />
+            <Icon :name="item.icon" size="sm" tone="inherit" />
             {{ item.label }}
           </button>
         </template>
         <div class="pm-nav-spacer"></div>
         <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
-          <PhUserMinus :size="13" weight="bold" />
+          <Icon name="user.remove" size="sm" tone="inherit" />
           注销账号
         </button>
       </div>
@@ -36,7 +36,7 @@
       <div class="pm-content">
         <div class="pm-content-header">
           <span class="pm-content-title">{{ currentNavLabel }}</span>
-          <button class="popup-close-btn" @click="$emit('close')"><PhX :size="13" weight="bold" /></button>
+          <button class="popup-close-btn" @click="$emit('close')"><Icon name="action.close" size="sm" tone="inherit" /></button>
         </div>
         <div class="pm-content-body" ref="pmBodyRef">
           <KeepAlive>
@@ -86,7 +86,7 @@ import ProfileImPane from './ProfileModal/ProfileImPane.vue'
 import ProfileToolPermissionsPane from './ProfileModal/ProfileToolPermissionsPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
-import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle, PhWrench } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
@@ -96,13 +96,13 @@ const displayLabel = computed(() => authStore.user?.displayName || authStore.use
 const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
 
 const navItems = [
-  { key: 'info', label: '个人信息', icon: PhUser },
-  { key: 'account', label: '账号设置', icon: PhShieldCheck },
-  { key: 'prefs', label: '偏好设置', icon: PhSliders },
+  { key: 'info', label: '个人信息', icon: 'user.default' },
+  { key: 'account', label: '账号设置', icon: 'user.security' },
+  { key: 'prefs', label: '偏好设置', icon: 'user.settings' },
   { divider: true },
-  { key: 'gugu', label: '咕咕设置', icon: PhBird },
-  { key: 'tools', label: '工具权限', icon: PhWrench },
-  { key: 'im', label: '接入咕咕', icon: PhChatsCircle },
+  { key: 'gugu', label: '咕咕设置', icon: 'user.gugu' },
+  { key: 'tools', label: '工具权限', icon: 'admin.wrench' },
+  { key: 'im', label: '接入咕咕', icon: 'communication.chat' },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')

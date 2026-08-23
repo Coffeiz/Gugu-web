@@ -14,7 +14,7 @@
           <button class="trash-expand-btn" :title="expandedTrashFolders.has(folder.id) ? '收起内容' : '查看内容'" @click.stop="toggleTrashFolder(folder)">
             <svg :class="{ rotated: expandedTrashFolders.has(folder.id) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 3.5l3 3 3-3"/></svg>
           </button>
-          <PhFolder class="lr-folder-icon" :size="16" weight="fill" />
+          <Icon name="file.folder" class="lr-folder-icon" :size="16" />
           <span class="lr-filename" :title="folder.name">{{ folder.name }}</span>
         </span>
         <span class="lr-type-cell"><span class="lr-type-text">文件夹</span></span>
@@ -25,25 +25,25 @@
           <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedTrashFolderIds.has(folder.id) }"><svg v-if="selectedTrashFolderIds.has(folder.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
           <template v-if="!inSelectionMode">
             <button class="file-list-btn trash-restore-btn" title="恢复文件夹及其内容" @click.stop="restoreTrashFolder(folder)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>恢复</button>
-            <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)"><PhTrash :size="11" weight="bold" /></button>
+            <button class="file-list-btn del" title="永久删除文件夹及其内容" @click.stop="hardDeleteTrashFolder(folder)"><Icon name="action.delete" :size="11" /></button>
           </template>
         </span>
       </div>
       <div v-if="expandedTrashFolders.has(folder.id)" class="trash-folder-contents">
         <div v-if="trashFolderContents[folder.id]?.folders.length === 0 && trashFolderContents[folder.id]?.files.length === 0" class="trash-folder-empty">空文件夹</div>
-        <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><PhFolder :size="14" weight="fill" /><span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small></div>
-        <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file"><component :is="fileListIcon(file.ext)" :size="14" weight="fill" :style="{ color: fileIconColor(file.ext) }" /><span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span></div>
+        <div v-for="child in trashFolderContents[folder.id]?.folders || []" :key="`trash-child-${child.id}`" class="trash-child-row"><Icon name="file.folder" :size="14" /><span>{{ child.name }}</span><small>{{ child.fileCount }} 个文件</small></div>
+        <div v-for="file in trashFolderContents[folder.id]?.files || []" :key="`trash-child-file-${file.id}`" class="trash-child-row file"><component :is="fileListIcon(file.ext)" :size="14" :style="{ color: fileIconColor(file.ext) }" /><span>{{ file.displayName }}.{{ file.ext.toLowerCase() }}</span></div>
       </div>
     </template>
     <div v-for="f in sortedContents.files" :key="f.id" class="list-row" :data-file-id="f.id" :class="{ selected: selectedIds.has(f.id), 'pre-selected': previewFileIds.has(f.id) }" @click.stop="handleTrashFileClick(f, $event)">
-      <span class="lr-name-cell"><component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color: fileIconColor(f.ext) }" /><span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span></span>
+      <span class="lr-name-cell"><component :is="fileListIcon(f.ext)" class="lr-file-icon" :size="16" :style="{ color: fileIconColor(f.ext) }" /><span class="lr-filename" :title="f.displayName">{{ f.displayName }}</span></span>
       <span class="lr-type-cell"><span class="lr-ext" :style="{ color: fileIconColor(f.ext), background: fileIconColor(f.ext) + '18' }">{{ f.ext }}</span></span>
       <span class="lr-text">{{ f.deletedAt ? formatDate(f.deletedAt) : '—' }}</span>
       <span class="lr-text" :class="{ 'days-warn': daysLeft(f.deletedAt) <= 3 }">{{ daysLeft(f.deletedAt) }} 天</span>
       <span class="lr-text">{{ f.size }}</span>
       <span class="lr-actions">
         <Transition name="sel-cb"><div v-if="inSelectionMode" class="sel-checkbox" :class="{ checked: selectedIds.has(f.id) }"><svg v-if="selectedIds.has(f.id)" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6l3 3 5-5"/></svg></div></Transition>
-        <template v-if="!inSelectionMode"><button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>恢复</button><button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)"><PhTrash :size="11" weight="bold" /></button></template>
+        <template v-if="!inSelectionMode"><button class="file-list-btn trash-restore-btn" title="恢复" @click.stop="restoreFile(f)"><svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7A5 5 0 1 0 7 2"/><path d="M2 2v5h5"/></svg>恢复</button><button class="file-list-btn del" title="永久删除" @click.stop="hardDeleteFile(f)"><Icon name="action.delete" :size="11" /></button></template>
       </span>
     </div>
   </div>
@@ -51,8 +51,8 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
-import { PhFolder, PhTrash } from '@phosphor-icons/vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 const props = defineProps({ context: { type: Object as PropType<Record<string, any>>, required: true } })
 const { trashFolders, contents, sortedContents, sortedTrashFolders, expandedTrashFolders, trashFolderContents, sortKey, sortDir, onSortSelect, inSelectionMode, selectedTrashFolderIds, selectedIds, previewFolderKeys, previewFileIds, handleTrashFolderClick, toggleTrashFolder, restoreTrashFolder, hardDeleteTrashFolder, handleTrashFileClick, restoreFile, hardDeleteFile, fileListIcon, fileIconColor, formatDate, daysLeft, loading } = props.context

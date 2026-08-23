@@ -297,9 +297,11 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             func.count(AgentUsage.id),
             func.coalesce(func.sum(AgentUsage.tokens_in), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+            func.coalesce(func.sum(AgentUsage.cache_read), 0),
+            func.coalesce(func.sum(AgentUsage.cache_write), 0),
         )
     )
-    total_calls, total_in, total_out = total_row.one()
+    total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
     # 今日
     today = now_utc().date()
@@ -309,9 +311,11 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             func.count(AgentUsage.id),
             func.coalesce(func.sum(AgentUsage.tokens_in), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+            func.coalesce(func.sum(AgentUsage.cache_read), 0),
+            func.coalesce(func.sum(AgentUsage.cache_write), 0),
         ).where(AgentUsage.created_at >= today_start)
     )
-    today_calls, today_in, today_out = today_row.one()
+    today_calls, today_in, today_out, today_cache_read, today_cache_write = today_row.one()
 
     # 按 model 分组
     model_rows = await db.execute(
@@ -321,11 +325,13 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             func.count(AgentUsage.id),
             func.coalesce(func.sum(AgentUsage.tokens_in), 0),
             func.coalesce(func.sum(AgentUsage.tokens_out), 0),
+            func.coalesce(func.sum(AgentUsage.cache_read), 0),
+            func.coalesce(func.sum(AgentUsage.cache_write), 0),
         ).group_by(AgentUsage.model, AgentUsage.provider)
         .order_by(func.count(AgentUsage.id).desc())
     )
     by_model = [
-        {"model": r[0], "provider": r[1], "calls": r[2], "tokens_in": r[3], "tokens_out": r[4]}
+        {"model": r[0], "provider": r[1], "calls": r[2], "tokens_in": r[3], "tokens_out": r[4], "cache_read": r[5], "cache_write": r[6]}
         for r in model_rows.all()
     ]
 
@@ -363,7 +369,9 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
                    COALESCE(SUM(tokens_in), 0) AS tokens_in,
-                   COALESCE(SUM(tokens_out), 0) AS tokens_out
+                   COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                   COALESCE(SUM(cache_read), 0) AS cache_read,
+                   COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
             WHERE created_at >= :month_start AND created_at <= :month_end
     """
@@ -373,19 +381,19 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
         daily_params["model"] = model
     daily_sql += " GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY day"
     daily_rows = await db.execute(text(daily_sql), daily_params)
-    daily_map = {r[0]: {"calls": r[1], "tokens_in": r[2], "tokens_out": r[3]}
+    daily_map = {r[0]: {"calls": r[1], "tokens_in": r[2], "tokens_out": r[3], "cache_read": r[4], "cache_write": r[5]}
                  for r in daily_rows.all()}
 
     from datetime import date
     daily = []
     for d in range(1, days_in_month + 1):
         key = date(year, mon, d).isoformat()
-        entry = daily_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0})
+        entry = daily_map.get(key, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cache_read": 0, "cache_write": 0})
         daily.append({"date": key, **entry})
 
     return {
-        "total":   {"calls": total_calls, "tokens_in": total_in,   "tokens_out": total_out},
-        "today":   {"calls": today_calls, "tokens_in": today_in,   "tokens_out": today_out},
+        "total":   {"calls": total_calls, "tokens_in": total_in, "tokens_out": total_out, "cache_read": total_cache_read, "cache_write": total_cache_write, "cache_ratio": round(total_cache_read / total_in, 6) if total_in else 0},
+        "today":   {"calls": today_calls, "tokens_in": today_in, "tokens_out": today_out, "cache_read": today_cache_read, "cache_write": today_cache_write, "cache_ratio": round(today_cache_read / today_in, 6) if today_in else 0},
         "by_model": by_model,
         "active_model": model,
         "months":   available_months,

@@ -31,30 +31,39 @@
         <aside class="preview-sidebar">
           <div class="gugu-logo"><span class="mini-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h.01" /><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20" /><path d="M20 7l2 .5-2 .5" /><path d="M10 18v3" /><path d="M14 17.75V21" /></svg></span><strong>咕咕</strong></div>
           <span class="nav-rule" />
-          <div class="nav-group"><div class="nav-title">工作台</div><span class="nav-item active"><PhStack :size="14" />项目 <i>6</i></span><span class="nav-item"><PhCalendarBlank :size="14" />日历</span><span class="nav-item"><PhAlarm :size="14" />定时任务</span><span class="nav-item"><PhGraph :size="14" />思维</span></div>
+          <div class="nav-group"><div class="nav-title">工作台</div><span class="nav-item active"><Icon name="navigation.projects" :size="14" />项目 <i>6</i></span><span class="nav-item"><Icon name="navigation.calendar" :size="14" />日历</span><span class="nav-item"><Icon name="admin.alarm" :size="14" />定时任务</span><span class="nav-item"><Icon name="canvas.graph" :size="14" />思维</span></div>
           <span class="nav-rule" />
-          <div class="nav-group"><div class="nav-title">资源</div><span class="nav-item"><PhFolder :size="14" />文件库</span><span class="nav-item"><PhAddressBook :size="14" />客户 <em>咕了</em></span><span class="nav-item"><PhUsersThree :size="14" />团队 <em>咕了</em></span></div>
+          <div class="nav-group"><div class="nav-title">资源</div><span class="nav-item"><Icon name="file.folder" :size="14" />文件库</span><span class="nav-item"><Icon name="communication.customer" :size="14" />客户 <em>咕了</em></span><span class="nav-item"><Icon name="communication.team" :size="14" />团队 <em>咕了</em></span></div>
           <span class="nav-rule" />
-          <div class="nav-group"><div class="nav-title">通知</div><span class="nav-item"><PhBell :size="14" weight="bold" />通知 <i>2</i></span></div>
+          <div class="nav-group"><div class="nav-title">通知</div><span class="nav-item"><Icon name="admin.bell" :size="14" weight="bold" />通知 <i>2</i></span></div>
           <div class="user-card"><span class="avatar">C</span><div><b>小北</b><small>个人空间</small></div></div>
         </aside>
 
         <div class="preview-main">
-          <div class="topbar"><div class="topbar-title"><b>项目</b><span>2026年8月15日 · 星期六</span></div><div class="search"><PhMagnifyingGlass :size="13" />搜索项目、文件、笔记 <kbd>⌘ K</kbd></div><button class="btn" type="button"><PhUploadSimple :size="13" />上传文件</button><button class="btn primary" type="button"><PhPlus :size="13" />新建项目</button></div>
+          <div class="topbar"><div class="topbar-title"><b>项目</b><span>2026年8月15日 · 星期六</span></div><div class="search"><Icon name="action.search" :size="13" />搜索项目、文件、笔记 <kbd>⌘ K</kbd></div><button class="btn" type="button"><Icon name="action.upload" :size="13" />上传文件</button><button class="btn primary" type="button"><Icon name="action.add" :size="13" />新建项目</button></div>
           <div class="board-toolbar"><h2>项目看板</h2><span class="theme-badge"><i />{{ familyLabel }} · {{ modeLabel }}</span><span class="filter-chip">全部 12</span><span class="filter-chip">进行中 6</span><span class="spacer" /><span class="quiet">按阶段拖动项目</span></div>
           <div class="kanban">
-            <div v-for="column in columns" :key="column.title" class="column"><div class="column-head"><i class="status-dot" :class="column.dot" /><b>{{ column.title }}</b><span>{{ column.count }}</span></div><div class="card-list"><article v-for="card in column.cards" :key="card.title" class="proj-card" :class="{ 'mini-card': card.mini }" :style="{ '--project-color': card.color }"><div class="card-body"><div class="card-top"><div class="proj-name">{{ card.title }}</div><div class="stars">{{ card.stars }}</div></div><div class="proj-meta"><span class="proj-client">{{ card.meta }}</span><span class="proj-stage">{{ card.stage }}</span></div><div class="card-footer"><div class="date-range"><PhCalendarBlank :size="11" /> <span class="deadline" :class="{ done: card.progress === 100 }">{{ card.date }}</span></div><div class="footer-right"><span class="file-badge"><PhFile :size="9" /> {{ card.progress > 0 ? Math.max(1, Math.round(card.progress / 20)) : 0 }}</span><span class="progress-num">{{ card.progress }}%</span></div></div><div class="seg-bar-wrap"><i :style="{ width: `${card.progress}%` }" /></div></div></article></div></div>
+            <div v-for="column in columns" :key="column.title" class="column"><div class="column-head"><i class="status-dot" :class="column.dot" /><b>{{ column.title }}</b><span>{{ column.count }}</span></div><div class="card-list"><article v-for="card in column.cards" :key="card.title" class="proj-card" :class="{ 'mini-card': card.mini }" :style="{ '--project-color': card.color }"><div class="card-body"><div class="card-top"><div class="proj-name">{{ card.title }}</div><div class="stars">{{ card.stars }}</div></div><div class="proj-meta"><span class="proj-client">{{ card.meta }}</span><span class="proj-stage">{{ card.stage }}</span></div><div class="card-footer"><div class="date-range"><Icon name="navigation.calendar" :size="11" /> <span class="deadline" :class="{ done: card.progress === 100 }">{{ card.date }}</span></div><div class="footer-right"><span class="file-badge"><Icon name="file.document" :size="9" /> {{ card.progress > 0 ? Math.max(1, Math.round(card.progress / 20)) : 0 }}</span><span class="progress-num">{{ card.progress }}%</span></div></div><div class="seg-bar-wrap"><i :style="{ width: `${card.progress}%` }" /></div></div></article></div></div>
           </div>
           <Transition name="mock-chat">
             <div v-if="chatOpen" class="mock-chat-window">
               <div class="mock-chat-header"><b>咕咕</b><span><i />在线</span><button type="button" aria-label="关闭聊天" @click="chatOpen = false"><PhX :size="13" /></button></div>
               <div class="mock-chat-messages"><div class="mock-msg ai">嗨，我是咕咕。这里是设计令牌页里的聊天窗样板。</div><div class="mock-msg user">帮我看看今天的项目进度</div><div class="mock-msg ai">进行中的项目有 6 个，最近截止的是 Runtime 接入。</div></div>
-              <div class="mock-chat-composer"><button type="button" aria-label="添加附件"><PhPaperclip :size="15" /></button><span>问问项目进度、截止日期...</span><button class="mock-send" type="button" aria-label="发送"><PhArrowUp :size="14" weight="bold" /></button></div>
+              <div class="mock-chat-composer"><button type="button" aria-label="添加附件"><Icon name="communication.chat" :size="15" /></button><span>问问项目进度、截止日期...</span><button class="mock-send" type="button" aria-label="发送"><Icon name="action.next" :size="14" weight="bold" /></button></div>
             </div>
           </Transition>
           <button class="gugu-fab" aria-label="打开咕咕聊天" @click="chatOpen = !chatOpen"><svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h.01" /><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20" /><path d="M20 7l2 .5-2 .5" /><path d="M10 18v3" /><path d="M14 17.75V21" /></svg></button>
         </div>
       </section>
+
+      <TokenSection index="00" title="Icon contract" subtitle="业务只声明语义，不直接绑定 Remix Icon；尺寸、色调和无障碍属性由统一入口管理。" code="icon">
+        <div class="icon-contract-grid">
+          <div v-for="sample in iconSamples" :key="sample.name" class="icon-contract-card">
+            <Icon :name="sample.name" :size="sample.size" :tone="sample.tone" :title="sample.label" :decorative="false" />
+            <div><b>{{ sample.label }}</b><code class="token-code">{{ sample.name }}</code></div>
+          </div>
+        </div>
+      </TokenSection>
 
       <TokenSection index="01" title="Glass base palette" subtitle="Pearl、Iris、companion colors 共同构成主题的 primitive DNA。" code="primitive">
         <div class="swatch-grid"> <div v-for="token in primitiveTokens" :key="token.variable" class="swatch"><div class="swatch-color" :style="{ background: `var(${token.variable})` }" /><label>{{ token.name }}</label><code class="token-code">{{ token.variable }}</code></div></div>
@@ -89,7 +98,7 @@
       </TokenSection>
 
       <TokenSection index="07" title="Token index" subtitle="字体、间距、圆角、动效和画布令牌的可复制索引。" code="all tokens">
-        <div class="token-index"><div v-for="token in indexTokens" :key="token.variable" class="index-card"><div class="index-preview" :class="`preview-${token.type}`" :style="previewStyle(token)"><span v-if="token.type === 'font'">Aa</span><span v-else-if="token.type === 'duration'">→</span><span v-else-if="token.type === 'other'">{ }</span></div><button type="button" :title="`复制 ${token.variable}`" @click="copyToken(token)"><PhCheck v-if="copied === token.variable" :size="13" weight="bold" /><PhCopy v-else :size="13" /></button><b>{{ token.name }}</b><code class="token-code">{{ token.variable }}</code><small class="token-code">{{ valueOf(token) }}</small></div></div>
+        <div class="token-index"><div v-for="token in indexTokens" :key="token.variable" class="index-card"><div class="index-preview" :class="`preview-${token.type}`" :style="previewStyle(token)"><span v-if="token.type === 'font'">Aa</span><span v-else-if="token.type === 'duration'">→</span><span v-else-if="token.type === 'other'">{ }</span></div><button type="button" :title="`复制 ${token.variable}`" @click="copyToken(token)"><Icon name="status.success" v-if="copied === token.variable" :size="13" weight="bold" /><Icon name="action.copy" v-else :size="13" /></button><b>{{ token.name }}</b><code class="token-code">{{ token.variable }}</code><small class="token-code">{{ valueOf(token) }}</small></div></div>
       </TokenSection>
 
       <footer class="footer-note"><span>GUGU · Design Tokens · Glass / V2</span><span>{{ familyLabel }} · {{ modeLabel }} · family × mode</span></footer>
@@ -104,26 +113,7 @@ import { useDesignTokens } from '../composables/useDesignTokens'
 import { tokenCatalog, type DesignToken } from '../data/tokenCatalog'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import TokenSection from './TokenSection.vue'
-import {
-  PhAddressBook,
-  PhAlarm,
-  PhBell,
-  PhArrowUp,
-  PhCalendarBlank,
-  PhCheck,
-  PhCopy,
-  PhFolder,
-  PhFile,
-  PhGraph,
-  PhMagnifyingGlass,
-  PhPlus,
-  PhPaperclip,
-  PhStack,
-  PhUploadSimple,
-  PhUsersThree,
-  PhX,
-} from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 const { preference, resolved, family, setTheme, setFamily } = useTheme()
 const { valueOf, copyToken: copy } = useDesignTokens()
 const copied = ref<string | null>(null)
@@ -135,6 +125,14 @@ const accentTokens = by(token => token.variable.startsWith('--color-') || token.
 const projectTokens = by(token => token.variable.startsWith('--project-'))
 const semanticTokens = by(token => token.category === 'semantic')
 const indexTokens = by(token => token.category !== 'semantic')
+const iconSamples = [
+  { name: 'action.add', label: '添加', size: 'sm' as const, tone: 'active' as const },
+  { name: 'action.search', label: '搜索', size: 'md' as const, tone: 'default' as const },
+  { name: 'action.edit', label: '编辑', size: 'md' as const, tone: 'muted' as const },
+  { name: 'action.delete', label: '删除', size: 'md' as const, tone: 'danger' as const },
+  { name: 'file.folder', label: '文件夹', size: 'lg' as const, tone: 'default' as const },
+  { name: 'status.success', label: '成功', size: 'sm' as const, tone: 'active' as const },
+]
 const familyLabel = computed(() => family.value === 'glass' ? 'Glass' : 'V2 · Pearl / Ink / Iris')
 const modeLabel = computed(() => resolved.value === 'dark' ? 'Dark' : 'Light')
 const familyDescription = computed(() => family.value === 'glass' ? '保留当前咕咕的柔光、透明层与紫灰环境色。' : '使用 Pearl / Ink 中性表面与 Iris 交互色，保留项目内容色。')
@@ -170,6 +168,11 @@ async function copySnippet(): Promise<void> {
 
 <style scoped>
 .token-page { height: 100%; overflow-y: auto; box-sizing: border-box; padding: 28px; color: var(--content-primary); background: var(--surface-page); font-family: var(--font-sans); }
+.icon-contract-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.icon-contract-card { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); color: var(--content-secondary); background: var(--surface-card); }
+.icon-contract-card > div { display: grid; min-width: 0; gap: 3px; }
+.icon-contract-card b { color: var(--content-primary); font-size: 11px; font-weight: 600; }
+.icon-contract-card code { overflow: hidden; color: var(--content-tertiary); text-overflow: ellipsis; white-space: nowrap; }
 .token-shell { max-width: 1480px; margin: 0 auto; }
 .token-header { display: flex; align-items: center; gap: 18px; margin-bottom: 20px; }
 .brand-mark { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 14px; color: #fff; background: var(--brand-gradient); box-shadow: 0 8px 24px rgba(94,82,145,.22), inset 0 1px 0 rgba(255,255,255,.32); }

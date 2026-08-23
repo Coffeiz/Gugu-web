@@ -38,6 +38,7 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
     "@phosphor-icons/vue": "^2.2.1",
+    "@remixicon/vue": "^4.9.0",
     "@tanstack/vue-virtual": "^3.13.31",
     "@tiptap/core": "^3.27.3",
     "@tiptap/extension-code-block-lowlight": "^3.27.3",

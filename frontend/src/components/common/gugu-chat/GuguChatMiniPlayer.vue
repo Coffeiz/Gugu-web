@@ -7,11 +7,11 @@
         <div class="btn-group">
           <button class="mp-btn mp-btn--pin" :class="{ 'mp-btn--pinned': pinned }"
                   @click="$emit('update:pinned', !pinned)" :title="pinned ? '取消固定' : '固定'">
-            <PhPushPin v-if="pinned" :size="14" weight="fill" />
-            <PhPushPinSlash v-else :size="14" weight="regular" />
+            <Icon name="canvas.pin" v-if="pinned" :size="14" />
+            <Icon name="canvas.pin"Slash v-else :size="14" />
           </button>
           <button class="mp-btn mp-btn--close popup-close-btn" @click="onStop" title="关闭">
-            <PhX weight="bold" :size="13" />
+            <Icon name="action.close" :size="13" />
           </button>
         </div>
       </div>
@@ -26,14 +26,14 @@
       <div class="mp-controls">
         <div class="mp-vol-spacer" />
         <button class="mp-btn mp-btn--play" @click="onToggle">
-          <PhPlay  v-if="!playing" weight="fill" :size="16" />
-          <PhPause v-else          weight="fill" :size="16" />
+          <Icon name="media.play"  v-if="!playing" :size="16" />
+          <Icon name="media.pause" v-else :size="16" />
         </button>
         <div class="mp-vol-group">
           <button class="mp-vol-btn" @click="onToggleMute">
-            <PhSpeakerHigh  v-if="!muted && volume > 0.5" weight="fill" :size="14" />
-            <PhSpeakerLow   v-else-if="!muted && volume > 0" weight="fill" :size="14" />
-            <PhSpeakerSlash v-else weight="fill" :size="14" />
+            <Icon name="media.speaker-high"  v-if="!muted && volume > 0.5" :size="14" />
+            <Icon name="media.speaker-low"   v-else-if="!muted && volume > 0" :size="14" />
+            <Icon name="media.speaker-off" v-else :size="14" />
           </button>
           <input class="mp-vol-slider" type="range" min="0" max="1" step="0.02" :value="volume" @input="onSetVolume" />
         </div>
@@ -43,6 +43,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+import Icon from '@/components/common/Icon.vue'
 /**
  * 迷你播放器卡片：纯展示 + 交互转发。真正的 <audio> 元素和播放机制仍在
  * GuguChat.vue（useChatAudio 的 audioEl 需要在同一处声明模板 ref 才能绑定
@@ -50,12 +52,6 @@
  * 的等宽条动画重置（audioPlaying watcher）需要直接操作这些 DOM 节点的
  * style，那段是一次性的动画序列，不适合抽成响应式状态。
  */
-import { ref, computed } from 'vue'
-import {
-  PhPushPin, PhPushPinSlash, PhX, PhPlay, PhPause,
-  PhSpeakerHigh, PhSpeakerLow, PhSpeakerSlash,
-} from '@phosphor-icons/vue'
-
 defineProps<{
   visible: boolean
   style: Record<string, string | number>

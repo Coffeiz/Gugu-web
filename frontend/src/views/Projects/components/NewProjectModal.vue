@@ -15,7 +15,7 @@
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
         <button class="close-btn" @click="$emit('close')">
-          <PhX :size="14" weight="bold" />
+          <Icon name="action.close" :size="14" />
         </button>
       </div>
 
@@ -51,7 +51,7 @@
               :style="{ background: c.value }"
               @click="form.color = c.value"
             >
-              <PhCheck v-if="form.color === c.value" :size="11" weight="bold" style="color:white" />
+              <Icon name="status.success" v-if="form.color === c.value" :size="11" style="color:white" />
             </button>
           </div>
         </div>
@@ -67,7 +67,7 @@
               <!-- 模板按钮 -->
               <div class="tpl-selector" ref="tplSelectorRef">
                 <button class="tpl-trigger" @click.stop="tplOpen = !tplOpen">
-                  <PhSquaresFour :size="11" weight="bold" />
+                  <Icon name="navigation.apps" :size="11" />
                   模板
                 </button>
                 <Teleport to="body">
@@ -100,12 +100,12 @@
                             :title="renamingId === t.id ? '确认' : '重命名'"
                             @click.stop="renamingId === t.id ? commitRename(t.id) : startRename(t)"
                           >
-                            <PhPencilSimple v-if="renamingId !== t.id" :size="10" weight="bold" />
-                            <PhCheck v-else :size="10" weight="bold" />
+                            <Icon name="action.edit" v-if="renamingId !== t.id" :size="10" />
+                            <Icon name="status.success" v-else :size="10" />
                           </button>
                           <!-- 删除按钮（始终显示） -->
                           <button class="tpl-del-btn" title="删除" @click.stop="removeTemplate(t.id)">
-                            <PhX :size="10" weight="bold" />
+                            <Icon name="action.close" :size="10" />
                           </button>
                         </div>
                       </div>
@@ -115,7 +115,7 @@
                       <!-- 保存当前为模板 -->
                       <div v-if="!savingTpl" class="tpl-save-row">
                         <button class="tpl-save-btn" @click.stop="savingTpl = true">
-                          <PhPlus :size="10" weight="bold" />
+                          <Icon name="action.add" :size="10" />
                           保存当前为模板
                         </button>
                       </div>
@@ -129,10 +129,10 @@
                           ref="tplNameInputRef"
                         />
                         <button class="tpl-rename-btn" title="保存" @click.stop="commitSave">
-                          <PhCheck :size="10" weight="bold" />
+                          <Icon name="status.success" :size="10" />
                         </button>
                         <button class="tpl-del-btn" title="取消" @click.stop="savingTpl = false; newTplName = ''">
-                          <PhX :size="10" weight="bold" />
+                          <Icon name="action.close" :size="10" />
                         </button>
                       </div>
                     </div>
@@ -160,14 +160,14 @@
                     :ref="el => { if (el) stageInputRefs[stage.origIdx] = el as HTMLElement }"
                   />
                   <button class="del-btn" @click.stop="removeStage(stage.origIdx)" :disabled="form.stages.length <= 1">
-                    <PhX :size="10" weight="bold" />
+                    <Icon name="action.close" :size="10" />
                   </button>
                 </div>
                 <!-- 待办列表 -->
                 <div class="np-todo-list">
                   <div v-for="todo in (form.stages[stage.origIdx].todos ?? [])" :key="todo.id" class="np-todo-item">
                     <button class="np-todo-check" :class="{ checked: todo.done }" @click.stop="todo.done = !todo.done">
-                      <PhCheck v-if="todo.done" :size="8" weight="bold" />
+                      <Icon name="status.success" v-if="todo.done" :size="8" />
                     </button>
                     <input
                       :class="['np-todo-input', `np-todo-input-${stage.origIdx}`]"
@@ -178,13 +178,13 @@
                       v-enter.prevent="() => addNpTodo(stage.origIdx)"
                       @keydown.backspace="!todo.text && removeNpTodo(stage.origIdx, todo.id)"
                     />
-                    <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><PhX :size="10" weight="bold" /></button>
+                    <button class="np-todo-del" @click.stop="removeNpTodo(stage.origIdx, todo.id)"><Icon name="action.close" :size="10" /></button>
                   </div>
                   <button class="np-todo-add-btn" @click.stop="addNpTodo(stage.origIdx)">＋ 添加待办</button>
                 </div>
               </div>
               <button class="add-stage-btn" @click="addStage">
-                <PhPlus :size="10" weight="bold" />
+                <Icon name="action.add" :size="10" />
                 添加阶段
               </button>
             </div>
@@ -219,7 +219,7 @@ import { useStageTemplates } from '@/composables/useStageTemplates'
 import { nextZ, registerPopover } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
-import { PhX, PhCheck, PhPencilSimple, PhPlus, PhSquaresFour } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })

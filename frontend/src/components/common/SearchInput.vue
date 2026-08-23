@@ -1,6 +1,6 @@
 <template>
   <div class="search-input" :class="{ active, 'no-focus-ring': noFocusRing }">
-    <PhMagnifyingGlass class="search-input-icon" :size="15" weight="bold" />
+    <Icon name="action.search" class="search-input-icon" :size="15" />
     <input
       ref="inputEl"
       :value="modelValue"
@@ -16,15 +16,14 @@
       @keydown="emit('keydown', $event)"
     />
     <button v-if="clearable && modelValue" class="search-input-clear" title="清除" @click="clear">
-      <PhX :size="13" weight="bold" />
+      <Icon name="action.close" :size="13" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PhMagnifyingGlass, PhX } from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '搜索' },

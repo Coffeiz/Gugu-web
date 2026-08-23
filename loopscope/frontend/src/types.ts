@@ -91,6 +91,21 @@ export interface TraceRun {
   spans?: TraceSpan[]
 }
 
+export interface CanonicalEventStats {
+  count?: number
+  by_type?: Record<string, number>
+  schema_digests?: string[]
+}
+
+export interface AdapterCallStats {
+  count?: number
+  success?: number
+  errors?: number
+  canonical_render_calls?: number
+  by_provider?: Record<string, number>
+  by_api_format?: Record<string, number>
+}
+
 export interface TraceSpanPage {
   items: TraceSpan[]
   hasMore: boolean

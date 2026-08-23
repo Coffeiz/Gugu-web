@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><PhUploadSimple :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><PhPlus :size="13" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
         </div>
       </header>
 
@@ -80,8 +80,8 @@ import { useLiveStore } from '@/stores/live'
 import { projectsApi } from '@/services/api'
 import { uploadSignal } from '@/services/cache'
 import AppSidebar from '@/components/common/AppSidebar.vue'
+import Icon from '@/components/common/Icon.vue'
 import GuguChat from '@/components/common/GuguChat.vue'
-import { PhPlus, PhUploadSimple } from '@phosphor-icons/vue'
 import GlobalSearch from '@/components/common/GlobalSearch.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import NewProjectModal from '@/views/Projects/components/NewProjectModal.vue'

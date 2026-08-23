@@ -66,7 +66,7 @@
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
           <template v-if="project.status === 'done'">
-            <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
+            <span class="done-label"><Icon name="status.success" :size="9" /> 完成</span>
             <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
           </template>
           <template v-else>
@@ -131,7 +131,7 @@
       <div class="tp-header">
         <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
-        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
+        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><Icon name="action.close" :size="11" /></button>
       </div>
       <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
@@ -141,7 +141,7 @@
              @dragend="tpDragEnd"
              @dragover.prevent="tpDragOver(i, $event)">
           <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
-            <PhCheck v-if="t.done" :size="9" weight="bold" />
+            <Icon name="status.success" v-if="t.done" :size="9" />
           </button>
           <input
             v-if="editingTp === t.id"
@@ -157,7 +157,7 @@
           />
           <span v-else class="tp-name" :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                 @click="startEditTp(t.id)">{{ t.text || '待办事项' }}</span>
-          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><PhX :size="8" weight="bold" /></button>
+          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><Icon name="action.close" :size="8" /></button>
         </div>
       </TransitionGroup>
       <div v-else class="tp-empty">还没有待办</div>
@@ -175,7 +175,7 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
-import { PhCheck, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'

@@ -9,7 +9,7 @@
         :style="{ transformOrigin: uiStore.chatNotifyOrigin }"
       >
         <button class="nb-close" @click="dismiss(item.id)" title="关闭">
-          <PhX weight="bold" :size="13" />
+          <Icon name="action.close" :size="13" />
         </button>
         <div v-if="item.title" class="nb-head">
           <span class="nb-dot" :class="{ typing: item.typing }" />
@@ -24,8 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
-import { PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { useUiStore } from '@/stores/ui'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 

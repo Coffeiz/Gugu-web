@@ -1,20 +1,19 @@
 <template>
   <label class="fub" :class="[mode, { dragging }]">
-    <PhUploadSimple :size="mode === 'grid' ? 16 : 13" weight="bold" />
+    <Icon name="action.upload" :size="mode === 'grid' ? 22 : 13" />
     <span class="fub-text">上传文件</span>
     <input type="file" hidden multiple @change="emit('select', $event)" />
   </label>
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 /**
  * 文件库网格/列表和项目文件区网格/列表共用的上传入口——之前四处各画一份（文件库列表甚至
  * 漏画了），图标大小、文字包裹方式、hover 颜色都不一致。上传拖拽悬停态（dragging）由调用方
  * 的上传流程管理，这里只负责按 mode 呈现网格卡片式还是列表行式外观；
  * dragover/dragleave/drop 走原生事件透传，调用方直接在 <FileUploadButton> 标签上绑定即可。
  */
-import { PhUploadSimple } from '@phosphor-icons/vue'
-
 defineProps({
   mode: { type: String as () => 'grid' | 'list', default: 'grid' },
   dragging: { type: Boolean, default: false },

@@ -17,7 +17,7 @@
                 :class="{ active: category === c.value }"
                 @click="category = c.value"
               >
-                <component :is="c.icon" :size="13" weight="bold" />
+                <Icon :name="c.icon" size="sm" tone="inherit" />
                 {{ c.label }}
               </button>
             </div>
@@ -53,7 +53,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({ show: Boolean })
@@ -80,9 +80,9 @@ async function apiFeedback(category: string, content: string) {
 }
 
 const categories = [
-  { value: 'bug',        icon: PhWarningOctagon, label: 'Bug' },
-  { value: 'suggestion', icon: PhLightbulb,    label: '建议' },
-  { value: 'other',      icon: PhChatCircle,   label: '其他' },
+  { value: 'bug',        icon: 'status.warning-octagon', label: 'Bug' },
+  { value: 'suggestion', icon: 'status.info',            label: '建议' },
+  { value: 'other',      icon: 'communication.chat',     label: '其他' },
 ]
 
 const category  = ref('suggestion')

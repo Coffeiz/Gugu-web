@@ -1,6 +1,8 @@
-# 咕咕 · 后端开发文档
+# 咕咕 · 后端现状总览
 
-> 最后更新：2026-07-02
+> 最后更新：2026-08-23
+>
+> 本文是代码盘点，不是目标架构或 PRD。涉及具体功能时，以当前 `backend/` 实现和测试为准；尚未完成的重构会在文末单列。
 
 ---
 
@@ -13,10 +15,10 @@
 ### 大致怎么组织
 
 - **业务 API**（`app/api/v1/`）：项目、文件、文件夹、回收站、日历、客户等常规的增删改查，前端网页直接调。
-- **Agent 系统**（`agent/`，注意这是独立顶层目录，不在 `app/` 下）：AI 对话的核心逻辑、工具集、记忆、跨渠道适配器。这一块比业务 API 复杂得多，工具数量已经到了大几十个（项目/文件/日历/客户/定时任务/搜索/记忆……），远不只是"聊天+建日历"。
+- **Agent 系统**（`agent/`，独立于 `app/`）：统一承接 Web、QQ、飞书、微信和定时任务的 Agent 执行。这里包含上下文快照、连续历史、压缩、模型适配、能力注册、工具、Skill、记忆和跨渠道编排。
 - **Admin 后台**：一整套独立鉴权的管理端 API（配置热切换、用户管理、数据分析、系统日志、存储对账……），路由文件名多带 `_admin` 后缀。
 - **配置系统**：`.env` 打底，Admin 后台改的配置写进 `config.override.json`，改完不用重启就能生效。
-- **存储**：本地磁盘或阿里云 OSS 二选一，同样是 Admin 热切换（详见 [`storage.md`](./storage.md)）。
+- **存储**：本地磁盘或阿里云 OSS 二选一，聊天附件另有 draft/attached 所有权生命周期；存储细节见 [`storage.md`](./storage.md)。
 
 ### 谁在用它
 
@@ -24,9 +26,13 @@
 - Admin 管理面板：走同一套 `/api/v1/*` 但挂了 `require_admin` 依赖的一批路由。
 - IM 网关（QQ 官方机器人、飞书、微信）：作为独立进程/协程跑在同一个后端里，把外部消息喂给 Agent，Agent 的回复再发回去。
 
-### 这份文档没覆盖的
+### 当前服务形态
 
-`onboarding/`（新手引导，独立子系统）、IM 网关具体协议细节、精力/配额系统的计费逻辑，这些体量较大，值得单独开文档，这里只在数据模型/路由清单里带一笔。
+生产部署不是单一进程：`gugu-backend` 提供 FastAPI/uvicorn，`gugu-worker` 消费 Redis `im:inbound` 并执行 IM Agent，`gugu-supervisor` 按 `user_bots` 配置拉起 QQ/飞书/微信网关子进程。三者共享 PostgreSQL、Redis 和本地/OSS 存储，但职责不同。
+
+### 本文边界
+
+本文覆盖 HTTP API、ORM/迁移、Agent 上下文和工具系统、IM 消息链路、配置/安全、进程和测试入口。RAG 详细方案、存储 key 规则、IM 平台协议和前端行为仍以各自 PRD/专题文档为准。
 
 ---
 
@@ -44,7 +50,7 @@
 | 配置 | pydantic-settings + `.env` + `config.override.json`（热加载） |
 | 存储 | 本地磁盘 / 阿里云 OSS，Admin 面板热切换无需重启，详见 [`storage.md`](./storage.md) |
 | AI | Anthropic / OpenAI / 通义千问 / DeepSeek / MiniMax 等，共用 OpenAI-compatible 或 Anthropic 两套接口格式，支持多 key 分流（`ai_presets`，见配置系统） |
-| IM 接入 | 飞书（`lark-oapi` WebSocket 长连）、QQ 官方机器人（`qq-botpy` WebSocket 长连，C2C 单聊）、微信 |
+| IM 接入 | 飞书（`lark-oapi` WebSocket 长连）、QQ 官方机器人（`qq-botpy` WebSocket，C2C/群聊）、微信 iLink；统一进入 Redis inbound stream + Agent IM loop |
 
 `requirements.txt` 里的框架版本用 `>=` 而非精确锁定（如 `fastapi>=0.111.0`、`sqlalchemy>=2.0.0`、`langchain>=0.2.0`），无 `pyproject.toml`。`passlib` 虽在依赖列表里，但代码里已不再使用（密码哈希直接调 `bcrypt`），是个遗留依赖。
 
@@ -60,11 +66,16 @@ backend/
 ├── agent/                        # AI Agent 核心逻辑（独立顶层目录，不在 app/ 下）
 │   ├── core.py                   # 主循环：工具调用轮次、验证轮次
 │   ├── runner.py / router.py     # 请求路由、多渠道分发
-│   ├── llm_select.py             # 模型选择（pool/router 分流、mimo 识别等）
+│   ├── llm/                      # 模型选择、token、模型上下文与 driver
+│   ├── providers/                # Anthropic/OpenAI-compatible/本地模型适配
+│   ├── capabilities/             # Tool/Skill 注册、权限快照、选择与诊断
+│   ├── interactions/             # confirm/ask_user/stream event 交互协议
+│   ├── im/                       # IM 会话、身份、媒体、引用、回复编排
+│   ├── runtime/loopscope_trace/  # Agent run/round/span 旁路可观测性
 │   ├── memory/                   # 记忆系统（store / lens / reflection / compress）
 │   ├── context/                  # 上下文构建、token 预算、对话压缩
 │   ├── gateway/                 # web / qq / wechat / supervisor 等渠道适配器
-│   └── tools/                    # 工具集，15 个文件，约 60 个工具（见下）
+│   └── tools/                    # Skill 化工具注册（含 call_tool/use_skill 元工具）
 └── app/
     ├── main.py                   # FastAPI 入口，路由注册（约 30 个 router），lifespan
     ├── core/
@@ -76,7 +87,7 @@ backend/
     ├── db/
     │   ├── base.py               # DeclarativeBase
     │   └── session.py            # async engine，get_db，create_all_tables，_MIGRATIONS
-    ├── models/__init__.py        # 所有 SQLAlchemy 2.0 模型，16 个表（见下）
+    ├── models/__init__.py        # 所有 SQLAlchemy 2.0 模型，当前 30 个模型（见下）
     ├── schemas/__init__.py       # 所有 Pydantic v2 schema（camelCase 输出）
     ├── services/
     │   ├── storage/__init__.py   # StorageBackend 抽象 + LocalStorageBackend + OSSStorageBackend
@@ -156,13 +167,17 @@ backend/
 
 **Client**（`clients`）：`name`、`contact` / `email` / `phone`、`notes`。
 
-**ConversationSession**（`conversation_sessions`）：`title`（默认"新对话"）、`summary`（一句话摘要，供跨 session 查找/续接）、`source`（`web` 等）。
+**ConversationSession**（`conversation_sessions`）：除 `title/title_locked`、`summary`、`source` 外，还保存 IM 作用域（`bot_id`、`chat_id`、`platform_user_id`、`chat_type`）、`workspace_id`，以及 Agent 会话快照字段：`context_epoch`、`session_context`、`session_info_hash`、`snapshot_hash`、`snapshot_expires_at`、`baseline_message_id`、`baseline_message_hash`。普通轮次复用快照，TTL（当前 30 分钟）或上下文 revision 变化时重建。
 
-**ConversationMessage**（`conversation_messages`）：`role`、`content`、`content_json`（JSON，结构化内容块）、`files`（JSON，咕咕发的文件卡片 `[{file_id,name,ext,size_bytes}]`）。
+**ConversationMessage**（`conversation_messages`）：`role`、`content`、`content_json`（结构化文本/工具块/交互块）、`files`、`quoted_text`、`sent_at`，以及 IM 平台用户、机器人和群聊字段。工具历史以 provider-neutral canonical block 落库，再由 adapter 渲染为 Anthropic 或 OpenAI wire format。
+
+**InteractionPrompt / InteractionAction**（`interaction_prompts` / `interaction_actions`）：持久化 `confirm`、`ask_user` 等待用户操作的提示、一次性 action token 摘要、过期和消费状态，Web 与 IM 共用同一交互服务。
+
+**ChatAttachment**（`chat_attachments`）：聊天附件所有权与复用索引，区分 `draft` / `attached`，支持引用消息附件复用，物理文件只有在无存活引用时才清理。
 
 **MindMap**（`mind_maps`）：思维画布，表结构已建但**明确标注"暂不开发，预留结构"**，无对应 API 路由。
 
-#### 运营/系统表（10-06-21 版文档未收录）
+#### 记忆、交互与运营表
 
 | 表 | 用途 |
 |------|------|
@@ -175,14 +190,18 @@ backend/
 | `Feedback` | 用户反馈（bug/建议/其他） |
 | `ScheduledTask` | 定时任务：`user_id` 为空=系统级任务，`event_id`（不设 DB 外键，应用层级联删除）绑定日历提醒时使用 |
 | `SiteNotification` / `NotificationRead` | 站内通知广播 + 按用户已读记录 |
+| `MemoryReflectionJob` / `MemoryReflectionCursor` | 记忆反思异步任务和增量游标 |
+| `MemoryEntry` / `MemorySource` / `MemoryScopeTombstone` | 记忆正文、来源和作用域删除墓碑 |
+| `Workspace` | 用户工作区与会话归属 |
+| `MindNode` / `MindCanvasItem` / `MindRelation` | 思维画布节点、画布视图位置和关系边；相关 API 已存在 |
 
 ### 2.4 自动迁移
 
-不使用 Alembic，开发阶段由 `session.py` 的 `create_all_tables()` 自动建表 + 顺序执行 `_MIGRATIONS` 列表里的 SQL（目前 5 条，含 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 幂等语句，也有个别一次性数据修复 UPDATE）。新增 nullable 列直接在 `_MIGRATIONS` 追加即可。
+不使用 Alembic。服务启动由 `session.py` 的 `create_all_tables()` 建表，并在 PostgreSQL advisory lock 下顺序执行 `_MIGRATIONS`（当前 8 条，包含 `ADD COLUMN IF NOT EXISTS`、索引和历史数据修复）。迁移是启动时幂等执行，不是独立版本表；新增字段或数据修复必须追加迁移 SQL，并为已有数据库验证。
 
 ### 2.5 API 端点
 
-所有端点前缀 `/api/v1`，返回 camelCase JSON。`app/main.py` 里实际 `include_router` 的文件约 30 个，下面按业务分组列出主要的（IM 平台连接、Admin 数据分析等长尾路由不逐一展开，命名规律是 `xxx_connect.py` / `xxx_admin.py`）。
+所有端点前缀 `/api/v1`，返回 camelCase JSON。`app/main.py` 当前注册 35 个路由模块，分为公开认证、用户态、连接/新手引导和 Admin 四组；完整文件清单以 `backend/app/api/v1/` 与 `app/main.py` 为准。
 
 **用户认证**（`auth.py`，公开路由）
 ```
@@ -228,7 +247,9 @@ POST /api/v1/agent/upload                聊天内联上传（走暂存，见 st
 GET  /api/v1/agent/attachment/{id}/thumb|download|preview-pdf
 DELETE /api/v1/agent/attachments | /memory | /sessions/{id}
 ```
-工具调用轮次不是固定 5 轮：`agent/core.py` 里 `MAX_ROUNDS = 6`（"多步任务通常 2~3 轮就完成，设 6 给复杂任务留余量"），另有 `MAX_VERIFY = 5` 的自我验证机制——写操作后会强制多跑一轮确认真的生效，极端情况下单轮对话的工具调用总数可达 6 + 10 = 16。工具规模也远超"查询/创建/更新项目，创建日历事件"：`agent/tools/` 下 15 个文件、约 60 个工具，覆盖项目全生命周期（含阶段/待办/优先级/归档）、文件与文件夹增删改查、回收站、日历事件与提醒、客户、通用定时任务、对话历史检索、记忆写入、联网搜索/深度研究等。
+Agent 主循环上限是 `MAX_ROUNDS = 8`、工具调用上限是 `MAX_TOOL_CALLS = 10`；写操作另有最多 `MAX_VERIFY = 5` 的验证轮预算。`agent/tools/` 当前由多个 Skill 注册业务工具，能力注册层再按用户权限、Profile 和当前上下文生成 `CapabilitySnapshot`。固定入口包括 `call_tool`、`use_skill`、`ask_user`，按需能力通过 selector 注入；`canonical_tool_history.py` 将工具调用、结果、工具 schema 和 Skill schema 统一成 provider-neutral 历史，再由 Anthropic/OpenAI adapter 转换。
+
+工具覆盖项目/阶段/待办/优先级、文件/文件夹/回收站、日历/定时任务、客户、画布、记忆、联网搜索/深度研究、图片/附件、IM 和对话历史等。`declare_tools` 仍保留为兼容/过渡路径，不能把它当作唯一的按需注册实现。
 
 **定时任务**（`scheduled_tasks.py`）：用户自定义 cron 任务的 CRUD，与日历事件提醒（`ScheduledTask.event_id`）是两套概念但共用一张表。
 
@@ -244,7 +265,7 @@ GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只�
 POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 ```
 
-**其余 Admin 路由**（均挂 `Depends(require_admin)`）：`agent_admin`（Agent 行为配置）、`agent_perception`、`audit_log`、`system_logs`、`users_admin`、`services_admin`、`admin_debug`、`admin_analytics`、`ops_admin`、`feedback.admin_router`、`notifications_admin`。
+**其余 Admin 路由**（均挂 `Depends(require_admin)`）：`agent_admin`（Agent/Skill/模型行为配置）、`agent_perception`、`audit_log`、`system_logs`、`users_admin`、`services_admin`、`admin_debug`、`admin_analytics`、`ops_admin`、`folder_doctor_admin`、`feedback.admin_router`、`notifications_admin`。
 
 **IM 平台连接**（用户态）：`qq_connect.py`、`feishu_connect.py`、`wechat_connect.py`——扫码绑定/解绑自己的 IM 账号。`user_bots.py` 管理自带机器人凭据。
 
@@ -252,7 +273,33 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 
 **说明**：`app/api/v1/tasks.py` 文件存在但内容为空（0 字节），`main.py` 里也未导入，属于历史遗留的占位文件，不代表真实功能。
 
-### 2.6 配置系统
+### 2.6 Agent 请求与上下文流水线
+
+Web、IM 和定时任务最终都进入 `agent.runner` / `agent.core`，差异只在入口协议和回复出口：
+
+```text
+HTTP SSE / Redis IM inbound / scheduler
+        ↓
+AgentRequest + owner/session/IM context
+        ↓
+ensure_snapshot()
+  ├─ 命中：复用 session_context、system/session info 和 baseline
+  └─ 失效：按 context revision/TTL 重新加载项目、日历、文件、memory、时区、偏好、IM channel
+        ↓
+固定前缀 + baseline/history + 本轮消息 + 动态尾部
+        ↓
+provider adapter → LLM round
+        ↓
+canonical tool history / interaction event / output
+        ↓
+持久化消息、checkpoint/TTL、LoopScope trace、Web/IM 回复
+```
+
+快照的业务输入由 Redis 中的用户级 `context-revision:{user_id}` 失效：项目、日历、文件、记忆、偏好、时区和 IM channel 的变更都应推进 revision；SSE 是否通知前端与 Agent 快照是否失效是两条独立语义。普通消息不会把整块业务快照重新拼到每轮尾部，压缩只处理 baseline 之后的连续历史，并按工具调用原子单元避免切断 `tool_call/tool_result`。
+
+工具/Skill 采用注册表与权限快照：`use_skill` 负责加载 Skill 正文并追加相关 canonical schema，`call_tool` 在固定入口调用已授权工具，交互工具通过 `agent/interactions` 生成可持久化提示。Provider 只在边界把 canonical history 转成对应 wire format；不要在 gateway 或 Web 入口复制一套上下文组装逻辑。
+
+### 2.7 配置系统
 
 优先级（低 → 高）：代码默认值 → `.env` / 环境变量（`AppSettings`，`env_nested_delimiter="__"`）→ `config.override.json`（Admin UI 写入，最高优先级）。
 
@@ -267,6 +314,7 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 | `voice` | 独立语音识别模型（继承 `AISettings`），空=不支持语音识别 |
 | `ai_presets` | 多 key 分流池：`strategy`（active 单一激活 / pool 多 key 分流 / router 智能路由）+ `items[]` |
 | `agent` | Agent 行为：记忆开关、Reflection 阈值、worker 并发数、对话压缩开关等 |
+| `capabilities` / Agent 配置 | Tool/Skill 注册、按需能力、交互展示、模型与本地能力覆盖等 Admin 配置 |
 | `quota` | 全局默认配额上限（Token / 存储 / 搜索次数），None=不限 |
 | `search` | Tavily API Key（深度研究）+ SearXNG 地址与引擎列表 |
 | `smtp` | 邮件发送配置（反馈通知、密码重置） |
@@ -274,7 +322,7 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 
 嵌套配置类特意用 `BaseModel` 而非 `BaseSettings`——避免 `apply_override` 调 `model_validate` 时触发二次 env 读取，把 override 值覆盖掉（`config.py` 文件头注释原话）。`get_settings()` 用 `@lru_cache`，Admin 写入 override 后调用 `get_settings.cache_clear()` 触发重新加载。加新的嵌套配置段务必在 `apply_override()` 里显式合并，否则该段会静默变成裸 dict 或不生效（有过实际踩坑）。
 
-### 2.7 鉴权设计
+### 2.8 鉴权设计
 
 | Token 类型 | 签发 | 用途 | 有效期 |
 |-----------|------|------|--------|
@@ -284,7 +332,7 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 
 三类 Token 均为 HS256、`payload["role"]` 区分用途：`user` → `get_current_user`/`get_current_user_id`；`admin`/`superadmin` → `main.py` 的 `require_admin`；`stream` → `verify_stream_token`。User Token payload 含 `sub`（UUID 字符串形式的 user_id）；Admin Token payload 含 `sub`（username）+ `role`；Stream Token 额外带 `fid`（file_id）。密码哈希直接调用 `bcrypt.hashpw`/`checkpw`，未经 passlib 封装。
 
-### 2.8 启动流程（lifespan）
+### 2.9 启动流程（lifespan）
 
 1. `create_all_tables()` 建表（`DB_STARTUP_TIMEOUT` 环境变量控制超时，默认 5s，超时后跳过并后台重试）
 2. 清理旧 JPEG 缩略图缓存（历史遗留，迁移到 WebP 后的清理逻辑）
@@ -292,7 +340,7 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 4. 启动 `_db_retry_loop()`：DB 不可达时每 30 秒重试建表，连上即建表退出
 5. 启动 `flush_log_queue()`：日志队列落盘任务
 
-### 2.9 Schema 规范
+### 2.10 Schema 规范
 
 所有 schema 继承 `CamelModel`（`app/schemas/__init__.py`）：
 
@@ -305,7 +353,7 @@ class CamelModel(BaseModel):
     )
 ```
 
-### 2.10 本地启动
+### 2.11 本地启动
 
 ```bash
 cd backend
@@ -318,15 +366,25 @@ make restart
 
 访问：`http://localhost:8000/docs`（Swagger UI）
 
-### 2.11 添加新端点
+生产/测试机使用 `start.sh` 或 Makefile 的 systemd 模式管理三个服务：
 
-1. 在 `app/models/__init__.py` 添加 SQLAlchemy 模型，在 `_MIGRATIONS` 追加 `ALTER TABLE`
+```bash
+make status
+make restart
+systemctl status gugu-backend gugu-worker gugu-supervisor
+```
+
+改动 `agent/gateway` 或机器人凭据后，至少需要重启 `gugu-supervisor`；改动 Agent/worker 代码则需要同步并重启对应 web/worker 进程。不要把网关凭据放入命令行参数，supervisor 通过环境变量注入子进程。
+
+### 2.12 添加新端点
+
+1. 在 `app/models/__init__.py` 添加 SQLAlchemy 模型，在 `_MIGRATIONS` 追加幂等 SQL（当前没有 Alembic 版本链）
 2. 在 `app/schemas/__init__.py` 添加 `XxxCreate`、`XxxUpdate`、`XxxResponse`（继承 `CamelModel`）
 3. 在 `app/api/v1/` 新建 `xxx.py`，定义 `APIRouter`，注入 `get_current_user`
 4. 在 `app/main.py` `import` 并 `app.include_router(xxx.router, prefix="/api/v1")`（需要 Admin 鉴权的话加 `dependencies=[Depends(require_admin)]`）
 5. 在 `frontend/src/services/api.js` 添加对应 `xxxApi` 对象
 
-### 2.12 常见问题
+### 2.13 常见问题
 
 **Q: 启动报 `asyncpg.exceptions.InvalidPasswordError`**
 确认 PostgreSQL 用户名密码与 `.env` 一致，检查 `pg_hba.conf` 是否允许本地连接。
@@ -340,9 +398,9 @@ make restart
 **Q: 缩略图不更新**
 删除 `uploads/.thumbs/` 目录下对应文件（或全部），下次请求时重新生成。
 
-### 2.13 时间与时区约定
+### 2.14 时间与时区约定
 
-写任何涉及时间的代码，遵循四条（详见 [时区与时钟迁移方案.md](时区与时钟迁移方案.md)）：
+写任何涉及时间的代码，遵循四条（详见 [时区与时钟迁移方案](../refactor/【已完成】时区与时钟迁移方案.md)）：
 
 1. **存储一律 aware UTC**：datetime 列用 `app/db/types.py` 的 `UtcDateTime`（不是裸 `DateTime`）——两库进出都是 aware UTC（Postgres timestamptz / SQLite naive + 读出补 UTC），业务代码不再有 naive/aware 混用。
 2. **当前时间走单一出口 `app.core.tz.now_utc()`**（aware UTC）——**禁止裸调 `datetime.utcnow()`**（已弃用 + naive）。静态守卫 `python scripts/check_utcnow.py` 拦回归，例外加 `# utcnow-exempt` 标记。
@@ -351,4 +409,30 @@ make restart
 
 ---
 
-*待核实：Agent 精力/配额系统（`token_limit_*`、`QuotaSettings`）的具体计费与窗口规则，onboarding 子系统的路由细节——体量较大，建议后续单独开文档覆盖，本文档仅做了存在性确认。*
+### 2.15 安全与可观测性
+
+- 用户数据访问优先走 `app/core/ownership.py` 的 `get_owned()`；跨用户查询不能只依赖前端传入的 ID。
+- 外部 URL 复用 URL safety 校验，禁止未经校验的自动重定向；聊天正文、附件名和用户输入不能写入可见日志，诊断日志使用脱敏 fingerprint。
+- 删除、永久删除、批量 destructive 操作必须经过 `confirm` 门；IM 的 QQ/飞书/微信凭据由 supervisor 通过环境变量传给子进程，不进 argv。
+- Agent run/round/tool/数据库 loader 通过 `agent/runtime/loopscope_trace` 写入旁路 trace；LoopScope 只消费脱敏元数据，不应把 prompt、聊天正文、token 或凭据当作普通业务日志。
+- `app.core.logging` 统一处理进程日志；HTTP 未处理异常对外只返回通用错误，原始异常留在服务端诊断日志。
+
+### 2.16 测试与验证
+
+后端测试位于 `backend/tests/`，覆盖 API、模型/迁移、上下文快照与压缩、canonical tool history、能力注册、Provider adapter、Agent runner、IM 网关/回复、交互确认、存储和安全。当前本地验证基线为：
+
+```bash
+cd backend
+pytest -q
+```
+
+最近一次 Phase 5 改动的结果是 `1204 passed`；修改上下文、工具协议或数据库时，应至少再运行对应目录测试和完整 backend suite。前端、Runtime、LoopScope 的联动 CI 不由本文件代替，需按各自仓库/工作流单独验证。
+
+### 2.17 当前已知边界
+
+- 数据库仍采用启动时幂等迁移，没有 Alembic 版本历史；复杂结构变更需要单独设计可回滚脚本。
+- `snapshot_hash` 当前主要用于 checkpoint/trace 标识，尚未完全覆盖所有 snapshot 输入的内容哈希；正确性依靠 snapshot payload、TTL 和 context revision。
+- `declare_tools` 仍是能力声明的兼容入口，Phase 5 的 canonical adapter 已接入，但声明入口的彻底收敛仍属于后续清理。
+- canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件；独立的完整 `ToolCall`/`ToolResult` 领域对象抽取和所有 LoopScope 诊断字段仍可继续完善。
+- RAG 的统一索引、切片和召回仍以 `PRD-RAG-1-统一知识召回与索引.md` 的实施状态为准，不能从当前 Agent 工具注册状态推断 RAG 已完成。
+- 配额模型字段和 onboarding 路由已经存在，但计费窗口、运营规则和完整协议仍应维护在专题文档，不在本总览中重复展开。

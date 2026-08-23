@@ -13,13 +13,13 @@
             </div>
             <div class="fp-header-actions">
               <button ref="infoBtnRef" class="fp-action-btn" :class="{ active: showInfo }" title="文件信息" @click="openInfo">
-                <PhInfo weight="bold" :size="16" />
+                <Icon name="status.info" :size="16" />
               </button>
               <button class="fp-action-btn" title="下载" @click="handleDownload">
-                <PhDownloadSimple weight="bold" :size="16" />
+                <Icon name="action.download" :size="16" />
               </button>
               <button class="fp-action-btn fp-close-btn" title="关闭 (Esc)" @click="$emit('close')">
-                <PhX weight="bold" :size="16" />
+                <Icon name="action.close" :size="16" />
               </button>
             </div>
           </div>
@@ -31,7 +31,7 @@
               <span>{{ converting ? '正在转换文档…' : '加载中…' }}</span>
             </div>
             <div v-else-if="error" class="fp-status fp-error">
-              <PhWarningCircle :size="32" style="opacity:.5" />
+              <Icon name="status.warning" :size="32" style="opacity:.5" />
               <span>{{ error }}</span>
             </div>
             <template v-else-if="blobUrl || videoSrc">
@@ -55,7 +55,7 @@
         <div class="fp-info-title" @mousedown.prevent="startInfoDrag">
           <span>文件信息</span>
           <button class="fp-action-btn fp-close-btn" @click="showInfo = false">
-            <PhX weight="bold" :size="15" />
+            <Icon name="action.close" :size="15" />
           </button>
         </div>
         <div class="fp-info-body">
@@ -100,7 +100,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, onUnmounted, nextTick, type PropType } from 'vue'
 import type { FileMeta } from '@/stores/filesCache'
-import { PhInfo, PhDownloadSimple, PhX, PhWarningCircle } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
 import { useLiveStore } from '@/stores/live'

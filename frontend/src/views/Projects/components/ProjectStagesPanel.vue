@@ -22,7 +22,7 @@
               :style="i === activeStageIdx && stage.key !== draggedStageKey ? { background: stageColor } : {}"
               @click.stop="!stageDrag.active && handleSetStage(stage.key, i)"
             >
-              <PhCheck v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" weight="bold" style="color:white" />
+              <Icon name="status.success" v-if="i < activeStageIdx && stage.key !== draggedStageKey" :size="10" style="color:white" />
               <span v-else class="node-num">{{ i + 1 }}</span>
             </div>
             <div class="node-body">
@@ -37,7 +37,7 @@
               <span class="todo-count" v-if="stage.todos?.length">{{ stage.todos.filter(t=>t.done).length }}/{{ stage.todos.length }}</span>
             </div>
             <button class="del-stage" @click.stop="handleRemoveStage(stage.key)">
-              <PhX :size="9" weight="bold" />
+              <Icon name="action.close" :size="9" />
             </button>
           </div>
           <ProjectTodosPanel
@@ -74,7 +74,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, nextTick, watch, onUnmounted, type PropType } from 'vue'
-import { PhCheck, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import type { ProjectStage, ProjectTodo } from '@/types/project'
 import { useProjectStages } from '@/composables/projects/useProjectStages'
 import { useProjectTodos } from '@/composables/projects/useProjectTodos'

@@ -5,7 +5,7 @@
       <span>加载中…</span>
     </div>
     <div v-else-if="error" class="tv-status tv-error">
-      <PhWarningCircle :size="28" style="opacity:.5" />
+      <Icon name="status.warning" :size="28" style="opacity:.5" />
       <span>{{ error }}</span>
     </div>
     <!-- 代码类扩展名：直接就是 CodeMirror，没有单独的只读预览态——它本身就能当预览用
@@ -48,7 +48,7 @@
     </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
       <button v-if="editable" class="tv-edit-toggle" title="编辑" @click="startEdit">
-        <PhPencilSimple weight="bold" :size="13" />
+        <Icon name="action.edit" :size="13" />
       </button>
       <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
       <!-- Markdown 渲染 -->
@@ -69,7 +69,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, defineAsyncComponent, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
-import { PhWarningCircle, PhPencilSimple } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'

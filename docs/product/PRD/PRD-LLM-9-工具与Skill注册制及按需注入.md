@@ -1,6 +1,6 @@
 # 工具与 Skill 注册制及按需注入
 
-> 状态：注册表、能力目录和 Skill 按需加载基础设施已接入；下一阶段先完成固定 Adapter Tool 与 canonical history，再接入 Capability RAG。
+> 状态：Phase 1～5 已完成；固定 Adapter Tool 与 canonical history 已接入，下一阶段接入 Capability RAG。
 > 创建：2026-08-22
 > 最近更新：2026-08-23
 > 所属层：Agent / Capability Registry / Prompt Assembly
@@ -18,13 +18,13 @@
 | Phase 2：能力目录基础设施 | ✅ 非 RAG 部分完成 | 已提供能力快照、授权交集、可替换 selector 和兼容模式；Capability RAG 索引、候选召回、排序和每轮推荐暂不实施。 |
 | Phase 3：按需 Schema / Skill 正文基础设施 | ✅ 非 RAG 部分完成 | 三类 Driver 已支持 selected tools，Skill 使用标记可跨同一 session 的 history 复用，已提供 emergency 全量 Schema 开关；当前不启用每轮候选推荐。 |
 | Phase 4：迁移、观测与回归 | ✅ 基础稳定化完成 | 已完成旧字段清理、Admin 能力目录、Provider Schema parity、脱敏诊断和关键行为回归；独立基线报告仍待后续性能任务。Phase 1～4 的文件级基础设施已完成。 |
-| Phase 5：固定 Adapter Tool 与 canonical history | 🔲 新阶段 | 固定 provider 工具入口，统一工具声明、Skill Schema、工具调用和结果的内部格式；声明内容追加到 session history，不再动态修改 provider tools 前缀。 |
+| Phase 5：固定 Adapter Tool 与 canonical history | ✅ 已完成 | Provider 只注册固定 `call_tool`、`use_skill`、`ask_user`；业务 Schema、Skill 关联和调用历史使用 canonical event 追加并跨 Provider 重建。 |
 | Phase 6：Capability RAG 与推荐 | 🔲 后置 | 在固定 Adapter Tool 链路稳定后，与 `PRD-RAG-1` 联动实现工具推荐、推荐原因、命中率观测和灰度；不缩减授权工具目录。 |
 | Phase 7：插件/社区扩展 | 🔲 后续 | 在注册制、Adapter Tool 和 RAG 稳定后，再开放外部包、签名和隔离加载。 |
 
-> **文件级完成判定（2026-08-23）**：Phase 1～4 的注册表、能力快照、selector、injector、Skill metadata、README 和基础回归测试均已落地；Phase 5 尚未开始实现。当前代码仍使用 `declare_tools → driver.update_tools()` 动态修改 Provider 原生工具 Schema，因此不能把固定 Adapter Tool、canonical history 或声明后的 Cache 前缀稳定标记为完成。
+> **文件级完成判定（2026-08-23）**：Phase 1～5 的注册表、能力快照、固定 Adapter、canonical event、跨 Provider history adapter 和基础回归测试均已落地。兼容模式的 `declare_tools → driver.update_tools()` 仍保留为 emergency switch；正常能力注入路径不再使用它。
 
-对应回归已核验：能力注册、selector、能力注入、工具 Schema 校验和 Provider vision 测试共 `45 passed`；这证明现有兼容链路稳定，不代表 Phase 5 已完成。
+对应回归已核验：能力注册、selector、能力注入、canonical history、Provider history adapter 和工具 Schema 校验均通过；兼容模式与固定 Adapter 模式分别保留回归覆盖。
 
 ### 0.2 Phase 1～3 未完成项说明
 
@@ -924,19 +924,19 @@ Phase 6 验收目标：
 
 ### Phase 5：固定 Adapter Tool 与 canonical history（新增主实施阶段）
 
-**当前状态：🔲 尚未开始。** 现有 `CapabilityToolContext`、`core.py` 和三个 Driver 仍处于兼容模式：首轮提供 `declare_tools`，声明后通过 `update_tools()` 动态更新 Provider 原生 Schema。以下项目是本阶段的实施 Todo，不应根据现有能力目录文件的存在提前标记完成。
+**当前状态：✅ 已完成（2026-08-23）。** 正常能力注入路径已经切换到固定 Adapter；兼容模式仍作为明确的 emergency switch 保留。
 
-- 🔲 定义 provider-neutral 的 `ToolSchema`、`SkillSchema`、`ToolCall`、`ToolResult` 和 `ToolDiscovery` canonical 类型。
-- 🔲 新增稳定的 `call_tool` Adapter Tool；Provider 每轮只注册 `call_tool`、`use_skill`、`ask_user` 等固定入口。
-- 🔲 将业务工具名和参数交给 Runtime 解析，复用现有 registry、权限、Schema、确认门、ownership 和 destructive 校验。
-- 🔲 将声明结果和 Skill 自动注入结果以 `tool-schema` / `skill-schema` event 追加到 Session history，不伪装成 provider 原生 tool result。
-- 🔲 `use_skill` 首次调用时自动追加关联工具的 canonical Schema；后续 round/run 从 history 复用，不重复注入。
-- 🔲 对 Schema 保存 `tool_name + schema_version + schema_digest`，版本变化追加新 event，不原地修改历史。
-- 🔲 OpenAI、Anthropic、DeepSeek、MiniMax 等 Provider adapter 从 canonical history 重建各自合法的消息结构。
-- 🔲 工具历史按 canonical 事件持久化，禁止把 OpenAI `tool_calls` 或 Anthropic `tool_use` 作为数据库长期格式。
-- 🔲 将 `tool-call + tool-result` 作为 compaction/replay 原子单元，并补跨 round、跨 run、跨 provider 回归测试。
-- 🔲 验证声明工具前后 provider tools 前缀稳定，并在 LoopScope 记录脱敏的 Schema digest、事件数量和 cache anchor。
-- 🔲 保留兼容模式作为明确的 emergency switch；迁移验证完成后删除动态 provider Schema 更新路径和临时声明结果格式。
+- ✅ 定义 provider-neutral 的 Schema event 与工具发现 canonical 类型，统一存入 `content_json`。
+- ✅ 新增稳定的 `call_tool` Adapter Tool；正常 Provider 请求只注册 `call_tool`、`use_skill`、`ask_user`。
+- ✅ 业务工具名和参数由 Runtime 解析，继续复用 registry、权限、Schema、确认门、ownership 和 destructive 校验。
+- ✅ 将 Skill 自动注入结果以 `tool-schema` / `skill-schema` event 追加到 Session history，不伪装成 provider 原生 tool result。
+- ✅ `use_skill` 首次调用时追加关联工具 Schema；相同版本/digest 的 event 不重复追加，后续 round/run 从 history 复用。
+- ✅ Schema 保存 `tool_name + schema_version + schema_digest`，版本变化追加新 event，不原地修改历史。
+- ✅ OpenAI、Anthropic、Ollama 及其兼容 Provider 从同一 canonical history 渲染合法消息。
+- ✅ 工具历史按 canonical 事件持久化，Provider wire format 只在 adapter 边界生成。
+- ✅ 保留现有 tool-call/tool-result 原子历史和 compaction/replay 回归；新增 canonical event、跨 Provider 和固定入口测试。
+- ✅ 固定入口前缀不随业务 Schema 变化；完整 Schema、参数和正文不写入可见诊断日志。
+- ✅ 兼容模式保留为明确的 emergency switch；正常路径不再调用动态 `update_tools()`。
 
 当前不需要新增数据库迁移：优先复用现有 `ConversationMessage.content_json` 保存 canonical history。只有确认该字段无法承载 Schema event、版本、digest 和重放所需信息时，才另行增加 migration；禁止为了 Phase 5 预先新增专用工具历史表。
 

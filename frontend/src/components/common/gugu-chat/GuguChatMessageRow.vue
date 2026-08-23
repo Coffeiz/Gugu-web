@@ -22,8 +22,8 @@
     <div v-if="f.kind === 'voice'" class="msg-voice" :class="{ playing: voicePlayingId === f.attach_id }"
          @click="$emit('toggleVoice', f)" title="点击播放语音">
       <span class="mv-btn">
-        <PhPause v-if="voicePlayingId === f.attach_id" weight="fill" :size="13" />
-        <PhPlay  v-else weight="fill" :size="13" />
+        <Icon name="media.pause" v-if="voicePlayingId === f.attach_id" :size="13" />
+        <Icon name="media.play"  v-else :size="13" />
       </span>
       <span class="mv-wave"><i v-for="n in 13" :key="n" :style="{ height: voiceBar(n) }" /></span>
       <span class="mv-dur">{{ fmtDur(f.duration) }}</span>
@@ -52,20 +52,20 @@
   <div v-if="msg.role !== 'tool' && msg.role !== 'interaction'" class="msg-footer">
     <span class="msg-time">{{ msg.time }}</span>
     <button class="msg-copy-btn" @click="$emit('copy', msg)" title="复制">
-      <PhCheck v-if="copiedId === msg.id" :size="11" weight="bold" />
-      <PhCopy  v-else :size="11" />
+      <Icon name="status.success" v-if="copiedId === msg.id" :size="11" />
+      <Icon name="action.copy"  v-else :size="11" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 /**
  * 单条消息展示：只接收消息对象和展示回调，不直接读取全局 Store、不直接修改会话数组。
  * 播放语音、打开/下载文件、复制正文、代码块复制和 gugu:// 协议链接都通过事件转发给
  * GuguChat.vue（这些动作牵涉共享的单实例状态——当前播放的语音、预览 Store、剪贴板——
  * 暂时仍由主组件持有，Phase 2/4 会把其中一部分收进对应 composable）。
  */
-import { PhPause, PhPlay, PhCheck, PhCopy } from '@phosphor-icons/vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import GuguChatToolBubble from './GuguChatToolBubble.vue'
 import GuguChatInteraction from './GuguChatInteraction.vue'

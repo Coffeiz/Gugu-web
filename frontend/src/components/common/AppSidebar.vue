@@ -13,18 +13,18 @@
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">工作台</span>
-        <NavItem to="/projects" :icon="PhStack">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
-        <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
-        <NavItem to="/mind" :icon="PhGraph">思维</NavItem>
-        <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
+        <NavItem to="/projects" icon="navigation.projects">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
+        <NavItem to="/calendar" icon="navigation.calendar">日历</NavItem>
+        <NavItem to="/mind" icon="canvas.graph">思维</NavItem>
+        <NavItem to="/schedules" icon="admin.alarm">定时任务</NavItem>
       </div>
 
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">资源</span>
-        <NavItem to="/files" :icon="PhFolder">文件库</NavItem>
-        <div class="nav-item soon-item"><PhAddressBook class="nav-icon" :size="15" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
-        <div class="nav-item soon-item"><PhUsersThree class="nav-icon" :size="15" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
+        <NavItem to="/files" icon="file.folder">文件库</NavItem>
+        <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
+        <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
       </div>
 
       <div class="nav-divider"></div>
@@ -32,7 +32,7 @@
         <span class="nav-label">通知</span>
         <div class="notif-anchor" ref="notifBtnRef">
           <button class="nav-item notif-btn" :class="{ 'notif-active': notifOpen }" @click.stop="toggleNotif">
-            <PhBell class="nav-icon" :size="14" weight="bold" /><span class="nav-label-text">通知</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
+            <Icon name="admin.bell" class="nav-icon" size="sm" tone="inherit" /><span class="nav-label-text">通知</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
           </button>
         </div>
       </div>
@@ -47,16 +47,16 @@
           aria-label="切换主题模式"
           :aria-pressed="true"
           @click="cycleTheme"
-        ><PhDesktop v-if="preference === 'system'" :size="13" weight="bold" /><PhSun v-else-if="resolved === 'light'" :size="13" weight="bold" /><PhMoon v-else :size="13" weight="bold" /></button>
+        ><Icon v-if="preference === 'system'" name="theme.system" size="sm" tone="inherit" /><Icon v-else-if="resolved === 'light'" name="theme.light" size="sm" tone="inherit" /><Icon v-else name="theme.dark" size="sm" tone="inherit" /></button>
       </div>
 
       <Transition name="popup">
         <div v-if="settingsOpen" class="settings-popup" @click.stop>
-          <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><PhFlag :size="13" weight="bold" />提交反馈</button>
+          <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />提交反馈</button>
           <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><PhUser :size="13" weight="bold" />个人设置</button>
+          <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />个人设置</button>
           <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item danger" @click="handleLogout"><PhSignOut :size="13" weight="bold" />退出登录</button>
+          <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />退出登录</button>
         </div>
       </Transition>
     </div>
@@ -90,10 +90,7 @@ import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
 import NavItem from './NavItem.vue'
-import {
-  PhStack, PhCalendarBlank, PhAlarm, PhGraph, PhFolder, PhAddressBook, PhUsersThree,
-  PhBell, PhUser, PhSignOut, PhFlag, PhSun, PhMoon, PhDesktop,
-} from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
 
 const router = useRouter()

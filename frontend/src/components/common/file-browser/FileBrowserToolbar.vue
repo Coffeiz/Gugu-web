@@ -5,18 +5,18 @@
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
     <button v-if="showSelection" class="sel-mode-btn select-mode-btn" :class="{ on: selectionMode }"
       @click.stop="emit('toggle-selection')" title="多选模式">
-      <PhCheckSquare :size="13" weight="bold" />
+      <Icon name="status.check-square" :size="13" />
     </button>
     <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
       <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
-        <PhSquaresFour :size="13" weight="bold" />
+        <Icon name="navigation.grid" :size="13" />
       </button>
       <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" title="列表视图">
-        <PhList :size="13" weight="bold" />
+        <Icon name="navigation.list" :size="13" />
       </button>
     </SegmentedControl>
     <button v-if="showNewFolderButton && !showNewFolder" class="new-folder-btn" @click.stop="emit('update:show-new-folder', true)">
-      <PhFolderPlus :size="13" weight="bold" />新建文件夹
+      <Icon name="file.folder-add" :size="13" />新建文件夹
     </button>
     <div v-else-if="showNewFolderButton" class="new-folder-inline" @click.stop>
       <input ref="folderInput" class="new-folder-input" :value="newFolderName" placeholder="文件夹名称"
@@ -28,13 +28,13 @@
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
     <slot name="trailing" />
-    <button v-if="showClose" class="close-btn" @click="emit('close')"><PhX :size="14" weight="bold" /></button>
+    <button v-if="showClose" class="close-btn" @click="emit('close')"><Icon name="action.close" :size="14" /></button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, ref, watch, type PropType } from 'vue'
-import { PhCheckSquare, PhFolderPlus, PhList, PhSquaresFour, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import SortMenu from '@/components/common/SortMenu.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'

@@ -21,7 +21,7 @@ def test_catalog_contains_short_descriptions_only():
     assert "搜索资料" in block
     assert "联网查找资料" in block
     assert "input_schema" not in block
-    assert "declare_tools" in block
+    assert "call_tool" in block
 
 
 def test_capability_diagnostics_are_redacted_to_metrics():
@@ -148,3 +148,11 @@ def test_capability_context_keeps_ask_user_available_on_first_round():
     assert context.select_for_messages([]).tool_names == (
         "declare_tools", "ask_user", "image_search"
     )
+
+
+def test_fixed_adapter_context_only_exposes_stable_provider_tools():
+    from agent.capabilities.injector import build_fixed_adapter_context
+
+    context = build_fixed_adapter_context(["image_search"])
+    assert context.fixed_adapter is True
+    assert context.select_for_messages([]).tool_names == ("call_tool", "use_skill", "ask_user")

@@ -355,7 +355,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
 
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     full_reply = ""
-    usage_tokens = {"input": 0, "output": 0}
+    usage_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     anthr_messages: list = []
     anthr_initial_len: int = 0
     oa_messages: list = []
@@ -457,6 +457,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             if etype == "_usage":
                 usage_tokens["input"]  = evt["input"]
                 usage_tokens["output"] = evt["output"]
+                usage_tokens["cache_read"] = evt.get("cache_read", 0) or 0
+                usage_tokens["cache_write"] = evt.get("cache_write", 0) or 0
                 continue  # 不转发给客户端
             if etype == "token":
                 # 清洗 MiniMax 漏出的 tool-call 标记；标记后内容丢弃
@@ -519,6 +521,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     db2.add(AgentUsage(
                         user_id=user_id, session_id=session_id if sess_alive else None,
                         tokens_in=_cap_in, tokens_out=_cap_out,
+                        cache_read=usage_tokens["cache_read"], cache_write=usage_tokens["cache_write"],
                         model=settings.ai.model, provider=settings.ai.provider,
                         tools_used=used_tools or None,
                     ))

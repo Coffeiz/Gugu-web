@@ -175,7 +175,7 @@ class Tool:
                  permissions: tuple[str, ...] = (),
                  platforms: tuple[str, ...] = (),
                  related_skills: tuple[str, ...] = (),
-                 source: str = "builtin"):
+                 source: str = "builtin", schema_version: int = 1):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -205,6 +205,7 @@ class Tool:
         self.platforms = tuple(platforms)
         self.related_skills = tuple(related_skills)
         self.source = source
+        self.schema_version = schema_version
         # 注册时由 SkillRegistry.add() 完成 schema 自检并缓存；未注册 Tool 不允许直接 dispatch。
         self._input_validator = None
 

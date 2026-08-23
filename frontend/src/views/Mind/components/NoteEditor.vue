@@ -1,6 +1,6 @@
 <template>
   <div class="note-editor" ref="rootRef" :class="{ compact }">
-    <div class="ne-body"><EditorContent :editor="editor" /></div>
+    <div class="ne-body"><EditorContent v-if="editor" :editor="editor" /></div>
 
     <!-- 窄口径工具栏：待办/列表/样式，没有 / 菜单（/ 预留给咕咕）、没有正文/标题文字样式
          切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），这里只管

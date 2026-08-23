@@ -3,7 +3,7 @@
     <div class="panel glass-card">
       <div class="section-header">
         <button class="btn-primary press-fx" @click="openCreate">
-          <PhAlarm :size="14" weight="bold" style="vertical-align:-1px;margin-right:5px" />新建任务
+          <Icon name="admin.alarm" :size="14" style="vertical-align:-1px;margin-right:5px" />新建任务
         </button>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
@@ -20,7 +20,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { PhAlarm } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { errorMessage } from '@/composables/useAppToast'
 import { fireHint } from '@/composables/useOnboarding'
 import { useAuthStore } from '@/stores/auth'

@@ -19,12 +19,12 @@
   </div>
   <textarea v-model="event.description" class="popup-textarea" placeholder="描述（可选）" rows="2"></textarea>
   <div class="reminder-section" v-if="!isPastDate(event.date)">
-    <div class="reminder-label"><PhBell :size="11" weight="bold" /> 提醒</div>
+    <div class="reminder-label"><Icon name="admin.bell" :size="11" /> 提醒</div>
     <div v-for="(r, i) in form.reminders.value" :key="i" class="reminder-item">
       <select v-model.number="r.leadMin" class="lead-select">
         <option v-for="o in LEAD_OPTIONS" :key="o.min" :value="o.min">{{ o.label }}</option>
       </select>
-      <button class="reminder-del" @click="form.removeReminderAt(i)" title="移除"><PhX :size="10" weight="bold" /></button>
+      <button class="reminder-del" @click="form.removeReminderAt(i)" title="移除"><Icon name="action.close" :size="10" /></button>
     </div>
     <button class="reminder-add-toggle" @click="form.addReminder">＋ 添加提醒</button>
     <div class="chan-block" v-if="form.reminders.value.length">
@@ -33,13 +33,13 @@
         <button class="chan-chip" :class="{ on: form.reminderChannels.value.includes('web') }" @click="form.toggleReminderChannel('web')">web</button>
         <button v-for="ch in form.imChannels.value" :key="ch" class="chan-chip" :class="{ on: form.reminderChannels.value.includes(ch) }" @click="form.toggleReminderChannel(ch)">{{ CHAN_LABEL[ch] || ch }}</button>
       </div>
-      <button class="reminder-test-bar" @click="emit('test-reminder')"><PhPaperPlaneTilt :size="11" weight="bold" /> 测试发送</button>
+      <button class="reminder-test-bar" @click="emit('test-reminder')"><Icon name="action.send" :size="11" /> 测试发送</button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { PhBell, PhPaperPlaneTilt, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import {

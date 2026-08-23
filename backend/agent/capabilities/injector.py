@@ -21,12 +21,14 @@ class CapabilityToolContext:
         *,
         declaration_enabled: bool = False,
         declaration_tool: str = "declare_tools",
+        fixed_adapter: bool = False,
     ):
         self.snapshot = snapshot
         self.selector = selector
         self.limit = limit
         self.declaration_enabled = declaration_enabled and declaration_tool in snapshot.tools
         self.declaration_tool = declaration_tool
+        self.fixed_adapter = fixed_adapter
         # 交互工具必须在首轮可见。否则模型只能把选项写成普通文本，用户
         # 回复选项序号后会被当成新消息，无法恢复原来的 ask_user 挂起轮。
         self.always_available_tools = tuple(
@@ -53,6 +55,10 @@ class CapabilityToolContext:
         return self.declared_tool_names
 
     def select_for_messages(self, messages) -> SelectedCapabilities:
+        if self.fixed_adapter:
+            names = tuple(name for name in ("call_tool", "use_skill", "ask_user") if name in self.snapshot.tools)
+            self.selection = SelectedCapabilities(names, shadow=False)
+            return self.selection
         if self.declaration_enabled:
             names = self.declared_tool_names or ()
             # 保留声明入口和交互工具，允许 Agent 在同一个 Run 中刷新业务工具集合。
@@ -88,10 +94,24 @@ def build_compatibility_context(tool_names: list[str], *, limit: int = 12) -> Ca
     )
 
 
+def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 12) -> CapabilityToolContext:
+    """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
+    from .index import CapabilityIndex
+    from .selector import RegistryCapabilitySelector
+    fixed = ["call_tool", "use_skill", "ask_user"]
+    names = list(dict.fromkeys([*tool_names, *fixed]))
+    index = CapabilityIndex.from_registries(tool_names=names)
+    snapshot = index.snapshot(authorized_names=names)
+    return CapabilityToolContext(
+        snapshot, RegistryCapabilitySelector(), limit=limit, fixed_adapter=True,
+    )
+
+
 def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None) -> str:
     lines = [
         "## 当前可用能力目录",
-        "这里只是工具简介，不是完整参数 Schema。需要调用工具时，先用 `declare_tools` 声明本轮需要的工具名；下一轮 Runtime 才会提供对应完整 Schema。",
+        "这里只是工具简介。固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具；"
+        "需要完整参数时，先使用 `use_skill`，对应的 canonical tool-schema 会追加到历史。",
     ]
     for item in snapshot.catalog:
         if kind is not None and item.kind != kind:

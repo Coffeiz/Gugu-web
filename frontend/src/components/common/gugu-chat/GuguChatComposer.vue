@@ -31,14 +31,16 @@
       <button class="rec-cancel" @click="onCancelRecord">取消</button>
     </div>
     <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
-      <PhCheck      v-if="recording"  weight="bold" :size="expanded ? 14 : 13" />
-      <PhArrowRight v-else-if="!streaming" weight="bold" :size="expanded ? 14 : 13" />
-      <PhStop       v-else            weight="fill"  :size="expanded ? 14 : 13" />
+      <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
+      <Icon name="action.next" v-else-if="!streaming" :size="expanded ? 14 : 13" />
+      <Icon name="action.stop"       v-else  :size="expanded ? 14 : 13" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from 'vue'
+import Icon from '@/components/common/Icon.vue'
 /**
  * 输入框、附件行和录音条：只负责输入交互和展示，不拥有附件/录音状态本身
  * （那是 useChatAttachments，由 GuguChat.vue 单次实例化后把结果和回调传进来）。
@@ -47,8 +49,6 @@
  * 发送后收起多行输入框时操作它（focus/测宽度重新量高度/清空后收起高度），
  * 通过 defineExpose 暴露 focus()/fitTextarea()/resetHeight()，不重新拿一份引用。
  */
-import { ref } from 'vue'
-import { PhArrowRight, PhStop, PhCheck } from '@phosphor-icons/vue'
 import type { ChatFile } from './chatTypes'
 import { SMALL_W, SIDEBAR_W } from './chatConstants'
 

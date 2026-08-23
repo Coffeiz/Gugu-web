@@ -3,13 +3,13 @@
 
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">Agent 配置</h2>
-        <p class="page-desc">管理 LLM 连接、系统提示词与行为参数</p>
+        <h2 class="page-title">{{ standaloneMode === 'behavior' ? 'Agent 行为配置' : standaloneMode === 'usage' ? 'Agent 用量统计' : 'Agent 配置' }}</h2>
+        <p class="page-desc">{{ standaloneMode ? '独立管理 Agent 运行参数与用量数据' : '管理 LLM 连接、系统提示词与行为参数' }}</p>
       </div>
     </div>
 
     <!-- 标签栏 -->
-    <div class="tab-bar">
+    <div v-if="!standaloneMode" class="tab-bar">
       <button
         v-for="tab in tabs"
         :key="tab.key"
@@ -18,6 +18,10 @@
         :data-label="tab.label"
         @click="switchTab(tab.key)"
       >{{ tab.label }}</button>
+    </div>
+
+    <div v-if="activeTab === 'behavior'" class="behavior-tab-bar" role="tablist" aria-label="行为配置分类">
+      <button v-for="tab in behaviorTabs" :key="tab.key" class="behavior-tab-btn" :class="{ active: behaviorTab === tab.key }" @click="behaviorTab = tab.key">{{ tab.label }}</button>
     </div>
 
     <div class="panels-wrap">
@@ -368,7 +372,7 @@
       <PromptPanel v-if="activeTab === 'prompts'" />
 
       <!-- ── 行为配置 ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && (behaviorTab === 'runtime' || behaviorTab === 'maintenance')" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -378,13 +382,13 @@
             </svg>
           </div>
           <div class="card-title-block">
-            <h3>行为配置</h3>
-            <p>记忆系统参数（记忆系统实装后生效）</p>
+            <h3>{{ behaviorTab === 'maintenance' ? '记忆运行参数' : '运行行为' }}</h3>
+            <p>{{ behaviorTab === 'maintenance' ? '控制记忆提炼、保留和压缩的周期；日常运行无需频繁调整。' : '控制 Agent 的工具权限、上下文压缩和 IM 运行行为。' }}</p>
           </div>
         </div>
 
         <div class="behavior-grid">
-          <div class="behavior-item" style="grid-column: 1 / -1;">
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
               <span>Shell 工具总开关</span>
               <span class="behavior-desc">默认关闭。开启后仅允许本地 Admin 进入后续 Shell 能力；用户开关、工作区和沙盒仍需分别满足。</span>
@@ -398,7 +402,7 @@
             </button>
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
             <div class="behavior-label">
               <span>记忆系统</span>
               <span class="behavior-desc">开启后 Agent 将自动从对话中提炼记忆</span>
@@ -412,7 +416,7 @@
             </button>
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label">
               <span>对话历史压缩</span>
               <span class="behavior-desc">超长会话把旧消息总结成摘要省 token；关闭后只截断不摘要</span>
@@ -426,7 +430,7 @@
             </button>
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label">
               <span>IM 慢工具进度声明</span>
               <span class="behavior-desc">多步工具循环期间先发一句"我去查一下"再执行，减少 IM 非流式的长时间沉默感；文案来自工具自身登记的固定文案，不是模型现场生成；只在 IM 生效，网页不受影响</span>
@@ -440,7 +444,7 @@
             </button>
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
             <div class="behavior-label">
               <span>Reflection 触发阈值</span>
               <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
@@ -453,7 +457,7 @@
             />
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
             <div class="behavior-label">
               <span>Daily 记忆保留天数</span>
               <span class="behavior-desc">超出后压缩进 Weekly</span>
@@ -466,7 +470,7 @@
             />
           </div>
 
-          <div class="behavior-item">
+          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
             <div class="behavior-label">
               <span>Weekly 记忆保留周数</span>
               <span class="behavior-desc">超出后提炼进 memory.md（长期记忆）</span>
@@ -494,7 +498,7 @@
       </section>
 
       <!-- ── 联网搜索（Tavily）── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'search'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(122,184,200,0.15);--stroke:#7ab8c8">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -623,7 +627,7 @@
       </section>
 
       <!-- ── 相似图搜索 ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'search'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(218,157,111,0.15);--stroke:#da9d6f">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -698,7 +702,7 @@
       </section>
 
       <!-- ── 语音识别模型 ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'voice'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -761,7 +765,7 @@
       </section>
 
       <!-- ── 向量 Embedding 模型 ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'retrieval'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -866,7 +870,7 @@
       </section>
 
       <!-- ── 记忆维护：一键复核清理，见 scripts/refresh_memory.py ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'maintenance'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -929,7 +933,7 @@
       </section>
 
       <!-- ── IM 群组/member 记忆维护 ── -->
-      <section v-if="activeTab === 'behavior'" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'maintenance'" class="config-card">
         <div class="card-head">
           <div class="card-title-block">
             <h3>IM 群组与成员记忆</h3>
@@ -1154,6 +1158,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
 import TracePanel from './observability/components/TracePanel.vue'
@@ -1172,6 +1177,8 @@ import ConfigField from '../Config/components/ConfigField.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
+const route = useRoute()
+const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavior' : route.path === '/agent-usage' ? 'usage' : '')
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, embeddingDraft, embeddingSaving, embeddingSaved, embeddingError, embTest, resetEmbedding, saveEmbedding, testEmbedding, searchTest, testSearch, saveSearch } = runtimeConfig
 const memoryMaintenance = useMemoryMaintenance(adminStore)
@@ -1190,7 +1197,15 @@ const tabs = [
   { key: 'trace',    label: '决策轨迹' },
   { key: 'prompts',  label: '系统提示词' },
 ]
-const activeTab = ref('llm')
+const activeTab = ref(standaloneMode.value || 'llm')
+const behaviorTabs = [
+  { key: 'runtime', label: '运行行为' },
+  { key: 'search', label: '搜索与图片' },
+  { key: 'voice', label: '语音识别' },
+  { key: 'retrieval', label: '向量检索' },
+  { key: 'maintenance', label: '记忆维护' },
+]
+const behaviorTab = ref('runtime')
 
 function switchTab(key: string) {
   activeTab.value = key
@@ -2813,6 +2828,10 @@ onUnmounted(() => { stopRebuildPoll() })
 .im-memory-maintenance-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
 .im-memory-progress { display: flex; gap: 12px; margin-top: 10px; color: rgba(255,255,255,0.55); font-size: 12px; }
 .im-memory-progress .error { color: #ff9b9b; }
+.behavior-tab-bar { display: flex; gap: 6px; margin: 18px 36px 0; padding: 4px; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.035); width: fit-content; }
+.behavior-tab-btn { border: 0; border-radius: 7px; padding: 7px 14px; color: rgba(255,255,255,0.48); background: transparent; font-size: 12px; cursor: pointer; transition: background .18s, color .18s; }
+.behavior-tab-btn:hover { color: rgba(255,255,255,0.8); }
+.behavior-tab-btn.active { color: rgba(255,255,255,0.9); background: rgba(123,127,178,0.28); box-shadow: inset 0 1px rgba(255,255,255,0.08); }
 @media (max-width: 900px) { .im-memory-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .labels-list { grid-template-columns: 1fr; } }
 </style>

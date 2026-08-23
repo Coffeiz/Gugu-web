@@ -1,7 +1,7 @@
 <template>
   <template v-if="group.type === 'recent'">
     <div class="done-group-layout-node recent-done" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
-      <div class="recent-done-label"><PhCheckCircle :size="12" weight="fill" style="color:#5a9e88" />{{ group.label }}</div>
+      <div class="recent-done-label"><Icon name="status.check-circle" :size="12" style="color:#5a9e88" />{{ group.label }}</div>
       <DoneCardList :projects="group.items" :is-project-detached="isProjectDetached" recent collection-key="recent" @card-click="$emit('card-click', $event)" />
     </div>
   </template>
@@ -14,7 +14,7 @@
   <template v-else-if="group.type === 'month'">
     <div class="done-group-layout-node" :data-layout-key="group.key" data-layout-role="group" data-layout-group>
       <button class="month-row" @click="$emit('toggle', `${group.year}${group.month}`)">
-        <PhFolderOpen v-if="group.open" :size="13" weight="fill" style="color:#5a9e88; opacity:0.85; flex-shrink:0" /><PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
+        <Icon name="file.folder-open" v-if="group.open" :size="13" style="color:#5a9e88; opacity:0.85; flex-shrink:0" /><Icon name="file.folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
         <span class="month-name">{{ group.label }}</span><span class="month-cnt">{{ group.items.length }}</span><FlipChevron :open="group.open" :size="8" />
       </button>
       <div :key="`${group.key}-cards`" class="month-folder" data-layout-content :data-layout-key="`${group.year}${group.month}`" :data-layout-open="group.open ? 'true' : 'false'">
@@ -37,7 +37,7 @@
 
 <script setup lang="ts">
 import { type PropType } from 'vue'
-import { PhFolder, PhFolderOpen, PhCheckCircle } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import FlipChevron from '@/components/common/FlipChevron.vue'
 import type { DoneGroup } from './doneTypes'
 import DoneCardList from './DoneCardList.vue'

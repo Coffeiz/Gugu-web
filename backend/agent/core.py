@@ -534,7 +534,7 @@ class LLMRunner:
             try:
                 # 每次 provider 请求前刷新 selected tools。工具调用/结果仍由下方现有
                 # append_tool_round 写入 history；这里仅更新原生 tools 参数。
-                if self.capability_context is not None:
+                if self.capability_context is not None and not getattr(self.capability_context, "fixed_adapter", False):
                     selected = self.capability_context.select_for_messages(messages)
                     driver.update_tools(ctx, list(selected.tool_names))
                 _round_gen = driver.run_round(client, ctx, messages)
@@ -637,7 +637,11 @@ class LLMRunner:
                     _progress_pending = False
                 any_tool_called = True   # 本轮真调了工具 → narration 兜底不触发
                 # 核实阶段首次补做（本轮调了增删改）→ 把"发现漏了X，补一下"说明发一次；之后的核对文字仍静默
-                if verify_mode and not verify_fixed and _verify_buf and any(tc.name in _mutset for tc in result.tool_calls):
+                if verify_mode and not verify_fixed and _verify_buf and any(
+                    (str((tc.input or {}).get("name") or "").strip()
+                     if tc.name == "call_tool" and isinstance(tc.input, dict) else tc.name) in _mutset
+                    for tc in result.tool_calls
+                ):
                     async for _line in genstream.typed_stream(''.join(_verify_buf)):   # 逐字流式，与正常回复一致
                         yield _line
                 dispatched = []
@@ -645,7 +649,11 @@ class LLMRunner:
                 remaining_tool_calls = max(0, MAX_TOOL_CALLS - tool_calls_used)
                 tool_budget_exceeded = len(result.tool_calls) > remaining_tool_calls
                 for call_index, tc in enumerate(result.tool_calls):
-                    label = self._label(tc.name)
+                    adapter_target = None
+                    if tc.name == "call_tool" and isinstance(tc.input, dict):
+                        adapter_target = str(tc.input.get("name") or "").strip() or None
+                    effective_tool_name = adapter_target or tc.name
+                    label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
                     if call_index >= remaining_tool_calls:
@@ -653,10 +661,10 @@ class LLMRunner:
                         # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=tc.name, label=label, input=tc.input, verify=verify_mode,
+                                           name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
                                            status="skipped")
                         yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=tc.name, label=label, verify=verify_mode, status="skipped")
+                                           name=effective_tool_name, label=label, verify=verify_mode, status="skipped")
                         dispatched.append((tc, _TOOL_BUDGET_EXHAUSTED))
                         continue
                     tool_calls_used += 1
@@ -665,17 +673,17 @@ class LLMRunner:
                         # tool_result 让模型精简参数后重发；不真 dispatch、不置 did_mutate。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                         yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=tc.name, label=label, input={}, verify=verify_mode,
+                                           name=effective_tool_name, label=label, input={}, verify=verify_mode,
                                            status="invalid")
                         yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                           name=tc.name, label=label, verify=verify_mode, status="error")
+                                           name=effective_tool_name, label=label, verify=verify_mode, status="error")
                         dispatched.append((tc, loop_drivers.TOOL_ARGS_TRUNCATED_ERROR))
                         continue
-                    await _im_set_tool_state(tc.name)
+                    await _im_set_tool_state(effective_tool_name)
                     # 自检轮工具照常显示，但打 verify 标记：前端凭 verify 收尾不冒「生成中」点点（否则回复完还在转、像卡住）
                     tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
                     yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
-                                       name=tc.name, label=label, input=tc.input, verify=verify_mode,
+                                       name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
                                        status="running")
                     # Skill 正文第一次通过 use_skill 进入 history 后，后续轮次直接复用；
                     # 只有 history 已被压缩/截断时，才会再次真正加载正文。
@@ -691,7 +699,12 @@ class LLMRunner:
                         }, ensure_ascii=False)
                         artifact = None
                     else:
-                        res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                        if adapter_target is not None:
+                            res, artifact = await registry.dispatch(
+                                user_id, adapter_target, tc.input.get("arguments", {})
+                            )
+                        else:
+                            res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
                         if skill_slug and _is_successful_tool_result(res):
                             loaded_skill_slugs.add(skill_slug)
                     if tc.name == "ask_user":
@@ -710,7 +723,7 @@ class LLMRunner:
                                 user_id=user_id,
                                 session_id=session_id,
                                 tool_call_id=tool_call_id,
-                                tool_name=tc.name,
+                                tool_name=effective_tool_name,
                                 payload=ask_payload,
                             )
                         if interaction is not None:
@@ -722,7 +735,7 @@ class LLMRunner:
                             dispatched.append((tc, pending_result))
                             pending_interaction = (prompt.id, tool_call_id)
                             yield stream_event("tool_done", round_id=round_id,
-                                               tool_call_id=tool_call_id, name=tc.name, label=label,
+                                               tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                                verify=verify_mode, status="waiting")
                             yield stream_event(
                                 "interaction_required", round_id=round_id,
@@ -767,7 +780,7 @@ class LLMRunner:
                     # 桥接失败不能影响工具结果写回模型，因此只在成功创建时发送事件。
                     from app.services.interactions import create_tool_confirmation
                     interaction = await create_tool_confirmation(
-                        user_id=user_id, session_id=session_id, tool_name=tc.name,
+                        user_id=user_id, session_id=session_id, tool_name=effective_tool_name,
                         tool_call_id=tool_call_id, result=res,
                     )
                     if interaction:
@@ -782,22 +795,49 @@ class LLMRunner:
                                 "tool_call_id": tool_call_id,
                             })
                         yield stream_event("tool_done", round_id=round_id,
-                                           tool_call_id=tool_call_id, name=tc.name, label=label,
+                                           tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                            verify=verify_mode, status="waiting")
                         break
-                    if tc.name in _mutset and _is_successful_tool_result(res):
+                    if effective_tool_name in _mutset and _is_successful_tool_result(res):
                         did_mutate = True   # 本次成功做过增删改 → 立刻强制自我核实
                         if verify_mode:
                             verify_fixed = True   # 核实阶段里补了东西 → 确有遗漏
-                    elif verify_mode and _is_read_tool(tc.name):
+                    elif verify_mode and _is_read_tool(effective_tool_name):
                         verify_queried = True   # 核实阶段真的用查询工具查证了（不是嘴上确认）
                     yield stream_event("tool_done", round_id=round_id, tool_call_id=tool_call_id,
-                                       name=tc.name, label=label, verify=verify_mode,
+                                       name=effective_tool_name, label=label, verify=verify_mode,
                                        status="success" if _is_successful_tool_result(res) else "error")
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
                 driver.append_tool_round(messages, result, dispatched)
+                if getattr(self.capability_context, "fixed_adapter", False):
+                    from agent.context.canonical_tool_history import (
+                        SkillSchemaEvent, append_event, tool_schema_event,
+                    )
+                    for tc, _res in dispatched:
+                        if tc.name == "use_skill":
+                            skill_name = str((tc.input or {}).get("name") or "").strip()
+                            resolved_skill = None
+                            from agent.skills import resolve_skill_slug
+                            resolved_skill = resolve_skill_slug(skill_name) or skill_name
+                            skill_meta = getattr(self.capability_context, "snapshot", None)
+                            skill_meta = getattr(skill_meta, "skills", {}).get(resolved_skill)
+                            related = tuple(getattr(skill_meta, "related_tools", ()) or ())
+                            if related:
+                                append_event(messages, SkillSchemaEvent(skill_name, related))
+                                for name in related:
+                                    tool = registry.get(name)
+                                    if tool is not None:
+                                        append_event(messages, tool_schema_event(tool))
+                            continue
+                        target_name = None
+                        if tc.name == "call_tool" and isinstance(tc.input, dict):
+                            target_name = str(tc.input.get("name") or "").strip() or None
+                        if target_name:
+                            tool = registry.get(target_name)
+                            if tool is not None:
+                                append_event(messages, tool_schema_event(tool))
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
                     prompt_id, pending_tool_call_id = pending_interaction

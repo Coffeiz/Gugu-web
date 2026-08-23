@@ -53,6 +53,27 @@
           ℹ️ 当前模型不支持缓存机制
         </div>
 
+        <section v-if="selectedLoaded" class="diagnostic-grid">
+          <div class="diagnostic-card">
+            <span>Canonical events</span>
+            <b>{{ canonicalStats.count ?? '—' }}</b>
+            <small>{{ canonicalTypeSummary }}</small>
+          </div>
+          <div class="diagnostic-card">
+            <span>Schema digest</span>
+            <b>{{ canonicalStats.schema_digests ? canonicalStats.schema_digests.length : '—' }}</b>
+            <small v-if="canonicalStats.schema_digests?.length" class="digest-list">
+              <code v-for="digest in canonicalStats.schema_digests" :key="digest">{{ digest }}</code>
+            </small>
+            <small v-else>本 Run 未发现 Schema digest</small>
+          </div>
+          <div class="diagnostic-card">
+            <span>Adapter calls</span>
+            <b>{{ adapterStats.count ?? '—' }}</b>
+            <small>{{ adapterCallSummary }}</small>
+          </div>
+        </section>
+
         <section class="span-section">
           <header class="span-section-head">
             <div><span class="eyebrow">AGENT LOOP</span><strong>{{ selectedLoaded ? `${selected.spans?.length ?? 0} spans` : '详情加载中…' }}</strong></div>
@@ -86,7 +107,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { TraceRun, TokenUsage } from '../types'
+import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from '../types'
 import TraceSpanCard from './TraceSpanCard.vue'
 
 const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
@@ -116,6 +137,26 @@ const usageSourceLabel = computed(() => hasProviderUsage(selected.value) ? 'prov
 const cacheRatio = computed(() => usage.value.input ? Math.min((usage.value.cache_read ?? 0) / usage.value.input, 1) : 0)
 const cachePercent = computed(() => usage.value.input ? `${(cacheRatio.value * 100).toFixed(1)}%` : '—')
 const cacheMode = computed(() => (selected.value?.attributes?.cache_mode ?? 'active') as string)
+const canonicalStats = computed<CanonicalEventStats>(() => {
+  const value = selected.value?.attributes?.canonical_events
+  return value && typeof value === 'object' ? value as CanonicalEventStats : {}
+})
+const adapterStats = computed<AdapterCallStats>(() => {
+  const value = selected.value?.attributes?.adapter_calls
+  return value && typeof value === 'object' ? value as AdapterCallStats : {}
+})
+const canonicalTypeSummary = computed(() => {
+  const entries = Object.entries(canonicalStats.value.by_type ?? {})
+  return entries.length ? entries.map(([name, count]) => `${name} ${count}`).join(' · ') : '未记录事件类型'
+})
+const adapterCallSummary = computed(() => {
+  const providers = Object.entries(adapterStats.value.by_provider ?? {}).map(([name, count]) => `${name} ${count}`)
+  const formats = Object.entries(adapterStats.value.by_api_format ?? {}).map(([name, count]) => `${name} ${count}`)
+  const rendered = adapterStats.value.canonical_render_calls ?? 0
+  const success = adapterStats.value.success ?? 0
+  const errors = adapterStats.value.errors ?? 0
+  return `${providers.join(' · ') || 'provider —'} · 成功 ${success} · 失败 ${errors} · canonical render ${rendered}${formats.length ? ` · ${formats.join(' · ')}` : ''}`
+})
 const modelLabel = computed(() => {
   const a = selected.value?.attributes ?? {}
   return [a.provider, a.model].filter(Boolean).join(' / ') || 'model unknown'
@@ -258,6 +299,13 @@ function fmtTokens(v: number | null | undefined) {
 .cache-hit { display:block; height:100%; border-radius:inherit; background:var(--action-primary); transition:width var(--motion-default) var(--motion-ease-standard); }
 .cache-legend { display:flex; justify-content:space-between; margin-top:4px; color:var(--content-tertiary); font:8px var(--font-mono); }
 .cache-hint { margin-top:8px; padding:6px 10px; border-radius:var(--radius-md); background:var(--surface-soft); color:var(--content-tertiary); font-size:10px; line-height:1.5; }
+.diagnostic-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:12px; }
+.diagnostic-card { min-width:0; padding:10px 12px; border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-card); }
+.diagnostic-card > span { display:block; color:var(--content-tertiary); font-size:8px; text-transform:uppercase; letter-spacing:.08em; }
+.diagnostic-card > b { display:block; margin:4px 0 3px; font:600 16px var(--font-mono); }
+.diagnostic-card > small { display:block; color:var(--content-tertiary); font-size:9px; line-height:1.45; overflow-wrap:anywhere; }
+.digest-list { display:flex !important; flex-wrap:wrap; gap:4px; }
+.digest-list code { color:var(--content-secondary); font:9px var(--font-mono); }
 .span-section { margin-top:24px; }
 .span-section-head { display:flex; justify-content:space-between; align-items:end; gap:12px; margin-bottom:9px; }
 .span-section-head strong { display:block; margin-top:3px; font-size:11px; }
@@ -274,5 +322,6 @@ function fmtTokens(v: number | null | undefined) {
 .span-list { display:grid; gap:8px; width:100%; }
 .child-spans { display:grid; gap:6px; }
 @media(max-width:1050px){ .usage-grid{grid-template-columns:repeat(3,1fr)} }
+@media(max-width:1050px){ .diagnostic-grid{grid-template-columns:1fr} }
 @media(max-width:760px){ .session-monitor{grid-template-columns:1fr}.run-list{display:flex;gap:6px;border-right:0;border-bottom:1px solid var(--border-subtle);overflow:auto}.run-list-head{display:none}.run-row{min-width:150px}.usage-grid{grid-template-columns:repeat(2,1fr)} }
 </style>

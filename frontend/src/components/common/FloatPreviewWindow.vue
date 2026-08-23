@@ -13,22 +13,22 @@
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
       <div class="fpw-actions">
         <template v-if="isText">
-          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><PhMinus weight="bold" :size="12" /></button>
+          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
-          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><PhPlus weight="bold" :size="12" /></button>
+          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
         </template>
         <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" title="文件信息" @click.stop="openInfo">
-          <PhInfo weight="bold" :size="13" />
+          <Icon name="status.info" :size="13" />
         </button>
         <button class="fpw-btn" title="下载" @click.stop="handleDownload">
-          <PhDownloadSimple weight="bold" :size="13" />
+          <Icon name="action.download" :size="13" />
         </button>
         <button class="fpw-btn" :title="maximized ? '还原' : '最大化'" @click.stop="toggleMaximize">
-          <PhCornersOut v-if="!maximized" weight="bold" :size="13" />
-          <PhCornersIn  v-else           weight="bold" :size="13" />
+          <Icon name="action.expand" v-if="!maximized" :size="13" />
+          <Icon name="action.collapse" v-else :size="13" />
         </button>
         <button class="fpw-btn fpw-close" title="关闭" @click.stop="previewStore.closeWindow(win.id)">
-          <PhX weight="bold" :size="13" />
+          <Icon name="action.close" :size="13" />
         </button>
       </div>
     </div>
@@ -44,7 +44,7 @@
         <span>加载中…</span>
       </div>
       <div v-if="!loading && error" class="fpw-status fpw-error">
-        <PhWarningCircle :size="28" style="opacity:.5" />
+        <Icon name="status.warning" :size="28" style="opacity:.5" />
         <span>{{ error }}</span>
       </div>
       <!-- 占位图覆盖在真实内容上方，imageReady 后淡出，遮住大图解码过程 -->
@@ -66,10 +66,10 @@
       <!-- 同目录图片左右切换 -->
       <template v-if="canNav">
         <button class="fpw-nav fpw-nav-prev" title="上一张" @click.stop="goPrev">
-          <PhCaretLeft weight="bold" :size="18" />
+          <Icon name="action.back" :size="18" />
         </button>
         <button class="fpw-nav fpw-nav-next" title="下一张" @click.stop="goNext">
-          <PhCaretRight weight="bold" :size="18" />
+          <Icon name="action.next" :size="18" />
         </button>
       </template>
     </div>
@@ -97,7 +97,7 @@
         <div class="fpw-info-title" @mousedown.prevent="startInfoDrag">
           <span>文件信息</span>
           <button class="fpw-btn fpw-close" @click.stop="showInfo = false">
-            <PhX weight="bold" :size="13" />
+            <Icon name="action.close" :size="13" />
           </button>
         </div>
         <div class="fpw-info-body">
@@ -144,10 +144,10 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
+import Icon from '@/components/common/Icon.vue'
 import type { PreviewWindow } from '@/stores/preview'
 import type { FileMeta } from '@/stores/filesCache'
-import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
-import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'

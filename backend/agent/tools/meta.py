@@ -7,6 +7,8 @@ use_skill(name) 把该技能的正文（剧本）拉进上下文，再照着执�
 """
 from __future__ import annotations
 
+import json
+
 from agent import skills as _skills
 from agent.tools.base import BaseSkill, Tool
 
@@ -44,9 +46,44 @@ async def _declare_tools(db, user_id, args: dict):
     return {"declared_tools": args.get("tools", [])}
 
 
+async def _call_tool(db, user_id, args: dict):
+    """固定 Adapter Tool 的非 Agent Loop 调用入口。
+
+    主循环会在这里之前执行一次自己的 UI/确认编排；直接 dispatch 时保留同一套
+    registry、权限与 Schema 校验，避免 Adapter 形成第二套执行器。
+    """
+    name = str(args.get("name") or "").strip()
+    arguments = args.get("arguments")
+    if not name:
+        return {"error": "缺少业务工具名"}
+    if not isinstance(arguments, dict):
+        return {"error": "arguments 必须是 object"}
+    from agent.tools import registry
+    result, _artifact = await registry.dispatch(user_id, name, arguments)
+    try:
+        return json.loads(result) if isinstance(result, str) else result
+    except (TypeError, ValueError):
+        return {"result": result}
+
+
 class MetaSkill(BaseSkill):
     name = "meta"
     tools = [
+        Tool(
+            name="call_tool",
+            label="调用工具",
+            description="固定工具适配入口。根据工具目录调用一个已授权业务工具。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 1, "maxLength": 80},
+                    "arguments": {"type": "object"},
+                },
+                "required": ["name", "arguments"],
+                "additionalProperties": False,
+            },
+            handler=_call_tool,
+        ),
         Tool(
             name="use_skill",
             label="调用技能",

@@ -43,8 +43,8 @@ def _capability_context(tool_names, settings):
         return None
     if getattr(agent_settings, "capability_force_full_schema", False):
         return None
-    from agent.capabilities.injector import build_compatibility_context
-    return build_compatibility_context(tool_names)
+    from agent.capabilities.injector import build_fixed_adapter_context
+    return build_fixed_adapter_context(tool_names)
 
 
 async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str]) -> list[str]:
@@ -513,7 +513,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
                          on_interaction=on_interaction)
 
     try:
-        text, tin, tout, errored, sent_files, cancelled, meta = await _collect(
+        text, tin, tout, cache_read, cache_write, errored, sent_files, cancelled, meta = await _collect(
             gen, model_cfg=model_cfg, include_meta=True)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
@@ -560,6 +560,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
                 db2.add(AgentUsage(
                     user_id=user_id, session_id=session_id,
                     tokens_in=_cap_in, tokens_out=_cap_out,
+                    cache_read=cache_read, cache_write=cache_write,
                     model=model_cfg.model, provider=model_cfg.provider,
                 ))
             await db2.commit()
@@ -598,6 +599,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
                                     group_mode=bool(req.chat_id and req.source != "web"))
 
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
+                         cache_read=cache_read, cache_write=cache_write,
                          files=sent_files, used_tools=im_used_tools,
                          interactions=meta.get("interactions", []))
 
@@ -840,7 +842,7 @@ async def run_stream(
     san = sanitize.StreamSanitizer(adapter=provider_adapter)
     rounds: list[str] = []
     cur = ""
-    tin = tout = 0
+    tin = tout = cache_read = cache_write = 0
     files: list = []
     interactions: list[dict] = []
     cancelled = False
@@ -994,7 +996,7 @@ async def _collect(
     san = sanitize.StreamSanitizer(adapter=provider_adapter)
     rounds: list[str] = []   # 每轮文本分开存
     cur = ""
-    tin = tout = 0
+    tin = tout = cache_read = cache_write = 0
     files: list = []
     tool_names: list[str] = []
     interactions: list[dict] = []
@@ -1014,6 +1016,8 @@ async def _collect(
         elif t == "_usage":
             tin = evt.get("input", 0)
             tout = evt.get("output", 0)
+            cache_read = evt.get("cache_read", 0) or 0
+            cache_write = evt.get("cache_write", 0) or 0
         elif t == "token":
             cur += san.feed(evt.get("content", ""))
         elif t == "file" and evt.get("file"):
@@ -1042,7 +1046,7 @@ async def _collect(
             break
         elif t == "error":
             detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
-            result = (detail, tin, tout, True, files, False)
+            result = (detail, tin, tout, cache_read, cache_write, True, files, False)
             meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
             return result + (meta,) if include_meta else result
     cur += san.flush()
@@ -1054,7 +1058,7 @@ async def _collect(
         if r:
             text = r
             break
-    result = (text, tin, tout, False, files, cancelled)
+    result = (text, tin, tout, cache_read, cache_write, False, files, cancelled)
     meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions}
     return result + (meta,) if include_meta else result
 

@@ -2,9 +2,9 @@
   <Transition name="picker">
     <div v-if="open" ref="root" class="cal-month-picker" :style="style">
       <div class="picker-year-row">
-        <button class="picker-nav" @click.stop="$emit('prev-year')"><PhCaretLeft :size="12" weight="bold" /></button>
+        <button class="picker-nav" @click.stop="$emit('prev-year')"><Icon name="action.back" :size="12" /></button>
         <span class="picker-year">{{ year }}</span>
-        <button class="picker-nav" @click.stop="$emit('next-year')"><PhCaretRight :size="12" weight="bold" /></button>
+        <button class="picker-nav" @click.stop="$emit('next-year')"><Icon name="action.next" :size="12" /></button>
       </div>
       <div class="picker-months">
         <button v-for="m in 12" :key="m" class="picker-month" :class="{ active: m - 1 === cursor.getMonth() && year === cursor.getFullYear() }" @click.stop="$emit('select', year, m - 1)">{{ m }}月</button>
@@ -15,8 +15,7 @@
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 defineProps<{
   open: boolean
   year: number

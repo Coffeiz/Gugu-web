@@ -7,11 +7,11 @@
         <div class="session-list">
           <span class="sidebar-caption">即时通讯</span>
           <div class="im-platform open">
-            <div class="im-head"><PhCaretDown :size="10" weight="bold" /><strong>QQ</strong><span class="online-badge">已接入</span></div>
+            <div class="im-head"><Icon name="action.down" :size="10" /><strong>QQ</strong><span class="online-badge">已接入</span></div>
             <button class="session im-session"><span class="group-tag">群</span><span class="session-copy"><strong>角色讨论群</strong><small>20:48</small></span></button>
           </div>
-          <div class="im-platform"><div class="im-head"><PhCaretRight :size="10" weight="bold" /><strong>微信</strong><span class="online-badge">已接入</span></div></div>
-          <div class="im-platform"><div class="im-head"><PhCaretRight :size="10" weight="bold" /><strong>飞书</strong><span class="offline-badge">未接入</span></div></div>
+          <div class="im-platform"><div class="im-head"><Icon name="action.next" :size="10" /><strong>微信</strong><span class="online-badge">已接入</span></div></div>
+          <div class="im-platform"><div class="im-head"><Icon name="action.next" :size="10" /><strong>飞书</strong><span class="offline-badge">未接入</span></div></div>
 
           <div class="sidebar-divider group-divider" />
           <span class="sidebar-caption">最近对话</span>
@@ -20,7 +20,7 @@
           <button class="session"><span class="session-copy"><strong>本周计划</strong><small>8/13</small></span></button>
         </div>
         <div class="sidebar-divider" />
-        <div class="new-chat-wrap"><button class="new-chat"><PhPencilSimple :size="13" weight="bold" />新对话</button></div>
+        <div class="new-chat-wrap"><button class="new-chat"><Icon name="action.edit" :size="13" />新对话</button></div>
       </aside>
 
       <main class="chat-main" :class="{ 'is-expanded': expanded }">
@@ -28,9 +28,9 @@
           <strong class="chat-title">{{ expanded ? '项目安排' : '咕咕' }}</strong>
           <span class="presence"><i />在线</span>
           <div class="header-actions">
-            <button v-if="!expanded" title="展开" @click="expanded = true"><PhArrowsOut :size="13" weight="bold" /></button>
-            <button v-else title="收起" @click="expanded = false"><PhArrowsIn :size="14" weight="bold" /></button>
-            <button title="关闭" @click="$emit('close')"><PhX :size="13" weight="bold" /></button>
+            <button v-if="!expanded" title="展开" @click="expanded = true"><Icon name="action.next" :size="13" /></button>
+            <button v-else title="收起" @click="expanded = false"><Icon name="action.back" :size="14" /></button>
+            <button title="关闭" @click="$emit('close')"><Icon name="action.close" :size="13" /></button>
           </div>
         </header>
 
@@ -43,10 +43,10 @@
 
         <!-- 与真实 GuguChatComposer 一样：底部整条输入区，不再额外套一个浮动圆角卡。 -->
         <div class="composer">
-          <button class="composer-tool" title="附件"><PhPaperclip :size="15" /></button>
-          <button class="composer-tool" title="语音"><PhMicrophone :size="15" /></button>
+          <button class="composer-tool" title="附件"><Icon name="communication.chat" :size="15" /></button>
+          <button class="composer-tool" title="语音"><Icon name="communication.microphone" :size="15" /></button>
           <div class="composer-input">问问项目进度、截止日期…</div>
-          <button class="send-btn" title="发送"><PhArrowRight :size="13" weight="bold" /></button>
+          <button class="send-btn" title="发送"><Icon name="action.next" :size="13" /></button>
         </div>
       </main>
     </section>
@@ -55,7 +55,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { PhArrowRight, PhArrowsIn, PhArrowsOut, PhCaretDown, PhCaretRight, PhMicrophone, PhPaperclip, PhPencilSimple, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 const props = defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 const expanded = ref(false)

@@ -42,13 +42,13 @@
         </span>
         <div class="btn-group">
           <button v-if="!expanded" class="popup-icon-btn" @click="onEnterExpanded" title="展开">
-            <PhArrowsOut weight="bold" :size="13" />
+            <Icon name="action.expand" :size="13" />
           </button>
           <button v-if="expanded" class="exp-icon-btn" @click="onExitExpanded" title="收起">
-            <PhArrowsIn weight="bold" :size="14" />
+            <Icon name="action.collapse" :size="14" />
           </button>
           <button class="popup-close-btn" @click="onClose">
-            <PhX weight="bold" :size="13" />
+            <Icon name="action.close" :size="13" />
           </button>
         </div>
       </div>
@@ -81,6 +81,8 @@
 </template>
 
 <script setup lang="ts">
+import { ref, computed } from 'vue'
+import Icon from '@/components/common/Icon.vue'
 /**
  * 聊天窗口外壳：窗口 DOM、标题栏、展开/收起按钮、消息列表与输入框的挂载点。
  * 不拥有任何业务状态——messages / inputText / 附件 / 录音 / 流式 / 会话全部由父组件
@@ -91,8 +93,6 @@
  * composerRef（GuguChatComposer 实例，暴露 focus/fitTextarea/resetHeight）。通过
  * defineExpose 暴露给父组件，父组件再注入 useChatWindow / useChatConversation。
  */
-import { ref, computed } from 'vue'
-import { PhX, PhArrowsOut, PhArrowsIn } from '@phosphor-icons/vue'
 import GuguChatMessageList from './GuguChatMessageList.vue'
 import GuguChatComposer from './GuguChatComposer.vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'

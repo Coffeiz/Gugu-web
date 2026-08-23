@@ -23,6 +23,54 @@ def _enabled() -> bool:
 def _now() -> float:
     return time.time()
 
+
+def _diagnostic_bucket(run: "_ScopeRun", key: str, default: dict[str, Any]) -> dict[str, Any]:
+    value = run.attributes.get(key)
+    if not isinstance(value, dict):
+        value = copy.deepcopy(default)
+        run.attributes[key] = value
+    return value
+
+
+def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> None:
+    """记录最近一次 provider 输入中的 canonical event 统计。"""
+    bucket = _diagnostic_bucket(run, "canonical_events", {
+        "count": 0, "by_type": {}, "schema_digests": [],
+    })
+    bucket["count"] = int(stats.get("count", 0) or 0)
+    bucket["by_type"] = dict(stats.get("by_type") or {})
+    bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
+
+
+def record_adapter_call(
+    run: "_ScopeRun",
+    *,
+    provider: str,
+    api_format: str,
+    canonical_event_count: int,
+) -> None:
+    """记录一次真实 LLM driver/provider adapter 调用的脱敏计数。"""
+    bucket = _diagnostic_bucket(run, "adapter_calls", {
+        "count": 0, "success": 0, "errors": 0, "canonical_render_calls": 0,
+        "by_provider": {}, "by_api_format": {},
+    })
+    bucket["count"] = int(bucket.get("count", 0) or 0) + 1
+    if canonical_event_count:
+        bucket["canonical_render_calls"] = int(bucket.get("canonical_render_calls", 0) or 0) + 1
+    for key, value in (("by_provider", provider or "unknown"), ("by_api_format", api_format or "unknown")):
+        counts = bucket.setdefault(key, {})
+        counts[value] = int(counts.get(value, 0) or 0) + 1
+
+
+def record_adapter_result(run: "_ScopeRun", status: str) -> None:
+    """记录 adapter 调用的结束状态。"""
+    bucket = _diagnostic_bucket(run, "adapter_calls", {
+        "count": 0, "success": 0, "errors": 0, "canonical_render_calls": 0,
+        "by_provider": {}, "by_api_format": {},
+    })
+    key = "success" if status == "success" else "errors"
+    bucket[key] = int(bucket.get(key, 0) or 0) + 1
+
 @dataclass
 class _Span:
     id: str

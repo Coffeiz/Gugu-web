@@ -5,6 +5,7 @@ import json
 from typing import Iterable
 
 from .tokens import content_text
+from .canonical_tool_history import event_text
 
 
 def build_chat_tool_events(messages: Iterable) -> list[dict]:
@@ -105,6 +106,8 @@ def _canonical_block(block: dict) -> dict | None:
         if _tool_result_is_error(block):
             result["is_error"] = True
         return result
+    if block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+        return dict(block)
     return None
 
 
@@ -145,7 +148,10 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                     canonical.append(normalized)
                 elif role == "assistant" and block.get("type") == "text" and block.get("text"):
                     canonical.append({"type": "text", "text": str(block["text"])})
-        if canonical and any(block.get("type") in ("tool_call", "tool_result") for block in canonical):
+        if canonical and any(
+            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery")
+            for block in canonical
+        ):
             result.append({"role": role, "content": canonical})
     return result
 
@@ -168,6 +174,8 @@ def _anthropic_history_blocks(content_json) -> list[dict]:
             if "is_error" in block:
                 result["is_error"] = block["is_error"]
             converted.append(result)
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+            converted.append({"type": "text", "text": event_text(block)})
         else:
             converted.append(block)
     return converted
@@ -199,6 +207,10 @@ def _openai_history_message(message, request) -> list[dict]:
                 "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
                 "content": content_text(block.get("content", "")),
             })
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+            rendered = event_text(block)
+            if rendered:
+                text_parts.append(rendered)
         elif block_type == "text":
             if block.get("text"):
                 text_parts.append(str(block["text"]))
@@ -256,7 +268,9 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 content_json = strip_vision_for_history(content_json)
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
-                if any(block.get("type") in ("tool_call", "tool_result") for block in blocks):
+                if any(block.get("type") in (
+                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery"
+                ) for block in blocks):
                     content = _anthropic_history_blocks(content_json)
                 else:
                     content = list(content_json) if isinstance(content_json, list) else content_json

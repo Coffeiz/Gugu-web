@@ -9,12 +9,12 @@
       :data-folder-key="f.id" :data-folder-id="f.folderId"
       data-layout-role="card" :data-layout-key="folderLayoutKey(f)"
       @contextmenu.prevent.stop="openCtx('folder', f, $event)" @click.stop="handleFolderClick(f, $event)">
-      <template #icon><component :is="folderListIcon(f)" class="fd-big-icon" :size="92" weight="bold" /></template>
+      <template #icon><component :is="folderListIcon(f)" class="fd-big-icon" :size="92" /></template>
       <template #name><span :title="f.displayName"><span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></span></template>
       <template #actions>
-        <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)"><PhCheck v-if="renamingFolderKey === f.folderId" :size="11" weight="bold" /><PhPencilSimple v-else :size="11" weight="bold" /></button>
-        <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)"><PhDownloadSimple :size="11" weight="bold" /></button>
-        <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)"><PhTrash :size="11" weight="bold" /></button>
+        <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)"><Icon name="status.success" v-if="renamingFolderKey === f.folderId" :size="11" /><Icon name="action.edit" v-else :size="11" /></button>
+        <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)"><Icon name="action.download" :size="11" /></button>
+        <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)"><Icon name="action.delete" :size="11" /></button>
       </template>
     </RuntimeFolderCard>
 
@@ -27,7 +27,7 @@
       <template #thumb><img class="fc-thumb-tiny" v-lazy-src="{ id: f.id, size: 'tiny', revision: f.thumbRevision }" decoding="async" draggable="false" alt="" /><img class="fc-thumb-full" v-lazy-src="{ id: f.id, size: 'card', revision: f.thumbRevision }" :class="{ 'fc-loaded': cardBlobReadyIds.has(f.id) }" decoding="async" draggable="false" alt="" @load="cardBlobReadyIds.add(f.id)" @error="($event.target as HTMLElement).style.display='none'" /><div class="fc-thumb-fade"></div></template>
       <template #name><span v-if="renamingFileId === f.id" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></template>
       <template #meta>{{ f.size }} · {{ f.createdAt }}</template>
-      <div v-if="!inSelectionMode" class="fc-hover-actions"><button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)"><PhCheck v-if="renamingFileId === f.id" :size="11" weight="bold" /><PhPencilSimple v-else :size="11" weight="bold" /></button><button class="file-card-btn" title="下载" @click.stop="downloadFile(f)"><PhDownloadSimple :size="11" weight="bold" /></button><button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)"><PhTrash :size="11" weight="bold" /></button></div>
+      <div v-if="!inSelectionMode" class="fc-hover-actions"><button class="file-card-btn" :title="renamingFileId === f.id ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFileId === f.id ? commitRename() : startRenameFile(f)"><Icon name="status.success" v-if="renamingFileId === f.id" :size="11" /><Icon name="action.edit" v-else :size="11" /></button><button class="file-card-btn" title="下载" @click.stop="downloadFile(f)"><Icon name="action.download" :size="11" /></button><button class="file-card-btn del" title="移到回收站" @click.stop="deleteSingleFile(f)"><Icon name="action.delete" :size="11" /></button></div>
     </RuntimeFileCard>
     <FileUploadGhostCard v-for="g in uploadingItems" :key="g.uid" :name="g.name" :ext="g.ext" :is-folder="g.isFolder" :progress="g.progress" :done="g.done" :total="g.total" :failed="g.failed" :error="g.error" data-flip-target />
     <FileUploadButton v-if="canUpload" mode="grid" data-flip-target @select="handleFileInput" />
@@ -36,8 +36,8 @@
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
-import { PhCheck, PhDownloadSimple, PhPencilSimple, PhTrash } from '@phosphor-icons/vue'
 import FileBrowserGrid from '@/components/common/file-browser/FileBrowserGrid.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'

@@ -28,10 +28,10 @@
     <template #breadcrumb>
       <FileBrowserBreadcrumb>
         <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
-          <PhArrowLeft :size="14" weight="bold" />
+          <Icon name="action.back" :size="14" />
         </button>
         <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" title="前进">
-          <PhArrowRight :size="14" weight="bold" />
+          <Icon name="action.next" :size="14" />
         </button>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
           全部文件
@@ -197,7 +197,7 @@ import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFil
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
-import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
