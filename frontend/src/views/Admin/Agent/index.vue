@@ -1161,6 +1161,9 @@ import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
 import { useAgentRuntimeConfig } from './runtime-config/useAgentRuntimeConfig'
+import { useMemoryMaintenance } from './memory/useMemoryMaintenance'
+import { useImMemoryMaintenance } from './memory/useImMemoryMaintenance'
+import { useLlmPresets } from './llm/useLlmPresets'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1171,6 +1174,12 @@ const configStore = useConfigStore()
 const adminStore  = useAdminStore()
 const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, embeddingDraft, embeddingSaving, embeddingSaved, embeddingError, embTest, resetEmbedding, saveEmbedding, testEmbedding, searchTest, testSearch, saveSearch } = runtimeConfig
+const memoryMaintenance = useMemoryMaintenance(adminStore)
+const { state: memCleanup, userCount: memCleanupUserCount, totalRemoved: memCleanupTotalRemoved, totalMoved: memCleanupTotalMoved, totalProfileEvents: memCleanupTotalProfileEvents, totalDaily: memCleanupTotalDaily, totalLegacy: memCleanupTotalLegacy, applyMsg: memCleanupApplyMsg, startPreview: startMemCleanupPreview, apply: applyMemCleanup } = memoryMaintenance
+const imMemoryMaintenance = useImMemoryMaintenance(adminStore)
+const { state: imScopes, preview: imModelPreview, loadScopes: loadImScopes, startPreview: startImModelPreview, apply: applyImMemoryMaintenance } = imMemoryMaintenance
+const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
+const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
@@ -1212,17 +1221,9 @@ const API_FORMATS = [
   { key: 'anthropic', label: 'Anthropic 格式' },
 ]
 
-const presets        = ref<any[]>([])
-const activePresetId = ref('')
-const strategy       = ref('active')   // active 单一激活 | pool 多 key 分流 | router 智能路由
-const poolMode       = ref('random')   // pool 分流方式：random | round_robin | least_loaded
-const presetsLoading = ref(false)
-const llmMsg         = ref('')
-const llmMsgError    = ref(false)
-const testingId      = ref<any | null>(null)
-const activatingId   = ref<any | null>(null)
-const probingId      = ref<any | null>(null)
+/* PHASE4_LLM_RUNTIME_STATE_OLD_BEGIN
 const probingDim     = ref<string | null>(null)   // 弹窗内正在检测的维度（image/video/audio）
+PHASE4_LLM_RUNTIME_STATE_OLD_END */
 const capabilityProbeLoading = ref(false)
 const capabilityProbeResult = ref<Record<string, { status?: string; detail?: string }>>({})
 
@@ -1261,6 +1262,7 @@ const filteredModelOptions = computed(() => {
   return modelOptions.value.filter(model => model.toLowerCase().includes(query))
 })
 
+/* PHASE4_LLM_RUNTIME_ACTIONS_OLD_BEGIN
 function showMsg(msg: string, isError = false) {
   llmMsg.value      = msg
   llmMsgError.value = isError
@@ -1325,6 +1327,7 @@ async function saveConcurrency() {
     showMsg('保存并发量失败：' + (e instanceof Error ? e.message : String(e)), true)
   }
 }
+PHASE4_LLM_RUNTIME_ACTIONS_OLD_END */
 
 async function togglePool(p: any) {
   const next = !p.in_pool
@@ -1516,6 +1519,7 @@ async function savePreset() {
   }
 }
 
+/* PHASE4_LLM_RUNTIME_LIST_ACTIONS_OLD_BEGIN
 async function activatePreset(id: any) {
   activatingId.value = id
   try {
@@ -1556,6 +1560,7 @@ async function testPreset(id: any) {
     testingId.value = null
   }
 }
+PHASE4_LLM_RUNTIME_LIST_ACTIONS_OLD_END */
 
 // 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
 // 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
@@ -1828,6 +1833,7 @@ async function startRebuild() {
   }
 }
 
+/* PHASE5_MEMORY_OLD_BEGIN
 // ── 记忆维护：pattern.json 批量复核清理（先预览再确认，见 backend scripts/refresh_memory.py）──
 interface MemCleanupPlanItem {
   removed_ids?: string[]; removed_texts?: string[]
@@ -2021,6 +2027,8 @@ async function applyImMemoryMaintenance() {
     imScopes.applying = false
   }
 }
+
+PHASE5_MEMORY_OLD_END */
 
 /* PHASE3_SEARCH_OLD_BEGIN
 // ── 搜索连通测试（SearXNG / Tavily）──
@@ -2242,10 +2250,10 @@ onMounted(async () => {
   Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
   pollRebuild()   // 若有重建任务在跑，页面加载即反映进度并接续轮询
-  pollMemCleanup()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
+  memoryMaintenance.poll()   // 同理：若有记忆清理预览在跑/已完成，页面加载即反映
 })
 
-onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewPoll() })
+onUnmounted(() => { stopRebuildPoll() })
 </script>
 
 <style scoped>
