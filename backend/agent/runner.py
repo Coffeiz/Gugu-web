@@ -474,11 +474,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = []
-    if _snapshot_injection:
-        fixed_parts.append(_snapshot_injection)
-    if _summary:
-        fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
+    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz)
     tail_parts = []
@@ -600,10 +596,6 @@ async def run_collect(req: AgentRequest, *, on_interaction=None) -> AgentRespons
                 reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
                                     used_tools=im_used_tools, session_id=session_id,
                                     group_mode=bool(req.chat_id and req.source != "web"))
-
-# 对话压缩（fire-and-forget）
-    from agent.context import compress_conv
-    compress_conv.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
                          files=sent_files, used_tools=im_used_tools,
@@ -807,11 +799,7 @@ async def run_stream(
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = []
-    if _snapshot_injection:
-        fixed_parts.append(_snapshot_injection)
-    if _summary:
-        fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
+    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz)
     tail_parts = []
@@ -981,9 +969,6 @@ async def run_stream(
                 reflection.schedule(user_id, req.user_name, reflect_message, reflect_reply, settings,
                                     used_tools=im_used_tools, session_id=session_id,
                                     group_mode=bool(req.chat_id and req.source != "web"))
-
-        from agent.context import compress_conv as _cc
-        _cc.schedule(session_id, user_id, settings, model_cfg.context_tokens)
 
     yield ("final", AgentResponse(text=text, session_id=session_id, tokens_in=tin,
                                   tokens_out=tout, files=files, cancelled=False,

@@ -54,10 +54,6 @@
           <PhFlag :size="14" />
           用户反馈
         </div>
-        <div class="nav-item" :class="{ active: isActive('/invite-codes') }" role="link" tabindex="0" @click="go('/invite-codes')">
-          <PhTicket :size="14" />
-          邀请码
-        </div>
         <div class="nav-item" :class="{ active: isActive('/users') }" role="link" tabindex="0" @click="go('/users')">
           <PhUsers :size="14" />
           用户管理
@@ -135,7 +131,7 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
 import {
-  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhTicket, PhUsers,
+  PhGear, PhRobot, PhChartLine, PhChartBar, PhFlag, PhUsers,
   PhStack, PhPulse, PhClipboard, PhTerminal, PhBug, PhSignOut, PhBellRinging, PhBrain, PhGauge,
   PhFolderSimpleDashed,
 } from '@phosphor-icons/vue'

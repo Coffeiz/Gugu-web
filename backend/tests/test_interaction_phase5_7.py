@@ -62,8 +62,9 @@ def test_qq_interaction_parser_accepts_official_resolved_button_data():
 def test_qq_interaction_parser_accepts_official_top_level_user_openid():
     event = parse_interaction_event({
         "id": "evt-top-level",
+        "user_openid": "platform-user",
+        "chat_type": 2,
         "data": {
-            "user_openid": "platform-user",
             "resolved": {"button_data": "17:opaque-token"},
         },
     })

@@ -1,18 +1,18 @@
-"""对话历史压缩：token 量超阈值时后台把老消息滚动总结成 summary，注入 system prompt。
+"""对话历史压缩：按当前请求实际组装上下文触发，或由 ``/compact`` 主动执行。
 
-触发：回复结束后估算 session 全量历史 token，超过 THRESHOLD × budget 则把"超出保留
-窗口的最老一批"压成摘要。**滚动**：把上一版 summary 一并喂给摘要器合并，不从头重压。
+手动/请求内触发时，把"超出保留窗口的最老一批"压成摘要。**滚动**：把上一版 summary
+一并喂给摘要器合并，不从头重压。
 存为每 session 一条 role="summary" 的 ConversationMessage（覆盖更新）。
 
 注入：`select_history` 把 summary 置顶取出，**入口编排（runner/web）把它从消息列表里
 弹出、追加进 system prompt**——不能当成 role="summary" 的消息发给 LLM（API 只认 user/
 assistant，且要交替）。见 `pop_summary`。
 
-无感：fire-and-forget 异步执行，不阻塞当前回复；失败只 log，不影响主流程。
+自动路径不再按数据库累计 token 触发摘要；本轮实际上下文的预算检查由
+``agent.core`` 负责。数据库积累很多旧消息但当前请求仍在预算内时，不会无谓调用摘要模型。
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 from pathlib import Path
 
@@ -24,12 +24,7 @@ from agent.context.tokens import content_text, estimate_tokens, msg_tokens
 
 logger = logging.getLogger(__name__)
 
-_bg_tasks: set = set()
-
-# 关系：保留窗口（TARGET）须 ≥ select_history 的预算（=budget），否则被保留的原文会和
-# summary 覆盖区重叠、重复烧 token。故 TARGET=1.0（与 select_history 保留量对齐），
-# THRESHOLD=1.5（总量超 1.5×budget 才压，summary 只覆盖窗口之外、select_history 本就丢掉的老消息）。
-COMPRESS_THRESHOLD = 1.5    # 全量 token > budget × 此值时触发
+# 手动压缩的默认窗口仍保留，自动请求预算由 agent.core 的实际组装长度统一判定。
 COMPRESS_TARGET    = 1.0    # 保留最近原文的量（占 budget）——与 select_history 对齐，不重叠
 FORCE_COMPRESS_TARGET = HARD_TARGET_RATIO  # 手动 /compact 保留统一的 20%目标
 _MAX_COMPRESS_TOKENS = 12000   # 单次喂给摘要器的原文上限（保护摘要器自身上下文；超出取最近一段，老的靠上一版 summary）
@@ -59,20 +54,14 @@ def summary_context_block(summary_text: str) -> str:
     return f"\n\n{_SUMMARY_HEADER}\n{summary_text}"
 
 
-def schedule(session_id: int, user_id: int, settings, token_budget: int) -> None:
-    """回复结束后 fire-and-forget 触发压缩检查，不阻塞主流程。后台开关关闭则不跑。"""
-    if not getattr(getattr(settings, "agent", None), "conv_compress_enabled", True):
-        return   # 后台「对话历史压缩」开关关闭：只截断不摘要
-    task = asyncio.create_task(_run(session_id, user_id, settings, token_budget))
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _run(session_id: int, user_id: int, settings, token_budget: int) -> None:
-    try:
-        await compress_if_needed(session_id, user_id, settings, token_budget)
-    except Exception as e:
-        logger.warning("[compress_conv] session %s 压缩失败: %s", session_id, e)
+def fixed_context_parts(snapshot_injection: dict | None, summary_text: str | None) -> list[dict]:
+    """统一组装固定上下文：摘要在前，session snapshot 在后。"""
+    parts: list[dict] = []
+    if summary_text:
+        parts.append({"role": "user", "content": summary_context_block(summary_text)})
+    if snapshot_injection:
+        parts.append(snapshot_injection)
+    return parts
 
 
 async def compress_if_needed(
@@ -136,8 +125,8 @@ async def _compress_if_needed_unlocked(
         return False
 
     total = sum(msg_tokens(m) for m in all_msgs)
-    if not force and total <= token_budget * COMPRESS_THRESHOLD:
-        return False   # 还没到阈值
+    if not force and total <= token_budget:
+        return False   # 仅供显式调用方使用；正常请求不会走数据库累计判定
 
     # 自动压缩保留完整窗口；手动 /compact 主动把旧内容整理到 20% 安全基线。
     target_keep = int(token_budget * (FORCE_COMPRESS_TARGET if force else COMPRESS_TARGET))

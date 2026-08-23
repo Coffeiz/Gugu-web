@@ -111,6 +111,19 @@ def test_cache_checkpoint_recovers_after_image_round():
     assert cached[-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
 
 
+def test_cache_checkpoint_rebuilds_previous_turn_for_new_request():
+    messages = [
+        {"role": "user", "content": "上一轮用户消息"},
+        {"role": "assistant", "content": "上一轮回复"},
+        {"role": "user", "content": "本轮用户消息"},
+    ]
+
+    cached = _with_history_cache(messages)
+
+    assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+
 def test_cache_diagnostics_only_exposes_sizes_and_digests():
     class Messages(list):
         conversation = [
@@ -129,7 +142,10 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
 
     assert diagnostics["cache_supported"] is True
     assert diagnostics["conversation_messages"] == 2
+    assert diagnostics["cache_anchor_indices"] == [0]
     assert diagnostics["cache_anchor_last_index"] == 0
+    assert diagnostics["cache_prefix_digest"]
+    assert diagnostics["stable_prefix_digest"]
     assert diagnostics["volatile_image_present"] is True
     assert diagnostics["volatile_image_first_index"] == 1
     assert diagnostics["tool_count"] == 1
@@ -138,3 +154,22 @@ def test_cache_diagnostics_only_exposes_sizes_and_digests():
     assert "secret_tool" not in diagnostics
     assert "私有工具定义" not in diagnostics
     assert "AAAA" not in str(diagnostics)
+
+
+def test_cache_diagnostics_reports_effective_runtime_anchors():
+    """LoopScope 应记录 driver 实际会打出的断点，而不是装配前的空列表。"""
+    messages = [
+        {"role": "user", "content": "上一轮用户消息"},
+        {"role": "assistant", "content": "上一轮回复"},
+        {"role": "user", "content": "本轮用户消息"},
+    ]
+
+    class Context:
+        tools = []
+        supports_active_cache = True
+
+    diagnostics = _cache_diagnostics(messages, Context())
+
+    assert diagnostics["cache_anchor_count"] == 2
+    assert diagnostics["cache_anchor_last_index"] == 2
+    assert diagnostics["dynamic_tail_count"] == 0

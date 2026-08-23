@@ -165,8 +165,10 @@ def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[
         conversation = getattr(messages, "conversation", messages)
         if not isinstance(conversation, list):
             conversation = []
-        anchors = getattr(messages, "cache_anchor_indices", []) or []
-        anchors = [int(index) for index in anchors if isinstance(index, int)]
+        from agent.loop_drivers import _history_cache_state
+
+        stable_message_count, effective_anchors = _history_cache_state(messages)
+        anchors = sorted(int(index) for index in effective_anchors if isinstance(index, int))
         tools = getattr(ctx, "tools", None) or []
         tool_json = json.dumps(
             _jsonable(tools), ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -182,7 +184,7 @@ def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[
         except Exception:
             pass
 
-        stable_message_count = volatile_index if volatile_index is not None else len(conversation)
+        # 与 driver 实际发送逻辑保持一致；volatile_index 仅作为可读诊断字段保留。
         anchor_token_estimate = 0
         if anchors:
             last_anchor = max(anchors)
@@ -191,11 +193,17 @@ def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[
             "cache_supported": bool(getattr(ctx, "supports_active_cache", False)),
             "conversation_messages": len(conversation),
             "cache_anchor_count": len(anchors),
+            "cache_anchor_indices": anchors,
             "cache_anchor_last_index": max(anchors) if anchors else None,
             "cache_anchor_tokens_estimate": anchor_token_estimate,
+            "cache_prefix_digest": _prompt_digest(
+                conversation[:max(anchors) + 1] if anchors else []
+            ),
             "volatile_image_present": volatile_index is not None,
             "volatile_image_first_index": volatile_index,
             "stable_message_count": stable_message_count,
+            "dynamic_tail_count": max(0, len(messages) - len(conversation)),
+            "stable_prefix_digest": _prompt_digest(conversation[:stable_message_count]),
             "tool_count": len(tools),
             "tool_schema_bytes": len(tool_json.encode("utf-8")),
             "tool_schema_tokens_estimate": _estimate_tokens(tool_json, model),

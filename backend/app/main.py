@@ -37,7 +37,6 @@ from app.api.v1 import workspaces as workspaces_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import agent_perception as agent_perception_router
-from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
 from app.api.v1 import system_logs as system_logs_router
 from app.api.v1 import users_admin as users_admin_router
@@ -250,11 +249,6 @@ app.include_router(
 )
 app.include_router(
     agent_perception_router.router,
-    prefix="/api/v1",
-    dependencies=[Depends(require_admin)],
-)
-app.include_router(
-    invite_codes_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )

@@ -62,22 +62,29 @@ def parse_interaction_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     # QQ 官方 INTERACTION_CREATE 的 C2C 回调通常把操作者直接放在
     # data.user_openid（而不是 data.user.user_openid）；群回调也可能使用
     # group_member_openid。优先读取官方顶层字段，再兼容旧的嵌套样本。
+    # 官方 INTERACTION_CREATE 将操作者和场景字段放在事件顶层 d；旧适配器
+    # 有时把它们嵌套在 data，顶层必须优先，避免解析成功但丢失用户身份。
     platform_user_id = (
-        data.get("user_openid")
+        payload.get("user_openid")
+        or payload.get("group_member_openid")
+        or data.get("user_openid")
         or data.get("group_member_openid")
         or actor.get("user_openid")
         or actor.get("openid")
         or actor.get("id")
         or resolved.get("user_id")
     )
+    group_openid = payload.get("group_openid") or data.get("group_openid")
+    group_id = payload.get("group_id") or data.get("group_id")
+    raw_chat_type = payload.get("chat_type")
     return {
         "prompt_id": prompt_id,
         "token": token,
         "event_id": str(payload.get("id") or data.get("id") or "") or None,
         "platform_user_id": str(platform_user_id or "") or None,
-        "channel_id": str(data.get("channel_id") or payload.get("channel_id") or "") or None,
-        "chat_type": "group" if data.get("group_openid") or data.get("group_id") else "c2c",
-        "chat_id": str(data.get("group_openid") or data.get("group_id") or "") or None,
+        "channel_id": str(payload.get("channel_id") or data.get("channel_id") or "") or None,
+        "chat_type": "group" if group_openid or group_id or raw_chat_type == 1 else "c2c",
+        "chat_id": str(group_openid or group_id or "") or None,
     }
 
 

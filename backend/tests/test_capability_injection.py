@@ -125,3 +125,26 @@ def test_capability_context_starts_with_declaration_and_refreshes_schema_selecti
     assert context.select_for_messages([]).tool_names == ("declare_tools",)
     assert context.declare(["image_search", "not_authorized"]) == ("image_search",)
     assert context.select_for_messages([]).tool_names == ("declare_tools", "image_search")
+
+
+def test_capability_context_keeps_ask_user_available_on_first_round():
+    from agent.capabilities.injector import CapabilityToolContext
+    from agent.capabilities.selector import RegistryCapabilitySelector
+
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={
+            "declare_tools": CapabilityMeta("declare_tools", "tool", "声明工具。"),
+            "ask_user": CapabilityMeta("ask_user", "tool", "询问用户。"),
+            "image_search": CapabilityMeta("image_search", "tool", "搜索图片。"),
+        },
+        skills={},
+    )
+    context = CapabilityToolContext(
+        snapshot, RegistryCapabilitySelector(), declaration_enabled=True,
+    )
+    assert context.select_for_messages([]).tool_names == ("declare_tools", "ask_user")
+    context.declare(["image_search"])
+    assert context.select_for_messages([]).tool_names == (
+        "declare_tools", "ask_user", "image_search"
+    )

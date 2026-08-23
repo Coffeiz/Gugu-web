@@ -1,6 +1,38 @@
 from agent.gateway import qq
 
 
+def test_qq_identify_subscribes_to_interaction_events():
+    assert qq._INTENTS & qq._INTENT_GROUP_AND_C2C
+    assert qq._INTENTS & qq._INTENT_PUBLIC_GUILD_MESSAGES
+    assert qq._INTENTS & qq._INTENT_DIRECT_MESSAGE
+    assert qq._INTENTS & qq._INTENT_INTERACTION
+
+
+async def test_ack_qq_interaction_uses_official_callback_endpoint(monkeypatch):
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append((channel_id, method, path, json_body))
+        return None
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    assert await qq._ack_qq_interaction("bot-1", "interaction-42") is True
+    assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 0})]
+
+    calls.clear()
+    assert await qq._ack_qq_interaction("bot-1", "interaction-42", code=3) is True
+    assert calls == [("bot-1", "PUT", "/interactions/interaction-42", {"code": 3})]
+
+
+async def test_ack_qq_interaction_without_id_is_noop(monkeypatch):
+    async def fail_request(*args, **kwargs):
+        raise AssertionError("不应调用 QQ API")
+
+    monkeypatch.setattr(qq, "_qq_request", fail_request)
+    assert await qq._ack_qq_interaction("bot-1", "") is False
+
+
 async def _fake_next_seq(msg_id):
     return 1
 
@@ -49,6 +81,8 @@ async def test_post_keyboard_builds_inline_keyboard_with_opaque_action(monkeypat
     assert button["action"]["type"] == 1
     assert button["action"]["data"] == "17:opaque-token"
     assert button["action"]["permission"] == {"type": 2}
+    assert button["action"]["click_limit"] == 1
+    assert button["group_id"] == "gugu-prompt-17"
     assert "session_id" not in repr(body)
 
 

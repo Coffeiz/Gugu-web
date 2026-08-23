@@ -57,12 +57,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '配额管理' },
       },
       {
-        path: 'invite-codes',
-        name: 'AdminInviteCodes',
-        component: () => import('@/views/Admin/InviteCodes/index.vue'),
-        meta: { title: '邀请码管理' },
-      },
-      {
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/Admin/Feedback/index.vue'),

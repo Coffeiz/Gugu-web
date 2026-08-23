@@ -1,6 +1,6 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：基础设施部分就绪，Knowledge RAG 尚未接入
+> 状态：基础设施部分就绪，Knowledge RAG 尚未接入；Capability RAG 后置于 `PRD-LLM-9` Phase 5 固定 Adapter Tool 完成之后。
 > 创建：2026-08-04
 > 最近更新：2026-08-23
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
@@ -14,7 +14,7 @@
 | Phase 0：数据源与权限协议 | 🟡 部分具备 | 各业务已有 ownership/scope 校验，但统一文档的 source、scope、版本和删除事件协议尚未落地 |
 | Phase 1：内容摘要与分块接口 | 🔲 未开始 | 目前没有生产 SourceAdapter、统一摘要或分块产物 |
 | Phase 2：统一索引管线 | 🟡 部分具备 | 已有记忆 embedding/cache 原语和离线 BM25；没有统一持久化索引、异步 upsert/invalidate 管线 |
-| Phase 3：统一召回工具 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口，但没有 Knowledge RAG 的 `rag_recall` |
+| Phase 3：统一召回工具 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口，但没有 Knowledge RAG 的 `rag_recall`；Capability RAG 推荐后置于 `PRD-LLM-9` Phase 6 |
 | Phase 4：跨来源混合召回 | 🔲 待评估 | 多来源合并、去重、引用和上下文预算；首版不做独立 Ranking/Reranker |
 | Phase 5：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；真实数据标注集、生产灰度和权限回归尚未完成 |
 
@@ -31,7 +31,7 @@
 | `bench_rag_virtual.py` | 离线虚拟文档 BM25、Embedding 和意图判断压测 | 评估工具，不是生产索引或召回服务 |
 | Knowledge RAG | 未发现生产 `SourceAdapter`、`IndexPipeline`、持久化 BM25 index、`rag_recall` 或跨来源 retriever | 本 PRD 的主体仍待实施 |
 
-当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和 Schema 注入，后者负责用户知识片段召回。
+当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续 Phase 6 联动。
 
 ## 1. 背景与目标
 
@@ -150,6 +150,14 @@
 - Runtime 必须先生成 admin、用户、平台、工作区和会话 scope 的授权视图；这些是硬安全边界，不由 RAG 复制或替代。
 - RAG 返回的推荐只影响工具的优先顺序和提示，不改变授权工具全集，不能直接执行工具或绕过 dispatch、确认门和 ownership 校验。
 
+与 `PRD-LLM-9` Phase 5 的边界：
+
+- Capability RAG 只返回工具名、短描述、类别、相关性分数和推荐理由，不返回完整 Provider Schema。
+- 固定 `call_tool` 是 Provider 侧唯一的业务工具入口；Capability RAG 不得通过修改 Provider `tools` 集合来注入推荐结果。
+- 命中的工具 Schema 由 Capability Registry 转换为 canonical `tool-schema` history event，随后由 `call_tool` 使用；Schema 的版本和 digest 由注册表提供。
+- `use_skill` 自动注入关联工具时，同样追加 canonical `skill-schema` / `tool-schema` event，不把 Capability RAG 结果写入 Knowledge RAG 文档或 session snapshot。
+- Capability RAG 失败、为空或延迟超限时，不影响固定 Adapter Tool、授权判断和已有 canonical history。
+
 ### 3.4 切片协议
 
 切片采用“语义优先、长度兜底”，不按固定字符数机械截断：
@@ -257,7 +265,7 @@ chunk_id = document_id + version + position
 - 文件、项目、画布和日记必须复用各自的 ownership 校验；
 - 不同 owner、Bot、平台、项目和群组的文档不能串库。
 
-### FR-RAG-6：Capability RAG 工具软推荐（注册基础部分具备，RAG 召回未实现）
+### FR-RAG-6：Capability RAG 工具软推荐（注册基础部分具备，后置于 PRD-LLM-9 Phase 6）
 
 Capability RAG 为 `PRD-LLM-9` 提供本轮工具推荐，不负责工具执行，也不负责缩小工具候选集合：
 
@@ -297,10 +305,12 @@ Capability Registry      → Capability IndexDocument ↗
                     Knowledge / Capability namespace
                        BM25 / Embedding Index
                                       ↓
-                         RAG Retriever / Capability Retriever
+                        RAG Retriever / Capability Retriever
                               ↓                 ↓
                          rag_recall      tool candidates
 ```
+
+其中 `tool candidates` 只供 `PRD-LLM-9` Phase 6 的 selector 生成推荐提示；它不会生成 Provider 原生业务工具 Schema，也不会替换 Phase 5 的固定 `call_tool` Adapter Tool。
 
 `global_search` 和 `search_conversations` 可复用底层候选排序或分词组件，但继续保留各自的精确查询和完整读取 API。
 
@@ -332,28 +342,32 @@ RAG 结果不能写入 session snapshot、静态 system 或每轮固定的 dynam
 ```text
 固定 system / session snapshot
         ↓
-历史消息与已有 tool round
+固定 Adapter Tool：call_tool / use_skill / ask_user
+        ↓
+canonical history 与已有 tool round
         ↓
 当前 user message
         ↓
-rag_recall tool_call
+call_tool(name="rag_recall")
         ↓
-rag_recall tool_result（摘要、片段、来源引用、更新时间）
+canonical tool-result（摘要、片段、来源引用、更新时间）
+        ↓
+Provider adapter 重建当前模型所需的合法消息
         ↓
 模型基于结果继续回答或继续调用工具
 ```
 
 约束：
 
-- `rag_recall` 的完整结果只进入当前 round 的 tool result，不进入 snapshot；
+- `rag_recall` 的完整结果只进入当前 round 的 canonical `tool-result`，不进入 snapshot；
 - 后续 round 若仍需要该结果，由已有 tool history 继承，不重复拼装到 system reminder；
 - 新 Run 是否保留历史由普通 conversation history/compaction 决定，不建立 RAG 专用永久快照；
 - 结果返回摘要和有限片段，不返回原始文件二进制或全量正文；
-- 工具 Schema 通过 provider 的 tools 参数注入，Capability RAG 的候选元数据不混入 Knowledge RAG 结果；
+- 工具 Schema 以 canonical `tool-schema` history event 保存；Provider 只注册固定 Adapter Tool，Capability RAG 的候选元数据不混入 Knowledge RAG 结果；
 - 若未来增加自动召回，也必须复用同一个 `rag_recall` 结果结构，不能在业务入口复制一套 system 注入逻辑；
 - LoopScope 只记录 namespace、source_type、候选数、命中数、耗时、版本和脱敏 digest，不记录完整敏感正文。
 
-因此，RAG 不应该成为新的 `[system-reminder]` 来源。`[system-reminder]` 继续只承载 session snapshot 和确有必要的动态运行状态；知识检索结果使用标准 tool round，保证消息边界、缓存前缀和 compaction 语义稳定。
+因此，RAG 不应该成为新的 `[system-reminder]` 来源。`[system-reminder]` 继续只承载 session snapshot 和确有必要的动态运行状态；知识检索结果使用 canonical tool round，保证消息边界、缓存前缀和 compaction 语义稳定。RAG 不得重新引入第二套 Prompt 拼装策略。
 
 ### 5.4 向量缓存与规模策略
 
@@ -384,6 +398,7 @@ rag_recall tool_result（摘要、片段、来源引用、更新时间）
 5. 群组/member 记忆隔离（见 `PRD-IM-3`）；
 6. 至少准备一批跨来源召回标注样本，用于比较 BM25 和混合召回质量。
 7. 建立通用分词器、动态领域词库、停用词和同义词的配置边界。
+8. 先完成 `PRD-LLM-9` Phase 5 的固定 `call_tool` 与 canonical history；Capability RAG 不得依赖动态 Provider Schema 注入。
 
 ## 7. 验证与上线
 

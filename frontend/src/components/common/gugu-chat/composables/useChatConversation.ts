@@ -41,6 +41,18 @@ export function useChatConversation(options: {
 }) {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
+  const sessionSettling = ref(false)
+  // 所有滚动请求共用一个代次与 rAF。切会话、流式 token、工具事件可能同时请求到底部，
+  // 旧请求必须失效，否则它会在新消息布局完成后再次改写 scrollTop。
+  let scrollRequest = 0
+  let scrollRaf: number | null = null
+  function invalidateScrollRequests() {
+    scrollRequest += 1
+    if (scrollRaf !== null) {
+      cancelAnimationFrame(scrollRaf)
+      scrollRaf = null
+    }
+  }
 
   const now = () => {
     const d = new Date()
@@ -126,7 +138,10 @@ export function useChatConversation(options: {
   const isGroupSession = ref(false)
   let _chatViewGeneration = 0
   const getViewGeneration = () => _chatViewGeneration
-  const bumpViewGeneration = () => ++_chatViewGeneration
+  const bumpViewGeneration = () => {
+    invalidateScrollRequests()
+    return ++_chatViewGeneration
+  }
 
   async function fetchSessions() {
     try { sessions.value = await agentApi.listSessions() } catch {}
@@ -242,15 +257,45 @@ export function useChatConversation(options: {
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
   // 再补一帧 rAF，兜住附件缩略图/气泡迟一拍布局导致的高度变化
   async function scrollBottom(force = false) {
+    const request = ++scrollRequest
+    if (scrollRaf !== null) {
+      cancelAnimationFrame(scrollRaf)
+      scrollRaf = null
+    }
     await nextTick()
+    if (request !== scrollRequest) return
     const el = messagesEl.value; if (!el) return
     options.onSyncSmallH()   // 发送/加载后按内容真实高度更新窗口高（含刚加的用户气泡）
     if (force) {
       stick.value = true
       scrollToBottom()
-      requestAnimationFrame(() => { if (stick.value) scrollToBottom() })
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = null
+        if (request !== scrollRequest) return
+        if (stick.value) scrollToBottom()
+      })
     }
     else if (stick.value) scrollToBottom()
+  }
+
+  // 虚拟列表在切换会话后会先用估算高度绘制，再在可见行挂载后逐帧修正高度。
+  // 在这些修正完成前解除隐藏会造成会话先出现在错误位置、下一帧再跳到底部。
+  async function waitForStableScrollLayout() {
+    let previous = ''
+    let stableFrames = 0
+    for (let i = 0; i < 12; i += 1) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await nextTick()
+      const el = messagesEl.value
+      const current = el ? `${el.scrollHeight}:${el.clientHeight}` : ''
+      if (current && current === previous) {
+        stableFrames += 1
+        if (stableFrames >= 2) return
+      } else {
+        stableFrames = 0
+        previous = current
+      }
+    }
   }
 
   watch(messagesEl, (el, oldEl) => {
@@ -287,6 +332,8 @@ export function useChatConversation(options: {
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
+    waitForStableScrollLayout,
+    setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
   const { webSessions, imSessions, currentSessionTitle, loadSession, newSession, deleteSession, renameSession } = sessionsApi
 
@@ -331,7 +378,7 @@ export function useChatConversation(options: {
   })
 
   return {
-    messages, mkid, now,
+    messages, mkid, now, sessionSettling,
     inputText, thinkingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,

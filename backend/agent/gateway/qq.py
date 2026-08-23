@@ -114,7 +114,18 @@ _OP_HELLO = 10
 _OP_HEARTBEAT_ACK = 11
 
 _INTENT_GROUP_AND_C2C = 1 << 25
-_INTENTS = _INTENT_GROUP_AND_C2C
+_INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
+_INTENT_DIRECT_MESSAGE = 1 << 12
+# Inline Keyboard 的 INTERACTION_CREATE 不会随群聊/C2C 消息 intent 一起下发，
+# 必须显式订阅交互 intent；同时保留 QQ 官方/成熟适配器使用的 guild/direct
+# message intent 组合，避免交互事件在不同会话类型下被网关过滤。
+_INTENT_INTERACTION = 1 << 26
+_INTENTS = (
+    _INTENT_GROUP_AND_C2C
+    | _INTENT_PUBLIC_GUILD_MESSAGES
+    | _INTENT_DIRECT_MESSAGE
+    | _INTENT_INTERACTION
+)
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 from agent.im.parsers.qq import (
@@ -249,6 +260,27 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
         # 可以广吞，但仍要留痕方便排查。
         diag_log("agent.gateway.qq._qq_ack", e)
         _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
+
+
+async def _ack_qq_interaction(channel_id: str, interaction_id: str, *, code: int = 0) -> bool:
+    """确认 QQ Keyboard interaction，避免客户端在业务处理后继续显示 loading。
+
+    这和发送“已选择”文本是两条独立链路：前者是 QQ 回调协议 ACK，使用
+    code=0 表示服务端已经消费成功；后者只是用户可见的状态提示。
+    """
+    if not interaction_id:
+        return False
+    try:
+        await _qq_request(
+            channel_id,
+            "PUT",
+            f"/interactions/{interaction_id}",
+            json_body={"code": int(code)},
+        )
+        return True
+    except Exception as exc:
+        diag_log("agent.gateway.qq.interaction_ack", exc)
+        return False
 
 
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
@@ -531,9 +563,12 @@ async def _consume_qq_text_choice(*, owner: str, channel_id: str, chat_type: str
 
 async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: str) -> None:
     """消费 QQ Keyboard 回调，并以受控文本恢复原会话。"""
+    raw_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+    interaction_id = str(data.get("id") or raw_data.get("id") or "")
     from agent.interactions.qq import parse_interaction_event
     event = parse_interaction_event(data)
     if event is None or not event.get("platform_user_id"):
+        await _ack_qq_interaction(channel_id, interaction_id, code=1)
         return
     try:
         from app.db import session as db_session
@@ -551,11 +586,14 @@ async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: s
                 event_id=event.get("event_id"),
             )
     except (LookupError, ValueError):
+        await _ack_qq_interaction(channel_id, interaction_id, code=3)
         await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", event.get("event_id") or "")
         return
     except Exception as exc:
+        await _ack_qq_interaction(channel_id, interaction_id, code=1)
         diag_log("agent.gateway.qq.interaction", exc)
         return
+    await _ack_qq_interaction(channel_id, interaction_id, code=0)
 
     option_id = str(result.get("option_id") or "")
     result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}
@@ -1039,11 +1077,15 @@ def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
                 "visited_label": "已选择",
                 "style": 1,
             },
+            # 单选 Prompt：点击后按钮只允许消费一次，并让 QQ 将同组按钮
+            # 视为互斥选择，而不是继续显示为可多选状态。
+            "group_id": f"gugu-prompt-{actions['prompt_id']}",
             "action": {
                 "type": 1,
                 # 交互权限由服务端 prompt/session 校验；QQ C2C 对
                 # type=0 + specify_user_ids 的组合兼容性不稳定。
                 "permission": {"type": 2},
+                "click_limit": 1,
                 "data": item["action_data"],
                 "unsupport_tips": "请回复选项序号或选项文字",
             },

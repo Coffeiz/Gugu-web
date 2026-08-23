@@ -338,12 +338,22 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
     # 开场上下文会提高模型复述问候的概率，也会破坏固定前缀的稳定性。
 
-    tool_names = profile.tool_names
+    # Web 后台生成与 IM 共用能力目录：首轮只声明能力目录和 ask_user，
+    # 只有模型声明后才把对应工具 schema 放回后续轮次。
+    from agent.runner import _capability_context, _filter_shell_tool
+    async with _sess._SessionLocal() as db:
+        tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
+    capability_context = _capability_context(tool_names, settings)
+    if capability_context is not None:
+        from agent.capabilities.injector import catalog_block
+        _snapshot_injection = session_snapshot.reminder_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        )
 
     from agent.llm.llm_select import use_anthropic_for
     use_anthropic = use_anthropic_for(settings.ai)
 
-    runner = LLMRunner(tool_names, settings)
+    runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     full_reply = ""
     usage_tokens = {"input": 0, "output": 0}
     anthr_messages: list = []
@@ -354,11 +364,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     try:
-        fixed_parts = []
-        if _snapshot_injection:
-            fixed_parts.append(_snapshot_injection)
-        if _summary:
-            fixed_parts.append({"role": "user", "content": compress_conv.summary_context_block(_summary)})
+        fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
         history_parts = build_history_parts(
             history, req, use_anthropic=use_anthropic, user_tz=user_tz)
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
@@ -545,10 +551,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             from agent.memory import reflection
             reflection.schedule(user_id, req.user_name, req.message, full_reply, settings,
                                 used_tools=used_tools, session_id=session_id)
-
-        # ── 对话压缩：token 超阈值时后台静默压缩旧消息（fire-and-forget）──
-        from agent.context import compress_conv
-        compress_conv.schedule(session_id, user_id, settings, settings.ai.context_tokens)
 
     except BaseException as e:
         logger.exception("agent generate error for user %s: %s", req.user_id, e)

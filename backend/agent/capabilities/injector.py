@@ -27,9 +27,18 @@ class CapabilityToolContext:
         self.limit = limit
         self.declaration_enabled = declaration_enabled and declaration_tool in snapshot.tools
         self.declaration_tool = declaration_tool
+        # 交互工具必须在首轮可见。否则模型只能把选项写成普通文本，用户
+        # 回复选项序号后会被当成新消息，无法恢复原来的 ask_user 挂起轮。
+        self.always_available_tools = tuple(
+            name for name in ("ask_user",) if name in snapshot.tools
+        )
         self.declared_tool_names: tuple[str, ...] | None = None
-        initial = (declaration_tool,) if self.declaration_enabled else tuple(snapshot.tools)
-        self.selection = SelectedCapabilities(initial)
+        initial = (
+            (declaration_tool, *self.always_available_tools)
+            if self.declaration_enabled
+            else tuple(snapshot.tools)
+        )
+        self.selection = SelectedCapabilities(tuple(dict.fromkeys(initial)))
 
     def declare(self, names) -> tuple[str, ...]:
         """校验并固化本轮声明，返回可注入的授权工具名。"""
@@ -46,9 +55,9 @@ class CapabilityToolContext:
     def select_for_messages(self, messages) -> SelectedCapabilities:
         if self.declaration_enabled:
             names = self.declared_tool_names or ()
-            # 保留声明入口，允许 Agent 在同一个 Run 中刷新工具集合。
-            selected = (self.declaration_tool, *names)
-            self.selection = SelectedCapabilities(selected, shadow=False)
+            # 保留声明入口和交互工具，允许 Agent 在同一个 Run 中刷新业务工具集合。
+            selected = (self.declaration_tool, *self.always_available_tools, *names)
+            self.selection = SelectedCapabilities(tuple(dict.fromkeys(selected)), shadow=False)
             return self.selection
         query = ""
         for message in reversed(getattr(messages, "conversation", messages) or []):

@@ -37,3 +37,13 @@ class LocalAdapter(ProviderAdapter):
     def capabilities(self, model: str = "") -> ProviderCapabilities:
         # 本地服务的高级能力必须经过探测或人工覆盖，不能按运行时名称误报。
         return ProviderCapabilities(api_format="openai", cache_mode="none", tools=False)
+
+    def build_openai_cache_kwargs(self, ai) -> dict:
+        """让 llama.cpp 复用同一 slot 的 KV/prompt cache。
+
+        这是 llama.cpp 的运行时参数，不是云厂商的 cache_control；因此不把它
+        标记为主动缓存能力，也不改变 LoopScope 的 provider cache 统计语义。
+        """
+        if getattr(ai, "local_runtime", "other") == "llama.cpp":
+            return {"extra_body": {"cache_prompt": True}}
+        return {}

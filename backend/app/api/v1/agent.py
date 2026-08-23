@@ -400,11 +400,24 @@ async def get_session_messages(
         for message in msgs
         if message.platform_user_id and message.platform_user_name
     }
+    # 工具中间行和普通消息共用自增 id。只恢复本次正文窗口内的工具行，
+    # 避免长会话把整段历史的 tool_call/tool_result 全部塞进虚拟列表。
+    # 当前未完成的轮次由 active/resumeStream 续接，不需要在这里扫描全历史。
+    tool_filters = [
+        ConversationMessage.session_id == session_id,
+        ConversationMessage.content_json.is_not(None),
+    ]
+    if msgs:
+        message_ids = [message.id for message in msgs]
+        tool_filters.extend([
+            ConversationMessage.id >= min(message_ids),
+            ConversationMessage.id <= max(message_ids),
+        ])
+    else:
+        # 没有正文窗口时不应退化为扫描整段工具历史。
+        tool_filters.append(False)
     tool_rows = (await db.execute(
-        select(ConversationMessage).where(
-            ConversationMessage.session_id == session_id,
-            ConversationMessage.content_json.is_not(None),
-        ).order_by(ConversationMessage.id)
+        select(ConversationMessage).where(*tool_filters).order_by(ConversationMessage.id)
     )).scalars().all()
     tool_events = build_chat_tool_events(tool_rows)
     for message in msgs:

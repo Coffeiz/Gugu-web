@@ -55,9 +55,10 @@
 
       <GuguChatMessageList
         ref="messageListRef"
-        :messages="messages" :is-group-session="isGroupSession"
+        :messages="messages" :session-id="sessionId" :is-group-session="isGroupSession"
         :copied-id="copiedId" :voice-playing-id="voicePlayingId"
         :expanded="expanded" :status-kind="statusKind" :status-typed="statusTyped"
+        :session-settling="sessionSettling"
         @copy="onCopy" @toggle-voice="onToggleVoice"
         @open-file="onOpenFile" @download="onDownload" @action-click="onActionClick"
         @interaction-select="onInteractionSelect"
@@ -116,6 +117,7 @@ const props = defineProps<{
   voicePlayingId: string | null
   statusKind: string
   statusTyped: string
+  sessionSettling: boolean
   // 输入框
   inputText: string
   pendingAtt: ChatFile[]
@@ -281,6 +283,7 @@ defineExpose({
 :deep(.chat-messages) {
   flex: 1; overflow-y: auto; overflow-x: hidden; position: relative;
 }
+:deep(.chat-messages.is-session-settling) { visibility: hidden; }
 .chat-main.is-expanded :deep(.chat-messages .msg-bubble) { max-width: 72%; font-size: 14px; }
 .chat-main.is-expanded :deep(.chat-messages .msg-quoted) { max-width: 72%; font-size: 13.5px; }
 :deep(.msg-virtual-spacer) { position: relative; width: 100%; }

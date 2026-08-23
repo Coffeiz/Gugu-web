@@ -67,7 +67,9 @@ class ProviderAdapter:
             payload = {"model": getattr(ai, "model", ""), "max_tokens": 1,
                        "messages": [{"role": "user", "content": "hi"}]}
         else:
-            headers = {"Authorization": f"Bearer {api_key}", "content-type": "application/json"}
+            headers = {"content-type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
             path = "/chat/completions"
             payload = {"model": getattr(ai, "model", ""), "max_tokens": 1,
                        "messages": [{"role": "user", "content": "hi"}]}
@@ -84,9 +86,12 @@ class ProviderAdapter:
         headers = {"Accept": "application/json"}
         api_key = getattr(ai, "api_key", "") or ("ollama" if self.name == "ollama" else "")
         if protocol == "anthropic":
-            headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+            headers["anthropic-version"] = "2023-06-01"
+            if api_key:
+                headers["x-api-key"] = api_key
         else:
-            headers["Authorization"] = f"Bearer {api_key}"
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
         headers.update(self.auth_headers(ai))
         if self.name == "mimo":
             headers.pop("Authorization", None)
@@ -129,6 +134,10 @@ class ProviderAdapter:
         """返回 OpenAI SDK 调用所需的思考参数。"""
         params = self.build_thinking_params(ai, thinking=thinking)
         return {"extra_body": params} if params else {}
+
+    def build_openai_cache_kwargs(self, ai) -> dict:
+        """构造 OpenAI 兼容接口的本地 prompt cache 参数。"""
+        return {}
 
     def build_anthropic_thinking_params(self, ai, *, thinking: str | None = None) -> dict:
         """返回 Anthropic SDK 调用所需的思考参数。"""

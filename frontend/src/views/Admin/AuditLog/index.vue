@@ -114,7 +114,6 @@ const actionOptions = [
   { value: '',       label: '全部操作' },
   { value: 'login',  label: '登录' },
   { value: 'config', label: '配置变更' },
-  { value: 'invite', label: '邀请码' },
   { value: 'agent',  label: 'Agent 配置' },
   { value: 'prompt', label: '提示词' },
   { value: 'user',   label: '用户管理' },
@@ -205,7 +204,7 @@ function formatTime(ts: any) {
 }
 
 function actionLabel(action: string) {
-  const map = { login: '登录', config: '配置', invite: '邀请码', agent: 'Agent', prompt: '提示词', user: '用户管理' }
+  const map = { login: '登录', config: '配置', agent: 'Agent', prompt: '提示词', user: '用户管理' }
   return map[action as keyof typeof map] ?? action
 }
 
@@ -300,7 +299,6 @@ onMounted(load)
 }
 .tag-login  { background: rgba(100,180,100,0.15); color: rgba(120,210,120,0.9); }
 .tag-config { background: rgba(120,140,220,0.15); color: rgba(150,170,240,0.9); }
-.tag-invite { background: rgba(200,160,80,0.15);  color: rgba(220,185,100,0.9); }
 .tag-agent  { background: rgba(160,100,220,0.15); color: rgba(190,140,240,0.9); }
 .tag-user   { background: rgba(80,170,200,0.15);  color: rgba(100,200,230,0.9); }
 .tag-prompt { background: rgba(220,120,160,0.15); color: rgba(235,150,185,0.9); }

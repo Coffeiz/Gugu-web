@@ -143,6 +143,44 @@ def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
         message["content"] = "\n".join(text_parts) or "[图片已查看]"
 
 
+def _history_cache_state(messages: list) -> tuple[int, set[int]]:
+    """计算实际请求会使用的稳定边界和缓存断点。
+
+    这个计算同时被发送路径和 LoopScope 诊断使用，避免监控看到的是装配前状态，
+    而 provider 实际拿到的副本已经有另一套断点。
+    """
+    conversation = getattr(messages, "conversation", messages)
+    cache_limit = len(conversation)
+    if cache_limit <= 0:
+        return 0, set()
+
+    volatile_index = next(
+        (index for index, message in enumerate(conversation[:cache_limit])
+         if _contains_volatile_image(message)),
+        None,
+    )
+    stable_limit = volatile_index if volatile_index is not None else cache_limit
+    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
+    anchor_indices = {index for index in anchor_indices if 0 <= index < stable_limit}
+    latest_anchor = stable_limit - 1
+    if latest_anchor >= 0:
+        anchor_indices.add(latest_anchor)
+
+    # 新请求会重建 PromptMessages，因此需要从稳定 conversation 中重建上一轮边界。
+    for index in range(stable_limit - 2, -1, -1):
+        message = conversation[index]
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        blocks = content if isinstance(content, list) else []
+        if blocks and all(isinstance(block, dict) and block.get("type") == "tool_result"
+                          for block in blocks):
+            continue
+        anchor_indices.add(index)
+        break
+    return stable_limit, anchor_indices
+
+
 def _with_history_cache(messages: list) -> list:
     """给消息历史添加 cache_control，参考 dsh/pi-ai 的实现。
 
@@ -164,29 +202,12 @@ def _with_history_cache(messages: list) -> list:
 
     # PromptMessages 的动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾；
     # 否则时间 reminder 会被包含在断点前缀中，下一轮必然失去命中。
-    cache_limit = len(getattr(messages, "conversation", messages))
-    if cache_limit <= 0:
+    stable_limit, anchor_indices = _history_cache_state(messages)
+    if stable_limit <= 0:
         return list(messages)
-
-    # 内联 base64 图片通常只属于本轮请求，且下一轮历史会被规范化为文本/工具记录。
-    # 因此缓存断点最多推进到图片之前，避免把不稳定的视觉 payload 纳入前缀。
-    volatile_index = next(
-        (index for index, message in enumerate(messages[:cache_limit])
-         if _contains_volatile_image(message)),
-        None,
-    )
-    stable_limit = volatile_index if volatile_index is not None else cache_limit
-
-    # 保留上一请求的 checkpoint，并在本轮 conversation 末尾建立新 checkpoint。
-    # PromptMessages 会在同一 run 的 tool round 之间持续追加消息；如果每次只标记
-    # 最后一条，provider 可能看不到上一轮已经建立的可复用前缀。
-    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
-    anchor_indices = {index for index in anchor_indices if 0 <= index < stable_limit}
-    latest_anchor = stable_limit - 1
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    if latest_anchor >= 0:
-        anchor_indices.add(latest_anchor)
-    if remember_anchor is not None and volatile_index is None and latest_anchor >= 0:
+    latest_anchor = stable_limit - 1
+    if remember_anchor is not None and latest_anchor >= 0:
         remember_anchor(latest_anchor)
 
     # 浅拷贝 messages 列表
@@ -197,7 +218,7 @@ def _with_history_cache(messages: list) -> list:
         content = msg.get("content")
 
         # 只给 conversation checkpoint 加 cache_control；动态尾部永远不加。
-        is_anchor = i in anchor_indices and i < cache_limit
+        is_anchor = i in anchor_indices and i < stable_limit
 
         if isinstance(content, list) and is_anchor and content:
             new_content = content[:-1] + [
@@ -440,6 +461,7 @@ class OpenAIDriver:
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         messages = _with_history_cache(messages) if ctx.supports_active_cache else messages
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
+        cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         stream = await client.chat.completions.create(
             model=ctx.model,
             messages=messages,
@@ -449,6 +471,7 @@ class OpenAIDriver:
             stream_options={"include_usage": True},
             **ctx.think_kwargs,
             **tool_params,
+            **cache_kwargs,
         )
         content = ""
         reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400

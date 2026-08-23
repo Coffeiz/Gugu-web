@@ -169,7 +169,6 @@ backend/
 | `AgentUsage` | 每次 Agent 调用记一行：`tokens_in/out`、`model`、`provider`、`tools_used`（JSON），配额统计用 |
 | `SearchUsage` | 深度研究（Tavily）用量计数，`web_search`（自建 SearXNG）不计配额 |
 | `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qq`） |
-| `InviteCode` | 邀请码，注册走邀请制 |
 | `AuditLog` | 管理员操作审计 |
 | `SystemLog` | 系统级错误/警告日志 |
 | `FrontendEvent` | 前端行为埋点 |
@@ -245,7 +244,7 @@ GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只�
 POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 ```
 
-**其余 Admin 路由**（均挂 `Depends(require_admin)`）：`agent_admin`（Agent 行为配置）、`agent_perception`、`invite_codes`、`audit_log`、`system_logs`、`users_admin`、`services_admin`、`admin_debug`、`admin_analytics`、`ops_admin`、`feedback.admin_router`、`notifications_admin`。
+**其余 Admin 路由**（均挂 `Depends(require_admin)`）：`agent_admin`（Agent 行为配置）、`agent_perception`、`audit_log`、`system_logs`、`users_admin`、`services_admin`、`admin_debug`、`admin_analytics`、`ops_admin`、`feedback.admin_router`、`notifications_admin`。
 
 **IM 平台连接**（用户态）：`qq_connect.py`、`feishu_connect.py`、`wechat_connect.py`——扫码绑定/解绑自己的 IM 账号。`user_bots.py` 管理自带机器人凭据。
 

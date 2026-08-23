@@ -31,7 +31,6 @@ class UserRegister(CamelModel):
     username: str
     email: str
     password: str
-    invite_code: str
 
 
 class UserLogin(CamelModel):

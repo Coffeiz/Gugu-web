@@ -732,19 +732,6 @@ class UserBot(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
-# ── InviteCode ────────────────────────────────────────────────────────────────
-
-class InviteCode(Base):
-    __tablename__ = "invite_codes"
-
-    id:         Mapped[int]              = mapped_column(Integer, primary_key=True, autoincrement=True)
-    code:       Mapped[str]              = mapped_column(String(32), unique=True, index=True)
-    note:       Mapped[Optional[str]]    = mapped_column(String(200), nullable=True)
-    used_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    used_by:    Mapped[Optional[UUID]]   = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime]         = mapped_column(UtcDateTime, default=now_utc)
-
-
 # ── AuditLog ──────────────────────────────────────────────────────────────────
 
 class AuditLog(Base):

@@ -47,6 +47,7 @@
       :messages="messages" :is-group-session="isGroupSession"
       :copied-id="copiedId" :voice-playing-id="voicePlayingId"
       :status-kind="statusKind" :status-typed="statusTyped"
+      :session-settling="sessionSettling"
       v-model:input-text="inputText"
       :pending-att="pendingAtt" :att-uploading="attUploading"
       :recording="recording" :record-secs="recordSecs" :vw="vw"
@@ -342,7 +343,7 @@ const conversation = useChatConversation({
   onContentReset, onCaptureBaseScrollH, onSyncSmallH,
 })
 const {
-  messages, mkid, now,
+  messages, mkid, now, sessionSettling,
   inputText, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
   sessions, webSessions, imSessions, currentSessionTitle,

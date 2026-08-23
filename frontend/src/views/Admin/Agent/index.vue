@@ -363,20 +363,15 @@
                 <span>本地能力覆盖</span>
                 <span class="thinking-hint">仅覆盖已确认的能力；留空表示使用默认声明</span>
               </div>
-              <div class="capability-overrides">
-                <label v-for="cap in LOCAL_CAPABILITIES" :key="cap.key" class="capability-override">
-                  <input type="checkbox" :checked="editTarget.capability_overrides?.[cap.key] === true"
-                    @change="setCapabilityOverride(cap.key, ($event.target as HTMLInputElement).checked)" />
-                  {{ cap.label }}
-                </label>
-              </div>
-              <button type="button" class="pca-btn pca-btn--sm" :disabled="editIsNew || capabilityProbeLoading"
-                @click="probeCapabilities(editTarget.id)">
-                {{ capabilityProbeLoading ? '检测中…' : '检测本地能力' }}
-              </button>
-              <div v-if="editTarget.capability_checked_at" class="modal-hint">
-                最近检测：{{ editTarget.capability_checked_at }}
-              </div>
+              <LocalCapabilityOverrides
+                :model="editTarget"
+                :disabled="editIsNew"
+                :loading="capabilityProbeLoading"
+                :checked-at="editTarget.capability_checked_at"
+                :results="capabilityProbeResult"
+                @toggle="setCapabilityOverride"
+                @probe="probeCapabilities(editTarget.id)"
+              />
             </div>
 
             <div class="modal-field modal-field--row" v-for="dim in visionDims" :key="dim.key">
@@ -1416,6 +1411,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
@@ -1640,13 +1636,6 @@ const LOCAL_RUNTIMES = [
   { key: 'vllm', label: 'vLLM' },
   { key: 'other', label: '其它兼容服务' },
 ]
-const LOCAL_CAPABILITIES = [
-  { key: 'tools', label: '工具调用' },
-  { key: 'structured_json', label: 'JSON 输出' },
-  { key: 'structured_schema', label: 'JSON Schema' },
-  { key: 'thinking', label: '思考/推理' },
-]
-
 // MiMo 同时提供 OpenAI / Anthropic 两套兼容 API，按预设选格式（影响后端走哪条通道）
 const API_FORMATS = [
   { key: 'openai',    label: 'OpenAI 格式' },
@@ -1665,6 +1654,7 @@ const activatingId   = ref<any | null>(null)
 const probingId      = ref<any | null>(null)
 const probingDim     = ref<string | null>(null)   // 弹窗内正在检测的维度（image/video/audio）
 const capabilityProbeLoading = ref(false)
+const capabilityProbeResult = ref<Record<string, { status?: string; detail?: string }>>({})
 
 // 多模态三维度：图片→vision，视频→vision_video，音频→vision_audio
 const visionDims = [
@@ -1787,6 +1777,7 @@ function openNewPreset() {
   modelOptions.value = []
   modelListError.value = ''
   modelMenuOpen.value = false
+  capabilityProbeResult.value = {}
 }
 
 function openEditPreset(p: any) {
@@ -1796,6 +1787,7 @@ function openEditPreset(p: any) {
   modelOptions.value = []
   modelListError.value = ''
   modelMenuOpen.value = false
+  capabilityProbeResult.value = p.capability_probe || {}
 }
 
 function closeModelMenuSoon() {
@@ -1819,7 +1811,20 @@ async function probeCapabilities(id: string) {
     if (!res.ok) throw new Error(data.detail || '能力检测失败')
     editTarget.value.capability_checked_at = data.checked_at || ''
     editTarget.value.capability_fingerprint = data.fingerprint || ''
-    showMsg('本地能力检测完成')
+    capabilityProbeResult.value = data.results || {}
+    const mappings = [
+      ['tools', 'tools'],
+      ['structured_json', 'json_object'],
+      ['structured_schema', 'json_schema'],
+      ['thinking', 'reasoning'],
+    ] as const
+    const next = { ...(editTarget.value.capability_overrides || {}) }
+    for (const [capability, resultKey] of mappings) {
+      const status = capabilityProbeResult.value[resultKey]?.status
+      if (status === '支持') next[capability] = true
+      else if (status === '需服务端配置') next[capability] = false
+    }
+    editTarget.value.capability_overrides = next
   } catch (e) {
     editError.value = e instanceof Error ? e.message : '能力检测失败'
   } finally {

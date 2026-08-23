@@ -78,6 +78,8 @@ export function useChatSessions(options: {
   onContentReset: () => void
   onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
+  waitForStableScrollLayout: () => Promise<void>
+  setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
 
@@ -90,12 +92,18 @@ export function useChatSessions(options: {
   async function loadSession(id: number) {
     if (id === sessionId.value) return
     const viewGeneration = options.bumpViewGeneration()
+    const previousMessages = messages.value
+    options.setSessionSettling(true)
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
     // 旧会话排队等着接力发送的消息不属于要切进去的这个会话，清掉——不清的话，等新会话
     // 这边某次 send() 结束时会把它们当成"这个会话排队的消息"接着发出去（真实复现过的
     // bug：A 会话生成中发消息进队列，切到 C 会话，C 的回复一结束，A 排队的那条被发进 C）。
     options.clearPendingQueue()
+    // 请求期间清掉旧会话的 DOM，避免新会话挂载前沿用旧 scrollTop；请求失败再恢复。
+    messages.value = []
+    options.clearStatus()
+    options.onContentReset()
     try {
       const data = await agentApi.getMessages(String(id))
       if (viewGeneration !== options.getViewGeneration()) return   // 等待期间又切换/新建了会话，丢弃这次结果
@@ -155,7 +163,6 @@ export function useChatSessions(options: {
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
-      options.scrollBottom(true)
       // DB 持久化和 genstream.end() 不是同一个事务：生成刚完成时，接口可能短暂同时返回
       // 「最后一条是完整 assistant」和 active=true。此时不能把已完成回复再次 resume，
       // 否则 Redis 快照会被渲染成第二个生成气泡。只有最后一条可见消息不是完整 assistant
@@ -164,15 +171,28 @@ export function useChatSessions(options: {
       const staleActive = Boolean(
         data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
       )
-      if (staleActive) {
-      } else if (data.active) {
-        options.resumeStream(id)   // 该会话后端正在生成 → 重连续看
+      const shouldResume = Boolean(data.active && !staleActive)
+      // 结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，再等待其真实高度
+      // 连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成会话位置跳动。
+      await options.scrollBottom(true)
+      if (shouldResume) {
+        await options.resumeStream(id)
       }
-    } catch {}
+      if (viewGeneration !== options.getViewGeneration()) return
+      await options.scrollBottom(true)
+      await options.waitForStableScrollLayout()
+      await options.scrollBottom(true)
+      await options.waitForStableScrollLayout()
+      options.setSessionSettling(false)
+    } catch {
+      if (viewGeneration === options.getViewGeneration()) messages.value = previousMessages
+      if (viewGeneration === options.getViewGeneration()) options.setSessionSettling(false)
+    }
   }
 
   async function newSession() {
     options.bumpViewGeneration()
+    options.setSessionSettling(false)
     options.abortCtrl.value?.abort()
     options.streaming.value = false
     options.clearPendingQueue()   // 同 loadSession：旧会话排队的消息不属于新对话，清掉

@@ -160,6 +160,17 @@ def test_local_capability_override_is_exposed_without_credentials():
     assert "api_key" not in snapshot
 
 
+def test_llama_cpp_enables_runtime_prompt_cache_without_active_provider_cache():
+    adapter = adapter_for(_ai(provider="local"))
+    llama = SimpleNamespace(provider="local", local_runtime="llama.cpp")
+    vllm = SimpleNamespace(provider="local", local_runtime="vllm")
+
+    assert adapter.build_openai_cache_kwargs(llama) == {
+        "extra_body": {"cache_prompt": True}}
+    assert adapter.build_openai_cache_kwargs(vllm) == {}
+    assert not adapter.supports_active_cache("")
+
+
 def test_adapter_for_unknown_provider_falls_back_to_default():
     """未命中任何已知 provider（既不是 minimax/mimo/deepseek，base_url 也没有对应关键字）
     → 退回 default 适配器。**关键断言**：transient_exceptions 为空——没有把 MiniMax 的

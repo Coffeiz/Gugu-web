@@ -1,4 +1,5 @@
 from agent.context.compaction import compact_context
+from agent.context.compress_conv import fixed_context_parts
 from agent.context.message_assembly import build_messages
 
 
@@ -37,3 +38,11 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
     assert compacted[:2] == messages[:2]
     assert "固定系统" not in compacted[2]["content"]
     assert "固定 session info" not in compacted[2]["content"]
+
+
+def test_fixed_context_puts_compacted_summary_before_snapshot():
+    snapshot = {"role": "user", "content": "大型 session snapshot"}
+    parts = fixed_context_parts(snapshot, "早前对话摘要")
+
+    assert "## 早前对话摘要" in parts[0]["content"]
+    assert parts[1] is snapshot

@@ -37,12 +37,6 @@
           <input v-model="form.password" type="password" placeholder="至少 8 位"
             autocomplete="new-password" :disabled="loading" />
         </div>
-        <div class="field">
-          <label>邀请码</label>
-          <input v-model="form.inviteCode" type="text" placeholder="GUGU-XXXX-XXXX"
-            autocomplete="off" :disabled="loading" style="text-transform:uppercase;letter-spacing:0.05em" />
-        </div>
-
         <label class="ack-row">
           <input type="checkbox" v-model="acknowledged" class="ack-input" />
           <span class="ack-box">
@@ -79,13 +73,13 @@ import { useAuthStore } from '@/stores/auth'
 
 const router  = useRouter()
 const auth    = useAuthStore()
-const form    = reactive({ username: '', email: '', password: '', inviteCode: '' })
+const form    = reactive({ username: '', email: '', password: '' })
 const loading      = ref(false)
 const error        = ref('')
 const acknowledged = ref(false)
 
 async function handleRegister() {
-  if (!form.username || !form.email || !form.password || !form.inviteCode) {
+  if (!form.username || !form.email || !form.password) {
     error.value = '请填写全部信息'; return
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
@@ -96,7 +90,7 @@ async function handleRegister() {
   }
   loading.value = true; error.value = ''
   try {
-    await auth.register(form.username, form.email, form.password, form.inviteCode)
+    await auth.register(form.username, form.email, form.password)
     router.push('/')
   } catch (e) {
     error.value = e instanceof Error ? e.message : '操作失败'
