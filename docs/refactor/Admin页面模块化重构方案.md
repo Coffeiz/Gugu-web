@@ -1,6 +1,6 @@
 # Admin 页面模块化重构方案
 
-> 状态：TODO 执行中（Phase 0、Phase 1.1–1.2 已完成）
+> 状态：TODO 执行中（Phase 0、Phase 1.1–1.2、Phase 2 已完成）
 >
 > 更新时间：2026-08-23
 
@@ -10,7 +10,7 @@
 
 | 区域 | 当前规模 | 当前状态 |
 | --- | ---: | --- |
-| `Admin/Agent/index.vue` | 3456 行 | 仍是模板、状态、请求、轮询、表单、图表和弹窗的单体入口 |
+| `Admin/Agent/index.vue` | 约 3300 行 | 已完成能力目录、决策轨迹、提示词、状态文案拆分；配置表单、LLM、记忆和用量仍待迁移 |
 | `Admin/StorageAudit/index.vue` | 684 行 | 入口偏大，包含查询、筛选、表格和详情流程 |
 | `Admin/Quota/index.vue` | 652 行 | 入口偏大，包含配额状态、编辑和保存流程 |
 | `Admin/Config/index.vue` | 557 行 | 配置字段、保存和状态展示仍集中 |
@@ -141,6 +141,14 @@ frontend/src/views/Admin/
 
 ## 4. 执行 TODO
 
+### Phase 2–4 耦合清点（2026-08-23）
+
+- **Phase 2：提示词与状态文案**：两个模块只依赖 `adminStore.authFetch` 和各自的本地表单状态，接口分别是 `/prompts`、`/prompts/{profile}` 与 `/state-labels`；彼此没有共享可变状态。提示词占位符插入原先通过全局 DOM 查询 textarea，已改为组件 ref，避免多个面板同时存在时串写。
+- **Phase 3：配置表单**：行为、搜索、语音、Embedding 都依赖 `configStore.cfg` 初始化并通过 `configStore.saveConfig` 提交；搜索/语音/Embedding 另有测试接口。迁移时必须按配置域隔离 draft 和 saving/error/test 状态，不能把 `configStore` 的响应式对象直接跨模块共享。
+- **Phase 4：LLM 预设**：耦合最重，包含预设列表、策略/池模式、并发配置、CRUD、激活/删除、模型列表、能力探测、视觉探测和新建/编辑 Teleport 弹窗；预设 API 与 `configStore` 并发配置同时存在。应先拆只读列表，再拆编辑器，最后迁移操作流程，并保持唯一状态源。
+
+本轮只执行 Phase 2；Phase 3、4 的耦合记录作为后续拆分边界，不提前改动行为。
+
 ### [x] Phase 0：边界与基线
 
 - 固定当前 Admin 功能清单、权限边界和 API 清单；
@@ -164,12 +172,14 @@ frontend/src/views/Admin/
 
 要求：请求、筛选、步骤解析和图表计算离开入口；组件只消费 typed props/state。
 
-### [ ] Phase 2：提示词与状态文案
+### [x] Phase 2：提示词与状态文案
 
 - `PromptPanel` + `usePromptConfig`；
 - `StateLabelsPanel` + `useStateLabels`；
 - 把占位符插入、缓存、保存错误和成功状态封装在对应 composable；
 - 保留文本区域、切换和保存行为不变。
+
+已完成：`prompting/PromptPanel.vue` + `usePromptConfig`、`prompting/StateLabelsPanel.vue` + `useStateLabels`，入口不再维护这两个模块的请求和表单状态。
 
 ### [ ] Phase 3：配置表单
 

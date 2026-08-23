@@ -365,94 +365,7 @@
 
 
       <!-- ── 系统提示词 ── -->
-      <section v-if="activeTab === 'prompts'" class="config-card prompts-card">
-        <div class="card-head">
-          <div class="card-icon" style="--ic:rgba(122,184,200,0.14);--stroke:#7ab8c8">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M4 6h12M4 10h8M4 14h6"/>
-            </svg>
-          </div>
-          <div class="card-title-block">
-            <h3>系统提示词</h3>
-            <p>各 Profile 的 Prompt 模板，支持占位符，保存后热更新</p>
-          </div>
-          <div class="profile-switcher">
-            <button
-              v-for="p in profiles"
-              :key="p.profile"
-              class="toggle-btn"
-              :class="{ active: activeProfile === p.profile }"
-              :data-label="p.profile"
-              @click="switchProfile(p.profile)"
-            >{{ (({persona:'人格', skills:'工具准则', policy:'内容政策', reflection:'记忆反思', compress:'记忆压缩'}) as Record<string,string>)[p.profile] || p.profile }}</button>
-          </div>
-        </div>
-
-        <div v-if="activeProfile === 'persona'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
-                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
-          ⚠️ 这是咕咕的<strong>人格设定</strong>，所有对话共享。谨慎修改 —— 会直接改变咕咕的性格、主动性、对话模式与说话方式。
-        </div>
-
-        <div v-if="activeProfile === 'skills'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
-                 background:rgba(123,127,178,0.12);border:1px solid rgba(123,127,178,0.3);color:#5b5f96">
-          🛠️ 这是<strong>工具使用准则</strong>（Execution Policy），紧跟人格注入、所有对话共享。决定咕咕何时该动手、动几下、别重复验证/查询。越短越好用，改它直接影响咕咕调工具的行为模式。
-        </div>
-
-        <div v-if="activeProfile === 'policy'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
-                 background:rgba(214,90,90,0.12);border:1px solid rgba(214,90,90,0.3);color:#b04343">
-          🚫 这是<strong>内容政策（红线）</strong>，所有对话共享。定义咕咕不参与的话题（政治、色情等）和专业领域免责。以后加新红线就在这里加一行。
-        </div>
-
-        <div v-if="activeProfile === 'reflection'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
-                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
-          ⚠️ 这是<strong>记忆反思提炼词</strong>，决定咕咕每次对话后从中记住什么。改它会影响记忆质量；需保持输出 JSON 格式 <code>{"profile_add":[...],"pattern_add":[...],"daily":"..."}</code>。
-        </div>
-
-        <div v-if="activeProfile === 'compress'" class="persona-caution"
-          style="margin:0 0 12px;padding:10px 14px;border-radius:10px;font-size:13px;line-height:1.6;min-height:62px;box-sizing:border-box;
-                 background:rgba(214,138,90,0.12);border:1px solid rgba(214,138,90,0.3);color:#b07043">
-          ⚠️ 这是<strong>记忆压缩提炼词</strong>，决定老的近期记忆怎么沉淀进长期记忆。改它会影响长期记忆质量；需保持输出 JSON 格式 <code>{"memory":"..."}</code>。
-        </div>
-
-        <div class="prompt-editor-wrap">
-          <textarea
-            class="prompt-textarea scroll-surface scroll-surface--editor"
-            v-model="promptContent"
-            placeholder="输入系统提示词模板…"
-            spellcheck="false"
-          />
-          <div class="placeholder-panel">
-            <div class="placeholder-title">可用占位符</div>
-            <div
-              v-for="ph in placeholders"
-              :key="ph.key"
-              class="placeholder-item"
-              @click="insertPlaceholder(ph.key)"
-              title="点击插入"
-            >
-              <code>{{ ph.key }}</code>
-              <span>{{ ph.desc }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="card-actions">
-          <span class="save-hint" :class="{ error: !!promptError, muted: !promptSaved && !promptError }">
-            <template v-if="promptSaved"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 6l2.5 2.5 5.5-5"/></svg>已保存</template>
-            <template v-else-if="promptError">{{ promptError }}</template>
-            <template v-else>修改后点击保存即时生效，无需重启</template>
-          </span>
-          <button class="btn-primary" :class="{ loading: promptSaving }" :disabled="promptSaving" @click="savePrompt">
-            <svg v-if="promptSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
-            {{ promptSaving ? '保存中…' : '保存提示词' }}
-          </button>
-        </div>
-      </section>
+      <PromptPanel v-if="activeTab === 'prompts'" />
 
       <!-- ── 行为配置 ── -->
       <section v-if="activeTab === 'behavior'" class="config-card">
@@ -1062,60 +975,7 @@
       </section>
 
       <!-- ── 状态命名 ── -->
-      <section v-if="activeTab === 'labels'" class="config-card labels-card">
-        <div class="card-head">
-          <h3>状态命名</h3>
-          <p>自定义对话里「状态指示」的显示名。留空＝用默认值。改完保存即时生效（工具名立即生效，「思考中」需刷新对话页）。</p>
-        </div>
-
-        <div class="labels-tip">
-          <span class="labels-tip-icon">💡</span>
-          <span>一个状态可填<b>多个名称</b>，用竖线 <code>|</code> 分隔，每次显示<b>随机取一个</b>。例：<code>咕咕在想…|让我捋捋一下|动动小脑瓜</code></span>
-        </div>
-
-        <div v-if="labelsLoading" class="placeholder-panel">加载中…</div>
-        <template v-else>
-          <!-- 特殊状态 -->
-          <div class="labels-group-title">特殊状态</div>
-          <div class="labels-list">
-            <div v-for="row in stateLabels.special" :key="row.key" class="label-row">
-              <div class="label-meta">
-                <span class="label-key">{{ row.key }}</span>
-                <span class="label-default">默认：{{ row.default || '（空·回退三个点）' }}</span>
-              </div>
-              <div class="label-input-wrap">
-                <input v-model="row.custom" :placeholder="row.default || '留空＝三个点；多个用 | 分隔'" class="label-input" />
-                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- 工具 -->
-          <div class="labels-group-title">
-            工具（{{ filteredTools.length }}/{{ stateLabels.tools.length }}）
-            <input v-model="labelsFilter" placeholder="筛选工具名 / 文案…" class="labels-filter" />
-          </div>
-          <div class="labels-list">
-            <div v-for="row in filteredTools" :key="row.key" class="label-row">
-              <div class="label-meta">
-                <span class="label-key">{{ row.key }}</span>
-                <span class="label-default">默认：{{ row.default }}</span>
-              </div>
-              <div class="label-input-wrap">
-                <input v-model="row.custom" :placeholder="row.default" class="label-input" />
-                <button v-if="row.custom" class="label-reset" title="恢复默认" @click="resetStateLabel(row)">×</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="labels-save-bar">
-            <span v-if="labelsSaved" class="labels-saved-tip">已保存 ✓</span>
-            <button class="btn-primary" :disabled="labelsSaving" @click="saveStateLabels">
-              {{ labelsSaving ? '保存中…' : '保存' }}
-            </button>
-          </div>
-        </template>
-      </section>
+      <StateLabelsPanel v-if="activeTab === 'labels'" />
 
       <!-- ── 用量统计 ── -->
       <div v-if="activeTab === 'usage'">
@@ -1311,11 +1171,12 @@ import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
 import TracePanel from './observability/components/TracePanel.vue'
+import PromptPanel from './prompting/components/PromptPanel.vue'
+import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
 import { PhBrain, PhEye, PhVideo, PhMicrophone } from '@phosphor-icons/vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
-import { showAppError } from '@/composables/useAppToast'
 import ConfigField from '../Config/components/ConfigField.vue'
 
 const configStore = useConfigStore()
@@ -1335,67 +1196,9 @@ const activeTab = ref('llm')
 function switchTab(key: string) {
   activeTab.value = key
   if (key === 'llm'     && presets.value.length === 0) fetchPresets()
-  if (key === 'prompts' && profiles.value.length === 0) fetchProfiles()
   if (key === 'usage'   && !usage.value) fetchUsage()
-  if (key === 'labels'  && !stateLabels.special.length && !stateLabels.tools.length) fetchStateLabels()
   if (key === 'behavior' && imScopes.summary.total_scopes === 0) loadImScopes()
 }
-
-// ── 状态命名（对话里状态指示的显示名）──────────────────────────────────────────
-const stateLabels  = reactive<{ special: any[]; tools: any[] }>({ special: [], tools: [] })
-const labelsLoading = ref(false)
-const labelsSaving  = ref(false)
-const labelsFilter  = ref('')
-const labelsSaved   = ref(false)
-
-const filteredTools = computed(() => {
-  const q = labelsFilter.value.trim().toLowerCase()
-  if (!q) return stateLabels.tools
-  return stateLabels.tools.filter(r =>
-    r.key.toLowerCase().includes(q) || (r.default || '').includes(q) || (r.custom || '').includes(q))
-})
-
-async function fetchStateLabels() {
-  labelsLoading.value = true
-  try {
-    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels')
-    const data = await res.json()
-    stateLabels.special = (data.special || []).map((r: any) => ({ ...r }))
-    stateLabels.tools   = (data.tools   || []).map((r: any) => ({ ...r }))
-  } catch (e) {
-    console.error('加载状态命名失败', e)
-  } finally {
-    labelsLoading.value = false
-  }
-}
-
-async function saveStateLabels() {
-  labelsSaving.value = true
-  labelsSaved.value = false
-  try {
-    const overrides: Record<string, any> = {}
-    for (const r of [...stateLabels.special, ...stateLabels.tools]) {
-      const v = (r.custom || '').trim()
-      if (v && v !== r.default) overrides[r.key] = v   // 只提交「改过且非空」的，空/同默认走回退
-    }
-    const res = await adminStore.authFetch('/api/v1/admin/agent/state-labels', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ overrides }),
-    })
-    if (!res.ok) throw new Error('保存失败')
-    labelsSaved.value = true
-    setTimeout(() => { labelsSaved.value = false }, 2000)
-  } catch (e) {
-    console.error('保存状态命名失败', e)
-    showAppError('保存失败，请重试')
-  } finally {
-    labelsSaving.value = false
-  }
-}
-
-function resetStateLabel(row: any) { row.custom = '' }
-
 
 // ── LLM 预设 ──────────────────────────────────────────────────────────────
 const PROVIDERS = [
@@ -1810,80 +1613,6 @@ async function probeVision(id: any, dim?: string) {
   } finally {
     probingId.value = null
     probingDim.value = null
-  }
-}
-
-// ── 系统提示词 ────────────────────────────────────────────────────────────
-const activeProfile  = ref('default')
-const profiles       = ref<any[]>([])
-const placeholders   = ref<any[]>([])
-const promptContent  = ref('')
-const promptSaving   = ref(false)
-const promptSaved    = ref(false)
-const promptError    = ref('')
-const promptCache: Record<string, any>    = {}
-
-async function fetchProfiles() {
-  try {
-    const res  = await adminStore.authFetch('/api/v1/admin/agent/prompts')
-    const data = await res.json()
-    profiles.value     = data.profiles
-    placeholders.value = data.placeholders
-    await loadPrompt('default')
-  } catch (e) {
-    promptError.value = '加载失败：' + (e instanceof Error ? e.message : String(e))
-  }
-}
-
-async function loadPrompt(profile: any) {
-  if (promptCache[profile] !== undefined) {
-    promptContent.value = promptCache[profile]
-    return
-  }
-  try {
-    const res  = await adminStore.authFetch(`/api/v1/admin/agent/prompts/${profile}`)
-    const data = await res.json()
-    promptCache[profile] = data.content
-    promptContent.value  = data.content
-  } catch (e) {
-    promptError.value = '加载失败：' + (e instanceof Error ? e.message : String(e))
-  }
-}
-
-async function switchProfile(profile: any) {
-  promptCache[activeProfile.value] = promptContent.value
-  activeProfile.value = profile
-  await loadPrompt(profile)
-}
-
-function insertPlaceholder(key: string) {
-  const ta = document.querySelector<HTMLTextAreaElement>('.prompt-textarea')
-  if (!ta) return
-  const start = ta.selectionStart ?? 0
-  const end   = ta.selectionEnd ?? 0
-  const text  = promptContent.value
-  promptContent.value = text.slice(0, start) + key + text.slice(end)
-}
-
-async function savePrompt() {
-  promptSaving.value = true
-  promptSaved.value  = false
-  promptError.value  = ''
-  try {
-    const res = await adminStore.authFetch(`/api/v1/admin/agent/prompts/${activeProfile.value}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: promptContent.value }),
-    })
-    if (!res.ok) throw new Error(`保存失败（${res.status}）`)
-    promptCache[activeProfile.value] = promptContent.value
-    promptSaved.value = true
-    setTimeout(() => { promptSaved.value = false }, 3000)
-  } catch (e) {
-    promptError.value = (e instanceof Error ? e.message : String(e))
-    setTimeout(() => { promptError.value = '' }, 5000)
-  } finally {
-    promptSaving.value = false
   }
 }
 
@@ -2660,64 +2389,6 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-/* ── 提示词编辑器 ── */
-.prompts-card .card-head { align-items: flex-start; }
-.prompt-editor-wrap {
-  display: grid;
-  grid-template-columns: 1fr 200px;
-  gap: 14px;
-  min-height: 380px;
-}
-.prompt-textarea {
-  width: 100%;
-  min-height: 380px;
-  background: rgba(0,0,0,0.25);
-  border: 1px solid rgba(255,255,255,0.09);
-  border-radius: 10px;
-  padding: 14px 16px;
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 13px;
-  line-height: 1.7;
-  color: rgba(255,255,255,0.82);
-  resize: vertical;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.15s;
-}
-.prompt-textarea:focus {
-  border-color: rgba(123,127,178,0.4);
-}
-.prompt-textarea::placeholder { color: rgba(255,255,255,0.2); }
-/* 暗色滚动条 + 去掉右下角横竖交汇处的白块（scrollbar-corner 默认是白的） */
-.prompt-textarea { scrollbar-color: rgba(255,255,255,0.18) transparent; }  /* Firefox */
-
-.placeholder-panel {
-  display: flex; flex-direction: column; gap: 6px;
-}
-.placeholder-title {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.07em;
-  color: rgba(255,255,255,0.25); text-transform: uppercase;
-  margin-bottom: 2px;
-}
-.placeholder-item {
-  display: flex; flex-direction: column; gap: 2px;
-  padding: 8px 10px; border-radius: 8px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.07);
-  cursor: pointer; transition: all 0.15s;
-}
-.placeholder-item:hover {
-  background: rgba(123,127,178,0.12);
-  border-color: rgba(123,127,178,0.25);
-}
-.placeholder-item code {
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  font-size: 12px; color: rgba(149,144,196,0.9);
-}
-.placeholder-item span {
-  font-size: 11px; color: rgba(255,255,255,0.3);
-}
-
 /* ── 行为配置 ── */
 .behavior-grid {
   display: flex; flex-direction: column; gap: 2px;
@@ -3132,36 +2803,6 @@ onUnmounted(() => { stopRebuildPoll(); stopMemCleanupPoll(); stopImModelPreviewP
 .modal-input[type="number"]::-webkit-inner-spin-button,
 .modal-input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
-/* ── 状态命名 ── */
-.labels-tip { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; padding: 10px 13px;
-  background: rgba(120,170,255,0.09); border: 1px solid rgba(120,170,255,0.22); border-radius: 10px;
-  font-size: 12.5px; line-height: 1.6; color: rgba(255,255,255,0.78); }
-.labels-tip-icon { flex: 0 0 auto; font-size: 14px; line-height: 1.4; }
-.labels-tip b { color: #fff; font-weight: 600; }
-.labels-tip code, .card-head code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
-  background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; padding: 1px 6px; color: #ffd9a8; }
-.labels-group-title { display: flex; align-items: center; gap: 10px; margin: 18px 2px 8px; font-size: 12px; font-weight: 600;
-  color: rgba(255,255,255,0.42); text-transform: uppercase; letter-spacing: 0.06em; }
-.labels-filter { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; width: 180px;
-  background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px; padding: 5px 9px; color: #e6e7f0; font-size: 12px; }
-.labels-filter:focus { outline: none; border-color: rgba(255,255,255,0.28); }
-.labels-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
-.label-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: rgba(255,255,255,0.025);
-  border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
-.label-meta { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 0 0 40%; }
-.label-key { font-size: 12px; color: #cdd0e4; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; }
-.label-default { font-size: 10.5px; color: rgba(255,255,255,0.3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.label-input-wrap { position: relative; flex: 1; min-width: 0; }
-.label-input { width: 100%; background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.1); border-radius: 7px;
-  padding: 6px 26px 6px 9px; color: #e6e7f0; font-size: 12.5px; }
-.label-input:focus { outline: none; border-color: rgba(255,255,255,0.3); }
-.label-reset { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; line-height: 1;
-  border: none; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.55); border-radius: 50%; cursor: pointer; font-size: 13px; }
-.label-reset:hover { background: rgba(255,255,255,0.16); color: #fff; }
-.labels-save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 18px;
-  padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07); }
-.labels-saved-tip { font-size: 12.5px; color: #7fd6a0; }
 .im-memory-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
 .im-memory-summary-grid > div { min-width: 0; padding: 10px 8px; border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; background: rgba(255,255,255,0.035); text-align: center; }
 .im-memory-summary-grid strong { display: block; color: #e6e7f0; font-size: 18px; line-height: 1.2; }
