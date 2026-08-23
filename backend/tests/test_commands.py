@@ -10,6 +10,20 @@ def test_router_recognizes_compact_without_starting_agent():
     assert result == {"action": "compact"}
 
 
+def test_help_lists_all_commands():
+    result = router.decide("/help", "idle")
+    assert result["action"] == "reply"
+    for command in ("/stop", "/status", "/compact", "/memory", "/forget", "/workspace", "/shell"):
+        assert command in result["reply"]
+
+
+@pytest.mark.parametrize("text", ["/stop help", "/status help", "/help workspace"])
+def test_router_supports_command_help(text):
+    result = router.decide(text, "idle")
+    assert result["action"] == "reply"
+    assert "用法" in result["reply"]
+
+
 @pytest.mark.parametrize("text", ["@小北 /compact", "＠小北　／compact", "<@bot-placeholder> /compact"])
 def test_router_recognizes_group_command_after_bot_mention(text):
     assert router.decide(text, "idle", allow_leading_mention=True) == {"action": "compact"}
@@ -33,6 +47,15 @@ async def test_command_handler_accepts_group_mention():
 @pytest.mark.asyncio
 async def test_compact_without_session_is_deterministic():
     assert await commands.handle("user-1", "/compact") == "当前还没有可压缩的对话。"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("text", [
+    "/compact help", "/memory help", "/forget help", "/workspace help", "/shell help",
+])
+async def test_each_command_supports_help(text):
+    result = await commands.handle("user-1", text)
+    assert "用法" in result
 
 
 @pytest.mark.asyncio

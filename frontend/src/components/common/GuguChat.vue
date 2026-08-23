@@ -42,6 +42,7 @@
       :window-style="windowStyle" :expanded="expanded" :resizing="resizing"
       :streaming="streaming" :is-chat-dragging="isChatDragging"
       :current-session-title="currentSessionTitle"
+      :current-session-workspace-name="currentSessionWorkspaceName"
       :session-id="sessionId"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
@@ -346,7 +347,7 @@ const {
   messages, mkid, now, sessionSettling,
   inputText, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
-  sessions, webSessions, imSessions, currentSessionTitle,
+  sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName,
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,

@@ -94,6 +94,9 @@ export function useChatSessions(options: {
   const currentSessionTitle = computed(() =>
     !sessionId.value ? '新对话' : (sessions.value.find(s => s.id === sessionId.value)?.title ?? '对话')
   )
+  const currentSessionWorkspaceName = computed(() =>
+    !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.workspaceName ?? null)
+  )
 
   async function loadSession(id: number) {
     if (id === sessionId.value) return
@@ -114,6 +117,8 @@ export function useChatSessions(options: {
       const data = await agentApi.getMessages(String(id))
       if (viewGeneration !== options.getViewGeneration()) return   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
+      const loadedSession = sessions.value.find(s => s.id === id)
+      if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
       options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
@@ -236,7 +241,7 @@ export function useChatSessions(options: {
   }
 
   return {
-    webSessions, imSessions, currentSessionTitle,
+    webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName,
     loadSession, newSession, deleteSession, renameSession,
   }
 }

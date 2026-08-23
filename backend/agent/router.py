@@ -23,7 +23,8 @@
 不真的取消；发起者本人取消则正常中断。
 """
 from agent.runtime import runtime_state as st
-from agent.command_text import normalize_command_text
+from agent.commands.text import normalize_command_text
+from agent.commands.help import all_help_text, command_help, is_help_arg
 
 # intent
 PROGRESS = "progress"
@@ -71,26 +72,20 @@ _CMD = {
     "compact": "compact", "压缩": "compact", "整理上下文": "compact",
     "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
 }
-_HELP_TEXT = (
-    "🤖 可用命令（确定性、立即生效）：\n"
-    "/stop　停止当前任务\n"
-    "/status　看当前进度\n"
-    "/compact　整理当前会话上下文\n"
-    "/memory　查看咕咕记住的内容\n"
-    "/forget <内容>　忘记匹配的记忆\n"
-    "/workspace list　列出可绑定工作区\n"
-    "/workspace <ID>　绑定当前会话工作区\n"
-    "/workspace 解除　解除当前会话工作区\n"
-    "/help　这份帮助"
-)
+def parse_command_parts(text: str, *, allow_leading_mention: bool = False) -> tuple[str | None, str]:
+    """识别斜杠命令及其参数；半/全角斜杠都认。非命令返回 ``(None, "")``。"""
+    t = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
+    if t[:1] not in ("/", "／"):
+        return None, ""
+    parts = t[1:].strip().replace("　", " ").split(maxsplit=1)
+    if not parts:
+        return None, ""
+    return _CMD.get(parts[0].lower()), parts[1].strip() if len(parts) == 2 else ""
 
 
 def parse_command(text: str, *, allow_leading_mention: bool = False) -> str | None:
-    """识别 `/stop` 这类斜杠命令；半角/全角斜杠都认。非命令返回 None。"""
-    t = normalize_command_text(text) if allow_leading_mention else (text or "").strip()
-    if t[:1] not in ("/", "／"):
-        return None
-    return _CMD.get(t[1:].strip().lower())
+    """识别斜杠命令名；保留旧接口供调用方使用。"""
+    return parse_command_parts(text, allow_leading_mention=allow_leading_mention)[0]
 
 
 def classify(text: str) -> str:
@@ -172,14 +167,18 @@ def decide(text: str, state: str, awaiting: bool = False,
         current_puid and active_puid and current_puid in active_puid
     )
 
-    cmd = parse_command(text, allow_leading_mention=allow_leading_mention)
+    cmd, cmd_arg = parse_command_parts(text, allow_leading_mention=allow_leading_mention)
     if cmd == "stop":
+        if is_help_arg(cmd_arg):
+            return {"action": "reply", "reply": command_help("stop")}
         return ({"action": "cancel", "reply": "🛑 已停止当前任务"} if busy
                 else {"action": "reply", "reply": "现在没有在跑的任务哦～"})
     if cmd == "status":
+        if is_help_arg(cmd_arg):
+            return {"action": "reply", "reply": command_help("status")}
         return {"action": "reply", "reply": _PROGRESS_REPLY.get(state, _PROGRESS_REPLY[st.IDLE])}
     if cmd == "help":
-        return {"action": "reply", "reply": _HELP_TEXT}
+        return {"action": "reply", "reply": command_help(cmd_arg) if cmd_arg and not is_help_arg(cmd_arg) else all_help_text()}
     if cmd == "compact":
         return {"action": "compact"}
 

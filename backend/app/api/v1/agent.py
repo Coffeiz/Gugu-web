@@ -17,7 +17,7 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, User, UserBot
+from app.models import ConversationMessage, ConversationSession, User, UserBot, Workspace
 from app.services import interactions
 
 from agent.llm import genstream
@@ -304,22 +304,24 @@ async def list_sessions(
     db: AsyncSession = Depends(get_db),
 ):
     res = await db.execute(
-        select(ConversationSession)
+        select(ConversationSession, Workspace.name)
+        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
         .where(ConversationSession.user_id == current_user.id)
         .order_by(desc(ConversationSession.updated_at))
         .limit(50)
     )
-    sessions = res.scalars().all()
+    sessions = res.all()
     return [
         {
             "id": s.id,
             "title": s.title,
             "source": s.source,
             "chatType": s.chat_type,
+            "workspaceName": workspace_name,
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
-        for s in sessions
+        for s, workspace_name in sessions
     ]
 
 
@@ -446,9 +448,11 @@ async def get_session_messages(
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
         return replace_mention_ids(text, mention_names)
 
+    workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
-                    "ownerPlatformUserId": owner_platform_user_id},
+                    "ownerPlatformUserId": owner_platform_user_id,
+                    "workspaceName": workspace.name if workspace else None},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "pagination": {
             "limit": limit,

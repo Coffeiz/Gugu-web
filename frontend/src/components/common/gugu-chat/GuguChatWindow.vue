@@ -27,13 +27,15 @@
     <!-- 主区域（始终存在，消息列表永不销毁） -->
     <div class="chat-main" :class="{ 'is-expanded': expanded, 'is-resizing': resizing }">
       <div class="chat-header">
-        <SessionTitleEdit
-          v-if="expanded && sessionId"
-          class="chat-title"
-          header
-          :title="currentSessionTitle"
-          :on-rename="(t) => onRenameSession(sessionId!, t)"
-        />
+        <template v-if="expanded && sessionId">
+          <SessionTitleEdit
+            class="chat-title"
+            header
+            :title="currentSessionTitle"
+            :on-rename="(t) => onRenameSession(sessionId!, t)"
+          />
+          <span v-if="currentSessionWorkspaceName" class="chat-workspace-name">· {{ currentSessionWorkspaceName }}</span>
+        </template>
         <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
@@ -106,6 +108,7 @@ const props = defineProps<{
   streaming: boolean
   isChatDragging: boolean
   currentSessionTitle: string
+  currentSessionWorkspaceName: string | null
   sessionId: number | null
   presenceKind: string
   presenceText: string
@@ -240,6 +243,15 @@ defineExpose({
 .chat-title { font-size: 13px; font-weight: 700; }
 .chat-title.is-new-session { display: inline-block; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
+.chat-workspace-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--content-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+}
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }
 .popup-status { font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 4px; }
