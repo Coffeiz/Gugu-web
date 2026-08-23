@@ -206,6 +206,38 @@ chunk_id = document_id + version + position
 
 召回结果不能只返回孤立文本，还要带父文档标题、摘要、来源引用、更新时间、版本和 chunk 位置。召回后的确定性处理只包括：按 chunk 去重、同一父文档最多保留 2～3 个 chunk、相邻 chunk 合并、按总字符预算截断；首版不增加额外 Ranking 层。
 
+### 3.5 RAG 注入位置与生命周期
+
+RAG 结果属于**当前用户消息的上下文补充**，必须跟随当前消息进入连续 history；不写入静态 session snapshot。静态 snapshot 只负责冻结 system、projects、calendar、files、memory 等低频上下文，不能因为一次 RAG 召回而刷新。
+
+当前消息的组装顺序固定为：
+
+```text
+已有有效 history
+  ↓
+当前消息时间 reminder
+  ↓
+当前消息对应的 RAG context
+  ↓
+当前用户原始消息
+  ↓
+动态尾部：stance / summary / current time
+```
+
+RAG context 使用 provider 兼容的普通 history 消息承载，不增加 OpenAI/Anthropic 不认识的自定义 message 字段。内部的 `chunk_id`、`version`、`content_hash` 只作为持久化和组装元数据，不能发送给模型，也不能进入可见正文。
+
+RAG 注入必须遵守整体有效上下文去重，而不是只检查静态 snapshot：
+
+1. 先检查当前有效 history 中已有的 `chunk_id + version`；
+2. 再检查规范化正文的 `content_hash`；
+3. 相同内容来自多个来源时合并 citations，不重复占用上下文；
+4. 只把当前消息尚未覆盖的 RAG chunk 追加到 history；
+5. 版本变化、权限 scope 变化或无法确认旧摘要是否覆盖时，允许重新注入。
+
+RAG 去重不是永久黑名单。Compaction 把旧 history 收进 summary 后，summary/baseline 的内部 metadata 可以记录已覆盖的 RAG hash；如果无法确认某个 chunk 已被 summary 保留，必须允许再次注入，不能为了去重造成知识丢失。
+
+RAG history 位于当前消息的新增区域之后，因此不会改变已经稳定缓存的历史前缀；同一 run 的后续 tool round 继续保留它，下一次 run 则通过持久化的 canonical history 复用。RAG 召回失败、为空或超时不应阻塞当前消息，也不得刷新静态 snapshot。
+
 ## 4. 功能需求
 
 ### FR-RAG-1：异步摘要与分块（未实现）
@@ -252,6 +284,21 @@ Agent 工具。当前面向 Agent 的记忆入口由 `PRD-MEM-1` 的 `search_mem
 
 内部服务结果至少包含来源类型、对象标题、摘要或片段、更新时间、对象引用和
 `has_more`，同时强制执行 scope、数量和总字符预算。
+
+统一召回服务还必须返回稳定的 `chunk_id`、`document_version` 和 `content_hash`，供 history 注入层做确定性去重；相关性分数只用于本次结果排序，不作为事实置信度，也不写入缓存身份。
+
+#### 召回数量与注入预算
+
+首版采用“候选量较宽、最终注入量较窄”的两级限制：
+
+```text
+每个来源候选召回：最多 20 条
+跨来源合并候选：最多 30 条
+同一父文档保留：最多 2～3 个 chunk
+当前消息最终注入：默认 5 个 chunk，硬上限 8 个 chunk
+```
+
+候选结果经过 scope 过滤、精确去重、父文档去重和相邻 chunk 合并后，才进入最终注入预算。最终数量不足时可以少于 5 个；达到 8 个后不再继续追加，剩余结果通过 `has_more` 和引用信息保留，不为了凑满数量突破 token/字符预算。20 条是每个来源的候选上限，不代表 20 条都会进入模型上下文。
 
 ### FR-RAG-5：权限和隔离（部分具备；统一索引前置过滤未实现）
 

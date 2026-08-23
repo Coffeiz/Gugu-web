@@ -121,6 +121,15 @@ async def typed_stream(text: str, delay: float = 0.045):
         await asyncio.sleep(delay)
 
 
+async def immediate_stream(text: str):
+    """一次性发送一条文本 SSE，不触发前端逐字动画。
+
+    用于确定性命令等已经完整生成的短回复；普通模型回复仍使用真实 token 流，
+    系统硬拦提示也保留原有打字反馈。
+    """
+    yield f"data: {json.dumps({'type': 'token', 'content': text}, ensure_ascii=False)}\n\n"
+
+
 async def subscribe(session_id, pubsub=None):
     """订阅某会话的生成频道，逐条 yield SSE 行。无消息时定期 keepalive。
     可传入 open_subscription() 预先订好的 pubsub（避免订阅前丢消息）。"""

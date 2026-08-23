@@ -3,11 +3,19 @@
 import pytest
 
 from agent import commands, router
+from agent.llm.genstream import immediate_stream
 
 
 def test_router_recognizes_compact_without_starting_agent():
     result = router.decide("/compact", "idle")
     assert result == {"action": "compact"}
+
+
+@pytest.mark.asyncio
+async def test_immediate_stream_emits_one_complete_token():
+    events = [line async for line in immediate_stream("/help 输出")]
+    assert len(events) == 1
+    assert '"content": "/help 输出"' in events[0]
 
 
 def test_help_lists_all_commands():

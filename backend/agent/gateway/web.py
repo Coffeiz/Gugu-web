@@ -215,7 +215,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))
                 await db2.commit()
-        async for line in genstream.typed_stream(cmd_reply):
+        async for line in genstream.immediate_stream(cmd_reply):
             yield line
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
