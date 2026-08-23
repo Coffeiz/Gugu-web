@@ -16,8 +16,8 @@
       </Transition>
       <Transition name="cd-compact">
         <div v-if="!expanded" class="cd-compact-nav">
-        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.grid" :size="16" /></button>
-        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="16" /></button>
+        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
+        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
         </div>
       </Transition>
     </div></template>

@@ -250,6 +250,21 @@
             <button class="choice-chip">另一个选项</button>
           </div>
 
+          <div class="subhead"><div><h3>Inline rename input</h3><p>文件卡与工作区重命名共用的小尺寸输入框契约。</p></div><code>--rename-input-*</code></div>
+          <div class="rename-token-preview preview-card">
+            <span class="rename-sizer"><span class="rename-ghost">参考素材</span><input class="rename-input-inline" value="参考素材" aria-label="重命名输入框示例" /></span>
+          </div>
+          <div class="token-grid compact-colors rename-token-grid">
+            <article v-for="token in renameInputTokens" :key="token.name" class="token-card color-card">
+              <div class="rename-token-swatch" :style="{ background: token.demo === 'surface' ? `var(${token.name})` : 'var(--surface-soft)' }">
+                <span v-if="token.demo === 'radius'" :style="{ borderRadius: `var(${token.name})` }" />
+                <span v-else-if="token.demo === 'size'" :style="{ width: `var(${token.name})`, height: '8px' }" />
+                <code v-else>{{ token.value }}</code>
+              </div>
+              <div class="token-meta"><strong>{{ token.label }}</strong><code>{{ token.name }}</code><span>{{ token.note }}</span></div>
+            </article>
+          </div>
+
           <div class="subhead"><div><h3>Mind note palette</h3><p>保存的 amber / coral / blue / teal 不变；渲染色按当前主题 surface 自动混合。</p></div><code>--note-paper-*</code></div>
           <div class="note-grid">
             <article v-for="note in notes" :key="note.token" class="preview-card note-token">
@@ -380,6 +395,15 @@ function secondaryDemoStyle(token:{name:string}){
   if (name.includes('fg')) return { ...base, color:`var(${name})` }
   return base
 }
+const renameInputTokens = [
+  { label:'Height', name:'--rename-input-height', value:'20px', note:'标题/文件名内联编辑高度', demo:'size' },
+  { label:'Padding', name:'--rename-input-padding', value:'0 4px', note:'紧凑文字内边距', demo:'surface' },
+  { label:'Radius', name:'--rename-input-radius', value:'4px', note:'小输入框圆角', demo:'radius' },
+  { label:'Background', name:'--rename-input-bg', value:'var(--input-bg)', note:'主题输入框底色', demo:'surface' },
+  { label:'Border', name:'--rename-input-border', value:'var(--input-border)', note:'主题输入框边框', demo:'surface' },
+  { label:'Foreground', name:'--rename-input-fg', value:'var(--input-fg)', note:'主题输入框文字', demo:'surface' },
+]
+
 const notes = [
   { label: 'Default', token: '--note-surface', note: '时间流默认纸面' },
   { label: 'Amber', token: '--note-paper-amber', note: '橙色便签' },
@@ -448,4 +472,11 @@ const notes = [
 .font-family-section{margin-top:var(--space-xl)}.font-family-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-sm)}.font-family-card{min-width:0;overflow:visible;border:1px solid var(--border-subtle);border-radius:var(--radius-md);background:var(--surface-soft)}.font-family-sample{min-height:84px;display:flex;align-items:center;padding:var(--space-xl) var(--space-lg);border-bottom:1px solid var(--border-hairline);font-size:var(--font-size-md);line-height:var(--line-height-body);color:var(--content-primary)}.font-family-meta{display:flex;flex-direction:column;gap:var(--space-xs);padding:var(--space-md)}.font-family-meta strong{font-size:var(--font-size-sm);line-height:var(--line-height-ui)}.font-family-meta code{overflow:hidden;color:var(--selection-fg);font:var(--font-size-xs)/var(--line-height-ui) var(--font-mono);text-overflow:ellipsis;white-space:nowrap}.font-family-meta span{color:var(--content-tertiary);font-size:var(--font-size-xs);line-height:var(--line-height-body)}
 @media(max-width:1100px){.font-family-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:640px){.font-family-grid{grid-template-columns:1fr}}
 .contracts-detail .choice-chip { padding: var(--choice-chip-padding); }
+.rename-token-preview { min-height: 74px; display: flex; align-items: center; padding: var(--space-lg); overflow: visible; }
+.rename-token-preview .rename-sizer { min-width: 86px; }
+.rename-token-preview .rename-input-inline { box-shadow: var(--input-focus-shadow); }
+.rename-token-grid { margin-top: var(--space-md); }
+.rename-token-swatch { height: 56px; display: grid; place-items: center; border-bottom: 1px solid var(--border-hairline); }
+.rename-token-swatch > span { display: block; min-width: 38px; height: 20px; border: 1px solid var(--border-default); background: var(--surface-raised); }
+.rename-token-swatch code { color: var(--content-secondary); font: var(--font-size-xs) var(--font-mono); }
 </style>

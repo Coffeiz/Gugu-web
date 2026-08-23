@@ -188,7 +188,8 @@
   --choice-chip-padding: 0 11px 2px;
   --choice-chip-line-height: var(--line-height-ui);
 
-  --workspace-card-bg: var(--surface-soft);
+  /* Light workspace cards need a raised paper surface; dark keeps the softer neutral card below. */
+  --workspace-card-bg: var(--surface-raised);
   --workspace-card-bg-hover: var(--surface-soft-hover);
   --workspace-card-border: var(--border-subtle);
   --workspace-card-border-hover: var(--border-hover);
@@ -196,6 +197,14 @@
   --workspace-card-shadow-hover: var(--elevation-card-hover);
   --workspace-badge-bg: var(--selection-bg);
   --workspace-badge-fg: var(--content-secondary);
+
+  /* Small inline rename control: compact file-card geometry with theme-aware input paint. */
+  --rename-input-height: 20px;
+  --rename-input-padding: 0 4px;
+  --rename-input-radius: 4px;
+  --rename-input-bg: var(--input-bg);
+  --rename-input-border: var(--input-border);
+  --rename-input-fg: var(--input-fg);
 
   /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
   --danger-button-bg: var(--status-danger-bg);
@@ -261,6 +270,8 @@ html[data-theme='light'][data-family='v2'] {
 
 html[data-theme='dark'][data-family] {
   /* Preserve the existing dark contracts; the neutral light restoration above must not shift dark. */
+  --workspace-card-bg: var(--surface-soft);
+  --workspace-card-bg-hover: var(--surface-soft-hover);
   --gugu-chat-user-highlight: color-mix(in srgb,var(--border-highlight) 82%,transparent);
   --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
   --panel-divider: var(--border-subtle);

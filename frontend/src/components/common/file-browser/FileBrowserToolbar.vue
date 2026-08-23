@@ -9,7 +9,7 @@
     </button>
     <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
       <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
-        <Icon name="navigation.apps" :size="13" />
+        <Icon name="file.function" :size="13" />
       </button>
       <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" title="列表视图">
         <Icon name="navigation.list" :size="13" />

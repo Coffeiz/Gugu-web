@@ -29,7 +29,7 @@
           系统配置
         </div>
         <div class="nav-item" :class="{ active: isActive('/agent') }" role="link" tabindex="0" @click="go('/agent')">
-          <Icon name="admin.robot" size="sm" />
+          <Icon name="admin.robot2" size="sm" />
           Agent 配置
         </div>
         <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><Icon name="admin.sliders" size="sm" />行为配置</div>
