@@ -1,6 +1,6 @@
 # Admin 页面模块化重构方案
 
-> 状态：Phase 0 完成，Phase 1（能力目录）完成，继续迁移中
+> 状态：TODO 执行中（Phase 0、Phase 1.1–1.2 已完成）
 >
 > 更新时间：2026-08-23
 
@@ -139,9 +139,9 @@ frontend/src/views/Admin/
 - 其他 Admin 页面不得直接 import Agent 功能域内部实现；如需复用，先提炼到明确的 Admin common 组件并补测试；
 - 路由、导航标题和权限标识保持不变，目录拆分不改变外部 URL。
 
-## 4. 执行批次
+## 4. 执行 TODO
 
-### Phase 0：边界与基线
+### [x] Phase 0：边界与基线
 
 - 固定当前 Admin 功能清单、权限边界和 API 清单；
 - 为 Agent 各 Tab 建立最小冒烟路径；
@@ -152,22 +152,26 @@ frontend/src/views/Admin/
 
 ### Phase 1：低风险只读模块
 
+- [x] 1.1 能力目录：`CapabilityCatalogPanel` + `useCapabilityCatalog`；
+- [x] 1.2 决策轨迹：`TracePanel` + `useTrace` + `utils/traceSteps.ts`；
+- [ ] 1.3 用量统计：`UsagePanel` + `useUsage` + `utils/usageChart.ts`。
+
 先迁移不直接修改核心配置的模块：
 
-1. `CapabilityCatalogPanel` + `useCapabilityCatalog`；
-2. `TracePanel` + `useTrace` + `utils/traceSteps.ts`；
-3. `UsagePanel` + `useUsage` + `utils/usageChart.ts`。
+- [x] 能力目录迁移完成；
+- [x] 决策轨迹迁移；
+- [ ] 用量统计迁移。
 
 要求：请求、筛选、步骤解析和图表计算离开入口；组件只消费 typed props/state。
 
-### Phase 2：提示词与状态文案
+### [ ] Phase 2：提示词与状态文案
 
 - `PromptPanel` + `usePromptConfig`；
 - `StateLabelsPanel` + `useStateLabels`；
 - 把占位符插入、缓存、保存错误和成功状态封装在对应 composable；
 - 保留文本区域、切换和保存行为不变。
 
-### Phase 3：配置表单
+### [ ] Phase 3：配置表单
 
 按一个配置域一个提交边界迁移：
 
@@ -178,7 +182,7 @@ frontend/src/views/Admin/
 
 每个模块独立维护 draft、reset、saving、saved、error 和 test 状态，禁止多个模块共享可变 draft。
 
-### Phase 4：LLM 预设
+### [ ] Phase 4：LLM 预设
 
 这是风险最高的批次，拆成：
 
@@ -189,7 +193,7 @@ frontend/src/views/Admin/
 
 先迁移只读列表，再迁移编辑弹窗，最后迁移激活/删除/测试。迁移期间只能有一个状态源，禁止旧入口和新 composable 同时写预设。
 
-### Phase 5：记忆维护
+### [ ] Phase 5：记忆维护
 
 - `MemoryMaintenancePanel` + `useMemoryMaintenance`；
 - `ImMemoryMaintenancePanel` + `useImMemoryMaintenance`；
@@ -197,14 +201,14 @@ frontend/src/views/Admin/
 - `onUnmounted` 必须停止所有 timer/poll；
 - 入口不得直接读取计划内部结构或操作轮询句柄。
 
-### Phase 6：Agent 入口收口
+### [ ] Phase 6：Agent 入口收口
 
 - 删除迁移区块的旧模板、旧 ref、旧请求和旧轮询；
 - `index.vue` 只保留页面布局、Tab 定义、模块组合和页面级初始化；
 - 统一 API 错误显示和 loading 状态命名；
 - 进行一次重复逻辑、重复 CSS、重复请求和 `any` 类型审查。
 
-### Phase 7：其他 Admin 页面
+### [ ] Phase 7：其他 Admin 页面
 
 按规模和复用价值处理：
 
@@ -224,6 +228,14 @@ frontend/src/views/Admin/
 - 不新增全局 store 保存局部 Admin 表单；
 - 密钥只保留后端脱敏值，禁止写入日志、URL、前端持久化或提交；
 - 保持 Admin 权限检查和现有 `adminStore.authFetch` 语义。
+
+### 5.1 设计 Token 约定
+
+- Admin 页面直接使用现有全局语义 token，例如 `--surface-*`、`--content-*`、`--border-*`、`--action-*`、`--elevation-*`、`--motion-*`；
+- 不新增 `--admin-*` 私有 token 层，不在 Admin 页面维护独立色板、阴影或动效常量；
+- 只有全局设计系统确实缺少语义时，才在全局 token 文件中补充 token，并同步浅色/深色及其他主题族；
+- 组件迁移时同时替换硬编码颜色、阴影、动效时长和状态色，但不借重构机会改变视觉设计；
+- `transform`、`transition`、`opacity` 等由 Interaction Runtime 管理的属性仍不得用 CSS 强制覆盖。
 
 ## 6. 测试与验收
 
@@ -277,7 +289,7 @@ npm run build
 
 ## 9. 当前未完成项
 
-- [ ] Agent 只读模块拆分；
+- [ ] Agent 只读模块拆分（用量统计仍待完成）；
 - [ ] 提示词、状态文案和配置表单拆分；
 - [ ] LLM 预设拆分；
 - [ ] 记忆维护拆分；
