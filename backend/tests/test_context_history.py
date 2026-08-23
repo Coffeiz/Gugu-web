@@ -69,6 +69,18 @@ def test_anthropic_history_keeps_native_tool_blocks():
     assert result == [{"role": "assistant", "content": blocks}]
 
 
+def test_anthropic_history_coerces_legacy_string_tool_arguments_to_object():
+    assistant = _message("assistant", [{
+        "type": "tool_call", "id": "call-legacy", "name": "weather",
+        "arguments": '{"city":"南京"}',
+    }])
+    result = build_history_parts([assistant], None, use_anthropic=True)
+    assert result == [{"role": "assistant", "content": [{
+        "type": "tool_use", "id": "call-legacy", "name": "weather",
+        "input": {"city": "南京"},
+    }]}]
+
+
 def test_openai_history_converts_anthropic_tool_turn():
     assistant = _message("assistant", [{
         "type": "tool_use", "id": "call-1", "name": "weather", "input": {"city": "南京"},
@@ -139,6 +151,45 @@ def test_chat_tool_events_restore_call_and_result_as_one_bubble():
     }]
 
 
+def test_chat_tool_events_restore_name_when_result_is_scanned_before_call():
+    """历史块顺序异常时也不能把具体工具名退化成通用「工具调用」。"""
+    from datetime import datetime, timezone
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    result_created = datetime(2026, 8, 22, 7, 0, 1, tzinfo=timezone.utc)
+    result = SimpleNamespace(
+        id=21, created_at=result_created,
+        content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "晴天"}],
+    )
+    assistant = SimpleNamespace(
+        id=20, created_at=created,
+        content_json=[{"type": "tool_call", "id": "call-1", "name": "weather", "arguments": {}}],
+    )
+
+    events = build_chat_tool_events([result, assistant])
+
+    assert events[0]["toolName"] == "weather"
+    assert events[0]["toolLabel"] == "weather"
+    assert events[0]["toolResult"] == "晴天"
+
+
+def test_chat_tool_events_use_tool_name_from_result_only_legacy_record():
+    from datetime import datetime, timezone
+
+    result = SimpleNamespace(
+        id=22, created_at=datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc),
+        content_json=[{
+            "type": "tool_result", "tool_call_id": "call-legacy",
+            "tool_name": "image_search", "content": "候选图",
+        }],
+    )
+
+    events = build_chat_tool_events([result])
+
+    assert events[0]["toolName"] == "image_search"
+    assert events[0]["toolLabel"] == "图片搜索"
+
+
 def test_chat_tool_events_restore_registered_tool_label():
     from datetime import datetime, timezone
 
@@ -151,6 +202,55 @@ def test_chat_tool_events_restore_registered_tool_label():
     assert events[0]["toolName"] == "image_search"
     assert events[0]["toolLabel"] == "图片搜索"
     assert events[0]["timelineOrder"] == 14
+
+
+def test_chat_tool_events_unwrap_fixed_adapter_call_tool():
+    """刷新恢复时显示业务工具名，不把固定 Adapter 名称显示成「调用工具」。"""
+    from datetime import datetime, timezone
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    result_created = datetime(2026, 8, 22, 7, 0, 1, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=16, created_at=created,
+        content_json=[{
+            "type": "tool_call", "id": "call-adapter", "name": "call_tool",
+            "arguments": {"name": "image_search", "arguments": {"query": "角色"}},
+        }],
+    )
+    result = SimpleNamespace(
+        id=17, created_at=result_created,
+        content_json=[{"type": "tool_result", "tool_call_id": "call-adapter", "content": "结果"}],
+    )
+
+    events = build_chat_tool_events([assistant, result])
+
+    assert events[0]["toolName"] == "image_search"
+    assert events[0]["toolLabel"] == "图片搜索"
+    assert events[0]["toolInput"] == {"query": "角色"}
+
+
+def test_chat_tool_events_unwrap_openai_adapter_arguments():
+    """OpenAI canonical arguments 是 JSON 字符串时也要恢复业务工具名。"""
+    from datetime import datetime, timezone
+    import json
+
+    created = datetime(2026, 8, 22, 7, 0, tzinfo=timezone.utc)
+    assistant = SimpleNamespace(
+        id=18, created_at=created,
+        content_json=[{
+            "type": "tool_call", "id": "call-adapter-openai", "name": "call_tool",
+            "arguments": json.dumps(
+                {"name": "web_search", "arguments": {"query": "天气"}},
+                ensure_ascii=False,
+            ),
+        }],
+    )
+
+    events = build_chat_tool_events([assistant])
+
+    assert events[0]["toolName"] == "web_search"
+    assert events[0]["toolLabel"] == "联网搜索"
+    assert events[0]["toolInput"] == {"query": "天气"}
 
 
 def test_chat_tool_events_restore_legacy_anthropic_tool_use():

@@ -261,18 +261,6 @@ class AnthropicDriver:
         else:
             system_param = system_text
 
-        print(json.dumps({
-            "probe": "runtime-ask-user-tools",
-            "phase": "provider-tools",
-            "provider": adapter.name,
-            "model": getattr(ai, "model", ""),
-            "declaredTools": True,
-            "profileToolCount": len(tool_names),
-            "finalToolCount": len(tools),
-            "hasAskUser": "ask_user" in tool_names and any(
-                item.get("name") == "ask_user" for item in tools
-            ),
-        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         ctx = _AnthropicCtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             thinking_param=thinking_param, system_param=system_param,
@@ -432,18 +420,6 @@ class OpenAIDriver:
 
         think_kwargs = adapter.build_openai_thinking_kwargs(ai)
 
-        print(json.dumps({
-            "probe": "runtime-ask-user-tools",
-            "phase": "provider-tools",
-            "provider": adapter.name,
-            "model": getattr(ai, "model", ""),
-            "declaredTools": bool(declared.get("tools", True)),
-            "profileToolCount": len(tool_names),
-            "finalToolCount": len(tools),
-            "hasAskUser": "ask_user" in tool_names and any(
-                item.get("function", {}).get("name") == "ask_user" for item in tools
-            ),
-        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             think_kwargs=think_kwargs, model=ai.model,
@@ -657,18 +633,6 @@ class OllamaDriver:
         if think not in {False, "low", "medium", "high", "max"}:
             think = "medium"
         tools = registry.openai_schemas(tool_names)
-        print(json.dumps({
-            "probe": "runtime-ask-user-tools",
-            "phase": "provider-tools",
-            "provider": adapter.name,
-            "model": getattr(ai, "model", ""),
-            "declaredTools": True,
-            "profileToolCount": len(tool_names),
-            "finalToolCount": len(tools),
-            "hasAskUser": "ask_user" in tool_names and any(
-                item.get("function", {}).get("name") == "ask_user" for item in tools
-            ),
-        }, ensure_ascii=False, separators=(",", ":")), flush=True)
         return client, _OllamaCtx(
             tools=tools,
             max_tokens=ai.max_tokens,

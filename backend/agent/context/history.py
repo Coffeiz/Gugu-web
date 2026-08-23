@@ -6,6 +6,7 @@ from typing import Iterable
 
 from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, event_text
+from .provider_history import strip_thinking_blocks
 
 
 def _tool_label(tool_name: str) -> str:
@@ -19,23 +20,65 @@ def _tool_label(tool_name: str) -> str:
         return tool_name
 
 
+def _display_tool_call(block: dict) -> tuple[str, object]:
+    """把持久化的工具调用转换成聊天 UI 使用的业务工具名和参数。
+
+    固定 Adapter 模式下，canonical history 必须保留外层 ``call_tool``，
+    这样 provider 之间可以继续复用同一套历史协议；真实业务工具名在
+    ``arguments.name`` 中。这里仅在恢复 UI 工具气泡时解包，不能改写
+    canonical history 本身。
+    """
+    tool_name = str(block.get("name") or "unknown_tool")
+    tool_input = block.get("arguments", block.get("input", {}))
+    adapter_input = tool_input
+    if isinstance(adapter_input, str):
+        try:
+            parsed = json.loads(adapter_input)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            adapter_input = parsed
+    if tool_name == "call_tool" and isinstance(adapter_input, dict):
+        target_name = str(adapter_input.get("name") or "").strip()
+        target_arguments = adapter_input.get("arguments")
+        if target_name:
+            return target_name, target_arguments if isinstance(target_arguments, dict) else {}
+    return tool_name, tool_input
+
+
+def _display_tool_result_name(block: dict) -> str:
+    """兼容旧记录里结果块携带 Adapter 工具名的情况。"""
+    tool_name = str(block.get("tool_name") or "").strip()
+    if tool_name == "call_tool":
+        result_input = block.get("input")
+        if isinstance(result_input, dict):
+            target_name = str(result_input.get("name") or "").strip()
+            if target_name:
+                return target_name
+    return tool_name
+
+
 def build_chat_tool_events(messages: Iterable) -> list[dict]:
     """把持久化的 canonical tool turn 聚合成聊天 UI 的工具气泡。"""
+    # 不假设数据库中的块顺序永远是 call -> result。旧数据、跨 provider
+    # 持久化或事务边界都可能让 result 先被扫描到；先收集调用，再合并结果，
+    # 避免先创建「工具调用」占位事件后丢失真实工具名。
     events: dict[str, dict] = {}
+    pending_results: list[tuple[str, dict, object]] = []
     for message in messages:
         content_json = getattr(message, "content_json", None)
         for index, block in enumerate(_blocks(content_json)):
             block_type = block.get("type")
             if block_type in ("tool_call", "tool_use"):
                 call_id = str(block.get("id") or f"message-{message.id}-{index}")
-                tool_name = str(block.get("name") or "unknown_tool")
+                tool_name, tool_input = _display_tool_call(block)
                 events[call_id] = {
                     "id": f"tool:{call_id}",
                     "toolCallId": call_id,
                     "timelineOrder": message.id,
                     "toolName": tool_name,
                     "toolLabel": _tool_label(tool_name),
-                    "toolInput": block.get("arguments", block.get("input", {})),
+                    "toolInput": tool_input,
                     "toolStatus": "running",
                     "createdAt": message.created_at,
                 }
@@ -43,24 +86,32 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
                 call_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
                 if not call_id:
                     continue
-                event = events.setdefault(call_id, {
-                    "id": f"tool:{call_id}",
-                    "toolCallId": call_id,
-                    "timelineOrder": message.id,
-                    "toolName": "工具调用",
-                    "toolLabel": "工具调用",
-                    "toolStatus": "running",
-                    "createdAt": message.created_at,
-                })
-                event["toolResult"] = block.get("content", "")
-                event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
-                # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
-                # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
-                event["timelineOrder"] = message.id
-                event["updatedAt"] = message.created_at
-                event["toolDurationMs"] = max(
-                    0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
-                )
+                pending_results.append((call_id, block, message))
+
+    for call_id, block, message in pending_results:
+        event = events.get(call_id)
+        if event is None:
+            # 兼容历史中只保存结果块的异常记录；若结果带有 tool_name，
+            # 仍可恢复具体名称，否则才退化为通用文案。
+            tool_name = _display_tool_result_name(block) or "工具调用"
+            event = events.setdefault(call_id, {
+                "id": f"tool:{call_id}",
+                "toolCallId": call_id,
+                "timelineOrder": message.id,
+                "toolName": tool_name,
+                "toolLabel": _tool_label(tool_name) if tool_name != "工具调用" else "工具调用",
+                "toolStatus": "running",
+                "createdAt": message.created_at,
+            })
+        event["toolResult"] = block.get("content", "")
+        event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
+        # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
+        # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
+        event["timelineOrder"] = message.id
+        event["updatedAt"] = message.created_at
+        event["toolDurationMs"] = max(
+            0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
+        )
     return sorted(events.values(), key=lambda item: (item["createdAt"], item["id"]))
 
 
@@ -112,7 +163,7 @@ def _canonical_block(block: dict) -> dict | None:
         return ToolCall.from_block(block).to_block()
     if block_type == "tool_result":
         return ToolResult.from_block(block).to_block()
-    if block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+    if block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
         return dict(block)
     return None
 
@@ -152,21 +203,35 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 elif role == "assistant" and block.get("type") == "text" and block.get("text"):
                     canonical.append({"type": "text", "text": str(block["text"])})
         if canonical and any(
-            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery")
+            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context")
             for block in canonical
         ):
             result.append({"role": role, "content": canonical})
     return result
 
 
-def _anthropic_history_blocks(content_json) -> list[dict]:
+def _anthropic_history_blocks(content_json, *, strip_thinking: bool = False) -> list[dict]:
     converted = []
     for block in _blocks(content_json):
+        if strip_thinking and block.get("type") in {"thinking", "reasoning_content"}:
+            continue
         block_type = block.get("type")
-        if block_type == "tool_call":
+        if block_type in ("tool_call", "tool_use"):
+            arguments = block.get("arguments", block.get("input", {}))
+            # 早期 canonical history 可能把 OpenAI 的 function.arguments
+            # 以 JSON 字符串持久化；Anthropic/MiniMax 的 tool_use.input
+            # 必须是对象，不能把这段字符串原样发回去。
+            if isinstance(arguments, str):
+                try:
+                    parsed = json.loads(arguments)
+                except (TypeError, json.JSONDecodeError):
+                    parsed = {}
+                arguments = parsed if isinstance(parsed, dict) else {}
+            elif not isinstance(arguments, dict):
+                arguments = {}
             converted.append({
                 "type": "tool_use", "id": block.get("id"),
-                "name": block.get("name"), "input": block.get("arguments", {}),
+                "name": block.get("name"), "input": arguments,
             })
         elif block_type == "tool_result":
             tool_use_id = block.get("tool_call_id") or block.get("tool_use_id")
@@ -182,14 +247,14 @@ def _anthropic_history_blocks(content_json) -> list[dict]:
             if "is_error" in block:
                 result["is_error"] = block["is_error"]
             converted.append(result)
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
             converted.append({"type": "text", "text": event_text(block)})
         else:
             converted.append(block)
     return converted
 
 
-def _openai_history_message(message, request) -> list[dict]:
+def _openai_history_message(message, request, *, strip_thinking: bool = False) -> list[dict]:
     content_json = getattr(message, "content_json", None)
     if content_json is None:
         from agent.im.context_loader import format_history_content
@@ -199,6 +264,8 @@ def _openai_history_message(message, request) -> list[dict]:
     from app.core.chat_attach import strip_vision_for_history
     content_json = strip_vision_for_history(content_json)
     blocks = _blocks(content_json)
+    if strip_thinking:
+        blocks = [block for block in blocks if block.get("type") not in {"thinking", "reasoning_content"}]
     if not blocks:
         return [{"role": message.role, "content": content_text(content_json)}]
 
@@ -215,7 +282,7 @@ def _openai_history_message(message, request) -> list[dict]:
                 "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
                 "content": content_text(block.get("content", "")),
             })
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery"):
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
             rendered = event_text(block)
             if rendered:
                 text_parts.append(rendered)
@@ -246,7 +313,7 @@ def _openai_history_message(message, request) -> list[dict]:
 
 
 def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
-                        user_tz=None) -> list[dict]:
+                        user_tz=None, strip_thinking: bool = False) -> list[dict]:
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
     用户消息的时间 reminder 要等完整 turn（assistant/tool 结果）组装完再追加。
@@ -277,11 +344,13 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
                 if any(block.get("type") in (
-                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery"
+                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context"
                 ) for block in blocks):
-                    content = _anthropic_history_blocks(content_json)
+                    content = _anthropic_history_blocks(content_json, strip_thinking=strip_thinking)
                 else:
                     content = list(content_json) if isinstance(content_json, list) else content_json
+                    if strip_thinking:
+                        content = strip_thinking_blocks(content)
                 if attachment_refs and isinstance(content, list):
                     content = [*content, {"type": "text", "text": attachment_refs}]
                 role = "user" if message.role == "tool" else message.role
@@ -291,7 +360,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
 
                 parts.append({"role": message.role, "content": format_history_content(message, request)})
         else:
-            parts.extend(_openai_history_message(message, request))
+            parts.extend(_openai_history_message(message, request, strip_thinking=strip_thinking))
 
         if is_user_message:
             timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
