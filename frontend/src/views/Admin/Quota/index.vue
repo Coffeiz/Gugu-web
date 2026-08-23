@@ -280,10 +280,14 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
 import { PhArrowClockwise } from '@phosphor-icons/vue'
+import { useQuotaAdmin } from './useQuotaAdmin'
 
 const adminStore  = useAdminStore()
 const configStore = useConfigStore()
+const quotaAdmin = useQuotaAdmin(adminStore, configStore)
+const { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, maskMousedownSelf, editForm, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
 
+/* PHASE7_QUOTA_OLD_BEGIN
 // ── 全局配额 ──────────────────────────────────────────────────────────────────
 const globalDraft  = reactive<{ token6h: number|null; tokenWeek: number|null; storageGB: number|null; searchDaily: number|null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 const globalSaving = ref(false)
@@ -449,6 +453,7 @@ onMounted(async () => {
   _loadGlobalDraft()
   loadUsers()
 })
+PHASE7_QUOTA_OLD_END */
 </script>
 
 <style scoped>
