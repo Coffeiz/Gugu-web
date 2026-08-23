@@ -40,6 +40,8 @@ def _out(b: UserBot) -> dict:
         "group_chat_enabled": b.group_chat_enabled,
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
+        "group_memory_enabled": b.group_memory_enabled,
+        "member_memory_enabled": b.member_memory_enabled,
         "group_response_mode": response_mode,
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "group_message_format": b.group_message_format or "compat",
@@ -134,6 +136,8 @@ class BotUpdate(BaseModel):
     group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
     group_read_enabled: bool | None = None
+    group_memory_enabled: bool | None = None
+    member_memory_enabled: bool | None = None
     group_response_mode: str | None = None
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
@@ -168,6 +172,10 @@ async def update_my_bot(
         bot.group_requires_at = body.group_requires_at
     if body.group_read_enabled is not None:
         bot.group_read_enabled = body.group_read_enabled
+    if body.group_memory_enabled is not None:
+        bot.group_memory_enabled = body.group_memory_enabled
+    if body.member_memory_enabled is not None:
+        bot.member_memory_enabled = body.member_memory_enabled
     if body.group_response_mode is not None:
         if body.group_response_mode not in {"reply_all", "reply_mentions", "record_only"}:
             raise HTTPException(400, "无效的群聊回应方式")

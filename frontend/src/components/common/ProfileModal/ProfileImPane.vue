@@ -20,6 +20,10 @@
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">私聊流式回复</span><span class="pm-field-hint">使用 QQ 官方接口逐步更新同一条私聊消息；部分客户端可能不显示过程</span></div><span class="pm-switch-wrap"><label class="switch sm"><input type="checkbox" :checked="bot.private_streaming_enabled === true" @change="togglePrivateStreaming(bot)" /><span class="slider"></span></label><span class="pm-switch-label" :class="{ on: bot.private_streaming_enabled === true }">{{ bot.private_streaming_enabled === true ? '已开启' : '已关闭' }}</span></span></div>
         </template>
+        <template v-if="platform.key === 'qq' && bot.group_chat_enabled">
+          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群组记忆</span><span class="pm-field-hint">允许咕咕读取并沉淀当前群的公开信息</span></div><span class="pm-switch-wrap"><label class="switch sm"><input type="checkbox" :checked="bot.group_memory_enabled !== false" @change="toggleMemory(bot, 'group_memory_enabled')" /><span class="slider"></span></label><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? '已开启' : '已关闭' }}</span></span></div>
+          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群成员记忆</span><span class="pm-field-hint">允许咕咕为群成员分别记录可用的个人偏好</span></div><span class="pm-switch-wrap"><label class="switch sm"><input type="checkbox" :checked="bot.member_memory_enabled !== false" @change="toggleMemory(bot, 'member_memory_enabled')" /><span class="slider"></span></label><span class="pm-switch-label" :class="{ on: bot.member_memory_enabled !== false }">{{ bot.member_memory_enabled !== false ? '已开启' : '已关闭' }}</span></span></div>
+        </template>
         <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群成员可用工具</span><span class="pm-field-hint">可多选；未选中的工具不会提供给群成员</span></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupToolOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: hasGroupTool(bot, option) }" @click="toggleGroupTool(bot, option)">{{ option.label }}</button></div></div>
       </div>
     </template>
@@ -40,10 +44,11 @@ import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
-interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
+interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
   'enabled' | 'group_chat_enabled' | 'group_response_mode' | 'group_allowed_tools' |
-  'group_message_format' | 'private_message_format' | 'private_streaming_enabled'
+  'group_message_format' | 'private_message_format' | 'private_streaming_enabled' |
+  'group_memory_enabled' | 'member_memory_enabled'
 >>
 
 const groupResponseOptions = [
@@ -174,6 +179,10 @@ async function copyBindingCode(botId: number) {
 }
 function clearCopyFeedback() { if (copyFeedbackTimer) clearTimeout(copyFeedbackTimer); copyFeedbackTimer = null; copiedBindingBotId.value = null }
 function toggleGroupChat(bot: Bot) { const current = botById(bot.id); if (current) void updateBotSetting(bot.id, { group_chat_enabled: !current.group_chat_enabled }, '群聊设置失败') }
+function toggleMemory(bot: Bot, field: 'group_memory_enabled' | 'member_memory_enabled') {
+  const current = botById(bot.id)
+  if (current) void updateBotSetting(bot.id, { [field]: current[field] !== false ? false : true }, '群聊记忆设置失败')
+}
 function groupResponseMode(bot: Bot): string { return bot.group_response_mode ?? (bot.group_read_enabled ? 'record_only' : bot.group_requires_at ? 'reply_mentions' : 'reply_all') }
 function setGroupResponseMode(bot: Bot, mode: string) { void updateBotSetting(bot.id, { group_response_mode: mode }, '群聊回应方式设置失败') }
 function groupTools(bot: Bot): string[] { return bot.group_allowed_tools ?? ['web_search', 'http_get', 'image_search', 'inspect_images', 'send_file'] }

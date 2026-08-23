@@ -132,7 +132,7 @@ def test_chat_tool_events_restore_call_and_result_as_one_bubble():
         content_json=[{"type": "tool_result", "tool_call_id": "call-1", "content": "晴天"}],
     )
     assert build_chat_tool_events([assistant, result]) == [{
-        "id": "tool:call-1", "toolCallId": "call-1", "timelineOrder": 10, "toolName": "weather",
+        "id": "tool:call-1", "toolCallId": "call-1", "timelineOrder": 11, "toolName": "weather",
         "toolLabel": "weather",
         "toolInput": {"city": "南京"}, "toolResult": "晴天", "toolStatus": "success",
         "createdAt": created, "updatedAt": result_created, "toolDurationMs": 1000,

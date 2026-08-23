@@ -519,12 +519,13 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     "group",
                     str(request.chat_id),
                 )
-            await observe_group_message(
-                group_scope,
-                recorded_message_id,
-                message_row.created_at,
-            )
-            if request.im_role == "member" and request.platform_user_id:
+            if request.im_group_memory_enabled:
+                await observe_group_message(
+                    group_scope,
+                    recorded_message_id,
+                    message_row.created_at,
+                )
+            if request.im_member_memory_enabled and request.im_role == "member" and request.platform_user_id:
                 await observe_member_message(
                     MemoryScope(
                         request.user_id,
@@ -683,6 +684,8 @@ async def prepare_request(
         allowed_tool_names=allowed_tool_names,
         actor_context=actor,
         im_message_format=payload.get("message_format"),
+        im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
+        im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
     )
     # 临时定位 ask_user 未出现在 QQ 私聊模型工具列表的问题；不记录用户 ID 或正文。
     print(json.dumps({
@@ -879,20 +882,21 @@ async def dispatch_im_message(payload: dict):
             from agent.memory.reflection_jobs import observe_session_activity
             from agent.memory.scopes import MemoryScope
 
-            await observe_session_activity(
-                MemoryScope(
-                    req.user_id,
-                    req.source or "qq",
-                    str(req.platform_bot_id or ""),
-                    "group",
-                    str(req.chat_id),
-                ),
-                resp.session_id,
-            )
+            if req.im_group_memory_enabled:
+                await observe_session_activity(
+                    MemoryScope(
+                        req.user_id,
+                        req.source or "qq",
+                        str(req.platform_bot_id or ""),
+                        "group",
+                        str(req.chat_id),
+                    ),
+                    resp.session_id,
+                )
         except Exception:
             # 记忆调度失败不影响当前回复已经完成。
             pass
-        if prepared.actor.role == "member" and req.platform_user_id:
+        if req.im_member_memory_enabled and prepared.actor.role == "member" and req.platform_user_id:
             try:
                 from agent.memory.reflection_jobs import observe_member_activity
                 from agent.memory.scopes import MemoryScope

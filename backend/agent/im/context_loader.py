@@ -151,12 +151,13 @@ async def load_im_memory(request: AgentRequest) -> dict:
     group_scope = MemoryScope(
         request.user_id, request.source, bot_id, "group", str(request.chat_id)
     )
-    group_memory = await preview_scope(group_scope)
-    if group_memory is None:
-        return {}
-    result = {"group": group_memory}
+    result = {}
+    if request.im_group_memory_enabled:
+        group_memory = await preview_scope(group_scope)
+        if group_memory is not None:
+            result["group"] = group_memory
     role = request.actor_context.role if request.actor_context else request.im_role
-    if role == "member" and request.platform_user_id:
+    if request.im_member_memory_enabled and role == "member" and request.platform_user_id:
         user_scope = MemoryScope(
             request.user_id, request.source, bot_id, "platform-user", str(request.platform_user_id)
         )

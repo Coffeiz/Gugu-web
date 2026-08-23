@@ -719,6 +719,9 @@ class UserBot(Base):
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
+    group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "inspect_images", "send_file"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。

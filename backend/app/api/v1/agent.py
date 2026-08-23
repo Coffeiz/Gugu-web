@@ -400,26 +400,27 @@ async def get_session_messages(
         for message in msgs
         if message.platform_user_id and message.platform_user_name
     }
-    # 工具中间行和普通消息共用自增 id。只恢复本次正文窗口内的工具行，
-    # 避免长会话把整段历史的 tool_call/tool_result 全部塞进虚拟列表。
-    # 当前未完成的轮次由 active/resumeStream 续接，不需要在这里扫描全历史。
+    # 工具调用和结果必须先在完整会话范围内配对，再按正文窗口筛选。
+    # 如果只查询窗口内的行，窗口边界正好落在 tool_call/tool_result 中间时，
+    # 恢复端只能看到 tool_result，只能退化成“工具调用”，从而丢失工具名称。
+    # 这里只返回当前正文窗口对应的事件，不会把旧工具气泡全部塞进虚拟列表。
     tool_filters = [
         ConversationMessage.session_id == session_id,
         ConversationMessage.content_json.is_not(None),
     ]
-    if msgs:
-        message_ids = [message.id for message in msgs]
-        tool_filters.extend([
-            ConversationMessage.id >= min(message_ids),
-            ConversationMessage.id <= max(message_ids),
-        ])
-    else:
-        # 没有正文窗口时不应退化为扫描整段工具历史。
-        tool_filters.append(False)
     tool_rows = (await db.execute(
         select(ConversationMessage).where(*tool_filters).order_by(ConversationMessage.id)
     )).scalars().all()
     tool_events = build_chat_tool_events(tool_rows)
+    if msgs:
+        message_ids = [message.id for message in msgs]
+        first_id, last_id = min(message_ids), max(message_ids)
+        tool_events = [
+            event for event in tool_events
+            if first_id <= int(event.get("timelineOrder") or 0) <= last_id
+        ]
+    else:
+        tool_events = []
     for message in msgs:
         if message.platform_bot_user_id:
             mention_names[message.platform_bot_user_id] = "咕咕"

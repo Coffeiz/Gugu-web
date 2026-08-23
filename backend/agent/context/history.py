@@ -54,6 +54,9 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
                 })
                 event["toolResult"] = block.get("content", "")
                 event["toolStatus"] = "error" if _tool_result_is_error(block) else "success"
+                # 工具调用和结果可能跨过消息分页窗口。以结果所在消息作为时间线位置，
+                # 这样恢复当前窗口时仍能保留前面已经配对的工具名称和输入。
+                event["timelineOrder"] = message.id
                 event["updatedAt"] = message.created_at
                 event["toolDurationMs"] = max(
                     0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)

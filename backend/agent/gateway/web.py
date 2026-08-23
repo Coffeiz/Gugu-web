@@ -452,7 +452,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 round_buf  = ""
                 dedup      = bool(last_round)     # 有上一轮才需去重
                 san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置，防止上轮 _cut 污染
-                await genstream.publish(session_id, {"type": "_new_round"})
+                # 保留 round_id/run_id，前端需要用它结束上一轮正文气泡并建立下一轮边界。
+                await genstream.publish(session_id, evt)
                 continue
             if etype == "_usage":
                 usage_tokens["input"]  = evt["input"]

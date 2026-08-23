@@ -99,6 +99,7 @@ export function useChatStream(options: {
       : ''
     const usedTools = new Set<string>()
     let currentRoundId = ''
+    let currentRunId = ''
     const toolMessageIndexes = new Map<string, number>()
     let timelineOrder = messages.value.reduce(
       (max, message) => Math.max(max, message._timelineOrder ?? 0),
@@ -110,6 +111,15 @@ export function useChatStream(options: {
         if (a._timelineOrder == null || b._timelineOrder == null) return 0
         return a._timelineOrder - b._timelineOrder
       })
+    }
+    // 每个 round 的正文必须是独立气泡。工具调用前的草稿属于上一轮，
+    // 下一轮 token 不能继续写入同一个 aiIdx，否则 UI 会把多轮正文拼成一条消息。
+    const finishRoundMessage = () => {
+      if (aiIdx === -1 || !messages.value[aiIdx]) return
+      const message = messages.value[aiIdx]
+      message.streaming = false
+      if (message.text.trim()) message.html = renderMd(message.text)
+      aiIdx = -1
     }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
@@ -151,9 +161,13 @@ export function useChatStream(options: {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
             if (s) s.title = evt.title
           } else if (evt.type === 'round_start') {
+            finishRoundMessage()
+            currentRunId = String(evt.run_id || currentRunId)
             currentRoundId = String(evt.round_id || `round-${toolMessageIndexes.size + 1}`)
           } else if (evt.type === '_new_round') {
             // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
+            finishRoundMessage()
+            currentRunId = String(evt.run_id || currentRunId)
             if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
@@ -238,7 +252,12 @@ export function useChatStream(options: {
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
                 const messageId = mkid()
-                messages.value.push({ id: messageId, role: 'ai', text: '', time: now(), streaming: true, _timelineOrder: nextTimelineOrder() })
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
                 sortLiveTimeline()
                 aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
@@ -251,7 +270,12 @@ export function useChatStream(options: {
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
                 const messageId = mkid()
-                messages.value.push({ id: messageId, role: 'ai', text: '', time: now(), streaming: true, _timelineOrder: nextTimelineOrder() })
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
                 sortLiveTimeline()
                 aiIdx = messages.value.findIndex(item => item.id === messageId)
               }

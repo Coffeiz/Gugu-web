@@ -286,6 +286,8 @@ async def _ack_qq_interaction(channel_id: str, interaction_id: str, *, code: int
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                                  channel_id: str, owner: str, last_ack: dict) -> None:
     read_enabled = False
+    group_memory_enabled = True
+    member_memory_enabled = True
     mentioned = False
     if event_type == "C2C_MESSAGE_CREATE":
         chat_type = "c2c"
@@ -296,8 +298,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     elif event_type in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         group_settings = await _group_settings(channel_id)
         group_enabled, requires_at = group_settings[:2]
-        # 兼容旧的测试/自定义适配器返回二元组；正式实现始终返回三元组。
+        # 兼容旧的测试/自定义适配器返回短元组；新增记忆字段缺失时保持开启。
         read_enabled = bool(group_settings[2]) if len(group_settings) > 2 else False
+        group_memory_enabled = bool(group_settings[3]) if len(group_settings) > 3 else True
+        member_memory_enabled = bool(group_settings[4]) if len(group_settings) > 4 else True
         mentioned = _qq_message_mentions_bot(data, event_type)
         if not group_enabled:
             return
@@ -441,6 +445,8 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["chat_id"] = chat_id
         payload["group_requires_at"] = requires_at
         payload["group_read_enabled"] = read_enabled
+        payload["group_memory_enabled"] = group_memory_enabled
+        payload["member_memory_enabled"] = member_memory_enabled
         payload["group_mentioned"] = mentioned
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
