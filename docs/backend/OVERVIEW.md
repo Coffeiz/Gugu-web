@@ -249,7 +249,7 @@ DELETE /api/v1/agent/attachments | /memory | /sessions/{id}
 ```
 Agent 主循环上限是 `MAX_ROUNDS = 8`、工具调用上限是 `MAX_TOOL_CALLS = 10`；写操作另有最多 `MAX_VERIFY = 5` 的验证轮预算。`agent/tools/` 当前由多个 Skill 注册业务工具，能力注册层再按用户权限、Profile 和当前上下文生成 `CapabilitySnapshot`。固定入口包括 `call_tool`、`use_skill`、`ask_user`，按需能力通过 selector 注入；`canonical_tool_history.py` 将工具调用、结果、工具 schema 和 Skill schema 统一成 provider-neutral 历史，再由 Anthropic/OpenAI adapter 转换。
 
-工具覆盖项目/阶段/待办/优先级、文件/文件夹/回收站、日历/定时任务、客户、画布、记忆、联网搜索/深度研究、图片/附件、IM 和对话历史等。`declare_tools` 仍保留为兼容/过渡路径，不能把它当作唯一的按需注册实现。
+工具覆盖项目/阶段/待办/优先级、文件/文件夹/回收站、日历/定时任务、客户、画布、记忆、联网搜索/深度研究、图片/附件、IM 和对话历史等。当前统一通过固定 `call_tool`、`use_skill`、`ask_user` 入口注入；业务 Schema 和工具往返使用 canonical history。
 
 **定时任务**（`scheduled_tasks.py`）：用户自定义 cron 任务的 CRUD，与日历事件提醒（`ScheduledTask.event_id`）是两套概念但共用一张表。
 
@@ -432,7 +432,7 @@ pytest -q
 
 - 数据库仍采用启动时幂等迁移，没有 Alembic 版本历史；复杂结构变更需要单独设计可回滚脚本。
 - `snapshot_hash` 当前主要用于 checkpoint/trace 标识，尚未完全覆盖所有 snapshot 输入的内容哈希；正确性依靠 snapshot payload、TTL 和 context revision。
-- `declare_tools` 仍是能力声明的兼容入口，Phase 5 的 canonical adapter 已接入，但声明入口的彻底收敛仍属于后续清理。
-- canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件；独立的完整 `ToolCall`/`ToolResult` 领域对象抽取和所有 LoopScope 诊断字段仍可继续完善。
+- 旧 `declare_tools` 动态注册路径已删除；OpenAI/Anthropic 的历史 wire format 仍由 history adapter 兼容转换。
+- canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件，并使用 `ToolCall`/`ToolResult` 领域对象统一归一；LoopScope 展示 canonical event、Schema digest 和 Adapter 统计。
 - RAG 的统一索引、切片和召回仍以 `PRD-RAG-1-统一知识召回与索引.md` 的实施状态为准，不能从当前 Agent 工具注册状态推断 RAG 已完成。
 - 配额模型字段和 onboarding 路由已经存在，但计费窗口、运营规则和完整协议仍应维护在专题文档，不在本总览中重复展开。

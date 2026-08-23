@@ -5,7 +5,18 @@ import json
 from typing import Iterable
 
 from .tokens import content_text
-from .canonical_tool_history import event_text
+from .canonical_tool_history import ToolCall, ToolResult, event_text
+
+
+def _tool_label(tool_name: str) -> str:
+    """读取工具注册表中的用户可见名称，历史恢复时与实时 SSE 保持一致。"""
+    try:
+        from agent.tools import registry
+        tool = registry.get(tool_name)
+        return str(tool.label if tool else tool_name)
+    except Exception:
+        # 历史数据可能包含已移除的旧工具；名称仍比丢失整条时间线更有用。
+        return tool_name
 
 
 def build_chat_tool_events(messages: Iterable) -> list[dict]:
@@ -20,7 +31,9 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
                 events[call_id] = {
                     "id": f"tool:{call_id}",
                     "toolCallId": call_id,
+                    "timelineOrder": message.id,
                     "toolName": str(block.get("name") or "unknown_tool"),
+                    "toolLabel": _tool_label(str(block.get("name") or "unknown_tool")),
                     "toolInput": block.get("arguments", {}),
                     "toolStatus": "running",
                     "createdAt": message.created_at,
@@ -32,7 +45,9 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
                 event = events.setdefault(call_id, {
                     "id": f"tool:{call_id}",
                     "toolCallId": call_id,
+                    "timelineOrder": message.id,
                     "toolName": "工具调用",
+                    "toolLabel": "工具调用",
                     "toolStatus": "running",
                     "createdAt": message.created_at,
                 })
@@ -90,22 +105,9 @@ def _canonical_block(block: dict) -> dict | None:
     """把 Anthropic/OpenAI 工具块归一为 provider-neutral 结构。"""
     block_type = block.get("type")
     if block_type in ("tool_use", "tool_call"):
-        arguments = block.get("arguments", block.get("input", {}))
-        return {
-            "type": "tool_call",
-            "id": str(block.get("id") or block.get("tool_use_id") or "tool-call"),
-            "name": str(block.get("name") or "unknown_tool"),
-            "arguments": arguments if isinstance(arguments, (dict, list, str)) else {},
-        }
+        return ToolCall.from_block(block).to_block()
     if block_type == "tool_result":
-        result = {
-            "type": "tool_result",
-            "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
-            "content": block.get("content", ""),
-        }
-        if _tool_result_is_error(block):
-            result["is_error"] = True
-        return result
+        return ToolResult.from_block(block).to_block()
     if block_type in ("tool-schema", "skill-schema", "tool-discovery"):
         return dict(block)
     return None
@@ -133,14 +135,11 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 if normalized is not None:
                     canonical.append(normalized)
         elif role == "tool":
-            tool_result = {
-                "type": "tool_result",
-                "tool_call_id": str(message.get("tool_call_id") or ""),
-                "content": content,
-            }
-            if _tool_result_is_error(tool_result):
-                tool_result["is_error"] = True
-            canonical.append(tool_result)
+            canonical.append(ToolResult(
+                tool_call_id=str(message.get("tool_call_id") or ""),
+                content=content,
+                is_error=_tool_result_is_error(message),
+            ).to_block())
         else:
             for block in _blocks(content):
                 normalized = _canonical_block(block)

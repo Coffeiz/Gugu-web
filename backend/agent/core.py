@@ -760,22 +760,6 @@ class LLMRunner:
                                     "tool_call_id": tool_call_id,
                                 })
                             break
-                    if tc.name == "declare_tools" and self.capability_context is not None:
-                        try:
-                            declared_payload = json.loads(res) if isinstance(res, str) else res
-                        except (TypeError, ValueError):
-                            declared_payload = None
-                        declared = (
-                            declared_payload.get("declared_tools", [])
-                            if isinstance(declared_payload, dict) else []
-                        )
-                        accepted = self.capability_context.declare(declared)
-                        res = json.dumps({
-                            "declared_tools": list(accepted),
-                            "rejected_count": max(0, len(declared) - len(accepted))
-                            if isinstance(declared, list) else 0,
-                            "message": "下一轮将提供已声明工具的完整 Schema。",
-                        }, ensure_ascii=False)
                     # 统一交互桥：保留工具原有确认门，同时向 Guguchat/Web 发出按钮事件。
                     # 桥接失败不能影响工具结果写回模型，因此只在成功创建时发送事件。
                     from app.services.interactions import create_tool_confirmation

@@ -40,6 +40,7 @@ from typing import Any, AsyncGenerator, Protocol
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
+from agent.context.canonical_tool_history import ToolCall
 
 _log = logging.getLogger("agent.core")
 
@@ -50,10 +51,9 @@ TOOL_ARGS_TRUNCATED_ERROR = json.dumps(
 
 
 @dataclass
-class NormalizedToolCall:
-    id: str
-    name: str
-    input: dict
+class NormalizedToolCall(ToolCall):
+    """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
+
     parse_error: bool = False   # 只有 OpenAI 路会真的置真（JSON 截断解析失败）
 
 

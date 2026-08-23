@@ -41,11 +41,6 @@ async def _ask_user(db, user_id, args: dict):
     }
 
 
-async def _declare_tools(db, user_id, args: dict):
-    """把本轮工具声明交给 Runtime 校验；不直接执行任何业务操作。"""
-    return {"declared_tools": args.get("tools", [])}
-
-
 async def _call_tool(db, user_id, args: dict):
     """固定 Adapter Tool 的非 Agent Loop 调用入口。
 
@@ -131,25 +126,6 @@ class MetaSkill(BaseSkill):
                 "additionalProperties": False,
             },
             handler=_ask_user,
-        ),
-        Tool(
-            name="declare_tools",
-            label="声明工具",
-            description="声明本轮需要的工具。Runtime 校验后，下一轮才会提供这些工具的完整 Schema。",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "tools": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 12,
-                        "items": {"type": "string", "minLength": 1, "maxLength": 80},
-                    },
-                },
-                "required": ["tools"],
-                "additionalProperties": False,
-            },
-            handler=_declare_tools,
         ),
     ]
 

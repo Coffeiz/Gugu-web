@@ -64,16 +64,6 @@ def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_
     assert runner.capability_context is None
 
 
-def test_emergency_switch_keeps_full_schema_path_when_injection_is_enabled():
-    from agent.runner import _capability_context
-
-    settings = SimpleNamespace(agent=SimpleNamespace(
-        capability_injection_enabled=True,
-        capability_force_full_schema=True,
-    ))
-    assert _capability_context(["web_search"], settings) is None
-
-
 def test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction():
     messages = [{
         "role": "tool",
@@ -105,49 +95,6 @@ def test_loopscope_tool_schema_names_fall_back_to_provider_payload():
         {"name": "image_search"},
         {"type": "function", "function": {"name": "ask_user"}},
     ]) == ["ask_user", "image_search"]
-
-
-def test_capability_context_starts_with_declaration_and_refreshes_schema_selection():
-    from agent.capabilities.injector import CapabilityToolContext
-    from agent.capabilities.selector import RegistryCapabilitySelector
-
-    snapshot = CapabilitySnapshot(
-        generation=1,
-        tools={
-            "declare_tools": CapabilityMeta("declare_tools", "tool", "声明工具。"),
-            "image_search": CapabilityMeta("image_search", "tool", "搜索图片。"),
-        },
-        skills={},
-    )
-    context = CapabilityToolContext(
-        snapshot, RegistryCapabilitySelector(), declaration_enabled=True,
-    )
-    assert context.select_for_messages([]).tool_names == ("declare_tools",)
-    assert context.declare(["image_search", "not_authorized"]) == ("image_search",)
-    assert context.select_for_messages([]).tool_names == ("declare_tools", "image_search")
-
-
-def test_capability_context_keeps_ask_user_available_on_first_round():
-    from agent.capabilities.injector import CapabilityToolContext
-    from agent.capabilities.selector import RegistryCapabilitySelector
-
-    snapshot = CapabilitySnapshot(
-        generation=1,
-        tools={
-            "declare_tools": CapabilityMeta("declare_tools", "tool", "声明工具。"),
-            "ask_user": CapabilityMeta("ask_user", "tool", "询问用户。"),
-            "image_search": CapabilityMeta("image_search", "tool", "搜索图片。"),
-        },
-        skills={},
-    )
-    context = CapabilityToolContext(
-        snapshot, RegistryCapabilitySelector(), declaration_enabled=True,
-    )
-    assert context.select_for_messages([]).tool_names == ("declare_tools", "ask_user")
-    context.declare(["image_search"])
-    assert context.select_for_messages([]).tool_names == (
-        "declare_tools", "ask_user", "image_search"
-    )
 
 
 def test_fixed_adapter_context_only_exposes_stable_provider_tools():

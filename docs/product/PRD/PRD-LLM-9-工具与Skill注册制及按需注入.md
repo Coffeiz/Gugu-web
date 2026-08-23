@@ -14,17 +14,17 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 0：现状审查与协议草案 | ✅ 已完成 | 已完成代码、Prompt、Provider、权限、LoopScope 和测试盘点；统一协议已形成文档草案，代码层尚未冻结。 |
-| Phase 1：统一能力注册协议 | ✅ 已完成 | 89 个工具和 10 个 Skill 已具备可校验短描述、类别/关联 metadata、注册适配器、不可变快照和社区 README；旧 Skill 字段已迁移，注册与关联回归已补齐。 |
-| Phase 2：能力目录基础设施 | ✅ 非 RAG 部分完成 | 已提供能力快照、授权交集、可替换 selector 和兼容模式；Capability RAG 索引、候选召回、排序和每轮推荐暂不实施。 |
+| Phase 1：统一能力注册协议 | ✅ 已完成 | 90 个工具和 10 个 Skill 已具备可校验短描述、类别/关联 metadata、注册适配器、不可变快照和社区 README；旧 Skill 字段已迁移，注册与关联回归已补齐。 |
+| Phase 2：能力目录基础设施 | ✅ 非 RAG 部分完成 | 已提供能力快照、授权交集和可替换 selector；Capability RAG 索引、候选召回、排序和每轮推荐暂不实施。 |
 | Phase 3：按需 Schema / Skill 正文基础设施 | ✅ 非 RAG 部分完成 | 三类 Driver 已支持 selected tools，Skill 使用标记可跨同一 session 的 history 复用，已提供 emergency 全量 Schema 开关；当前不启用每轮候选推荐。 |
 | Phase 4：迁移、观测与回归 | ✅ 基础稳定化完成 | 已完成旧字段清理、Admin 能力目录、Provider Schema parity、脱敏诊断和关键行为回归；独立基线报告仍待后续性能任务。Phase 1～4 的文件级基础设施已完成。 |
 | Phase 5：固定 Adapter Tool 与 canonical history | ✅ 已完成 | Provider 只注册固定 `call_tool`、`use_skill`、`ask_user`；业务 Schema、Skill 关联和调用历史使用 canonical event 追加并跨 Provider 重建。 |
 | Phase 6：Capability RAG 与推荐 | 🔲 后置 | 在固定 Adapter Tool 链路稳定后，与 `PRD-RAG-1` 联动实现工具推荐、推荐原因、命中率观测和灰度；不缩减授权工具目录。 |
 | Phase 7：插件/社区扩展 | 🔲 后续 | 在注册制、Adapter Tool 和 RAG 稳定后，再开放外部包、签名和隔离加载。 |
 
-> **文件级完成判定（2026-08-23）**：Phase 1～5 的注册表、能力快照、固定 Adapter、canonical event、跨 Provider history adapter 和基础回归测试均已落地。兼容模式的 `declare_tools → driver.update_tools()` 仍保留为 emergency switch；正常能力注入路径不再使用它。
+> **文件级完成判定（2026-08-23）**：Phase 1～5 的注册表、能力快照、固定 Adapter、canonical event、跨 Provider history adapter、`ToolCall/ToolResult` 领域对象和基础回归测试均已落地。旧 `declare_tools` 动态注册路径已删除，固定 Adapter 是当前唯一能力注入路径。
 
-对应回归已核验：能力注册、selector、能力注入、canonical history、Provider history adapter 和工具 Schema 校验均通过；兼容模式与固定 Adapter 模式分别保留回归覆盖。
+对应回归已核验：能力注册、selector、能力注入、canonical history、Provider history adapter、工具 Schema 校验和 dataclass round-trip 均通过。
 
 ### 0.2 Phase 1～3 未完成项说明
 
@@ -33,7 +33,7 @@
 | 类别 | 项目 | 处理阶段 | 当前策略 |
 |---|---|---|---|
 | 注册迁移收尾 | 旧 `description/when` 解析兼容、完整 Provider parity | Phase 4 | 已删除旧 Skill 字段读取兼容；Provider 统一由 Tool contract 生成两种 Schema，并补 parity 回归。 |
-| 观测与安全回归 | LoopScope 能力目录指标、emergency switch、权限/确认门/写工具回归 | Phase 4 | 已记录脱敏目录指标并补关键回归，不接入候选推荐。 |
+| 观测与安全回归 | LoopScope 能力目录指标、权限/确认门/写工具回归 | Phase 4 | 已记录脱敏目录指标并补关键回归，不接入候选推荐。 |
 | RAG 依赖项 | Capability RAG 索引、BM25/Embedding、每轮软推荐、推荐命中率评估 | Phase 6，依赖 `PRD-RAG-1` | 必须在 Phase 5 固定 Adapter Tool 链路稳定后实施。 |
 
 因此，Phase 1～3 的“代码基础设施”已经完成；未完成标记主要代表迁移、观测和 RAG 接入，不代表注册表、Skill 标记或三类 Provider 的基础能力缺失。
@@ -169,7 +169,7 @@ mind-canvas：用户要查看、搜索、创建、整理或连接思维画布节
 能力路由只回答“本轮可能需要哪些能力”：
 
 ```text
-用户输入 → 能力简介目录 → `declare_tools` 声明 → Runtime 校验 → 下一轮注入声明工具 Schema → Agent Loop
+用户输入 → 能力简介目录 → `use_skill` 按需加载 → canonical Schema history → 固定 Adapter → Agent Loop
 
 Capability RAG（后置）只负责给完整能力目录生成推荐顺序和理由，不改变声明协议，也不执行工具。
 
@@ -185,10 +185,10 @@ Plan 模式回答“任务要拆成哪些步骤以及如何按依赖执行”。
 | 层 | 内容 | 生命周期 |
 |---|---|---|
 | 静态 Snapshot | 已注册、已授权能力的短描述目录，以及注册代数和诊断摘要 | 可跨轮缓存；权限、注册或平台变化时失效 |
-| 动态工具 | Runtime 根据声明得到的工具名 | 声明后下一轮注入；RAG 未来只负责推荐优先级 |
+| 动态工具 | Runtime 根据 Skill / canonical history 得到的工具能力 | 追加后跨 round/run 复用；RAG 未来只负责推荐优先级 |
 
-兼容模式下，完整工具 Schema 仍通过 provider 原生 `tools` 参数传递，不拼成普通 Prompt 文本；Phase 5
-固定 Adapter 模式下，完整 Schema 以 canonical `tool-schema` history event 保存，由固定 `call_tool` 使用。
+完整工具 Schema 不再通过动态 provider 原生 `tools` 集合传递；以 canonical `tool-schema` history event 保存，
+由固定 `call_tool` 使用。
 Skill 正文不属于候选集合，只能通过 `use_skill` 等明确加载路径进入动态上下文。
 
 ### 2.6 Snapshot / tail / history 分层
@@ -492,28 +492,24 @@ Skill 文件名负责 `slug`，frontmatter 负责注册 metadata，正文负责�
 
 `capabilities/selector.py` 只作为 RAG 结果适配层，负责把推荐结果排在授权工具全集前面，不复制 RAG 的分词、BM25 或 Embedding 实现，也不执行候选裁剪。
 
-### FR-REG-6：按需注入完整工具 Schema（🟡 现有链路完成，固定 Adapter 目标待 Phase 5）
+### FR-REG-6：按需注入完整工具 Schema（✅ 固定 Adapter 已完成）
 
-当前兼容链路是：首轮只注入工具简介目录和固定的 `declare_tools` Schema。模型声明本轮需要的工具后，Runtime
-执行权限/注册校验，并在下一轮 provider 请求中注入声明工具的完整 Schema。该链路已经可用，但会因为动态修改
-provider 原生 `tools` 集合而造成声明后的 Cache 断点变化。
-
-Phase 5 将升级为固定 Adapter Tool：业务工具 Schema 作为 canonical `tool-schema` event 追加到 Session
-history，provider 每轮只注册固定的 `call_tool`、`use_skill`、`ask_user`，不再把业务工具 Schema 动态加入原生
-`tools` 集合。
+当前链路是固定 Adapter Tool：首轮只注入工具简介目录和固定的 `call_tool`、`use_skill`、`ask_user` Schema。
+业务工具 Schema 作为 canonical `tool-schema` event 追加到 Session history，provider 每轮只注册固定入口，
+不再动态修改原生 `tools` 集合。
 
 RAG 不属于这条链路的前置条件；未来只需把 RAG 推荐结果作为声明前的优先提示，不改变工具
 可见目录、工具 handler、确认门或 history 协议。
 
-现有兼容模式的 Agent Loop 仍接收动态候选工具的完整 provider Schema：
+当前 Agent Loop 的固定 Adapter 路径：
 
 ```text
 静态 Snapshot：短描述目录
         ↓
-Capability RAG 推荐 image_search、web_search 优先考虑（不隐藏其它授权工具）
+Capability selector / 未来 RAG 只提供能力目录排序建议
         ↓
 动态上下文：仅由明确的 `use_skill` 加载 Skill 正文和临时说明
-Provider tools 参数：这两个工具的完整 Schema
+Provider tools 参数：固定 Adapter 的完整 Schema
         ↓
 模型生成 tool call
   ↓
@@ -536,17 +532,17 @@ Runtime 从 ToolRegistry 取 canonical 定义并校验执行
 
 要求：
 
-- 候选 Schema 使用 ToolRegistry adapter 复用当前 `SkillRegistry.openai_schemas()` / `anthropic_schemas()` 的 provider 格式；迁移完成后再把 Schema 序列化职责移入 ToolRegistry，不复制实现。
+- canonical Schema 使用 ToolRegistry 生成，provider adapter 只负责把 canonical history 渲染成目标格式；不复制 Schema 定义。
 - 不改变 `dispatch()` 的 schema 校验、权限、确认门和事务边界。
-- 兼容模式下，如果模型请求了尚未声明的已注册工具，仍由 `declare_tools` 在下一轮注入其 Schema；Phase 5
-  改为追加 canonical `tool-schema`，由固定 `call_tool` 执行，不依赖 RAG 推荐结果。
+- 如果模型请求了已加载 Skill 中的业务工具，由固定 `call_tool` 执行；未加载 Skill 时先调用 `use_skill`，
+  再追加对应 canonical `tool-schema`，不依赖动态 provider tools。
 - 如果模型传入了不存在的工具名，继续返回现有未知工具错误。
 - Schema 缓存按 `tool name + api_format` 计算 digest，避免每轮重复序列化。
 
-兼容模式下，工具声明的生命周期以“单次模型请求”为单位；Phase 5 改为 Session history 可复用的 append-only 生命周期：
+工具 Schema 的生命周期是 Session history 可复用的 append-only 生命周期：
 
-- 当前兼容模式每次调用模型前都可重新计算当前请求的推荐顺序和已声明工具；固定 Adapter 模式不重新修改
-  provider tools，只在 history 中追加尚未存在的 Schema 版本。
+- selector / 未来 RAG 只影响能力目录排序；固定 Adapter 模式不重新修改 provider tools，只在 history 中追加尚未存在
+  的 Schema 版本。
 - Skill 首次调用或工具结果暴露出新需求时，追加对应 `skill-schema`/`tool-schema` event；后续 Run 通过 history
   复用，不重复注入。
 - 权限、平台或 Schema 版本发生变化时，追加新的 canonical event；旧 event 保留用于历史重放。
@@ -902,14 +898,14 @@ Phase 6 验收目标：
 - ✅ `LLMRunner` 增加可选 CapabilityToolContext，区分授权快照与 selected tool names。
 - ✅ Anthropic/OpenAI/Ollama 三个 Driver 支持按 selected tool names 更新原生 tools 参数，复用现有 Schema 转换。
 - ✅ Run 内每次模型请求前刷新 selected tool names 和 provider tools 参数。
-- ✅ 兼容模式下 Snapshot 常驻短简介目录；首轮只提供固定 `declare_tools` Schema。
-- ✅ 兼容模式下 Runtime 校验模型声明的工具名，并在下一轮只注入声明工具 Schema；固定 Adapter Tool 迁移归 Phase 5。
+- ✅ Snapshot 常驻短简介目录；首轮只提供固定 `call_tool`、`use_skill`、`ask_user` Schema。
+- ✅ Runtime 通过固定 Adapter 校验工具名和参数；业务 Schema 通过 canonical history 复用。
 - ✅ 工具候选 tail 的 RAG 推荐、排序和去重仍后置到 Phase 6，不影响 Phase 5 的固定 Adapter Tool 链路。
 - ✅ 保留 Skill 正文的显式 `use_skill` 延迟加载路径，本轮注册改动不复制正文。
 - ✅ 未加载工具不进入当前 provider tools；`dispatch()` 继续按全局 registry 执行权限、Schema、确认门。
-- ✅ 提供完整 Schema emergency switch，异常时可恢复原始全量工具路径。
+- ✅ 已移除全量 Schema emergency switch，避免运行时回退到旧注入路径。
 
-完成标准：兼容模式首轮不注入业务工具完整 Schema；声明后只注入已授权且已注册的工具 Schema；固定 Adapter Tool 与 canonical history 目标归 Phase 5 验收。
+完成标准：首轮不注入业务工具完整 Schema；Skill 命中后通过 canonical history 追加已授权且已注册的工具 Schema；固定 Adapter Tool 与 canonical history 共同验收。
 
 ### Phase 4：迁移、观测与稳定化（基础稳定化完成）
 
@@ -924,7 +920,7 @@ Phase 6 验收目标：
 
 ### Phase 5：固定 Adapter Tool 与 canonical history（新增主实施阶段）
 
-**当前状态：✅ 已完成（2026-08-23）。** 正常能力注入路径已经切换到固定 Adapter；兼容模式仍作为明确的 emergency switch 保留。
+**当前状态：✅ 已完成（2026-08-23）。** 能力注入路径已经统一为固定 Adapter；旧声明和全量 Schema 回退路径已清理。
 
 - ✅ 定义 provider-neutral 的 Schema event 与工具发现 canonical 类型，统一存入 `content_json`。
 - ✅ 新增稳定的 `call_tool` Adapter Tool；正常 Provider 请求只注册 `call_tool`、`use_skill`、`ask_user`。
@@ -936,7 +932,7 @@ Phase 6 验收目标：
 - ✅ 工具历史按 canonical 事件持久化，Provider wire format 只在 adapter 边界生成。
 - ✅ 保留现有 tool-call/tool-result 原子历史和 compaction/replay 回归；新增 canonical event、跨 Provider 和固定入口测试。
 - ✅ 固定入口前缀不随业务 Schema 变化；完整 Schema、参数和正文不写入可见诊断日志。
-- ✅ 兼容模式保留为明确的 emergency switch；正常路径不再调用动态 `update_tools()`。
+- ✅ 正常路径不调用动态 `update_tools()`；业务 Schema 通过 canonical history 追加并复用。
 
 当前不需要新增数据库迁移：优先复用现有 `ConversationMessage.content_json` 保存 canonical history。只有确认该字段无法承载 Schema event、版本、digest 和重放所需信息时，才另行增加 migration；禁止为了 Phase 5 预先新增专用工具历史表。
 

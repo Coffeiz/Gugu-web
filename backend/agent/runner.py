@@ -37,12 +37,7 @@ _bg_tasks: set = set()
 
 
 def _capability_context(tool_names, settings):
-    """按需创建能力上下文；默认关闭，避免 RAG 接入前改变工具可见性。"""
-    agent_settings = getattr(settings, "agent", None)
-    if not getattr(agent_settings, "capability_injection_enabled", False):
-        return None
-    if getattr(agent_settings, "capability_force_full_schema", False):
-        return None
+    """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
     from agent.capabilities.injector import build_fixed_adapter_context
     return build_fixed_adapter_context(tool_names)
 

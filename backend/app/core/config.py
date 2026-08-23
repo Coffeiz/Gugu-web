@@ -145,8 +145,6 @@ class AIPresets(BaseModel):
 class AgentBehaviorSettings(BaseModel):
     # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
     shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
-    capability_injection_enabled: bool = Field(True, description="是否启用简介目录与两阶段工具声明（关闭后恢复全量工具 Schema）")
-    capability_force_full_schema: bool = Field(False, description="按需注入异常时强制恢复全量工具 Schema（紧急开关）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")

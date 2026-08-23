@@ -24,6 +24,91 @@ _CANONICAL_EVENT_TYPES = frozenset({
 })
 
 
+def _tool_result_is_error(block: dict[str, Any]) -> bool:
+    """从 provider-neutral 结果中判断失败，不读取或记录结果正文。"""
+    if "is_error" in block:
+        return bool(block["is_error"])
+    content = block.get("content", "")
+    values = content if isinstance(content, list) else [content]
+    for value in values:
+        if isinstance(value, dict) and value.get("error"):
+            return True
+        if isinstance(value, str):
+            try:
+                payload = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, dict) and payload.get("error"):
+                return True
+    return False
+
+
+@dataclass
+class ToolCall:
+    """Provider-neutral 的工具调用。
+
+    ``input`` 统一采用 Anthropic 侧更直观的命名；写入 canonical history 时
+    转成稳定的 ``arguments`` 字段，provider adapter 再负责渲染成各自格式。
+    """
+
+    id: str
+    name: str
+    input: Any
+
+    @property
+    def arguments(self) -> Any:
+        """兼容 OpenAI 语义的只读别名，避免调用方重复转换字段。"""
+        return self.input
+
+    @classmethod
+    def from_block(cls, block: dict[str, Any]) -> "ToolCall":
+        value = block.get("arguments", block.get("input", {}))
+        return cls(
+            id=str(block.get("id") or block.get("tool_call_id") or block.get("tool_use_id") or "tool-call"),
+            name=str(block.get("name") or "unknown_tool"),
+            input=value if isinstance(value, (dict, list, str)) else {},
+        )
+
+    def to_block(self) -> dict[str, Any]:
+        return {
+            "type": "tool_call",
+            "id": self.id,
+            "name": self.name,
+            "arguments": self.input,
+        }
+
+
+@dataclass
+class ToolResult:
+    """Provider-neutral 的工具结果，保留错误状态供 adapter 和 UI 判断。"""
+
+    tool_call_id: str
+    content: Any
+    is_error: bool = False
+    tool_name: str | None = None
+
+    @classmethod
+    def from_block(cls, block: dict[str, Any]) -> "ToolResult":
+        return cls(
+            tool_call_id=str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
+            content=block.get("content", ""),
+            is_error=_tool_result_is_error(block),
+            tool_name=str(block["tool_name"]) if block.get("tool_name") else None,
+        )
+
+    def to_block(self) -> dict[str, Any]:
+        block: dict[str, Any] = {
+            "type": "tool_result",
+            "tool_call_id": self.tool_call_id,
+            "content": self.content,
+        }
+        if self.is_error:
+            block["is_error"] = True
+        if self.tool_name:
+            block["tool_name"] = self.tool_name
+        return block
+
+
 def canonical_event_stats(messages: list[dict]) -> dict[str, Any]:
     """汇总 canonical history 的脱敏统计，不返回工具参数或正文。"""
     by_type: dict[str, int] = {}

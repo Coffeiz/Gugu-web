@@ -2,12 +2,15 @@ from types import SimpleNamespace
 
 from agent.context.canonical_tool_history import (
     SkillSchemaEvent,
+    ToolCall,
+    ToolResult,
     ToolSchemaEvent,
     append_event,
     canonical_event_stats,
     render_events_for_provider,
     schema_digest,
 )
+from agent.loop_drivers import NormalizedToolCall
 from agent.context.history import build_history_parts, canonicalize_tool_messages
 
 
@@ -67,3 +70,38 @@ def test_canonical_event_stats_are_aggregated_without_exposing_payloads():
         "by_type": {"skill-schema": 1, "tool-schema": 1, "tool_result": 1},
         "schema_digests": ["abc123"],
     }
+
+
+def test_tool_dataclasses_round_trip_provider_neutral_blocks():
+    call = ToolCall("call-1", "weather", {"city": "南京"})
+    result = ToolResult("call-1", {"temperature": 26}, tool_name="weather")
+
+    assert call.arguments == call.input
+    assert call.to_block() == {
+        "type": "tool_call",
+        "id": "call-1",
+        "name": "weather",
+        "arguments": {"city": "南京"},
+    }
+    assert result.to_block() == {
+        "type": "tool_result",
+        "tool_call_id": "call-1",
+        "content": {"temperature": 26},
+        "tool_name": "weather",
+    }
+
+    assert ToolCall.from_block({
+        "type": "tool_use", "id": "call-1", "name": "weather",
+        "input": {"city": "南京"},
+    }) == call
+    assert ToolResult.from_block({
+        "type": "tool_result", "tool_use_id": "call-1",
+        "content": {"temperature": 26}, "tool_name": "weather",
+    }) == result
+
+
+def test_normalized_tool_call_reuses_canonical_tool_call_fields():
+    call = NormalizedToolCall("call-1", "weather", {"city": "南京"}, parse_error=True)
+    assert isinstance(call, ToolCall)
+    assert call.arguments == {"city": "南京"}
+    assert call.parse_error is True
