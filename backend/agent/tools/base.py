@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextvars import ContextVar
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
@@ -18,6 +19,20 @@ from agent.tools.tool_contract import SchemaError, build_validator, invalid_inpu
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
 _traj_log = logging.getLogger("agent.traj")
 _log = logging.getLogger("agent.tools")
+_dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
+
+
+def set_dispatch_session_id(session_id: int | None):
+    """为当前 Agent 工具执行上下文绑定真实会话 ID。"""
+    return _dispatch_session_id.set(session_id)
+
+
+def reset_dispatch_session_id(token) -> None:
+    _dispatch_session_id.reset(token)
+
+
+def current_dispatch_session_id() -> int | None:
+    return _dispatch_session_id.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；
@@ -327,6 +342,14 @@ class SkillRegistry:
             _log_traj(name, user_id, args, False, "未知工具", t0)
             return json.dumps({"error": f"未知工具: {name}"}), None
 
+        # Shell 的会话身份由 Agent 执行器提供，不能信任模型自行填写的 session_id。
+        # 兼容旧模型残留的同名参数：校验前丢弃，执行时统一使用真实会话 ID。
+        public_args = args
+        if name == "shell" and isinstance(args, dict) and "session_id" in args:
+            public_args = dict(args)
+            public_args.pop("session_id", None)
+            args = public_args
+
         # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再保留现有 ID 弱归一，最后按
         # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
         # 防止“参数根本不能执行，却先对用户说我去做了”或 mutation handler 带错参运行。
@@ -377,7 +400,11 @@ class SkillRegistry:
         # 可见日志只留脱敏摘要 + 异常类型名；外发给模型/用户/轨迹的也只有脱敏版。
         try:
             async with _sess._SessionLocal() as db:
-                result: Any = await tool.handler(db, user_id, args)
+                handler_args = args
+                if name == "shell":
+                    handler_args = dict(args)
+                    handler_args["_session_id"] = current_dispatch_session_id()
+                result: Any = await tool.handler(db, user_id, handler_args)
                 # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
                 # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
                 # 虽然不会修改数据（校验在写入前就 return 了），但 flush 可能留下

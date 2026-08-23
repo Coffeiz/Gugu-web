@@ -590,10 +590,14 @@ backend/agent/rag/
 │   ├── __init__.py
 │   ├── base.py              # SourceAdapter 协议、摘要/分块/版本接口
 │   └── <pilot_source>.py    # 首个试点来源的 adapter，确认来源后命名
+├── chunking.py               # 语义边界、atomic/expandable chunk 和稳定 chunk_id
+├── scope.py                  # scope 规范化与查询前过滤，不替代 ownership 校验
 ├── lexical.py               # 生产 BM25、中文分词、领域词库和停用词边界
-├── index.py                 # upsert/invalidate、版本去重和可重建索引访问
+├── storage.py               # IndexDocument/chunk 元数据持久化或可重建索引存储适配
+├── index.py                  # upsert/invalidate、版本去重和索引生命周期
 ├── retriever.py             # scope-first 的 BM25/Embedding 混合召回
-├── service.py               # 查询编排、预算限制、去重和引用组装
+├── service.py               # 查询编排、候选限制、去重和引用组装
+├── injection.py             # 作为当前消息 history 的 RAG 注入、整体上下文去重
 └── diagnostics.py           # 只记录脱敏召回指标，不记录正文
 ```
 
@@ -603,6 +607,8 @@ backend/agent/rag/
 
 ```text
 backend/agent/rag/service.py               # 统一内部召回服务和结果契约
+backend/agent/rag/chunking.py              # 来源无关的切片边界和 chunk 身份
+backend/agent/rag/injection.py             # 当前消息 history 注入与 content_hash 去重
 backend/agent/tasks/rag_index.py           # 摘要、分块、upsert/invalidate 的异步任务
 backend/tests/test_rag_models.py           # 文档、scope、版本和引用模型
 backend/tests/test_rag_lexical.py          # 中文/英文/混合词法召回
@@ -631,6 +637,7 @@ backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估�
 | `backend/app/api/v1/search.py`、`backend/app/services/search.py` | 如需复用词法基础设施，只抽公共组件；保留现有全局精确搜索 API | P2/P3 |
 | `backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py` | 只补职责说明或共享结果类型；不改成 RAG 代理 | P3 |
 | `backend/agent/context/builder.py` 或 Agent 编排入口 | 仅在确认自动召回策略后接入；首版显式工具不应默认污染每轮上下文 | P3/P4 |
+| `backend/agent/context/message_assembly.py` 或独立 history assembler | 只接收已经过权限过滤和预算限制的 RAG history block；不实现召回和索引 | P2/P3 |
 | `docs/product/PRD/PRD-MEM-1-记忆召回工具与混合检索.md` | 试点选 memory 时同步边界、复用 embedding 和迁移路径 | P0/P1 |
 | `docs/product/PRD/PRD-LLM-9-工具与Skill注册制及按需注入.md` | Capability RAG 接入后补 selector adapter 和诊断契约 | P3 |
 | `docs/product/PRD/report/RAG-意图与召回压测报告.md` | 增加真实试点的脱敏质量/延迟结果，不覆盖离线基线 | P3/P4 |

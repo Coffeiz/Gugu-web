@@ -21,7 +21,7 @@ async def test_immediate_stream_emits_one_complete_token():
 def test_help_lists_all_commands():
     result = router.decide("/help", "idle")
     assert result["action"] == "reply"
-    for command in ("/stop", "/status", "/compact", "/memory", "/forget", "/workspace", "/shell"):
+    for command in ("/stop", "/status", "/compact", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
 
 
@@ -39,6 +39,10 @@ def test_router_recognizes_group_command_after_bot_mention(text):
 
 def test_router_does_not_treat_mention_in_normal_text_as_command():
     assert router.decide("@小北 这次不用 /compact 了", "idle", allow_leading_mention=True)["action"] == "agent"
+
+
+def test_chinese_slash_command_names_are_not_supported():
+    assert router.decide("/状态", "idle")["action"] == "agent"
 
 
 def test_router_does_not_strip_mentions_without_group_context():
@@ -59,7 +63,7 @@ async def test_compact_without_session_is_deterministic():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", [
-    "/compact help", "/memory help", "/forget help", "/workspace help", "/shell help",
+    "/compact help", "/memory help", "/forget help", "/workspace help",
 ])
 async def test_each_command_supports_help(text):
     result = await commands.handle("user-1", text)

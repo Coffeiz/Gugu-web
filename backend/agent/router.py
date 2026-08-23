@@ -67,10 +67,9 @@ def _is_emotion(t: str) -> bool:
 # body（去掉前导 /）小写后查表 → 命令名；非命令（如粘贴的路径 /Users/..）返回 None 走正常对话
 _CMD = {
     "stop": "stop", "s": "stop", "cancel": "stop", "x": "stop",
-    "停": "stop", "停止": "stop", "取消": "stop", "停下": "stop",
-    "status": "status", "状态": "status", "进度": "status",
-    "compact": "compact", "压缩": "compact", "整理上下文": "compact",
-    "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
+    "status": "status",
+    "compact": "compact",
+    "help": "help", "h": "help",
 }
 def parse_command_parts(text: str, *, allow_leading_mention: bool = False) -> tuple[str | None, str]:
     """识别斜杠命令及其参数；半/全角斜杠都认。非命令返回 ``(None, "")``。"""

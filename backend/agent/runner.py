@@ -53,22 +53,16 @@ async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[st
 
 
 async def _shell_context(db, user_id, session_id: int) -> str:
-    """给模型提供 Shell 工具所需的会话标识和范围，不暴露宿主机真实路径。"""
+    """给模型提供 Shell 工具所需的派生范围，不暴露宿主机真实路径。"""
     from app.services.workspaces import describe_session, get_session_shell_scope
     workspace = await describe_session(db, user_id, session_id)
     scope = await get_session_shell_scope(db, user_id, session_id)
-    if scope == "off":
-        return (
-            "\n\n## Shell 状态\n"
-            "- 当前会话未选择 Shell 范围，不能调用 shell。\n"
-            "- 可提示用户使用 /shell workspace、/shell personal 或 /shell off 选择范围。"
-        )
     return (
         "\n\n## Shell 状态\n"
-        f"- 当前会话 ID：{session_id}\n"
         f"- 当前范围：{scope}\n"
         + (f"- 当前工作区：{workspace.name}\n" if workspace else "")
-        + "- cwd 只能使用当前范围内的相对路径；不要索要或猜测宿主机绝对路径。"
+        + "- 范围由当前会话是否绑定工作区自动决定；cwd 只能使用当前范围内的相对路径；"
+        "不要索要或猜测宿主机绝对路径。"
     )
 
 

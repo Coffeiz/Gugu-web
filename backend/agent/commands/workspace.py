@@ -16,7 +16,7 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
     async with session_shell_lock(session_id):
         async with db_session._SessionLocal() as db:
             value = (arg or "").strip()
-            if value.lower() in {"list", "列表"}:
+            if value.lower() == "list":
                 workspaces = await list_workspaces(db, user_id)
                 if not workspaces:
                     return "当前没有可绑定的工作区，请先在文件库创建工作区。"
@@ -27,11 +27,11 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
                     lines.append(f"- {workspace.id}：{workspace.name}{marker}")
                 lines.append("使用 /workspace <ID> 绑定，例如 /workspace 12。")
                 return "\n".join(lines)
-            if value.lower() in {"", "show", "查看"}:
+            if value.lower() in {"", "show"}:
                 workspace = await describe_session(db, user_id, session_id)
                 return (f"当前工作区：{workspace.name}（{workspace.id}）" if workspace
                         else "当前会话未绑定工作区。请在文件库创建/选择工作区后使用 /workspace <ID> 绑定。")
-            if value.lower() in {"off", "none", "unbind", "解除", "取消"}:
+            if value.lower() in {"off", "none", "unbind", "unlink"}:
                 try:
                     await bind_session(db, user_id, session_id, None)
                 except LookupError:
@@ -41,7 +41,7 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
             try:
                 workspace_id = int(value)
             except ValueError:
-                return "用法：/workspace 查看，/workspace <工作区ID> 绑定，/workspace 解除。"
+                return "用法：/workspace 查看，/workspace list 列出，/workspace <ID> 绑定，/workspace unlink 解除。"
             if await get_workspace(db, user_id, workspace_id) is None:
                 return "这个工作区不存在，或不属于当前用户。"
             try:

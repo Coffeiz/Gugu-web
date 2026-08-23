@@ -11,7 +11,6 @@ from app.services.workspaces import (
     describe_session,
     list_workspaces,
     get_session_shell_scope,
-    set_session_shell_scope,
     update_workspace,
 )
 
@@ -47,16 +46,11 @@ async def test_workspace_binding_is_owned_and_can_be_cleared(db, user_a, user_b)
 
 
 @pytest.mark.asyncio
-async def test_session_shell_scope_is_explicit_and_personal_does_not_need_workspace(db, user_a):
+async def test_session_shell_scope_is_derived_from_workspace_binding(db, user_a):
     session = ConversationSession(user_id=user_a.id, title="个人 Agent", source="web")
     db.add(session)
     await db.flush()
-    assert await get_session_shell_scope(db, user_a.id, session.id) == "off"
-    await set_session_shell_scope(db, user_a.id, session.id, "personal")
-    await db.commit()
-    assert await get_session_shell_scope(db, user_a.id, session.id) == "personal"
-    with pytest.raises(ValueError, match="工作区"):
-        await set_session_shell_scope(db, user_a.id, session.id, "workspace")
+    assert await get_session_shell_scope(db, user_a.id, session.id) == "system"
 
 
 @pytest.mark.asyncio

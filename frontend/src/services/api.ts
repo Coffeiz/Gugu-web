@@ -424,7 +424,6 @@ export const workspacesApi = {
   current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
   bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
-  setShellScope: (sessionId: number, scope: 'off' | 'workspace' | 'personal' | 'system') => request('PUT', `/workspaces/session/${sessionId}/shell-scope`, { scope }),
 }
 
 export const notificationsApi = {

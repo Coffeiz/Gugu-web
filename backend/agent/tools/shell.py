@@ -20,7 +20,7 @@ def _audit(**fields) -> None:
 
 
 async def _shell(db, user_id, args: dict):
-    session_id = args.get("session_id")
+    session_id = args.get("_session_id")
     started = time.monotonic()
     risk = "unknown"
     workspace_id = None
@@ -59,7 +59,7 @@ async def _shell(db, user_id, args: dict):
 
 async def _run_shell(db, user_id, args: dict):
     command = str(args.get("command") or "").strip()
-    session_id = args.get("session_id")
+    session_id = args.get("_session_id")
     decision = await evaluate(
         db, user_id, session_id, command, confirm=bool(args.get("confirm")),
     )
@@ -115,22 +115,22 @@ class ShellSkill(BaseSkill):
             name="shell",
             label="执行 Shell 命令",
             description=(
-                "在当前会话选定的 Shell 范围内执行一条受控命令。范围可能是工作区、个人文件目录或系统；"
+                "在当前会话自动匹配的 Shell 范围内执行一条受控命令。绑定工作区时使用工作区；"
+                "未绑定工作区时使用系统范围；"
                 "只能使用相对 cwd，不支持管道、重定向或命令替换。危险命令会先要求用户确认；"
-                "没有可用 Shell 范围时不要调用。session_id 必须使用系统提示提供的当前会话 ID。"
+                "没有可用 Shell 权限时不要调用。会话身份由系统注入，不需要传 session_id。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "要执行的单条命令，不要拼接管道或重定向"},
-                    "session_id": {"type": "integer", "description": "当前会话 ID"},
                     "cwd": {"type": "string", "description": "workspace 内相对目录，默认 ."},
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300, "description": "超时时间，秒，默认 30"},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "输出字符上限，默认 12000"},
                     "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
                     "confirm_token": {"type": "string", "description": "危险命令确认凭证"},
                 },
-                "required": ["command", "session_id"],
+                "required": ["command"],
             },
             handler=_shell,
             mutates=True,

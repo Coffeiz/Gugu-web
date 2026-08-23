@@ -94,7 +94,7 @@ async def evaluate(
     *,
     confirm: bool = False,
 ) -> ShellDecision:
-    """计算最终 Shell 权限；未显式选择 scope 时拒绝，不把空工作区当作全局权限。"""
+    """计算最终 Shell 权限；范围由会话绑定状态派生。"""
     risk = classify_command(command)
     if not get_settings().agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
@@ -103,12 +103,9 @@ async def evaluate(
     session = await db.get(ConversationSession, session_id)
     if not session or session.user_id != user_id:
         return ShellDecision(False, "会话不存在", risk)
-    try:
-        scope = ShellScope(getattr(session, "shell_scope", "off") or "off")
-    except ValueError:
-        return ShellDecision(False, "当前会话的 Shell 范围无效", risk)
-    if scope is ShellScope.OFF and session.workspace_id is not None:
-        scope = ShellScope.WORKSPACE
+    # Shell 范围只由会话是否绑定工作区派生。旧 shell_scope 字段保留用于迁移兼容，
+    # 但不再参与授权，避免命令状态与会话绑定状态分叉。
+    scope = ShellScope.WORKSPACE if session.workspace_id is not None else ShellScope.SYSTEM
     workspace = None
     if scope is ShellScope.WORKSPACE:
         if not getattr(get_settings().agent, "shell_workspace_enabled", True):
@@ -120,18 +117,11 @@ async def evaluate(
         workspace = await db.get(Workspace, session.workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
-    elif scope is ShellScope.PERSONAL:
-        if not getattr(get_settings().agent, "shell_personal_enabled", False):
-            return ShellDecision(False, "管理员未开启个人 Shell", risk, scope=scope)
-        if not await effective_shell_personal_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启个人 Shell", risk, scope=scope)
     elif scope is ShellScope.SYSTEM:
         if not getattr(get_settings().agent, "shell_system_enabled", False):
             return ShellDecision(False, "管理员未开启系统 Shell", risk, scope=scope)
         if not await effective_shell_system_enabled(db, user_id):
             return ShellDecision(False, "用户未开启系统 Shell", risk, scope=scope)
-    else:
-        return ShellDecision(False, "当前会话未选择 Shell 范围", risk, scope=scope)
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
             return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)

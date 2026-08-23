@@ -152,20 +152,6 @@ async def current_workspace(
     if row is None:
         raise HTTPException(status_code=404, detail="会话不存在")
     workspace = await get_workspace(db, user.id, row.workspace_id) if row.workspace_id else None
-    return {"sessionId": session_id, "shellScope": row.shell_scope or ("workspace" if workspace else "off"), "workspace": _response(workspace) if workspace else None}
-
-
-@router.put("/session/{session_id}/shell-scope")
-async def set_shell_scope(
-    session_id: int, body: dict,
-    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db),
-):
-    from app.services.workspaces import set_session_shell_scope
-    try:
-        row = await set_session_shell_scope(db, user.id, session_id, str(body.get("scope") or "off"))
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await db.commit()
-    return {"sessionId": row.id, "shellScope": row.shell_scope}
+    from app.services.workspaces import get_session_shell_scope
+    scope = await get_session_shell_scope(db, user.id, session_id)
+    return {"sessionId": session_id, "shellScope": scope, "workspace": _response(workspace) if workspace else None}

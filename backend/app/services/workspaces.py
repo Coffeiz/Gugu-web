@@ -1,7 +1,6 @@
 """工作区归属与会话绑定服务。
 
-这里只负责声明、归属和绑定；Shell 执行器及沙盒留在后续阶段，避免把未授权能力
-通过工作区表间接打开。
+这里只负责声明、归属和绑定；Shell 范围由会话绑定状态派生，执行器及沙盒留在执行层。
 """
 from __future__ import annotations
 
@@ -96,13 +95,11 @@ async def bind_session(db: AsyncSession, user_id, session_id: int, workspace_id:
         raise LookupError("会话不存在")
     if workspace_id is None:
         session.workspace_id = None
-        session.shell_scope = "off"
     else:
         workspace = await get_workspace(db, user_id, workspace_id)
         if workspace is None or not workspace.enabled:
             raise LookupError("工作区不存在或已停用")
         session.workspace_id = workspace.id
-        session.shell_scope = "workspace"
     await db.flush()
     return session
 
@@ -146,25 +143,11 @@ async def describe_session(db: AsyncSession, user_id, session_id: int) -> Worksp
 
 
 async def get_session_shell_scope(db: AsyncSession, user_id, session_id: int) -> str:
+    """根据会话绑定状态派生 Shell 范围，不读取可手动漂移的旧字段。"""
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None:
         raise LookupError("会话不存在")
-    if session.shell_scope == "off" and session.workspace_id is not None:
-        return "workspace"
-    return session.shell_scope or "off"
-
-
-async def set_session_shell_scope(db: AsyncSession, user_id, session_id: int, scope: str) -> ConversationSession:
-    if scope not in {"off", "workspace", "personal", "system"}:
-        raise ValueError("Shell 范围无效")
-    session = await get_owned(db, ConversationSession, session_id, user_id)
-    if session is None:
-        raise LookupError("会话不存在")
-    if scope == "workspace" and session.workspace_id is None:
-        raise ValueError("当前会话未绑定工作区")
-    session.shell_scope = scope
-    await db.flush()
-    return session
+    return "workspace" if session.workspace_id is not None else "system"
 
 
 async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:

@@ -727,11 +727,21 @@ class LLMRunner:
                         artifact = None
                     else:
                         if adapter_target is not None:
-                            res, artifact = await registry.dispatch(
-                                user_id, adapter_target, tc.input.get("arguments", {})
-                            )
+                            from agent.tools.base import set_dispatch_session_id, reset_dispatch_session_id
+                            _dispatch_token = set_dispatch_session_id(session_id)
+                            try:
+                                res, artifact = await registry.dispatch(
+                                    user_id, adapter_target, tc.input.get("arguments", {})
+                                )
+                            finally:
+                                reset_dispatch_session_id(_dispatch_token)
                         else:
-                            res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                            from agent.tools.base import set_dispatch_session_id, reset_dispatch_session_id
+                            _dispatch_token = set_dispatch_session_id(session_id)
+                            try:
+                                res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                            finally:
+                                reset_dispatch_session_id(_dispatch_token)
                         if skill_slug and _is_successful_tool_result(res):
                             loaded_skill_slugs.add(skill_slug)
                     if tc.name == "ask_user":

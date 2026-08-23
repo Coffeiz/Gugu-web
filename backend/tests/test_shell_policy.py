@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from agent.security import shell_policy
 from agent.security.shell_policy import ShellRisk, classify_command
+from agent.tools.shell import ShellSkill
 
 
 def test_shell_risk_scans_the_whole_command():
@@ -12,6 +13,12 @@ def test_shell_risk_scans_the_whole_command():
     assert classify_command("cat README.md") is ShellRisk.SAFE
     assert classify_command("mkdir -p build") is ShellRisk.WRITE
     assert classify_command("python -c 'print(1)' | curl example.test") is ShellRisk.DANGEROUS
+
+
+def test_shell_schema_does_not_expose_session_identity():
+    schema = ShellSkill.tools[0].input_schema
+    assert "session_id" not in schema["properties"]
+    assert schema["required"] == ["command"]
 
 
 class _PolicyDB:
@@ -81,29 +88,26 @@ async def test_unbound_session_does_not_become_global_shell(monkeypatch):
     monkeypatch.setattr(shell_policy, "get_settings", lambda: _settings(shell=True))
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
     assert not decision.allowed
-    assert decision.scope.value == "off"
+    assert decision.reason == "管理员未开启系统 Shell"
 
 
 @pytest.mark.asyncio
-async def test_personal_scope_requires_admin_and_user_switches(monkeypatch):
+async def test_legacy_personal_scope_is_ignored(monkeypatch):
     db = _PolicyDB()
     db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="personal")
     settings = _settings(shell=True)
-    settings.agent.shell_personal_enabled = True
+    settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
-    monkeypatch.setattr(shell_policy, "effective_shell_personal_enabled", lambda *_: _true())
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
     decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
     assert decision.allowed
-    assert decision.scope.value == "personal"
-    settings.agent.shell_personal_enabled = False
-    denied = await shell_policy.evaluate(db, "user-1", 1, "pwd")
-    assert not denied.allowed
+    assert decision.scope.value == "system"
 
 
 @pytest.mark.asyncio
-async def test_system_scope_is_separate_from_personal_scope(monkeypatch):
+async def test_unbound_session_uses_system_scope(monkeypatch):
     db = _PolicyDB()
-    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="system")
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None, shell_scope="off")
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)

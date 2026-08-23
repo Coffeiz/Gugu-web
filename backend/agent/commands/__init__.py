@@ -1,6 +1,6 @@
 """斜杠控制命令的统一入口。
 
-具体命令按职责拆在 ``command_*.py`` 中；本文件只负责解析、别名映射和分发。
+具体命令按职责拆在本目录的 ``*.py`` 文件中；本文件只负责解析、别名映射和分发。
 这些命令在 Web/IM 两条入口都短路执行，不触发主 Agent 或反思。
 """
 from __future__ import annotations
@@ -8,20 +8,17 @@ from __future__ import annotations
 from agent.commands.compact import handle as handle_compact
 from agent.commands.help import all_help_text, command_help, is_help_arg
 from agent.commands.memory import forget, show_memory
-from agent.commands.shell import handle as handle_shell
 from agent.commands.text import normalize_command_text
 from agent.commands.workspace import handle as handle_workspace
 
 _PREFIX = ("/", "／")
 
 _COMMANDS: dict[str, str] = {
-    "memory": "memory", "mem": "memory", "记忆": "memory", "记得": "memory",
-    "你记得什么": "memory", "记得啥": "memory",
-    "forget": "forget", "忘记": "forget", "忘掉": "forget", "忘了": "forget",
-    "compact": "compact", "压缩": "compact", "整理上下文": "compact",
-    "workspace": "workspace", "工作区": "workspace", "工作空间": "workspace",
-    "shell": "shell", "命令行": "shell", "终端": "shell",
-    "help": "help", "h": "help", "帮助": "help", "菜单": "help", "命令": "help",
+    "memory": "memory", "mem": "memory",
+    "forget": "forget",
+    "compact": "compact",
+    "workspace": "workspace",
+    "help": "help", "h": "help",
 }
 
 
@@ -54,6 +51,4 @@ async def handle(user_id, text: str, *, session_id: int | None = None,
         return await handle_compact(user_id, session_id, arg)
     if name == "workspace":
         return await handle_workspace(user_id, session_id, arg)
-    if name == "shell":
-        return await handle_shell(user_id, session_id, arg)
     return None

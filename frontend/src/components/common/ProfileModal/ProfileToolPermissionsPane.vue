@@ -13,7 +13,7 @@
       </template>
     </div>
     <div class="pm-sep"></div>
-    <div class="pm-section"><div class="pm-section-label">说明</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-hint">开启个人开关不会自动执行命令。需要在当前会话使用 /shell personal、/shell workspace 或 /shell system 选择范围；/shell off 可关闭。</span></div></div></div>
+    <div class="pm-section"><div class="pm-section-label">说明</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-hint">Shell 范围由当前会话自动决定：绑定工作区时使用工作区，未绑定工作区时使用系统范围。管理员或用户未开放对应权限时，Shell 会被禁止。</span></div></div></div>
   </div>
 </template>
 <script setup lang="ts">
