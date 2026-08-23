@@ -31,7 +31,8 @@ import time
 from app.services.storage import get_storage
 
 _DIR = ".agent"
-DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
+DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
+DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
 DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
 DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
 
@@ -55,7 +56,7 @@ _PATTERN_CONFIRM_STEP      = 0.1
 _PATTERN_MAX_CONF          = 0.97
 
 # ── memory.md 长期记忆向量检索参数 ──
-MEMORY_INJECT_CHARS = 1500   # memory.md 超此字数才走向量挑相关块，否则整块注入（小的没必要检索）
+MEMORY_INJECT_CHARS = 2000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
 MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
 
 
@@ -108,7 +109,8 @@ async def read_memory(user_id, query: str = "") -> dict:
     pattern = render_pattern(raw_patterns, query, query_vec if pattern_over else None, pattern_vec_map)  # 有向量走 cosine，无则词法
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
-    daily   = (await _read(_key(user_id, "daily.md"))).strip()
+    # daily 的落盘内容不能因为上下文预算被删除；这里只限制本轮注入，且 daily 新内容在顶部。
+    daily   = (await _read(_key(user_id, "daily.md"))).strip()[:DAILY_INJECT_CHARS]
     _sum_doc = await _read_summary_doc(user_id)
     summary, summary_ts = _sum_doc["text"], _sum_doc["ts"]
     stance, stance_ts = await read_stance(user_id)
@@ -470,26 +472,34 @@ async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> No
 
 def retrieve_memory_block(memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS) -> str:
     """memory.md 语义检索：超预算 + 有 query 向量 → 按 cosine 挑相关块拼到预算内（保原文顺序）；
-    否则/无向量/覆盖不足 → 原样返回整篇（= 现有行为，零回归）。"""
+    否则/无向量/覆盖不足 → 保留开头预算内容，保证注入不超过硬上限。"""
     memory_text = (memory_text or "").strip()
-    if not query_vec or not vec_map or len(memory_text) <= budget:
+    if len(memory_text) <= budget:
         return memory_text
+    if not query_vec or not vec_map:
+        return memory_text[:budget].rstrip()
     from agent.memory.embedding import cosine
     chunks = _memory_chunks(memory_text)
     # 覆盖不足（多数块没缓存向量，如刚启用还没重嵌）→ 别乱挑，退回整篇
     covered = sum(1 for c in chunks if vec_map.get(_chunk_key(c)))
     if covered < max(1, len(chunks) // 2):
-        return memory_text
+        return memory_text[:budget].rstrip()
     scored = [(cosine(query_vec, vec_map.get(_chunk_key(c)) or []), i, c) for i, c in enumerate(chunks)]
     scored.sort(key=lambda x: -x[0])
     picked, used = [], 0
     for _s, i, c in scored:
-        if picked and used + len(c) > budget:
+        remaining = budget - used
+        if remaining <= 0:
+            break
+        if len(c) > remaining:
+            # 第一块也不能突破硬预算；后续块不再继续拼接。
+            if not picked:
+                picked.append((i, c[:remaining].rstrip()))
             break
         picked.append((i, c))
         used += len(c)
     picked.sort(key=lambda x: x[0])   # 恢复原文顺序，保叙述连贯
-    return "\n\n".join(c for _i, c in picked)
+    return "\n\n".join(c for _i, c in picked)[:budget].rstrip()
 
 
 def _jaccard(a: set, b: set) -> float:

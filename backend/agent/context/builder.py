@@ -301,7 +301,10 @@ def _memory_block(memory: dict, *, include_summary: bool = True) -> str:
     profile = (memory.get("profile") or "").strip()
     pattern = (memory.get("pattern") or "").strip()
     longterm = (memory.get("memory") or "").strip()
-    daily   = (memory.get("daily") or "").strip()
+    # daily 已在 store.read_memory 的注入层截断；这里保留二次边界，避免其他调用方
+    # 直接传入未截断内容时绕过上下文预算。
+    from agent.memory.store import DAILY_INJECT_CHARS
+    daily   = (memory.get("daily") or "").strip()[:DAILY_INJECT_CHARS]
     parts = []
     if summary and include_summary:
         # 时间衰减:summary 越久没更新越不可信，按权重换不同话术（数字内部用、不喂模型）

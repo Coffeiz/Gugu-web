@@ -17,6 +17,7 @@ from sqlalchemy import select
 from app.core import redis as R
 from app.core.tz import now_utc
 from agent.memory._llm import complete_json
+from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import read_scope, read_scope_json, write_scope_file, write_scope_json
 from agent.memory.scopes import MemoryScope
@@ -461,7 +462,10 @@ async def _apply_output(
         summary = str(output.get("summary") or "").strip()
         if summary:
             await write_scope_json(scope, "summary.json", {"text": summary, "ts": now_utc().timestamp()})
-        if len(entries) >= GROUP_DAILY_COMPACT_AT:
+        if should_compact(
+            len(entries), trigger=GROUP_DAILY_COMPACT_AT,
+            keep_recent=GROUP_DAILY_KEEP_RECENT,
+        ):
             try:
                 await _compact_group_daily(scope, entries, current.get("memory") or "", settings)
             except Exception as exc:
@@ -560,9 +564,14 @@ def _merge_pattern(current: Any, incoming: Any) -> list:
 
 
 async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_memory: str, settings) -> None:
-    """把群 daily 压缩进 memory，并保留最近一段原始记录作为可追溯窗口。"""
+    """复用 owner 的固定批次策略压缩群 daily，保留未处理记录作为可追溯窗口。"""
+    recent, batch, remaining = split_batch(
+        entries, keep_recent=GROUP_DAILY_KEEP_RECENT,
+    )
+    if not batch:
+        return
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "im" / "group_compress.md").read_text(encoding="utf-8")
-    daily = _render_daily(entries)
+    daily = _render_daily(batch)
     result = await complete_json(
         prompt,
         f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
@@ -571,7 +580,7 @@ async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_m
         thinking="disabled",
     )
     memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
-    if not memory or not _preserves_group_dates(entries, memory):
+    if not memory or not _preserves_group_dates(batch, memory):
         return
     await write_scope_file(scope, "memory.md", memory + "\n")
-    await write_scope_file(scope, "daily.md", _render_daily(entries[:GROUP_DAILY_KEEP_RECENT]))
+    await write_scope_file(scope, "daily.md", _render_daily(merge_remaining(recent, remaining)))
