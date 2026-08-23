@@ -31,6 +31,7 @@ import Icon from '@/components/common/Icon.vue'
 import type { MindCanvas } from '@/services/api'
 import { createFlipTransaction, createLayoutItems } from '@/interaction/layout/flipCoordinator'
 import { showAppError } from '@/composables/useAppToast'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 const props = defineProps({
   canvases: { type: Array as PropType<MindCanvas[]>, required: true },
@@ -65,7 +66,7 @@ onUpdated(() => {
 })
 
 function open(id: number) { emit('open', id) }
-function remove(canvas: MindCanvas) { if (window.confirm(`删除画布「${canvas.title || '未命名画布'}」？`)) emit('delete', canvas) }
+async function remove(canvas: MindCanvas) { if (await confirmDialog({ title: '删除画布', message: `删除画布「${canvas.title || '未命名画布'}」？`, tone: 'danger', confirmText: '删除画布' })) emit('delete', canvas) }
 function startRename(canvas: MindCanvas) {
   if (savingIds.value.has(canvas.id)) return
   editingId.value = canvas.id

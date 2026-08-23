@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   refresh: null as ((resource?: string) => void) | null,
   showError: vi.fn(),
   showNotice: vi.fn(),
+  confirmDialog: vi.fn(),
 }))
 
 vi.mock('@/services/api', () => ({
@@ -29,6 +30,9 @@ vi.mock('@/composables/useLiveRefresh', () => ({
   useLiveRefresh: (_resource: string, callback: (resource?: string) => void) => {
     mocks.refresh = callback
   },
+}))
+vi.mock('@/composables/useConfirmDialog', () => ({
+  confirmDialog: mocks.confirmDialog,
 }))
 
 import { useScheduledTasks } from '@/views/Schedules/composables/useScheduledTasks'
@@ -78,16 +82,14 @@ describe('useScheduledTasks', () => {
     expect(mocks.run).toHaveBeenCalledWith(7)
     expect(mocks.showNotice).toHaveBeenCalledWith('已发送')
 
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.confirmDialog.mockResolvedValueOnce(true)
     await state.remove(task)
     expect(mocks.remove).toHaveBeenCalledWith(7)
-    vi.unstubAllGlobals()
 
-    vi.stubGlobal('confirm', vi.fn(() => false))
+    mocks.confirmDialog.mockResolvedValueOnce(false)
     mocks.remove.mockClear()
     await state.remove(task)
     expect(mocks.remove).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
 
     mocks.update.mockRejectedValueOnce(new Error('网络失败'))
     await state.toggle(task)
@@ -98,9 +100,8 @@ describe('useScheduledTasks', () => {
     expect(mocks.showError).toHaveBeenCalledWith('执行失败：执行失败')
 
     mocks.remove.mockRejectedValueOnce(new Error('删除失败'))
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.confirmDialog.mockResolvedValueOnce(true)
     await state.remove(task)
     expect(mocks.showError).toHaveBeenCalledWith('删除任务失败：删除失败')
-    vi.unstubAllGlobals()
   })
 })

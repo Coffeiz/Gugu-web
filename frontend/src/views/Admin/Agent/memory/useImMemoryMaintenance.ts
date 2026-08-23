@@ -1,4 +1,5 @@
 import { onUnmounted, reactive } from 'vue'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
 interface PlatformSummary { platform: string; scopes: number; groups: number; members: number; entries: number }
@@ -57,7 +58,7 @@ export function useImMemoryMaintenance(adminStore: AdminStore) {
     } catch (error) { preview.running = false; preview.message = error instanceof Error ? error.message : '启动模型预览失败' }
   }
   async function apply() {
-    if (!confirm('确定整理全部 IM 记忆中尚未反思的消息吗？不会删除已有记忆。')) return
+    if (!await confirmDialog({ title: '整理 IM 记忆', message: '确定整理全部 IM 记忆中尚未反思的消息吗？不会删除已有记忆。', tone: 'warning', confirmText: '开始整理' })) return
     state.applying = true; state.error = ''; state.message = ''
     try {
       const res = await adminStore.authFetch('/api/v1/admin/agent/memory/im-scopes/maintenance/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) })

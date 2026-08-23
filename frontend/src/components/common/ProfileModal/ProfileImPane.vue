@@ -38,6 +38,7 @@ import { optimisticMutation } from '@/utils/optimisticMutation'
 import { beginOptimisticIntent, isOptimisticIntentCurrent, withOptimisticIntent } from '@/utils/optimisticIntent'
 import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
@@ -193,7 +194,7 @@ function togglePrivateStreaming(bot: Bot) {
   const current = botById(bot.id)
   if (current) void updateBotSetting(bot.id, { private_streaming_enabled: current.private_streaming_enabled === false }, '私聊流式设置失败')
 }
-async function removeBot(bot: Bot) { if (!confirm(`删除「${bot.name}」？删除后这个机器人不再连咕咕。`)) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
+async function removeBot(bot: Bot) { if (!await confirmDialog({ title: '删除机器人', message: `删除「${bot.name}」？删除后这个机器人不再连咕咕。`, tone: 'danger', confirmText: '删除' })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
 onMounted(() => { void preferences.fetch(); loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
 onDeactivated(stopPoll)
 onDeactivated(clearCopyFeedback)
@@ -242,7 +243,7 @@ onActivated(resumePoll)
 }
 
 .pm-binding-code-value {
-  font-family: 'SF Mono', 'Consolas', monospace;
+  font-family: var(--font-family-mono);
   font-size: 15px;
   font-weight: 750;
   line-height: 1;

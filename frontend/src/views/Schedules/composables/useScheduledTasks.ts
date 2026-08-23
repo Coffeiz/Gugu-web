@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { scheduledTasksApi } from '@/services/api'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveRefresh } from '@/composables/useLiveRefresh'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 export type ScheduledTask = Record<string, any>
 
@@ -54,7 +55,7 @@ export function useScheduledTasks() {
   }
 
   async function remove(task: ScheduledTask) {
-    if (!confirm(`删除「${task.name}」？`)) return
+    if (!await confirmDialog({ title: '删除定时任务', message: `删除「${task.name}」？`, tone: 'danger', confirmText: '删除' })) return
     try {
       await scheduledTasksApi.delete(task.id)
       await load()

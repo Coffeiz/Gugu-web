@@ -7,6 +7,8 @@
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
     :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
+    :show-new-workspace-button="currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
+    :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
     :view-mode="viewMode"
     :show-new-folder="showNewFolderInput"
@@ -22,6 +24,7 @@
     @update:show-new-folder="showNewFolderInput = $event"
     @update:new-folder-name="newFolderName = $event"
     @create-folder="createFolder"
+    @create-workspace="createWorkspace"
     @sort-select="onSortSelect"
   >
 
@@ -194,6 +197,8 @@ import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
+import { confirmDialog } from '@/composables/useConfirmDialog'
+import { workspacesApi } from '@/services/api'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
@@ -234,6 +239,52 @@ function syncFileDragRotation(mode: 'grid' | 'list') {
 watch(viewMode, syncFileDragRotation, { immediate: true })
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
 const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
+
+type WorkspaceFolder = { id: number; folderId?: number | null }
+const workspaceFolders = ref<WorkspaceFolder[]>([])
+const workspaceFoldersLoaded = ref(false)
+const currentWorkspace = computed(() => {
+  const folderId = currentSeg.value?.folderId
+  if (folderId == null) return null
+  return workspaceFolders.value.find(item => item.folderId === folderId) ?? null
+})
+
+async function refreshWorkspaceFolders() {
+  workspaceFoldersLoaded.value = false
+  try {
+    const status = await workspacesApi.status()
+    workspaceFolders.value = (status.items as WorkspaceFolder[]).filter(item => item.folderId != null)
+  } catch {
+    workspaceFolders.value = []
+  } finally {
+    workspaceFoldersLoaded.value = true
+  }
+}
+
+async function createWorkspace() {
+  const folder = currentSeg.value
+  if (!folder || folder.type !== 'folder' || folder.folderId == null) return
+  try {
+    const existing = currentWorkspace.value
+    if (existing) {
+      if (!await confirmDialog({
+        title: '删除文件夹工作区',
+        message: `确认删除文件夹「${folder.name}」的工作区？\n不会删除文件夹或其中的文件。`,
+        tone: 'danger',
+        confirmText: '删除工作区',
+      })) return
+      await workspacesApi.delete(existing.id)
+      workspaceFolders.value = workspaceFolders.value.filter(item => item.id !== existing.id)
+      uiStore.pushNotification({ title: '工作区', content: `已删除文件夹「${folder.name}」的工作区`, bubble: true, persist: false })
+      return
+    }
+    await workspacesApi.create({ name: folder.name, kind: 'folder', folderId: folder.folderId })
+    await refreshWorkspaceFolders()
+    uiStore.pushNotification({ title: '工作区', content: `已创建工作区「${folder.name}」`, bubble: true, persist: false })
+  } catch {
+    uiStore.pushNotification({ title: '工作区', content: '创建工作区失败，请稍后重试', bubble: true, persist: false })
+  }
+}
 
 // ── Runtime Core API：浏览区 Surface ──
 // Surface 继续服务真实拖拽；目录导航只更新当前目录状态，不再进入 Runtime 布局事务。
@@ -324,6 +375,7 @@ const sortedContents = useFileLibrarySorting({ contents, currentType, sortKey, s
 onMounted(async () => {
   fireHint('file_lib')   // 新手引导：第一次进文件库
   fetchStorage()
+  refreshWorkspaceFolders()
   // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
   const target = consumePendingTarget()
   // 热缓存：同步初始化，避免 await 微任务暂停导致空帧

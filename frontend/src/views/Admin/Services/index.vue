@@ -71,6 +71,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 const adminStore = useAdminStore()
 const services = ref<any[]>([])
@@ -102,7 +103,7 @@ async function load(manual = false) {
 }
 
 async function restart(s: any) {
-  if (!confirm(`重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`)) return
+  if (!await confirmDialog({ title: '重启服务', message: `重启「${s.label}」？将向进程发送 SIGTERM，由 systemd 自动拉起（开发环境无 systemd 不会自愈）。`, tone: 'warning', confirmText: '重启' })) return
   restarting.value = s.name
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/services/${s.name}/restart`, { method: 'POST' })

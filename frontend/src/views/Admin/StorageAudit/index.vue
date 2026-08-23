@@ -271,6 +271,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 const adminStore = useAdminStore()
 
@@ -296,7 +297,7 @@ async function scanTrashMigration() {
 
 async function runTrashMigration() {
   const ids = trashMigration.value?.items.map(item => item.file_id) || []
-  if (!ids.length || !window.confirm(`确认迁移 ${ids.length} 个旧回收站文件？`)) return
+  if (!ids.length || !await confirmDialog({ title: '迁移旧回收站文件', message: `确认迁移 ${ids.length} 个旧回收站文件？`, tone: 'warning', confirmText: '开始迁移' })) return
   trashMigrating.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash', {
@@ -342,7 +343,7 @@ async function scanPathMigration() {
 
 async function repairPathMigration() {
   const items = pathReport.value?.candidates || []
-  if (!items.length || !window.confirm(`确认修复 ${items.length} 个文件的路径归属？`)) return
+  if (!items.length || !await confirmDialog({ title: '修复文件路径归属', message: `确认修复 ${items.length} 个文件的路径归属？`, tone: 'warning', confirmText: '开始修复' })) return
   pathRepairing.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration/repair', {
@@ -381,7 +382,7 @@ async function scanFiles() {
 
 async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   if (fileRepairing.value || !keys.length) return
-  if (action === 'delete' && !window.confirm(`确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`)) return
+  if (action === 'delete' && !await confirmDialog({ title: '删除孤儿物理文件', message: `确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -414,7 +415,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
 
 async function repairMisplaced() {
   if (fileRepairing.value || !fileReport.value?.misplaced_count) return
-  if (!window.confirm(`确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`)) return
+  if (!await confirmDialog({ title: '修复文件物理位置', message: `确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`, tone: 'warning', confirmText: '搬回文件' })) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -554,7 +555,7 @@ async function scanLegacyMemory() {
 
 async function cleanupLegacy(keys: string[]) {
   if (memCleaning.value || !keys.length) return
-  if (!window.confirm(`确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`)) return
+  if (!await confirmDialog({ title: '删除旧记忆文件', message: `确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
   memCleaning.value = true
   memMsg.value = ''
   try {

@@ -22,6 +22,38 @@
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
 
+  --confirm-dialog-width: 420px;
+  --confirm-dialog-bg: var(--modal-card-bg);
+  --confirm-dialog-fg: var(--content-primary);
+  --confirm-dialog-title-fg: var(--content-primary);
+  --confirm-dialog-body-fg: var(--content-secondary);
+  --confirm-dialog-padding: var(--space-lg);
+  --confirm-dialog-gap: var(--space-md);
+  --confirm-dialog-action-gap: var(--space-sm);
+  --confirm-dialog-icon-size: 36px;
+  --confirm-dialog-icon-fg: var(--status-warning);
+  --confirm-dialog-icon-bg: var(--status-warning-bg);
+  --confirm-dialog-danger-icon-fg: var(--status-danger);
+  --confirm-dialog-danger-icon-bg: var(--status-danger-bg);
+  --confirm-dialog-button-min-width: 72px;
+  --confirm-dialog-button-height: 34px;
+  --confirm-dialog-cancel-fg: var(--content-secondary);
+  --confirm-dialog-cancel-fg-hover: var(--content-primary);
+  --confirm-dialog-cancel-bg: var(--control-bg);
+  --confirm-dialog-cancel-bg-hover: var(--control-bg-hover);
+  --confirm-dialog-cancel-border: var(--control-border);
+  --confirm-dialog-cancel-border-hover: var(--control-border-hover);
+  --confirm-dialog-confirm-fg: var(--content-on-accent);
+  --confirm-dialog-confirm-bg: var(--action-primary-bg);
+  --confirm-dialog-confirm-bg-hover: var(--action-primary-bg-hover);
+  --confirm-dialog-confirm-border: var(--action-primary-bg);
+  --confirm-dialog-confirm-border-hover: var(--action-primary-bg-hover);
+  --confirm-dialog-danger-confirm-fg: var(--content-on-accent);
+  --confirm-dialog-danger-confirm-bg: var(--status-danger);
+  --confirm-dialog-danger-confirm-bg-hover: color-mix(in srgb,var(--status-danger) 84%,#000);
+  --confirm-dialog-danger-confirm-border: var(--status-danger);
+  --confirm-dialog-danger-confirm-border-hover: var(--status-danger);
+
   /* File-dialog surface contract. UploadModal and the project editor file pane historically shared
      the same light paper/panel system; keep those product values here instead of leaking white
      glass-border semantics into their inner lines. Dark values are remapped 1:1 below. */

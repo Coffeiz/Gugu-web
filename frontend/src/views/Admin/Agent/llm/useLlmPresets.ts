@@ -1,19 +1,33 @@
 import { reactive, ref } from 'vue'
+import { confirmDialog } from '@/composables/useConfirmDialog'
 
 type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
 type AgentDraft = { worker_concurrency: number; [key: string]: unknown }
+type LlmPresetSummary = {
+  id: string | number
+  name: string
+  provider: string
+  model: string
+  in_pool?: boolean
+  capability_probe?: Record<string, { status?: string; detail?: string }>
+  capability_checked_at?: string
+  capability_fingerprint?: string
+  capability_overrides?: Record<string, boolean>
+  api_key?: string
+  [key: string]: unknown
+}
 
 export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig: (value: unknown) => Promise<unknown> }, agentDraft: AgentDraft) {
-  const presets = ref<any[]>([])
+  const presets = ref<LlmPresetSummary[]>([])
   const activePresetId = ref('')
   const strategy = ref('active')
   const poolMode = ref('random')
   const presetsLoading = ref(false)
   const llmMsg = ref('')
   const llmMsgError = ref(false)
-  const testingId = ref<any | null>(null)
-  const activatingId = ref<any | null>(null)
-  const probingId = ref<any | null>(null)
+  const testingId = ref<string | number | null>(null)
+  const activatingId = ref<string | number | null>(null)
+  const probingId = ref<string | number | null>(null)
   const probingDim = ref<string | null>(null)
 
   function showMsg(msg: string, isError = false) {
@@ -51,24 +65,24 @@ export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig:
     try { await configStore.saveConfig({ agent: { ...agentDraft } }); showMsg(`并发量已设为 ${value}（worker ≤30s 热生效）`) }
     catch (error) { showMsg('保存并发量失败：' + (error instanceof Error ? error.message : String(error)), true) }
   }
-  async function activatePreset(id: any) {
+  async function activatePreset(id: string | number) {
     activatingId.value = id
     try {
       const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/activate`, { method: 'POST' })
       if (!res.ok) throw new Error(`切换失败（${res.status}）`)
-      activePresetId.value = id; showMsg('已切换，即时生效')
+      activePresetId.value = String(id); showMsg('已切换，即时生效')
     } catch (error) { showMsg(error instanceof Error ? error.message : String(error), true) }
     finally { activatingId.value = null }
   }
-  async function deletePreset(id: any) {
-    if (!confirm('确定删除该预设？')) return
+  async function deletePreset(id: string | number) {
+    if (!await confirmDialog({ title: '删除模型预设', message: '确定删除该预设？', tone: 'danger', confirmText: '删除预设' })) return
     try {
       const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}`, { method: 'DELETE' })
       if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.detail || `删除失败（${res.status}）`) }
       await fetchPresets()
     } catch (error) { showMsg(error instanceof Error ? error.message : String(error), true) }
   }
-  async function testPreset(id: any) {
+  async function testPreset(id: string | number) {
     testingId.value = id
     try {
       const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/test`, { method: 'POST' }); const data = await res.json()
