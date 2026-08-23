@@ -1,27 +1,31 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：基础设施部分就绪，Knowledge RAG 尚未接入；本 PRD 不新增面向 Agent 的主动召回工具。
+> 状态：Memory 单来源 Knowledge RAG 已接入统一召回、被动 history 注入和 LoopScope 诊断；全量主动召回与 RAG history 生命周期列入 Phase 4，跨来源 RAG 后置实施。
 > Capability RAG 后置于 `PRD-LLM-9` 固定 Adapter Tool 完成之后。
 > 创建：2026-08-04
-> 最近更新：2026-08-23
+> 最近更新：2026-08-24
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
 > 首个试点：[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)
 > 前置文档：[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 > 协作文档：[`PRD-LLM-9-工具与Skill注册制及按需注入.md`](./PRD-LLM-9-工具与Skill注册制及按需注入.md)
 
-## 0. 实施状态
+## 0. 实施 Todo
 
-| 阶段 | 状态 | 说明 |
-|---|---|---|
-| Phase 0：数据源与权限协议 | 🟡 部分具备 | 各业务已有 ownership/scope 校验，但统一文档的 source、scope、版本和删除事件协议尚未落地 |
-| Phase 1：内容摘要与分块接口 | 🔲 未开始 | 目前没有生产 SourceAdapter、统一摘要或分块产物 |
-| Phase 2：统一索引管线 | 🟡 部分具备 | 已有记忆 embedding/cache 原语和离线 BM25；没有统一持久化索引、异步 upsert/invalidate 管线 |
-| Phase 3：统一召回服务 | 🟡 能力侧部分具备 | `CapabilityIndex`、selector、injector 已建立注册与候选接口；Knowledge RAG 仍未接入统一 Retriever/Service |
-| Phase 4：跨来源混合召回 | 🔲 待评估 | 多来源合并、去重、引用和上下文预算；首版不做独立 Ranking/Reranker |
-| Phase 5：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；真实数据标注集、生产灰度和权限回归尚未完成 |
+本表是本 PRD 唯一的实施状态来源。阶段内同时记录已完成项和剩余项，避免再维护另一套 P0～P4 进度表。
 
-实施顺序：先按 `PRD-MEM-1` 完成 Memory 单来源闭环，再扩展项目、文件、日记、画布和
-对话等来源。Memory PRD 是本 PRD 的落地子方案，不是另一套 RAG 基础设施；公共契约
+| 阶段 | 状态 | 已完成 / 当前实现 | 剩余 Todo |
+|---|---|---|---|
+| Phase 0：数据源与权限协议 | ✅ 已完成 | 首个试点确定为 owner Memory；统一 `Scope`、`IndexDocument`、版本/hash、`SourceAdapter` 边界和 owner-only 查询协议；索引文档只保存摘要/片段，不保存原始文件二进制、密钥或未脱敏聊天正文；冻结切片参数、来源边界、`chunk_id` 规则和 tool round 原子性要求 | 无 |
+| Phase 1：Memory 内容摘要与分块召回 | ✅ 已完成 | Memory adapter、稳定切片、中文字符 n-gram BM25、可替换的 `IndexStore` 协议、内存 upsert/invalidate、版本去重和 `search_memory` 已落地；支持空结果、limit 上限、scope 与旧版本失效；已补自动化测试 | IM scope 后置到多来源阶段 |
+| Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 多来源统一索引管线和生产规模升级移至 Phase 5/6 |
+| Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | 跨来源 Retriever 和 Capability RAG 后置到 Phase 5/6；群聊 scope 规则在 Phase 4 落地 |
+| Phase 4：全量主动召回与 History 生命周期 | 🔲 待实施 | 已确定自动召回默认 BM25；正则/轻量规则只作为 Embedding 升级信号和明显非记忆请求的排除信号；Embedding 仅在 BM25 无命中或低质量且存在缓存向量时启用；owner 私聊与群聊共用 Retriever/BM25，群聊只改变候选 scope 与 ACL | 每条用户消息执行低成本 BM25；按内容 hash、chunk/version 和有效 history 去重；将自动 RAG 结果作为当前消息后的 canonical knowledge-context history 保存，后续 Run 复用；同一 Run 的后续 round 复用本轮结果；完成群共享记忆、当前发言人群友记忆、开关和 scope 隔离；群聊总输出仍限制 3000 字符；压缩时与普通 history 一起处理，TTL 只刷新 snapshot，不重写旧 RAG；LoopScope 展示策略、scope、命中数和是否注入 |
+| Phase 5：跨来源混合召回 | 🔲 待实施 | 已确定项目、文件、日记、画布、对话等来源沿用 `SourceAdapter`、scope、切片和预算契约；首版不做独立 Ranking/Reranker | 接入第二个来源并验证去重、引用和跨来源排序；补 `global_search`、`search_conversations` 与领域召回工具的职责边界回归 |
+| Phase 6：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；已明确不记录原始敏感正文，且保留专用工具和回滚路径 | 建立不含真实敏感正文的查询—相关文档标注集，比较 Recall@K、Precision@K、P95 延迟和越权率；仅对明确的跨来源知识问题灰度启用；按文档量、索引更新延迟和并发量评估 pgvector/HNSW/独立搜索服务；验证 owner、平台、bot、群组和项目 scope 隔离 |
+
+实施顺序：先按 `PRD-MEM-1` 完成 Memory 单来源闭环，再完成 Phase 4 的全量主动召回，
+随后扩展项目、文件、日记、画布和对话等来源，最后进入跨来源灰度评估。Memory PRD
+是本 PRD 的落地子方案，不是另一套 RAG 基础设施；公共契约
 （IndexDocument、scope、version、切片、预算、回退和诊断）以本文件为唯一来源。
 
 补充说明：已完成离线虚拟数据压测，结果见 [RAG 意图与召回压测报告](./report/RAG-意图与召回压测报告.md)。压测验证了 BM25、真实 Embedding 缓存和 LLM 意图判断的链路，但不等同于生产 Knowledge RAG 已经接入。
@@ -34,10 +38,11 @@
 | `search_conversations` / `read_conversation` | 按用户隔离搜索历史 session，并读取完整消息 | 继续作为历史会话检索和读取工具，不是统一索引 |
 | `agent.memory.embedding` | 独立配置 embedding、模型 tag、向量生成、cosine 和失败退回词法；当前主要服务 memory/pattern | 可复用的向量基础设施，不代表已有跨来源索引 |
 | `agent.capabilities` | `CapabilityIndex`、`RegistryCapabilitySelector`、`CapabilityToolContext` 已提供注册快照、权限交集和候选接口 | 是 PRD-LLM-9 的能力注册基础；当前 selector 没有 BM25/Embedding 召回，默认仍保留授权工具全集 |
+| LoopScope RAG span | 已接入 | 每次召回记录 `namespace/source_type/mode/candidate_count/hit_count/elapsed_ms/fallback_reason/index_version` 和候选/命中 token impact；不记录 query、正文、owner 或完整结果 |
 | `bench_rag_virtual.py` | 离线虚拟文档 BM25、Embedding 和意图判断压测 | 评估工具，不是生产索引或召回服务 |
-| Knowledge RAG | 未发现生产 `SourceAdapter`、`IndexPipeline`、持久化 BM25 index 或跨来源 retriever | 本 PRD 的主体仍待实施 |
+| Knowledge RAG | Memory 已具备 `SourceAdapter`、异步索引、持久化 BM25/Embedding 候选、统一 Retriever 和被动 history 注入；全量主动召回、RAG history 持久化复用仍待 Phase 4；其他来源尚未注册 | 本 PRD 的跨来源主体仍待 Phase 5 |
 
-当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续 Phase 6 联动。
+当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续阶段联动。
 
 ## 1. 背景与目标
 
@@ -74,6 +79,8 @@
 - 无 embedding 配置时使用 BM25；启用 embedding 后使用 BM25 + cosine 混合召回。
 - BM25 是首版默认召回方式；Embedding 是语义补充和低命中兜底，不要求所有查询都调用。
 - 召回结果直接包含摘要或相关片段，通常不需要再调用读取工具。
+- 支持每条用户消息的低成本自动召回：默认 BM25；只有在词法命中不足且满足条件时才升级到 Embedding。
+- 自动召回结果进入连续 conversation history，并按稳定 hash/version 复用；不写入 session snapshot。
 - 所有结果先经过 owner、project、group、platform-user 等 scope 权限过滤。
 - 支持结果去重、来源引用、版本追踪和删除后索引清理。
 
@@ -97,12 +104,14 @@
   "id": "stable-source-document-id",
   "source_type": "project|journal|canvas|file|conversation|memory",
   "source_id": "业务对象 ID",
+  "scope_type": "owner|group|member",
   "scope": {
     "owner_user_id": "...",
     "project_id": "...",
     "platform": "...",
     "bot_id": "...",
-    "group_id": "..."
+    "group_id": "...",
+    "platform_user_id": "..."
   },
   "title": "可展示标题",
   "summary": "短摘要",
@@ -113,6 +122,17 @@
 ```
 
 `content` 是检索和上下文注入的文本，不代表原始对象全文。原始对象仍由各业务模块负责保存。
+
+Scope 规范：
+
+| scope | 含义 | 可见范围 |
+|---|---|---|
+| `owner` | Web/私聊中的 owner 私人知识 | 当前 owner；不得进入群聊 |
+| `group` | 当前平台、Bot 和群组的共享记忆/知识 | 当前群会话 |
+| `member` | 当前平台、Bot、群组和发言人的群内成员记忆 | 当前发言人对应的当前群会话 |
+
+`member` scope 默认不跨群共享。查询必须先完成 scope/ownership 过滤，再执行 BM25 或
+Embedding；不能先算出相关性再补权限过滤。
 
 ### 3.2 SourceAdapter
 
@@ -208,23 +228,72 @@ chunk_id = document_id + version + position
 
 ### 3.5 RAG 注入位置与生命周期
 
-RAG 结果属于**当前用户消息的上下文补充**，必须跟随当前消息进入连续 history；不写入静态 session snapshot。静态 snapshot 只负责冻结 system、projects、calendar、files、memory 等低频上下文，不能因为一次 RAG 召回而刷新。
+RAG 结果属于**当前用户消息的上下文补充**，必须跟随当前消息进入连续 conversation history；不写入静态 session snapshot。静态 snapshot 只负责冻结 system、projects、calendar、files、memory 等低频上下文，不能因为一次 RAG 召回而刷新。
 
-当前消息的组装顺序固定为：
+Phase 4 的目标生命周期是：
+
+```text
+当前用户消息
+  ↓
+自动 BM25 召回
+  ↓
+命中充分 → 直接形成 knowledge-context
+  ↓
+命中为空/质量不足 → 按规则判断是否启用 Embedding
+  ↓
+形成当前消息对应的 canonical knowledge-context history
+  ↓
+回复完成后保存精确渲染结果，下一 Run 原样复用
+```
+
+这里的“保存”指 conversation history 的上下文事件，不是把结果并入 session snapshot。RAG
+结果与触发它的用户消息绑定，保存 `content_hash`、`chunk_id`、`document_version`、
+`index_version` 和生成时间等内部元数据；Provider 边界仍渲染为普通兼容消息，不增加
+OpenAI/Anthropic 不认识的自定义 message 字段。
+
+当前请求的组装顺序固定为：
 
 ```text
 已有有效 history
   ↓
-当前消息时间 reminder
-  ↓
-当前消息对应的 RAG context
-  ↓
 当前用户原始消息
   ↓
-动态尾部：stance / summary / current time
+群共享 RAG context（无命中则没有）
+  ↓
+当前发言人的群友 RAG context（无命中则没有）
+  ↓
+当前消息时间 reminder / 动态尾部：stance / summary / current time
 ```
 
-RAG context 使用 provider 兼容的普通 history 消息承载，不增加 OpenAI/Anthropic 不认识的自定义 message 字段。内部的 `chunk_id`、`version`、`content_hash` 只作为持久化和组装元数据，不能发送给模型，也不能进入可见正文。
+Owner 私聊和群聊共用同一套 `UnifiedRetriever`、BM25 默认策略、去重和字符预算；差异只
+存在于候选池与权限过滤。Owner 私聊可以检索 owner 允许的 Memory/Knowledge scope，群聊
+只能检索当前群共享 scope 和当前发言人的群内 member scope，不能检索 owner 私人记忆或
+其他群友的 member scope。
+
+群聊的动态尾部使用 provider 兼容的普通 history 消息承载，并保持区块顺序稳定：
+
+```text
+当前用户原始消息
+
+[group-rag]
+群共享记忆/知识片段
+[/group-rag]
+
+[group-member-rag]
+当前发言人的群内记忆/偏好
+[/group-member-rag]
+
+[system-reminder]
+当前时间：08-24 04:10
+[/system-reminder]
+```
+
+群共享 RAG 和群友 RAG 都只在对应开关开启且存在有效命中时出现；无命中时不生成空
+区块。群聊短消息优先要求明确 BM25 命中，避免把泛化词带来的噪声注入全群对话。
+群友记忆默认绑定当前群，不跨群共享；即使内容只用于帮助当前发言人理解，最终回复
+仍会被群内其他成员看到，因此不得把私聊中的私人 owner Memory 直接带入群聊。
+
+被动 RAG context 使用 provider 兼容的普通 history 消息承载，不增加 OpenAI/Anthropic 不认识的自定义 message 字段。显式 `search_memory` 则沿用真实工具调用产生的 canonical `tool-call` / `tool-result` history。内部的 `chunk_id`、`version`、`content_hash` 只作为持久化和组装元数据，不能发送给模型，也不能进入可见正文。
 
 RAG 注入必须遵守整体有效上下文去重，而不是只检查静态 snapshot：
 
@@ -234,15 +303,37 @@ RAG 注入必须遵守整体有效上下文去重，而不是只检查静态 sna
 4. 只把当前消息尚未覆盖的 RAG chunk 追加到 history；
 5. 版本变化、权限 scope 变化或无法确认旧摘要是否覆盖时，允许重新注入。
 
+Memory 试点还必须遵守 snapshot 的注入边界：`profile`、`pattern`、`memory`、`daily`
+先经过 snapshot 的实际注入文本过滤，再进入 `search_memory` 候选池。已经落入当前
+snapshot 的内容不应再次作为 RAG 结果返回；只有超出当前注入预算或未被 snapshot
+覆盖的 chunk 才能召回。不能简单按固定字符前缀推断边界，因为 pattern 和长期记忆
+可能会按当前消息做相关性选择。snapshot 命中/重建时登记实际渲染文本，RAG 在请求级
+上下文中按规范化正文判断已覆盖 chunk；登记不可用时不阻塞正常召回。
+
 RAG 去重不是永久黑名单。Compaction 把旧 history 收进 summary 后，summary/baseline 的内部 metadata 可以记录已覆盖的 RAG hash；如果无法确认某个 chunk 已被 summary 保留，必须允许再次注入，不能为了去重造成知识丢失。
 
-RAG history 位于当前消息的新增区域之后，因此不会改变已经稳定缓存的历史前缀；同一 run 的后续 tool round 继续保留它，下一次 run 则通过持久化的 canonical history 复用。RAG 召回失败、为空或超时不应阻塞当前消息，也不得刷新静态 snapshot。
+自动 RAG history 位于当前 user message 之后、时间 reminder 之前，因此不会改变已经稳定
+缓存的历史前缀；同一 Run 的后续 tool round 继续复用它。当前轮新增的 RAG 区域本身属于
+新鲜输入，回复完成后会成为下一 Run 的稳定 history 前缀。显式工具结果按普通 canonical
+tool history 持久化；自动 RAG 则保存为 canonical knowledge-context history，不伪装成
+模型已经执行过的工具。
+
+RAG history 的去重范围必须覆盖 snapshot 和完整有效 conversation history，而不是只对当前一次召回去重：
+
+- 相同 `content_hash` 已存在时不再次保存；
+- 相同 `chunk_id + document_version` 已存在时不再次保存；
+- 多个来源命中相同正文时合并引用，不复制正文；
+- 索引版本或内容版本变化时允许产生新的 context 事件；
+- 压缩后只有在 summary/baseline 无法证明仍覆盖旧 chunk 时，才允许重新召回。
+
+RAG 召回失败、为空或超时不应阻塞当前消息，也不得刷新静态 snapshot。TTL 或 context
+revision 到期只负责重建 snapshot；不会回写或重排历史中的旧 RAG 结果。
 
 ## 4. 功能需求
 
-### FR-RAG-1：异步摘要与分块（未实现）
+### FR-RAG-1：异步摘要与分块（Memory 试点已实现）
 
-源内容变更后由异步任务生成或更新摘要和检索分块，不在用户查询时临时读取全部原文。
+Memory 源内容变更后由事件触发异步任务生成或更新检索分块；其他来源待后续接入。
 
 - 内容 hash 未变化时不重复生成；
 - 切片必须保持稳定边界；同一 `document_id + version` 不得因为任务重试产生随机 chunk 顺序；
@@ -250,7 +341,7 @@ RAG history 位于当前消息的新增区域之后，因此不会改变已经�
 - 摘要失败不能删除旧索引，保留上一个可用版本；
 - 任务失败可重试，但不能无限重试。
 
-### FR-RAG-2：无 embedding 的 BM25 召回（未实现；离线验证已完成）
+### FR-RAG-2：无 embedding 的 BM25 召回（Memory 试点已实现）
 
 - 所有 source adapter 生成的文档进入统一 BM25 候选池；
 - 中文使用“通用分词器 + Gugu 动态领域词库”，并保留少量字符二元组作为新词/错别字兜底；
@@ -264,18 +355,32 @@ RAG history 位于当前消息的新增区域之后，因此不会改变已经�
 
 压测脚本中的字符二元组和简化 BM25 仅用于离线验证，不能直接视为生产分词实现。
 
-### FR-RAG-3：BM25 + embedding 混合召回（未实现；向量基础设施已具备）
+### FR-RAG-3：BM25 + embedding 混合召回（Memory 试点基础能力已实现）
 
-- BM25 和 embedding 各取候选集合；
-- 首版先并行召回并合并去重，不引入独立 Ranking 或 LLM Reranker；
-- 结果顺序只使用 BM25/Embedding 本身的可解释分数、来源优先级和稳定时间顺序；不再增加额外模型排序层；
-- embedding 未配置、缓存缺失或服务失败时自动退回 BM25；
+- 自动 RAG 默认只执行 BM25，不为每条消息固定生成 query embedding；
+- BM25 命中为空、最高分低于阈值，或轻量规则判断为明显的历史/偏好语义但词法覆盖不足时，才允许升级到 Embedding；
+- 条件 Embedding 只使用已有缓存向量；没有文档向量缓存时直接退回 BM25，不在用户请求热路径生成全部文档向量；
+- 条件召回可以对索引文档执行向量候选检索，也可以在已有 BM25 候选上混合排序，具体由索引规模和缓存能力决定；不能把“只重排 BM25 候选”误称为完整语义兜底；
+- 首版不引入独立 Ranking 或 LLM Reranker；结果顺序只使用 BM25/Embedding 本身的可解释分数、来源优先级和稳定时间顺序；
+- embedding 未配置、缓存缺失、服务失败或超过延迟预算时自动退回 BM25；
 - 查询默认直接使用用户原句，不先让 LLM 改写 Embedding 查询；
-- 只有查询模糊、BM25 命中不足或明确需要语义扩展时，才考虑启用 Embedding；
 - 向量是可重建缓存，模型切换后按 model tag 失效并重建；
 - 缓存至少记录模型标识、维度、文本指纹和向量，不能把向量当作主数据。
 
-### FR-RAG-4：统一召回服务（未实现）
+自动路径与显式工具路径分开：
+
+| 路径 | 默认策略 | Embedding 条件 |
+|---|---|---|
+| 自动 RAG | BM25 | 无命中、低质量命中或历史/偏好语义信号；且存在可用缓存向量 |
+| `search_memory` | `auto` | 按工具参数和同一条件策略决定；允许显式指定 `bm25` / `embedding` |
+| 后续跨来源 RAG | BM25 | 由来源规模、索引能力和 Phase 6 评估结果决定 |
+
+正则或轻量规则只负责两类信号：识别“之前、上次、记得”等历史/偏好语义，作为
+Embedding 升级信号；识别命令、当前时间、天气、新闻、比赛和已有专用工具可直接处理的
+请求，作为 Embedding 排除信号。它不再作为 BM25 自动召回的总开关，也不能替代真正的
+相关性阈值。
+
+### FR-RAG-4：统一召回服务（Memory 单来源已实现；自动 History 生命周期待 Phase 4）
 
 RAG-1 只提供内部 Retriever/Service、索引和结果契约，不新增面向 Agent 的
 Agent 工具。当前面向 Agent 的记忆入口由 `PRD-MEM-1` 的 `search_memory`
@@ -302,12 +407,18 @@ Agent 工具。当前面向 Agent 的记忆入口由 `PRD-MEM-1` 的 `search_mem
 
 ### FR-RAG-5：权限和隔离（部分具备；统一索引前置过滤未实现）
 
-- owner Web/私聊可检索自己有权访问的全部来源，当前群优先，跨群群 RAG 最多 3 条；
-- owner 群聊当前群优先，跨群只补充 1～2 条，不能直接公开其他群原文；
-- member 只能检索自己仍属于的群公开内容，当前群优先，Web/私聊跨群最多 3 条；
-- 群聊和私聊均不为跨群结果临时调用 LLM 摘要，优先使用索引已有摘要或短片段；
+- owner Web/私聊可检索 owner 允许的 Memory/Knowledge scope；不经过群 scope 时不注入群共享或群友记忆；
+- 群聊只能检索当前群共享 scope，以及当前发言人的当前群 member scope；不检索 owner 私人 Memory，也不检索其他群友的 member scope；
+- 群共享记忆由 `group_memory_enabled` 控制，群友记忆由 `member_memory_enabled` 控制；任一开关关闭时对应候选池为空；
+- 群友记忆默认绑定平台、Bot、群组和当前发言人，不跨群共享；当前发言人变化时必须重新计算 member scope；
+- 群聊短消息没有明确 BM25 命中时不强行注入；群共享结果排在群友结果之前，最终共同受 3000 字符注入预算约束；
+- 群聊和私聊均不为召回结果临时调用 LLM 摘要，优先使用索引已有摘要或短片段；
 - 文件、项目、画布和日记必须复用各自的 ownership 校验；
-- 不同 owner、Bot、平台、项目和群组的文档不能串库。
+- 不同 owner、Bot、平台、项目、群组和 member 的文档不能串库；scope 过滤必须发生在相关性计算之前。
+
+群聊的 member scope 只能保存和召回低敏感的群内偏好、称呼和对话事实。由于召回内容
+最终可能影响全群可见回复，私聊中的私人记忆不能通过“当前发言人是 owner”这一条件
+绕过群聊隔离。
 
 ### FR-RAG-6：Capability RAG 工具软推荐（注册基础部分具备，后置于 PRD-LLM-9 Phase 6）
 
@@ -360,14 +471,28 @@ Capability Registry      → Capability IndexDocument ↗
 
 ### 5.2 查询编排策略
 
-首版按以下策略执行：
+自动 RAG 按以下策略执行：
 
 ```text
-明确、短、包含领域词的查询
-  → 直接 BM25
+每条用户消息
+  → 先执行 BM25
+  → 命中充分：直接注入 knowledge-context
+  → 无命中/低分：检查轻量规则和 Embedding 缓存
+  → 满足条件：执行 Embedding 候选召回
+  → 不满足/失败/超时：保留 BM25 结果或不注入
+```
 
-跨来源或 BM25 命中不足
-  → BM25 + Embedding 并行召回
+显式 `search_memory` 可以直接请求指定策略，但仍然必须经过 scope、权限、去重和预算
+限制。后续跨来源服务复用同一策略，不在 Web、IM 或各领域工具中复制检索分支。
+
+自动 RAG 不因为“每条消息都执行 BM25”就把空结果写入 history；只有至少一个结果通过
+相关性阈值和内容预算过滤后，才生成 knowledge-context history。没有合格结果时只记录
+脱敏的 `hit_count=0` 诊断。
+
+条件混合召回按以下路径执行：
+
+BM25 命中不足且有缓存向量
+  → Embedding 全索引候选或 BM25 候选混合
 
 范围不明确、需要判断 sources/scope 的查询
   → 可选 LLM 意图判断
@@ -381,7 +506,7 @@ LLM 意图判断只负责结构化 `sources`、`scope`、`need_current` 等路�
 
 ### 5.3 上下文注入结构
 
-RAG 结果不能写入 session snapshot、静态 system 或每轮固定的 dynamic tail。它属于当前用户问题的临时检索结果，应该沿用工具调用的消息边界：
+RAG 结果不能写入 session snapshot、静态 system 或每轮固定的 dynamic tail。它属于当前用户问题的检索结果，使用独立的 canonical `knowledge-context` history 边界：
 
 ```text
 固定 system / session snapshot
@@ -390,28 +515,31 @@ RAG 结果不能写入 session snapshot、静态 system 或每轮固定的 dynam
         ↓
 canonical history 与已有 tool round
         ↓
+历史 RAG context（已持久化、按 hash/version 去重）
+        ↓
 当前 user message
         ↓
-domain tool（当前为 search_memory）
+自动 BM25 / 条件 Embedding
         ↓
-canonical tool-result（摘要、片段、来源引用、更新时间）
+当前消息对应的 knowledge-context history
+        ↓
+回复完成后写入 conversation history
         ↓
 Provider adapter 重建当前模型所需的合法消息
-        ↓
-模型基于结果继续回答或继续调用工具
 ```
 
 约束：
 
-- 召回结果只进入当前 round 的 canonical `tool-result`，不进入 snapshot；
-- 后续 round 若仍需要该结果，由已有 tool history 继承，不重复拼装到 system reminder；
-- 新 Run 是否保留历史由普通 conversation history/compaction 决定，不建立 RAG 专用永久快照；
+- 自动召回结果进入当前消息对应的 canonical `knowledge-context` history，不进入 snapshot；
+- 显式 `search_memory` 结果进入真实的 canonical `tool-result`，不能把自动召回伪装成工具调用；
+- 后续 round 直接继承已有 RAG history，不重复拼装到 system reminder；
+- 新 Run 按普通 conversation history 读取已经持久化的 RAG context，不建立独立的 RAG snapshot；
 - 结果返回摘要和有限片段，不返回原始文件二进制或全量正文；
 - 工具 Schema 以 canonical `tool-schema` history event 保存；Provider 只注册固定 Adapter Tool，Capability RAG 的候选元数据不混入 Knowledge RAG 结果；
-- 若未来增加自动召回，也必须复用同一个内部召回结果结构，不能在业务入口复制一套 system 注入逻辑；
+- 自动召回、显式 `search_memory` 和未来跨来源入口必须复用同一个内部召回结果结构，不能在业务入口复制一套 system 注入逻辑；
 - LoopScope 只记录 namespace、source_type、候选数、命中数、耗时、版本和脱敏 digest，不记录完整敏感正文。
 
-因此，RAG 不应该成为新的 `[system-reminder]` 来源。`[system-reminder]` 继续只承载 session snapshot 和确有必要的动态运行状态；知识检索结果使用 canonical tool round，保证消息边界、缓存前缀和 compaction 语义稳定。RAG 不得重新引入第二套 Prompt 拼装策略。
+因此，RAG 不应该成为新的 `[system-reminder]` 来源。`[system-reminder]` 继续只承载 session snapshot 和确有必要的动态运行状态；知识检索结果使用独立的 canonical history 事件，保证消息边界、缓存前缀和 compaction 语义稳定。RAG 不得重新引入第二套 Prompt 拼装策略。
 
 ### 5.4 向量缓存与规模策略
 
@@ -533,52 +661,32 @@ Memory 试点通过后，才对明确要求跨来源检索的请求接入对应�
 
 稳定后再让 Agent 在“查以前内容/相关资料”类请求中主动调用，保留现有专用工具作为精确查询和完整读取兜底。
 
-## 7.1 按当前代码现状的实施 Todo
+### Phase 4：全量主动召回与 History 生命周期验收
 
-以下 Todo 只针对 Knowledge RAG；Capability Registry 的已完成部分由 `PRD-LLM-9` 继续维护，不在这里重复实现。
+本节只定义第 0 节 Phase 4 的验收项，不维护第二套实施状态：
 
-### P0：冻结边界和数据契约
+- 每条用户消息先执行 BM25；普通寒暄、当前事实和专用业务操作即使没有命中，也不能因此触发高成本 Embedding；
+- 轻量正则/规则只作为历史/偏好语义的 Embedding 升级信号，以及命令、天气、新闻、比赛等请求的排除信号；不能继续作为 BM25 总开关；
+- BM25 无命中或低于相关性阈值时，且索引存在可用缓存向量，才允许执行 Embedding；失败、超时或无缓存时稳定退回 BM25；
+- 自动召回结果使用 canonical `knowledge-context` history 保存，显式 `search_memory` 继续使用 canonical `tool-result`；两者不得混淆；
+- 跨 snapshot、当前有效 history、同一 Run 后续 round 和下一 Run 均验证 `content_hash + chunk_id + document_version` 去重；
+- 验证 TTL / context revision 只重建 snapshot，不重写或重排已保存的旧 RAG history；compaction 无法证明摘要覆盖时允许重新召回；
+- Owner 私聊与群聊必须共用同一 `UnifiedRetriever` 和 BM25 默认策略；群聊只通过候选 scope、ACL 和开关改变检索范围，不新增第二套召回算法；
+- 群聊自动召回只允许当前群 `group` scope 和当前发言人的当前群 `member` scope；禁止注入 owner 私人记忆或其他群友的 member scope；
+- `group_memory_enabled` 控制群共享记忆，`member_memory_enabled` 控制群友记忆；群友记忆默认不跨群共享，当前发言人变化时重新计算 member scope；
+- 群聊动态尾部顺序必须是“当前用户消息 → `[group-rag]` → `[group-member-rag]` → 当前时间 reminder”；无命中时不生成空区块，群共享结果排在群友结果之前；
+- 群聊和私聊均使用 3000 字符总注入预算；群聊短消息没有明确 BM25 命中时不强行注入，避免泛化词污染全群上下文；
+- LoopScope 至少能区分 `bm25`、`embedding`、`fallback`、`skipped`，展示候选数、命中数、耗时、索引版本和注入状态，不记录查询正文或记忆正文；
+- LoopScope 额外记录 `scope_type`、脱敏 scope digest、开关状态和 group/member 命中数，不记录群正文、成员昵称、平台 ID 或原始查询；
+- 补齐自动召回、owner/group/member ACL、低命中升级、去重、压缩后恢复、Embedding 失败回退和跨 Run 缓存前缀稳定性测试。
 
-- [ ] 确认首个试点来源，并只为该来源实现最小 `SourceAdapter`。
-- [ ] 定义 `source_type/source_id/document_id/version/scope` 的稳定规则。
-- [ ] 明确删除、归档、权限变化和内容更新的失效事件；旧版本必须先不可召回。
-- [ ] 复用现有 ownership 工具完成“查询前 scope 过滤”，不在索引层自行推导权限。
-- [ ] 明确索引文档只保存摘要/片段，不保存原始文件二进制、密钥或未脱敏聊天正文。
-- [ ] 冻结切片参数、来源专用边界、`chunk_id` 规则和 tool round 原子性要求。
+## 7.1 实现清单说明
 
-### P1：单来源词法召回闭环
-
-- [ ] 实现一个可替换的 `SourceAdapter` 和统一 `IndexDocument`，先不接所有来源。
-- [ ] 实现可测试的 BM25/中文分词组件；离线脚本中的简化实现不能直接复制到生产。
-- [ ] 实现语义优先的切片器，验证目标/硬上限、overlap、稳定顺序和相邻 chunk 合并。
-- [ ] 先采用数据库/本地可控存储完成 upsert、invalidate、按 scope 查询和版本去重。
-- [ ] 为首个领域工具（当前为 `search_memory`）接入统一召回服务，只返回摘要、片段、来源引用、更新时间和分数。
-- [ ] 为 scope、删除后不可见、版本更新和空结果增加自动化测试。
-
-### P2：异步更新与查询预算
-
-- [ ] 将摘要、分块和索引更新接入现有 worker/event 体系，保证幂等和有限重试。
-- [ ] 为召回结果设置条数、字符数和单来源配额，避免把 RAG 变成上下文膨胀入口。
-- [ ] 设定默认被动召回预算：最多 8 个结果、单来源最多 3 个、总输出约 6000～8000 字符；主动调用也必须受后端硬上限约束。
-- [ ] embedding 只作为 BM25 的可选补充；失败、缺缓存或超时必须稳定退回 BM25。
-- [ ] 记录脱敏诊断字段：namespace、source_type、候选数、命中数、耗时、回退原因和 index version。
-
-### P3：多来源和质量验证
-
-- [ ] 在单来源质量达标后，再接入第二个来源，验证去重、引用和跨来源排序。
-- [ ] 建立不含真实敏感正文的查询—相关文档标注集，比较 Recall@K、Precision@K、延迟和越权率。
-- [ ] 不在本阶段实现 reranker；如未来重新评估，必须以独立 PRD 和真实标注集证明收益。
-- [ ] 对 `global_search`、`search_conversations` 和领域召回工具的职责边界做回归测试。
-
-### P4：灰度和规模升级
-
-- [ ] 仅对明确的跨来源知识问题灰度启用对应领域工具，保留专用工具兜底。
-- [ ] 根据文档量、P95 延迟、索引更新延迟和并发量，决定是否引入 pgvector/HNSW/独立搜索服务。
-- [ ] 验证不同 owner、平台、bot、群组和项目 scope 的隔离；完成灰度开关和回滚方案。
+唯一状态来源为第 0 节。本节不再维护第二套 P0/P1/P2/P3/P4 进度表；`PRD-LLM-9` 负责维护 Capability Registry 的能力注册进度，本 PRD 只维护 Knowledge RAG 的数据源、索引、召回和灰度进度。
 
 ## 7.2 文件变更清单
 
-以下清单按“首个单来源试点 + 可扩展到多来源”的最小实现盘点。文件名是实施约定，不代表本轮立即创建；只有 P0/P1 决策确认后才开始落代码。
+以下清单按“首个单来源试点 + 可扩展到多来源”的最小实现盘点。文件是否已创建、后续新增哪些文件，以第 0 节对应阶段的 Todo 为准。
 
 ### 需要新建的 Knowledge RAG 核心文件
 
@@ -598,7 +706,8 @@ backend/agent/rag/
 ├── retriever.py             # scope-first 的 BM25/Embedding 混合召回
 ├── service.py               # 查询编排、候选限制、去重和引用组装
 ├── injection.py             # 作为当前消息 history 的 RAG 注入、整体上下文去重
-└── diagnostics.py           # 只记录脱敏召回指标，不记录正文
+├── diagnostics.py           # 只记录脱敏召回/索引生命周期指标，不记录正文
+└── pipeline.py              # Memory 索引异步更新、按 owner 串行和有限重试
 ```
 
 说明：`rag/` 是 Knowledge RAG namespace。Capability RAG 不在这里复制一套工具注册代码；它继续复用 `backend/agent/capabilities/` 的注册快照和 Schema 注入，未来只替换 selector 的候选来源。
@@ -609,7 +718,7 @@ backend/agent/rag/
 backend/agent/rag/service.py               # 统一内部召回服务和结果契约
 backend/agent/rag/chunking.py              # 来源无关的切片边界和 chunk 身份
 backend/agent/rag/injection.py             # 当前消息 history 注入与 content_hash 去重
-backend/agent/tasks/rag_index.py           # 摘要、分块、upsert/invalidate 的异步任务
+backend/agent/rag/pipeline.py              # Memory 索引异步更新、upsert/invalidate 和有限重试
 backend/tests/test_rag_models.py           # 文档、scope、版本和引用模型
 backend/tests/test_rag_lexical.py          # 中文/英文/混合词法召回
 backend/tests/test_rag_scope.py             # owner、项目、群组、平台隔离
