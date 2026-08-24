@@ -1,6 +1,6 @@
 # 上下文预算与 Baseline 设计
 
-> 本文历史设计已由 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](../../product/PRD/PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 收口。当前实现只维护一个 baseline；下文出现的 checkpoint 仅用于解释旧迁移背景，新的代码和流程不得新增该语义。provider overflow 或成功 usage ≥90% 时才推进压缩；压缩后只保留最近 5k token 对应的完整 history，其余全部滚动合并为 summary，最终 summary 不超过 10,000 字符，50% 仅用 provider 实际 usage 检测。
+> 本文历史设计已由 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](../../product/PRD/PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 收口；分支式候选生成的新增规则见 [`PRD-AGENT-5：分支式上下文压缩与缓存保持`](../../product/PRD/PRD-AGENT-5-分支式上下文压缩与缓存保持.md)。当前实现只维护一个 baseline；下文出现的 checkpoint 仅用于解释旧迁移背景，新的代码和流程不得新增该语义。provider overflow 或成功 usage ≥90% 时才推进压缩；在安全输入范围内优先一次性分支生成 summary，超限才使用滚动 fallback；最终 summary 不超过 10,000 字符，50% 仅用 provider 实际 usage 检测。
 
 ## 1. 背景
 

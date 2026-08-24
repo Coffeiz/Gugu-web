@@ -886,6 +886,11 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
     try:
         res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
+        # 直接 memory/pattern 缓存之外，RAG 索引还有 profile/daily/memory 文档。
+        # 统一通过 MemoryAdapter 生成同一套 chunk/key，避免两套分块算法失配。
+        from agent.rag.pipeline import rebuild_memory_index
+        for uid in user_ids:
+            await rebuild_memory_index(uid, operation="embedding-rebuild")
         failed = int(res.get("failed_users") or 0)
         status = "error" if failed else "done"
         message = (
@@ -902,8 +907,8 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
 @router.post("/embedding-rebuild")
 async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
-    """换 embedding 模型后，批量给所有用户的 pattern 重算向量（force）。后台跑、立即返回。
-    未启用/已在跑 → 拒绝。进度用 GET /embedding-rebuild/status 轮询。"""
+    """换 embedding 模型后，批量重建 pattern、memory 及 RAG Memory 文档向量。
+    后台运行并立即返回；进度通过 GET /embedding-rebuild/status 轮询。"""
     from agent.memory import embedding
     from app.core.redis import get_redis
     from app.models import User

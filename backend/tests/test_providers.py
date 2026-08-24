@@ -92,6 +92,7 @@ def test_adapter_for_deepseek_by_provider():
     assert a.name == "deepseek"
     assert a.api_format == "openai"
     assert a.supports_active_cache("")
+    assert not a.supports_explicit_cache("")
     assert a.supports_thinking_toggle
 
 

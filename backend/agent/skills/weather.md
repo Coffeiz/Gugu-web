@@ -1,7 +1,7 @@
 ---
 name: 天气
-description_short: 用户询问天气、温度、降雨或出行建议时使用。
-description_long: "获取天气预报和气温信息。使用场景：用户询问天气、温度、降雨、出行建议等。支持通过 wttr.in 查询全球城市天气，无需 API Key。"
+description_short: 用户询问天气、温度、降雨、风力或出行建议时使用。
+description_long: "使用 Open-Meteo 查询全球城市的当前天气和未来预报。"
 category: weather
 related_tools: http_get
 emoji: 🌤️
@@ -9,101 +9,134 @@ emoji: 🌤️
 
 # 天气查询技能
 
-获取指定城市的当前天气和未来预报。
+使用 Open-Meteo 查询指定地点的当前天气和预报。天气数据来自数值天气模型，回复时只陈述接口实际返回的内容，不把预报说成确定事实。
 
-## 使用场景
+## 适用范围
 
-✅ **适用：**
+适用于：
 
-- "今天天气怎么样？"
-- "明天会下雨吗？"
-- "北京/上海天气"
-- "周末出行要带伞吗？"
-- 查询任意城市气温
+- 当前天气、温度、体感温度、湿度、风力
+- 今天、明天、后天或未来几天的天气
+- 降雨概率和基础出行建议
+- 全球城市天气查询
 
-❌ **不适用：**
+不适用于：
 
-- 历史天气数据
-- 极端天气预警（请查询气象局）
-- 气象数据分析
+- 历史天气、气候分析或长期趋势
+- 官方极端天气预警
+- 空气质量、紫外线、潮汐等未请求的指标
 
-## 查询方式
+## 执行流程
 
-### 当前天气
+### 第一步：解析地点
 
-```bash
-# 简洁格式
-curl "wttr.in/北京?format=3"
+用户只给城市名时，先用 `http_get` 请求地理编码接口：
 
-# 详细当前天气
-curl "wttr.in/北京?0"
+```text
+https://geocoding-api.open-meteo.com/v1/search?name=南京&count=5&language=zh&format=json
 ```
 
-### 预报查询
+调用约定：
 
-```bash
-# 3天预报（纯文本 ASCII 图，够用；别再加别的参数）
-curl "wttr.in/北京"
+- 工具参数必须是 `{"url": "完整 URL"}`，不要发送 `curl` 命令。
+- 优先选择名称精确、行政区和国家符合用户语境的结果。
+- 同名城市无法判断时，列出简短候选并询问用户，不要猜经纬度。
+- 地理编码结果中的 `latitude`、`longitude`、`name`、`country`、`admin1` 可用于下一步查询。
+- 用户已经提供经纬度时跳过地理编码。
+
+### 第二步：查询天气
+
+当前天气使用：
+
+```text
+https://api.open-meteo.com/v1/forecast?latitude=32.0603&longitude=118.7969&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m&timezone=auto
 ```
 
-⚠️ **别用 `?format=j1` 或 `?format=v2` 这类完整格式**——数据量很大（内含逐小时/多日详细字段），
-默认返回约 4000 字符会被截断，截断后解析不出来只会越试越乱。如果确实需要完整 JSON，可以传
-`max_chars` 参数（上限 40000）一次拉全。只查当天/单项数据时，用下面「常用格式」里的精简写法；
-要看未来几天概况，直接用不带参数的 `wttr.in/城市`（3 天纯文本图）就够，不要换成 JSON。
+未来预报使用：
 
-### 查未来某一天
-
-wttr.in **没有 `date=` 这种参数**，用整数表示"第几天"（0=今天，1=明天，2=后天，最多到 2）：
-
-```bash
-curl "wttr.in/北京?1&format=%c+%t"   # 明天天气+温度
-curl "wttr.in/北京?2"                # 后天
+```text
+https://api.open-meteo.com/v1/forecast?latitude=32.0603&longitude=118.7969&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max&timezone=auto&forecast_days=3
 ```
 
-只能查到未来 2 天；再往后 wttr.in 本身不支持，别硬凑参数重试，直接告诉用户查不到这么远。
+请求规则：
 
-### 常用格式
+- 使用地理编码返回的坐标替换示例坐标。
+- 始终带 `timezone=auto`，按地点当地时间解释结果。
+- 简单当前天气只请求 `current`，不要额外请求完整 hourly 数据。
+- 用户问逐小时变化时，再请求 `hourly=temperature_2m,apparent_temperature,precipitation_probability,weather_code,wind_speed_10m`。
+- 用户问一周天气时设置 `forecast_days=7`；没有明确要求时默认 3 天。
+- 同一次请求只取完成回答所需字段，避免返回过大的 JSON。
 
-```bash
-# 城市+天气+温度+体感
-curl -s "wttr.in/北京?format=%l:+%c+%t+(体感%f)"
+## 字段解释
 
-# 是否下雨
-curl -s "wttr.in/北京?format=%l:+%c+%p"
+常用字段：
+
+- `temperature_2m`：当前气温
+- `apparent_temperature`：体感温度
+- `relative_humidity_2m`：相对湿度
+- `wind_speed_10m`：当前风速
+- `wind_speed_10m_max`：当天最大风速
+- `precipitation_probability_max`：当天最高降水概率
+- `temperature_2m_max` / `temperature_2m_min`：当天最高/最低温度
+- `weather_code`：WMO 天气代码
+
+WMO 天气代码转中文：
+
+```text
+0       晴
+1       基本晴
+2       局部多云
+3       阴
+45,48   雾
+51-57   毛毛雨
+61-67   雨
+71-77   雪
+80-82   阵雨
+85-86   阵雪
+95      雷暴
+96,99   雷暴伴冰雹
 ```
 
-## 格式代码
+如果代码不在列表中，使用“天气状况代码为 X”，不要自行编造天气描述。
 
-- `%c` — 天气状况emoji
-- `%t` — 温度
-- `%f` — 体感温度
-- `%w` — 风速
-- `%h` — 湿度
-- `%p` — 降水量
-- `%l` — 地点
+## 输出格式
 
-## 快速示例
+当前天气示例：
 
-**查询上海天气：**
-```bash
-curl -s "wttr.in/上海?format=%l:+%c+%t+(体感%f),+%w风,+%h湿度"
+```text
+南京现在：多云，26°C，体感 28°C。
+湿度 78%，风速 10 km/h。
 ```
 
-**查询明天会不会下雨：**
-```bash
-curl -s "wttr.in/广州?1&format=%c+%p"
+多日预报示例：
+
+```text
+南京未来 3 天：
+
+今天：多云，24–30°C，降水概率 20%
+明天：小雨，23–28°C，降水概率 65%
+后天：阴，22–29°C，降水概率 35%
 ```
 
-## 支持格式
+出行建议只能基于实际字段：
 
-- 支持城市名：`curl wttr.in/深圳`
-- 支持拼音：`curl wttr.in/Shenzhen`
-- 支持机场代码：`curl wttr.in/PEK`
-- 支持中文：`curl wttr.in/东京?format=3`
+- 降水概率较高：建议带伞。
+- 温度较高：提醒防晒和补水。
+- 风速较高：提醒注意户外活动。
+- 温度较低：提醒保暖。
 
-## 注意事项
+不要在没有对应字段时推断空气质量、紫外线、台风预警或官方灾害预警。
 
-- 无需 API Key
-- 有请求频率限制，请勿频繁刷请求
-- 支持全球主要城市
-- 网络不稳定时可能需要重试
+## 错误处理
+
+- 地理编码没有结果：请用户补充省份、国家或更完整的城市名。
+- Open-Meteo 请求失败：最多重试一次，仍失败就说明暂时无法获取天气。
+- 返回缺少某个字段：只输出实际获取到的字段。
+- 不要切换回 wttr.in。
+- 不要把 `web_search` 当作普通天气查询的替代方案。
+- 不要为了修复解析问题反复更换参数或请求完整历史数据。
+- 不要编造天气结果、天气预警或接口没有返回的数值。
+
+## 数据来源
+
+回复可以简短注明“数据来源：Open-Meteo”。数据采用 CC BY 4.0，需要保留适当归属说明。免费接口适用于当前低频、非商业场景；调用频率由服务方限制，避免循环请求。

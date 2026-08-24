@@ -16,6 +16,7 @@ from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.rust_sidecar import RustSidecarUnavailable
 from agent.rag.scope import matches_scope, normalize_memory_scope
 from agent.rag.storage import PersistentMemoryIndex
+from agent.rag.vector_cache import cache_key
 
 
 MAX_ACTIVE_RESULTS = 10
@@ -379,7 +380,10 @@ async def _load_cached_vectors(user_id, documents) -> dict[str, list[float]]:
     result: dict[str, list[float]] = {}
     for doc in documents:
         key = doc.metadata.get("vector_key")
-        cached = (pattern if doc.source_id == "pattern" else memory).get(key or "")
+        if doc.source_id == "pattern":
+            cached = pattern.get(key or "")
+        else:
+            cached = memory.get(cache_key(doc) or "")
         if cached and cached.get("t") == tag and isinstance(cached.get("v"), list):
             result[doc.chunk_id] = cached["v"]
     return result

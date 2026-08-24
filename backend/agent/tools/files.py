@@ -1358,6 +1358,8 @@ class FilesSkill(BaseSkill):
                 "新建一个文件。format 为可编辑文本类型时 content 按原文直接写入；"
                 "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
                 "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
+                "工具成功后会返回真实 file_id；用户询问位置、路径、打开或查看时，回复使用"
+                "[文件名](gugu://open-file/{file_id}) 生成文件库跳转按钮，不要把保存误说成已发送。"
                 "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
                 "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**"
             ),
@@ -1536,6 +1538,8 @@ class FilesSkill(BaseSkill):
         Tool(
             name="send_file", label="发送文件",
             description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
+                        "它不是文件库跳转工具；用户只问位置/路径/打开时不要调用 send_file，而应在文字中使用"
+                        "[文件名](gugu://open-file/{file_id})。"
                         "三种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
                         "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）；"
                         "③ 之前收到/发过、还在暂存区的附件——用 attach_id 直接重发，不重新下载、不进文件库。"

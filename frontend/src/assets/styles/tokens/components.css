@@ -34,6 +34,12 @@
   --control-border: var(--border-default);
   --control-border-hover: var(--border-hover);
   --control-radius: var(--radius-sm);
+  --control-checkbox-size: 16px;
+  --control-checkbox-radius: 5px;
+  --control-checkbox-border-width: 1.5px;
+  --control-checkbox-mark-width: 7px;
+  --control-checkbox-mark-height: 4px;
+  --control-checkbox-mark-stroke: 1.6px;
   --control-focus-shadow: 0 0 0 3px color-mix(in srgb,var(--focus-ring) 48%,transparent);
   --segmented-track-bg: var(--action-soft);
   --segmented-pill-bg: var(--control-bg);

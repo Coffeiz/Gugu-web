@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 COMPACT_SUMMARY_MAX_TOKENS = 800  # provider 摘要输出上限（请求参数，不参与历史估算）
 RECENT_HISTORY_KEEP_CHARS = 20_000  # 压缩后保留的最近完整 history 字符上限
 SUMMARY_SOURCE_CHUNK_CHARS = 48_000  # 单次摘要输入字符上限，跨块滚动合并
+BRANCH_SUMMARY_MAX_CHARS = 96_000  # 可一次性分支压缩的 history 输入上限
 
 
 async def estimate_context_length(messages: list, system_text: str = "") -> int:
@@ -364,6 +365,12 @@ async def _generate_compact_summary(
         current_chars += item_chars
     if current:
         chunks.append(current)
+
+    # 在安全输入上限内只发一次独立摘要请求。调用方稍后才会替换当前 run
+    # 的内存消息，因而这里不会改变真实 session；超限时保留原有分块滚动策略。
+    all_text = "\n".join(content_list)
+    if len(all_text) <= BRANCH_SUMMARY_MAX_CHARS:
+        return await _generate_compact_summary_once(content_list, prev_summary)
 
     summary = prev_summary
     for chunk in chunks:

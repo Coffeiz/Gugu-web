@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 import agent.core as core
-from agent.core import LLMRunner
+from agent.core import LLMRunner, _provider_context_usage
 from agent.runtime.loopscope_trace import hooks as loop_hooks
 from agent.runtime.loopscope_trace.state import _ScopeRun, _now, _scope_run
 
@@ -36,6 +36,16 @@ EXPECTED_USAGE = {
     "input": 13, "output": 5, "cache_read": 3, "cache_write": 0,
     "fresh_input": 10, "total": 18, "cache_ratio": round(3 / 13, 6),
 }
+
+
+def test_context_threshold_uses_cache_tokens_for_anthropic():
+    result = SimpleNamespace(usage_in=1080, cache_tokens=75456)
+    assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 76536
+
+
+def test_context_threshold_does_not_double_count_openai_cache_tokens():
+    result = SimpleNamespace(usage_in=76536, cache_tokens=75456)
+    assert _provider_context_usage(SimpleNamespace(api_format="openai"), result) == 76536
 
 
 @pytest.fixture(autouse=True)

@@ -9,6 +9,7 @@ from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.diagnostics import record_index_update
 from agent.rag.scope import normalize_memory_scope
 from agent.rag.storage import PersistentMemoryIndex
+from agent.rag.vector_cache import sync_memory_index_vectors
 
 
 MAX_RETRIES = 3
@@ -23,6 +24,7 @@ async def rebuild_memory_index(user_id: object, *, operation: str = "upsert") ->
         scope = normalize_memory_scope(user_id, "auto")
         documents = await MemoryAdapter(user_id).build_documents(scope=scope)
         await PersistentMemoryIndex(user_id).replace(documents)
+        await sync_memory_index_vectors(user_id, documents)
         return len(documents)
 
 

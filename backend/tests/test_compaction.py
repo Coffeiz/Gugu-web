@@ -8,6 +8,7 @@ from agent.context.compaction import (
     validate_compacted_shape,
     _is_system_injection,
     _atomic_message_units,
+    _generate_compact_summary,
 )
 from agent.context.tokens import content_text, estimate_tokens, message_text
 
@@ -99,6 +100,37 @@ class TestIsSystemInjection:
 
 
 class TestCompactContext:
+    def test_small_history_uses_single_branch_summary_request(self, monkeypatch):
+        calls = []
+
+        async def fake_once(items, previous=None):
+            calls.append((items, previous))
+            return "分支摘要"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
+        result = asyncio.get_event_loop().run_until_complete(
+            _generate_compact_summary(["用户：第一条", "咕咕：第二条"], "旧摘要")
+        )
+        assert result == "分支摘要"
+        assert len(calls) == 1
+        assert calls[0][1] == "旧摘要"
+
+    def test_oversized_history_uses_rolling_fallback(self, monkeypatch):
+        calls = []
+
+        async def fake_once(items, previous=None):
+            calls.append((items, previous))
+            return f"摘要{len(calls)}"
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary_once", fake_once)
+        items = ["用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000,
+                 "用户：" + "内容" * 30_000, "咕咕：" + "内容" * 30_000]
+        result = asyncio.get_event_loop().run_until_complete(
+            _generate_compact_summary(items)
+        )
+        assert result == f"摘要{len(calls)}"
+        assert len(calls) > 1
+
     def test_force_compaction_does_not_use_local_token_estimate(self, monkeypatch):
         """正常压缩由 provider usage 触发，不得再用本地 token 估算决定是否执行。"""
         def fail_estimate(*_args, **_kwargs):

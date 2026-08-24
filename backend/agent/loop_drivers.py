@@ -376,6 +376,7 @@ class _OpenAICtx:
     think_kwargs: dict
     model: str
     supports_active_cache: bool
+    supports_explicit_cache: bool
     adapter: Any
     ai: Any
 
@@ -438,13 +439,16 @@ class OpenAIDriver:
         from agent.tools import registry
 
         adapter = providers.adapter_for(ai)
-        supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
+        model = getattr(ai, "model", "") or ""
+        supports_active_cache = adapter.supports_active_cache(model)
+        supports_explicit_cache = adapter.supports_explicit_cache(model)
 
-        # OpenAI 兼容 provider 的 cache_control 语义并不统一。DeepSeek/Qwen
-        # 会把第一个标记当成缓存边界；如果给每个 system 都标记，缓存会被截在
+        # OpenAI 兼容 provider 的 cache_control 语义并不统一。经过验证的 Qwen
+        # 端点会把标记作为缓存边界；如果给每个 system 都标记，缓存会被截在
         # snapshot 的前缀处。稳定 conversation 的唯一锚点统一由 run_round
-        # 的 _with_history_cache() 放在末尾，动态尾部也不会被纳入。
-        if adapter.supports_explicit_cache(getattr(ai, "model", "") or ""):
+        # 的显式策略放在末尾，动态尾部也不会被纳入。DeepSeek 走服务端自动缓存，
+        # 不进入这条分支。
+        if supports_explicit_cache:
             cache_messages = getattr(messages, "conversation", messages)
             for message in cache_messages:
                 if message.get("role") != "system":
@@ -472,6 +476,7 @@ class OpenAIDriver:
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
             think_kwargs=think_kwargs, model=ai.model,
             supports_active_cache=supports_active_cache,
+            supports_explicit_cache=supports_explicit_cache,
             adapter=adapter,
             ai=ai,
         )
@@ -487,7 +492,10 @@ class OpenAIDriver:
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         from agent.context.canonical_tool_history import render_events_for_provider
         outbound = render_events_for_provider(messages)
-        if ctx.supports_active_cache:
+        # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
+        # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
+        # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
+        if ctx.supports_explicit_cache:
             if ctx.adapter.uses_single_history_cache_anchor(ctx.model):
                 messages = _with_single_history_cache(outbound)
             else:

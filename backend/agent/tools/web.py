@@ -427,7 +427,9 @@ class WebSkill(BaseSkill):
             description="仅当用户提供了明确的公网 URL，并明确要求下载、保存或导入时调用。用户只是询问工具是否存在、"
                         "查看用法或没有提供 URL 时不要调用，应先向用户索要 URL；不要用空参数试探。只读网页内容用 http_get，"
                         "向聊天发送已有文件用 send_file。默认保存到个人空间根目录；可用 space/project_id/folder_id 指定落点，"
-                        "folder_id 会自动决定所属空间和项目。不跟随重定向，只允许公网地址，单文件最大 50MB。",
+                        "folder_id 会自动决定所属空间和项目。不跟随重定向，只允许公网地址，单文件最大 50MB。"
+                        "成功回执会返回真实 file_id；用户询问位置、路径、打开或查看时，回复使用"
+                        "[文件名](gugu://open-file/{file_id}) 生成文件库跳转按钮，不要调用 send_file 代替跳转。",
             input_schema={
                 "type": "object",
                 "properties": {

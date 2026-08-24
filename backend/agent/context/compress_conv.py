@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 BASELINE_UPDATE_RATIO = 0.90
 _MAX_COMPRESS_CHARS = 48_000   # 单次摘要块字符上限；全部旧 history 通过滚动摘要覆盖
 _RECENT_HISTORY_KEEP_CHARS = 20_000
+# 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
+# provider 前缀；超出该上限才退回分块滚动，避免一次摘要输入超过 provider 硬限制。
+_BRANCH_COMPRESS_MAX_CHARS = 96_000
 _COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
@@ -327,11 +330,22 @@ async def _compress_if_needed_unlocked(
     if not chunks:
         return False
 
-    summary = prev_summary
-    for chunk in chunks:
-        summary = await _call_llm("\n\n".join(chunk), summary, settings)
-        if not summary:
-            return False
+    summary: str | None
+    all_text = "\n\n".join("\n".join(chunk) for chunk in chunks)
+    if len(all_text) <= _BRANCH_COMPRESS_MAX_CHARS:
+        # 分支式候选：这次请求只读取 session 的 history 快照，不持有数据库事务，
+        # 结果仍需在下方按 baseline hash 做 CAS 后才能写回。
+        summary = await _call_llm(all_text, prev_summary, settings)
+        compression_mode = "branch"
+    else:
+        summary = prev_summary
+        for chunk in chunks:
+            summary = await _call_llm("\n\n".join(chunk), summary, settings)
+            if not summary:
+                return False
+        compression_mode = "rolling-fallback"
+    if not summary:
+        return False
     summary = summary[:10_000]
 
     async with _sess._SessionLocal() as db:
@@ -401,9 +415,9 @@ async def _compress_if_needed_unlocked(
         },
     )
 
-    logger.info("[compress_conv] session %s：%d 条 → summary（%d 字符，%s）",
+    logger.info("[compress_conv] session %s：%d 条 → summary（%d 字符，%s，mode=%s）",
                 session_id, len(to_compress), len(summary),
-                "滚动合并" if prev_summary else "首次")
+                "滚动合并" if prev_summary else "首次", compression_mode)
     return True
 
 

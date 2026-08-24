@@ -1218,29 +1218,6 @@ onMounted(async () => {
 .btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
-/* Agent 页面统一勾选框，避免被浏览器/全局 checkbox paint 规则压成小点。 */
-.admin-checkbox {
-  appearance: none !important;
-  -webkit-appearance: none !important;
-  width: 16px !important;
-  height: 16px !important;
-  flex: 0 0 16px;
-  margin: 0;
-  border: 1px solid var(--action-outline, rgba(123,127,178,.35));
-  border-radius: 4px;
-  background: var(--surface-raised, rgba(255,255,255,.06));
-  background-image: none !important;
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
-}
-.admin-checkbox:hover { border-color: var(--action-primary, #7b7fb2); }
-.admin-checkbox:focus-visible { outline: 2px solid color-mix(in srgb, var(--action-primary, #7b7fb2) 45%, transparent); outline-offset: 2px; }
-.admin-checkbox:checked { background: var(--action-primary, #7b7fb2); border-color: var(--action-primary, #7b7fb2); box-shadow: 0 2px 8px color-mix(in srgb, var(--action-primary, #7b7fb2) 35%, transparent); }
-.admin-checkbox:checked::after { content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 4px; border-left: 1.5px solid var(--content-on-accent); border-bottom: 1.5px solid var(--content-on-accent); background-image: none !important; transform: translate(-50%, -62%) rotate(-45deg); transform-origin: center; }
-.admin-checkbox:disabled { opacity: .5; cursor: default; }
-
 /* Agent 行为开关：使用统一控件 token，不依赖浏览器默认 button/checkbox 外观。 */
 .toggle-switch {
   position: relative;

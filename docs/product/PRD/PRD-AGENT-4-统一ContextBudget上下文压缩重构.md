@@ -2,7 +2,7 @@
 
 ## 状态
 
-实施中（2026-08-24，Phase 0-5 已完成）。本文仍是 Phase 6 验收与部署依据，全部完成后再标记为「已完成」。
+实施中（2026-08-24，Phase 0-5 已完成）。分支式摘要候选与缓存保持另见 PRD-AGENT-5；本 PRD 继续作为预算、baseline、retry 和 session 生命周期的总规范。
 
 ## 本任务目标
 
@@ -99,7 +99,7 @@ baseline
 | pending | pending 是 session 自身的持久状态，不依赖 Redis lock 推断。新消息可先落库，执行器只处理一个 active task。 |
 | Redis | Redis gate 只负责跨 worker 的执行所有权、短时租约和故障恢复；不能作为业务消息是否 pending 的唯一事实来源。 |
 | baseline | session 只有一个 active baseline 版本；旧压缩任务不能覆盖新 baseline。 |
-| 压缩结果 | `compact_context()` 返回 `CompactionResult`，包含 `changed`、`before_tokens`、`after_tokens` 和 `return_reason`；原因区分 `no_compressible_history`、`summary_failed`、`shape_validation_failed`、`budget_inconsistent` 和 `compacted`。 |
+| 压缩结果 | `compact_context()` 返回 `CompactionResult`，包含 `changed`、`before_tokens`、`after_tokens` 和 `return_reason`；摘要候选优先走 PRD-AGENT-5 的 branch，超限才走 rolling fallback。原因区分 `no_compressible_history`、`summary_failed`、`shape_validation_failed`、`budget_inconsistent` 和 `compacted`。 |
 | 被动群消息 | 被动群消息继续存储，但不触发生成；后续被提及或主动响应时从当前 baseline 增量读取。 |
 
 ---

@@ -31,6 +31,19 @@ _log = logging.getLogger("agent.core")
 _RETRY_BACKOFF = [1, 2, 4]   # 退避秒数；最多重试 3 次
 
 
+def _provider_context_usage(driver: Any, result: Any) -> int:
+    """返回用于上下文阈值判断的完整 provider 输入量。
+
+    Anthropic 兼容接口把缓存命中单独放在 ``cache_tokens``，而
+    ``usage_in`` 只包含 fresh input；OpenAI 兼容接口的 ``usage_in`` 已经
+    包含缓存命中，不能再次相加。
+    """
+    usage_in = max(0, int(getattr(result, "usage_in", 0) or 0))
+    if getattr(driver, "api_format", "") == "anthropic":
+        usage_in += max(0, int(getattr(result, "cache_tokens", 0) or 0))
+    return usage_in
+
+
 def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
     """取得固定 Adapter 的业务参数。
 
@@ -701,7 +714,7 @@ class LLMRunner:
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
-            run_context_usage = max(run_context_usage, int(result.usage_in or 0))
+            run_context_usage = max(run_context_usage, _provider_context_usage(driver, result))
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:
