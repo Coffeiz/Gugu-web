@@ -222,7 +222,13 @@ def event_text(block: dict) -> str:
 
 
 def render_events_for_provider(messages: list[dict]) -> list[dict]:
-    """复制并渲染 canonical blocks，原始历史保持可持久化和可重放。"""
+    """复制并渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
+
+    provider wire 渲染不能把动态尾部降级成普通 list，否则缓存层无法区分
+    稳定 conversation 和每轮变化的 dynamic_tail。
+    """
+    conversation_count = len(getattr(messages, "conversation", messages))
+    is_prompt_messages = hasattr(messages, "dynamic_tail") and hasattr(messages, "fixed_prefix_size")
     rendered: list[dict] = []
     for message in messages:
         clone = dict(message)
@@ -246,4 +252,20 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
                 else:
                     clone["content"] = "\n\n".join(event_lines)
         rendered.append(clone)
-    return rendered
+
+    if not is_prompt_messages:
+        return rendered
+
+    # 延迟导入避免 message_assembly 与 canonical history 之间形成模块级循环依赖。
+    from agent.context.message_assembly import PromptMessages
+
+    result = PromptMessages(
+        rendered[:conversation_count],
+        rendered[conversation_count:],
+        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+    )
+    remember_anchor = getattr(result, "remember_cache_anchor", None)
+    if remember_anchor is not None:
+        for index in getattr(messages, "cache_anchor_indices", ()):
+            remember_anchor(index)
+    return result

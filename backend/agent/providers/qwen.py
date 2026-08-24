@@ -7,6 +7,14 @@ class QwenAdapter(ProviderAdapter):
     cache_mode = "active"
     supports_thinking_toggle = True
 
+    def supports_explicit_cache(self, model: str = "") -> bool:
+        return self.supports_active_cache(model)
+
+    def uses_single_history_cache_anchor(self, model: str = "") -> bool:
+        # Token Plan 的 OpenAI 兼容端点对多个历史 cache_control 锚点命中不稳定；
+        # 保留系统前缀锚点，只发送最新稳定历史尾锚点。
+        return self.supports_explicit_cache(model)
+
     @staticmethod
     def _qwen3_model(model: str) -> bool:
         return (model or "").strip().lower().startswith("qwen3")

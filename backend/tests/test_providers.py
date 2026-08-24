@@ -42,6 +42,8 @@ def test_bailian_qwen3_capabilities_and_thinking_toggle():
     assert adapter.capabilities("qwen3.8-max").thinking
     assert adapter.capabilities("qwen3.8-max").structured_json
     assert adapter.capabilities("qwen3.8-max").structured_schema
+    assert adapter.supports_explicit_cache("qwen3.6-flash")
+    assert adapter.uses_single_history_cache_anchor("qwen3.6-flash")
     assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
         provider="qwen", model="qwen3.8-max", thinking="disabled"
     )) == {"extra_body": {"enable_thinking": False}}

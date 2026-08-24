@@ -30,10 +30,13 @@ def test_openai_provider_render_keeps_snapshot_prefix():
         dynamic_tail=[{"role": "system", "content": "当前时间"}],
     )
 
-    outbound = render_events_for_provider(messages.conversation)
+    outbound = render_events_for_provider(messages)
 
     assert outbound[0] == {"role": "system", "content": "固定 snapshot"}
-    assert [item["content"] for item in outbound] == ["固定 snapshot", "旧消息", "当前消息"]
+    assert [item["content"] for item in outbound.conversation] == [
+        "固定 snapshot", "旧消息", "当前消息",
+    ]
+    assert [item["content"] for item in outbound.dynamic_tail] == ["当前时间"]
 
 
 def test_rag_tail_is_stable_conversation_after_current_user():

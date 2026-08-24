@@ -17,7 +17,7 @@ from agent.context.session_snapshot import (
     initialize_snapshot,
 )
 from agent.context.message_assembly import PromptMessages, build_messages, reminder, newly_appended
-from agent.loop_drivers import _with_history_cache
+from agent.loop_drivers import _with_history_cache, _with_single_history_cache
 from agent.runtime.loopscope_trace.state import _ScopeRun, _scope_run, _now
 import pytest
 
@@ -257,6 +257,23 @@ def test_history_cache_keeps_previous_checkpoint_across_round_append():
     assert second[3]["content"][0]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in second[-1]["content"]
     assert "cache_control" not in first[-1]["content"]
+
+
+def test_single_history_cache_keeps_only_latest_anchor():
+    messages = PromptMessages(
+        [
+            {"role": "user", "content": "旧锚点"},
+            {"role": "assistant", "content": "回复"},
+            {"role": "user", "content": "最新锚点"},
+        ],
+        [reminder("time")],
+    )
+    cached = _with_single_history_cache(messages)
+
+    assert "cache_control" not in cached[0]["content"][0]
+    assert "cache_control" not in cached[1]["content"][0]
+    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in cached[-1]["content"]
 
 
 @pytest.mark.asyncio

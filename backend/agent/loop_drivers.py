@@ -237,6 +237,37 @@ def _with_history_cache(messages: list) -> list:
     return new_messages
 
 
+def _with_single_history_cache(messages: list) -> list:
+    """只给稳定 conversation 的最新消息添加一个历史缓存锚点。"""
+    stable_limit, _ = _history_cache_state(messages)
+    if stable_limit <= 0:
+        return list(messages)
+    latest_anchor = stable_limit - 1
+    new_messages = []
+    for index, message in enumerate(messages):
+        clone = dict(message)
+        content = clone.get("content")
+        if index == latest_anchor:
+            if isinstance(content, list) and content:
+                clone["content"] = content[:-1] + [
+                    {**content[-1], "cache_control": {"type": "ephemeral"}}
+                ]
+            elif isinstance(content, str):
+                clone["content"] = [{
+                    "type": "text", "text": content,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+        else:
+            if isinstance(content, list):
+                clone["content"] = [
+                    {key: value for key, value in block.items() if key != "cache_control"}
+                    if isinstance(block, dict) else block
+                    for block in content
+                ]
+        new_messages.append(clone)
+    return new_messages
+
+
 class AnthropicDriver:
     api_format = "anthropic"
 
@@ -409,17 +440,26 @@ class OpenAIDriver:
         adapter = providers.adapter_for(ai)
         supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
 
-        # OpenAI 兼容 API 的 system 已由 message assembly 生成稳定文本，
-        # 支持主动缓存的 provider 将整个稳定 system 标记为可缓存。
-        for _m in messages if supports_active_cache else []:
-            if _m.get("role") == "system":
-                content = _m.get("content")
+        # OpenAI 兼容 provider 的 cache_control 语义并不统一。DeepSeek/Qwen
+        # 会把第一个标记当成缓存边界；如果给每个 system 都标记，缓存会被截在
+        # snapshot 的前缀处。稳定 conversation 的唯一锚点统一由 run_round
+        # 的 _with_history_cache() 放在末尾，动态尾部也不会被纳入。
+        if adapter.supports_explicit_cache(getattr(ai, "model", "") or ""):
+            cache_messages = getattr(messages, "conversation", messages)
+            for message in cache_messages:
+                if message.get("role") != "system":
+                    continue
+                content = message.get("content")
                 if isinstance(content, str):
-                    _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-                elif isinstance(content, list):
-                    # 已经是数组格式，确保最后一个块有 cache_control
-                    if content and "cache_control" not in content[-1]:
-                        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+                    message["content"] = [{
+                        "type": "text", "text": content,
+                        "cache_control": {"type": "ephemeral"},
+                    }]
+                elif isinstance(content, list) and content and "cache_control" not in content[-1]:
+                    content[-1] = {
+                        **content[-1], "cache_control": {"type": "ephemeral"},
+                    }
+                break
 
         declared = providers.capability_snapshot(ai)
         tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []
@@ -447,7 +487,13 @@ class OpenAIDriver:
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
         from agent.context.canonical_tool_history import render_events_for_provider
         outbound = render_events_for_provider(messages)
-        messages = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
+        if ctx.supports_active_cache:
+            if ctx.adapter.uses_single_history_cache_anchor(ctx.model):
+                messages = _with_single_history_cache(outbound)
+            else:
+                messages = _with_history_cache(outbound)
+        else:
+            messages = outbound
         tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
         cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         stream = await client.chat.completions.create(

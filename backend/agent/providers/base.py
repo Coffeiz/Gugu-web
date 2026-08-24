@@ -49,6 +49,18 @@ class ProviderAdapter:
     def supports_active_cache(self, model: str = "") -> bool:
         return self.capabilities(model).cache_mode == "active"
 
+    def supports_explicit_cache(self, model: str = "") -> bool:
+        """该 provider 是否支持在 message content 上使用显式缓存锚点。"""
+        return False
+
+    def uses_single_history_cache_anchor(self, model: str = "") -> bool:
+        """是否只发送一个最新的历史缓存锚点。
+
+        不同 OpenAI 兼容端点对多个显式锚点的实现并不一致；默认保持历史
+        行为，由具体 provider 按实测能力覆盖。
+        """
+        return False
+
     def auth_headers(self, ai) -> dict[str, str]:
         return {}
 
