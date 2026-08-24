@@ -190,10 +190,18 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 
-        # 连续历史：不再按最近 N 条滑动；压缩后从 session baseline 之后继续追加。
+        # 连续历史：统一按实际 history budget 读取窗口；持久化压缩后从 baseline 继续追加。
         from agent.context import session_history
+        history_budget = session_history.history_budget_for_context(
+            settings.ai.context_tokens,
+            system_prompt=snapshot["system_prompt"],
+            snapshot_context=snapshot["snapshot_context"],
+        )
         history = await session_history.load_session_history(
-            db, session.id, session_snapshot.history_baseline(session),
+            db,
+            session.id,
+            session_snapshot.history_baseline(session),
+            token_budget=history_budget,
         )
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, settings.ai)
@@ -283,6 +291,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
             strip_thinking=strip_thinking,
+            history_budget=history_budget,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -318,7 +327,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                     user_content=None, user_images=None, attach_cards=None,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
-                    strip_thinking: bool = False) -> None:
+                    strip_thinking: bool = False,
+                    history_budget: int | None = None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -569,6 +579,17 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 await db2.commit()
         except IntegrityError:
             logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
+
+        # Web 与 IM 使用同一套持久化压缩；snapshot checkpoint 只更新稳定上下文，
+        # 对话 summary/baseline 由这里的后台任务推进。
+        from agent.context import compress_conv
+        compress_conv.schedule_checkpoint(
+            session_id,
+            user_id,
+            settings,
+            settings.ai.context_tokens,
+            history_budget=history_budget,
+        )
 
         # 回复正文已经持久化后，聊天流就应当结束。标题、总结、反思和压缩都是后台收尾，
         # 不能让前端在文本已经完整显示后继续保持“终止生成”状态，也不能阻塞下一条消息。

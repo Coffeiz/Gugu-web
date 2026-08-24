@@ -101,8 +101,14 @@ def schedule_checkpoint(
     user_id: int,
     settings,
     context_tokens: int,
+    *,
+    history_budget: int | None = None,
 ) -> None:
-    """在 run 完成后按 90% 软阈值后台创建 checkpoint。"""
+    """在 run 完成后按本轮历史预算后台创建 checkpoint。
+
+    ``history_budget`` 由入口在组装前计算，已扣除固定上下文预留；未提供时保留
+    原来的 90% 总上下文兼容行为。
+    """
     if not session_id:
         return
     existing = _checkpoint_tasks.get(session_id)
@@ -113,7 +119,12 @@ def schedule_checkpoint(
             session_id,
             user_id,
             settings,
-            max(1, int(context_tokens * POST_RUN_CHECKPOINT_RATIO)),
+            max(
+                1,
+                int(history_budget)
+                if history_budget is not None
+                else int(context_tokens * POST_RUN_CHECKPOINT_RATIO),
+            ),
             force=False,
         ),
         name=f"context-checkpoint:{session_id}",
@@ -125,9 +136,13 @@ def schedule_checkpoint(
             _checkpoint_tasks.pop(session_id, None)
         try:
             done.exception()
-        except (asyncio.CancelledError, Exception):
-            # 后台 checkpoint 失败不影响已经完成的 run；下一条消息仍会硬预检。
+        except asyncio.CancelledError:
+            # 服务关闭时允许任务取消，不把取消当成业务失败。
             pass
+        except Exception:
+            # 后台 checkpoint 失败不影响已经完成的 run；下一条消息仍会硬预检，
+            # 但必须留下诊断日志，避免 summary/baseline 永久停在旧水位却无人知晓。
+            logger.exception("[compress_conv] session=%s 后台 checkpoint 失败", session_id)
 
     task.add_done_callback(_cleanup)
 

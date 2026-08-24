@@ -330,9 +330,17 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
             "platform_user": member_memory,
         })
 
-        # 连续历史：未压缩时不再按最近 N 条滑动；压缩后从 baseline 水位继续追加。
+        # 连续历史：统一按实际 history budget 读取窗口；持久化压缩后从 baseline 继续追加。
+        history_budget = session_history.history_budget_for_context(
+            model_cfg.context_tokens,
+            system_prompt=snapshot["system_prompt"],
+            snapshot_context=snapshot["snapshot_context"],
+        )
         history = await session_history.load_session_history(
-            db, session_id, session_snapshot.history_baseline(session),
+            db,
+            session_id,
+            session_snapshot.history_baseline(session),
+            token_budget=history_budget,
         )
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, model_cfg)
@@ -584,6 +592,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         compress_conv.schedule_checkpoint(
             session_id, user_id, settings,
             getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+            history_budget=history_budget,
         )
 
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
@@ -714,9 +723,17 @@ async def run_stream(
             "platform_user": member_memory,
         })
 
-        # 连续历史：只加载 baseline 之后的追加消息，避免每轮重新裁剪历史前缀。
+        # 连续历史：统一按实际 history budget 读取窗口，避免 baseline=0 时无界加载。
+        history_budget = session_history.history_budget_for_context(
+            model_cfg.context_tokens,
+            system_prompt=snapshot["system_prompt"],
+            snapshot_context=snapshot["snapshot_context"],
+        )
         history = await session_history.load_session_history(
-            db, session_id, session_snapshot.history_baseline(session),
+            db,
+            session_id,
+            session_snapshot.history_baseline(session),
+            token_budget=history_budget,
         )
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, model_cfg)
@@ -1013,6 +1030,7 @@ async def run_stream(
         compress_conv.schedule_checkpoint(
             session_id, user_id, settings,
             getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+            history_budget=history_budget,
         )
 
         if is_new_session and text:
