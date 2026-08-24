@@ -927,7 +927,11 @@ class LLMRunner:
                     answer = await wait_for_resolution(
                         user_id=user_id, prompt_id=prompt_id,
                         heartbeat=lambda: genstream.touch(session_id),
+                        cancel_check=lambda: _im_cancelled(session_id),
                     )
+                    if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                        return
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return

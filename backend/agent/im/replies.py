@@ -52,7 +52,7 @@ async def send_interaction(payload: dict, prompt: dict) -> bool:
 
     platform = payload.get("platform")
     if platform != "qq":
-        return await send_text(payload, format_text_fallback(prompt))
+        return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
     text = format_text_fallback(prompt)
     if prompt.get("options"):

@@ -645,6 +645,52 @@ class MemorySource(Base):
     )
 
 
+class KnowledgeIndexEntry(Base):
+    """统一知识索引的持久化 chunk。
+
+    业务表仍然是事实来源；这张表只保存可重建的检索投影。scope 字段与正文
+    同行保存，查询时先做 owner/scope 过滤，再进入 BM25 或数据库全文索引。
+    """
+
+    __tablename__ = "knowledge_index_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(32), index=True)
+    source_id: Mapped[str] = mapped_column(String(255), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True, default="owner")
+    scope_id: Mapped[str] = mapped_column(String(255), index=True, default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    bot_id: Mapped[str] = mapped_column(String(128), default="")
+    group_id: Mapped[str] = mapped_column(String(255), default="")
+    document_id: Mapped[str] = mapped_column(String(255), index=True)
+    parent_document_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    document_version: Mapped[str] = mapped_column(String(64))
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_updated_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    indexed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "source_type", "source_id", "document_version", "chunk_index",
+            name="uq_knowledge_index_entry_chunk",
+        ),
+        Index(
+            "ix_knowledge_index_scope_source",
+            "owner_user_id", "scope_type", "scope_id", "source_type",
+        ),
+    )
+
+
 class MemoryScopeTombstone(Base):
     """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
     __tablename__ = "memory_scope_tombstones"

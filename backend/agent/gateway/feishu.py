@@ -158,6 +158,21 @@ def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
     return False
 
 
+def _feishu_mentions_current_bot(message, open_id: str | None) -> bool:
+    """从飞书 at 节点确认是否指向当前 bot；没有结构化节点时不猜测。"""
+    if not open_id:
+        return False
+    mentions = getattr(message, "mentions", None) or []
+    if not isinstance(mentions, list):
+        return False
+    for item in mentions:
+        value = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+        candidate = value.get("open_id") if isinstance(value, dict) else getattr(value, "open_id", None)
+        if candidate == open_id or value == open_id:
+            return True
+    return False
+
+
 def _do_react(client, message_id: str, emoji_type: str) -> bool:
     """给某条消息加表情回应（同步，给 asyncio.to_thread 用）。失败返回 False。"""
     try:
@@ -243,6 +258,9 @@ def _make_on_message(channel_id: str, owner: str, api_client, expected_app_id: s
             "attachments": attachments,
             "trace_id": tid,             # 全链路 trace：worker/工具日志同 id，grep 可串联
         }
+        # 飞书 SDK 版本可能把 at 节点解析到 mentions，也可能已将其从 text 中移除。
+        # 只把明确指向当前 bot 的 mention 标为 True，不根据可见 @ 文本猜测。
+        payload["bot_mentioned"] = _feishu_mentions_current_bot(msg, open_id)
         # 隐私：不打印消息原文，只留结构+指纹（见 agent/logsafe.py），同 agent.traj 脱敏口径
         from agent.security import logsafe
         print(f"[feishu:{channel_id}] 收到 {open_id} @ {msg.chat_id} ({mt}): text_len={len(text)} "

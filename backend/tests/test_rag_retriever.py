@@ -1,8 +1,11 @@
 import pytest
 
+from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.models import IndexDocument, RecallResult, Scope
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.service import UnifiedRecallService
+from agent.rag.scope import group_scope, owner_scope
+from app.models import Project
 
 
 class FakeRetriever:
@@ -56,6 +59,57 @@ async def test_recall_service_merges_same_content_citations():
     assert {item["source_type"] for item in result["results"][0]["citations"]} == {
         "fake", "fake-duplicate"
     }
+
+
+@pytest.mark.asyncio
+async def test_project_adapter_is_owner_only_and_keeps_project_citation(db, user_a):
+    project = Project(
+        user_id=user_a.id, name="上线计划", client="小北",
+        status="active", progress=40, current_stage="验收", version=2,
+    )
+    project.stages = [{"name": "设计"}, {"name": "验收"}]
+    db.add(project)
+    await db.commit()
+
+    adapter = ProjectAdapter(user_a.id, db=db)
+    documents = await adapter.build_documents(scope=owner_scope(user_a.id))
+    assert len(documents) == 1
+    assert documents[0].source_type == "project"
+    assert documents[0].source_id == str(project.id)
+    assert "上线计划" in documents[0].content
+    assert "验收" in documents[0].content
+    assert await adapter.build_documents(
+        scope=group_scope(user_a.id, "qq", "bot", "group")
+    ) == []
+
+
+class _ManyProjects:
+    source_type = "project"
+
+    async def retrieve(self, query, *, scope, strategy, candidate_limit):
+        return RetrievalBatch(
+            source_type=self.source_type,
+            results=tuple(
+                RecallResult(IndexDocument(
+                    document_id=f"project:{index}", source_type="project",
+                    source_id=str(index), scope=Scope(owner_user_id="user-a"),
+                    title=f"项目 {index}", summary="", content=f"项目内容 {index}",
+                    version="v1",
+                ), 100 - index)
+                for index in range(8)
+            ),
+            candidate_count=8,
+        )
+
+
+@pytest.mark.asyncio
+async def test_recall_service_limits_by_source_type_not_source_id():
+    result = await UnifiedRecallService(
+        UnifiedRetriever([_ManyProjects()])
+    ).search("项目", strategy="bm25", limit=10)
+
+    assert len(result["results"]) == 3
+    assert {item["source"] for item in result["results"]} == {"project"}
 
 
 def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):

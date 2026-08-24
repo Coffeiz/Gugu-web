@@ -1,10 +1,12 @@
 # 群成员长期记忆（从群压缩派生）PRD
 
-> 状态：📝 草案（未实现，仅设计文档）
+> 状态：📝 草案（未实现，依赖 `PRD-MEM-2` 公共事件记忆底座）
 > 创建：2026-08-10
 > 关联：[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)（本 PRD 是它的直接延伸，共享其记忆作用域、隔离和隐私边界，不重复冻结项）
 
 ## 1. 背景与目标
+
+> 执行边界：本 PRD 不复制一套成员专属压缩器。事件章节、叙事记忆合并、内容 hash、向量同步、异常回退和 scope 删除复用 [`PRD-MEM-2-事件型长期记忆与压缩去重.md`](./PRD-MEM-2-事件型长期记忆与压缩去重.md)；本 PRD 只增加 IM 群消息的成员归因、成员校验和派生分发。
 
 `PRD-IM-3` 已经为 `platform-user`（群成员）作用域实现了 `profile.json`/`pattern.json`/`summary.json`，但**没有 `daily.md`/`memory.md`**——群成员目前只有画像、行为模式和一句话状态快照，没有逐日流水，也没有长期叙述性记忆。
 
@@ -87,6 +89,21 @@ backend/agent/memory/
 
 `scoped_store.py`（IM-3 已有）需要确认支持对 `platform-user` scope 的 `memory.md` 做"读现有内容 + 合并 + 整体写回"，如果目前只针对 `group`/`owner` 场景实现过这个模式，需要补齐通用性（不是新概念，是把已有的读-合并-写模式对 `platform-user` scope 也打开）。
 
+### 3.1 与 MEM-2 的实现衔接
+
+IM-11 实施时应调用 MEM-2 提供的公共事件记忆能力，而不是在 `im_reflection.py` 内重新实现一套文本合并逻辑：
+
+| 能力 | 归属 | IM-11 用法 |
+|---|---|---|
+| 事件章节解析/规范化 | MEM-2 | 校验 `member_memory_add.text` 是否为事件型内容 |
+| 现有 memory + 增量合并 | MEM-2 | 对每个成员整体写回 `memory.md` |
+| hash、去重、冲突修正 | MEM-2 | 防止同一群压缩批次重复写入成员事件 |
+| 向量同步和旧块 GC | MEM-2 | 成员 memory 写入成功后增量同步 |
+| 成员归因、成员名单校验 | IM-11 | 过滤非法或不属于当前群的 `platform_user_id` |
+| 群/成员失败隔离 | IM-11 | 成员写入失败不回滚群 memory |
+
+当前实现盘点显示，`platform-user` scope 仍只有 `profile.json`、`pattern.json`、`summary.json`，因此 Phase 0 必须先补齐 scope 文件契约，再进入一次调用双重产出。
+
 ## 4. 风险与决策
 
 | 风险 | 决策 |
@@ -101,12 +118,14 @@ backend/agent/memory/
 
 ### Phase 0：设计确认
 - [ ] 确认本 PRD 的调用方式（一次调用双重产出）、阈值改动（500/300/600）和归因校验策略。
-- [ ] 确认 `scoped_store.py` 对 `platform-user` scope 的 `memory.md` 读-合并-写路径是否已具备，不具备则先补齐。
+- [ ] 以前置 `PRD-MEM-2` Phase 0–1 的事件章节和公共写入契约为准，确认 `scoped_store.py` 对 `platform-user` scope 的 `memory.md` 读-合并-写路径；当前代码尚未具备，需先补齐。
+- [ ] 确认成员事件只允许当前群消息作为来源，不能从 group profile、members.json 或他人评价反推。
 
 ### Phase 1：Prompt 与调用扩展
 - [ ] 扩展 `prompts/im/group_compress.md`，要求输出 `member_memory_add`。
-- [ ] `_compact_group_daily` 解析新字段，按 `platform_user_id` 校验后逐一合并写入。
+- [ ] `_compact_group_daily` 解析新字段，按 `platform_user_id` 校验后调用 MEM-2 公共事件写入器逐一合并写入。
 - [ ] 调整 `GROUP_DAILY_COMPACT_AT/KEEP_RECENT/HARD_CAP` 为 500/300/600。
+- [ ] 成员 memory 写入成功后复用 MEM-2 的 hash/向量同步；不得新增一套 IM 专属向量缓存协议。
 
 ### Phase 2：验收
 - [ ] 单测：`member_memory_add` 为空数组时不产生任何成员写入；非法/不存在的 `platform_user_id` 被过滤；单个成员写入失败不影响群 memory 和其他成员。
@@ -121,3 +140,19 @@ backend/agent/memory/
 - [ ] 成员 `memory.md` 写入失败不影响群 `memory.md` 的正常写入。
 - [ ] 群/成员记忆各自独立，删除一方不影响另一方；成员退出/群解散的清理路径无需新增代码即可覆盖 `memory.md`。
 - [ ] 阈值调整后，压缩触发频率明显快于调整前（1000/500 → 500/300）。
+
+## 7. 与 MEM-2 的关系
+
+两份 PRD 可以在同一开发周期推进，但不合并文档和职责：
+
+```text
+PRD-MEM-2：事件型长期记忆公共底座
+  ├── owner memory.md
+  ├── group memory.md
+  └── platform-user memory.md
+
+PRD-IM-11：群压缩派生成员事件记忆
+  └── 复用 MEM-2 的事件合并、去重、hash、向量和删除能力
+```
+
+推荐顺序为：MEM-2 Phase 0–3 → IM-11 Phase 0–1 → 两份 PRD 各自的测试和 devserver 验收。IM-11 的 500/300/600 阈值调整应放在公共事件写入契约完成后执行，避免先增加压缩调用却无法保证成员记忆质量。

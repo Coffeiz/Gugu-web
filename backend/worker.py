@@ -180,6 +180,34 @@ async def _dispatch(msg_id: str, payload: dict):
         # 路由字段缺失（理论上不该发生）：退化成按 msg_id 各自成轮，不合并、不跟别的会话共用锁。
         key = ImConversationKey(key.platform, key.bot_id, key.chat_type, msg_id)
 
+    # ask_user 等待期间，首轮 Run 会持有该会话锁；交互回复必须绕过这把锁，
+    # 否则数字/选项消息只能排在正在等待的 Run 后面，直到 Prompt 超时。
+    if not (payload.get("attachments") or not (payload.get("text") or "").strip()):
+        from agent.im.interaction_text import has_active_interaction
+
+        try:
+            scope_chat_id = payload.get("chat_id") or payload.get("wechat_group_id")
+            if key.chat_type != "group":
+                scope_chat_id = None
+            is_interaction_reply = await has_active_interaction(
+                user_id=payload.get("owner_user_id") or payload.get("user_id"),
+                platform=key.platform,
+                bot_id=key.bot_id,
+                chat_id=scope_chat_id,
+                platform_user_id=payload.get("platform_user_id"),
+            )
+        except Exception as exc:
+            print(f"[worker] 交互快速通道检查失败，继续排队: {type(exc).__name__}", flush=True)
+            is_interaction_reply = False
+        if is_interaction_reply:
+            try:
+                await handle(msg_id, payload)
+            except Exception as exc:
+                print(f"[worker] 交互快速通道处理出错（已 ack）: {type(exc).__name__}: {exc}", flush=True)
+            finally:
+                await R.ack(STREAM, GROUP, msg_id)
+            return
+
     # 静默记录/未被 @ 的群消息不应该排队等当前 LLM 任务结束；否则用户在咕咕
     # 搜索期间发出的消息会一直留在 buffer，直到回复完成才出现在 GuguChat。
     # 被动消息使用独立锁保持群内写入顺序，但不占用主动回复的会话锁。

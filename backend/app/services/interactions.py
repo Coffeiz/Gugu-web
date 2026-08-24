@@ -149,8 +149,13 @@ async def create_agent_prompt(
 
 async def wait_for_resolution(
     *, user_id, prompt_id: int, timeout_seconds: float = 600, heartbeat=None,
+    cancel_check=None,
 ) -> dict | None:
-    """等待交互被消费，让原 Agent Run 在同一协程中继续。"""
+    """等待交互被消费，让原 Agent Run 在同一协程中继续。
+
+    ``cancel_check`` 用于 IM 的实时取消信号。交互等待期间没有模型 token 边界，
+    不能只依赖普通生成循环的取消检查；命中后先关闭 Prompt，再让原 Run 收尾。
+    """
     from app.db import session as db_session
 
     db_session.ensure_engine()
@@ -160,6 +165,17 @@ async def wait_for_resolution(
     next_heartbeat = 0.0
     while asyncio.get_running_loop().time() < deadline:
         now = asyncio.get_running_loop().time()
+        if cancel_check is not None and await cancel_check():
+            async with db_session._SessionLocal() as db:
+                prompt = await db.scalar(select(InteractionPrompt).where(
+                    InteractionPrompt.id == prompt_id,
+                    InteractionPrompt.user_id == user_id,
+                ))
+                if prompt is not None and prompt.status == "active":
+                    prompt.status = "cancelled"
+                    prompt.resolved_at = now_utc()
+                    await db.commit()
+            return {"status": "cancelled", "prompt_id": prompt_id}
         if heartbeat is not None and now >= next_heartbeat:
             await heartbeat()
             next_heartbeat = now + 20

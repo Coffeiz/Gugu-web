@@ -103,9 +103,9 @@ async def build_passive_history_message(user_id, query: str) -> dict[str, str] |
     if not should_passively_recall(query):
         return None
     try:
-        from agent.rag.service import search_memory
+        from agent.rag.service import search_knowledge
 
-        result = await search_memory(
+        result = await search_knowledge(
             user_id, query, scope="auto", source="all", strategy="bm25",
             limit=5, mode="passive",
         )
@@ -168,7 +168,7 @@ async def build_automatic_rag_context(
     if not query:
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
     try:
-        from agent.rag.service import MAX_OUTPUT_CHARS, search_memory
+        from agent.rag.service import MAX_OUTPUT_CHARS, search_knowledge
         from agent.rag.models import content_hash
 
         seen = _history_rag_hashes(history)
@@ -181,7 +181,7 @@ async def build_automatic_rag_context(
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
                 # 显式 search_memory 工具仍保留自己的完整等待语义。
                 result = await _search_with_timeout(
-                    search_memory(
+                    search_knowledge(
                         request.user_id, query, scope=scope, source="all",
                         strategy="bm25", limit=5, mode="automatic",
                     ),

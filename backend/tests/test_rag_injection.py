@@ -41,14 +41,14 @@ def test_passive_recall_only_targets_historical_questions():
 
 
 @pytest.mark.asyncio
-async def test_passive_recall_uses_same_memory_service(monkeypatch):
+async def test_passive_recall_uses_same_knowledge_service(monkeypatch):
     from agent.rag import service
 
     async def fake_search(*args, **kwargs):
         assert kwargs["strategy"] == "bm25"
         return {"results": [{"title": "记忆", "text": "之前讨论过稳定缓存。"}]}
 
-    monkeypatch.setattr(service, "search_memory", fake_search)
+    monkeypatch.setattr(service, "search_knowledge", fake_search)
 
     message = await build_passive_history_message("user-a", "之前讨论过缓存吗")
 
@@ -72,7 +72,7 @@ async def test_automatic_recall_uses_group_then_member_scope_and_deduplicates(mo
             "citation": {"source_type": "memory", "title": label},
         }]}
 
-    monkeypatch.setattr("agent.rag.service.search_memory", fake_search)
+    monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
     request = SimpleNamespace(
         user_id="owner", source="qq", chat_id="group-1", platform_bot_id="bot-1",
         platform_user_id="member-1", im_role="member",
@@ -96,7 +96,7 @@ async def test_automatic_recall_does_not_repeat_persisted_hash(monkeypatch):
             "citation": {"source_type": "memory", "title": "记忆"},
         }]}
 
-    monkeypatch.setattr("agent.rag.service.search_memory", fake_search)
+    monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
     request = SimpleNamespace(user_id="owner", source="web", chat_id=None)
     history = [SimpleNamespace(content_json=[{
         "type": "knowledge-context", "content_hashes": ["already-there"],
@@ -120,7 +120,7 @@ async def test_automatic_recall_timeout_does_not_block_agent(monkeypatch):
         finished.set()
         return {"candidate_count": 1, "results": []}
 
-    monkeypatch.setattr("agent.rag.service.search_memory", slow_search)
+    monkeypatch.setattr("agent.rag.service.search_knowledge", slow_search)
     monkeypatch.setattr(injection, "AUTO_RECALL_TIMEOUT_SECONDS", 0.001)
     request = SimpleNamespace(user_id="owner", source="web", chat_id=None)
 

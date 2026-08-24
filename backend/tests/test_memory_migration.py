@@ -166,7 +166,17 @@ async def test_render_profile_no_relevance_filtering(storage):
     from agent.memory import store
     profile = [{"id": "1", "text": "条目一", "ts": 1.0}, {"id": "2", "text": "条目二", "ts": 2.0}]
     rendered = store.render_profile(profile)
-    assert "条目一" in rendered and "条目二" in rendered   # 全量注入，不做衰减/退休/相关性挑选
+    assert "条目一" in rendered and "条目二" in rendered   # 小于直注入上限时保留稳定顺序
+
+
+async def test_render_profile_caps_direct_injection_at_fifty(storage):
+    from agent.memory import store
+
+    profile = [{"type": "note", "text": f"画像条目{i}"} for i in range(60)]
+    rendered = store.render_profile(profile)
+    assert "画像条目0" in rendered
+    assert "画像条目49" in rendered
+    assert "画像条目50" not in rendered
 
 
 def test_reflection_splits_temporal_profile_into_daily():

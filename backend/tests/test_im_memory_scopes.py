@@ -84,6 +84,22 @@ def test_format_im_memory_uses_owner_injection_budget():
     assert "成员摘要" in personal
 
 
+def test_im_memory_caps_each_list_source_at_fifty_entries():
+    from agent.im.context_loader import format_platform_user_memory
+
+    data = {
+        "platform_user": {
+            "profile": [{"text": f"画像{i}"} for i in range(60)],
+            "pattern": [{"text": f"模式{i}"} for i in range(60)],
+        },
+    }
+    rendered = format_platform_user_memory(data)
+    assert "画像0" in rendered and "画像49" in rendered
+    assert "画像50" not in rendered
+    assert "模式0" in rendered and "模式49" in rendered
+    assert "模式50" not in rendered
+
+
 def test_group_daily_policy_and_markdown_roundtrip():
     from agent.memory.im_reflection import (
         GROUP_DAILY_COMPACT_AT,

@@ -55,6 +55,8 @@ async def _log_memory_updated(e: MemoryUpdated) -> None:
 
 
 async def _log_rag_index_updated(e: RagIndexUpdated) -> None:
+    from agent.rag.index_cache import invalidate_index_cache
+    await invalidate_index_cache(e.user_id, e.source_type)
     if e.source_type == "memory":
         from agent.rag.pipeline import handle_memory_index_event
         await handle_memory_index_event(e)

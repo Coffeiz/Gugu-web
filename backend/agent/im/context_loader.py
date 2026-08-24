@@ -17,13 +17,16 @@ from agent.models import AgentRequest
 from agent.memory.store import MEMORY_INJECT_CHARS
 
 
+IM_MEMORY_ENTRY_INJECT_MAX = 50  # 每个 profile/pattern 来源的直注入条数；其余由 RAG 召回
+
+
 def _memory_value_text(value: Any) -> str:
     """把 scope 中的 JSON/文本统一成可注入文本，避免直接输出 Python repr。"""
     if isinstance(value, str):
         return value.strip()
     if isinstance(value, list):
         rows = []
-        for item in value:
+        for item in value[:IM_MEMORY_ENTRY_INJECT_MAX]:
             if isinstance(item, dict):
                 text = str(item.get("text") or item.get("content") or "").strip()
                 if text:

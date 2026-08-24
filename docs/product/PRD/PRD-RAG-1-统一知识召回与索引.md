@@ -1,6 +1,6 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：Phase 4 全量主动召回与 RAG history 生命周期已完成；跨来源 RAG 后置实施。
+> 状态：Phase 5 跨来源混合召回已完成；Phase 6 已建立数据库持久化统一索引首版，正在进行 ILIKE 与索引检索对照，尚未切换线上 Global Search。
 > Capability RAG 后置于 `PRD-LLM-9` 固定 Adapter Tool 完成之后。
 > 创建：2026-08-04
 > 最近更新：2026-08-24
@@ -17,14 +17,14 @@
 |---|---|---|---|
 | Phase 0：数据源与权限协议 | ✅ 已完成 | 首个试点确定为 owner Memory；统一 `Scope`、`IndexDocument`、版本/hash、`SourceAdapter` 边界和 owner-only 查询协议；索引文档只保存摘要/片段，不保存原始文件二进制、密钥或未脱敏聊天正文；冻结切片参数、来源边界、`chunk_id` 规则和 tool round 原子性要求 | 无 |
 | Phase 1：Memory 内容摘要与分块召回 | ✅ 已完成 | Memory adapter、稳定切片、中文字符 n-gram BM25、可替换的 `IndexStore` 协议、内存 upsert/invalidate、版本去重和 `search_memory` 已落地；支持空结果、limit 上限、scope 与旧版本失效；已补自动化测试 | IM scope 后置到多来源阶段 |
-| Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 多来源统一索引管线和生产规模升级移至 Phase 5/6 |
-| Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | 跨来源 Retriever 和 Capability RAG 后置到 Phase 5/6；群聊 scope 规则在 Phase 4 落地 |
+| Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 其他来源的持久化索引和生产规模升级移至 Phase 6 |
+| Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | Capability RAG 后置到 PRD-LLM-9 后续阶段；群聊 scope 规则在 Phase 4 落地 |
 | Phase 4：全量主动召回与 History 生命周期 | ✅ 已完成 | 每条用户消息统一执行 BM25；owner、group、member 共用 `UnifiedRetriever` 与 `MemoryAdapter`，群聊通过 scope、ACL 和两个记忆开关隔离；自动结果放在当前用户消息后的动态尾部，并保存为 canonical `knowledge-context`；按正文 hash 去重，LoopScope 记录模式、scope digest、命中数和注入状态 | 无；Embedding 仍只作为显式/限定条件召回能力，跨来源 RAG 后置 |
-| Phase 5：跨来源混合召回 | 🔲 待实施 | 已确定项目、文件、日记、画布、对话等来源沿用 `SourceAdapter`、scope、切片和预算契约；首版不做独立 Ranking/Reranker | 接入第二个来源并验证去重、引用和跨来源排序；补 `global_search`、`search_conversations` 与领域召回工具的职责边界回归 |
-| Phase 6：灰度与质量评估 | 🟡 离线部分完成 | 已有虚拟数据 BM25/Embedding 延迟压测；已明确不记录原始敏感正文，且保留专用工具和回滚路径 | 建立不含真实敏感正文的查询—相关文档标注集，比较 Recall@K、Precision@K、P95 延迟和越权率；仅对明确的跨来源知识问题灰度启用；按文档量、索引更新延迟和并发量评估 pgvector/HNSW/独立搜索服务；验证 owner、平台、bot、群组和项目 scope 隔离 |
+| Phase 5：跨来源混合召回 | ✅ 首个跨来源闭环完成 | Project 已注册为第二个 Knowledge 来源；owner scope、稳定切片、BM25 候选、来源优先级、正文 hash 去重、父文档预算、合并引用和 3000 字符总预算统一由 `UnifiedRecallService` 收口；自动 RAG 已从 Memory-only 切换为 Memory + Project；`search_memory` 仍保持记忆专用工具；未引入独立 Ranking/Reranker | 文件、画布、对话等来源和生产规模索引继续后置到 Phase 6；跨来源标注集与质量评估后置 |
+| Phase 6：灰度与质量评估 | 🟡 持久化索引首版完成 | 新增 `knowledge_index_entries` 数据库投影和 owner 级重建入口，已覆盖 memory/project/file/note/canvas/calendar/scheduled_task/conversation；当前真实数据已完成一次聚合验证。现有“每次全量加载后临时构建 BM25”比 ILIKE 慢，暂不切换线上 Global Search | 先把数据库查询索引、进程内索引缓存或 PostgreSQL 原生检索做成可公平对照的实现；比较 Recall@K、命中数、P95 延迟和越权率，再决定是否替换 ILIKE；补齐更新事件、删除失效和生产规模灰度 |
 
 实施顺序：先按 `PRD-MEM-1` 完成 Memory 单来源闭环，再完成 Phase 4 的全量主动召回，
-随后扩展项目、文件、日记、画布和对话等来源，最后进入跨来源灰度评估。Memory PRD
+随后扩展文件、日记、画布和对话等来源，最后进入跨来源灰度评估。Memory PRD
 是本 PRD 的落地子方案，不是另一套 RAG 基础设施；公共契约
 （IndexDocument、scope、version、切片、预算、回退和诊断）以本文件为唯一来源。
 
@@ -40,7 +40,7 @@
 | `agent.capabilities` | `CapabilityIndex`、`RegistryCapabilitySelector`、`CapabilityToolContext` 已提供注册快照、权限交集和候选接口 | 是 PRD-LLM-9 的能力注册基础；当前 selector 没有 BM25/Embedding 召回，默认仍保留授权工具全集 |
 | LoopScope RAG span | 已接入 | 每次召回记录 `namespace/source_type/mode/candidate_count/hit_count/elapsed_ms/fallback_reason/index_version` 和候选/命中 token impact；不记录 query、正文、owner 或完整结果 |
 | `bench_rag_virtual.py` | 离线虚拟文档 BM25、Embedding 和意图判断压测 | 评估工具，不是生产索引或召回服务 |
-| Knowledge RAG | Memory 已具备 `SourceAdapter`、异步索引、持久化 BM25/Embedding 候选、统一 Retriever 和被动 history 注入；全量主动召回、RAG history 持久化复用仍待 Phase 4；其他来源尚未注册 | 本 PRD 的跨来源主体仍待 Phase 5 |
+| Knowledge RAG | Memory 与 Project 已具备 `SourceAdapter`、统一 Retriever、BM25 候选、跨来源去重/引用/预算和主动 history 注入；数据库统一索引首版已覆盖八类来源，保留按来源重建能力 | 文件正文抽取、更新事件自动重建、Global Search 切换和生产规模检索优化仍在 Phase 6 |
 
 当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续阶段联动。
 
@@ -557,7 +557,7 @@ Provider adapter 重建当前模型所需的合法消息
 - 索引更新幂等，按 `source_id + version` 去重；
 - 删除和权限变更必须优先使旧文档不可召回，再异步清理缓存。
 
-首版不要求独立向量数据库；数据规模和查询延迟达到阈值后再评估专用索引服务。
+首版不要求独立向量数据库；当前已使用业务数据库保存可重建的 `knowledge_index_entries`，数据规模和查询延迟达到阈值后再评估 PostgreSQL 原生检索、pgvector/HNSW 或专用索引服务。
 
 ## 6. 前置条件
 
@@ -680,6 +680,14 @@ Memory 试点通过后，才对明确要求跨来源检索的请求接入对应�
 - LoopScope 额外记录 `scope_type`、脱敏 scope digest、开关状态和 group/member 命中数，不记录群正文、成员昵称、平台 ID 或原始查询；
 - 补齐自动召回、owner/group/member ACL、低命中升级、去重、压缩后恢复、Embedding 失败回退和跨 Run 缓存前缀稳定性测试。
 
+### Phase 5：跨来源混合召回（已完成）
+
+- 新增 `ProjectAdapter` / `ProjectRetriever`，只从当前 owner 的未归档项目生成稳定摘要文档；群组和群友 scope 明确返回空集，项目文件正文不在本阶段进入 Knowledge RAG。
+- 自动召回使用 `search_knowledge` 统一编排 Memory 与 Project；`search_memory` 继续是记忆专用显式工具，`global_search`、`search_conversations` 和项目领域工具继续保持精确定位职责。
+- 跨来源候选先按固定来源优先级，再按来源内召回分数、更新时间和稳定 chunk id 排序；不引入不可解释的独立 Ranking/Reranker。
+- `UnifiedRecallService` 按 `source_type` 统计来源上限，按正文 hash 合并重复结果并合并 citation，继续执行父文档上限、最终条数和 3000 字符总预算。
+- 已补 Project owner/group 隔离、跨来源引用合并、来源上限和既有精确搜索职责边界测试。
+
 ## 7.1 实现清单说明
 
 唯一状态来源为第 0 节。本节不再维护第二套 P0/P1/P2/P3/P4 进度表；`PRD-LLM-9` 负责维护 Capability Registry 的能力注册进度，本 PRD 只维护 Knowledge RAG 的数据源、索引、召回和灰度进度。
@@ -697,11 +705,14 @@ backend/agent/rag/
 ├── adapters/
 │   ├── __init__.py
 │   ├── base.py              # SourceAdapter 协议、摘要/分块/版本接口
-│   └── <pilot_source>.py    # 首个试点来源的 adapter，确认来源后命名
+│   ├── memory.py             # Memory 来源 adapter
+│   └── projects.py           # Project 来源 adapter（Phase 5）
 ├── chunking.py               # 语义边界、atomic/expandable chunk 和稳定 chunk_id
 ├── scope.py                  # scope 规范化与查询前过滤，不替代 ownership 校验
 ├── lexical.py               # 生产 BM25、中文分词、领域词库和停用词边界
-├── storage.py               # IndexDocument/chunk 元数据持久化或可重建索引存储适配
+├── storage.py               # Memory 可重建索引存储适配
+├── persistent_store.py      # 统一数据库索引 chunk 的替换、读取和 BM25 查询
+├── index_builder.py         # 业务来源投影与 owner 级重建
 ├── index.py                  # upsert/invalidate、版本去重和索引生命周期
 ├── retriever.py             # scope-first 的 BM25/Embedding 混合召回
 ├── service.py               # 查询编排、候选限制、去重和引用组装

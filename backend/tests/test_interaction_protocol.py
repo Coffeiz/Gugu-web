@@ -220,3 +220,34 @@ async def test_wait_for_resolution_returns_same_interaction_result(db, user_a):
     result = await waiting
     assert result is not None
     assert result["option_id"] == "b"
+
+
+async def test_wait_for_resolution_stops_and_closes_prompt_on_cancel(db, user_a):
+    session, _pending_message = await _make_interaction_session(db, user_a)
+    prompt, _actions = await create_prompt(
+        db,
+        user_id=user_a.id,
+        session_id=session.id,
+        kind="choice",
+        title="选择",
+        body="选一个",
+        options=[{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    )
+    await db.commit()
+    cancelled = False
+
+    async def cancel_check():
+        return cancelled
+
+    waiting = asyncio.create_task(wait_for_resolution(
+        user_id=user_a.id,
+        prompt_id=prompt.id,
+        timeout_seconds=1,
+        cancel_check=cancel_check,
+    ))
+    await asyncio.sleep(0.02)
+    cancelled = True
+    result = await waiting
+    assert result == {"status": "cancelled", "prompt_id": prompt.id}
+    await db.refresh(prompt)
+    assert prompt.status == "cancelled"

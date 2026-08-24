@@ -448,6 +448,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["group_memory_enabled"] = group_memory_enabled
         payload["member_memory_enabled"] = member_memory_enabled
         payload["group_mentioned"] = mentioned
+        payload["bot_mentioned"] = mentioned
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
@@ -458,28 +459,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     else:
         print(f"[qq:{channel_fp}] 收到 {sender_fp}: text_len={len(text)} "
               f"fp={logsafe.fingerprint(text)} att={len(all_attachments)} trace={tid}", flush=True)
-
-    # 原生键盘在部分 QQ 客户端/权限组合下可能被平台拒绝。若用户按降级文案
-    # 回复序号或选项文字，先尝试消费当前会话的活动 Prompt，避免它被当成新一轮
-    # 普通消息；没有命中活动 Prompt 时才继续正常入队。
-    if not all_attachments and not quoted_text and text:
-        interaction_result = await _consume_qq_text_choice(
-            owner=owner,
-            channel_id=channel_id,
-            chat_type=chat_type,
-            chat_id=chat_id,
-            platform_user_id=sender_id,
-            text=text,
-            event_id=msg_id,
-        )
-        if interaction_result is not None:
-            target = chat_id if chat_type == "group" else sender_id
-            label = str(interaction_result["result"].get("text") or interaction_result["option_id"])
-            await _qq_ack(channel_id, chat_type, target, f"已选择：{label}，继续处理。", msg_id)
-            # consume_choice_text 已经把 pending prompt 标记为 resolved；原来的
-            # Agent Run 会在 wait_for_resolution() 中被唤醒并继续。这里不能再把
-            # 选项作为普通消息重新入队，否则会同时启动第二个 Run，产生重复回复。
-            return
 
     # 取消是实时控制信号：必须在 Gateway 侧立刻写入 Redis，不能等同用户锁的
     # worker 轮到这条消息；普通 reply/drop shortcut 仍交给 worker 决策。
@@ -514,58 +493,6 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         # 网关事件回调里，没有把整条 WS 消息回放重放的机制，重试意义不大，交给运维看诊断日志处理。
         diag_log("agent.gateway.qq._handle_raw_qq_message.enqueue", e)
         _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
-
-
-async def _consume_qq_text_choice(*, owner: str, channel_id: str, chat_type: str,
-                                  chat_id: str, platform_user_id: str, text: str,
-                                  event_id: str) -> dict | None:
-    """按 QQ 会话作用域消费降级文本选项；未命中时返回 None。"""
-    from app.db import session as db_session
-    from app.models import ConversationSession
-    from app.services.interactions import consume_choice_text
-    from sqlalchemy import select
-
-    db_session.ensure_engine()
-    if db_session._SessionLocal is None:
-        return None
-    try:
-        async with db_session._SessionLocal() as db:
-            filters = [
-                ConversationSession.user_id == UUID(str(owner)),
-                ConversationSession.source == "qq",
-                ConversationSession.bot_id == channel_id,
-            ]
-            if chat_type == "group":
-                filters.extend([
-                    ConversationSession.chat_type == "group",
-                    ConversationSession.chat_id == chat_id,
-                ])
-            else:
-                filters.extend([
-                    ConversationSession.chat_type == "c2c",
-                    ConversationSession.chat_id.is_(None),
-                    ConversationSession.platform_user_id == platform_user_id,
-                ])
-            session_id = await db.scalar(
-                select(ConversationSession.id)
-                .where(*filters)
-                .order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
-                .limit(1)
-            )
-            if not session_id:
-                return None
-            return await consume_choice_text(
-                db,
-                session_id=int(session_id),
-                user_id=UUID(str(owner)),
-                text=text,
-                event_id=event_id or None,
-            )
-    except (LookupError, ValueError):
-        return None
-    except Exception as exc:
-        diag_log("agent.gateway.qq.interaction_text", exc)
-        return None
 
 
 async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: str) -> None:

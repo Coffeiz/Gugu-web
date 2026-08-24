@@ -117,6 +117,7 @@ _MIGRATIONS = [
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",
     "ALTER TABLE conversation_sessions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NULL",
     "CREATE INDEX IF NOT EXISTS ix_conversation_sessions_workspace_id ON conversation_sessions (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_index_owner_source_time ON knowledge_index_entries (owner_user_id, source_type, indexed_at)",
     # 修复历史数据：_move_one 曾未同步 project_id，导致 file.project_id 与 folder.project_id 不一致
     """UPDATE files SET project_id = folders.project_id
        FROM folders

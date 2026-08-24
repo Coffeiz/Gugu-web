@@ -69,7 +69,7 @@ class PreparedImRequest:
     session_id: Optional[int]
 
 
-@dataclass(frozen=True)
+@dataclass
 class ImActivity:
     """一次 IM 模型执行期间的忙碌态和平台 typing 句柄。"""
 
@@ -78,6 +78,7 @@ class ImActivity:
     typing_indicator: Any
     bot_id: str = ""
     scope_id: str = ""
+    typing_stopped: bool = False
 
 
 class OwnerAgentLoop:
@@ -100,20 +101,20 @@ class OwnerAgentLoop:
             kwargs["on_interaction"] = on_interaction
         if on_tool_event is not None:
             kwargs["on_tool_event"] = on_tool_event
-        try:
-            return run_stream(request, **kwargs)
-        except TypeError as exc:
-            # 旧的外部 Loop 替身/扩展可能还没有工具事件回调；只对明确的
-            # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
-            if "on_tool_event" not in str(exc):
-                raise
-            kwargs.pop("on_tool_event", None)
+        # 旧的外部 Loop 替身/扩展可能还没有其中一个回调；只对明确的
+        # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
+        while kwargs:
             try:
                 return run_stream(request, **kwargs)
-            except TypeError as legacy_exc:
-                if "on_interaction" not in str(legacy_exc):
+            except TypeError as exc:
+                unsupported = next(
+                    (name for name in ("on_interaction", "on_tool_event") if name in str(exc)),
+                    None,
+                )
+                if unsupported is None:
                     raise
-                return run_stream(request)
+                kwargs.pop(unsupported, None)
+        return run_stream(request)
 
 
 class MemberAgentLoop(OwnerAgentLoop):
@@ -305,8 +306,6 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
 async def finish_im_activity(activity: ImActivity) -> None:
     """无论模型成功、失败或取消，都清理忙碌态和 typing 指示器。"""
     from agent.runtime import runtime_state
-    from agent.gateway import wechat
-
     await runtime_state.clear_state(
         activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
     )
@@ -316,6 +315,16 @@ async def finish_im_activity(activity: ImActivity) -> None:
     await runtime_state.unmark_active(
         activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
     )
+    await stop_im_typing(activity)
+
+
+async def stop_im_typing(activity: ImActivity) -> None:
+    """在交互等待前结束 typing，但保留会话活跃状态。"""
+    if activity.typing_stopped:
+        return
+    activity.typing_stopped = True
+    from agent.gateway import wechat
+
     await wechat.stop_typing(activity.typing_indicator)
 
 
@@ -747,6 +756,41 @@ async def dispatch_im_message(payload: dict):
     req.session_id = prepared.session_id
     trace_id = trace.set_trace(payload.get("trace_id"))
     trace.bind_im_run(prepared.session_id, platform)
+    from agent.im.mentions import payload_semantic_text
+    semantic_text = payload_semantic_text(payload, req.message)
+
+    # 文本降级选项必须先于 shortcut/模型执行消费，否则微信、飞书的数字回复
+    # 会被当成新一轮用户消息；QQ 也统一走这里，避免网关各自维护一套解析。
+    if not req.attachments and req.message.strip():
+        from agent.im.interaction_text import consume_text_choice
+
+        try:
+            interaction_result = await consume_text_choice(
+                user_id=user_id,
+                session_id=prepared.session_id,
+                text=req.message,
+                event_id=payload.get("message_id"),
+                platform=platform,
+                bot_id=route.bot_id,
+                chat_id=req.chat_id,
+                platform_user_id=puid,
+                bot_mentioned=bool(payload.get("bot_mentioned", payload.get("group_mentioned"))),
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.interaction_text.consume", exc)
+            interaction_result = None
+        if interaction_result is not None:
+            result_payload = interaction_result.get("result") or {}
+            selected_text = str(
+                result_payload.get("text")
+                or interaction_result.get("option_id")
+                or "已选择"
+            )
+            await send_text(payload, f"已选择：{selected_text}，继续处理。")
+            trace.finish_run("success")
+            return None
 
     if should_record_passive_group(req, payload):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
@@ -759,7 +803,7 @@ async def dispatch_im_message(payload: dict):
     shortcut = await decide_im_shortcut(
         platform,
         puid or "",
-        req.message,
+        semantic_text,
         has_attachments=bool(req.attachments),
         bot_id=route.bot_id,
         scope_id=session_scope,
@@ -787,8 +831,8 @@ async def dispatch_im_message(payload: dict):
     # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
     from agent import commands as _commands
     command_name, _ = _commands.parse(
-        req.message,
-        allow_leading_mention=bool(payload.get("group_mentioned")),
+        semantic_text,
+        allow_leading_mention=False,
     )
     if command_name is not None:
         import app.db.session as _db_session
@@ -805,9 +849,9 @@ async def dispatch_im_message(payload: dict):
 
     cmd_reply = await handle_im_command(
         user_id,
-        req.message,
+        semantic_text,
         req.session_id,
-        allow_leading_mention=bool(payload.get("group_mentioned")),
+        allow_leading_mention=False,
     )
     if cmd_reply is not None:
         await send_text(payload, cmd_reply)
@@ -827,20 +871,21 @@ async def dispatch_im_message(payload: dict):
         from agent.im.replies import send_tool_event
         await send_tool_event(payload, event)
 
-    async def _show_qq_interaction(interaction: dict) -> None:
-        """在共享 Runner 进入等待前，把 QQ 文本提示即时发出去。"""
-        if platform != "qq":
-            return
+    async def _show_im_interaction(interaction: dict) -> None:
+        """在共享 Runner 进入等待前发送交互，并结束 IM typing。"""
+        # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
+        # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
+        await stop_im_typing(activity)
         # 流式消息必须先发送 DONE 帧；QQ 在 stream_messages 尚未结束时
         # 不会可靠展示 Inline Keyboard。流式路径由回合结束后的统一分支发送。
-        if qq_private_streaming:
+        if platform == "qq" and qq_private_streaming:
             return
         try:
             await _send_interaction_prompts(payload, [interaction])
         except Exception as exc:
             # 平台展示失败不能取消当前 Run；网页仍可从 active prompt 恢复交互。
             from app.core.redaction import diag_log
-            diag_log("agent.im.qq.interaction_display", exc)
+            diag_log("agent.im.interaction_display", exc)
             return
         prompt_id = interaction.get("prompt_id")
         if prompt_id is not None:
@@ -857,19 +902,23 @@ async def dispatch_im_message(payload: dict):
             qq_private_streaming = False
     try:
         if platform == "feishu":
-            token_iter = agent_loop.run_stream(req, on_tool_event=_show_tool_event)
+            token_iter = agent_loop.run_stream(
+                req,
+                on_interaction=_show_im_interaction,
+                on_tool_event=_show_tool_event,
+            )
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         elif qq_private_streaming:
             token_iter = agent_loop.run_stream(
                 req,
-                on_interaction=_show_qq_interaction,
+                on_interaction=_show_im_interaction,
                 on_tool_event=_show_tool_event,
             )
             _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
         else:
             resp = await agent_loop.run_collect(
                 req,
-                on_interaction=_show_qq_interaction if platform == "qq" else None,
+                on_interaction=_show_im_interaction,
                 on_tool_event=_show_tool_event,
             )
             reply_text = ""

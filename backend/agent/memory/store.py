@@ -35,6 +35,7 @@ DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
 DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
 DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
 DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
+PROFILE_INJECT_MAX = 50  # profile 直注入条数；超出的条目由 RAG 按需召回
 
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
@@ -48,7 +49,7 @@ PATTERN_FILE                = "pattern.json"
 PATTERN_MAINTENANCE_FILE   = "pattern_maintenance.json"
 PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
 PATTERN_RETIRE_EFF          = 0.2    # effective 置信低于此 → 不注入（退休淡出）
-PATTERN_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
+PATTERN_INJECT_MAX          = 50     # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
 PATTERN_FLOOR_K             = 6      # 重要度保底：pattern 超上限时，最重要的前 K 条无论是否相关都注入（核心习惯不被相关性挤掉）
 PATTERN_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
 _PATTERN_DEFAULT_CONF      = {"observed": 0.9, "inferred": 0.6}
@@ -78,7 +79,7 @@ async def _write(key: str, text: str) -> None:
 
 async def read_memory(user_id, query: str = "") -> dict:
     """返回 {profile, pattern, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
-    profile = 用户画像(身份/稳定喜好，全量注入，不衰减)；pattern = 行为/决策模式(结构化，超上限时按相关性挑)。
+    profile = 用户画像(身份/稳定喜好，最多直注入 50 条，超出由 RAG 按需召回)；pattern = 行为/决策模式(结构化，最多直注入 50 条，超出时按相关性挑)。
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
@@ -105,7 +106,7 @@ async def read_memory(user_id, query: str = "") -> dict:
                 if mem_over:
                     mv = await read_memory_vecs(user_id)
                     mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
-    profile = render_profile(raw_profile)   # 无上限，全量注入
+    profile = render_profile(raw_profile)   # 固定最多直注入 PROFILE_INJECT_MAX 条，剩余由 RAG 按需召回
     pattern = render_pattern(raw_patterns, query, query_vec if pattern_over else None, pattern_vec_map)  # 有向量走 cosine，无则词法
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
@@ -281,8 +282,13 @@ def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
 
 
 def render_profile(profile: list[dict]) -> str:
-    """用户画像 → 注入用 markdown。不做衰减/退休/相关性挑选——profile 预期规模很小，全量注入。"""
-    lines = [f"- {p['text'].strip()}" for p in (profile or []) if (p.get("text") or "").strip()]
+    """用户画像 → 注入用 markdown。
+
+    profile 仍保持现有的增量去重和稳定语义，不做衰减；这里只限制固定上下文
+    的直注入条数，超出的条目继续保留在 RAG 索引中按需召回。
+    """
+    valid = [p for p in (profile or []) if (p.get("text") or "").strip()]
+    lines = [f"- {p['text'].strip()}" for p in valid[:PROFILE_INJECT_MAX]]
     return "\n".join(lines)
 
 

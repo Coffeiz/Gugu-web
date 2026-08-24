@@ -168,6 +168,7 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
 
     assert len(text_calls) == 1
     assert "1. A" in text_calls[0][1]
+    assert "请直接回复选项序号或选项文字" in text_calls[0][1]
 
 
 @pytest.mark.asyncio
