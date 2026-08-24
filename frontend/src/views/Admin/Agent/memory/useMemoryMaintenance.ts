@@ -14,7 +14,7 @@ export interface MemCleanupPlanItem {
   error?: string
 }
 
-type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
+type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }
 
 export function useMemoryMaintenance(adminStore: AdminStore) {
   const state = reactive({

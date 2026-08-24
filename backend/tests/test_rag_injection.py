@@ -9,6 +9,32 @@ from agent.rag.injection import (
 )
 
 
+@pytest.mark.asyncio
+async def test_memory_scope_adapter_renders_profile_dict_entries(monkeypatch):
+    from agent.rag.adapters.memory import MemoryAdapter
+
+    async def fake_preview(_scope):
+        return {
+            "profile": [{"type": "preference", "text": "偏好简洁回复"}],
+            "summary": {"text": "正在整理 RAG"},
+            "daily": ["2026-08-24 完成测试"],
+            "memory": "## 记录长期记忆：RAG\n已完成适配",
+        }
+
+    monkeypatch.setattr("agent.rag.adapters.memory.preview_scope", fake_preview)
+    adapter = MemoryAdapter("owner")
+
+    from agent.rag.models import Scope
+    documents = await adapter.build_documents(scope=Scope(
+        owner_user_id="owner", platform="qq", bot_id="bot", group_id="group",
+        scope_type="group", scope_id="group",
+    ))
+
+    texts = [document.content for document in documents]
+    assert any("偏好简洁回复" in text for text in texts)
+    assert any("正在整理 RAG" in text for text in texts)
+
+
 def test_rag_history_injection_hides_internal_identity_fields():
     result = {
         "source": "memory",

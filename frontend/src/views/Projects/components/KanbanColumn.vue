@@ -110,7 +110,7 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
 .kanban-card-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
 }
 .kanban-card-list-move {

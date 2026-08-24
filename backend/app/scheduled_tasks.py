@@ -434,10 +434,10 @@ async def _persist_push_im(
     from app.core import redis as R
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
+    from app.services.conversation_retention import trim_session_messages
     from agent.im.session import (
         session_key,
         session_scope_filters,
-        trim_session_messages,
     )
     from agent.im.owner_session import get_bound_session, bind_session_by_id
 

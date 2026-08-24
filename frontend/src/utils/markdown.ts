@@ -6,6 +6,23 @@ import DOMPurify from 'dompurify'
 // 这里只要标准 GFM + 软换行，渲染加粗/斜体/链接/列表/标题/行内代码/引用/表格等完整 markdown。
 const md = new Marked({ breaks: true, gfm: true })
 
+function escHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[c] || c)
+}
+
+// Mermaid 需要在组件挂载后异步生成 SVG；这里先保留安全的源码占位节点。
+// MarkdownView 会负责调用 mermaid，并继续经过 DOMPurify 清洗生成结果。
+md.use({
+  renderer: {
+    code(token) {
+      if (String(token.lang || '').trim().toLowerCase() !== 'mermaid') return false
+      return `<pre class="md-mermaid-source"><code>${escHtml(token.text)}</code></pre>`
+    },
+  },
+})
+
 // ── XSS 防护（见 docs/security/代码审查-GPT复审核实版-2026-07-10.md P0）──
 // 属性值转义：防 title/href 里的引号逃逸出属性、注入新标签。
 const _ATTR_ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }

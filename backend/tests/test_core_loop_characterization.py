@@ -5,7 +5,7 @@ PRD-LLM-1 Phase 2 前置：这两条循环各自完整实现工具调用/核实�
 **没有任何端到端测试**——贸然合并的风险跟"修一个 bug"不对等。这份测试先把现有行为
 钉死，给后续合并提供回归安全网；不改任何主循环代码。
 
-前 5 个场景（`test_verify_*`/`test_readonly_*`/`test_openai_clean_pass_matches_anthropic`）
+现有场景（`test_verify_*`/`test_readonly_*`/`test_openai_clean_pass_matches_anthropic`）
 移植自原 `scripts/smoke_self_verify.py`（手动冒烟脚本，原本只能手跑、不进 CI，场景已
 完整迁到这里后已删除，避免两份资产分叉维护）——移植时注意：原脚本直接对模块全局赋值
 （`core._stream_round = fake_stream_round`、`registry.dispatch = fake_dispatch` 等）
@@ -86,115 +86,6 @@ def n_verify(messages):
     return sum(1 for m in messages if m.get("content") == _VERIFY_PROMPT)
 
 
-async def test_compaction_receives_session_id(monkeypatch):
-    """上下文压缩分支拿到 session 后，预算仍超限时不得继续调用 provider。"""
-    patch_anthropic(monkeypatch, [msg([TX("收到")])])
-    seen = {}
-
-    async def fake_estimate(_messages, _system_text):
-        return 100
-
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
-        seen.update(session_id=session_id, user_id=user_id)
-        return messages, False
-
-    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
-    monkeypatch.setattr(compaction, "compact_context", fake_compact)
-    ai = SimpleNamespace(**vars(AI), context_tokens=100)
-    ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
-                                     session_id=388)
-    )
-
-    assert text == ""
-    assert errors
-    assert ev.get("_usage", 0) == 0
-    assert seen == {"session_id": 388, "user_id": "u"}
-
-
-async def test_compaction_retry_uses_core_logger(monkeypatch):
-    """真实压缩重试不能因日志变量错误中断，尤其覆盖 IM 长上下文路径。"""
-    patch_anthropic(monkeypatch, [msg([TX("压缩后")])])
-    calls = 0
-    lengths = iter([100, 50, 50])
-
-    async def fake_estimate(_messages, _system_text):
-        return next(lengths)
-
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
-        nonlocal calls
-        calls += 1
-        return messages, calls == 1
-
-    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
-    monkeypatch.setattr(compaction, "compact_context", fake_compact)
-    ai = SimpleNamespace(**vars(AI), context_tokens=100)
-    ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
-                                     session_id=388)
-    )
-
-    assert text == "压缩后"
-    assert errors == []
-    assert calls == 1
-    assert ev["_usage"] == 1
-
-
-async def test_compaction_stops_when_result_makes_no_progress(monkeypatch):
-    """摘要没有减少上下文时，不得反复调用摘要 LLM。"""
-    patch_anthropic(monkeypatch, [msg([TX("不应调用模型")])])
-    compact_calls = 0
-
-    async def fake_estimate(_messages, _system_text):
-        return 100
-
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
-        nonlocal compact_calls
-        compact_calls += 1
-        return messages, True
-
-    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
-    monkeypatch.setattr(compaction, "compact_context", fake_compact)
-    ai = SimpleNamespace(**vars(AI), context_tokens=100)
-    ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
-                                     session_id=388)
-    )
-
-    assert compact_calls == 1
-    assert ev["error"] == 1
-    assert text == ""
-    assert errors
-
-
-async def test_compaction_honors_cancel_after_summary(monkeypatch):
-    """摘要调用返回后若用户已取消，应立即结束，不再进入模型 round。"""
-    patch_anthropic(monkeypatch, [msg([TX("不应调用模型")])])
-    cancel_checks = iter([False, False, True])
-
-    async def fake_cancel(_session_id=None):
-        return next(cancel_checks)
-
-    async def fake_estimate(_messages, _system_text):
-        return 100
-
-    async def fake_compact(messages, system_text, context_tokens, session_id=None, user_id=None, **kwargs):
-        return messages, True
-
-    monkeypatch.setattr(core, "_im_cancelled", fake_cancel)
-    monkeypatch.setattr(compaction, "estimate_context_length", fake_estimate)
-    monkeypatch.setattr(compaction, "compact_context", fake_compact)
-    ai = SimpleNamespace(**vars(AI), context_tokens=100)
-    ev, text, errors = await drain(
-        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "测试"}], ai,
-                                     session_id=388)
-    )
-
-    assert ev["_cancelled"] == 1
-    assert text == ""
-    assert errors == []
-
-
 async def test_progress_only_round_is_retried_without_leaking_placeholder(monkeypatch):
     """模型只吐“正在查询”且没有 tool call 时，不能把占位话术当成最终回复。"""
     patch_anthropic(monkeypatch, [
@@ -210,6 +101,31 @@ async def test_progress_only_round_is_retried_without_leaking_placeholder(monkey
     assert "正在为你查询最新信息" not in text
     assert ev["_new_round"] == 1
     assert errors == []
+
+
+async def test_final_reply_runs_provider_usage_compaction_check(monkeypatch):
+    """无工具的长最终回复也必须走 run 级 provider usage 90% 检查。"""
+    calls = []
+
+    async def fake_compact(messages, *args, **kwargs):
+        calls.append(kwargs.get("force"))
+        return list(messages), True
+
+    monkeypatch.setattr(compaction, "compact_context", fake_compact)
+    final = msg([TX("最终回复")])
+    final.usage.input_tokens = 950
+    patch_anthropic(monkeypatch, [final])
+    ai = SimpleNamespace(**AI.__dict__, context_tokens=1000)
+    runner = LLMRunner(tool_names=[], settings=SimpleNamespace(ai=ai))
+
+    ev, text, errors = await drain(runner._run_anthropic(
+        "u", "sys", [{"role": "user", "content": "测试"}], ai,
+    ))
+
+    assert text == "最终回复"
+    assert errors == []
+    assert calls == [True]
+    assert ev["_context_compaction"] == 1
 
 
 # ── 假 Anthropic 消息块（迁自 scripts/smoke_self_verify.py）─────────────────────
@@ -436,8 +352,21 @@ async def test_narration_guard_nudges_once_then_gives_up(monkeypatch, dispatched
     ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
     nudges = [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
     assert len(nudges) == 1, "叙事守卫应该只追一次，不能无限重试"
+    assert nudges[0]["role"] == "system"
     assert ev["_usage"] == 1 and ev["error"] == 0
     assert "好的，明白了" in text   # 第二轮没再被拦，原样收尾输出
+
+
+async def test_narration_guard_does_not_treat_reported_fact_as_local_mutation(monkeypatch, dispatched):
+    """检索结果中的第三方事实不能被误判为本轮发送/修改操作。"""
+    patch_anthropic(monkeypatch, [
+        msg([TX("好——查了下，Take-Two 已经发出传票，公开资料还不完整。")]),
+    ])
+    messages = [{"role": "user", "content": "查一下这个案件的调查进展"}]
+    ev, text, _errors = await drain(make_runner()._run_anthropic("u", "sys", messages, AI))
+    assert not [m for m in messages if m.get("content") == core._NARRATION_NUDGE]
+    assert "已经发出传票" in text
+    assert ev["_usage"] == 1 and ev["error"] == 0
 
 
 async def test_intent_announce_guard_nudges_once(monkeypatch, dispatched):

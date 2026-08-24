@@ -8,6 +8,14 @@ from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, event_text
 from .provider_history import strip_thinking_blocks
 
+_SUMMARY_HEADER = "## 早前对话摘要（供参考，非最新消息）"
+
+
+def _summary_content(message) -> str:
+    """将持久化 baseline 摘要恢复为普通历史 user 消息。"""
+    text = (getattr(message, "content", "") or "").strip()
+    return f"\n\n{_SUMMARY_HEADER}\n{text}"
+
 
 def _tool_label(tool_name: str) -> str:
     """读取工具注册表中的用户可见名称，历史恢复时与实时 SSE 保持一致。"""
@@ -286,6 +294,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
             rendered = event_text(block)
             if rendered:
                 text_parts.append(rendered)
+
         elif block_type == "text":
             if block.get("text"):
                 text_parts.append(str(block["text"]))
@@ -293,6 +302,13 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
             rendered = content_text(block)
             if rendered:
                 text_parts.append(rendered)
+
+    if message.role == "user" and not tool_results:
+        from agent.im.context_loader import quoted_context_prefix
+
+        quote_prefix = quoted_context_prefix(getattr(message, "quoted_text", None))
+        if quote_prefix:
+            text_parts.insert(0, quote_prefix)
 
     from agent.im.context_loader import format_attachment_refs
     attachment_refs = format_attachment_refs(message)
@@ -317,18 +333,33 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
     用户消息的时间 reminder 要等完整 turn（assistant/tool 结果）组装完再追加。
-    当前 run 中它位于动态尾部；下一 run 该消息进入 history 后也必须位于同一 turn
-    末尾，否则工具轮会被时间 reminder 从中间切开，破坏跨 run cache 前缀。
+    RAG 知识块由调用方放在当前用户消息之后的稳定 conversation 区域；这里只负责
+    从持久化 history 还原同样的顺序，避免动态尾部与下一轮 history 边界不一致。
     """
     from .session_snapshot import message_time_reminder
 
     parts: list[dict] = []
     pending_timestamp = None
     for message in history:
+        if getattr(message, "role", None) == "summary":
+            # summary 是唯一 baseline 的历史起点，不应作为 provider 不认识的
+            # role=summary 发送，也不应被放入动态 reminder 尾部。
+            parts.append({"role": "user", "content": _summary_content(message)})
+            continue
         content_json = getattr(message, "content_json", None)
         blocks = _blocks(content_json)
         is_tool_message = any(block.get("type") == "tool_result" for block in blocks)
-        is_user_message = getattr(message, "role", None) == "user" and not is_tool_message
+        # canonical event 是上一条真实用户 turn 的附属上下文，不是新用户发言。
+        # 如果把它们当成 user，会在每个 schema/RAG block 前重复插入 sent_at，
+        # 让跨 run 的消息边界与上一轮请求不一致，直接打断 provider cache 前缀。
+        is_canonical_event = any(block.get("type") in (
+            "knowledge-context", "tool-schema", "skill-schema", "tool-discovery"
+        ) for block in blocks)
+        is_user_message = (
+            getattr(message, "role", None) == "user"
+            and not is_tool_message
+            and not is_canonical_event
+        )
 
         # 新的真实 user 消息意味着上一个 turn 已经结束；时间 reminder 放在上一个
         # turn 的最后一个 assistant/tool 消息之后，而不是紧贴旧 user 插入。
@@ -351,6 +382,17 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                     content = list(content_json) if isinstance(content_json, list) else content_json
                     if strip_thinking:
                         content = strip_thinking_blocks(content)
+                if message.role == "user" and not any(
+                    block.get("type") == "tool_result" for block in blocks
+                ):
+                    from agent.im.context_loader import quoted_context_prefix
+
+                    quote_prefix = quoted_context_prefix(getattr(message, "quoted_text", None))
+                    if quote_prefix:
+                        if isinstance(content, list):
+                            content = [{"type": "text", "text": quote_prefix}, *content]
+                        elif isinstance(content, str):
+                            content = quote_prefix + content
                 if attachment_refs and isinstance(content, list):
                     content = [*content, {"type": "text", "text": attachment_refs}]
                 role = "user" if message.role == "tool" else message.role

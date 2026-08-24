@@ -1953,3 +1953,72 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - OpenAI 兼容路径接入 conversation 末尾缓存断点后，Qwen 连续三轮测试的后两轮缓存命中率达到 98%+。
 - Kimi 多数轮次达到 94%+，偶发低命中随后自动恢复，暂未发现业务侧组装异常。
 - 将“Session baseline 与 conversation 分段缓存”记录为后续可选方案，待确认多断点兼容性和实际收益后再实施。
+
+## 2026-08-24 · History 完整性审计：引用修复后的下一处边界
+
+### 背景
+
+近期修复了 IM 引用消息在下一轮 History 中丢失的问题：引用正文继续单独保存在
+`ConversationMessage.quoted_text`，模型侧通过稳定的引用上下文前缀恢复，网页展示仍使用原始
+`content`，避免把引用正文直接拼进聊天气泡。
+
+### 审计结论
+
+对照 `ConversationMessage` 持久化字段、Web/IM runner、History builder 和 Provider adapter 后，
+发现当前轮模型输入与后续 History 仍有一处重要差异：附件解析结果只存在当前轮的 `aug_text`。
+消息落库时保存的是原始用户正文和附件卡片；下一轮 History 只恢复图片附件的轻量 `attach_id` 引用，
+不会恢复文本文件解析内容、语音转写结果或普通文件附件的稳定存在信息。
+
+因此当前策略表现为：
+
+- 图片：保留 `attach_id`，不重复写入 base64，模型需要时可再次读取；
+- 文本/文档附件：当前轮可以注入解析正文，后续 History 不再看到解析结果；
+- 语音：当前轮可以使用转写文本，后续 History 不再看到该转写文本；
+- thinking/reasoning：Provider 切换时主动清除，属于兼容策略，不是意外丢失；
+- UI-only 交互状态：保存在交互表和前端事件中，不作为模型历史，属于正确隔离；
+- 工具调用、工具结果、Skill/Tool Schema、RAG：已使用 canonical block 保存，再由 Provider adapter 转换。
+
+### 规范方向
+
+现有 `canonicalize_tool_messages()` 只覆盖工具及上下文事件，不能完整表达普通消息、引用、附件、
+发言人和时间。后续应建立统一 History Contract，并在持久化边界做一次归一化：
+
+1. 原始正文保持不可变，用于网页/IM 展示；
+2. 模型上下文使用 canonical blocks 表达文本、引用、附件引用、转写文本、工具事件和 RAG；
+3. Provider adapter 只负责把 canonical history 转换成各自 wire format；
+4. 明确省略策略：不持久化 base64、供应商 thinking 签名和 UI-only 状态；
+5. 未知 block 必须有统一的保留或文本化规则，不能由 OpenAI/Anthropic 路径分别决定；
+6. 为 Web、QQ、微信、飞书及 OpenAI/Anthropic 建立同一组 History 完整性回归测试。
+
+### 当前状态
+
+引用恢复已补充跨平台测试并通过。附件上下文持久化和完整 History 归一化暂未在本条目中实施，
+后续优先补稳定附件引用/转写文本的历史契约，再考虑是否新增数据库字段。
+
+## 2026-08-24 · 上下文预算口径统一：移除本地估算对压缩触发的影响
+
+### 问题
+
+此前上下文链路同时存在两套“预算”概念：一套来自 provider 实际返回的输入 token，另一套来自
+本地 `estimate_tokens()` 对 system、snapshot、history、RAG 和工具 schema 的估算。两套口径对
+中文、工具块、动态尾部和 provider 开销的处理并不一致，导致同一 session 可能出现上一轮看似未超限、
+下一轮却提前压缩，或者压缩后再次按旧估算截断的情况；这也会让 baseline 更新点和下一轮输入大小漂移。
+
+### 修复原则
+
+- 正常请求的压缩触发、重试和预算判断只接受 provider 的实际 usage 或 overflow 结果；
+- `ContextBudget` 只作为统一的预算分项/诊断结构，不再作为历史读取或压缩触发器；
+- 本地 token 估算仅保留给回归测试、诊断展示和 provider overflow 后的确定性兜底，不得提前改变正常上下文；
+- 压缩结果通过 LoopScope 的 `Context compaction` span 记录，后续以 baseline 生命周期继续追踪；
+- provider 边界保留 `context-layout` 元数据，用于核对 history 顺序、消息数量和序列指纹，不记录正文。
+
+### 回归覆盖
+
+新增压缩回归：在强制压缩路径中替换本地 `estimate_tokens()` 为失败桩，压缩仍必须成功，证明正常压缩
+不依赖本地 token 估算。现有 `ContextBudget` 分项、provider overflow 兜底、工具轮次原子性和 baseline
+测试继续覆盖兼容诊断与确定性保护路径。
+
+### 验证
+
+后端上下文相关测试通过；后续新增预算字段或压缩触发条件时，必须同时验证 provider usage 与 LoopScope
+的压缩 span，禁止重新引入第二套本地预算触发逻辑。

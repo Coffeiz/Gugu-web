@@ -158,7 +158,8 @@ def sanitize_messages(messages: list) -> list:
     1) 规整成 block 列表、丢空 text block；
     2) 只认「assistant(tool_use X) 紧接 user(tool_result X)」的合法对，其余 tool 块全剥掉；
     3) 丢空消息；
-    4) 开头必须是 user——丢前导 assistant 时，同步剥掉它在新表头遗留的孤儿 tool_result；
+    4) 开头允许稳定的 system snapshot；其后的对话区必须从 user 开始。丢前导
+       assistant 时，同步剥掉它在新表头遗留的孤儿 tool_result；
     5) 合并相邻同角色。
     """
     norm = [_to_norm(m) for m in messages]
@@ -191,7 +192,12 @@ def sanitize_messages(messages: list) -> list:
     # 3) 丢空消息
     norm = [m for m in norm if m["content"]]
 
-    # 4) 开头必须是 user；丢前导 assistant 时剥掉新表头的孤儿 tool_result
+    # 4) 保留前导 system snapshot。旧规则要求第一条必须是 user，会把新的
+    # role=system snapshot 直接删掉，最终请求只剩 system_param + history/tail。
+    # system 之后仍要求对话区从 user 开始，并继续清理前导 assistant 及其孤儿 result。
+    leading_system = []
+    while norm and norm[0]["role"] == "system":
+        leading_system.append(norm.pop(0))
     while norm and norm[0]["role"] != "user":
         dropped_uses = _uses(norm.pop(0)["content"])
         if dropped_uses and norm and norm[0]["role"] == "user":
@@ -202,6 +208,7 @@ def sanitize_messages(messages: list) -> list:
             ]
             if not norm[0]["content"]:
                 norm.pop(0)
+    norm = leading_system + norm
 
     # 5) 合并相邻同角色
     merged: list = []

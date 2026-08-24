@@ -213,7 +213,7 @@ def _bigrams(text: str) -> set[str]:
 
 
 def _bm25_rank(documents: list[VirtualDocument], query: str, top_k: int) -> list[VirtualDocument]:
-    """在内存虚拟索引上执行轻量 BM25，模拟统一 RAG 的本地词法召回。"""
+    """离线虚拟数据基准的简化词法排序，不属于生产 RAG 实现。"""
     query_terms = _bigrams(query)
     if not query_terms:
         return []

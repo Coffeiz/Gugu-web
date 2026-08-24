@@ -1,6 +1,6 @@
 # PRD-AGENT-1 会话上下文增量与压缩
 
-> 💡 本文保留为上下文增量与压缩的总体 PRD。当前实现细节以 [`上下文预算与 Baseline 设计`](../../../agent/context/context-budget-baseline-design.md) 为准，尤其是“运行中硬预算 + run 完成后 90% 后台 checkpoint”的双阈值策略。
+> 💡 本文仅保留历史背景。当前实现细节以 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](./PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 为准；checkpoint、20%目标和旧双阈值描述均已被 baseline 生命周期替代。
 >
 > 状态：Phase 0 待评估
 > 创建：2026-08-08

@@ -1,8 +1,8 @@
 # PRD-LLM-6：百炼文本模型能力适配
 
-> 状态：🔲 待评估
+> 状态：🟡 Phase 1-4 已完成，Batch 后置
 > 创建：2026-08-12
-> 最近更新：2026-08-12
+> 最近更新：2026-08-24
 > 所属层：LLM / Provider 适配层
 > 关联模块：`backend/agent/providers.py`、`backend/agent/llm/llm_select.py`、`backend/agent/loop_drivers.py`、`backend/agent/memory/_llm.py`、`backend/app/api/v1/agent_admin.py`
 > 背景参考：[百炼文本生成](https://help.aliyun.com/zh/model-studio/text-generation)、[百炼多轮对话](https://help.aliyun.com/zh/model-studio/multi-round-conversation)、[百炼文本生成模型](https://help.aliyun.com/zh/model-studio/text-generation-model/)、[百炼批量推理](https://help.aliyun.com/zh/model-studio/batch-inference)
@@ -17,18 +17,18 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| 现状摸底 | ✅ 已完成 | 已确认 devserver 配置了百炼 OpenAI 兼容模型 `qwen3.8-max`。当前已支持流式、多轮消息、Function Calling 和多轮工具循环。 |
-| Provider 能力建模 | 🔲 待评估 | 将 Qwen 的思考开关、结构化输出、并行工具能力收拢为 provider 能力位。 |
-| Qwen 实时参数适配 | 🔲 待评估 | 接入 `enable_thinking`，统一后台测试与正式聊天的参数构造。 |
-| 结构化输出适配 | 🔲 待评估 | 为记忆、后台整理等 JSON 场景接入 `json_object` / `json_schema`。 |
-| 工具与多模态验证 | 🔲 待评估 | 对当前百炼模型做真实工具调用、连续工具调用、图片/视频能力矩阵测试。 |
+| 现状摸底 | ✅ 已完成 | devserver 实际预设为 `Bailian / qwen3.6-flash`，已确认使用百炼 OpenAI 兼容接口，现有链路支持流式、多轮消息、Function Calling 和多轮工具循环。 |
+| Provider 能力建模 | ✅ 已完成 | `QwenAdapter` 按 `qwen3*` 模型族开启思考、JSON Object/Schema 能力；并行工具保持保守关闭。 |
+| Qwen 实时参数适配 | ✅ 已完成 | `disabled` 发送 `extra_body.enable_thinking=false`，自适应模式发送 `preserve_thinking=true`；后台探测和正式 OpenAI 请求复用同一参数构造。 |
+| 结构化输出适配 | ✅ 已完成 | 统一支持 `json_object`，并兼容完整或裸 JSON Schema 输入；调用方仍需按任务关闭思考。 |
+| 工具与多模态验证 | 🟡 部分完成 | devserver 已实测普通请求、流式、单工具、JSON Object/Schema；并行工具、图片/视频仍按模型能力后置验证。 |
 | 百炼 Batch 独立服务 | 🔲 后置 | 不进入实时 AgentLoop，另建批量任务服务。 |
 
 ## 1. 背景与目标
 
 ### 现状
 
-咕咕已经通过 OpenAI 兼容接口接入百炼模型。当前 devserver 的主要百炼预设为 `qwen3.8-max`，实际链路已经支持：
+咕咕已经通过 OpenAI 兼容接口接入百炼模型。当前 devserver 的主要百炼预设为 `qwen3.6-flash`，实际链路已经支持：
 
 - `messages` 历史传入的多轮对话；
 - 流式响应和 usage 统计；
@@ -36,7 +36,7 @@
 - 工具结果回传和连续工具调用；
 - 图片、视频能力配置及后台探测入口。
 
-但 Qwen 专属参数仍未完整接入：当前 `thinking` 参数只覆盖 DeepSeek/MiMo，Qwen 的 `enable_thinking` 尚未统一处理；结构化输出只在部分记忆调用中启用，未成为通用能力；百炼 Batch API 也尚未接入。
+Qwen 专属参数现在由 `QwenAdapter` 统一处理；结构化输出也已提供通用 adapter 接口。百炼 Batch API 尚未接入，仍作为独立后续阶段。
 
 ### 目标
 
@@ -53,15 +53,15 @@
 
 ## 2. 功能需求
 
-### FR-LLM-6-1：Qwen 思考开关（🔲 待评估）
+### FR-LLM-6-1：Qwen 思考开关（✅ 已完成）
 
 - `thinking=disabled` 时，Qwen 发送 `extra_body: {"enable_thinking": false}`。
-- `thinking=adaptive` 时默认不发送参数，使用模型默认行为。
+- `thinking=adaptive` 时保留百炼默认行为，并发送 `preserve_thinking=true`，保证带 `reasoning_content` 的历史可以继续回放。
 - 其它 provider 保持现有参数：DeepSeek/MiMo 继续使用现有 `thinking` / `reasoning_effort` 逻辑。
 - 后台“测试连接”和正式聊天必须调用同一参数构造函数。
 - 不向不支持该参数的 OpenAI 兼容模型盲目发送 `enable_thinking`。
 
-### FR-LLM-6-2：结构化输出（🔲 待评估）
+### FR-LLM-6-2：结构化输出（✅ 已完成）
 
 新增统一请求能力，至少支持：
 
@@ -89,7 +89,7 @@
 
 普通聊天不默认开启结构化输出。解析失败时保留现有错误记录和重试边界，不用宽松 fallback 掩盖模型不兼容。
 
-### FR-LLM-6-3：工具调用能力位（🔲 待评估）
+### FR-LLM-6-3：工具调用能力位（✅ 基础完成）
 
 Provider 能力模型需要明确：
 
@@ -99,13 +99,13 @@ Provider 能力模型需要明确：
 - 是否支持工具调用后继续思考和再次调用；
 - 工具参数是否支持严格 JSON schema。
 
-Qwen 的能力通过真实模型测试确认后再写入默认能力位。未确认的能力不得默认开启。
+Qwen3 的基础工具调用能力已通过 devserver 真实请求确认；并行工具调用仍未确认，因此默认关闭。
 
-### FR-LLM-6-4：多轮对话与思考内容回传（🔲 待评估）
+### FR-LLM-6-4：多轮对话与思考内容回传（✅ 基础完成）
 
 - 继续由咕咕本地维护 `messages`；
 - Qwen 的 assistant 消息、工具调用消息和工具结果必须保持 OpenAI 兼容格式；
-- 如果 Qwen 返回 reasoning 内容，确认是否需要原样回传到下一轮；
+- 如果 Qwen 返回 reasoning 内容，按 OpenAI 兼容消息结构保留到下一轮；Qwen3 自适应模式通过 `preserve_thinking` 保持该字段语义；
 - 不把 reasoning 内容展示给用户或写入普通回复正文。
 
 ### FR-LLM-6-5：百炼 Batch 独立服务（🔲 后置）
@@ -197,7 +197,7 @@ response_format = {"type": "json_object"}
 | 连续工具 | 工具结果后能继续调用或总结 |
 | 并行工具 | 仅在能力确认后开启 |
 | JSON Object | 返回可解析 JSON |
-| JSON Schema | 字段和类型符合 schema |
+| JSON Schema | 接口接受 schema；业务任务仍需校验字段完整性 |
 | 图片 | 正确理解图片内容 |
 | 视频 | 仅在模型明确支持时测试 |
 
@@ -220,9 +220,11 @@ response_format = {"type": "json_object"}
 | 并行工具调用兼容性不明 | 工具状态机收到异常调用结构 | 默认关闭，确认后按模型开启 |
 | Batch API 与实时任务生命周期不同 | 任务状态、重试和结果关联复杂 | 独立服务和数据库任务表，后置实现 |
 
-待确认：
+已确认/待确认：
 
-- [ ] 当前 `qwen3.8-max` 是否支持 `enable_thinking=false` 和 `enable_thinking=true` 的显式切换。
-- [ ] 当前 `qwen3.8-max` 是否支持 `json_schema`，还是只支持 `json_object`。
+- [x] 当前 devserver `qwen3.6-flash` 的 `enable_thinking=false`、JSON Object、基础工具调用和流式请求均返回成功。
+- [x] 当前模型的 JSON Schema 请求被接口接受；业务侧仍需用完整 schema 做内容断言。
 - [ ] 当前模型是否支持并行工具调用，以及流式分片的完整格式。
 - [ ] 百炼 Batch 是否纳入咕咕首批离线任务，还是先保留 provider 接口。
+
+真实验证记录：2026-08-24，使用 devserver `Bailian / qwen3.6-flash`，普通、JSON Object、JSON Schema、强制单工具和流式请求均返回 HTTP 200；JSON Schema 最小测试因 `max_tokens=16` 以 `length` 结束，不能代替业务 schema 完整性测试。

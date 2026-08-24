@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
+import logging
 import os
 import time
 import urllib.request
@@ -16,6 +18,7 @@ from .utils import _code_ref, _estimate_tokens, _jsonable
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
 _send_tasks: set[asyncio.Task] = set()
+_layout_logger = logging.getLogger("agent.core")
 
 def _enabled() -> bool:
     return os.getenv("LOOPSCOPE_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -40,6 +43,39 @@ def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> Non
     bucket["count"] = int(stats.get("count", 0) or 0)
     bucket["by_type"] = dict(stats.get("by_type") or {})
     bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
+
+
+def record_context_compaction(
+    *,
+    phase: str,
+    reason: str,
+    changed: bool,
+    before_messages: int,
+    after_messages: int,
+    before_summary_count: int = 0,
+    after_summary_count: int = 0,
+    before_summary_chars: int = 0,
+    after_summary_chars: int = 0,
+    protected_from: int | None = None,
+) -> None:
+    """记录一次上下文压缩结果，不记录历史正文。"""
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    payload = {
+        "phase": phase,
+        "reason": reason,
+        "changed": bool(changed),
+        "before_messages": int(before_messages),
+        "after_messages": int(after_messages),
+        "before_summary_count": int(before_summary_count),
+        "after_summary_count": int(after_summary_count),
+        "before_summary_chars": int(before_summary_chars),
+        "after_summary_chars": int(after_summary_chars),
+        "protected_from": protected_from,
+    }
+    span = run.span("context", "Context compaction", payload, context_source="compaction")
+    span.finish(payload, status="success" if changed else "skipped")
 
 
 def record_adapter_call(
@@ -266,6 +302,73 @@ def record_snapshot_event(
             code=_code_ref(frame_depth=2),
         )
         run.pending_context_spans.append(span)
+    except Exception:
+        pass
+
+
+def record_context_layout(
+    messages: Any,
+    *,
+    metadata: dict[str, Any] | None = None,
+    system_text: str = "",
+    parent_span_id: str | None = None,
+) -> None:
+    """记录 provider loop 实际收到的上下文边界（仅长度/指纹/标记）。"""
+    if not _enabled():
+        return
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    try:
+        rows = list(messages) if isinstance(messages, (list, tuple)) else []
+        def _row(value: Any) -> dict[str, Any]:
+            if isinstance(value, dict):
+                role = str(value.get("role") or "")
+                content = value.get("content")
+            else:
+                role = str(getattr(value, "role", "") or "")
+                content = getattr(value, "content", "")
+            text = content if isinstance(content, str) else _jsonable(content)
+            text = str(text or "")
+            markers = [marker for marker in (
+                "[system-reminder]", "[群聊历史消息", "[当前群聊发言人", "[group-rag]",
+                "[owner-rag]", "[group-member-rag]", "[knowledge-context]",
+                "## 当前群组记忆", "## 当前 IM 身份事实", "## 默认相处姿态", "当前时间：",
+            ) if marker in text]
+            return {
+                "role": role,
+                "len": len(text),
+                "fp": hashlib.sha1(text.encode("utf-8")).hexdigest()[:12],
+                "markers": markers,
+            }
+        row_meta = [_row(item) for item in rows]
+        sequence_fp = hashlib.sha1(
+            json.dumps(row_meta, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:12]
+        payload = {
+            "phase": "provider-input",
+            "provider_message_count": len(row_meta),
+            "provider_sequence_fp": sequence_fp,
+            "provider_head": row_meta[:3],
+            "provider_tail": row_meta[-3:],
+            "system_len": len(system_text or ""),
+            "system_fp": hashlib.sha1((system_text or "").encode("utf-8")).hexdigest()[:12],
+            "application_boundary": _jsonable(metadata or {}),
+        }
+        _layout_logger.info("[context-layout] %s", payload)
+        run.attributes["context_layout"] = payload
+        span = run.span(
+            "context",
+            "Context layout at provider boundary",
+            payload,
+            parent_span_id=parent_span_id,
+            token_impact={"message_count": len(row_meta)},
+            context_source="provider-input",
+        )
+        span.finish({
+            "provider_message_count": len(row_meta),
+            "provider_sequence_fp": sequence_fp,
+        })
     except Exception:
         pass
 

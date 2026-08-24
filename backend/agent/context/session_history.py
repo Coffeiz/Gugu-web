@@ -1,33 +1,22 @@
 """按 session baseline 读取连续对话历史。
 
-历史读取窗口是运行时的安全边界；它不推进 baseline，也不替代持久化压缩。
+读取阶段只应用 baseline 水位和非 token 的条数安全上限；不做本地 token 估算，
+也不推进 baseline。预算、压缩和重试统一在 provider 请求边界处理。
 """
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextvars import ContextVar
+from typing import Any
 
 from sqlalchemy import select
 
-from .budget import effective_budget
-from .tokens import HISTORY_MAX_MSGS, HISTORY_TOKEN_BUDGET, estimate_tokens, msg_tokens
+from .tokens import HISTORY_MAX_MSGS
 
 
-def history_budget_for_context(
-    context_tokens: int,
-    *,
-    system_prompt: str = "",
-    snapshot_context: str = "",
-    reserve_ratio: float = 0.20,
-) -> int:
-    """计算历史窗口预算，不改变持久化压缩的 token 配置。
-
-    读取阶段尚未完成工具 schema 和动态尾部组装，因此额外预留一段固定比例，
-    防止 baseline=0 的长会话把 system/snapshot/工具上下文挤出模型窗口。
-    """
-    context = max(1, int(context_tokens or HISTORY_TOKEN_BUDGET))
-    fixed_tokens = estimate_tokens(system_prompt) + estimate_tokens(snapshot_context)
-    dynamic_reserve = int(context * max(0.0, min(0.40, reserve_ratio)))
-    return max(1, effective_budget(context, reserved_tokens=fixed_tokens + dynamic_reserve))
+_last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
+    "session_history_stats", default=None,
+)
 
 
 def _blocks(message) -> list[dict]:
@@ -55,12 +44,15 @@ def select_history_window(
     token_budget: int,
     max_messages: int = HISTORY_MAX_MSGS,
 ) -> list:
-    """按 token 预算选择最近历史，并保持工具调用轮次完整。
+    """按条数保留最近历史，兼容旧调用但不做本地 token 估算。
 
-    ``messages_newest_first`` 不包含 summary；调用方负责把 summary 置于结果最前。
+    上下文是否超预算只能由 provider 的实际请求结果决定。``token_budget`` 保留
+    仅为兼容旧调用，绝不参与历史选择。
     """
     newest = list(messages_newest_first)[:max_messages]
     chronological = list(reversed(newest))
+    # 兼容旧显式调用：将 token_budget 视作“字符安全上限”，不做 token 换算。
+    # 正常历史读取不会调用本函数。
     units: list[list] = []
     index = 0
     while index < len(chronological):
@@ -74,15 +66,14 @@ def select_history_window(
         else:
             index += 1
         units.append(unit)
-
     selected: list = []
-    used = 0
+    used_chars = 0
     for unit in reversed(units):
-        unit_tokens = sum(msg_tokens(message) for message in unit)
-        if selected and used + unit_tokens > max(1, int(token_budget)):
+        chars = sum(len(getattr(message, "content", "") or "") for message in unit)
+        if selected and used_chars + chars > max(1, int(token_budget)):
             break
         selected[0:0] = unit
-        used += unit_tokens
+        used_chars += chars
     return selected
 
 async def load_session_history(
@@ -90,13 +81,15 @@ async def load_session_history(
     session_id: int,
     baseline_message_id: int = 0,
     *,
-    token_budget: int = HISTORY_TOKEN_BUDGET,
+    budget: object | None = None,
+    token_budget: int | None = None,
     max_messages: int = HISTORY_MAX_MSGS,
 ) -> list:
-    """读取 baseline 之后的有限历史，按数据库消息 id 正序返回。
+    """读取 baseline 之后的历史，按数据库消息 id 正序返回。
 
-    读取窗口只保护当前 run，不推进 baseline。持久化压缩仍由 ``compress_conv``
-    负责；summary 行始终保留给入口层弹出并放入固定上下文区。
+    读取窗口只保护当前 run，不推进 baseline。持久化 baseline 更新由
+    ``compress_conv`` 负责；summary 行始终保留在结果第一条，由 history builder
+    在发送边界规范化为普通 user 历史消息。
     """
     from app.models import ConversationMessage
 
@@ -125,9 +118,25 @@ async def load_session_history(
             ConversationMessage.id > baseline_message_id
         )
     newest = list((await db.execute(query)).scalars().all())
-    history = select_history_window(
-        newest,
-        token_budget=token_budget,
-        max_messages=max_messages,
-    )
+    # 不在数据库读取阶段使用本地 token 估算。历史只受非 token 的条数安全上限
+    # 保护；真正的预算、压缩和重试统一由 provider 边界处理。
+    history = list(reversed(newest))
+    _last_history_stats.set({
+        "history_loaded_count": len(newest),
+        "history_selected_count": len(history) + len(summary),
+        "history_selected_tokens": None,
+        "history_token_budget": None,
+        "history_selection": "provider-authoritative",
+        "history_summary_count": len(summary),
+        "history_baseline_message_id": int(baseline_message_id or 0),
+        "history_oldest_selected_id": getattr(history[0], "id", None) if history else None,
+        "history_newest_selected_id": getattr(history[-1], "id", None) if history else None,
+    })
     return summary + history
+
+
+def consume_history_stats() -> dict[str, Any] | None:
+    """取出当前任务最近一次历史窗口统计，不携带正文。"""
+    stats = _last_history_stats.get()
+    _last_history_stats.set(None)
+    return stats

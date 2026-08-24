@@ -117,6 +117,10 @@ async def embed(text: str) -> list[float] | None:
         return None
     e = get_settings().embedding
     base_url = resolve_base_url(e.provider, e.base_url)
+    # 百炼的多模态模型不支持 OpenAI 兼容的 /embeddings 文本接口；文本内容
+    # 仍可通过多模态 endpoint 的 text content 生成同一模型空间的向量。
+    if e.multimodal and _is_bailian(e.provider, base_url):
+        return await embed_multimodal([{"text": text}], enable_fusion=False)
     payload = build_payload(e.provider, base_url, e.model, text, e.dimensions)
     try:
         import httpx

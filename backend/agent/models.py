@@ -56,3 +56,4 @@ class AgentResponse:
     used_tools: bool = False                     # 本轮是否实际经过工具调用，供 IM 记忆触发策略使用
     interactions: list = field(default_factory=list)  # 可选交互提示；由平台 adapter 决定是否展示
     tool_events: list = field(default_factory=list)  # 本轮工具状态事件；不直接作为用户正文展示
+    compaction_applied: bool = False                 # 本轮是否发生上下文压缩或确定性兜底

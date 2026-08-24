@@ -81,6 +81,7 @@ class LoopDriver(Protocol):
     def append_tool_round(self, messages: list, result: RoundResult, dispatched: list) -> None: ...
     def append_followup(self, messages: list, result: RoundResult, next_content: str,
                           assistant_fallback: str = "（…）") -> None: ...
+    def append_guard_followup(self, messages: list, result: RoundResult, next_content: str) -> None: ...
     def append_empty_retry(self, messages: list, result: RoundResult) -> None: ...
 
 
@@ -217,7 +218,7 @@ def _with_history_cache(messages: list) -> list:
         msg = dict(msg)
         content = msg.get("content")
 
-        # 只给 conversation checkpoint 加 cache_control；动态尾部永远不加。
+        # 只给 conversation baseline 加 cache_control；动态尾部永远不加。
         is_anchor = i in anchor_indices and i < stable_limit
 
         if isinstance(content, list) and is_anchor and content:
@@ -280,6 +281,8 @@ class AnthropicDriver:
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
         from agent.context.canonical_tool_history import render_events_for_provider
         outbound = render_events_for_provider(messages)
+        from agent.context.provider_history import render_anthropic_message_roles
+        outbound = render_anthropic_message_roles(outbound, ctx.adapter)
         _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
@@ -316,6 +319,11 @@ class AnthropicDriver:
     def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
         messages.append({"role": "assistant", "content": self._content_dicts(result)})
         messages.append({"role": "user", "content": next_content})
+
+    def append_guard_followup(self, messages, result, next_content):
+        """追加内部守卫控制消息；守卫不是用户新消息，保留 system 语义。"""
+        messages.append({"role": "assistant", "content": self._content_dicts(result)})
+        messages.append({"role": "system", "content": next_content})
 
     def append_empty_retry(self, messages, result):
         # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；
@@ -554,6 +562,11 @@ class OpenAIDriver:
         messages.append(self._asst(result.raw, result.text or assistant_fallback))
         messages.append({"role": "user", "content": next_content})
 
+    def append_guard_followup(self, messages, result, next_content):
+        """追加内部守卫控制消息，不把它伪装成用户指令。"""
+        messages.append(self._asst(result.raw, result.text or "（…）"))
+        messages.append({"role": "system", "content": next_content})
+
     def append_empty_retry(self, messages, result):
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
@@ -720,6 +733,10 @@ class OllamaDriver:
     def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
         messages.append(self._assistant(result.raw, result.text or assistant_fallback))
         messages.append({"role": "user", "content": next_content})
+
+    def append_guard_followup(self, messages, result, next_content):
+        messages.append(self._assistant(result.raw, result.text or "（…）"))
+        messages.append({"role": "system", "content": next_content})
 
     def append_empty_retry(self, messages, result):
         messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})

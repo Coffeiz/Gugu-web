@@ -1,8 +1,56 @@
 """上下文超量时的确定性截断测试。"""
 
-from agent.context.budget import effective_budget, enforce_message_budget, estimate_tool_schema_tokens, truncate_messages
+from agent.context.budget import (
+    ContextBudget,
+    enforce_message_budget,
+    estimate_tool_schema_tokens,
+    truncate_messages,
+)
 from agent.context.message_assembly import PromptMessages
 from agent.context.tokens import estimate_tokens, message_text
+
+
+def test_context_budget_uses_one_total_and_history_capacity_semantics():
+    budget = ContextBudget.for_history(
+        128_000,
+        fixed_prefix_text="系统提示" * 100,
+        tool_schema_tokens=300,
+        dynamic_tail_tokens=120,
+        current_turn_tokens=80,
+    )
+
+    assert budget.total_tokens == budget.non_history_tokens
+    assert budget.history_capacity_tokens == budget.soft_limit_tokens - budget.non_history_tokens
+    assert budget.compression_cap_tokens == 64_000
+    assert budget.diagnostics()["history_capacity_tokens"] == budget.history_capacity_tokens
+
+
+def test_context_budget_from_messages_has_one_breakdown():
+    messages = [
+        {"role": "system", "content": "稳定快照" * 10},
+        {"role": "user", "content": "历史" * 20},
+        {"role": "user", "content": "当前问题"},
+    ]
+    budget = ContextBudget.from_messages(
+        10_000,
+        messages,
+        system_text="系统" * 10,
+        fixed_prefix_size=1,
+        tool_schema_tokens=31,
+        dynamic_tail_tokens=17,
+    )
+
+    assert budget.total_tokens == (
+        budget.system_prompt_tokens
+        + budget.snapshot_tokens
+        + budget.history_tokens
+        + budget.tool_schema_tokens
+        + budget.dynamic_tail_tokens
+    )
+    assert budget.snapshot_tokens == estimate_tokens(messages[0]["content"])
+    assert budget.history_tokens == sum(
+        estimate_tokens(message_text(message)) for message in messages[1:]
+    )
 
 
 def test_over_budget_keeps_latest_tool_round_atomic():
@@ -19,7 +67,7 @@ def test_over_budget_keeps_latest_tool_round_atomic():
     assert result[-1]["content"] == "当前问题"
     tool_indices = [index for index, item in enumerate(result) if item.get("role") == "tool"]
     assert not tool_indices or any(item.get("tool_calls") for item in result[:tool_indices[0]])
-    assert stats.after_tokens <= effective_budget(120) + 10
+    assert stats.after_tokens <= ContextBudget(120).soft_limit_tokens + 10
 
 
 def test_single_oversized_current_message_is_truncated_without_llm():
@@ -30,7 +78,7 @@ def test_single_oversized_current_message_is_truncated_without_llm():
     assert stats.changed
     assert stats.oversized_item
     assert "内容因上下文预算被截断" in result[-1]["content"]
-    assert stats.after_tokens <= effective_budget(100) + 10
+    assert stats.after_tokens <= ContextBudget(100).soft_limit_tokens + 10
 
 
 def test_valid_history_is_not_trimmed():
@@ -69,7 +117,7 @@ def test_tool_schema_reservation_is_included_in_hard_budget():
 
     assert overhead > 0
     assert stats.changed
-    assert stats.after_tokens <= overhead + effective_budget(2500, reserved_tokens=overhead) + 10
+    assert stats.after_tokens <= ContextBudget(2500, provider_overhead_tokens=overhead).soft_limit_tokens + 10
 
 
 def test_dynamic_tail_is_counted_and_preserved_during_truncation():
@@ -87,5 +135,5 @@ def test_dynamic_tail_is_counted_and_preserved_during_truncation():
 
     assert result.changed
     assert messages.dynamic_tail == tail_before
-    assert result.after_tokens <= effective_budget(1200) + 10
+    assert result.after_tokens <= ContextBudget(1200).soft_limit_tokens + 10
     assert len(messages.conversation) < 2

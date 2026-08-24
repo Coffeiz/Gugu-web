@@ -1,7 +1,7 @@
 import { onUnmounted, reactive } from 'vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
-type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
+type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }
 interface PlatformSummary { platform: string; scopes: number; groups: number; members: number; entries: number }
 interface Summary {
   total_scopes: number; groups: number; members: number; total_entries: number

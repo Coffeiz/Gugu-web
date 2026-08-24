@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-import json
 import logging
 from typing import Any
 
 
 _log = logging.getLogger("agent.rag")
-AUTO_RECALL_TIMEOUT_SECONDS = 1.5
+AUTO_RECALL_TIMEOUT_SECONDS = 3.0
 
 
 def _drain_background_task(task: asyncio.Task) -> None:
@@ -98,7 +97,7 @@ async def build_passive_history_message(user_id, query: str) -> dict[str, str] |
     """按当前问题做低成本 Memory 被动召回。
 
     失败只跳过可选知识补充，不阻塞主 Agent；显式 `search_memory` 仍是完整结果和
-    canonical tool round 的精确入口。这里固定使用 BM25，避免普通对话因 embedding
+    canonical tool round 的精确入口。这里固定使用 lexical，避免普通对话因 embedding
     请求增加额外延迟。
     """
     if not should_passively_recall(query):
@@ -160,9 +159,11 @@ def _request_scopes(request) -> list[tuple[str, Any]]:
 async def build_automatic_rag_context(
     request, query: str, *, history: Iterable[Any] = (), snapshot_text: str = "",
 ) -> dict[str, Any]:
-    """每条用户消息执行一次低成本 BM25 自动召回。
+    """每条用户消息执行一次低成本 lexical 自动召回。
 
-    返回动态尾部消息和可持久化的 canonical blocks。召回失败只跳过可选上下文，
+    返回本轮稳定 conversation 消息和可持久化的 canonical blocks。调用方应把
+    ``tail`` 放在当前用户消息之后，而不是放进 dynamic_tail；这样本轮组装与
+    下一轮从 history 重建时保持相同的消息边界。召回失败只跳过可选上下文，
     不阻塞主 Agent；结果按 scope 顺序合并并共享 3000 字符上限。
     """
     query = (query or "").strip()
@@ -180,6 +181,7 @@ async def build_automatic_rag_context(
         from app.core.redaction import diag_log
 
         for label, scope in _request_scopes(request):
+            scope_stage = "search"
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
                 # 显式 search_memory 工具仍保留自己的完整等待语义。
@@ -190,6 +192,9 @@ async def build_automatic_rag_context(
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,
                 )
+                scope_stage = "result-shape"
+                if not isinstance(result, dict):
+                    raise TypeError("RAG 返回值不是对象")
             except asyncio.TimeoutError:
                 _log.warning("自动知识召回超时，跳过当前 scope")
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
@@ -199,11 +204,6 @@ async def build_automatic_rag_context(
                 # 单一来源（例如项目索引）异常不能让群记忆/其他 scope 全部失效。
                 # 原始异常只进入受限诊断出口，普通日志只保留类型和 scope。
                 diag_log(f"agent.rag.auto_recall.{label}", exc)
-                _log.warning("[runtime-rag-auto-probe] %s", json.dumps({
-                    "phase": "scope-error",
-                    "scope": label,
-                    "errorType": type(exc).__name__,
-                }, ensure_ascii=False, sort_keys=True))
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "error": type(exc).__name__})
                 continue
@@ -234,12 +234,6 @@ async def build_automatic_rag_context(
         return {"tail": tail, "blocks": blocks, "scope_hits": scope_hits,
                 "injected": bool(tail)}
     except Exception as exc:
-        _log.warning("[runtime-rag-auto-probe] %s", json.dumps({
-            "phase": "error",
-            "errorType": type(exc).__name__,
-            "scopeCount": len(scope_hits),
-            "injectedChars": sum(len(str(block.get("text") or "")) for block in blocks),
-        }, ensure_ascii=False, sort_keys=True))
         _log.warning("自动知识召回跳过：%s", type(exc).__name__)
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
 __all__ = [

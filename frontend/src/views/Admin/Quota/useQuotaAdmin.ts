@@ -1,7 +1,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 
-type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
-type ConfigStore = { cfg: any; fetchConfig: () => Promise<unknown>; saveConfig: (value: unknown) => Promise<unknown> }
+type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }
+type ConfigStore = { cfg: any; fetchConfig: () => Promise<unknown>; saveConfig: (value: Record<string, Record<string, unknown>>) => Promise<unknown> }
 
 export function useQuotaAdmin(adminStore: AdminStore, configStore: ConfigStore) {
   const globalDraft = reactive<{ token6h: number | null; tokenWeek: number | null; storageGB: number | null; searchDaily: number | null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })

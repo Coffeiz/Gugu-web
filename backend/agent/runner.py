@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history
+from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history, audit
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data, load_platform_user_memory
@@ -208,9 +208,9 @@ def _with_quoted_context(message: str, quoted_text: str | None) -> str:
     不能拿它当 ConversationMessage.content 存/当网页展示文本——那样会把引用原文（可能带
     markdown 表格等）直接拼进用户消息正文，网页气泡按纯文本渲染，会被原样摊平显示得很难看
     （devlog 2026-07-10）。展示层面引用原文走 quoted_text 单独一列，前端另起一个引用预览块。"""
-    if not quoted_text:
-        return message
-    return f"💬 用户引用/回复了一条历史消息（原文：「{quoted_text}」），针对这条消息说：\n\n{message}"
+    from agent.im.context_loader import format_quoted_context
+
+    return format_quoted_context(message, quoted_text)
 
 
 async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
@@ -260,7 +260,7 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     return block
 
 
-async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
+async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
     profile = DefaultProfile()
@@ -282,8 +282,6 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
-        from agent.context import compress_conv
-        await compress_conv.wait_for_checkpoint(session_id)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -330,18 +328,13 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
             "platform_user": member_memory,
         })
 
-        # 连续历史：统一按实际 history budget 读取窗口；持久化压缩后从 baseline 继续追加。
-        history_budget = session_history.history_budget_for_context(
-            model_cfg.context_tokens,
-            system_prompt=snapshot["system_prompt"],
-            snapshot_context=snapshot["snapshot_context"],
-        )
+        # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
         history = await session_history.load_session_history(
             db,
             session_id,
             session_snapshot.history_baseline(session),
-            token_budget=history_budget,
         )
+        history_stats = session_history.consume_history_stats()
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, model_cfg)
         if strip_thinking:
@@ -456,7 +449,6 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     from agent.context import compress_conv
-    _summary, history = compress_conv.pop_summary(history)
 
     # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。
     _ctx_injection = None
@@ -486,7 +478,7 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
+    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection)
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking)
@@ -494,8 +486,8 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
     rag_context = await build_automatic_rag_context(
         req, req.message, history=history, snapshot_text=snapshot_context,
     )
+    # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
     tail_parts = []
-    tail_parts.extend(rag_context["tail"])
     message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
     if message_time:
         tail_parts.append(message_time)
@@ -508,13 +500,34 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
             fixed_parts=fixed_parts, history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
+            conversation_tail=rag_context["tail"],
         )
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
         # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
+        sanitize_before_count = len(assembly.conversation)
+        fixed_boundary = assembly.fixed_prefix_size
+        merged_cross_segment = bool(
+            fixed_boundary > 0
+            and fixed_boundary < sanitize_before_count
+            and assembly.conversation[fixed_boundary - 1].get("role")
+            == assembly.conversation[fixed_boundary].get("role")
+        )
         clean_conversation = sanitize.sanitize_messages(assembly.conversation)
+        merged_cross_segment = merged_cross_segment and len(clean_conversation) < sanitize_before_count
         assembly.replace_conversation(clean_conversation)
+        sanitize_after_count = len(assembly.conversation)
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
+        audit.context_layout_probe(
+            phase="assembled", session=session, snapshot=snapshot,
+            history=history, messages=assembly,
+            fixed_prefix_count=assembly.fixed_prefix_size,
+            dynamic_tail_count=len(assembly.dynamic_tail),
+            history_stats=history_stats,
+            sanitize_before_count=sanitize_before_count,
+            sanitize_after_count=sanitize_after_count,
+            merged_cross_segment=merged_cross_segment,
+        )
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
                          model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
@@ -524,8 +537,16 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
+            conversation_tail=rag_context["tail"],
         )
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
+        audit.context_layout_probe(
+            phase="assembled", session=session, snapshot=snapshot,
+            history=history, messages=oa_messages,
+            fixed_prefix_count=getattr(oa_messages, "fixed_prefix_size", None),
+            dynamic_tail_count=len(oa_messages.dynamic_tail) if hasattr(oa_messages, "dynamic_tail") else None,
+            history_stats=history_stats,
+        )
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
                          model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
@@ -570,14 +591,6 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=sent_files or None))
             # 按 6h 剩余额度封顶本轮用量（精力条最多 100%，顶过线只记填满部分，超出不计 6h 与周）；已满则 (0,0) 不写
-            snapshot_session = await db2.get(ConversationSession, session_id)
-            if snapshot_session is not None:
-                await db2.flush()
-                session_snapshot.checkpoint_snapshot(
-                    snapshot_session,
-                    [{"role": "user", "content": req.message},
-                     {"role": "assistant", "content": text}],
-                )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:
                 db2.add(AgentUsage(
@@ -588,11 +601,15 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                 ))
             await db2.commit()
 
+        from app.services.conversation_retention import trim_session_messages
+        await trim_session_messages(session_id)
+
         from agent.context import compress_conv
-        compress_conv.schedule_checkpoint(
+        compress_conv.schedule_baseline_update(
             session_id, user_id, settings,
             getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
-            history_budget=history_budget,
+            actual_usage_tokens=int(meta.get("context_input", tin) or 0),
+            compaction_applied=bool(meta.get("compaction_applied", False)),
         )
 
         # 新会话标题：移出关键路径，后台生成（会话已有首句截断做临时标题，好了再异步升级+推事件）。
@@ -632,7 +649,22 @@ async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=N
                          cache_read=cache_read, cache_write=cache_write,
                          files=sent_files, used_tools=im_used_tools,
                          interactions=meta.get("interactions", []),
-                         tool_events=meta.get("tool_events", []))
+                         tool_events=meta.get("tool_events", []),
+                         compaction_applied=bool(meta.get("compaction_applied", False)))
+
+
+async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
+    """同一 session 串行生成；不同 session 仍可并行。"""
+    from agent.context import compress_conv
+
+    async with compress_conv.session_run_gate(req):
+        response = await _run_collect_unlocked(
+            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+        )
+        # baseline 是 run 末尾提交的安全点。释放 gate 前必须等待它完成，
+        # 否则下一个 worker 可能在 summary/baseline 提交前读取旧快照并再次压缩。
+        await compress_conv.wait_for_baseline_update(response.session_id or req.session_id)
+        return response
 
 
 async def _notify_tool_event(callback, event: dict) -> None:
@@ -656,7 +688,7 @@ async def _notify_tool_event(callback, event: dict) -> None:
 #   ("final", AgentResponse)  — 生成结束，含完整 text/files/cancelled/session_id/tokens
 #                                session_id 来自 run_collect 同款会话创建流程（line 165-193）
 #                                持久化 / 反思 / 压缩跟 run_collect 完全一致
-async def run_stream(
+async def _run_stream_unlocked(
     req: AgentRequest,
     *,
     on_interaction=None,
@@ -681,8 +713,6 @@ async def run_stream(
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
-        from agent.context import compress_conv
-        await compress_conv.wait_for_checkpoint(session_id)
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -723,18 +753,13 @@ async def run_stream(
             "platform_user": member_memory,
         })
 
-        # 连续历史：统一按实际 history budget 读取窗口，避免 baseline=0 时无界加载。
-        history_budget = session_history.history_budget_for_context(
-            model_cfg.context_tokens,
-            system_prompt=snapshot["system_prompt"],
-            snapshot_context=snapshot["snapshot_context"],
-        )
+        # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
         history = await session_history.load_session_history(
             db,
             session_id,
             session_snapshot.history_baseline(session),
-            token_budget=history_budget,
         )
+        history_stats = session_history.consume_history_stats()
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, model_cfg)
         if strip_thinking:
@@ -837,7 +862,6 @@ async def run_stream(
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
 
     from agent.context import compress_conv
-    _summary, history = compress_conv.pop_summary(history)
 
     # 本轮动态上下文用 [system-reminder] 包裹，避免和 snapshot 固定前缀混淆。
     _ctx_injection = None
@@ -867,7 +891,7 @@ async def run_stream(
     anthr_initial_len = 0
     oa_messages: list = []
     oa_initial_len = 0
-    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
+    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection)
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking)
@@ -875,8 +899,8 @@ async def run_stream(
     rag_context = await build_automatic_rag_context(
         req, req.message, history=history, snapshot_text=snapshot_context,
     )
+    # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
     tail_parts = []
-    tail_parts.extend(rag_context["tail"])
     message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
     if message_time:
         tail_parts.append(message_time)
@@ -888,10 +912,31 @@ async def run_stream(
         assembly = message_assembly.build_messages(
             fixed_parts=fixed_parts, history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts)
-        assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
+            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+        sanitize_before_count = len(assembly.conversation)
+        fixed_boundary = assembly.fixed_prefix_size
+        merged_cross_segment = bool(
+            fixed_boundary > 0
+            and fixed_boundary < sanitize_before_count
+            and assembly.conversation[fixed_boundary - 1].get("role")
+            == assembly.conversation[fixed_boundary].get("role")
+        )
+        clean_conversation = sanitize.sanitize_messages(assembly.conversation)
+        merged_cross_segment = merged_cross_segment and len(clean_conversation) < sanitize_before_count
+        assembly.replace_conversation(clean_conversation)
+        sanitize_after_count = len(assembly.conversation)
         anthr_messages = assembly
         anthr_initial_len = len(assembly.conversation)
+        audit.context_layout_probe(
+            phase="assembled", session=session, snapshot=snapshot,
+            history=history, messages=assembly,
+            fixed_prefix_count=assembly.fixed_prefix_size,
+            dynamic_tail_count=len(assembly.dynamic_tail),
+            history_stats=history_stats,
+            sanitize_before_count=sanitize_before_count,
+            sanitize_after_count=sanitize_after_count,
+            merged_cross_segment=merged_cross_segment,
+        )
         gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
                          model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
@@ -901,8 +946,15 @@ async def run_stream(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts)
+            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
+        audit.context_layout_probe(
+            phase="assembled", session=session, snapshot=snapshot,
+            history=history, messages=oa_messages,
+            fixed_prefix_count=getattr(oa_messages, "fixed_prefix_size", None),
+            dynamic_tail_count=len(oa_messages.dynamic_tail) if hasattr(oa_messages, "dynamic_tail") else None,
+            history_stats=history_stats,
+        )
         gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
                          model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
@@ -915,9 +967,11 @@ async def run_stream(
     rounds: list[str] = []
     cur = ""
     tin = tout = cache_read = cache_write = 0
+    context_input = 0
     files: list = []
     interactions: list[dict] = []
     tool_events: list[dict] = []
+    compaction_applied = False
     cancelled = False
     errored = False
     errored_text = ""
@@ -1009,14 +1063,6 @@ async def run_stream(
             if text or files:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant",
                                             content=text, files=files or None))
-            snapshot_session = await db2.get(ConversationSession, session_id)
-            if snapshot_session is not None:
-                await db2.flush()
-                session_snapshot.checkpoint_snapshot(
-                    snapshot_session,
-                    [{"role": "user", "content": req.message},
-                     {"role": "assistant", "content": text}],
-                )
             _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
             if _cap_in or _cap_out:
                 db2.add(AgentUsage(
@@ -1026,11 +1072,15 @@ async def run_stream(
                 ))
             await db2.commit()
 
+        from app.services.conversation_retention import trim_session_messages
+        await trim_session_messages(session_id)
+
         from agent.context import compress_conv
-        compress_conv.schedule_checkpoint(
+        compress_conv.schedule_baseline_update(
             session_id, user_id, settings,
             getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
-            history_budget=history_budget,
+            actual_usage_tokens=int(meta.get("context_input", tin) or 0),
+            compaction_applied=bool(meta.get("compaction_applied", False)),
         )
 
         if is_new_session and text:
@@ -1067,6 +1117,29 @@ async def run_stream(
                                   tool_events=tool_events))
 
 
+async def run_stream(
+    req: AgentRequest,
+    *,
+    on_interaction=None,
+    on_tool_event=None,
+) -> AsyncIterator[tuple[str, object]]:
+    """流式生成也复用同一 session gate，避免和普通生成并行。"""
+    from agent.context import compress_conv
+
+    final_session_id = req.session_id
+    async with compress_conv.session_run_gate(req):
+        async for item in _run_stream_unlocked(
+            req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+        ):
+            if isinstance(item, tuple) and len(item) == 2 and item[0] == "final":
+                response = item[1]
+                final_session_id = getattr(response, "session_id", None) or final_session_id
+            yield item
+        # 和非流式路径一致：最终帧可以先交给调用方，但 gate 要继续持有到
+        # baseline 完成，保证同 session 的下一轮不会看到未提交的 baseline。
+        await compress_conv.wait_for_baseline_update(final_session_id)
+
+
 async def _collect(
     gen: AsyncGenerator[str, None], include_meta: bool = False,
     model_cfg=None, on_tool_event=None,
@@ -1087,12 +1160,14 @@ async def _collect(
     rounds: list[str] = []   # 每轮文本分开存
     cur = ""
     tin = tout = cache_read = cache_write = 0
+    context_input = 0
     files: list = []
     tool_names: list[str] = []
     interactions: list[dict] = []
     tool_events: list[dict] = []
     mutated = False
     cancelled = False
+    compaction_applied = False
     async for evt_str in gen:
         try:
             evt = json.loads(evt_str[6:])
@@ -1106,9 +1181,12 @@ async def _collect(
             san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置清洗器
         elif t == "_usage":
             tin = evt.get("input", 0)
+            context_input = max(context_input, int(evt.get("context_input", tin) or 0))
             tout = evt.get("output", 0)
             cache_read = evt.get("cache_read", 0) or 0
             cache_write = evt.get("cache_write", 0) or 0
+        elif t == "_context_compaction":
+            compaction_applied = bool(evt.get("applied")) or compaction_applied
         elif t == "token":
             cur += san.feed(evt.get("content", ""))
         elif t == "file" and evt.get("file"):
@@ -1146,7 +1224,8 @@ async def _collect(
             detail = evt.get("message") or evt.get("detail") or "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？"
             result = (detail, tin, tout, cache_read, cache_write, True, files, False)
             meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
-                    "tool_events": tool_events}
+                    "tool_events": tool_events, "compaction_applied": compaction_applied,
+                    "context_input": context_input}
             return result + (meta,) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
@@ -1159,7 +1238,8 @@ async def _collect(
             break
     result = (text, tin, tout, cache_read, cache_write, False, files, cancelled)
     meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
-            "tool_events": tool_events}
+            "tool_events": tool_events, "compaction_applied": compaction_applied,
+            "context_input": context_input}
     return result + (meta,) if include_meta else result
 
 

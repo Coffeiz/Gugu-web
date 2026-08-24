@@ -158,6 +158,71 @@ def _drop_stale_event(data, channel_id: str, now_ms: int | None = None) -> bool:
     return False
 
 
+async def _consume_card_action(owner: str, prompt_id: int, token: str,
+                               event_id: str | None) -> dict:
+    """在飞书回调协程中消费统一 Prompt Action。"""
+    from uuid import UUID
+    from app.db import session as db_session
+    from app.services.interactions import consume_action
+
+    db_session.ensure_engine()
+    if db_session._SessionLocal is None:
+        raise RuntimeError("数据库不可用")
+    async with db_session._SessionLocal() as db:
+        return await consume_action(
+            db,
+            user_id=UUID(str(owner)),
+            prompt_id=prompt_id,
+            token=token,
+            event_id=event_id,
+        )
+
+
+def _handle_card_action(data, owner: str):
+    """处理飞书 card.action.trigger；在 SDK 当前 event loop 调度消费任务。"""
+    from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTriggerResponse
+    from agent.interactions.feishu import decode_action_value, build_completed_card_payload
+
+    event = getattr(data, "event", None)
+    action = getattr(event, "action", None)
+    value = getattr(action, "value", None) if action is not None else None
+    completed_card = None
+    try:
+        prompt_id, token = decode_action_value(value)
+        header = getattr(data, "header", None)
+        event_id = getattr(header, "event_id", None)
+        coroutine = _consume_card_action(owner, prompt_id, token, event_id)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 仅供离线测试或非 SDK 调用路径；正式 WebSocket 回调总有运行中的 loop。
+            asyncio.run(coroutine)
+            message = "已选择，继续处理。"
+        else:
+            task = loop.create_task(coroutine)
+
+            def _report_card_action_failure(done_task) -> None:
+                try:
+                    done_task.result()
+                except Exception as exc:
+                    diag_log("agent.gateway.feishu.interaction", exc)
+
+            task.add_done_callback(_report_card_action_failure)
+            message = "已收到选择，继续处理。"
+        completed_card = build_completed_card_payload(message)
+    except (LookupError, ValueError):
+        message = "这个选项已过期或已经处理过了。"
+    except Exception as exc:
+        diag_log("agent.gateway.feishu.interaction", exc)
+        message = "暂时无法处理这个选项，请回复选项文字。"
+    response = {"toast": {"type": "info", "content": message}}
+    if completed_card is not None:
+        # 飞书回调允许返回新的 raw card。用无按钮状态卡替换原卡，避免重复点击；
+        # 真正的幂等性仍由服务端一次性 action token 保证。
+        response["card"] = {"type": "raw", "data": completed_card}
+    return P2CardActionTriggerResponse(response)
+
+
 def _feishu_mentions_current_bot(message, open_id: str | None) -> bool:
     """从飞书 at 节点确认是否指向当前 bot；没有结构化节点时不猜测。"""
     if not open_id:
@@ -322,6 +387,7 @@ def serve() -> None:
     handler = (
         lark.EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(_make_on_message(channel_id, owner, api_client, app_id))
+        .register_p2_card_action_trigger(lambda data: _handle_card_action(data, owner))
         .register_p2_im_message_reaction_created_v1(lambda data: None)
         .register_p2_im_message_reaction_deleted_v1(lambda data: None)
         .build()
@@ -472,6 +538,31 @@ def _do_send(client, receive_id: str, text: str) -> bool:
     return _create("text", json.dumps({"text": text}, ensure_ascii=False))
 
 
+def _do_send_interaction_card(client, receive_id: str, prompt: dict) -> bool:
+    """发送带按钮的 Prompt 卡片；失败由调用方退回文本选项。"""
+    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+    from agent.interactions.feishu import build_card_payload
+
+    rid_type = "open_id" if str(receive_id).startswith("ou_") else "chat_id"
+    content = json.dumps(build_card_payload(prompt), ensure_ascii=False)
+    req = (
+        CreateMessageRequest.builder()
+        .receive_id_type(rid_type)
+        .request_body(
+            CreateMessageRequestBody.builder()
+            .receive_id(receive_id)
+            .msg_type("interactive")
+            .content(content)
+            .build()
+        ).build()
+    )
+    resp = client.im.v1.message.create(req)
+    if not resp.success():
+        print(f"[feishu] 交互卡片发送失败: code={resp.code} msg={resp.msg}", flush=True)
+        return False
+    return True
+
+
 async def send_text(receive_id: str, text: str, channel_id: str | None = None) -> bool:
     """给指定收件人发文本（chat_id 或 open_id 都行，用该 bot 的凭据）。lark API 同步，丢线程跑。"""
     app_id, app_secret = await _creds_by_id(channel_id)
@@ -481,6 +572,24 @@ async def send_text(receive_id: str, text: str, channel_id: str | None = None) -
     if channel_id not in _clients:
         _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
     return await asyncio.to_thread(_do_send, _clients[channel_id], receive_id, text)
+
+
+async def send_interaction_card(receive_id: str, prompt: dict,
+                                channel_id: str | None = None) -> bool:
+    """发送飞书原生交互卡片。"""
+    app_id, app_secret = await _creds_by_id(channel_id)
+    if not app_id or not receive_id:
+        return False
+    if channel_id not in _clients:
+        _clients[channel_id] = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()
+    try:
+        return await asyncio.to_thread(
+            _do_send_interaction_card, _clients[channel_id], receive_id, prompt
+        )
+    except Exception as e:
+        diag_log("agent.gateway.feishu.send_interaction_card", e)
+        print(f"[feishu] 交互卡片发送异常: {redact(f'{type(e).__name__}: {e}')}", flush=True)
+        return False
 
 
 # ── 发送文件/图片（咕咕 send_file 工具 → IM）──────────────────────────────────

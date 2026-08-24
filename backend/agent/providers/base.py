@@ -73,6 +73,13 @@ class ProviderAdapter:
             path = "/chat/completions"
             payload = {"model": getattr(ai, "model", ""), "max_tokens": 1,
                        "messages": [{"role": "user", "content": "hi"}]}
+            # 后台探测必须和正式 OpenAI SDK 调用复用同一套 provider 专属参数。
+            # SDK 的 extra_body 会被展开到请求体；这里是原始 HTTP，所以显式合并。
+            for key, value in self.build_openai_thinking_kwargs(ai).items():
+                if key == "extra_body" and isinstance(value, dict):
+                    payload.update(value)
+                else:
+                    payload[key] = value
         headers.update(self.auth_headers(ai))
         if self.name == "mimo":
             headers.pop("Authorization", None)

@@ -1,9 +1,9 @@
 # IM 会话复用与消息窗口裁剪 PRD
 
-> 状态：✅ 已实施（Phase 1～5 代码完成，测试通过，待评审合并）
+> 状态：✅ 已实施（Phase 1～5 代码完成，测试通过；消息物理保留已扩展为所有会话通用）
 > 创建：2026-08-06
-> 最近更新：2026-08-06
-> 关联模块：`backend/agent/im/session.py`、`backend/agent/im/loop.py`、`backend/agent/im/owner_session.py`、`backend/agent/runner.py`、`backend/app/scheduled_tasks.py`、`backend/app/models/__init__.py`
+> 最近更新：2026-08-24
+> 关联模块：`backend/app/services/conversation_retention.py`、`backend/agent/im/session.py`、`backend/agent/im/loop.py`、`backend/agent/im/owner_session.py`、`backend/agent/runner.py`、`backend/agent/gateway/web.py`、`backend/app/scheduled_tasks.py`、`backend/app/models/__init__.py`
 > 关联文档：[`【已完成】PRD-IM-2-im-loop与gateway解耦.md`](./【已完成】PRD-IM-2-im-loop与gateway解耦.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)
 
 ## 0. 实施状态
@@ -11,9 +11,9 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 1：会话复用 | ✅ 已完成 | `session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 作用域复用；新建 session 补写 `platform_user_id`；`_im_continuity_bridge` 传 `platform_user_id` |
-| Phase 2：消息窗口裁剪 | ✅ 已完成 | `trim_group_messages` 泛化为 `trim_session_messages`（600 阈值裁到 500）；私聊/群聊/被动记录统一触发 |
+| Phase 2：消息窗口裁剪 | ✅ 已完成 | `conversation_retention` 提供跨平台统一规则（600 阈值裁到 500）；Web、IM、流式/非流式 runner、主动消息统一在完整持久化后触发 |
 | Phase 3：读取窗口统一 | ✅ 已完成 | `_history_query_limit` 私聊从 40 提到 50 |
-| Phase 4：定时任务归并 | ✅ 已完成 | `_persist_push_im` 修 Redis key 格式 + 复用所属 session + 推送后裁剪 |
+| Phase 4：定时任务归并 | ✅ 已完成 | `_persist_push_im` 修 Redis key 格式、复用所属 session，并调用跨平台 `conversation_retention`；主动推送与 Web/IM 普通消息共用 600→500 规则 |
 | Phase 5：测试 | ✅ 已完成 | 新增 `test_im_session_reuse.py`（9 用例）；更新群聊裁剪测试；完整后端套件 714 通过 |
 
 ## 0. 背景与问题
@@ -33,10 +33,10 @@
 ### 0.2 目标
 
 1. **每个私聊/群只对应一个 session**：私聊按 `(source, bot_id, platform_user_id)` 复用，群聊按 `(source, bot_id, chat_id)` 复用，不再每次新对话都新建。
-2. **数据库每个 session 只保留最近 500 条消息**（物理裁剪，与群聊现状一致，扩展到私聊）。
+2. **数据库每个 session 只保留最近 500 条消息**（物理裁剪，Web、IM、定时任务等所有会话来源一致）。
 3. **上下文读取窗口统一为 50 条**（私聊从 40 条提升到 50 条，与群聊一致）。
-4. **裁剪阈值 600 条**：消息数超过 600 才裁剪到 500，避免每轮都做 DELETE（群聊也改为相同策略）。
-5. **定时任务投递归并到所属 peer 的 session**，并修复 `_persist_push_im` 的 Redis key 格式 bug。
+4. **裁剪阈值 600 条**：消息数超过 600 才裁剪到 500，避免每轮都做 DELETE。该规则是会话级策略，不按平台分叉。
+5. **定时任务投递归并到所属 peer 的 session**，并修复 `_persist_push_im` 的 Redis key 格式 bug；推送写入后使用公共会话保留服务。
 
 ## 1. 方案设计
 
@@ -112,16 +112,17 @@ def session_scope_filters(model, source, chat_id, bot_id=None, platform_user_id=
 
 **注意**：`_im_continuity_bridge`（[runner.py](backend/agent/runner.py#L180-L229)）也调用 `session_scope_filters`，私聊时需传入 `platform_user_id`，避免匹配到所有私聊 session。
 
-### 1.3 消息窗口裁剪：统一 `trim_session_messages`
+### 1.3 消息窗口裁剪：跨平台统一 `conversation_retention`
 
-**改动点**：[session.py](backend/agent/im/session.py#L185-L210)。
+**改动点**：[conversation_retention.py](../../../../backend/app/services/conversation_retention.py)。
 
-将 `trim_group_messages` 泛化为 `trim_session_messages`，支持阈值参数：
+物理保留策略不属于 QQ、群聊或任何单一入口，由公共服务统一负责计数、裁剪和
+消息附件清理。`agent/im/session.py` 只保留兼容包装，旧调用方无需立即迁移。
 
 ```python
 MESSAGE_RETENTION_LIMIT = 500   # 每个 session 物理保留上限
 MESSAGE_TRIM_THRESHOLD = 600    # 超过该条数才触发裁剪（避免每轮 DELETE）
-GROUP_CONTEXT_LIMIT = 50        # 上下文读取窗口（私聊/群聊统一）
+GROUP_CONTEXT_LIMIT = 50        # IM 上下文读取窗口，不是物理保留规则
 
 async def trim_session_messages(session_id, limit=MESSAGE_RETENTION_LIMIT,
                                 threshold=MESSAGE_TRIM_THRESHOLD):
@@ -130,13 +131,15 @@ async def trim_session_messages(session_id, limit=MESSAGE_RETENTION_LIMIT,
     # 保留最近 limit 条，删除更旧的
 ```
 
-**兼容**：保留 `trim_group_messages` 和 `trim_group_session_messages` 作为别名，避免破坏 `test_qq_group_history.py` 等外部引用。
+**兼容**：IM 入口保留 `trim_session_messages` 包装，避免破坏已有调用方和测试；实际默认阈值只在公共服务维护。
 
 **触发点**：
-1. `persist_im_session` 的群聊分支（[loop.py](backend/agent/im/loop.py#L424-L441)）——已有，改为新函数。
-2. `persist_im_session` 的私聊分支——**新增**，私聊消息每轮都过 runner，在此裁剪。
-3. `record_passive_im_message`（[loop.py](backend/agent/im/loop.py#L333)）——群聊被动记录，改为新函数。
-4. `_persist_push_im`（[scheduled_tasks.py](backend/app/scheduled_tasks.py#L408-L460)）——定时任务推送后裁剪。
+1. `run_collect` / `run_stream` 在完整持久化 assistant/tool turn 后裁剪。
+2. Web 命令回复和普通生成落库后裁剪。
+3. `persist_im_session`、`record_passive_im_message` 等 IM 写入路径裁剪。
+4. `_persist_push_im` 定时任务推送后裁剪。
+
+所有触发点都在当前写入事务提交后执行，不会在 provider round 中途裁剪；重复触发只做一次轻量条数检查。
 
 ### 1.4 上下文读取窗口统一为 50 条
 
@@ -177,7 +180,8 @@ def _history_query_limit(request: AgentRequest) -> int:
 
 | 文件 | 改动 |
 |---|---|
-| `backend/agent/im/session.py` | 常量重命名（`GROUP_MESSAGE_RETENTION_LIMIT`→`MESSAGE_RETENTION_LIMIT`，新增 `MESSAGE_TRIM_THRESHOLD`）；`session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 增加作用域复用；`trim_group_messages`→`trim_session_messages`（带阈值） |
+| `backend/app/services/conversation_retention.py` | 新增跨平台会话物理保留服务、统一阈值和附件清理 |
+| `backend/agent/im/session.py` | 常量改为公共服务导出；保留兼容包装；`session_scope_filters` 扩展 `platform_user_id`；`get_or_create_session` 增加作用域复用 |
 | `backend/agent/im/loop.py` | `persist_im_session` 私聊分支新增裁剪；`record_passive_im_message` 改用新函数 |
 | `backend/agent/runner.py` | `_history_query_limit` 私聊窗口改 50；`_im_continuity_bridge` 传 `platform_user_id` |
 | `backend/app/scheduled_tasks.py` | `_persist_push_im` 修 key 格式 + 复用所属 session + 裁剪；`owner_private_targets` 补 `bot_id` |
@@ -196,12 +200,12 @@ def _history_query_limit(request: AgentRequest) -> int:
 ### 3.2 存量超长 session
 
 复用后，存量私聊 session 可能超过 500 条。处理策略：
-- 首次触发裁剪时（消息数 > 600）自动裁到 500。
+- 任意会话来源首次触发裁剪时（消息数 > 600）自动裁到 500。
 - 不主动对存量做一次性裁剪，避免影响线上。
 
 ### 3.3 常量重命名兼容
 
-`trim_group_messages`、`trim_group_session_messages`、`GROUP_MESSAGE_RETENTION_LIMIT` 保留为别名/兼容值，避免破坏外部引用和测试。
+IM 入口的 `trim_session_messages` 包装保留为兼容层，默认值从公共服务读取，避免再次形成 QQ 专用规则。
 
 ## 4. 测试计划
 

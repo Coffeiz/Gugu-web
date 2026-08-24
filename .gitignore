@@ -85,6 +85,9 @@ frontend/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
 
+# Rust RAG sidecar 构建产物
+/rust/target/
+
 # QQ 引用索引（运行时聊天正文、身份和媒体 URL，不入版本控制）
 /backend/data/qq-ref-index/
 

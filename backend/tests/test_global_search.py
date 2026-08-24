@@ -1,6 +1,7 @@
 from app.api.v1.search import run_global_search
 from app.models import File, MindNode, Project
 from agent.tools.global_search import _global_search
+import app.api.v1.search as search_api
 
 
 async def _mk(db, obj):
@@ -19,6 +20,23 @@ async def test_run_global_search_matches_file_ext_case_insensitively(db, user_a)
     assert result["total"] == 1
     assert result["groups"][0]["type"] == "file"
     assert result["groups"][0]["items"][0]["title"] == "prototype.HTML"
+
+
+async def test_global_search_can_fall_back_to_ilike_backend(db, user_a, monkeypatch):
+    await _mk(db, File(user_id=user_a.id, display_name="兼容查询", ext="md",
+                       storage_key="k", size=10))
+    monkeypatch.setattr(
+        search_api,
+        "get_settings",
+        lambda: type("Settings", (), {
+            "search": type("Search", (), {"global_search_backend": "ilike"})(),
+        })(),
+    )
+
+    result = await run_global_search(db, user_a.id, "兼容查询")
+
+    assert result["groups"][0]["type"] == "file"
+    assert result["groups"][0]["items"][0]["title"] == "兼容查询.md"
 
 
 async def test_run_global_search_isolates_by_user(db, user_a, user_b):

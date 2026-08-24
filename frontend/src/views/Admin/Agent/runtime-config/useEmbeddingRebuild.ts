@@ -1,6 +1,6 @@
 import { onUnmounted, reactive } from 'vue'
 
-type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
+type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }
 
 export function useEmbeddingRebuild(adminStore: AdminStore) {
   const rebuild = reactive({ running: false, done: 0, total: 0, msg: '', error: false })
@@ -20,10 +20,10 @@ export function useEmbeddingRebuild(adminStore: AdminStore) {
         if (!timer) timer = setInterval(() => void poll(), 2000)
       } else if (data.status === 'done') {
         rebuild.running = false; rebuild.error = false
-        rebuild.msg = `完成：重算了 ${data.done || 0} 个用户的 pattern + 长期记忆向量（${data.with_facts || 0} 个有 pattern）`
+        rebuild.msg = data.message || `完成：重算了 ${data.done || 0} 个用户，pattern ${data.pattern_vectors || 0} 条，memory ${data.memory_vectors || 0} 块`
         stop()
       } else if (data.status === 'error') {
-        rebuild.running = false; rebuild.error = true; rebuild.msg = '失败：' + (data.message || '')
+        rebuild.running = false; rebuild.error = true; rebuild.msg = data.message || '重建失败，请检查 embedding 配置'
         stop()
       } else {
         rebuild.running = false; stop()

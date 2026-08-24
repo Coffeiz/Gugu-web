@@ -39,6 +39,11 @@ interface CapabilityResult {
   detail?: string
 }
 
+interface CapabilityModel {
+  capability_overrides?: Record<string, boolean>
+  [key: string]: unknown
+}
+
 const LOCAL_CAPABILITIES = [
   { key: 'tools', label: '工具调用', resultKey: 'tools' },
   { key: 'structured_json', label: 'JSON 输出', resultKey: 'json_object' },
@@ -47,7 +52,7 @@ const LOCAL_CAPABILITIES = [
 ] as const
 
 const props = defineProps({
-  model: { type: Object as PropType<Record<string, unknown>>, required: true },
+  model: { type: Object as PropType<CapabilityModel>, required: true },
   disabled: { type: Boolean, default: false },
   loading: { type: Boolean, default: false },
   checkedAt: { type: String, default: '' },

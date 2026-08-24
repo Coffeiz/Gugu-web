@@ -9,18 +9,8 @@ import asyncio
 import calendar as _cal  # noqa: F401  (保留与原实现一致的导入位置)
 import json
 import logging
-import time
 
 logger = logging.getLogger(__name__)
-
-
-def _stuck_probe(session_id, phase: str, started_at: float | None = None, **fields) -> None:
-    """临时定位 Web 生成卡点；只记录固定阶段和耗时，不记录正文。"""
-    payload = {"phase": phase, "sessionId": str(session_id)}
-    if started_at is not None:
-        payload["durationMs"] = round((time.monotonic() - started_at) * 1000, 1)
-    payload.update(fields)
-    logger.warning("[runtime-web-stuck-probe] %s", json.dumps(payload, ensure_ascii=False, sort_keys=True))
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
@@ -36,7 +26,7 @@ from app.models import (
 from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, message_assembly
+from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history, audit
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
@@ -190,19 +180,13 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         user_tz = snapshot["user_tz"]
         set_ctx_tz(user_tz)
 
-        # 连续历史：统一按实际 history budget 读取窗口；持久化压缩后从 baseline 继续追加。
-        from agent.context import session_history
-        history_budget = session_history.history_budget_for_context(
-            settings.ai.context_tokens,
-            system_prompt=snapshot["system_prompt"],
-            snapshot_context=snapshot["snapshot_context"],
-        )
+        # 历史读取不做本地 token 预估；预算由 provider 实际请求结果决定。
         history = await session_history.load_session_history(
             db,
             session.id,
             session_snapshot.history_baseline(session),
-            token_budget=history_budget,
         )
+        history_stats = session_history.consume_history_stats()
         from agent.context.provider_history import clean_persisted_history, prepare_session
         _, strip_thinking = prepare_session(session, settings.ai)
         if strip_thinking:
@@ -228,6 +212,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             return
         await db.commit()
         session_id = session.id
+        # 后台生成任务需要用真实 session id 建立跨 worker gate；新会话在这里才拿到 id。
+        req.session_id = session_id
 
     yield f"data: {json.dumps({'type': 'session_id', 'session_id': session_id})}\n\n"
 
@@ -239,6 +225,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))
                 await db2.commit()
+                from app.services.conversation_retention import trim_session_messages
+                await trim_session_messages(session_id)
         async for line in genstream.immediate_stream(cmd_reply):
             yield line
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -251,6 +239,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
                 await db2.commit()
+                from app.services.conversation_retention import trim_session_messages
+                await trim_session_messages(session_id)
         async for line in genstream.typed_stream(block_msg):   # 逐字流式：复用 SSE token 动画，咕咕「打字」感
             yield line
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -267,6 +257,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
                 if await db2.get(ConversationSession, session_id) is not None:
                     db2.add(ConversationMessage(session_id=session_id, role="assistant", content=block_msg))
                     await db2.commit()
+                    from app.services.conversation_retention import trim_session_messages
+                    await trim_session_messages(session_id)
             async for line in genstream.typed_stream(block_msg):
                 yield line
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
@@ -285,13 +277,12 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         # 先标记 active，再创建脱离请求的后台任务。否则新会话刚收到 session_id
         # 时点击中断会看到 active=false，cancel 请求会错过这次生成。
         await genstream.begin(session_id)
-        _stuck_probe(session_id, "generation-begun")
         task = asyncio.create_task(_generate(
             req, session_id, snapshot, history, is_new_session, aug_text, aug_images,
             attach_cards=attach_cards, user_media=aug_media, user_tz=user_tz,
             sent_at=user_message.sent_at, user_message=user_message,
+            session=session, history_stats=history_stats,
             strip_thinking=strip_thinking,
-            history_budget=history_budget,
         ))
         _gen_tasks.add(task)
         task.add_done_callback(_gen_tasks.discard)
@@ -323,12 +314,12 @@ async def resume(session_id) -> AsyncGenerator[str, None]:
         yield line
 
 
-async def _generate(req, session_id, snapshot, history, is_new_session,
+async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                     user_content=None, user_images=None, attach_cards=None,
                     user_media=None, user_tz=None, sent_at=None,
                     user_message=None, resume_interaction: bool = False,
-                    strip_thinking: bool = False,
-                    history_budget: int | None = None) -> None:
+                    strip_thinking: bool = False, session=None,
+                    history_stats=None) -> None:
     """后台生成任务：跑 LLM、把事件发到 genstream 频道、自己持久化。
 
     脱离 HTTP 请求存活——浏览器刷新/断开不影响它跑完、不丢回复。`stream()` 与
@@ -336,8 +327,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     持久化/反思仍用 req.message 原文）。
     """
     user_id = req.user_id
-    generate_started_at = time.monotonic()
-    _stuck_probe(session_id, "generate-enter")
     set_ctx_tz(user_tz)   # 本任务内（含 build 与 tool dispatch）「今天」按用户时区算（Phase 3）
     user_content = user_content if user_content is not None else req.message
     user_images = user_images or []
@@ -360,11 +349,9 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         if snapshot_context else None
     )
 
-    # 对话摘要：从历史弹出 summary 条，注入 system prompt（不能当 role="summary" 消息发给 LLM）
     from agent.context import compress_conv
     from agent.im.context_loader import format_history_content
     from agent.context.history import build_history_parts
-    _summary, history = compress_conv.pop_summary(history)
 
     # 默认问候已经在新会话创建时作为 assistant 历史消息落库，并会随 history
     # 发送给模型。不要再把同一段文字追加进 system-reminder：两份语义相同的
@@ -386,8 +373,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     use_anthropic = use_anthropic_for(settings.ai)
 
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
-    _stuck_probe(session_id, "before-runner", generate_started_at,
-                 toolCount=len(tool_names), hasCapabilityContext=capability_context is not None)
     full_reply = ""
     usage_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
     anthr_messages: list = []
@@ -398,9 +383,7 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
     used_tools: list = []   # 本次对话调用的工具名（去重保留顺序）
 
     try:
-        rag_started_at = time.monotonic()
-        _stuck_probe(session_id, "before-rag")
-        fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection, _summary)
+        fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection)
         history_parts = build_history_parts(
             history, req, use_anthropic=use_anthropic, user_tz=user_tz,
             strip_thinking=strip_thinking)
@@ -408,9 +391,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         rag_context = await build_automatic_rag_context(
             req, req.message, history=history, snapshot_text=snapshot_context,
         )
-        _stuck_probe(session_id, "after-rag", rag_started_at,
-                     injected=bool(rag_context.get("injected")),
-                     scopeCount=len(rag_context.get("scope_hits") or []))
         image_only = bool(user_images) and not user_media and bool(attach_cards) and all(
             str(card.get("kind") or "").lower() == "image" for card in attach_cards
         )
@@ -421,7 +401,8 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             if image_only and user_message is not None
             else user_content
         )
-        tail_parts = list(rag_context["tail"])
+        # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
+        tail_parts: list[dict] = []
         message_time = (
             session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
             if user_message is not None else None
@@ -433,10 +414,31 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
             assembly = message_assembly.build_messages(
                 fixed_parts=fixed_parts, history=history_parts,
                 current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
-                dynamic_tail=tail_parts)
-            assembly.replace_conversation(sanitize.sanitize_messages(assembly.conversation))
+                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+            sanitize_before_count = len(assembly.conversation)
+            fixed_boundary = assembly.fixed_prefix_size
+            merged_cross_segment = bool(
+                fixed_boundary > 0
+                and fixed_boundary < sanitize_before_count
+                and assembly.conversation[fixed_boundary - 1].get("role")
+                == assembly.conversation[fixed_boundary].get("role")
+            )
+            clean_conversation = sanitize.sanitize_messages(assembly.conversation)
+            merged_cross_segment = merged_cross_segment and len(clean_conversation) < sanitize_before_count
+            assembly.replace_conversation(clean_conversation)
+            sanitize_after_count = len(assembly.conversation)
             anthr_messages = assembly
             anthr_initial_len = len(assembly.conversation)
+            audit.context_layout_probe(
+                phase="assembled", session=session, snapshot=snapshot,
+                history=history, messages=assembly,
+                fixed_prefix_count=assembly.fixed_prefix_size,
+                dynamic_tail_count=len(assembly.dynamic_tail),
+                history_stats=history_stats,
+                sanitize_before_count=sanitize_before_count,
+                sanitize_after_count=sanitize_after_count,
+                merged_cross_segment=merged_cross_segment,
+            )
             gen = runner.run(
                 user_id, system_prompt, anthr_messages,
                 use_anthropic=True, session_id=session_id,
@@ -446,8 +448,15 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
                 history=history_parts,
                 current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
-                dynamic_tail=tail_parts)
+                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
             oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
+            audit.context_layout_probe(
+                phase="assembled", session=session, snapshot=snapshot,
+                history=history, messages=oa_messages,
+                fixed_prefix_count=getattr(oa_messages, "fixed_prefix_size", None),
+                dynamic_tail_count=len(oa_messages.dynamic_tail) if hasattr(oa_messages, "dynamic_tail") else None,
+                history_stats=history_stats,
+            )
             gen = runner.run(
                 user_id, None, oa_messages,
                 use_anthropic=False, session_id=session_id,
@@ -485,7 +494,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
         from agent import providers
         provider_adapter = providers.adapter_for(settings.ai)
         san = sanitize.StreamSanitizer(adapter=provider_adapter)
-        _stuck_probe(session_id, "runner-created", generate_started_at)
         async for evt_str in gen:
             try:
                 evt = json.loads(evt_str[6:])
@@ -555,15 +563,6 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                         db2.add(ConversationMessage(
                             session_id=session_id, role="assistant", content=full_reply, files=sent_files or None,
                         ))
-                snapshot_session = await db2.get(ConversationSession, session_id)
-                if snapshot_session is not None:
-                    await db2.flush()
-                    if not resume_interaction:
-                        session_snapshot.checkpoint_snapshot(
-                            snapshot_session,
-                            [{"role": "user", "content": req.message},
-                             {"role": "assistant", "content": full_reply}],
-                        )
                 # 按 6h 剩余额度封顶本轮用量：精力条最多 100%，单轮顶过线则只记填满部分、
                 # 超出（对话后半段）不计入（6h 与周都不计）；已满则 (0,0) 不写。
                 _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings,
@@ -577,22 +576,26 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                         tools_used=used_tools or None,
                     ))
                 await db2.commit()
+                from app.services.conversation_retention import trim_session_messages
+                await trim_session_messages(session_id)
         except IntegrityError:
             logger.warning("会话 %s 在生成期间被删除，跳过本次持久化", session_id)
 
-        # Web 与 IM 使用同一套持久化压缩；snapshot checkpoint 只更新稳定上下文，
+        # Web 与 IM 使用同一套持久化压缩；snapshot baseline 只更新稳定上下文，
         # 对话 summary/baseline 由这里的后台任务推进。
         from agent.context import compress_conv
-        compress_conv.schedule_checkpoint(
+        compress_conv.schedule_baseline_update(
             session_id,
             user_id,
             settings,
             settings.ai.context_tokens,
-            history_budget=history_budget,
+            actual_usage_tokens=int(usage_tokens.get("input", 0) or 0),
+            compaction_applied=False,
         )
 
         # 回复正文已经持久化后，聊天流就应当结束。标题、总结、反思和压缩都是后台收尾，
-        # 不能让前端在文本已经完整显示后继续保持“终止生成”状态，也不能阻塞下一条消息。
+        # 不能让前端在文本已经完整显示后继续保持“终止生成”状态；session gate 会在
+        # baseline 提交完成后才允许同一会话进入下一轮。
         await genstream.publish(session_id, {"type": "done"})
 
         # ── 新会话：根据对话内容生成标题并推送（空标题不覆盖原首句截断）──
@@ -618,12 +621,30 @@ async def _generate(req, session_id, snapshot, history, is_new_session,
                                 used_tools=used_tools, session_id=session_id)
 
     except BaseException as e:
-        _stuck_probe(session_id, "generate-exception", generate_started_at,
-                     errorType=type(e).__name__)
         logger.exception("agent generate error for user %s: %s", req.user_id, e)
         msg = ("咕咕网络不太好 📡 可以再发一遍吗？" if _is_network_error(e)
                else "咕咕开小差了 😵‍💫 麻烦再说一遍好吗？")
         await genstream.publish(session_id, {"type": "error", "message": msg})
     finally:
-        _stuck_probe(session_id, "generate-finally", generate_started_at)
         await genstream.end(session_id)
+
+
+async def _generate(req, session_id, snapshot, history, is_new_session,
+                    user_content=None, user_images=None, attach_cards=None,
+                    user_media=None, user_tz=None, sent_at=None,
+                    user_message=None, resume_interaction: bool = False,
+                    strip_thinking: bool = False, session=None,
+                    history_stats=None) -> None:
+    """持有 session gate 运行 Web 后台生成，并等待 baseline 提交完成。"""
+    from agent.context import compress_conv
+
+    async with compress_conv.session_run_gate(req):
+        await _generate_unlocked(
+            req, session_id, snapshot, history, is_new_session,
+            user_content=user_content, user_images=user_images,
+            attach_cards=attach_cards, user_media=user_media,
+            user_tz=user_tz, sent_at=sent_at, user_message=user_message,
+            resume_interaction=resume_interaction, strip_thinking=strip_thinking,
+            session=session, history_stats=history_stats,
+        )
+        await compress_conv.wait_for_baseline_update(session_id)

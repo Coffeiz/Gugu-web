@@ -8,8 +8,6 @@ from agent.context.compaction import (
     validate_compacted_shape,
     _is_system_injection,
     _atomic_message_units,
-    COMPACTION_THRESHOLD_RATIO,
-    COMPACTION_TARGET_RATIO,
 )
 from agent.context.tokens import content_text, estimate_tokens, message_text
 
@@ -101,6 +99,20 @@ class TestIsSystemInjection:
 
 
 class TestCompactContext:
+    def test_force_compaction_does_not_use_local_token_estimate(self, monkeypatch):
+        """正常压缩由 provider usage 触发，不得再用本地 token 估算决定是否执行。"""
+        def fail_estimate(*_args, **_kwargs):
+            raise AssertionError("正常压缩路径不应调用本地 token 估算")
+
+        monkeypatch.setattr("agent.context.compaction.estimate_tokens", fail_estimate)
+        messages = [_make_msg("user", f"历史消息 {index} " + "内容" * 40) for index in range(8)]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, "你是咕咕", context_tokens=80, force=True)
+        )
+
+        assert result.changed
+        assert result.return_reason == "compacted"
+
     def test_below_threshold_no_compact(self):
         """上下文未达到阈值时不应压缩"""
         msgs = [_make_msg("user", "你好")]
@@ -109,6 +121,19 @@ class TestCompactContext:
         )
         assert not compacted
         assert result == msgs
+
+    def test_compaction_result_exposes_return_reason(self):
+        msgs = [_make_msg("user", "你好")]
+        result, compacted = asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, "你是咕咕", context_tokens=256000)
+        )
+        assert not compacted
+        # 二元组解包保持兼容，同时暴露结构化原因给 core 诊断。
+        detailed = asyncio.get_event_loop().run_until_complete(
+            compact_context(msgs, "你是咕咕", context_tokens=256000)
+        )
+        assert detailed.return_reason == "below_threshold"
+        assert detailed.before_tokens == detailed.after_tokens
 
     def test_above_threshold_triggers_compact(self, monkeypatch):
         """超过阈值应触发压缩"""
@@ -229,7 +254,7 @@ class TestCompactContext:
             "content": [{"type": "tool_use", "id": "call-1", "name": "search", "input": {}}],
         }
         tool_result = _make_tool_result("本轮工具结果")
-        messages = [_make_msg("user", "旧历史" * 80), current, tool_use, tool_result]
+        messages = [_make_msg("user", "旧历史" * 3000), current, tool_use, tool_result]
         result, compacted = asyncio.get_event_loop().run_until_complete(
             compact_context(
                 messages,
@@ -248,8 +273,8 @@ class TestCompactContext:
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
 
-    def test_post_run_checkpoint_is_coalesced_and_uses_soft_budget(self, monkeypatch):
-        """同一 session 的 run 完成 checkpoint 只启动一次，并使用 90%软阈值。"""
+    def test_post_run_baseline_is_coalesced_and_uses_provider_usage(self, monkeypatch):
+        """同一 session 的 run 收尾 baseline 只启动一次，并使用 provider usage。"""
         calls = []
 
         async def fake_compress(session_id, user_id, settings, token_budget, *, force=False):
@@ -259,13 +284,25 @@ class TestCompactContext:
         monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compress)
 
         async def exercise():
-            compress_conv._checkpoint_tasks.clear()
-            compress_conv.schedule_checkpoint(88, "user", object(), 1000)
-            compress_conv.schedule_checkpoint(88, "user", object(), 1000)
-            await compress_conv.wait_for_checkpoint(88)
+            compress_conv._baseline_tasks.clear()
+            compress_conv.schedule_baseline_update(88, "user", object(), 1000, actual_usage_tokens=950)
+            compress_conv.schedule_baseline_update(88, "user", object(), 1000, actual_usage_tokens=950)
+            await compress_conv.wait_for_baseline_update(88)
 
         asyncio.get_event_loop().run_until_complete(exercise())
-        assert calls == [(88, "user", 900, False)]
+        assert calls == [(88, "user", 1000, False)]
+
+    def test_session_run_lock_key_uses_canonical_session_id(self):
+        from types import SimpleNamespace
+
+        first = SimpleNamespace(
+            user_id="u1", session_id=9, source="qq", chat_type="group", chat_id="g1",
+            platform_bot_id="b1", platform_user_id="p1",
+        )
+        same = SimpleNamespace(**first.__dict__)
+        other = SimpleNamespace(**{**first.__dict__, "chat_id": "g2", "session_id": 10})
+        assert compress_conv._session_lock_key(first) == compress_conv._session_lock_key(same)
+        assert compress_conv._session_lock_key(first) != compress_conv._session_lock_key(other)
 
     def test_atomic_units_pair_anthropic_and_openai_tool_messages(self):
         messages = [

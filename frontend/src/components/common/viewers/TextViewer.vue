@@ -52,7 +52,7 @@
       </button>
       <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
       <!-- Markdown 渲染 -->
-      <div v-if="mdHtml" class="tv-md" v-html="mdHtml" @click="onMdClick" />
+      <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
       <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
       <table v-else class="tv-table" cellspacing="0">
         <tbody>
@@ -67,11 +67,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, defineAsyncComponent, type PropType } from 'vue'
+import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
 import Icon from '@/components/common/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
+import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
@@ -102,6 +103,10 @@ const previewStore = usePreviewStore()
 const uiStore = useUiStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
+const mdRoot = ref<HTMLElement | null>(null)
+let mermaidApi: typeof import('mermaid').default | null = null
+let mermaidRenderSequence = 0
+let themeObserver: MutationObserver | null = null
 
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
 // 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
@@ -414,6 +419,9 @@ async function renderMarkdown(text: string) {
     _tvMarked = new Marked({
       renderer: {
         code({ text, lang }) {
+          if (String(lang || '').trim().toLowerCase() === 'mermaid') {
+            return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
+          }
           const validLang = lang && hljs.getLanguage(lang) ? lang : null
           const body = validLang
             ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
@@ -434,6 +442,75 @@ async function renderMarkdown(text: string) {
   }
 
   return sanitizeHtml(_tvMarked.parse(text) as string)
+}
+
+function isDarkTheme(): boolean {
+  return document.documentElement.dataset.theme === 'dark'
+}
+
+function cssToken(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+async function getMermaid() {
+  if (!mermaidApi) mermaidApi = (await import('mermaid')).default
+  return mermaidApi
+}
+
+function configureMermaid(mermaid: NonNullable<typeof mermaidApi>): void {
+  const dark = isDarkTheme()
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    htmlLabels: false,
+    theme: dark ? 'dark' : 'default',
+    themeVariables: {
+      primaryColor: cssToken('--surface-card-solid', dark ? '#24212b' : '#ffffff'),
+      primaryTextColor: cssToken('--text-primary', dark ? '#f2eff7' : '#272532'),
+      primaryBorderColor: cssToken('--border-default', dark ? 'rgba(255,255,255,.16)' : 'rgba(42,35,49,.12)'),
+      lineColor: cssToken('--text-secondary', dark ? '#c9c3d5' : '#67647a'),
+      secondaryColor: cssToken('--surface-panel', dark ? '#2c2835' : '#f3f2f7'),
+      tertiaryColor: cssToken('--surface-hover', dark ? '#363140' : '#ebeaf2'),
+      fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
+    },
+  })
+}
+
+async function renderMermaidBlock(element: HTMLElement, source: string): Promise<void> {
+  const sequence = ++mermaidRenderSequence
+  element.dataset.renderSequence = String(sequence)
+  try {
+    const mermaid = await getMermaid()
+    configureMermaid(mermaid)
+    const { svg } = await mermaid.render(`tv-mermaid-${sequence}`, source)
+    if (!element.isConnected || element.dataset.renderSequence !== String(sequence)) return
+    const cleanSvg = sanitizeHtml(svg)
+    element.innerHTML = cleanSvg
+    bindMermaidInteractions(element)
+    element.classList.add('md-mermaid-ready')
+    element.classList.remove('md-mermaid-error')
+  } catch {
+    element.classList.add('md-mermaid-error')
+    element.textContent = `Mermaid 图表渲染失败\n\n${source}`
+  }
+}
+
+async function renderMermaidBlocks(): Promise<void> {
+  await nextTick()
+  if (!mdRoot.value) return
+  const sourceBlocks = Array.from(mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
+  for (const sourceBlock of sourceBlocks) {
+    const source = sourceBlock.textContent || ''
+    const container = document.createElement('div')
+    container.className = 'md-mermaid'
+    container.dataset.source = encodeURIComponent(source)
+    sourceBlock.replaceWith(container)
+  }
+  for (const container of mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid')) {
+    const encoded = container.dataset.source
+    if (encoded) await renderMermaidBlock(container, decodeURIComponent(encoded))
+  }
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
@@ -511,6 +588,7 @@ async function processText(text: string, ext: string) {
 
   if (extUp === 'MD') {
     mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
+    await renderMermaidBlocks()
   } else if (!isCodeExt.value) {
     lines.value = text.split('\n')
   }
@@ -554,13 +632,32 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
     requestAnimationFrame(() => { if (tvScroll.value) tvScroll.value.scrollTop = saved })
   }
 }, { immediate: true })
+
+onMounted(() => {
+  // 首次文件加载可能发生在组件挂载前，此时 mdRoot 尚未存在；挂载后补一次 Mermaid 渲染。
+  renderMermaidBlocks()
+  themeObserver = new MutationObserver(() => renderMermaidBlocks())
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
+})
+
+// 文件加载期间 .tv-scroll 被 loading 分支暂时移出 DOM；等预览节点真正出现后再渲染图表。
+watch([mdHtml, loading], ([html, isLoading]) => {
+  if (html && !isLoading) renderMermaidBlocks()
+}, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
+  cleanupMermaidInteractions(mdRoot.value)
+  mermaidRenderSequence += 1
+})
 </script>
 
 <style scoped>
 .tv-wrap {
   position: absolute;
   inset: 0;
-  background: #fff;
+  background: var(--surface-card-solid, #fff);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -705,10 +802,10 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   padding: 32px 48px;
   max-width: 860px;
   margin: 0 auto;
-  color: #24292f;
+  color: var(--content-primary, #24292f);
   font-size: var(--tv-font-size, 15px);
   line-height: 1.75;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-family-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .tv-md :deep(h1),
@@ -718,7 +815,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   font-weight: 600;
   margin: 1.5em 0 0.5em;
   line-height: 1.3;
-  color: #1a1c24;
+  color: var(--content-primary, #1a1c24);
 }
 .tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3em; }
 .tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid rgba(0,0,0,0.06); padding-bottom: 0.25em; }
@@ -741,7 +838,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 /* 代码块容器 */
 .tv-md :deep(.md-pre) {
   position: relative;
-  background: #f0f1f6;
+  background: var(--surface-panel, #f0f1f6);
   border-radius: 10px;
   margin: 1em 0;
   overflow: hidden;
@@ -751,10 +848,35 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   padding: 14px 20px 16px;
   overflow-x: auto;
   background: none;
-  color: #383a42;
+  color: var(--content-primary, #383a42);
   font-family: var(--font-family-mono);
   font-size: 13px;
   line-height: 1.65;
+}
+
+.tv-md :deep(.md-mermaid) {
+  width: 100%; box-sizing: border-box; margin: 1em 0; padding: 12px;
+  overflow-x: auto; border: 1px solid var(--border-default, rgba(42,35,49,.12));
+  border-radius: 10px; background: var(--surface-card-solid, #fff);
+}
+.tv-md :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.tv-md :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
+.tv-md :deep(.md-mermaid-dragging) { cursor: grabbing; }
+.tv-md :deep(.md-mermaid-controls) {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  display: flex; gap: 3px; padding: 3px;
+  border: 1px solid var(--border-default); border-radius: 7px;
+  background: var(--surface-card-solid); box-shadow: var(--elevation-card);
+}
+.tv-md :deep(.md-mermaid-controls button) {
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
+  color: var(--content-secondary); background: transparent; cursor: pointer;
+  font-size: 16px; line-height: 1;
+}
+.tv-md :deep(.md-mermaid-controls button:hover) { color: var(--content-primary); background: var(--surface-soft-hover); }
+.tv-md :deep(.md-mermaid-error) {
+  white-space: pre-wrap; color: var(--text-secondary, #67647a);
+  font-family: var(--font-family-mono, monospace);
 }
 
 /* 语言标签 */
@@ -883,6 +1005,43 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 }
 
 .tv-md :deep(img) { max-width: 100%; border-radius: 6px; }
+
+/* 文件预览跟随主题：Markdown 预览独立于聊天气泡，不能依赖外层 panel 的浅色默认值。 */
+html[data-theme='dark'][data-family] .tv-wrap {
+  background: var(--surface-base, #17151d);
+  color: var(--content-primary, #f2eff7);
+}
+html[data-theme='dark'][data-family] .tv-md :deep(h1),
+html[data-theme='dark'][data-family] .tv-md :deep(h2),
+html[data-theme='dark'][data-family] .tv-md :deep(h3),
+html[data-theme='dark'][data-family] .tv-md :deep(h4),
+html[data-theme='dark'][data-family] .tv-md :deep(p),
+html[data-theme='dark'][data-family] .tv-md :deep(li) {
+  color: var(--content-primary, #f2eff7);
+}
+html[data-theme='dark'][data-family] .tv-md :deep(a) { color: var(--color-primary, #a9a7df); }
+html[data-theme='dark'][data-family] .tv-md :deep(code) {
+  background: var(--surface-soft-hover, rgba(255,255,255,.08));
+  color: var(--content-primary, #f2eff7);
+}
+html[data-theme='dark'][data-family] .tv-md :deep(.md-pre) {
+  background: var(--surface-panel, #24212b);
+}
+html[data-theme='dark'][data-family] .tv-md :deep(.md-pre code) { color: var(--content-primary, #f2eff7); }
+html[data-theme='dark'][data-family] .tv-md :deep(.md-mermaid) {
+  background: var(--surface-card-solid, #24212b);
+  border-color: var(--border-default, rgba(255,255,255,.16));
+}
+html[data-theme='dark'][data-family] .tv-md :deep(blockquote) {
+  color: var(--content-secondary, #c9c3d5);
+  border-left-color: var(--border-focus, rgba(169,167,223,.65));
+}
+html[data-theme='dark'][data-family] .tv-md :deep(th) { background: var(--surface-panel, #24212b); }
+html[data-theme='dark'][data-family] .tv-md :deep(th),
+html[data-theme='dark'][data-family] .tv-md :deep(td) {
+  border-color: var(--border-subtle, rgba(255,255,255,.12));
+}
+html[data-theme='dark'][data-family] .tv-md :deep(hr) { border-top-color: var(--border-subtle, rgba(255,255,255,.12)); }
 
 /* ── 状态 ── */
 .tv-status {

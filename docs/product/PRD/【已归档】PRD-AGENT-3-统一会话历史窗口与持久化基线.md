@@ -1,5 +1,7 @@
 # PRD-AGENT-3：统一会话历史窗口与持久化基线
 
+> 本文已由 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](./PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 替代。当前入口统一调用 baseline coordinator；本文中的 checkpoint、固定窗口和旧预算描述不再作为实现依据。
+
 ## 状态
 
 执行中（2026-08-24）

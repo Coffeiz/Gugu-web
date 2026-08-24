@@ -1,7 +1,7 @@
 import { reactive, ref } from 'vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
-type AdminStore = { authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }
+type AdminStore = { authFetch: (url: string, options?: RequestInit) => Promise<Response> }
 type AgentDraft = { worker_concurrency: number; [key: string]: unknown }
 type LlmPresetSummary = {
   id: string | number
@@ -17,7 +17,7 @@ type LlmPresetSummary = {
   [key: string]: unknown
 }
 
-export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig: (value: unknown) => Promise<unknown> }, agentDraft: AgentDraft) {
+export function useLlmPresets(adminStore: AdminStore, configStore: { saveConfig: (value: Record<string, Record<string, unknown>>) => Promise<unknown> }, agentDraft: AgentDraft) {
   const presets = ref<LlmPresetSummary[]>([])
   const activePresetId = ref('')
   const strategy = ref('active')

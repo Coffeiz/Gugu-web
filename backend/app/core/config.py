@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -172,6 +172,16 @@ class SearchSettings(BaseModel):
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
     searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
+    global_search_backend: Literal["index", "ilike"] = Field(
+        "ilike", description="全局搜索后端：持久化索引（index）或 ILIKE 兼容模式"
+    )
+    rust_lexical_backend: Literal["rust", "python"] = Field(
+        "rust", description="RAG 词法召回后端：Rust/Tantivy 或 Python BM25"
+    )
+    rust_sidecar_enabled: bool = Field(True, description="是否启用 Rust/Tantivy 词法检索 sidecar（默认开启）")
+    rust_sidecar_command: str = Field("", description="Rust 词法 sidecar 可执行文件及参数；为空则使用项目内置构建物")
+    rust_sidecar_index_dir: str = Field("", description="Rust sidecar 持久化索引目录；为空使用内存索引")
+    rust_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="Rust sidecar 单次请求超时毫秒数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
     similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")

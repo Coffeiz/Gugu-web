@@ -11,6 +11,7 @@ from .context import install_context_hooks
 from .state import (
     _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace,
     record_adapter_call, record_adapter_result, record_canonical_event_stats,
+    record_context_layout,
 )
 from .utils import (
     _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
@@ -261,6 +262,20 @@ def ensure_hooks() -> None:
                 "message_count": len(messages) if isinstance(messages, list) else None,
             })
             run.attach_context_spans(ctx_span.id)
+
+            # 统一在 provider loop 入口记录实际收到的 messages。应用层 runner/web
+            # 的组装探针只提供 baseline/history 对照，不再作为最终输入的唯一依据。
+            try:
+                from agent.context.audit import consume_context_layout_probe
+                application_layout = consume_context_layout_probe()
+            except Exception:
+                application_layout = None
+            record_context_layout(
+                messages,
+                metadata=application_layout,
+                system_text=effective_system,
+                parent_span_id=ctx_span.id,
+            )
 
             history = run.span(
                 "history",

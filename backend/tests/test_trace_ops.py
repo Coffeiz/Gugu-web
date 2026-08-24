@@ -49,6 +49,32 @@ def test_bind_im_run_assigns_session_metadata(monkeypatch):
     assert run.source == "qq"
 
 
+def test_record_context_compaction_creates_redacted_span(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-compaction", trace_id="trace-compaction", session_key="gugu:qq:388",
+        external_session_id="388", source="qq", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        trace_state.record_context_compaction(
+            phase="completed", reason="compacted", changed=True,
+            before_messages=256, after_messages=39,
+            before_summary_count=0, after_summary_count=1,
+            before_summary_chars=0, after_summary_chars=1464,
+            protected_from=255,
+        )
+    finally:
+        _scope_run.reset(token)
+
+    span = next(item for item in run.spans if item.name == "Context compaction")
+    assert span.status == "success"
+    assert span.input["before_messages"] == 256
+    assert span.input["after_messages"] == 39
+    assert span.input["after_summary_chars"] == 1464
+    assert "summary" not in span.input
+
+
 @pytest.mark.asyncio
 async def test_finish_run_closes_non_web_scope_run(monkeypatch):
     monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")

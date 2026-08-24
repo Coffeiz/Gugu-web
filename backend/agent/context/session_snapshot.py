@@ -1,4 +1,4 @@
-"""Session snapshot 的规范化 hash、TTL 和 checkpoint 元数据。"""
+"""Session snapshot 与唯一 baseline 的规范化 hash、TTL 和提交元数据。"""
 from __future__ import annotations
 
 import hashlib
@@ -33,8 +33,8 @@ def current_time_text(user_tz=None) -> str:
 
 
 def reminder_message(content: str) -> dict:
-    """生成不带观测元数据的固定 reminder 消息。"""
-    return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+    """生成不带观测元数据的系统上下文消息。"""
+    return {"role": "system", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
 
 
 def message_time_reminder(sent_at, user_tz=None) -> dict | None:
@@ -128,11 +128,6 @@ def snapshot_is_usable(session, now: datetime | None = None) -> bool:
     )
 
 
-def invalidate_snapshot(session) -> None:
-    """显式标记下次 run 重建上下文；不触碰历史消息。"""
-    session.snapshot_expires_at = now_utc() - timedelta(seconds=1)
-
-
 def snapshot_context(session) -> dict:
     """读取已经冻结的 prompt 输入；调用方不得修改返回值后回写。"""
     context = getattr(session, "session_context", None) or {}
@@ -197,6 +192,11 @@ def _record_snapshot_event(session, phase: str) -> None:
         return
 
 
+def record_baseline_update(session) -> None:
+    """发布 baseline 已更新事件；正文仍只保留在数据库，不进入观测日志。"""
+    _record_snapshot_event(session, "baseline_update")
+
+
 def initialize_snapshot(
     session,
     *,
@@ -248,7 +248,7 @@ def initialize_snapshot(
     return session.snapshot_hash
 
 
-def checkpoint_snapshot(
+def update_baseline_snapshot(
     session,
     messages: list[dict],
     *,
@@ -256,7 +256,7 @@ def checkpoint_snapshot(
     now: datetime | None = None,
     ttl: timedelta = DEFAULT_IDLE_TTL,
 ) -> str:
-    """将本轮新增消息纳入 snapshot hash，并刷新 idle TTL。"""
+    """将已覆盖消息纳入唯一 baseline 的 snapshot hash，并刷新 idle TTL。"""
     context = snapshot_context(session)
     stored_context = dict(getattr(session, "session_context", None) or {})
     current = now or now_utc()
@@ -274,8 +274,12 @@ def checkpoint_snapshot(
         if baseline_message_id is None
         else baseline_message_id
     )
+    next_revision = int(stored_context.get("context_revision", 0) or 0) + 1
+    context["context_revision"] = next_revision
     stored_context["history_baseline_message_id"] = context["history_baseline_message_id"]
+    stored_context["context_revision"] = next_revision
     session.session_context = stored_context
+    session.context_epoch = int(getattr(session, "context_epoch", 0) or 0) + 1
     session.snapshot_expires_at = current + ttl
     return session.snapshot_hash
 

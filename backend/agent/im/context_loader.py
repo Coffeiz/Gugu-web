@@ -77,13 +77,28 @@ def format_attachment_refs(message) -> str:
     return "\n[历史图片附件，仅在用户要求回看/分析时调用 inspect_images 读取：" + "；".join(refs) + "]"
 
 
+def quoted_context_prefix(quoted_text: str | None) -> str:
+    """返回供模型理解引用关系的稳定前缀，不改写消息正文。"""
+    if not quoted_text:
+        return ""
+    return f"💬 用户引用/回复了一条历史消息（原文：「{quoted_text}」），针对这条消息说：\n\n"
+
+
+def format_quoted_context(content: str, quoted_text: str | None) -> str:
+    """把引用原文和用户正文组合成模型上下文。"""
+    return quoted_context_prefix(quoted_text) + content
+
+
 def format_history_content(message, request: AgentRequest) -> str:
     """给群聊历史用户消息附加稳定发言人身份。
 
     身份元数据只进入模型上下文，不改 ConversationMessage.content，网页历史和
     数据库存档仍保持用户原文。私聊及 Web 继续使用原始内容。
     """
-    content = message.content or ""
+    content = format_quoted_context(
+        message.content or "",
+        getattr(message, "quoted_text", None),
+    )
     content += format_attachment_refs(message)
     if not request.chat_id or getattr(message, "chat_type", None) != "group":
         return content

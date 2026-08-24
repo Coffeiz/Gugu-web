@@ -14,6 +14,26 @@ class MemoryAdapter:
     def __init__(self, user_id: object):
         self.user_id = user_id
 
+    @staticmethod
+    def _scope_value_text(value: object) -> str:
+        """把 scope 文件的字符串/字典/列表安全转换成可检索文本。"""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, dict):
+            for key in ("text", "content", "summary", "value"):
+                candidate = value.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
+            return ""
+        if isinstance(value, list):
+            parts = []
+            for item in value:
+                text = MemoryAdapter._scope_value_text(item)
+                if text:
+                    parts.append(text)
+            return "\n".join(parts)
+        return str(value or "").strip()
+
     async def build_documents(self, *, scope: Scope) -> list[IndexDocument]:
         if scope.owner_user_id != str(self.user_id):
             return []
@@ -39,7 +59,7 @@ class MemoryAdapter:
                 (("summary", "群友摘要"), ("profile", "群友资料"), ("pattern", "群友行为模式"))
             for source_id, title in sources:
                 value = data.get(source_id)
-                text = "\n".join(value) if isinstance(value, list) else str(value or "")
+                text = self._scope_value_text(value)
                 documents.extend(self._make_chunks(scope, source_id, text, title, 0))
             return documents
         profile = await store.read_profile_list(self.user_id)

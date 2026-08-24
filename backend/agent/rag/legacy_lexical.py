@@ -1,26 +1,18 @@
-"""轻量 BM25：中文字符 n-gram + 英文/数字 token。"""
+"""Rust sidecar 部署前的临时词法回退。
+
+仅允许在 Rust sidecar 未部署/不可用时调用。sidecar 灰度完成后删除本文件，
+不要在新业务代码中直接导入。
+"""
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
 
 from agent.rag.models import IndexDocument, RecallResult
-
-_TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
-
-
-def tokenize(text: str) -> list[str]:
-    raw = _TOKEN.findall((text or "").lower())
-    output: list[str] = []
-    for token in raw:
-        output.append(token)
-        if len(token) > 1 and token.isascii():
-            output.extend(token[index:index + 2] for index in range(len(token) - 1))
-    return output
+from agent.rag.tokenizer import tokenize
 
 
-class BM25:
+class LegacyBM25:
     def __init__(self, documents: list[IndexDocument], *, k1: float = 1.2, b: float = 0.75):
         self.documents = list(documents)
         self.k1 = k1
@@ -38,18 +30,21 @@ class BM25:
             return []
         total = len(self.documents)
         scored: list[RecallResult] = []
-        for index, doc in enumerate(self.documents):
+        for index, document in enumerate(self.documents):
             length = len(self.tokens[index]) or 1
             score = 0.0
             for term in query_terms:
-                freq = self.term_freq[index].get(term, 0)
-                if not freq:
+                frequency = self.term_freq[index].get(term, 0)
+                if not frequency:
                     continue
-                df = self.doc_freq.get(term, 0)
-                idf = math.log(1 + (total - df + 0.5) / (df + 0.5))
-                norm = freq + self.k1 * (1 - self.b + self.b * length / (self.avg_len or 1))
-                score += idf * freq * (self.k1 + 1) / norm
+                document_frequency = self.doc_freq.get(term, 0)
+                idf = math.log(1 + (total - document_frequency + 0.5) / (document_frequency + 0.5))
+                norm = frequency + self.k1 * (1 - self.b + self.b * length / (self.avg_len or 1))
+                score += idf * frequency * (self.k1 + 1) / norm
             if score > min_score:
-                scored.append(RecallResult(doc, score))
+                scored.append(RecallResult(document, score))
         scored.sort(key=lambda item: (-item.score, item.document.chunk_id))
         return scored[:max(1, min(limit, 10))]
+
+
+__all__ = ["LegacyBM25"]

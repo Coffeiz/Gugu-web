@@ -1,6 +1,18 @@
 import pytest
 
 
+def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
+    from agent.gateway.qq import QQAPIError, _qq_msg_id_invalid
+
+    exc = QQAPIError(
+        "POST",
+        "/v2/groups/test/messages",
+        400,
+        {"code": 40034031, "message": "msgid已经过期,不能回复"},
+    )
+    assert _qq_msg_id_invalid(exc)
+
+
 @pytest.mark.asyncio
 async def test_qq_stream_timer_cancel_does_not_cancel_inflight_flush(monkeypatch):
     """finish 取消节流任务时，已开始的刷新仍必须完成，避免卡在生成中。"""
@@ -150,7 +162,7 @@ async def test_qq_keyboard_failure_fallback_accepts_number(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("platform", ["feishu", "wechat"])
 async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, platform):
-    """飞书/微信尚未接入原生按钮，ask_user 必须直接发送文本。"""
+    """飞书/微信未提供原生按钮时，ask_user 必须直接发送文本。"""
     from agent.im import replies
 
     text_calls = []
@@ -160,8 +172,16 @@ async def test_interaction_uses_plain_text_for_unadapted_platforms(monkeypatch, 
         return True
 
     monkeypatch.setattr(replies, "send_text", fake_text)
+    if platform == "feishu":
+        from agent.gateway import feishu
+
+        async def unavailable_card(*_args, **_kwargs):
+            return False
+
+        monkeypatch.setattr(feishu, "send_interaction_card", unavailable_card)
     await replies.send_interaction(
-        {"platform": platform, "chat_type": "c2c", "platform_user_id": "user-1"},
+        {"platform": platform, "chat_type": "c2c", "chat_id": "chat-1",
+         "platform_user_id": "user-1", "channel_id": "bot-1"},
         {"prompt_id": 18, "title": "选择", "body": "选一个",
          "options": [{"id": "a", "label": "A", "token": "opaque-token"}]},
     )

@@ -1,16 +1,15 @@
-"""轻量 token 估算 + 历史窗口裁剪。
+"""上下文正文规范化与诊断估算工具。
 
-不引入 tokenizer 依赖，用 CJK 感知的廉价估算：中文/日文等表意字符约
-1.3 token/字，其余（英文/数字/符号）约 4 字符/token。用于按 token 预算
-裁剪对话历史，比按条数更贴近真实上下文体积与成本。
+本地估算只允许用于诊断、回归测试和 provider overflow 后的兼容旧接口，
+不得用于正常历史组装、预算触发、压缩触发或重试决定。真实请求预算以
+provider 返回的 usage/overflow 为准。
 """
 from __future__ import annotations
 
 import json
 
-# 历史窗口默认参数——实际调用时由 model_cfg.context_tokens 覆盖
-HISTORY_TOKEN_BUDGET = 120000   # 默认 token 预算（约 128K context 的 90% 留给 system + current）
-HISTORY_MAX_MSGS = 500          # 条数安全上限（防极端情况）
+# 历史读取只保留非 token 的条数安全上限，预算由 provider 边界裁定。
+HISTORY_MAX_MSGS = 500
 
 
 def estimate_tokens(text: str) -> int:

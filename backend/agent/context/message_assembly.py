@@ -54,7 +54,7 @@ class PromptMessages(list):
         return list(self._cache_anchor_indices)
 
     def remember_cache_anchor(self, index: int, *, limit: int = 2) -> None:
-        """保留最近的 conversation cache checkpoint，不污染实际消息。"""
+        """保留最近的 conversation cache baseline，不污染实际消息。"""
         conversation_len = len(self.conversation)
         if index < 0 or index >= conversation_len:
             return
@@ -70,16 +70,25 @@ class PromptMessages(list):
 
 
 def reminder(content: str) -> dict:
-    return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+    """构造内部系统上下文消息，不把动态上下文伪装成用户发言。"""
+    return {"role": "system", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
 
 
 def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],
-                   current_user: dict | None, dynamic_tail: Iterable[dict]) -> PromptMessages:
-    """固定上下文、连续历史和当前消息先组成 conversation，动态内容最后追加。"""
+                   current_user: dict | None, dynamic_tail: Iterable[dict],
+                   conversation_tail: Iterable[dict] = ()) -> PromptMessages:
+    """固定上下文、连续历史和当前消息组成 conversation。
+
+    ``conversation_tail`` 用于本轮已经确定、且会落库的内容（例如 RAG
+    知识块）。它必须紧跟当前用户消息，避免本轮作为动态尾部、下一轮又变成
+    history 时改变 cache 前缀。真正只供当前请求使用的内容仍放在
+    ``dynamic_tail``。
+    """
     fixed = list(fixed_parts)
     conversation = fixed + list(history)
     if current_user is not None:
         conversation.append(current_user)
+    conversation.extend(conversation_tail)
     return PromptMessages(conversation, dynamic_tail, fixed_prefix_size=len(fixed))
 
 

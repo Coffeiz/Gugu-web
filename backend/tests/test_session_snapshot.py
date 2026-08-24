@@ -13,7 +13,7 @@ from agent.context.session_snapshot import (
     snapshot_is_usable,
     snapshot_context,
     reminder_message,
-    checkpoint_snapshot,
+    update_baseline_snapshot,
     initialize_snapshot,
 )
 from agent.context.message_assembly import PromptMessages, build_messages, reminder, newly_appended
@@ -150,15 +150,15 @@ async def test_snapshot_serializes_zoneinfo_timezone_for_json():
 
 def test_reminder_and_time_messages_have_stable_boundary():
     message = reminder_message("固定 session snapshot")
-    assert message == {"role": "user", "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]"}
+    assert message == {"role": "system", "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]"}
 
 
 def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():
     session = _Session()
     initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
                         session_info={"epoch": 1}, user_tz="Asia/Shanghai")
-    first = checkpoint_snapshot(session, [{"role": "user", "content": "第一轮"}])
-    second = checkpoint_snapshot(session, [{"role": "user", "content": "第二轮"}])
+    first = update_baseline_snapshot(session, [{"role": "user", "content": "第一轮"}])
+    second = update_baseline_snapshot(session, [{"role": "user", "content": "第二轮"}])
     assert first != second
     assert session.session_context["snapshot_context"] == "fixed"
 
@@ -169,10 +169,10 @@ def test_snapshot_records_history_baseline_without_dropping_context_metadata():
     initialize_snapshot(session, system_prompt="system", snapshot_context="fixed",
                         session_info={"epoch": 1}, user_tz="Asia/Shanghai")
 
-    checkpoint_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_id=18)
+    update_baseline_snapshot(session, [{"role": "summary", "content": "摘要"}], baseline_message_id=18)
 
     assert session.session_context["history_baseline_message_id"] == 18
-    assert session.session_context["context_revision"] == 0
+    assert session.session_context["context_revision"] == 1
 
 
 def test_history_baseline_never_moves_back_from_session_watermark():

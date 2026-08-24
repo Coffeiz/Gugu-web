@@ -112,6 +112,9 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 
 .asel-popup { min-width: 120px; }
 .asel-popup--model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   padding: var(--popup-surface-padding);
   border: 1px solid var(--popup-surface-border);
   border-radius: var(--popup-surface-radius);
@@ -123,6 +126,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 .asel-popup--model-list .popup-menu-item {
   display: block;
   width: 100%;
+  margin-top: 0;
   padding: var(--popup-item-padding);
   border-radius: var(--popup-item-radius);
   text-align: left;

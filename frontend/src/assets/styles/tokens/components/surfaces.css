@@ -185,7 +185,7 @@
   --choice-chip-border-active: var(--action-outline);
   --choice-chip-radius: var(--radius-pill);
   --choice-chip-min-height: var(--control-height-sm);
-  --choice-chip-padding: 0 11px 2px;
+  --choice-chip-padding: 1px 11px;
   --choice-chip-line-height: var(--line-height-ui);
 
   /* Light workspace cards need a raised paper surface; dark keeps the softer neutral card below. */

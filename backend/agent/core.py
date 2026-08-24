@@ -457,8 +457,11 @@ class LLMRunner:
         verify_mode = False; verify_fixed = False; verify_queried = False
         finalize_pending = False
         total_in = total_out = total_cache = 0
-        compaction_attempts = 0
+        # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
+        # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
+        run_context_usage = 0
         hard_budget_retries = 0
+        compaction_applied = False
         run_id = f"run-{uuid4().hex[:16]}"
         round_number = 0
         event_seq = 0
@@ -473,6 +476,75 @@ class LLMRunner:
                 seq=event_seq,
                 **payload,
             )
+
+        async def compact_after_provider_overflow() -> bool:
+            """仅在 provider overflow 后压缩旧 history，并让当前 round 重试。"""
+            nonlocal messages, compaction_applied
+            from agent.context import compaction
+
+            conversation = getattr(messages, "conversation", messages)
+            before_count = len(conversation)
+            before_summary = [
+                item for item in conversation
+                if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")
+            ]
+            protected_from = next(
+                (index for index, item in enumerate(conversation)
+                 if item is _run_start_message),
+                max(0, len(conversation) - 1),
+            )
+            result = await compaction.compact_context(
+                list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
+                session_id=session_id, user_id=user_id,
+                fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                overhead_tokens=0,
+                protected_from=protected_from,
+                force=True,
+            )
+            compacted_messages, changed = result
+            after_summary = [
+                item for item in compacted_messages
+                if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")
+            ]
+            try:
+                from agent.runtime.loopscope_trace.state import record_context_compaction
+                record_context_compaction(
+                    phase="completed",
+                    reason=str(getattr(result, "return_reason", "unknown") or "unknown"),
+                    changed=bool(changed),
+                    before_messages=before_count,
+                    after_messages=len(compacted_messages),
+                    before_summary_count=len(before_summary),
+                    after_summary_count=len(after_summary),
+                    before_summary_chars=sum(len(str(item.get("content") or "")) for item in before_summary),
+                    after_summary_chars=sum(len(str(item.get("content") or "")) for item in after_summary),
+                    protected_from=protected_from,
+                )
+            except Exception:
+                pass
+            if not changed:
+                return False
+            if hasattr(messages, "replace_conversation"):
+                messages.replace_conversation(compacted_messages)
+            else:
+                messages = compacted_messages
+            compaction_applied = True
+            yield_event = {"type": "_context_compaction", "applied": True,
+                           "reason": getattr(result, "return_reason", "compacted")}
+            # 事件由调用方发送，避免 helper 自己消费生成器控制流。
+            _context_compaction_event[0] = yield_event
+            return True
+
+        async def compact_after_usage_threshold() -> bool:
+            """统一检查 run 级 provider context usage，达到 90% 后压缩旧 history。"""
+            from agent.context.budget import SAFE_BUDGET_RATIO
+
+            context_tokens = max(1, int(getattr(ai, "context_tokens", 0) or 0))
+            if run_context_usage < int(context_tokens * SAFE_BUDGET_RATIO) or compaction_applied:
+                return False
+            return await compact_after_provider_overflow()
+
+        _context_compaction_event = [None]
 
         while True:
             # 核实轮拥有独立预算，但不能把 MAX_VERIFY 误加到普通任务轮次上。
@@ -489,153 +561,6 @@ class LLMRunner:
             if await _im_cancelled(session_id):
                 yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
                 return
-
-            # 上下文压缩检测：先尝试 LLM 压缩，压缩无效或仍超安全预算时才截断。
-            from agent.context import compaction, tokens
-            from agent.context.budget import (
-                effective_budget,
-                enforce_message_budget,
-                estimate_tool_schema_tokens,
-            )
-            context_tokens = getattr(ai, "context_tokens", 256000)
-            overhead_tokens = (
-                estimate_tool_schema_tokens(getattr(ctx, "tools", None))
-            )
-            if overhead_tokens >= int(context_tokens or 0):
-                _log.error(
-                    "[core] 工具 schema 已超过模型上下文上限：schema_tokens=%s context_tokens=%s",
-                    overhead_tokens, context_tokens,
-                )
-                yield f"data: {json.dumps({'type': 'error', 'detail': '当前工具配置已超过模型处理上限，请减少启用的工具后再试～'}, ensure_ascii=False)}\n\n"
-                return
-            current_length = await compaction.estimate_context_length(messages, system_text)
-            safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
-            _dynamic_tail_tokens = sum(
-                tokens.estimate_tokens(tokens.message_text(item))
-                for item in getattr(messages, "dynamic_tail", ())
-            )
-            _log.warning("[runtime-context-budget-probe] %s", json.dumps({
-                "phase": "preflight",
-                "runId": run_id,
-                "round": round_number + 1,
-                "provider": getattr(ai, "provider", "") or "unknown",
-                "apiFormat": driver.api_format,
-                "messageCount": len(getattr(messages, "conversation", messages)),
-                "fixedPrefixCount": getattr(messages, "fixed_prefix_size", 0),
-                "currentTokens": current_length,
-                "safeBudget": safe_budget,
-                "contextTokens": context_tokens,
-                "overheadTokens": overhead_tokens,
-                "dynamicTailTokens": _dynamic_tail_tokens,
-                "compactionAttempts": compaction_attempts,
-            }, ensure_ascii=False, sort_keys=True))
-            if current_length > safe_budget and compaction_attempts < 1:
-                # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
-                # 仍开始下一次摘要请求。
-                if await _im_cancelled(session_id):
-                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
-                    return
-                if compaction_attempts >= 1:
-                    _log.error(
-                        "[core] 上下文压缩后仍超过预算，停止重复压缩：before=%s attempts=%s",
-                        current_length, compaction_attempts,
-                    )
-                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，压缩后仍然超过处理上限，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
-                    return
-                yield f"data: {json.dumps({'type': 'compaction', 'detail': '上下文压缩中...'})}\n\n"
-                _current_conversation = getattr(messages, "conversation", messages)
-                _protected_from = next(
-                    (index for index, item in enumerate(_current_conversation)
-                     if item is _run_start_message),
-                    max(0, len(_current_conversation) - 1),
-                )
-                compacted_messages, compacted = await compaction.compact_context(
-                    list(getattr(messages, "conversation", messages)), system_text, context_tokens,
-                    session_id=session_id, user_id=user_id,
-                    fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-                    overhead_tokens=overhead_tokens,
-                    extra_tokens=_dynamic_tail_tokens,
-                    protected_from=_protected_from,
-                )
-                if await _im_cancelled(session_id):
-                    yield f"data: {json.dumps({'type': '_cancelled'})}\n\n"
-                    return
-                if hasattr(messages, "replace_conversation"):
-                    messages.replace_conversation(compacted_messages)
-                else:
-                    messages = compacted_messages
-                if compacted:
-                    compacted_length = await compaction.estimate_context_length(messages, system_text)
-                    compaction_attempts += 1
-                    if compacted_length >= current_length:
-                        _log.error(
-                            "[core] 上下文压缩没有取得进展，转入确定性截断：before=%s after=%s",
-                            current_length, compacted_length,
-                        )
-                    elif compacted_length > safe_budget:
-                        _log.error(
-                            "[core] 上下文压缩后仍超过预算，转入确定性截断：before=%s after=%s",
-                            current_length, compacted_length,
-                        )
-                else:
-                    compacted_length = current_length
-                _log.warning("[runtime-context-budget-probe] %s", json.dumps({
-                    "phase": "compaction-result",
-                    "runId": run_id,
-                    "round": round_number + 1,
-                    "changed": bool(compacted),
-                    "beforeTokens": current_length,
-                    "afterTokens": compacted_length,
-                    "messageCount": len(getattr(messages, "conversation", messages)),
-                    "protectedFrom": _protected_from,
-                    "dynamicTailTokens": _dynamic_tail_tokens,
-                }, ensure_ascii=False, sort_keys=True))
-                if compacted:
-                    if compacted_length < current_length and compacted_length <= safe_budget:
-                        _log.info("[core] 上下文已压缩，重试当前 round")
-                        if verify_mode:
-                            verify_rounds -= 1
-                        else:
-                            task_rounds -= 1
-                        continue
-
-            # LLM 压缩没有执行或没有把上下文压到安全预算后，才做本地确定性截断。
-            if current_length > safe_budget:
-                _current_conversation = getattr(messages, "conversation", messages)
-                _protected_from = next(
-                    (index for index, item in enumerate(_current_conversation)
-                     if item is _run_start_message),
-                    max(0, len(_current_conversation) - 1),
-                )
-                hard_result = enforce_message_budget(
-                    messages, system_text or "", context_tokens,
-                    overhead_tokens=overhead_tokens,
-                    protected_from=_protected_from,
-                )
-                if hard_result.changed:
-                    current_length = await compaction.estimate_context_length(messages, system_text)
-                    _log.warning(
-                        "[core] 上下文预检超预算，执行确定性截断：before=%s after=%s dropped=%s",
-                        hard_result.before_tokens, hard_result.after_tokens,
-                        hard_result.dropped_messages,
-                    )
-                _log.warning("[runtime-context-budget-probe] %s", json.dumps({
-                    "phase": "deterministic-truncate",
-                    "runId": run_id,
-                    "round": round_number + 1,
-                    "changed": bool(hard_result.changed),
-                    "beforeTokens": hard_result.before_tokens,
-                    "afterTokens": hard_result.after_tokens,
-                    "currentTokens": current_length,
-                    "safeBudget": safe_budget,
-                    "droppedMessages": hard_result.dropped_messages,
-                    "oversizedItem": hard_result.oversized_item,
-                    "messageCount": len(getattr(messages, "conversation", messages)),
-                    "fixedPrefixCount": getattr(messages, "fixed_prefix_size", 0),
-                }, ensure_ascii=False, sort_keys=True))
-                if current_length > safe_budget:
-                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
-                    return
 
             _tok = 0
             result = None
@@ -688,14 +613,23 @@ class LLMRunner:
                         await _round_gen.aclose()
                         return
             except RetryableError as e:
-                from agent.context.budget import enforce_message_budget, is_context_overflow_error
+                from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 overflow = is_context_overflow_error(e) or is_context_overflow_error(e.cause) if e.cause else is_context_overflow_error(e)
                 if overflow and hard_budget_retries < 1:
-                    hard_result = enforce_message_budget(
+                    if await compact_after_provider_overflow():
+                        hard_budget_retries += 1
+                        _event = _context_compaction_event[0]
+                        _context_compaction_event[0] = None
+                        if _event:
+                            yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                        if verify_mode:
+                            verify_rounds -= 1
+                        else:
+                            task_rounds -= 1
+                        _log.warning("[core] provider overflow 后完成历史压缩，重试当前 round")
+                        continue
+                    hard_result = enforce_provider_overflow_fallback(
                         messages, system_text or "", getattr(ai, "context_tokens", 256000),
-                        overhead_tokens=(
-                            estimate_tool_schema_tokens(getattr(ctx, "tools", None))
-                        ),
                         protected_from=next(
                             (index for index, item in enumerate(getattr(messages, "conversation", messages))
                              if item is _run_start_message),
@@ -703,6 +637,8 @@ class LLMRunner:
                         ),
                     )
                     if hard_result.changed:
+                        compaction_applied = True
+                        yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
                         hard_budget_retries += 1
                         if verify_mode:
                             verify_rounds -= 1
@@ -718,13 +654,22 @@ class LLMRunner:
                 yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
                 return
             except Exception as e:
-                from agent.context.budget import enforce_message_budget, is_context_overflow_error
+                from agent.context.budget import enforce_provider_overflow_fallback, is_context_overflow_error
                 if is_context_overflow_error(e) and hard_budget_retries < 1:
-                    hard_result = enforce_message_budget(
+                    if await compact_after_provider_overflow():
+                        hard_budget_retries += 1
+                        _event = _context_compaction_event[0]
+                        _context_compaction_event[0] = None
+                        if _event:
+                            yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+                        if verify_mode:
+                            verify_rounds -= 1
+                        else:
+                            task_rounds -= 1
+                        _log.warning("[core] provider overflow 后完成历史压缩，重试当前 round")
+                        continue
+                    hard_result = enforce_provider_overflow_fallback(
                         messages, system_text or "", getattr(ai, "context_tokens", 256000),
-                        overhead_tokens=(
-                            estimate_tool_schema_tokens(getattr(ctx, "tools", None))
-                        ),
                         protected_from=next(
                             (index for index, item in enumerate(getattr(messages, "conversation", messages))
                              if item is _run_start_message),
@@ -732,6 +677,8 @@ class LLMRunner:
                         ),
                     )
                     if hard_result.changed:
+                        compaction_applied = True
+                        yield f"data: {json.dumps({'type': '_context_compaction', 'applied': True, 'reason': 'provider_overflow_fallback'}, ensure_ascii=False)}\n\n"
                         hard_budget_retries += 1
                         if verify_mode:
                             verify_rounds -= 1
@@ -754,6 +701,7 @@ class LLMRunner:
             total_in  += result.usage_in
             total_out += result.usage_out
             total_cache += result.cache_tokens
+            run_context_usage = max(run_context_usage, int(result.usage_in or 0))
 
             _requires_tools = result.requires_tools
             if _requires_tools is None:
@@ -988,6 +936,11 @@ class LLMRunner:
                         tool_call_id=pending_tool_call_id,
                         result=answer,
                     )
+                    if await compact_after_usage_threshold():
+                        _event = _context_compaction_event[0]
+                        _context_compaction_event[0] = None
+                        if _event:
+                            yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
                 if tool_budget_exceeded:
@@ -1002,6 +955,11 @@ class LLMRunner:
                     verify_mode = True
                     verify_queried = False
                     messages.append({"role": "user", "content": _VERIFY_PROMPT})
+                if await compact_after_usage_threshold():
+                    _event = _context_compaction_event[0]
+                    _context_compaction_event[0] = None
+                    if _event:
+                        yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1059,14 +1017,14 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
-                driver.append_followup(messages, result, _NARRATION_NUDGE)
+                driver.append_guard_followup(messages, result, _NARRATION_NUDGE)
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
             if (not any_tool_called and not verify_mode and intent_retry < 1
                     and _announces_intent(_final_text)):
                 intent_retry += 1
-                driver.append_followup(messages, result, _INTENT_NUDGE)
+                driver.append_guard_followup(messages, result, _INTENT_NUDGE)
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
@@ -1075,14 +1033,14 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and tool_intent_retry < 1
                     and (_requires_tools is True or _is_tool_progress_only(_final_text))):
                 tool_intent_retry += 1
-                driver.append_followup(messages, result, _TOOL_REQUIRED_NUDGE)
+                driver.append_guard_followup(messages, result, _TOOL_REQUIRED_NUDGE)
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, _final_text)):
                 decision_retry += 1
-                driver.append_followup(messages, result, _DECISION_NUDGE)
+                driver.append_guard_followup(messages, result, _DECISION_NUDGE)
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 即时复查时，前面还没有生成过最终说明；保留最终收束轮的确认给用户，
@@ -1091,7 +1049,16 @@ class LLMRunner:
                 async for _line in genstream.typed_stream(_final_text):
                     yield _line
 
-            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'output': total_out, 'cache_read': total_cache})}\n\n"
+            # 普通最终回复也必须经过同一条 90% 检查。此前这里直接结束，导致没有
+            # tool call 的长回复不会触发 baseline 更新；检查发生在最终正文已经确定后，
+            # 不会打断输出，且 compaction_applied 防止本 run 重复压缩。
+            if await compact_after_usage_threshold():
+                _event = _context_compaction_event[0]
+                _context_compaction_event[0] = None
+                if _event:
+                    yield f"data: {json.dumps(_event, ensure_ascii=False)}\n\n"
+
+            yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return
 
         yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完，前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"

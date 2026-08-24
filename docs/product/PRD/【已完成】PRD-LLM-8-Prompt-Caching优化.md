@@ -240,7 +240,7 @@ system = [{"type": "text", "text": static_text, "cache_control": {"type": "ephem
 
 **压缩目标**：
 ```
-压缩到 token 预算的 20%
+压缩结果不超过模型上下文预算的 50%，没有固定下限（现由 PRD-AGENT-4 的 ContextBudget 统一控制）。
 ```
 
 **保护范围**：

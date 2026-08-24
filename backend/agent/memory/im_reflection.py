@@ -18,6 +18,7 @@ from app.core import redis as R
 from app.core.tz import now_utc
 from agent.memory._llm import complete_json
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
+from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
 from agent.memory.scoped_store import read_scope, read_scope_json, write_scope_file, write_scope_json
 from agent.memory.scopes import MemoryScope
@@ -603,6 +604,7 @@ async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_m
         thinking="disabled",
     )
     memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
+    memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
     if not memory or not _preserves_group_dates(batch, memory):
         return
     await write_scope_file(scope, "memory.md", memory + "\n")

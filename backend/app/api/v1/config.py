@@ -886,8 +886,15 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
     try:
         res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
+        failed = int(res.get("failed_users") or 0)
+        status = "error" if failed else "done"
+        message = (
+            f"重建完成：pattern {res.get('pattern_vectors', 0)} 条，"
+            f"memory {res.get('memory_vectors', 0)} 块"
+            + (f"；失败用户 {failed} 个" if failed else "")
+        )
         await r.set(_REBUILD_KEY, json.dumps(
-            {"status": "done", **res, "tag": tag, "ts": time.time()}), ex=3600)
+            {"status": status, **res, "message": message, "tag": tag, "ts": time.time()}), ex=3600)
     except Exception as e:
         await r.set(_REBUILD_KEY, json.dumps(
             {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)

@@ -22,6 +22,21 @@ async def test_collect_keeps_legacy_error_message():
     assert errored is True
 
 
+async def test_collect_initializes_context_usage_metadata():
+    """回归：没有 usage 事件或首次 usage 事件时不得触发未初始化变量。"""
+    async def stream():
+        yield "data: " + json.dumps({
+            "type": "_usage", "input": 12, "context_input": 34,
+            "output": 5,
+        }) + "\n\n"
+        yield "data: " + json.dumps({"type": "token", "content": "完成"}) + "\n\n"
+
+    result = await _collect(stream(), include_meta=True)
+    assert result[0] == "完成"
+    assert result[-1]["context_input"] == 34
+    assert result[-1]["compaction_applied"] is False
+
+
 async def _tool_call_stream(tool_name: str):
     yield "data: " + json.dumps({"type": "tool_call", "name": tool_name}, ensure_ascii=False) + "\n\n"
     yield "data: " + json.dumps({"type": "token", "content": "完成了"}, ensure_ascii=False) + "\n\n"

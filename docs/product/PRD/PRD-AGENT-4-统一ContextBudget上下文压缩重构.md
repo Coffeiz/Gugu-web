@@ -2,7 +2,7 @@
 
 ## 状态
 
-规划中（2026-08-24）。本文是实现依据，完成后再标记为「已完成」。
+实施中（2026-08-24，Phase 0-5 已完成）。本文仍是 Phase 6 验收与部署依据，全部完成后再标记为「已完成」。
 
 ## 本任务目标
 
@@ -58,11 +58,11 @@ baseline
 
 ### 2.1 目标
 
-1. Web、私聊、群聊、微信、飞书和定时任务使用同一个 `ContextBudget` 预算模型。
-2. `ContextBudget` 是唯一的上下文预算语义：固定前缀、snapshot、工具 schema、动态尾部、history、当前消息、工具轮和输出/推理预留全部纳入总预算。
-3. 未超过硬上限时不提前压缩；达到 90% 软阈值后让当前 run 完成，再异步推进 baseline。
-4. 超过硬上限时，禁止加载或发送超过预算的完整 history；先做本地确定性裁剪/字段降级，必要时对旧 history 做 LLM 压缩并重试当前 round。
-5. 压缩结果的总上下文不超过模型上限的 50%；50% 是上限而不是必须达到的目标，不设置下限，尽可能保留历史语义。
+1. Web、私聊、群聊、微信、飞书和定时任务使用同一个 provider usage 归一化和 baseline 生命周期。
+2. `ContextBudget` 只负责 provider usage 分项、诊断和本地字符/条数兜底，不在发送前预计算 token 触发压缩。
+3. provider 成功且真实 usage 达到 90% 后，让当前 run 完成，再压缩并提交 baseline。
+4. provider 返回 context overflow 时立即压缩旧 history 并 retry；不再以本地 95% token 预检作为正常流程。
+5. 压缩后只保留最近 5k token 对应的完整 history；其余旧 history 全部滚动合并为 summary，最终 summary 限制为 10,000 字符。50% 只在 retry 后用 provider 实际 usage 检测。
 6. 压缩只处理 history，不删除当前 run 的用户消息、assistant/tool call、tool result 和最终输出。
 7. snapshot/summary 统一归属于一个活跃 baseline 版本，摘要、业务 snapshot 和覆盖水位原子提交。
 8. 一个 session 同时只允许一个生成任务；运行中或 baseline 更新中收到的新消息进入该 session 的 pending 状态，生成结束后按顺序继续。
@@ -91,13 +91,15 @@ baseline
 | 唯一预算名 | 只使用 `ContextBudget`。`safe_budget`、`history_budget`、`compaction_budget`、`hard_target` 等重复语义必须迁移后删除或改为 ContextBudget 的字段。 |
 | 总量口径 | budget 覆盖所有 context：system、snapshot、工具定义、动态尾部、history、当前消息、工具轮、输出/推理预留和 provider overhead。 |
 | 软阈值 | 达到模型 ContextBudget 的 90% 后，本轮先完成回复；完成后再推进 baseline。 |
-| 硬上限 | 第一次 provider 请求前和每个 tool round 前都检查硬上限；超过时不加载/发送超预算的完整 history。 |
-| 压缩目标 | 压缩后的总上下文必须 `<= 50% * model_context_tokens`；无下限，尽量低但优先保持历史语义。 |
+| 截断上限 | 不再维护 95% 的本地 token 触发线；仅在 provider overflow 或异常 payload 时执行字符/条数兜底。 |
+| 压缩目标 | provider overflow 或 run 收尾压缩后，用 provider 实际 usage 检查是否已降至 `<= 50% * model_context_tokens`；无下限，尽量低但优先保持历史语义。 |
+| 原文保留窗口 | 只保留最近 5k token 的完整 history；user/assistant/tool call/tool result 按完整 round 原子保留，超过窗口的旧 history 不保留原文。 |
 | 压缩范围 | 只压缩 baseline 之后的旧 history；当前 run 的消息链受到保护。 |
-| 重试 | baseline 或 inline 压缩完成并提交后，当前 round 必须重新组装并重试；最多按统一 retry policy 防止无限循环。 |
+| 重试 | provider overflow 分支的压缩完成并提交后，当前 round 必须重新组装并重试；run 收尾 baseline 更新不重复当前输出；最多按统一 retry policy 防止无限循环。 |
 | pending | pending 是 session 自身的持久状态，不依赖 Redis lock 推断。新消息可先落库，执行器只处理一个 active task。 |
 | Redis | Redis gate 只负责跨 worker 的执行所有权、短时租约和故障恢复；不能作为业务消息是否 pending 的唯一事实来源。 |
 | baseline | session 只有一个 active baseline 版本；旧压缩任务不能覆盖新 baseline。 |
+| 压缩结果 | `compact_context()` 返回 `CompactionResult`，包含 `changed`、`before_tokens`、`after_tokens` 和 `return_reason`；原因区分 `no_compressible_history`、`summary_failed`、`shape_validation_failed`、`budget_inconsistent` 和 `compacted`。 |
 | 被动群消息 | 被动群消息继续存储，但不触发生成；后续被提及或主动响应时从当前 baseline 增量读取。 |
 
 ---
@@ -113,30 +115,35 @@ ContextBudget {
   model_context_tokens        # 模型硬上限
   output_reserve_tokens       # 输出/推理预留
   provider_overhead_tokens    # provider/tool 格式开销
-  fixed_prefix_tokens         # system + 稳定 snapshot + 固定提示
+  system_prompt_tokens        # system prompt
+  snapshot_tokens             # 稳定 snapshot/固定前缀消息
   tool_schema_tokens          # 当前可用工具定义
   dynamic_tail_tokens         # 当前时间、RAG、提醒、渠道动态提示
   current_turn_tokens         # 当前 user + 当前 run 的 tool 链
   history_tokens              # baseline 之后可注入的 history
   total_tokens                # 上述各项总和
-  soft_limit_tokens           # 0.90 * model_context_tokens
-  compression_cap_tokens      # 0.50 * model_context_tokens
-  hard_limit_tokens           # provider 允许的最大总量
+  soft_limit_tokens           # provider 实际 usage 的 0.90 观察线
+  compression_cap_tokens      # provider retry 后观察目标，不做本地硬判断
+  recent_history_keep_tokens  # 5000，最近完整 history 原文窗口
+  truncation_limit_tokens     # 仅保留兼容诊断字段，不作为正常触发器
 }
+
+实现上统一通过 `ContextBudget.from_messages()` 或 `ContextBudget.from_parts()`
+记录 provider usage 分项。正常请求不再调用本地 token 预检；provider 返回的
+`total_context_tokens` 才是压缩触发事实。本地字符/条数限制只作为数据库读取和异常
+payload 兜底。
 ```
 
 计算规则：
 
 ```text
-total = fixed_prefix + tool_schema + dynamic_tail
-      + current_turn + history + output_reserve + provider_overhead
-
-soft_limit = floor(model_context_tokens * 0.90)
-compression_cap = floor(model_context_tokens * 0.50)
-available_history = hard_limit - (total - history)
+total_context_tokens = provider_reported_input + provider_reported_cache
+soft_observation = floor(model_context_tokens * 0.90)
+compression_observation = floor(model_context_tokens * 0.50)
 ```
 
-`available_history <= 0` 时，先缩减可压缩 history；不得把动态尾部、当前 user 或当前工具轮误算为可删除历史。若当前单条消息本身超过硬上限，返回明确的单条输入过大错误，不进行无限重试。
+本地字符/条数兜底触发时，仍不得删除动态尾部、当前 user 或当前工具轮。provider
+overflow 后最多按 retry 策略继续收敛，不进行无限重试。
 
 ### 4.2 Baseline 与 Snapshot
 
@@ -176,26 +183,21 @@ flowchart TD
   F -- 是 --> G[session.pending = true\n记录 pending_from_message_id\n返回排队状态]
   F -- 否 --> H[领取 active task\nRedis 仅做跨 worker 所有权]
   H --> I[读取 baseline 之后增量 history]
-  I --> J[ContextBudget 统一预检]
-  J --> K{超过硬上限?}
-  K -- 否 --> L[Provider Round]
-  K -- 是 --> M[保护当前 turn\n只压缩旧 history]
-  M --> N{LLM 压缩后 <= 50%?}
-  N -- 是 --> O[原子推进 baseline]
-  N -- 否/失败 --> P[确定性消息组/字段裁剪]
-  P --> Q{仍超硬上限?}
-  Q -- 是 --> R[明确错误\n不发送超预算请求]
-  Q -- 否 --> O
-  O --> L
-  L --> S{还有 tool round?}
-  S -- 是 --> J
-  S -- 否 --> T[持久化本轮输出]
-  T --> U{total >= 90%?}
-  U -- 否 --> V[释放 active task]
-  U -- 是 --> W[创建 baseline 更新任务]
-  W --> X[压缩旧 history\n总量 <= 50%]
-  X --> Y[原子提交 summary + snapshot + baseline]
-  Y --> V
+  I --> J[Provider Round]
+  J --> K{Provider response}
+  K -- overflow --> L[压缩旧 history\n最近 5k 原文 + summary ≤10k 字符]
+  L --> M[Retry Provider Round]
+  M --> N[读取真实 usage\n检查 50% 目标]
+  K -- success --> O[读取真实 total_context_tokens]
+  N --> O
+  O --> P{usage >= 90%?}
+  P -- 否 --> Q[持久化本轮输出]
+  P -- 是 --> R[run 收尾压缩旧 history]
+  R --> S[原子提交 summary + snapshot + baseline]
+  S --> Q
+  Q --> T{还有 tool round?}
+  T -- 是 --> J
+  T -- 否 --> U[释放 active task]
   V --> Z{session.pending?}
   Z -- 是 --> H
   Z -- 否 --> AA[session idle]
@@ -211,20 +213,22 @@ sequenceDiagram
   participant P as Provider
   participant K as BaselineUpdater
 
-  S->>B: build(total context, baseline + incremental history)
-  B-->>C: plan + diagnostics
-  alt total > hard_limit
-    C->>B: compact old history, protect current turn
-  B-->>C: new messages + baseline candidate
-    C->>C: commit baseline/snapshot, retry same round
+  S->>B: build canonical context
+  B-->>C: provider usage metadata + diagnostics
+  C->>P: provider request
+  alt provider overflow
+    P-->>C: context overflow
+    C->>K: compress old history
+    K-->>C: recent 5k + summary ≤10k chars
+    C->>P: retry provider request
+    P-->>C: actual usage / result
+  else provider success
+    P-->>C: actual usage / assistant/tool result
   end
-  C->>P: provider request within hard_limit
-  P-->>C: assistant/tool result
-  C->>B: recompute before next tool round
   C-->>S: persist output
-  alt total >= soft_limit
-    C->>K: schedule baseline update (session pending-safe)
-    K->>K: compress history only, cap <= 50%
+  alt actual usage >= 90%
+    C->>K: force baseline update before gate release
+    K->>K: compress history and check 50% with provider usage
     K->>S: atomic baseline/snapshot commit
   end
 ```
@@ -235,7 +239,7 @@ sequenceDiagram
 stateDiagram-v2
   [*] --> idle
   idle --> running: 主动消息领取任务
-  idle --> baseline_updating: 90% baseline update
+  idle --> baseline_updating: provider usage >=90% / overflow retry
   running --> running: tool round / 同一 run 重试
   running --> pending: 新主动消息到达
   baseline_updating --> pending: 新主动消息到达
@@ -243,7 +247,7 @@ stateDiagram-v2
   draining --> running: 按 message_id 顺序领取下一条
   draining --> idle: 没有待处理主动消息
   running --> idle: 输出持久化
-  baseline_updating --> idle: baseline 更新完成
+  baseline_updating --> idle: baseline 提交完成
 ```
 
 ---
@@ -259,23 +263,23 @@ stateDiagram-v2
 3. tool call 与 tool result、assistant tool_use 与对应结果视为不可拆分单元。
 4. 不先把超过硬预算的完整 history 读入内存；SQL 查询必须带 token/条数上限和 baseline 条件。
 5. 旧 session 没有 baseline 时仍按 ContextBudget 计算窗口，不能以 `baseline=0` 读取全量数据库历史。
-6. 动态 RAG、提醒、当前时间和渠道提示属于 dynamic tail，预检时计入但不被 history 裁剪误删。
+6. 动态 RAG、提醒、当前时间和渠道提示属于 dynamic tail；随 provider 请求发送，发生压缩时不得被 history 裁剪误删。
 
 ### 6.2 硬预算与当前 round 重试
 
-- 第一次 provider 请求前执行 preflight。
-- 每次工具结果追加后、进入下一 round 前再次执行 preflight。
-- 超过硬上限时，保护当前 turn，先压缩 baseline 之前/当前 turn 之前的 history。
-- LLM 压缩成功、确定性裁剪成功或 baseline 提交后，必须重新组装并重试当前 round。
+- 正常请求直接发送给 provider；不以本地 token 估算触发压缩或截断。
+- provider 返回 context overflow 时，保护当前 turn，压缩 baseline 之前的旧 history 并重新组装、重试当前 round。
+- provider 成功且真实 usage 达到 90% 时，本轮完整结束后再推进 baseline，不打断当前输出。
+- LLM 压缩成功、确定性字符/条数兜底或 baseline 提交后，必须重新组装并重试当前 round。
 - 每个 round 使用统一 retry counter；压缩无进展时停止重复压缩并执行下一阶段的确定性裁剪。
-- provider 返回 413 只能作为异常兜底，允许一次本地更激进裁剪重试；不能把 provider 错误作为正常预算流程。
+- provider overflow 的 retry 次数受统一策略限制；不能无限压缩或重试。
 
 ### 6.3 软阈值 baseline 更新
 
-- `total < soft_limit`：当前 run 正常结束，保持 baseline。
-- `total >= soft_limit`：当前 run 仍完整完成并持久化；随后异步推进 baseline。
+- provider 实际 usage < 90%：当前 run 正常结束，保持 baseline。
+- provider 实际 usage >= 90%：当前 run 仍完整完成并持久化；随后推进 baseline。
 - baseline 更新只处理 baseline 之后的旧 history，不能删当前 run。
-- baseline 更新结果的完整上下文必须不超过 `compression_cap_tokens`，即模型上下文上限的 50%。
+- baseline 更新后重新请求或验证 provider usage；50% 是验证目标，不是发送前的本地硬限制。
 - baseline 更新完成后，pending session 必须重新领取排队消息；不发送重复回答。
 
 ### 6.4 Pending 与并发
@@ -302,8 +306,8 @@ baseline 更新事务必须：
 
 | 文件/目录 | 当前职责与问题 | 本 PRD 计划修改 | 完成后清理 |
 | --- | --- | --- | --- |
-| `backend/agent/context/budget.py` | 有效预算、90% safe、20% target、最近 20 条 fallback 混在一起 | 原地收口为唯一 `ContextBudget` 计划/计量/决策 API；字段化记录 fixed/dynamic/history/current/overhead | 删除 `SAFE_BUDGET_RATIO`、`POST_RUN_CHECKPOINT_RATIO`、`HARD_TARGET_RATIO` 等同义常量及隐式 20%目标；不并行创建第二个预算模块 |
-| `backend/agent/context/compaction.py` | 当前 run LLM 压缩；使用 `COMPACTION_THRESHOLD_RATIO`、`COMPACTION_TARGET_RATIO=20%` | 接入 ContextBudget；目标改为“结果总量 <=50%，无下限”；压缩只接收受限 history | 删除 `COMPACTION_*` 常量和与 baseline 更新重复的预算计算 |
+| `backend/agent/context/budget.py` | provider usage 分项、诊断和本地字符/条数兜底 | 原地收口为唯一 usage 归一化与诊断 API | 删除发送前 token 预检和 95% token 触发语义 |
+| `backend/agent/context/compaction.py` | overflow/90% 收尾压缩，保留最近 5k 原文 | provider overflow retry 或真实 usage ≥90% 后执行；summary 输入/输出 ≤10k 字符，retry 后用 provider usage 检查 50% | 删除本地 token 预检和 50% 硬截断 |
 | `backend/agent/context/compress_conv.py` | 后台 baseline 更新、Redis 压缩锁、local task、baseline CAS；仍有 `token_budget`/force 20% | 原地收口为统一 baseline 更新入口；只有在文件职责无法承载时才拆出 coordinator，并删除原入口 | 删除 `FORCE_COMPRESS_TARGET`、独立 `token_budget` 语义、无法跨进程恢复的本地 task 作为事实来源 |
 | `backend/agent/context/session_history.py` | `history_budget_for_context` 固定 reserve 35%，入口各自计算 | 只保留 baseline 增量读取，预算由 ContextBudget 传入；统一工具消息组选择 | 删除 `history_budget_for_context`、固定 reserve heuristic |
 | `backend/agent/context/tokens.py` | `HISTORY_TOKEN_BUDGET=120000`、`HISTORY_MAX_MSGS=500` 作为独立上限 | 将条数/单页保护变成 ContextBudget 的查询安全上限 | 删除与模型预算冲突的固定 history token 常量；保留必要的查询保护常量并改名说明 |
@@ -311,7 +315,7 @@ baseline 更新事务必须：
 | `backend/agent/context/message_assembly.py` | fixed prefix、dynamic tail、conversation replacement 边界 | 由 ContextBudget 输出组装计划，保证动态尾部不被误裁剪 | 删除入口自定义拼接分支和重复的固定前缀计数 |
 | `backend/agent/context/history.py` | tool history 规范化、时间提示和原子消息组 | 保留原子化能力，接入统一 history unit/token 计量 | 不删除 provider/tool 合法性清理；删除重复的窗口裁剪实现 |
 | `backend/agent/context/provider_history.py` | provider tool_use/tool_result 规范化 | 保持 provider payload 合法性，预算只由 ContextBudget 决定 | 删除与会话压缩重复的历史裁剪；保留 provider 特有格式清理 |
-| `backend/agent/core.py` | 每轮 preflight、inline compaction、413 retry，仍使用多套预算 | 统一 preflight/round retry/baseline 事件；压缩完成强制重试当前 round | 删除重复 safe/hard 预算分支、重复计数器和无进展 retry |
+| `backend/agent/core.py` | provider round、overflow retry 和 baseline 事件曾分散在多套预算分支 | 统一 provider usage/round retry/baseline 事件；压缩完成强制重试当前 round | 删除重复 safe/hard 预算分支、重复计数器和无进展 retry |
 | `backend/agent/runner.py` | IM/定时入口、历史读取、生成、baseline wrapper 多处重复 | 抽取可复用的最小执行函数，优先复用现有 runner；不再叠加新的入口 wrapper | 删除两套 `_run_*_unlocked` 中重复历史预算/等待 baseline 代码 |
 | `backend/agent/gateway/web.py` | Web 独立加载历史、生成 wrapper、baseline 更新 | 复用 runner/context 的最小执行函数；保留 Web stream/event 输出 | 删除 Web 专属 `history_budget`、重复 gate/wait 和旧后台生成分支 |
 | `backend/agent/im/loop.py` | 被动群落库 shortcut 与主动生成 | 以 session pending 状态区分主动/被动；统一 drain 与单任务执行 | 删除仅依靠入口局部判断的并发/重复回复防护 |
@@ -319,7 +323,7 @@ baseline 更新事务必须：
 | 数据库迁移目录 | 尚未承载统一 pending/revision schema | 新增可回滚迁移、旧 session 默认 idle、旧 baseline 可安全兼容 | 清理临时迁移和未使用索引 |
 | `backend/agent/loop_drivers.py` | provider 工具 JSON/单结果字段级截断 | 保持 provider payload 安全，调用统一 ContextBudget 的 retry 信号 | 不删除 provider 专属字段截断；删除重复 context history 裁剪 |
 | `backend/agent/rag/**` | RAG 动态尾部/快照去重 | 明确 dynamic tail 计入总预算，超限时不误删当前 RAG 结果；必要时按 RAG 结果数降级 | 删除把 RAG 当作独立历史预算的旧分支 |
-| `backend/tests/test_compaction.py` | 20%目标、inline compaction、gate 测试 | 改为 50% cap、无下限、当前 round 重试、无进展保护 | 删除旧 20%断言和重复 gate 断言 |
+| `backend/tests/test_compaction.py` | 压缩、inline compaction、gate 测试 | 覆盖最近 5k 原文窗口、旧 history 全量滚动摘要、当前 round 重试、无进展保护 | 删除旧最近 20 条断言和重复 gate 断言 |
 | `backend/tests/test_session_history.py` | 固定 35% reserve/history budget 测试 | 改测 ContextBudget 全量分项、baseline 增量和硬 cap 读取 | 删除 `history_budget_for_context` 专属测试 |
 | `backend/tests/test_im_protocol.py` | 被动群消息不触发生成测试 | 增加 pending、顺序 drain、单任务和跨 worker 场景 | 清理仅模拟 Redis key 的旧并发测试 |
 | 新增 `backend/tests/test_budget.py` | 无统一预算契约测试 | 覆盖总量、90%、50%、动态尾部、工具轮、单条超限 | — |
@@ -371,70 +375,97 @@ baseline 更新事务必须：
 
 ## 9. 完整实施 TODO
 
-### Phase 0：审计、基线与可观测性
+### Phase 0：审计、基线与可观测性（已完成）
 
-- [ ] 固化当前 Web/私聊/群聊/定时任务的 history、snapshot、baseline 调用链图。
-- [ ] 建立重构前代码量基线：运行时代码总行数、预算/压缩相关函数数、入口 wrapper 数和重复分支数。
-- [ ] 列出所有预算常量、history loader、compaction caller 和 retry caller，建立删除清单。
-- [ ] 为 `ContextBudget` 定义 Python 类型、字段命名和日志 schema。
-- [ ] 增加脱敏 `context-budget` 事件：总量、各分项、baseline、round、action、retry 次数；禁止记录正文。
-- [ ] 为长群会话、短私聊、Web 多工具、单条超大结果建立固定 fixture。
-- [ ] 明确旧 session/旧 snapshot/无 baseline 的迁移兼容策略。
+- [x] 固化当前 Web/私聊/群聊/定时任务的 history、snapshot、baseline 调用链图。
+- [x] 建立重构前代码量基线：运行时代码总行数、预算/压缩相关函数数、入口 wrapper 数和重复分支数。
+- [x] 列出所有预算常量、history loader、compaction caller 和 retry caller，建立删除清单。
+- [x] 为 `ContextBudget` 定义 Python 类型、字段命名和日志 schema。
+- [x] 增加脱敏 `budget` 事件：总量、各分项、baseline、round、action、retry 次数；禁止记录正文。
+- [x] 为长群会话、短私聊、Web 多工具、单条超大结果建立固定 fixture。
+- [x] 明确旧 session/旧 snapshot/无 baseline 的迁移兼容策略。
 
-### Phase 1：唯一 ContextBudget 与统一历史读取
+### Phase 1：唯一 ContextBudget 与统一历史读取（已完成）
 
-- [ ] 在唯一 `budget.py` 中实现总量计算、soft 90%、compression cap 50% 和 history capacity。
-- [ ] 将 `session_history` 改为只接收 ContextBudget 计划，不再自行计算 35% reserve。
-- [ ] 将 Web、IM、定时任务入口改为同一 history loader。
-- [ ] 查询层按 baseline、token 上限和条数安全上限加载，禁止全量超预算读取。
-- [ ] 保证动态尾部、工具 schema、当前消息和当前工具轮计入总量且不被历史裁剪误删。
-- [ ] 保留 tool call/tool result 原子消息组。
-- [ ] 补齐 ContextBudget 单元测试和入口一致性测试。
+- [x] 在唯一 `budget.py` 中实现总量计算、soft 90%、compression cap 50% 和 history capacity。
+- [x] 将 `session_history` 改为接收 ContextBudget 计划，不再由业务入口计算 35% reserve。
+- [x] 将 Web、IM、定时任务入口改为同一 history loader。
+- [x] 查询层按 baseline、token 上限和条数安全上限加载，禁止全量超预算读取。
+- [x] 保证动态尾部、工具 schema、当前消息和当前工具轮计入总量且不被历史裁剪误删。
+- [x] 保留 tool call/tool result 原子消息组。
+- [x] 补齐 ContextBudget 单元测试和入口一致性测试。
+
+Phase 1 仍保留旧 API 的短期兼容函数，供迁移中的外部调用和旧测试使用；它只委托 `budget.py`，不再拥有独立预算算法。该兼容层在 Phase 5 清理。
 
 ### Phase 2：硬预算、压缩 cap 与当前 round 重试
 
-- [ ] 将 core 的 preflight 改为 ContextBudget plan，并在每个 tool round 前调用。
-- [ ] inline compaction 只处理保护边界前的 history。
-- [ ] 将所有 20%目标改为“压缩后总量 <=50%，无下限”。
-- [ ] 压缩完成后重新组装当前 round 并强制重试。
-- [ ] 增加无进展检测、统一 retry counter 和单条输入过大错误。
-- [ ] provider 413 仅保留一次确定性兜底，不启动无限 LLM 压缩。
-- [ ] 验证超预算历史从数据库读取阶段即被限制。
+- [x] 将 core 的 preflight 改为 ContextBudget plan，并在每个 tool round 前调用。
+- [x] inline compaction 只处理保护边界前的 history。
+- [x] 将所有 20%目标改为“压缩后总量 <=50%，无下限”。
+- [x] 压缩完成后重新组装当前 round 并强制重试。
+- [x] 增加无进展检测、统一 retry counter 和单条输入过大错误。
+- [x] provider overflow 仅保留一次确定性兜底，不启动无限 LLM 压缩。
+- [x] 验证超预算历史从数据库读取阶段即被限制。
+
+Phase 2 的原 token 预检实现已被新的 provider usage 驱动方案替代：正常请求不再在发送前按本地 token 触发压缩；overflow 才进入压缩 retry，成功响应达到真实 usage 90% 后在 run 收尾推进 baseline。`ContextBudget` 仅保留 usage 分项、诊断和字符/条数兜底。
 
 ### Phase 3：Snapshot 单一 baseline
 
-- [ ] 把 inline compaction、后台 baseline 更新、手动 `/compact` 的提交契约统一到 baseline coordinator。
-- [ ] 设计并执行 ConversationSession revision/pending/baseline schema 迁移。
-- [ ] 在一项事务中提交 summary、snapshot、baseline、hash、revision 和覆盖范围。
-- [ ] 使用 row lock/CAS 防止旧压缩任务覆盖新 baseline。
-- [ ] 保证普通 run 不重建稳定 snapshot；只有 TTL/90% baseline 更新/明确维护点刷新。
-- [ ] baseline 更新成功后发布 invalidation/event，失败保留可恢复状态。
-- [ ] 更新 snapshot/hash/cache 相关测试。
+- [x] 把 inline compaction、后台 baseline 更新、手动 `/compact` 的提交契约统一到 baseline coordinator。
+- [x] 设计并执行 ConversationSession revision/pending/baseline schema 迁移。
+- [x] 在一项事务中提交 summary、snapshot、baseline、hash、revision 和覆盖范围。
+- [x] 使用 row lock/CAS 防止旧压缩任务覆盖新 baseline。
+- [x] 保证普通 run 不重建稳定 snapshot；只有 TTL/provider usage ≥90%/overflow retry/明确维护点刷新。
+- [x] baseline 更新成功后发布 invalidation/event，失败保留可恢复状态。
+- [x] 更新 snapshot/hash/cache 相关测试。
+
+Phase 3 已完成：现有 `ConversationSession.baseline_message_id/baseline_message_hash` 与 `session_context.context_revision` 已足够承载唯一 baseline；pending 属于 Phase 4 的执行状态，不额外扩张本阶段 schema。baseline 提交在同一事务内完成，并以行锁 + baseline hash CAS 防止旧摘要覆盖新水位；普通 run 不再刷新稳定 snapshot。baseline 触发改由 provider overflow 或成功 usage ≥90% 决定。
 
 ### Phase 4：单 session 执行与 pending
 
-- [ ] 实现 SessionExecutor，统一 Web/IM/定时任务入口。
-- [ ] 主动消息写入 session pending；running/baseline_updating 时不启动第二个 loop。
-- [ ] 当前任务完成后按 message id 顺序 drain pending，并保证不重复发送。
-- [ ] 被动群消息只落库，不标记主动 pending，不触发生成。
-- [ ] Redis gate 降级为跨 worker ownership/lease；pending 事实只读 session 状态。
+- [x] 以现有 `session_run_gate` 作为统一执行协调入口，覆盖 Web/IM/定时任务。
+- [x] 主动消息在 `ConversationSession.execution_state` 为 running/baseline_updating 时累加 pending，不启动并行 loop。
+- [x] gate 释放后按排队请求继续执行；每个请求只消费一次 pending 计数，避免重复发送。
+- [x] 被动群消息不进入 session gate，因此只落库、不标记主动 pending。
+- [x] Redis gate 只负责跨 worker ownership/lease；pending 事实保存在 session 字段。
 - [ ] 增加 worker 崩溃、租约过期、重复投递和跨进程 drain 测试。
+
+Phase 4 的运行时协调已完成；故障恢复与高并发 drain 测试归入 Phase 6 验收，不在本次代码清理中伪造通过。
+
+### Phase 4.1：provider usage 驱动的压缩结果与 baseline 原子收口（已完成）
+
+- [x] 仅在 provider context overflow，或 provider 成功且真实 usage ≥90% 的 run 收尾触发上下文压缩；普通最终回复和工具回合都经过同一条检查，正常请求不得使用本地 token 预检触发压缩。
+- [x] 统一使用 run 内 provider context usage 的高水位作为判定依据；多次 provider 请求的 input 不相加，避免工具轮数放大预算。
+- [x] 本轮发生 LLM 压缩或 provider overflow 后的确定性字符/条数兜底时，标记 `compaction_applied=True`，并贯穿到 run 收尾；`CompactionResult.return_reason` 必须保留实际原因。
+- [x] overflow 分支压缩后必须重新组装并 retry 当前 round；retry 后读取 provider 实际 usage，记录是否达到 50% 目标。run 收尾压缩不重复当前已经完成的输出。
+- [x] `compaction_applied=True` 时强制提交唯一 baseline；summary、baseline 水位和 hash 提交完成前不得释放 session gate。baseline 提交后下一轮只能从新 baseline 增量组装。
+- [x] baseline 更新状态改为可跨 worker 感知的持久状态；`_baseline_tasks` 只能作为当前进程的等待优化，不能作为事实来源。
+- [x] session gate 的 Redis 锁键收敛为 canonical `session_id`，pending 事实保存在 session 状态；Redis 只负责跨 worker ownership/lease，不能代替业务状态。
+- [x] 增加脱敏生命周期日志：provider usage 分项、`provider_overflow`、`usage_ratio`、`baseline_before`、`baseline_after`、`baseline_hash_before`、`baseline_hash_after`、`compaction_applied`、`persisted` 和 `execution_state`。
+- [x] 本地字符/条数兜底只在 overflow retry 仍失败或异常 payload 时执行，不新增 95% token 触发线，也不删除当前消息、动态尾部或不完整工具链。
+- [x] 增加回归测试：overflow 压缩后 retry、90% run 收尾 baseline、50% provider usage 验证、压缩后下一轮从新 baseline 开始、跨 worker baseline 更新不能被跳过、同 session 不得出现并行生成。
+
+Phase 4.1 已完成：baseline 更新状态写入 `ConversationSession.execution_state`，Redis 仅保留跨 worker lease；provider usage、压缩原因和 baseline 前后水位均有脱敏生命周期日志。普通最终回复收尾前也会执行一次 90% 检查，避免无工具长回复漏掉压缩；核心循环和 runner 使用同一 run 级 provider context usage 高水位。旧的路由元数据锁键已从执行协调路径移除，预算字段仅保留为兼容诊断和 provider overflow 兜底所需的数据。
 
 ### Phase 5：清理重复实现与兼容迁移
 
-- [ ] 删除/改名 `history_budget_for_context`、旧 budget ratio 和 20% target 常量。
-- [ ] 删除入口重复的 `_unlocked` 历史预算、等待 baseline 和 retry 分支。
-- [ ] 清理 local baseline task 作为事实来源的旧逻辑；仅保留可取消的进程内调度优化。
-- [ ] 清理旧 snapshot 双水位、legacy group 注入和临时 fallback 分支。
-- [ ] 复核 provider history/loop driver，确保只保留 payload 合法性处理。
-- [ ] 更新旧 PRD 的替代说明，删除互相矛盾的 TODO 和 20%描述。
+- [x] 删除/改名 `history_budget_for_context`、旧 budget ratio 和 20% target 常量。
+- [x] 删除入口重复的 `_unlocked` 历史预算、等待 baseline 和 retry 分支。
+- [x] 清理 local baseline task 作为事实来源的旧逻辑；仅保留可取消的进程内调度优化。
+- [x] 清理旧 snapshot 双水位、legacy group 注入和临时 fallback 分支。
+- [x] 复核 provider history/loop driver，确保只保留 payload 合法性处理。
+- [x] 更新旧 PRD 的替代说明，删除互相矛盾的 TODO 和 20%描述。
+
+Phase 5 已完成：预算、压缩、snapshot、baseline 的旧兼容 wrapper 与重复比例常量已删除；旧文档中的 checkpoint 仅保留迁移背景，并明确指向本 PRD。
 
 ### Phase 6：测试、压测、部署与收口
+
+已执行 Phase 6 自动化回归：上下文/压缩/baseline/gate 专项及新增 session gate 测试通过；全量 pytest 为 `1348 passed, 5 failed`。5 个失败均来自当前工作区既有的能力目录数量、飞书降级调用、Rust sidecar 配置测试，与本 PRD 改动无关，待对应模块单独处理后再完成最终验收。
 
 - [ ] 单元测试：ContextBudget、消息原子组、压缩 cap、硬截断、重试。
 - [ ] 集成测试：Web/私聊/群聊/定时任务统一历史窗口和 baseline 更新。
 - [ ] 并发测试：同 session 10 条消息只有一个 active task，pending 顺序稳定。
-- [ ] 回归测试：工具调用、图片附件、RAG 动态尾部、provider 413、模型切换。
+- [ ] 回归测试：工具调用、图片附件、RAG 动态尾部、provider overflow、模型切换。
 - [ ] 使用真实脱敏 LoopScope/trace 对比 cache、输入 token、压缩次数和响应顺序。
 - [ ] 在 devserver 执行迁移、重启 web/worker/supervisor，验证旧 session 可继续对话。
 - [ ] 清理探针、临时日志、临时迁移和无用兼容导出。
@@ -447,10 +478,12 @@ baseline 更新事务必须：
 
 ### 10.1 正确性
 
-- [ ] 任一入口发送给 provider 的 `total_tokens <= hard_limit_tokens`，除 provider 估算误差外不依赖 413 才裁剪。
-- [ ] 任何压缩结果的总上下文 `<= compression_cap_tokens`（模型上限 50%）。
-- [ ] 达到 90% 时当前 run 完成后才推进 baseline，不打断正常输出。
-- [ ] 超硬上限的压缩/裁剪提交后，当前 round 必须重试且不会重复用户消息。
+- [ ] 正常请求不执行本地 token 预检；压缩触发只来自 provider overflow 或成功 usage ≥90%。
+- [ ] provider overflow 后压缩并 retry，retry 后记录真实 usage 是否达到 50% 目标。
+- [ ] provider 成功且真实 usage ≥90% 时，当前 run 完成后才推进 baseline，不打断正常输出。
+- [ ] 本地字符/条数兜底不会替代 provider usage，也不会产生 95% token 触发语义。
+- [ ] 发生压缩或确定性截断的 run 必须在释放 session gate 前完成 baseline 持久化，下一轮不得重新读取旧 baseline。
+- [ ] baseline 更新状态、锁键和生命周期日志在单 worker/多 worker 场景下保持一致。
 - [ ] 当前 run 的 user、assistant/tool_use、tool_result 不会被压缩删除。
 - [ ] baseline、summary、snapshot、revision 同事务提交，旧任务不能覆盖新任务。
 - [ ] 同一 session 永远只有一个 active generation；pending 消息按顺序继续。
@@ -459,7 +492,7 @@ baseline 更新事务必须：
 ### 10.2 性能与缓存
 
 - [ ] 跨 run 首轮在 baseline 未变化时 history 前缀稳定，cache 不因每轮 inline summary 变化而抖动。
-- [ ] 长群会话不再每轮重复压缩；压缩次数与 90% baseline 更新次数一致。
+- [ ] 长群会话不再每轮重复压缩；压缩次数与 provider overflow/真实 usage ≥90% 事件一致。
 - [ ] 超大历史不会在数据库查询或 Python 内存中先完整加载。
 - [ ] pending drain 不产生重复 provider 请求和重复渠道发送。
 
@@ -469,18 +502,26 @@ baseline 更新事务必须：
 
 ```json
 {
-  "event": "budget",
+  "event": "provider_context_usage",
   "session_id_fp": "…",
   "run_id": "…",
   "round": 1,
   "model_context_tokens": 128000,
-  "total_tokens": 0,
+  "total_context_tokens": 0,
+  "uncached_input_tokens": 0,
+  "cached_input_tokens": 0,
+  "cache_write_tokens": 0,
   "fixed_prefix_tokens": 0,
   "dynamic_tail_tokens": 0,
   "history_tokens": 0,
   "current_turn_tokens": 0,
-  "soft_limit_tokens": 0,
-  "compression_cap_tokens": 0,
+  "usage_ratio": 0,
+  "compression_target_reached": false,
+  "overflow": false,
+  "compaction_applied": false,
+  "persisted": false,
+  "baseline_before": 0,
+  "baseline_after": 0,
   "baseline_message_id": 0,
   "action": "none|trim|compact|baseline_update|retry|queue",
   "pending": false,
@@ -506,7 +547,7 @@ baseline 更新事务必须：
 | --- | --- |
 | 旧 session 没有 baseline/revision | 迁移默认 baseline=0、revision=1，首轮按 ContextBudget 受限读取并在成功 baseline 更新后建立新水位。 |
 | 旧 summary/snapshot 结构不一致 | 读取时做一次结构归一化，写回新版本；不在每轮重建。 |
-| provider token 估算偏差 | 保留 provider overhead 和一次 413 确定性兜底；记录估算与实际错误类型。 |
+| provider usage 差异 | 记录归一化后的实际 usage 分项，并保留一次 overflow 确定性兜底；不以本地估算触发正常压缩。 |
 | 压缩模型失败 | 先执行本地原子裁剪；当前 run 不因后台 baseline 更新失败而丢回复。 |
 | worker 崩溃留下 running | lease + heartbeat 超时恢复；session pending/active_run_id 负责判断是否可重试。 |
 | cache 率下降 | 固定前缀只在 baseline/revision 变化时更新；动态成员记忆/RAG 留在动态尾部并计入预算。 |

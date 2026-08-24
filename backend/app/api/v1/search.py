@@ -18,6 +18,10 @@ from app.models import (
     ConversationSession, ConversationMessage, MindNode,
 )
 from app.utils.romaji import is_romaji_query, romaji_match
+from app.core.config import get_settings
+from app.models import KnowledgeIndexEntry
+from agent.rag.persistent_store import search_persistent_index
+from agent.rag.rust_sidecar import RustSidecarUnavailable
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -66,7 +70,7 @@ def _primary_rank(column, q: str):
     )
 
 
-async def run_global_search(db: AsyncSession, user_id, q: str, *,
+async def _run_ilike_search(db: AsyncSession, user_id, q: str, *,
                             per_type: int = PER_TYPE, types: list[str] | None = None,
                             queries: list[str] | None = None, mode: str = "OR") -> dict:
     """跨类型多关键词搜索核心逻辑。`types` 不传则搜全部，传了只搜指定类型
@@ -324,6 +328,126 @@ async def run_global_search(db: AsyncSession, user_id, q: str, *,
     total = sum(len(g["items"]) for g in groups)
     return {"query": original_query or " ".join(search_queries),
             "queries": search_queries, "mode": mode, "total": total, "groups": groups}
+
+
+INDEXED_SEARCH_TYPES = {"project", "file", "note"}
+INDEXED_LABELS = {"project": "项目", "file": "文件", "note": "便签"}
+
+
+async def _run_index_search(
+    db: AsyncSession, user_id, q: str, *, per_type: int,
+    types: list[str] | None, queries: list[str] | None, mode: str,
+) -> dict:
+    """使用持久化索引搜索已完成建索引的来源，其余来源交给原 ILIKE 查询。"""
+    original_query = (q or "").strip()
+    search_queries = normalize_queries(original_query, queries)
+    normalized_mode = normalize_mode(mode)
+    wanted = set(types) if types else set(ALL_TYPES)
+    indexed_types = wanted & INDEXED_SEARCH_TYPES
+    ilike_types = wanted - INDEXED_SEARCH_TYPES
+    if not indexed_types:
+        return await _run_ilike_search(
+            db, user_id, q, per_type=per_type, types=types,
+            queries=queries, mode=normalized_mode,
+        )
+
+    # 没有任何索引行的来源仍走 ILIKE，避免索引尚未重建时静默丢结果。
+    indexed_rows = (await db.execute(
+        select(KnowledgeIndexEntry.source_type).where(
+            KnowledgeIndexEntry.owner_user_id == user_id,
+            KnowledgeIndexEntry.source_type.in_(indexed_types),
+            KnowledgeIndexEntry.deleted_at.is_(None),
+        ).distinct()
+    )).scalars().all()
+    ready_types = indexed_types & set(indexed_rows)
+    ilike_types |= indexed_types - ready_types
+    groups_by_type: dict[str, dict] = {}
+    if ready_types and search_queries:
+        hits = []
+        for source in sorted(ready_types):
+            try:
+                hits.extend(await search_persistent_index(
+                    db, user_id, " ".join(search_queries),
+                    source_types={source}, limit=max(per_type * 3, per_type),
+                ))
+            except RustSidecarUnavailable:
+                # sidecar 未部署或临时不可用时，继续走同类型 ILIKE，避免全局搜索 500。
+                ilike_types.add(source)
+        # 一个业务对象可能有多个 chunk，只保留最高分 chunk，保持每类输出条数稳定。
+        hit_ids: dict[str, list[str]] = {source: [] for source in ready_types}
+        hit_docs: dict[tuple[str, str], object] = {}
+        for hit in hits:
+            source = hit.document.source_type
+            source_id = hit.document.source_id
+            key = (source, source_id)
+            if source_id not in hit_ids.setdefault(source, []):
+                hit_ids[source].append(source_id)
+                hit_docs[key] = hit.document
+            if len(hit_ids[source]) >= per_type:
+                continue
+
+        for source in ready_types:
+            ids = hit_ids.get(source, [])[:per_type]
+            if not ids:
+                continue
+            if source == "project":
+                rows = (await db.execute(select(Project).where(
+                    Project.user_id == user_id, Project.id.in_([int(i) for i in ids if str(i).isdigit()]),
+                ))).scalars().all()
+                by_id = {str(row.id): row for row in rows}
+                items = [{"id": row.id, "title": row.name,
+                          "subtitle": " · ".join(filter(None, [row.client, row.status]))}
+                         for key in ids if (row := by_id.get(str(key)))]
+            elif source == "file":
+                rows = (await db.execute(select(File).where(
+                    File.user_id == user_id, File.deleted_at.is_(None),
+                    File.id.in_([int(i) for i in ids if str(i).isdigit()]),
+                ))).scalars().all()
+                by_id = {str(row.id): row for row in rows}
+                space = {"project": "项目", "mind": "思维", "asset": "素材", "personal": "个人"}
+                items = [{"id": row.id,
+                          "title": f"{row.display_name}.{row.ext}" if row.ext else row.display_name,
+                          "subtitle": f"{space.get(row.space, row.space)}空间 · {row.size}".strip(" ·")}
+                         for key in ids if (row := by_id.get(str(key)))]
+            else:
+                rows = (await db.execute(select(MindNode).where(
+                    MindNode.user_id == user_id, MindNode.kind == "note",
+                    MindNode.deleted_at.is_(None),
+                    MindNode.id.in_([int(i) for i in ids if str(i).isdigit()]),
+                ))).scalars().all()
+                by_id = {str(row.id): row for row in rows}
+                items = [{"id": row.id,
+                          "title": row.title or "无标题便签",
+                          "subtitle": _snippet_for_queries(
+                              hit_docs[(source, str(row.id))].content, search_queries),
+                          "version": row.version}
+                         for key in ids if (row := by_id.get(str(key)))]
+            if items:
+                groups_by_type[source] = {"type": source, "label": INDEXED_LABELS[source], "items": items}
+
+    if ilike_types:
+        ilike_result = await _run_ilike_search(
+            db, user_id, q, per_type=per_type, types=sorted(ilike_types),
+            queries=queries, mode=normalized_mode,
+        )
+        groups_by_type.update({group["type"]: group for group in ilike_result["groups"]})
+    groups = [groups_by_type[source] for source in ALL_TYPES if source in groups_by_type]
+    return {"query": original_query or " ".join(search_queries),
+            "queries": search_queries, "mode": normalized_mode,
+            "total": sum(len(group["items"]) for group in groups), "groups": groups}
+
+
+async def run_global_search(db: AsyncSession, user_id, q: str, *,
+                            per_type: int = PER_TYPE, types: list[str] | None = None,
+                            queries: list[str] | None = None, mode: str = "OR") -> dict:
+    """统一全局搜索入口；Admin 可在索引与 ILIKE 之间热切换。"""
+    if get_settings().search.global_search_backend == "ilike":
+        return await _run_ilike_search(
+            db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode,
+        )
+    return await _run_index_search(
+        db, user_id, q, per_type=per_type, types=types, queries=queries, mode=mode,
+    )
 
 
 @router.get("")

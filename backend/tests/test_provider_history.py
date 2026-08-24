@@ -1,7 +1,12 @@
 from types import SimpleNamespace
 
 from agent.context.history import build_history_parts
-from agent.context.provider_history import clean_persisted_history, prepare_session, strip_thinking_blocks
+from agent.context.provider_history import (
+    clean_persisted_history,
+    prepare_session,
+    render_anthropic_message_roles,
+    strip_thinking_blocks,
+)
 
 
 class _Adapter:
@@ -9,6 +14,16 @@ class _Adapter:
 
     def protocol_format(self, ai):
         return "anthropic"
+
+
+def test_native_anthropic_renders_internal_system_reminder_as_user():
+    messages = [
+        {"role": "system", "content": "[system-reminder]\n时间\n[/system-reminder]"},
+        {"role": "user", "content": "继续"},
+    ]
+    result = render_anthropic_message_roles(messages, SimpleNamespace(name="anthropic"))
+    assert [item["role"] for item in result] == ["user", "user"]
+    assert render_anthropic_message_roles(messages, SimpleNamespace(name="minimax")) == messages
 
 
 def test_strip_thinking_blocks_keeps_text_and_tools():

@@ -45,12 +45,20 @@ async def send_text(payload: dict, text: str) -> bool:
 async def send_interaction(payload: dict, prompt: dict) -> bool:
     """统一发送交互提示。
 
-    目前只有 QQ 接入了原生 Keyboard；飞书和微信不尝试发送未适配的卡片或
-    按钮协议，始终把 ask_user/确认选项降级为普通文本。
+    QQ 使用 Keyboard，飞书使用交互卡片；两者失败后都复用同一份文本降级。
     """
     from agent.interactions.qq import format_text_fallback
 
     platform = payload.get("platform")
+    if platform == "feishu" and prompt.get("options"):
+        from agent.gateway import feishu
+
+        target_id = payload.get("chat_id") or payload.get("platform_user_id")
+        if target_id and await feishu.send_interaction_card(
+            target_id, prompt, channel_id=payload.get("channel_id")
+        ):
+            return True
+        return await send_text(payload, format_text_fallback(prompt, platform="feishu"))
     if platform != "qq":
         return await send_text(payload, format_text_fallback(prompt, platform=platform))
 
@@ -373,7 +381,7 @@ async def send_stream_with_fallback(
     return bool(stream_sent), response, reply_text
 
 
-async def send_agent_response(payload: dict, response: AgentResponse) -> str:
+async def send_agent_response(payload: dict, response: AgentResponse) -> str | None:
     """统一收尾一轮 AgentResponse：先发送附件，再发送文本说明。
 
     IM Loop 不再分别判断平台、文件和文本入口；平台 capability 由
@@ -388,5 +396,6 @@ async def send_agent_response(payload: dict, response: AgentResponse) -> str:
     if result.failed:
         reply_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
     if payload.get("platform") != "feishu" or not response.files:
-        await send_text(payload, reply_text)
+        if not await send_text(payload, reply_text):
+            return None
     return reply_text

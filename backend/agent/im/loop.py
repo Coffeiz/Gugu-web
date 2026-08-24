@@ -20,13 +20,13 @@ from agent.im.owner_session import (
     resolve_session as resolve_owner_session,
 )
 from agent.im.permissions import resolve_access
+from app.services.conversation_retention import trim_session_messages
 from agent.im.session import (
     SessionRoute,
     get_session,
     resolve_route,
     resolve_session_id,
     set_session,
-    trim_session_messages,
 )
 from agent.models import AgentRequest
 
@@ -997,6 +997,16 @@ async def dispatch_im_message(payload: dict):
                 await send_text(payload, file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。")
     elif platform != "feishu" or resp.files:
         reply_text = await send_agent_response(payload, resp)
+
+    if reply_text is None:
+        # 生成成功不等于平台送达；避免把 QQ 400 等发送失败记录成成功回复。
+        trace.finish_run("error")
+        await finalize_im_response(platform, puid, False, "")
+        print(
+            f"[im-loop] {platform} 回复发送失败(session={resp.session_id} trace={trace_id})",
+            flush=True,
+        )
+        return resp
 
     trace.finish_run("success", reply_text)
     await finalize_im_response(platform, puid, False, reply_text)

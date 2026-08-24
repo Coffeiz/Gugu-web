@@ -90,3 +90,16 @@ def test_sanitize_drops_tool_result_without_id_without_raising():
         for block in message["content"]
         if block.get("type") == "tool_result"
     )
+
+
+def test_sanitize_preserves_leading_system_snapshot():
+    """system snapshot 是固定前缀，不能被历史清洗器按旧 user 首条规则删掉。"""
+    messages = [
+        {"role": "system", "content": "[system-reminder]\n项目快照\n[/system-reminder]"},
+        {"role": "user", "content": "看看项目"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert [item["role"] for item in cleaned] == ["system", "user"]
+    assert "项目快照" in cleaned[0]["content"][0]["text"]

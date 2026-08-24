@@ -36,8 +36,61 @@ def test_user_message_time_is_a_stable_separate_reminder_in_history():
 
     assert result == [
         {"role": "user", "content": "测试"},
-        {"role": "user", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"},
+        {"role": "system", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"},
     ]
+
+
+def test_history_restores_quoted_text_without_rewriting_message_content():
+    from agent.models import AgentRequest
+
+    message = SimpleNamespace(
+        role="user",
+        content="嗯",
+        quoted_text="双曲线三号是星际荣耀的技术路线",
+        content_json=None,
+        sent_at=None,
+        chat_type="group",
+        platform_user_id="member-1",
+        platform_user_name="小北",
+    )
+
+    result = build_history_parts(
+        [message], AgentRequest(message="", user_id="owner", user_name="小北"),
+        use_anthropic=True,
+    )
+
+    assert "双曲线三号是星际荣耀的技术路线" in result[0]["content"]
+    assert result[0]["content"].endswith("嗯")
+
+
+def test_history_restores_quoted_text_for_all_im_sources_and_providers():
+    from agent.models import AgentRequest
+
+    for source in ("qq", "feishu", "wechat"):
+        message = SimpleNamespace(
+            role="user",
+            content="继续",
+            quoted_text="上一条平台消息的正文",
+            content_json=None,
+            sent_at=None,
+            chat_type="group",
+            platform_user_id="member-1",
+            platform_user_name="小北",
+        )
+        request = AgentRequest(
+            message="",
+            user_id="owner",
+            user_name="小北",
+            source=source,
+            chat_id="group-1",
+        )
+
+        for use_anthropic in (True, False):
+            result = build_history_parts(
+                [message], request, use_anthropic=use_anthropic,
+            )
+            assert "上一条平台消息的正文" in str(result)
+            assert "继续" in str(result)
 
 
 def test_user_message_time_stays_after_complete_tool_turn():
@@ -59,8 +112,42 @@ def test_user_message_time_stays_after_complete_tool_turn():
         use_anthropic=False, user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert [item["role"] for item in result] == ["user", "assistant", "tool", "user"]
-    assert result[-1]["content"] == "[system-reminder]\n08-22 15:22\n[/system-reminder]"
+    assert [item["role"] for item in result] == ["user", "assistant", "tool", "system"]
+    assert result[-1] == {"role": "system", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"}
+
+
+def test_canonical_events_do_not_split_user_turn_timestamp_boundary():
+    """RAG/schema 属于同一 turn，不能在它们前面重复插入消息时间。"""
+    from agent.models import AgentRequest
+
+    user = SimpleNamespace(
+        role="user", content="今天天气如何", content_json=None,
+        sent_at=datetime(2026, 8, 25, 0, 26, tzinfo=timezone.utc),
+        chat_type=None, platform_user_id=None, platform_user_name=None,
+    )
+    rag = _message("user", [{
+        "type": "knowledge-context", "scope": "owner-rag",
+        "text": "南京近期天气记录", "content_hash": "rag-1",
+    }])
+    schema = _message("user", [{
+        "type": "skill-schema", "skill_name": "weather", "tools": ["http_get"],
+    }])
+    next_user = SimpleNamespace(
+        role="user", content="好潮湿", content_json=None,
+        sent_at=None, chat_type=None, platform_user_id=None, platform_user_name=None,
+    )
+
+    result = build_history_parts(
+        [user, rag, schema, next_user],
+        AgentRequest(message="", user_id="owner", user_name="小北"),
+        use_anthropic=True,
+        user_tz=ZoneInfo("Asia/Shanghai"),
+    )
+
+    assert [item["role"] for item in result] == ["user", "user", "user", "system", "user"]
+    assert result[1]["content"][0]["type"] == "text"
+    assert result[2]["content"][0]["type"] == "text"
+    assert result[3]["content"] == "[system-reminder]\n08-25 08:26\n[/system-reminder]"
 
 
 def test_anthropic_history_keeps_native_tool_blocks():

@@ -339,6 +339,34 @@
         <div class="behavior-grid">
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
+              <span>站内全局搜索后端</span>
+              <span class="behavior-desc">默认使用 ILIKE 兼容查询；持久化 BM25 索引可作为灰度路径开启。索引未覆盖的来源仍继续使用兼容查询。</span>
+            </div>
+            <AdminSelect
+              :model-value="generalSearchDraft.global_search_backend"
+              :options="[
+                { value: 'index', label: '持久化索引（BM25）' },
+                { value: 'ilike', label: 'ILIKE 兼容模式' },
+              ]"
+              @update:model-value="generalSearchDraft.global_search_backend = $event"
+            />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
+              <span>RAG 词法召回后端</span>
+              <span class="behavior-desc">Rust/Tantivy 为默认后端；选择 Python BM25 仅用于兼容与排障，不影响站内全局搜索的 ILIKE 选项。</span>
+            </div>
+            <AdminSelect
+              :model-value="generalSearchDraft.rust_lexical_backend"
+              :options="[
+                { value: 'rust', label: 'Rust/Tantivy BM25' },
+                { value: 'python', label: 'Python BM25（兼容）' },
+              ]"
+              @update:model-value="generalSearchDraft.rust_lexical_backend = $event"
+            />
+          </div>
+          <div class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label">
               <span>SearXNG 地址（通用搜索 web_search）</span>
               <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索、全部走 Tavily。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
             </div>
@@ -901,14 +929,15 @@ function setCapabilityOverride(key: string, enabled: boolean) {
 }
 
 async function probeCapabilities(id: string) {
-  if (!id || capabilityProbeLoading.value) return
+  const target = editTarget.value
+  if (!id || capabilityProbeLoading.value || !target) return
   capabilityProbeLoading.value = true
   try {
     const res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${id}/capabilities`, { method: 'POST' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || '能力检测失败')
-    editTarget.value.capability_checked_at = data.checked_at || ''
-    editTarget.value.capability_fingerprint = data.fingerprint || ''
+    target.capability_checked_at = data.checked_at || ''
+    target.capability_fingerprint = data.fingerprint || ''
     capabilityProbeResult.value = data.results || {}
     const mappings = [
       ['tools', 'tools'],
@@ -916,13 +945,13 @@ async function probeCapabilities(id: string) {
       ['structured_schema', 'json_schema'],
       ['thinking', 'reasoning'],
     ] as const
-    const next = { ...(editTarget.value.capability_overrides || {}) }
+    const next = { ...(target.capability_overrides || {}) }
     for (const [capability, resultKey] of mappings) {
       const status = capabilityProbeResult.value[resultKey]?.status
       if (status === '支持') next[capability] = true
       else if (status === '需服务端配置') next[capability] = false
     }
-    editTarget.value.capability_overrides = next
+    target.capability_overrides = next
   } catch (e) {
     editError.value = e instanceof Error ? e.message : '能力检测失败'
   } finally {
@@ -937,7 +966,8 @@ function selectModel(model: string) {
 }
 
 async function fetchModelList() {
-  if (!editTarget.value || modelListLoading.value) return
+  const target = editTarget.value
+  if (!target || modelListLoading.value) return
   modelListLoading.value = true
   modelListError.value = ''
   modelMenuOpen.value = true
@@ -949,15 +979,15 @@ async function fetchModelList() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider: editTarget.value.provider,
-          base_url: editTarget.value.base_url,
-          api_key: editTarget.value.api_key,
-          api_format: editTarget.value.api_format || '',
-          local_runtime: editTarget.value.local_runtime || 'other',
+          provider: target.provider,
+          base_url: target.base_url,
+          api_key: target.api_key,
+          api_format: target.api_format || '',
+          local_runtime: target.local_runtime || 'other',
         }),
       })
     } else {
-      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${editTarget.value.id}/models`)
+      res = await adminStore.authFetch(`/api/v1/admin/agent/llm-presets/${target.id}/models`)
     }
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.detail || '获取模型列表失败')
@@ -972,18 +1002,19 @@ async function fetchModelList() {
 }
 
 function setEditProvider(key: string) {
+  const target = editTarget.value
   const pv = PROVIDERS.find(p => p.key === key)
-  if (!pv) return
-  editTarget.value.provider = key
-  editTarget.value.base_url = pv.base_url
-  editTarget.value.model    = pv.model
+  if (!pv || !target) return
+  target.provider = key
+  target.base_url = pv.base_url
+  target.model    = pv.model
   // mimo 同时提供两套 API：默认 openai 格式；切到别的 provider 清掉（走自动判定）
-  editTarget.value.api_format = key === 'mimo' ? 'openai' : ''
-  editTarget.value.deployment_mode = key === 'local' ? 'local' : 'cloud'
-  editTarget.value.ollama_mode = key === 'ollama' ? 'local' : (editTarget.value.ollama_mode || 'local')
+  target.api_format = key === 'mimo' ? 'openai' : ''
+  target.deployment_mode = key === 'local' ? 'local' : 'cloud'
+  target.ollama_mode = key === 'ollama' ? 'local' : (target.ollama_mode || 'local')
   if (key === 'ollama') {
-    editTarget.value.ollama_api_mode = editTarget.value.ollama_api_mode || 'native'
-    editTarget.value.ollama_keep_alive = editTarget.value.ollama_keep_alive || '5m'
+    target.ollama_api_mode = target.ollama_api_mode || 'native'
+    target.ollama_keep_alive = target.ollama_keep_alive || '5m'
   }
   modelOptions.value = []
   modelListError.value = ''
@@ -1002,20 +1033,24 @@ function setOllamaMode(mode: 'local' | 'cloud') {
 
 // 选 API 格式时，同步切换 mimo 端点后缀（host 保留，只改 /v1 ↔ /anthropic）
 function pickApiFormat(fmt: string) {
-  editTarget.value.api_format = fmt
-  const bu = (editTarget.value.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
+  const target = editTarget.value
+  if (!target) return
+  target.api_format = fmt
+  const bu = (target.base_url || '').replace(/\/(v1|anthropic)\/?$/, '')
   if (bu.includes('xiaomimimo')) {
-    editTarget.value.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
+    target.base_url = bu + (fmt === 'anthropic' ? '/anthropic' : '/v1')
   }
   modelOptions.value = []
   modelListError.value = ''
 }
 
 async function savePreset() {
+  const target = editTarget.value
+  if (!target) return
   editSaving.value = true
   editError.value  = ''
   try {
-    const body = { ...editTarget.value }
+    const body = { ...target }
     let res
     if (editIsNew.value) {
       res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets', {
@@ -1048,6 +1083,8 @@ async function savePreset() {
 // 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
 // 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
 async function probeVision(id: string | number, dim?: string) {
+  const target = editTarget.value
+  if (dim && !target) return
   if (dim) {
     probingDim.value = dim
   } else {
@@ -1065,7 +1102,7 @@ async function probeVision(id: string | number, dim?: string) {
       else                               showMsg(`${label}：测不准：${data.detail}`, true)
       if (data.supported === true) {
         const field = dim === 'image' ? 'vision' : 'vision_' + dim
-        editTarget.value[field] = true
+        target![field] = true
       }
     } else {
       // 全维度（卡片）

@@ -1,6 +1,6 @@
 # 事件型长期记忆与压缩去重
 
-> 状态：方案确认，尚未实施
+> 状态：Phase 0–4 已完成，Phase 5 待实施
 > 创建：2026-08-24
 > 关联文档：[`docs/agent/11-记忆系统.md`](../../agent/11-记忆系统.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)
 > 目标：明确 profile、pattern、memory 的边界，把 memory.md 收敛为事件/对话记忆，并在 daily 压缩时用少量 RAG 历史参考减少重复。
@@ -144,6 +144,19 @@ RAG 结果只用于辅助识别重复、补全背景和发现冲突，不能替�
 
 ## 7. 实施文件盘点
 
+### 7.0 Phase 0 盘点结论
+
+| 链路 | 当前实现 | Phase 0 结论 |
+|---|---|---|
+| profile | reflection.py 输出增量 profile_add/profile_remove，store.py 去重后写入 profile.json | 保持现状，不并入事件 memory |
+| pattern | reflection.py 输出增量 pattern_add/pattern_remove，store.py 按相似度和置信度合并 | 保持现状，不并入事件 memory |
+| daily | reflection.py 追加带日期条目；达到条数水位后由 compress.compact 批量处理 | 作为事件缓冲，不在本阶段改变阈值 |
+| memory | compress.py 读取旧主档、profile、pattern 和 daily 批次后调用维护模型重写 | 接入事件章节规范化和输出校验 |
+| 向量 | store.sync_memory_vecs 在 memory 重写后同步章节/块缓存 | 生命周期与增量 hash 留给 Phase 3 |
+| scope | owner 与 IM scope 复用 scoped_store/im_reflection | 本阶段只固定公共事件契约，不改变 IM 归因 |
+
+盘点确认：Phase 0 不新增独立存储，不把 profile、pattern 改成事件索引；事件 memory 的公共标题、章节解析和 hash 契约由 backend/agent/memory/event_memory.py 提供。
+
 ### 7.1 预计修改
 
 - `backend/agent/memory/reflection.py`：明确 daily 提取为事件记录，减少把 profile/pattern 内容写入 daily；
@@ -166,14 +179,14 @@ RAG 结果只用于辅助识别重复、补全背景和发现冲突，不能替�
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
-| Phase 0 | 盘点现有 profile/pattern/daily/memory 写入、压缩和向量链路 | 🔲 |
-| Phase 1 | 固定事件型 memory 边界、标题格式和 Prompt | 🔲 |
-| Phase 2 | 接入压缩阶段历史事件 RAG，最多 10 条并保留失败回退 | 🔲 |
-| Phase 3 | 规范章节去重、冲突修正、hash 和 memory_vec 增量同步 | 🔲 |
-| Phase 4 | 补齐 owner/IM scope、删除失效、压缩异常和回归测试 | 🔲 |
+| Phase 0 | 盘点现有 profile/pattern/daily/memory 写入、压缩和向量链路 | ✅ |
+| Phase 1 | 固定事件型 memory 边界、标题格式和 Prompt | ✅ |
+| Phase 2 | 接入压缩阶段历史事件 RAG，最多 10 条并保留失败回退 | ✅ |
+| Phase 3 | 规范章节去重、冲突修正、hash 和 memory_vec 增量同步 | ✅ |
+| Phase 4 | 补齐 owner/IM scope、删除失效、压缩异常和回归测试 | ✅ |
 | Phase 5 | 在 devserver 验证事件重复率、召回质量、压缩延迟和上下文体积 | 🔲 |
 
-最低验收标准：
+最低验收标准（Phase 0–1）：
 
 1. profile/pattern 不再被整段复制进 memory 事件；
 2. 相同事件跨多个 daily 批次不会无限重复生成章节；
@@ -183,6 +196,26 @@ RAG 结果只用于辅助识别重复、补全背景和发现冲突，不能替�
 6. memory 重写后向量缓存能增量更新，旧块不会残留；
 7. owner、群组和成员记忆不会跨 scope 召回；
 8. 压缩失败不会覆盖旧 memory，也不会丢弃 daily。
+
+Phase 0–1 已完成的验收：
+
+- memory.md 新输出统一规范为「## 记录长期记忆：<事件标题>」章节；旧无标题主档仅在重写时包裹为兼容事件章节；
+- 压缩 Prompt 明确 profile/pattern 与事件 memory 的边界、日期要求、重复合并和冲突修正规则；
+- 空输出、日期校验和原有失败回退仍保留；事件章节解析与稳定 hash 已有单元测试。
+
+Phase 2 已完成的验收：
+
+- daily 压缩前用当前批次构造 BM25 查询，只从 owner memory scope 召回历史事件；
+- 压缩阶段最多使用 10 条历史参考，并设置总字符上限，不把 chunk、scope、score 等内部字段注入模型；
+- RAG 不可用、索引缺失或召回异常时，压缩继续使用原有完整 memory 输入，不阻塞压缩，也不裁剪 daily；
+- 已补充历史参考数量、scope/策略和召回失败回退测试。
+
+Phase 3–4 已完成的验收：
+
+- owner 与 IM 群组压缩统一经过事件章节规范化；同标题章节合并，相同正文按稳定 hash 去重，后续补充内容按原顺序保留；事实冲突仍由维护模型结合日期处理。
+- owner memory 重写继续使用 `memory_vec.json` 的块文本 hash 增量同步：未变化块复用向量，新增/变化块补算，消失块清理；embedding 不可用时保持 no-op。
+- owner 召回严格使用 owner scope；IM 群组使用自身 scope 的存储和压缩链路，成员 scope 不读取群组 memory；删除通过 tombstone、scope 锁和 scope 前缀清理，避免删除后旧索引/旧文件复活。
+- owner、IM 群组的压缩异常均不覆盖旧 memory、不裁剪 daily；已补充章节去重、群组规范化、异常回退和删除屏障回归测试。
 
 ## 9. 与现有方案的关系
 

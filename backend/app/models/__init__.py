@@ -422,6 +422,10 @@ class ConversationSession(Base):
     # 压缩后的连续历史水位：旧消息保留在数据库，但运行时只从该消息之后追加。
     baseline_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
     baseline_message_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 单 session 执行状态：Redis 只负责跨 worker 租约，这些字段才是 pending 的持久事实。
+    execution_state: Mapped[str] = mapped_column(String(24), default="idle", server_default="idle", index=True)
+    active_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    pending_message_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # 最近一次发送历史所使用的 provider/API 格式。切换时只触发一次历史 thinking 清理，
     # 不把 provider 专属签名写回 canonical history。
     history_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -649,7 +653,7 @@ class KnowledgeIndexEntry(Base):
     """统一知识索引的持久化 chunk。
 
     业务表仍然是事实来源；这张表只保存可重建的检索投影。scope 字段与正文
-    同行保存，查询时先做 owner/scope 过滤，再进入 BM25 或数据库全文索引。
+    同行保存，查询时先做 owner/scope 过滤，再进入 Rust lexical 或数据库 ILIKE 兼容路径。
     """
 
     __tablename__ = "knowledge_index_entries"

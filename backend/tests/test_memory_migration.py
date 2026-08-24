@@ -397,6 +397,7 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
 
     ok = await compress.compact(UID, SimpleNamespace())
     assert ok is True
+    assert "已有的长期记忆" in captured["user"]
     assert "已结构化的用户画像" in captured["user"]
     assert "用户住南京" in captured["user"]
     assert "已结构化的行为模式" in captured["user"]

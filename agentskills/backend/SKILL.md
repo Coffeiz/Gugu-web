@@ -43,9 +43,9 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 ## LLM Prompt 缓存策略
 
-**当前策略（2026-08-19 新架构）**：system prompt 只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过 `[system-reminder]` 注入 `messages[0]`。system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存稳定命中 90%+。
+**当前策略（2026-08-24）**：system prompt 只包含静态内容（persona/skills/policy），动态内容（beh/memory/projects/time）通过带 `[system-reminder]` 的 `role=system` 消息注入 conversation。内部上下文与真实 user message 分离；原生 Anthropic adapter 在 wire 边界把消息级 system reminder 转成允许的 user message，MiniMax/百炼按已验证能力保留 system role。system prefix 跨 call 完全一致，MiniMax 前缀匹配缓存稳定命中 90%+。
 
-**为什么把动态内容移到 messages**：测试验证 behavior block（相处姿态）在不同 call 间变化（Query 430 chars → Companion 705 chars），导致 system prefix 断裂，缓存命中率从 99%+ 降到 0.4%。移到 messages[0] 后，system 完全不变，缓存恢复到 91.6%。
+**为什么把动态内容移到 conversation**：测试验证 behavior block（相处姿态）在不同 call 间变化（Query 430 chars → Companion 705 chars），导致 system prefix 断裂，缓存命中率从 99%+ 降到 0.4%。移到 conversation 后，静态 system 完全不变；再用 role=system 表达其语义，避免模型把动态上下文误当成用户发言。
 
 **实现位置**：`backend/agent/runner.py` 组装段 + `backend/agent/context/builder.py` 的 `build_split()`。
 

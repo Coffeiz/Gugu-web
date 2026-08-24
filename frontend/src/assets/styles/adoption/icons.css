@@ -17,7 +17,11 @@ html[data-theme][data-family] .app-icon--active { color: var(--icon-color-active
 html[data-theme][data-family] .app-icon--danger { color: var(--icon-color-danger); }
 html[data-theme][data-family] .app-icon--inherit { color: inherit; }
 
+/* GlobalSearch 的结果图标不能继承页面默认前景色，统一使用搜索结果弱化色。 */
+html[data-theme][data-family] .gs-item-icon {
+  color: var(--topbar-search-result-icon);
+}
+
 @media (prefers-reduced-motion: reduce) {
   html[data-theme][data-family] .app-icon { transition: none; }
 }
-

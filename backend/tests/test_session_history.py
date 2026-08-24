@@ -2,8 +2,9 @@
 
 import asyncio
 
+from agent.context.budget import ContextBudget
 from agent.context.session_history import (
-    history_budget_for_context,
+    consume_history_stats,
     load_session_history,
     select_history_window,
 )
@@ -47,10 +48,19 @@ class _Message:
         self.content_json = content_json
 
 
+async def _load_history_and_stats(rows):
+    result = await load_session_history(_Db(rows), 10, token_budget=10_000)
+    return result, consume_history_stats()
+
+
 def test_load_session_history_returns_database_order():
     rows = [_Message(1), _Message(2), _Message(3)]
-    result = asyncio.run(load_session_history(_Db(rows), 10, token_budget=10_000))
+    result, stats = asyncio.run(_load_history_and_stats(rows))
     assert [item.id for item in result] == [1, 2, 3]
+    assert stats["history_loaded_count"] == 3
+    assert stats["history_selected_count"] == 3
+    assert stats["history_oldest_selected_id"] == 1
+    assert stats["history_newest_selected_id"] == 3
 
 
 def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
@@ -61,15 +71,15 @@ def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     assert any("conversation_messages.id >" in query for query in db.last_queries)
 
 
-def test_history_budget_reserves_fixed_context_and_dynamic_tail():
-    full = history_budget_for_context(120_000)
-    reserved = history_budget_for_context(
+def test_context_budget_reserves_fixed_context_and_dynamic_tail():
+    full = ContextBudget.for_history(120_000)
+    reserved = ContextBudget.for_history(
         120_000,
-        system_prompt="系统提示" * 1000,
-        snapshot_context="群记忆" * 1000,
+        fixed_prefix_text="系统提示" * 1000 + "群记忆" * 1000,
+        dynamic_tail_tokens=800,
     )
-    assert reserved < full
-    assert reserved > 1
+    assert reserved.history_capacity_tokens < full.history_capacity_tokens
+    assert reserved.history_capacity_tokens > 1
 
 
 def test_history_window_keeps_tool_call_and_result_together():

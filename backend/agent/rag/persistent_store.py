@@ -8,7 +8,6 @@ from sqlalchemy import delete, select
 from agent.rag.models import IndexDocument, Scope
 from app.models import KnowledgeIndexEntry
 from app.core.tz import now_utc
-from agent.rag.lexical import BM25
 from agent.rag.models import RecallResult
 
 
@@ -153,7 +152,7 @@ async def search_persistent_index(
     scope: Scope | None = None,
     limit: int = 10,
 ) -> list[RecallResult]:
-    """在持久化 chunk 上做 BM25；权限先由数据库 owner 条件收窄。"""
+    """在持久化 chunk 上使用 Rust lexical index；权限先由 owner 收窄。"""
     requested_limit = max(1, min(int(limit), 50))
     types = sorted(source_types or {
         "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
@@ -163,7 +162,9 @@ async def search_persistent_index(
     results = []
     for source_type in types:
         index = await get_index_cache().get(db, owner_user_id, source_type, scope)
-        results.extend(index.search(query, limit=requested_limit))
+        results.extend(await index.search(
+            query, limit=requested_limit, source_types={source_type}, scope=scope,
+        ))
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
     return results[:requested_limit]
 

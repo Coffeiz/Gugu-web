@@ -259,12 +259,12 @@ onBeforeUnmount(() => {
 .gs-item:hover { background: rgba(123, 127, 178, 0.08); }
 
 .gs-item-icon {
-  color: var(--color-primary);
+  color: var(--topbar-search-result-icon);
   flex-shrink: 0;
 }
 .gs-item-title {
   font-size: 13px;
-  color: var(--text-primary);
+  color: var(--topbar-search-result-fg);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -273,7 +273,7 @@ onBeforeUnmount(() => {
 }
 .gs-item-sub {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--topbar-search-result-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

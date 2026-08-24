@@ -1,4 +1,4 @@
-"""BM25 与已有 embedding 缓存的确定性混合排序。"""
+"""Rust lexical score 与已有 embedding 缓存的确定性混合排序。"""
 from __future__ import annotations
 
 from agent.rag.models import IndexDocument, RecallResult
@@ -21,7 +21,7 @@ def hybrid_results(
     vector_weight: float = 0.4,
     limit: int = 20,
 ) -> tuple[list[RecallResult], str | None]:
-    """只对已有缓存向量的文档混合；没有缓存的候选保留 BM25 分数。"""
+    """只对已有缓存向量的文档混合；没有缓存的候选保留 lexical 分数。"""
     if not query_vector or not vector_map:
         return lexical[:limit], "embedding_cache_unavailable"
     from agent.memory.embedding import cosine

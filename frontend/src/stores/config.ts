@@ -101,6 +101,8 @@ export const useConfigStore = defineStore('config', () => {
       searxng_engines: 'sogou,quark,360search',
       searxng_image_engines: '',
       max_results: 5,
+      global_search_backend: 'ilike',
+      rust_lexical_backend: 'rust',
       similar_image_enabled: false,
       baidu_qianfan_api_key: '',
       similar_image_default_count: 15,

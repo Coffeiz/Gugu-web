@@ -37,6 +37,34 @@ def test_adapter_for_qwen_keeps_known_openai_cache_capability():
     assert a.supports_active_cache("qwen-max")
 
 
+def test_bailian_qwen3_capabilities_and_thinking_toggle():
+    adapter = adapter_for(_ai(provider="qwen", model="qwen3.8-max"))
+    assert adapter.capabilities("qwen3.8-max").thinking
+    assert adapter.capabilities("qwen3.8-max").structured_json
+    assert adapter.capabilities("qwen3.8-max").structured_schema
+    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
+        provider="qwen", model="qwen3.8-max", thinking="disabled"
+    )) == {"extra_body": {"enable_thinking": False}}
+    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
+        provider="qwen", model="qwen3.8-max", thinking="adaptive"
+    )) == {"extra_body": {"preserve_thinking": True}}
+    assert adapter.build_structured_output(SimpleNamespace(
+        provider="qwen", model="qwen3.8-max"
+    ), {"type": "object"}) == {
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "gugu_output", "schema": {"type": "object"}},
+        }
+    }
+
+
+def test_bailian_legacy_qwen_does_not_receive_qwen3_parameters():
+    adapter = adapter_for(_ai(provider="qwen", model="qwen-max"))
+    ai = SimpleNamespace(provider="qwen", model="qwen-max", thinking="disabled")
+    assert adapter.build_thinking_params(ai) == {}
+    assert adapter.build_structured_output(ai) == {}
+
+
 def test_adapter_for_mimo_by_provider():
     a = adapter_for(_ai(provider="mimo"))
     assert a.name == "mimo"
@@ -263,6 +291,14 @@ def test_diagnostic_request_builder_keeps_protocol_and_auth_provider_local():
     assert anthropic_req["path"] == "/messages"
     assert anthropic_req["headers"]["x-api-key"] == "k"
     assert anthropic_req["payload"]["model"] == "claude-test"
+
+
+def test_diagnostic_request_expands_openai_provider_extra_body():
+    qwen = adapter_for(SimpleNamespace(provider="qwen"))
+    request = qwen.diagnostic_request(SimpleNamespace(
+        provider="qwen", model="qwen3.8-max", api_key="k", thinking="disabled"
+    ))
+    assert request["payload"]["enable_thinking"] is False
 
 
 def test_models_request_builder_uses_provider_protocol_path():

@@ -71,6 +71,9 @@
   --topbar-title-size: var(--font-size-xl);
   --topbar-meta-size: var(--font-size-sm);
   --topbar-height: 52px;
+  --topbar-search-result-icon: var(--content-secondary);
+  --topbar-search-result-fg: var(--content-secondary);
+  --topbar-search-result-muted: var(--content-tertiary);
 
   /* Scrollbar: one visual contract for page and component scroll surfaces. */
   --scrollbar-track: transparent;

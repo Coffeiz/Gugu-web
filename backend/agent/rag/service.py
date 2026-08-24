@@ -9,10 +9,11 @@ from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
 from agent.rag.hybrid import hybrid_results
-from agent.rag.lexical import BM25
 from agent.rag.models import RecallResult
 from agent.rag.persistent_store import load_index_documents, replace_source_documents, search_persistent_index
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
+from agent.rag.index_cache import search_documents_with_cache
+from agent.rag.rust_sidecar import RustSidecarUnavailable
 from agent.rag.scope import matches_scope, normalize_memory_scope
 from agent.rag.storage import PersistentMemoryIndex
 
@@ -95,9 +96,18 @@ class MemoryRetriever:
                 if not _snapshot_covers_document(doc.content, snapshot_text)
             ]
 
-        lexical = BM25(documents).search(query, limit=candidate_limit)
+        try:
+            lexical = await search_documents_with_cache(
+                self.user_id, documents, query, limit=candidate_limit,
+            )
+        except RustSidecarUnavailable:
+            from agent.rag.legacy_lexical import LegacyBM25
+
+            lexical = LegacyBM25(documents).search(query, limit=candidate_limit)
         final: list[RecallResult] = lexical
         fallback_reason = "embedding_disabled"
+        if not lexical:
+            fallback_reason = "lexical_empty"
         if strategy in {"auto", "embedding"}:
             from agent.memory import embedding
 
@@ -121,7 +131,7 @@ class MemoryRetriever:
 
 
 class ProjectRetriever:
-    """Project 来源候选召回器；首版只使用 BM25。"""
+    """Project 来源候选召回器；词法检索由 Rust sidecar 执行。"""
 
     source_type = "project"
 
@@ -154,7 +164,14 @@ class ProjectRetriever:
                 candidate_count=candidate_count,
             )
         documents = await self.adapter.build_documents(scope=query_scope)
-        results = BM25(documents).search(query, limit=candidate_limit)
+        try:
+            results = await search_documents_with_cache(
+                self.adapter.user_id, documents, query, limit=candidate_limit,
+            )
+        except RustSidecarUnavailable:
+            from agent.rag.legacy_lexical import LegacyBM25
+
+            results = LegacyBM25(documents).search(query, limit=candidate_limit)
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(results),
@@ -171,10 +188,16 @@ class ProjectRetriever:
             documents = await self.adapter.build_documents(scope=scope)
             await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
             await db.commit()
-        return await search_persistent_index(
-            db, self.adapter.user_id, query,
-            source_types={self.source_type}, scope=scope, limit=limit,
-        )
+        try:
+            return await search_persistent_index(
+                db, self.adapter.user_id, query,
+                source_types={self.source_type}, scope=scope, limit=limit,
+            )
+        except RustSidecarUnavailable:
+            from agent.rag.legacy_lexical import LegacyBM25
+
+            scoped_documents = [document for document in documents if matches_scope(document, scope)]
+            return LegacyBM25(scoped_documents).search(query, limit=limit)
 
 
 class UnifiedRecallService:
@@ -313,7 +336,7 @@ async def search_knowledge(
         return {"query": "", "results": [], "has_more": False, "message": "需要提供检索关键词"}
     if db is None:
         # Web/IM 的自动召回通常没有沿调用链携带 DB session；在这里短暂打开一份，
-        # 让 Project 等数据库来源也能复用持久化索引，而不是退回每次临时 BM25。
+        # 让 Project 等数据库来源也能复用持久化 Rust lexical 索引。
         import app.db.session as db_session
         # 统一走 ensure_engine，处理跨事件循环和 reset_engine 的生命周期，
         # 不要直接读取 _engine 再调用私有构造函数。

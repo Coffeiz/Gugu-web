@@ -180,7 +180,7 @@ owner 的个人记忆可以继续读取和写入；群内公开内容只能写�
 
 owner 在群里主动调用个人项目、文件、日程、记忆或其他私人工具，视为授权将本次请求所需结果回复到当前群。不增加二次确认，也不主动扩展到 owner 未请求的其他私人内容。owner 仍使用完整 Agent Loop；member 和 unknown 永远不能借用 owner 权限。
 
-当前群的公开记忆进入共享会话 snapshot 前缀，在 snapshot 首次建立、TTL 到期或压缩 checkpoint 时重新读取；普通记忆版本变化只记录 pending revision，不会让每一轮缓存失效。snapshot 只保存 group scope，不保存任何 platform-user 内容。
+当前群的公开记忆进入共享会话 snapshot 前缀，在 snapshot 首次建立、TTL 到期或 baseline 更新时重新读取；普通记忆版本变化只记录 pending revision，不会让每一轮缓存失效。snapshot 只保存 group scope，不保存任何 platform-user 内容。会话预算与 baseline 生命周期以 PRD-AGENT-4 为准。
 
 ### 4.2 member
 

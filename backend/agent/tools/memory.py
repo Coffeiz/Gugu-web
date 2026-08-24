@@ -99,7 +99,7 @@ class MemorySkill(BaseSkill):
             description=(
                 "按关键词搜索过去的事件、对话背景、近期记录和长期记忆。"
                 "用户询问以前讨论过什么、某个决定的背景或历史记忆时使用；"
-                "不用于搜索项目、文件或完整聊天记录。当前仅支持 owner 私人记忆的 BM25 召回。"
+                "不用于搜索项目、文件或完整聊天记录。当前仅支持 owner 私人记忆的 lexical 召回。"
             ),
             input_schema={
                 "type": "object",
@@ -107,7 +107,7 @@ class MemorySkill(BaseSkill):
                     "query": {"type": "string", "description": "要检索的关键词或短语"},
                     "scope": {"type": "string", "enum": ["auto", "private_memory"], "description": "记忆范围，默认 auto"},
                     "source": {"type": "string", "enum": ["all", "profile", "pattern", "daily", "memory"], "description": "记忆来源，默认 all"},
-                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时自动退回 BM25"},
+                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 Rust lexical"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},
                 },
                 "required": ["query"],

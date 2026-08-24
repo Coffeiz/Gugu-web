@@ -1,8 +1,8 @@
 # 统一交互选择、动作与 Agent 事件系统
 
-> 状态：Web/LoopScope 与 IM 的 Round/Tool 事件链路已接入；真实平台验收待完成
+> 状态：✅ 已完成；核心 Prompt/Action 协议、Web/LoopScope、QQ Keyboard、飞书交互卡片与微信文本降级均已完成，自动测试和真实平台验收全部完成。
 > 创建：2026-08-03
-> 最近更新：2026-08-23
+> 最近更新：2026-08-24
 > 所属层：LLM / Agent 交互层
 > 关联模块：`backend/agent/interactions/`、`backend/agent/core.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/app/models/__init__.py`、`frontend/src/components/common/gugu-chat/`
 > 平台适配：`backend/agent/gateway/qq.py`、Guguchat、网页、飞书
@@ -12,29 +12,39 @@
 
 ## 当前实现边界
 
-当前只落地选择协议的薄骨架；QQ 身份绑定已改为独立的一次性验证码流程：
+核心交互协议已经进入可运行状态，平台适配器只负责渲染和回调，不持有第二套状态：
 
-- `agent/selection/models.py` 提供 `SelectionPrompt`、`SelectionOption`。
-- 网页端为当前用户的 QQ Bot 生成 6 位、10 分钟有效的一次性绑定码。
-- 用户在 QQ 私聊机器人发送“绑定 6 位验证码”，网关校验后原子写入
-  `owner_platform_user_id`；首次普通私聊不会自动获得 owner 权限。
-- 绑定码只保存 HMAC 摘要，不把明文写入 Redis 或日志；验证码输入不进入 Agent。
-- 暂不发送 Keyboard，不保存选择状态，不处理点击回调、过期和重复消费。
+- `app.services.interactions` 负责 Prompt/Action 的创建、一次性 token、过期、重复消费、
+  用户/会话绑定以及结果写回原始 `tool_result`。
+- `ask_user` 会暂停当前 Run，用户点击按钮或回复文本后恢复同一个 Run，不创建无关的新对话。
+- Web/Guguchat 和 LoopScope 已支持结构化 Prompt、选择/确认结果和工具事件展示。
+- QQ 已接入原生 Keyboard，并保留序号/选项文字的文本降级；微信不支持交互式卡片，固定使用序号/选项文字文本交互。
+- IM 已有统一的工具调用展示偏好、交互等待取消和 @ 语义归一化；平台差异不改变服务端
+  的身份、权限、过期和消费规则。
+- 工具结果会更新原始消息中的 pending `tool_result`，刷新后仍可恢复完整输入/输出。
+- 飞书私聊/群聊交互卡片、回调消费、过期/重复点击和失败降级均已完成验收。
 
-因此这不是完整选择系统，只是为后续 Keyboard 和 Guguchat 选择气泡提供稳定调用边界。
-
-当前还存在一个展示边界：Agent Loop 已产生 `tool_call/tool_done` 事件，Web 可以通过 SSE
-消费并展示；IM 非流式与流式路径现在都可按用户偏好独立发送普通工具状态消息，最终回复仍
-保持独立出站。真实平台的多轮样本和刷新恢复行为仍需在 devserver 验收。
-
-当前还已建立交互协议目录的骨架：
+协议目录职责如下：
 
 - `agent/interactions/events.py`：交互事件名和协议常量；
 - `agent/interactions/stream_events.py`：SSE 事件编码/解析；
 - `agent/interactions/confirmations.py`：确认凭证与确认交互入口；
-- `agent/security/confirm.py`：保留旧导入路径的兼容入口。
+- `agent/interactions/qq.py`：QQ Keyboard 的 wire payload 与事件解析；
+- `app.services.interactions`：跨平台共用的持久化和原子消费服务。
 
-这部分只整理协议边界，不改变现有 Agent Loop 的执行行为。
+平台模块不得直接执行资源写入、拼接业务参数或绕过 destructive 确认门。
+
+### 现状验收清单
+
+- [x] Web/Guguchat 选择、确认、文本回答和 Run 恢复
+- [x] LoopScope 结构化事件和交互结果回放
+- [x] QQ Keyboard、过期/重复点击和文本降级
+- [x] 微信文本降级、序号/选项文字恢复
+- [x] IM 交互等待期间取消当前 Run
+- [x] 工具状态独立出站与用户级显示偏好
+- [x] QQ/飞书/微信 @ 语义归一化
+- [x] 飞书原生交互卡片和 `card.action.trigger` 回调
+- [x] 飞书卡片私聊/群聊真实验收、过期/重复点击和失败降级
 
 ## 0. 目标与边界
 
@@ -241,15 +251,46 @@ ChatToolCall
 
 `useChatStream.ts` 负责按 `run_id + round_id + seq` 归档事件；`GuguChatMessageList.vue` 负责顺序和滚动；`GuguChatRound.vue`、`GuguChatToolBubble.vue` 负责展示。
 
-### 多平台降级
+### 多平台渲染与降级
 
 | 平台 | 展示方式 |
 |---|---|
 | Guguchat/Web | Round 容器、可展开工具气泡、确认按钮 |
 | LoopScope | 完整结构化事件、参数、结果和耗时 |
-| QQ/飞书/微信 | 状态文本或平台卡片，按能力降级 |
+| QQ | 原生 Keyboard；发送失败时使用序号/文字文本降级 |
+| 飞书 | 交互卡片；发送失败、权限不足或回调不可用时使用序号/文字文本降级 |
+| 微信 | 不支持交互式卡片，固定使用序号/选项文字文本交互 |
 
 平台不支持结构化交互时，必须退回自然语言确认；不能因为 UI 能力不足而阻塞 Agent 执行或绕过服务端确认门。
+
+## 12-H. 飞书交互卡片
+
+### 12-H.1 目标
+
+使用飞书原生交互卡片承载 `choice`、`confirm` 和带选项的 `question`，点击后通过
+`card.action.trigger` 回调复用 `consume_action()` 恢复原 Run。飞书卡片不是新的交互类型，
+也不新增飞书专属 Prompt/Action 表。
+
+### 12-H.2 实现任务
+
+- [x] 在 `agent/interactions/feishu.py` 增加卡片动作值编码/解析和卡片元素构造；动作值只含
+  `prompt_id` 与一次性 token，不放用户 ID、session 或业务参数。
+- [x] 在 `agent/im/replies.py` 增加飞书原生卡片发送分支，失败后复用现有文本降级。
+- [x] 在 `agent/gateway/feishu.py` 注册 `register_p2_card_action_trigger`，校验动作结构并以当前
+  bot owner 作为 Prompt 所属用户调用 `consume_action()`。
+- [x] 回调成功返回飞书 toast，并让原 Run 自己继续；不得再次把点击结果入队，避免并行 Run。
+- [x] 过期、重复消费、无效 token、错误 bot 和数据库异常分别返回安全提示，不泄漏内部 ID。
+- [x] 卡片按钮在消费后变为不可重复操作或由回调返回已选择状态；失败时保留文本降级路径。
+- [x] 私聊和群聊都使用 `chat_id` 作为发送目标，操作者身份只用于审计和权限校验。
+- [x] 增加纯函数测试、回调消费测试、过期/重放测试和无卡片权限降级测试。
+- [x] 在 devserver 验收飞书私聊、群聊、刷新后恢复、超时和重复点击。
+
+### 12-H.3 安全与兼容边界
+
+- 回调验证由飞书 SDK 的事件加密/verification token 机制负责；生产环境不得注册空校验配置。
+- 不把 action token 写入可见日志、消息正文或持久化业务上下文；日志只记录固定原因和指纹。
+- 飞书卡片失败不能阻塞原 Run；发送失败必须落回同一份文本选项，保证用户仍可直接回复。
+- 卡片更新是展示优化，真实状态以 `InteractionPrompt/InteractionAction` 原子消费结果为准。
 
 ### IM 独立出站契约
 
@@ -594,7 +635,7 @@ Agent bridge 负责：
 | 阶段 | 状态 | 内容 |
 |---|---|---|
 | Phase 0：协议和状态定义 | ✅ | 确定 choice、confirm、question、form、WAITING_INPUT 和统一结果结构。 |
-| Phase 0.5：交互协议骨架 | ✅ | 已实现 `agent/interactions/` 的事件/确认入口和 QQ `platform_user_id` 注册动作；Keyboard 仍留给后续平台适配阶段。 |
+| Phase 0.5：交互协议骨架 | ✅ | 已实现 `agent/interactions/` 的事件/确认入口和平台动作解析边界；平台身份绑定仍由各 IM 网关负责。 |
 | Phase 1：Round/Tool 流式事件 | ✅ | `round_start`、兼容 `_new_round`、`tool_call`、`tool_done` 和 `interaction_required` 携带 `run_id/round_id/tool_call_id/seq`，旧客户端仍可消费旧事件名。 |
 | Phase 2：Interaction Service | ✅ | 建立 Prompt/Action 表和迁移，实现 token hash、创建、列表、过期校验、原子消费和 event_id 幂等字段。 |
 | Phase 3：Agent Bridge | ✅ | Agent Loop 将工具确认结果桥接为统一交互事件；按钮消费服务端 token 后复用现有会话发送链恢复下一轮，切会话/刷新可通过 active prompt 列表恢复。 |
@@ -602,11 +643,12 @@ Agent bridge 负责：
 | Phase 5：统一显示偏好 | ✅ | 用户级 `show_tool_interactions` 已统一控制普通工具状态和交互提示的 IM 展示；关闭只影响展示，不影响执行、历史和最终回复。 |
 | Phase 6：QQ Keyboard | ✅ | 增加 QQ action payload 编解码、官方 Inline Keyboard wire payload、嵌套 interaction event 解析和回调消费；平台拒绝时复用统一文本兜底。 |
 | Phase 7：业务接入 | ✅ | QQ 身份绑定沿用既有 owner 校验；所有注册表 `destructive` 工具的 `needs_confirm` 统一桥接 Prompt/Action，按钮/文本确认复用原 session，非 destructive 结果不会生成危险交互。 |
-| Phase 8：其他平台 | 🔲 | 飞书卡片、微信或其他平台按能力逐步适配。 |
+| Phase 8：其他平台 | ✅ | QQ Keyboard、飞书交互卡片和微信文本降级均已完成真实平台验收；微信不支持交互式卡片。 |
 | Phase 9：`ask_user` 工具协议 | ✅ | 注册内置 `ask_user`，完成 choice/question/form 的 schema 校验、长度限制、短 token action 和统一 `InteractionResult`。 |
 | Phase 10：暂停与恢复 | ✅ | Agent 在 `ask_user` 后停止当前 Run；按钮/允许文本回答会原子消费、替换 pending tool result，并在原 session 恢复 Agent Loop；补齐过期、取消和重复消费保护。 |
 | Phase 11：多端展示 | ✅ | Web 使用按钮/输入框交互；QQ 已在 ask_user 挂起点即时发送脱敏文本提示并列出编号选项，未确认原生按钮字段时保留网页点击兜底；统一权限校验、同一 Run 等待恢复和历史展示。 |
-| Phase 12：IM Round/Tool 独立出站 | 🟡 | `tool_call/tool_done` 已从 Agent 事件收集到统一 IM 出站协议，按 Run/Round/Seq 串行发送工具状态与结果；统一应用显示开关，修复 QQ 强制展示和非流式只发最终回复的问题。代码与自动回归已完成，真实平台人工验收待 devserver 验证。 |
+| Phase 12：IM Round/Tool 独立出站 | ✅ | `tool_call/tool_done` 已从 Agent 事件收集到统一 IM 出站协议，按 Run/Round/Seq 串行发送工具状态与结果；统一应用显示开关，代码、自动回归和真实平台验收均完成。 |
+| Phase 12-H：飞书交互卡片 | ✅ | 复用 Prompt/Action、飞书 interactive card 和 `card.action.trigger`；发送失败回退文本，私聊/群聊、过期/重放和卡片状态更新均已验收。微信保持文本降级。 |
 
 ### Phase 12 实施 TODO
 
@@ -627,7 +669,7 @@ Agent bridge 负责：
 - [x] **G：回归测试**：已覆盖事件顺序、结果摘要和输入隔离、多 Round、Run 边界、多平台 IM mock、
   QQ 群聊、飞书/微信降级；`ask_user` 的既有回归继续覆盖交互不受工具出站改动影响。显示开关由
   统一偏好读取逻辑控制，真实平台样本仍归入 H 的人工验收。
-- [ ] **H：文档与人工验收**：待 devserver 补充真实平台消息样本，确认“工具调用前后独立消息 + 最终回复独立消息”
+- [x] **H：文档与人工验收**：已在 devserver 完成真实平台消息样本验收，确认“工具调用前后独立消息 + 最终回复独立消息”
   的顺序，并验证刷新/历史恢复不会重复发送 IM 工具消息。
 
 每个阶段单独提交。任一阶段出现生命周期或权限行为差异，不进入下一阶段。
@@ -669,20 +711,25 @@ Agent bridge 负责：
 9. QQ Keyboard 成功发送、点击回调和重复点击均符合预期。
 10. QQ 不支持按钮时能进入网页或文本兜底。
 11. 删除文件确认取消后文件不变，确认后只执行一次。
+12. 飞书私聊/群聊卡片点击后只消费一次 action，并恢复原 Run。
+13. 飞书卡片过期、重复点击、错误 token 和发送权限不足时分别进入安全提示或文本兜底。
 
-### 10.3 Phase 11 当前实现边界
+### 10.3 当前 IM 交互实现边界
 
-- QQ 的 ask_user 展示不再等当前 Run 完成：共享 Runner 创建 Prompt 后立即调用平台展示回调，随后才进入等待状态。
-- QQ 文本兜底只展示标题、正文和选项标签，不输出 action token；当前未确认 QQ 原生 Keyboard 的发送字段，因此选项默认提示前往网页点击。
+- IM 的 ask_user 展示不再等当前 Run 完成：共享 Runner 创建 Prompt 后立即调用平台展示回调，随后才进入等待状态。
+- 文本兜底只展示标题、正文和选项标签，不输出 action token；QQ、飞书、微信均可回复选项序号或选项文字。
 - `show_tool_interactions` 关闭时仍不发送 IM 交互提示，但不影响 Prompt 创建、Agent 等待、网页恢复和历史记录。
-- QQ 原生 Keyboard 使用官方 Inline Keyboard payload；按钮权限优先限制为当前平台用户，服务端仍以 owner/action token 做最终校验。
-- QQ、飞书、微信的交互发送都从 `send_interaction()` 出口进入；只有 QQ 尝试原生 Keyboard，其他平台直接复用同一份文本兜底，平台 adapter 不复制 ask_user 文案。
+- QQ 原生 Keyboard 使用官方 Inline Keyboard payload；服务端仍以 owner/action token 做最终校验。
+- 飞书使用 interactive card 和 `card.action.trigger` 回调；卡片动作只携带 Prompt ID 与一次性 token，
+  服务端消费后原 Run 自己恢复，不把点击结果再次入队。
+- QQ、飞书、微信的交互发送都从 `send_interaction()` 出口进入；原生卡片发送失败时复用同一份文本兜底，
+  平台 adapter 不复制 Prompt 生命周期。
 
-12. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
-13. 在“接入咕咕”设置顶部关闭工具信息后，QQ、飞书、微信都不再展示工具过程，但最终回复和确认消息仍正常发送。
-14. 重新打开设置后，工具信息恢复展示；已经发送的历史消息不被重写。
-15. Agent 需要在多个合理路径中选择时展示 `ask_user` 按钮；回答后继续原任务，而不是新建无关对话。
-16. 用户直接输入补充信息时，`allow_text_input` 为真才允许恢复；错误回答不会触发工具执行。
+14. 成功、失败和部分成功结果符合用户语气设置，不暴露内部 action 名称。
+15. 在“接入咕咕”设置顶部关闭工具信息后，QQ、飞书、微信都不再展示工具过程，但最终回复和确认消息仍正常发送。
+16. 重新打开设置后，工具信息恢复展示；已经发送的历史消息不被重写。
+17. Agent 需要在多个合理路径中选择时展示 `ask_user` 按钮；回答后继续原任务，而不是新建无关对话。
+18. 用户直接输入补充信息时，`allow_text_input` 为真才允许恢复；错误回答不会触发工具执行。
 
 ### 10.4 Phase 12 验收口径
 
@@ -692,9 +739,10 @@ Agent bridge 负责：
 - QQ 不再因平台名称被强制打开或关闭该开关；QQ、飞书、微信对同一用户偏好采用一致语义。
 - 工具事件发送失败只能记录受限诊断并继续最终回复，不能让 Agent Run 失败或重复执行工具。
 
-## 11. 待确认问题
+## 11. 已确认边界与后续扩展
 
-- QQ Keyboard 使用模板键盘还是自定义键盘；需要先保存真实 interaction event 样本。
-- Guguchat 选择气泡是否支持多选和输入框，第一版先按单选/确认实现。
-- Agent 等待输入的最长保留时间，以及服务重启后的恢复策略。
-- 一个 prompt 是否允许多个平台同时显示；默认只允许一个主平台，其他平台显示失效提示。
+- QQ 使用已验收的原生 Keyboard；发送失败时回退序号/选项文字。
+- 微信不支持交互式卡片，固定使用序号/选项文字，不再等待网页按钮。
+- Guguchat/Web 当前以单选、确认和文本回答为主；多选和复杂表单属于后续扩展，不影响本 PRD 完成。
+- Agent 等待输入、过期、取消和服务重启恢复策略已由 Interaction Service 和 active prompt 机制覆盖。
+- 同一 prompt 默认只允许一个主平台展示，其他平台收到失效或文本降级提示；这是当前统一协议边界。

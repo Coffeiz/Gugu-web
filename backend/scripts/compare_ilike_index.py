@@ -12,7 +12,6 @@ from uuid import UUID
 
 from sqlalchemy import or_, select
 
-from agent.rag.lexical import BM25
 from agent.rag.persistent_store import load_index_documents
 from app.db.session import get_db
 from app.models import ConversationMessage, ConversationSession, File, MindNode, Project
@@ -70,47 +69,37 @@ async def _run(user_id: UUID, queries: tuple[str, ...], repeat: int) -> None:
             db, user_id, source_types=COMMON_SOURCE_TYPES,
         )
         index_load_ms = (time.perf_counter() - load_started) * 1000
-        build_started = time.perf_counter()
-        index = BM25(documents)
-        index_build_ms = (time.perf_counter() - build_started) * 1000
         rows = []
         for query in queries:
             ilike_times: list[float] = []
-            search_times: list[float] = []
             ilike_ids = await _ilike_source_ids(db, user_id, query)
-            results = index.search(query, limit=10)
-            index_ids = {f"{item.document.source_type}:{item.document.source_id}" for item in results}
             for _ in range(max(1, repeat)):
                 started = time.perf_counter()
                 await _ilike_source_ids(db, user_id, query)
                 ilike_times.append((time.perf_counter() - started) * 1000)
-                started = time.perf_counter()
-                index.search(query, limit=10)
-                search_times.append((time.perf_counter() - started) * 1000)
-            overlap = _overlap_ratio(ilike_ids, index_ids)
+                # Rust/Tantivy latency由独立 sidecar benchmark 测量；此脚本只保留
+                # ILIKE 的基线，避免重新引入 Python BM25 实现。
+            overlap = None
             rows.append({
                 "query_len": len(query),
                 "ilike_hits": len(ilike_ids),
-                "bm25_hits": len(index_ids),
-                "top10_overlap": round(overlap, 4),
+                "rust_hits": None,
+                "top10_overlap": overlap,
                 "ilike_median_ms": round(statistics.median(ilike_times), 2),
                 "ilike_p95_ms": round(_percentile(ilike_times, 0.95), 2),
-                "bm25_hot_median_ms": round(statistics.median(search_times), 2),
-                "bm25_hot_p95_ms": round(_percentile(search_times, 0.95), 2),
             })
         print({
             "source_types": sorted(COMMON_SOURCE_TYPES),
             "repeat": repeat,
             "index_documents": len(documents),
             "index_load_ms": round(index_load_ms, 2),
-            "index_build_ms": round(index_build_ms, 2),
             "queries": rows,
         })
         return
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="对比 ILIKE 与持久化 BM25 索引")
+    parser = argparse.ArgumentParser(description="测量全局 ILIKE 基线；Rust sidecar 由独立 benchmark 测量")
     parser.add_argument("--user-id", required=True, type=UUID)
     parser.add_argument("--query", action="append", required=True)
     parser.add_argument("--repeat", type=int, default=10)

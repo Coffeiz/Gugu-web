@@ -1,10 +1,11 @@
 <template>
-  <div class="md-view" v-html="rendered" />
+  <div ref="root" class="md-view" v-html="rendered" />
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { renderMarkdown, sanitizeHtml, sanitizeChatHtml } from '@/utils/markdown'
+import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 
 // 全站通用的 markdown 展示组件，统一 GuguChat 聊天 / 通知气泡 / 侧边栏通知中心的 md 输出样式。
 // - text：原始 markdown 文本，用轻量 renderMarkdown 渲染；
@@ -16,11 +17,102 @@ const props = defineProps({
   // 聊天路径：额外放行 gugu:// 动作链接（由 GuguChat onChatActionClick 处理）；其余仍严格消毒
   chat: { type: Boolean, default: false },
 })
+const root = ref<HTMLElement | null>(null)
+let renderSequence = 0
+let themeObserver: MutationObserver | null = null
+type MermaidApi = typeof import('mermaid').default
+let mermaidApi: MermaidApi | null = null
+
+async function getMermaid(): Promise<MermaidApi> {
+  if (!mermaidApi) mermaidApi = (await import('mermaid')).default
+  return mermaidApi
+}
+
+function isDarkTheme(): boolean {
+  return document.documentElement.dataset.theme === 'dark'
+}
+
+function cssToken(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+function configureMermaid(mermaid: MermaidApi): void {
+  const dark = isDarkTheme()
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    htmlLabels: false,
+    theme: dark ? 'dark' : 'default',
+    themeVariables: {
+      primaryColor: cssToken('--surface-card-solid', dark ? '#24212b' : '#ffffff'),
+      primaryTextColor: cssToken('--text-primary', dark ? '#f2eff7' : '#272532'),
+      primaryBorderColor: cssToken('--border-default', dark ? 'rgba(255,255,255,.16)' : 'rgba(42,35,49,.12)'),
+      lineColor: cssToken('--text-secondary', dark ? '#c9c3d5' : '#67647a'),
+      secondaryColor: cssToken('--surface-panel', dark ? '#2c2835' : '#f3f2f7'),
+      tertiaryColor: cssToken('--surface-hover', dark ? '#363140' : '#ebeaf2'),
+      fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
+    },
+  })
+}
+
+async function renderMermaidBlock(element: HTMLElement, source: string): Promise<void> {
+  const sequence = ++renderSequence
+  element.dataset.renderSequence = String(sequence)
+  try {
+    const mermaid = await getMermaid()
+    configureMermaid(mermaid)
+    const { svg } = await mermaid.render(`md-mermaid-${sequence}`, source)
+    if (!element.isConnected || element.dataset.renderSequence !== String(sequence)) return
+    element.innerHTML = sanitizeHtml(svg)
+    bindMermaidInteractions(element)
+    element.classList.add('md-mermaid-ready')
+    element.classList.remove('md-mermaid-error')
+  } catch {
+    // 保留源码，避免无效图表把用户内容静默吞掉。
+    element.classList.add('md-mermaid-error')
+    element.textContent = `Mermaid 图表渲染失败\n\n${source}`
+  }
+}
+
+async function renderMermaidBlocks(): Promise<void> {
+  await nextTick()
+  if (!root.value) return
+  const sourceBlocks = Array.from(root.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
+  for (const sourceBlock of sourceBlocks) {
+    const source = sourceBlock.textContent || ''
+    const container = document.createElement('div')
+    container.className = 'md-mermaid'
+    container.dataset.source = encodeURIComponent(source)
+    sourceBlock.replaceWith(container)
+  }
+
+  // 主题切换时保留源码并重画，避免 Mermaid 使用旧的亮/暗色配置。
+  for (const container of root.value.querySelectorAll<HTMLElement>('.md-mermaid')) {
+    const encoded = container.dataset.source
+    if (encoded) await renderMermaidBlock(container, decodeURIComponent(encoded))
+  }
+}
 // html 预渲染 prop 同样不可信（来自后端/流式），也必须消毒——不能因「已是 HTML」就跳过
 const rendered = computed(() =>
   props.html != null
     ? (props.chat ? sanitizeChatHtml(props.html) : sanitizeHtml(props.html))
     : renderMarkdown(props.text))
+
+watch(rendered, renderMermaidBlocks, { flush: 'post' })
+
+onMounted(() => {
+  renderMermaidBlocks()
+  themeObserver = new MutationObserver(() => renderMermaidBlocks())
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
+})
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
+  cleanupMermaidInteractions(root.value)
+  renderSequence += 1
+})
 </script>
 
 <style scoped>
@@ -74,6 +166,29 @@ const rendered = computed(() =>
    轻量 renderMarkdown 产出的是裸 <pre><code>，由下面的 pre 兜底样式接管。 */
 .md-view :deep(pre) { margin: 7px 0; padding: 9px 12px; overflow-x: auto; background: rgba(20,22,40,0.05); border-radius: 8px; }
 .md-view :deep(pre code) { background: none; color: var(--text-primary); padding: 0; border-radius: 0; font-size: 0.95em; line-height: 1.6; }
+.md-view :deep(.md-mermaid) {
+  width: 100%; margin: 9px 0; padding: 10px; box-sizing: border-box;
+  overflow-x: auto; border: 1px solid var(--border-default);
+  border-radius: 8px; background: var(--surface-card-solid);
+}
+.md-view :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.md-view :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
+.md-view :deep(.md-mermaid-dragging) { cursor: grabbing; }
+.md-view :deep(.md-mermaid-controls) {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  display: flex; gap: 3px; padding: 3px;
+  border: 1px solid var(--border-default); border-radius: 7px;
+  background: var(--surface-card-solid); box-shadow: var(--elevation-card);
+}
+.md-view :deep(.md-mermaid-controls button) {
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
+  color: var(--content-secondary); background: transparent; cursor: pointer;
+  font-size: 16px; line-height: 1;
+}
+.md-view :deep(.md-mermaid-controls button:hover) { color: var(--content-primary); background: var(--surface-soft-hover); }
+.md-view :deep(.md-mermaid-error) {
+  white-space: pre-wrap; color: var(--text-secondary); font-family: var(--font-family-mono, monospace);
+}
 .md-view :deep(.md-code-block) { margin: 8px 0; border: 1px solid rgba(123,127,178,0.22); border-radius: 8px; overflow: hidden; background: transparent; font-size: 0.9em; }
 .md-view :deep(.md-code-block pre) { margin: 0; background: none; border-radius: 0; }
 .md-view :deep(.md-code-header) { display: flex; align-items: center; justify-content: space-between; min-height: 28px; box-sizing: border-box; padding: 5px 12px; background: rgba(123,127,178,0.1); border-bottom: 1px solid rgba(123,127,178,0.16); }

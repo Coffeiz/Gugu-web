@@ -340,13 +340,16 @@ async def write_pattern_vecs(user_id, vecs: dict) -> None:
     await _write(_key(user_id, PATTERN_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) -> None:
+async def sync_pattern_vecs(
+    user_id, patterns: list[dict], force: bool = False, *, strict: bool = False,
+) -> int:
     """给 pattern 增量补向量缓存：只 embed 新模式或换模型后的模式，已删模式顺带清掉。
     `force=True`（重建 job 用）→ 无视 tag 全部重算。
-    embedding 未启用 → `embed()` 返回 None → 整体 no-op。best-effort，永不抛（反思路径不能被它拖垮）。"""
+    embedding 未启用 → `embed()` 返回 None → 整体 no-op。普通增量路径 best-effort；
+    管理员重建可用 strict=True 让失败被上层统计。返回成功写入的向量数量。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
-        return
+        return 0
     try:
         vecs = await read_pattern_vecs(user_id)
         before = len(vecs)
@@ -354,6 +357,7 @@ async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) 
         alive = {item.get("id") for item in patterns if item.get("id")}
         vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 已删 pattern 的向量
         changed = len(vecs) != before
+        written = 0
         for item in patterns:
             pattern_id, text = item.get("id"), (item.get("text") or "").strip()
             if not pattern_id or not text:
@@ -365,10 +369,16 @@ async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) 
             if v:
                 vecs[pattern_id] = {"v": v, "t": tag}
                 changed = True
+                written += 1
+            elif strict:
+                raise RuntimeError("pattern 向量生成失败")
         if changed:
             await write_pattern_vecs(user_id, vecs)
+        return written
     except Exception:
-        pass
+        if strict:
+            raise
+        return 0
 
 
 async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
@@ -376,24 +386,32 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
     复用 `sync_pattern_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
     返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_patterns = len(user_ids), 0, 0
+    pattern_vectors = memory_vectors = failed_users = 0
     for uid in user_ids:
         try:
             patterns = await read_pattern_list(uid)
             if patterns:
-                await sync_pattern_vecs(uid, patterns, force=True)
+                pattern_vectors += await sync_pattern_vecs(uid, patterns, force=True, strict=True)
                 with_patterns += 1
             mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
             if mem:
-                await sync_memory_vecs(uid, mem, force=True)
+                memory_vectors += await sync_memory_vecs(uid, mem, force=True, strict=True)
         except Exception:
-            pass
+            failed_users += 1
         done += 1
         if on_progress:
             try:
                 await on_progress(done, total)
             except Exception:
                 pass
-    return {"done": done, "total": total, "with_patterns": with_patterns}
+    return {
+        "done": done,
+        "total": total,
+        "with_patterns": with_patterns,
+        "pattern_vectors": pattern_vectors,
+        "memory_vectors": memory_vectors,
+        "failed_users": failed_users,
+    }
 
 
 # ── memory.md（长期记忆）向量检索：切块 + 逐块缓存 + 语义挑相关段 ──
@@ -447,12 +465,15 @@ async def write_memory_vecs(user_id, vecs: dict) -> None:
     await _write(_key(user_id, MEMORY_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> None:
+async def sync_memory_vecs(
+    user_id, memory_text: str, force: bool = False, *, strict: bool = False,
+) -> int:
     """给 memory.md 的块增量补向量（compress 写完 memory.md 后调）。块文本变/换模型才重嵌，消失的块 GC。
-    embedding 未启用 → no-op。best-effort，永不抛。"""
+    embedding 未启用 → no-op。普通增量路径 best-effort；管理员重建可用 strict=True。
+    返回成功写入的向量数量。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
-        return
+        return 0
     try:
         chunks = _memory_chunks(memory_text)
         vecs = await read_memory_vecs(user_id)
@@ -461,6 +482,7 @@ async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> No
         alive = {_chunk_key(c) for c in chunks}
         vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 改动/消失的块
         changed = len(vecs) != before
+        written = 0
         for c in chunks:
             k = _chunk_key(c)
             cur = vecs.get(k)
@@ -470,10 +492,16 @@ async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> No
             if v:
                 vecs[k] = {"v": v, "t": tag}
                 changed = True
+                written += 1
+            elif strict:
+                raise RuntimeError("memory 向量生成失败")
         if changed:
             await write_memory_vecs(user_id, vecs)
+        return written
     except Exception:
-        pass
+        if strict:
+            raise
+        return 0
 
 
 def retrieve_memory_block(memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS) -> str:

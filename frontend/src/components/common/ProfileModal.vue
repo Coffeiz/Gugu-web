@@ -22,7 +22,7 @@
         <template v-for="item in navItems" :key="item.key">
           <div v-if="item.divider" class="pm-nav-divider"></div>
           <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
-            <Icon :name="item.icon" size="sm" tone="inherit" />
+            <Icon :name="item.icon || ''" size="sm" tone="inherit" />
             {{ item.label }}
           </button>
         </template>
@@ -95,7 +95,7 @@ const emit  = defineEmits(['close'])
 const router = useRouter()
 const authStore = useAuthStore()
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
-const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
+const initial = computed<string>(() => (displayLabel.value.charAt(0) || '?').toUpperCase())
 
 const navItems = [
   { key: 'info', label: '个人信息', icon: 'user.default' },
