@@ -510,6 +510,25 @@ class LLMRunner:
                 return
             current_length = await compaction.estimate_context_length(messages, system_text)
             safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
+            _dynamic_tail_tokens = sum(
+                tokens.estimate_tokens(tokens.message_text(item))
+                for item in getattr(messages, "dynamic_tail", ())
+            )
+            _log.warning("[runtime-context-budget-probe] %s", json.dumps({
+                "phase": "preflight",
+                "runId": run_id,
+                "round": round_number + 1,
+                "provider": getattr(ai, "provider", "") or "unknown",
+                "apiFormat": driver.api_format,
+                "messageCount": len(getattr(messages, "conversation", messages)),
+                "fixedPrefixCount": getattr(messages, "fixed_prefix_size", 0),
+                "currentTokens": current_length,
+                "safeBudget": safe_budget,
+                "contextTokens": context_tokens,
+                "overheadTokens": overhead_tokens,
+                "dynamicTailTokens": _dynamic_tail_tokens,
+                "compactionAttempts": compaction_attempts,
+            }, ensure_ascii=False, sort_keys=True))
             if current_length > safe_budget and compaction_attempts < 1:
                 # 压缩摘要本身也是一次 LLM 调用。先检查取消，避免用户发「/stop」后
                 # 仍开始下一次摘要请求。
@@ -535,6 +554,7 @@ class LLMRunner:
                     session_id=session_id, user_id=user_id,
                     fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
                     overhead_tokens=overhead_tokens,
+                    extra_tokens=_dynamic_tail_tokens,
                     protected_from=_protected_from,
                 )
                 if await _im_cancelled(session_id):
@@ -557,7 +577,21 @@ class LLMRunner:
                             "[core] 上下文压缩后仍超过预算，转入确定性截断：before=%s after=%s",
                             current_length, compacted_length,
                         )
-                    else:
+                else:
+                    compacted_length = current_length
+                _log.warning("[runtime-context-budget-probe] %s", json.dumps({
+                    "phase": "compaction-result",
+                    "runId": run_id,
+                    "round": round_number + 1,
+                    "changed": bool(compacted),
+                    "beforeTokens": current_length,
+                    "afterTokens": compacted_length,
+                    "messageCount": len(getattr(messages, "conversation", messages)),
+                    "protectedFrom": _protected_from,
+                    "dynamicTailTokens": _dynamic_tail_tokens,
+                }, ensure_ascii=False, sort_keys=True))
+                if compacted:
+                    if compacted_length < current_length and compacted_length <= safe_budget:
                         _log.info("[core] 上下文已压缩，重试当前 round")
                         if verify_mode:
                             verify_rounds -= 1
@@ -585,6 +619,20 @@ class LLMRunner:
                         hard_result.before_tokens, hard_result.after_tokens,
                         hard_result.dropped_messages,
                     )
+                _log.warning("[runtime-context-budget-probe] %s", json.dumps({
+                    "phase": "deterministic-truncate",
+                    "runId": run_id,
+                    "round": round_number + 1,
+                    "changed": bool(hard_result.changed),
+                    "beforeTokens": hard_result.before_tokens,
+                    "afterTokens": hard_result.after_tokens,
+                    "currentTokens": current_length,
+                    "safeBudget": safe_budget,
+                    "droppedMessages": hard_result.dropped_messages,
+                    "oversizedItem": hard_result.oversized_item,
+                    "messageCount": len(getattr(messages, "conversation", messages)),
+                    "fixedPrefixCount": getattr(messages, "fixed_prefix_size", 0),
+                }, ensure_ascii=False, sort_keys=True))
                 if current_length > safe_budget:
                     yield f"data: {json.dumps({'type': 'error', 'detail': '这次内容太多了，已无法在当前模型上处理，请拆成几条消息再试试～'}, ensure_ascii=False)}\n\n"
                     return

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
+import json
 import logging
 from typing import Any
 
@@ -176,6 +177,8 @@ async def build_automatic_rag_context(
         tail: list[dict[str, str]] = []
         blocks: list[dict[str, Any]] = []
         scope_hits: list[dict[str, Any]] = []
+        from app.core.redaction import diag_log
+
         for label, scope in _request_scopes(request):
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
@@ -191,6 +194,18 @@ async def build_automatic_rag_context(
                 _log.warning("自动知识召回超时，跳过当前 scope")
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "timeout": True})
+                continue
+            except Exception as exc:
+                # 单一来源（例如项目索引）异常不能让群记忆/其他 scope 全部失效。
+                # 原始异常只进入受限诊断出口，普通日志只保留类型和 scope。
+                diag_log(f"agent.rag.auto_recall.{label}", exc)
+                _log.warning("[runtime-rag-auto-probe] %s", json.dumps({
+                    "phase": "scope-error",
+                    "scope": label,
+                    "errorType": type(exc).__name__,
+                }, ensure_ascii=False, sort_keys=True))
+                scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
+                                   "error": type(exc).__name__})
                 continue
             selected: list[dict[str, Any]] = []
             for item in result.get("results", []):
@@ -219,6 +234,12 @@ async def build_automatic_rag_context(
         return {"tail": tail, "blocks": blocks, "scope_hits": scope_hits,
                 "injected": bool(tail)}
     except Exception as exc:
+        _log.warning("[runtime-rag-auto-probe] %s", json.dumps({
+            "phase": "error",
+            "errorType": type(exc).__name__,
+            "scopeCount": len(scope_hits),
+            "injectedChars": sum(len(str(block.get("text") or "")) for block in blocks),
+        }, ensure_ascii=False, sort_keys=True))
         _log.warning("自动知识召回跳过：%s", type(exc).__name__)
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
 __all__ = [

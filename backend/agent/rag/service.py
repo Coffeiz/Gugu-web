@@ -315,9 +315,13 @@ async def search_knowledge(
         # Web/IM 的自动召回通常没有沿调用链携带 DB session；在这里短暂打开一份，
         # 让 Project 等数据库来源也能复用持久化索引，而不是退回每次临时 BM25。
         import app.db.session as db_session
-        if db_session._engine is None:
-            db_session._build_engine()
-        async with db_session._SessionLocal() as search_db:
+        # 统一走 ensure_engine，处理跨事件循环和 reset_engine 的生命周期，
+        # 不要直接读取 _engine 再调用私有构造函数。
+        db_session.ensure_engine()
+        session_factory = db_session._SessionLocal
+        if session_factory is None:
+            raise RuntimeError("RAG 数据库会话工厂未初始化")
+        async with session_factory() as search_db:
             return await search_knowledge(
                 user_id, query, scope=scope, source=source, strategy=strategy,
                 limit=limit, mode=mode, db=search_db,

@@ -145,6 +145,7 @@ def truncate_messages(
     fixed_prefix_size: int = 0,
     target_ratio: float = HARD_TARGET_RATIO,
     overhead_tokens: int = 0,
+    extra_tokens: int = 0,
     protected_from: int | None = None,
 ) -> tuple[list[dict], BudgetResult]:
     """在不调用 LLM 的前提下截断消息，返回新列表和统计结果。
@@ -152,7 +153,8 @@ def truncate_messages(
     固定前缀和最新完整工具单元优先保留；其余从最旧单元开始丢弃。
     """
     original = list(messages)
-    before = overhead_tokens + estimate_tokens(system_text) + sum(
+    extra_tokens = max(0, int(extra_tokens or 0))
+    before = overhead_tokens + extra_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in original
     )
     safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
@@ -170,7 +172,7 @@ def truncate_messages(
     target = max(1, int(max(0.1, min(0.5, target_ratio)) * max(
         1, int(context_tokens) - max(0, int(overhead_tokens))
     )))
-    fixed_tokens = estimate_tokens(system_text) + sum(
+    fixed_tokens = extra_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in prefix
     )
     fixed_tokens += sum(estimate_tokens(message_text(message)) for message in protected_tail)
@@ -221,7 +223,7 @@ def truncate_messages(
         kept = [[_fit_oversized_message(message, latest_budget) for message in latest]]
 
     result = prefix + [message for unit in kept for message in unit] + protected_tail
-    after = overhead_tokens + estimate_tokens(system_text) + sum(
+    after = overhead_tokens + extra_tokens + estimate_tokens(system_text) + sum(
         estimate_tokens(message_text(message)) for message in result
     )
     dropped = max(0, len(original) - len(result))
@@ -238,12 +240,17 @@ def enforce_message_budget(
 ) -> BudgetResult:
     """就地应用强制截断，兼容 PromptMessages 的动态尾部。"""
     conversation = list(getattr(messages, "conversation", messages))
+    dynamic_tail_tokens = sum(
+        estimate_tokens(message_text(message))
+        for message in getattr(messages, "dynamic_tail", ())
+    )
     truncated, result = truncate_messages(
         conversation,
         system_text,
         context_tokens,
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
         overhead_tokens=overhead_tokens,
+        extra_tokens=dynamic_tail_tokens,
         protected_from=protected_from,
     )
     if not result.changed:

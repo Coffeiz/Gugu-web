@@ -47,6 +47,7 @@ async def compact_context(
     user_id: int | None = None,
     fixed_prefix_size: int = 0,
     overhead_tokens: int = 0,
+    extra_tokens: int = 0,
     protected_from: int | None = None,
 ) -> tuple[list, bool]:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
@@ -57,11 +58,12 @@ async def compact_context(
     3. 将更老的消息压缩成摘要
     4. 返回压缩后的 messages，确保前缀一致
     """
+    extra_tokens = max(0, int(extra_tokens or 0))
     available_context = max(1, int(context_tokens) - max(0, int(overhead_tokens)))
     target_tokens = int(available_context * COMPACTION_TARGET_RATIO)
 
     # 估算当前上下文长度
-    current_length = overhead_tokens + await estimate_context_length(messages, system_text)
+    current_length = overhead_tokens + extra_tokens + await estimate_context_length(messages, system_text)
     safe_budget = effective_budget(context_tokens, reserved_tokens=overhead_tokens)
     input_length = current_length - overhead_tokens
     if input_length <= safe_budget:
@@ -102,7 +104,7 @@ async def compact_context(
             break
 
     # 计算可用的 token 预算
-    available_tokens = target_tokens
+    available_tokens = max(1, target_tokens - extra_tokens)
     if system_injection_idx >= 0:
         # 系统上下文注入占用一部分 token
         inj_msg = normal_msgs[system_injection_idx]

@@ -1,6 +1,7 @@
 """上下文超量时的确定性截断测试。"""
 
-from agent.context.budget import effective_budget, estimate_tool_schema_tokens, truncate_messages
+from agent.context.budget import effective_budget, enforce_message_budget, estimate_tool_schema_tokens, truncate_messages
+from agent.context.message_assembly import PromptMessages
 from agent.context.tokens import estimate_tokens, message_text
 
 
@@ -69,3 +70,22 @@ def test_tool_schema_reservation_is_included_in_hard_budget():
     assert overhead > 0
     assert stats.changed
     assert stats.after_tokens <= overhead + effective_budget(2500, reserved_tokens=overhead) + 10
+
+
+def test_dynamic_tail_is_counted_and_preserved_during_truncation():
+    """RAG/提醒等动态尾部不能绕过预算，也不能被历史截断逻辑删除。"""
+    messages = PromptMessages(
+        conversation=[
+            {"role": "user", "content": "旧历史 " * 200},
+            {"role": "user", "content": "当前问题"},
+        ],
+        dynamic_tail=[{"role": "user", "content": "动态召回 " * 100}],
+    )
+    tail_before = messages.dynamic_tail
+
+    result = enforce_message_budget(messages, "", 1200)
+
+    assert result.changed
+    assert messages.dynamic_tail == tail_before
+    assert result.after_tokens <= effective_budget(1200) + 10
+    assert len(messages.conversation) < 2
