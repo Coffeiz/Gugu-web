@@ -3,18 +3,33 @@
     <aside class="run-list" @scroll="onRunListScroll">
       <div class="run-list-head">
         <span class="eyebrow">RUNS</span>
+        <div class="run-list-actions">
+          <button
+            class="export-button"
+            :class="{ active: selectionMode }"
+            :aria-pressed="selectionMode"
+            title="选择多个 Run"
+            @click="toggleSelectionMode"
+          >{{ selectionMode ? '完成' : '多选' }}</button>
+          <button
+            v-if="selectedRunIds.size"
+            class="export-button"
+            title="导出选中的 Run"
+            @click="emit('export-runs', [...selectedRunIds])"
+          >导出 ({{ selectedRunIds.size }})</button>
+        </div>
       </div>
-      <button
-        v-for="run in runs"
-        :key="run.id"
+      <div v-for="run in runs" :key="run.id" class="run-item">
+        <button
         class="run-row"
-        :class="{ active: run.id === selectedId }"
-        @click="selectRun(run.id)"
-      >
-        <span class="run-dot" :data-status="run.status"></span>
-        <span class="run-main"><b>{{ shortRun(run.id) }}</b><small>{{ runTime(run.started_at) }}</small></span>
-        <em>{{ fmtMs(run.duration_ms) }}</em>
-      </button>
+        :class="{ active: run.id === selectedId, selected: selectedRunIds.has(run.id) }"
+        @click="handleRunClick(run.id)"
+        >
+          <span class="run-dot" :data-status="run.status"></span>
+          <span class="run-main"><b>{{ shortRun(run.id) }}</b><small>{{ runTime(run.started_at) }}</small></span>
+          <em>{{ fmtMs(run.duration_ms) }}</em>
+        </button>
+      </div>
       <div v-if="!runs.length" class="empty-run">这个 Session 还没有 Trace。</div>
       <div v-else-if="loadingMore" class="loading-more">正在加载更早 Run…</div>
     </aside>
@@ -31,7 +46,10 @@
             <h2>{{ selected.id }}</h2>
             <div class="run-sub"><code>{{ selected.trace_id || 'no trace id' }}</code><span>·</span><span>{{ modelLabel }}</span></div>
           </div>
-          <div class="duration"><small>Duration</small><b>{{ fmtMs(selected.duration_ms) }}</b></div>
+          <div class="run-header-actions">
+            <button class="export-button" title="导出当前 Run" @click="emit('export-runs', [selected.id])">导出 Run</button>
+            <div class="duration"><small>Duration</small><b>{{ fmtMs(selected.duration_ms) }}</b></div>
+          </div>
         </header>
 
         <section class="usage-grid">
@@ -111,9 +129,16 @@ import type { AdapterCallStats, CanonicalEventStats, TraceRun, TokenUsage } from
 import TraceSpanCard from './TraceSpanCard.vue'
 
 const props = defineProps<{ runs: TraceRun[]; details?: Record<string, TraceRun>; focusRunId?: string; hasMoreSpans?: boolean }>()
-const emit = defineEmits<{ select: [runId: string]; 'load-more': []; 'load-more-spans': [] }>()
+const emit = defineEmits<{
+  select: [runId: string]
+  'load-more': []
+  'load-more-spans': []
+  'export-runs': [runIds: string[]]
+}>()
 const hasMoreSpans = computed(() => Boolean(props.hasMoreSpans))
 const loadingMore = ref(false)
+const selectionMode = ref(false)
+const selectedRunIds = ref<Set<string>>(new Set())
 const runDetailEl = ref<HTMLElement | null>(null)
 function getScrollTop() { return runDetailEl.value?.scrollTop ?? 0 }
 function setScrollTop(value: number) { if (runDetailEl.value) runDetailEl.value.scrollTop = value }
@@ -185,6 +210,20 @@ function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s 
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId
   emit('select', runId)
+}
+function toggleRun(runId: string) {
+  const next = new Set(selectedRunIds.value)
+  if (next.has(runId)) next.delete(runId)
+  else next.add(runId)
+  selectedRunIds.value = next
+}
+function toggleSelectionMode() {
+  selectionMode.value = !selectionMode.value
+  if (!selectionMode.value) selectedRunIds.value = new Set()
+}
+function handleRunClick(runId: string) {
+  if (selectionMode.value) toggleRun(runId)
+  else selectRun(runId)
 }
 function onRunListScroll(event: Event) {
   const element = event.currentTarget as HTMLElement
@@ -267,11 +306,18 @@ function fmtTokens(v: number | null | undefined) {
 <style scoped>
 .session-monitor { min-height:0; height:100%; display:grid; grid-template-columns:190px minmax(0,1fr); overflow:hidden; }
 .run-list { min-height:0; overflow:auto; padding:16px 10px; border-right:1px solid var(--border-subtle); background:color-mix(in srgb,var(--surface-panel) 56%,transparent); }
-.run-list-head { display:flex; align-items:center; justify-content:space-between; padding:0 7px 8px; }
+.run-list-head { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:0 7px 8px; }
+.run-list-actions { display:flex; align-items:center; gap:4px; }
+.run-item { min-width:0; }
 .eyebrow { font-size:8px; letter-spacing:.12em; color:var(--content-tertiary); font-weight:600; }
 .run-row { width:100%; display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:7px; align-items:center; padding:8px; border:1px solid transparent; border-radius:10px; background:transparent; text-align:left; color:var(--content-secondary); }
 .run-row:hover,.run-row.active { background:var(--surface-raised); border-color:var(--border-subtle); }
 .run-row.active { box-shadow:var(--elevation-card); color:var(--content-primary); }
+.run-row.selected { border-color:var(--action-primary); background:color-mix(in srgb,var(--action-primary) 12%,var(--surface-raised)); }
+.export-button { border:1px solid var(--border-subtle); border-radius:7px; padding:4px 7px; background:var(--surface-soft); color:var(--content-secondary); font-size:9px; white-space:nowrap; }
+.export-button:hover:not(:disabled) { color:var(--content-primary); border-color:var(--border-default); background:var(--surface-raised); }
+.export-button.active { color:var(--content-primary); border-color:var(--border-default); background:var(--surface-raised); }
+.export-button:disabled { cursor:not-allowed; opacity:.45; }
 .run-dot { width:6px; height:6px; border-radius:50%; background:var(--status-success); }
 .run-dot[data-status="error"] { background:var(--status-danger); }
 .run-main { min-width:0; }
@@ -287,6 +333,7 @@ function fmtTokens(v: number | null | undefined) {
 .run-header h2 { margin:3px 0 5px; font:600 14px var(--font-mono); }
 .run-sub { display:flex; gap:7px; color:var(--content-tertiary); font-size:9px; }
 .duration { text-align:right; }
+.run-header-actions { display:flex; align-items:flex-start; gap:14px; }
 .duration small { display:block; color:var(--content-tertiary); font-size:8px; text-transform:uppercase; letter-spacing:.08em; }
 .duration b { font:600 16px var(--font-mono); }
 .usage-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-top:18px; }

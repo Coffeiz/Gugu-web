@@ -94,7 +94,9 @@
         @select="loadRunDetail"
         @load-more="loadOlderRuns"
         @load-more-spans="loadMoreSpans"
+        @export-runs="exportRuns"
       />
+      <p v-if="sessionView === 'monitor' && error" class="error">{{ error }}</p>
     </section>
   </div>
 </template>
@@ -192,6 +194,41 @@ async function loadMoreSpans() {
   const runId = monitorFocusRunId.value
   if (!runId || !hasMoreSpans.value) return
   await loadSpans(runId, spanOffsets.value[runId] ?? 0)
+}
+async function loadCompleteRun(runId: string): Promise<TraceRun> {
+  const detail = await getRun(runId, { includeSpans: false })
+  const spans: NonNullable<TraceRun['spans']> = []
+  let offset = 0
+  while (true) {
+    const page = await getRunSpans(runId, { limit: 100, offset })
+    spans.push(...(page.items ?? []))
+    offset += page.items?.length ?? 0
+    if (!page.hasMore || !page.items?.length) break
+  }
+  return { ...detail, spans }
+}
+async function exportRuns(runIds: string[]) {
+  const ids = [...new Set(runIds)].filter(Boolean)
+  if (!ids.length) return
+  error.value = ''
+  try {
+    const exported = await Promise.all(ids.map(loadCompleteRun))
+    const payload = {
+      format: 'loopscope-run-export',
+      version: 1,
+      exported_at: new Date().toISOString(),
+      runs: exported,
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `loopscope-runs-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (cause) {
+    error.value = cause instanceof Error ? `导出失败：${cause.message}` : '导出失败，请稍后重试。'
+  }
 }
 async function loadLatestMessages(sessionId: number) {
   const page = await loadMessagePage(sessionId, { limit: 50 })
