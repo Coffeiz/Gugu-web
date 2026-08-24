@@ -24,6 +24,21 @@ def test_catalog_contains_short_descriptions_only():
     assert "call_tool" in block
 
 
+def test_catalog_truncates_long_description_to_keep_snapshot_compact():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"search": CapabilityMeta(
+            "search", "tool", "这是一个很长的工具说明，包含很多触发条件、使用限制、返回格式细节、错误处理方式、权限说明和调用示例。"
+        )},
+        skills={},
+    )
+    block = catalog_block(snapshot)
+    description = block.split("- search：", 1)[1]
+    assert len(description) == 48
+    assert description.endswith("…")
+    assert "input_schema" not in block
+
+
 def test_fixed_adapter_preserves_nested_and_flattened_business_arguments():
     assert _resolve_adapter_arguments({
         "name": "http_get",

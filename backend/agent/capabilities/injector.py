@@ -6,6 +6,9 @@ from .models import CapabilitySnapshot, SelectedCapabilities
 from .selector import CapabilitySelector
 
 
+CATALOG_DESCRIPTION_MAX_CHARS = 48
+
+
 class CapabilityToolContext:
     """Run 内的能力上下文。
 
@@ -63,8 +66,9 @@ def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 12) -> Ca
 
 def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None) -> str:
     lines = [
-        "## 当前可用能力目录",
-        "这里只是工具简介。固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具；"
+        "## 当前可用能力索引",
+        "这里只是稳定的能力名称和极短简介，不是已经发生的工具调用记录；"
+        "固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具。"
         "需要完整参数时，先使用 `use_skill`，对应的 canonical tool-schema 会追加到历史。",
     ]
     for item in snapshot.catalog:
@@ -72,7 +76,10 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None) -> s
             continue
         if item.kind == "tool" and item.name not in snapshot.tools:
             continue
-        lines.append(f"- {item.name}：{item.description_short}")
+        description = " ".join(str(item.description_short or "").split())
+        if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
+            description = description[:CATALOG_DESCRIPTION_MAX_CHARS - 1].rstrip() + "…"
+        lines.append(f"- {item.name}：{description}")
     return "\n".join(lines)
 
 

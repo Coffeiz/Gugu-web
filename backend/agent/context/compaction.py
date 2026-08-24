@@ -400,14 +400,14 @@ async def _generate_compact_summary_once(
     else:
         user_text = conv_text
 
-    sys_prompt = (
-        "你是一个对话摘要助手。请将以下对话压缩为简洁摘要，要求：\n"
-        "1. 保留关键决定、事实和用户偏好\n"
-        "2. 保留重要的工具调用结果\n"
-        "3. 控制在 300 字以内\n"
-        "4. 使用中文，保持自然流畅\n\n"
-        "请直接输出摘要，不要添加任何前缀或说明。"
-    )
+    prompt_path = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
+    try:
+        sys_prompt = prompt_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        sys_prompt = (
+            "请将历史对话压缩为 300 字以内的中文摘要，保留决定、偏好、事实、待办和未解决问题；"
+            "工具结果只保留结论，不复述原文、凭据或敏感细节。只输出摘要正文。"
+        )
 
     try:
         from app.core.config import get_settings
