@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -106,17 +107,60 @@ def validate_input(validator: Draft202012Validator, instance: dict) -> list[dict
     return issues
 
 
+def _invalid_input_next_action(issues: list[dict[str, str]]) -> str:
+    """给模型一个短的纠错动作，不重复注入完整 schema。"""
+    missing = [item["path"] for item in issues if item.get("rule") == "required"]
+    if missing:
+        fields = "、".join(missing[:MAX_VALIDATION_ISSUES])
+        return f"请补齐必填字段：{fields}。如果当前对话没有提供且无法可靠推断，请先向用户询问，不要提交空参数重试。"
+    return "请根据 issues 修正参数后再调用；不要重复提交相同参数，也不要猜测用户未提供的值。"
+
+
 def invalid_input_payload(tool_name: str, issues: list[dict[str, str]]) -> dict[str, Any]:
+    """返回统一、短小且可执行的参数纠错提示；完整 schema 仍由工具声明负责。"""
+    bounded = issues[:MAX_VALIDATION_ISSUES]
     return {
         "error": "tool_input_invalid",
         "tool": tool_name,
-        "issues": issues[:MAX_VALIDATION_ISSUES],
+        "issues": bounded,
+        "usage_hint": "参数不符合工具 schema。先按 issues 修正；缺少无法从上下文确定的必填信息时，先向用户询问。",
+        "next_action": _invalid_input_next_action(bounded),
     }
+
+
+def enrich_tool_error(tool_name: str, result: Any) -> Any:
+    """给 handler 的业务错误补统一使用规范，保持原返回类型和业务字段。"""
+    def _enrich(payload: dict[str, Any]) -> dict[str, Any]:
+        if not payload.get("error"):
+            return payload
+        out = dict(payload)
+        out.setdefault("tool", tool_name)
+        out.setdefault(
+            "usage_hint",
+            "工具执行失败。先根据错误信息判断下一步；需要用户补充信息时先询问，不要重复提交相同参数。",
+        )
+        out.setdefault(
+            "next_action",
+            "根据错误信息修正或向用户询问缺失信息；确认没有新信息前不要盲目重试。",
+        )
+        return out
+
+    if isinstance(result, dict):
+        return _enrich(result)
+    if isinstance(result, str) and result.lstrip().startswith('{"error"'):
+        try:
+            payload = json.loads(result)
+        except Exception:
+            return result
+        if isinstance(payload, dict):
+            return json.dumps(_enrich(payload), ensure_ascii=False)
+    return result
 
 
 __all__ = [
     "SchemaError",
     "build_validator",
     "invalid_input_payload",
+    "enrich_tool_error",
     "validate_input",
 ]

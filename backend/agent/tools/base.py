@@ -13,7 +13,13 @@ from contextvars import ContextVar
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
-from agent.tools.tool_contract import SchemaError, build_validator, invalid_input_payload, validate_input
+from agent.tools.tool_contract import (
+    SchemaError,
+    build_validator,
+    enrich_tool_error,
+    invalid_input_payload,
+    validate_input,
+)
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
@@ -357,12 +363,14 @@ class SkillRegistry:
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
         if not can_use_tool(name, allowed_tool_names):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
-            return json.dumps({"error": "当前群聊身份没有使用该工具的权限"}, ensure_ascii=False), None
+            payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
+            return json.dumps(payload, ensure_ascii=False), None
 
         tool = self._tools.get(name)
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
-            return json.dumps({"error": f"未知工具: {name}"}), None
+            payload = enrich_tool_error(name, {"error": f"未知工具: {name}"})
+            return json.dumps(payload, ensure_ascii=False), None
 
         # Shell 的会话身份由 Agent 执行器提供，不能信任模型自行填写的 session_id。
         # 兼容旧模型残留的同名参数：校验前丢弃，执行时统一使用真实会话 ID。
@@ -441,10 +449,12 @@ class SkillRegistry:
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
             _log.error("工具 %s 执行出错：%s", name, _safe)        # 可见日志只给脱敏摘要
             _log_traj(name, user_id, args, False, _safe, t0)
-            return json.dumps({"error": f"工具 {name} 执行出错：{_safe}"}, ensure_ascii=False), None
+            payload = enrich_tool_error(name, {"error": f"工具 {name} 执行出错：{_safe}"})
+            return json.dumps(payload, ensure_ascii=False), None
 
         # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；
         # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
+        result = enrich_tool_error(name, result)
         result = _redact_result(name, result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）

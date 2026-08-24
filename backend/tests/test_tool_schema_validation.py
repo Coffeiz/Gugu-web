@@ -69,6 +69,9 @@ async def test_dispatch_rejects_missing_required_before_handler():
     assert payload["error"] == "tool_input_invalid"
     assert {item["path"] for item in payload["issues"]} == {"project_id"}
     assert {item["rule"] for item in payload["issues"]} == {"required"}
+    assert "usage_hint" in payload
+    assert "project_id" in payload["next_action"]
+    assert "先向用户询问" in payload["next_action"]
     assert called is False
 
 
@@ -126,6 +129,21 @@ async def test_dispatch_commits_successful_task_transaction(db, user_a):
 
     persisted = await db.scalar(select(Project).where(Project.id == project_id))
     assert persisted is not None
+
+
+async def test_dispatch_enriches_business_error_with_usage_contract():
+    async def handler(db, user_id, args):
+        return {"error": "资源不存在", "resource": "project"}
+
+    reg, _ = _make_registry({"type": "object"}, handler)
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {})
+    payload = json.loads(raw)
+
+    assert payload["error"] == "资源不存在"
+    assert payload["resource"] == "project"
+    assert payload["tool"] == "schema_test_tool"
+    assert payload["usage_hint"]
+    assert payload["next_action"]
 
 
 async def test_dispatch_rolls_back_failed_task_transaction(db, user_a):

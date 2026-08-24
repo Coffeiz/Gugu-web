@@ -3,7 +3,7 @@ name: 文件操作
 description_long: 移动/改名/编辑/创建/保存文件、列文件或核对文件存在性、引用文件给跳转链接时——拿批量入口用法、核对与防覆盖做法
 description_short: 用户要查找、创建、编辑、移动或引用文件时使用。
 category: files
-related_tools: list_files, read_file, edit_file, create_document, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file
+related_tools: list_files, read_file, edit_file, create_document, rename_file, move_items, copy_file, create_folder, delete_file, list_folders, rename_folder, delete_folder, send_file, list_recent_attachments, save_uploaded_file, web_download
 emoji: 📂
 ---
 
@@ -42,6 +42,12 @@ emoji: 📂
 - `create_document` 等新建文档后，**一句话告诉存到了哪**（照回执的 `project_name` / 文件夹说，如「存到『神椿插画』的素材文件夹了」），方便去找。
 - 同一文件在本轮被**连续编辑**时，只在「刚创建」那次报一次位置就够，后面别每次重复念目录。
 - **绝不主动调 `send_file`**：保存好 ≠ 发给用户。`send_file` 在飞书 / QQ 是**真把文件推到对方聊天里**（网页是下载卡片）——**只有用户明确说「发给我 / 给我那个 / 发过来」时才调**。创建 / 改完默认只告知位置。
+
+## 从公网 URL 保存文件
+- 用户明确说「下载 / 保存 / 导入这个链接」时使用 `web_download`；它会把文件写入文件库，不是把正文读进上下文。
+- 不要因为用户提到一个 URL 就自动下载；只想阅读网页用 `http_get`，只想把已有文件发到聊天用 `send_file`。
+- 不传落点时保存到个人空间根目录；明确给出 `folder_id` 时直接使用它，`space` / `project_id` 只在用户明确指定项目或空间时传。
+- 下载结果的文件名、大小和真实落点以工具回执为准；不要自行猜测保存目录。单文件上限为 50MB，公网安全校验和重定向限制由工具统一执行。
 
 ## 读取音视频
 - 文件库里的 `read_file` 不只支持文本、PDF/Office 和图片，也支持音频与视频：音频会转写，视频会提取代表画面并尽量转写音频。
