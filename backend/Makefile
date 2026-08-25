@@ -10,7 +10,7 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update migrate backup clean deps deps-dev
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev
 
 # ── venv 路径自动检测 ───────────────────────────────────
 # 优先用 .venv，找不到退到 venv
@@ -87,9 +87,22 @@ deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
 	@echo "  pip install -r requirements-dev.txt ..."
 	@$(VENV_BIN)/pip install -r requirements-dev.txt
 
-update:      ## 装依赖 + 跑迁移（不用 git，适合 scp/rsync 部署）
+update:      ## 装依赖 + 跑数据库和文件存储迁移（不用 git，适合 scp/rsync 部署）
 	@$(MAKE) deps
 	@$(MAKE) migrate
+	@$(MAKE) storage-migrate
+
+makeupdate: update ## update 的兼容别名，便于业务端一键升级
+
+storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
+	@set -e; \
+	if [ "$$(id -u)" -eq 0 ] && systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service'; then \
+	  ./start.sh stop; \
+	  $(VENV_BIN)/python scripts/migrate_storage_root.py --apply; \
+	  ./start.sh install; \
+	else \
+	  $(VENV_BIN)/python scripts/migrate_storage_root.py --apply; \
+	fi
 
 migrate:     ## 跑数据库迁移（用 venv 绝对路径，不踩 PEP 668）
 	@if [ -z "$(VENV_BIN)" ]; then \

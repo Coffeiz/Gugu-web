@@ -29,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 # 运行时需要写的目标（必须真实存在，否则 systemd namespace 报 226）
-ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
+ReadWritePaths=__APP_DIR__/uploads __APP_DIR__/../Gugu-data/users __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
 
 [Install]
 WantedBy=multi-user.target

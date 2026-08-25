@@ -3,7 +3,7 @@
 ## 1. 文档信息
 
 - 状态：执行器实现准备中
-- 目标：先完成本机工作区受限执行闭环，再评估 Docker/Podman 沙盒
+- 目标：默认使用用户独立沙盒；工作区只作为默认目录，再评估 Docker/Podman 后端
 - 首版平台：devserver/Linux 本机执行
 - 后续平台：macOS、Windows 复用执行器接口，暂不承诺相同隔离强度
 - 相关能力：Agent 工具、用户设置、会话绑定、文件库工作区
@@ -12,31 +12,32 @@
 
 咕咕需要能够在用户明确授权后执行项目构建、测试、文件整理和诊断命令。直接在宿主机执行任意 Shell 会带来路径越权、凭据泄露、后台驻留、服务破坏和跨用户访问风险。
 
-本阶段先做“本机工作区受限执行器”：执行进程仍运行在当前系统用户下，但所有权限、路径、命令风险、超时和输出边界都由 Gugu-web 在执行前后统一校验。Docker/Podman 作为后续更强隔离层，不阻塞本阶段落地。
+本阶段先做“本机用户沙盒执行器”：执行进程仍运行在当前系统用户下，但所有权限、路径、命令风险、超时和输出边界都由 Gugu-web 在执行前后统一校验。Docker/Podman 作为后续更强隔离层，不阻塞本阶段落地。
 
 ## 3. 版本策略
 
 本 PRD 按执行链路拆成六个阶段。先完成权限和执行范围基础，再落地本机执行器，最后补工具注册、确认门、审计和回归测试。每一阶段都保持可独立验证，不提前暴露尚未实现的 Shell 工具。
 
-### 执行范围
+### 执行模式与工作区
 
-会话范围由绑定状态自动派生，不再通过命令单独维护 `shell_scope`：
+Shell 只维护两种执行模式：
 
-| 范围 | 根目录 | 说明 |
-|---|---|---|
-| `workspace` | 当前工作区 | 保留原有行为，要求绑定启用的工作区 |
-| `personal` | 用户个人文件目录 | 未绑定工作区且 system 未开放时的回落范围；必须由 Admin 和用户分别开启 |
-| `system` | 系统根目录 | 未绑定工作区时的优先范围；必须由 Admin 和用户分别开启 |
+| 模式 | 执行位置 | 默认值 | 说明 |
+|---|---|---|---|
+| `sandbox` | 用户独立沙盒 | ✅ | 默认模式；工作区只决定默认 `cwd` 和需要挂载的目录 |
+| `system` | 宿主机受控执行器 | 关闭 | 高权限模式；必须同时通过 Admin 总开关、用户权限和危险命令策略 |
 
-`shell_enabled` 是所有范围共用的总开关。绑定 workspace 的会话自动使用 `workspace`；解除绑定后优先使用 `system`，system 任一开关未开启时回落到 `personal`。只有总开关关闭时才会禁用所有 Shell。Shell 工具的会话 ID由执行器注入，模型不能自行指定。
+工作区不再是 Shell 权限范围。它只负责提供当前会话的默认目录、可挂载目录和上下文名称：绑定工作区时，`sandbox` 默认进入该工作区；未绑定时，`sandbox` 使用用户沙盒根目录。`system` 模式也可以使用绑定工作区作为默认 `cwd`，但不因此扩大或缩小系统执行器的权限。
+
+`shell_enabled` 是所有模式共用的总开关。Shell 模式由服务端根据权限和当前会话状态决定，模型不能传入 `scope`、`session_id` 或宿主机路径自行切换。
 
 ### 3.1 当前阶段：权限与执行器基础
 
 - Admin 总开关默认关闭。
 - 关闭时完全不注册 Shell 工具，并在 dispatch 层拒绝旧请求。
-- 开启后仍需同时满足对应范围的用户开关和会话绑定状态；system 仍需额外的危险命令确认门。
+- 开启后默认提供 `sandbox`；切换到 `system` 仍需额外的 Admin/用户权限和危险命令确认门。
 - “本机执行”仅指使用当前系统用户权限，不等于 root、`sudo` 或系统级权限。
-- 工作区和个人范围不接受宿主机绝对路径，不允许根目录外访问；系统范围仅在独立 Admin/用户开关均开启时优先使用。
+- 沙盒不接受宿主机绝对路径，不允许挂载工作区以外的目录；系统范围仅在独立 Admin/用户开关均开启时可用。
 - 保留执行超时、输出大小、后台进程和敏感路径等边界。
 - 危险命令另设独立的 Admin 总开关和用户个人开关，两个开关默认关闭。
 - 危险命令即使两个开关都开启，仍必须经过现有逐次确认门。
@@ -47,18 +48,50 @@
 - 在容器内复用同一 `ShellSandbox` 接口和权限快照。
 - 根据平台评估 macOS Seatbelt、Windows WSL2/AppContainer 等增强隔离。
 
+### 3.3 用户文件存储迁移
+
+当前本地存储实际目录为 `backend/uploads`，迁移目标为仓库同级的 `Gugu-data/users`。迁移不改变数据库中的 `storage_key`，因为现有 key 已包含用户隔离前缀；只切换 Local Storage 的根目录。
+
+- 迁移由 `backend/scripts/migrate_storage_root.py` 执行。
+- 默认先 dry-run，`make storage-migrate` 或 `make update` 才执行复制和配置切换。
+- 迁移按 SHA-256 校验；相同文件跳过，目标冲突时中止，不覆盖目标文件。
+- 迁移完成后更新 `config.override.json.storage.local_path` 为 `../Gugu-data/users`。
+- 旧 `backend/uploads` 保留，不在迁移脚本中自动删除。
+- 已安装 systemd 服务由 `make update` 停止、迁移、重新生成可写目录白名单并启动。
+- 迁移失败不得切换配置，服务继续使用旧存储根目录。
+
+### 3.4 OSS 模式下的 Shell 配额
+
+当 `storage.backend=oss` 时，OSS 文件库不可直接挂载到 Shell 容器。此时文件库继续使用 OSS 配额，Shell 沙盒使用独立的本地用户空间，只服务于 Shell 执行，不与 OSS 文件库共用容量。
+
+- Shell 沙盒默认配额为 `128 MB`。
+- Admin 的用户配额管理页面增加 Shell 沙盒配额配置和已用空间展示。
+- Shell 配额按用户保存；用户创建文件、下载内容、生成构建产物和缓存都计入同一配额。
+- 超出配额时拒绝写入、下载和生成，不影响用户在 OSS 文件库中的空间。
+- 删除沙盒文件后释放 Shell 配额。
+- `system` Shell 不使用这 128 MB 作为宿主机磁盘配额，继续使用独立的临时目录、输出大小和执行时长限制。
+- 本地存储模式下，Shell 可以继续复用 `Gugu-data/users/<user-id>`，不额外创建 Shell 配额字段。
+
+建议配置字段：
+
+```text
+shell_quota_bytes
+shell_used_bytes
+shell_quota_updated_at
+```
+
 ## 4. 目标与非目标
 
 ### 4.1 首版目标
 
 - Admin 可以全局开启/关闭 Shell 能力。
 - Admin 关闭时，所有用户禁止使用，用户页面不显示 Shell 设置。
-- 用户可以在个人设置中开启/关闭自己的 Shell 能力。
-- 新会话默认不绑定工作区，此时优先匹配 system；没有 system 权限但 personal 权限满足时回落到 personal。
+- 用户可以在个人设置中开启/关闭自己的 Shell 能力，并在允许时选择 `sandbox/system` 模式。
+- 新会话默认使用 `sandbox`，不绑定工作区；绑定工作区后只改变默认目录，不改变 Shell 权限模式。
 - 用户或咕咕可以为当前 session 绑定、切换、解除工作区。
 - 工作区可以来自文件库文件夹或项目。
-- 未绑定工作区且 system/personal 权限都未满足时，不向 Agent 暴露 Shell 工具。
-- 仅允许在当前 workspace 真实目录及其子目录内执行命令。
+- 用户未开启 Shell 或系统总开关关闭时，不向 Agent 暴露 Shell 工具。
+- `sandbox` 仅允许访问用户沙盒根目录及当前工作区挂载目录；`system` 使用独立的系统执行策略。
 - 本机执行器默认断网能力由命令策略控制；容器阶段再提供强制网络隔离。
 - 危险命令必须经过确认门。
 - 记录结构化审计信息，不记录密钥、完整用户输入或敏感命令输出。
@@ -66,7 +99,7 @@
 ### 4.2 当前阶段不做
 
 - 不开放宿主机 root shell，也不把宿主机 root 作为普通 Shell 能力开放。
-- system scope 受独立 Admin/用户开关控制；关闭 system 不影响 workspace/personal。
+- `system` 模式受独立 Admin/用户开关控制；关闭 system 不影响默认 `sandbox`。
 - 不允许通过参数访问任意宿主机目录、Docker socket 或提权接口。
 - 不支持任意远程主机执行。
 - 不在当前阶段实现 Docker/Podman、macOS Seatbelt 或 Windows AppContainer。
@@ -103,19 +136,13 @@ ConversationSession.workspace_id: nullable
 - 绑定、切换、解除只影响当前 session。
 - 工作区被删除、禁用或用户失去权限时，session 视为未绑定。
 
-### 5.3 执行范围
+### 5.3 执行模式
 
-首版只实现：
-
-```text
-workspace：当前工作区真实目录及其子目录
-```
-
-预留：
+首版统一为：
 
 ```text
-workspace-root：后续容器内 root，仍只访问当前工作区
-system：宿主机受控操作，仅 Admin，后续单独设计
+sandbox：用户独立沙盒；绑定工作区时挂载并进入当前工作区
+system：宿主机受控执行器，仅在独立权限开启后可用
 ```
 
 ## 6. 权限模型
@@ -135,17 +162,13 @@ shell_allowed = settings.agent.shell_enabled and is_local_admin(request)
 - 已经启动的命令由执行器超时/终止机制负责收尾；
 - 本机执行器不可用时返回明确错误，不回退到其他目录或未授权执行器。
 
-最终权限必须由服务端计算：
+最终模式和权限必须由服务端计算：
 
 ```python
-shell_allowed = (
-    admin_shell_enabled
-    and user_shell_enabled
-    and (
-        (session.workspace_id is not None and workspace_enabled)
-        or (session.workspace_id is None and (system_enabled or personal_enabled))
-    )
-)
+shell_allowed = admin_shell_enabled and user_shell_enabled
+sandbox_allowed = shell_allowed
+system_allowed = shell_allowed and admin_system_enabled and user_system_enabled
+mode = "system" if session.shell_mode == "system" and system_allowed else "sandbox"
 ```
 
 权限判断必须同时位于：
@@ -157,18 +180,12 @@ shell_allowed = (
 当前首版使用以下最终权限：
 
 ```python
-shell_allowed = (
-    admin_shell_enabled
-    and user_shell_enabled
-    and (
-        (session.workspace_id is not None and workspace_enabled)
-        or (session.workspace_id is None and (system_enabled or personal_enabled))
-    )
-)
+sandbox_allowed = admin_shell_enabled and user_shell_enabled
+system_allowed = sandbox_allowed and admin_system_enabled and user_system_enabled
+mode = "system" if requested_mode == "system" and system_allowed else "sandbox"
 ```
 
-未绑定工作区时，服务端优先选择 `system`；只有 system 任一开关未满足时才尝试 `personal`。
-关闭 `shell_system_enabled` 不会关闭工作区或个人目录 Shell；只有 `shell_enabled` 总开关会关闭全部范围。
+请求 `system` 但权限不满足时不得静默提升或执行宿主机命令，应返回明确的权限错误；默认会话直接使用 `sandbox`。关闭 system 不影响 sandbox，只有 `shell_enabled` 总开关会关闭全部 Shell。
 
 Admin 关闭总开关时：
 
@@ -185,10 +202,7 @@ dangerous_allowed = (
     and admin_dangerous_shell_enabled
     and user_shell_enabled
     and user_dangerous_shell_enabled
-    and (
-        (session.workspace_id is not None and workspace_enabled)
-        or (session.workspace_id is None and (system_enabled or personal_enabled))
-    )
+    and mode in ("sandbox", "system")
 )
 ```
 
@@ -220,7 +234,7 @@ shell
 }
 ```
 
-首版不接受 `root_path`、宿主机绝对路径或任意 `scope`。范围由当前 session workspace 决定。
+首版不接受 `root_path`、宿主机绝对路径或任意 `scope`。模式由服务端策略决定，默认目录由当前 session workspace 决定。
 
 ### 7.3 输出
 
@@ -240,7 +254,7 @@ shell
 
 ### 7.4 没有工作区时
 
-Shell 工具不注册。用户要求执行命令时，咕咕应提示先选择或绑定工作区，不得自行猜测默认目录。
+Shell 仍可在 `sandbox` 模式执行，默认目录为该用户的沙盒根目录。咕咕不得自行猜测宿主机目录；如果用户要求操作某个工作区，应先绑定或明确选择工作区。
 
 ### 7.5 危险命令开关
 
@@ -259,7 +273,7 @@ Shell 工具不注册。用户要求执行命令时，咕咕应提示先选择�
 /workspace
 /workspace list
 /workspace use 项目A
-/workspace clear
+/workspace unlink
 ```
 
 ### 8.2 Agent 工具
@@ -279,7 +293,8 @@ workspace_unbind
 
 ```text
 - 使用 Gugu-web 当前系统用户启动子进程
-- cwd 只能是当前 workspace 根目录或其子目录
+- sandbox 的 cwd 只能是沙盒根目录或当前 workspace 挂载目录的子目录
+- system 的 cwd 默认跟随 workspace，但必须经过系统执行器的独立路径策略
 - 不接受宿主机绝对路径、额外挂载和任意环境变量
 - 环境变量使用最小白名单，不继承密钥、Token 和数据库连接信息
 - 默认不主动联网；需要联网的命令按风险策略拒绝或单独确认
@@ -289,11 +304,11 @@ workspace_unbind
 
 ### 9.2 路径限制
 
-- `cwd` 必须解析到 `/workspace` 内部。
+- sandbox 的 `cwd` 必须解析到沙盒根目录或 `/workspace` 挂载点内部。
 - 拒绝 `..` 逃逸、绝对宿主机路径和未授权挂载。
-- 解析真实路径后再次检查是否仍在 workspace 根目录下。
+- 解析真实路径后再次检查是否仍在沙盒根目录或当前 workspace 根目录下。
 - 拒绝通过软链接逃逸到 workspace 外部。
-- 容器只挂载当前 workspace，不挂载用户 home、数据库、配置文件或密钥目录。
+- 容器只挂载当前 workspace，不挂载用户 home、数据库、配置文件或密钥目录；未绑定 workspace 时不挂载工作区。
 
 ### 9.3 资源限制
 
@@ -348,7 +363,7 @@ pytest、npm test、pnpm test、构建和静态检查命令
 
 ### 10.2 write
 
-用户已开启 Shell 且 workspace 可写时允许：
+用户已开启 Shell 且当前 sandbox 工作区可写时允许：
 
 ```text
 mkdir、touch、编辑文件、构建产物、安装项目依赖
@@ -371,7 +386,7 @@ git reset、git clean、覆盖性迁移
 高风险命令确认内容必须包含：
 
 - 规范化命令；
-- workspace 名称和范围；
+- workspace 名称和 Shell 模式；
 - 工作目录；
 - 是否联网；
 - 预期影响。
@@ -385,7 +400,7 @@ backend/agent/tools/shell.py
     Agent 工具 schema、调用参数和结果格式
 
 backend/agent/security/shell_policy.py
-    总开关、用户开关、workspace 权限、命令风险分类
+    总开关、sandbox/system 权限、命令风险分类
 
 backend/agent/sandbox/base.py
     ShellSandbox 接口、权限快照和统一结果模型
@@ -418,15 +433,15 @@ backend/tests/test_workspace_binding.py
 ### Phase 0：权限与契约冻结
 
 - [x] 增加 Admin `shell_enabled` 总开关，默认 `false`（配置模型、Admin 行为配置页已接入）。
-- [x] 明确工具不可见条件：Admin 总开关关闭、对应范围关闭、用户范围开关关闭或 session scope 为 `off` 时均不注册。
+- [x] 明确工具不可见条件：Admin 总开关关闭或用户 Shell 开关关闭时不注册；system 选项单独按权限隐藏。
 - [x] 开关变更后立即刷新配置，不依赖重启（复用现有 override 热更新）。
-- [x] 将 `workspace`、`personal`、`system` 作为独立范围；`system` 默认关闭且不等同于 root 提权。
+- [x] 冻结两种模式：默认 `sandbox`，独立高权限 `system` 默认关闭且不等同于 root 提权。
 - [x] 冻结输入、输出、错误脱敏和审计字段。
 
 ### Phase 1：本机执行器核心
 
 - [x] 实现 `ShellSandbox` 抽象契约和统一 `ShellResult`。
-- [x] 实现 `LocalWorkspaceSandbox`，只接受 workspace 内的相对 cwd。
+- [x] 实现 `LocalWorkspaceSandbox`，只接受沙盒或当前 workspace 挂载目录内的相对 cwd。
 - [x] 使用参数数组启动进程，禁止 `shell=True` 拼接执行。
 - [x] 实现 stdout/stderr 截断、超时和进程组清理。
 - [x] 使用最小环境变量集合，避免继承密钥和数据库配置。
@@ -438,20 +453,21 @@ backend/tests/test_workspace_binding.py
 - [x] 支持文件夹和项目转换为 workspace，并解析真实根目录。
 - [x] 增加用户 `shell_enabled` 偏好（复用 `user_preferences` JSON）。
 - [x] 增加 `ConversationSession.workspace_id` 及迁移。
-- [x] 保留 `ConversationSession.shell_scope` 迁移字段以兼容旧数据库；运行时不再读取它，范围由 workspace 绑定状态派生。
+- [x] 保留 `ConversationSession.shell_scope` 迁移字段以兼容旧数据库；运行时不再读取它。
 - [x] 新会话默认不绑定 workspace。
 - [x] 实现工作区列表、创建、绑定和解除绑定 API。
 - [x] 在执行前验证 workspace 用户归属、启用状态和真实根目录。
 - [x] 增加 `/workspace` 命令，支持查看当前绑定、`list` 列出可绑定工作区、绑定和解除绑定。
-- [x] 移除 `/shell` 命令和会话范围写入 API，避免 Shell 状态与 workspace 绑定分叉。
-- [x] 系统范围使用独立策略，不复用工作区路径；system 未开放时，未绑定会话回落 personal。
+- [x] 移除 `/shell` 命令和旧会话范围写入 API，避免 Shell 状态与 workspace 绑定分叉。
+- [ ] 将旧 `personal/workspace` scope 迁移为 `sandbox`，并增加 `ConversationSession.shell_mode`；工作区只保留默认目录职责。
+- [ ] 系统范围使用独立策略；system 未开放时，所有会话保持 sandbox，不再回落 personal。
 
 ### Phase 3：工具注册与模型提示
 
 - [x] 注册 `shell` 工具 schema 和统一返回值。
-- [x] 仅在总开关、派生范围 Admin 开关、用户范围开关和 workspace 绑定状态均满足时向模型暴露工具。
+- [x] 仅在总开关和用户 Shell 权限满足时向模型暴露 sandbox；system 另受 Admin/用户 system 开关控制。
 - [x] 增加 `shell-workspace` 技能和 `prompts/skills.md` 主动指针。
-- [x] 在动态提示词中显示当前 Shell 范围、workspace 名称、相对 cwd 和权限状态。
+- [x] 在动态提示词中显示当前 Shell 模式、workspace 名称、相对 cwd 和权限状态。
 - [x] 明确模型规则：使用系统提供的自动派生范围；不能传入 session_id、猜测默认目录或自行扩大范围。
 
 ### Phase 4：风险控制与审计（已完成本地执行器范围）
@@ -461,8 +477,9 @@ backend/tests/test_workspace_binding.py
 - [x] dispatch、执行器启动前和执行过程中再次校验权限快照；撤权后终止进程组。
 - [x] 记录结构化审计，不记录完整命令、输出、Token 或敏感路径。
 - [x] 增加同一 session 串行锁，避免 workspace 切换与执行竞态。
-- [x] Admin 按范围提供总开关；关闭的范围在个人设置中直接隐藏。
-- [x] 增加 workspace 派生、system 优先/personal 回落、总开关、旧 shell_scope 忽略和权限拒绝回归测试。
+- [x] Admin 提供 system 模式总开关；关闭 system 时仅隐藏 system 选项，不影响默认 sandbox。
+- [x] 增加总开关、旧 shell_scope 忽略和权限拒绝回归测试。
+- [ ] 增加默认 sandbox、工作区仅决定 cwd、system 独立权限和旧 scope 迁移回归测试。
 
 - [x] Admin 页面增加总开关。
 - [x] Admin 页面增加危险 Shell 命令总开关，默认关闭。
@@ -479,6 +496,8 @@ backend/tests/test_workspace_binding.py
 - [ ] 准备 rootless Docker 或受限专用执行服务，移除业务进程对 rootful Docker socket 的直接依赖。
 - [ ] 实现容器版 `ShellSandbox`，复用 Phase 1 的接口和测试。
 - [ ] 增加非 root、只读根文件系统、workspace 挂载、断网和资源限制。
+- [ ] OSS 模式下为每个用户创建独立 Shell 空间，默认配额 128 MB，并接入 Admin 配额管理。
+- [ ] 复用统一配额服务，覆盖 Shell 创建、下载、构建产物、缓存和删除后的空间回收。
 - [ ] 对比本机执行器与容器执行器的权限差异，决定默认后端。
 
 ## 13. 验收标准
@@ -487,28 +506,29 @@ backend/tests/test_workspace_binding.py
 
 - 默认配置下不存在可调用的 Shell 工具。
 - Admin 关闭开关后，旧请求也会被 dispatch 拒绝。
-- Admin、用户和 session workspace 均满足时，工具才会注册并执行。
-- 本机执行器只能在当前 workspace 内工作，不会回退到任意宿主机目录。
+- Admin 和用户 Shell 权限满足时，sandbox 工具即可注册并执行；workspace 只决定默认 cwd。
+- sandbox 只能在沙盒根目录或当前 workspace 挂载目录内工作，不会回退到任意宿主机目录。
 - 命令超时、输出超限和后台进程都能被收束。
 - `sudo`、提权命令、系统目录、密钥目录和软链接逃逸被拒绝。
 
 ### 13.2 权限与会话验收
 
 - Admin 关闭后，任意用户无法看到或调用 Shell。
-- 用户未开启或 session 未绑定 workspace 时，模型工具列表没有 Shell。
-- Shell 无法访问 workspace 外路径、软链接目标和宿主机密钥。
+- 用户未开启时，模型工具列表没有 Shell；未绑定 workspace 时仍可使用默认 sandbox。
+- sandbox 无法访问沙盒/当前 workspace 外路径、软链接目标和宿主机密钥；system 使用独立权限策略。
 - safe 命令可以正常执行并返回统一结果。
 - dangerous 命令未确认时不会执行。
 - 超时命令会终止完整进程树并释放执行状态。
 - 同一 session 并发调用不会交叉使用不同 workspace。
 - workspace 切换只影响当前 session。
-- `/workspace clear` 后立即无法执行 Shell。
+- `/workspace unlink` 后立即回到 sandbox 根目录，不会关闭 Shell。
 
 ### 13.3 后续容器验收
 
 - Docker/Podman 后端复用本机执行器的权限快照和统一结果模型。
 - 容器不可用时不会静默切换到更高权限的执行路径。
 - 容器具备非 root、workspace 单独挂载、默认断网和资源限制。
+- OSS 模式下每个用户默认拥有 128 MB Shell 空间，Admin 可以修改配额，Shell 空间与 OSS 文件库配额互不影响。
 
 ## 14. 后续平台适配
 
