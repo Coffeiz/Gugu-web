@@ -1054,6 +1054,44 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
         return None, sc, f"未能判定：{msg}"
 
 
+class VisionProbePreview(BaseModel):
+    provider: str
+    api_key: str = ""
+    base_url: str = ""
+    model: str = ""
+    api_format: str = ""
+
+
+async def _run_vision_probe(item: dict, dims: list[str]) -> dict:
+    results = {}
+    for d in dims:
+        supported, sc, detail = await _do_vision_probe(
+            item.get("provider", "openai"), item.get("api_key", ""),
+            item.get("base_url", "").rstrip("/"), item.get("model", ""),
+            item.get("api_format", ""), dim=d)
+        results[d] = {"supported": supported, "status": sc, "detail": detail}
+    return results
+
+
+def _apply_vision_probe(item: dict, results: dict) -> None:
+    """只把明确的 True/False 写回能力字段，测不准时保留原值。"""
+    for dim, result in results.items():
+        supported = result.get("supported")
+        if supported is None:
+            continue
+        field = "vision" if dim == "image" else f"vision_{dim}"
+        item[field] = bool(supported)
+
+
+@router.post("/llm-presets/probe-vision-preview")
+async def probe_vision_preview(body: VisionProbePreview, dim: str = "image"):
+    """检测尚未保存的预设草稿，不写入服务端配置。"""
+    if dim not in ("image", "video", "audio"):
+        raise HTTPException(400, "dim 仅支持 image/video/audio")
+    results = await _run_vision_probe(body.model_dump(), [dim])
+    return {"dim": dim, **results[dim]}
+
+
 @router.post("/llm-presets/{preset_id}/probe-vision")
 async def probe_vision_preset(preset_id: str, dim: str = ""):
     """探测预设模型的多模态能力，并把明确结论写回对应字段。
@@ -1073,24 +1111,16 @@ async def probe_vision_preset(preset_id: str, dim: str = ""):
     from agent.providers import capability_snapshot
     declared_capabilities = capability_snapshot(SimpleNamespace(**item))
 
+    results = await _run_vision_probe(item, dims)
+    _apply_vision_probe(item, results)
+    if presets.get("active_id") == preset_id:
+        override["ai"] = _ai_segment(item)
+    _write_override(override)
     if len(dims) == 1:
         d = dims[0]
-        supported, sc, detail = await _do_vision_probe(
-            item.get("provider", "openai"), item.get("api_key", ""),
-            item.get("base_url", "").rstrip("/"), item.get("model", ""),
-            item.get("api_format", ""), dim=d)
-        # 探测是一次性诊断，不覆盖预设中的静态声明；运行时能力仍由适配器决定。
-        return {"supported": supported, "status": sc, "detail": detail, "dim": d,
-                "declared_capabilities": declared_capabilities,
-                "probe": {"supported": supported, "status": sc}}
-
-    results = {}
-    for d in dims:
-        supported, sc, detail = await _do_vision_probe(
-            item.get("provider", "openai"), item.get("api_key", ""),
-            item.get("base_url", "").rstrip("/"), item.get("model", ""),
-            item.get("api_format", ""), dim=d)
-        results[d] = {"supported": supported, "status": sc, "detail": detail}
+        result = results[d]
+        return {**result, "dim": d, "declared_capabilities": declared_capabilities,
+                "probe": {"supported": result["supported"], "status": result["status"]}}
     return {"results": results, "declared_capabilities": declared_capabilities,
             "probe": results}
 

@@ -34,8 +34,37 @@ def test_first_diff_is_structural_and_diagnostics_are_digest_only():
     )
     assert result["first_diff_index"] is None
     assert result["wire_message_count"] == 3
+    assert len(result["wire_message_diagnostics"]) == 3
+    assert result["wire_role_sequence_digest"]
+    assert result["first_diff"] is None
     assert "hello" not in str(result)
     assert "time" not in str(result)
+
+
+def test_diagnostics_reports_first_wire_difference_without_body():
+    before = build_messages(
+        fixed_parts=[{"role": "system", "content": "stable"}],
+        history=[{"role": "assistant", "content": "history"}],
+        current_user={"role": "user", "content": "old"},
+        dynamic_tail=[{"role": "system", "content": "time"}],
+    )
+    after = build_messages(
+        fixed_parts=[{"role": "system", "content": "stable"}],
+        history=[{"role": "assistant", "content": "history"}],
+        current_user={"role": "user", "content": "new"},
+        dynamic_tail=[{"role": "system", "content": "time"}],
+    )
+    previous = list(before)
+    current = list(after)
+    result = request_diagnostics(
+        after, system_text="stable", tools=[], adapter=FakeAdapter(), model="test",
+        previous_messages=previous,
+    )
+    assert result["first_diff_index"] == 2
+    assert result["first_diff"]["previous"]["shape"]["role"] == "user"
+    assert result["first_diff"]["current"]["shape"]["role"] == "user"
+    assert "old" not in str(result)
+    assert "new" not in str(result)
 
 
 def test_ten_runs_keep_fixed_sections_stable_while_tail_changes():

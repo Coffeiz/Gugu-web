@@ -1,9 +1,9 @@
 # 记忆召回工具与混合检索 PRD
 
-> 状态：Memory 召回与混合排序已实现；评分、过滤、诊断统一遵循 PRD-RAG-4
+> 状态：Memory 单来源召回、混合排序与质量过滤已实现；IM scope 工具权限和 ILIKE 策略仍待完成
 > 创建：2026-08-04
-> 最近更新：2026-08-23
-> 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/global_search.py`
+> 最近更新：2026-08-25
+> 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/memory.py`、`backend/agent/rag/service.py`
 > 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 
 本 PRD 是 `PRD-RAG-1` 的首个单来源落地方案，只负责 Memory 来源和记忆专用
@@ -16,10 +16,10 @@ IM scope 权限和工具行为。未来跨来源召回复用 RAG-1 的内部 Ret
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 1：owner 私聊记忆召回工具 | 🟡 基础 BM25 已实现 | `pattern`、`daily`、`memory` 已通过 RAG-1 Memory adapter 和 `search_memory` 接入；embedding 混合、IM scope 和持久化索引后置 |
-| Phase 2：embedding 混合召回 | 🟡 基础能力已实现 | 使用已有同模型向量缓存与 BM25 混合；缺缓存、未启用或失败时退回 BM25，持久化索引后置 |
-| Phase 3：IM scope 权限 | 🔲 待实现 | owner 跨群、member 当前群隔离 |
-| Phase 4：与历史 session 检索共用底层 | 🔲 待评估 | 保持工具边界不合并，复用检索服务 |
+| Phase 1：owner 私聊记忆召回工具 | ✅ 已完成 | `profile`、`pattern`、`daily`、`memory` 已通过 RAG-1 Memory adapter 和 `search_memory` 接入；包含 BM25、结果预算、去重、snapshot 排除和 owner scope 隔离 |
+| Phase 2：embedding 混合召回 | ✅ 已完成 | 使用同模型向量缓存与 BM25 做 RRF 混合；缺缓存、未启用或失败时退回 BM25；实际权重为 BM25 0.45、Embedding 0.55 |
+| Phase 3：IM scope 权限 | 🟡 部分完成 | 自动 RAG 已支持 group/member scope；`search_memory` 工具仍只接受 `auto`/`private_memory`，owner 跨群、member 跨群及 unknown 权限矩阵尚未接入 |
+| Phase 4：与历史 session 检索共用底层 | 🟡 部分完成 | Memory、Knowledge、Project 已复用 `UnifiedRecallService`；`search_conversations` 仍保留独立数据库检索，未接入统一 IndexDocument/Retriever |
 | Phase 5：自动化测试与灰度 | ✅ 已完成（RAG-4） | 权限、统一 confidence 排序、预算、多样性和无 embedding BM25 回退测试已覆盖；质量对照见 RAG 质量复测报告 |
 
 阶段映射：Phase 1～3 是 RAG-1 的 Memory 单来源试点；Phase 4～5 对应 RAG-1
@@ -46,7 +46,7 @@ Memory 映射，不另起一套协议。
 
 ## 2. 功能需求
 
-### FR-MEM-1：主动记忆召回（待实现）
+### FR-MEM-1：主动记忆召回（✅ 基础能力已实现，IM scope 待补齐）
 
 新增 `search_memory` 工具，输入：
 
@@ -64,9 +64,10 @@ Memory 映射，不另起一套协议。
 
 - `query`：必填，由 LLM 提炼成适合检索的关键词或短语。
 - `scope`：`auto`、`current_group`、`all_my_groups`、`private_memory`；后端必须按身份权限二次校验。
-- `source`：`pattern`、`daily`、`memory`、`all`。
-- `strategy`：`auto`、`bm25`、`embedding`、`ilike`。`auto` 由后端按配置和查询特征选择；
-  `embedding` 未配置或不可用时必须退回 BM25，`ilike` 只做数据库子串匹配，不承诺语义相关性。
+- `source`：`knowledge`、`profile`、`pattern`、`daily`、`memory`、`all`。
+- `strategy` 规划为 `auto`、`bm25`、`embedding`、`ilike`。当前实现已支持前三者，
+  `ilike` 尚未接入 Memory 检索器；`auto` 由后端按配置选择，`embedding` 未配置或不可用时退回 BM25。
+  `ilike` 只做数据库子串匹配，不承诺语义相关性。
 - `limit`：默认 5，后端强制限制为 1～10，不能由模型扩大上限。
 
 默认建议使用 `auto`。只有排查召回、精确查找或离线对比时，才由 Agent 显式指定策略；
@@ -92,7 +93,7 @@ Memory 映射，不另起一套协议。
 
 只返回必要片段，不返回完整 memory 文件；总字符数由后端预算限制，避免工具结果撑爆上下文。
 
-### FR-MEM-2：无 embedding 时的 BM25 召回（待实现）
+### FR-MEM-2：无 embedding 时的 BM25 召回（✅ 已实现）
 
 - 将 `pattern` 条目、`daily` 条目和 `memory.md` 分段作为可检索文档。
 - 使用 BM25 对 query 和文档计算相关性。
@@ -100,7 +101,7 @@ Memory 映射，不另起一套协议。
 - 对中文使用项目统一的分词或字符 n-gram 策略；不能依赖英文空格分词。
 - 没有结果时返回空结果和可供 LLM 改写 query 的提示，不自动无限重试。
 
-### FR-MEM-3：BM25 + embedding 混合召回（待实现）
+### FR-MEM-3：BM25 + embedding 混合召回（✅ 已实现）
 
 当 embedding 已启用且存在同模型向量缓存时：
 
@@ -110,14 +111,14 @@ Memory 映射，不另起一套协议。
 4. 按混合分数排序，默认公式：
 
 ```text
-hybrid_score = 0.6 * bm25_score + 0.4 * cosine_score
+hybrid_score = 0.45 * bm25_rrf + 0.55 * cosine_rrf
 ```
 
 5. 结果不足时用 BM25 结果补齐；不得因向量服务失败而阻塞当前回复。
 
 权重和候选数量应配置在后端，不允许由 LLM 传入。后续可通过离线评估调整，不在首版暴露给普通用户。
 
-### FR-MEM-4：召回范围与权限（待实现）
+### FR-MEM-4：召回范围与权限（🟡 自动注入已实现，显式工具 scope 待实现）
 
 身份判断必须复用确定性的 `ActorResolver`，不能由模型、昵称或群内称呼推断。
 
@@ -139,7 +140,7 @@ owner_user_id + platform + bot_id + scope_type + scope_id
 不额外调用 LLM 做实时摘要，直接使用索引中已有的摘要或短片段；Web/私聊最多返回
 3 条群 RAG 结果，且同一群最多占 1 条。
 
-### FR-MEM-5：与现有搜索工具的边界（待实现）
+### FR-MEM-5：与现有搜索工具的边界（✅ 边界已实现）
 
 - `global_search`：搜索项目、文件、文件夹、日程、客户、便签等站内对象，继续保留。
 - `search_conversations`：搜索历史 session，继续使用消息正文、标题和摘要查询。
@@ -168,11 +169,11 @@ Memory 的 scope 校验和结果脱敏。
 
 ### 3.1 检索文档构建
 
-新增 `backend/agent/memory/recall.py`，负责：
+当前由 `backend/agent/rag/adapters/memory.py` 与 `backend/agent/rag/service.py` 负责：
 
 - 将各记忆层转换为带 `source`、`scope`、`date`、`text` 的统一文档。
 - 对 `memory.md` 按段落切分，对 daily 按条目切分。
-- 对 pattern 使用条目文本和结构化重要度作为排序保底。
+- 对 pattern 使用条目文本和统一 RAG 评分作为排序依据。
 - 不记录用户原文到普通日志；诊断日志只记录 source、scope 类型、结果数量和耗时。
 
 ### 3.2 BM25 实现
@@ -205,29 +206,29 @@ LLM 只有在以下情况主动调用：
 
 ## 4. 验证与上线
 
-### Phase 1：owner 私聊
+### Phase 1：owner 私聊（✅ 已完成）
 
 - BM25 无 embedding 时能召回包含关键词的 pattern、daily、memory。
 - `limit` 超过 10 会被后端截断。
 - 无结果时不调用第二次无限搜索。
 - owner 只能读取自己的记忆。
 
-### Phase 2：混合排序
+### Phase 2：混合排序（✅ 已完成）
 
 - 同一批候选同时有 BM25 和向量分数时按混合分数排序。
 - embedding 未配置、缓存缺失、服务 4xx/5xx 时均能退回 BM25。
 - 不重复调用 embedding；单次 query 只生成一个 query 向量。
 
-### Phase 3：IM 权限
+### Phase 3：IM 权限（🟡 部分完成）
 
-- owner 私聊可查自己的跨群记忆。
-- owner 群聊默认只查当前群，明确跨群后结果不泄露其他群原文。
-- member / unknown 无法读取 owner 或其他群记忆。
+- 自动 RAG 已按当前群和当前发言人构造 group/member scope。
+- `search_memory` 显式工具目前只支持 owner scope；跨群 owner、member 和 unknown 的工具权限尚未实现。
+- 完成前不得把自动注入路径的 scope 支持视为工具权限已完成。
 - 不同 `owner_user_id`、平台和 Bot 的 scope 完全隔离。
 
-### Phase 4：回归与性能
+### Phase 4：回归与性能（🟡 部分完成）
 
-- 与 `global_search`、`search_conversations` 并行测试，确认工具职责不互相覆盖。
+- 与 `global_search`、`search_conversations` 的工具边界已保持独立；统一底层 Retriever 目前只覆盖 Memory/Knowledge/Project，尚未覆盖历史 session。
 - 记录检索耗时、候选数、最终结果数和回退原因，不记录记忆正文。
 - 单次工具调用总输出控制在上下文预算内。
 
@@ -243,7 +244,9 @@ LLM 只有在以下情况主动调用：
 
 待确认：
 
-- 🔲 BM25 首版采用字符 n-gram 还是引入中文分词依赖。
-- 🔲 混合权重 `0.6 / 0.4` 需用真实记忆样本离线评估后确认。
-- 🔲 owner 群聊跨群召回的摘要脱敏格式需结合 IM UI 最终确定。
-- 🔲 群组/member 记忆 scope 等待 `PRD-IM-3` 实现后接入。
+- 🔲 `search_memory` 接入 `current_group`、`all_my_groups` 等显式 scope，并复用 IM ActorResolver 做权限校验。
+- 🔲 owner/member/unknown 的跨群结果限制、脱敏和当前群优先规则落地。
+- 🔲 Memory group/member scope 接入持久化索引与增量失效机制。
+- 🔲 接入 `ilike` 策略，明确其仅作为精确子串回退，不参与语义混合排序。
+- 🔲 评估是否将 `search_conversations` 的消息索引接入统一 Retriever；保持工具边界不合并。
+- 🔲 补充显式 `search_memory` 的 IM 权限、scope、策略和跨用户隔离测试。

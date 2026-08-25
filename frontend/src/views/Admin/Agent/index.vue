@@ -1082,7 +1082,7 @@ async function savePreset() {
 
 // 多模态探测：发极小媒体给该预设模型，按响应判定是否支持对应维度，结论自动写回。
 // 卡片按钮不传 dim → 依次测图片/视频/音频三维度；弹窗内按钮传 dim → 只测单维度。
-async function probeVision(id: string | number, dim?: string) {
+async function probeVision(id: string | number | undefined, dim?: string) {
   const target = editTarget.value
   if (dim && !target) return
   if (dim) {
@@ -1091,8 +1091,23 @@ async function probeVision(id: string | number, dim?: string) {
     probingId.value = id
   }
   try {
-    const url = `/api/v1/admin/agent/llm-presets/${id}/probe-vision` + (dim ? `?dim=${dim}` : '')
-    const res  = await adminStore.authFetch(url, { method: 'POST' })
+    const isDraft = Boolean(dim && !id && target)
+    const url = isDraft
+      ? `/api/v1/admin/agent/llm-presets/probe-vision-preview?dim=${dim}`
+      : `/api/v1/admin/agent/llm-presets/${id}/probe-vision` + (dim ? `?dim=${dim}` : '')
+    const res = await adminStore.authFetch(url, {
+      method: 'POST',
+      ...(isDraft ? {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: target!.provider,
+          api_key: target!.api_key,
+          base_url: target!.base_url,
+          model: target!.model,
+          api_format: target!.api_format || '',
+        }),
+      } : {}),
+    })
     const data = await res.json()
     if (dim) {
       // 单维度（弹窗内）
@@ -1100,9 +1115,9 @@ async function probeVision(id: string | number, dim?: string) {
       if (data.supported === true)       showMsg(`✅ ${label}：支持，已开启`)
       else if (data.supported === false) showMsg(`${label}：不支持，已设为关闭：${data.detail}`, true)
       else                               showMsg(`${label}：测不准：${data.detail}`, true)
-      if (data.supported === true) {
+      if (data.supported === true || data.supported === false) {
         const field = dim === 'image' ? 'vision' : 'vision_' + dim
-        target![field] = true
+        target![field] = data.supported
       }
     } else {
       // 全维度（卡片）

@@ -208,6 +208,46 @@ async def test_capability_fingerprint_changes_when_model_changes(monkeypatch):
     assert override["ai_presets"]["items"][0]["capability_checked_at"] == second["checked_at"]
 
 
+@pytest.mark.asyncio
+async def test_vision_probe_preview_supports_unsaved_preset(monkeypatch):
+    async def fake_probe(provider, api_key, base_url, model, api_format, *, dim):
+        return True, 200, f"支持{dim}"
+
+    monkeypatch.setattr(agent_admin, "_do_vision_probe", fake_probe)
+    result = await agent_admin.probe_vision_preview(
+        agent_admin.VisionProbePreview(
+            provider="openai", base_url="http://127.0.0.1:8000/v1", model="vision-model",
+        ),
+        dim="image",
+    )
+
+    assert result["supported"] is True
+    assert result["dim"] == "image"
+
+
+@pytest.mark.asyncio
+async def test_vision_probe_persists_definitive_capabilities(monkeypatch):
+    item = {
+        "id": "vision-1", "provider": "openai", "api_key": "", "base_url": "http://local/v1",
+        "model": "vision-model", "vision": False, "vision_video": False, "vision_audio": False,
+    }
+    override = {"ai_presets": {"active_id": "vision-1", "items": [item]}}
+    monkeypatch.setattr(agent_admin, "_read_override", lambda: override)
+    monkeypatch.setattr(agent_admin, "_write_override", lambda value: None)
+
+    async def fake_probe(provider, api_key, base_url, model, api_format, *, dim):
+        return (dim == "image"), 200, "明确结果"
+
+    monkeypatch.setattr(agent_admin, "_do_vision_probe", fake_probe)
+    result = await agent_admin.probe_vision_preset("vision-1")
+
+    assert result["results"]["image"]["supported"] is True
+    assert item["vision"] is True
+    assert item["vision_video"] is False
+    assert item["vision_audio"] is False
+    assert override["ai"]["vision"] is True
+
+
 def _probe_result():
     return {
         key: {"status": "支持", "detail": "HTTP 200"}

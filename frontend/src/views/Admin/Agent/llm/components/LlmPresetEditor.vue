@@ -206,8 +206,8 @@
                   type="button"
                   class="pca-btn pca-btn--sm"
                   :class="{ 'pca-btn--testing': probingDim === dim.key }"
-                  :disabled="isNew || (probingDim !== null && probingDim !== dim.key)"
-                  :title="isNew ? '先保存预设再检测' : ''"
+                  :disabled="probingDim !== null && probingDim !== dim.key"
+                  :title="isNew ? '检测草稿，不会写入配置；保存后生效' : ''"
                   @click="$emit('probe-vision', draft.id, dim.key)"
                 >{{ probingDim === dim.key ? '检测中…' : '检测' }}</button>
                 <button
