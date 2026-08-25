@@ -48,6 +48,31 @@ Shell 只维护两种执行模式：
 - 在容器内复用同一 `ShellSandbox` 接口和权限快照。
 - 根据平台评估 macOS Seatbelt、Windows WSL2/AppContainer 等增强隔离。
 
+#### Rootless Docker 部署方案
+
+首版容器执行器优先使用宿主机上的 Rootless Docker，而不是让业务进程直接连接 root Docker socket，也不在用户容器内部运行 Docker。
+
+```text
+宿主机
+└── gugu-sandbox 系统用户
+    └── Rootless Docker daemon
+        └── 每用户一个受限沙盒容器
+```
+
+- `sandboxd` 作为独立执行服务运行，Gugu Web/Worker 通过受限 API 调用，不直接持有 root Docker socket。
+- 容器基础镜像首版使用固定 digest 的 `debian:bookworm-slim`；容器内部使用非 root 用户 `gugu`。
+- 宿主机需要启用 user namespace、cgroup v2，并准备 `fuse-overlayfs`；Rootless Docker 通过 systemd lingering 保持后台运行。
+- 禁止 `privileged`、host network、host PID、任意宿主机挂载、Docker-in-Docker 和未经批准的设备映射。
+- 用户数据只允许挂载对应用户的数据卷和当前工作区目录；镜像根文件系统只读，临时目录单独限制大小。
+- 低端口映射、部分内核能力和高级网络能力属于 Rootless Docker 的已知限制，Shell 沙盒不依赖这些能力。
+- Rootless Docker 不可用时，沙盒不能开启，Shell 不得回退到本机执行器。
+
+#### 镜像许可证
+
+- `gugu-sandboxd`、执行器和咕咕自有代码使用 Apache License 2.0。
+- `debian:bookworm-slim`、Debian 软件包及其他依赖继续遵循各自许可证，不因咕咕代码使用 Apache-2.0 而改变许可证。
+- 发布镜像时保留 Apache-2.0、基础镜像版权声明和第三方许可证清单。
+
 ### 3.3 用户文件存储迁移
 
 当前本地存储实际目录为 `backend/uploads`，迁移目标为仓库同级的 `Gugu-data/users`。迁移不改变数据库中的 `storage_key`，因为现有 key 已包含用户隔离前缀；只切换 Local Storage 的根目录。
@@ -78,6 +103,75 @@ Shell 只维护两种执行模式：
 shell_quota_bytes
 shell_used_bytes
 shell_quota_updated_at
+```
+
+### 3.5 Admin 沙盒管理
+
+容器沙盒完成后，Admin 增加独立的“Shell 沙盒”管理页面，作为 Shell 的运行时总闸门和容器状态入口，不把 Docker 参数暴露给普通用户，也不要求管理员手动填写容器命令。
+
+- 页面显示沙盒状态：已关闭、Docker 未安装、Docker 未运行、容器执行器就绪或初始化失败。
+- 沙盒默认关闭。关闭沙盒时，Shell 工具不注册且 dispatch 继续拒绝旧请求；不会删除用户文件、Shell 空间或已配置的配额。
+- 只有检测到本机 Docker CLI 和可用 Docker daemon 后，才允许打开沙盒；Docker 未安装或 daemon 不可用时，开关保持禁用并显示原因。
+- 管理员打开沙盒后，后端自动校验并初始化受限执行环境：固定镜像、非 root 用户、只读根文件系统、用户空间挂载、断网和 CPU/内存/进程/超时限制。初始化失败时不打开开关，并返回结构化错误。
+- 管理员关闭沙盒后，只停止或回收 Shell 容器运行态，不清理用户数据；再次打开时按用户需要重新创建容器。
+- Admin 页面只管理全局沙盒开关和运行状态；危险命令、用户 Shell 权限和用户配额继续沿用各自的权限/配额入口。
+- 沙盒状态必须由后端事实源返回，不能由前端仅根据配置值推断“可用”。Shell 工具注册、dispatch 和执行器三层都必须检查沙盒就绪状态。
+
+建议接口：
+
+```text
+GET   /api/v1/admin/sandbox/status
+POST  /api/v1/admin/sandbox/enable
+POST  /api/v1/admin/sandbox/disable
+```
+
+建议状态字段：
+
+```text
+enabled
+docker_installed
+docker_daemon_ready
+executor_ready
+state
+message
+image
+updated_at
+```
+
+#### 沙盒生命周期权限
+
+沙盒的运行控制需要区分用户自助操作和 Admin 管理操作，不能把容器控制参数直接暴露给用户。
+
+用户可以对自己的沙盒执行：
+
+- **重启沙盒**：停止并重新启动当前容器，保留用户文件、挂载卷和配额记录。
+- **重建沙盒**：删除旧容器并按当前系统配置重新创建容器，保留用户数据卷，不允许选择镜像、挂载路径、网络、资源上限或启动参数。
+- 用户重启/重建需要冷却时间、并发限制和操作确认；失败时返回容器状态和可见原因。
+
+Admin 可以执行：
+
+- 查看单个用户沙盒的状态、资源占用、配额和最近错误。
+- 重启或重建单个用户沙盒。
+- 在维护场景下批量重启或重建沙盒。
+- 配置镜像版本、CPU、内存、进程数、执行时长和磁盘配额。
+- 强制停止异常、超限或违反策略的沙盒。
+
+以下操作必须严格区分：
+
+- **重启**只改变容器生命周期，不改变容器数据。
+- **重建**只替换容器实例，默认保留用户数据卷；镜像更新或配置变更后使用重建使其生效。
+- **清空沙盒**是独立的破坏性操作，会删除用户沙盒文件，不能隐含在重建、重启或关闭沙盒中，必须使用单独确认门。
+
+全局关闭沙盒时停止或回收容器运行态，但不删除用户数据和配额分配。用户操作只能影响自己的沙盒，Admin 的批量操作需要记录审计日志。
+
+建议接口：
+
+```text
+POST /api/v1/sandbox/restart
+POST /api/v1/sandbox/rebuild
+POST /api/v1/admin/sandbox/users/{user_id}/restart
+POST /api/v1/admin/sandbox/users/{user_id}/rebuild
+POST /api/v1/admin/sandbox/users/{user_id}/clear
 ```
 
 ## 4. 目标与非目标
@@ -495,9 +589,18 @@ backend/tests/test_workspace_binding.py
 - [ ] 清理 devserver Docker 存储并建立容器存储配额。
 - [ ] 准备 rootless Docker 或受限专用执行服务，移除业务进程对 rootful Docker socket 的直接依赖。
 - [ ] 实现容器版 `ShellSandbox`，复用 Phase 1 的接口和测试。
+- [ ] 准备 `gugu-sandbox` 专用系统用户、Rootless Docker、user namespace、cgroup v2、fuse-overlayfs 和 systemd lingering。
+- [ ] 固定 `debian:bookworm-slim` 镜像 digest，容器内使用非 root 用户并生成第三方许可证清单。
 - [ ] 增加非 root、只读根文件系统、workspace 挂载、断网和资源限制。
 - [ ] OSS 模式下为每个用户创建独立 Shell 空间，默认配额 128 MB，并接入 Admin 配额管理。
 - [ ] 复用统一配额服务，覆盖 Shell 创建、下载、构建产物、缓存和删除后的空间回收。
+- [ ] 增加 Admin “Shell 沙盒”管理页面和状态接口：关闭时禁用 Shell，Docker 不可用时禁止开启。
+- [ ] 实现 Docker 可用性检测与自动初始化；禁止前端或管理员手动拼接容器启动参数。
+- [ ] 将沙盒就绪状态接入工具注册、dispatch、执行器三层权限闸门。
+- [ ] 验证关闭沙盒只停止/回收容器，不删除用户空间和既有配额分配。
+- [ ] 增加用户沙盒重启/重建入口，限制为当前用户并保留数据卷。
+- [ ] 增加 Admin 单用户和批量沙盒生命周期管理，接入审计日志与确认门。
+- [ ] 将清空沙盒设计为独立破坏性操作，不允许被重建流程隐式触发。
 - [ ] 对比本机执行器与容器执行器的权限差异，决定默认后端。
 
 ## 13. 验收标准
@@ -522,6 +625,12 @@ backend/tests/test_workspace_binding.py
 - 同一 session 并发调用不会交叉使用不同 workspace。
 - workspace 切换只影响当前 session。
 - `/workspace unlink` 后立即回到 sandbox 根目录，不会关闭 Shell。
+- 沙盒关闭后 Shell 不出现在工具列表，旧请求也被拒绝；用户文件和配额保持不变。
+- Docker 未安装、daemon 未运行或容器初始化失败时，Admin 无法打开沙盒，并能看到明确状态原因。
+- Rootless Docker 不可用时不会回退到本机执行器；业务进程不具备 root Docker socket 访问权限。
+- 沙盒镜像使用固定 digest，容器以非 root 用户运行，许可证文件和第三方许可证清单随镜像发布。
+- 用户重启/重建只能影响自己的容器；重建后文件仍然存在，清空操作必须单独确认。
+- Admin 可查看并管理单个用户沙盒，批量操作有审计记录，不会误删用户数据。
 
 ### 13.3 后续容器验收
 
