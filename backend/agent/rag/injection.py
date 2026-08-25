@@ -100,7 +100,9 @@ async def build_passive_history_message(user_id, query: str) -> dict[str, str] |
     canonical tool round 的精确入口。这里固定使用 lexical，避免普通对话因 embedding
     请求增加额外延迟。
     """
-    if not should_passively_recall(query):
+    from app.core.config import get_settings
+
+    if not get_settings().search.rag_enabled or not should_passively_recall(query):
         return None
     try:
         from agent.rag.service import search_knowledge
@@ -166,6 +168,11 @@ async def build_automatic_rag_context(
     下一轮从 history 重建时保持相同的消息边界。召回失败只跳过可选上下文，
     不阻塞主 Agent；结果按 scope 顺序合并并共享 3000 字符上限。
     """
+    from app.core.config import get_settings
+
+    if not get_settings().search.rag_enabled:
+        return {"tail": [], "blocks": [], "scope_hits": [], "injected": False,
+                "disabled": True}
     query = (query or "").strip()
     if not query:
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}

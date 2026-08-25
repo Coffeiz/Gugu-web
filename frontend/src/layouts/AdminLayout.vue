@@ -32,7 +32,8 @@
           <Icon name="admin.robot2" size="sm" />
           Agent 配置
         </div>
-        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><Icon name="admin.sliders" size="sm" />行为配置</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-behavior') }" role="link" tabindex="0" @click="go('/agent-behavior')"><Icon name="admin.sliders" size="sm" />Agent 能力</div>
+        <div class="nav-item nav-sub" :class="{ active: isActive('/agent-memory') }" role="link" tabindex="0" @click="go('/agent-memory')"><Icon name="admin.brain" size="sm" />Agent 记忆</div>
         <div class="nav-item nav-sub" :class="{ active: isActive('/agent-usage') }" role="link" tabindex="0" @click="go('/agent-usage')"><Icon name="admin.analytics" size="sm" />Agent 用量</div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />

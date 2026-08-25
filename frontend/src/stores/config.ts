@@ -96,6 +96,7 @@ export const useConfigStore = defineStore('config', () => {
       default_search_limit_daily: null,
     },
     search: {
+      rag_enabled: true,
       tavily_api_key: '',
       searxng_url: '',
       searxng_engines: 'sogou,quark,360search',

@@ -3,7 +3,7 @@
 
     <div class="page-header">
       <div class="page-title-block">
-        <h2 class="page-title">{{ standaloneMode === 'behavior' ? 'Agent 行为配置' : standaloneMode === 'usage' ? 'Agent 用量统计' : 'Agent 配置' }}</h2>
+        <h2 class="page-title">{{ standaloneMode === 'behavior' ? 'Agent 能力' : standaloneMode === 'usage' ? 'Agent 用量统计' : 'Agent 配置' }}</h2>
         <p class="page-desc">{{ standaloneMode ? '独立管理 Agent 运行参数与用量数据' : '管理 LLM 连接、系统提示词与行为参数' }}</p>
       </div>
     </div>
@@ -160,7 +160,7 @@
       <PromptPanel v-if="activeTab === 'prompts'" />
 
       <!-- ── 行为配置 ── -->
-      <section v-if="activeTab === 'behavior' && (behaviorTab === 'runtime' || behaviorTab === 'maintenance')" class="config-card">
+      <section v-if="activeTab === 'behavior' && behaviorTab === 'runtime'" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -170,8 +170,8 @@
             </svg>
           </div>
           <div class="card-title-block">
-            <h3>{{ behaviorTab === 'maintenance' ? '记忆运行参数' : '运行行为' }}</h3>
-            <p>{{ behaviorTab === 'maintenance' ? '控制记忆提炼、保留和压缩的周期；日常运行无需频繁调整。' : '控制 Agent 的工具权限、上下文压缩和 IM 运行行为。' }}</p>
+            <h3>运行行为</h3>
+            <p>控制 Agent 的工具权限、上下文压缩和 IM 运行行为。</p>
           </div>
         </div>
 
@@ -222,7 +222,7 @@
             </button>
           </div>
 
-          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
+          <div v-if="false" class="behavior-item">
             <div class="behavior-label">
               <span>记忆系统</span>
               <span class="behavior-desc">开启后 Agent 将自动从对话中提炼记忆</span>
@@ -267,7 +267,7 @@
             </button>
           </div>
 
-          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
+          <div v-if="false" class="behavior-item">
             <div class="behavior-label">
               <span>Reflection 触发阈值</span>
               <span class="behavior-desc">每隔多少条消息触发一次记忆整理</span>
@@ -280,7 +280,7 @@
             />
           </div>
 
-          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
+          <div v-if="false" class="behavior-item">
             <div class="behavior-label">
               <span>Daily 记忆保留天数</span>
               <span class="behavior-desc">超出后压缩进 Weekly</span>
@@ -293,7 +293,7 @@
             />
           </div>
 
-          <div v-if="behaviorTab === 'maintenance'" class="behavior-item">
+          <div v-if="false" class="behavior-item">
             <div class="behavior-label">
               <span>Weekly 记忆保留周数</span>
               <span class="behavior-desc">超出后提炼进 memory.md（长期记忆）</span>
@@ -615,8 +615,8 @@
         </div>
       </section>
 
-      <!-- ── 向量 Embedding 模型 ── -->
-      <section v-if="activeTab === 'retrieval'" class="config-card">
+      <!-- 记忆召回已迁移至独立的 Agent 记忆页面。 -->
+      <!--
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"
@@ -726,7 +726,7 @@
         </div>
       </section>
 
-      <MemoryMaintenancePanel v-if="activeTab === 'behavior' && behaviorTab === 'maintenance'" />
+      -->
 
       <!-- ── 状态命名 ── -->
       <StateLabelsPanel v-if="activeTab === 'labels'" />
@@ -750,7 +750,6 @@ import TracePanel from './observability/components/TracePanel.vue'
 import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
-import MemoryMaintenancePanel from './memory/components/MemoryMaintenancePanel.vue'
 import { useAgentRuntimeConfig } from './runtime-config/useAgentRuntimeConfig'
 import { useLlmPresets } from './llm/useLlmPresets'
 import AdminSelect from '@/components/AdminSelect.vue'
@@ -759,21 +758,18 @@ import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
-import { useEmbeddingRebuild } from './runtime-config/useEmbeddingRebuild'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
 const route = useRoute()
 const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavior' : route.path === '/agent-usage' ? 'usage' : '')
 const runtimeConfig = useAgentRuntimeConfig()
-const { rebuild, pollRebuild, startRebuild } = useEmbeddingRebuild(adminStore)
-const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, embeddingDraft, embeddingSaving, embeddingSaved, embeddingError, embTest, resetEmbedding, saveEmbedding, testEmbedding, searchTest, testSearch, saveSearch } = runtimeConfig
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
-  { key: 'retrieval', label: '向量检索' },
   { key: 'capabilities', label: '能力目录' },
   { key: 'labels',   label: '状态命名' },
   { key: 'trace',    label: '决策轨迹' },
@@ -784,7 +780,6 @@ const behaviorTabs = [
   { key: 'runtime', label: '运行行为' },
   { key: 'search', label: '搜索与图片' },
   { key: 'voice', label: '语音识别' },
-  { key: 'maintenance', label: '记忆维护' },
 ]
 const behaviorTab = ref('runtime')
 
@@ -1152,9 +1147,7 @@ onMounted(async () => {
   resetGeneralSearch()
   resetSimilarImageSearch()
   Object.assign(voiceDraft, configStore.cfg.voice)
-  Object.assign(embeddingDraft, configStore.cfg.embedding)
   fetchPresets()
-  pollRebuild()   // 若有重建任务在跑，页面加载即反映进度并接续轮询
 })
 
 </script>

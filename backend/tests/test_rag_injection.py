@@ -136,6 +136,24 @@ async def test_automatic_recall_uses_group_then_member_scope_and_deduplicates(mo
 
 
 @pytest.mark.asyncio
+async def test_automatic_recall_respects_global_rag_switch(monkeypatch):
+    from agent.rag import injection
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(search=SimpleNamespace(rag_enabled=False)),
+    )
+    request = SimpleNamespace(user_id="owner", source="web", chat_id=None)
+
+    result = await injection.build_automatic_rag_context(request, "之前的缓存", history=[])
+
+    assert result["tail"] == []
+    assert result["blocks"] == []
+    assert result["injected"] is False
+    assert result["disabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_automatic_recall_does_not_repeat_persisted_hash(monkeypatch):
     from agent.rag import injection
 

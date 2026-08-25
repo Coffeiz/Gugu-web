@@ -169,6 +169,7 @@ class QuotaSettings(BaseModel):
 
 
 class SearchSettings(BaseModel):
+    rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
     searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")

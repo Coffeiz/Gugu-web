@@ -44,7 +44,8 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/Admin/Agent/index.vue'),
         meta: { title: 'Agent 配置' },
       },
-      { path: 'agent-behavior', name: 'AdminAgentBehavior', component: () => import('@/views/Admin/AgentBehavior/index.vue'), meta: { title: 'Agent 行为配置' } },
+      { path: 'agent-behavior', name: 'AdminAgentBehavior', component: () => import('@/views/Admin/AgentBehavior/index.vue'), meta: { title: 'Agent 能力' } },
+      { path: 'agent-memory', name: 'AdminAgentMemory', component: () => import('@/views/Admin/AgentMemory/index.vue'), meta: { title: 'Agent 记忆' } },
       { path: 'agent-usage', name: 'AdminAgentUsage', component: () => import('@/views/Admin/AgentUsage/index.vue'), meta: { title: 'Agent 用量统计' } },
       {
         path: 'users',
