@@ -15,7 +15,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.logging import setup_logging, flush_log_queue
 from app.api.v1 import config as config_router
-from app.api.v1 import admin_auth
+from app.api.v1 import admin_auth, sandbox_admin
 from app.api.v1 import auth as user_auth
 from app.api.v1 import projects as projects_router
 from app.api.v1 import files as files_router
@@ -46,6 +46,7 @@ from app.api.v1 import ops_admin as ops_admin_router
 from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import notifications as notifications_router
+from app.api.v1 import user_skills as user_skills_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
@@ -243,6 +244,11 @@ app.include_router(
     dependencies=[Depends(require_admin)],
 )
 app.include_router(
+    sandbox_admin.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
     agent_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
@@ -303,6 +309,7 @@ app.include_router(
     dependencies=[Depends(require_admin)],
 )
 app.include_router(notifications_router.router, prefix="/api/v1")
+app.include_router(user_skills_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

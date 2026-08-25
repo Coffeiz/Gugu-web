@@ -345,7 +345,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
     _snapshot_injection = (
-        session_snapshot.reminder_message(snapshot_context)
+        session_snapshot.snapshot_message(snapshot_context)
         if snapshot_context else None
     )
 
@@ -362,11 +362,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     from agent.runner import _capability_context, _filter_shell_tool
     async with _sess._SessionLocal() as db:
         tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
-    capability_context = _capability_context(tool_names, settings)
+    capability_context = await _capability_context(tool_names, settings, owner_id=user_id)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
-        _snapshot_injection = session_snapshot.reminder_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        _snapshot_injection = session_snapshot.snapshot_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
         )
 
     from agent.llm.llm_select import use_anthropic_for
@@ -387,6 +387,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         history_parts = build_history_parts(
             history, req, use_anthropic=use_anthropic, user_tz=user_tz,
             strip_thinking=strip_thinking)
+        # 当前用户消息也必须沿用 history 的稳定边界：发送时间放在消息之前，
+        # 不能留在动态尾部，否则下一次 run 恢复历史时会发生位置移动并切断缓存。
+        message_time = (
+            session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+            if user_message is not None and not resume_interaction else None
+        )
+        if message_time:
+            history_parts.append(message_time)
         from agent.rag.injection import build_automatic_rag_context
         rag_context = await build_automatic_rag_context(
             req, req.message, history=history, snapshot_text=snapshot_context,
@@ -403,12 +411,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
         )
         # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
         tail_parts: list[dict] = []
-        message_time = (
-            session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
-            if user_message is not None else None
-        )
-        if message_time:
-            tail_parts.append(message_time)
         tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
         if use_anthropic:
             assembly = message_assembly.assemble(

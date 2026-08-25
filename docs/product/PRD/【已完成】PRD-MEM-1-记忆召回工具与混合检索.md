@@ -1,6 +1,6 @@
 # 记忆召回工具与混合检索 PRD
 
-> 状态：Memory 单来源召回、混合排序与质量过滤已实现；IM scope 工具权限和 ILIKE 策略仍待完成
+> 状态：Memory 召回、混合排序、IM scope 权限和历史会话统一检索已实现；ILIKE 策略仍待补充
 > 创建：2026-08-04
 > 最近更新：2026-08-25
 > 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/memory.py`、`backend/agent/rag/service.py`
@@ -18,8 +18,8 @@ IM scope 权限和工具行为。未来跨来源召回复用 RAG-1 的内部 Ret
 |---|---|---|
 | Phase 1：owner 私聊记忆召回工具 | ✅ 已完成 | `profile`、`pattern`、`daily`、`memory` 已通过 RAG-1 Memory adapter 和 `search_memory` 接入；包含 BM25、结果预算、去重、snapshot 排除和 owner scope 隔离 |
 | Phase 2：embedding 混合召回 | ✅ 已完成 | 使用同模型向量缓存与 BM25 做 RRF 混合；缺缓存、未启用或失败时退回 BM25；实际权重为 BM25 0.45、Embedding 0.55 |
-| Phase 3：IM scope 权限 | 🟡 部分完成 | 自动 RAG 已支持 group/member scope；`search_memory` 工具仍只接受 `auto`/`private_memory`，owner 跨群、member 跨群及 unknown 权限矩阵尚未接入 |
-| Phase 4：与历史 session 检索共用底层 | 🟡 部分完成 | Memory、Knowledge、Project 已复用 `UnifiedRecallService`；`search_conversations` 仍保留独立数据库检索，未接入统一 IndexDocument/Retriever |
+| Phase 3：IM scope 权限 | ✅ 已完成 | `search_memory` 通过确定性的 IM context 解析 owner/member/unknown；支持当前群、本人可见群范围和跨群结果上限，禁止 member/unknown 读取 owner 私人记忆 |
+| Phase 4：与历史 session 检索共用底层 | ✅ 已完成 | 新增 Conversation adapter；`search_conversations` 保留原工具返回协议和 `read_conversation` 边界，但搜索结果已复用 `UnifiedRecallService` 的 scope、confidence、去重和预算流水线 |
 | Phase 5：自动化测试与灰度 | ✅ 已完成（RAG-4） | 权限、统一 confidence 排序、预算、多样性和无 embedding BM25 回退测试已覆盖；质量对照见 RAG 质量复测报告 |
 
 阶段映射：Phase 1～3 是 RAG-1 的 Memory 单来源试点；Phase 4～5 对应 RAG-1
@@ -118,7 +118,7 @@ hybrid_score = 0.45 * bm25_rrf + 0.55 * cosine_rrf
 
 权重和候选数量应配置在后端，不允许由 LLM 传入。后续可通过离线评估调整，不在首版暴露给普通用户。
 
-### FR-MEM-4：召回范围与权限（🟡 自动注入已实现，显式工具 scope 待实现）
+### FR-MEM-4：召回范围与权限（✅ 已实现）
 
 身份判断必须复用确定性的 `ActorResolver`，不能由模型、昵称或群内称呼推断。
 
@@ -140,7 +140,7 @@ owner_user_id + platform + bot_id + scope_type + scope_id
 不额外调用 LLM 做实时摘要，直接使用索引中已有的摘要或短片段；Web/私聊最多返回
 3 条群 RAG 结果，且同一群最多占 1 条。
 
-### FR-MEM-5：与现有搜索工具的边界（✅ 边界已实现）
+### FR-MEM-5：与现有搜索工具的边界（✅ 已实现）
 
 - `global_search`：搜索项目、文件、文件夹、日程、客户、便签等站内对象，继续保留。
 - `search_conversations`：搜索历史 session，继续使用消息正文、标题和摘要查询。
@@ -169,7 +169,8 @@ Memory 的 scope 校验和结果脱敏。
 
 ### 3.1 检索文档构建
 
-当前由 `backend/agent/rag/adapters/memory.py` 与 `backend/agent/rag/service.py` 负责：
+当前由 `backend/agent/rag/adapters/memory.py`、`backend/agent/rag/adapters/conversations.py`
+与 `backend/agent/rag/service.py` 负责：
 
 - 将各记忆层转换为带 `source`、`scope`、`date`、`text` 的统一文档。
 - 对 `memory.md` 按段落切分，对 daily 按条目切分。
@@ -219,16 +220,17 @@ LLM 只有在以下情况主动调用：
 - embedding 未配置、缓存缺失、服务 4xx/5xx 时均能退回 BM25。
 - 不重复调用 embedding；单次 query 只生成一个 query 向量。
 
-### Phase 3：IM 权限（🟡 部分完成）
+### Phase 3：IM 权限（✅ 已完成）
 
-- 自动 RAG 已按当前群和当前发言人构造 group/member scope。
-- `search_memory` 显式工具目前只支持 owner scope；跨群 owner、member 和 unknown 的工具权限尚未实现。
-- 完成前不得把自动注入路径的 scope 支持视为工具权限已完成。
+- 自动 RAG 与显式 `search_memory` 共用 group/member scope 构造。
+- owner Web/私聊最多补充 3 个群 scope；owner 群聊明确 `all_my_groups` 时最多补充 2 个其他群。
+- member 只能读取当前发言人对应的 platform-user scope 和群公开记忆；unknown 不能升级为 owner。
 - 不同 `owner_user_id`、平台和 Bot 的 scope 完全隔离。
 
-### Phase 4：回归与性能（🟡 部分完成）
+### Phase 4：回归与性能（✅ 已完成）
 
-- 与 `global_search`、`search_conversations` 的工具边界已保持独立；统一底层 Retriever 目前只覆盖 Memory/Knowledge/Project，尚未覆盖历史 session。
+- 与 `global_search` 的工具边界保持独立；`search_conversations` 已通过 Conversation adapter 复用统一召回服务，但 `read_conversation` 仍负责完整消息读取。
+- Conversation adapter 的数据库候选查询只返回当前用户的消息，再进入统一 confidence、去重和结果预算流水线。
 - 记录检索耗时、候选数、最终结果数和回退原因，不记录记忆正文。
 - 单次工具调用总输出控制在上下文预算内。
 
@@ -244,9 +246,7 @@ LLM 只有在以下情况主动调用：
 
 待确认：
 
-- 🔲 `search_memory` 接入 `current_group`、`all_my_groups` 等显式 scope，并复用 IM ActorResolver 做权限校验。
-- 🔲 owner/member/unknown 的跨群结果限制、脱敏和当前群优先规则落地。
-- 🔲 Memory group/member scope 接入持久化索引与增量失效机制。
+- 🔲 Memory group/member scope 接入持久化索引与增量失效机制（后续索引规模优化，不阻塞 Phase 3/4）。
 - 🔲 接入 `ilike` 策略，明确其仅作为精确子串回退，不参与语义混合排序。
 - 🔲 评估是否将 `search_conversations` 的消息索引接入统一 Retriever；保持工具边界不合并。
 - 🔲 补充显式 `search_memory` 的 IM 权限、scope、策略和跨用户隔离测试。

@@ -21,7 +21,7 @@ def _project_priority(project) -> int:
     return {"high": 3, "medium": 2, "low": 1}.get(project.priority, 0)
 
 
-def _project_sort_key(project):
+def project_sort_key(project):
     """与项目页一致：优先级优先，再按各列的业务日期排序。"""
     priority = _project_priority(project)
     if project.status == "done":
@@ -44,7 +44,7 @@ async def load_projects(db, user_id) -> list:
         grouped.setdefault(project.status, []).append(project)
     selected = []
     for status in ("pending", "active", "done"):
-        ordered = sorted(grouped.get(status, []), key=_project_sort_key)
+        ordered = sorted(grouped.get(status, []), key=project_sort_key)
         selected.extend(ordered[:PROJECT_CONTEXT_LIMITS[status]])
     return selected
 

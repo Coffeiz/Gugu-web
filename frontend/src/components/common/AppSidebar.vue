@@ -23,6 +23,7 @@
       <div class="nav-section">
         <span class="nav-label">资源</span>
         <NavItem to="/files" icon="file.folder">文件库</NavItem>
+        <NavItem to="/skills" icon="resource.skill">咕咕技能</NavItem>
         <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
         <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
       </div>

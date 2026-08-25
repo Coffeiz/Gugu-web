@@ -1,15 +1,14 @@
 <template>
   <div class="local-capability-panel">
     <div class="capability-overrides">
-      <label v-for="cap in LOCAL_CAPABILITIES" :key="cap.key" class="capability-override">
-        <input
-          class="admin-checkbox"
-          type="checkbox"
-          :checked="model.capability_overrides?.[cap.key] === true"
-          @change="onToggle(cap.key, ($event.target as HTMLInputElement).checked)"
-        />
-        <span>{{ cap.label }}</span>
-      </label>
+      <Checkbox
+        v-for="cap in LOCAL_CAPABILITIES"
+        :key="cap.key"
+        class="capability-override"
+        :model-value="model.capability_overrides?.[cap.key] === true"
+        :aria-label="cap.label"
+        @update:model-value="onToggle(cap.key, $event)"
+      >{{ cap.label }}</Checkbox>
     </div>
 
     <button type="button" class="capability-probe" :disabled="disabled || loading" @click="$emit('probe')">
@@ -33,6 +32,7 @@
 
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
+import Checkbox from '@/components/common/Checkbox.vue'
 
 interface CapabilityResult {
   status?: string
@@ -117,27 +117,6 @@ function onToggle(key: string, enabled: boolean) {
   cursor: pointer;
   white-space: nowrap;
 }
-
-.capability-override input {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  margin: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  border: 1px solid var(--action-outline, rgba(123,127,178,.35));
-  border-radius: 4px;
-  background: var(--surface-raised, rgba(255,255,255,.06));
-  background-image: none !important;
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
-}
-.capability-override input:hover { border-color: var(--action-primary, #7b7fb2); }
-.capability-override input:focus-visible { outline: 2px solid color-mix(in srgb, var(--action-primary, #7b7fb2) 45%, transparent); outline-offset: 2px; }
-.capability-override input:checked { background: var(--action-primary, #7b7fb2); border-color: var(--action-primary, #7b7fb2); box-shadow: 0 2px 8px color-mix(in srgb, var(--action-primary, #7b7fb2) 35%, transparent); }
-.capability-override input:checked::after { content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 4px; border-left: 1.5px solid var(--content-on-accent); border-bottom: 1.5px solid var(--content-on-accent); background-image: none !important; transform: translate(-50%, -62%) rotate(-45deg); transform-origin: center; }
 
 .capability-probe {
   display: inline-flex;

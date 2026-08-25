@@ -18,9 +18,9 @@ from app.models import ConversationSession, Workspace
 from app.services.workspaces import (
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
-    effective_shell_personal_enabled,
     effective_shell_system_enabled,
 )
+from agent.sandbox.docker_runtime import sandbox_readiness
 
 
 class ShellRisk(StrEnum):
@@ -31,8 +31,7 @@ class ShellRisk(StrEnum):
 
 class ShellScope(StrEnum):
     OFF = "off"
-    WORKSPACE = "workspace"
-    PERSONAL = "personal"
+    SANDBOX = "sandbox"
     SYSTEM = "system"
 
 
@@ -97,7 +96,8 @@ async def evaluate(
 ) -> ShellDecision:
     """计算最终 Shell 权限；范围由会话绑定状态派生。"""
     risk = classify_command(command)
-    if not get_settings().agent.shell_enabled:
+    settings = get_settings()
+    if not settings.agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
     if not session_id:
         return ShellDecision(False, "当前会话不可用", risk)
@@ -105,29 +105,32 @@ async def evaluate(
         session = await db.get(ConversationSession, session_id)
     if not session or session.user_id != user_id:
         return ShellDecision(False, "会话不存在", risk)
-    # Shell 范围由会话绑定状态和独立范围开关共同派生。旧 shell_scope 字段保留用于迁移兼容，
-    # 但不再参与授权，避免命令状态与会话绑定状态分叉。
-    scope = ShellScope.WORKSPACE if session.workspace_id is not None else ShellScope.SYSTEM
+    # Shell 只有 sandbox/system 两种执行后端。会话绑定只改变 sandbox 的挂载目录，
+    # 历史 shell_scope 字段不再参与授权，避免旧状态与当前会话绑定分叉。
+    scope = ShellScope.SANDBOX
     workspace = None
-    if scope is ShellScope.WORKSPACE:
-        if not getattr(get_settings().agent, "shell_workspace_enabled", True):
-            return ShellDecision(False, "管理员未开启工作区 Shell", risk, scope=scope)
+    if session.workspace_id is not None:
         if not await effective_shell_enabled(db, user_id):
-            return ShellDecision(False, "用户未开启工作区 Shell", risk, scope=scope)
-        if not session.workspace_id:
-            return ShellDecision(False, "当前会话未绑定工作区", risk, scope=scope)
+            return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
         workspace = await db.get(Workspace, session.workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
-    elif scope is ShellScope.SYSTEM:
-        # 未绑定工作区时优先使用 system；system 关闭后回落到 personal，
-        # 不让系统范围开关意外阻断个人目录 Shell。
-        if getattr(get_settings().agent, "shell_system_enabled", False) and await effective_shell_system_enabled(db, user_id):
-            pass
-        elif getattr(get_settings().agent, "shell_personal_enabled", False) and await effective_shell_personal_enabled(db, user_id):
-            scope = ShellScope.PERSONAL
-        else:
-            return ShellDecision(False, "当前会话没有可用的 Shell 范围", risk, scope=scope)
+    elif (
+        getattr(settings.agent, "shell_system_enabled", False)
+        and getattr(getattr(settings, "ai", None), "deployment_mode", "cloud") == "local"
+        and await effective_shell_system_enabled(db, user_id)
+    ):
+        scope = ShellScope.SYSTEM
+    elif not await effective_shell_enabled(db, user_id):
+        return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
+
+    # sandbox 是容器唯一执行后端；system 是明确授权的本机可信执行器。
+    if scope is ShellScope.SANDBOX:
+        sandbox = getattr(settings, "sandbox", None)
+        if sandbox is not None:
+            ready, reason = sandbox_readiness(sandbox)
+            if not ready:
+                return ShellDecision(False, reason, risk)
     if risk is ShellRisk.DANGEROUS:
         if not get_settings().agent.shell_dangerous_enabled:
             return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)

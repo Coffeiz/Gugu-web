@@ -184,12 +184,6 @@ html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scroll
   background:transparent;
   margin-block:var(--scrollbar-safe-inset);
 }
-html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb {
-  background:var(--scrollbar-thumb);
-  border-radius:var(--radius-pill);
-}
-html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-thumb-hover); }
-
 @media(max-width:900px) {
   html[data-theme][data-family] .design-page .scrollbar-style-grid { grid-template-columns:1fr; }
   html[data-theme][data-family] .design-page .sample-board { grid-template-columns:repeat(3,220px); overflow-x:auto; }

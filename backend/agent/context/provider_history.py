@@ -13,15 +13,12 @@ from agent import providers
 
 
 def render_anthropic_message_roles(messages: list[dict], adapter) -> list[dict]:
-    """把内部系统上下文渲染成原生 Anthropic 可接受的消息角色。
+    """把 Anthropic 消息协议中的消息级 system 统一渲染为 user。
 
-    Anthropic Messages API 的 ``system`` 是顶层字段，消息数组只接受 user/
-    assistant。因此内部仍保留 system 语义，只有原生 Anthropic wire 边界把
-    消息级 reminder 转成 user；MiniMax 的 Anthropic 兼容接口按已验证能力
-    保留 system role。
+    ``system_prompt`` 仍由调用层放在顶层 ``system`` 字段；消息数组中的
+    snapshot 只是内部语义标记，原生 Anthropic 和 MiniMax 兼容端都统一按
+    ``user`` 发送，避免 provider 分叉改变消息边界。
     """
-    if getattr(adapter, "name", "") != "anthropic":
-        return messages
     return [
         {**message, "role": "user"} if message.get("role") == "system" else message
         for message in messages

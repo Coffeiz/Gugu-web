@@ -67,6 +67,8 @@ def _skill_result_metadata(value: Any) -> dict[str, Any]:
         "content_chars": len(body),
         "content_digest": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
         "content_tokens_estimate": _estimate_tokens(body),
+        "source": str((payload.get("_capability_usage") or {}).get("source") or "builtin"),
+        "owner_fingerprint": str((payload.get("_capability_usage") or {}).get("owner_fingerprint") or ""),
     }
 
 def ensure_hooks() -> None:

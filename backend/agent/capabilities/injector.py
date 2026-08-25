@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from .index import CapabilityIndex
 from .models import CapabilitySnapshot, SelectedCapabilities
 from .selector import CapabilitySelector
 
@@ -50,18 +51,39 @@ class CapabilityToolContext:
         self.selection = self.selector.select(query, self.snapshot, self.limit)
         return self.selection
 
+    def skill_meta(self, name: str):
+        value = str(name or "").strip().lower()
+        return self.snapshot.skills.get(value)
 
-def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5) -> CapabilityToolContext:
-    """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
-    from .index import CapabilityIndex
+    def skill_digest(self, name: str) -> str | None:
+        meta = self.skill_meta(name)
+        return (meta.content_digest or None) if meta is not None else None
+
+
+def _build_fixed_context(index, *, limit: int = 5, names: list[str]) -> CapabilityToolContext:
     from .selector import RegistryCapabilitySelector
-    fixed = ["call_tool", "use_skill", "ask_user"]
-    names = list(dict.fromkeys([*tool_names, *fixed]))
-    index = CapabilityIndex.from_registries(tool_names=names)
     snapshot = index.snapshot(authorized_names=names)
     return CapabilityToolContext(
         snapshot, RegistryCapabilitySelector(), limit=limit, fixed_adapter=True,
     )
+
+
+def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5) -> CapabilityToolContext:
+    """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
+    fixed = ["call_tool", "use_skill", "ask_user"]
+    names = list(dict.fromkeys([*tool_names, *fixed]))
+    return _build_fixed_context(CapabilityIndex.from_registries(tool_names=names), limit=limit, names=names)
+
+
+async def build_fixed_adapter_context_for_user(
+    tool_names: list[str], *, limit: int = 5, db=None, owner_id=None,
+) -> CapabilityToolContext:
+    """构建当前 owner 的能力快照；用户 Skill 只进入 metadata，不加载正文。"""
+    if db is None or owner_id is None:
+        return build_fixed_adapter_context(tool_names, limit=limit)
+    names = list(dict.fromkeys([*tool_names, "call_tool", "use_skill", "ask_user"]))
+    index = await CapabilityIndex.from_registries_for_user(db, owner_id, tool_names=names)
+    return _build_fixed_context(index, limit=limit, names=names)
 
 
 def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None) -> str:

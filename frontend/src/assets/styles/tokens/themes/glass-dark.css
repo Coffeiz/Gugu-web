@@ -17,7 +17,7 @@
   /* GuguChat 发送按钮暗色专用背景：比 brand-gradient 收敛一档，去掉亮色
      渐变在暗色面板里"漂浮"感。色相保持和 brand 一致以维持品牌感。 */
   --theme-gugu-chat-send-bg: linear-gradient(135deg,#6e6a9c,#847fb4);
-  --theme-scrollbar-thumb: rgba(190,185,235,.24); --theme-scrollbar-thumb-hover: rgba(190,185,235,.42); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
+  --theme-scrollbar-thumb: rgba(190,185,235,.26); --theme-scrollbar-thumb-hover: rgba(190,185,235,.34); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
   --theme-topbar-bg: rgba(255,255,255,.018); --theme-topbar-bg-hover: rgba(255,255,255,.03); --theme-topbar-border: rgba(255,255,255,.05); --theme-topbar-shadow: 0 3px 14px rgba(0,0,0,.12),inset 0 1px 0 rgba(255,255,255,.05); --theme-topbar-shadow-hover: 0 5px 18px rgba(0,0,0,.18),inset 0 1px 0 rgba(255,255,255,.08);
   --theme-project-overlay-start: rgba(25,27,40,.92); --theme-project-overlay-end: rgba(29,31,46,.98); --theme-project-border: rgba(255,255,255,.09); --theme-project-hover-border: rgba(255,255,255,.14);
   --theme-project-shadow: 0 2px 8px rgba(0,0,0,.16); --theme-project-hover-shadow: 0 7px 20px rgba(0,0,0,.24); --theme-project-sheen-rest: rgba(255,255,255,.02); --theme-project-highlight-rest: rgba(255,255,255,.04); --theme-project-sheen-hover: rgba(255,255,255,.08); --theme-project-sheen-hover-mid: rgba(255,255,255,.02); --theme-project-highlight-hover: rgba(255,255,255,.12);

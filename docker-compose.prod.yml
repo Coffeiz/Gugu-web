@@ -1,0 +1,165 @@
+# 生产 Compose：只消费已经构建好的镜像，不挂载源码，不运行 Vite/Uvicorn reload。
+# 默认入口：http://localhost:9595
+# 使用前设置 GUGU_BACKEND_IMAGE、GUGU_FRONTEND_IMAGE、POSTGRES_PASSWORD。
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gugu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-gugu}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  searxng:
+    image: searxng/searxng:latest
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080/}
+      UWSGI_WORKERS: 2
+      UWSGI_THREADS: 4
+    mem_limit: 512m
+    restart: unless-stopped
+
+  migrate:
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: ${POSTGRES_DB:-gugu}
+      DB__USER: ${POSTGRES_USER:-gugu}
+      DB__PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+
+  backend:
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: ${POSTGRES_DB:-gugu}
+      DB__USER: ${POSTGRES_USER:-gugu}
+      DB__PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      SEARCH__SEARXNG_URL: http://searxng:8080
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+      - sandbox_socket:/run/gugu
+    restart: unless-stopped
+
+  worker:
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    command: ["python", "-m", "worker"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: ${POSTGRES_DB:-gugu}
+      DB__USER: ${POSTGRES_USER:-gugu}
+      DB__PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
+      REDIS__HOST: redis
+      REDIS__PORT: 6379
+      SEARCH__SEARXNG_URL: http://searxng:8080
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+      - sandbox_socket:/run/gugu
+    restart: unless-stopped
+
+  sandboxd:
+    profiles: ["sandbox"]
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DOCKER_HOST: unix:///run/gugu/docker.sock
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-false}
+      SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+      - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+    restart: unless-stopped
+
+  frontend:
+    image: ${GUGU_FRONTEND_IMAGE:?请设置 GUGU_FRONTEND_IMAGE}
+    depends_on:
+      - backend
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${GUGU_HTTP_PORT:-9595}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  gugu_data:
+  gugu_config:
+  sandbox_socket:

@@ -31,11 +31,9 @@ logger = logging.getLogger(__name__)
 # 自动请求预算由 agent.core 的实际组装长度统一判定；baseline 更新后的完整
 # 上下文上限统一为模型上下文的 50%，没有额外的低水位目标。
 BASELINE_UPDATE_RATIO = 0.90
-_MAX_COMPRESS_CHARS = 48_000   # 单次摘要块字符上限；全部旧 history 通过滚动摘要覆盖
 _RECENT_HISTORY_KEEP_CHARS = 20_000
 # 在模型预算允许时，优先从当前 session history 分支出一次摘要请求，保持稳定
 # provider 前缀；超出该上限才退回分块滚动，避免一次摘要输入超过 provider 硬限制。
-_BRANCH_COMPRESS_MAX_CHARS = 96_000
 _COMPRESS_LOCK_TIMEOUT = 300
 
 _PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
@@ -49,6 +47,13 @@ def _session_lock_key(request) -> str:
     if not session_id:
         raise ValueError("session_run_gate 需要 canonical session_id")
     return f"agent:context:session-run:{int(session_id)}"
+
+
+def _baseline_matches(session, baseline_id: int, baseline_hash: str) -> bool:
+    """判断摘要请求开始时的 baseline 是否仍是当前水位。"""
+    current_id = int(getattr(session, "baseline_message_id", 0) or 0)
+    current_hash = str(getattr(session, "baseline_message_hash", "") or "")
+    return current_id == int(baseline_id or 0) and current_hash == str(baseline_hash or "")
 
 
 @asynccontextmanager
@@ -300,48 +305,36 @@ async def _compress_if_needed_unlocked(
         return False
 
     # 统一读取普通正文和 content_json，工具轮次不能因为正文不在 content 而丢失。
-    # 全部旧 history 都进入摘要；按块滚动合并，避免只取最近一段而丢失更早语义。
-    lines: list[str | None] = []
-    acc = 0
+    # 分支/滚动边界由 compaction.generate_compact_summary 统一管理。
+    content_items: list[str] = []
     for m in to_compress:
         raw = m.content_json if m.content_json is not None else m.content
         text = content_text(raw).strip()
         if not text:
             continue
-        chars = len(text)
-        if acc + chars > _MAX_COMPRESS_CHARS and lines:
-            # 这里不截断旧内容；先保留为独立块，后续逐块合并。
-            lines.append(None)
-            acc = 0
-        lines.append(f"{'用户' if m.role == 'user' else '咕咕'}：{text}")
-        acc += chars
-    chunks: list[list[str]] = [[]]
-    for line in lines:
-        if line is None:
-            chunks.append([])
-        else:
-            chunks[-1].append(line)
-    chunks = [chunk for chunk in chunks if chunk]
-    if not chunks:
+        content_items.append(f"{'用户' if m.role == 'user' else '咕咕'}：{text}")
+    if not content_items:
         return False
 
-    summary: str | None
-    all_text = "\n\n".join("\n".join(chunk) for chunk in chunks)
-    if len(all_text) <= _BRANCH_COMPRESS_MAX_CHARS:
-        # 分支式候选：这次请求只读取 session 的 history 快照，不持有数据库事务，
-        # 结果仍需在下方按 baseline hash 做 CAS 后才能写回。
-        summary = await _call_llm(all_text, prev_summary, settings)
-        compression_mode = "branch"
-    else:
-        summary = prev_summary
-        for chunk in chunks:
-            summary = await _call_llm("\n\n".join(chunk), summary, settings)
-            if not summary:
-                return False
-        compression_mode = "rolling-fallback"
-    if not summary:
+    # 分支式候选只读取 history 快照，不持有数据库事务；共享策略超限时自动
+    # 使用滚动 fallback，结果仍需在下方按 baseline hash 做 CAS 后才能写回。
+    from agent.context.compaction import generate_compact_summary, BRANCH_SUMMARY_MAX_CHARS
+
+    async def call_once(items, previous):
+        return await _call_llm("\n\n".join(items), previous, settings)
+
+    summary = await generate_compact_summary(
+        content_items,
+        prev_summary,
+        call_once,
+    )
+    compression_mode = "branch" if len("\n".join(content_items)) <= BRANCH_SUMMARY_MAX_CHARS else "rolling-fallback"
+    from agent.context.compaction import validate_compact_summary
+
+    summary_ok, summary_reason = validate_compact_summary(summary)
+    if not summary_ok:
+        logger.warning("[compress_conv] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
         return False
-    summary = summary[:10_000]
 
     async with _sess._SessionLocal() as db:
         # 重新锁定并读取水位。摘要模型运行期间可能已有另一个进程完成了
@@ -351,10 +344,7 @@ async def _compress_if_needed_unlocked(
             return False
         current_baseline = int(getattr(session, "baseline_message_id", 0) or 0)
         current_baseline_hash = str(getattr(session, "baseline_message_hash", "") or "")
-        if current_baseline > baseline_id or (
-            current_baseline == baseline_id
-            and current_baseline_hash != baseline_hash_before
-        ):
+        if not _baseline_matches(session, baseline_id, baseline_hash_before):
             logger.info(
                 "[compress_conv] session=%s baseline 已由更新水位接管，跳过旧结果 baseline=%s/%s current=%s/%s",
                 session_id, baseline_id, baseline_hash_before[:8],

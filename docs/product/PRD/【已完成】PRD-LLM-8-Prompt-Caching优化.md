@@ -1,11 +1,15 @@
 # Prompt Caching 优化 PRD
 
-> 状态：🚧 Phase 2 实施中（上下文压缩策略）
+> 状态：✅ 已完成并由 PRD-AGENT-4 收口（缓存结构与上下文压缩部分）
 > 创建：2026-08-19
-> 最近更新：2026-08-21
+> 最近更新：2026-08-25
 > 所属层：LLM / Prompt 缓存
 > 关联模块：`backend/agent/context/builder.py`、`backend/agent/runner.py`、`backend/agent/loop_drivers.py`
 > 关联文档：[[../../reports/INVEST-Cross-Call-Prompt-Caching.md]]、[[../../reports/OPT-Cache-Strategy-Aggressive.md]]
+
+> 说明：本文继续记录 Prompt Cache 的业务目标和 provider 观察结果；上下文预算、压缩触发、baseline
+> 和 retry 的唯一实现规范改为 [`PRD-AGENT-4`](./PRD-AGENT-4-统一ContextBudget上下文压缩重构.md)。
+> 本文中的旧 20% 压缩目标、固定历史窗口和重复 baseline TODO 均不再作为实现依据。
 
 ---
 

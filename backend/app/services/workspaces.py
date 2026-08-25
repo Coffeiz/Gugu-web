@@ -13,6 +13,7 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import compose_logical_path
+from agent.sandbox.quota import ensure_sandbox_root
 
 
 async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspace | None:
@@ -112,13 +113,6 @@ async def effective_shell_enabled(db: AsyncSession, user_id) -> bool:
     return bool(prefs and prefs.data.get("shell_enabled", False))
 
 
-async def effective_shell_personal_enabled(db: AsyncSession, user_id) -> bool:
-    prefs = (await db.execute(
-        select(UserPreferences).where(UserPreferences.user_id == user_id)
-    )).scalar_one_or_none()
-    return bool(prefs and prefs.data.get("shell_personal_enabled", False))
-
-
 async def effective_shell_system_enabled(db: AsyncSession, user_id) -> bool:
     prefs = (await db.execute(
         select(UserPreferences).where(UserPreferences.user_id == user_id)
@@ -142,14 +136,6 @@ async def describe_session(db: AsyncSession, user_id, session_id: int) -> Worksp
     return await get_workspace(db, user_id, session.workspace_id)
 
 
-async def get_session_shell_scope(db: AsyncSession, user_id, session_id: int) -> str:
-    """根据会话绑定状态派生 Shell 范围，不读取可手动漂移的旧字段。"""
-    session = await get_owned(db, ConversationSession, session_id, user_id)
-    if session is None:
-        raise LookupError("会话不存在")
-    return "workspace" if session.workspace_id is not None else "system"
-
-
 async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:
     """把已归属的工作区解析为本地存储根下的真实目录。
 
@@ -159,7 +145,9 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
     if workspace is None or not workspace.enabled:
         return None
     settings = get_settings()
-    if settings.storage.backend != "local":
+    # OSS 只决定文件库对象如何存储；Shell 仍需要一块本地、独立的执行空间。
+    # 该目录不作为 OSS 对象路径使用，也不与旧 backend/uploads 混用。
+    if settings.storage.backend not in {"local", "oss"}:
         return None
 
     logical = None
@@ -197,21 +185,20 @@ async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -
     return (Path(settings.storage.local_path).resolve() / str(user_id) / logical).resolve()
 
 
-async def resolve_personal_shell_root(db: AsyncSession, user_id) -> Path | None:
-    """用户个人文件根目录；个人 Shell 不得把用户目录外的路径当作工作区。"""
+async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
+    """解析用户独立 Shell 持久根目录，不与文件库个人根目录混用。"""
     settings = get_settings()
-    if settings.storage.backend != "local":
+    if settings.storage.backend not in {"local", "oss"}:
         return None
-    root = (Path(settings.storage.local_path).resolve() / str(user_id)).resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    root = (Path(settings.storage.local_path).resolve() / str(user_id) / "shell").resolve()
+    return ensure_sandbox_root(root)
 
 
 async def resolve_shell_root(db: AsyncSession, user_id, scope: str, workspace_id: int | None) -> Path | None:
-    if scope == "workspace":
+    if scope == "sandbox" and workspace_id:
         return await resolve_workspace_root(db, user_id, workspace_id) if workspace_id else None
-    if scope == "personal":
-        return await resolve_personal_shell_root(db, user_id)
+    if scope == "sandbox":
+        return await resolve_sandbox_root(db, user_id)
     if scope == "system":
         return Path("/").resolve()
     return None

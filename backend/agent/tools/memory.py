@@ -63,8 +63,12 @@ async def _search_memory(db, user_id, args: dict):
     if not 1 <= limit <= 10:
         return {"error": "limit 必须是 1 到 10 的整数"}
     try:
-        return await search_memory(user_id, query, scope=scope, source=source, strategy=strategy, limit=limit)
-    except ValueError as exc:
+        from agent.im import imctx
+        return await search_memory(
+            user_id, query, scope=scope, source=source, strategy=strategy,
+            limit=limit, db=db, im_context=imctx.get_im(),
+        )
+    except (ValueError, PermissionError) as exc:
         return {"error": str(exc)}
 
 
@@ -221,7 +225,7 @@ class MemorySkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "要检索的关键词或短语"},
-                    "scope": {"type": "string", "enum": ["auto", "private_memory"], "description": "记忆范围，默认 auto"},
+                    "scope": {"type": "string", "enum": ["auto", "current_group", "all_my_groups", "private_memory"], "description": "记忆范围，默认 auto；群聊可指定当前群或本人可见的其他群"},
                     "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"], "description": "记忆或知识来源，默认 all"},
                     "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 Rust lexical"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},

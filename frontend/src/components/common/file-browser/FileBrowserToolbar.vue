@@ -31,13 +31,14 @@
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
     <slot name="trailing" />
-    <button v-if="showClose" class="close-btn" @click="emit('close')"><Icon name="action.close" :size="14" /></button>
+    <CloseButton v-if="showClose" @click="emit('close')" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { nextTick, ref, watch, type PropType } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import CloseButton from '@/components/common/CloseButton.vue'
 import SortMenu from '@/components/common/SortMenu.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'

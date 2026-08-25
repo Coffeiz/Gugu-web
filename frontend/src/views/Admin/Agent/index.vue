@@ -16,7 +16,7 @@
     <div class="panels-wrap">
 
       <!-- ── 能力目录 ── -->
-      <CapabilityCatalogPanel v-if="activeTab === 'capabilities'" />
+      <CapabilityCatalogPanel v-if="activeTab === 'behavior' && behaviorTab === 'capabilities'" />
 
       <!-- ── LLM 预设 ── -->
       <div v-if="activeTab === 'llm'">
@@ -179,29 +179,14 @@
           <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
               <span>Shell 工具总开关</span>
-              <span class="behavior-desc">默认关闭。开启后仅允许本地 Admin 进入后续 Shell 能力；用户开关、工作区和沙盒仍需分别满足。</span>
+              <span class="behavior-desc">默认关闭。开启后才允许用户使用 Shell；默认执行后端是 Docker 沙盒，沙盒状态和镜像配置在“Shell 沙盒”页面管理。</span>
             </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: agentDraft.shell_enabled }"
-              @click="agentDraft.shell_enabled = !agentDraft.shell_enabled; saveBehavior()"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="agentDraft.shell_enabled" aria-label="切换 Shell 工具总开关" @update:model-value="agentDraft.shell_enabled = $event; saveBehavior()" />
           </div>
 
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
-            <div class="behavior-label"><span>工作区 Shell</span><span class="behavior-desc">允许在已绑定工作区内执行受控命令。</span></div>
-            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_workspace_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_workspace_enabled" @click="agentDraft.shell_workspace_enabled = !agentDraft.shell_workspace_enabled; saveBehavior()"><span class="toggle-knob" /></button>
-          </div>
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
-            <div class="behavior-label"><span>个人目录 Shell</span><span class="behavior-desc">允许用户在自己的文件目录中使用 Shell，不需要绑定工作区。</span></div>
-            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_personal_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_personal_enabled" @click="agentDraft.shell_personal_enabled = !agentDraft.shell_personal_enabled; saveBehavior()"><span class="toggle-knob" /></button>
-          </div>
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label"><span>系统范围 Shell</span><span class="behavior-desc">允许访问系统范围，风险最高；建议仅本地管理员使用。</span></div>
-            <button type="button" class="toggle-switch" :class="{ on: agentDraft.shell_system_enabled, disabled: !agentDraft.shell_enabled }" :disabled="!agentDraft.shell_enabled" :aria-pressed="agentDraft.shell_system_enabled" @click="agentDraft.shell_system_enabled = !agentDraft.shell_system_enabled; saveBehavior()"><span class="toggle-knob" /></button>
+            <ToggleSwitch :model-value="agentDraft.shell_system_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换系统范围 Shell" @update:model-value="agentDraft.shell_system_enabled = $event; saveBehavior()" />
           </div>
 
           <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
@@ -209,32 +194,7 @@
               <span>危险 Shell 命令</span>
               <span class="behavior-desc">默认关闭。包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；仍需用户逐次确认，不会绕过确认门。</span>
             </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: agentDraft.shell_dangerous_enabled, disabled: !agentDraft.shell_enabled }"
-              :disabled="!agentDraft.shell_enabled"
-              aria-label="切换危险 Shell 命令"
-              :aria-pressed="agentDraft.shell_dangerous_enabled"
-              @click="agentDraft.shell_dangerous_enabled = !agentDraft.shell_dangerous_enabled; saveBehavior()"
-            >
-              <span class="toggle-knob" />
-            </button>
-          </div>
-
-          <div v-if="false" class="behavior-item">
-            <div class="behavior-label">
-              <span>记忆系统</span>
-              <span class="behavior-desc">开启后 Agent 将自动从对话中提炼记忆</span>
-            </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: agentDraft.memory_enabled }"
-              @click="agentDraft.memory_enabled = !agentDraft.memory_enabled; saveBehavior()"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="agentDraft.shell_dangerous_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换危险 Shell 命令" @update:model-value="agentDraft.shell_dangerous_enabled = $event; saveBehavior()" />
           </div>
 
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
@@ -242,14 +202,7 @@
               <span>对话历史压缩</span>
               <span class="behavior-desc">超长会话把旧消息总结成摘要省 token；关闭后只截断不摘要</span>
             </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: agentDraft.conv_compress_enabled }"
-              @click="agentDraft.conv_compress_enabled = !agentDraft.conv_compress_enabled; saveBehavior()"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="agentDraft.conv_compress_enabled" aria-label="切换对话历史压缩" @update:model-value="agentDraft.conv_compress_enabled = $event; saveBehavior()" />
           </div>
 
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
@@ -257,14 +210,7 @@
               <span>IM 慢工具进度声明</span>
               <span class="behavior-desc">多步工具循环期间先发一句"我去查一下"再执行，减少 IM 非流式的长时间沉默感；文案来自工具自身登记的固定文案，不是模型现场生成；只在 IM 生效，网页不受影响</span>
             </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: agentDraft.im_progress_announce_enabled }"
-              @click="agentDraft.im_progress_announce_enabled = !agentDraft.im_progress_announce_enabled; saveBehavior()"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="agentDraft.im_progress_announce_enabled" aria-label="切换 IM 慢工具进度声明" @update:model-value="agentDraft.im_progress_announce_enabled = $event; saveBehavior()" />
           </div>
 
           <div v-if="false" class="behavior-item">
@@ -391,14 +337,14 @@
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
               <span>SearXNG 引擎（文本搜索 web_search）</span>
-              <span class="behavior-desc">逗号分隔。国内服务器一般只有这几个可达；google/bing 会超时</span>
+              <span class="behavior-desc">逗号分隔；默认使用已登记的通用网页引擎，可按部署环境实测后调整</span>
             </div>
             <input
               type="text"
               class="behavior-input"
               style="width: 280px;"
               v-model="generalSearchDraft.searxng_engines"
-              placeholder="sogou,quark,360search"
+              placeholder="baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google"
             />
           </div>
 
@@ -507,7 +453,7 @@
               <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.baidu_similar_images.loading" @click="testSearch('baidu_similar_images')">
                 {{ searchTest.baidu_similar_images.loading ? '测试中…' : '测试' }}
               </button>
-              <input class="admin-checkbox" type="checkbox" v-model="similarImageDraft.similar_image_enabled" title="启用百度千帆相似图搜索" />
+              <Checkbox v-model="similarImageDraft.similar_image_enabled" aria-label="启用百度千帆相似图搜索" />
               <input type="password" class="behavior-input" style="width:280px; flex-shrink:0;"
                      v-model="similarImageDraft.baidu_qianfan_api_key" autocomplete="new-password"
                      placeholder="百度 API Key（留空=不修改）" />
@@ -637,25 +583,11 @@
               <span>启用向量检索</span>
               <span class="behavior-desc">关闭＝退回词法相关性（bigram），零副作用；改完记得下方保存</span>
             </div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: embeddingDraft.enabled }"
-              @click="embeddingDraft.enabled = !embeddingDraft.enabled"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="embeddingDraft.enabled" aria-label="切换向量检索" @update:model-value="embeddingDraft.enabled = $event" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>多模态 Embedding</span><span class="behavior-desc">百炼填写 <code>qwen3-vl-embedding</code>；开启后供图片/视频向量调用使用，不改变现有文本记忆索引</span></div>
-            <button
-              type="button"
-              class="toggle-switch"
-              :class="{ on: embeddingDraft.multimodal }"
-              @click="embeddingDraft.multimodal = !embeddingDraft.multimodal"
-            >
-              <span class="toggle-knob" />
-            </button>
+            <ToggleSwitch :model-value="embeddingDraft.multimodal" aria-label="切换多模态 Embedding" @update:model-value="embeddingDraft.multimodal = $event" />
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label"><span>提供方 provider</span><span class="behavior-desc">选择服务商；通用兼容用于其他 OpenAI 兼容端点</span></div>
@@ -743,6 +675,8 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import Checkbox from '@/components/common/Checkbox.vue'
 import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
@@ -770,7 +704,6 @@ const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llm
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
-  { key: 'capabilities', label: '能力目录' },
   { key: 'labels',   label: '状态命名' },
   { key: 'trace',    label: '决策轨迹' },
   { key: 'prompts',  label: '系统提示词' },
@@ -780,6 +713,7 @@ const behaviorTabs = [
   { key: 'runtime', label: '运行行为' },
   { key: 'search', label: '搜索与图片' },
   { key: 'voice', label: '语音识别' },
+  { key: 'capabilities', label: '能力目录' },
 ]
 const behaviorTab = ref('runtime')
 
@@ -822,15 +756,15 @@ const visionDims = [
 ]
 const DEEPSEEK_EFFORTS = [
   { key: '', label: '默认' },
-  { key: 'low', label: 'low' },
-  { key: 'high', label: 'high' },
-  { key: 'max', label: 'max' },
+  { key: 'low', label: '低' },
+  { key: 'high', label: '高' },
+  { key: 'max', label: '最大' },
 ]
 const IMAGE_DETAIL_LEVELS = [
-  { key: 'auto', label: 'auto' },
-  { key: 'low', label: 'low' },
-  { key: 'high', label: 'high' },
-  { key: 'original', label: 'original' },
+  { key: 'auto', label: '自动' },
+  { key: 'low', label: '低' },
+  { key: 'high', label: '高' },
+  { key: 'original', label: '原图' },
 ]
 
 // edit modal
@@ -1083,7 +1017,7 @@ async function probeVision(id: string | number | undefined, dim?: string) {
   if (dim) {
     probingDim.value = dim
   } else {
-    probingId.value = id
+    probingId.value = id === undefined ? null : id
   }
   try {
     const isDraft = Boolean(dim && !id && target)
@@ -1225,39 +1159,6 @@ onMounted(async () => {
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
-
-/* Agent 行为开关：使用统一控件 token，不依赖浏览器默认 button/checkbox 外观。 */
-.toggle-switch {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  width: 42px;
-  height: 24px;
-  flex: 0 0 42px;
-  padding: 0;
-  border: 1px solid var(--control-border);
-  border-radius: var(--radius-pill);
-  background: var(--control-bg);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--content-primary) 8%, transparent);
-  cursor: pointer;
-  transition: background var(--motion-fast) var(--motion-ease-standard), border-color var(--motion-fast) var(--motion-ease-standard), box-shadow var(--motion-fast) var(--motion-ease-standard);
-}
-.toggle-switch:hover { border-color: var(--control-border-hover); background: var(--control-bg-hover); }
-.toggle-switch:focus-visible { outline: none; box-shadow: var(--control-focus-shadow); }
-.toggle-switch.on { border-color: var(--action-primary); background: var(--action-primary); }
-.toggle-knob {
-  display: block;
-  width: 18px;
-  height: 18px;
-  margin-left: 2px;
-  border-radius: 50%;
-  background: var(--content-on-accent);
-  box-shadow: var(--elevation-control, 0 1px 3px color-mix(in srgb, var(--content-primary) 18%, transparent));
-  transform: translateX(0);
-  transition: transform var(--motion-fast) var(--motion-ease-standard);
-}
-.toggle-switch.on .toggle-knob { transform: translateX(18px); }
-.toggle-switch:disabled { opacity: .5; cursor: default; }
 
 /* ── 行为配置 ── */
 .behavior-grid {

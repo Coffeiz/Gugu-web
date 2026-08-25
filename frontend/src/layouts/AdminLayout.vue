@@ -65,6 +65,10 @@
           <Icon name="admin.stack" size="sm" />
           配额管理
         </div>
+        <div class="nav-item" :class="{ active: isActive('/sandbox') }" role="link" tabindex="0" @click="go('/sandbox')">
+          <Icon name="admin.computer" size="sm" />
+          Shell 沙盒
+        </div>
 
         <div class="sidebar-rule" style="margin:14px 4px" />
         <div class="nav-group-label">运维</div>

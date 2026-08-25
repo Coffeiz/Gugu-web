@@ -51,7 +51,8 @@ def test_canonical_event_round_trips_through_persisted_history():
     )
     openai = build_history_parts([message], None, use_anthropic=False)
     anthropic = build_history_parts([message], None, use_anthropic=True)
-    assert "weather" in openai[0]["content"]
+    assert openai[0]["content"][0]["type"] == "tool-schema"
+    assert "weather" in render_events_for_provider(openai)[0]["content"]
     assert anthropic[0]["content"][0]["type"] == "text"
 
 

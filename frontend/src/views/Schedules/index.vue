@@ -2,9 +2,9 @@
   <div class="sched-page">
     <div class="panel glass-card">
       <div class="section-header">
-        <button class="btn-primary press-fx" @click="openCreate">
-          <Icon name="admin.alarm" :size="14" style="vertical-align:-1px;margin-right:5px" />新建任务
-        </button>
+        <ActionButton fit @click="openCreate">
+          <Icon name="admin.alarm" :size="14" />新建任务
+        </ActionButton>
       </div>
       <div v-if="!loading && !tasks.length" class="empty">还没有自定义任务，点上方「新建任务」试试～</div>
       <div v-else-if="tasks.length" class="task-grid scroll-surface scroll-surface--compact">
@@ -21,6 +21,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import Icon from '@/components/common/Icon.vue'
+import ActionButton from '@/components/common/ActionButton.vue'
 import { errorMessage } from '@/composables/useAppToast'
 import { fireHint } from '@/composables/useOnboarding'
 import { useAuthStore } from '@/stores/auth'

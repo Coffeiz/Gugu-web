@@ -33,7 +33,12 @@ def current_time_text(user_tz=None) -> str:
 
 
 def reminder_message(content: str) -> dict:
-    """生成不带观测元数据的系统上下文消息。"""
+    """生成不带观测元数据的 reminder 消息。"""
+    return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+
+
+def snapshot_message(content: str) -> dict:
+    """生成固定 session snapshot 消息。"""
     return {"role": "system", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
 
 

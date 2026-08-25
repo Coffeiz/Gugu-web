@@ -396,7 +396,7 @@ systemctl status gugu-backend gugu-worker gugu-supervisor
 修改 `.env` 需重启；通过 Admin UI 写入 override 自动热加载，无需重启。加新的嵌套配置段本身如果没有在 `apply_override()` 里同步注册合并逻辑，也会表现为"改了不生效"。
 
 **Q: 缩略图不更新**
-删除 `uploads/.thumbs/` 目录下对应文件（或全部），下次请求时重新生成。
+删除 `Gugu-data/users/.thumbs/` 目录下对应文件（或全部），下次请求时重新生成。
 
 ### 2.14 时间与时区约定
 

@@ -16,6 +16,8 @@
 
 ### 改进
 
+- **上下文压缩与会话稳定性**：Web、IM 和定时任务统一按 provider usage/overflow 管理 ContextBudget；长会话压缩只处理旧历史并保留当前工具轮，baseline 更新后继续增量运行，减少重复压缩和并发生成造成的上下文抖动
+
 - **上下文预算收口**：统一 provider usage 驱动的 ContextBudget 压缩、baseline 提交与 session gate，避免同一会话并行生成和重复压缩。
 - **上下文旧逻辑清理**：删除未再使用的历史窗口兼容 API 和 token_budget 字符裁剪路径，Web/IM/定时任务统一走 baseline 后增量历史读取。
 - **Agent 运行链路**：统一 Web、IM 与 LoopScope 的 runner 入口，保留消息时间和附件上下文，补齐群聊上下文、消息脱敏、数据库迁移与多 worker 配置刷新支持。

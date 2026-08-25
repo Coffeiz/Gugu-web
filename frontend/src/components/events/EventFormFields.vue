@@ -6,10 +6,9 @@
          v-enter="() => emit('save')" @keydown.esc="emit('close')" :autofocus="autofocus" />
   <div class="date-row">
     <DatePicker class="date-row-picker" v-model="event.date" placeholder="选择日期" />
-    <label class="allday-toggle">
-      <input type="checkbox" v-model="event.allDay" @change="onToggleAllDay(event)" />
+    <Checkbox v-model="event.allDay" class="allday-toggle" @update:model-value="onToggleAllDay(event)">
       全天
-    </label>
+    </Checkbox>
   </div>
   <div class="time-box" v-if="!event.allDay">
     <TimeInput v-model="event.time" :boxed="false" />
@@ -40,6 +39,7 @@
 
 <script setup lang="ts">
 import Icon from '@/components/common/Icon.vue'
+import Checkbox from '@/components/common/Checkbox.vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import {
@@ -62,26 +62,6 @@ const emit = defineEmits<{ (e: 'save'): void; (e: 'close'): void; (e: 'test-remi
 .allday-toggle {
   display: flex; align-items: center; gap: 6px; flex-shrink: 0;
   font-size: 12.5px; color: var(--content-secondary); cursor: pointer; user-select: none; white-space: nowrap;
-}
-/* The global checkbox keeps the legacy registration/task-list shape, but its light paper fill is
-   too bright inside a dark event editor. This component maps that same control to the shared
-   option/action contract without introducing another global checkbox override layer. */
-.allday-toggle input[type="checkbox"] {
-  background: var(--option-bg);
-  border-color: var(--option-border);
-  transition:
-    background-color var(--motion-hover-control) var(--motion-ease-standard),
-    border-color var(--motion-hover-control) var(--motion-ease-standard),
-    box-shadow var(--motion-hover-control) var(--motion-ease-standard);
-}
-.allday-toggle input[type="checkbox"]:hover {
-  background: var(--option-bg-hover);
-  border-color: var(--option-border-hover);
-}
-.allday-toggle input[type="checkbox"]:checked {
-  background: var(--action-primary-bg);
-  border-color: transparent;
-  box-shadow: var(--elevation-card);
 }
 .time-box,
 .popup-input,

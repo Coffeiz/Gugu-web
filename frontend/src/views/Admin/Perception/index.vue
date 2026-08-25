@@ -6,10 +6,7 @@
         <p class="page-desc">咕咕「读懂用户需求」健康度 · 仅活跃用户、按用户宏平均（重度用户不主导）</p>
       </div>
       <div class="header-right">
-        <label class="xd-toggle" :class="{ on: excludeDev }">
-          <input type="checkbox" v-model="excludeDev" @change="load">
-          排除开发者
-        </label>
+        <Checkbox :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
         <div class="range-tabs">
           <button v-for="r in ranges" :key="r.h"
             :class="['range-tab', { active: hours === r.h }]"
@@ -157,6 +154,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import Checkbox from '@/components/common/Checkbox.vue'
 
 interface PerceptionData {
   active_users?: number
@@ -301,15 +299,6 @@ onMounted(load)
 .header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 
 /* 排除开发者开关（同 Admin/Analytics/index.vue） */
-.xd-toggle {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
-  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
-}
-.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
-.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
-
 .range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
 .range-tab { font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer; color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s; }
 .range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }

@@ -91,6 +91,10 @@ class IndexDocument:
             for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "parent_id"):
                 if self.metadata.get(key):
                     result[key] = self.metadata[key]
+        if self.source_type == "conversation":
+            for key in ("message_id", "role", "session_source", "session_updated_at"):
+                if self.metadata.get(key) is not None:
+                    result[key] = self.metadata[key]
         return result
 
 

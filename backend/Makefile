@@ -94,6 +94,18 @@ update:      ## 装依赖 + 跑数据库和文件存储迁移（不用 git，适
 
 makeupdate: update ## update 的兼容别名，便于业务端一键升级
 
+rootless-workspace-plan: ## 输出 Rootless Docker workspace ACL 计划（默认不修改权限）
+	@if [ -z "$(ROOTLESS_WORKSPACE)" ]; then \
+		echo "ERROR: 请传入 ROOTLESS_WORKSPACE=/path/to/workspace"; exit 1; \
+	fi
+	@$(VENV_BIN)/python scripts/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",)
+
+rootless-workspace-apply: ## 显式应用 Rootless Docker workspace ACL（需部署权限）
+	@if [ -z "$(ROOTLESS_WORKSPACE)" ]; then \
+		echo "ERROR: 请传入 ROOTLESS_WORKSPACE=/path/to/workspace"; exit 1; \
+	fi
+	@$(VENV_BIN)/python scripts/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",) --apply
+
 storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
 	@set -e; \
 	if [ "$$(id -u)" -eq 0 ] && systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service'; then \
@@ -113,24 +125,24 @@ migrate:     ## 跑数据库迁移（用 venv 绝对路径，不踩 PEP 668）
 	@$(VENV_BIN)/alembic upgrade head
 	@echo "  alembic current: $$($(VENV_BIN)/alembic current 2>/dev/null || true)"
 
-backup:      ## 备份数据库 + uploads + override 配置
+backup:      ## 备份数据库 + Gugu-data/users + override 配置
 	./backup.sh
 
 # ── systemd ──────────────────────────────────────────────
-install:     ## 装成 systemd 服务（web + IM worker + IM supervisor，均 Restart=always）
+install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM supervisor）
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（三个）
-	for s in gugu-backend gugu-worker gugu-supervisor; do \
+uninstall:   ## 卸载 systemd 服务（四个）
+	for s in gugu-sandboxd gugu-backend gugu-worker gugu-supervisor; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \
 	done
 	systemctl daemon-reload
-	@echo "已卸载 systemd 服务（gugu-backend / gugu-worker / gugu-supervisor）"
+	@echo "已卸载 systemd 服务（gugu-sandboxd / gugu-backend / gugu-worker / gugu-supervisor）"
 
 # ── 清理 ─────────────────────────────────────────────────
-clean:       ## 清缓存 + 日志 + pid（不删 venv / uploads / override）
+clean:       ## 清缓存 + 日志 + pid（不删 venv / Gugu-data/users / override）
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
 	rm -f .gugu.pid

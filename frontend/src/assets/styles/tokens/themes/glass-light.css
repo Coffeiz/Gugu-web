@@ -19,7 +19,7 @@
   --theme-shadow-3: 0 12px 36px rgba(60,70,100,.13),inset 0 1px 0 rgba(255,255,255,.94);
   --theme-shadow-4: 0 24px 64px rgba(20,25,50,.18),inset 0 1px 0 rgba(255,255,255,.95);
   --theme-brand-gradient: linear-gradient(135deg,#7b7fb2,#c4afc8); --theme-fab-gradient: linear-gradient(135deg,#7b7fb2,#9590c4);
-  --theme-scrollbar-thumb: rgba(123,127,178,.22); --theme-scrollbar-thumb-hover: rgba(123,127,178,.30); --theme-divider: linear-gradient(90deg,transparent,rgba(0,0,0,.07) 20%,rgba(0,0,0,.07) 80%,transparent);
+  --theme-scrollbar-thumb: rgba(123,127,178,.24); --theme-scrollbar-thumb-hover: rgba(123,127,178,.32); --theme-divider: linear-gradient(90deg,transparent,rgba(0,0,0,.07) 20%,rgba(0,0,0,.07) 80%,transparent);
   --theme-topbar-bg: rgba(255,255,255,.18); --theme-topbar-bg-hover: rgba(255,255,255,.26); --theme-topbar-border: rgba(255,255,255,.30);
   --theme-topbar-shadow: 0 3px 14px rgba(80,90,110,.032),inset 0 1px 0 rgba(255,255,255,.34); --theme-topbar-shadow-hover: 0 5px 18px rgba(80,90,110,.052),inset 0 1px 0 rgba(255,255,255,.44);
   --theme-project-overlay-start: rgba(255,255,255,.90); --theme-project-overlay-end: rgba(255,255,255,1);

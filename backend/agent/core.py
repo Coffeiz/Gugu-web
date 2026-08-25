@@ -789,11 +789,16 @@ class LLMRunner:
                     skill_slug = None
                     if tc.name == "use_skill":
                         from agent.skills import resolve_skill_slug
-                        skill_slug = resolve_skill_slug(str((tc.input or {}).get("name") or ""))
+                        requested_skill = str((tc.input or {}).get("name") or "")
+                        skill_slug = resolve_skill_slug(requested_skill) or requested_skill.strip().lower()
                     current_skill_digest = None
                     if skill_slug:
-                        from agent.skills import skill_content_digest
-                        current_skill_digest = skill_content_digest(skill_slug)
+                        capability_context = self.capability_context
+                        if capability_context is not None:
+                            current_skill_digest = capability_context.skill_digest(skill_slug)
+                        if not current_skill_digest:
+                            from agent.skills import skill_content_digest
+                            current_skill_digest = skill_content_digest(skill_slug)
                     if (
                         skill_slug
                         and current_skill_digest

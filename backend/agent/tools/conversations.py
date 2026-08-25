@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from app.services.conversations import get_session, list_messages, list_recent_sessions, search_messages
+from app.services.conversations import get_session, list_messages, list_recent_sessions
 
 from app.search.query import normalize_mode, normalize_queries
 from agent.tools.base import BaseSkill, Tool
@@ -33,21 +33,28 @@ async def _search_conversations(db, user_id, args: dict):
             for s in rows
         ]}
 
-    # 有关键词 → 搜消息正文 + 标题，按 session 聚合，每条给匹配片段
-    rows = await search_messages(
-        db, user_id,
-        search_queries, mode, limit * 4,
-    )
-
     seen: dict[int, dict] = {}
-    for msg, sess in rows:
-        if sess.id in seen:
+    # 有关键词 → 统一走 RAG service；工具仍只返回 session 摘要和匹配片段，
+    # 完整消息继续由 read_conversation 读取。
+    from agent.rag.service import search_conversations
+    recall = await search_conversations(
+        db, user_id, " ".join(search_queries), queries=search_queries,
+        match_mode=mode, limit=limit * 4,
+    )
+    for item in recall.get("results", []):
+        session_id = int(item.get("source_id") or 0)
+        if not session_id or session_id in seen:
             continue
-        snippet = (msg.content or "")[:140]
-        seen[sess.id] = {
-            "session_id": sess.id, "title": sess.title, "summary": sess.summary or "",
-            "source": sess.source, "updated_at": _fmt(sess.updated_at),
-            "match": {"role": ("你" if msg.role == "user" else "咕咕"), "snippet": snippet},
+        seen[session_id] = {
+            "session_id": session_id,
+            "title": item.get("title") or "未命名对话",
+            "summary": item.get("summary") or "",
+            "source": item.get("session_source") or "web",
+            "updated_at": _fmt_from_iso(item.get("session_updated_at")),
+            "match": {
+                "role": ("你" if item.get("role") == "user" else "咕咕"),
+                "snippet": str(item.get("text") or "")[:140],
+            },
         }
         if len(seen) >= limit:
             break
@@ -56,6 +63,16 @@ async def _search_conversations(db, user_id, args: dict):
         return {"matches": [], "hint": f"没找到提到「{' / '.join(search_queries)}」的过去对话"}
     return {"matches": list(seen.values()),
             "note": "用 read_conversation(session_id) 看某条对话的完整内容"}
+
+
+def _fmt_from_iso(value) -> str:
+    if not value:
+        return ""
+    try:
+        from datetime import datetime
+        return _fmt(datetime.fromisoformat(str(value)))
+    except (TypeError, ValueError):
+        return ""
 
 
 async def _read_conversation(db, user_id, args: dict):

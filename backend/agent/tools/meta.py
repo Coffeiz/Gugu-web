@@ -8,8 +8,10 @@ use_skill(name) 把该技能的正文（剧本）拉进上下文，再照着执�
 from __future__ import annotations
 
 import json
+import hashlib
 
 from agent import skills as _skills
+from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
 
 
@@ -19,17 +21,31 @@ async def _use_skill(db, user_id, args: dict):
         return {"error": "缺少技能名"}
     slug = _skills.resolve_skill_slug(name)
     body = _skills.load_skill(name)
+    source = "builtin"
+    owner_fingerprint = ""
+    if body is None and db is not None and user_id is not None:
+        from agent.capabilities.skill_registry import SkillCapabilityRegistry
+        row = await SkillCapabilityRegistry().load_user_skill(db, user_id, name)
+        if row is not None:
+            slug = row.slug
+            body = row.body
+            content_digest = row.content_digest
+            source = "user"
+            owner_fingerprint = fingerprint(str(user_id))
     if body is None:
         avail = "、".join(s["slug"] for s in _skills.skills_index())
         return {"error": f"没有名为「{name}」的技能", "available": avail}
-    content_digest = _skills.skill_content_digest(slug or name)
+    content_digest = content_digest if source == "user" else _skills.skill_content_digest(slug or name)
+    marker = {
+        "kind": "skill", "slug": slug or name, "loaded": True,
+        "content_digest": content_digest,
+    }
+    if source == "user":
+        marker.update({"source": source, "owner_fingerprint": owner_fingerprint})
     return {
         "skill": slug or name,
         "content": body,
-        "_capability_usage": {
-            "kind": "skill", "slug": slug or name, "loaded": True,
-            "content_digest": content_digest,
-        },
+        "_capability_usage": marker,
     }
 
 
@@ -43,6 +59,55 @@ async def _ask_user(db, user_id, args: dict):
         "options": args.get("options", []),
         "allow_text_input": bool(args.get("allow_text_input", False)),
     }
+
+
+async def _create_skill(db, user_id, args: dict):
+    """通过统一注册服务创建用户 Prompt Skill，不开放任何可执行代码。"""
+    from agent.capabilities.skill_registry import SkillCapabilityRegistry
+    from agent.im import imctx
+    from agent.profiles.default import DefaultProfile
+    from agent.tools import registry
+
+    name = str(args.get("name") or "").strip()
+    slug = str(args.get("slug") or "").strip().lower()
+    if not slug:
+        slug = f"user-skill-{hashlib.sha256(name.encode('utf-8')).hexdigest()[:10]}"
+    current_im = imctx.get_im()
+    allowed = current_im.get("allowed_tool_names") if current_im else None
+    allowed = list(allowed) if allowed is not None else DefaultProfile().tool_names
+    related = [str(item).strip() for item in (args.get("related_tools") or ()) if str(item).strip()]
+    risky = [item for item in related if (registry.get(item) and (registry.get(item).mutates or registry.get(item).destructive))]
+    if risky:
+        from agent.security import confirm
+        blocked = confirm.needs_confirmation(
+            args, f"创建会关联写入或危险工具的 Skill：{', '.join(risky)}", user_id,
+        )
+        if blocked:
+            return blocked
+    try:
+        row = await SkillCapabilityRegistry().create_user_skill(
+            db, user_id, allowed_tool_names=allowed,
+            slug=slug, name=name,
+            description_short=args.get("description_short") or "",
+            description_long=args.get("description_long"),
+            category=args.get("category") or "personal",
+            related_tools=related, body=args.get("body") or "",
+        )
+        await db.commit()
+        return {
+            "success": True, "skill": {
+                "slug": row.slug, "name": row.name,
+                "description_short": row.description_short,
+                "related_tools": list(row.related_tools or ()), "enabled": row.enabled,
+            },
+            "message": "已创建这个咕咕技能，后续会在需要时按需加载。",
+        }
+    except Exception as exc:
+        await db.rollback()
+        from agent.capabilities.errors import CapabilityRegistrationError
+        if isinstance(exc, CapabilityRegistrationError):
+            return {"error": str(exc)}
+        raise
 
 
 async def _call_tool(db, user_id, args: dict):
@@ -96,6 +161,32 @@ class MetaSkill(BaseSkill):
                 "required": ["name"],
             },
             handler=_use_skill,
+        ),
+        Tool(
+            name="create_skill",
+            label="创建咕咕技能",
+            description=(
+                "当用户明确要求记住一套可复用做法时，创建一个 Prompt Skill。"
+                "只能保存指导文本，不能写代码、注册新工具或扩大权限。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "maxLength": 80},
+                    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+                    "description_short": {"type": "string", "minLength": 1, "maxLength": 100},
+                    "description_long": {"type": "string", "maxLength": 500},
+                    "category": {"type": "string", "enum": ["personal", "productivity", "research", "creative", "other"]},
+                    "related_tools": {"type": "array", "maxItems": 32, "items": {"type": "string", "maxLength": 80}},
+                    "body": {"type": "string", "minLength": 1, "maxLength": 20000},
+                    "confirm": {"type": "boolean"},
+                    "confirm_token": {"type": "string"},
+                },
+                "required": ["name", "description_short", "body", "related_tools"],
+                "additionalProperties": False,
+            },
+            handler=_create_skill,
+            mutates=True,
         ),
         Tool(
             name="ask_user",

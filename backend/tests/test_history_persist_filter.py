@@ -93,7 +93,7 @@ def test_sanitize_drops_tool_result_without_id_without_raising():
 
 
 def test_sanitize_preserves_leading_system_snapshot():
-    """system snapshot 是固定前缀，不能被历史清洗器按旧 user 首条规则删掉。"""
+    """真正的 system snapshot 仍保留；它与 user-role reminder 是两种消息。"""
     messages = [
         {"role": "system", "content": "[system-reminder]\n项目快照\n[/system-reminder]"},
         {"role": "user", "content": "看看项目"},
@@ -103,3 +103,16 @@ def test_sanitize_preserves_leading_system_snapshot():
 
     assert [item["role"] for item in cleaned] == ["system", "user"]
     assert "项目快照" in cleaned[0]["content"][0]["text"]
+
+
+def test_sanitize_keeps_user_reminder_boundary():
+    messages = [
+        {"role": "user", "content": "[system-reminder]\n时间\n[/system-reminder]"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert [item["role"] for item in cleaned] == ["user", "user"]
+    assert cleaned[0]["content"][0]["text"].startswith("[system-reminder]")
+    assert cleaned[1]["content"][0]["text"] == "当前问题"

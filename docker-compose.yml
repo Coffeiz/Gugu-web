@@ -38,6 +38,45 @@ services:
       timeout: 3s
       retries: 10
 
+  # 普通联网搜索和图片搜索的本地引擎。后端通过 Compose 内网地址访问，
+  # 宿主机只绑定 127.0.0.1，避免把未带认证的 JSON 搜索接口暴露到局域网。
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8888/
+      UWSGI_WORKERS: 1
+      UWSGI_THREADS: 2
+    mem_limit: 350m
+    restart: unless-stopped
+
+  # 只执行一次的数据库初始化/迁移任务。Web 和 Worker 都等它成功后再启动，
+  # 避免两个容器同时执行 alembic 产生迁移竞态。
+  migrate:
+    build:
+      context: ./backend
+      args:
+        - PIP_INDEX_URL
+    command: ["python", "-c", "from pathlib import Path; Path('/data/users').mkdir(parents=True, exist_ok=True)"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: postgres
+      DB__PORT: 5432
+      DB__NAME: gugu
+      DB__USER: gugu
+      DB__PASSWORD: gugu_docker_pw
+      STORAGE__LOCAL_PATH: /data/users
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - gugu_data:/data
+
   backend:
     build:
       context: ./backend
@@ -62,14 +101,22 @@ services:
       DB__PASSWORD: gugu_docker_pw
       REDIS__HOST: redis
       REDIS__PORT: 6379
+      SEARCH__SEARXNG_URL: http://searxng:8080
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      searxng:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
-      - backend_uploads:/app/uploads
+      - gugu_data:/data
+      - sandbox_socket:/run/gugu
 
   # IM 队列消费者（飞书/QQ/微信消息 → 跑 agent 回复）——跟 backend 是同一个镜像，
   # 只是 command 换成 worker 入口；没配 IM 频道凭据也能起，只是收不到消息，不影响
@@ -90,14 +137,48 @@ services:
       DB__PASSWORD: gugu_docker_pw
       REDIS__HOST: redis
       REDIS__PORT: 6379
+      SEARCH__SEARXNG_URL: http://searxng:8080
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
+      searxng:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./backend:/app
-      - backend_uploads:/app/uploads
+      - gugu_data:/data
+      - sandbox_socket:/run/gugu
+
+  # 生产 Shell 沙盒的 Docker 权限只给这个进程。默认不启动，必须显式使用
+  # `docker compose --profile sandbox up -d`，并提供宿主机 Rootless Docker Socket。
+  sandboxd:
+    profiles: ["sandbox"]
+    build:
+      context: ./backend
+      args:
+        - PIP_INDEX_URL
+    command: ["python", "-m", "agent.sandbox.sandboxd", "--socket", "/run/gugu/sandboxd.sock", "--allowed-root", "/data/users"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DOCKER_HOST: unix:///run/gugu/docker.sock
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-false}
+      SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
+    volumes:
+      - gugu_data:/data
+      - sandbox_socket:/run/gugu
+      - ${GUGU_DOCKER_SOCKET:-/var/run/docker.sock}:/run/gugu/docker.sock
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -117,4 +198,5 @@ services:
 
 volumes:
   pgdata:
-  backend_uploads:
+  gugu_data:
+  sandbox_socket:

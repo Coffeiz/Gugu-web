@@ -31,10 +31,14 @@ class ShellResult:
     cwd: str
     truncated: bool = False
     permission_revoked: bool = False
+    quota_exceeded: bool = False
 
 
-class LocalWorkspaceSandbox:
-    """在当前系统用户下执行受限于 workspace 的单条命令。"""
+class LocalWorkspaceExecutor:
+    """在当前系统用户下执行受限于 workspace 的单条命令。
+
+    这是可信本机执行后端，不是面向不受信用户的安全隔离边界。
+    """
 
     def __init__(self, workspace_root: str | Path, *, env: dict[str, str] | None = None):
         root = Path(workspace_root).expanduser().resolve(strict=True)

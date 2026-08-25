@@ -1,19 +1,19 @@
-"""对话默认问候生成：组装记忆上下文（fact + 近 7 天项目活动/提醒 + 近 7 天 daily）+ 轻量 LLM 直连。
+"""对话默认问候生成：组装精简记忆上下文 + 轻量 LLM 直连。
 
 不走完整 agent 循环（参照 gateway/web._generate_title）；模型用默认 `settings.ai`。
 **不计入精力/配额**：本调用不经 web.stream / runner 那条记 AgentUsage 的路，token 不写 AgentUsage、不扣配额。
 失败 / 空 → 返回 ''，由前端兜底池接手（永不慢、永不空）。问候**不自我介绍、不报功能菜单、emoji 极简**。
 """
 import logging
-from app.core.tz import now_utc
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 
-from app.core.tz import now_ctx
+from app.core.tz import now_ctx, now_utc
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import CalendarEvent, ConversationMessage, ConversationSession, Project
+from app.models import ConversationMessage, ConversationSession, Project
+from agent.context.loaders import project_sort_key
 from agent.memory import store as mem_store
 
 logger = logging.getLogger("agent.greeting")
@@ -65,16 +65,14 @@ async def _last_seen_part(db: AsyncSession, user_id) -> str:
 async def _recent_context(db: AsyncSession, user_id) -> str:
     # 上次互动时间（定问候口吻：刚聊过别说「好久不见」）
     seen = await _last_seen_part(db, user_id)
-    # 记忆：当前状态快照 + 长期画像/行为模式 + 近 7 天 daily（先取出，下面按优先级排）
+    # 记忆：当前状态快照 + 长期画像 + 近 7 天 daily（先取出，下面按优先级排）
     summary = long_term_memory = daily = ""
     summary_ts = None
     try:
         mem = await mem_store.read_memory(user_id)
         summary = (mem.get("summary") or "").strip()[:400]
         summary_ts = mem.get("summary_ts")
-        long_term_memory = "\n".join(
-            x for x in [(mem.get("profile") or "").strip(), (mem.get("pattern") or "").strip()] if x
-        )[:800]
+        long_term_memory = (mem.get("profile") or "").strip()[:500]
         cutoff = (now_ctx().date() - timedelta(days=7)).isoformat()
         daily_entries = mem_store.extract_daily_entries(mem.get("daily") or "")
         daily_lines = [f"- {date} {note}" for date, note in daily_entries if date >= cutoff]
@@ -95,34 +93,28 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
             stance_hint = _SMAP.get(st.strip(), "")
     except Exception:
         pass
-    # 近 7 天有动静的项目（可选背景，不是必提项）
+    # 项目背景沿用项目看板排序：待开始取 1 个，进行中取 3 个。
     proj_part = ""
     try:
-        since = now_utc() - timedelta(days=7)
         rows = (await db.execute(
             select(Project)
-            .where(Project.user_id == user_id, Project.updated_at >= since,
-                   Project.archived.is_(False), Project.progress < 100)  # 已完成(100%)的不列，免得问「做完了吗」
-            .order_by(Project.updated_at.desc()).limit(6))).scalars().all()
-        if rows:
-            proj_part = "\n".join(f"- {p.name}（{p.progress}%）" for p in rows)
+            .where(Project.user_id == user_id, Project.archived.is_(False),
+                   Project.status.in_(("pending", "active"))))).scalars().all()
+        grouped = {"pending": [], "active": []}
+        for project in rows:
+            grouped[project.status].append(project)
+        selected = (
+            sorted(grouped["pending"], key=project_sort_key)[:1]
+            + sorted(grouped["active"], key=project_sort_key)[:3]
+        )
+        if selected:
+            proj_part = "\n".join(
+                f"- {p.name}（{'待开始' if p.status == 'pending' else '进行中'}，{p.progress}%）"
+                for p in selected
+            )
     except Exception:
         pass
-    # 提醒：只取「今天 ~ 未来 14 天」的日历事件（过去的不算提醒，问「做了吗」是明知故问）
-    ev_part = ""
-    try:
-        lo = date.today().isoformat()
-        hi = (date.today() + timedelta(days=14)).isoformat()
-        evs = (await db.execute(
-            select(CalendarEvent)
-            .where(CalendarEvent.user_id == user_id, CalendarEvent.date >= lo, CalendarEvent.date <= hi)
-            .order_by(CalendarEvent.date).limit(6))).scalars().all()
-        if evs:
-            ev_part = "\n".join(f"- {e.date} {e.title}" for e in evs)
-    except Exception:
-        pass
-    # 优先级：最近在推进的（项目 > 当下重心 > 日程）排前、最显眼；长期画像/模式垫底并明确
-    # 标成「背景」——别让陈年信息（如早就聊过的旧项目名）被当成「最近在忙」拿出来。
+    # 优先级：项目、summary、daily、长期画像；不注入 pattern 或日程，避免问候上下文过载。
     parts: list[str] = []
     if seen:
         parts.append(seen)
@@ -140,12 +132,10 @@ async def _recent_context(db: AsyncSession, user_id) -> str:
             parts.append(f"【TA 之前在忙什么（约 {int(ad)} 天前记的，可能已变，别当成现在的事张口就提）】\n" + summary)
         else:
             parts.append(f"【TA 较早前的状态（约 {int(ad)} 天前，多半过时，别拿来当近况）】\n" + summary)
-    if ev_part:
-        parts.append("【近期日程 / 提醒】\n" + ev_part)
     if daily:
         parts.append("【近 7 天记忆】\n" + daily)
     if long_term_memory:
-        parts.append("【长期背景（陈年信息，**别当成「最近在忙」随口提**，仅帮你把握 TA 是谁）】\n" + long_term_memory)
+        parts.append("【长期画像（仅帮你把握 TA 是谁，别当成最近在忙的事）】\n" + long_term_memory)
     return ("\n近期上下文（仅供你自然带一句，别照念）：\n" + "\n\n".join(parts) + "\n\n") if parts else "\n"
 
 

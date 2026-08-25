@@ -210,6 +210,48 @@ export const filesApi = {
   },
 }
 
+// ── 咕咕 Skills ─────────────────────────────────────────────────────────────
+export interface UserSkillItem {
+  id: number
+  slug: string
+  name: string
+  description_short: string
+  description_long: string | null
+  category: string
+  related_tools: string[]
+  body: string
+  source: string
+  enabled: boolean
+  content_digest: string
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface UserSkillWrite {
+  slug: string
+  name: string
+  description_short: string
+  description_long?: string | null
+  category: string
+  related_tools: string[]
+  body: string
+  enabled?: boolean
+}
+
+export interface SkillToolItem {
+  name: string
+  description_short: string
+  category: string
+  enabled: boolean
+}
+
+export const userSkillsApi = {
+  list: () => get<{ skills: UserSkillItem[]; tools: SkillToolItem[] }>('/skills'),
+  create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
+  update: (slug: string, data: Partial<Omit<UserSkillWrite, 'slug'>>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(slug)}`, data),
+  delete: (slug: string) => del(`/skills/${encodeURIComponent(slug)}`),
+}
+
 // ── Events ────────────────────────────────────────────────────────────────────
 export const eventsApi = {
   list:   (year: number, month: number) => get<Schemas['EventResponse'][]>(`/events?year=${year}&month=${month}`),
@@ -417,7 +459,7 @@ export const preferencesApi = {
 }
 
 export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; workspaceGlobalEnabled: boolean; personalGlobalEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userPersonalEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; items: unknown[] }>('/workspaces'),
+  status: () => get<{ globalEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; items: unknown[] }>('/workspaces'),
   create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
   update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
   delete: (id: number) => del(`/workspaces/${id}`),

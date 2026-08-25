@@ -556,10 +556,10 @@ Phase 6 自动化与 devserver 收口已完成：本次清理后的上下文/压
 
 ## 12. 文档与发布要求
 
-- [ ] 更新 `docs/agent/context/context-budget-baseline-design.md`，改为引用本 PRD 的唯一预算语义。
-- [ ] 更新 `PRD-AGENT-3`，标注其历史窗口方案已被本 PRD 替代。
-- [ ] 更新 `PRD-LLM-8`，删除旧 20%压缩目标和重复 baseline 更新 TODO。
-- [ ] 更新 `PRD-IM-6`，仅保留渠道会话复用与消息窗口的兼容说明。
-- [ ] 在 `docs/devlog.md` 记录迁移前后 token/cache/压缩次数对比，不记录正文。
-- [ ] changelog 只记录用户可感知的上下文稳定性、长群会话和并发行为变化。
-- [ ] 完成代码审查后清理所有无效探针、旧 ratio、临时 fallback、重复 API 和未使用类型。
+- [x] `docs/agent/context/context-budget-baseline-design.md` 已引用本 PRD 的唯一预算语义。
+- [x] `PRD-AGENT-3` 已归档，并标注其历史窗口方案已被本 PRD 替代。
+- [x] `PRD-LLM-8` 已改为完成状态；旧 20% 压缩目标和重复 baseline TODO 不再作为实现依据。
+- [x] `PRD-IM-6` 已收窄为渠道会话复用、物理保留和消息窗口兼容说明。
+- [x] `docs/devlog.md` 已记录专项验证结果；未伪造线上 token/cache 对比，真实脱敏长群 trace 仍作为上线后观察项。
+- [x] `CHANGELOG.md` 只记录用户可感知的上下文稳定性、长群会话和并发行为变化。
+- [x] 代码审查确认本 PRD 范围内未保留无效探针、旧 ratio、重复 API 或未使用类型；保留的 `context-layout`/baseline 生命周期日志属于脱敏诊断，不进入模型上下文。

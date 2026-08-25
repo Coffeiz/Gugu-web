@@ -210,10 +210,30 @@ def sanitize_messages(messages: list) -> list:
                 norm.pop(0)
     norm = leading_system + norm
 
-    # 5) 合并相邻同角色
+    # 5) 合并相邻同角色，但保留 reminder 与真实消息的独立边界。
+    # reminder 现在使用 user role；如果无条件合并，当前用户消息会和时间/快照
+    # reminder 粘成一条，下一轮从历史恢复时会再次改变消息形状并破坏缓存前缀。
     merged: list = []
     for m in norm:
-        if merged and merged[-1]["role"] == m["role"]:
+        previous_is_reminder = bool(
+            merged
+            and isinstance(merged[-1].get("content"), list)
+            and any(
+                isinstance(block, dict)
+                and block.get("type") == "text"
+                and str(block.get("text") or "").startswith("[system-reminder]")
+                for block in merged[-1]["content"]
+            )
+        )
+        current_is_reminder = any(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and str(block.get("text") or "").startswith("[system-reminder]")
+            for block in m["content"]
+        )
+        if merged and merged[-1]["role"] == m["role"] and not (
+            previous_is_reminder or current_is_reminder
+        ):
             merged[-1]["content"] = merged[-1]["content"] + m["content"]
         else:
             merged.append({"role": m["role"], "content": m["content"]})

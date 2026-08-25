@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import tempfile
@@ -18,7 +19,12 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-OVERRIDE_FILE = Path(__file__).parent.parent.parent / "config.override.json"
+OVERRIDE_FILE = Path(
+    os.getenv(
+        "GUGU_CONFIG_OVERRIDE_FILE",
+        str(Path(__file__).parent.parent.parent / "config.override.json"),
+    )
+)
 
 
 def normalize_dimensions(value: Any) -> int:
@@ -59,7 +65,9 @@ class RedisSettings(BaseModel):
 
 class StorageSettings(BaseModel):
     backend: str = Field("local", description="存储后端: local | oss")
-    local_path: str = Field("./uploads", description="本地存储路径")
+    # 用户文件和 Shell 沙盒统一放在仓库根目录的数据区；旧 backend/uploads
+    # 仅由一次性迁移脚本读取，不能再作为运行时默认根目录。
+    local_path: str = Field("../Gugu-data/users", description="本地用户数据与 Shell 沙盒根目录")
     oss_access_key_id: str = Field("", description="OSS AccessKey ID")
     oss_access_key_secret: str = Field("", description="OSS AccessKey Secret")
     oss_bucket: str = Field("gugu-web", description="OSS Bucket 名")
@@ -109,6 +117,36 @@ class VoiceSettings(BaseModel):
     )
 
 
+class SandboxSettings(BaseModel):
+    """Shell 容器沙盒配置。
+
+    enabled 只表示 Admin 请求启用沙盒；是否真的可执行还必须经过 Docker
+    运行时探测和执行器就绪检查，不能由配置值单独推断。
+    """
+    enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
+    image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
+    image_digest: str = Field(
+        "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
+        description="已验证的固定镜像 digest；必须与当前 daemon 已加载镜像一致",
+    )
+    rootless_required: bool = Field(True, description="是否要求 Rootless Docker")
+    network_profile: Literal["none"] = Field("none", description="容器网络策略；当前生产版本只允许断网")
+    cpu_limit: float = Field(1.0, ge=0.1, le=2.0, description="单用户容器 CPU 上限")
+    memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
+    pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
+    timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
+    output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
+    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 持久空间配额")
+    ephemeral_quota_bytes: int = Field(1024 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 临时构建/cache 配额")
+    sandboxd_socket: str = Field(
+        default_factory=lambda: os.getenv(
+            "GUGU_SANDBOXD_SOCKET",
+            f"/run/user/{getattr(os, 'getuid', lambda: 0)()}/gugu-sandboxd.sock",
+        ),
+        description="sandboxd Unix Socket；生产 Shell 必须通过该 socket 执行",
+    )
+
+
 class AIPresetItem(BaseModel):
     id: str = ""
     name: str = ""
@@ -147,8 +185,6 @@ class AIPresets(BaseModel):
 class AgentBehaviorSettings(BaseModel):
     # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
     shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
-    shell_workspace_enabled: bool = Field(True, description="是否允许 Shell 访问已绑定工作区")
-    shell_personal_enabled: bool = Field(False, description="是否允许 Shell 访问用户个人文件目录")
     shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
     shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
@@ -172,7 +208,10 @@ class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
-    searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
+    searxng_engines: str = Field(
+        "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
+        description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
+    )
     searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
     global_search_backend: Literal["index", "ilike"] = Field(
@@ -248,6 +287,7 @@ class AppSettings(BaseSettings):
     ai: AISettings = Field(default_factory=AISettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
@@ -332,6 +372,13 @@ class AppSettings(BaseSettings):
                 merged["dimensions"] = normalize_dimensions(merged.get("dimensions"))
                 updates["embedding"] = EmbeddingSettings.model_construct(**merged)
 
+            if "sandbox" in override:
+                merged = {**self.sandbox.model_dump(), **{
+                    k: v for k, v in (override["sandbox"] or {}).items()
+                    if k in SandboxSettings.model_fields
+                }}
+                updates["sandbox"] = SandboxSettings.model_construct(**merged)
+
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -381,7 +428,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding", "sandbox"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -425,6 +472,27 @@ def write_override_json(data: dict) -> None:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+    except OSError as exc:
+        # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
+        # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入，
+        # 其他错误继续保留原子写入的失败语义。
+        if exc.errno == errno.EBUSY:
+            with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(OVERRIDE_FILE, 0o600)
+            try:
+                os.unlink(temp_name)
+            except FileNotFoundError:
+                pass
+            return
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
     except Exception:
         try:
             os.unlink(temp_name)

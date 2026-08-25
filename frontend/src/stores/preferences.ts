@@ -12,7 +12,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
   const defaultView       = ref(localStorage.getItem('gugu-default-view') ?? 'projects')
   const shellEnabled      = ref(false)
-  const shellPersonalEnabled = ref(false)
   const shellSystemEnabled = ref(false)
   const shellDangerousEnabled = ref(false)
   const showToolInteractions = ref(false)
@@ -29,7 +28,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
       calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
       defaultView.value      = (data as any).defaultView ?? 'projects'
       shellEnabled.value     = (data as any).shellEnabled ?? false
-      shellPersonalEnabled.value = (data as any).shellPersonalEnabled ?? false
       shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
@@ -57,11 +55,6 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function saveShellEnabled(v: boolean) {
     shellEnabled.value = v
     try { await preferencesApi.update({ shellEnabled: v } as any) } catch {}
-  }
-
-  async function saveShellPersonalEnabled(v: boolean) {
-    shellPersonalEnabled.value = v
-    try { await preferencesApi.update({ shellPersonalEnabled: v } as any) } catch {}
   }
 
   async function saveShellSystemEnabled(v: boolean) {
@@ -101,7 +94,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarDoneMode, defaultView, shellEnabled, shellPersonalEnabled, shellSystemEnabled, shellDangerousEnabled, showToolInteractions,
-    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellPersonalEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShowToolInteractions,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, showToolInteractions,
+    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShowToolInteractions,
   }
 })

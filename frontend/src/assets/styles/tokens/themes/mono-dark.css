@@ -11,7 +11,7 @@
   --theme-sidebar-active-bg: rgba(164,154,203,.12); --theme-sidebar-active-fg: #c7c0e2; --theme-sidebar-active-border: rgba(164,154,203,.10); --theme-sidebar-active-highlight: transparent;
   --theme-success: #82ad99; --theme-warning: #c5a175; --theme-danger: #d28683; --theme-info: #91a7c1;
   --theme-shadow-1: 0 2px 8px rgba(0,0,0,.14); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.20); --theme-shadow-3: 0 14px 38px rgba(0,0,0,.26); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.34);
-  --theme-brand-gradient: linear-gradient(145deg,#a49acb,#bd7e95); --theme-fab-gradient: linear-gradient(135deg,#9187bd,#a49acb); --theme-scrollbar-thumb: rgba(164,154,203,.24); --theme-scrollbar-thumb-hover: rgba(164,154,203,.40); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.075) 20%,rgba(255,255,255,.075) 80%,transparent);
+  --theme-brand-gradient: linear-gradient(145deg,#a49acb,#bd7e95); --theme-fab-gradient: linear-gradient(135deg,#9187bd,#a49acb); --theme-scrollbar-thumb: rgba(164,154,203,.26); --theme-scrollbar-thumb-hover: rgba(164,154,203,.34); --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.075) 20%,rgba(255,255,255,.075) 80%,transparent);
   /* GuguChat 发送按钮暗色专用背景：v2 dark 用相对更冷的紫调，避免和
      page radial gradient 抢色。 */
   --theme-gugu-chat-send-bg: linear-gradient(145deg,#7d749f,#8b7fa8);

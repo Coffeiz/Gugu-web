@@ -6,6 +6,10 @@
 > 关联模块：`backend/app/services/conversation_retention.py`、`backend/agent/im/session.py`、`backend/agent/im/loop.py`、`backend/agent/im/owner_session.py`、`backend/agent/runner.py`、`backend/agent/gateway/web.py`、`backend/app/scheduled_tasks.py`、`backend/app/models/__init__.py`
 > 关联文档：[`【已完成】PRD-IM-2-im-loop与gateway解耦.md`](./【已完成】PRD-IM-2-im-loop与gateway解耦.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)
 
+> 上下文预算、baseline 增量读取、provider overflow 压缩和 retry 统一以
+> [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](./PRD-AGENT-4-统一ContextBudget上下文压缩重构.md)
+> 为准。本文只保留 IM 会话复用、物理保留和渠道适配规则，不再定义独立的消息窗口预算。
+
 ## 0. 实施状态
 
 | 阶段 | 状态 | 说明 |

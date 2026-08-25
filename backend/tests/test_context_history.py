@@ -35,8 +35,8 @@ def test_user_message_time_is_a_stable_separate_reminder_in_history():
     )
 
     assert result == [
+        {"role": "user", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"},
         {"role": "user", "content": "测试"},
-        {"role": "system", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"},
     ]
 
 
@@ -93,7 +93,7 @@ def test_history_restores_quoted_text_for_all_im_sources_and_providers():
             assert "继续" in str(result)
 
 
-def test_user_message_time_stays_after_complete_tool_turn():
+def test_user_message_time_stays_before_complete_tool_turn():
     from agent.models import AgentRequest
 
     user = SimpleNamespace(
@@ -112,8 +112,8 @@ def test_user_message_time_stays_after_complete_tool_turn():
         use_anthropic=False, user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert [item["role"] for item in result] == ["user", "assistant", "tool", "system"]
-    assert result[-1] == {"role": "system", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"}
+    assert [item["role"] for item in result] == ["user", "user", "assistant", "tool"]
+    assert result[0] == {"role": "user", "content": "[system-reminder]\n08-22 15:22\n[/system-reminder]"}
 
 
 def test_canonical_events_do_not_split_user_turn_timestamp_boundary():
@@ -144,10 +144,10 @@ def test_canonical_events_do_not_split_user_turn_timestamp_boundary():
         user_tz=ZoneInfo("Asia/Shanghai"),
     )
 
-    assert [item["role"] for item in result] == ["user", "user", "user", "system", "user"]
-    assert result[1]["content"][0]["type"] == "text"
+    assert [item["role"] for item in result] == ["user", "user", "user", "user", "user"]
+    assert result[0]["content"] == "[system-reminder]\n08-25 08:26\n[/system-reminder]"
     assert result[2]["content"][0]["type"] == "text"
-    assert result[3]["content"] == "[system-reminder]\n08-25 08:26\n[/system-reminder]"
+    assert result[3]["content"][0]["type"] == "text"
 
 
 def test_anthropic_history_keeps_native_tool_blocks():
@@ -166,8 +166,6 @@ def test_anthropic_history_coerces_legacy_string_tool_arguments_to_object():
         "type": "tool_use", "id": "call-legacy", "name": "weather",
         "input": {"city": "南京"},
     }]}]
-
-
 def test_openai_history_converts_anthropic_tool_turn():
     assistant = _message("assistant", [{
         "type": "tool_use", "id": "call-1", "name": "weather", "input": {"city": "南京"},

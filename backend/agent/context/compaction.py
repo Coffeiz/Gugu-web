@@ -23,6 +23,7 @@ COMPACT_SUMMARY_MAX_TOKENS = 800  # provider 摘要输出上限（请求参数�
 RECENT_HISTORY_KEEP_CHARS = 20_000  # 压缩后保留的最近完整 history 字符上限
 SUMMARY_SOURCE_CHUNK_CHARS = 48_000  # 单次摘要输入字符上限，跨块滚动合并
 BRANCH_SUMMARY_MAX_CHARS = 96_000  # 可一次性分支压缩的 history 输入上限
+COMPACT_SUMMARY_MAX_CHARS = 10_000  # 候选摘要的持久化/注入硬上限
 
 
 async def estimate_context_length(messages: list, system_text: str = "") -> int:
@@ -216,8 +217,10 @@ async def compact_context(
         summary_msg.get("content", "") if summary_msg else None,
     )
 
-    if not compact_summary:
-        result = _result(messages, False, "summary_failed", None)
+    summary_ok, summary_reason = validate_compact_summary(compact_summary)
+    if not summary_ok:
+        logger.warning("[compaction] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
+        result = _result(messages, False, "summary_validation_failed", None)
         return result
 
     summary_change(
@@ -378,11 +381,40 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     return True, "压缩结构有效"
 
 
+def validate_compact_summary(summary: object) -> tuple[bool, str]:
+    """校验模型返回的摘要候选，避免坏结果进入 inline history 或 baseline。
+
+    外层 ``<compacted-summary>`` 包裹由组装器统一添加，因此模型不能返回另一份
+    包裹或结构化响应；这样失败时可以安全丢弃候选，不污染当前消息和持久 baseline。
+    """
+    if not isinstance(summary, str) or not summary.strip():
+        return False, "摘要为空"
+    value = summary.strip()
+    if len(value) > COMPACT_SUMMARY_MAX_CHARS:
+        return False, "摘要超过长度上限"
+    if "<compacted-summary>" in value or "</compacted-summary>" in value:
+        return False, "摘要包含外层包裹标记"
+    return True, "摘要候选有效"
+
+
 async def _generate_compact_summary(
     content_list: list[str],
     prev_summary: str | None = None,
 ) -> str:
-    """分块滚动生成摘要，确保旧 history 不因单次输入上限被静默丢弃。"""
+    """使用共享分支/fallback 策略生成摘要。"""
+    return await generate_compact_summary(
+        content_list,
+        prev_summary,
+        _generate_compact_summary_once,
+    )
+
+
+async def generate_compact_summary(content_list, prev_summary, call_once) -> str:
+    """统一执行分支式摘要，超限时才退回滚动 fallback。
+
+    ``call_once`` 由调用方提供，以便 inline compaction 和持久 baseline 复用同一
+    边界策略，同时保留各自的 provider/settings 路由。
+    """
     if not content_list:
         return ""
 
@@ -404,11 +436,11 @@ async def _generate_compact_summary(
     # 的内存消息，因而这里不会改变真实 session；超限时保留原有分块滚动策略。
     all_text = "\n".join(content_list)
     if len(all_text) <= BRANCH_SUMMARY_MAX_CHARS:
-        return await _generate_compact_summary_once(content_list, prev_summary)
+        return await call_once(content_list, prev_summary)
 
     summary = prev_summary
     for chunk in chunks:
-        summary = await _generate_compact_summary_once(chunk, summary)
+        summary = await call_once(chunk, summary)
         if not summary:
             return ""
     return summary or ""

@@ -286,6 +286,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
     text_parts: list[str] = []
     tool_calls: list[dict] = []
     tool_results: list[dict] = []
+    canonical_events: list[dict] = []
     for block in blocks:
         block_type = block.get("type")
         if block_type in ("tool_use", "tool_call"):
@@ -297,9 +298,10 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
                 "content": content_text(block.get("content", "")),
             })
         elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
-            rendered = event_text(block)
-            if rendered:
-                text_parts.append(rendered)
+            # 保留 canonical event 的结构，直到 provider boundary 再统一渲染。
+            # 如果这里提前转成字符串，下一轮从数据库恢复时会变成另一种消息形状，
+            # 跨 run 的字节前缀会在第一个 schema event 处断开。
+            canonical_events.append(dict(block))
 
         elif block_type == "text":
             if block.get("text"):
@@ -321,6 +323,12 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
     if attachment_refs:
         text_parts.append(attachment_refs)
 
+    if canonical_events and not tool_calls and not tool_results:
+        content_blocks = ([{"type": "text", "text": "\n".join(text_parts)}]
+                          if text_parts else [])
+        content_blocks.extend(canonical_events)
+        return [{"role": message.role, "content": content_blocks}]
+
     result: list[dict] = []
     if message.role == "assistant" or tool_calls:
         assistant = {"role": "assistant", "content": "\n".join(text_parts) or None}
@@ -338,14 +346,13 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                         user_tz=None, strip_thinking: bool = False) -> list[dict]:
     """统一构建 history；一条持久化消息可能展开为多个 OpenAI tool 消息。
 
-    用户消息的时间 reminder 要等完整 turn（assistant/tool 结果）组装完再追加。
+    用户消息的时间 reminder 固定放在该用户消息之前。
     RAG 知识块由调用方放在当前用户消息之后的稳定 conversation 区域；这里只负责
     从持久化 history 还原同样的顺序，避免动态尾部与下一轮 history 边界不一致。
     """
     from .session_snapshot import message_time_reminder
 
     parts: list[dict] = []
-    pending_timestamp = None
     for message in history:
         if getattr(message, "role", None) == "summary":
             # summary 是唯一 baseline 的历史起点，不应作为 provider 不认识的
@@ -367,11 +374,12 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             and not is_canonical_event
         )
 
-        # 新的真实 user 消息意味着上一个 turn 已经结束；时间 reminder 放在上一个
-        # turn 的最后一个 assistant/tool 消息之后，而不是紧贴旧 user 插入。
-        if is_user_message and pending_timestamp is not None:
-            parts.append(pending_timestamp)
-            pending_timestamp = None
+        # 时间 reminder 固定放在对应 user 之前。当前请求也遵循同一顺序，避免
+        # 本轮末尾的时间在下一 run 恢复时移动到 assistant/tool 结果之后。
+        if is_user_message:
+            timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
+            if timestamp:
+                parts.append(timestamp)
 
         if use_anthropic:
             if content_json is not None:
@@ -410,11 +418,4 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         else:
             parts.extend(_openai_history_message(message, request, strip_thinking=strip_thinking))
 
-        if is_user_message:
-            timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
-            if timestamp:
-                pending_timestamp = timestamp
-
-    if pending_timestamp is not None:
-        parts.append(pending_timestamp)
     return parts

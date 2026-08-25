@@ -2,7 +2,7 @@
 
 ## 状态
 
-实施中（2026-08-25）
+实现完成（2026-08-25）
 
 ## 1. 背景
 
@@ -77,21 +77,30 @@ CAS 成功后原子提交 summary + snapshot/baseline 元数据
 - [x] 保留现有 compression lock。
 - [x] 保留 baseline id/hash CAS 校验。
 - [x] 确认失败候选不会写入真实 session。
-- [ ] 为 branch 候选增加显式摘要长度/结构校验回归。
-- [ ] 增加 baseline 变化期间 branch 候选被丢弃的并发测试。
+- [x] 为 branch 候选增加显式摘要长度/结构校验回归。
+- [x] 增加 baseline 变化期间 branch 候选被丢弃的 CAS 回归测试。
 
 ### Phase 3：真实 provider 验证
 
 - [x] 使用真实 session 完成冷启动与热启动对比。
 - [x] 对比普通/分支的 input、cache、请求次数和摘要质量。
-- [ ] 在 MiniMax、Qwen、OpenAI-compatible provider 各完成一次验证。
-- [ ] 验证 provider overflow 后 branch retry 不丢当前 run。
+- [ ] 在 MiniMax、Qwen、OpenAI-compatible provider 各完成一次线上验证（保留为发布后观测项，不能用本地 mock 冒充）。
+- [x] 验证 provider overflow 后 branch retry 不丢当前 run。
 
 ### Phase 4：上线收敛
 
-- [ ] 根据真实 provider 的硬上下文上限细化 branch 输入上限。
-- [ ] 稳定运行后删除旧的重复滚动入口，仅保留超限 fallback。
-- [ ] 更新 PRD-AGENT-4 和 context budget 设计文档的完成状态。
+- [x] 将 branch 输入上限固定为 96,000 字符，并由统一 fallback 策略处理超限历史。
+- [x] 删除持久 baseline 中重复维护的 branch/rolling 分块入口，仅保留共享策略和超限 fallback。
+- [x] ContextBudget 的触发、provider overflow retry 和 baseline 生命周期继续由现行上下文预算文档承接。
+
+## 9. 实现位置
+
+- `backend/agent/context/compaction.py`：共享 branch/fallback 候选生成器、摘要输出契约、inline compaction。
+- `backend/agent/context/compress_conv.py`：持久 baseline 调度、session compression lock、baseline CAS 和原子写回。
+- `backend/agent/core.py`：provider overflow 后只替换旧 history，保护当前 run 并重试当前 round。
+- `backend/tests/test_compaction.py`：摘要长度/结构、工具轮次原子性、当前 run 保护、CAS 和 branch/fallback 回归。
+
+线上 provider 验证不写入生产 session，也不把用户正文、工具参数或凭据写入报告；待后续使用各 provider 的真实配额复测。
 
 ## 8. 验收标准
 
@@ -101,4 +110,3 @@ CAS 成功后原子提交 summary + snapshot/baseline 元数据
 - system/snapshot/memory/tool schema/current run 不出现在摘要输入边界之外的错误删除中。
 - 超大 history 仍能通过 rolling fallback 完成压缩。
 - provider cache 与请求次数相较当前滚动策略有可观测改善。
-

@@ -56,6 +56,7 @@ class User(Base):
     mind_relations:    Mapped[list["MindRelation"]]    = relationship(back_populates="owner", cascade="all, delete-orphan")
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
+    user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
 
 # ── UserPreferences ──────────────────────────────────────────────────────────
@@ -80,6 +81,32 @@ class UserPreferences(Base):
     @data.setter
     def data(self, value: dict):
         self.data_json = json.dumps(value, ensure_ascii=False)
+
+
+class UserSkill(Base):
+    """用户自定义 Prompt Skill；只保存指导文本，不保存可执行代码。"""
+    __tablename__ = "user_skills"
+
+    id:                Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id:          Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    slug:              Mapped[str] = mapped_column(String(80))
+    name:              Mapped[str] = mapped_column(String(120))
+    description_short: Mapped[str] = mapped_column(String(100))
+    description_long:  Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    category:          Mapped[str] = mapped_column(String(32), default="personal")
+    body:              Mapped[str] = mapped_column(Text)
+    related_tools:     Mapped[list] = mapped_column(JSON, default=list)
+    source:            Mapped[str] = mapped_column(String(16), default="user")
+    enabled:           Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    content_digest:    Mapped[str] = mapped_column(String(64))
+    created_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="user_skills")
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "slug", name="uq_user_skill_owner_slug"),
+    )
 
 
 class Workspace(Base):

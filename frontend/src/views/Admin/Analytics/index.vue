@@ -6,10 +6,7 @@
         <p class="page-desc">生意好不好：活跃、漏斗、留存（怎么用的看「使用分析」）</p>
       </div>
       <div class="header-right">
-        <label class="xd-toggle" :class="{ on: excludeDev }">
-          <input type="checkbox" v-model="excludeDev" @change="load">
-          排除开发者
-        </label>
+        <Checkbox :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
         <div class="range-tabs">
           <button v-for="r in ranges" :key="r.days"
             :class="['range-tab', { active: rangeDays === r.days }]"
@@ -228,6 +225,7 @@ import {
   LineElement, Tooltip, Filler
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
+import Checkbox from '@/components/common/Checkbox.vue'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts,
   BLUE, pct, convRate, dailyAvg,
@@ -334,15 +332,6 @@ onMounted(load)
 .header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 
 /* 排除开发者开关 */
-.xd-toggle {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
-  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
-}
-.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
-.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
-
 .range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
 .range-tab {
   font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;

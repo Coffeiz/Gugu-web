@@ -2,17 +2,17 @@ import asyncio
 
 import pytest
 
-from agent.sandbox import LocalWorkspaceSandbox
+from agent.sandbox import LocalWorkspaceExecutor
 
 
 def test_local_sandbox_rejects_shell_operators(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     with pytest.raises(ValueError):
         asyncio.run(sandbox.execute("pwd && echo escaped"))
 
 
 def test_local_sandbox_runs_inside_workspace(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     result = asyncio.run(sandbox.execute("pwd"))
     assert result.ok
     assert result.cwd == "."
@@ -20,14 +20,14 @@ def test_local_sandbox_runs_inside_workspace(tmp_path):
 
 
 def test_local_sandbox_cleans_up_timeout(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     result = asyncio.run(sandbox.execute("sleep 2", timeout=0.1))
     assert not result.ok
     assert result.timed_out
 
 
 def test_local_sandbox_truncates_output_and_rejects_escape(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     result = asyncio.run(sandbox.execute("printf 123456789", max_output_chars=4))
     assert result.stdout == "1234"
     assert result.truncated
@@ -54,19 +54,19 @@ def test_local_sandbox_rejects_symlink_argument_escape(tmp_path):
         link.symlink_to(outside, target_is_directory=True)
     except (NotImplementedError, OSError):
         pytest.skip("当前平台不支持目录软链接")
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     with pytest.raises(ValueError, match="超出 workspace"):
         asyncio.run(sandbox.execute("cat outside/secret.txt"))
 
 
 def test_local_sandbox_rejects_windows_style_traversal(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     with pytest.raises(ValueError, match="超出 workspace"):
         asyncio.run(sandbox.execute(r"ls ..\\..\\secret"))
 
 
 def test_local_sandbox_rechecks_authorization_during_execution(tmp_path):
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     calls = 0
 
     async def authorization_check():
@@ -87,6 +87,6 @@ def test_local_sandbox_rejects_symlink_escape(tmp_path):
         link.symlink_to(outside, target_is_directory=True)
     except (NotImplementedError, OSError):
         pytest.skip("当前平台不支持目录软链接")
-    sandbox = LocalWorkspaceSandbox(tmp_path)
+    sandbox = LocalWorkspaceExecutor(tmp_path)
     with pytest.raises(ValueError, match="超出 workspace"):
         asyncio.run(sandbox.execute("pwd", cwd="outside"))

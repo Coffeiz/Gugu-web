@@ -15,7 +15,6 @@ from app.services.workspaces import (
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
-    effective_shell_personal_enabled,
     effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
@@ -47,12 +46,9 @@ async def list_workspaces(
     )).all())
     return {
         "globalEnabled": bool(get_settings().agent.shell_enabled),
-        "workspaceGlobalEnabled": bool(get_settings().agent.shell_workspace_enabled),
-        "personalGlobalEnabled": bool(get_settings().agent.shell_personal_enabled),
         "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
-        "userPersonalEnabled": await effective_shell_personal_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
@@ -152,6 +148,4 @@ async def current_workspace(
     if row is None:
         raise HTTPException(status_code=404, detail="会话不存在")
     workspace = await get_workspace(db, user.id, row.workspace_id) if row.workspace_id else None
-    from app.services.workspaces import get_session_shell_scope
-    scope = await get_session_shell_scope(db, user.id, session_id)
-    return {"sessionId": session_id, "shellScope": scope, "workspace": _response(workspace) if workspace else None}
+    return {"sessionId": session_id, "workspace": _response(workspace) if workspace else None}

@@ -325,15 +325,6 @@ async function doDeleteAccount() {
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--content-secondary); }
 .pm-switch-label.on { color: var(--action-primary); font-weight: 600; }
-.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
-.switch.sm { width: 32px; height: 19px; }
-.switch input { opacity: 0; width: 0; height: 0; }
-.switch .slider { position: absolute; inset: 0; background: var(--switch-track-bg); border-radius: 22px; transition: background-color var(--motion-hover-control) var(--motion-ease-standard); cursor: pointer; }
-.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: var(--switch-thumb-bg); border-radius: 50%; transition: transform var(--motion-hover-control) var(--motion-ease-standard); }
-.switch.sm .slider::before { height: 13px; width: 13px; }
-.switch input:checked + .slider { background: var(--switch-track-bg-active); }
-.switch input:checked + .slider::before { transform: translateX(16px); }
-.switch.sm input:checked + .slider::before { transform: translateX(13px); }
 .pm-bot-del { flex-shrink: 0; font-size: 12px; color: var(--status-danger); background: none; border: none; cursor: pointer; }
 .pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
 .pm-add-bot:hover { color: var(--action-primary); border-color: var(--action-outline); }

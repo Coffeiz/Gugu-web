@@ -42,6 +42,11 @@ def test_default_db_user_is_gugu():
     assert db.user == "gugu"
 
 
+def test_storage_defaults_to_migrated_user_data_root():
+    """默认存储根必须与 sandboxd allowed-root 使用同一份迁移后目录。"""
+    assert cfg.StorageSettings().local_path == "../Gugu-data/users"
+
+
 def test_apply_override_requires_db_password(tmp_path, monkeypatch):
     """override.json 没写 password → 启动直接抛错，不允许静默用空密码连 DB。"""
     fake = tmp_path / "config.override.json"
@@ -107,3 +112,24 @@ def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):
     assert json.loads(target.read_text(encoding="utf-8"))["ai"]["model"] == "test"
     assert target.stat().st_mode & 0o777 == 0o600
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_override_json_falls_back_for_systemd_ebusy(tmp_path, monkeypatch):
+    """ProtectSystem 只允许原位写入时，配置更新仍可完成。"""
+    import errno
+
+    target = tmp_path / "config.override.json"
+    target.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", target)
+    original_replace = cfg.os.replace
+
+    def raise_ebusy(*args, **kwargs):
+        raise OSError(errno.EBUSY, "Device or resource busy")
+
+    monkeypatch.setattr(cfg.os, "replace", raise_ebusy)
+    cfg.write_override_json({"sandbox": {"enabled": False}})
+
+    assert json.loads(target.read_text(encoding="utf-8"))["sandbox"]["enabled"] is False
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
+    monkeypatch.setattr(cfg.os, "replace", original_replace)

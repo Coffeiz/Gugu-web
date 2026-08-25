@@ -11,7 +11,12 @@ from agent.security import confirm
 from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
 from agent.tools.base import current_dispatch_session
-from agent.sandbox import LocalWorkspaceSandbox
+from agent.sandbox import LocalWorkspaceExecutor
+from agent.sandbox.docker_runtime import sandbox_readiness
+from agent.sandbox.quota import snapshot_quota
+from agent.sandbox.client import SandboxdClient, SandboxdUnavailable
+from agent.sandbox.protocol import ExecuteRequest
+from app.core.config import get_settings
 from agent.tools.base import BaseSkill, Tool
 from app.services.workspaces import resolve_shell_root
 
@@ -81,6 +86,26 @@ async def _run_shell(db, user_id, args: dict):
     root = await resolve_shell_root(db, user_id, decision.scope.value, decision.workspace_id)
     if root is None:
         return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
+    quota_root = None
+    quota_bytes = None
+    if decision.scope.value == "sandbox":
+        sandbox_settings = get_settings().sandbox
+        ready, reason = sandbox_readiness(sandbox_settings)
+        if not ready:
+            return {"error": reason, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
+        # 文件库/项目工作区沿用文件服务自己的存储配额；只有未绑定 workspace
+        # 时才检查独立 Shell 持久目录，避免把项目文件误计入 Shell 配额。
+        if decision.workspace_id is None:
+            quota = snapshot_quota(root, sandbox_settings.persistent_quota_bytes)
+            if quota.exceeded:
+                return {
+                    "error": "Shell 持久空间已超过配额，请先清理文件后再执行命令",
+                    "_risk": decision.risk.value,
+                    "_scope": decision.scope.value,
+                    "_audit_event": "quota_exceeded",
+                }
+        quota_root = root if decision.workspace_id is None else None
+        quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
     async def authorization_check() -> bool:
         """在独立事务中复核权限。
 
@@ -108,13 +133,35 @@ async def _run_shell(db, user_id, args: dict):
                 await auth_db.rollback()
                 return False
     try:
-        result = await LocalWorkspaceSandbox(root).execute(
-            command,
-            cwd=args.get("cwd", "."),
-            timeout=args.get("timeout", 30),
-            max_output_chars=args.get("max_output_chars", 12_000),
-            authorization_check=authorization_check,
-        )
+        sandbox_settings = get_settings().sandbox
+        if decision.scope.value == "sandbox":
+            # sandbox 生产链路必须经过 sandboxd；客户端失败不得回退 Docker CLI
+            # 或本机执行器，否则 Docker/ACL/审计边界会被静默绕过。
+            if not sandbox_settings.sandboxd_socket:
+                return {"error": "sandboxd 未配置，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
+            result_data = await SandboxdClient(sandbox_settings.sandboxd_socket).execute(
+                ExecuteRequest(
+                    root=str(root), command=command, cwd=str(args.get("cwd", ".")),
+                    timeout=float(args.get("timeout", 30)),
+                    max_output_chars=int(args.get("max_output_chars", 12_000)),
+                    quota_root=str(quota_root) if quota_root else None,
+                    quota_bytes=quota_bytes,
+                )
+            )
+            if result_data.get("error"):
+                return {"error": result_data["error"], "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_rejected"}
+            result = type("SandboxdResult", (), result_data)()
+        else:
+            executor = (
+                LocalWorkspaceExecutor(root)
+            )
+            result = await executor.execute(
+                command, cwd=args.get("cwd", "."), timeout=args.get("timeout", 30),
+                max_output_chars=args.get("max_output_chars", 12_000),
+                authorization_check=authorization_check,
+            )
+    except SandboxdUnavailable as exc:
+        return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
     except ValueError as exc:
         return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "rejected"}
     return {
@@ -128,6 +175,8 @@ async def _run_shell(db, user_id, args: dict):
         "scope": decision.scope.value,
         "cwd": result.cwd,
         "permission_revoked": result.permission_revoked,
+        "quota_exceeded": getattr(result, "quota_exceeded", False),
+        **({"error": "Shell 持久空间达到配额，命令已终止"} if getattr(result, "quota_exceeded", False) else {}),
         "_risk": decision.risk.value,
         "_workspace_id": decision.workspace_id,
         "_scope": decision.scope.value,
@@ -142,8 +191,8 @@ class ShellSkill(BaseSkill):
             name="shell",
             label="执行 Shell 命令",
             description=(
-                "在当前会话自动匹配的 Shell 范围内执行一条受控命令。绑定工作区时使用工作区；"
-                "未绑定工作区时使用系统范围；"
+                "在当前会话自动匹配的 Shell 范围内执行一条受控命令。默认使用用户 sandbox；"
+                "绑定工作区时只把工作区作为 sandbox 的默认目录；明确开启 system 权限时才使用宿主机执行器；"
                 "只能使用相对 cwd，不支持管道、重定向或命令替换。危险命令会先要求用户确认；"
                 "没有可用 Shell 权限时不要调用。会话身份由系统注入，不需要传 session_id。"
             ),

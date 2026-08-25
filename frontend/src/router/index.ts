@@ -79,6 +79,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '文件库' },
       },
       {
+        path: 'skills',
+        name: 'Skills',
+        component: () => import('@/views/Skills/index.vue'),
+        meta: { title: '咕咕技能' },
+      },
+      {
         // 思维面板：记录时间流与空间画布共享便签本体，但各自拥有独立界面。
         // fullBleed：思维是「工作台」不是「管理」视图，隐藏 topbar 让便签流/画布铺满内容区
         // （笔记页UI设计.md）；topbar 的全局搜索由页内胶囊条的便签筛选补位

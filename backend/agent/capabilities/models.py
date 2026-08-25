@@ -21,6 +21,8 @@ class CapabilityMeta:
     related_skills: tuple[str, ...] = ()
     source: str = "builtin"
     enabled: bool = True
+    content_digest: str = ""
+    owner_fingerprint: str = ""
 
 
 @dataclass(frozen=True)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent.knowledge.store import KnowledgeStore
 from agent.rag.models import IndexDocument, Scope
+from agent.rag.scope import normalize_memory_scopes
 from agent.rag.retriever import RetrievalBatch
 
 
@@ -44,10 +45,10 @@ class KnowledgeAdapter:
         if strategy not in {"auto", "bm25", "embedding"}:
             raise ValueError("策略只能是 auto、bm25 或 embedding")
         from agent.rag.index_cache import search_documents_with_cache
-        from agent.rag.scope import normalize_memory_scope
-
-        query_scope = normalize_memory_scope(self.user_id, scope)
-        documents = await self.build_documents(scope=query_scope)
+        query_scopes = normalize_memory_scopes(self.user_id, scope)
+        documents = []
+        for query_scope in query_scopes:
+            documents.extend(await self.build_documents(scope=query_scope))
         if not documents:
             return RetrievalBatch(
                 source_type=self.source_type, results=(),

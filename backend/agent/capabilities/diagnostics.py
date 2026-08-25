@@ -34,6 +34,14 @@ def capability_injection_diagnostics(context) -> dict:
         "skill_count": len(skill_names),
         "skill_names": skill_names,
         "skill_digest": skill_digest,
+        "skill_sources": {
+            name: {
+                "source": meta.source,
+                "content_digest": meta.content_digest,
+                "owner_fingerprint": meta.owner_fingerprint,
+            }
+            for name, meta in context.snapshot.skills.items()
+        },
         "shadow": bool(selection.shadow),
         "diagnostic_count": len(snapshot.diagnostics),
     }

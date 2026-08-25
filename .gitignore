@@ -66,6 +66,8 @@ docs/development/local.md
 # 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/
 uploads/
 backend/uploads/
+# 统一用户数据根目录（运行时文件、缩略图和私有 .agent/，不入版本控制）
+Gugu-data/
 # 进程 PID 文件（运行时产生）
 *.pid
 # 备份文件

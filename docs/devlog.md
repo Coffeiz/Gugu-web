@@ -2035,3 +2035,40 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 
 后端上下文相关测试通过；后续新增预算字段或压缩触发条件时，必须同时验证 provider usage 与 LoopScope
 的压缩 span，禁止重新引入第二套本地预算触发逻辑。
+
+## 2026-08-25 · PRD-AGENT-4 文档与发布收口
+
+### 收口内容
+
+- 将 `ContextBudget`、provider overflow retry、90% usage 收尾压缩、baseline 增量读取和 pending 生命周期的权威说明统一收口到 PRD-AGENT-4。
+- 归档 PRD-AGENT-3 的旧固定窗口语义；PRD-LLM-8 保留缓存目标但不再承载上下文压缩实现；PRD-IM-6 保留渠道复用与物理保留规则。
+- 保留 `context-layout` 和 baseline 生命周期诊断字段。它们只记录数量、token、hash/摘要指纹和阶段，不记录消息正文、附件内容或凭据，也不注入模型上下文。
+
+### 验证
+
+- ContextBudget、历史读取、压缩、消息原子边界、core retry 和 provider history 专项：`72 passed`。
+- 本次没有伪造迁移前后的线上 token/cache 对比；真实脱敏长群 trace 继续作为上线后的观察项，避免把不同 provider、模型和会话状态混为可比数据。
+
+## 2026-08-25 · DeepSeek 前缀缓存限制整理
+
+- DeepSeek 走 OpenAI-compatible 自动前缀缓存，当前不发送未经确认的显式 `cache_control`；缓存命中依赖请求前缀结构稳定，客户端不能指定服务端断点。
+- 20-run 脱敏测试中，首轮为冷缓存；Run 3 起曾稳定命中约 `12,032` token，但随着工具历史增长命中量没有继续推进，缓存率从 `78.04%` 降至 `68.10%`。该现象只能说明早期前缀稳定，不能直接归因于 provider 能力或某一个业务字段。
+- 已将约束、已确认事实、未确认假设和后续 A/B 验证方案整理到 `docs/reports/DEEPSEEK-PREFIX-CACHE-CONSTRAINTS-20260825.md`。后续以 canonical/wire/schema/tail digest 的首个差异为准，不把 `12,032` 或假设的缓存粒度硬编码进实现。
+
+## 2026-08-25 · 用户 Skill Phase 4 按需注入与变更生效
+
+- 用户 Skill metadata 现在按 owner 合并到每次运行的 Capability Snapshot；首轮目录只包含简介，不加载 Skill 正文。
+- `use_skill` 通过数据库 owner 隔离查询启用中的用户 Skill，正文仍按需进入工具结果；正文更新后以 content digest 判断并重新加载，停用后不会从旧 session 扩大能力范围。
+- Web、IM 和定时任务统一使用用户能力快照；关联工具在快照构建时按当前授权集合收窄，实际执行仍由 registry/dispatch 权限检查决定。
+- LoopScope 只记录 Skill source、owner fingerprint 和 content digest 等脱敏元数据，不记录 Skill 正文或用户标识。
+
+验证：用户 Skill 与能力注入专项 `27 passed`，Python `compileall` 通过。
+
+## 2026-08-25 · AGENT-5 分支式上下文压缩与缓存保持收口
+
+- inline compaction 与持久 baseline 现在共用同一份 branch/fallback 候选生成策略：历史输入不超过 `96,000` 字符时只发一次摘要请求，超限才按 `48,000` 字符块滚动合并。
+- 新增摘要候选契约：必须为非空纯文本、最多 `10,000` 字符，不能重复携带外层 `<compacted-summary>` 标记；校验失败直接丢弃，当前消息和 baseline 均不变化。
+- baseline 提交前抽出纯 CAS 判断，baseline id 或 hash 任一变化都会丢弃旧候选；provider overflow 重试继续通过 `protected_from` 保留当前 run 的用户消息、工具调用和工具结果。
+- 诊断只保留模式、数量、长度、耗时和 hash 等脱敏字段，不记录历史正文。
+
+验证：上下文压缩专项 `41 passed`，Python compileall 与 `git diff --check` 通过；各 provider 的真实线上复测保留为发布后观测项。

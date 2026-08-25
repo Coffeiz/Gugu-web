@@ -23,7 +23,8 @@ def test_native_anthropic_renders_internal_system_reminder_as_user():
     ]
     result = render_anthropic_message_roles(messages, SimpleNamespace(name="anthropic"))
     assert [item["role"] for item in result] == ["user", "user"]
-    assert render_anthropic_message_roles(messages, SimpleNamespace(name="minimax")) == messages
+    assert [item["role"] for item in render_anthropic_message_roles(
+        messages, SimpleNamespace(name="minimax"))] == ["user", "user"]
 
 
 def test_strip_thinking_blocks_keeps_text_and_tools():

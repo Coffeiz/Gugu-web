@@ -10,6 +10,7 @@ from agent.context.compaction import (
     _atomic_message_units,
     _drop_orphan_tool_results,
     _generate_compact_summary,
+    validate_compact_summary,
 )
 from agent.context.tokens import content_text, estimate_tokens, message_text
 
@@ -101,6 +102,27 @@ class TestIsSystemInjection:
 
 
 class TestCompactContext:
+    def test_summary_candidate_has_explicit_length_and_shape_contract(self):
+        assert validate_compact_summary("有效摘要")[0]
+        assert validate_compact_summary(" ") == (False, "摘要为空")
+        assert validate_compact_summary("x" * 10_001) == (False, "摘要超过长度上限")
+        assert validate_compact_summary("<compacted-summary>摘要</compacted-summary>") == (
+            False, "摘要包含外层包裹标记"
+        )
+
+    def test_invalid_summary_candidate_does_not_change_messages(self, monkeypatch):
+        async def oversized_summary(_items, _previous=None):
+            return "x" * 10_001
+
+        monkeypatch.setattr("agent.context.compaction._generate_compact_summary", oversized_summary)
+        messages = [_make_msg("user", "旧消息" * 100) for _ in range(50)]
+        result = asyncio.get_event_loop().run_until_complete(
+            compact_context(messages, "系统", context_tokens=1000, force=True)
+        )
+        assert not result.changed
+        assert result.return_reason == "summary_validation_failed"
+        assert result.messages == messages
+
     def test_small_history_uses_single_branch_summary_request(self, monkeypatch):
         calls = []
 
@@ -336,6 +358,14 @@ class TestCompactContext:
         other = SimpleNamespace(**{**first.__dict__, "chat_id": "g2", "session_id": 10})
         assert compress_conv._session_lock_key(first) == compress_conv._session_lock_key(same)
         assert compress_conv._session_lock_key(first) != compress_conv._session_lock_key(other)
+
+    def test_baseline_cas_rejects_same_id_with_changed_hash(self):
+        from types import SimpleNamespace
+
+        session = SimpleNamespace(baseline_message_id=12, baseline_message_hash="new-hash")
+        assert compress_conv._baseline_matches(session, 12, "new-hash")
+        assert not compress_conv._baseline_matches(session, 12, "old-hash")
+        assert not compress_conv._baseline_matches(session, 11, "old-hash")
 
     def test_atomic_units_pair_anthropic_and_openai_tool_messages(self):
         messages = [

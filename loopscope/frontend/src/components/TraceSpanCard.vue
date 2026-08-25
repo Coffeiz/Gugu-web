@@ -22,6 +22,7 @@
     <div class="panel-actions">
       <button v-if="sourceContent" :class="{ active: open.content }" @click="toggle('content')">Content</button>
       <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
+      <button v-if="diagnostics" :class="{ active: open.diagnostics }" @click="toggle('diagnostics')">Diagnostics</button>
       <button :class="{ active: open.input }" @click="toggle('input')">Input</button>
       <button :class="{ active: open.output }" @click="toggle('output')">Output</button>
       <button v-if="hasSource" :class="{ active: open.source }" @click="toggle('source')">Source</button>
@@ -41,9 +42,13 @@
       </div>
       <p class="assembly-note">完整 system 文本只在 Context assembly 中展示；本轮通过 digest 与来源重建实际组装关系。</p>
     </section>
+    <section v-if="open.diagnostics && diagnostics" class="panel diagnostics-panel">
+      <div class="panel-label">Context diagnostics</div>
+      <pre>{{ pretty(diagnostics) }}</pre>
+    </section>
     <section v-if="open.input" class="panel">
       <div class="panel-label">Input</div>
-      <pre>{{ pretty(span.input) }}</pre>
+      <pre>{{ pretty(inputForDisplay) }}</pre>
     </section>
     <section v-if="open.output" class="panel">
       <div class="panel-label">Output</div>
@@ -69,7 +74,7 @@ import { computed, reactive } from 'vue'
 import type { TraceSpan } from '../types'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; depth?: number }>(), { depth: 0 })
-const open = reactive<Record<string, boolean>>({ content: false, assembly: false, input: false, output: false, source: false, attributes: false })
+const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, input: false, output: false, source: false, attributes: false })
 
 function toggle(key: string) { open[key] = !open[key] }
 function fmtMs(v: number) { return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms` }
@@ -95,6 +100,18 @@ const sourceContent = computed(() => {
 const assembly = computed(() => {
   const input = props.span.input as any
   return input && typeof input === 'object' && input.assembly ? input.assembly : null
+})
+const diagnostics = computed(() => {
+  const value = assembly.value?.canonical_context
+  return value && typeof value === 'object' ? value : null
+})
+const inputForDisplay = computed(() => {
+  const input = props.span.input
+  if (!input || typeof input !== 'object' || !assembly.value || !('canonical_context' in assembly.value)) {
+    return input
+  }
+  const { canonical_context: _diagnostics, ...visibleAssembly } = assembly.value
+  return { ...(input as Record<string, unknown>), assembly: visibleAssembly }
 })
 const hasSource = computed(() => !!(props.span.code?.file || props.span.code?.function || props.span.attributes?.path))
 const hasAttributes = computed(() => !!props.span.attributes && Object.keys(props.span.attributes).length > 0)

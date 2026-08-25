@@ -189,10 +189,9 @@
           <ul class="dir-list">
             <li v-for="d in dirReport.orphan_dirs" :key="d" class="dir-item">{{ d }}</li>
           </ul>
-          <label class="fd-confirm">
-            <input type="checkbox" v-model="removeOrphans" />
+          <Checkbox v-model="removeOrphans" class="fd-confirm">
             我确认清理上述孤儿空目录（仅删空目录，非空目录不受影响，且不可恢复）
-          </label>
+          </Checkbox>
         </div>
 
         <div v-if="dirReport.misplaced_files.length" class="fd-section">
@@ -203,10 +202,9 @@
               <div class="misplaced-path"><span class="from">{{ m.current_key }}</span> → <span class="to">{{ m.expected_key }}</span></div>
             </li>
           </ul>
-          <label class="fd-confirm">
-            <input type="checkbox" v-model="relocateFiles" />
+          <Checkbox v-model="relocateFiles" class="fd-confirm">
             我确认把上述文件搬到当前归属应在的位置（重命名冲突自动加后缀，不覆盖已有文件）
-          </label>
+          </Checkbox>
         </div>
 
         <div v-if="!dirReport.healthy" class="fd-actions">
@@ -272,6 +270,7 @@
 import { ref, computed } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import Checkbox from '@/components/common/Checkbox.vue'
 
 const adminStore = useAdminStore()
 
@@ -675,9 +674,7 @@ async function cleanupLegacy(keys: string[]) {
 .misplaced-path .from { color: #e0a96a; }
 .misplaced-path .to { color: #7fc99a; }
 
-.fd-confirm { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px;
-  color: rgba(255,255,255,0.6); cursor: pointer; user-select: none; }
-.fd-confirm input { accent-color: #d9a94e; width: 15px; height: 15px; cursor: pointer; }
+.fd-confirm { margin-top: 12px; font-size: 13px; color: rgba(255,255,255,0.6); }
 
 .fd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; flex-wrap: wrap; }
 .fd-actions-note { font-size: 12px; color: rgba(255,255,255,0.35); }

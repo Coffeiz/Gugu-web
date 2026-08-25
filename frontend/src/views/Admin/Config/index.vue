@@ -123,7 +123,7 @@
         </div>
 
         <div v-if="draft.storage.backend === 'local'" class="field-grid">
-          <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="./uploads" class="span2" />
+          <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="../Gugu-data/users" class="span2" />
         </div>
         <div v-else class="field-grid">
           <ConfigField label="Bucket 名" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />

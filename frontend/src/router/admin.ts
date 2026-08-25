@@ -60,6 +60,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '配额管理' },
       },
       {
+        path: 'sandbox',
+        name: 'AdminSandbox',
+        component: () => import('@/views/Admin/Sandbox/index.vue'),
+        meta: { title: 'Shell 沙盒' },
+      },
+      {
         path: 'feedback',
         name: 'AdminFeedback',
         component: () => import('@/views/Admin/Feedback/index.vue'),

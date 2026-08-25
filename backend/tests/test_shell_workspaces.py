@@ -1,6 +1,7 @@
 """Shell Phase 0-2：工作区归属、会话绑定和默认关闭行为。"""
 
 import pytest
+from types import SimpleNamespace
 
 from app.core.config import AgentBehaviorSettings
 from app.models import ConversationSession, Project
@@ -10,9 +11,9 @@ from app.services.workspaces import (
     delete_workspace,
     describe_session,
     list_workspaces,
-    get_session_shell_scope,
     update_workspace,
 )
+import app.services.workspaces as workspace_service
 
 
 @pytest.mark.asyncio
@@ -46,11 +47,15 @@ async def test_workspace_binding_is_owned_and_can_be_cleared(db, user_a, user_b)
 
 
 @pytest.mark.asyncio
-async def test_session_shell_scope_is_derived_from_workspace_binding(db, user_a):
-    session = ConversationSession(user_id=user_a.id, title="个人 Agent", source="web")
-    db.add(session)
-    await db.flush()
-    assert await get_session_shell_scope(db, user_a.id, session.id) == "system"
+async def test_oss_storage_keeps_a_local_sandbox_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        workspace_service,
+        "get_settings",
+        lambda: SimpleNamespace(storage=SimpleNamespace(backend="oss", local_path=str(tmp_path))),
+    )
+    root = await workspace_service.resolve_sandbox_root(None, "user-oss")
+    assert root == (tmp_path / "user-oss" / "shell").resolve()
+    assert root.is_dir()
 
 
 @pytest.mark.asyncio

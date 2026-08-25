@@ -50,7 +50,7 @@
     <button class="send-btn" :class="{ 'exp-send-btn': expanded }" @click="recording ? onStopRecord() : (streaming ? onStopStreaming() : onSend())">
       <Icon name="status.success"      v-if="recording" :size="expanded ? 14 : 13" />
       <Icon name="action.next" v-else-if="!streaming" :size="expanded ? 14 : 13" />
-      <Icon name="action.stop"       v-else  :size="expanded ? 14 : 13" />
+      <Icon name="action.stop-fill" v-else  :size="expanded ? 14 : 13" />
     </button>
   </div>
 </template>

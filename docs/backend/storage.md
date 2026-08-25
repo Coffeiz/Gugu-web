@@ -38,7 +38,7 @@
 ### 2.1 磁盘目录结构
 
 ```
-uploads/
+Gugu-data/users/
 └── {user_id}/
     ├── 个人文件/
     │   ├── 文件.pdf
@@ -69,7 +69,7 @@ uploads/
 
 `{user_id}` 现在是 UUID（`uuid7`）字符串，不是自增整数。
 
-**用户隔离：** 回收站路径包含 `{user_id}/`，不同用户的回收站完全隔离。`/uploads/` 目录不对外静态暴露，所有访问必须经后端鉴权接口（`/files/{id}/download` 等）。
+**用户隔离：** 用户数据根为 `Gugu-data/users/{user_id}/`，不同用户的回收站完全隔离。物理目录不对外静态暴露，所有访问必须经后端鉴权接口（`/files/{id}/download` 等）。
 
 **年月来源：** 优先用项目 `start_date`，fallback 到 `created_at`（`_proj_date()` 工具函数，`backend/app/api/v1/projects.py`）。
 
@@ -206,7 +206,7 @@ def get_storage() -> StorageBackend:
 
 **切换即时生效**：`get_storage()` 每次请求重读 settings，把 `backend` 改成 `oss` 后**下一请求**就走 OSS，无需重启。
 
-**现有本地文件不自动迁移**：`files.storage_key` 是相对路径（如 `{uid}/项目文件/…/x.png`），本地与 OSS **共用同一套 key**。切到 OSS 后，老文件的 key 在 OSS 上并不存在 → 读取/缩略图会 404（`get_thumb` 等已改为缺文件返回 404、不再 500）。**平滑切换需先把 `uploads/` 全量同步到 OSS 同名 key**（`StorageBackend.list_keys()` 可枚举：Local 走 `rglob`、OSS 走 `ObjectIterator`，对账工具即基于此）。
+**现有本地文件不自动迁移**：`files.storage_key` 是相对路径（如 `{uid}/项目文件/…/x.png`），本地与 OSS **共用同一套 key**。切到 OSS 后，老文件的 key 在 OSS 上并不存在 → 读取/缩略图会 404（`get_thumb` 等已改为缺文件返回 404、不再 500）。本地数据统一位于 `Gugu-data/users/`；切 OSS 前需把该目录按同名 key 同步到 OSS（`StorageBackend.list_keys()` 可枚举：Local 走 `rglob`、OSS 走 `ObjectIterator`）。
 
 **Endpoint 协议**：`oss_endpoint` 不带协议时 oss2 默认 `http://`，签名 URL（`fetch_url`，QQ 抓媒体用）也是 http。需要 https 就把 endpoint 配成 `https://oss-cn-…aliyuncs.com`。
 
@@ -379,7 +379,7 @@ Authorization: Bearer <user_token>
 
 #### 2.9.2 后端磁盘缓存
 
-生成的缩略图持久化到 `uploads/.thumbs/{fid}_{size}.webp`（旧版遗留的 `.jpg` 缓存文件在 lifespan 启动时会被清理）。请求到来时优先命中缓存，跳过 Pillow，响应时间从数百毫秒降至毫秒级。
+生成的缩略图持久化到 `Gugu-data/users/.thumbs/{fid}_{size}.webp`（旧版遗留的 `.jpg` 缓存文件在 lifespan 启动时会被清理）。请求到来时优先命中缓存，跳过 Pillow，响应时间从数百毫秒降至毫秒级。
 
 **生成策略：**
 
@@ -419,7 +419,7 @@ Authorization: Bearer <user_token>
 
 ### 2.10 存储↔DB 对账与修复（Admin · 数据库）
 
-**以物理存储为准**核对 DB 记录与磁盘/OSS 对象，修复两者不一致。起因：DB 在两台服务器间迁移、两边 `uploads/` 都有文件，配置一改两边数据就串了。
+**以物理存储为准**核对 DB 记录与磁盘/OSS 对象，修复两者不一致。当前本地物理根统一为 `Gugu-data/users/`；历史迁移时要确认旧目录内容已经完整复制，避免配置切换后出现数据不一致。
 
 #### 2.10.1 两类不一致
 

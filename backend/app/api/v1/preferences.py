@@ -33,7 +33,6 @@ def _to_response(data: dict) -> PreferencesResponse:
         pmStagesExpanded=data.get("pm_stages_expanded", False),
         defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
         shellEnabled=bool(data.get("shell_enabled", False)),
-        shellPersonalEnabled=bool(data.get("shell_personal_enabled", False)),
         shellSystemEnabled=bool(data.get("shell_system_enabled", False)),
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
@@ -81,8 +80,6 @@ async def update_preferences(
         data["default_view"] = body.defaultView
     if body.shellEnabled is not None:
         data["shell_enabled"] = body.shellEnabled
-    if body.shellPersonalEnabled is not None:
-        data["shell_personal_enabled"] = body.shellPersonalEnabled
     if body.shellSystemEnabled is not None:
         data["shell_system_enabled"] = body.shellSystemEnabled
     if body.shellDangerousEnabled is not None:

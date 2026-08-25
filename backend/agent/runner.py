@@ -36,9 +36,17 @@ from agent.profiles import DefaultProfile
 _bg_tasks: set = set()
 
 
-def _capability_context(tool_names, settings):
+async def _capability_context(tool_names, settings, *, db=None, owner_id=None):
     """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
-    from agent.capabilities.injector import build_fixed_adapter_context
+    from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
+    if db is None and owner_id is not None:
+        import app.db.session as _sess
+        if _sess._engine is None:
+            _sess._build_engine()
+        async with _sess._SessionLocal() as capability_db:
+            return await build_fixed_adapter_context_for_user(tool_names, db=capability_db, owner_id=owner_id)
+    if db is not None and owner_id is not None:
+        return await build_fixed_adapter_context_for_user(tool_names, db=db, owner_id=owner_id)
     return build_fixed_adapter_context(tool_names)
 
 
@@ -434,7 +442,7 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
     _snapshot_injection = (
-        session_snapshot.reminder_message(snapshot_context)
+        session_snapshot.snapshot_message(snapshot_context)
         if snapshot_context else None
     )
 
@@ -460,11 +468,11 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
-    capability_context = _capability_context(tool_names, settings)
+    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
-        _snapshot_injection = session_snapshot.reminder_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        _snapshot_injection = session_snapshot.snapshot_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
@@ -482,15 +490,15 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking)
+    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+    if message_time:
+        history_parts.append(message_time)
     from agent.rag.injection import build_automatic_rag_context
     rag_context = await build_automatic_rag_context(
         req, req.message, history=history, snapshot_text=snapshot_context,
     )
     # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
     tail_parts = []
-    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
-    if message_time:
-        tail_parts.append(message_time)
     if _ctx_injection:
         tail_parts.append(_ctx_injection)
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
@@ -849,7 +857,7 @@ async def _run_stream_unlocked(
 
     # snapshot 内容在 snapshot 有效期内保持稳定，放在 history 之前形成可缓存前缀。
     _snapshot_injection = (
-        session_snapshot.reminder_message(snapshot_context)
+        session_snapshot.snapshot_message(snapshot_context)
         if snapshot_context else None
     )
 
@@ -875,11 +883,11 @@ async def _run_stream_unlocked(
     use_anthropic = use_anthropic_for(model_cfg)
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
-    capability_context = _capability_context(tool_names, settings)
+    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
-        _snapshot_injection = session_snapshot.reminder_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+        _snapshot_injection = session_snapshot.snapshot_message(
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
@@ -897,15 +905,15 @@ async def _run_stream_unlocked(
     history_parts = build_history_parts(
         history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking)
+    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
+    if message_time:
+        history_parts.append(message_time)
     from agent.rag.injection import build_automatic_rag_context
     rag_context = await build_automatic_rag_context(
         req, req.message, history=history, snapshot_text=snapshot_context,
     )
     # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
     tail_parts = []
-    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
-    if message_time:
-        tail_parts.append(message_time)
     if _ctx_injection:
         tail_parts.append(_ctx_injection)
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
@@ -1245,6 +1253,19 @@ async def _collect(
     return result + (meta,) if include_meta else result
 
 
+def _scheduled_collect_result(collected: tuple) -> tuple[str, bool, dict]:
+    """把定时执行的收集结果按完整字段顺序转换成执行元数据。
+
+    `_collect(include_meta=True)` 的返回顺序是文本、输入/输出用量、缓存用量、
+    错误标记、附件、取消标记、元数据。定时任务只需要其中三项，但必须显式跳过
+    中间字段，避免附件列表错位成为元数据。
+    """
+    text, _, _, _, _, errored, files, _, meta = collected
+    execution_meta = dict(meta or {})
+    execution_meta["files"] = files
+    return text, errored, execution_meta
+
+
 async def _run_scheduled_once(
     user_id,
     user_name: str,
@@ -1305,10 +1326,10 @@ async def _run_scheduled_once(
         )
         # 定时任务没有交互式 session workspace，不向模型暴露本机 Shell。
         tool_names = [name for name in tool_names if name != "shell"]
-        capability_context = _capability_context(tool_names, settings)
+        capability_context = await _capability_context(tool_names, settings, owner_id=user_id)
         if capability_context is not None:
             from agent.capabilities.injector import catalog_block
-            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, kind='tool')}"
+            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
         runner = LLMRunner(tool_names, settings, capability_context=capability_context)
 
         from app.core.chat_attach import build_user_content
@@ -1343,12 +1364,8 @@ async def _run_scheduled_once(
             model_cfg=model_cfg,
             include_meta=include_meta,
         )
-        text, _, _, errored, files, _, *meta = collected
-        return (
-            (text, errored, {**(meta[0] if meta else {}), "files": files})
-            if include_meta
-            else (text, errored)
-        )
+        text, errored, meta = _scheduled_collect_result(collected)
+        return (text, errored, meta) if include_meta else (text, errored)
     finally:
         _release_model(model_cfg)
 
@@ -1357,7 +1374,7 @@ def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
                               now_str: str, prompt: str, memory: dict,
                               *, use_anthropic: bool, user_content=None):
     """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
-    fixed_parts = ([session_snapshot.reminder_message(snapshot_context)]
+    fixed_parts = ([session_snapshot.snapshot_message(snapshot_context)]
                    if snapshot_context else [])
     dynamic_tail = []
     dynamic_tail.extend(message_assembly.reminder(part)

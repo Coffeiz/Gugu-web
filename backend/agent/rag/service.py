@@ -17,7 +17,13 @@ from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.scoring import filter_confidence, normalize_scores, token_similarity
 from agent.rag.index_cache import search_documents_with_cache
 from agent.rag.rust_sidecar import RustSidecarUnavailable
-from agent.rag.scope import filter_authorized_documents, matches_scope, normalize_memory_scope
+from agent.rag.scope import (
+    matches_any_scope,
+    matches_scope,
+    normalize_memory_scope,
+    normalize_memory_scopes,
+    resolve_memory_query_scopes,
+)
 from agent.rag.storage import PersistentMemoryIndex
 from agent.rag.vector_cache import cache_key
 
@@ -90,14 +96,20 @@ class MemoryRetriever:
         strategy: str,
         candidate_limit: int,
     ) -> RetrievalBatch:
-        query_scope = normalize_memory_scope(self.user_id, scope)
-        documents, index_source = await _load_memory_documents(self.user_id, query_scope)
+        query_scopes = normalize_memory_scopes(self.user_id, scope)
+        loaded = [
+            await _load_memory_documents(self.user_id, query_scope)
+            for query_scope in query_scopes
+        ]
+        documents = [document for docs, _ in loaded for document in docs]
+        index_source = ",".join(sorted({source for _, source in loaded}))
         allowed_sources = {"profile", "pattern", "daily", "memory"}
         if self.source_filter != "all":
             allowed_sources &= {self.source_filter}
         documents = [
             doc for doc in documents
-            if doc.source_id in allowed_sources and matches_scope(doc, query_scope)
+            if doc.source_id in allowed_sources
+            and matches_any_scope(doc, query_scopes)
         ]
         snapshot_text = get_snapshot_context()
         if snapshot_text:
@@ -286,12 +298,14 @@ class UnifiedRecallService:
         # 来源 adapter 已执行 scope-first；这里再做一次统一边界校验，防止
         # 新来源遗漏 owner/group/member 过滤后把越权候选带入融合。
         permission_rejected = 0
-        if isinstance(scope, Scope):
+        if isinstance(scope, Scope) or isinstance(scope, (list, tuple)):
+            query_scopes = list(scope) if isinstance(scope, (list, tuple)) else [scope]
             authorized: list[tuple[int, RecallCandidate]] = []
             for order, candidate in candidates:
-                allowed, rejected = filter_authorized_documents(
-                    [candidate.document], scope,
-                )
+                allowed = [candidate.document] if matches_any_scope(
+                    candidate.document, query_scopes,
+                ) else []
+                rejected = 0 if allowed else 1
                 if rejected:
                     permission_rejected += rejected
                     continue
@@ -421,12 +435,15 @@ class UnifiedRecallService:
 
 async def search_memory(
     user_id, query: str, *, scope="auto", source: str = "all", strategy: str = "auto", limit: int = DEFAULT_RESULTS,
-    mode: str = "tool",
+    mode: str = "tool", db=None, im_context: dict | None = None,
 ) -> dict:
     started = time.monotonic()
     query = (query or "").strip()
     if not query:
         return {"query": "", "results": [], "has_more": False, "message": "需要提供检索关键词"}
+    query_scopes = await resolve_memory_query_scopes(
+        user_id, scope, im_context=im_context, db=db,
+    )
     retrievers = []
     if source in {"all", "profile", "pattern", "daily", "memory"}:
         retrievers.append(MemoryRetriever(user_id, source_filter=source if source != "knowledge" else "all"))
@@ -435,7 +452,7 @@ async def search_memory(
     service = UnifiedRecallService(UnifiedRetriever(retrievers))
     result = await service.search(
         query, source="all" if source == "all" else source,
-        scope=scope,
+        scope=query_scopes,
         strategy=strategy,
         limit=limit,
     )
@@ -517,6 +534,48 @@ async def search_knowledge(
         cache_hit=result.get("cache_hit"),
         cache_entries=result.get("cache_entries"),
         cache_miss_reasons=result.get("cache_miss_reasons"),
+        quality={
+            key: result.get(key)
+            for key in (
+                "accepted_count", "rejected_low_score", "rejected_not_preferred",
+                "rejected_duplicate", "rejected_parent", "rejected_source",
+                "rejected_diversity", "top_confidence", "confidence_threshold",
+                "preferred_confidence_threshold", "scoring_version",
+            )
+            if result.get(key) is not None
+        },
+    )
+    return result
+
+
+async def search_conversations(
+    db, user_id, query: str, *, queries=None, limit: int = 6,
+    mode: str = "tool", match_mode: str = "OR",
+) -> dict:
+    """历史会话的统一召回入口；不改变 conversations 工具的返回协议。"""
+    started = time.monotonic()
+    from agent.rag.scope import owner_scope
+    from agent.rag.adapters.conversations import ConversationAdapter
+
+    service = UnifiedRecallService(UnifiedRetriever([
+        ConversationAdapter(user_id, db=db, queries=queries, mode=match_mode),
+    ]))
+    result = await service.search(
+        query,
+        source="conversation",
+        scope=owner_scope(user_id),
+        strategy="bm25",
+        limit=max(1, min(int(limit or 6), 20)),
+    )
+    record_recall(
+        namespace="conversation", source_type="conversation",
+        candidate_count=result.get("candidate_count", 0),
+        hit_count=len(result.get("results", [])),
+        elapsed_ms=int((time.monotonic() - started) * 1000),
+        fallback_reason=result.get("fallback_reason"),
+        index_version="conversation-rag-v1", mode=mode,
+        scope_type="owner", scope_key="", injected=False,
+        engine=result.get("engine", "unknown"),
         quality={
             key: result.get(key)
             for key in (

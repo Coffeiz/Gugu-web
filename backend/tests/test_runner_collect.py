@@ -1,6 +1,6 @@
 import json
 
-from agent.runner import _collect
+from agent.runner import _collect, _scheduled_collect_result
 from agent.im.replies import format_tool_event
 
 
@@ -35,6 +35,20 @@ async def test_collect_initializes_context_usage_metadata():
     assert result[0] == "完成"
     assert result[-1]["context_input"] == 34
     assert result[-1]["compaction_applied"] is False
+
+
+def test_scheduled_collect_result_keeps_files_separate_from_meta():
+    """回归：定时执行不能把 `_collect` 的附件列表错位当成元数据。"""
+    files = [{"attach_id": "attachment-1", "name": "结果.png"}]
+    meta = {"tool_names": ["send_file"], "mutated": False}
+    collected = ("完成", 10, 2, 8, 0, False, files, False, meta)
+
+    text, errored, execution_meta = _scheduled_collect_result(collected)
+
+    assert text == "完成"
+    assert errored is False
+    assert execution_meta["tool_names"] == ["send_file"]
+    assert execution_meta["files"] == files
 
 
 async def _tool_call_stream(tool_name: str):

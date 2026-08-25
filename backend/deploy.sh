@@ -5,7 +5,7 @@
 #
 #  流程:
 #    1. 校验环境（venv、磁盘空间）
-#    2. 备份关键数据（config.override.json、uploads/）
+#    2. 备份关键数据（config.override.json、Gugu-data/users/）
 #    3. 同步 Python 依赖（pip install -r requirements.txt）
 #    4. 跑数据库迁移（alembic upgrade head，DB 不通则跳过）
 #    5. 可选：构建前端（--no-build 跳过）
@@ -91,7 +91,7 @@ backup_if_exists() {
 }
 
 backup_if_exists "config.override.json" "config-override"
-backup_if_exists "uploads"             "uploads"
+backup_if_exists "../Gugu-data/users"  "users"
 
 # 只保留最近 10 个备份
 ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f

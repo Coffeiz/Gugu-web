@@ -49,11 +49,50 @@ async def test_memory_search_reads_only_owner_namespace(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_memory_search_rejects_non_owner_scope():
+async def test_memory_search_accepts_current_group_scope(monkeypatch):
     from agent.rag.service import search_memory
 
-    with pytest.raises(ValueError):
-        await search_memory("user-a", "事件", scope="current_group")
+    monkeypatch.setattr(
+        "agent.rag.adapters.memory.MemoryAdapter.build_documents",
+        lambda *_args, **_kwargs: _empty_async_result(),
+    )
+    result = await search_memory(
+        "user-a", "事件", scope="current_group",
+        im_context={
+            "platform": "qq", "chat_type": "group", "chat_id": "group-1",
+            "channel_id": "bot-1", "im_role": "member", "puid": "member-1",
+        },
+    )
+    assert result["results"] == []
+
+
+async def _empty_async_result():
+    return []
+
+
+@pytest.mark.asyncio
+async def test_memory_query_scope_rejects_private_memory_for_member():
+    from agent.rag.scope import resolve_memory_query_scopes
+
+    with pytest.raises(PermissionError):
+        await resolve_memory_query_scopes(
+            "user-a", "private_memory",
+            im_context={"platform": "qq", "chat_type": "group", "im_role": "member"},
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_query_scope_rejects_private_memory_in_owner_group():
+    from agent.rag.scope import resolve_memory_query_scopes
+
+    with pytest.raises(PermissionError):
+        await resolve_memory_query_scopes(
+            "user-a", "private_memory",
+            im_context={
+                "platform": "qq", "chat_type": "group", "chat_id": "g1",
+                "channel_id": "bot", "im_role": "owner",
+            },
+        )
 
 
 @pytest.mark.asyncio

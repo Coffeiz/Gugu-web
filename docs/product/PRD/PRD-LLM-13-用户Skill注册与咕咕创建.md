@@ -1,11 +1,11 @@
 # 用户 Skill 注册与咕咕创建
 
-> 状态：规划中
+> 状态：Phase 0-4 已完成
 > 创建：2026-08-25
 > 最近更新：2026-08-25
 > 所属层：Agent / Capability Registry / User Extension
 > 关联 PRD：`PRD-LLM-9-工具与Skill注册制及按需注入.md`、`PRD-LLM-10-工具调用守卫升级.md`
-> 关联模块：`backend/agent/skills/`、`backend/agent/capabilities/`、`backend/agent/tools/meta.py`、个人设置 / 咕咕设置
+> 关联模块：`backend/agent/skills/`、`backend/agent/capabilities/`、`backend/agent/tools/meta.py`、资源区 / 咕咕技能
 
 ---
 
@@ -372,42 +372,78 @@ builtin skills
 
 ### Phase 0：协议与安全基线
 
-- [ ] 复用系统 Skill validator，明确用户 Skill 字段映射。
-- [ ] 明确用户 Skill 与系统 Skill 的来源、slug 和同名冲突规则。
-- [ ] 完成 Tool 关联权限矩阵和危险工具确认策略。
-- [ ] 补充用户 Skill 的 ownership 和安全测试清单。
+- [x] 复用系统 Skill validator，明确用户 Skill 字段映射。
+- [x] 明确用户 Skill 与系统 Skill 的来源、slug 和同名冲突规则。
+- [x] 完成 Tool 关联权限矩阵和危险工具确认策略；注册入口必须显式传入当前授权工具集合。
+- [x] 补充用户 Skill 的 ownership 和安全测试清单。
 
 ### Phase 1：用户 Skill 持久化注册
 
-- [ ] 新增 `user_skills` 数据模型和迁移。
-- [ ] 实现 `SkillRegistry` 的数据库来源适配器。
-- [ ] 统一 builtin/user Skill 的 metadata validator。
-- [ ] 实现启用状态、内容 digest 和工具关联校验。
-- [ ] 补充跨用户隔离、同名冲突、无效工具关联和正文限制测试。
+- [x] 新增 `user_skills` 数据模型和迁移。
+- [x] 实现 `SkillRegistry` 的数据库来源适配器。
+- [x] 统一 builtin/user Skill 的 metadata validator。
+- [x] 实现启用状态、内容 digest 和工具关联校验。
+- [x] 补充跨用户隔离、同名冲突、无效工具关联和正文限制测试。
 
-### Phase 2：个人设置 UI
+Phase 0-1 实现位置：
 
-- [ ] 新增“我的 Skills”页面或设置分区。
-- [ ] 完成列表、新建、编辑、启用/禁用、删除。
-- [ ] 接入工具目录，只显示当前用户可见工具及权限状态。
-- [ ] 使用现有设计令牌和弹窗/确认组件。
-- [ ] 补充表单校验、空状态、错误状态和权限变化刷新。
+- `backend/app/models/__init__.py`：`UserSkill` 持久化模型及 ownership 关系。
+- `backend/alembic/versions/20260825000001_add_user_skills.py`：数据库迁移。
+- `backend/agent/capabilities/skill_registry.py`：统一 validator、digest、用户 metadata 适配和创建入口。
+- `backend/agent/capabilities/index.py`：`from_registries_for_user()` 合并 builtin/user metadata。
+- `backend/tests/test_user_skills.py`：字段、隔离、禁用、重复和 Capability 合并测试。
+
+Phase 0-1 不处理用户 Skill 正文注入和 `use_skill` 数据库加载；运行时按需加载属于 Phase 4，避免在持久化阶段引入第二套 prompt 逻辑。
+
+### Phase 2：资源区咕咕技能 UI
+
+- [x] 在导航栏“资源”区域新增“咕咕技能”，位置紧跟文件库下方。
+- [x] 完成技能列表、新建、编辑、启用/禁用、删除。
+- [x] 接入当前用户可见的工具目录和状态，不在前端复制权限规则。
+- [x] 使用现有设计令牌、`BaseModal` 和统一表单交互。
+- [x] 补充前端表单校验、空状态、错误状态和保存后刷新。
+
+Phase 2 实现位置：
+
+- `frontend/src/views/Skills/index.vue`：页面布局、列表和页面级调度。
+- `frontend/src/views/Skills/components/SkillForm.vue`：新建/编辑表单。
+- `frontend/src/views/Skills/composables/useUserSkills.ts`：列表加载及增删改启用流程。
+- `frontend/src/services/api.ts`：`userSkillsApi` 及前端数据类型。
+- `frontend/src/components/common/AppSidebar.vue`、`frontend/src/router/index.ts`：资源区导航和路由入口。
+- `backend/app/api/v1/user_skills.py`：用户隔离的 CRUD API 与工具目录 API。
 
 ### Phase 3：咕咕创建入口
 
-- [ ] 新增 `create_skill` 固定 Adapter Tool。
-- [ ] 接入统一 validator、ownership 和确认门。
-- [ ] 设计创建成功/失败的工具结果和 IM 文案。
-- [ ] 首版只允许创建，不默认允许模型自动更新或删除已有 Skill。
-- [ ] 补充 Agent Loop、Web、QQ/微信/飞书入口回归。
+- [x] 新增 `create_skill` 固定 Adapter Tool，正文只允许 Prompt/Markdown 指导文本。
+- [x] 接入统一 validator、ownership、工具存在性/授权校验和危险关联工具确认门。
+- [x] 返回结构化创建成功/失败结果，供各渠道复用现有工具回执。
+- [x] 首版只允许创建，不开放模型自动更新或删除已有 Skill。
+- [x] 将创建入口注册到统一 Meta Skill，并复用现有 Agent Loop/Web/IM dispatch 链路。
+
+Phase 3 实现位置：
+
+- `backend/agent/tools/meta.py`：`create_skill` 固定 Adapter Tool。
+- `backend/agent/capabilities/skill_registry.py`：创建、更新、删除及统一校验服务。
+- `backend/app/api/v1/user_skills.py`：与 UI 共用的 ownership/校验边界。
+- `backend/tests/test_user_skills.py`：注册协议、隔离和权限相关回归测试。
 
 ### Phase 4：按需注入与变更生效
 
-- [ ] 将用户 Skill metadata 合并到 Capability Snapshot。
-- [ ] 接入 `use_skill` 的用户 Skill 加载。
-- [ ] 验证更新正文后 digest 会触发重新加载。
-- [ ] 验证禁用 Skill 不再出现在目录且旧 session 不扩大权限。
-- [ ] 接入 LoopScope 的 Skill source、owner、digest 脱敏观测。
+- [x] 将用户 Skill metadata 合并到 Capability Snapshot，并按当前 owner 与授权工具集合收窄关联工具。
+- [x] 接入 `use_skill` 的用户 Skill 加载；正文只从当前 owner 的启用记录按需读取。
+- [x] 验证更新正文后 digest 会触发重新加载，旧 history 标记不会复用旧正文。
+- [x] 验证禁用 Skill 不再出现在目录且旧 session 不扩大权限。
+- [x] 接入 LoopScope 的 Skill source、owner fingerprint、content digest 脱敏观测。
+
+Phase 4 实现位置：
+
+- `backend/agent/capabilities/models.py`：Skill metadata 的 digest 与 owner fingerprint 字段。
+- `backend/agent/capabilities/index.py`、`injector.py`：按 owner 合并用户 Skill metadata，固定 Adapter 目录包含用户 Skill。
+- `backend/agent/runner.py`、`backend/agent/gateway/web.py`：Web、IM、定时任务统一构建用户能力快照。
+- `backend/agent/capabilities/skill_registry.py`、`backend/agent/tools/meta.py`：owner 隔离的正文按需加载。
+- `backend/agent/core.py`：基于当前 snapshot digest 判断 Skill 正文是否可复用。
+- `backend/agent/capabilities/diagnostics.py`、`backend/agent/runtime/loopscope_trace/hooks.py`：只记录脱敏来源、指纹和 digest。
+- `backend/tests/test_user_skills.py`：目录合并、正文加载、正文更新和停用回归测试。
 
 ### Phase 5：后续扩展
 
@@ -429,4 +465,3 @@ builtin skills
 - Web 与 IM 渠道的创建、加载、失败和确认行为一致。
 - 所有用户输入、Skill 正文、工具结果和凭据遵循现有日志脱敏规则。
 - 不引入用户自定义可执行代码，不改变现有 Tool dispatch 和确认门安全边界。
-

@@ -70,8 +70,12 @@ class PromptMessages(list):
 
 
 def reminder(content: str) -> dict:
-    """构造内部系统上下文消息，不把动态上下文伪装成用户发言。"""
-    return {"role": "system", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
+    """构造内部 reminder 消息。
+
+    reminder 使用 user role，和真实用户消息保持 provider 兼容；语义边界由
+    ``[system-reminder]`` 包裹标识，而不是依赖一个 provider 可能特殊处理的 role。
+    """
+    return {"role": "user", "content": f"[system-reminder]\n{content}\n[/system-reminder]"}
 
 
 def build_messages(*, fixed_parts: Iterable[dict], history: Iterable[dict],

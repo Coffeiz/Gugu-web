@@ -13,6 +13,7 @@ from agent.context.session_snapshot import (
     snapshot_is_usable,
     snapshot_context,
     reminder_message,
+    snapshot_message,
     update_baseline_snapshot,
     initialize_snapshot,
 )
@@ -150,7 +151,11 @@ async def test_snapshot_serializes_zoneinfo_timezone_for_json():
 
 def test_reminder_and_time_messages_have_stable_boundary():
     message = reminder_message("固定 session snapshot")
-    assert message == {"role": "system", "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]"}
+    assert message == {"role": "user", "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]"}
+    assert snapshot_message("固定 session snapshot") == {
+        "role": "system",
+        "content": "[system-reminder]\n固定 session snapshot\n[/system-reminder]",
+    }
 
 
 def test_checkpoint_hash_chains_new_messages_without_copying_snapshot_text():

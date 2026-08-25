@@ -14,9 +14,7 @@
           @input="errors.name = ''"
         />
         <span v-if="errors.name" class="name-error">{{ errors.name }}</span>
-        <button class="close-btn" @click="$emit('close')">
-          <Icon name="action.close" :size="14" />
-        </button>
+        <CloseButton @click="$emit('close')" />
       </div>
 
       <!-- 主体：单列 -->
@@ -193,8 +191,8 @@
 
       <!-- 底部 -->
       <div class="modal-footer">
-        <button class="btn-cancel" @click="$emit('close')">取消</button>
-        <button class="btn-create" @click="handleCreate">创建项目</button>
+        <ActionButton variant="secondary" @click="$emit('close')">取消</ActionButton>
+        <ActionButton @click="handleCreate">创建</ActionButton>
       </div>
 
       <Teleport to="body">
@@ -215,11 +213,13 @@ import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 import DateRangePicker from '@/components/common/DateSpanPicker.vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import ActionButton from '@/components/common/ActionButton.vue'
 import { useStageTemplates } from '@/composables/useStageTemplates'
 import { nextZ, registerPopover } from '@/composables/windowz'
 import { usePreferencesStore } from '@/stores/preferences'
 import { onboardingProjectId } from '@/composables/useOnboarding'
 import Icon from '@/components/common/Icon.vue'
+import CloseButton from '@/components/common/CloseButton.vue'
 import { PROJECT_COLOR_PRESETS } from '@/utils/projectColors'
 
 const props = defineProps({ show: Boolean, initStatus: { type: String, default: null } })
@@ -559,14 +559,6 @@ function handleCreate() {
 .name-error {
   font-size: 11px; color: var(--color-warning); flex-shrink: 0;
 }
-.close-btn {
-  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
-  background: rgba(0,0,0,0.05); border: none;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--text-secondary); transition: background 0.15s;
-}
-.close-btn:hover { background: rgba(0,0,0,0.1); }
-
 /* ── 主体单列 ── */
 .modal-body {
   display: flex; flex-direction: column; gap: 12px;
@@ -846,24 +838,6 @@ input:not(.name-input):not(.header-name-input):focus:not(:disabled) {
   border-top: 1px solid rgba(0,0,0,0.07);
   flex-shrink: 0;
 }
-.btn-cancel {
-  padding: 7px 18px; border-radius: var(--radius-sm);
-  border: 1px solid rgba(0,0,0,0.1);
-  background: rgba(255,255,255,0.72);
-  font-size: 13px; color: var(--text-secondary);
-  cursor: pointer; font-family: var(--font-sans); transition: all 0.15s;
-}
-.btn-cancel:hover { background: rgba(255,255,255,0.9); color: var(--text-primary); }
-.btn-create {
-  padding: 7px 22px; border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border: none; color: white;
-  font-size: 13px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-sans);
-  box-shadow: 0 3px 12px rgba(123,127,178,0.3);
-  transition: opacity 0.15s;
-}
-.btn-create:hover { opacity: 0.85; }
 </style>
 
 <style>

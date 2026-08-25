@@ -15,7 +15,7 @@
             </div>
 
             <div class="modal-field">
-              <label>Provider</label>
+              <label>服务商</label>
               <div class="toggle-group" style="margin-bottom:0">
                 <button v-for="pv in providers" :key="pv.key"
                   class="toggle-btn" :class="{ active: draft.provider === pv.key }"
@@ -70,13 +70,13 @@
             </div>
 
             <div class="modal-field">
-              <label>{{ draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? 'API Key（可选）' : 'API Key' }}</label>
+              <label>{{ draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? 'API 密钥（可选）' : 'API 密钥' }}</label>
               <input v-model="draft.api_key" type="password" autocomplete="new-password"
                 :placeholder="draft.provider === 'ollama' && (draft.ollama_mode || 'local') === 'local' ? '本地 Ollama 通常留空' : '留空表示不修改'" class="modal-input" />
             </div>
 
             <div class="modal-field">
-              <label>Base URL</label>
+              <label>接口地址</label>
               <input v-model="draft.base_url" :placeholder="draft.provider === 'ollama' ? 'http://127.0.0.1:11434/v1' : 'https://…'" class="modal-input" />
               <div v-if="draft.provider === 'ollama'" class="modal-hint">
                 本地：<code>http://127.0.0.1:11434/v1</code>；云端：<code>https://ollama.com/v1</code>。地址指向运行 Gugu 后端的机器。
@@ -110,7 +110,7 @@
             </div>
 
             <div class="modal-field" v-if="draft.provider === 'mimo'">
-              <label>API 格式 <span class="thinking-hint" style="font-weight:400">Anthropic 格式可用思考块 / 缓存 / 看库内图</span></label>
+              <label>接口格式 <span class="thinking-hint" style="font-weight:400">Anthropic 格式支持思考块、缓存和读取库内图片</span></label>
               <div class="api-format-grid">
                 <button v-for="f in apiFormats" :key="f.key" type="button"
                   class="toggle-btn" :class="{ active: (draft.api_format || 'openai') === f.key }"
@@ -120,32 +120,26 @@
 
             <div class="modal-field-row">
               <div class="modal-field">
-                <label>最大输出 Tokens</label>
+                <label>最大输出令牌数</label>
                 <input v-model.number="draft.max_tokens" type="number" min="100" max="32000" step="100" class="modal-input" />
               </div>
               <div class="modal-field">
-                <label>发散度 Temperature</label>
+                <label>温度</label>
                 <input v-model.number="draft.temperature" type="number" min="0" max="2" step="0.05" class="modal-input" />
               </div>
             </div>
 
             <div class="modal-field">
-              <label>上下文历史 Tokens</label>
+              <label>上下文历史令牌数</label>
               <input v-model.number="draft.context_tokens" type="number" min="500" max="200000" step="500" class="modal-input" />
             </div>
 
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
                 <span>深度思考</span>
-                <span class="thinking-hint">MiniMax M3 / Anthropic / mimo / DeepSeek（adaptive 模式）</span>
+                <span class="thinking-hint">MiniMax M3、Anthropic、MiMo、DeepSeek（自适应模式）</span>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ on: draft.thinking === 'adaptive' }"
-                @click="draft.thinking = draft.thinking === 'adaptive' ? 'disabled' : 'adaptive'"
-              >
-                <span class="toggle-knob" />
-              </button>
+              <ToggleSwitch :model-value="draft.thinking === 'adaptive'" aria-label="切换深度思考" @update:model-value="draft.thinking = $event ? 'adaptive' : 'disabled'" />
             </div>
 
             <div class="modal-field modal-field--row" v-if="draft.provider === 'deepseek'">
@@ -153,7 +147,7 @@
                 <span>思考强度</span>
                 <span class="thinking-hint">思考开启时生效；关闭思考时先保存选择</span>
               </div>
-              <div style="display:flex; gap:6px;">
+              <div class="option-button-row">
                 <button v-for="effort in deepseekEfforts" :key="effort.key" type="button" class="toggle-btn"
                   :disabled="draft.thinking !== 'adaptive'"
                   :class="{ active: draft.reasoning_effort === effort.key || (!draft.reasoning_effort && effort.key === '') }"
@@ -164,9 +158,9 @@
             <div class="modal-field modal-field--row" v-if="draft.provider === 'deepseek'">
               <div class="thinking-label">
                 <span>图片细节级别</span>
-                <span class="thinking-hint">DeepSeek Vision 的 image_url.detail；auto 自动选择，通常等价于 original</span>
+                <span class="thinking-hint">DeepSeek Vision 的图片细节级别；自动选择通常等价于原图</span>
               </div>
-              <div style="display:flex; gap:6px;">
+              <div class="option-button-row">
                 <button v-for="detail in imageDetailLevels" :key="detail.key" type="button" class="toggle-btn"
                   :class="{ active: (draft.vision_detail || 'auto') === detail.key }"
                   @click="draft.vision_detail = detail.key">{{ detail.label }}</button>
@@ -201,7 +195,7 @@
                 <span>{{ dim.label }}</span>
                 <span class="thinking-hint">{{ dim.hint }}</span>
               </div>
-              <div style="display:flex; align-items:center; gap:8px;">
+              <div class="option-button-row option-button-row--center">
                 <button
                   type="button"
                   class="pca-btn pca-btn--sm"
@@ -210,13 +204,7 @@
                   :title="isNew ? '检测草稿，不会写入配置；保存后生效' : ''"
                   @click="$emit('probe-vision', draft.id, dim.key)"
                 >{{ probingDim === dim.key ? '检测中…' : '检测' }}</button>
-                <button
-                  class="toggle-switch"
-                  :class="{ on: draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] }"
-                  @click="draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] = !draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key]"
-                >
-                  <span class="toggle-knob" />
-                </button>
+                <ToggleSwitch :model-value="Boolean(draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key])" :aria-label="`切换${dim.label}`" @update:model-value="draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] = $event" />
               </div>
             </div>
 
@@ -235,6 +223,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 interface Provider { key: string; label: string; base_url: string; model: string }
 interface Option { key: string; label: string; hint?: string }
@@ -267,7 +256,7 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .modal-mask { position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(4,5,12,.58); backdrop-filter:blur(8px); }
 .modal-box { width:min(620px,100%); max-height:calc(100vh - 40px); overflow:auto; padding:22px 24px; border:1px solid rgba(255,255,255,.1); border-radius:16px; background:rgba(20,22,38,.96); box-shadow:0 8px 36px rgba(0,0,0,.42), inset 0 1px rgba(255,255,255,.06); color:rgba(255,255,255,.82); }
 .modal-title { margin:0 0 14px; color:rgba(255,255,255,.88); font-size:16px; font-weight:700; }
-.modal-field { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }.modal-field label { color:rgba(255,255,255,.4); font-size:11px; font-weight:600; }.modal-input { width:100%; box-sizing:border-box; padding:7px 10px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.06); color:rgba(255,255,255,.78); font-size:13px; outline:none; }.modal-input:focus { border-color:rgba(123,127,178,.45); }.modal-hint,.thinking-hint { color:rgba(255,255,255,.38); font-size:11px; line-height:1.5; }.toggle-group,.api-format-grid { display:flex; flex-wrap:wrap; gap:6px; }.toggle-btn { padding:6px 12px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.05); color:rgba(255,255,255,.48); font-size:12px; cursor:pointer; }.toggle-btn.active { border-color:rgba(123,127,178,.35); background:rgba(123,127,178,.2); color:rgba(255,255,255,.88); }.modal-field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }.modal-field--row { flex-direction:row; align-items:center; justify-content:space-between; }.thinking-label { display:flex; flex-direction:column; gap:3px; }.toggle-switch { width:42px; height:24px; border:1px solid rgba(255,255,255,.12); border-radius:99px; background:rgba(255,255,255,.1); cursor:pointer; }.toggle-switch.on { background:rgba(123,127,178,.5); border-color:rgba(123,127,178,.6); }.toggle-knob { display:block; width:16px; height:16px; margin:3px; border-radius:50%; background:rgba(255,255,255,.7); transition:transform .18s; }.toggle-switch.on .toggle-knob { transform:translateX(18px); }.model-picker { position:relative; }.model-picker-row { display:flex; gap:6px; }.model-picker-row .modal-input { flex:1; }.model-fetch-btn,.pca-btn { padding:6px 10px; border:1px solid rgba(255,255,255,.1); border-radius:8px; background:rgba(255,255,255,.06); color:rgba(255,255,255,.58); font-size:12px; cursor:pointer; }.model-fetch-btn:disabled,.pca-btn:disabled { opacity:.5; cursor:default; }.model-options { position:absolute; z-index:2; top:calc(100% + 4px); left:0; right:0; max-height:180px; overflow:auto; padding:4px; border:1px solid rgba(255,255,255,.11); border-radius:10px; background:rgba(20,22,38,.98); }.model-option { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:rgba(255,255,255,.7); text-align:left; cursor:pointer; }.model-option:hover { background:rgba(255,255,255,.07); }.model-option-hint { padding:7px 9px; color:rgba(255,255,255,.35); font-size:11px; }.model-option-hint.error { color:#e07878; }.modal-actions { display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,.07); }.save-hint { flex:1; color:#5ab899; font-size:12px; }.save-hint.error { color:#e07878; }.btn-ghost,.btn-primary { padding:6px 14px; border-radius:9px; font-size:13px; cursor:pointer; }.btn-ghost { border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.06); color:rgba(255,255,255,.55); }.btn-primary { border:0; background:linear-gradient(135deg,#7b7fb2,#9590c4); color:#fff; font-weight:600; }.btn-primary:disabled,.btn-ghost:disabled { opacity:.5; cursor:default; }.ollama-mode-warning { color:rgba(242,190,126,.78); }
+.modal-field { display:flex; flex-direction:column; gap:6px; margin-bottom:10px; }.modal-field label { color:rgba(255,255,255,.4); font-size:11px; font-weight:600; }.modal-input { width:100%; box-sizing:border-box; padding:7px 10px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.06); color:rgba(255,255,255,.78); font-size:13px; outline:none; }.modal-input:focus { border-color:rgba(123,127,178,.45); }.modal-hint,.thinking-hint { color:rgba(255,255,255,.38); font-size:11px; line-height:1.5; }.toggle-group,.api-format-grid { display:flex; flex-wrap:wrap; gap:6px; }.toggle-btn { padding:6px 12px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.05); color:rgba(255,255,255,.48); font-size:12px; cursor:pointer; }.toggle-btn.active { border-color:rgba(123,127,178,.35); background:rgba(123,127,178,.2); color:rgba(255,255,255,.88); }.modal-field-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }.modal-field--row { flex-direction:row; align-items:center; justify-content:space-between; }.thinking-label { display:flex; flex-direction:column; gap:3px; }.model-picker { position:relative; }.model-picker-row { display:flex; gap:6px; }.model-picker-row .modal-input { flex:1; }.model-fetch-btn,.pca-btn { padding:6px 10px; border:1px solid rgba(255,255,255,.1); border-radius:8px; background:rgba(255,255,255,.06); color:rgba(255,255,255,.58); font-size:12px; cursor:pointer; }.model-fetch-btn:disabled,.pca-btn:disabled { opacity:.5; cursor:default; }.model-options { position:absolute; z-index:2; top:calc(100% + 4px); left:0; right:0; max-height:180px; overflow:auto; padding:4px; border:1px solid rgba(255,255,255,.11); border-radius:10px; background:rgba(20,22,38,.98); }.model-option { display:block; width:100%; padding:7px 9px; border:0; border-radius:6px; background:transparent; color:rgba(255,255,255,.7); text-align:left; cursor:pointer; }.model-option:hover { background:rgba(255,255,255,.07); }.model-option-hint { padding:7px 9px; color:rgba(255,255,255,.35); font-size:11px; }.model-option-hint.error { color:#e07878; }.modal-actions { display:flex; align-items:center; gap:10px; margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,.07); }.save-hint { flex:1; color:#5ab899; font-size:12px; }.save-hint.error { color:#e07878; }.btn-ghost,.btn-primary { padding:6px 14px; border-radius:9px; font-size:13px; cursor:pointer; }.btn-ghost { border:1px solid rgba(255,255,255,.1); background:rgba(255,255,255,.06); color:rgba(255,255,255,.55); }.btn-primary { border:0; background:linear-gradient(135deg,#7b7fb2,#9590c4); color:#fff; font-weight:600; }.btn-primary:disabled,.btn-ghost:disabled { opacity:.5; cursor:default; }.ollama-mode-warning { color:rgba(242,190,126,.78); }
 .modal-input::placeholder { color: rgba(255,255,255,.2); }
 .modal-field label { color: rgba(255,255,255,.35); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; }
 .modal-hint code { color: rgba(123,127,178,.9); background: rgba(123,127,178,.12); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; word-break: break-all; }
@@ -276,5 +265,10 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .modal-field--row > span { font-size: 11px; font-weight: 600; color: rgba(255,255,255,.35); letter-spacing: .07em; }
 .thinking-label > span:first-child { font-size: 11px; font-weight: 600; color: rgba(255,255,255,.35); text-transform: uppercase; letter-spacing: .07em; }
 .thinking-hint { color: rgba(255,255,255,.2); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.option-button-row { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.option-button-row--center { justify-content:flex-end; }
+.toggle-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
+.model-fetch-btn, .pca-btn { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
+.btn-ghost, .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
 @media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } }
 </style>

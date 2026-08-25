@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from types import MappingProxyType
 
 from agent.tools import registry as tool_registry
@@ -43,6 +44,35 @@ class CapabilityIndex:
             skills=MappingProxyType(dict(self._skills)),
             diagnostics=self._diagnostics,
         )
+
+    @classmethod
+    async def from_registries_for_user(cls, db, owner_id: object, *,
+                                       tool_names: list[str] | None = None,
+                                       skill_names: list[str] | None = None):
+        """合并 builtin 与当前用户 Skill metadata；正文仍按需加载。"""
+        base = cls.from_registries(tool_names=tool_names, skill_names=skill_names)
+        user_items = await SkillCapabilityRegistry().user_metadata(db, owner_id)
+        authorized_tools = set(tool_names) if tool_names is not None else set(tool_registry._tools)
+        # 先用全局 registry 判断关联名是否真实存在，再单独按本轮授权集收窄；
+        # 历史 Skill 关联到后来关闭的工具时，不能把整个会话构建打成 500。
+        known_tools = set(tool_registry._tools)
+        for item in user_items:
+            missing = [name for name in item.related_tools if name not in known_tools]
+            if missing:
+                raise CapabilityReferenceError(
+                    f"Skill {item.name} 关联了未知工具：{', '.join(missing)}"
+                )
+        if skill_names is not None:
+            allowed = set(skill_names)
+            user_items = tuple(item for item in user_items if item.name in allowed)
+        # Skill metadata 可以继续展示，但关联工具必须按本轮授权集收窄，不能因为
+        # Skill 正文或旧数据库记录把工具权限重新扩大。
+        user_items = tuple(
+            replace(item, related_tools=tuple(name for name in item.related_tools if name in authorized_tools))
+            for item in user_items
+        )
+        return cls(tuple(base._tools.values()), tuple(base._skills.values()) + user_items,
+                   base._diagnostics)
 
     def short_catalog(self, snapshot: CapabilitySnapshot) -> list[dict]:
         return [

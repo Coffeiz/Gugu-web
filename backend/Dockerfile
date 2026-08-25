@@ -21,7 +21,7 @@ FROM python:3.12-slim
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils ffmpeg curl build-essential
+        poppler-utils ffmpeg curl build-essential docker.io
 
 WORKDIR /app
 
@@ -44,12 +44,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -i "${PIP_INDEX_URL}" -r requirements.txt
 
 COPY . .
-RUN mkdir -p uploads logs
+RUN mkdir -p logs
 
 # 不像 systemd 单元那样切非 root 用户跑（那份加固对生产才有意义）——这个镜像的
 # docker-compose.yml 用法会把 ./backend 整个 bind mount 进 /app，运行时的文件属主
 # 由宿主机那份说了算，容器里镜像构建阶段 chown 的结果会被挂载直接盖掉，非 root 用户
-# 反而可能在宿主机 UID 对不上时写不进 uploads/logs（各操作系统 Docker 的 UID 映射
+# 反而可能在宿主机 UID 对不上时写不进 logs（各操作系统 Docker 的 UID 映射
 # 行为不一致，尤其是 macOS/Windows Docker Desktop）。本镜像仅用于本地开发，不担心这层。
 EXPOSE 8000
 

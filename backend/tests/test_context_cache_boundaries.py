@@ -36,6 +36,12 @@ def test_first_diff_is_structural_and_diagnostics_are_digest_only():
     assert result["wire_message_count"] == 3
     assert len(result["wire_message_diagnostics"]) == 3
     assert result["wire_role_sequence_digest"]
+    assert result["wire_conversation_message_count"] == 2
+    assert result["wire_dynamic_tail_first_index"] == 2
+    assert result["wire_total_token_estimate"] >= 3
+    assert result["wire_message_diagnostics"][-1]["cumulative_token_estimate"] == result[
+        "wire_total_token_estimate"
+    ]
     assert result["first_diff"] is None
     assert "hello" not in str(result)
     assert "time" not in str(result)
@@ -63,6 +69,7 @@ def test_diagnostics_reports_first_wire_difference_without_body():
     assert result["first_diff_index"] == 2
     assert result["first_diff"]["previous"]["shape"]["role"] == "user"
     assert result["first_diff"]["current"]["shape"]["role"] == "user"
+    assert result["first_diff"]["current"]["cumulative_token_estimate"] > 0
     assert "old" not in str(result)
     assert "new" not in str(result)
 
@@ -101,3 +108,20 @@ def test_diagnostics_never_include_context_body_or_attachment_url():
     assert "当前私密问题" not in rendered
     assert "动态私密信息" not in rendered
     assert "signed" not in rendered
+
+
+def test_diagnostics_marks_dynamic_tail_boundary_without_body():
+    messages = build_messages(
+        fixed_parts=[{"role": "system", "content": "stable"}],
+        history=[{"role": "assistant", "content": "history"}],
+        current_user={"role": "user", "content": "current"},
+        dynamic_tail=[{"role": "system", "content": "volatile"}],
+    )
+    result = request_diagnostics(
+        messages, system_text="stable", tools=[], adapter=FakeAdapter(), model="test",
+    )
+    assert result["wire_message_count"] == 4
+    assert result["wire_conversation_message_count"] == 3
+    assert result["wire_dynamic_tail_count"] == 1
+    assert result["wire_dynamic_tail_first_index"] == 3
+    assert "volatile" not in str(result)
