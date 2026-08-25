@@ -64,3 +64,35 @@ async def test_protocol_error_is_converted_to_sidecar_unavailable():
     )
     with pytest.raises(RustSidecarUnavailable):
         await client._request({"op": "ping"})
+
+
+@pytest.mark.asyncio
+async def test_persistent_sidecar_reuses_matching_revision_without_rebuild():
+    client = RustSidecarClient("user-a", command="/opt/gugu-rag-sidecar", index_dir="/var/lib/gugu/rag-index")
+    client._revision = "r1"
+    client._document_count = 3
+    calls = {"ensure": 0}
+
+    async def ensure_process():
+        calls["ensure"] += 1
+
+    client._ensure_process = ensure_process
+
+    assert await client.reuse_if_current("r1") is True
+    assert calls["ensure"] == 1
+    assert await client.reuse_if_current("r2") is False
+
+
+@pytest.mark.asyncio
+async def test_empty_persistent_sidecar_can_reuse_only_empty_revision():
+    client = RustSidecarClient("user-a", command="/opt/gugu-rag-sidecar", index_dir="/var/lib/gugu/rag-index")
+    client._revision = ""
+    client._document_count = 0
+    client._ensure_process = lambda: _completed_coroutine()
+
+    assert await client.reuse_if_current("") is True
+    assert await client.reuse_if_current("r1") is False
+
+
+async def _completed_coroutine():
+    return None

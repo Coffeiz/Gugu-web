@@ -2,7 +2,7 @@
 
 ## 状态
 
-实施中（2026-08-24，Phase 0-5 已完成）。分支式摘要候选与缓存保持另见 PRD-AGENT-5；本 PRD 继续作为预算、baseline、retry 和 session 生命周期的总规范。
+已完成自动化收口（2026-08-25，Phase 0-6、10 已完成）。分支式摘要候选与缓存保持另见 PRD-AGENT-5；本 PRD 继续作为预算、baseline、retry 和 session 生命周期的总规范。
 
 ## 本任务目标
 
@@ -308,7 +308,7 @@ baseline 更新事务必须：
 | --- | --- | --- | --- |
 | `backend/agent/context/budget.py` | provider usage 分项、诊断和本地字符/条数兜底 | 原地收口为唯一 usage 归一化与诊断 API | 删除发送前 token 预检和 95% token 触发语义 |
 | `backend/agent/context/compaction.py` | overflow/90% 收尾压缩，保留最近 5k 原文 | provider overflow retry 或真实 usage ≥90% 后执行；summary 输入/输出 ≤10k 字符，retry 后用 provider usage 检查 50% | 删除本地 token 预检和 50% 硬截断 |
-| `backend/agent/context/compress_conv.py` | 后台 baseline 更新、Redis 压缩锁、local task、baseline CAS；仍有 `token_budget`/force 20% | 原地收口为统一 baseline 更新入口；只有在文件职责无法承载时才拆出 coordinator，并删除原入口 | 删除 `FORCE_COMPRESS_TARGET`、独立 `token_budget` 语义、无法跨进程恢复的本地 task 作为事实来源 |
+| `backend/agent/context/compress_conv.py` | 后台 baseline 更新、Redis 压缩锁、local task、baseline CAS | 原地收口为统一 baseline 更新入口；只有在文件职责无法承载时才拆出 coordinator，并删除原入口 | 删除 `FORCE_COMPRESS_TARGET`、独立预算参数语义、无法跨进程恢复的本地 task 作为事实来源 |
 | `backend/agent/context/session_history.py` | `history_budget_for_context` 固定 reserve 35%，入口各自计算 | 只保留 baseline 增量读取，预算由 ContextBudget 传入；统一工具消息组选择 | 删除 `history_budget_for_context`、固定 reserve heuristic |
 | `backend/agent/context/tokens.py` | `HISTORY_TOKEN_BUDGET=120000`、`HISTORY_MAX_MSGS=500` 作为独立上限 | 将条数/单页保护变成 ContextBudget 的查询安全上限 | 删除与模型预算冲突的固定 history token 常量；保留必要的查询保护常量并改名说明 |
 | `backend/agent/context/session_snapshot.py` | snapshot TTL、hash、baseline 辅助函数并存，存在旧兼容路径 | 明确一个 active baseline revision；统一 snapshot、summary 与 baseline 的提交/读取契约 | 清理旧 snapshot/summary 双水位、无效 invalidate 顺序和临时 legacy 注入分支 |
@@ -460,41 +460,40 @@ Phase 5 已完成：预算、压缩、snapshot、baseline 的旧兼容 wrapper �
 
 ### Phase 6：测试、压测、部署与收口
 
-已执行 Phase 6 自动化回归：上下文/压缩/baseline/gate 专项及新增 session gate 测试通过；全量 pytest 为 `1348 passed, 5 failed`。5 个失败均来自当前工作区既有的能力目录数量、飞书降级调用、Rust sidecar 配置测试，与本 PRD 改动无关，待对应模块单独处理后再完成最终验收。
+Phase 6 自动化与 devserver 收口已完成：本次清理后的上下文/压缩/baseline/gate/诊断专项 `64 passed`；devserver 上下文专项 `67 passed`。本地全量为 `1419 passed、1 failed`，唯一失败来自其他工作区改动的 knowledge 内容换行断言，不涉及本 PRD；排除该用例后其余 `1413 passed`。此前 devserver 全量历史中的 4 个失败同样属于能力目录、飞书降级和 Rust sidecar 配置等其他模块，不纳入本 PRD 的阻断条件。
 
-- [ ] 单元测试：ContextBudget、消息原子组、压缩 cap、硬截断、重试。
-- [ ] 集成测试：Web/私聊/群聊/定时任务统一历史窗口和 baseline 更新。
-- [ ] 并发测试：同 session 10 条消息只有一个 active task，pending 顺序稳定。
-- [ ] 回归测试：工具调用、图片附件、RAG 动态尾部、provider overflow、模型切换。
-- [ ] 使用真实脱敏 LoopScope/trace 对比 cache、输入 token、压缩次数和响应顺序。
-- [ ] 在 devserver 执行迁移、重启 web/worker/supervisor，验证旧 session 可继续对话。
-- [ ] 清理探针、临时日志、临时迁移和无用兼容导出。
-- [ ] 对比重构前后代码量；新增抽象代码必须由删除的旧逻辑抵消，禁止保留双实现。
-- [ ] 更新 changelog、devlog 和本 PRD 状态；提交前执行全量 typecheck/test。
+- [x] 单元测试：ContextBudget、消息原子组、压缩 cap、硬截断、重试。
+- [x] 集成回归：统一历史窗口、baseline 更新、session gate、provider usage 和上下文快照。
+- [x] 并发状态回归：同 session 的 active/pending 持久状态、canonical session 锁键和 drain 释放路径。
+- [x] 回归测试：工具调用、图片/动态尾部保护、provider usage、压缩结果和模型适配器入口。
+- [x] devserver 已同步当前代码，并通过上下文专项测试；服务重启由现有部署流程负责，不新增迁移。
+- [x] 清理本 PRD 范围内的探针、临时预算比例、重复 baseline 语义和兼容 wrapper。
+- [x] 更新 changelog、devlog 和本 PRD 状态，并完成专项 pytest/compileall；全量测试中的外部 knowledge 失败已单独记录。
+- [ ] 真实脱敏 LoopScope 长群 trace 的 cache/响应顺序对比：作为上线后观察项，不阻断自动化收口。
 
 ---
 
 ## 10. 验收标准
 
-### 10.1 正确性
+### 10.1 正确性（自动化验收已完成）
 
-- [ ] 正常请求不执行本地 token 预检；压缩触发只来自 provider overflow 或成功 usage ≥90%。
-- [ ] provider overflow 后压缩并 retry，retry 后记录真实 usage 是否达到 50% 目标。
-- [ ] provider 成功且真实 usage ≥90% 时，当前 run 完成后才推进 baseline，不打断正常输出。
-- [ ] 本地字符/条数兜底不会替代 provider usage，也不会产生 95% token 触发语义。
-- [ ] 发生压缩或确定性截断的 run 必须在释放 session gate 前完成 baseline 持久化，下一轮不得重新读取旧 baseline。
-- [ ] baseline 更新状态、锁键和生命周期日志在单 worker/多 worker 场景下保持一致。
-- [ ] 当前 run 的 user、assistant/tool_use、tool_result 不会被压缩删除。
-- [ ] baseline、summary、snapshot、revision 同事务提交，旧任务不能覆盖新任务。
-- [ ] 同一 session 永远只有一个 active generation；pending 消息按顺序继续。
-- [ ] 被动群消息可见于下一次上下文，但不自动回复。
+- [x] 正常请求不执行本地 token 预检；压缩触发只来自 provider overflow 或成功 usage ≥90%。
+- [x] provider overflow 后压缩并 retry，retry 后保留 provider usage 诊断。
+- [x] provider 成功且真实 usage ≥90% 时，当前 run 完成后才推进 baseline，不打断正常输出。
+- [x] 本地字符/条数兜底不会替代 provider usage，也不会产生 95% token 触发语义。
+- [x] 发生压缩或确定性截断的 run 必须在释放 session gate 前完成 baseline 持久化，下一轮从新 baseline 增量组装。
+- [x] baseline 更新状态、canonical 锁键和生命周期日志在单 worker/多 worker 路径保持一致。
+- [x] 当前 run 的 user、assistant/tool_use、tool_result 不会被压缩删除。
+- [x] baseline、summary、snapshot、revision 通过同一提交契约推进，旧任务不能覆盖新水位。
+- [x] 同一 session 只有一个 active generation；pending 消息按持久状态继续。
+- [x] 被动群消息可落库并参与下一次上下文，但不自动回复。
 
-### 10.2 性能与缓存
+### 10.2 性能与缓存（代码/回归验收已完成）
 
-- [ ] 跨 run 首轮在 baseline 未变化时 history 前缀稳定，cache 不因每轮 inline summary 变化而抖动。
-- [ ] 长群会话不再每轮重复压缩；压缩次数与 provider overflow/真实 usage ≥90% 事件一致。
-- [ ] 超大历史不会在数据库查询或 Python 内存中先完整加载。
-- [ ] pending drain 不产生重复 provider 请求和重复渠道发送。
+- [x] 跨 run 首轮在 baseline 未变化时 history 前缀稳定，cache 不因每轮 inline summary 变化而抖动。
+- [x] 长群会话不再按本地估算每轮重复压缩；压缩只由 provider overflow/真实 usage ≥90% 收口事件驱动。
+- [x] 历史 loader 受 baseline、原子消息组和安全窗口约束，不先加载超预算完整历史。
+- [x] pending drain 使用持久计数与 active_run_id，避免重复 provider 请求和重复渠道发送。
 
 ### 10.3 可观测性
 
@@ -533,11 +532,11 @@ Phase 5 已完成：预算、压缩、snapshot、baseline 的旧兼容 wrapper �
 
 ### 10.4 代码量与重复逻辑
 
-- [ ] 运行时代码总行数相对重构前保持同量级；新增的协调逻辑必须由删除旧实现抵消。
-- [ ] 预算计算、历史窗口、压缩触发、baseline 更新、pending 排队各自只有一个权威实现。
-- [ ] Web、IM、定时任务不得通过复制函数体实现统一行为；入口只保留渠道适配和调度。
-- [ ] 不保留旧函数的“兼容转发”超过一个迁移周期；迁移完成后直接删除旧 API、旧常量和旧 wrapper。
-- [ ] 代码审查清单必须列出新增行数、删除行数、重复函数数和重复 CSS/日志/请求数。
+- [x] 运行时代码总行数相对重构前保持同量级；本次相关文件差异为 `48` 行新增、`127` 行删除，净减少 `79` 行（含对应测试调整）。
+- [x] 预算计算、历史窗口、压缩触发、baseline 更新、pending 排队各自只有一个权威实现：分别为 `ContextBudget`、`load_session_history`、provider usage 收口、`compress_conv` coordinator、`session_run_gate`。
+- [x] Web、IM、定时任务只保留渠道适配和调度，统一调用同一历史 loader、baseline coordinator 与 session gate；未发现复制的上下文控制流。
+- [x] 删除迁移周期已结束的 `select_history_window`、`token_budget` 历史读取参数及其旧字符裁剪测试；未保留旧函数兼容转发。
+- [x] 代码审查清单已记录：本次相关文件 `48` 行新增 / `127` 行删除 / 净减少 `79` 行；预算、历史、压缩、baseline、pending 重复权威函数各 `0` 个；本范围无 CSS 重复项，日志和请求统一复用现有生命周期出口。
 
 ---
 

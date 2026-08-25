@@ -47,3 +47,18 @@ def matches_scope(document: IndexDocument, query_scope: Scope) -> bool:
         if wanted and getattr(actual, field) != wanted:
             return False
     return True
+
+
+def filter_authorized_documents(
+    documents: list[IndexDocument] | tuple[IndexDocument, ...],
+    query_scope: Scope | None,
+) -> tuple[list[IndexDocument], int]:
+    """在候选进入融合前执行一次严格 owner/scope 过滤。
+
+    ``query_scope`` 已由调用方完成身份解析；为空时保持旧调用方行为，
+    由各来源 retriever 自己负责 scope-first 过滤。
+    """
+    if query_scope is None:
+        return list(documents), 0
+    allowed = [document for document in documents if matches_scope(document, query_scope)]
+    return allowed, len(documents) - len(allowed)

@@ -5,6 +5,7 @@ import pytest
 from agent.capabilities.injector import catalog_block
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
 from agent.core import LLMRunner, _loaded_skill_slugs, _resolve_adapter_arguments
+from agent.skills import skill_content_digest
 from agent.tools.meta import _use_skill
 from agent.capabilities.diagnostics import capability_injection_diagnostics
 from agent.runtime.loopscope_trace.hooks import _skill_result_metadata
@@ -92,12 +93,17 @@ def test_llm_runner_accepts_dynamic_capability_context_without_changing_default_
 
 
 def test_loaded_skill_is_detected_from_history_and_can_be_reloaded_after_compaction():
+    digest = skill_content_digest("weather")
     messages = [{
         "role": "tool",
-        "content": '{"skill":"weather","content":"天气技能正文","_capability_usage":{"kind":"skill","slug":"weather","loaded":true}}',
+        "content": '{"skill":"weather","content":"天气技能正文","_capability_usage":{"kind":"skill","slug":"weather","loaded":true,"content_digest":"%s"}}' % digest,
     }]
-    assert _loaded_skill_slugs(messages) == {"weather"}
-    assert _loaded_skill_slugs([]) == set()
+    assert _loaded_skill_slugs(messages) == {"weather": digest}
+    assert _loaded_skill_slugs([{
+        "role": "tool",
+        "content": '{"_capability_usage":{"kind":"skill","slug":"weather","loaded":true}}',
+    }]) == {}
+    assert _loaded_skill_slugs([]) == {}
 
 
 @pytest.mark.anyio
@@ -105,6 +111,7 @@ async def test_use_skill_result_contains_structured_usage_marker():
     result = await _use_skill(None, None, {"name": "weather"})
     assert result["_capability_usage"] == {
         "kind": "skill", "slug": "weather", "loaded": True,
+        "content_digest": skill_content_digest("weather"),
     }
 
 

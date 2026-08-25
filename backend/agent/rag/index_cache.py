@@ -89,12 +89,15 @@ class KnowledgeIndexCache:
 
     async def get(
         self, db, owner_user_id: object, source_type: str, scope: Scope | None = None,
+        diagnostics: dict[str, object] | None = None,
     ):
         """返回 owner 级 lexical index，Rust/Python 共用缓存生命周期。"""
         from app.core.config import get_settings
 
         search_settings = get_settings().search
         backend = _selected_backend(search_settings)
+        if diagnostics is not None:
+            diagnostics["engine"] = backend
         self._purge_expired()
         owner_key = str(owner_user_id)
         key = (owner_key, backend, "all")
@@ -102,7 +105,16 @@ class KnowledgeIndexCache:
         entry = self._entries.get(key)
         if entry is not None and self._valid(entry, revision, backend):
             self._touch(key, entry)
+            if diagnostics is not None:
+                diagnostics["cache_hit"] = True
             return entry.index
+
+        if diagnostics is not None:
+            diagnostics["cache_miss_reason"] = (
+                "empty_or_expired" if entry is None
+                else "revision_changed" if entry.revision != revision
+                else "backend_changed"
+            )
 
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
@@ -110,11 +122,15 @@ class KnowledgeIndexCache:
             entry = self._entries.get(key)
             if entry is not None and self._valid(entry, revision, backend):
                 self._touch(key, entry)
+                if diagnostics is not None:
+                    diagnostics["cache_hit"] = True
                 return entry.index
             documents = await load_index_documents(db, owner_user_id)
             index = await self._build_index(
                 backend, owner_user_id, documents, revision, search_settings,
             )
+            if diagnostics is not None:
+                diagnostics["cache_hit"] = False
             size = estimate_index_bytes(documents, index)
             if size <= self.owner_limit_bytes:
                 self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
@@ -125,12 +141,16 @@ class KnowledgeIndexCache:
 
     async def get_transient(
         self, owner_user_id: object, documents: list[IndexDocument], *, revision: str,
+        diagnostics: dict[str, object] | None = None,
     ):
         """缓存无数据库索引的来源，供 Memory/Project transient 召回复用。"""
         from app.core.config import get_settings
 
         settings = get_settings().search
         backend = _selected_backend(settings)
+        if diagnostics is not None:
+            diagnostics["engine"] = backend
+            diagnostics["cache_entries"] = 1
         owner_key = str(owner_user_id)
         fingerprint = _documents_fingerprint(documents)
         key = (owner_key, backend, f"transient:{fingerprint}")
@@ -138,14 +158,26 @@ class KnowledgeIndexCache:
         entry = self._entries.get(key)
         if entry is not None and self._valid(entry, revision, backend):
             self._touch(key, entry)
+            if diagnostics is not None:
+                diagnostics["cache_hit"] = True
             return entry.index
+        if diagnostics is not None:
+            diagnostics["cache_miss_reason"] = (
+                "empty_or_expired" if entry is None
+                else "revision_changed" if entry.revision != revision
+                else "backend_changed"
+            )
         lock = self._locks.setdefault(key, asyncio.Lock())
         async with lock:
             entry = self._entries.get(key)
             if entry is not None and self._valid(entry, revision, backend):
                 self._touch(key, entry)
+                if diagnostics is not None:
+                    diagnostics["cache_hit"] = True
                 return entry.index
             index = await self._build_index(backend, owner_user_id, documents, revision, settings)
+            if diagnostics is not None:
+                diagnostics["cache_hit"] = False
             size = estimate_index_bytes(documents, index)
             if size <= self.owner_limit_bytes:
                 self._store(key, _Entry(index, size, revision, backend, time.monotonic()))
@@ -162,7 +194,10 @@ class KnowledgeIndexCache:
             index_dir=settings.rust_sidecar_index_dir,
         )
         try:
-            await client.replace(documents, revision)
+            reuse = getattr(client, "reuse_if_current", None)
+            reused = await reuse(revision) if reuse is not None else False
+            if not reused:
+                await client.replace(documents, revision)
         except Exception:
             await client.close()
             raise
@@ -277,10 +312,13 @@ async def invalidate_index_cache(owner_user_id: object, source_type: str | None 
 
 async def search_documents_with_cache(
     owner_user_id: object, documents: list[IndexDocument], query: str, *, limit: int = 10,
+    diagnostics: dict[str, object] | None = None,
 ) -> list:
     """在统一 owner 缓存中查询 transient 文档。"""
     revision = _documents_fingerprint(documents)
-    index = await _CACHE.get_transient(owner_user_id, documents, revision=revision)
+    index = await _CACHE.get_transient(
+        owner_user_id, documents, revision=revision, diagnostics=diagnostics,
+    )
     return await index.search(query, limit=limit)
 
 

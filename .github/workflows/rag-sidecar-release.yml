@@ -1,0 +1,44 @@
+name: RAG sidecar release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-musl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl linker
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+
+      - name: Rust tests
+        run: cargo test --manifest-path rust/rag-sidecar/Cargo.toml
+
+      - name: Build Linux musl artifact
+        run: cargo build --release --target x86_64-unknown-linux-musl --manifest-path rust/rag-sidecar/Cargo.toml
+
+      - name: Verify artifact
+        run: |
+          cp rust/target/x86_64-unknown-linux-musl/release/gugu-rag-sidecar backend/bin/gugu-rag-sidecar-linux-x86_64-musl
+          chmod 755 backend/bin/gugu-rag-sidecar-linux-x86_64-musl
+          file backend/bin/gugu-rag-sidecar-linux-x86_64-musl
+          test "$(backend/bin/gugu-rag-sidecar-linux-x86_64-musl --version)" = "gugu-rag-sidecar 0.1.0"
+          sha256sum backend/bin/gugu-rag-sidecar-linux-x86_64-musl
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gugu-rag-sidecar-linux-x86_64-musl
+          path: backend/bin/gugu-rag-sidecar-linux-x86_64-musl

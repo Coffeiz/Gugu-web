@@ -2,7 +2,7 @@
 
 ## 1. 状态
 
-**状态：实施中**
+**状态：Phase 5、6 已完成**
 
 ## 2. 背景与目标
 
@@ -85,16 +85,29 @@ Python 不再保存 BM25 的词频、倒排词典或文档扫描状态。sidecar
 - [x] 增加 Python 侧 scope、sidecar 重启、故障回退测试；
 - [x] 增加 Rust unavailable、超时、协议错误的回退测试；
 - [x] 比较 Python BM25、Tantivy、ILIKE 的召回重叠和 P50/P95；
-- [ ] 清理探针、临时 corpus 和生成物。
+- [x] 清理探针、临时 corpus 和生成物；仅保留可复现的 benchmark/质量脚本，索引目录和构建缓存不进入 Git。
 
 ### Phase 5：灰度与上线
 
 - [x] 在 devserver Linux 宿主机使用 Rust `1.98.0` 完成 `x86_64-unknown-linux-gnu` 验证构建，写入 `backend/bin/gugu-rag-sidecar` 并通过版本检查；
 - [x] 在 devserver 真实数据库索引上完成 sidecar 协议 smoke test、Rust persistent search 和 Global Search 业务路径测试；
-- [ ] release pipeline 在 Linux/Docker 构建并签核固定版本 `x86_64-unknown-linux-musl` sidecar，写入镜像或 `backend/bin/gugu-rag-sidecar`；
-- [ ] devserver 同步/安装 musl 验证制品，并确认实际后端进程使用新实现；
-- [ ] 以 `ilike` 默认、Rust opt-in 灰度，观察错误率、回退率、召回重叠和延迟；
-- [ ] 验证通过后将 Rust 设为默认，保留 ILIKE 紧急开关。
+- [x] release pipeline 已新增 Linux/Docker `x86_64-unknown-linux-musl` 构建、测试、版本检查、SHA-256 和制品上传流程；
+- [x] devserver 已安装并验证 musl 制品，实际固定路径 `backend/bin/gugu-rag-sidecar` 为 static-pie，三个后端 systemd 服务已重启并保持 active；
+- [x] 已完成 devserver Rust opt-in 灰度验证：配置读取为 `rust`、sidecar enabled、持久化索引目录为 `var/rag-index`，协议 smoke test 和 RAG 回归均通过；
+- [x] Rust 已设为默认词法后端，Global Search 继续保留 ILIKE 紧急开关和 sidecar 故障回退。
+
+### Phase 6：持久化缓存与运行时收口（✅ 已完成）
+
+Phase 6 负责把 sidecar 从“进程内可用”收口为“可跨 worker 重启复用的持久化索引”，并补齐缓存诊断与回归边界。
+
+- [x] 默认使用 `backend/var/rag-index` 作为持久化索引根目录；每个 owner 使用稳定 hash 子目录，避免不同 owner 共享 Tantivy 状态。
+- [x] worker 重启后先执行 `ping`，仅当磁盘 revision 与数据库 revision 一致且文档计数有效时复用索引；revision 变化、空索引和协议异常必须重建或降级。
+- [x] 保留 Python 侧 30 分钟句柄 TTL 与数据库 revision 失效；TTL 只管理进程内句柄，不改变 sidecar 磁盘索引的 revision 语义。
+- [x] 统一记录 `engine`、cache hit/miss、miss reason、fallback 与索引文档数，诊断字段不包含正文、用户输入或密钥。
+- [x] 增加持久化 revision 复用、空索引边界和缓存构建不重复 `replace` 的回归测试。
+- [x] 清理本阶段新增的运行时探针；benchmark corpus、缓存目录和 Python 生成物均不进入 Git，保留基准脚本供发布验收使用。
+
+Phase 6 完成后的运行时边界：Python 负责分词、权限、正文映射和回退；Rust sidecar 负责唯一词法倒排与 BM25 查询；`ILIKE` 仍作为 Global Search 的紧急开关，不能把 sidecar 不可用伪装成空结果。
 
 ## 6. 验收标准
 

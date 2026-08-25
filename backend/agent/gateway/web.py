@@ -26,7 +26,7 @@ from app.models import (
 from agent.security import sanitize
 from agent.llm import genstream
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history, audit
+from agent.context import builder, loaders, tokens, session_snapshot, context_assembly as message_assembly, session_history, audit
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
@@ -411,10 +411,11 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             tail_parts.append(message_time)
         tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
         if use_anthropic:
-            assembly = message_assembly.build_messages(
+            assembly = message_assembly.assemble(
                 fixed_parts=fixed_parts, history=history_parts,
                 current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, True, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
-                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"],
+                system_text=system_prompt)
             sanitize_before_count = len(assembly.conversation)
             fixed_boundary = assembly.fixed_prefix_size
             merged_cross_segment = bool(
@@ -444,11 +445,12 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 use_anthropic=True, session_id=session_id,
             )
         else:
-            oa_messages = message_assembly.build_messages(
+            oa_messages = message_assembly.assemble(
                 fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
                 history=history_parts,
                 current_user=None if resume_interaction else {"role": "user", "content": chat_attach.build_user_content(current_text, user_images, False, media=user_media, image_detail=getattr(settings.ai, "vision_detail", "auto"))},
-                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+                dynamic_tail=tail_parts, conversation_tail=rag_context["tail"],
+                system_text=system_prompt)
             oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
             audit.context_layout_probe(
                 phase="assembled", session=session, snapshot=snapshot,

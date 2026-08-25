@@ -77,7 +77,7 @@ class MemoryScope:
     def files(self) -> Tuple[str, ...]:
         if self.scope_type == "group":
             return ("profile.json", "summary.json", "daily.md", "memory.md", "members.json")
-        return ("profile.json", "pattern.json", "summary.json")
+        return ("profile.json", "pattern.json", "summary.json", "memory.md")
 
     def key(self, filename: str) -> str:
         if filename not in self.files:

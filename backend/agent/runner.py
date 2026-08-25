@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, message_assembly, session_history, audit
+from agent.context import builder, loaders, tokens, session_snapshot, context_assembly as message_assembly, session_history, audit
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data, load_platform_user_memory
@@ -496,11 +496,12 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
     if use_anthropic:
-        assembly = message_assembly.build_messages(
+        assembly = message_assembly.assemble(
             fixed_parts=fixed_parts, history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
             conversation_tail=rag_context["tail"],
+            system_text=system_prompt,
         )
         # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
         # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
@@ -532,12 +533,13 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
                          model_cfg=model_cfg, session_id=session_id, session=session,
                          on_interaction=on_interaction)
     else:
-        oa_messages = message_assembly.build_messages(
+        oa_messages = message_assembly.assemble(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
             dynamic_tail=tail_parts,
             conversation_tail=rag_context["tail"],
+            system_text=system_prompt,
         )
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         audit.context_layout_probe(
@@ -909,10 +911,10 @@ async def _run_stream_unlocked(
     tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
     if use_anthropic:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
-        assembly = message_assembly.build_messages(
+        assembly = message_assembly.assemble(
             fixed_parts=fixed_parts, history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"], system_text=system_prompt)
         sanitize_before_count = len(assembly.conversation)
         fixed_boundary = assembly.fixed_prefix_size
         merged_cross_segment = bool(
@@ -942,11 +944,11 @@ async def _run_stream_unlocked(
                          on_interaction=on_interaction)
     else:
         tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
-        oa_messages = message_assembly.build_messages(
+        oa_messages = message_assembly.assemble(
             fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
             history=history_parts,
             current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"])
+            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"], system_text=system_prompt)
         oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
         audit.context_layout_probe(
             phase="assembled", session=session, snapshot=snapshot,
@@ -1364,15 +1366,17 @@ def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
     if user_content is None:
         user_content = prompt
     if use_anthropic:
-        return message_assembly.build_messages(
+        return message_assembly.assemble(
             fixed_parts=fixed_parts, history=[],
             current_user={"role": "user", "content": user_content},
             dynamic_tail=dynamic_tail,
+            system_text=system_prompt,
         )
-    return message_assembly.build_messages(
+    return message_assembly.assemble(
         fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
         history=[], current_user={"role": "user", "content": user_content},
         dynamic_tail=dynamic_tail,
+        system_text=system_prompt,
     )
 
 

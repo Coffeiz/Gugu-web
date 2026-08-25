@@ -20,7 +20,7 @@ class CapabilityToolContext:
         self,
         snapshot: CapabilitySnapshot,
         selector: CapabilitySelector,
-        limit: int = 12,
+        limit: int = 5,
         *,
         fixed_adapter: bool = False,
     ):
@@ -51,7 +51,7 @@ class CapabilityToolContext:
         return self.selection
 
 
-def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 12) -> CapabilityToolContext:
+def build_fixed_adapter_context(tool_names: list[str], *, limit: int = 5) -> CapabilityToolContext:
     """Phase 5：业务工具不进入 Provider tools，只保留固定 Adapter 入口。"""
     from .index import CapabilityIndex
     from .selector import RegistryCapabilitySelector

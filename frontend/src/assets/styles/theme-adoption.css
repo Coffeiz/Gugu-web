@@ -422,7 +422,7 @@ html[data-theme='dark'][data-family] .chat-window .tool-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
   color: var(--content-on-accent);
-  background: var(--brand-gradient);
+  background: var(--gugu-chat-send-bg);
   box-shadow: var(--elevation-card);
 }
 html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,

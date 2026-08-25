@@ -96,6 +96,15 @@ def test_adapter_for_deepseek_by_provider():
     assert a.supports_thinking_toggle
 
 
+def test_cache_capabilities_are_separate_by_provider():
+    deepseek = adapter_for(_ai(provider="deepseek", model="deepseek-chat")).cache_capabilities("deepseek-chat")
+    qwen = adapter_for(_ai(provider="qwen", model="qwen3.6-flash")).cache_capabilities("qwen3.6-flash")
+    minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3")).cache_capabilities("MiniMax-M3")
+    assert deepseek.automatic_prefix_cache and not deepseek.explicit_cache_control
+    assert qwen.automatic_prefix_cache and qwen.explicit_cache_control and qwen.single_history_anchor
+    assert minimax.automatic_prefix_cache
+
+
 def test_adapter_for_deepseek_by_base_url_fallback():
     a = adapter_for(_ai(base_url="https://api.deepseek.com/v1"))
     assert a.name == "deepseek"

@@ -12,7 +12,7 @@ from .models import CapabilitySnapshot, SelectedCapabilities
 
 
 class CapabilitySelector(Protocol):
-    def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 12) -> SelectedCapabilities: ...
+    def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 5) -> SelectedCapabilities: ...
 
 
 class RegistryCapabilitySelector:
@@ -26,7 +26,7 @@ class RegistryCapabilitySelector:
         self.candidate_names = tuple(candidate_names) if candidate_names is not None else None
         self.shadow = shadow
 
-    def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 12) -> SelectedCapabilities:
+    def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 5) -> SelectedCapabilities:
         authorized = tuple(snapshot.tools)
         if self.candidate_names is None:
             names = authorized

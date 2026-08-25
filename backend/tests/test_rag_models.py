@@ -1,5 +1,5 @@
 from agent.rag.chunking import split_sections, split_text
-from agent.rag.models import IndexDocument, Scope, content_hash
+from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope, content_hash
 
 
 def test_index_document_identity_is_stable():
@@ -18,3 +18,17 @@ def test_sections_and_chunks_keep_order_and_bounds():
     assert chunks
     assert "第一句" in chunks[0]
     assert all(len(chunk) <= 8 for chunk in chunks)
+
+
+def test_recall_candidate_keeps_stable_identity_and_rank():
+    document = IndexDocument(
+        "memory:x", "memory", "memory", Scope("user-a"),
+        "标题", "摘要", "正文", "v1",
+    )
+    candidate = RecallCandidate.from_result(RecallResult(document, 0.8), rank=2)
+
+    assert candidate.source_type == "memory"
+    assert candidate.source_id == "memory"
+    assert candidate.content_fingerprint == document.content_hash
+    assert candidate.rank == 2
+    assert candidate.as_public()["score"] == 0.8

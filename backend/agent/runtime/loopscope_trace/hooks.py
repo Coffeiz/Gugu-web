@@ -197,6 +197,13 @@ def ensure_hooks() -> None:
                 source = str(im_context["platform"])
                 run.source = source
                 run.session_key = f"gugu:{source}:{session_id}"
+            elif session is not None and getattr(session, "source", None) not in (None, "", "web"):
+                # Web 可以继续发送一个原本由 QQ/飞书/微信创建的会话。此时没有 IM
+                # Context，但数据库 session.source 仍是该会话的真实归属，不能回落到
+                # gugu:web，否则 LoopScope 会把这次 run 从原平台 session 中隐藏。
+                source = str(session.source)
+                run.source = source
+                run.session_key = f"gugu:{source}:{session_id}"
             elif run.source == "unknown" or run.session_key.startswith("pending:"):
                 run.source = "web"
                 run.session_key = f"gugu:web:{session_id}"
@@ -206,6 +213,7 @@ def ensure_hooks() -> None:
         previous_prompt_estimate = 0
         tool_schema_context_recorded = False
         capability_context_recorded = False
+        previous_round_messages = None
 
         initial_user = _extract_last_user(messages)
         # 这些值同时用于有/无 LoopScope run 的路径。IM 可能尚未建立 web trace，
@@ -288,7 +296,7 @@ def ensure_hooks() -> None:
             history.finish({"message_count": len(messages) if isinstance(messages, list) else None})
 
         async def traced_round(client, ctx, round_messages):
-            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded
+            nonlocal round_index, previous_prompt_estimate, tool_schema_context_recorded, capability_context_recorded, previous_round_messages
             round_index += 1
             round_visible_messages = _trace_conversation_messages(round_messages, system_location)
             round_system = effective_system
@@ -301,6 +309,16 @@ def ensure_hooks() -> None:
             cache_diag = _cache_diagnostics(round_messages, ctx, model_name)
             from agent.context.canonical_tool_history import canonical_event_stats
             canonical_stats = canonical_event_stats(round_messages)
+            from agent.context.context_diagnostics import request_diagnostics
+            canonical_diagnostics = request_diagnostics(
+                round_messages,
+                system_text=round_system,
+                tools=list(getattr(ctx, "tools", None) or ()),
+                adapter=getattr(ctx, "adapter", None) or getattr(ctx, "_adapter", None),
+                model=model_name,
+                api_format=str(getattr(driver, "api_format", "unknown") or "unknown"),
+                previous_messages=previous_round_messages,
+            ) if getattr(ctx, "adapter", None) is not None else {"available": False}
             if run:
                 record_canonical_event_stats(run, canonical_stats)
                 record_adapter_call(
@@ -384,6 +402,7 @@ def ensure_hooks() -> None:
                             "provider": getattr(ai, "provider", ""),
                             "api_format": getattr(driver, "api_format", ""),
                         },
+                        "canonical_context": canonical_diagnostics,
                     },
                 },
                 code=_code_ref(original_round),
@@ -398,6 +417,7 @@ def ensure_hooks() -> None:
                 model=getattr(ai, "model", ""),
             ) if run else None
             previous_prompt_estimate = round_prompt_est
+            previous_round_messages = list(round_messages)
             final = None
             try:
                 async for kind, value in original_round(client, ctx, round_messages):

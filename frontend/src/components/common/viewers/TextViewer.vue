@@ -675,9 +675,9 @@ onBeforeUnmount(() => {
 
 .tv-notice {
   font-size: 11px;
-  color: var(--text-secondary);
-  background: rgba(240, 180, 80, 0.12);
-  border-bottom: 1px solid rgba(240, 180, 80, 0.25);
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
   padding: 6px 20px;
   margin-bottom: 8px;
 }
@@ -686,11 +686,15 @@ onBeforeUnmount(() => {
 .tv-edit-toggle {
   position: absolute; top: 10px; right: 14px; z-index: 2;
   width: 26px; height: 26px; border-radius: 7px;
-  border: none; background: rgba(123,127,178,0.1); color: rgba(80,85,130,0.6);
+  border: 1px solid var(--border-subtle); background: var(--action-soft); color: var(--action-primary);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tv-edit-toggle:hover { background: rgba(123,127,178,0.2); color: rgba(80,85,130,0.9); }
+.tv-edit-toggle:hover { background: var(--action-soft-hover); border-color: var(--action-outline); color: var(--action-primary-hover); }
 
 /* ── 编辑模式：纯文本框 + 底部操作条 ── */
 .tv-edit-textarea {
@@ -699,32 +703,35 @@ onBeforeUnmount(() => {
   padding: 20px 24px;
   font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
-  line-height: 1.7; color: #383a42; background: #fff;
+  line-height: 1.7; color: var(--content-primary); background: var(--surface-card-solid);
+  caret-color: var(--action-primary); accent-color: var(--action-primary);
 }
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: 10px 16px; border-top: 1px solid rgba(0,0,0,0.06); background: #f7f7fb;
+  padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
 }
-.tv-edit-error { flex: 1; font-size: 12px; color: rgba(180,80,80,0.85); }
+.tv-edit-error { flex: 1; font-size: 12px; color: var(--status-danger); }
 .tv-edit-btn {
   padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  border: 1px solid rgba(0,0,0,0.08); background: #fff; color: var(--text-secondary);
-  cursor: pointer; transition: background 0.12s;
+  border: 1px solid var(--border-default); background: var(--surface-card-solid); color: var(--content-secondary);
+  cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tv-edit-btn:hover:not(:disabled) { background: rgba(0,0,0,0.03); }
+.tv-edit-btn:hover:not(:disabled) { background: var(--surface-soft-hover); color: var(--content-primary); }
 .tv-edit-btn:disabled { opacity: 0.5; cursor: default; }
 .tv-edit-save {
-  border-color: transparent; color: #fff;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-color: transparent; color: var(--content-on-accent);
+  background: var(--gugu-chat-send-bg);
 }
-.tv-edit-save:hover:not(:disabled) { opacity: 0.92; background: linear-gradient(135deg, #7b7fb2, #9590c4); }
+.tv-edit-save:hover:not(:disabled) { opacity: 0.92; background: var(--gugu-chat-send-bg); }
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
-.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; }
+.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-scroller),
+.tv-edit-cm-wrap :deep(.cm-content) { background: var(--surface-card-solid); color: var(--content-primary); }
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); font-size: 12px; background: #fff;
+  color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
 }
 .tv-edit-md-wrap :deep(.cm-content) {
   padding: 20px 24px;
@@ -732,8 +739,29 @@ onBeforeUnmount(() => {
   line-height: 1.7;
 }
 .tv-edit-md-wrap :deep(.cm-gutters) {
-  background: #f2f3f8;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--content-tertiary);
+}
+.tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
+/* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
+.tv-edit-cm-wrap :deep(.cm-activeLine) {
+  background: color-mix(in srgb, var(--action-primary) 5%, transparent);
+}
+.tv-edit-cm-wrap :deep(.cm-activeLineGutter) {
+  background: var(--selection-bg);
+  color: var(--content-primary);
+}
+.tv-edit-cm-wrap :deep(.cm-selectionBackground),
+.tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
+  background: var(--selection-bg) !important;
+}
+.tv-edit-cm-wrap :deep(.cm-content ::selection),
+.tv-edit-textarea::selection,
+.tv-table ::selection,
+.tv-md ::selection {
+  background: var(--selection-bg);
+  color: var(--content-primary);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
@@ -770,6 +798,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
   line-height: 1.7;
+  background: var(--surface-card-solid);
 }
 
 .tv-ln {
@@ -777,25 +806,25 @@ onBeforeUnmount(() => {
   min-width: 48px;
   padding: 0 16px 0 20px;
   text-align: right;
-  color: rgba(120, 124, 160, 0.45);
+  color: var(--content-tertiary);
   white-space: nowrap;
   user-select: none;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  border-right: 1px solid var(--border-subtle);
   vertical-align: top;
   position: sticky;
   left: 0;
-  background: #f2f3f8;
+  background: var(--surface-panel);
 }
 
 .tv-code {
   padding: 0 24px 0 16px;
   white-space: pre;
-  color: #383a42;
+  color: var(--content-primary);
   vertical-align: top;
 }
 
-tr:hover .tv-ln  { background: #eaebf2; }
-tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
+tr:hover .tv-ln  { background: var(--surface-soft-hover); }
+tr:hover .tv-code { background: color-mix(in srgb, var(--action-primary) 4%, transparent); }
 
 /* ── Markdown 渲染 ── */
 .tv-md {
@@ -817,22 +846,22 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   line-height: 1.3;
   color: var(--content-primary, #1a1c24);
 }
-.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3em; }
-.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid rgba(0,0,0,0.06); padding-bottom: 0.25em; }
+.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.3em; }
+.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid var(--border-hairline); padding-bottom: 0.25em; }
 .tv-md :deep(h3) { font-size: 1.15em; }
 
 .tv-md :deep(p)  { margin: 0.8em 0; }
-.tv-md :deep(a)  { color: #4c7ef3; text-decoration: none; }
+.tv-md :deep(a)  { color: var(--action-primary); text-decoration: none; }
 .tv-md :deep(a:hover) { text-decoration: underline; }
 
 /* 行内代码 */
 .tv-md :deep(code) {
   font-family: var(--font-family-mono);
   font-size: 0.875em;
-  background: rgba(100, 110, 200, 0.08);
+  background: var(--action-soft);
   border-radius: 4px;
   padding: 0.15em 0.4em;
-  color: #a626a4;
+  color: var(--action-primary);
 }
 
 /* 代码块容器 */
@@ -857,7 +886,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 .tv-md :deep(.md-mermaid) {
   width: 100%; box-sizing: border-box; margin: 1em 0; padding: 12px;
   overflow-x: auto; border: 1px solid var(--border-default, rgba(42,35,49,.12));
-  border-radius: 10px; background: var(--surface-card-solid, #fff);
+  border-radius: 10px; background: var(--surface-card-solid, #fff); user-select: none;
 }
 .tv-md :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .tv-md :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
@@ -888,7 +917,7 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: rgba(60, 65, 100, 0.4);
+  color: var(--content-tertiary);
   font-family: var(--font-family-mono);
   pointer-events: none;
   user-select: none;
@@ -908,24 +937,24 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: rgba(80, 85, 130, 0.4);
+  color: var(--content-tertiary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 5px;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
   opacity: 0;
 }
 .tv-md :deep(.md-pre:hover .md-copy-btn) { opacity: 1; }
 .tv-md :deep(.md-copy-btn:hover) {
-  background: rgba(100, 110, 200, 0.1);
-  color: rgba(80, 85, 130, 0.8);
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
 }
 .tv-md :deep(.md-copy-btn svg) { width: 14px; height: 14px; }
 .tv-md :deep(.md-check-icon) { display: none; }
 .tv-md :deep(.md-copy-icon) { display: flex; }
-.tv-md :deep(.md-copy-btn.md-copied) { color: #50a14f; }
+.tv-md :deep(.md-copy-btn.md-copied) { color: var(--status-success); }
 .tv-md :deep(.md-copy-btn.md-copied .md-copy-icon) { display: none; }
 .tv-md :deep(.md-copy-btn.md-copied .md-check-icon) { display: flex; }
 
@@ -970,13 +999,13 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 }
 /* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
 .tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
-.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: rgba(123, 127, 178, 0.6); }
+.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: var(--action-outline); }
 
 .tv-md :deep(blockquote) {
   margin: 1em 0;
   padding: 0 1em;
-  border-left: 3px solid rgba(100, 110, 200, 0.35);
-  color: rgba(36, 41, 47, 0.6);
+  border-left: 3px solid var(--action-outline);
+  color: var(--content-secondary);
 }
 
 .tv-md :deep(ul),
@@ -992,56 +1021,19 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 .tv-md :deep(th),
 .tv-md :deep(td) {
   padding: 8px 14px;
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid var(--border-subtle);
   text-align: left;
 }
-.tv-md :deep(th) { background: rgba(100,110,200,0.06); font-weight: 600; }
-.tv-md :deep(tr:hover td) { background: rgba(100,110,200,0.03); }
+.tv-md :deep(th) { background: var(--surface-soft); font-weight: 600; }
+.tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
   border: none;
-  border-top: 1px solid rgba(0,0,0,0.1);
+  border-top: 1px solid var(--border-subtle);
   margin: 1.5em 0;
 }
 
 .tv-md :deep(img) { max-width: 100%; border-radius: 6px; }
-
-/* 文件预览跟随主题：Markdown 预览独立于聊天气泡，不能依赖外层 panel 的浅色默认值。 */
-html[data-theme='dark'][data-family] .tv-wrap {
-  background: var(--surface-base, #17151d);
-  color: var(--content-primary, #f2eff7);
-}
-html[data-theme='dark'][data-family] .tv-md :deep(h1),
-html[data-theme='dark'][data-family] .tv-md :deep(h2),
-html[data-theme='dark'][data-family] .tv-md :deep(h3),
-html[data-theme='dark'][data-family] .tv-md :deep(h4),
-html[data-theme='dark'][data-family] .tv-md :deep(p),
-html[data-theme='dark'][data-family] .tv-md :deep(li) {
-  color: var(--content-primary, #f2eff7);
-}
-html[data-theme='dark'][data-family] .tv-md :deep(a) { color: var(--color-primary, #a9a7df); }
-html[data-theme='dark'][data-family] .tv-md :deep(code) {
-  background: var(--surface-soft-hover, rgba(255,255,255,.08));
-  color: var(--content-primary, #f2eff7);
-}
-html[data-theme='dark'][data-family] .tv-md :deep(.md-pre) {
-  background: var(--surface-panel, #24212b);
-}
-html[data-theme='dark'][data-family] .tv-md :deep(.md-pre code) { color: var(--content-primary, #f2eff7); }
-html[data-theme='dark'][data-family] .tv-md :deep(.md-mermaid) {
-  background: var(--surface-card-solid, #24212b);
-  border-color: var(--border-default, rgba(255,255,255,.16));
-}
-html[data-theme='dark'][data-family] .tv-md :deep(blockquote) {
-  color: var(--content-secondary, #c9c3d5);
-  border-left-color: var(--border-focus, rgba(169,167,223,.65));
-}
-html[data-theme='dark'][data-family] .tv-md :deep(th) { background: var(--surface-panel, #24212b); }
-html[data-theme='dark'][data-family] .tv-md :deep(th),
-html[data-theme='dark'][data-family] .tv-md :deep(td) {
-  border-color: var(--border-subtle, rgba(255,255,255,.12));
-}
-html[data-theme='dark'][data-family] .tv-md :deep(hr) { border-top-color: var(--border-subtle, rgba(255,255,255,.12)); }
 
 /* ── 状态 ── */
 .tv-status {
@@ -1052,13 +1044,14 @@ html[data-theme='dark'][data-family] .tv-md :deep(hr) { border-top-color: var(--
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--text-secondary);
+  color: var(--content-secondary);
   font-size: 13px;
 }
-.tv-error { color: rgba(180, 80, 80, 0.8); }
+.tv-error { color: var(--status-danger); }
 .tv-spinner {
   width: 24px; height: 24px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
+  border: 2px solid var(--action-soft);
+  border-top-color: var(--action-primary);
   border-top-color: rgba(123, 127, 178, 0.7);
   animation: tv-spin 0.7s linear infinite;
 }

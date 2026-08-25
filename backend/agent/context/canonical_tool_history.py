@@ -6,6 +6,7 @@ Canonical event 只存在于内部历史；发送给 Provider 前由 adapter 渲
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -17,6 +18,21 @@ def _canonical_json(value: Any) -> str:
 
 def schema_digest(schema: dict) -> str:
     return hashlib.sha256(_canonical_json(schema).encode("utf-8")).hexdigest()[:16]
+
+
+def implementation_digest(tool) -> str:
+    """按处理函数源码生成实现指纹，区分 Schema 不变但行为已更新的工具。"""
+    handler = getattr(tool, "handler", None)
+    try:
+        source = inspect.getsource(handler)
+    except (OSError, TypeError):
+        source = ""
+    identity = "|".join((
+        str(getattr(handler, "__module__", "")),
+        str(getattr(handler, "__qualname__", "")),
+        source,
+    ))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
 
 
 _CANONICAL_EVENT_TYPES = frozenset({
@@ -141,6 +157,7 @@ class ToolSchemaEvent:
     schema_version: int
     schema_digest: str
     schema: dict
+    implementation_digest: str = ""
     event_type: str = "tool-schema"
 
     def to_block(self) -> dict:
@@ -177,13 +194,17 @@ def tool_schema_event(tool) -> ToolSchemaEvent:
         schema_version=int(getattr(tool, "schema_version", 1) or 1),
         schema_digest=schema_digest(schema),
         schema=schema,
+        implementation_digest=implementation_digest(tool),
     )
 
 
 def append_event(messages: list[dict], event) -> None:
     """追加一个可重放的 canonical event；相同版本/digest 不重复追加。"""
     block = event.to_block()
-    key = (block.get("type"), block.get("tool_name"), block.get("schema_digest"), block.get("skill_name"))
+    key = (
+        block.get("type"), block.get("tool_name"), block.get("schema_digest"),
+        block.get("implementation_digest"), block.get("skill_name"),
+    )
     for message in messages:
         content = message.get("content") if isinstance(message, dict) else None
         blocks = content if isinstance(content, list) else []
@@ -192,7 +213,8 @@ def append_event(messages: list[dict], event) -> None:
                 continue
             existing_key = (
                 existing.get("type"), existing.get("tool_name"),
-                existing.get("schema_digest"), existing.get("skill_name"),
+                existing.get("schema_digest"), existing.get("implementation_digest"),
+                existing.get("skill_name"),
             )
             if existing_key == key:
                 return
@@ -264,6 +286,9 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
         rendered[conversation_count:],
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
     )
+    canonical_context = getattr(messages, "canonical_context", None)
+    if canonical_context is not None:
+        result.canonical_context = canonical_context
     remember_anchor = getattr(result, "remember_cache_anchor", None)
     if remember_anchor is not None:
         for index in getattr(messages, "cache_anchor_indices", ()):

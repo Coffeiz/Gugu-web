@@ -163,6 +163,8 @@ async def send_tool_event(payload: dict, event: dict) -> bool:
 async def send_reply(payload: dict, reply: PlatformReply) -> bool:
     """将统一回复交给对应 Gateway。"""
     platform = payload.get("platform")
+    from agent.outbound import sanitize_im_links
+    text = sanitize_im_links(reply.text) if platform in {"qq", "feishu", "wechat"} else reply.text
     unsupported = reply.unsupported_capabilities(platform or "")
     if unsupported and platform in {"qq", "feishu", "wechat"}:
         from agent.security import logsafe
@@ -174,21 +176,21 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         return False
     if platform == "feishu" and reply.target.id:
         from agent.gateway import feishu
-        result = await feishu.send_text(reply.target.id, reply.text, payload.get("channel_id"))
+        result = await feishu.send_text(reply.target.id, text, payload.get("channel_id"))
         return result is not False
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
         if reply.target.type == "group":
             return await qq.send_group(
                 reply.target.id,
-                reply.text,
+                text,
                 reply.reply_to_message_id,
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
         return await qq.send_c2c(
             reply.target.id,
-            reply.text,
+            text,
             reply.reply_to_message_id,
             payload.get("channel_id"),
             payload.get("message_format"),
@@ -197,7 +199,7 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
         from agent.gateway import wechat
         result = await wechat.send_text(
             reply.target.id,
-            reply.text,
+            text,
             payload.get("channel_id"),
             payload.get("context_token", ""),
         )

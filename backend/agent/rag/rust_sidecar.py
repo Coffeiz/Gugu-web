@@ -33,6 +33,7 @@ class RustSidecarClient:
         self._process: asyncio.subprocess.Process | None = None
         self._lock = asyncio.Lock()
         self._revision: str | None = None
+        self._document_count = 0
 
     async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
         if not documents:
@@ -55,6 +56,24 @@ class RustSidecarClient:
             ],
         })
         self._revision = response.get("revision")
+        self._document_count = int(response.get("document_count") or len(documents))
+
+    async def reuse_if_current(self, revision: str | None) -> bool:
+        """连接持久化 sidecar，并在磁盘索引 revision 一致时复用它。
+
+        sidecar 进程本身会在启动时从 index_dir 恢复 Tantivy 索引。此前 Python
+        每次创建客户端都会无条件 replace，导致 worker 重启后又完整重建一次。
+        内存模式没有可复用的持久化目录，始终返回 False。
+        """
+        await self._ensure_process()
+        expected = revision or ""
+        # 新建的空磁盘目录 revision 也是空字符串，不能误判为可复用；
+        # 空数据集本身可以复用空索引。
+        return bool(
+            self.index_dir
+            and self._revision == expected
+            and (self._document_count > 0 or not expected)
+        )
 
     async def search(
         self,
@@ -142,6 +161,7 @@ class RustSidecarClient:
             )
             response = await self._request_unlocked({"op": "ping"})
             self._revision = response.get("revision") or self._revision
+            self._document_count = int(response.get("document_count") or 0)
         except (OSError, asyncio.TimeoutError, RustSidecarUnavailable) as error:
             await self.close()
             if isinstance(error, RustSidecarUnavailable):

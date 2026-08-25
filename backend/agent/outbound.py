@@ -12,6 +12,19 @@ from __future__ import annotations
 
 import re
 
+# 这是 Web 内部动作协议，不是 IM 平台可发送的外链。IM 出站保留可读文案，
+# 由 Web 聊天继续保留原始 gugu:// href 并处理点击。
+_GUGU_MARKDOWN_LINK_RE = re.compile(
+    r"\[([^\]\n]+)\]\(gugu://[^)\s]+\)", re.IGNORECASE
+)
+_GUGU_URI_RE = re.compile(r"(?<![\w])gugu://[^\s)]+", re.IGNORECASE)
+
+
+def sanitize_im_links(text: str) -> str:
+    """把 Web 专用 gugu:// 动作链接转换为适合 IM 发送的可读文本。"""
+    text = _GUGU_MARKDOWN_LINK_RE.sub(r"\1", text)
+    return _GUGU_URI_RE.sub("", text)
+
 # tool_call id / 内部 id：纯噪声，对用户无意义，直接抹掉
 _NOISE = re.compile(
     r"\bcall_function_[A-Za-z0-9]+(?:_\d+)?\b"          # call_function_xxx_1

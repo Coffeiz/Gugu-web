@@ -52,8 +52,8 @@ async def _search_memory(db, user_id, args: dict):
     source = str(args.get("source") or "all").strip().lower()
     scope = str(args.get("scope") or "auto").strip().lower()
     strategy = str(args.get("strategy") or "auto").strip().lower()
-    if source not in {"all", "profile", "pattern", "daily", "memory"}:
-        return {"error": "source 只能是 all、profile、pattern、daily 或 memory"}
+    if source not in {"all", "knowledge", "profile", "pattern", "daily", "memory"}:
+        return {"error": "source 只能是 all、knowledge、profile、pattern、daily 或 memory"}
     if strategy not in {"auto", "bm25", "embedding"}:
         return {"error": "strategy 只能是 auto、bm25 或 embedding"}
     try:
@@ -68,9 +68,105 @@ async def _search_memory(db, user_id, args: dict):
         return {"error": str(exc)}
 
 
+async def _save_knowledge(db, user_id, args: dict):
+    from agent.knowledge.models import KnowledgeEntry, KnowledgeScope
+    from agent.knowledge.store import KnowledgeStore, source_from_input
+
+    title = str(args.get("title") or "").strip()
+    content = str(args.get("content") or "").strip()
+    if not title or not content:
+        return {"error": "需要提供 title 和 content"}
+    source_type = str(args.get("source_type") or "user").strip().lower()
+    confidence = str(args.get("confidence") or "confirmed").strip().lower()
+    if confidence not in {"confirmed", "probable", "unverified"}:
+        return {"error": "confidence 只能是 confirmed、probable 或 unverified"}
+    try:
+        source = source_from_input(
+            source_type, str(args.get("source_ref") or ""),
+            str(args.get("source_label") or ""),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    entry = KnowledgeEntry.create(
+        title=title, content=content, topic=str(args.get("topic") or ""),
+        scope=KnowledgeScope(type="owner", owner_user_id=str(user_id)),
+        source=source, confidence=confidence,  # type: ignore[arg-type]
+    )
+    try:
+        saved = await KnowledgeStore(user_id).save(entry)
+    except ValueError as exc:
+        return {"error": str(exc)}
+    try:
+        from agent.rag.adapters.knowledge import KnowledgeAdapter
+        from agent.memory import embedding
+        from agent.rag.models import Scope
+        from agent.rag.vector_cache import sync_knowledge_index_vectors
+
+        if embedding.is_enabled():
+            vector_scope = Scope(
+                owner_user_id=str(user_id), scope_type="owner",
+            )
+            documents = await KnowledgeAdapter(user_id).build_documents(scope=vector_scope)
+            await sync_knowledge_index_vectors(user_id, documents)
+    except Exception:
+        # 向量是可重建缓存，保存主数据成功后不因缓存不可用而失败。
+        pass
+    return {
+        "success": True, "id": saved.id, "title": saved.title,
+        "version": saved.version, "source_type": saved.source.type,
+        "confidence": saved.confidence,
+    }
+
+
+async def _delete_knowledge(db, user_id, args: dict):
+    from agent.knowledge.store import KnowledgeStore
+    from agent.security import confirm
+
+    entry_id = str(args.get("knowledge_id") or "").strip()
+    if not entry_id:
+        return {"error": "需要提供 knowledge_id"}
+    store = KnowledgeStore(user_id)
+    entries = await store.list(active_only=True)
+    entry = next((item for item in entries if item.id == entry_id), None)
+    if entry is None:
+        return {"error": "知识条目不存在"}
+    blocked = confirm.needs_confirmation(
+        args, f"将删除知识条目「{entry.title}」，保留历史但停止检索", user_id,
+    )
+    if blocked:
+        return blocked
+    deleted = await store.delete(entry_id)
+    if deleted:
+        from agent.rag.index_cache import get_index_cache
+        get_index_cache().invalidate(user_id, "knowledge")
+    return {"success": deleted, "knowledge_id": entry_id}
+
+
 class MemorySkill(BaseSkill):
     name = "memory"
     tools = [
+        Tool(
+            name="save_knowledge", label="保存知识",
+            description=(
+                "保存用户明确要求长期保留的事实、规则或资料摘要。"
+                "默认写入 owner 知识库，不把普通聊天自动保存为知识。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "知识条目标题"},
+                    "content": {"type": "string", "description": "经过整理的知识正文"},
+                    "topic": {"type": "string", "description": "主题，可选"},
+                    "source_type": {"type": "string", "enum": ["user", "file", "web", "derived", "conversation"], "description": "来源类型，默认 user"},
+                    "source_ref": {"type": "string", "description": "来源引用，可选"},
+                    "source_label": {"type": "string", "description": "来源名称，可选"},
+                    "confidence": {"type": "string", "enum": ["confirmed", "probable", "unverified"], "description": "可信度，默认 confirmed"},
+                },
+                "required": ["title", "content"],
+            },
+            handler=_save_knowledge,
+            mutates=True,
+        ),
         Tool(
             name="remember", label="记住",
             description=(
@@ -95,18 +191,38 @@ class MemorySkill(BaseSkill):
             mutates=True,
         ),
         Tool(
+            name="delete_knowledge", label="删除知识",
+            description=(
+                "删除一条已保存的知识条目并停止检索。必须先不带 confirm 请求确认，"
+                "再携带确认凭证执行；历史版本不会被物理覆盖。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "knowledge_id": {"type": "string", "description": "知识条目 ID"},
+                    "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
+                    "confirm_token": {"type": "string", "description": "确认请求返回的短时凭证"},
+                },
+                "required": ["knowledge_id"],
+            },
+            handler=_delete_knowledge,
+            destructive=True,
+            mutates=True,
+        ),
+        Tool(
             name="search_memory", label="搜索记忆",
             description=(
                 "按关键词搜索过去的事件、对话背景、近期记录和长期记忆。"
                 "用户询问以前讨论过什么、某个决定的背景或历史记忆时使用；"
-                "不用于搜索项目、文件或完整聊天记录。当前仅支持 owner 私人记忆的 lexical 召回。"
+                "source=knowledge 用于搜索用户明确保存的事实、规则和资料。"
+                "不用于搜索项目、文件或完整聊天记录。"
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "要检索的关键词或短语"},
                     "scope": {"type": "string", "enum": ["auto", "private_memory"], "description": "记忆范围，默认 auto"},
-                    "source": {"type": "string", "enum": ["all", "profile", "pattern", "daily", "memory"], "description": "记忆来源，默认 all"},
+                    "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"], "description": "记忆或知识来源，默认 all"},
                     "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 Rust lexical"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},
                 },

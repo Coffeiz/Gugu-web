@@ -125,7 +125,6 @@ async def compress_if_needed(
     session_id: int,
     user_id: int,
     settings,
-    token_budget: int | None = None,
     *,
     force: bool = False,
 ) -> bool:
@@ -145,7 +144,7 @@ async def compress_if_needed(
     persisted = False
     try:
         result = await _compress_if_needed_unlocked(
-            session_id, user_id, settings, token_budget, force=force,
+            session_id, user_id, settings, force=force,
         )
         persisted = bool(result)
         return result
@@ -214,7 +213,6 @@ def schedule_baseline_update(
             session_id,
             user_id,
             settings,
-            context_tokens,
             force=False,
         ),
         name=f"context-baseline:{session_id}",
@@ -256,7 +254,6 @@ async def _compress_if_needed_unlocked(
     session_id: int,
     user_id: int,
     settings,
-    token_budget: int | None,
     *,
     force: bool = False,
 ) -> bool:
@@ -285,10 +282,8 @@ async def _compress_if_needed_unlocked(
     if not all_msgs:
         return False
 
-    # 自动路径由 provider usage/overflow 决定；token_budget 仅保留给显式维护调用，
-    # 不再作为数据库累计 token 的正常触发器。
-    # token_budget 仅表示 provider 的模型上限，用于配置摘要请求；不把本地
-    # token 估算用于决定哪些 history 被保留。保留窗口采用字符硬上限。
+    # 自动路径由 provider usage/overflow 决定；不把本地 token 估算用于决定哪些
+    # history 被保留。保留窗口采用字符硬上限。
     target_keep_chars = _RECENT_HISTORY_KEEP_CHARS
     tail_chars = 0
     split_idx = 0

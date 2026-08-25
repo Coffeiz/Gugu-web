@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from .tokens import content_text, message_text
 from .tokens import estimate_tokens, msg_tokens
 from .audit import summary_change
+from .canonical_context import tool_call_ids, tool_result_ids
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ async def compact_context(
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
     fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(messages)))
     fixed_prefix = list(messages[:fixed_prefix_size])
-    message_history = list(messages[fixed_prefix_size:])
+    message_history = _drop_orphan_tool_results(list(messages[fixed_prefix_size:]))
 
     # 分离消息类型
     summary_msg = None
@@ -261,29 +262,12 @@ async def compact_context(
     return result
 
 
-def _block_types(message: dict) -> set[str]:
-    content = message.get("content") if isinstance(message, dict) else None
-    blocks = content if isinstance(content, list) else [content]
-    return {
-        str(block.get("type"))
-        for block in blocks
-        if isinstance(block, dict) and block.get("type")
-    }
-
-
-def _has_tool_call(message: dict) -> bool:
-    return (
-        message.get("role") == "assistant"
-        and (bool(message.get("tool_calls")) or bool({"tool_use", "tool_call"} & _block_types(message)))
-    )
-
-
-def _has_tool_result(message: dict) -> bool:
-    return message.get("role") == "tool" or "tool_result" in _block_types(message)
-
-
 def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> list[list[int]]:
-    """按工具往返切分 message index；普通消息仍然各自作为一个单元。"""
+    """按匹配的工具往返切分 message index；普通消息仍然各自作为一个单元。
+
+    只有相邻消息且调用/result id 有交集时才归为一个工具单元。这样异常历史中的
+    孤儿 result 不会因为“看起来像 result”而被压缩边界误保留。
+    """
     indices = [i for i in range(len(messages)) if i != excluded_index]
     units: list[list[int]] = []
     cursor = 0
@@ -291,12 +275,62 @@ def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> lis
         start = indices[cursor]
         unit = [start]
         cursor += 1
-        if _has_tool_call(messages[start]):
-            while cursor < len(indices) and _has_tool_result(messages[indices[cursor]]):
+        call_ids = tool_call_ids(messages[start])
+        if call_ids and cursor < len(indices):
+            result_ids = tool_result_ids(messages[indices[cursor]])
+            if result_ids and call_ids & result_ids:
                 unit.append(indices[cursor])
                 cursor += 1
         units.append(unit)
     return units
+
+
+def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
+    """删除没有紧邻匹配调用的 tool_result，保留其他 block 原样。
+
+    这是压缩前的兼容清理，不负责把 provider wire format 重新渲染；它只处理
+    已知非法的孤儿结果，避免结果被最新窗口保留并在下一次请求中触发 400。
+    """
+    cleaned: list[dict] = []
+    previous_call_ids: frozenset[str] = frozenset()
+    for message in messages:
+        current = dict(message)
+        result_ids = tool_result_ids(current)
+        call_ids = tool_call_ids(current)
+        if result_ids:
+            matched = previous_call_ids & result_ids
+            content = current.get("content")
+            blocks = content if isinstance(content, list) else None
+            if not matched:
+                if current.get("role") == "tool":
+                    previous_call_ids = frozenset()
+                    continue
+                if blocks is not None:
+                    blocks = [
+                        block for block in blocks
+                        if not (
+                            isinstance(block, dict)
+                            and block.get("type") == "tool_result"
+                        )
+                    ]
+                    if blocks:
+                        current["content"] = blocks
+                    else:
+                        previous_call_ids = frozenset()
+                        continue
+            elif blocks is not None:
+                current["content"] = [
+                    block for block in blocks
+                    if not (
+                        isinstance(block, dict)
+                        and block.get("type") == "tool_result"
+                        and str(block.get("tool_call_id") or block.get("tool_use_id") or "")
+                        not in matched
+                    )
+                ]
+        cleaned.append(current)
+        previous_call_ids = call_ids
+    return cleaned
 
 
 def _is_system_injection(content: str) -> bool:

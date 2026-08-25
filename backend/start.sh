@@ -237,9 +237,13 @@ cmd_install() {
 
     # ReadWritePaths 要求路径真实存在，否则 systemd 报 226/NAMESPACE
     log "准备可写目录并授权给 $run_user"
-    mkdir -p "${APP_DIR}/uploads" "${APP_DIR}/logs"
-    [ -f "${APP_DIR}/config.override.json" ] || echo '{}' > "${APP_DIR}/config.override.json"
-    chown -R "$run_user":"$run_user" "${APP_DIR}/uploads" "${APP_DIR}/logs" "${APP_DIR}/config.override.json"
+    mkdir -p "${APP_DIR}/uploads" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index"
+    if [ ! -f "${APP_DIR}/config.override.json" ]; then
+        umask 077
+        printf '{}\n' > "${APP_DIR}/config.override.json"
+    fi
+    chmod 600 "${APP_DIR}/config.override.json"
+    chown -R "$run_user":"$run_user" "${APP_DIR}/uploads" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
 
     # 按实际安装目录 / 用户填占位符，生成三个单元
     for s in $services; do

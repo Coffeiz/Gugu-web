@@ -114,8 +114,23 @@ def deduplicate_event_sections(text: str) -> str:
     ).strip()
 
 
+def merge_event_memory(current: str, incoming: str, *, fallback_title: str = "事件记录") -> str:
+    """把一批事件增量合并进已有主档，保持章节契约和确定性去重。
+
+    事件主档的语义合并仍由上游压缩模型负责；这里不再次调用模型，只做
+    标题规范化、章节拼接和重复正文去重，确保成员派生写入不会复制一套压缩器。
+    """
+    existing = normalize_event_memory(current)
+    addition = normalize_event_memory(incoming, fallback_title=fallback_title)
+    if not existing:
+        return deduplicate_event_sections(addition)
+    if not addition:
+        return deduplicate_event_sections(existing)
+    return deduplicate_event_sections(f"{existing}\n\n{addition}")
+
+
 __all__ = [
     "EVENT_HEADING_PREFIX", "EventSection", "event_hash",
     "normalize_event_memory", "normalize_event_title", "parse_event_sections",
-    "deduplicate_event_sections",
+    "deduplicate_event_sections", "merge_event_memory",
 ]

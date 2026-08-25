@@ -61,6 +61,34 @@ async def test_recall_service_merges_same_content_citations():
     }
 
 
+class _MixedScopeRetriever:
+    source_type = "mixed"
+
+    async def retrieve(self, query, *, scope, strategy, candidate_limit):
+        return RetrievalBatch(
+            source_type=self.source_type,
+            results=tuple(
+                RecallResult(IndexDocument(
+                    document_id=f"mixed:{owner}", source_type="memory",
+                    source_id=owner, scope=Scope(owner_user_id=owner),
+                    title=owner, summary="", content=f"内容 {owner}", version="v1",
+                ), 1.0)
+                for owner in ("user-a", "user-b")
+            ),
+            candidate_count=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_recall_service_applies_scope_filter_before_selection():
+    result = await UnifiedRecallService(
+        UnifiedRetriever([_MixedScopeRetriever()])
+    ).search("内容", scope=owner_scope("user-a"), strategy="bm25", limit=10)
+
+    assert [item["source_id"] for item in result["results"]] == ["user-a"]
+    assert result["permission_rejected"] == 1
+
+
 @pytest.mark.asyncio
 async def test_project_adapter_is_owner_only_and_keeps_project_citation(db, user_a):
     project = Project(
@@ -126,7 +154,8 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
         record_recall(
             namespace="knowledge", source_type="memory", candidate_count=12,
             hit_count=3, elapsed_ms=17, fallback_reason="embedding_disabled",
-            index_version="memory-rag-v1", mode="passive",
+            index_version="memory-rag-v1", mode="passive", engine="rust",
+            cache_hit=True, cache_entries=1,
         )
     finally:
         state._scope_run.reset(token)
@@ -135,5 +164,8 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.kind == "rag"
     assert span.name == "Knowledge RAG recall"
     assert span.attributes["mode"] == "passive"
+    assert span.attributes["engine"] == "rust"
+    assert span.attributes["cache_hit"] is True
+    assert span.attributes["cache_entries"] == 1
     assert span.output["hit_count"] == 3
     assert "query" not in str(span.payload())

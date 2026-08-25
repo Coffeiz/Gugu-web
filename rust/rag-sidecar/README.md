@@ -1,6 +1,6 @@
 # Gugu RAG Tantivy Sidecar
 
-这是 Phase 5 的本地 Spike。进程只通过 stdin/stdout 接收 JSONL，不监听网络端口，避免在尚未完成权限与部署验收前暴露检索服务。
+这是 Rust 词法检索 sidecar。进程只通过 stdin/stdout 接收 JSONL，不监听网络端口，避免暴露检索服务。
 
 ## 构建与运行
 
@@ -18,7 +18,7 @@ rust/target/release/gugu-rag-sidecar /var/lib/gugu/rag-index
 回退，不会尝试自行编译。ARM 支持作为后续独立制品增加。
 ```
 
-不传目录时使用内存索引；传入目录后使用 Tantivy 持久化目录。索引目录不得提交 Git，也不得直接放入用户可下载的文件库。
+不传目录时使用内存索引；传入目录后使用 Tantivy 持久化目录。Python 侧会先用 `ping` 检查磁盘上的 revision；revision 一致时直接复用，变化时才发送 `replace`。索引目录不得提交 Git，也不得直接放入用户可下载的文件库。
 
 ## JSONL 协议
 

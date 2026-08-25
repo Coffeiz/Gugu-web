@@ -35,6 +35,29 @@ async def test_memory_scope_adapter_renders_profile_dict_entries(monkeypatch):
     assert any("正在整理 RAG" in text for text in texts)
 
 
+@pytest.mark.asyncio
+async def test_memory_scope_adapter_includes_member_event_memory(monkeypatch):
+    from agent.rag.adapters.memory import MemoryAdapter
+    from agent.rag.models import Scope
+
+    async def fake_preview(_scope):
+        return {
+            "profile": [],
+            "pattern": [],
+            "summary": {},
+            "memory": "## 记录长期记忆：成员事件\n\n已确认负责测试。",
+        }
+
+    monkeypatch.setattr("agent.rag.adapters.memory.preview_scope", fake_preview)
+    documents = await MemoryAdapter("owner").build_documents(scope=Scope(
+        owner_user_id="owner", platform="qq", bot_id="bot", group_id="group",
+        scope_type="member", scope_id="group:member-1",
+    ))
+
+    assert any(document.source_id == "memory" and "负责测试" in document.content
+               for document in documents)
+
+
 def test_rag_history_injection_hides_internal_identity_fields():
     result = {
         "source": "memory",

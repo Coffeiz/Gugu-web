@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 _DIR = Path(__file__).parent
@@ -94,6 +95,14 @@ def load_skill(key: str) -> str | None:
         if v["name"] == key:
             return v["body"]
     return None
+
+
+def skill_content_digest(key: str) -> str | None:
+    """返回当前 Skill 正文指纹，用于判断会话中的旧正文是否仍然有效。"""
+    body = load_skill(key)
+    if body is None:
+        return None
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 def resolve_skill_slug(key: str) -> str | None:

@@ -90,8 +90,6 @@ def context_layout_probe(*, phase: str, session: Any, snapshot: dict[str, Any] |
         "dynamic_tail_count": dynamic_tail_count,
         "history_loaded_count": (history_stats or {}).get("history_loaded_count"),
         "history_selected_count": (history_stats or {}).get("history_selected_count", len(history_meta)),
-        "history_selected_tokens": (history_stats or {}).get("history_selected_tokens"),
-        "history_token_budget": (history_stats or {}).get("history_token_budget"),
         "history_summary_count": (history_stats or {}).get("history_summary_count"),
         "history_baseline_message_id": (history_stats or {}).get("history_baseline_message_id"),
         "history_oldest_selected_id": (history_stats or {}).get("history_oldest_selected_id"),

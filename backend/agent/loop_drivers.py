@@ -310,8 +310,7 @@ class AnthropicDriver:
         # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
-        from agent.context.canonical_tool_history import render_events_for_provider
-        outbound = render_events_for_provider(messages)
+        outbound = ctx.adapter.render_history(messages)
         from agent.context.provider_history import render_anthropic_message_roles
         outbound = render_anthropic_message_roles(outbound, ctx.adapter)
         _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
@@ -490,8 +489,7 @@ class OpenAIDriver:
     async def run_round(self, client, ctx, messages):
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
-        from agent.context.canonical_tool_history import render_events_for_provider
-        outbound = render_events_for_provider(messages)
+        outbound = ctx.adapter.render_history(messages)
         # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
         # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
         # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
@@ -640,6 +638,7 @@ class _OllamaCtx:
     think: bool | str
     keep_alive: str
     base_url: str
+    adapter: Any
 
 
 @dataclass
@@ -708,6 +707,7 @@ class OllamaDriver:
             think=think,
             keep_alive=getattr(ai, "ollama_keep_alive", "5m") or "5m",
             base_url=adapter.resolve_native_base_url(ai),
+            adapter=adapter,
         )
 
     def update_tools(self, ctx, tool_names: list[str]) -> None:
@@ -715,10 +715,9 @@ class OllamaDriver:
         ctx.tools = registry.openai_schemas(tool_names)
 
     async def run_round(self, client, ctx, messages):
-        from agent.context.canonical_tool_history import render_events_for_provider
         payload = {
             "model": ctx.model,
-            "messages": _ollama_messages(render_events_for_provider(messages)),
+            "messages": _ollama_messages(ctx.adapter.render_history(messages)),
             "stream": True,
             "think": ctx.think,
             "keep_alive": ctx.keep_alive,

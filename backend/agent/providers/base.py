@@ -53,6 +53,16 @@ class ProviderAdapter:
         """该 provider 是否支持在 message content 上使用显式缓存锚点。"""
         return False
 
+    def cache_capabilities(self, model: str = ""):
+        """返回统一缓存能力描述，具体策略仍由现有驱动决定。"""
+        from agent.context.cache_policy import cache_capabilities
+        return cache_capabilities(self, model)
+
+    def render_history(self, messages):
+        """把 canonical history 转换为本 provider 的请求前历史。"""
+        from agent.context.canonical_tool_history import render_events_for_provider
+        return render_events_for_provider(messages)
+
     def uses_single_history_cache_anchor(self, model: str = "") -> bool:
         """是否只发送一个最新的历史缓存锚点。
 

@@ -70,7 +70,9 @@ const filterText   = ref('')
 const autoScroll   = ref(true)
 const connected    = ref(false)
 const tableWrap    = ref<HTMLElement | null>(null)
-let   sse: EventSource | null = null
+let   streamAbort: AbortController | null = null
+let   streamRetry: ReturnType<typeof setTimeout> | null = null
+let   streamRunning = true
 let   uid          = 0
 
 const sourceOptions = [
@@ -136,21 +138,56 @@ async function loadTail() {
   } catch {}
 }
 
-function startSSE() {
-  if (sse) { sse.close(); sse = null }
+async function startSSE() {
+  if (!streamRunning) return
+  if (streamRetry) { clearTimeout(streamRetry); streamRetry = null }
+  streamAbort?.abort()
+  const controller = new AbortController()
+  streamAbort = controller
   const token = localStorage.getItem('admin_token')
-  sse = new EventSource(`/api/v1/admin/debug/logs/stream?token=${token}`)
-  sse.onopen = () => { connected.value = true }
-  sse.onmessage = (e) => {
-    try {
-      const { source, line, time } = JSON.parse(e.data)
-      addLine(source, line, time)
-    } catch {}
-  }
-  sse.onerror = () => {
+
+  try {
+    const res = await fetch('/api/v1/admin/debug/logs/stream', {
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: controller.signal,
+    })
+    if (!res.ok || !res.body) throw new Error(`日志流连接失败（${res.status}）`)
+    connected.value = true
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (streamRunning) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const rows = buffer.split('\n')
+      buffer = rows.pop() ?? ''
+      for (const row of rows) {
+        if (!row.startsWith('data:')) continue
+        const raw = row.slice(5).trim()
+        if (!raw) continue
+        try {
+          const { source, line, time } = JSON.parse(raw)
+          addLine(source, line, time)
+        } catch {}
+      }
+    }
+  } catch (error) {
+    if ((error as { name?: string }).name !== 'AbortError') {
+      connected.value = false
+    }
+  } finally {
     connected.value = false
-    sse?.close()
-    setTimeout(startSSE, 3000)
+    if (streamRunning && !controller.signal.aborted) {
+      streamRetry = setTimeout(() => {
+        streamRetry = null
+        void startSSE()
+      }, 3000)
+    }
   }
 }
 
@@ -163,7 +200,11 @@ onMounted(async () => {
   startSSE()
 })
 
-onUnmounted(() => { sse?.close() })
+onUnmounted(() => {
+  streamRunning = false
+  if (streamRetry) clearTimeout(streamRetry)
+  streamAbort?.abort()
+})
 </script>
 
 <style scoped>

@@ -1,7 +1,7 @@
 # 统一知识召回与索引（通用 RAG）PRD
 
-> 状态：Phase 5 跨来源混合召回已完成；Phase 6 已建立数据库持久化统一索引首版，正在进行 ILIKE 与索引检索对照，尚未切换线上 Global Search。
-> Capability RAG 后置于 `PRD-LLM-9` 固定 Adapter Tool 完成之后。
+> 状态：Phase 5 跨来源混合召回与 RAG-4 评分过滤已完成；Phase 6 持久化索引首版与质量评估已完成。Global Search 仍保留 ILIKE 紧急开关，Rust 词法迁移的 musl 发布灰度见 PRD-RAG-3。
+> Capability RAG 已完成离线软推荐探针，正式运行时接入后置于 `PRD-LLM-9` 固定 Adapter Tool 与 shadow 验证之后。
 > 创建：2026-08-04
 > 最近更新：2026-08-24
 > 关联模块：`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/conversations.py`
@@ -20,8 +20,8 @@
 | Phase 2：统一索引管线与查询预算 | ✅ Memory 试点完成 | Memory 更新已接入 event 体系并发出独立 `rag.index.upsert` 信号；已实现按 owner 持久化 JSON 索引、异步串行更新、最多 3 次有限重试和脱敏生命周期诊断；查询优先读取索引，缺失时可重建回填；召回最多 10 条、单一 Memory 子来源最多 3 条、总输出 3000 字符；主动 `search_memory` 默认 5 条；embedding 作为可选补充，失败或缺缓存稳定退回 BM25 | 其他来源的持久化索引和生产规模升级移至 Phase 6 |
 | Phase 3：统一召回服务 | ✅ Memory 单来源完成 | 已抽取 `UnifiedRetriever` / `UnifiedRecallService`；统一候选结果、来源引用、父文档/正文去重、3000 字符预算和 snapshot 去重；显式 `search_memory` 保持 canonical tool round；历史问题启用同一服务的低成本 BM25 被动召回，并以 provider-compatible history 消息注入；LoopScope 增加脱敏 `Knowledge RAG recall` span，区分 `tool` / `passive` 入口；保留 `global_search`、`search_conversations` 等精确工具作为兜底 | Capability RAG 后置到 PRD-LLM-9 后续阶段；群聊 scope 规则在 Phase 4 落地 |
 | Phase 4：全量主动召回与 History 生命周期 | ✅ 已完成 | 每条用户消息统一执行 BM25；owner、group、member 共用 `UnifiedRetriever` 与 `MemoryAdapter`，群聊通过 scope、ACL 和两个记忆开关隔离；自动结果放在当前用户消息后的动态尾部，并保存为 canonical `knowledge-context`；按正文 hash 去重，LoopScope 记录模式、scope digest、命中数和注入状态 | 无；Embedding 仍只作为显式/限定条件召回能力，跨来源 RAG 后置 |
-| Phase 5：跨来源混合召回 | ✅ 首个跨来源闭环完成 | Project 已注册为第二个 Knowledge 来源；owner scope、稳定切片、BM25 候选、来源优先级、正文 hash 去重、父文档预算、合并引用和 3000 字符总预算统一由 `UnifiedRecallService` 收口；自动 RAG 已从 Memory-only 切换为 Memory + Project；`search_memory` 仍保持记忆专用工具；未引入独立 Ranking/Reranker | 文件、画布、对话等来源和生产规模索引继续后置到 Phase 6；跨来源标注集与质量评估后置 |
-| Phase 6：灰度与质量评估 | 🟡 持久化索引首版完成 | 新增 `knowledge_index_entries` 数据库投影和 owner 级重建入口，已覆盖 memory/project/file/note/canvas/calendar/scheduled_task/conversation；当前真实数据已完成一次聚合验证。现有“每次全量加载后临时构建 BM25”比 ILIKE 慢，暂不切换线上 Global Search | 先把数据库查询索引、进程内索引缓存或 PostgreSQL 原生检索做成可公平对照的实现；比较 Recall@K、命中数、P95 延迟和越权率，再决定是否替换 ILIKE；补齐更新事件、删除失效和生产规模灰度 |
+| Phase 5：跨来源混合召回 | ✅ 首个跨来源闭环完成 | Project 和 Knowledge 已注册为 Knowledge 来源；owner scope、稳定切片、BM25 候选、来源优先级、正文 hash 去重、父文档预算、合并引用和 3000 字符总预算统一由 `UnifiedRecallService` 收口；`search_memory(source=knowledge)` 已可显式召回用户知识；未引入独立 Ranking/Reranker | 文件、画布、对话等来源和生产规模索引继续后置到 `PRD-RAG-5`；跨来源标注集与质量评估后置 |
+| Phase 6：灰度与质量评估 | ✅ 已完成（RAG-4） | `knowledge_index_entries`、owner 级持久化索引、统一 `confidence` 过滤、去重、多样性和质量诊断已完成；质量复测覆盖 BM25/向量/hybrid 与无 embedding 回退。Global Search 继续保留 ILIKE 紧急开关，Rust 制品发布灰度由 RAG-3 Phase 5 管理 | 文件正文抽取、更新事件自动重建和生产规模切换仍按来源独立推进 |
 
 实施顺序：先按 `PRD-MEM-1` 完成 Memory 单来源闭环，再完成 Phase 4 的全量主动召回，
 随后扩展文件、日记、画布和对话等来源，最后进入跨来源灰度评估。Memory PRD
@@ -43,6 +43,8 @@
 | Knowledge RAG | Memory 与 Project 已具备 `SourceAdapter`、统一 Retriever、BM25 候选、跨来源去重/引用/预算和主动 history 注入；数据库统一索引首版已覆盖八类来源，保留按来源重建能力 | 文件正文抽取、更新事件自动重建、Global Search 切换和生产规模检索优化仍在 Phase 6 |
 
 当前边界：不能因为已有 `CapabilityIndex` 或 memory 向量缓存，就把 Capability RAG 或 Knowledge RAG 标记为完成。Capability Registry 与 Knowledge RAG 保持独立 namespace；前者负责能力元数据和固定 Adapter Tool / canonical Schema 注入，后者负责用户知识片段召回。Capability RAG 只有在 `PRD-LLM-9` Phase 5 完成后，才进入本 PRD 的后续阶段联动。
+
+评分边界：所有来源统一经过 RAG-4 的来源内归一化、RRF、`confidence` 过滤、去重和预算裁剪；调用方不得再按 BM25 原始分或 `normalized_score` 自行设阈值。
 
 ## 1. 背景与目标
 
@@ -169,7 +171,7 @@ Embedding；不能先算出相关性再补权限过滤。
 
 规则：
 
-- Capability RAG 只召回工具候选，不返回 Skill 正文。
+- Capability RAG 只召回工具候选，不返回 Skill 正文。当前已通过 `backend/scripts/diagnostics/capability_recommendation_probe.py` 进行离线验证，正式查询接口和运行时接入仍未打开。
 - Skill 只提供短描述和关联 metadata；正文仍由 `use_skill` 或明确加载规则按需读取。
 - 工具的完整 JSON Schema 不进入 RAG 文档，也不由 RAG 返回；候选命中后由 `PRD-LLM-9` 从 ToolRegistry 取 Schema。
 - Capability RAG 与 Knowledge RAG 共用分词、BM25、Embedding、缓存和诊断基础设施，但使用独立 namespace、索引和结果类型。

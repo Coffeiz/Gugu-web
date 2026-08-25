@@ -64,6 +64,8 @@ export function bindMermaidInteractions(container: HTMLElement): void {
   }
   const onPointerDown = (event: PointerEvent) => {
     if (event.button !== 0 || scale <= 1 || (event.target as HTMLElement).closest('.md-mermaid-controls')) return
+    event.preventDefault()
+    window.getSelection()?.removeAllRanges()
     dragging = true
     startX = event.clientX
     startY = event.clientY

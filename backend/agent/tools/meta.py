@@ -22,10 +22,14 @@ async def _use_skill(db, user_id, args: dict):
     if body is None:
         avail = "、".join(s["slug"] for s in _skills.skills_index())
         return {"error": f"没有名为「{name}」的技能", "available": avail}
+    content_digest = _skills.skill_content_digest(slug or name)
     return {
         "skill": slug or name,
         "content": body,
-        "_capability_usage": {"kind": "skill", "slug": slug or name, "loaded": True},
+        "_capability_usage": {
+            "kind": "skill", "slug": slug or name, "loaded": True,
+            "content_digest": content_digest,
+        },
     }
 
 

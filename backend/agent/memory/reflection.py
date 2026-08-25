@@ -37,6 +37,8 @@ _SYS_FALLBACK = (
     "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回；"
     "涉及具体时间点一律换算成绝对日期（如「7/6 晚」而非「今晚」），照 user 消息开头给的当前日期换算。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
+    "knowledge_candidate 只在本轮出现有明确主题、可长期复用的事实或规则时给，格式为 {should_reflect:boolean,query:string}；"
+    "普通闲聊、一次性进展、用户画像/习惯、纯工具操作时 should_reflect 必须为 false。"
     "correction 唯一判 true 的条件：错的主体是**你（咕咕）本人这次的回答/理解**（用户说「你错了/不是这个/我说的是…」）。"
     "错的若是**别人**一律 false：用户认自己错/确认你是对的（是我错了/你是对的/哦原来如此）、说第三方或外部信息错"
     "（他记错了/这数据源不对/官网写错了）、单纯聊「某事是错的」——都 false（句里有「错」字也不算）。"
@@ -48,7 +50,8 @@ _SYS_FALLBACK = (
     '"pattern_add": [{"text": "...", "kind": "observed", "importance": 4}], "pattern_remove": ["..."], '
     '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"correction": {"is_correction": false, "kind": ""}, '
-    '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
+    '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}, '
+    '"knowledge_candidate": {"should_reflect": false, "query": ""}}'
 )
 
 # 误判捕获:主信号是反思 LLM 判的 correction（见 _misperc_llm，能分感知误读/数据执行错）；
@@ -462,6 +465,18 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
+        # Knowledge 复用本轮 Memory 反思时机；只有 Memory 反思明确标记候选时才追加一次调用。
+        try:
+            from agent.knowledge.reflection import candidate_request, reflect_if_candidate
+            should_reflect, query = candidate_request(out)
+            if should_reflect:
+                mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
+                await reflect_if_candidate(
+                    user_id, user_msg, assistant_reply, settings, query,
+                    save_mode=mode, session_id=session_id,
+                )
+        except Exception:
+            _memdiff_log.debug("knowledge reflection skipped", exc_info=True)
         try:
             from agent.security.logsafe import fingerprint
             _memdiff_log.info(
@@ -479,6 +494,11 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
     except Exception:
         return False  # 反思是锦上添花，任何失败都不能影响对话
     return True
+
+
+def _explicit_knowledge_request(text: str) -> bool:
+    markers = ("记住", "保存到知识库", "加入知识库", "以后按这个规则", "把这个知识")
+    return any(marker in (text or "") for marker in markers)
 
 
 async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
@@ -504,6 +524,7 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
         f"——没变动就都给空数组、别重列旧内容"
         f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
         f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
+        f"+ knowledge_candidate（仅明确、可复用的事实/规则才标 true，并给一个用于 Knowledge RAG 的短查询）。"
     )
     # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
     # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。

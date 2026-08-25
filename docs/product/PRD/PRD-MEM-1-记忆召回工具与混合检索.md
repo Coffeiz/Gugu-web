@@ -1,6 +1,6 @@
 # 记忆召回工具与混合检索 PRD
 
-> 状态：设计完成，待实现（RAG-1 的 Memory 试点子 PRD）
+> 状态：Memory 召回与混合排序已实现；评分、过滤、诊断统一遵循 PRD-RAG-4
 > 创建：2026-08-04
 > 最近更新：2026-08-23
 > 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/conversations.py`、`backend/agent/tools/global_search.py`
@@ -20,7 +20,7 @@ IM scope 权限和工具行为。未来跨来源召回复用 RAG-1 的内部 Ret
 | Phase 2：embedding 混合召回 | 🟡 基础能力已实现 | 使用已有同模型向量缓存与 BM25 混合；缺缓存、未启用或失败时退回 BM25，持久化索引后置 |
 | Phase 3：IM scope 权限 | 🔲 待实现 | owner 跨群、member 当前群隔离 |
 | Phase 4：与历史 session 检索共用底层 | 🔲 待评估 | 保持工具边界不合并，复用检索服务 |
-| Phase 5：自动化测试与灰度 | 🔲 待实现 | 权限、排序、预算和无 embedding 回退测试 |
+| Phase 5：自动化测试与灰度 | ✅ 已完成（RAG-4） | 权限、统一 confidence 排序、预算、多样性和无 embedding BM25 回退测试已覆盖；质量对照见 RAG 质量复测报告 |
 
 阶段映射：Phase 1～3 是 RAG-1 的 Memory 单来源试点；Phase 4～5 对应 RAG-1
 的查询边界、质量验证和灰度要求。公共契约变化时先更新 RAG-1，再同步本 PRD 的
@@ -39,6 +39,10 @@ Memory 映射，不另起一套协议。
 5. member 在群聊中只能召回当前群记忆，不能读取 owner 或其他群记忆。
 
 本 PRD 不替换 `global_search`，也不把 `search_conversations` / `read_conversation` 合并进记忆工具。三者可以共用底层排序组件，但数据源、权限和返回格式保持独立。
+
+记忆来源不再维护独立的最低分、归一化或排序规则；统一交给
+`backend/agent/rag/scoring.py` 和 `UnifiedRecallService`，工具层只负责参数、scope
+和返回格式。
 
 ## 2. 功能需求
 

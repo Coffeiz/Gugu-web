@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
 from contextvars import ContextVar
 from typing import Any
 
@@ -19,70 +18,11 @@ _last_history_stats: ContextVar[dict[str, Any] | None] = ContextVar(
 )
 
 
-def _blocks(message) -> list[dict]:
-    value = getattr(message, "content_json", None)
-    if isinstance(value, dict):
-        return [value]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    return []
-
-
-def _has_tool_call(message) -> bool:
-    return any(block.get("type") in {"tool_call", "tool_use"} for block in _blocks(message))
-
-
-def _has_tool_result(message) -> bool:
-    return getattr(message, "role", None) == "tool" or any(
-        block.get("type") == "tool_result" for block in _blocks(message)
-    )
-
-
-def select_history_window(
-    messages_newest_first: Iterable,
-    *,
-    token_budget: int,
-    max_messages: int = HISTORY_MAX_MSGS,
-) -> list:
-    """按条数保留最近历史，兼容旧调用但不做本地 token 估算。
-
-    上下文是否超预算只能由 provider 的实际请求结果决定。``token_budget`` 保留
-    仅为兼容旧调用，绝不参与历史选择。
-    """
-    newest = list(messages_newest_first)[:max_messages]
-    chronological = list(reversed(newest))
-    # 兼容旧显式调用：将 token_budget 视作“字符安全上限”，不做 token 换算。
-    # 正常历史读取不会调用本函数。
-    units: list[list] = []
-    index = 0
-    while index < len(chronological):
-        unit = [chronological[index]]
-        if _has_tool_call(chronological[index]):
-            next_index = index + 1
-            while next_index < len(chronological) and _has_tool_result(chronological[next_index]):
-                unit.append(chronological[next_index])
-                next_index += 1
-            index = next_index
-        else:
-            index += 1
-        units.append(unit)
-    selected: list = []
-    used_chars = 0
-    for unit in reversed(units):
-        chars = sum(len(getattr(message, "content", "") or "") for message in unit)
-        if selected and used_chars + chars > max(1, int(token_budget)):
-            break
-        selected[0:0] = unit
-        used_chars += chars
-    return selected
-
 async def load_session_history(
     db,
     session_id: int,
     baseline_message_id: int = 0,
     *,
-    budget: object | None = None,
-    token_budget: int | None = None,
     max_messages: int = HISTORY_MAX_MSGS,
 ) -> list:
     """读取 baseline 之后的历史，按数据库消息 id 正序返回。
@@ -124,8 +64,6 @@ async def load_session_history(
     _last_history_stats.set({
         "history_loaded_count": len(newest),
         "history_selected_count": len(history) + len(summary),
-        "history_selected_tokens": None,
-        "history_token_budget": None,
         "history_selection": "provider-authoritative",
         "history_summary_count": len(summary),
         "history_baseline_message_id": int(baseline_message_id or 0),

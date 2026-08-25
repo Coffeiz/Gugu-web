@@ -6,9 +6,15 @@ from typing import Iterable
 
 from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, event_text
+from .canonical_context import HistoryEnvelope, normalize_history_message
 from .provider_history import strip_thinking_blocks
 
 _SUMMARY_HEADER = "## 早前对话摘要（供参考，非最新消息）"
+
+
+def build_canonical_history_envelopes(history: Iterable, *, source: str | None = None) -> list[HistoryEnvelope]:
+    """从 ORM/平台历史恢复 provider-neutral envelope，不改变原始消息。"""
+    return [normalize_history_message(message, source=source) for message in history]
 
 
 def _summary_content(message) -> str:

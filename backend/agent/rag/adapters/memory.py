@@ -43,7 +43,9 @@ class MemoryAdapter:
                 group_id, member_id = split_member_scope_id(scope.scope_id)
                 if group_id != scope.group_id or not member_id:
                     return []
-                scope_id = member_id
+                # 成员 scope 沿用 IM-3 的 group_id:platform_user_id 绑定，避免把
+                # 一个群里的成员事件泄漏到另一个群；profile/pattern/summary/memory
+                # 使用同一物理 scope，不能只取裸 member_id。
             memory_scope = MemoryScope(
                 self.user_id, scope.platform, scope.bot_id,
                 "group" if scope.scope_type == "group" else "platform-user",
@@ -53,10 +55,13 @@ class MemoryAdapter:
             if not isinstance(data, dict):
                 return []
             documents: list[IndexDocument] = []
-            sources = (("summary", "群组摘要"), ("profile", "群组资料"),
-                       ("daily", "群组近期记忆"), ("memory", "群组长期记忆")) \
-                if scope.scope_type == "group" else \
-                (("summary", "群友摘要"), ("profile", "群友资料"), ("pattern", "群友行为模式"))
+            sources = (
+                (("summary", "群组摘要"), ("profile", "群组资料"),
+                 ("daily", "群组近期记忆"), ("memory", "群组长期记忆"))
+                if scope.scope_type == "group" else
+                (("summary", "群友摘要"), ("profile", "群友资料"),
+                 ("pattern", "群友行为模式"), ("memory", "群友事件记忆"))
+            )
             for source_id, title in sources:
                 value = data.get(source_id)
                 text = self._scope_value_text(value)
@@ -76,6 +81,16 @@ class MemoryAdapter:
         for index, (title, section) in enumerate(split_sections(memory)):
             text = f"{title}\n{section}".strip() if title else section
             documents.extend(self._make_chunks(scope, "memory", text, title or "长期记忆", index))
+        return documents
+
+    async def build_daily_documents(self, *, scope: Scope) -> list[IndexDocument]:
+        """只构建 owner 的 daily 投影，供持久索引竞态时做轻量新鲜度修复。"""
+        if scope.owner_user_id != str(self.user_id) or scope.scope_type != "owner":
+            return []
+        daily = await store.read_daily_lines(self.user_id)
+        documents: list[IndexDocument] = []
+        for index, line in enumerate(daily):
+            documents.extend(self._make_chunks(scope, "daily", line, "近期记忆", index))
         return documents
 
     def _make_chunks(

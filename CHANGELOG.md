@@ -16,6 +16,8 @@
 
 ### 改进
 
+- **上下文预算收口**：统一 provider usage 驱动的 ContextBudget 压缩、baseline 提交与 session gate，避免同一会话并行生成和重复压缩。
+- **上下文旧逻辑清理**：删除未再使用的历史窗口兼容 API 和 token_budget 字符裁剪路径，Web/IM/定时任务统一走 baseline 后增量历史读取。
 - **Agent 运行链路**：统一 Web、IM 与 LoopScope 的 runner 入口，保留消息时间和附件上下文，补齐群聊上下文、消息脱敏、数据库迁移与多 worker 配置刷新支持。
 - **图片分析工具链**：扩展网络图片来源解析，支持相似图结果的 `image_url`/`img_src`/`url` 字段，并将每轮网络图片读取预算调整为最多 3 次。
 - **画布与项目交互**：持续收口 Interaction Runtime 的拖拽、landing、FLIP、连接线、摄像机和抽屉生命周期；优化画布平移与跨 Surface 落地性能，减少释放和落地过程中的布局工作。
@@ -31,6 +33,7 @@
 
 ### 测试
 
+- 补充 ContextBudget、压缩重试、baseline 生命周期、session pending gate 与 provider usage 阈值回归测试；上下文专项测试 64 passed，devserver 专项测试 67 passed。
 - 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`OPT-Cache-Tuning-2026-08-21.md`](docs/reports/OPT-Cache-Tuning-2026-08-21.md)。
 - 补充相似图 `image_url` 解析、网络图片读取次数限制、工具意图守卫和纯进度回复重试回归测试。
 

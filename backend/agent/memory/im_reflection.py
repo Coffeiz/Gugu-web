@@ -20,7 +20,13 @@ from agent.memory._llm import complete_json
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
-from agent.memory.scoped_store import read_scope, read_scope_json, write_scope_file, write_scope_json
+from agent.memory.scoped_store import (
+    merge_scope_event_memory,
+    read_scope,
+    read_scope_json,
+    write_scope_file,
+    write_scope_json,
+)
 from agent.memory.scopes import MemoryScope
 
 import logging
@@ -28,9 +34,9 @@ import logging
 _reflection_log = logging.getLogger("agent.memory.reflection")
 
 
-GROUP_DAILY_COMPACT_AT = 1000
-GROUP_DAILY_KEEP_RECENT = 500
-GROUP_DAILY_HARD_CAP = 1200
+GROUP_DAILY_COMPACT_AT = 500
+GROUP_DAILY_KEEP_RECENT = 300
+GROUP_DAILY_HARD_CAP = 600
 GROUP_MEMORY_MAX_TOKENS = 15000
 _DATE_RE = re.compile(r"20\d{2}-\d{1,2}-\d{1,2}")
 GROUP_PROFILE_TYPES = {"name", "nature", "rule", "role", "project", "preference", "note"}
@@ -491,7 +497,14 @@ async def _apply_output(
             keep_recent=GROUP_DAILY_KEEP_RECENT,
         ):
             try:
-                await _compact_group_daily(scope, entries, current.get("memory") or "", settings)
+                await _compact_group_daily(
+                    scope,
+                    entries,
+                    current.get("memory") or "",
+                    settings,
+                    member_ids={str(message.platform_user_id).strip() for message in messages
+                                if message.platform_user_id},
+                )
             except Exception as exc:
                 # 压缩失败不能让本轮反思重跑，避免 daily 重复追加。
                 if len(entries) >= GROUP_DAILY_HARD_CAP:
@@ -587,8 +600,15 @@ def _merge_pattern(current: Any, incoming: Any) -> list:
     return values
 
 
-async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_memory: str, settings) -> None:
-    """复用 owner 的固定批次策略压缩群 daily，保留未处理记录作为可追溯窗口。"""
+async def _compact_group_daily(
+    scope: MemoryScope,
+    entries: List[Any],
+    current_memory: str,
+    settings,
+    *,
+    member_ids: set[str] | None = None,
+) -> None:
+    """一次调用压缩群 daily，并派生成员事件记忆；成员失败不影响群主档。"""
     recent, batch, remaining = split_batch(
         entries, keep_recent=GROUP_DAILY_KEEP_RECENT,
     )
@@ -609,3 +629,49 @@ async def _compact_group_daily(scope: MemoryScope, entries: List[Any], current_m
         return
     await write_scope_file(scope, "memory.md", memory + "\n")
     await write_scope_file(scope, "daily.md", _render_daily(merge_remaining(recent, remaining)))
+
+    # 成员事件是群压缩的派生结果：只接受本批消息里出现过的 ID，避免模型凭空
+    # 生成成员或把群外信息写入 platform-user scope。每个成员独立失败隔离。
+    additions = result.get("member_memory_add") if isinstance(result, dict) else []
+    allowed_ids = member_ids or set()
+    members_doc = await read_scope_json(scope, "members.json")
+    known_member_ids = members_doc.get("members") if isinstance(members_doc, dict) else {}
+    if isinstance(known_member_ids, dict) and known_member_ids:
+        allowed_ids &= {str(value).strip() for value in known_member_ids}
+    seen_member_ids: set[str] = set()
+    for item in additions if isinstance(additions, list) else []:
+        if not isinstance(item, dict):
+            continue
+        member_id = str(item.get("platform_user_id") or "").strip()
+        text = str(item.get("text") or "").strip()
+        if (not member_id or not text or member_id not in allowed_ids
+                or member_id in seen_member_ids):
+            continue
+        seen_member_ids.add(member_id)
+        member_scope = MemoryScope(
+            scope.owner_user_id, scope.platform, scope.bot_id,
+            "platform-user", f"{scope.scope_id}:{member_id}",
+        )
+        try:
+            await merge_scope_event_memory(
+                member_scope,
+                text,
+                fallback_title=f"{scope.scope_id} 成员事件",
+            )
+            # platform-user 当前走 transient RAG；这里仅增量补向量，不做全局 GC，
+            # 防止一次成员写入删掉其他群/owner 的 RAG 向量缓存。
+            from agent.rag.adapters.memory import MemoryAdapter
+            from agent.rag.scope import member_scope as rag_member_scope
+            from agent.rag.vector_cache import sync_memory_index_vectors
+
+            documents = await MemoryAdapter(scope.owner_user_id).build_documents(
+                scope=rag_member_scope(
+                    scope.owner_user_id, scope.platform, scope.bot_id,
+                    scope.scope_id, member_id,
+                )
+            )
+            await sync_memory_index_vectors(scope.owner_user_id, documents, prune=False)
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.memory.member_event_write", exc)

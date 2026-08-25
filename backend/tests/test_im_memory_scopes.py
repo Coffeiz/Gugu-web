@@ -32,6 +32,14 @@ def test_memory_scope_rejects_path_traversal():
         MemoryScope(7, "qq", "bot", "group", "x").key("pattern.json")
 
 
+def test_platform_user_scope_includes_event_memory_file():
+    from agent.memory.scopes import MemoryScope
+
+    scope = MemoryScope("owner", "qq", "bot", "platform-user", "member-1")
+    assert scope.files == ("profile.json", "pattern.json", "summary.json", "memory.md")
+    assert scope.key("memory.md").endswith("/platform-users/member-1/memory.md")
+
+
 def test_format_im_memory_keeps_member_scope_separate():
     from agent.im.context_loader import format_im_memory
 
@@ -113,9 +121,9 @@ def test_group_daily_policy_and_markdown_roundtrip():
     entries = _daily_entries(text)
     assert entries == [("2026-08-04", "新决定"), ("2026-08-03", "旧记录")]
     assert _daily_entries(_render_daily(entries)) == entries
-    assert GROUP_DAILY_COMPACT_AT == 1000
-    assert GROUP_DAILY_KEEP_RECENT == 500
-    assert GROUP_DAILY_HARD_CAP == 1200
+    assert GROUP_DAILY_COMPACT_AT == 500
+    assert GROUP_DAILY_KEEP_RECENT == 300
+    assert GROUP_DAILY_HARD_CAP == 600
     assert GROUP_DAILY_KEEP_RECENT < GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
 
 

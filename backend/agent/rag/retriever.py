@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from agent.rag.models import RecallResult
+from agent.rag.models import RecallCandidate, RecallResult
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,13 @@ class RetrievalBatch:
     fallback_reason: str | None = None
     candidate_count: int = 0
     metadata: dict[str, str] = field(default_factory=dict)
+
+    def candidates(self) -> tuple[RecallCandidate, ...]:
+        """把来源结果转换为统一 Phase 1 候选，保留来源内 rank。"""
+        return tuple(
+            RecallCandidate.from_result(result, rank=index)
+            for index, result in enumerate(self.results, start=1)
+        )
 
 
 class SourceRetriever(Protocol):
@@ -78,4 +85,4 @@ class UnifiedRetriever:
         ]
 
 
-__all__ = ["RetrievalBatch", "SourceRetriever", "UnifiedRetriever"]
+__all__ = ["RecallCandidate", "RetrievalBatch", "SourceRetriever", "UnifiedRetriever"]

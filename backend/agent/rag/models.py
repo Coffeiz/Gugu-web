@@ -73,7 +73,7 @@ class IndexDocument:
             "version": self.version,
             "updated_at": self.updated_at,
         }
-        return {
+        result = {
             "source": self.source_type,
             "source_id": self.source_id,
             "title": self.title,
@@ -87,6 +87,11 @@ class IndexDocument:
             "updated_at": self.updated_at,
             "citation": citation,
         }
+        if self.source_type == "knowledge":
+            for key in ("confidence", "source_type", "source_ref", "source_label", "topic", "parent_id"):
+                if self.metadata.get(key):
+                    result[key] = self.metadata[key]
+        return result
 
 
 @dataclass(frozen=True)
@@ -96,6 +101,55 @@ class RecallResult:
 
     def as_public(self) -> dict[str, Any]:
         return self.document.as_public_result(self.score)
+
+
+@dataclass(frozen=True)
+class RecallCandidate:
+    """跨来源召回的统一内部候选契约。
+
+    Phase 1 只负责身份、来源、权限边界和诊断字段；归一化、RRF
+    与 confidence 计算在后续阶段统一实现。``raw_score`` 仅保留
+    来源内诊断意义，不能被调用方拿来横向比较不同检索器。
+    """
+
+    document: IndexDocument
+    source_type: str
+    source_id: str
+    scope: Scope
+    content_fingerprint: str
+    raw_score: float
+    rank: int
+    version: str
+    parent_document_id: str | None = None
+    normalized_score: float = 0.0
+    fused_score: float = 0.0
+    confidence: float = 0.0
+    source_quality: float = 0.0
+
+    @classmethod
+    def from_result(cls, result: RecallResult, *, rank: int) -> "RecallCandidate":
+        document = result.document
+        return cls(
+            document=document,
+            source_type=document.source_type,
+            source_id=document.source_id,
+            scope=document.scope,
+            content_fingerprint=document.content_hash,
+            raw_score=float(result.score),
+            rank=max(1, int(rank)),
+            version=document.version,
+            parent_document_id=document.parent_document_id,
+        )
+
+    def as_public(self) -> dict[str, Any]:
+        """保留旧 RecallResult 输出形状，同时提供统一诊断分数。"""
+        result = RecallResult(self.document, self.raw_score).as_public()
+        result["content_fingerprint"] = self.content_fingerprint
+        result["rank"] = self.rank
+        result["normalized_score"] = round(self.normalized_score, 6)
+        result["fused_score"] = round(self.fused_score, 6)
+        result["confidence"] = round(self.confidence, 6)
+        return result
 
 
 def stable_version(*parts: object) -> str:

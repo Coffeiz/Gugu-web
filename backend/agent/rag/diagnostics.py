@@ -13,7 +13,11 @@ _log = logging.getLogger("agent.rag")
 def record_recall(*, namespace: str, source_type: str, candidate_count: int,
                   hit_count: int, elapsed_ms: int, fallback_reason: str | None,
                   index_version: str, mode: str = "tool", scope_type: str = "owner",
-                  scope_key: str = "", injected: bool | None = None) -> None:
+                  scope_key: str = "", injected: bool | None = None,
+                  engine: str = "unknown", cache_hit: bool | None = None,
+                  cache_entries: int | None = None,
+                  cache_miss_reasons: list[str] | None = None,
+                  quality: dict[str, object] | None = None) -> None:
     """记录脱敏召回日志和 LoopScope span。"""
     scope_digest = hashlib.sha256(scope_key.encode()).hexdigest()[:12] if scope_key else ""
     try:
@@ -30,6 +34,11 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
             "scope_type": scope_type,
             "scope_digest": scope_digest,
             "injected": injected,
+            "engine": engine,
+            "cache_hit": cache_hit,
+            "cache_entries": cache_entries,
+            "cache_miss_reasons": cache_miss_reasons or [],
+            "quality": quality or {},
         }, ensure_ascii=False))
     except Exception:
         pass
@@ -45,6 +54,11 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
         scope_type=scope_type,
         scope_digest=scope_digest,
         injected=injected,
+        engine=engine,
+        cache_hit=cache_hit,
+        cache_entries=cache_entries,
+        cache_miss_reasons=cache_miss_reasons,
+        quality=quality,
     )
 
 
@@ -52,7 +66,11 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
                              candidate_count: int, hit_count: int,
                              elapsed_ms: int, fallback_reason: str | None,
                              index_version: str, mode: str, scope_type: str = "owner",
-                             scope_digest: str = "", injected: bool | None = None) -> None:
+                             scope_digest: str = "", injected: bool | None = None,
+                             engine: str = "unknown", cache_hit: bool | None = None,
+                             cache_entries: int | None = None,
+                             cache_miss_reasons: list[str] | None = None,
+                             quality: dict[str, object] | None = None) -> None:
     """把召回指标写入当前 LoopScope run；绝不携带 query、正文或 owner。"""
     try:
         from agent.runtime.loopscope_trace.state import _scope_run, _enabled
@@ -80,6 +98,11 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             scope_type=scope_type,
             scope_digest=scope_digest,
             injected=injected,
+            engine=engine,
+            cache_hit=cache_hit,
+            cache_entries=cache_entries,
+            cache_miss_reasons=cache_miss_reasons or [],
+            quality=quality or {},
             fallback_reason=fallback_reason or "",
             index_version=index_version,
         )
@@ -93,6 +116,10 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             "scope_type": scope_type,
             "scope_digest": scope_digest,
             "injected": injected,
+            "engine": engine,
+            "cache_hit": cache_hit,
+            "cache_entries": cache_entries,
+            "quality": quality or {},
         })
     except Exception:
         # 可观测性不能阻塞 RAG 或主 Agent。

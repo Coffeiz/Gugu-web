@@ -136,3 +136,37 @@ async def test_backend_switch_does_not_reuse_other_backend_cache(monkeypatch):
     assert isinstance(python_index, PythonLexicalIndex)
     assert rust_index is not python_index
     assert cache.stats()["entries"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
+    document = _document("user-a", "项目 alpha", "v1")
+    settings = SimpleNamespace(search=SimpleNamespace(
+        rust_lexical_backend="rust", rust_sidecar_enabled=True,
+        rust_sidecar_command="/opt/gugu-rag-sidecar", rust_sidecar_index_dir="/var/lib/gugu/rag-index",
+    ))
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+    calls = {"reuse": 0, "replace": 0}
+
+    class PersistentSidecar:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def reuse_if_current(self, revision):
+            calls["reuse"] += 1
+            return revision == "v1"
+
+        async def replace(self, _documents, _revision):
+            calls["replace"] += 1
+
+        async def search(self, query, *, documents, **_kwargs):
+            return []
+
+        async def close(self):
+            return None
+
+    monkeypatch.setattr("agent.rag.index_cache.RustSidecarClient", PersistentSidecar)
+    cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
+    first = await cache.get_transient("user-a", [document], revision="v1")
+    assert isinstance(first, object)
+    assert calls == {"reuse": 1, "replace": 0}

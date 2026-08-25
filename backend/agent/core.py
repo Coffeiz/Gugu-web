@@ -217,15 +217,15 @@ def _is_successful_tool_result(result: str) -> bool:
     return not isinstance(payload, dict) or not payload.get("error")
 
 
-def _loaded_skill_slugs(messages) -> set[str]:
+def _loaded_skill_slugs(messages) -> dict[str, str]:
     """从 Skill 的结构化使用标记找出已经进入上下文的正文。
 
     不扫描正文、不做关键词匹配；只读取 provider history 中 role=tool 或 tool_result
-    block 的 `_capability_usage` 标记。压缩后标记与正文一起消失，自然允许重新加载。
+    block 的 `_capability_usage` 标记和正文指纹。旧版没有指纹的标记视为过期。
     """
     import json as _json
 
-    loaded: set[str] = set()
+    loaded: dict[str, str] = {}
 
     def read_result(value):
         if isinstance(value, str):
@@ -238,8 +238,9 @@ def _loaded_skill_slugs(messages) -> set[str]:
         marker = value.get("_capability_usage")
         if isinstance(marker, dict) and marker.get("kind") == "skill" and marker.get("loaded"):
             slug = marker.get("slug")
-            if isinstance(slug, str) and slug:
-                loaded.add(slug)
+            digest = marker.get("content_digest")
+            if isinstance(slug, str) and slug and isinstance(digest, str) and digest:
+                loaded[slug] = digest
 
     for message in getattr(messages, "conversation", messages) or []:
         if not isinstance(message, dict):
@@ -550,10 +551,11 @@ class LLMRunner:
 
         async def compact_after_usage_threshold() -> bool:
             """统一检查 run 级 provider context usage，达到 90% 后压缩旧 history。"""
-            from agent.context.budget import SAFE_BUDGET_RATIO
+            # 90% 观察线只在 provider usage 层维护一份，避免 core 再复制预算语义。
+            from agent.context.compress_conv import BASELINE_UPDATE_RATIO
 
             context_tokens = max(1, int(getattr(ai, "context_tokens", 0) or 0))
-            if run_context_usage < int(context_tokens * SAFE_BUDGET_RATIO) or compaction_applied:
+            if run_context_usage < int(context_tokens * BASELINE_UPDATE_RATIO) or compaction_applied:
                 return False
             return await compact_after_provider_overflow()
 
@@ -782,13 +784,21 @@ class LLMRunner:
                     yield stream_event("tool_call", round_id=round_id, tool_call_id=tool_call_id,
                                        name=effective_tool_name, label=label, input=tc.input, verify=verify_mode,
                                        status="running")
-                    # Skill 正文第一次通过 use_skill 进入 history 后，后续轮次直接复用；
-                    # 只有 history 已被压缩/截断时，才会再次真正加载正文。
+                    # Skill 正文第一次通过 use_skill 进入 history 后，正文指纹一致时复用；
+                    # 文件更新或 history 中仍是旧版标记时，重新加载正文。
                     skill_slug = None
                     if tc.name == "use_skill":
                         from agent.skills import resolve_skill_slug
                         skill_slug = resolve_skill_slug(str((tc.input or {}).get("name") or ""))
-                    if skill_slug and skill_slug in loaded_skill_slugs:
+                    current_skill_digest = None
+                    if skill_slug:
+                        from agent.skills import skill_content_digest
+                        current_skill_digest = skill_content_digest(skill_slug)
+                    if (
+                        skill_slug
+                        and current_skill_digest
+                        and loaded_skill_slugs.get(skill_slug) == current_skill_digest
+                    ):
                         res = json.dumps({
                             "skill": skill_slug,
                             "already_loaded": True,
@@ -812,8 +822,8 @@ class LLMRunner:
                                 res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
                             finally:
                                 reset_dispatch_session(_dispatch_token)
-                        if skill_slug and _is_successful_tool_result(res):
-                            loaded_skill_slugs.add(skill_slug)
+                        if skill_slug and _is_successful_tool_result(res) and current_skill_digest:
+                            loaded_skill_slugs[skill_slug] = current_skill_digest
                     if tc.name == "ask_user":
                         # ask_user 是唯一会把当前 Run 挂起的普通工具：先把工具往返写进
                         # provider history，等待回答后由 interaction service 替换 pending

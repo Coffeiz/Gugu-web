@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, func, text, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import OVERRIDE_FILE, get_settings
+from app.core.config import OVERRIDE_FILE, get_settings, write_override_json
 from app.db.session import get_db
 from app.models import AgentUsage, ConversationSession, ConversationMessage, User
 
@@ -40,13 +40,16 @@ def _read_override() -> dict:
     if not OVERRIDE_FILE.exists():
         return {}
     try:
-        return json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+        data = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("用户运行配置文件损坏，已拒绝覆盖写入") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("用户运行配置文件格式无效，已拒绝覆盖写入")
+    return data
 
 
 def _write_override(data: dict):
-    OVERRIDE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_override_json(data)
     from app.core.config import invalidate_settings_cache
     invalidate_settings_cache()
 

@@ -151,6 +151,7 @@ async def search_persistent_index(
     source_types: set[str] | None = None,
     scope: Scope | None = None,
     limit: int = 10,
+    diagnostics: dict[str, object] | None = None,
 ) -> list[RecallResult]:
     """在持久化 chunk 上使用 Rust lexical index；权限先由 owner 收窄。"""
     requested_limit = max(1, min(int(limit), 50))
@@ -160,12 +161,30 @@ async def search_persistent_index(
     from agent.rag.index_cache import get_index_cache
 
     results = []
+    cache_hits: list[bool] = []
+    cache_miss_reasons: set[str] = set()
+    engines: set[str] = set()
     for source_type in types:
-        index = await get_index_cache().get(db, owner_user_id, source_type, scope)
+        index_diagnostics: dict[str, object] = {}
+        index = await get_index_cache().get(
+            db, owner_user_id, source_type, scope, diagnostics=index_diagnostics,
+        )
+        if index_diagnostics.get("engine"):
+            engines.add(str(index_diagnostics["engine"]))
+        if "cache_hit" in index_diagnostics:
+            cache_hits.append(bool(index_diagnostics["cache_hit"]))
+        reason = index_diagnostics.get("cache_miss_reason")
+        if reason:
+            cache_miss_reasons.add(str(reason))
         results.extend(await index.search(
             query, limit=requested_limit, source_types={source_type}, scope=scope,
         ))
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
+    if diagnostics is not None:
+        diagnostics["engine"] = next(iter(engines)) if len(engines) == 1 else "mixed"
+        diagnostics["cache_hit"] = bool(cache_hits) and all(cache_hits)
+        diagnostics["cache_entries"] = len(cache_hits)
+        diagnostics["cache_miss_reasons"] = ",".join(sorted(cache_miss_reasons))
     return results[:requested_limit]
 
 

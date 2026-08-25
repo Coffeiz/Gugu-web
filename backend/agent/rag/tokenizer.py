@@ -14,7 +14,13 @@ _TOKEN = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+")
 
 
 def tokenize(text: str) -> list[str]:
-    raw = _TOKEN.findall((text or "").lower())
+    normalized = (text or "").lower()
+    raw = _TOKEN.findall(normalized)
+    # 产品名/版本号常见写法会在空格处断开（GTA 6 / GTA6、F1 2026 等）。
+    # 保留原 token，同时补一个紧凑实体 token，让查询和记忆正文使用同一词法边界。
+    compact = re.sub(r"(?<=[a-z])\s+(?=\d)|(?<=\d)\s+(?=[a-z])", "", normalized)
+    compact_tokens = [token for token in _TOKEN.findall(compact) if token not in raw]
+    raw.extend(compact_tokens)
     output: list[str] = []
     for token in raw:
         if token.isascii():

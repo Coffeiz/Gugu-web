@@ -22,7 +22,6 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
             session_id,
             user_id,
             settings,
-            settings.ai.context_tokens,
             force=True,
         )
     except Exception:

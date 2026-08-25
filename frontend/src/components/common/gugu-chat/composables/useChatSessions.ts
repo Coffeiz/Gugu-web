@@ -186,18 +186,18 @@ export function useChatSessions(options: {
         data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
       )
       const shouldResume = Boolean(data.active && !staleActive)
-      // 结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，再等待其真实高度
-      // 连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成会话位置跳动。
+      // 初始历史消息结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，
+      // 再等待其真实高度连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成
+      // 会话位置跳动。这个隐藏阶段只覆盖历史快照，不能覆盖后面的流式续接。
       await options.scrollBottom(true)
+      await options.waitForStableScrollLayout()
+      if (viewGeneration !== options.getViewGeneration()) return
+      options.setSessionSettling(false)
       if (shouldResume) {
         await options.resumeStream(id)
       }
       if (viewGeneration !== options.getViewGeneration()) return
       await options.scrollBottom(true)
-      await options.waitForStableScrollLayout()
-      await options.scrollBottom(true)
-      await options.waitForStableScrollLayout()
-      options.setSessionSettling(false)
     } catch {
       if (viewGeneration === options.getViewGeneration()) messages.value = previousMessages
       if (viewGeneration === options.getViewGeneration()) options.setSessionSettling(false)

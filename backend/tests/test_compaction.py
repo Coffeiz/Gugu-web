@@ -8,6 +8,7 @@ from agent.context.compaction import (
     validate_compacted_shape,
     _is_system_injection,
     _atomic_message_units,
+    _drop_orphan_tool_results,
     _generate_compact_summary,
 )
 from agent.context.tokens import content_text, estimate_tokens, message_text
@@ -18,7 +19,7 @@ def _make_msg(role: str, text: str) -> dict:
 
 
 def _make_tool_result(text: str) -> dict:
-    return {"role": "user", "content": [{"type": "tool_result", "content": text}]}
+    return {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call-1", "content": text}]}
 
 
 @pytest.fixture(autouse=True)
@@ -309,8 +310,8 @@ class TestCompactContext:
         """同一 session 的 run 收尾 baseline 只启动一次，并使用 provider usage。"""
         calls = []
 
-        async def fake_compress(session_id, user_id, settings, token_budget, *, force=False):
-            calls.append((session_id, user_id, token_budget, force))
+        async def fake_compress(session_id, user_id, settings, *, force=False):
+            calls.append((session_id, user_id, force))
             return False
 
         monkeypatch.setattr(compress_conv, "compress_if_needed", fake_compress)
@@ -322,7 +323,7 @@ class TestCompactContext:
             await compress_conv.wait_for_baseline_update(88)
 
         asyncio.get_event_loop().run_until_complete(exercise())
-        assert calls == [(88, "user", 1000, False)]
+        assert calls == [(88, "user", False)]
 
     def test_session_run_lock_key_uses_canonical_session_id(self):
         from types import SimpleNamespace
@@ -356,6 +357,21 @@ class TestCompactContext:
             {"role": "user", "content": "现在"},
         ]
         assert _atomic_message_units(messages) == [[0, 1], [2]]
+
+    def test_compaction_drops_orphan_result_before_selecting_recent_window(self):
+        messages = [
+            _make_msg("user", "旧历史"),
+            {"role": "assistant", "tool_calls": [{"id": "call-a"}], "content": None},
+            {"role": "tool", "tool_call_id": "call-b", "content": "孤儿结果"},
+            _make_msg("user", "当前问题"),
+        ]
+        cleaned = _drop_orphan_tool_results(messages)
+        assert cleaned == [messages[0], messages[1], messages[3]]
+
+    def test_compaction_keeps_matching_openai_result(self):
+        call = {"role": "assistant", "tool_calls": [{"id": "call-a"}], "content": None}
+        result = {"role": "tool", "tool_call_id": "call-a", "content": "结果"}
+        assert _drop_orphan_tool_results([call, result]) == [call, result]
 
 
 class TestVerifyPrefixConsistency:

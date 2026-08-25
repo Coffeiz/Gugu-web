@@ -552,12 +552,21 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   display: inline-flex; align-items: center; gap: 5px;
   margin: 3px 4px 3px 0; padding: 5px 12px;
   font-size: 12.5px; font-weight: 600; text-decoration: none;
-  color: #fff; background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  border-radius: 999px; box-shadow: 0 2px 8px rgba(123,127,178,0.28);
-  cursor: pointer; transition: box-shadow 0.12s, transform 0.15s ease, opacity 0.15s ease; user-select: none;
+  color: var(--content-on-accent); background: var(--gugu-chat-send-bg);
+  border: 1px solid color-mix(in srgb, var(--action-primary) 22%, transparent);
+  border-radius: var(--radius-pill); box-shadow: var(--elevation-card);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    box-shadow var(--motion-hover-control) var(--motion-ease-standard),
+    transform var(--motion-hover-control) var(--motion-ease-standard),
+    opacity var(--motion-hover-control) var(--motion-ease-standard);
+  user-select: none;
 }
 :deep(.msg-bubble.md-body a[href^="gugu://"]:hover) {
-  box-shadow: 0 4px 14px rgba(80,90,110,0.3); opacity: 1;
+  background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
+  box-shadow: var(--elevation-card-hover); opacity: 1;
 }
 :deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 

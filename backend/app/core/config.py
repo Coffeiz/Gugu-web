@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
@@ -180,7 +182,10 @@ class SearchSettings(BaseModel):
     )
     rust_sidecar_enabled: bool = Field(True, description="是否启用 Rust/Tantivy 词法检索 sidecar（默认开启）")
     rust_sidecar_command: str = Field("", description="Rust 词法 sidecar 可执行文件及参数；为空则使用项目内置构建物")
-    rust_sidecar_index_dir: str = Field("", description="Rust sidecar 持久化索引目录；为空使用内存索引")
+    rust_sidecar_index_dir: str = Field(
+        "var/rag-index",
+        description="Rust sidecar 持久化索引目录；默认保存在 backend/var/rag-index",
+    )
     rust_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="Rust sidecar 单次请求超时毫秒数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
@@ -397,6 +402,36 @@ def _deep_merge(base: dict, override: dict) -> None:
             base[k] = v
 
 
+def write_override_json(data: dict) -> None:
+    """原子写入用户运行配置，避免读到半截 JSON 或留下半写文件。"""
+    OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{OVERRIDE_FILE.name}.",
+        suffix=".tmp",
+        dir=OVERRIDE_FILE.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp_name, 0o600)
+        os.replace(temp_name, OVERRIDE_FILE)
+        dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except FileNotFoundError:
+            pass
+        raise
+
+
 # ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
 # 旧实现用 @lru_cache，但 lru_cache 是进程内单例——uvicorn --workers N 时，
 # Worker A 写 override.json 并 cache_clear() 只清自己的缓存，Worker B 仍在用旧值。
@@ -435,7 +470,7 @@ async def save_override(patch: dict) -> AppSettings:
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
     _deep_merge(existing, patch)
-    OVERRIDE_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_override_json(existing)
     invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:

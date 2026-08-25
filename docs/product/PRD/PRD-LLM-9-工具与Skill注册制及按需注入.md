@@ -1,8 +1,8 @@
 # 工具与 Skill 注册制及按需注入
 
-> 状态：Phase 1～5 已完成；固定 Adapter Tool 与 canonical history 已接入，下一阶段接入 Capability RAG。
+> 状态：Phase 1～5 已完成；Capability RAG 软推荐已完成离线首版验证，运行时灰度接入和质量优化后置。
 > 创建：2026-08-22
-> 最近更新：2026-08-23
+> 最近更新：2026-08-25
 > 所属层：Agent / Capability Registry / Prompt Assembly
 > 关联模块：`backend/agent/tools/base.py`、`backend/agent/tools/__init__.py`、`backend/agent/skills/__init__.py`、`backend/agent/context/builder.py`、`backend/agent/loop_drivers.py`、`backend/agent/prompts/skills.md`
 > 关联测试：`backend/tests/test_tool_schema_validation.py`、`backend/tests/test_tool_isolation.py`、LoopScope context/tool schema 相关测试
@@ -15,11 +15,11 @@
 |---|---|---|
 | Phase 0：现状审查与协议草案 | ✅ 已完成 | 已完成代码、Prompt、Provider、权限、LoopScope 和测试盘点；统一协议已形成文档草案，代码层尚未冻结。 |
 | Phase 1：统一能力注册协议 | ✅ 已完成 | 90 个工具和 10 个 Skill 已具备可校验短描述、类别/关联 metadata、注册适配器、不可变快照和社区 README；旧 Skill 字段已迁移，注册与关联回归已补齐。 |
-| Phase 2：能力目录基础设施 | ✅ 非 RAG 部分完成 | 已提供能力快照、授权交集和可替换 selector；Capability RAG 索引、候选召回、排序和每轮推荐暂不实施。 |
-| Phase 3：按需 Schema / Skill 正文基础设施 | ✅ 非 RAG 部分完成 | 三类 Driver 已支持 selected tools，Skill 使用标记可跨同一 session 的 history 复用，已提供 emergency 全量 Schema 开关；当前不启用每轮候选推荐。 |
+| Phase 2：能力目录基础设施 | ✅ 完成 | 已提供能力快照、授权交集和可替换 selector；Capability RAG 不复制注册表和权限逻辑。 |
+| Phase 3：按需 Schema / Skill 正文基础设施 | ✅ 完成 | 三类 Driver 已支持 selected tools，Skill 使用标记可跨同一 session 的 history 复用，已提供 emergency 全量 Schema 开关。 |
 | Phase 4：迁移、观测与回归 | ✅ 基础稳定化完成 | 已完成旧字段清理、Admin 能力目录、Provider Schema parity、脱敏诊断和关键行为回归；独立基线报告仍待后续性能任务。Phase 1～4 的文件级基础设施已完成。 |
 | Phase 5：固定 Adapter Tool 与 canonical history | ✅ 已完成 | Provider 只注册固定 `call_tool`、`use_skill`、`ask_user`；业务 Schema、Skill 关联和调用历史使用 canonical event 追加并跨 Provider 重建。 |
-| Phase 6：Capability RAG 与推荐 | 🔲 后置 | 在固定 Adapter Tool 链路稳定后，与 `PRD-RAG-1` 联动实现工具推荐、推荐原因、命中率观测和灰度；不缩减授权工具目录。 |
+| Phase 6：Capability RAG 与推荐 | ✅ 离线首版完成，运行时接入后置 | 已完成真实注册表上的软推荐探针，复用统一分词并验证授权、启用、平台、权限和置信度筛选；推荐只调整顺序，不缩减授权目录。运行时接入、质量指标和灰度仍待后续。 |
 | Phase 7：插件/社区扩展 | 🔲 后续 | 在注册制、Adapter Tool 和 RAG 稳定后，再开放外部包、签名和隔离加载。 |
 
 > **文件级完成判定（2026-08-23）**：Phase 1～5 的注册表、能力快照、固定 Adapter、canonical event、跨 Provider history adapter、`ToolCall/ToolResult` 领域对象和基础回归测试均已落地。旧 `declare_tools` 动态注册路径已删除，固定 Adapter 是当前唯一能力注入路径。
@@ -34,7 +34,7 @@
 |---|---|---|---|
 | 注册迁移收尾 | 旧 `description/when` 解析兼容、完整 Provider parity | Phase 4 | 已删除旧 Skill 字段读取兼容；Provider 统一由 Tool contract 生成两种 Schema，并补 parity 回归。 |
 | 观测与安全回归 | LoopScope 能力目录指标、权限/确认门/写工具回归 | Phase 4 | 已记录脱敏目录指标并补关键回归，不接入候选推荐。 |
-| RAG 依赖项 | Capability RAG 索引、BM25/Embedding、每轮软推荐、推荐命中率评估 | Phase 6，依赖 `PRD-RAG-1` | 必须在 Phase 5 固定 Adapter Tool 链路稳定后实施。 |
+| RAG 依赖项 | Capability RAG 索引、BM25/Embedding、运行时软推荐、推荐命中率评估 | Phase 6 / `PRD-RAG-1` | 离线推荐探针已完成；正式接入仍需复用 RAG 检索实现并进行 shadow/灰度验证。 |
 
 因此，Phase 1～3 的“代码基础设施”已经完成；未完成标记主要代表迁移、观测和 RAG 接入，不代表注册表、Skill 标记或三类 Provider 的基础能力缺失。
 
@@ -474,9 +474,9 @@ Skill 文件名负责 `slug`，frontmatter 负责注册 metadata，正文负责�
 
 未通过过滤的能力不能进入模型目录，避免模型尝试调用必然被拒绝的工具。
 
-### FR-REG-5：Capability RAG 软推荐接口（⏸️ 后置，依赖 PRD-RAG-1）
+### FR-REG-5：Capability RAG 软推荐接口（✅ 离线首版；运行时接入后置）
 
-本 PRD 不实现 BM25、Embedding 或候选排序算法，只定义注册信息如何提供给统一 RAG 层，以及如何消费 RAG 返回的工具推荐：
+当前已完成离线推荐探针，但尚未把推荐接入 Agent Loop。本 PRD 不复制 BM25、Embedding 或候选排序算法，只定义注册信息如何提供给统一 RAG 层，以及如何消费 RAG 返回的工具推荐：
 
 - Capability RAG 索引工具的名称、短描述、类别、关键词、平台和关联 Skill metadata。
 - 权限、平台、工作区和会话 scope 由 Runtime 先生成授权视图；权限是硬安全边界，RAG 不复制也不替代它。
@@ -491,6 +491,14 @@ Skill 文件名负责 `slug`，frontmatter 负责注册 metadata，正文负责�
 - Capability RAG 只负责推荐，不执行 handler、不改变数据库状态、不代替 Agent 规划。
 
 `capabilities/selector.py` 只作为 RAG 结果适配层，负责把推荐结果排在授权工具全集前面，不复制 RAG 的分词、BM25 或 Embedding 实现，也不执行候选裁剪。
+
+离线验证脚本：
+
+```text
+backend/scripts/diagnostics/capability_recommendation_probe.py
+```
+
+当前验证覆盖天气、文件下载、画布整理、未授权 Shell、模糊闲聊和 IM 平台语境。结果表明天气和文件下载可以命中关联工具，未授权 Shell 不会进入推荐，模糊请求会回退；画布工具仍存在同类工具排序不够细的问题，暂不作为运行时默认推荐依据。
 
 ### FR-REG-6：按需注入完整工具 Schema（✅ 固定 Adapter 已完成）
 
@@ -938,11 +946,14 @@ Phase 6 验收目标：
 
 完成标准：业务工具声明不再改变 Provider 原生 tools 前缀；Skill 和工具 Schema 可在同一 Session 的后续 round/run 通过 canonical history 复用；三类 Provider 能从同一内部格式重建合法请求，权限和执行语义不变。
 
-### Phase 6：Capability RAG 与每轮软推荐（后置）
+### Phase 6：Capability RAG 与每轮软推荐
 
-- 🔲 与 `PRD-RAG-1` 对齐索引字段和 Capability RAG 查询接口。
-- 🔲 使用 `filter_tool_names()` 和 `_filter_shell_tool()` 生成 RAG 可用的授权视图；安全过滤仍由 Runtime 执行，不由 RAG 复制。
-- 🔲 使用 BM25/Embedding 生成工具推荐；本 PRD 不复制检索算法。
+- ✅ 离线推荐探针已基于真实 Tool/Skill Registry 运行，关联 Skill metadata 已纳入工具检索文本。
+- ✅ 推荐测试保留现有 RAG 边界：授权、启用状态、平台、权限为硬筛选，置信度低于阈值不推荐。
+- ✅ 推荐为空或未命中时保留完整授权短描述目录；推荐结果不改变固定 Provider tools。
+- ✅ 每轮默认最多推荐 5 个工具；该上限只限制推荐列表，不限制完整授权工具目录。
+- 🔲 与 `PRD-RAG-1` 对齐正式索引字段和 Capability RAG 查询接口。
+- 🔲 使用统一 RAG 的 BM25/Embedding 生成运行时工具推荐；本 PRD 不复制检索算法。
 - 🔲 将推荐结果作为短描述目录顺序或提示，不改变固定 Provider tools，也不硬过滤授权工具。
 - 🔲 评估推荐命中率、推荐为空率、Schema 成本、P95 延迟和安全回归，完成灰度后再打开默认开关。
 - 🔲 将推荐数量、召回耗时、推荐理由和能力注入指标纳入 LoopScope 性能报告及现有 prompt/cache 报告。
@@ -950,7 +961,7 @@ Phase 6 验收目标：
 - 🔲 完成全量后端 CI、工具契约检查、确认门检查、权限检查和关键 E2E。
 - 🔲 更新 `docs/product/PRD/README.md`、`docs/agent/30-提示词优化指南.md`、技能文案规范和 Changelog。
 
-完成标准：Capability RAG 只提供授权工具推荐，不改变固定 Adapter Tool 链路，不承担 Schema 生成、权限判断或工具执行。
+当前完成边界：离线探针已经证明推荐和硬筛选边界可独立验证；正式完成仍需接入统一 RAG、LoopScope 观测和 shadow/灰度。Capability RAG 只提供授权工具推荐，不改变固定 Adapter Tool 链路，不承担 Schema 生成、权限判断或工具执行。
 
 ### Phase 7：插件/社区能力（后续）
 
@@ -991,7 +1002,7 @@ Phase 6 验收目标：
 
 ### 6.3 灰度和回滚
 
-- Phase 6 使用 shadow mode，不改变实际工具推荐和固定 Adapter Tool 注入。
+- 当前离线探针不改变实际工具推荐和固定 Adapter Tool 注入；运行时接入必须先使用 shadow mode。
 - Phase 6 完成后增加配置开关，支持按用户、平台或 provider 灰度。
 - 出现工具成功率、确认门或上下文错误明显回归时，关闭按需注入开关即可恢复旧 Schema 注入路径。
 - 回滚不删除注册 metadata；只切换 injector 策略，保证迁移可继续。

@@ -124,6 +124,24 @@ async def test_post_compat_mode_sends_plain_text(monkeypatch):
     }]
 
 
+async def test_post_removes_web_only_gugu_links_for_qq(monkeypatch):
+    monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
+    calls = []
+
+    async def fake_request(channel_id, method, path, json_body=None, **kw):
+        calls.append(json_body)
+
+    monkeypatch.setattr(qq, "_qq_request", fake_request)
+
+    await qq._post(
+        "bot-1", "ou_1", "文件已保存：[打开文件](gugu://open-file/123)", "msg-1", "smart"
+    )
+
+    assert calls[0]["msg_type"] == 0
+    assert calls[0]["content"] == "文件已保存：打开文件"
+    assert "gugu://" not in str(calls[0])
+
+
 async def test_post_smart_mode_only_uses_markdown_for_markdown_content(monkeypatch):
     monkeypatch.setattr(qq, "_next_seq", _fake_next_seq)
     calls = []

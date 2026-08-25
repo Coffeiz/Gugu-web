@@ -33,6 +33,7 @@ from uuid import UUID
 
 from app.core import redis as R
 from app.core.redaction import redact, diag_log, diag_log_raw
+from agent.outbound import sanitize_im_links
 
 _log = logging.getLogger("agent.gateway.qq")
 
@@ -749,6 +750,21 @@ class QQAPIError(Exception):
         super().__init__(f"QQ API {method} {path} 失败 status={status}")
 
 
+def _qq_error_summary(exc: BaseException) -> dict[str, object]:
+    """提取 QQ 错误的结构化诊断字段，不把请求正文写进普通日志。"""
+    if not isinstance(exc, QQAPIError):
+        return {}
+    body = exc.body
+    if not isinstance(body, dict):
+        return {"status": exc.status, "body_type": type(body).__name__}
+    summary: dict[str, object] = {"status": exc.status}
+    for key in ("code", "err_code", "message", "msg"):
+        value = body.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            summary[key] = value
+    return summary
+
+
 def _qq_is_transient(exc: BaseException) -> bool:
     """判定失败是否值得重试：真正瞬时的（超时/连接错/5xx/429）才重试；401 也算——
     换新 token 重发是既有的、安全的做法（旧 token 从未被 QQ 处理成功，重发不会重复），
@@ -852,7 +868,7 @@ class QQPrivateTextStream:
                 "input_mode": "replace",
                 "input_state": input_state,
                 "content_type": self.content_type,
-                "content_raw": self.full_text,
+                "content_raw": sanitize_im_links(self.full_text),
                 "msg_seq": self.msg_seq,
                 "index": self.frame_index,
             }
@@ -960,6 +976,7 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
                 message_format: str | None = None):
     """按会话格式发送 QQ 文本；Markdown 被拒时回退纯文本。"""
     path = f"/v2/users/{openid}/messages"
+    text = sanitize_im_links(text)
     msg_type = _message_type(text, message_format)
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
@@ -983,6 +1000,7 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
                       message_format: str | None = None):
     """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
+    text = sanitize_im_links(text)
     msg_type = _message_type(text, message_format)
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
@@ -1107,6 +1125,7 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "attempt": attempt,
                 "error": type(e).__name__,
                 "transient": _qq_is_transient(e),
+                "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
@@ -1157,6 +1176,7 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "attempt": attempt,
                 "error": type(e).__name__,
                 "transient": _qq_is_transient(e),
+                "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")

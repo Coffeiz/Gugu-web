@@ -27,6 +27,7 @@ async def sync_memory_index_vectors(
     *,
     force: bool = False,
     strict: bool = False,
+    prune: bool = True,
 ) -> int:
     """按 RAG 文档契约增量生成 profile/daily/memory 向量。
 
@@ -42,10 +43,11 @@ async def sync_memory_index_vectors(
         vecs = await store.read_memory_vecs(user_id)
         tag = embedding.model_tag()
         alive = {key for document in docs if (key := cache_key(document))}
-        vecs = {
-            key: value for key, value in vecs.items()
-            if not key.startswith(RAG_VECTOR_PREFIX) or key in alive
-        }
+        if prune:
+            vecs = {
+                key: value for key, value in vecs.items()
+                if not key.startswith(RAG_VECTOR_PREFIX) or key in alive
+            }
         changed = False
         written = 0
         seen: set[str] = set()
@@ -73,4 +75,20 @@ async def sync_memory_index_vectors(
         return 0
 
 
-__all__ = ["RAG_VECTOR_PREFIX", "cache_key", "sync_memory_index_vectors"]
+async def sync_knowledge_index_vectors(
+    user_id: object,
+    documents: Iterable[IndexDocument],
+    *,
+    force: bool = False,
+    strict: bool = False,
+) -> int:
+    """同步 Knowledge 文档向量，复用 Memory 的 owner 缓存和 TTL。"""
+    return await sync_memory_index_vectors(
+        user_id, documents, force=force, strict=strict, prune=False,
+    )
+
+
+__all__ = [
+    "RAG_VECTOR_PREFIX", "cache_key", "sync_knowledge_index_vectors",
+    "sync_memory_index_vectors",
+]

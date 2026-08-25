@@ -2,6 +2,7 @@ from agent.memory.event_memory import (
     EVENT_HEADING_PREFIX,
     deduplicate_event_sections,
     event_hash,
+    merge_event_memory,
     normalize_event_memory,
     parse_event_sections,
 )
@@ -43,6 +44,17 @@ def test_deduplicate_event_sections_merges_same_event_and_drops_exact_duplicate(
     assert result.count("## 记录长期记忆：工具优化") == 1
     assert result.count("2026-08-20 完成压缩") == 1
     assert "2026-08-21 补充测试" in result
+
+
+def test_merge_event_memory_keeps_existing_sections_and_deduplicates_increment():
+    result = merge_event_memory(
+        "## 记录长期记忆：旧事件\n\n已确认方案。",
+        "2026-08-24 成员确认负责测试。",
+        fallback_title="成员事件",
+    )
+    assert "旧事件" in result
+    assert "成员事件" in result
+    assert result.count("已确认方案") == 1
 
 
 @pytest.mark.asyncio

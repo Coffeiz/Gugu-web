@@ -19,11 +19,12 @@ import app.db.session as db_session
 from agent.memory import embedding
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.hybrid import hybrid_results
-from agent.rag.models import Scope
+from agent.rag.models import RecallCandidate, Scope
 from agent.rag.retriever import RetrievalBatch
 from agent.rag.scope import owner_scope, group_scope
 from agent.rag.service import _load_cached_vectors
 from agent.rag.index_cache import search_documents_with_cache
+from agent.rag.scoring import confidence_for, normalize_scores, filter_confidence
 from agent.rag.rust_sidecar import RustSidecarUnavailable
 from app.models import MemoryReflectionCursor, User
 
@@ -75,6 +76,39 @@ def public(item, score: float, *, mode: str, norm: float | None = None) -> dict[
     return value
 
 
+def quality_views(query: str, results, *, top_k: int) -> dict[str, Any]:
+    """输出四种离线策略的脱敏候选，线上只使用 confidence 这一条流水线。"""
+    raw = list(results[:max(top_k, 20)])
+    candidates = [
+        RecallCandidate.from_result(item, rank=index)
+        for index, item in enumerate(raw, start=1)
+    ]
+    normalized = normalize_scores(candidates)
+    normalized_kept = [item for item in normalized if item.normalized_score >= 0.35]
+    confidence_candidates = [
+        confidence_for(query, item.__class__(
+            **{**item.__dict__, "fused_score": item.normalized_score},
+        ))
+        for item in normalized
+    ]
+    confidence_kept, confidence_stats = filter_confidence(
+        query, confidence_candidates, limit=top_k,
+    )
+    return {
+        "unfiltered": [public(item, item.score, mode="unfiltered") for item in raw[:top_k]],
+        "raw_score": [public(item, item.score, mode="raw_score") for item in raw[:top_k]],
+        "normalized_score": [
+            public(item, item.raw_score, mode="normalized_score", norm=item.normalized_score)
+            for item in normalized_kept[:top_k]
+        ],
+        "confidence": [
+            public(item.document, item.confidence, mode="confidence", norm=item.confidence)
+            for item in confidence_kept
+        ],
+        "confidence_stats": confidence_stats,
+    }
+
+
 async def lexical(user_id: str, documents, query: str, limit: int):
     try:
         return await search_documents_with_cache(user_id, documents, query, limit=limit)
@@ -114,6 +148,7 @@ async def one_scope(user_id: str, label: str, scope: Scope, queries: tuple[tuple
                 vector_results = [public(doc, score, mode="vector") for score, doc in scored[:top_k]]
         hybrid = []
         hybrid_norm = []
+        quality = {}
         if query_vector:
             mixed, fallback = hybrid_results(
                 lexical_results, documents, query_vector, vectors, limit=max(top_k, 20)
@@ -125,6 +160,9 @@ async def one_scope(user_id: str, label: str, scope: Scope, queries: tuple[tuple
                        norm=(float(item.score) / peak if peak > 0 else 0.0))
                 for item in mixed[:top_k]
             ]
+            quality = quality_views(query, mixed, top_k=top_k)
+        else:
+            quality = quality_views(query, lexical_results, top_k=top_k)
         output["queries"].append({
             "label": query_label,
             "query_fp": fp(query),
@@ -134,6 +172,7 @@ async def one_scope(user_id: str, label: str, scope: Scope, queries: tuple[tuple
             "vector": vector_results,
             "hybrid": hybrid,
             "hybrid_normalized": hybrid_norm,
+            "quality_strategies": quality,
         })
     return output
 

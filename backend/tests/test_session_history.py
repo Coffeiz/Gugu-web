@@ -3,11 +3,7 @@
 import asyncio
 
 from agent.context.budget import ContextBudget
-from agent.context.session_history import (
-    consume_history_stats,
-    load_session_history,
-    select_history_window,
-)
+from agent.context.session_history import consume_history_stats, load_session_history
 
 
 class _Result:
@@ -49,7 +45,7 @@ class _Message:
 
 
 async def _load_history_and_stats(rows):
-    result = await load_session_history(_Db(rows), 10, token_budget=10_000)
+    result = await load_session_history(_Db(rows), 10)
     return result, consume_history_stats()
 
 
@@ -66,7 +62,7 @@ def test_load_session_history_returns_database_order():
 def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     rows = [_Message(1), _Message(2), _Message(3), _Message(4, "summary")]
     db = _Db(rows, baseline=2)
-    result = asyncio.run(load_session_history(db, 10, baseline_message_id=2, token_budget=10_000))
+    result = asyncio.run(load_session_history(db, 10, baseline_message_id=2))
     assert [item.id for item in result] == [4, 3]
     assert any("conversation_messages.id >" in query for query in db.last_queries)
 
@@ -80,34 +76,3 @@ def test_context_budget_reserves_fixed_context_and_dynamic_tail():
     )
     assert reserved.history_capacity_tokens < full.history_capacity_tokens
     assert reserved.history_capacity_tokens > 1
-
-
-def test_history_window_keeps_tool_call_and_result_together():
-    call = _Message(
-        2,
-        "assistant",
-        "",
-        [{"type": "tool_call", "id": "call-1", "name": "search", "arguments": {}}],
-    )
-    result = _Message(
-        3,
-        "tool",
-        "",
-        [{"type": "tool_result", "tool_call_id": "call-1", "content": "结果"}],
-    )
-    old = _Message(1, content="旧消息" * 100)
-    newest = _Message(4, content="最新消息")
-
-    selected = select_history_window(
-        [newest, result, call, old],
-        token_budget=100,
-        max_messages=10,
-    )
-
-    assert [item.id for item in selected] == [2, 3, 4]
-
-
-def test_history_window_caps_uncompressed_session():
-    messages = [_Message(index, content=f"消息 {index}") for index in range(1, 20)]
-    selected = select_history_window(messages[::-1], token_budget=10_000, max_messages=5)
-    assert [item.id for item in selected] == [15, 16, 17, 18, 19]

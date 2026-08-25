@@ -1,6 +1,11 @@
 <template>
   <RouterView />
+  <ConfirmDialog />
 </template>
+
+<script setup lang="ts">
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+</script>
 
 <style>
 /* ── Admin 全局共用（非 scoped，仅 admin 打包加载，不影响前台）────────────────

@@ -96,3 +96,14 @@ def test_apply_override_accepts_real_password(tmp_path, monkeypatch):
     s = cfg.AppSettings().apply_override()
     assert s.db.password == "RealSecret_abc123"
     assert "RealSecret_abc123" in s.db.url
+
+
+def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):
+    target = tmp_path / "config.override.json"
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", target)
+
+    cfg.write_override_json({"db": {"password": "secret"}, "ai": {"model": "test"}})
+
+    assert json.loads(target.read_text(encoding="utf-8"))["ai"]["model"] == "test"
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []

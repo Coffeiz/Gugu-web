@@ -169,7 +169,7 @@ onBeforeUnmount(() => {
 .md-view :deep(.md-mermaid) {
   width: 100%; margin: 9px 0; padding: 10px; box-sizing: border-box;
   overflow-x: auto; border: 1px solid var(--border-default);
-  border-radius: 8px; background: var(--surface-card-solid);
+  border-radius: 8px; background: var(--surface-card-solid); user-select: none;
 }
 .md-view :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
 .md-view :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }

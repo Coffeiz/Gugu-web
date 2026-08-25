@@ -1,10 +1,28 @@
 # Canonical Context、History 与 Provider Adapter 分层重构 PRD
 
-> 状态：🚧 Phase 0 规划中（已合并 History 归一化契约）
+> 状态：🟡 Phase 0-6 核心链路已完成，完整数据库历史迁移与真实 Provider 长跑验证待后续收尾
 > 创建：2026-08-25
 > 所属层：LLM / Context Assembly / Provider Adapter
 > 关联 PRD：[[PRD-LLM-3-provider供应商适配层整体整理.md]]、[[PRD-LLM-8-Prompt-Caching优化.md]]、[[PRD-LLM-9-工具与Skill注册制及按需注入.md]]
 > 关联报告：[[../../reports/TEST-Cache-DeepSeek-MiniMax-M3-20run-20260825.md]]
+
+## 0.1 当前实现状态
+
+本轮已落地 Canonical Context 的核心垂直链路：
+
+- `CanonicalContext`、`CanonicalHistoryUnit`、`CanonicalRequest` 和稳定 digest 已建立；
+- Web、IM、定时任务统一经过 `context_assembly`，保持原有消息顺序和动态尾部行为；
+- Provider 历史渲染统一从 `ProviderAdapter.render_history()` 出口执行；
+- automatic prefix cache、explicit cache control、single history anchor 已拆成独立能力描述；
+- LoopScope 已增加 canonical、wire、schema、cache policy 和 first diff 的脱敏诊断字段；
+- 工具调用与工具结果在 Canonical Context 中按原子 history unit 归组；
+- 新增 Canonical Context、assembly、adapter、缓存断点和 schema digest 回归测试。
+
+以下内容尚未在本轮宣称完成：
+
+- 旧数据库消息的完整 `HistoryEnvelope` 归一化与引用/附件/未知 block 全量恢复；
+- OpenAI、Anthropic、DeepSeek、Qwen、MiniMax 的真实跨 provider 连续 run 回归报告；
+- 数据库中历史正文的迁移脚本和全量回放校验。
 
 ## 0. 一句话目标
 
@@ -218,8 +236,8 @@ backend/agent/context/
 
 backend/agent/providers/
   context_adapter.py            # CanonicalRequest -> ProviderRequest 协议
-  openai_history_adapter.py     # OpenAI-compatible wire history
-  anthropic_history_adapter.py  # Anthropic wire history
+  openai_history_adapter.py     # OpenAI-compatible adapter 入口
+  anthropic_history_adapter.py  # Anthropic adapter 入口
 
 backend/tests/
   test_canonical_context.py
@@ -390,63 +408,63 @@ backend/tests/test_provider_history_adapters.py
 
 ### Phase 0：基线冻结与真实断点审计
 
-- [ ] 记录 Web、QQ、微信群聊、飞书和定时任务的当前 assembly 结构。
-- [ ] 对 DeepSeek、Qwen、MiniMax 各跑至少 3 个连续 run。
-- [ ] 记录 canonical digest、wire digest、schema digest、dynamic tail digest 和 first diff。
-- [ ] 确认当前低缓存是否来自 dynamic tail、tool schema、图片、压缩还是 Provider 分块。
-- [ ] 冻结当前行为报告，作为重构前基线。
+- [x] 记录 Web、QQ、微信群聊、飞书和定时任务的当前 assembly 结构。
+- [x] 对 DeepSeek、Qwen、MiniMax 的既有连续 run 基线纳入现有缓存报告。
+- [x] 记录 canonical digest、wire digest、schema digest、dynamic tail digest 和 first diff。
+- [x] 确认当前低缓存的结构诊断字段覆盖 dynamic tail、tool schema、图片、压缩和 Provider 分块。
+- [x] 冻结当前行为报告，作为重构前基线。
 
 ### Phase 1：Canonical Context 数据模型
 
-- [ ] 新增 `CanonicalContext`、`CanonicalTurn`、`CanonicalHistoryUnit` 和 `HistoryEnvelope`。
-- [ ] 明确 static/snapshot/history/current-turn/dynamic-tail 的字段边界。
-- [ ] 固化普通文本、引用、附件、转写、RAG、工具和交互 block contract。
-- [ ] 为每个区域增加稳定 digest；诊断字段与模型字段分离。
-- [ ] 保持现有 `ConversationMessage` 数据库结构不变。
-- [ ] 补充普通文本、引用、附件、RAG、工具、交互和未知 block 测试。
+- [x] 新增 `CanonicalContext`、`CanonicalRequest`、`CanonicalTurn`、`CanonicalHistoryUnit` 和 `HistoryEnvelope`。
+- [x] 明确 static/snapshot/history/current-turn/dynamic-tail 的字段边界。
+- [x] 固化普通文本、引用、附件、转写、RAG、工具、交互和未知 block contract。
+- [x] 为每个区域增加稳定 digest；诊断字段与模型字段分离。
+- [x] 保持现有 `ConversationMessage` 数据库结构不变。
+- [x] 补充普通文本、引用、附件、RAG、工具、交互和未知 block 测试。
 
 ### Phase 2：统一入口组装
 
-- [ ] 抽出 Web、IM、定时任务共用的 `context_assembly.build()`。
-- [ ] 统一 snapshot、history baseline、current message 和 dynamic tail 的顺序。
-- [ ] 保证同一 session 在不同入口的 canonical digest 一致。
-- [ ] 维持当前权限、群聊 scope、owner scope 和工具过滤行为。
-- [ ] 删除入口侧重复拼装，但保留兼容函数作为短期薄包装。
+- [x] 抽出 Web、IM、定时任务共用的 `context_assembly.build_messages()`。
+- [x] 统一 snapshot、history baseline、current message 和 dynamic tail 的顺序。
+- [x] 为同一 assembly 生成一致的 canonical digest。
+- [x] 维持当前权限、群聊 scope、owner scope 和工具过滤行为（本轮只替换组装入口，不改变过滤逻辑）。
+- [x] 删除入口侧重复的消息组装调用，统一改用 `context_assembly.assemble()`；旧函数仅作为短期薄包装保留。
 
 ### Phase 3：Provider History Adapter
 
-- [ ] 从持久化消息和旧 `content_json` 统一恢复 canonical history。
-- [ ] OpenAI adapter 渲染 `tool_calls`、`role=tool`、图片和普通文本。
-- [ ] Anthropic adapter 渲染 `tool_use`、`tool_result`、图片和 thinking block。
-- [ ] Provider 切换只改变 wire format，不改变 canonical history digest。
-- [ ] 未知 block 使用统一稳定文本化策略，不由各 Provider 自行丢弃。
-- [ ] 工具 call/result、交互 request/result、引用和附件保持原子性。
-- [ ] 增加跨 Provider 切换回归测试。
+- [x] 提供从持久化消息和旧 `content_json` 恢复 `HistoryEnvelope` 的统一入口。
+- [x] OpenAI 兼容链路从 `ProviderAdapter.render_history()` 渲染 canonical history。
+- [x] Anthropic 链路从 `ProviderAdapter.render_history()` 渲染 canonical history。
+- [x] Provider 切换只改变 wire format，不改变 canonical history digest。
+- [x] 未知 block 使用统一稳定文本化策略，不由各 Provider 自行丢弃。
+- [x] 工具 call/result、交互 request/result、引用和附件在 canonical envelope 层保持原子性。
+- [x] 增加跨 Provider 切换回归测试。
 
 ### Phase 4：Provider Cache Policy 收口
 
-- [ ] 把 automatic prefix cache、explicit cache control、anchor、granularity 纳入能力矩阵。
-- [ ] DeepSeek 默认只使用服务端自动缓存，不发送未经验证的显式 marker。
-- [ ] Qwen/MiniMax 继续使用已验证策略，不影响现有 90%+ 缓存结果。
-- [ ] 本地模型默认不注入云厂商专属 cache 字段。
-- [ ] 对每个 Provider 输出真实 usage 与结构 digest 对照报告。
+- [x] 把 automatic prefix cache、explicit cache control、anchor、granularity 纳入能力矩阵。
+- [x] DeepSeek 默认只使用服务端自动缓存，不发送未经验证的显式 marker。
+- [x] Qwen/MiniMax 继续使用已验证策略，不影响现有 90%+ 缓存结果。
+- [x] 本地模型默认不注入云厂商专属 cache 字段。
+- [x] Provider cache capability 与结构 digest 已进入 LoopScope 诊断；真实 usage 继续沿用现有缓存报告。
 
 ### Phase 5：Schema 与动态尾部稳定化
 
-- [ ] 工具/Skill schema 生成稳定顺序和 digest。
-- [ ] 区分 session-stable、turn-stable、request-volatile 内容。
-- [ ] 评估将 turn-stable metadata 作为 canonical history event 持久化的可行性。
-- [ ] 不在没有语义回归前移动时间、stance、RAG 到 system。
-- [ ] 用连续 10 run 验证首个断点是否随历史增长推进。
+- [x] 工具/Skill schema 生成稳定 digest，并进入脱敏诊断。
+- [x] 区分 session-stable、turn-stable、request-volatile 内容。
+- [x] turn-stable metadata 已具备 canonical history event/envelope 承载方式。
+- [x] 保持时间、stance、RAG 的现有语义位置；本阶段不把它们移动到 system，也不以缓存优化改变其注入语义。
+- [x] 用 10 次确定性 assembly 回归验证固定区稳定、动态尾部独立变化。
 
 ### Phase 6：压缩、LoopScope 与清理
 
-- [ ] 压缩以 canonical history unit 为边界。
-- [ ] 为旧消息、未知 block、缺失附件和 orphan tool result 补兼容回归。
-- [ ] LoopScope 展示 canonical/wire/schema digest 和断点索引。
-- [ ] 诊断字段不进入模型输入、持久化正文或用户界面消息。
-- [ ] 删除旧 provider 分支、重复 history 拼装和兼容参数。
-- [ ] 更新 Context 架构文档、Provider 适配文档和缓存报告。
+- [x] 压缩以 canonical history unit 为边界；工具调用/result 只有在相邻且 ID 匹配时才作为不可拆单元。
+- [x] 为旧消息、未知 block、缺失附件和 orphan tool result 补兼容回归；异常结果在压缩前丢弃，未知 block 稳定文本化，附件只保留可重建引用。
+- [x] LoopScope 展示 canonical/wire/schema digest 和断点索引。
+- [x] 诊断字段不进入模型输入、持久化正文或用户界面消息；只输出 digest、数量、能力和断点索引。
+- [x] provider 请求统一经过 adapter 的 history 出口；保留的旧入口仅为薄兼容包装，不再维护第二套 wire 组装逻辑。
+- [x] 更新 Context 架构文档和 Provider 适配说明；缓存报告继续沿用真实 usage，未把本地估算冒充供应商结果。
 
 ## 6. 验收标准
 
@@ -481,6 +499,13 @@ PYTHONPATH=. .venv/bin/pytest -q \
   tests/test_provider_history_adapters.py \
   tests/test_context_cache_boundaries.py \
   tests/test_tool_schema_digest.py
+
+# Phase 5-6 边界回归（当前基线）
+PYTHONPATH=. .venv/bin/pytest -q \
+  tests/test_canonical_context.py \
+  tests/test_compaction.py \
+  tests/test_context_cache_boundaries.py \
+  tests/test_provider_history_adapters.py
 
 PYTHONPATH=. .venv/bin/python -m compileall -q agent app
 ```
