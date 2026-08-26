@@ -152,10 +152,10 @@ html[data-theme='dark'][data-family] .pm-nav-divider {
 
 html[data-theme][data-family] .topbar .btn-ghost-custom,
 html[data-theme][data-family] .sample-topbar .sample-ghost {
-  --topbar-btn-shadow: inset 0 1px 0 var(--highlight-muted);
-  box-shadow: var(--topbar-btn-shadow) !important;
+  --topbar-btn-shadow: none;
+  box-shadow: none !important;
 }
 html[data-theme][data-family] .topbar .btn-ghost-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-ghost:hover {
-  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
+  box-shadow: none !important;
 }

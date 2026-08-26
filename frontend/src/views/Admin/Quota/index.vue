@@ -530,12 +530,12 @@ PHASE7_QUOTA_OLD_END */
 .btn-save {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  color: white; font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: opacity 0.15s;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
+  background: var(--action-primary-bg);
+  color: var(--content-on-accent); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background-color 0.15s;
+  box-shadow: none;
 }
-.btn-save:hover:not(.loading) { opacity: 0.88; }
+.btn-save:hover:not(.loading) { background: var(--action-primary-bg-hover); opacity: 1; }
 .btn-save.loading { opacity: 0.5; cursor: default; }
 
 /* 用户表格 */
@@ -643,12 +643,12 @@ PHASE7_QUOTA_OLD_END */
 .btn-confirm {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  color: white; font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: opacity 0.15s;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
+  background: var(--action-primary-bg);
+  color: var(--content-on-accent); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background-color 0.15s;
+  box-shadow: none;
 }
-.btn-confirm:hover:not(:disabled) { opacity: 0.88; }
+.btn-confirm:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
 .btn-confirm:disabled { opacity: 0.5; cursor: default; }
 
 /* 最后一行下边距 */

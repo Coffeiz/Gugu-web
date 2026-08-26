@@ -573,10 +573,10 @@ label {
 .btn-cancel:hover { background: var(--file-dialog-control-bg-hover); border-color: var(--control-border-hover); color: var(--control-fg-strong); }
 .btn-upload {
   padding: 8px 22px; border-radius: var(--radius-sm); border: none;
-  background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: var(--elevation-card);
+  background: var(--action-primary-bg); color: var(--content-on-accent); box-shadow: none;
   font: 600 13px var(--font-sans); cursor: pointer;
   transition: opacity var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.btn-upload:hover:not(:disabled) { opacity: .9; box-shadow: var(--elevation-card-hover); }
+.btn-upload:hover:not(:disabled) { opacity: .9; box-shadow: none; }
 .btn-upload:disabled { opacity: .45; cursor: not-allowed; }
 </style>

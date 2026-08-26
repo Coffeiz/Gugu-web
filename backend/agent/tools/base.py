@@ -27,6 +27,7 @@ _traj_log = logging.getLogger("agent.traj")
 _log = logging.getLogger("agent.tools")
 _dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
 _dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
+_dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
 
 
 def set_dispatch_session_id(session_id: int | None):
@@ -38,17 +39,19 @@ def reset_dispatch_session_id(token) -> None:
     _dispatch_session_id.reset(token)
 
 
-def set_dispatch_session(session_id: int | None, session=None):
+def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None):
     """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
     id_token = _dispatch_session_id.set(session_id)
     session_token = _dispatch_session.set(session)
-    return id_token, session_token
+    run_token = _dispatch_run_id.set(run_id)
+    return id_token, session_token, run_token
 
 
 def reset_dispatch_session(token) -> None:
-    id_token, session_token = token
+    id_token, session_token, run_token = token
     _dispatch_session_id.reset(id_token)
     _dispatch_session.reset(session_token)
+    _dispatch_run_id.reset(run_token)
 
 
 def current_dispatch_session_id() -> int | None:
@@ -57,6 +60,10 @@ def current_dispatch_session_id() -> int | None:
 
 def current_dispatch_session():
     return _dispatch_session.get()
+
+
+def current_dispatch_run_id() -> str | None:
+    return _dispatch_run_id.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；

@@ -544,9 +544,9 @@ function darkenHex(hex: string, amount = 0.60) {
 .dash-popup-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 2px; }
 .dash-popup-cancel { padding: 5px 12px; border-radius: 8px; border: none; background: none; font-size: 12px; cursor: pointer; color: #8a8fa8; font-family: var(--font-family-ui); transition: background 0.12s; }
 .dash-popup-cancel:hover { background: rgba(0,0,0,0.06); }
-.dash-popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
+.dash-popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
 .dash-popup-save:disabled { opacity: 0.38; cursor: default; }
-.dash-popup-save:not(:disabled):hover { opacity: 0.88; }
+.dash-popup-save:not(:disabled):hover { background: var(--action-primary-bg-hover); opacity: 1; }
 .dash-form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .dash-form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
 .dash-form-pop-enter-from, .dash-form-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-6px); }

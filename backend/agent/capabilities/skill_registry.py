@@ -10,7 +10,7 @@ from sqlalchemy import select
 from agent import skills
 from agent.security.logsafe import fingerprint
 from .errors import CapabilityRegistrationError
-from .models import CapabilityMeta
+from .models import CapabilityMeta, DESCRIPTION_SHORT_MAX_CHARS
 
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -41,8 +41,10 @@ def validate_user_skill(*, slug: str, name: str, description_short: str,
         raise CapabilityRegistrationError("Skill slug 必须是小写字母、数字和连字符")
     if not 1 <= len(values["name"]) <= 120:
         raise CapabilityRegistrationError("Skill 名称长度必须是 1-120 个字符")
-    if not 1 <= len(values["description_short"]) <= 100:
-        raise CapabilityRegistrationError("Skill 短描述长度必须是 1-100 个字符")
+    if not 1 <= len(values["description_short"]) <= DESCRIPTION_SHORT_MAX_CHARS:
+        raise CapabilityRegistrationError(
+            f"Skill 短描述长度必须是 1-{DESCRIPTION_SHORT_MAX_CHARS} 个字符"
+        )
     if values["description_long"] and len(values["description_long"]) > 500:
         raise CapabilityRegistrationError("Skill 长描述最多 500 个字符")
     if values["category"] not in _ALLOWED_CATEGORIES:

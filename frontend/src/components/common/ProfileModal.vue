@@ -341,7 +341,7 @@ async function doDeleteAccount() {
 .pm-msg { font-size: 12px; margin-right: auto; }
 .pm-msg.ok { color: var(--status-success); }
 .pm-msg.err { color: var(--status-danger); }
-.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card); transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-save-btn:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
 .pm-save-btn:disabled { opacity: .35; cursor: default; transform: none; }
 

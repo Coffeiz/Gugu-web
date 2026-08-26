@@ -286,3 +286,7 @@ function forwardCapabilityOverride(key: string, enabled: boolean) {
 .btn-ghost, .btn-primary { display:inline-flex; align-items:center; justify-content:center; min-height:var(--control-md); box-sizing:border-box; line-height:1.2; }
 @media(max-width:720px){ .modal-field-row { grid-template-columns:1fr; gap:0; } .modal-box { padding:18px; } }
 </style>
+<style scoped>
+.btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }
+.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+</style>

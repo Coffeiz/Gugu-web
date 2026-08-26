@@ -162,6 +162,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="call_tool",
             label="调用工具",
+            description_short='按名称调用已授权工具；arguments 必须匹配 Schema',
             description="固定工具适配入口。根据工具目录调用一个已授权业务工具。",
             input_schema={
                 "type": "object",
@@ -177,6 +178,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="get_tool_schema",
             label="获取工具 Schema",
+            description_short='获取工具完整 Schema；只读，不执行工具',
             description=(
                 "获取本轮要使用的一个或多个已授权业务工具的完整参数 Schema。只读操作，不会执行工具。"
                 "未在当前对话历史中出现过完整 Schema 的工具，必须先获取 Schema。"
@@ -197,6 +199,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="use_skill",
             label="调用技能",
+            description_short='读取技能正文；拿到后按步骤执行',
             description="按名称拉取一个「技能」的详细做法说明（剧本），拿到后照它执行。"
                         "可用技能清单见系统提示里的「可用技能」。",
             input_schema={
@@ -211,6 +214,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="create_skill",
             label="创建咕咕技能",
+            description_short='创建咕咕技能；关键字段 name',
             description=(
                 "当用户明确要求记住一套可复用做法时，创建一个 Prompt Skill。"
                 "只能保存指导文本，不能写代码、注册新工具或扩大权限。"
@@ -237,6 +241,7 @@ class MetaSkill(BaseSkill):
         Tool(
             name="ask_user",
             label="询问用户",
+            description_short='向用户展示选项或澄清问题；不执行业务操作',
             description=(
                 "当下一步存在多个合理选择，或缺少继续任务所必需的信息时，向用户展示结构化问题。"
                 "只用于澄清，不直接执行任何业务操作；明确的破坏性确认必须使用工具自己的确认门。"

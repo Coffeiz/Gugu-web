@@ -45,12 +45,11 @@ const fontsCss = load('./fonts.css')
 
 describe('主题 CSS 回归契约', () => {
   it('字体资源层与字体族 token 保持单一契约', () => {
-    expect((fontsCss.match(/@font-face\s*\{/g) ?? [])).toHaveLength(3)
-    expect(fontsCss).toContain("font-family: 'Gugu Source Han Sans SC';")
-    expect(fontsCss).toContain("source-han-sans-sc-regular.woff2")
-    expect(fontsCss).toContain("source-han-sans-sc-medium.woff2")
-    expect(fontsCss).toContain("source-han-sans-sc-bold.woff2")
-    expect(primitivesCss).toContain('--font-family-body: "Gugu Source Han Sans SC", var(--font-system-sans);')
+    expect((fontsCss.match(/@font-face\s*\{/g) ?? [])).toHaveLength(1)
+    expect(fontsCss).toContain("font-family: 'Gugu Noto Sans SC';")
+    expect(fontsCss).toContain('Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf')
+    expect(fontsCss).toContain('font-weight: 100 900;')
+    expect(primitivesCss).toContain('--font-family-body: "Gugu Noto Sans SC", var(--font-system-sans);')
     expect(primitivesCss).toContain('--font-family-ui: var(--font-family-body);')
     expect(primitivesCss).toContain('--font-family-heading: var(--font-family-body);')
     expect(primitivesCss).toContain('--font-family-mono: var(--font-system-mono);')

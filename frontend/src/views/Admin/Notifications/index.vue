@@ -300,11 +300,11 @@ onMounted(loadHistory)
 .send-btn {
   width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px 0; border: none; border-radius: 10px;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: rgba(255,255,255,0.95);
+  background: var(--action-primary-bg); color: var(--content-on-accent);
   font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
-  box-shadow: 0 3px 12px rgba(123,127,178,0.3); transition: opacity 0.15s, box-shadow 0.15s;
+  box-shadow: none; transition: background-color 0.15s;
 }
-.send-btn:hover:not(:disabled) { box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
+.send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 历史 */

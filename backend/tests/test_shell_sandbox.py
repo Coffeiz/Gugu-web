@@ -19,6 +19,14 @@ def test_local_sandbox_runs_inside_workspace(tmp_path):
     assert result.stdout.strip() == str(tmp_path.resolve())
 
 
+def test_local_sandbox_returns_shell_error_for_missing_command(tmp_path):
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    result = asyncio.run(sandbox.execute("command-that-does-not-exist"))
+    assert not result.ok
+    assert result.exit_code == 127
+    assert "找不到命令" in result.stderr
+
+
 def test_local_sandbox_cleans_up_timeout(tmp_path):
     sandbox = LocalWorkspaceExecutor(tmp_path)
     result = asyncio.run(sandbox.execute("sleep 2", timeout=0.1))

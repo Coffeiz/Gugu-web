@@ -109,12 +109,14 @@ class ClientsSkill(BaseSkill):
     tools = [
         Tool(
             name="list_clients", label="查询客户",
+            description_short='查询当前用户的客户列表；无需参数',
             description="列出当前用户的所有客户。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_clients,
         ),
         Tool(
             name="create_client", label="新建客户",
+            description_short='新建客户；关键字段 name',
             description="新建客户，记录联系人、邮箱、电话、备注。",
             input_schema={
                 "type": "object",
@@ -132,6 +134,7 @@ class ClientsSkill(BaseSkill):
         ),
         Tool(
             name="update_client", label="更新客户",
+            description_short='更新客户；关键字段 name',
             description="修改客户信息（名称/联系人/邮箱/电话/备注）。",
             input_schema={
                 "type": "object",
@@ -152,6 +155,7 @@ class ClientsSkill(BaseSkill):
         ),
         Tool(
             name="delete_client", label="删除客户",
+            description_short='删除客户；关键字段 client_id/client_ids，执行前确认',
             description="删除一个或多个客户（不可恢复）。单项传 client_id/client，批量传 client_ids。批量目标一次确认，禁止逐项重复确认。",
             input_schema={
                 "type": "object",

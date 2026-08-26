@@ -895,6 +895,8 @@ systemctl restart gugu-supervisor            # 改了 IM 网关代码
 > **更稳的做法**：生产配一次 git deploy key（见 §4.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`Gugu-data/users` 都不应被代码更新覆盖，天然无「覆盖状态」风险，省去每次手动排除。
 >
 > ⚠️ 但 `git reset --hard` / `git clean -fdx` / 重新解压 zip **会**冲掉这些 gitignore 的状态文件（`.venv` 被删 → 服务 `203/EXEC`；`.env`/`config.override.json` 被删 → DB 密码丢、`password authentication failed for user "pm"`）。**任何代码刷新后，启动/迁移前先确认三样都在**：`.venv` 能跑（`.venv/bin/python -V`）、`.env` + `config.override.json` 里 DB 密码正确。缺了先补（重建 venv 见 §3.2，恢复 DB 密码见 §3.3/§3.4），再 migrate / 启动。
+
+> **配置缺失保护**：`deploy.sh`、`start.sh install` 和存储迁移不会再因缺少 `config.override.json` 静默创建空配置；这样可避免 `RUN_USER=...` 安装时把 Admin 设置误判为被清空。应先从 `.deploy-backups` 或正式备份恢复。只有全新部署确认没有历史配置时，才显式使用 `INIT_EMPTY_CONFIG=1 RUN_USER=<用户> make install` 创建空文件。
 >
 > ⚠️ **重建 `.env` 时务必沿用原来的 `SECRET_KEY`,别重新生成。** `SECRET_KEY` 一变,**所有已签发的登录 token 立刻失效** → 部署后用户访问任何需登录的接口都 `401`，前端表现为「数据页全部加载失败 / summary 401」。这不是数据/权限 bug，**重新登录即恢复**（旧 token 用旧 key 签的，新 key 验不过）。根治:`SECRET_KEY` 当成长期不变的密钥存在 `.env` 里，跨部署保持同一个值；每次部署重新随机生成 = 每次把全员登出。有旧值备份就填回旧值，连用户重登都省了。
 

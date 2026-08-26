@@ -457,8 +457,8 @@ const notes = [
 .sample-main > .sample-topbar .sample-search kbd { margin-left: auto; color: var(--content-tertiary); font-size: 9px; }
 .sample-main > .sample-topbar .sample-top-actions { gap: 8px; }
 .sample-main > .sample-topbar .sample-ghost, .sample-main > .sample-topbar .sample-primary { height: 32px; padding: 0 12px; border-radius: var(--radius-sm); font-size: 11px; }
-.sample-main > .sample-topbar .sample-ghost { border: 1px solid color-mix(in srgb, var(--control-border) 75%, transparent); color: var(--content-secondary); background: color-mix(in srgb, var(--control-bg) 74%, transparent); box-shadow: inset 0 1px 0 var(--highlight-muted); }
-.sample-main > .sample-topbar .sample-primary { color: var(--content-on-accent); background: var(--action-primary-bg); box-shadow: 0 3px 12px color-mix(in srgb, var(--color-primary) 30%, transparent); }
+.sample-main > .sample-topbar .sample-ghost { border: 1px solid color-mix(in srgb, var(--control-border) 75%, transparent); color: var(--content-secondary); background: color-mix(in srgb, var(--control-bg) 74%, transparent); box-shadow: none; }
+.sample-main > .sample-topbar .sample-primary { color: var(--content-on-accent); background: var(--action-primary-bg); box-shadow: none; }
 @media(max-width:760px){.sample-main > .sample-topbar{left:var(--space-md);right:var(--space-md)}.sample-main > .sample-topbar .sample-search{display:none}.sample-main > .sample-topbar .sample-ghost{display:none}}
 @media(max-width:760px){.motion-token-grid{grid-template-columns:1fr}}
 .contracts-detail{margin-top:var(--space-xl);padding-top:var(--space-xl);border-top:1px solid var(--border-hairline)}.contracts-detail .preview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--design-grid-gap)}.contracts-detail .preview-card{overflow:hidden;border:1px solid var(--design-card-border);border-radius:var(--design-card-radius);background:var(--design-card-bg);box-shadow:var(--elevation-card)}.contracts-detail .preview-stage{height:150px;display:grid;place-items:center;padding:var(--space-lg);background:var(--surface-soft);border-bottom:1px solid var(--border-hairline)}

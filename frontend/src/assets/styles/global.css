@@ -39,7 +39,7 @@ input[type="checkbox"]:not(.arco-checkbox-icon):hover {
 input[type="checkbox"]:not(.arco-checkbox-icon):checked {
   background: var(--action-primary-bg);
   border-color: transparent;
-  box-shadow: 0 2px 8px color-mix(in srgb,var(--action-primary) 35%,transparent);
+  box-shadow: none;
 }
 input[type="checkbox"]:not(.arco-checkbox-icon):checked::after {
   content: '';

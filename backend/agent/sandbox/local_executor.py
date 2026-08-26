@@ -141,15 +141,20 @@ class LocalWorkspaceExecutor:
         timeout = max(0.1, min(float(timeout), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars), _MAX_OUTPUT))
 
-        process = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=workdir,
-            env=self.env,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=workdir,
+                env=self.env,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            return ShellResult(False, 127, "", f"找不到命令：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
+        except PermissionError:
+            return ShellResult(False, 126, "", f"没有执行权限：{argv[0]}", False, str(workdir.relative_to(self.root) or ".") )
         stdout_task = asyncio.create_task(self._read_limited(process.stdout, output_limit))
         stderr_task = asyncio.create_task(self._read_limited(process.stderr, output_limit))
         timed_out = False

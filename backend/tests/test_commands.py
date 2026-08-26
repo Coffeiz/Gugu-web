@@ -4,7 +4,7 @@ import pytest
 
 from agent import commands, router
 from agent.llm.genstream import immediate_stream
-from app.models import ConversationSession
+from app.models import ConversationSession, Folder
 
 
 def test_router_recognizes_compact_without_starting_agent():
@@ -120,6 +120,32 @@ def test_new_is_parsed_as_a_control_command():
 @pytest.mark.asyncio
 async def test_new_without_session_is_deterministic():
     assert await commands.handle("user-1", "/new") == "当前还没有可重置的对话。"
+
+
+@pytest.mark.asyncio
+async def test_workspace_delete_requires_explicit_confirmation(db, user_a):
+    from app.services.workspaces import create_workspace
+
+    folder = Folder(user_id=user_a.id, name="工作区目录")
+    db.add(folder)
+    await db.flush()
+    workspace = await create_workspace(
+        db, user_a.id, name="待删除工作区", kind="folder", folder_id=folder.id,
+    )
+    session = ConversationSession(user_id=user_a.id, title="工作区命令测试", source="web")
+    session.workspace_id = workspace.id
+    db.add(session)
+    await db.commit()
+
+    pending = await commands.handle(
+        user_a.id, f"/workspace delete {workspace.id}", session_id=session.id,
+    )
+    assert "再次发送" in pending
+    assert await commands.handle(
+        user_a.id, f"/workspace delete {workspace.id} confirm", session_id=session.id,
+    ) == f"已删除工作区「待删除工作区」（ID {workspace.id}），项目和文件未受影响。"
+    await db.refresh(session)
+    assert session.workspace_id is None
 
 
 def test_goal_is_parsed_as_a_control_command():

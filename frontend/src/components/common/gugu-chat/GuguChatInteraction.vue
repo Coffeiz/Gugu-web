@@ -36,7 +36,7 @@ watch(() => props.msg.interaction?.resolved, (value) => {
 .interaction-body { margin-top: 5px; color: var(--content-secondary); font-size: var(--font-size-sm); line-height: var(--line-height-body); white-space: pre-wrap; }
 .interaction-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 13px; padding-top: 11px; border-top: 1px solid var(--border-subtle); }
 .interaction-actions button { min-height: var(--control-height-sm); border: 1px solid var(--action-primary); border-radius: var(--control-radius); padding: 5px 12px; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: var(--font-size-sm); cursor: pointer; transform: translateY(0); transition: var(--card-motion), background var(--motion-hover-card) var(--motion-ease-standard); }
-.interaction-actions button:hover:not(:disabled) { background: var(--action-primary-bg-hover); border-color: var(--action-primary-hover); box-shadow: var(--elevation-card-hover); transform: translateY(-1px); }
+.interaction-actions button:hover:not(:disabled) { background: var(--action-primary-bg-hover); border-color: var(--action-primary-hover); box-shadow: none; transform: none; }
 .interaction-actions button:focus-visible { outline: none; box-shadow: var(--control-focus-shadow); }
 .interaction-actions button:disabled { opacity: .55; cursor: default; }
 .interaction-resolved { margin-top: 8px; color: var(--content-tertiary); font-size: var(--font-size-xs); }

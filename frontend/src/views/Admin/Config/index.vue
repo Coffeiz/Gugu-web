@@ -531,10 +531,10 @@ async function testSmtp() {
 .btn-primary {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   color: white; font-size: 13px; font-weight: 600;
   cursor: pointer; transition: opacity 0.15s;
-  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
+  box-shadow: none;
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }

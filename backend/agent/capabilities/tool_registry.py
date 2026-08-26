@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from agent.tools.base import SkillRegistry, Tool
 from .errors import CapabilityRegistrationError
-from .models import CapabilityMeta
+from .models import CapabilityMeta, DESCRIPTION_SHORT_MAX_CHARS
 
 
 def _short_description(tool: Tool) -> str:
@@ -34,8 +34,10 @@ class ToolCapabilityRegistry:
             if tool is None:
                 raise CapabilityRegistrationError(f"未知工具：{name}")
             short = _short_description(tool)
-            if not short or len(short) > 100:
-                raise CapabilityRegistrationError(f"工具 {name} 的短描述必须是 1-100 个字符")
+            if not short or len(short) > DESCRIPTION_SHORT_MAX_CHARS:
+                raise CapabilityRegistrationError(
+                    f"工具 {name} 的短描述必须是 1-{DESCRIPTION_SHORT_MAX_CHARS} 个字符"
+                )
             out.append(CapabilityMeta(
                 name=name,
                 kind="tool",

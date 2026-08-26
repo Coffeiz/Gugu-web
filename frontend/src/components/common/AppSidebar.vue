@@ -17,6 +17,7 @@
         <NavItem to="/calendar" icon="navigation.calendar">日历</NavItem>
         <NavItem to="/mind" icon="canvas.note">思维</NavItem>
         <NavItem to="/schedules" icon="admin.alarm">定时任务</NavItem>
+        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">终端</NavItem>
       </div>
 
       <div class="nav-divider"></div>
@@ -93,6 +94,7 @@ import { useTheme } from '@/composables/useTheme'
 import NavItem from './NavItem.vue'
 import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
+import { workspacesApi } from '@/services/api'
 
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -107,12 +109,22 @@ const themeModeTitle = computed(() => preference.value === 'system'
   ? `当前显示：${currentModeLabel.value}（跟随系统）`
   : `当前显示：${currentModeLabel.value}，点击切换`)
 const feedbackOpen = ref(false)
+const terminalVisible = ref(false)
 
 function cycleTheme() {
   setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
 }
 
 function handleLogout() { authStore.logout(); router.push('/login') }
+
+async function refreshTerminalVisibility() {
+  try {
+    const status = await workspacesApi.status()
+    terminalVisible.value = status.globalEnabled && (status.userEnabled || status.userSystemEnabled)
+  } catch {
+    terminalVisible.value = false
+  }
+}
 
 const settingsOpen = ref(false)
 const notifOpen = ref(false)
@@ -141,7 +153,14 @@ function closeAll(e: MouseEvent) {
   if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target as Node) && !notifBtnRef.value?.contains(e?.target as Node)) notifOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeAll))
-onUnmounted(() => document.removeEventListener('click', closeAll))
+onMounted(() => {
+  refreshTerminalVisibility()
+  window.addEventListener('focus', refreshTerminalVisibility)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', closeAll)
+  window.removeEventListener('focus', refreshTerminalVisibility)
+})
 </script>
 
 <style scoped>
@@ -156,7 +175,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-anchor { position:relative; }
 .notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-sm); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
 .notif-btn:hover { background:rgba(123,127,178,.08); color:var(--text-primary); }
-.notif-btn.notif-active { background:rgba(255,255,255,.38); color:#6b6fa0; font-weight:700; border-color:rgba(255,255,255,.62); box-shadow:inset 0 1px 0 rgba(255,255,255,.85); }
+.notif-btn.notif-active { background:rgba(255,255,255,.38); color:#6b6fa0; font-weight:700; border-color:rgba(255,255,255,.62); box-shadow:none; }
 .nav-icon { flex-shrink:0; }.nav-label-text { flex:1; }.badge { background:rgba(123,127,178,.42); color:white; font-size:10px; font-weight:700; padding:1px 6px; border-radius:20px; min-width:18px; text-align:center; }
 .user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-md); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
 .user-card:hover { background:rgba(255,255,255,.38); }
@@ -166,7 +185,7 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-xs); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .theme-mode-quick button.current { color:var(--selection-fg); }
-.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
+.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:none; }
 /* settings-popup 保留原来的纯 translateY 淡入淡出；不要交给通用 popup scale cadence。 */
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
 .soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { margin-left:auto; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; }

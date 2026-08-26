@@ -25,23 +25,21 @@ def test_catalog_contains_short_descriptions_only():
     assert "input_schema" not in block
     assert "call_tool" in block
     assert "get_tool_schema" in block
-    assert "只有没有对应 Schema 时才使用" in block
+    assert "简介中的字段列表不完整" in block
+    assert "实际调用前必须确认历史里有当前版本的完整 Schema" in block
     assert "权限和执行校验由代码完成" in block
 
 
-def test_catalog_truncates_long_description_to_keep_snapshot_compact():
+def test_catalog_rejects_long_description_instead_of_truncating():
     snapshot = CapabilitySnapshot(
         generation=1,
         tools={"search": CapabilityMeta(
-            "search", "tool", "这是一个很长的工具说明，包含很多触发条件、使用限制、返回格式细节、错误处理方式、权限说明和调用示例。"
+            "search", "tool", "x" * 101
         )},
         skills={},
     )
-    block = catalog_block(snapshot)
-    description = block.split("- search：", 1)[1]
-    assert len(description) == 48
-    assert description.endswith("…")
-    assert "input_schema" not in block
+    with pytest.raises(ValueError, match="超过 100 字符"):
+        catalog_block(snapshot)
 
 
 def test_fixed_adapter_preserves_nested_and_flattened_business_arguments():

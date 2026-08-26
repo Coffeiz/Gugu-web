@@ -43,10 +43,9 @@
   --action-primary: var(--theme-action-primary);
   --action-primary-hover: var(--theme-action-hover);
   --action-primary-pressed: var(--theme-action-pressed);
-  /* Background fill is separate from the accent foreground. Light keeps the brand gradient;
-     resolved dark mode derives a quieter fill in theme-refinements.css. */
-  --action-primary-bg: var(--theme-brand-gradient);
-  --action-primary-bg-hover: var(--theme-brand-gradient);
+  /* Action controls use a flat fill. Brand gradients remain reserved for branding surfaces and FABs. */
+  --action-primary-bg: var(--action-primary);
+  --action-primary-bg-hover: var(--action-primary-hover);
   --action-soft: color-mix(in srgb, var(--action-primary) 9%, transparent);
   --action-soft-hover: color-mix(in srgb, var(--action-primary) 15%, transparent);
   --action-outline: color-mix(in srgb, var(--action-primary) 34%, transparent);
@@ -105,7 +104,7 @@
   --brand-gradient: var(--theme-brand-gradient);
   /* GuguChat 发送按钮专属：themes/*.css 提供 --theme-gugu-chat-send-bg 暗色变体，
      亮色/glass 主题下走 fallback。业务 CSS 引 --gugu-chat-send-bg。 */
-  --gugu-chat-send-bg: var(--theme-gugu-chat-send-bg, var(--brand-gradient));
+  --gugu-chat-send-bg: var(--action-primary-bg);
   --app-background: var(--surface-page);
   --column-bg: var(--surface-column);
   --divider-line: var(--theme-divider);

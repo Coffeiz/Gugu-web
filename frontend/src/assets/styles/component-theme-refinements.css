@@ -55,6 +55,7 @@ html[data-theme][data-family] .event-form-body .popup-save,
 html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
+  box-shadow: none !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-primary:hover,
@@ -62,7 +63,7 @@ html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
 html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
   background: var(--action-primary-bg-hover) !important;
-  box-shadow: var(--elevation-card-hover) !important;
+  box-shadow: none !important;
 }
 
 /* ── Calendar grid / weekend fidelity ──────────────────────────────────────────────── */
@@ -171,7 +172,7 @@ html[data-theme][data-family] .cal-toolbar .today-btn {
   color: var(--control-fg);
   background: var(--control-bg);
   border-color: var(--control-border);
-  box-shadow: inset 0 1px 0 var(--highlight-muted);
+  box-shadow: none;
 }
 html[data-theme][data-family] .cal-toolbar .today-btn:hover {
   color: var(--control-fg-strong);

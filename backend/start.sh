@@ -251,9 +251,19 @@ cmd_install() {
     # ReadWritePaths 要求路径真实存在，否则 systemd 报 226/NAMESPACE
     log "准备可写目录并授权给 $run_user"
     mkdir -p "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index"
+    # Admin 配置是运行数据，缺失通常意味着部署同步/清理误删。
+    # 禁止安装流程静默创建空对象，否则会把“配置丢失”伪装成“Admin 设置被清空”。
+    # 全新部署如确实需要空配置，必须显式传入 INIT_EMPTY_CONFIG=1。
     if [ ! -f "${APP_DIR}/config.override.json" ]; then
-        umask 077
-        printf '{}\n' > "${APP_DIR}/config.override.json"
+        if [ "${INIT_EMPTY_CONFIG:-0}" = "1" ]; then
+            umask 077
+            printf '{}\n' > "${APP_DIR}/config.override.json"
+            log "已按 INIT_EMPTY_CONFIG=1 显式创建空 config.override.json"
+        else
+            err "缺少 ${APP_DIR}/config.override.json；为避免清空 Admin 设置，安装已停止。"
+            err "请先从备份恢复，或确认全新部署后显式执行：INIT_EMPTY_CONFIG=1 RUN_USER=${run_user} make install"
+            exit 1
+        fi
     fi
     chmod 600 "${APP_DIR}/config.override.json"
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
@@ -309,6 +319,7 @@ case "${1:-start}" in
   PORT=8000              监听端口
   WORKERS=1              uvicorn worker 数
   DB_STARTUP_TIMEOUT=5   DB 启动超时秒数（传给后端）
+  INIT_EMPTY_CONFIG=1    仅全新部署时显式创建空 config.override.json
 
 示例:
   ./start.sh start

@@ -79,3 +79,7 @@ const providerOptions = [{ value: 'tavily', label: 'Tavily' }, { value: 'baidu',
   .deep-research-test-message { max-width:calc(100% - 92px); }
 }
 </style>
+<style scoped>
+.deep-research-card .btn-primary { background: var(--action-primary-bg); color: var(--content-on-accent); transition: background-color .15s; }
+.deep-research-card .btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); }
+</style>

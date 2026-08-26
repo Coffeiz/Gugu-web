@@ -265,6 +265,7 @@ class ScheduledTasksSkill(BaseSkill):
     tools = [
         Tool(
             name="list_scheduled_tasks", label="查看定时任务",
+            description_short='查看独立定时任务；不包含日历活动提醒',
             description=("列出我的全部独立定时任务（含 id、名称、触发时间、指令、投递渠道、是否启用、上次执行）。一次返回全部。"
                          "注意：日历活动的提醒不在此列——那是活动自带、在日历里单独管理，与定时任务两套互不影响。"),
             input_schema={"type": "object", "properties": {}},
@@ -272,6 +273,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
+            description_short='创建独立定时任务；活动提醒用 create_event/add_event_reminder',
             description="创建独立定时任务并按渠道投递；日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
@@ -292,6 +294,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
+            description_short='修改独立定时任务；关键字段 task/task_id、cron/enabled',
             description=("改定时任务的内容或启停。按 task_id 或任务名 task 定位（推荐直接用名字，免得先查）。"
                          "改时间同样用 cron/@once。停用传 enabled=false、启用传 true。"),
             input_schema={
@@ -315,6 +318,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
+            description_short='删除定时任务；关键字段 task_id',
             description="删除一个或多个定时任务（不可恢复）。单项按 task_id/task 定位，批量传 task_ids；批量目标一次确认。",
             input_schema={
                 "type": "object",

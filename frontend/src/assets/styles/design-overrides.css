@@ -114,14 +114,14 @@ html[data-theme][data-family] .design-page .sample-topbar:hover {
 }
 html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-primary {
   color:var(--content-on-accent);
-  background:var(--brand-gradient);
-  box-shadow:var(--elevation-card);
+  background:var(--action-primary-bg);
+  box-shadow:none;
 }
 html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-ghost {
   color:var(--content-secondary);
   background:color-mix(in srgb,var(--control-bg) 86%,transparent);
   border-color:var(--control-border);
-  box-shadow:inset 0 1px 0 var(--highlight-muted);
+  box-shadow:none;
 }
 
 html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:70; }

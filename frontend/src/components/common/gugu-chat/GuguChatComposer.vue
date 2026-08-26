@@ -317,6 +317,6 @@ defineExpose({
   transition: transform 0.15s; flex-shrink: 0;
 }
 .send-btn svg { display: block; }
-.send-btn:hover:not(:disabled) { transform: scale(1.1); }
+.send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); transform: none; }
 .send-btn:disabled { opacity: 0.55; cursor: default; }
 </style>

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""对真实 session 的 MiniMax M3 / Bailian / DeepSeek 做 20-run cache 矩阵测试。
+"""对真实 session 的 MiniMax M3 / GLM / Bailian / DeepSeek 做 20-run cache 矩阵测试。
 
 每个 provider 独立使用同一个真实 session 的 snapshot 与 history，连续发送 20 个
 run；每个 run 只有 1 个 provider round。固定 Adapter schema 会随请求发送，但工具
@@ -111,6 +111,9 @@ def select_targets(settings, requested: set[str]) -> list[Target]:
         if provider == "minimax" and "m3" in model.lower():
             label = "minimax-m3"
             anthropic = True
+        elif provider == "glm":
+            label = "glm"
+            anthropic = False
         elif provider in {"qwen", "bailian", "dashscope"}:
             label = "bailian"
             anthropic = False
@@ -127,7 +130,7 @@ def select_targets(settings, requested: set[str]) -> list[Target]:
     if missing:
         raise RuntimeError(f"devserver 真实预设缺少：{', '.join(sorted(missing))}")
     if not selected:
-        raise RuntimeError("没有找到请求的 MiniMax M3 / Bailian / DeepSeek 真实预设")
+        raise RuntimeError("没有找到请求的 MiniMax M3 / GLM / Bailian / DeepSeek 真实预设")
     return selected
 
 
@@ -414,7 +417,7 @@ async def main_async(args) -> int:
     from app.core.config import get_settings
 
     settings = get_settings()
-    requested = set(args.providers.split(",")) if args.providers else {"minimax-m3", "bailian", "deepseek"}
+    requested = set(args.providers.split(",")) if args.providers else {"minimax-m3", "glm", "bailian", "deepseek"}
     targets = select_targets(settings, requested)
     session, snapshot, history, request = await load_real_context(args.session_id, args.max_messages)
     print(json.dumps({
@@ -441,9 +444,9 @@ async def main_async(args) -> int:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="真实 session 三模型 20-run cache 矩阵")
+    parser = argparse.ArgumentParser(description="真实 session 多模型 20-run cache 矩阵")
     parser.add_argument("--session-id", type=int)
-    parser.add_argument("--providers", help="逗号分隔：minimax-m3,bailian,deepseek")
+    parser.add_argument("--providers", help="逗号分隔：minimax-m3,glm,bailian,deepseek")
     parser.add_argument("--runs", type=int, default=20)
     parser.add_argument("--max-messages", type=int, default=200)
     parser.add_argument("--pause", type=float, default=1.0)

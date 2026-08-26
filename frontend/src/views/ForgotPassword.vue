@@ -127,7 +127,7 @@ async function handleSubmit() {
 .card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
 .brand-icon {
   width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  background: var(--action-primary-bg);
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 6px 18px rgba(123,127,178,0.35);
 }
@@ -167,10 +167,10 @@ async function handleSubmit() {
   background: linear-gradient(135deg, #7b7fb2, #9590c4);
   border: none; border-radius: 11px;
   font-size: 14px; font-weight: 600; color: white;
-  cursor: pointer; transition: opacity 0.15s, transform 0.15s;
-  box-shadow: 0 4px 16px rgba(123,127,178,0.32);
+  cursor: pointer; transition: background-color 0.15s;
+  box-shadow: none;
 }
-.btn-primary:hover:not(:disabled) { opacity: 0.88; transform: translateY(-1px); }
+.btn-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .done-box { text-align: center; padding: 8px 0 4px; }

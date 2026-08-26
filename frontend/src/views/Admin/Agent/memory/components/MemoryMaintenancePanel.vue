@@ -44,10 +44,13 @@
   </section>
 
   <section class="config-card">
-    <div class="card-head"><div class="card-title-block"><h3>IM 群组与成员记忆</h3><p>调用维护模型生成只读汇总预览，不展示用户、群组或成员标识。</p></div></div>
+    <div class="card-head">
+      <div class="card-icon" style="--ic:var(--selection-bg);--stroke:var(--action-primary)"><Icon name="communication.team" size="sm" /></div>
+      <div class="card-title-block"><h3>IM 群组与成员记忆</h3><p>调用维护模型生成只读汇总预览，不展示用户、群组或成员标识。</p></div>
+    </div>
     <div v-if="imScopes.error" class="save-hint error">{{ imScopes.error }}</div>
     <div v-if="imScopes.message" class="save-hint">{{ imScopes.message }}</div>
-    <div class="behavior-grid memory-subpanel">
+    <div class="behavior-grid">
       <div class="behavior-item full-row">
         <div class="behavior-label"><span>生成维护预览</span><span class="behavior-desc">只读分析，后台运行</span></div>
         <div class="action-row"><span v-if="imPreview.message" class="behavior-desc">{{ imPreview.message }}</span><button type="button" class="btn-ghost" :disabled="imPreview.running" @click="startImPreview">{{ imPreview.running ? `预览中… ${imPreview.done}/${imPreview.total}` : '生成预览' }}</button></div>
@@ -68,6 +71,7 @@
 
 <script setup lang="ts">
 import { useAdminStore } from '@/stores/admin'
+import Icon from '@/components/common/Icon.vue'
 import { useMemoryMaintenance } from '../useMemoryMaintenance'
 import { useImMemoryMaintenance } from '../useImMemoryMaintenance'
 
@@ -112,7 +116,7 @@ const { state: imScopes, preview: imPreview, startPreview: startImPreview, apply
 .btn-ghost,.btn-primary { display:inline-flex; align-items:center; justify-content:center; box-sizing:border-box; min-height:30px; width:auto; padding:6px 14px; border-radius:var(--radius-sm); font-size:13px; line-height:1.2; cursor:pointer; white-space:nowrap; }
 .btn-ghost { border:1px solid var(--border-subtle); background:var(--surface-glass); color:var(--content-secondary); }
 .btn-ghost:hover:not(:disabled) { background:var(--surface-glass-hover); color:var(--content-primary); }
-.btn-primary { border:0; background:var(--action-primary-bg); color:var(--content-on-accent); font-weight:600; box-shadow:var(--elevation-card); }
+.btn-primary { border:0; background:var(--action-primary-bg); color:var(--content-on-accent); font-weight:600; box-shadow:none; }
 .btn-primary:hover:not(:disabled) { background:var(--action-primary-bg-hover); }
 .btn-ghost:disabled,.btn-primary:disabled { opacity:.5; cursor:default; }
 @media (max-width:720px) { .im-memory-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .result-head { align-items:flex-start; flex-direction:column; } }

@@ -979,7 +979,7 @@ class LLMRunner:
                                 pending_confirmation = None
                         if adapter_target is not None:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session)
+                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
                             try:
                                 res, artifact = await registry.dispatch(
                                     user_id, adapter_target, _resolve_adapter_arguments(dispatch_input)
@@ -988,7 +988,7 @@ class LLMRunner:
                                 reset_dispatch_session(_dispatch_token)
                         else:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
-                            _dispatch_token = set_dispatch_session(session_id, session)
+                            _dispatch_token = set_dispatch_session(session_id, session, run_id)
                             try:
                                 res, artifact = await registry.dispatch(user_id, tc.name, dispatch_input)
                             finally:
@@ -1225,6 +1225,29 @@ class LLMRunner:
                             expires_at=prompt.expires_at.isoformat(),
                             force_display=True,
                         )
+                        from app.services.interactions import wait_for_resolution
+                        answer = await wait_for_resolution(
+                            user_id=user_id,
+                            prompt_id=prompt.id,
+                            heartbeat=lambda: genstream.touch(session_id),
+                            cancel_check=lambda: _im_cancelled(session_id),
+                        )
+                        if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                            yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                            return
+                        if answer is None:
+                            yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
+                            return
+                        if answer.get("option_id") == "continue":
+                            # 继续只解除当前 run 的工具上限；session 中的持久状态由
+                            # interaction service 根据动作上下文维护，二者都必须生效。
+                            unlimited_mode = True
+                            yield stream_event(
+                                "_new_round",
+                                round_id=round_id,
+                                next_round=round_number + 1,
+                            )
+                            continue
                     else:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
                     return

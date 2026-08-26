@@ -64,6 +64,11 @@ def write_override(path: Path, value: dict) -> None:
 
 
 def switch_storage_root(override_path: Path, storage_path: str) -> None:
+    if not override_path.exists():
+        raise RuntimeError(
+            f"缺少配置文件：{override_path}；拒绝自动创建部分配置，"
+            "请先恢复 config.override.json，或在全新部署时显式初始化。"
+        )
     override = load_override(override_path)
     storage = override.setdefault("storage", {})
     storage["local_path"] = storage_path

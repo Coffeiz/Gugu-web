@@ -559,7 +559,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   font-size: 12.5px; font-weight: 600; text-decoration: none;
   color: var(--content-on-accent); background: var(--gugu-chat-send-bg);
   border: 1px solid color-mix(in srgb, var(--action-primary) 22%, transparent);
-  border-radius: var(--radius-pill); box-shadow: var(--elevation-card);
+  border-radius: var(--radius-pill); box-shadow: none;
   cursor: pointer;
   transition:
     background-color var(--motion-hover-control) var(--motion-ease-standard),
@@ -571,7 +571,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 }
 :deep(.msg-bubble.md-body a[href^="gugu://"]:hover) {
   background: var(--gugu-chat-send-bg); border-color: var(--action-primary-hover);
-  box-shadow: var(--elevation-card-hover); opacity: 1;
+  box-shadow: none; opacity: 1;
 }
 :deep(.msg-bubble.md-body a[href^="gugu://"]:active) { transform: translateY(1px); opacity: 0.93; }
 

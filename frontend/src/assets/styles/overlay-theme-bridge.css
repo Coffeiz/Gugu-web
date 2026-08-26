@@ -41,8 +41,8 @@ html[data-theme][data-family] .event-form-body .popup-close-btn { color: var(--c
 html[data-theme][data-family] .event-form-body .popup-close-btn:hover { background: var(--surface-soft-hover); }
 html[data-theme][data-family] .event-form-body .popup-save {
   color: var(--content-on-accent);
-  background: var(--brand-gradient);
-  box-shadow: var(--elevation-card);
+  background: var(--action-primary-bg);
+  box-shadow: none;
 }
 html[data-theme][data-family] .event-form-body .popup-delete {
   color: var(--status-warning);

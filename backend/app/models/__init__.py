@@ -125,6 +125,48 @@ class Workspace(Base):
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
 
+class TerminalSessionRecord(Base):
+    """共享协作终端会话；命令执行仍由 Shell 沙盒负责。"""
+    __tablename__ = "terminal_sessions"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), default="终端")
+    source: Mapped[str] = mapped_column(String(16), default="agent")
+    status: Mapped[str] = mapped_column(String(32), default="idle", index=True)
+    shell_mode: Mapped[str] = mapped_column(String(16), default="sandbox")
+    network_profile: Mapped[str] = mapped_column(String(16), default="none")
+    last_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    output_chars: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+
+
+class TerminalEventRecord(Base):
+    """终端可重放事件；输出受 Shell 工具的大小边界约束。"""
+    __tablename__ = "terminal_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    terminal_id: Mapped[str] = mapped_column(ForeignKey("terminal_sessions.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(32))
+    source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stdout: Mapped[str] = mapped_column(Text, default="")
+    stderr: Mapped[str] = mapped_column(Text, default="")
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("terminal_id", "sequence", name="uq_terminal_event_sequence"),
+    )
+
+
 # ── Project ──────────────────────────────────────────────────────────────────
 
 class Project(Base):

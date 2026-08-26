@@ -614,7 +614,7 @@ async function cleanupLegacy(keys: string[]) {
 }
 .sa-btn:hover:not(:disabled) { background: rgba(255,255,255,0.16); }
 .sa-btn:disabled { opacity: 0.5; cursor: default; }
-.sa-btn.primary { background: linear-gradient(135deg, #7b7fb2, #9590c4); border-color: transparent; color: #fff; }
+.sa-btn.primary { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
 .sa-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 .sa-inline-msg { font-size: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }

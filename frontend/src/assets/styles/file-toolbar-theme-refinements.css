@@ -104,13 +104,13 @@ html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm {
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
   border-color: transparent;
-  box-shadow: var(--elevation-card);
+  box-shadow: none;
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:not(:disabled):hover {
   color: var(--content-on-accent);
   background: var(--action-primary-bg-hover);
   border-color: transparent;
-  box-shadow: var(--elevation-card-hover);
+  box-shadow: none;
 }
 html[data-theme][data-family] .file-browser-toolbar .btn-confirm-sm:disabled {
   color: var(--content-disabled);

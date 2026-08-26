@@ -720,9 +720,9 @@ onBeforeUnmount(() => {
 .tv-edit-btn:disabled { opacity: 0.5; cursor: default; }
 .tv-edit-save {
   border-color: transparent; color: var(--content-on-accent);
-  background: var(--gugu-chat-send-bg);
+  background: var(--action-primary-bg);
 }
-.tv-edit-save:hover:not(:disabled) { opacity: 0.92; background: var(--gugu-chat-send-bg); }
+.tv-edit-save:hover:not(:disabled) { opacity: 1; background: var(--action-primary-bg-hover); }
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }

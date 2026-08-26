@@ -1223,8 +1223,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
-.add-proj-btn { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(123,127,178,0.3); }
-.add-proj-btn:hover { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; opacity: 0.92; box-shadow: 0 6px 18px rgba(123,127,178,0.4); }
+.add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
+.add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
 .sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
 .sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }
@@ -1278,9 +1278,9 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
 .popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
-.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
+.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
-.popup-save:not(:disabled):hover { opacity: 0.88; }
+.popup-save:not(:disabled):hover { background: var(--action-primary-bg-hover); opacity: 1; }
 .reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }

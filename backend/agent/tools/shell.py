@@ -11,7 +11,7 @@ import app.db.session as _db_session
 from agent.security import confirm
 from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
-from agent.tools.base import current_dispatch_session
+from agent.tools.base import current_dispatch_run_id, current_dispatch_session
 from agent.sandbox import LocalWorkspaceExecutor
 from agent.sandbox.docker_runtime import sandbox_readiness, valid_egress_network_name, valid_egress_proxy
 from agent.sandbox.quota import measure_directory, snapshot_quota
@@ -53,6 +53,7 @@ async def _shell(db, user_id, args: dict):
     risk = "unknown"
     workspace_id = None
     scope = None
+    terminal_id = None
     result = None
     event = "completed"
     try:
@@ -66,6 +67,7 @@ async def _shell(db, user_id, args: dict):
             risk = result.pop("_risk", risk)
             workspace_id = result.pop("_workspace_id", None)
             scope = result.pop("_scope", None)
+            terminal_id = result.pop("_terminal_id", None)
             event = result.pop("_audit_event", event)
         _audit(
             event=event,
@@ -81,6 +83,7 @@ async def _shell(db, user_id, args: dict):
             truncated=result.get("truncated", False) if isinstance(result, dict) else False,
             cwd_fingerprint=fingerprint(result.get("cwd", "")) if isinstance(result, dict) and result.get("cwd") else None,
             duration_ms=round((time.monotonic() - started) * 1000, 2),
+            terminal_id=terminal_id,
         )
     return result
 
@@ -88,12 +91,14 @@ async def _shell(db, user_id, args: dict):
 async def _run_shell(db, user_id, args: dict):
     command = str(args.get("command") or "").strip()
     session_id = args.get("_session_id")
+    requested_workspace_id = args.get("_workspace_id")
     network_profile = str(args.get("network") or "none").strip().lower()
     if network_profile not in {"none", "egress"}:
         return {"error": "network 只能是 none 或 egress", "_audit_event": "rejected"}
     decision = await evaluate(
         db, user_id, session_id, command, confirm=bool(args.get("confirm")),
         session=current_dispatch_session(),
+        workspace_id=requested_workspace_id,
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
@@ -178,6 +183,29 @@ async def _run_shell(db, user_id, args: dict):
                 }
         quota_root = root if decision.workspace_id is None else None
         quota_bytes = sandbox_settings.persistent_quota_bytes if decision.workspace_id is None else None
+    terminal_row = None
+    from app.services.terminals import ensure_agent_terminal, get_terminal
+    requested_terminal_id = str(args.get("_terminal_id") or "").strip()
+    if requested_terminal_id:
+        terminal_row = await get_terminal(db, user_id, requested_terminal_id)
+        if (
+            terminal_row is None
+            or terminal_row.closed_at is not None
+            or (session_id is not None and terminal_row.session_id != int(session_id))
+            or (session_id is None and terminal_row.session_id is not None)
+            or terminal_row.workspace_id != decision.workspace_id
+        ):
+            return {"error": "终端不存在、未关联当前会话或已停止", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+        terminal_row.status = "running"
+        terminal_row.shell_mode = decision.scope.value
+        terminal_row.network_profile = network_profile
+        terminal_row.updated_at = __import__("app.core.tz", fromlist=["now_utc"]).now_utc()
+    elif session_id:
+            terminal_row = await ensure_agent_terminal(
+                db, user_id, session_id=int(session_id), workspace_id=decision.workspace_id,
+                shell_mode=decision.scope.value, network_profile=network_profile,
+                run_id=current_dispatch_run_id(),
+            )
     async def authorization_check() -> bool:
         """在独立事务中复核权限。
 
@@ -195,6 +223,7 @@ async def _run_shell(db, user_id, args: dict):
                     command,
                     confirm=True,
                     session=current_dispatch_session(),
+                    workspace_id=requested_workspace_id,
                 )
                 return (
                     current.allowed
@@ -251,6 +280,14 @@ async def _run_shell(db, user_id, args: dict):
             idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
             metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
         )
+    if terminal_row is not None:
+        from app.services.terminals import append_shell_result
+        await append_shell_result(
+            db, terminal_row, command=command, stdout=result.stdout, stderr=result.stderr,
+            exit_code=result.exit_code, ok=result.ok,
+            source=str(args.get("_terminal_source") or "agent"),
+            run_id=current_dispatch_run_id(),
+        )
     return {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -263,6 +300,7 @@ async def _run_shell(db, user_id, args: dict):
         "cwd": result.cwd,
         "permission_revoked": result.permission_revoked,
         "quota_exceeded": getattr(result, "quota_exceeded", False),
+        "_terminal_id": terminal_row.id if terminal_row is not None else None,
         **({"error": "Shell 持久空间达到配额，命令已终止"} if getattr(result, "quota_exceeded", False) else {}),
         "_risk": decision.risk.value,
         "_workspace_id": decision.workspace_id,
@@ -277,6 +315,7 @@ class ShellSkill(BaseSkill):
         Tool(
             name="shell",
             label="执行 Shell 命令",
+            description_short='执行受控 Shell 命令；关键字段 command/cwd',
             description="在授权 Shell 范围执行一条受控命令；默认 sandbox，危险命令需确认，不支持管道和重定向。",
             input_schema={
                 "type": "object",

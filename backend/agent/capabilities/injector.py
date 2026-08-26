@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from .index import CapabilityIndex
-from .models import CapabilitySnapshot, SelectedCapabilities
+from .models import CapabilitySnapshot, SelectedCapabilities, DESCRIPTION_SHORT_MAX_CHARS
 from .selector import CapabilitySelector
 
 
-CATALOG_DESCRIPTION_MAX_CHARS = 48
+CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 
 
@@ -106,9 +106,10 @@ async def build_fixed_adapter_context_for_user(
 def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool_order=None) -> str:
     lines = [
         "## 当前可用能力索引",
-        "这里只是稳定的能力名称和极短简介，不是已经发生的工具调用记录；"
+        "这里只是稳定的能力名称、用途和少量关键字段，不是完整工具 Schema，也不是已经发生的工具调用记录；"
         "固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具。"
-        "本轮历史中已经存在且版本未变化的 Schema 直接复用；只有没有对应 Schema 时才使用 `get_tool_schema`。"
+        "简介中的字段列表不完整，实际调用前必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
+        "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
         "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
         "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
     ]
@@ -121,6 +122,8 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
             continue
         description = " ".join(str(item.description_short or "").split())
         if len(description) > CATALOG_DESCRIPTION_MAX_CHARS:
-            description = description[:CATALOG_DESCRIPTION_MAX_CHARS - 1].rstrip() + "…"
+            raise ValueError(
+                f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
+            )
         lines.append(f"- {item.name}：{description}")
     return "\n".join(lines)

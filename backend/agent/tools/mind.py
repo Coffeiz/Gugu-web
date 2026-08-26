@@ -321,6 +321,7 @@ class MindSkill(BaseSkill):
     tools = [
         Tool(
             name="mind_search", label="搜索思维笔记",
+            description_short='搜索思维笔记和画布便签；关键字段 query/q',
             description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
                         "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 mind_get。",
             input_schema={
@@ -342,6 +343,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="mind_get", label="读取思维节点",
+            description_short='读取思维节点；关键字段 node_id',
             description="读取一条已知思维节点的完整正文、来源对象和一跳关联。"
                         "node_id 必须来自 mind_search 或用户当前可见的思维内容，不能猜测。",
             input_schema={
@@ -355,6 +357,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="create_note", label="记录思维笔记",
+            description_short='创建时间流笔记；标题写入 heading block',
             description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
             input_schema={
                 "type": "object",
@@ -371,6 +374,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="update_note", label="更新思维笔记",
+            description_short='更新思维笔记；关键字段 node_id/version',
             description="更新已知笔记的标题、内容、颜色或时间；必须使用 node_id/version，整篇改写需先确认。",
             input_schema={
                 "type": "object",
@@ -390,6 +394,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="delete_note", label="删除思维笔记",
+            description_short='删除思维笔记；关键字段 node_id/version，执行前确认',
             description="软删一条已确认的便签，可由 restore_note 恢复。只能传搜索或读取结果里的精确"
                         "node_id 和 version；绝不能按标题、关键词或日期模糊删除。",
             input_schema={
@@ -405,6 +410,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="restore_note", label="恢复思维笔记",
+            description_short='恢复思维笔记；关键字段 node_id',
             description="恢复一条被软删的便签，只接受精确 node_id。",
             input_schema={
                 "type": "object",
@@ -416,6 +422,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="undo_last_gugu_note", label="撤销刚才的咕咕记录",
+            description_short='撤销最近一条咕咕创建的笔记；无需参数',
             description="撤销当前用户最近一次由咕咕创建的笔记；绝不会删除用户自己创建的笔记。",
             input_schema={"type": "object", "properties": {}},
             handler=_undo_last_gugu_note,

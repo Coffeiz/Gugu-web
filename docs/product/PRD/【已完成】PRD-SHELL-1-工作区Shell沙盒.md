@@ -739,7 +739,7 @@ backend/tests/test_workspace_binding.py
 - [x] 新会话默认不绑定 workspace。
 - [x] 实现工作区列表、创建、绑定和解除绑定 API。
 - [x] 在执行前验证 workspace 用户归属、启用状态和真实根目录。
-- [x] 增加 `/workspace` 命令，支持查看当前绑定、`list` 列出可绑定工作区、绑定和解除绑定。
+- [x] 增加 `/workspace` 命令，支持查看当前绑定、`list` 列出可绑定工作区、绑定和解除绑定；增加 `delete <ID>` 的显式二次确认删除。
 - [x] 移除 `/shell` 命令和旧会话范围写入 API，避免 Shell 状态与 workspace 绑定分叉。
 - [x] 将旧 `personal/workspace` scope 的运行时分叉收敛为 `sandbox`；工作区只保留默认目录职责。
 - [x] 从 Admin Agent 运行行为页移除旧的“工作区 Shell”和“个人目录 Shell”独立开关，避免与统一 sandbox 执行模型混淆；兼容字段暂保留至数据库清理窗口。

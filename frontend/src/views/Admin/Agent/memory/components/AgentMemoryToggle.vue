@@ -40,7 +40,7 @@ function toggle() {
   border: 1px solid var(--control-border);
   border-radius: var(--radius-pill);
   background: var(--control-bg);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--content-primary) 8%, transparent);
+  box-shadow: none;
   cursor: pointer;
   transition:
     background var(--motion-fast) var(--motion-ease-standard),

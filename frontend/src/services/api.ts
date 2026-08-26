@@ -468,6 +468,82 @@ export const workspacesApi = {
   unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
 }
 
+export type TerminalItem = {
+  id: string
+  name: string
+  sessionId: number | null
+  workspaceId: number | null
+  runId: string | null
+  source: 'user' | 'agent'
+  status: string
+  shellMode: string
+  networkProfile: string
+  lastSequence: number
+  outputChars: number
+  createdAt: string
+  updatedAt: string
+  closedAt: string | null
+}
+
+export type TerminalEventItem = {
+  sequence: number
+  type: string
+  source: string | null
+  runId: string | null
+  command: string | null
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  occurredAt: string
+}
+
+export const terminalsApi = {
+  list: () => get<{ enabled: boolean; items: TerminalItem[] }>('/terminals'),
+  create: (data: { name?: string; sessionId?: number; workspaceId?: number }) => post<TerminalItem>('/terminals', data),
+  detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
+  events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
+    const token = getToken()
+    const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`${BASE_URL}/terminals/${encodeURIComponent(id)}/events?after=${after}`, { headers, signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    if (!res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const consume = (line: string) => {
+      if (!line.startsWith('data: ')) return
+      try {
+        const event = (JSON.parse(line.slice(6)) as { event?: TerminalEventItem }).event
+        if (event) onEvent?.(event)
+      } catch { /* 不完整的 SSE 行会在下一次读取时重新拼接 */ }
+    }
+    while (true) {
+      const chunk = await reader.read()
+      buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      lines.forEach(consume)
+      if (chunk.done) break
+    }
+    if (buffer) consume(buffer)
+  },
+  rename: (id: string, name: string) => patch<TerminalItem>(`/terminals/${encodeURIComponent(id)}`, { name }),
+  input: (id: string, data: {
+    command: string
+    cwd?: string
+    timeout?: number
+    maxOutputChars?: number
+    network?: 'none' | 'egress'
+    confirm?: boolean
+    confirmToken?: string
+  }) => post<{ terminal: TerminalItem; result: Record<string, unknown> }>(`/terminals/${encodeURIComponent(id)}/input`, data),
+  terminate: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/terminate`, {}),
+  reopen: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reopen`, {}),
+  delete: (id: string) => del<{ deleted: boolean; terminalId: string }>(`/terminals/${encodeURIComponent(id)}`),
+  metrics: () => get<{ total: number; running: number; outputChars: number; retentionDays: number; outputRetentionChars: number }>('/terminals/metrics'),
+}
+
 export const notificationsApi = {
   list:        ()    => get('/notifications'),                       // 通知中心：近期持久通知 + 未读态
   latestBubble: ()   => get('/notifications/bubble'),               // 上线补弹：最近一条有效气泡（{bubble:null|{...}}）

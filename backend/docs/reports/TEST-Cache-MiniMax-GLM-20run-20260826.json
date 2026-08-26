@@ -1,0 +1,1643 @@
+{
+  "session_id": 503,
+  "targets": [
+    "minimax-m3",
+    "glm"
+  ],
+  "reports": [
+    {
+      "target": "minimax-m3",
+      "header": {
+        "target": "minimax-m3",
+        "provider": "minimax",
+        "model": "MiniMax-M3",
+        "session_id": 503,
+        "runs_requested": 20,
+        "tool_schema_names": [
+          "call_tool",
+          "use_skill",
+          "ask_user"
+        ],
+        "initial_history": {
+          "count": 221,
+          "roles": {
+            "system": 0,
+            "user": 147,
+            "assistant": 74,
+            "tool": 0
+          },
+          "digest": "789314e761c967cf"
+        },
+        "mode": "one provider call per run; tool dispatch disabled"
+      },
+      "summary": {
+        "runs_attempted": 20,
+        "runs_completed": 20,
+        "runs_requested": 20,
+        "complete": true,
+        "failed_runs": 0,
+        "cache_ratio_avg": 99.34,
+        "cache_ratio_min": 98.67,
+        "cache_ratio_max": 99.98,
+        "input_tokens_total": 1085064,
+        "fresh_input_tokens_total": 7176,
+        "cache_read_tokens_total": 1077888,
+        "output_tokens_total": 2554,
+        "elapsed_ms_total": 84392.3,
+        "tool_call_runs": 7,
+        "observed_tools": [
+          "call_tool",
+          "use_skill"
+        ]
+      },
+      "runs": [
+        {
+          "run": 1,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3014.8,
+              "request": {
+                "count": 223,
+                "roles": {
+                  "system": 0,
+                  "user": 149,
+                  "assistant": 74,
+                  "tool": 0
+                },
+                "digest": "7f951b4c0623b5af"
+              },
+              "first_diff_from_previous_run": null,
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 52619,
+                "fresh_input_tokens": 11,
+                "cache_read_tokens": 52608,
+                "cache_write_tokens": 0,
+                "output_tokens": 37,
+                "cache_ratio": 99.98
+              }
+            }
+          ]
+        },
+        {
+          "run": 2,
+          "scenario": "project-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2285.3,
+              "request": {
+                "count": 227,
+                "roles": {
+                  "system": 0,
+                  "user": 152,
+                  "assistant": 75,
+                  "tool": 0
+                },
+                "digest": "b02fa0918c80ef79"
+              },
+              "first_diff_from_previous_run": {
+                "index": 221,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "686b18066aad04a9",
+                "current_digest": "82d748a919b78136"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 52723,
+                "fresh_input_tokens": 115,
+                "cache_read_tokens": 52608,
+                "cache_write_tokens": 0,
+                "output_tokens": 51,
+                "cache_ratio": 99.78
+              }
+            }
+          ]
+        },
+        {
+          "run": 3,
+          "scenario": "calendar-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2555.6,
+              "request": {
+                "count": 232,
+                "roles": {
+                  "system": 0,
+                  "user": 156,
+                  "assistant": 76,
+                  "tool": 0
+                },
+                "digest": "87e945a1ae0f6087"
+              },
+              "first_diff_from_previous_run": {
+                "index": 225,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "1fb84bd277b64ede",
+                "current_digest": "62c25b625156f639"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 52861,
+                "fresh_input_tokens": 253,
+                "cache_read_tokens": 52608,
+                "cache_write_tokens": 0,
+                "output_tokens": 37,
+                "cache_ratio": 99.52
+              }
+            }
+          ]
+        },
+        {
+          "run": 4,
+          "scenario": "memory-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3563.6,
+              "request": {
+                "count": 237,
+                "roles": {
+                  "system": 0,
+                  "user": 160,
+                  "assistant": 77,
+                  "tool": 0
+                },
+                "digest": "b6758c518d8e6d5f"
+              },
+              "first_diff_from_previous_run": {
+                "index": 230,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "1e28b2580a446afd",
+                "current_digest": "68e20b54b798b779"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 52986,
+                "fresh_input_tokens": 378,
+                "cache_read_tokens": 52608,
+                "cache_write_tokens": 0,
+                "output_tokens": 97,
+                "cache_ratio": 99.29
+              }
+            }
+          ]
+        },
+        {
+          "run": 5,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 6888.4,
+              "request": {
+                "count": 241,
+                "roles": {
+                  "system": 0,
+                  "user": 163,
+                  "assistant": 78,
+                  "tool": 0
+                },
+                "digest": "2ef4c552982d7500"
+              },
+              "first_diff_from_previous_run": {
+                "index": 235,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "f96dbb5ce171eb04",
+                "current_digest": "a2d0c545c498df63"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 53151,
+                "fresh_input_tokens": 415,
+                "cache_read_tokens": 52736,
+                "cache_write_tokens": 0,
+                "output_tokens": 258,
+                "cache_ratio": 99.22
+              }
+            }
+          ]
+        },
+        {
+          "run": 6,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 1959.2,
+              "request": {
+                "count": 245,
+                "roles": {
+                  "system": 0,
+                  "user": 166,
+                  "assistant": 79,
+                  "tool": 0
+                },
+                "digest": "2ca7e9268e3aa091"
+              },
+              "first_diff_from_previous_run": {
+                "index": 239,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "0f30f6be6a219c3f",
+                "current_digest": "4092ca7d74da22d8"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 53474,
+                "fresh_input_tokens": 482,
+                "cache_read_tokens": 52992,
+                "cache_write_tokens": 0,
+                "output_tokens": 34,
+                "cache_ratio": 99.1
+              }
+            }
+          ]
+        },
+        {
+          "run": 7,
+          "scenario": "web-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2050.5,
+              "request": {
+                "count": 249,
+                "roles": {
+                  "system": 0,
+                  "user": 169,
+                  "assistant": 80,
+                  "tool": 0
+                },
+                "digest": "bb237f5b2bd83ced"
+              },
+              "first_diff_from_previous_run": {
+                "index": 243,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "2479c359a192eaf3",
+                "current_digest": "9686e09bf54c4c81"
+              },
+              "tool_calls": [
+                "use_skill"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 53575,
+                "fresh_input_tokens": 327,
+                "cache_read_tokens": 53248,
+                "cache_write_tokens": 0,
+                "output_tokens": 29,
+                "cache_ratio": 99.39
+              }
+            }
+          ]
+        },
+        {
+          "run": 8,
+          "scenario": "complex-research",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2719.4,
+              "request": {
+                "count": 254,
+                "roles": {
+                  "system": 0,
+                  "user": 173,
+                  "assistant": 81,
+                  "tool": 0
+                },
+                "digest": "39707cd716bd0cfb"
+              },
+              "first_diff_from_previous_run": {
+                "index": 247,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "1a33935e0b1e58ae",
+                "current_digest": "ec9ce02bf761dc6b"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 53700,
+                "fresh_input_tokens": 324,
+                "cache_read_tokens": 53376,
+                "cache_write_tokens": 0,
+                "output_tokens": 68,
+                "cache_ratio": 99.4
+              }
+            }
+          ]
+        },
+        {
+          "run": 9,
+          "scenario": "project-update",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 5208.1,
+              "request": {
+                "count": 259,
+                "roles": {
+                  "system": 0,
+                  "user": 177,
+                  "assistant": 82,
+                  "tool": 0
+                },
+                "digest": "b4c5572a69da9ff9"
+              },
+              "first_diff_from_previous_run": {
+                "index": 252,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "62dfb45c072ba463",
+                "current_digest": "b0d3bba0eb5b786a"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 53858,
+                "fresh_input_tokens": 354,
+                "cache_read_tokens": 53504,
+                "cache_write_tokens": 0,
+                "output_tokens": 130,
+                "cache_ratio": 99.34
+              }
+            }
+          ]
+        },
+        {
+          "run": 10,
+          "scenario": "calendar-plan",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 5098.1,
+              "request": {
+                "count": 263,
+                "roles": {
+                  "system": 0,
+                  "user": 180,
+                  "assistant": 83,
+                  "tool": 0
+                },
+                "digest": "791c4fdcb1e609fa"
+              },
+              "first_diff_from_previous_run": {
+                "index": 257,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "6bb5045734ef22fd",
+                "current_digest": "97190137579c1bdc"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 54050,
+                "fresh_input_tokens": 418,
+                "cache_read_tokens": 53632,
+                "cache_write_tokens": 0,
+                "output_tokens": 139,
+                "cache_ratio": 99.23
+              }
+            }
+          ]
+        },
+        {
+          "run": 11,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2349.6,
+              "request": {
+                "count": 267,
+                "roles": {
+                  "system": 0,
+                  "user": 183,
+                  "assistant": 84,
+                  "tool": 0
+                },
+                "digest": "0a889253b378a5aa"
+              },
+              "first_diff_from_previous_run": {
+                "index": 261,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "9354088f858352ba",
+                "current_digest": "1413519f0d80e5ac"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 54248,
+                "fresh_input_tokens": 360,
+                "cache_read_tokens": 53888,
+                "cache_write_tokens": 0,
+                "output_tokens": 36,
+                "cache_ratio": 99.34
+              }
+            }
+          ]
+        },
+        {
+          "run": 12,
+          "scenario": "memory-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 4717.9,
+              "request": {
+                "count": 271,
+                "roles": {
+                  "system": 0,
+                  "user": 186,
+                  "assistant": 85,
+                  "tool": 0
+                },
+                "digest": "2c0a2cc401389c97"
+              },
+              "first_diff_from_previous_run": {
+                "index": 265,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "55d1a35895caab39",
+                "current_digest": "d1b80f7099ba5289"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 54346,
+                "fresh_input_tokens": 330,
+                "cache_read_tokens": 54016,
+                "cache_write_tokens": 0,
+                "output_tokens": 112,
+                "cache_ratio": 99.39
+              }
+            }
+          ]
+        },
+        {
+          "run": 13,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 8471.7,
+              "request": {
+                "count": 275,
+                "roles": {
+                  "system": 0,
+                  "user": 189,
+                  "assistant": 86,
+                  "tool": 0
+                },
+                "digest": "9cb0bf34b803bf53"
+              },
+              "first_diff_from_previous_run": {
+                "index": 269,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "8ebd14abfcd6a62f",
+                "current_digest": "232ad0ffcf0add54"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 54526,
+                "fresh_input_tokens": 382,
+                "cache_read_tokens": 54144,
+                "cache_write_tokens": 0,
+                "output_tokens": 409,
+                "cache_ratio": 99.3
+              }
+            }
+          ]
+        },
+        {
+          "run": 14,
+          "scenario": "file-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2448.6,
+              "request": {
+                "count": 279,
+                "roles": {
+                  "system": 0,
+                  "user": 192,
+                  "assistant": 87,
+                  "tool": 0
+                },
+                "digest": "2fe8cb65b4124cdc"
+              },
+              "first_diff_from_previous_run": {
+                "index": 273,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "54477f10ef79c417",
+                "current_digest": "40e6d79bec9c488b"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 55004,
+                "fresh_input_tokens": 732,
+                "cache_read_tokens": 54272,
+                "cache_write_tokens": 0,
+                "output_tokens": 56,
+                "cache_ratio": 98.67
+              }
+            }
+          ]
+        },
+        {
+          "run": 15,
+          "scenario": "web-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2493.3,
+              "request": {
+                "count": 283,
+                "roles": {
+                  "system": 0,
+                  "user": 195,
+                  "assistant": 88,
+                  "tool": 0
+                },
+                "digest": "00d17d55abeac08f"
+              },
+              "first_diff_from_previous_run": {
+                "index": 277,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "52969e450a808b1e",
+                "current_digest": "0a2eacfe15d5c34e"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 55130,
+                "fresh_input_tokens": 346,
+                "cache_read_tokens": 54784,
+                "cache_write_tokens": 0,
+                "output_tokens": 65,
+                "cache_ratio": 99.37
+              }
+            }
+          ]
+        },
+        {
+          "run": 16,
+          "scenario": "complex-research",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 7710.8,
+              "request": {
+                "count": 288,
+                "roles": {
+                  "system": 0,
+                  "user": 199,
+                  "assistant": 89,
+                  "tool": 0
+                },
+                "digest": "72706a12becc8b86"
+              },
+              "first_diff_from_previous_run": {
+                "index": 281,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "d2296db85d8af9f1",
+                "current_digest": "3fd8cee724f4a825"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 55288,
+                "fresh_input_tokens": 376,
+                "cache_read_tokens": 54912,
+                "cache_write_tokens": 0,
+                "output_tokens": 349,
+                "cache_ratio": 99.32
+              }
+            }
+          ]
+        },
+        {
+          "run": 17,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3081.1,
+              "request": {
+                "count": 292,
+                "roles": {
+                  "system": 0,
+                  "user": 202,
+                  "assistant": 90,
+                  "tool": 0
+                },
+                "digest": "890e10cf48a96306"
+              },
+              "first_diff_from_previous_run": {
+                "index": 286,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "8ba6c8d24bb8fbee",
+                "current_digest": "f2bd0315e7e52a05"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 55699,
+                "fresh_input_tokens": 659,
+                "cache_read_tokens": 55040,
+                "cache_write_tokens": 0,
+                "output_tokens": 40,
+                "cache_ratio": 98.82
+              }
+            }
+          ]
+        },
+        {
+          "run": 18,
+          "scenario": "project-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3731.4,
+              "request": {
+                "count": 296,
+                "roles": {
+                  "system": 0,
+                  "user": 205,
+                  "assistant": 91,
+                  "tool": 0
+                },
+                "digest": "37b535c548b533f2"
+              },
+              "first_diff_from_previous_run": {
+                "index": 290,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "d51fa7b47c0c650a",
+                "current_digest": "3f16fadcb8b71767"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 55800,
+                "fresh_input_tokens": 248,
+                "cache_read_tokens": 55552,
+                "cache_write_tokens": 0,
+                "output_tokens": 48,
+                "cache_ratio": 99.56
+              }
+            }
+          ]
+        },
+        {
+          "run": 19,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3494.8,
+              "request": {
+                "count": 301,
+                "roles": {
+                  "system": 0,
+                  "user": 209,
+                  "assistant": 92,
+                  "tool": 0
+                },
+                "digest": "068e9a799ac037a6"
+              },
+              "first_diff_from_previous_run": {
+                "index": 294,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "a1ffcb39202597a8",
+                "current_digest": "672511d88e68e075"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 55940,
+                "fresh_input_tokens": 388,
+                "cache_read_tokens": 55552,
+                "cache_write_tokens": 0,
+                "output_tokens": 47,
+                "cache_ratio": 99.31
+              }
+            }
+          ]
+        },
+        {
+          "run": 20,
+          "scenario": "final-summary",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 10550.1,
+              "request": {
+                "count": 306,
+                "roles": {
+                  "system": 0,
+                  "user": 213,
+                  "assistant": 93,
+                  "tool": 0
+                },
+                "digest": "5a15a19917e731ed"
+              },
+              "first_diff_from_previous_run": {
+                "index": 299,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "569f2c69740db7f7",
+                "current_digest": "ebf940b4f786fbe4"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 56086,
+                "fresh_input_tokens": 278,
+                "cache_read_tokens": 55808,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.5
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "target": "glm",
+      "header": {
+        "target": "glm",
+        "provider": "glm",
+        "model": "glm-4.5-air",
+        "session_id": 503,
+        "runs_requested": 20,
+        "tool_schema_names": [
+          "call_tool",
+          "use_skill",
+          "ask_user"
+        ],
+        "initial_history": {
+          "count": 222,
+          "roles": {
+            "system": 0,
+            "user": 115,
+            "assistant": 74,
+            "tool": 33
+          },
+          "digest": "0199a30565d2c15e"
+        },
+        "mode": "one provider call per run; tool dispatch disabled"
+      },
+      "summary": {
+        "runs_attempted": 20,
+        "runs_completed": 20,
+        "runs_requested": 20,
+        "complete": true,
+        "failed_runs": 0,
+        "cache_ratio_avg": 99.69,
+        "cache_ratio_min": 99.45,
+        "cache_ratio_max": 99.97,
+        "input_tokens_total": 993004,
+        "fresh_input_tokens_total": 3052,
+        "cache_read_tokens_total": 989952,
+        "output_tokens_total": 5989,
+        "elapsed_ms_total": 153077.2,
+        "tool_call_runs": 8,
+        "observed_tools": [
+          "call_tool",
+          "use_skill"
+        ]
+      },
+      "runs": [
+        {
+          "run": 1,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 14621.0,
+              "request": {
+                "count": 224,
+                "roles": {
+                  "system": 0,
+                  "user": 117,
+                  "assistant": 74,
+                  "tool": 33
+                },
+                "digest": "d45245c9793782a1"
+              },
+              "first_diff_from_previous_run": null,
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 48656,
+                "fresh_input_tokens": 16,
+                "cache_read_tokens": 48640,
+                "cache_write_tokens": 0,
+                "output_tokens": 413,
+                "cache_ratio": 99.97
+              }
+            }
+          ]
+        },
+        {
+          "run": 2,
+          "scenario": "project-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2144.8,
+              "request": {
+                "count": 228,
+                "roles": {
+                  "system": 0,
+                  "user": 120,
+                  "assistant": 75,
+                  "tool": 33
+                },
+                "digest": "0e3265882f3fa982"
+              },
+              "first_diff_from_previous_run": {
+                "index": 222,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "7437b2beff9d42ae",
+                "current_digest": "ce5d52660543333b"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 48742,
+                "fresh_input_tokens": 102,
+                "cache_read_tokens": 48640,
+                "cache_write_tokens": 0,
+                "output_tokens": 53,
+                "cache_ratio": 99.79
+              }
+            }
+          ]
+        },
+        {
+          "run": 3,
+          "scenario": "calendar-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 1701.0,
+              "request": {
+                "count": 233,
+                "roles": {
+                  "system": 0,
+                  "user": 123,
+                  "assistant": 76,
+                  "tool": 34
+                },
+                "digest": "d0d5379c081ad47d"
+              },
+              "first_diff_from_previous_run": {
+                "index": 226,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "57b1be3732ae36d1",
+                "current_digest": "8755dc3378b9506b"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 48832,
+                "fresh_input_tokens": 192,
+                "cache_read_tokens": 48640,
+                "cache_write_tokens": 0,
+                "output_tokens": 52,
+                "cache_ratio": 99.61
+              }
+            }
+          ]
+        },
+        {
+          "run": 4,
+          "scenario": "memory-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 12071.9,
+              "request": {
+                "count": 238,
+                "roles": {
+                  "system": 0,
+                  "user": 126,
+                  "assistant": 77,
+                  "tool": 35
+                },
+                "digest": "cf701097090ccc19"
+              },
+              "first_diff_from_previous_run": {
+                "index": 231,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "60549af5544b575f",
+                "current_digest": "63a6fa85aa7b9d96"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 48919,
+                "fresh_input_tokens": 151,
+                "cache_read_tokens": 48768,
+                "cache_write_tokens": 0,
+                "output_tokens": 454,
+                "cache_ratio": 99.69
+              }
+            }
+          ]
+        },
+        {
+          "run": 5,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 11811.9,
+              "request": {
+                "count": 242,
+                "roles": {
+                  "system": 0,
+                  "user": 129,
+                  "assistant": 78,
+                  "tool": 35
+                },
+                "digest": "22a9f46512e08652"
+              },
+              "first_diff_from_previous_run": {
+                "index": 236,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "5bc37de9cbc80de7",
+                "current_digest": "9296c695c67e6a1e"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49056,
+                "fresh_input_tokens": 160,
+                "cache_read_tokens": 48896,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.67
+              }
+            }
+          ]
+        },
+        {
+          "run": 6,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 4651.6,
+              "request": {
+                "count": 246,
+                "roles": {
+                  "system": 0,
+                  "user": 132,
+                  "assistant": 79,
+                  "tool": 35
+                },
+                "digest": "5e82dd260042f5cb"
+              },
+              "first_diff_from_previous_run": {
+                "index": 240,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "f49ca814b09a0fbf",
+                "current_digest": "bdcd9ac0ba4a8fb0"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49194,
+                "fresh_input_tokens": 170,
+                "cache_read_tokens": 49024,
+                "cache_write_tokens": 0,
+                "output_tokens": 173,
+                "cache_ratio": 99.65
+              }
+            }
+          ]
+        },
+        {
+          "run": 7,
+          "scenario": "web-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2258.0,
+              "request": {
+                "count": 250,
+                "roles": {
+                  "system": 0,
+                  "user": 135,
+                  "assistant": 80,
+                  "tool": 35
+                },
+                "digest": "2217882b41845161"
+              },
+              "first_diff_from_previous_run": {
+                "index": 244,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "091d16bed98e0a21",
+                "current_digest": "cab50552310e4807"
+              },
+              "tool_calls": [
+                "use_skill"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 49295,
+                "fresh_input_tokens": 143,
+                "cache_read_tokens": 49152,
+                "cache_write_tokens": 0,
+                "output_tokens": 56,
+                "cache_ratio": 99.71
+              }
+            }
+          ]
+        },
+        {
+          "run": 8,
+          "scenario": "complex-research",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 8823.5,
+              "request": {
+                "count": 255,
+                "roles": {
+                  "system": 0,
+                  "user": 138,
+                  "assistant": 81,
+                  "tool": 36
+                },
+                "digest": "fd31dbee2c262a67"
+              },
+              "first_diff_from_previous_run": {
+                "index": 248,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "32ab53cb4631f38a",
+                "current_digest": "11a0cd9b93ef95a2"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 49377,
+                "fresh_input_tokens": 97,
+                "cache_read_tokens": 49280,
+                "cache_write_tokens": 0,
+                "output_tokens": 82,
+                "cache_ratio": 99.8
+              }
+            }
+          ]
+        },
+        {
+          "run": 9,
+          "scenario": "project-update",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3281.6,
+              "request": {
+                "count": 260,
+                "roles": {
+                  "system": 0,
+                  "user": 141,
+                  "assistant": 82,
+                  "tool": 37
+                },
+                "digest": "3aa84efc56bca8f0"
+              },
+              "first_diff_from_previous_run": {
+                "index": 253,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "d493789a190ca884",
+                "current_digest": "e1579130b0cd97f9"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 49482,
+                "fresh_input_tokens": 202,
+                "cache_read_tokens": 49280,
+                "cache_write_tokens": 0,
+                "output_tokens": 83,
+                "cache_ratio": 99.59
+              }
+            }
+          ]
+        },
+        {
+          "run": 10,
+          "scenario": "calendar-plan",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 2890.2,
+              "request": {
+                "count": 265,
+                "roles": {
+                  "system": 0,
+                  "user": 144,
+                  "assistant": 83,
+                  "tool": 38
+                },
+                "digest": "e983be7d68f19c95"
+              },
+              "first_diff_from_previous_run": {
+                "index": 258,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "2aabfe83a460f861",
+                "current_digest": "4d88f7cb65d8f1a6"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 49556,
+                "fresh_input_tokens": 148,
+                "cache_read_tokens": 49408,
+                "cache_write_tokens": 0,
+                "output_tokens": 52,
+                "cache_ratio": 99.7
+              }
+            }
+          ]
+        },
+        {
+          "run": 11,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 11287.0,
+              "request": {
+                "count": 270,
+                "roles": {
+                  "system": 0,
+                  "user": 147,
+                  "assistant": 84,
+                  "tool": 39
+                },
+                "digest": "8f2dc5b64e2ea351"
+              },
+              "first_diff_from_previous_run": {
+                "index": 263,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "90f55ce3bdb38349",
+                "current_digest": "f594d6948975c904"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49632,
+                "fresh_input_tokens": 96,
+                "cache_read_tokens": 49536,
+                "cache_write_tokens": 0,
+                "output_tokens": 426,
+                "cache_ratio": 99.81
+              }
+            }
+          ]
+        },
+        {
+          "run": 12,
+          "scenario": "memory-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 11501.9,
+              "request": {
+                "count": 274,
+                "roles": {
+                  "system": 0,
+                  "user": 150,
+                  "assistant": 85,
+                  "tool": 39
+                },
+                "digest": "ab9cd821a9fb2309"
+              },
+              "first_diff_from_previous_run": {
+                "index": 268,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "f868f657fbc8a1c8",
+                "current_digest": "1eb3a2b10e15db8a"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49728,
+                "fresh_input_tokens": 192,
+                "cache_read_tokens": 49536,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.61
+              }
+            }
+          ]
+        },
+        {
+          "run": 13,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 13243.1,
+              "request": {
+                "count": 278,
+                "roles": {
+                  "system": 0,
+                  "user": 153,
+                  "assistant": 86,
+                  "tool": 39
+                },
+                "digest": "8195ec535410cbc6"
+              },
+              "first_diff_from_previous_run": {
+                "index": 272,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "c6e54a42b0889ee3",
+                "current_digest": "39af5b33641599d7"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49885,
+                "fresh_input_tokens": 221,
+                "cache_read_tokens": 49664,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.56
+              }
+            }
+          ]
+        },
+        {
+          "run": 14,
+          "scenario": "file-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 12540.4,
+              "request": {
+                "count": 282,
+                "roles": {
+                  "system": 0,
+                  "user": 156,
+                  "assistant": 87,
+                  "tool": 39
+                },
+                "digest": "228f51f11203d587"
+              },
+              "first_diff_from_previous_run": {
+                "index": 276,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "ad421761d1382c04",
+                "current_digest": "3ad9cd90ab8657db"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 49993,
+                "fresh_input_tokens": 201,
+                "cache_read_tokens": 49792,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.6
+              }
+            }
+          ]
+        },
+        {
+          "run": 15,
+          "scenario": "web-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 6364.9,
+              "request": {
+                "count": 286,
+                "roles": {
+                  "system": 0,
+                  "user": 159,
+                  "assistant": 88,
+                  "tool": 39
+                },
+                "digest": "689af4cc3308b45b"
+              },
+              "first_diff_from_previous_run": {
+                "index": 280,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "d4c991ac595ff3e3",
+                "current_digest": "decd934a4fcdfa9a"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 50197,
+                "fresh_input_tokens": 277,
+                "cache_read_tokens": 49920,
+                "cache_write_tokens": 0,
+                "output_tokens": 193,
+                "cache_ratio": 99.45
+              }
+            }
+          ]
+        },
+        {
+          "run": 16,
+          "scenario": "complex-research",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 7592.9,
+              "request": {
+                "count": 291,
+                "roles": {
+                  "system": 0,
+                  "user": 162,
+                  "assistant": 89,
+                  "tool": 40
+                },
+                "digest": "88c32f5ea1f0ac1e"
+              },
+              "first_diff_from_previous_run": {
+                "index": 284,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "dfcdae85bee364d3",
+                "current_digest": "d202f1f71fc8872d"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 50307,
+                "fresh_input_tokens": 131,
+                "cache_read_tokens": 50176,
+                "cache_write_tokens": 0,
+                "output_tokens": 372,
+                "cache_ratio": 99.74
+              }
+            }
+          ]
+        },
+        {
+          "run": 17,
+          "scenario": "simple-chat",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 3177.0,
+              "request": {
+                "count": 295,
+                "roles": {
+                  "system": 0,
+                  "user": 165,
+                  "assistant": 90,
+                  "tool": 40
+                },
+                "digest": "12470ee672ce0d6c"
+              },
+              "first_diff_from_previous_run": {
+                "index": 289,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "da15459b4ed2aeb5",
+                "current_digest": "d4d6f21b8ea34f46"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 50430,
+                "fresh_input_tokens": 126,
+                "cache_read_tokens": 50304,
+                "cache_write_tokens": 0,
+                "output_tokens": 149,
+                "cache_ratio": 99.75
+              }
+            }
+          ]
+        },
+        {
+          "run": 18,
+          "scenario": "project-query",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 5572.3,
+              "request": {
+                "count": 299,
+                "roles": {
+                  "system": 0,
+                  "user": 168,
+                  "assistant": 91,
+                  "tool": 40
+                },
+                "digest": "2852446798aca2d4"
+              },
+              "first_diff_from_previous_run": {
+                "index": 293,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "6f254a4f8c973d60",
+                "current_digest": "40f526ef62e27026"
+              },
+              "tool_calls": [
+                "call_tool"
+              ],
+              "tool_call_count": 1,
+              "usage": {
+                "input_tokens": 50500,
+                "fresh_input_tokens": 196,
+                "cache_read_tokens": 50304,
+                "cache_write_tokens": 0,
+                "output_tokens": 359,
+                "cache_ratio": 99.61
+              }
+            }
+          ]
+        },
+        {
+          "run": 19,
+          "scenario": "complex-planning",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 7906.5,
+              "request": {
+                "count": 304,
+                "roles": {
+                  "system": 0,
+                  "user": 171,
+                  "assistant": 92,
+                  "tool": 41
+                },
+                "digest": "0c01e10f9c3ab7be"
+              },
+              "first_diff_from_previous_run": {
+                "index": 297,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "a48c31c61f81c9c9",
+                "current_digest": "74d6fa4cca2d563f"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 50581,
+                "fresh_input_tokens": 149,
+                "cache_read_tokens": 50432,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.71
+              }
+            }
+          ]
+        },
+        {
+          "run": 20,
+          "scenario": "final-summary",
+          "rounds": [
+            {
+              "round": 1,
+              "ok": true,
+              "elapsed_ms": 9635.7,
+              "request": {
+                "count": 308,
+                "roles": {
+                  "system": 0,
+                  "user": 174,
+                  "assistant": 93,
+                  "tool": 41
+                },
+                "digest": "e48e24e07263b36d"
+              },
+              "first_diff_from_previous_run": {
+                "index": 302,
+                "previous_role": "user",
+                "current_role": "user",
+                "previous_digest": "482f42fe4b12ef04",
+                "current_digest": "15f0b579983a74ea"
+              },
+              "tool_calls": [],
+              "tool_call_count": 0,
+              "usage": {
+                "input_tokens": 50642,
+                "fresh_input_tokens": 82,
+                "cache_read_tokens": 50560,
+                "cache_write_tokens": 0,
+                "output_tokens": 512,
+                "cache_ratio": 99.84
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

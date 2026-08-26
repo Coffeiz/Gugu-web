@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
+DESCRIPTION_SHORT_MAX_CHARS = 100
+
 
 @dataclass(frozen=True)
 class CapabilityMeta:

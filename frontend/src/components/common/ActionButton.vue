@@ -47,20 +47,20 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   border: 0;
   color: var(--content-on-accent);
   background: var(--action-primary-bg);
-  box-shadow: var(--elevation-card);
+  box-shadow: none;
 }
-.app-action-button.is-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); box-shadow: var(--elevation-card-hover); opacity: .92; }
+.app-action-button.is-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); box-shadow: none; opacity: .92; }
 .app-action-button.is-secondary {
   border: 1px solid var(--action-secondary-border);
   color: var(--action-secondary-fg);
   background: var(--action-secondary-bg);
-  box-shadow: var(--elevation-card);
+  box-shadow: none;
 }
 .app-action-button.is-secondary:hover:not(:disabled) {
   border-color: var(--action-secondary-border-hover);
   color: var(--action-secondary-fg-hover);
   background: var(--action-secondary-bg-hover);
-  box-shadow: var(--elevation-card-hover);
+  box-shadow: none;
 }
 .app-action-button:disabled { opacity: .5; cursor: default; }
 .app-action-button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }

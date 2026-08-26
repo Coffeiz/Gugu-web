@@ -517,6 +517,36 @@ async def test_tool_calls_exhausted_before_next_real_dispatch(monkeypatch, dispa
     assert any("查询步骤有点多" in detail for detail in errors)
 
 
+async def test_tool_budget_prompt_resumes_same_run_after_continue(monkeypatch, dispatched):
+    """达到工具次数上限后选择继续，必须等待并继续同一个 run。"""
+    class Prompt:
+        id = 903
+        kind = "choice"
+        title = "步骤较多，要继续吗？"
+        body = "本轮已达到普通工具调用次数。"
+        expires_at = SimpleNamespace(isoformat=lambda: "2026-08-26T00:00:00+08:00")
+
+    async def fake_create_prompt(*, user_id, session_id):
+        return Prompt(), [{"id": "continue", "label": "继续执行", "token": "token"}]
+
+    async def fake_wait_for_resolution(**_kwargs):
+        return {"status": "selected", "option_id": "continue"}
+
+    monkeypatch.setattr("app.services.interactions.create_tool_budget_prompt", fake_create_prompt)
+    monkeypatch.setattr("app.services.interactions.wait_for_resolution", fake_wait_for_resolution)
+    script = [msg([TU("get_project", str(i), {}) for i in range(MAX_TOOL_CALLS + 1)])]
+    script.append(msg([TX("继续完成")]))
+    patch_anthropic(monkeypatch, script)
+    ev, text, errors = await drain(
+        make_runner()._run_anthropic("u", "sys", [{"role": "user", "content": "执行任务"}], AI, session_id=1)
+    )
+
+    assert ev["interaction_required"] == 1
+    assert ev["_new_round"] >= 1
+    assert "继续完成" in text
+    assert errors == []
+
+
 async def test_goal_mode_allows_more_than_normal_tool_limit(monkeypatch, dispatched):
     """长任务模式解除工具次数上限，但仍沿用同一条 Runner 控制流。"""
     script = [msg([TU("get_project", str(i), {})]) for i in range(MAX_TOOL_CALLS + 1)]

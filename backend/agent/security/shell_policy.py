@@ -94,26 +94,32 @@ async def evaluate(
     *,
     confirm: bool = False,
     session: ConversationSession | None = None,
+    workspace_id: int | None = None,
 ) -> ShellDecision:
-    """计算最终 Shell 权限；范围由会话绑定状态派生。"""
+    """计算最终 Shell 权限；会话或独立终端均可提供工作区上下文。"""
     risk = classify_command(command)
     settings = get_settings()
     if not settings.agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
-    if not session_id:
-        return ShellDecision(False, "当前会话不可用", risk)
-    if session is None:
+    if session_id and session is None:
         session = await db.get(ConversationSession, session_id)
-    if not session or session.user_id != user_id:
+    if session_id and (not session or session.user_id != user_id):
         return ShellDecision(False, "会话不存在", risk)
     # Shell 只有 sandbox/system 两种执行后端。会话绑定只改变 sandbox 的挂载目录，
     # Shell 范围只由当前权限快照和 workspace 绑定派生，避免持久化状态分叉。
     scope = ShellScope.SANDBOX
     workspace = None
-    if session.workspace_id is not None:
+    if session is not None and session.workspace_id is not None:
+        workspace_id = session.workspace_id
         if not await effective_shell_enabled(db, user_id):
             return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
-        workspace = await db.get(Workspace, session.workspace_id)
+        workspace = await db.get(Workspace, workspace_id)
+        if not workspace or workspace.user_id != user_id or not workspace.enabled:
+            return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
+    elif workspace_id is not None:
+        if not await effective_shell_enabled(db, user_id):
+            return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
+        workspace = await db.get(Workspace, workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
     elif (

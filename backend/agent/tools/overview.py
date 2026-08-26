@@ -48,6 +48,7 @@ class OverviewSkill(BaseSkill):
     tools = [
         Tool(
             name="get_upcoming", label="近期待办",
+            description_short='汇总近期项目和活动；关键字段 days',
             description="汇总近期（默认 7 天内）要截止的项目与日历事件，按日期排序。用于回答「最近要忙什么」。",
             input_schema={
                 "type": "object",
@@ -59,6 +60,7 @@ class OverviewSkill(BaseSkill):
         ),
         Tool(
             name="get_dashboard_stats", label="总览统计",
+            description_short='汇总项目、事件、文件和客户数量；无需参数',
             description="返回项目（按状态）、近期事件、文件、客户的数量统计。用于回答「我手头有多少项目」这类总览问题。",
             input_schema={"type": "object", "properties": {}},
             handler=_get_dashboard_stats,

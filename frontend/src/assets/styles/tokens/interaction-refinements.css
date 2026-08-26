@@ -68,19 +68,19 @@ html[data-theme][data-family] .topbar .btn-primary-custom {
 html[data-theme='light'][data-family] .topbar .btn-ghost-custom:hover {
   background: var(--action-secondary-bg-hover) !important;
   border-color: var(--action-secondary-border-hover) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.98), 0 3px 10px rgba(80,90,110,.12) !important;
+  box-shadow: none !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom {
   background: var(--action-secondary-bg) !important;
   border-color: var(--action-secondary-border) !important;
   color: var(--action-secondary-fg) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.06) !important;
+  box-shadow: none !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover {
   background: var(--action-secondary-bg-hover) !important;
   border-color: var(--action-secondary-border-hover) !important;
   color: var(--action-secondary-fg-hover) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.10) !important;
+  box-shadow: none !important;
 }
 
 /* ── Calendar toolbar shell + controls ── */

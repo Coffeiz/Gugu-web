@@ -35,6 +35,7 @@ from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import wechat_connect as wechat_connect_router
 from app.api.v1 import preferences as preferences_router
 from app.api.v1 import workspaces as workspaces_router
+from app.api.v1 import terminals as terminals_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import agent_perception as agent_perception_router
@@ -263,6 +264,7 @@ app.include_router(mind_router.router,        prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
 app.include_router(workspaces_router.router, prefix="/api/v1")
+app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）

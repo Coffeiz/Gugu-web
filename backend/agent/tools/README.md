@@ -14,14 +14,28 @@ Tool(
 )
 ```
 
-`description_short` 为 1-100 个 Unicode 字符，说明“能做什么、什么时候使用”。完整
-`description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
+`description_short` 为 1-100 个 Unicode 字符，建议通常控制在 30-60 字、目标约 50 字。
+它要同时说明“能做什么、什么时候用、最关键的字段或相邻工具关系”；不要塞完整示例、
+枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
+
+短简介的推荐形状：
+
+```text
+创建项目；可带 stages/todos，后续用 add_stage/add_todo
+给活动加提醒；关键字段 event_id/lead_minutes/channels
+搜索公网网页；关键字段 query/max_results
+```
+
+关键字段只列路由和首次调用最容易遗漏的字段，不代替参数 Schema。模型在当前历史中没有
+该工具的完整 Schema 时，必须先调用 `get_tool_schema`；工具错误回执也会提示重新获取
+当前工具 Schema。所有 96 个内置工具都必须显式填写 `description_short`，注册表会拒绝
+缺失或超过 100 个 Unicode 字符的简介，不再静默截断。
 
 新增工具后运行：
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m pytest tests/test_capability_registry.py
+PYTHONPATH=. .venv/bin/python -m pytest tests/test_capability_registry.py tests/test_capability_injection.py
 ```
 
 不要在 handler 中拼 Prompt、筛选工具或绕过 `registry.dispatch()`。

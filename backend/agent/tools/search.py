@@ -601,6 +601,7 @@ class SearchSkill(BaseSkill):
     tools = [
         Tool(
             name="web_search", label="联网搜索",
+            description_short='搜索公网网页；关键字段 query/max_results',
             description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
             input_schema={
                 "type": "object",
@@ -618,6 +619,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="image_search", label="图片搜索",
+            description_short='搜索图片候选；需分析时再用 inspect_images',
             description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
             input_schema={
                 "type": "object",
@@ -641,6 +643,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="inspect_images", label="读取图片",
+            description_short='读取图片并交给视觉模型；最多 20 张',
             description="读取图片候选或历史附件并交给视觉模型分析；一次最多 20 张。",
             input_schema={
                 "type": "object",
@@ -674,6 +677,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="deep_research", label="深度研究",
+            description_short='深度研究；关键字段 query',
             description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
             input_schema={
                 "type": "object",

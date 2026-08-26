@@ -66,6 +66,11 @@ if [ ! -d ".venv" ] && [ ! -d "venv" ]; then
     err "未找到 venv，请先创建：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
     exit 1
 fi
+if [ ! -f "config.override.json" ]; then
+    err "缺少 config.override.json；为避免部署清空 Admin 设置，部署已停止。"
+    err "请先恢复备份后再部署。全新部署请先显式创建空配置，再运行本脚本。"
+    exit 1
+fi
 VENV_BIN=".venv/bin"
 [ -d "venv" ] && VENV_BIN="venv/bin"
 

@@ -1282,6 +1282,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
+            description_short='查询文件；关键字段 space/project_id/folder_id/query',
             description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
             input_schema={
                 "type": "object",
@@ -1305,6 +1306,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
+            description_short='读取文件内容；关键字段 file_id/file',
             description="读取文本、文档、表格、图片、音频或视频；返回与问题相关的内容摘要。",
             input_schema={
                 "type": "object",
@@ -1318,6 +1320,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
+            description_short='修改文本文件；关键字段 file_id/file/edits',
             description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
             input_schema={
                 "type": "object",
@@ -1351,6 +1354,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_document", label="生成文档",
+            description_short='创建文档；关键字段 name/format/content',
             description="创建文件；文本直接写入，docx/pdf 用 HTML，xlsx 用 CSV，返回 file_id。",
             input_schema={
                 "type": "object",
@@ -1369,6 +1373,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_file", label="重命名文件",
+            description_short='重命名文件；关键字段 file_id/file',
             description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
             input_schema={
                 "type": "object",
@@ -1398,6 +1403,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
+            description_short='移动文件/文件夹；关键字段 files/folders/target',
             description="批量移动文件或文件夹到同一目标位置；文件夹会递归携带内容。",
             input_schema={
                 "type": "object",
@@ -1424,6 +1430,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="copy_file", label="复制文件",
+            description_short='复制文件；关键字段 file_id/file',
             description="复制一份文件到目标位置（target.folder 填文件夹名；不填则在原位复制一份）。",
             input_schema={
                 "type": "object",
@@ -1446,6 +1453,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_folder", label="新建文件夹",
+            description_short='新建文件夹；关键字段 name/parent_id/project_id',
             description="新建文件夹，可指定所属项目与父文件夹（支持嵌套）。",
             input_schema={
                 "type": "object",
@@ -1461,6 +1469,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_file", label="删除文件",
+            description_short='删除文件到回收站；关键字段 file_id/file_ids',
             description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，批量传 file_ids。",
             input_schema={
                 "type": "object",
@@ -1476,6 +1485,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
+            description_short='查询文件夹路径；关键字段 project_id/parent_id',
             description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
@@ -1489,6 +1499,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_folder", label="重命名文件夹",
+            description_short='重命名文件夹；关键字段 project_id/folder_id/name',
             description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
             input_schema={
                 "type": "object",
@@ -1505,6 +1516,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
+            description_short='删除文件夹；关键字段 project_id/folder_id/name',
             description="删除一个或多个文件夹。单项用 name/folder_id，批量传 folder_ids。文件夹及其内容会整体移入回收站，30 天内可恢复。",
             input_schema={
                 "type": "object",
@@ -1520,6 +1532,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
+            description_short='发送文件或图片；关键字段 file/file_id/url',
             description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
             input_schema={
                 "type": "object",
@@ -1536,12 +1549,14 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
+            description_short='查最近暂存的附件；用于找回近期图片或文件',
             description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_recent_attachments,
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
+            description_short='保存聊天附件到文件库；关键字段 attach_ids/project_id',
             description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
             input_schema={
                 "type": "object",
