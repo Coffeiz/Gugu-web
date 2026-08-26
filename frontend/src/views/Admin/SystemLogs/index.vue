@@ -15,6 +15,8 @@
       <span class="toolbar-count" v-if="filtered.length">{{ filtered.length }} 条</span>
     </div>
 
+    <div v-if="loadError" class="load-error" role="alert">{{ loadError }}</div>
+
     <div class="log-table-wrap">
       <div class="log-table">
         <div class="lt-head">
@@ -85,6 +87,7 @@ const adminStore = useAdminStore()
 const items       = ref<any[]>([])
 const loading     = ref(false)
 const refreshing  = ref(false)  // 仅手动点击刷新时为 true
+const loadError   = ref('')
 const filterLevel = ref('')
 const expanded    = ref<number | null>(null)
 const page        = ref(1)
@@ -103,13 +106,23 @@ async function load(manual = false) {
     setTimeout(() => { refreshing.value = false }, 550)
   }
   loading.value = true
+  loadError.value = ''
   try {
     const qs  = filterLevel.value ? `?level=${filterLevel.value}` : ''
     const res = await adminStore.authFetch(`/api/v1/admin/system-logs${qs}`)
-    const data = await res.json()
+    const body = await res.text()
+    if (!res.ok) {
+      let detail = ''
+      try { detail = body ? (JSON.parse(body).detail || '') : '' } catch {}
+      throw new Error(detail || `加载失败（${res.status}）`)
+    }
+    if (!body.trim()) throw new Error('系统日志接口返回空响应')
+    const data = JSON.parse(body)
     items.value = data.items ?? []
     page.value  = 1
     expanded.value = null
+  } catch (error) {
+    loadError.value = error instanceof Error ? error.message : '加载系统日志失败'
   } finally {
     loading.value = false
   }
@@ -173,6 +186,15 @@ onMounted(load)
   padding: 18px 36px 0; flex-shrink: 0;
 }
 .toolbar-count { font-size: 12px; color: rgba(255,255,255,0.3); margin-left: 4px; }
+.load-error {
+  margin: 12px 36px 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(220, 100, 100, 0.28);
+  border-radius: 8px;
+  background: rgba(220, 80, 80, 0.1);
+  color: rgba(245, 150, 150, 0.95);
+  font-size: 12px;
+}
 
 .log-table-wrap {
   flex: 1; padding: 14px 36px 0; overflow: hidden;

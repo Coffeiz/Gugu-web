@@ -64,7 +64,7 @@ COMMAND_DETAILS: dict[str, str] = {
     "workspace": (
         "管理当前会话的工作区绑定，也可以删除工作区声明。\n"
         "用法：/workspace show、/workspace list、/workspace <ID>、/workspace unlink\n"
-        "删除：/workspace delete <ID>；确认删除：/workspace delete <ID> confirm。\n"
+        "删除：/workspace delete <ID>，随后点击确认/取消；也支持 /workspace delete <ID> confirm。\n"
         "解除只取消当前会话绑定；删除会解除所有会话绑定，但不会删除项目或文件。"
     ),
     "help": (

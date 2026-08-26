@@ -242,6 +242,8 @@ DELETE /api/v1/projects/{id}    项目下文件软删（进回收站），文件
 
 **用户偏好**（`preferences.py`）：`GET/PATCH /preferences`，部分更新 merge 写入。
 
+**实时业务事件**（TypeScript Live）：网页通过 `VITE_LIVE_API_URL` 或当前主机的 8585 端口直接请求 `GET /live/stream`；TypeScript 服务负责 JWT 用户鉴权、Redis 用户频道订阅、canonical envelope 校验和 SSE 生命周期，systemd 单元为 `gugu-live.service`。FastAPI 不再提供 Python Live 代理入口。聊天生成流、Admin 日志流和文件下载流不经过该服务。
+
 **AI Agent**（`agent.py`）
 ```
 POST /api/v1/agent/chat                 SSE 流式，支持 Anthropic / OpenAI-compatible 双路由
@@ -276,7 +278,7 @@ POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 
 **IM 平台连接**（用户态）：`qq_connect.py`、`feishu_connect.py`、`wechat_connect.py`——扫码绑定/解绑自己的 IM 账号。`user_bots.py` 管理自带机器人凭据。
 
-**其他用户态路由**：`search.py`（联网搜索代理）、`track.py`（埋点上报）、`feedback.py`（用户反馈提交）、`notifications.py`（站内通知）、`live.py`、`onboarding`（新手引导，独立子系统 `backend/onboarding/`）。
+**其他用户态路由**：`search.py`（联网搜索代理）、`track.py`（埋点上报）、`feedback.py`（用户反馈提交）、`notifications.py`（站内通知）、`onboarding`（新手引导，独立子系统 `backend/onboarding/`）。实时事件 SSE 由 `backend/ts/api/live.ts` 独立提供。
 
 **说明**：`app/api/v1/tasks.py` 文件存在但内容为空（0 字节），`main.py` 里也未导入，属于历史遗留的占位文件，不代表真实功能。
 

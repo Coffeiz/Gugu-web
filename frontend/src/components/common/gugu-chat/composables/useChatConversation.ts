@@ -346,7 +346,10 @@ export function useChatConversation(options: {
   // origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
   // 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
   watch(() => liveStore.sessionEvent, async (e) => {
-    if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
+    if (!e || String(e.session_id) !== String(sessionId.value)) return
+    const session = sessions.value.find(item => item.id === Number(e.session_id))
+    if (session && e.title) session.title = e.title
+    if (!e.appended?.length) return
     if (e.origin && e.origin === CLIENT_ID) return
     for (const m of e.appended) {
       const isAi = m.role === 'assistant'

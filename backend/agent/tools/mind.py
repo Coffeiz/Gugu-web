@@ -157,7 +157,7 @@ def _relation_summary(relation: Any, current_node_id: int, nodes: dict[int, Any]
     }
 
 
-async def _mind_search(db, user_id, args: dict):
+async def _note_search(db, user_id, args: dict):
     # 对模型统一暴露 query；q 保留为历史调用兼容别名。
     q = (args.get("query") or args.get("q") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
@@ -197,7 +197,7 @@ async def _mind_search(db, user_id, args: dict):
     }
 
 
-async def _mind_get(db, user_id, args: dict):
+async def _note_get(db, user_id, args: dict):
     node_id = args.get("node_id")
     node = await get_user_node(db, user_id, node_id)
     if node is None or node.deleted_at is not None:
@@ -320,10 +320,10 @@ class MindSkill(BaseSkill):
     name = "mind"
     tools = [
         Tool(
-            name="mind_search", label="搜索思维笔记",
-            description_short='搜索思维笔记和画布便签；关键字段 query/q',
+            name="note_search", label="搜索思维笔记",
+            description_short='固定工具名 note_search：全局搜索时间流笔记/画布便签；传 query',
             description="按一个或多个关键词（默认 OR）搜索思维面板中的笔记和画布便签，并带回每条命中节点的一跳关联。"
-                        "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 mind_get。",
+                        "用于回答用户的想法、结论、上下文之间有什么关联；需要完整正文时再调用 note_get。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -339,13 +339,13 @@ class MindSkill(BaseSkill):
                 # q / queries 至少传一个；具体校验由 handler 统一完成，兼容 queries-only 调用。
                 "required": [],
             },
-            handler=_mind_search,
+            handler=_note_search,
         ),
         Tool(
-            name="mind_get", label="读取思维节点",
-            description_short='读取思维节点；关键字段 node_id',
+            name="note_get", label="读取思维节点",
+            description_short='固定工具名 note_get：读取搜索到的思维节点正文；传 node_id',
             description="读取一条已知思维节点的完整正文、来源对象和一跳关联。"
-                        "node_id 必须来自 mind_search 或用户当前可见的思维内容，不能猜测。",
+                        "node_id 必须来自 note_search 或用户当前可见的思维内容，不能猜测。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -353,10 +353,10 @@ class MindSkill(BaseSkill):
                 },
                 "required": ["node_id"],
             },
-            handler=_mind_get,
+            handler=_note_get,
         ),
         Tool(
-            name="create_note", label="记录思维笔记",
+            name="note_create", label="记录思维笔记",
             description_short='创建时间流笔记；标题写入 heading block',
             description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
             input_schema={
@@ -373,7 +373,7 @@ class MindSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="update_note", label="更新思维笔记",
+            name="note_update", label="更新思维笔记",
             description_short='更新思维笔记；关键字段 node_id/version',
             description="更新已知笔记的标题、内容、颜色或时间；必须使用 node_id/version，整篇改写需先确认。",
             input_schema={
@@ -393,9 +393,9 @@ class MindSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="delete_note", label="删除思维笔记",
+            name="note_delete", label="删除思维笔记",
             description_short='删除思维笔记；关键字段 node_id/version，执行前确认',
-            description="软删一条已确认的便签，可由 restore_note 恢复。只能传搜索或读取结果里的精确"
+            description="软删一条已确认的便签，可由 note_restore 恢复。只能传搜索或读取结果里的精确"
                         "node_id 和 version；绝不能按标题、关键词或日期模糊删除。",
             input_schema={
                 "type": "object",
@@ -409,7 +409,7 @@ class MindSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="restore_note", label="恢复思维笔记",
+            name="note_restore", label="恢复思维笔记",
             description_short='恢复思维笔记；关键字段 node_id',
             description="恢复一条被软删的便签，只接受精确 node_id。",
             input_schema={
@@ -421,7 +421,7 @@ class MindSkill(BaseSkill):
             mutates=True,
         ),
         Tool(
-            name="undo_last_gugu_note", label="撤销刚才的咕咕记录",
+            name="note_undo", label="撤销刚才的咕咕记录",
             description_short='撤销最近一条咕咕创建的笔记；无需参数',
             description="撤销当前用户最近一次由咕咕创建的笔记；绝不会删除用户自己创建的笔记。",
             input_schema={"type": "object", "properties": {}},

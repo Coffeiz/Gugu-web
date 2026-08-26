@@ -10,7 +10,7 @@
 当前统一 Knowledge RAG 已接入 Memory 和 Project 两类 Retriever。文件、画布和历史对话虽然已经具备部分索引构建基础，但运行时仍主要依赖专用工具：
 
 - 文件通过文件搜索和读取工具访问。
-- 画布通过 `mind_search_canvas`、`mind_get_canvas` 等工具访问。
+- 画布通过 `canvas_search`、`canvas_get` 等工具访问。
 - 历史对话通过 `search_conversations`、`read_conversation` 访问。
 
 这保证了精确查询和权限边界，但无法在用户自然提问时自动补充相关内容。本 PRD 将三类来源接入统一 RAG，同时保留专用工具作为精确读取和写入入口。
@@ -32,7 +32,7 @@
 - RAG 不直接执行文件、画布或对话工具。
 - RAG 不绕过 owner、workspace、project、canvas、group 和成员权限。
 - RAG 不把二进制文件、图片原文或全部聊天记录直接注入上下文。
-- RAG 不替代 `read_file`、`mind_get_canvas`、`read_conversation` 等精确工具。
+- RAG 不替代 `read_file`、`canvas_get`、`read_conversation` 等精确工具。
 - 本阶段不做新的 Embedding 模型，不复制 BM25 实现。
 
 ## 3. 总体架构

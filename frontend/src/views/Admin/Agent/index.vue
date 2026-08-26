@@ -883,8 +883,9 @@ async function fetchModelList() {
   modelMenuOpen.value = true
   try {
     let res
-    if (editIsNew.value) {
-      // 新建时用表单里的临时配置获取，无需先保存
+    if (editIsNew.value || target.api_key.trim()) {
+      // 新建，或编辑时刚填写了尚未保存的 Key：都使用表单里的临时配置，
+      // 避免为了测试鉴权先把密钥持久化。
       res = await adminStore.authFetch('/api/v1/admin/agent/llm-presets/models-preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

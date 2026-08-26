@@ -1125,7 +1125,7 @@ async def _collect(
             if name and name not in tool_names:
                 tool_names.append(name)
             # 按工具注册时显式声明的 mutates 判断，不再靠名字前缀猜——猜测式前缀匹配
-            # 会漏掉 remember（写长期记忆）、undo_last_gugu_note（删笔记）这类不落在
+            # 会漏掉 remember（写长期记忆）、note_undo（删笔记）这类不落在
             # create_/update_/delete_/... 词表里的写工具，导致失败后重跑整轮时
             # 重复执行已经生效的写操作。
             from agent.tools import registry as _tool_registry

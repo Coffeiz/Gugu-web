@@ -11,10 +11,12 @@ import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
 import { getToken, CLIENT_ID } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
+import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
 
 // 细粒度会话事件：后端 SSE 推送的会话追加，供 GuguChat 增量追加消息
 interface SessionEvent {
   session_id: number | string
+  title?: string
   appended: Array<{
     role?: string; text?: string; files?: unknown[]; quoted_text?: string
     platform_user_id?: string | null; platform_user_name?: string | null
@@ -42,9 +44,11 @@ export interface ProjectEvent {
 }
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
-// 'mind' 预留给思维面板：P1 咕咕还不写便签，后端暂不推这个资源，rev.mind 会一直是 0；
-// 等 P3 接入咕咕确认式写入后由后端开始推，笔记页/画布这边不用再改。
-const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind']
+const LIVE_URL = import.meta.env.VITE_LIVE_API_URL
+  ?? (typeof window === 'undefined'
+    ? '/live/stream'
+    : `${window.location.protocol}//${window.location.hostname}:8585/live/stream`)
+const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals']
 
 export const useLiveStore = defineStore('live', () => {
   // 每个资源一个递增计数，视图 watch 它来触发 refetch
@@ -56,7 +60,11 @@ export const useLiveStore = defineStore('live', () => {
   // 文件库细粒度事件（供 filesCache 消费，见上方 FileEvent 注释）
   const fileEvent = ref<FileEvent | null>(null)
   const projectEvent = ref<ProjectEvent | null>(null)
+  // canonical 业务事件；rev/fileEvent/projectEvent 在迁移期间继续保留给旧消费者。
+  const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
   let _seq = 0
+  const seenEventIds = new Set<string>()
+  const lastCanonicalRevision = new Map<string, number>()
 
   // 同步拿 uiStore（Pinia 允许在 setup 里调其他 store）
   const uiStore = useUiStore()
@@ -89,7 +97,7 @@ export const useLiveStore = defineStore('live', () => {
       if (!token) { await _sleep(1000); continue }
       abort = new AbortController()
       try {
-        const res = await fetch(`${BASE_URL}/live/stream`, {
+        const res = await fetch(LIVE_URL, {
           headers: { Authorization: `Bearer ${token}` },
           signal: abort.signal,
         })
@@ -116,8 +124,34 @@ export const useLiveStore = defineStore('live', () => {
             try {
               const evt = JSON.parse(raw)
               const resources = evt.resources || []
+              const isCanonical = isLiveEventPayload(evt)
+              if (isCanonical) {
+                const canonical = evt as LiveEventPayload
+                if (seenEventIds.has(canonical.event_id)) continue
+                seenEventIds.add(canonical.event_id)
+                if (seenEventIds.size > 512) {
+                  const oldest = seenEventIds.values().next().value
+                  if (typeof oldest === 'string') seenEventIds.delete(oldest)
+                }
+                const previousRevision = lastCanonicalRevision.get(canonical.resource)
+                if (previousRevision != null && canonical.revision <= previousRevision) continue
+                if (previousRevision != null && canonical.revision > previousRevision + 1) bump(canonical.resource)
+                lastCanonicalRevision.set(canonical.resource, canonical.revision)
+                resourceEvent.value = { ...evt, _t: ++_seq }
+                if (evt.resource === 'sessions' && evt.entity_id != null) {
+                  const sessionPayload = evt.payload && typeof evt.payload === 'object'
+                    ? evt.payload as Record<string, unknown> : {}
+                  sessionEvent.value = {
+                    session_id: evt.entity_id,
+                    title: typeof sessionPayload.title === 'string' ? sessionPayload.title : undefined,
+                    appended: (Array.isArray(sessionPayload.appended) ? sessionPayload.appended : []) as SessionEvent['appended'],
+                    origin: evt.origin ?? null,
+                    _t: ++_seq,
+                  }
+                }
+              }
               for (const r of resources) bump(r)   // 粗信号：预览窗、Trash、项目卡片计数等仍照旧消费
-              if (resources.includes('projects')) {
+              if (resources.includes('projects') && !isCanonical) {
                 projectEvent.value = { origin: evt.origin ?? null, _t: ++_seq }
               }
               // 文件库细粒度事件：交给 filesCache 决定回声抑制 / remove 快路径 / 合并刷新
@@ -160,7 +194,7 @@ export const useLiveStore = defineStore('live', () => {
     if (abort) { abort.abort(); abort = null }
   }
 
-  return { rev, connected, sessionEvent, fileEvent, projectEvent, bump, connect, disconnect }
+  return { rev, connected, sessionEvent, fileEvent, projectEvent, resourceEvent, bump, connect, disconnect }
 })
 
 function _sleep(ms: number) {

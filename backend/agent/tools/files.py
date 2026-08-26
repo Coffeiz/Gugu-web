@@ -1403,23 +1403,29 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
-            description_short='移动文件/文件夹；关键字段 files/folders/target',
-            description="批量移动文件或文件夹到同一目标位置；文件夹会递归携带内容。",
+            description_short='移动文件或文件夹；批量传 files/folders，目标传 target',
+            description=(
+                "移动文件库中的文件或文件夹，可混合批量处理；文件夹会递归携带子文件夹和文件。"
+                "源项用 files/folders（名称或 id），目标用 target.folder_id 或 target.folder；"
+                "移到个人根目录传 target.space=personal、target.folder=根目录，"
+                "移到项目需传 target.space=project 和真实 target.project_id。"
+                "workspace_id 不是 project_id/folder_id，不能直接填入 target。"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "files":   {"type": "array", "items": {"type": "string"},
-                                "description": "要移动的文件（名称或 id）数组，可空"},
+                                "description": "要移动的文件名或文件 id 数组，可空"},
                     "folders": {"type": "array", "items": {"type": "string"},
-                                "description": "要移动的文件夹（名称或 id）数组，可空——整夹连内容递归搬"},
+                                "description": "要移动的文件夹名或文件夹 id 数组，可空；整夹连内容递归搬"},
                     "target": {
                         "type": "object",
-                        "description": "统一落点，所有文件和文件夹都移到这里",
+                        "description": "统一目标位置；所有源文件和文件夹都移动到这里",
                         "properties": {
-                            "folder": {"type": "string", "description": "目标文件夹名称（移到空间根传空串）"},
-                            "folder_id": {"type": "integer", "description": "目标文件夹 id（最准；有就优先用）"},
+                            "folder": {"type": "string", "description": "目标文件夹名称；移到空间根传“根目录”或空串"},
+                            "folder_id": {"type": "integer", "description": "目标文件夹 id，优先使用，不能填 workspace_id"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
-                            "project_id": {"type": "integer", "description": "目标在 project 空间时填"},
+                            "project_id": {"type": "integer", "description": "真实项目 id；space=project 时必填，不能填 workspace_id"},
                         },
                     },
                 },

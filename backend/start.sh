@@ -20,7 +20,7 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
-SYSTEMD_SERVICES="gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
+SYSTEMD_SERVICES="gugu-sandboxd gugu-live gugu-backend gugu-worker gugu-supervisor"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -219,8 +219,8 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    # 四个常驻服务：sandboxd、web(uvicorn)、IM worker、IM supervisor(网关管家)
-    local services="gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
+    # 五个常驻服务：sandboxd、TypeScript Live、web(uvicorn)、IM worker、IM supervisor(网关管家)
+    local services="gugu-sandboxd gugu-live gugu-backend gugu-worker gugu-supervisor"
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
     local run_user="${RUN_USER:-}"
     if [ -z "$run_user" ]; then
@@ -268,7 +268,7 @@ cmd_install() {
     chmod 600 "${APP_DIR}/config.override.json"
     chown -R "$run_user":"$run_user" "${APP_DIR}/../Gugu-data/users" "${APP_DIR}/logs" "${APP_DIR}/var/rag-index" "${APP_DIR}/config.override.json"
 
-    # 按实际安装目录 / 用户填占位符，生成三个单元
+    # 按实际安装目录 / 用户填占位符，生成五个单元
     for s in $services; do
         log "生成 systemd 单元 → /etc/systemd/system/${s}.service"
         sed -e "s#__APP_DIR__#${APP_DIR}#g" \
@@ -284,8 +284,9 @@ cmd_install() {
     for s in $services; do systemctl restart "$s"; done
     check_systemd_services
     log ""
-    log "常用命令（sandboxd / web / IM 大脑 / IM 网关）："
-    log "  systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
+    log "常用命令（sandboxd / TypeScript Live / web / IM 大脑 / IM 网关）："
+    log "  systemctl status gugu-sandboxd gugu-live gugu-backend gugu-worker gugu-supervisor"
+    log "  systemctl restart gugu-live          # 改了 TypeScript 实时事件服务后重启"
     log "  journalctl -u gugu-worker -f        # IM 大脑日志"
     log "  journalctl -u gugu-supervisor -f    # IM 网关日志"
     log "  systemctl restart gugu-worker       # 改了 agent 代码后重启大脑"
@@ -312,7 +313,7 @@ case "${1:-start}" in
   status       查看状态 + 健康检查
   logs         实时跟踪日志（Ctrl+C 退出）
   foreground   前台启动（带 --reload，用于调试）
-  install      安装为 systemd 服务（gugu-backend.service）
+  install      安装为 systemd 服务（sandboxd + gugu-live + gugu-backend + worker + supervisor）
 
 环境变量:
   HOST=0.0.0.0           监听地址

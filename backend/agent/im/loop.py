@@ -855,6 +855,10 @@ async def dispatch_im_message(payload: dict):
         allow_leading_mention=False,
     )
     if cmd_reply is not None and not goal_start:
+        if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
+            await _send_interaction_prompts(payload, [cmd_reply.get("prompt") or {}])
+            trace.finish_run("success", "已发送工作区删除确认")
+            return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
         return None

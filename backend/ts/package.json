@@ -12,8 +12,13 @@
   "scripts": {
     "build": "node scripts/build-rag.mjs",
     "gen:api": "node scripts/generate-api-contract.mjs",
+    "start:live": "tsx api/live.ts",
     "lint": "node scripts/typecheck.mjs",
-    "test": "node --test --experimental-strip-types workers/rag/test/*.test.ts",
+    "test": "node --import tsx --test api/*.test.ts workers/rag/test/*.test.ts packages/contracts/test/*.test.ts",
     "typecheck": "node scripts/typecheck.mjs"
+  },
+  "dependencies": {
+    "redis": "^5.12.1",
+    "tsx": "^4.19.4"
   }
 }

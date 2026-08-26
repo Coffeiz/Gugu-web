@@ -163,7 +163,6 @@
               </div>
               <div class="option-button-row">
                 <button v-for="effort in deepseekEfforts" :key="effort.key" type="button" class="toggle-btn"
-                  :disabled="draft.thinking !== 'adaptive'"
                   :class="{ active: draft.reasoning_effort === effort.key || (!draft.reasoning_effort && effort.key === '') }"
                   @click="draft.reasoning_effort = effort.key">{{ effort.label }}</button>
               </div>

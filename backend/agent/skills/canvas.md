@@ -3,7 +3,7 @@ name: 思维画布
 description_long: "用户要查看、搜索、创建、摆放、整理、连接、删除或批量编排思维画布节点时使用。"
 description_short: 用户要搜索、创建、整理或连接思维画布节点时使用。
 category: canvas
-related_tools: mind_list_canvases, mind_get_canvas, mind_search_canvas, mind_search_placeable_nodes, mind_create_canvas, mind_delete_canvas, mind_create_canvas_note, mind_add_canvas_node, mind_update_canvas_node, mind_remove_canvas_node, mind_update_canvas_note, mind_delete_canvas_note, mind_connect_nodes, mind_update_relation_anchor, mind_disconnect_nodes, mind_batch_canvas
+related_tools: canvas_list, canvas_get, canvas_search, canvas_search_placeable, canvas_create, canvas_delete, canvas_create_note, canvas_add_node, canvas_update_node, canvas_remove_node, canvas_update_note, canvas_delete_note, canvas_connect, canvas_update_anchor, canvas_disconnect, canvas_batch
 emoji: 🧠
 ---
 
@@ -11,17 +11,17 @@ emoji: 🧠
 
 ## 工具路由
 
-- 不要猜画布 ID：先用 `mind_list_canvases`，已有明确画布时用 `mind_get_canvas`。
-- 搜索画布中已经存在的节点用 `mind_search_canvas`。
-- 搜索可以放入画布的项目、文件、活动用 `mind_search_placeable_nodes`。
-- 普通时间流 `note` 不能放入画布；画布便签必须使用 `mind_create_canvas_note`。
-- 删除整张画布使用 `mind_delete_canvas`（含确认门，会清除画布内所有便签、引用节点和连接关系）。
+- 不要猜画布 ID：先用 `canvas_list`，已有明确画布时用 `canvas_get`。
+- 搜索画布中已经存在的节点用 `canvas_search`。
+- 搜索可以放入画布的项目、文件、活动用 `canvas_search_placeable`。
+- 普通时间流 `note` 不能放入画布；画布便签必须使用 `canvas_create_note`。
+- 删除整张画布使用 `canvas_delete`（含确认门，会清除画布内所有便签、引用节点和连接关系）。
 - 创建、放置、更新、移除和删除工具都支持单项或数组调用；数组一次最多 20 项。
 - 创建、移动、连接或批量编排后，以工具结果为准，不要只用文字声称成功。
 
 ## 画布便签的标题（重要）
 
-- `mind_create_canvas_note` / `mind_update_canvas_note` 的 `title` 参数**用户看不到**——只进搜索和列表索引。
+- `canvas_create_note` / `canvas_update_note` 的 `title` 参数**用户看不到**——只进搜索和列表索引。
 - **用户可见的标题必须写在 `content` 的第一行，格式 `# 标题`**（渲染成卡片标题，其余行是正文）。
 - 正确示范：`content: "# 合肥\n安徽\n商合杭、京港\n主要客运站：合肥站、合肥南站、合肥西站"`
 - 反例：`title: "合肥"` 但 `content` 第一行是 `安徽` → 用户看到的是"安徽"，城市名丢了。
@@ -55,7 +55,7 @@ bottom = y + height
 2. 确认用户要放置的对象，先搜索再使用稳定的 `node_id` 或引用 ID。
 3. 解析用户指定的位置；明确位置优先，但仍要检查是否与已有节点冲突。
 4. 发生冲突时，优先向右寻找最近的可用位置，再向下换行；不要自动移动已有节点。
-5. 批量放置时先在脑中完成所有矩形布局，再调用 `mind_batch_canvas`，每个新节点都要避让已有节点和同批节点。
+5. 批量放置时先在脑中完成所有矩形布局，再调用 `canvas_batch`，每个新节点都要避让已有节点和同批节点。
 6. 用户要求“大范围整理”时，先说明将移动哪些节点并请求确认；没有明确授权时只寻找空位。
 
 位置锚点的使用：
@@ -85,31 +85,31 @@ bottom = y + height
 - 方向判断用两卡片中心的水平坐标，不用节点 ID 顺序
 
 **其它规则**：
-- 创建关系时可在 `mind_connect_nodes` 传 `source_side` / `target_side`。
+- 创建关系时可在 `canvas_connect` 传 `source_side` / `target_side`。
 - 读取画布关系时，以返回的 `source_node_id` / `target_node_id` 对应端点；数据库可能按节点 ID 归一，不能因此自行交换端点。
-- 已有关系修改端点使用 `mind_update_relation_anchor`；移动节点后不要擅自重算已经确认的端点。
+- 已有关系修改端点使用 `canvas_update_anchor`；移动节点后不要擅自重算已经确认的端点。
 - 删除便签或关系必须先走确认门。
 
 ## 批量编排
 
 - 各 CRUD 工具优先直接使用数组参数完成同类操作：
-  - `mind_create_canvas_note.notes`
-  - `mind_add_canvas_node.nodes`
-  - `mind_update_canvas_node.updates`
-  - `mind_update_canvas_note.updates`
-  - `mind_remove_canvas_node.item_ids`
-  - `mind_delete_canvas_note.notes`
+  - `canvas_create_note.notes`
+  - `canvas_add_node.nodes`
+  - `canvas_update_node.updates`
+  - `canvas_update_note.updates`
+  - `canvas_remove_node.item_ids`
+  - `canvas_delete_note.notes`
 - 上述数组每次最多 20 项；单项调用继续使用原来的单数参数和返回格式。创建、放置和更新都只接受位置、层级和折叠状态，不要传 `w/h`；如果需要调整视觉尺寸，应由前端/Runtime 的布局策略处理。
-- `mind_batch_canvas` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
+- `canvas_batch` 用于需要跨类型、跨步骤保持原子性的事务，单次最多 20 个操作。支持 `create_note`、`add_node`、`update_item`、`remove_item`、`delete_note` 和 `connect`。
 - 批量事务使用稳定的 `request_id`；任一操作失败会整体回滚。
 - 批量连接也遵循相向端点规则，并可指定两端连接点。
 - 批量布局失败会整体回滚；收到回滚结果后先调整方案，不要盲目重复提交。
-- `mind_delete_canvas_note` 和批量中的 `delete_note` 都会一次性展示影响并请求确认；版本冲突时整批不执行。
+- `canvas_delete_note` 和批量中的 `delete_note` 都会一次性展示影响并请求确认；版本冲突时整批不执行。
 
 同类操作不要为了凑批量事务而逐项调用：例如创建多条便签直接使用
-`mind_create_canvas_note.notes`，移动多个节点直接使用 `mind_update_canvas_node.updates`。
+`canvas_create_note.notes`，移动多个节点直接使用 `canvas_update_node.updates`。
 只有“创建便签 → 放置引用 → 调整布局 → 建立连接”这类相互依赖的多类型流程，才使用
-`mind_batch_canvas`。
+`canvas_batch`。
 
 ## 典型示例
 

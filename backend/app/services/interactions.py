@@ -308,6 +308,29 @@ async def consume_action(
     prompt.resolved_at = now
     context = dict(action.context_json or {})
     is_cancel = action.option_id == "cancel" or action.action_type == "cancel"
+    command_action = str(context.get("command_action") or "")
+    if command_action == "workspace_delete" and not is_cancel:
+        from app.services.workspaces import delete_workspace, get_workspace
+
+        workspace_id = context.get("workspace_id")
+        workspace = await get_workspace(db, user_id, workspace_id)
+        if workspace is None:
+            result_status = "error"
+            result_text = "工作区不存在，或已经被删除。"
+        else:
+            await delete_workspace(db, user_id, workspace.id)
+            result_status = "confirmed"
+            result_text = f"已删除工作区「{workspace.name}」（ID {workspace.id}），项目和文件未受影响。"
+    else:
+        result_status = "cancelled" if is_cancel else "selected"
+        result_text = next(
+            (
+                str(item.get("label") or action.option_id)
+                for item in (prompt.schema_json or {}).get("options", [])
+                if isinstance(item, dict) and str(item.get("id") or "") == action.option_id
+            ),
+            action.option_id,
+        )
     # ``run_unlimited`` 只由当前 Agent 协程消费，不写入 session_context。
     # 持久化的无限模式只能通过显式 /unlimited 命令开启。
     if context.get("unlimited_mode") and action.option_id == "continue":
@@ -324,20 +347,13 @@ async def consume_action(
         session.session_context = session_context
     result = {
         "kind": prompt.kind,
-        "status": "cancelled" if is_cancel else "selected",
+        "status": result_status,
         "prompt_id": prompt.id,
         "option_id": action.option_id,
         "value": action.option_id,
-        "text": next(
-            (
-                str(item.get("label") or action.option_id)
-                for item in (prompt.schema_json or {}).get("options", [])
-                if isinstance(item, dict) and str(item.get("id") or "") == action.option_id
-            ),
-            action.option_id,
-        ),
+        "text": result_text,
     }
-    if prompt.kind == "confirm":
+    if prompt.kind == "confirm" and result_status != "error":
         if action.option_id == "confirm":
             result.update({
                 "status": "confirmed",

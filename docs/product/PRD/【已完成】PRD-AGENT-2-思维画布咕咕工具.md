@@ -75,12 +75,12 @@
 
 现有 `MindSkill` 已支持：
 
-- `mind_search`；
-- `mind_get`；
-- `create_note`；
-- `update_note`；
-- `delete_note` / `restore_note`；
-- `undo_last_gugu_note`。
+- `note_search`；
+- `note_get`；
+- `note_create`；
+- `note_update`；
+- `note_delete` / `note_restore`；
+- `note_undo`。
 
 ### 2.2 本 PRD 新增的部分
 
@@ -152,7 +152,7 @@
 ### 5.1 画布列表
 
 ```ts
-mind_list_canvases({
+canvas_list({
   project_id?: number,
   limit?: number,
   offset?: number
@@ -180,7 +180,7 @@ mind_list_canvases({
 ### 5.2 读取画布
 
 ```ts
-mind_get_canvas({
+canvas_get({
   canvas_id: number,
   include_nodes?: boolean,
   include_relations?: boolean,
@@ -203,7 +203,7 @@ mind_get_canvas({
 ### 5.3 搜索画布已有内容
 
 ```ts
-mind_search_canvas({
+canvas_search({
   canvas_id: number,
   queries?: string[],
   types?: ["canvas_note", "project", "file", "event"],
@@ -235,7 +235,7 @@ mind_search_canvas({
 ### 5.4 搜索可放置对象
 
 ```ts
-mind_search_placeable_nodes({
+canvas_search_placeable({
   queries: string[],
   types?: ["project", "file", "event"],
   canvas_id?: number,
@@ -266,7 +266,7 @@ mind_search_placeable_nodes({
 ### 5.5 创建画布
 
 ```ts
-mind_create_canvas({
+canvas_create({
   title: string,
   project_id?: number | null
 })
@@ -277,7 +277,7 @@ mind_create_canvas({
 ### 5.6 创建画布便签
 
 ```ts
-mind_create_canvas_note({
+canvas_create_note({
   canvas_id: number,
   title?: string,
   content: string,
@@ -291,7 +291,7 @@ mind_create_canvas_note({
 ### 5.7 放置引用节点
 
 ```ts
-mind_add_canvas_node({
+canvas_add_node({
   canvas_id: number,
   ref_type: "project" | "file" | "event",
   ref_id: number,
@@ -302,7 +302,7 @@ mind_add_canvas_node({
 也可以接受已经解析出的 `node_id`，但模型不应自行猜测节点 ID：
 
 ```ts
-mind_add_canvas_node({
+canvas_add_node({
   canvas_id: number,
   node_id: number,
   position?: CanvasPosition
@@ -342,7 +342,7 @@ type CanvasPosition = {
 ### 5.9 更新画布项
 
 ```ts
-mind_update_canvas_node({
+canvas_update_node({
   canvas_id: number,
   item_id: number,
   x?: number,
@@ -359,7 +359,7 @@ mind_update_canvas_node({
 ### 5.10 移除画布项
 
 ```ts
-mind_remove_canvas_node({
+canvas_remove_node({
   canvas_id: number,
   item_id: number
 })
@@ -370,7 +370,7 @@ mind_remove_canvas_node({
 ### 5.11 更新和删除画布便签
 
 ```ts
-mind_update_canvas_note({
+canvas_update_note({
   node_id: number,
   version: number,
   title?: string | null,
@@ -380,7 +380,7 @@ mind_update_canvas_note({
 ```
 
 ```ts
-mind_delete_canvas_note({
+canvas_delete_note({
   node_id: number,
   version: number
 })
@@ -391,7 +391,7 @@ mind_delete_canvas_note({
 ### 5.12 创建和删除连接
 
 ```ts
-mind_connect_nodes({
+canvas_connect({
   canvas_id: number,
   source_node_id: number,
   target_node_id: number,
@@ -402,13 +402,13 @@ mind_connect_nodes({
 ```
 
 ```ts
-mind_disconnect_nodes({
+canvas_disconnect({
   relation_id: number
 })
 ```
 
 ```ts
-mind_update_relation_anchor({
+canvas_update_anchor({
   canvas_id: number,
   relation_id: number,
   source_side: "left" | "right",
@@ -418,13 +418,13 @@ mind_update_relation_anchor({
 
 连接前验证两个节点属于当前用户并位于该画布。连接点属于画布视图状态，保存在画布
 `data_json.relationAnchors` 中；读取画布关系时会返回 `source_side` / `target_side`，
-创建时可指定两端，之后可用 `mind_update_relation_anchor` 修改，不改变关系语义。
+创建时可指定两端，之后可用 `canvas_update_anchor` 修改，不改变关系语义。
 
 ## 6. 摄像机和最后查看位置
 
 ### 6.1 返回视口信息
 
-`mind_get_canvas` 应返回：
+`canvas_get` 应返回：
 
 ```json
 {
@@ -561,7 +561,7 @@ request_id?: string
 - 用户说“画布”时先列出画布，不能猜画布 ID；
 - 用户指定名称时先搜索并确认唯一候选；
 - 用户说“放进去”时只能搜索项目、文件、活动，不搜索普通 `note`；
-- 用户说“画布里的便签/节点”时使用 `mind_search_canvas`；
+- 用户说“画布里的便签/节点”时使用 `canvas_search`；
 - 不能伪造 `node_id`、`item_id` 或 `relation_id`；
 - 删除前必须拿到精确 ID 和版本；
 - 需要正文时再读取正文，不把整个画布一次塞进上下文；
@@ -587,10 +587,10 @@ request_id?: string
 
 ### Phase 1：只读工具
 
-- [x] 实现 `mind_list_canvases`；
-- [x] 实现 `mind_get_canvas`；
-- [x] 实现 `mind_search_canvas`；
-- [x] 实现 `mind_search_placeable_nodes`；
+- [x] 实现 `canvas_list`；
+- [x] 实现 `canvas_get`；
+- [x] 实现 `canvas_search`；
+- [x] 实现 `canvas_search_placeable`；
 - [x] 返回 camera、viewport 和可见性摘要；
 - [x] 增加当前用户和跨用户隔离测试。
 
@@ -598,9 +598,9 @@ Phase 1 实现位置：`backend/agent/tools/mind_canvas.py`，测试位置：`ba
 
 ### Phase 2：创建和放置
 
-- [x] 实现 `mind_create_canvas`；
-- [x] 实现 `mind_create_canvas_note`；
-- [x] 实现 `mind_add_canvas_node`；
+- [x] 实现 `canvas_create`；
+- [x] 实现 `canvas_create_note`；
+- [x] 实现 `canvas_add_node`；
 - [x] 支持 `auto`、`near_node` 和 `viewport_*` 锚点；
 - [x] 复用已有引用节点，避免重复代理；
 - [x] 增加幂等、位置不重叠和失败回滚测试。
@@ -609,10 +609,10 @@ Phase 2 共用领域入口位于 `backend/app/core/mind_canvas.py`；创建/放�
 
 ### Phase 3：编辑和连接
 
-- [x] 实现 `mind_update_canvas_node`；
-- [x] 实现 `mind_remove_canvas_node`；
+- [x] 实现 `canvas_update_node`；
+- [x] 实现 `canvas_remove_node`；
 - [x] 实现画布便签更新和删除；
-- [x] 实现 `mind_connect_nodes` / `mind_disconnect_nodes`；
+- [x] 实现 `canvas_connect` / `canvas_disconnect`；
   - [x] 读取、指定和修改关系两端的左右连接点；
 - [x] 增加关系归一、重复连接、自连接和并发测试；
 - [x] 接入确认门和操作结果回显。
@@ -629,7 +629,7 @@ Phase 3 已完成。节点布局更新只改变画布视图项；移除视图项
 - [x] 增加 request_id 作为重试关联标识，并依靠引用/画布项/关系唯一约束保持可重放；
 - [x] 评估语义自动布局，不默认自动重排用户已有节点。
 
-Phase 4 已完成。`mind_batch_canvas` 只接受放置引用、更新布局和创建 `related` 连接，单次最多
+Phase 4 已完成。`canvas_batch` 只接受放置引用、更新布局和创建 `related` 连接，单次最多
 20 个操作；删除类动作仍走独立确认工具。批量操作在单一事务中提交，任何一步失败都会整批
 回滚；引用节点、画布项和关系分别复用现有唯一约束与幂等服务，重试不会重复放置或连线。
 

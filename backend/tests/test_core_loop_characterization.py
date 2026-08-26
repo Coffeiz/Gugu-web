@@ -274,18 +274,18 @@ async def test_readonly_no_verify_triggered(monkeypatch, dispatched):
     assert ev["_usage"] == 1
 
 
-async def test_mind_get_counts_as_verify_observation(monkeypatch, dispatched):
+async def test_note_get_counts_as_verify_observation(monkeypatch, dispatched):
     """思维笔记的历史命名不应导致读回后还被重复要求复查。"""
     patch_anthropic(monkeypatch, [
-        msg([TU("create_note", "1", {})]),
-        msg([TU("mind_get", "2", {})]),
+        msg([TU("note_create", "1", {})]),
+        msg([TU("note_get", "2", {})]),
         msg([TX("我确认一下笔记")]),
         msg([TX("笔记已记录")]),
     ])
     messages = [{"role": "user", "content": "记一条笔记"}]
-    runner = LLMRunner(tool_names=["create_note", "mind_get"], settings=SimpleNamespace(ai=AI))
+    runner = LLMRunner(tool_names=["note_create", "note_get"], settings=SimpleNamespace(ai=AI))
     _ev, text, _errors = await drain(runner._run_anthropic("u", "sys", messages, AI))
-    assert "mind_get" in dispatched
+    assert "note_get" in dispatched
     assert "笔记已记录" in text
     assert n_verify(messages) == 1
 

@@ -16,6 +16,7 @@ from app.api.v1.mind import (
     list_canvases, list_notes,
     ref_suggest, remove_canvas_item, update_canvas_item, update_canvas_note, update_note,
 )
+from app.api.v1 import mind as mind_api
 from app.api.v1.search import run_global_search
 from app.core.mind import content_hash, to_plain_text
 from app.core.tz import now_utc
@@ -177,6 +178,25 @@ async def test_delete_note_of_other_user_is_404(db, user_a, user_b):
         await delete_note(note.id, current_user=user_a, db=db)
     assert e.value.status_code == 404
     assert (await _row(db, note.id)).deleted_at is None  # 没被删掉
+
+
+@pytest.mark.asyncio
+async def test_note_mutations_publish_canonical_mind_events(db, user_a, monkeypatch):
+    """笔记事件必须在提交后以完整实体发布，不能依赖旧的 mind.canvas 参数格式。"""
+    published = []
+
+    async def publish(user_id, *resources, **kwargs):
+        published.append((user_id, resources, kwargs))
+
+    monkeypatch.setattr(mind_api.events, "publish", publish)
+    note = await _new_note(db, user_a, content="初始")
+    await update_note(note.id, MindNoteUpdate(content_md="更新", version=1), current_user=user_a, db=db)
+    await delete_note(note.id, current_user=user_a, db=db)
+
+    assert [entry[1] for entry in published] == [("mind",), ("mind",), ("mind",)]
+    assert [entry[2]["operation"] for entry in published] == ["create", "update", "delete"]
+    assert published[0][2]["event_payload"]["kind"] == "note"
+    assert published[0][2]["event_payload"]["entity"]["id"] == note.id
 
 
 # ── `[[` 对象引用补全 ─────────────────────────────────────────────────────────

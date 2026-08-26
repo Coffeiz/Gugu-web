@@ -22,6 +22,7 @@ from agent.tools.scheduled_tasks import ScheduledTasksSkill
 from agent.tools.web import WebSkill
 from agent.tools.meta import MetaSkill
 from agent.tools.shell import ShellSkill
+from agent.tools.workspaces import WorkspacesSkill
 
 __all__ = [
     "BaseSkill", "registry",
@@ -31,5 +32,5 @@ __all__ = [
     "MindSkill",
     "MindCanvasSkill",
     "ConversationsSkill", "IMSkill", "ScheduledTasksSkill",
-    "WebSkill", "MetaSkill", "ShellSkill",
+    "WebSkill", "MetaSkill", "ShellSkill", "WorkspacesSkill",
 ]

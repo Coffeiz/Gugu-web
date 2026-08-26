@@ -4,7 +4,7 @@ from __future__ import annotations
 from agent.commands.help import command_help, is_help_arg
 
 
-async def handle(user_id, session_id: int | None, arg: str) -> str:
+async def handle(user_id, session_id: int | None, arg: str) -> str | dict:
     if is_help_arg(arg):
         return command_help("workspace")
     if not session_id:
@@ -44,9 +44,8 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
                     return "当前会话不存在。"
                 await db.commit()
                 return "已解除当前会话的工作区绑定。"
-            # 删除是不可逆的控制命令，采用同一命令的显式二次确认，避免误触。
-            # 不复用 Agent 工具确认 token：斜杠命令会短路 Agent，且确认状态不应
-            # 跨会话持有；用户必须在同一条命令中明确追加 confirm/确认。
+            # 删除是不可逆的控制命令，首条命令进入统一确认交互，避免误触。
+            # 同时保留追加 confirm/确认的文本协议，兼容无法展示按钮的平台和旧客户端。
             delete_parts = value.split()
             if delete_parts and delete_parts[0].lower() in {"delete", "rm", "remove"}:
                 if len(delete_parts) < 2:
@@ -62,11 +61,38 @@ async def handle(user_id, session_id: int | None, arg: str) -> str:
                     "confirm", "yes", "y", "确认", "确定",
                 }
                 if not confirmed:
-                    return (
-                        f"将永久删除工作区「{workspace.name}」（ID {workspace.id}），"
-                        "同时解除绑定，但不会删除项目或文件。"
-                        f"请再次发送 /workspace delete {workspace.id} confirm。"
+                    from app.services.interactions import create_prompt
+
+                    prompt, rendered = await create_prompt(
+                        db,
+                        user_id=user_id,
+                        session_id=session_id,
+                        kind="confirm",
+                        title="确认删除工作区？",
+                        body=(
+                            f"将永久删除工作区「{workspace.name}」（ID {workspace.id}），"
+                            "同时解除会话绑定，但不会删除项目或文件。"
+                        ),
+                        options=[
+                            {"id": "confirm", "label": "确认删除", "action_type": "confirm"},
+                            {"id": "cancel", "label": "取消", "action_type": "cancel"},
+                        ],
+                        context={
+                            "command_action": "workspace_delete",
+                            "workspace_id": workspace.id,
+                        },
                     )
+                    await db.commit()
+                    return {
+                        "_command_interaction": True,
+                        "prompt": {
+                            "prompt_id": prompt.id,
+                            "kind": prompt.kind,
+                            "title": prompt.title,
+                            "body": prompt.body,
+                            "options": rendered,
+                        },
+                    }
                 await delete_workspace(db, user_id, workspace.id)
                 await db.commit()
                 return f"已删除工作区「{workspace.name}」（ID {workspace.id}），项目和文件未受影响。"

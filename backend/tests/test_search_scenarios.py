@@ -6,7 +6,7 @@ from agent.im import imctx
 from agent.tools.conversations import _search_conversations
 from agent.tools.global_search import _global_search
 from agent.tools.group_context import _group_context_search
-from agent.tools.mind import _mind_search
+from agent.tools.mind import _note_search
 
 
 async def _add(db, obj):
@@ -68,11 +68,11 @@ async def test_scenario_history_search_uses_multiple_terms_once(db, user_a):
     assert [item["session_id"] for item in result["matches"]] == [session.id]
 
 
-async def test_scenario_mind_search_uses_multiple_terms_once(db, user_a):
+async def test_scenario_note_search_uses_multiple_terms_once(db, user_a):
     await _add(db, MindNode(user_id=user_a.id, kind="note", title="部署方案", content_md="", content_plain="部署"))
     await _add(db, MindNode(user_id=user_a.id, kind="note", title="上线清单", content_md="", content_plain="上线"))
 
-    result = await _mind_search(db, user_a.id, {"queries": ["部署", "上线"]})
+    result = await _note_search(db, user_a.id, {"queries": ["部署", "上线"]})
 
     assert {match["title"] for match in result["matches"]} == {"部署方案", "上线清单"}
 

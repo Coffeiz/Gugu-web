@@ -33,7 +33,7 @@ endif
 help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
-	@echo "生产：make install 后 make start | stop | restart | status 自动管理并检查三个 systemd 服务"
+	@echo "生产：make install 后 make start | stop | restart | status 自动管理五个 systemd 服务（含 TypeScript Live）"
 	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
 	@echo "Compose：make compose-up；make compose-up SANDBOX_ACL=1 同时初始化 ACL 并开启 sandbox profile"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
@@ -182,18 +182,18 @@ backup:      ## 备份数据库 + Gugu-data/users + override 配置
 	./backup.sh
 
 # ── systemd ──────────────────────────────────────────────
-install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM supervisor）
+install:     ## 装成 systemd 服务（sandboxd + TypeScript Live + web + IM worker + IM supervisor）
 	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（四个）
-	for s in gugu-sandboxd gugu-backend gugu-worker gugu-supervisor; do \
+uninstall:   ## 卸载 systemd 服务（五个）
+	for s in gugu-sandboxd gugu-live gugu-backend gugu-worker gugu-supervisor; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \
 	done
 	systemctl daemon-reload
-	@echo "已卸载 systemd 服务（gugu-sandboxd / gugu-backend / gugu-worker / gugu-supervisor）"
+	@echo "已卸载 systemd 服务（gugu-sandboxd / gugu-live / gugu-backend / gugu-worker / gugu-supervisor）"
 
 # ── 清理 ─────────────────────────────────────────────────
 clean:       ## 清缓存 + 日志 + pid（不删 venv / Gugu-data/users / override）

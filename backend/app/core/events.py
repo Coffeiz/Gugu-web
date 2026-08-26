@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any
 
 from app.core.redis import get_redis
 
@@ -42,15 +45,15 @@ RESOURCE_BY_TOOL: dict[str, str] = {
     # 回收站（恢复/彻底删都影响文件库）
     "restore_file": "files", "permanent_delete": "files",
     # 思维画布便签
-    "create_note": "mind", "update_note": "mind", "delete_note": "mind",
-    "restore_note": "mind", "undo_last_gugu_note": "mind",
+    "note_create": "mind", "note_update": "mind", "note_delete": "mind",
+    "note_restore": "mind", "note_undo": "mind",
     # 思维画布 Agent 工具
-    "mind_create_canvas": "mind", "mind_create_canvas_note": "mind",
-    "mind_add_canvas_node": "mind", "mind_update_canvas_node": "mind",
-    "mind_remove_canvas_node": "mind", "mind_update_canvas_note": "mind",
-    "mind_delete_canvas_note": "mind", "mind_connect_nodes": "mind",
-    "mind_update_relation_anchor": "mind",
-    "mind_disconnect_nodes": "mind", "mind_batch_canvas": "mind",
+    "canvas_create": "mind", "canvas_create_note": "mind",
+    "canvas_add_node": "mind", "canvas_update_node": "mind",
+    "canvas_remove_node": "mind", "canvas_update_note": "mind",
+    "canvas_delete_note": "mind", "canvas_connect": "mind",
+    "canvas_update_anchor": "mind",
+    "canvas_disconnect": "mind", "canvas_batch": "mind",
 }
 
 
@@ -69,8 +72,6 @@ async def get_context_revision(user_id) -> int:
 
 async def bump_context_revision(user_id, *resources: str) -> None:
     """业务数据成功变更后递增版本，供 session snapshot 做新鲜度判断。"""
-    # 兼容 mind.canvas 的旧调用签名：publish(user_id, resource, action, payload)
-    # 后两个位置参数可能是字典，版本判断只消费字符串资源名。
     resource_names = {resource for resource in resources if isinstance(resource, str)}
     if not _CONTEXT_REVISION_SOURCES.intersection(resource_names):
         return
@@ -84,7 +85,10 @@ async def bump_context_revision(user_id, *resources: str) -> None:
 
 
 async def publish(user_id, *resources: str, origin: str | None = None,
-                  file_op: dict | None = None, **extra) -> None:
+                  file_op: dict | None = None, operation: str | None = None,
+                  entity_id: int | str | None = None,
+                  entity_ids: list[int | str] | None = None,
+                  event_payload: Any = None, **extra) -> None:
     """通知某用户：若干资源已变化（best-effort，失败不影响主流程）。
 
     - origin：发起这次改动的浏览器标签页 client-id（来自请求头 X-Client-Id）。前端收到
@@ -98,8 +102,43 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     payload: dict = {}
     res = [r for r in resources if r]
     await bump_context_revision(user_id, *res)
+    live_revision = 0
+    try:
+        redis = get_redis()
+        live_revision = int(await redis.incr(f"live-revision:{user_id}"))
+        await redis.expire(f"live-revision:{user_id}", 60 * 60 * 24 * 7)
+    except Exception:
+        pass
     if res:
         payload["resources"] = res
+        inferred_operation = operation or ((file_op or {}).get("op") if file_op else None)
+        if inferred_operation is None and res[0] == "sessions":
+            inferred_operation = "append" if extra.get("appended") is not None else (
+                "update" if extra.get("title") is not None else "refresh"
+            )
+        inferred_operation = inferred_operation or "refresh"
+        if inferred_operation == "remove":
+            inferred_operation = "delete"
+        canonical_resource = {"mind.canvas": "mind"}.get(res[0], res[0])
+        payload.update({
+            "protocol_version": "live-event-v1",
+            "event_id": f"evt-{uuid.uuid4().hex}",
+            "type": "resource.changed",
+            "resource": canonical_resource,
+            "operation": inferred_operation,
+            "revision": live_revision,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        if entity_id is not None:
+            payload["entity_id"] = entity_id
+        if entity_ids is not None:
+            payload["entity_ids"] = entity_ids
+        if event_payload is not None:
+            # 事件 payload 必须是 JSON 数据；API 层可以传 Pydantic 响应模型，
+            # 这里统一转换，避免“业务已提交但事件因不可序列化而静默丢失”。
+            if hasattr(event_payload, "model_dump"):
+                event_payload = event_payload.model_dump(mode="json", by_alias=True)
+            payload["payload"] = event_payload
     if origin:
         payload["origin"] = origin
     if file_op:
@@ -107,6 +146,18 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     for k, v in extra.items():
         if v is not None:
             payload[k] = v
+    # 会话消息和标题历史上通过 extra 传递；同时写入 canonical 字段，
+    # 让新消费者不再依赖旧的顶层 session_id/appended 形状。
+    if res and payload.get("resource") == "sessions":
+        if payload.get("entity_id") is None and extra.get("session_id") is not None:
+            payload["entity_id"] = extra["session_id"]
+        session_payload = {
+            key: extra[key]
+            for key in ("appended", "title")
+            if extra.get(key) is not None
+        }
+        if session_payload:
+            payload["payload"] = session_payload
     if not payload:
         return
     try:

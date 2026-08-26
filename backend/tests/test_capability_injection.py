@@ -142,7 +142,7 @@ def test_fixed_adapter_context_only_exposes_stable_provider_tools():
 
 
 def test_invalid_tool_input_requests_schema_recovery():
-    payload = invalid_input_payload("create_note", [{
+    payload = invalid_input_payload("note_create", [{
         "path": "blocks", "rule": "type", "message": "字段类型应为 array",
     }])
     assert payload["_schema_recovery"] == {"needed": True, "reason": "validation_error"}

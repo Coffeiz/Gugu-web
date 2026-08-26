@@ -2,7 +2,7 @@
 """
 调试 ValueError 发生的具体位置和原因。
 
-复现 mind_create_canvas 工具调用后，下一轮 LLM 调用中的 ValueError。
+复现 canvas_create 工具调用后，下一轮 LLM 调用中的 ValueError。
 """
 
 import asyncio
@@ -41,7 +41,7 @@ async def test_canvas_creation_flow():
 
     try:
         # 3. 构建工具列表和 driver
-        tool_names = ["mind_create_canvas", "mind_list_canvases"]
+        tool_names = ["canvas_create", "canvas_list"]
         from agent.loop_drivers import AnthropicDriver
 
         driver = AnthropicDriver()

@@ -118,7 +118,7 @@ Capability 是模型可以发现或调用的一项能力，分为两类：
 
 | 类型 | 作用 | 是否有执行 Schema |
 |---|---|---|
-| `tool` | 可被模型直接调用的函数，例如 `image_search`、`mind_search_canvas` | 有，必须提供 JSON Schema |
+| `tool` | 可被模型直接调用的函数，例如 `image_search`、`canvas_search` | 有，必须提供 JSON Schema |
 | `skill` | 一组操作规则、流程和工具使用约束，例如“联网搜索”“思维画布” | 无直接函数 Schema，可关联工具并按需加载正文 |
 
 二者共享注册 metadata，但不强行共享 handler。Skill 可以声明关联工具，工具也可以声明所属 Skill。
@@ -161,7 +161,7 @@ Capability 是模型可以发现或调用的一项能力，分为两类：
 
 ```text
 image_search：按文字或图片搜索相关图片。
-mind-canvas：用户要查看、搜索、创建、整理或连接思维画布节点时使用。
+canvas：用户要查看、搜索、创建、整理或连接思维画布节点时使用。
 ```
 
 ### 2.4 能力路由不是 Plan
@@ -462,7 +462,7 @@ Skill 文件名负责 `slug`，frontmatter 负责注册 metadata，正文负责�
 - image-analysis：识别、比较图片；需要查找来源或相似图时使用。
 - web-search：查找外部资料、新闻、官网事实和图片。
 - image_search：按文字或图片搜索相关图片。
-- mind-canvas：搜索、创建、整理或连接思维画布节点。
+- canvas：搜索、创建、整理或连接思维画布节点。
 ```
 
 目录必须经过以下过滤：

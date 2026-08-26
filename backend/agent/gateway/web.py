@@ -228,6 +228,11 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         goal_status = "paused" if state_context.get("goal_status") == "paused" and state_context.get("goal_text") else ("active" if state_context.get("goal_text") else None)
         yield f"data: {json.dumps({'type': 'session_goal', 'session_id': session_id, 'active': goal_active, 'status': goal_status})}\n\n"
     if cmd_reply is not None and not goal_start:
+        if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
+            prompt = cmd_reply.get("prompt") or {}
+            yield f"data: {json.dumps({'type': 'interaction_required', **prompt}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
         async with _sess._SessionLocal() as db2:
             if await db2.get(ConversationSession, session_id) is not None:
                 db2.add(ConversationMessage(session_id=session_id, role="assistant", content=cmd_reply))

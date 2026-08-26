@@ -59,10 +59,10 @@ async def _tool_call_stream(tool_name: str):
 
 async def test_collect_marks_mutated_for_tools_missed_by_old_prefix_matching():
     """回归：mutated 曾经靠工具名前缀猜（create_/update_/delete_/...），remember（写长期
-    记忆）和 undo_last_gugu_note（删笔记）都不在那张词表里，会被漏判成"没有副作用"，
+    记忆）和 note_undo（删笔记）都不在那张词表里，会被漏判成"没有副作用"，
     定时任务失败重试时可能把已经生效的写操作重放一遍。现在改成读工具注册时显式声明的
     mutates，这两个工具都必须被正确识别为有副作用。"""
-    for tool_name in ("remember", "undo_last_gugu_note"):
+    for tool_name in ("remember", "note_undo"):
         _, _, _, _, _, _, _, _, meta = await _collect(
             _tool_call_stream(tool_name), include_meta=True,
         )

@@ -17,13 +17,13 @@
         <NavItem to="/calendar" icon="navigation.calendar">日历</NavItem>
         <NavItem to="/mind" icon="canvas.note">思维</NavItem>
         <NavItem to="/schedules" icon="admin.alarm">定时任务</NavItem>
-        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">终端</NavItem>
       </div>
 
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">资源</span>
         <NavItem to="/files" icon="file.folder">文件库</NavItem>
+        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">终端</NavItem>
         <NavItem to="/skills" icon="resource.skill">技能</NavItem>
         <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
         <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>

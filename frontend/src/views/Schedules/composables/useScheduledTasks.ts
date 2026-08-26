@@ -1,8 +1,9 @@
-import { ref } from 'vue'
-import { scheduledTasksApi } from '@/services/api'
+import { ref, watch } from 'vue'
+import { CLIENT_ID, scheduledTasksApi } from '@/services/api'
 import { errorMessage, showAppError, showAppNotice } from '@/composables/useAppToast'
 import { useLiveRefresh } from '@/composables/useLiveRefresh'
 import { confirmDialog } from '@/composables/useConfirmDialog'
+import { useLiveStore } from '@/stores/live'
 
 export type ScheduledTask = Record<string, any>
 
@@ -64,6 +65,24 @@ export function useScheduledTasks() {
     }
   }
 
+  const live = useLiveStore()
+  watch(() => live.resourceEvent, (event) => {
+    if (!event || event.resource !== 'scheduled_tasks' || event.origin === CLIENT_ID) return
+    const id = Number(event.entity_id)
+    const payload = event.payload && typeof event.payload === 'object' ? event.payload as ScheduledTask : null
+    if (!Number.isFinite(id)) return void load()
+    if (event.operation === 'delete') {
+      tasks.value = tasks.value.filter(task => Number(task.id) !== id)
+    } else if (payload) {
+      const index = tasks.value.findIndex(task => Number(task.id) === id)
+      if (event.operation === 'create' && index === -1) tasks.value = [payload, ...tasks.value]
+      else if (index >= 0) tasks.value.splice(index, 1, payload)
+      else void load()
+    } else {
+      void load()
+    }
+  })
+  // 旧 resources 事件和事件缺口仍走统一 refetch 兼容路径。
   useLiveRefresh('scheduled_tasks', load)
 
   return { tasks, loading, busy, load, save, toggle, runNow, remove }

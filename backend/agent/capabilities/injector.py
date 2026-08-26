@@ -108,6 +108,7 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
         "## 当前可用能力索引",
         "这里只是稳定的能力名称、用途和少量关键字段，不是完整工具 Schema，也不是已经发生的工具调用记录；"
         "固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具。"
+        "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
         "简介中的字段列表不完整，实际调用前必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
         "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
         "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"

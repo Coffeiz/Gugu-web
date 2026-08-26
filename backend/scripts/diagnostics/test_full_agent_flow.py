@@ -96,7 +96,7 @@ async def test_full_agent_canvas_creation():
         # === 步骤 5: 准备工具列表 ===
         tracer.log("准备工具列表")
 
-        tool_names = ["mind_create_canvas", "mind_list_canvases"]
+        tool_names = ["canvas_create", "canvas_list"]
         tracer.log("工具列表准备完成", f"工具: {', '.join(tool_names)}")
 
         # === 步骤 6: 准备 AI 配置 ===

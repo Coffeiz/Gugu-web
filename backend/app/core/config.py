@@ -301,6 +301,7 @@ class AppSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
+    # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。

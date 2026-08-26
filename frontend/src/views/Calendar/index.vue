@@ -138,7 +138,7 @@ import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
-import { eventsApi } from '@/services/api'
+import { CLIENT_ID, eventsApi } from '@/services/api'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError } from '@/composables/useAppToast'
@@ -644,6 +644,7 @@ const {
   fetchNextMonthEvents,
   fetchSpilloverEvents,
   cacheMonth,
+  applyLiveEvent,
   normalizeCalendarEvent,
 } = useCalendarData({
   cursor,
@@ -1159,6 +1160,14 @@ onUnmounted(() => {
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
 watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents() })
+watch(() => liveStore.resourceEvent, (event) => {
+  if (!event || event.resource !== 'calendar' || event.origin === CLIENT_ID) return
+  if (!applyLiveEvent(event)) {
+    void fetchEvents()
+    void fetchNextMonthEvents()
+    void fetchSpilloverEvents()
+  }
+})
 watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())

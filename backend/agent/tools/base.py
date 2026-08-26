@@ -135,7 +135,7 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
 # 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
 _INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
                 "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id",
-                "canvas_id", "item_id", "relation_id", "ref_id")
+                "canvas_id", "item_id", "relation_id", "ref_id", "workspace_id")
 
 
 def _to_int_id(v):
@@ -235,7 +235,7 @@ class Tool:
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
         # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
         # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），
-        # remember、undo_last_gugu_note 这类不在前缀表里的写工具会被漏判，导致
+        # remember、note_undo 这类不在前缀表里的写工具会被漏判，导致
         # 报错后重跑整轮、重复执行已经生效的写操作。destructive 管的是要不要走
         # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
         # 但只要写了就不能自动重放（mutates）。

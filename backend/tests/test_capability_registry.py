@@ -52,7 +52,7 @@ def test_builtin_phase1_metadata_is_complete_and_relations_are_registered():
     index = CapabilityIndex.from_registries()
     snapshot = index.snapshot()
 
-    assert len(snapshot.tools) == 96  # 包含声明工具、保存/删除知识、inspect_images / web_download / shell 能力
+    assert len(snapshot.tools) == 101  # 另含工作区 CRUD 五个工具
     assert len(snapshot.skills) == 10
     assert not snapshot.diagnostics
     assert all(item.category for item in snapshot.tools.values())
@@ -67,7 +67,7 @@ async def test_admin_capability_catalog_exposes_metadata_without_schema_or_body(
     from app.api.v1.agent_admin import list_capabilities
 
     payload = await list_capabilities()
-    assert len(payload["tools"]) == 96  # 包含声明工具、保存/删除知识、inspect_images / web_download / shell 能力
+    assert len(payload["tools"]) == 101  # 另含工作区 CRUD 五个工具
     assert len(payload["skills"]) == 10
     assert all("description_short" in item for item in payload["tools"])
     assert all("input_schema" not in item and "handler" not in item for item in payload["tools"])

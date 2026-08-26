@@ -11,7 +11,7 @@
       @contextmenu.prevent.stop="openCtx('folder', f, $event)" @click.stop="handleFolderClick(f, $event)">
       <template #icon><component :is="folderListIcon(f)" class="fd-big-icon" :size="92" /></template>
       <template #name><span :title="f.displayName"><span v-if="renamingFolderKey === f.folderId" class="rename-sizer" @click.stop><span class="rename-ghost">{{ renameText || ' ' }}</span><input class="rename-input-inline" v-model="renameText" v-enter="commitRename" @keydown.esc="cancelRename" @blur="commitRename" @focus="($event.target as HTMLInputElement).select()" /></span><template v-else>{{ f.displayName }}</template></span></template>
-      <template #actions>
+      <template v-if="f.type === 'folder' && f.folderId != null" #actions>
         <button class="file-card-btn" :title="renamingFolderKey === f.folderId ? '确认' : '重命名'" @mousedown.prevent @click.stop="renamingFolderKey === f.folderId ? commitRename() : startRenameFolder(f)"><Icon name="status.success" v-if="renamingFolderKey === f.folderId" :size="11" /><Icon name="action.edit" v-else :size="11" /></button>
         <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolder(f)"><Icon name="action.download" :size="11" /></button>
         <button class="file-card-btn del" title="删除" @click.stop="deleteFolder(f)"><Icon name="action.delete" :size="11" /></button>

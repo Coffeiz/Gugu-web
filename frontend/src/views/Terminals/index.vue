@@ -16,7 +16,7 @@
             <span class="terminal-add-card-text">添加终端</span>
           </button>
         </aside>
-        <main class="terminal-main">
+        <main class="terminal-main" :class="{ 'is-empty': !selected }">
           <div v-if="selected" class="terminal-main-head glass-card">
             <div class="terminal-title">
               <input v-if="renaming" v-model="renameValue" class="terminal-rename" maxlength="200" @keydown.enter="saveRename" @keydown.esc="cancelRename" />
@@ -28,7 +28,7 @@
               <ActionButton v-if="renaming" variant="secondary" fit @click="saveRename">保存</ActionButton>
               <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">取消</ActionButton>
               <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />重命名</ActionButton>
-              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
+              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
             </div>
           </div>
           <div v-if="selected" ref="outputRef" class="terminal-output">
@@ -55,12 +55,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
+import { useLiveStore } from '@/stores/live'
 
 const terminals = ref<TerminalItem[]>([])
 const selectedId = ref<string | null>(null)
@@ -76,6 +77,7 @@ const renameValue = ref('')
 let streamGeneration = 0
 let eventsAbortController: AbortController | null = null
 const route = useRoute()
+const live = useLiveStore()
 
 const selected = computed(() => terminals.value.find(item => item.id === selectedId.value) ?? null)
 
@@ -118,6 +120,34 @@ async function loadEvents(id: string, reset = false, controller?: AbortControlle
 }
 
 function select(id: string) { selectedId.value = id; void loadEvents(id, true) }
+
+// 终端输出优先消费统一业务事件；切换终端和断线时仍用 sequence API 补拉，避免 Redis pub/sub 丢消息。
+watch(() => live.resourceEvent, (event) => {
+  if (!event || event.resource !== 'terminals') return
+  const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
+  const terminalId = String(event.entity_id ?? payload?.terminal_id ?? '')
+  if (event.operation === 'delete') {
+    terminals.value = terminals.value.filter(item => item.id !== terminalId)
+    if (selectedId.value === terminalId) {
+      eventsAbortController?.abort()
+      selectedId.value = terminals.value[0]?.id ?? null
+      events.value = []
+    }
+    return
+  }
+  const terminal = payload?.terminal as TerminalItem | undefined
+  if (terminal) {
+    const index = terminals.value.findIndex(item => item.id === terminal.id)
+    if (event.operation === 'create' && index < 0) terminals.value.unshift(terminal)
+    else if (index >= 0) terminals.value[index] = terminal
+  }
+  const terminalEvent = payload?.event as TerminalEventItem | undefined
+  if (event.operation === 'append' && terminalEvent && terminalId === selectedId.value
+      && !events.value.some(item => item.sequence === terminalEvent.sequence)) {
+    events.value.push(terminalEvent)
+    void nextTick(() => { if (outputRef.value) outputRef.value.scrollTop = outputRef.value.scrollHeight })
+  }
+})
 function startRename() { if (selected.value) { renameValue.value = selected.value.name; renaming.value = true } }
 function cancelRename() { renaming.value = false; renameValue.value = '' }
 async function saveRename() {
@@ -139,7 +169,8 @@ async function submitCommand() {
     const data = await terminalsApi.input(selected.value.id, { command: submittedCommand })
     const index = terminals.value.findIndex(value => value.id === data.terminal.id)
     if (index >= 0) terminals.value[index] = data.terminal
-    void loadEvents(data.terminal.id, true)
+    // 输入接口会发布 append 事件，现有 SSE 会增量更新输出；不要重置或重建事件流，
+    // 否则会清空输出列表并让终端内容短暂闪空。
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : '命令执行失败'
     if (!command.value) command.value = submittedCommand
@@ -175,8 +206,6 @@ async function deleteSelected() {
   })) return
   try {
     await terminalsApi.delete(target.id)
-    selectedId.value = null
-    events.value = []
     await load()
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端删除失败' }
 }
@@ -208,6 +237,7 @@ onUnmounted(() => { streamGeneration++; eventsAbortController?.abort() })
 .terminal-list-empty,.terminal-output-empty,.terminal-empty { display:grid; place-items:center; min-height:180px; color:var(--content-tertiary); font-size:12px; }
 .terminal-page-error { margin:0 0 var(--space-md); padding:8px 12px; color:var(--danger-fg); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .terminal-main { display:flex; flex-direction:column; min-width:0; min-height:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-card-solid); overflow:hidden; }
+.terminal-main.is-empty { border-color:transparent; background:transparent; }
 .terminal-main-head { flex:none; padding:13px 15px; border-bottom:1px solid var(--divider-line); }
 .terminal-main-head.glass-card { --glass-card-background:var(--surface-glass); --glass-card-background-hover:var(--surface-glass-hover); --glass-card-border:var(--border-default); --glass-card-border-hover:var(--border-hover); --glass-card-shadow:var(--elevation-card); --glass-card-shadow-hover:var(--elevation-card-hover); border:0; border-bottom:1px solid var(--divider-line); border-radius:0; }
 .terminal-main-head h2 { height:var(--control-height-sm); margin:0; font-size:14px; line-height:var(--control-height-sm); }
@@ -232,15 +262,17 @@ onUnmounted(() => { streamGeneration++; eventsAbortController?.abort() })
 .terminal-rename::selection,
 .terminal-input input::selection { background:var(--selection-bg); color:var(--selection-fg); }
 .terminal-input-hint { padding:10px 12px; border-top:1px solid var(--divider-line); color:var(--content-tertiary); font-size:11px; }
-.terminal-add-card { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; flex-shrink:0; min-height:50px; margin:0 0 6px; padding:10px; background:var(--inline-action-bg); border:1.5px dashed var(--inline-action-border); border-radius:var(--radius-md); corner-shape:squircle; color:var(--inline-action-fg); cursor:pointer; transition:border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), background var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-add-card { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; flex-shrink:0; min-height:50px; margin:0 0 6px; padding:10px; background:var(--inline-action-bg); border:1px solid var(--inline-action-border); border-radius:var(--radius-md); corner-shape:squircle; color:var(--inline-action-fg); cursor:pointer; transition:border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard), background var(--motion-hover-control) var(--motion-ease-standard); }
+.terminal-add-card:hover:not(:disabled) { background:var(--inline-action-bg-hover); border-color:var(--inline-action-border-hover); color:var(--inline-action-fg-hover); }
 .terminal-add-card:disabled { cursor:not-allowed; opacity:.5; }
-.terminal-add-card-text { font-size:11px; font-weight:600; }
+.terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
 .terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow), inset 0 1px 0 var(--design-section-highlight); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:hover:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:active:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }
+.terminal-actions :deep(.terminal-delete-action:active:not(:disabled)) { background:transparent; color:var(--content-secondary); }
 .terminals-page .terminal-item { position:relative; overflow:hidden; background:color-mix(in srgb,var(--surface-raised) 78%,transparent); border-color:var(--border-default); box-shadow:var(--elevation-card); transition:var(--card-motion); }
 .terminals-page .terminal-item::after { content:''; position:absolute; inset:0; border-radius:inherit; background:var(--card-hover-overlay); box-shadow:inset 0 1px 0 var(--highlight-soft); opacity:0; pointer-events:none; transition:opacity var(--hover-motion-card); }
 .terminals-page .terminal-item > * { position:relative; z-index:1; }
@@ -248,7 +280,5 @@ onUnmounted(() => { streamGeneration++; eventsAbortController?.abort() })
 .terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--border-hover); box-shadow:var(--elevation-card-hover); }
 .terminals-page .terminal-item:hover::after,
 .terminals-page .terminal-item.active::after { opacity:1; }
-.terminals-page .terminal-add-card { background:var(--inline-action-bg); border:1.5px dashed var(--inline-action-border); box-shadow:none; color:var(--inline-action-fg); transition:background var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
-.terminals-page .terminal-add-card:hover:not(:disabled) { background:var(--inline-action-bg-hover); border-color:var(--inline-action-border-hover); color:var(--inline-action-fg-hover); box-shadow:none; }
 @media(max-width:700px){.terminals-panel{padding:16px}.terminal-layout{grid-template-columns:1fr}.terminal-list{max-height:170px}.terminal-main{min-height:360px}}
 </style>

@@ -175,7 +175,7 @@ UI、咕咕工具、未来导入器都不能绕过该服务直接写表或直接
 ```text
 工具名             简介                         当前权限
 http_get            读取公开网页                 已开启
-mind_search         搜索思维笔记                 已开启
+note_search         搜索思维笔记                 已开启
 shell                执行 Shell 命令              已关闭
 ```
 

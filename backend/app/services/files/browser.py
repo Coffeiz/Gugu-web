@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
-from app.services.storage import LocalStorageBackend
 from app.search.query import keyword_condition, normalize_queries
 
 _VERSION_RETRY_BACKOFF = (0.05, 0.15)
@@ -98,19 +97,14 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
 
 
 async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
-    """列出全部文件，并清理本地存储中已经丢失实体文件的数据库记录。"""
-    rows = await list_all_file_rows(db, user_id)
-    if not isinstance(storage, LocalStorageBackend):
-        return rows, False
+    """列出全部文件。
 
-    valid_rows = []
-    for row in rows:
-        file = row[0]
-        if (storage.root / file.storage_key).exists():
-            valid_rows.append(row)
-        else:
-            await db.delete(file)
-    return valid_rows, len(valid_rows) < len(rows)
+    读取接口不能因为物理对象暂时缺失就删除数据库记录。数据库记录是文件
+    库的权威元数据，物理存储对账应由显式 doctor/清理任务完成；否则打开文件
+    库就会把 Agent 创建但尚未同步完成的文件静默抹掉，造成 UI 与数据库不一致。
+    ``storage`` 参数保留以兼容调用方，实际对账由专门任务负责。
+    """
+    return await list_all_file_rows(db, user_id), False
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:

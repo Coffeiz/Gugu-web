@@ -54,8 +54,8 @@ def is_goal_start(text: str, *, allow_leading_mention: bool = False) -> tuple[bo
 
 
 async def handle(user_id, text: str, *, session_id: int | None = None,
-                 allow_leading_mention: bool = False) -> str | None:
-    """命中控制命令 → 返回回复文本（短路）；否则 None。"""
+                 allow_leading_mention: bool = False) -> str | dict | None:
+    """命中控制命令 → 返回文本或结构化交互（短路）；否则 None。"""
     name, arg = parse(text, allow_leading_mention=allow_leading_mention)
     if name is None:
         return None

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
+from app.core import events
 from app.db.session import get_db
 from app.models import User
 from app.services.terminals import (
@@ -78,6 +79,8 @@ async def add_terminal(body: TerminalCreate, user: User = Depends(get_current_us
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     await db.commit()
+    await events.publish(user.id, "terminals", operation="create", entity_id=row.id,
+                         event_payload=serialize_terminal(row))
     return serialize_terminal(row)
 
 
@@ -123,6 +126,8 @@ async def rename_terminal_route(terminal_id: str, body: TerminalUpdate, user: Us
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
+    await events.publish(user.id, "terminals", operation="update", entity_id=row.id,
+                         event_payload=serialize_terminal(row))
     return serialize_terminal(row)
 
 
@@ -132,6 +137,7 @@ async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Dep
     access = await authorize_operation(db, user.id, owner_id=row.owner_id, session_id=row.session_id, workspace_id=row.workspace_id, operation=TerminalOperation.INPUT)
     if not access.allowed:
         raise HTTPException(status_code=403, detail=access.reason)
+    before_sequence = row.last_sequence
     result = await _shell(db, user.id, {
         "_session_id": row.session_id, "_workspace_id": row.workspace_id, "_terminal_id": row.id, "_terminal_source": "user",
         "command": body.command, "cwd": body.cwd, "timeout": body.timeout,
@@ -139,6 +145,11 @@ async def terminal_input(terminal_id: str, body: TerminalInput, user: User = Dep
         "confirm": body.confirm, "confirm_token": body.confirmToken,
     })
     await db.commit()
+    new_events = await terminal_events(db, row, before_sequence)
+    if new_events:
+        await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+                             event_payload={"terminal_id": row.id, "event": serialize_event(new_events[-1]),
+                                            "terminal": serialize_terminal(row)})
     return {"terminal": serialize_terminal(row), "result": result}
 
 
@@ -150,6 +161,8 @@ async def terminate_terminal_view(terminal_id: str, user: User = Depends(get_cur
         raise HTTPException(status_code=403, detail=access.reason)
     await terminate_terminal_record(db, row)
     await db.commit()
+    await events.publish(user.id, "terminals", operation="append", entity_id=row.id,
+                         event_payload={"terminal_id": row.id, "terminal": serialize_terminal(row)})
     return serialize_terminal(row)
 
 
@@ -161,6 +174,7 @@ async def delete_terminal_view(terminal_id: str, user: User = Depends(get_curren
         raise HTTPException(status_code=403, detail=access.reason)
     await delete_terminal(db, row)
     await db.commit()
+    await events.publish(user.id, "terminals", operation="delete", entity_id=terminal_id)
     return {"deleted": True, "terminalId": terminal_id}
 
 
@@ -176,4 +190,6 @@ async def reopen_terminal_view(terminal_id: str, user: User = Depends(get_curren
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
+    await events.publish(user.id, "terminals", operation="update", entity_id=row.id,
+                         event_payload=serialize_terminal(row))
     return serialize_terminal(row)

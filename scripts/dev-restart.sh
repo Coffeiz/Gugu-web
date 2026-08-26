@@ -13,6 +13,8 @@
 #   bash scripts/dev-restart.sh web        # 只重启 web
 #   bash scripts/dev-restart.sh worker
 #   bash scripts/dev-restart.sh supervisor
+#
+#   TypeScript Live 由 gugu-live.service 管理，不由这个 Python 开发脚本启动。
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 WHAT="${1:-all}"

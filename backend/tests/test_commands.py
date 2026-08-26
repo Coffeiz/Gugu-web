@@ -125,6 +125,7 @@ async def test_new_without_session_is_deterministic():
 @pytest.mark.asyncio
 async def test_workspace_delete_requires_explicit_confirmation(db, user_a):
     from app.services.workspaces import create_workspace
+    from app.services.interactions import consume_action
 
     folder = Folder(user_id=user_a.id, name="工作区目录")
     db.add(folder)
@@ -140,10 +141,14 @@ async def test_workspace_delete_requires_explicit_confirmation(db, user_a):
     pending = await commands.handle(
         user_a.id, f"/workspace delete {workspace.id}", session_id=session.id,
     )
-    assert "再次发送" in pending
-    assert await commands.handle(
-        user_a.id, f"/workspace delete {workspace.id} confirm", session_id=session.id,
-    ) == f"已删除工作区「待删除工作区」（ID {workspace.id}），项目和文件未受影响。"
+    assert pending["_command_interaction"] is True
+    prompt = pending["prompt"]
+    confirm = next(option for option in prompt["options"] if option["id"] == "confirm")
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt["prompt_id"], token=confirm["token"],
+    )
+    assert result["result"]["status"] == "confirmed"
+    assert result["result"]["text"] == "已删除工作区「待删除工作区」（ID %s），项目和文件未受影响。" % workspace.id
     await db.refresh(session)
     assert session.workspace_id is None
 
