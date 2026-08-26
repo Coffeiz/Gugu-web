@@ -35,6 +35,10 @@ importers:
       '@node-rs/jieba':
         specifier: 2.0.1
         version: 2.0.1
+    devDependencies:
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.2
 
   frontend:
     dependencies:
