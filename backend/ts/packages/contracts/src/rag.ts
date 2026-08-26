@@ -18,6 +18,9 @@ export type RagDocument = {
   id: string;
   text: string;
   source_type: RagSourceType | string;
+  platform?: string;
+  bot_id?: string;
+  group_id?: string;
   scope_type: RagScopeType | string;
   scope_id: string;
   document_version: string;
@@ -28,6 +31,14 @@ export type RagSearchResult = {
   score: number;
   source_type: RagSourceType | string;
   document_version: string;
+};
+
+export type RagSearchScope = {
+  platform?: string;
+  bot_id?: string;
+  group_id?: string;
+  scope_type?: string;
+  scope_id?: string;
 };
 
 export type RagScoreCandidate = {
@@ -58,7 +69,7 @@ export type RagRequest =
   | { op: "tokenize"; text: string }
   | { op: "replace"; revision: string; documents: RagDocument[] }
   | { op: "patch"; revision: string; base_revision?: string; upserts: RagDocument[]; deletes: string[] }
-  | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[] }
+  | { op: "search"; revision: string; query: string; limit?: number; source_types?: string[]; scope?: RagSearchScope }
   | { op: "score_filter"; query: string; candidates: RagScoreCandidate[]; limit?: number };
 
 export type RagSuccessResponse =

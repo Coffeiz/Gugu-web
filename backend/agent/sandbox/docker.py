@@ -10,6 +10,7 @@ import asyncio
 import os
 import signal
 import shutil
+from uuid import uuid4
 from pathlib import Path
 from collections.abc import Awaitable, Callable
 
@@ -60,7 +61,14 @@ class DockerSandboxExecutor:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
 
-    def build_argv(self, command: str, *, cwd: str = ".", network_profile: str | None = None) -> list[str]:
+    def build_argv(
+        self,
+        command: str,
+        *,
+        cwd: str = ".",
+        network_profile: str | None = None,
+        container_name: str | None = None,
+    ) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
         LocalWorkspaceExecutor(self.root)._validate_workspace_argv(argv, workdir)
@@ -81,6 +89,7 @@ class DockerSandboxExecutor:
             self.docker_path,
             "run",
             "--rm",
+            *([f"--name={container_name}"] if container_name else []),
             "--init",
             "--pull=never",
             "--label=com.gugu.sandbox=true",
@@ -123,7 +132,10 @@ class DockerSandboxExecutor:
         network_profile: str | None = None,
     ) -> ShellResult:
         workdir = self._resolve_cwd(cwd)
-        docker_argv = self.build_argv(command, cwd=cwd, network_profile=network_profile)
+        container_name = f"gugu-sandbox-{uuid4().hex}"
+        docker_argv = self.build_argv(
+            command, cwd=cwd, network_profile=network_profile, container_name=container_name,
+        )
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))
 
@@ -169,8 +181,12 @@ class DockerSandboxExecutor:
                 wait_task.cancel()
                 await asyncio.gather(wait_task, return_exceptions=True)
             if timed_out or permission_revoked or quota_exceeded:
+                # 杀掉 docker CLI 不等于杀掉它创建的容器；用受标签/唯一名称
+                # 定位当前执行，确保超时、撤权和配额超限不会留下后台容器。
+                await self._force_remove_container(container_name)
                 self._terminate_process_group(process.pid)
-                await process.wait()
+                if process.returncode is None:
+                    await process.wait()
 
         stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
         return ShellResult(
@@ -202,4 +218,26 @@ class DockerSandboxExecutor:
         try:
             os.killpg(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
+            pass
+
+    async def _force_remove_container(self, container_name: str) -> None:
+        """终止并删除当前执行容器；失败时不遮蔽原始超时/撤权结果。"""
+        try:
+            cleanup = await asyncio.create_subprocess_exec(
+                self.docker_path,
+                "rm",
+                "--force",
+                container_name,
+                cwd=self.root,
+                env=docker_environment(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(cleanup.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                cleanup.kill()
+                await cleanup.wait()
+        except (OSError, asyncio.TimeoutError):
             pass

@@ -201,6 +201,8 @@ async def lifespan(app: FastAPI):
         task, *( [retry_task] if retry_task is not None else [] ), log_task,
         return_exceptions=True,
     )
+    from agent.rag.ts_sidecar import close_score_clients
+    await close_score_clients()
     from app.db.session import dispose_engine
     await dispose_engine()
 

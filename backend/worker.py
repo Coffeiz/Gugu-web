@@ -386,6 +386,8 @@ async def serve():
     )
     sched.shutdown()
     await R.reset()
+    from agent.rag.ts_sidecar import close_score_clients
+    await close_score_clients()
     from app.db.session import dispose_engine
     await dispose_engine()
     print("[worker] stopped", flush=True)

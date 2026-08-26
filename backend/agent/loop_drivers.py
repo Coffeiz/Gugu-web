@@ -802,7 +802,7 @@ class OllamaDriver:
         messages = [self._assistant(result.raw, result.raw.content)]
         for tc, res in dispatched:
             content, _images = _openai_tool_result(res)
-            messages.append({"role": "tool", "content": content})
+            messages.append({"role": "tool", "tool_name": tc.name, "content": content})
         return messages
 
     def build_followup(self, result, next_content, assistant_fallback="（…）"):

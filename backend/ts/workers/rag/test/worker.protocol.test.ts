@@ -33,3 +33,34 @@ test("RAG worker 遵守 JSONL ping 与 replace/search contract", async (t) => {
   child.stdin.end();
   await once(child, "close");
 });
+
+test("RAG worker 在截断前应用 source 与 scope 过滤", async (t) => {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "src/index.ts"], { cwd: workerDir });
+  t.after(() => child.kill());
+  const lines = createInterface({ input: child.stdout });
+  const pending: Array<(value: string) => void> = [];
+  const received: string[] = [];
+  lines.on("line", (line) => {
+    const waiter = pending.shift();
+    if (waiter) waiter(line); else received.push(line);
+  });
+  const readResponse = async (): Promise<Record<string, unknown>> => {
+    const line = received.shift() ?? await new Promise<string>((resolveLine) => pending.push(resolveLine));
+    return JSON.parse(line) as Record<string, unknown>;
+  };
+  const documents = Array.from({ length: 10 }, (_, index) => ({
+    id: `wrong-${index}`, text: "麦子 麦子 麦子 麦子", source_type: "memory",
+    scope_type: "group", scope_id: "other", document_version: "1",
+  }));
+  documents.push({ id: "current", text: "麦子", source_type: "knowledge", scope_type: "owner", scope_id: "me", document_version: "1" });
+  child.stdin.write(JSON.stringify({ op: "replace", revision: "r1", documents }) + "\n");
+  assert.equal((await readResponse()).revision, "r1");
+  child.stdin.write(JSON.stringify({
+    op: "search", revision: "r1", query: "麦子", limit: 1,
+    source_types: ["knowledge"], scope: { scope_type: "owner", scope_id: "me" },
+  }) + "\n");
+  const result = await readResponse();
+  assert.equal((result.results as Array<Record<string, unknown>>)[0].id, "current");
+  child.stdin.end();
+  await once(child, "close");
+});

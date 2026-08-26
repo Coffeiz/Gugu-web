@@ -177,6 +177,25 @@ def test_sandboxd_rejects_non_finite_egress_expiry():
         })
 
 
+def test_docker_execution_uses_unique_container_name_for_cleanup(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "a" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1,
+        memory_limit_bytes=128 * 1024 * 1024,
+        ephemeral_quota_bytes=128 * 1024 * 1024,
+        egress_proxy_url="",
+        egress_isolation_enabled=False,
+    )
+    executor = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+    argv = executor.build_argv("pwd", container_name="gugu-sandbox-test")
+    assert "--name=gugu-sandbox-test" in argv
+
+
 def test_sandboxd_server_rejects_root_outside_allowed_root(tmp_path):
     from agent.sandbox.sandboxd import SandboxdServer
     import pytest

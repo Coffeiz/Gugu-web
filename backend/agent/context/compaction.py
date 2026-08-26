@@ -280,12 +280,15 @@ def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> lis
         start = indices[cursor]
         unit = [start]
         cursor += 1
-        call_ids = tool_call_ids(messages[start])
-        if call_ids and cursor < len(indices):
+        pending_call_ids = set(tool_call_ids(messages[start]))
+        while pending_call_ids and cursor < len(indices):
             result_ids = tool_result_ids(messages[indices[cursor]])
-            if result_ids and call_ids & result_ids:
-                unit.append(indices[cursor])
-                cursor += 1
+            matched = pending_call_ids & result_ids
+            if not matched:
+                break
+            unit.append(indices[cursor])
+            pending_call_ids.difference_update(matched)
+            cursor += 1
         units.append(unit)
     return units
 
@@ -297,18 +300,18 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
     已知非法的孤儿结果，避免结果被最新窗口保留并在下一次请求中触发 400。
     """
     cleaned: list[dict] = []
-    previous_call_ids: frozenset[str] = frozenset()
+    pending_call_ids: frozenset[str] = frozenset()
     for message in messages:
         current = dict(message)
         result_ids = tool_result_ids(current)
         call_ids = tool_call_ids(current)
         if result_ids:
-            matched = previous_call_ids & result_ids
+            matched = pending_call_ids & result_ids
             content = current.get("content")
             blocks = content if isinstance(content, list) else None
             if not matched:
                 if current.get("role") == "tool":
-                    previous_call_ids = frozenset()
+                    pending_call_ids = frozenset()
                     continue
                 if blocks is not None:
                     blocks = [
@@ -321,7 +324,7 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
                     if blocks:
                         current["content"] = blocks
                     else:
-                        previous_call_ids = frozenset()
+                        pending_call_ids = frozenset()
                         continue
             elif blocks is not None:
                 current["content"] = [
@@ -334,7 +337,12 @@ def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
                     )
                 ]
         cleaned.append(current)
-        previous_call_ids = call_ids
+        if result_ids:
+            # 一个 assistant 可以并行发起多个调用，连续 result 必须共享同一
+            # pending 集合；不能在第一个 result 后用空的 call_ids 覆盖它。
+            pending_call_ids = pending_call_ids - matched
+        else:
+            pending_call_ids = call_ids
     return cleaned
 
 

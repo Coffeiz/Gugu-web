@@ -8,6 +8,7 @@ import type {
   RagResponse,
   RagScoreCandidate,
   RagScoreStats,
+  RagSearchScope,
   RagSearchResult,
 } from "../../../packages/contracts/src/rag.ts";
 import { RAG_WORKER_VERSION } from "../../../packages/contracts/src/rag.ts";
@@ -115,12 +116,22 @@ async function persist(state: State): Promise<void> {
   await rename(temporary, target);
 }
 
-function search(state: State, query: string, limit: number): RagSearchResult[] {
+function matchesScope(document: Document, scope?: RagSearchScope): boolean {
+  if (!scope) return true;
+  for (const key of ["platform", "bot_id", "group_id", "scope_type", "scope_id"] as const) {
+    const wanted = scope[key];
+    if (wanted && document[key] !== wanted) return false;
+  }
+  return true;
+}
+
+function search(state: State, query: string, limit: number, allowedSources: Set<string>, scope?: RagSearchScope): RagSearchResult[] {
   const terms = new Set(tokens(query));
   if (!terms.size) return [];
   const total = state.documents.length;
   const scored: RagSearchResult[] = [];
   state.documents.forEach((document, index) => {
+    if ((allowedSources.size && !allowedSources.has(document.source_type)) || !matchesScope(document, scope)) return;
     const frequency = state.index[index];
     const length = Math.max(1, [...frequency.values()].reduce((sum, value) => sum + value, 0));
     let score = 0;
@@ -202,7 +213,7 @@ async function handle(state: State, request: RagRequest): Promise<RagResponse> {
   if (request.op === "search") {
     if ((request.revision ?? "") !== state.revision) return { status: "error", code: "revision_mismatch", message: "TS sidecar revision 与请求不一致" };
     const allowedSources = new Set(request.source_types ?? []);
-    const result = search(state, request.query ?? "", request.limit ?? 10).filter((item) => !allowedSources.size || allowedSources.has(item.source_type));
+    const result = search(state, request.query ?? "", request.limit ?? 10, allowedSources, request.scope);
     return { status: "ok", version: VERSION, revision: state.revision, results: result };
   }
   if (request.op === "score_filter") {

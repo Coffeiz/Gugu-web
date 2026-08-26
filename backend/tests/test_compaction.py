@@ -411,6 +411,15 @@ class TestCompactContext:
         ]
         assert _atomic_message_units(messages) == [[0, 1], [2]]
 
+    def test_atomic_units_keep_all_parallel_tool_results(self):
+        messages = [
+            {"role": "assistant", "tool_calls": [{"id": "call-a"}, {"id": "call-b"}], "content": None},
+            {"role": "tool", "tool_call_id": "call-a", "content": "结果 A"},
+            {"role": "tool", "tool_call_id": "call-b", "content": "结果 B"},
+            _make_msg("user", "继续"),
+        ]
+        assert _atomic_message_units(messages) == [[0, 1, 2], [3]]
+
     def test_compaction_drops_orphan_result_before_selecting_recent_window(self):
         messages = [
             _make_msg("user", "旧历史"),
@@ -425,6 +434,12 @@ class TestCompactContext:
         call = {"role": "assistant", "tool_calls": [{"id": "call-a"}], "content": None}
         result = {"role": "tool", "tool_call_id": "call-a", "content": "结果"}
         assert _drop_orphan_tool_results([call, result]) == [call, result]
+
+    def test_compaction_keeps_all_parallel_matching_results(self):
+        call = {"role": "assistant", "tool_calls": [{"id": "call-a"}, {"id": "call-b"}], "content": None}
+        result_a = {"role": "tool", "tool_call_id": "call-a", "content": "结果 A"}
+        result_b = {"role": "tool", "tool_call_id": "call-b", "content": "结果 B"}
+        assert _drop_orphan_tool_results([call, result_a, result_b]) == [call, result_a, result_b]
 
 
 class TestVerifyPrefixConsistency:

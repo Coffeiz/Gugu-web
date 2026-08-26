@@ -102,7 +102,7 @@ async def test_ollama_native_stream_and_tool_roundtrip(monkeypatch):
     messages = driver.build_tool_round(result, [(result.tool_calls[0], '{"ok":true}')])
     assert messages[0]["role"] == "assistant"
     assert messages[0]["tool_calls"][0]["function"]["name"] == "probe_noop"
-    assert messages[1] == {"role": "tool", "content": '{"ok":true}'}
+    assert messages[1] == {"role": "tool", "tool_name": "probe_noop", "content": '{"ok":true}'}
 
 
 @pytest.mark.asyncio

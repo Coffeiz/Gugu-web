@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shlex
+import weakref
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,13 @@ class TsSidecarClient:
             "query": query,
             "limit": max(1, min(int(limit), 50)),
             "source_types": sorted(source_type_set),
+            **({"scope": {
+                "platform": scope.platform,
+                "bot_id": scope.bot_id,
+                "group_id": scope.group_id,
+                "scope_type": scope.scope_type,
+                "scope_id": scope.scope_id,
+            }} if scope is not None else {}),
         })
         results: list[RecallResult] = []
         for item in response.get("results") or []:
@@ -198,6 +206,9 @@ def _wire_document(document: IndexDocument) -> dict[str, str]:
         # 保留原文，避免 Python 侧预分词导致 TS/Python 两套语义漂移。
         "text": "\n".join((document.title, document.summary, document.content)),
         "source_type": document.source_type,
+        "platform": document.scope.platform,
+        "bot_id": document.scope.bot_id,
+        "group_id": document.scope.group_id,
         "scope_type": document.scope.scope_type,
         "scope_id": document.scope.scope_id or "",
         "document_version": document.version or "",
@@ -209,7 +220,7 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
-_score_clients: dict[str, TsSidecarClient] = {}
+_score_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, TsSidecarClient] = weakref.WeakKeyDictionary()
 
 
 async def score_candidates_with_cache(
@@ -234,16 +245,18 @@ async def score_candidates_with_cache(
             "preferred_threshold": 0.55,
             "scoring_version": "confidence-v1",
         }
-    owner_key = f"{id(asyncio.get_running_loop())}:{owner_user_id}"
-    client = _score_clients.get(owner_key)
+    # score_filter 不持有 owner-specific index；按 event loop 共享一个 worker，
+    # 避免每个用户永久保留一个 Node 子进程。
+    loop = asyncio.get_running_loop()
+    client = _score_clients.get(loop)
     if client is None:
         settings = get_settings().search
         client = TsSidecarClient(
-            owner_key,
+            f"score:{id(loop)}",
             command=settings.ts_sidecar_command,
             index_dir="",
         )
-        _score_clients[owner_key] = client
+        _score_clients[loop] = client
     payload = []
     by_id = {}
     for index, candidate in enumerate(candidates):
@@ -272,6 +285,14 @@ async def score_candidates_with_cache(
     return updated, stats
 
 
+async def close_score_clients() -> None:
+    """关闭 score_filter 共享 worker，供应用和 worker shutdown 调用。"""
+    clients = list(_score_clients.values())
+    _score_clients.clear()
+    if clients:
+        await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+
+
 def _worker_command(command: str, index_dir: str, owner_user_id: str) -> list[str]:
     configured = command.strip()
     if not configured:
@@ -293,5 +314,5 @@ def _timeout_seconds() -> float:
 
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
-    "score_candidates_with_cache",
+    "score_candidates_with_cache", "close_score_clients",
 ]
