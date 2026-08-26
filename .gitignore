@@ -90,6 +90,12 @@ backend/scripts/.bench_rag_embeddings.json
 # Rust RAG sidecar 构建产物
 /rust/target/
 
+# TypeScript RAG 本地依赖与可重建索引；部署只消费 backend/bin 中的稳定构建物
+/backend/bin/node_modules/
+/backend/ts/**/node_modules/
+/backend/ts/bin/
+/backend/var/rag-ts-index/
+
 # QQ 引用索引（运行时聊天正文、身份和媒体 URL，不入版本控制）
 /backend/data/qq-ref-index/
 

@@ -10,6 +10,8 @@ from app.services.interactions import (
     consume_action,
     consume_text,
     create_agent_prompt,
+    create_goal_mode_prompt,
+    create_tool_budget_prompt,
     create_prompt,
     wait_for_resolution,
 )
@@ -142,6 +144,38 @@ async def test_ask_user_tool_result_creates_waiting_prompt(db, user_a):
     assert prompt.session_id == session.id
     assert prompt.kind == "choice"
     assert [item["id"] for item in actions] == ["talk", "sleep"]
+
+
+async def test_round_limit_prompt_only_resumes_current_run_without_persisting_unlimited(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="轮次上限交互", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_goal_mode_prompt(user_id=user_a.id, session_id=session.id)
+    assert prompt.kind == "choice"
+    assert [item["id"] for item in actions] == ["continue", "cancel"]
+    assert all("tool_call_id" not in item for item in actions)
+
+    result = await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-goal"
+    )
+    await db.refresh(session)
+    assert result["context"] == {"run_unlimited": True}
+    assert session.session_context is None
+
+
+async def test_tool_budget_prompt_enables_unlimited_without_goal_loop(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="步骤上限交互", source="web")
+    db.add(session)
+    await db.commit()
+
+    prompt, actions = await create_tool_budget_prompt(user_id=user_a.id, session_id=session.id)
+    assert [item["id"] for item in actions] == ["continue", "cancel"]
+    await consume_action(
+        db, user_id=user_a.id, prompt_id=prompt.id, token=actions[0]["token"], event_id="evt-budget"
+    )
+    await db.refresh(session)
+    assert session.session_context == {"unlimited_mode": True}
 
 
 async def test_confirmation_button_returns_token_for_resumed_destructive_tool(db, user_a):

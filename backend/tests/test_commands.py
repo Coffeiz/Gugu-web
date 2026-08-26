@@ -4,6 +4,7 @@ import pytest
 
 from agent import commands, router
 from agent.llm.genstream import immediate_stream
+from app.models import ConversationSession
 
 
 def test_router_recognizes_compact_without_starting_agent():
@@ -23,6 +24,7 @@ def test_help_lists_all_commands():
     assert result["action"] == "reply"
     for command in ("/stop", "/status", "/compact", "/new", "/memory", "/forget", "/workspace"):
         assert command in result["reply"]
+    assert "/unlimited" in result["reply"]
 
 
 @pytest.mark.parametrize("text", ["/stop help", "/status help", "/help workspace"])
@@ -118,3 +120,54 @@ def test_new_is_parsed_as_a_control_command():
 @pytest.mark.asyncio
 async def test_new_without_session_is_deterministic():
     assert await commands.handle("user-1", "/new") == "当前还没有可重置的对话。"
+
+
+def test_goal_is_parsed_as_a_control_command():
+    assert commands.parse("/goal 整理项目") == ("goal", "整理项目")
+    assert commands.parse("/goal cancel") == ("goal", "cancel")
+    assert commands.is_goal_start("/goal 整理项目") == (True, "整理项目")
+    assert commands.is_goal_start("/goal status") == (False, "")
+    assert commands.is_goal_start("/goal cancel") == (False, "")
+
+
+@pytest.mark.asyncio
+async def test_goal_mode_is_persisted_and_can_be_disabled(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="长任务测试", source="web")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    assert "已创建目标任务" in await commands.handle(user_a.id, "/goal 整理这批文件", session_id=session.id)
+    await db.refresh(session)
+    assert session.session_context == {
+        "goal_text": "整理这批文件", "goal_status": "active", "goal_mode": True,
+    }
+    assert "整理这批文件" in await commands.handle(user_a.id, "/goal status", session_id=session.id)
+
+    assert "暂停" in await commands.handle(user_a.id, "/goal pause", session_id=session.id)
+    await db.refresh(session)
+    assert session.session_context["goal_status"] == "paused"
+    assert session.session_context["goal_mode"] is False
+
+    assert "恢复" in await commands.handle(user_a.id, "/goal resume", session_id=session.id)
+    await db.refresh(session)
+    assert session.session_context["goal_status"] == "active"
+    assert session.session_context["goal_mode"] is True
+
+    assert "已取消" in await commands.handle(user_a.id, "/goal cancel", session_id=session.id)
+    await db.refresh(session)
+    assert session.session_context == {"goal_mode": False}
+
+
+@pytest.mark.asyncio
+async def test_unlimited_mode_does_not_enable_goal_loop(db, user_a):
+    session = ConversationSession(user_id=user_a.id, title="无限工具测试", source="web")
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+
+    assert "已开启无限工具调用模式" in await commands.handle(
+        user_a.id, "/unlimited", session_id=session.id,
+    )
+    await db.refresh(session)
+    assert session.session_context == {"unlimited_mode": True}

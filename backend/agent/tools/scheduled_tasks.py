@@ -272,12 +272,7 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description=("创建一个定时任务：到点自动按 instruction 执行并把结果投递给用户。一次带齐参数即可，无需多轮。"
-                         "（这是独立定时任务；若是给某个日历活动定提醒，改用日历的 create_event(reminders) 或 add_event_reminder，"
-                         "那种会绑定到活动、在活动卡里管理。跟活动无关的普通提醒/任务才用这个。两套互不影响。）\n"
-                         + _CRON_HINT
-                         + "\n渠道 channels：web(站内通知,默认) / feishu / qq；某渠道是否已连**看系统提示「当前对话来源 / 通知渠道」**——已连(✅)的直接设，只有未连(❌)才提示用户去绑（用户正用某 IM 跟你聊＝那个渠道必然已连，别让 TA 扫码）。"
-                         "QQ 选择 qq 时：网页/私聊默认 owner_private（私聊提醒用户）；群聊中必须先确认是 owner_private 还是 current_group，不能对模糊的‘提醒我’自行猜测。"),
+            description="创建独立定时任务并按渠道投递；日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
                 "properties": {

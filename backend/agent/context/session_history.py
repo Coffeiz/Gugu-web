@@ -39,7 +39,7 @@ async def load_session_history(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role == "summary",
         )
-        .order_by(ConversationMessage.id.desc())
+        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
         .limit(1)
     )
     summary = list((await db.execute(summary_query)).scalars().all())
@@ -50,7 +50,7 @@ async def load_session_history(
             ConversationMessage.session_id == session_id,
             ConversationMessage.role != "summary",
         )
-        .order_by(ConversationMessage.id.desc())
+        .order_by(ConversationMessage.created_at.desc(), ConversationMessage.id.desc())
         .limit(max(1, int(max_messages)))
     )
     if baseline_message_id > 0:

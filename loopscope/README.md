@@ -1,8 +1,8 @@
-# LoopScope 0.2
+# LoopScope 0.3
 
 LoopScope 是 Gugu monorepo 中暂存的独立 AgentLoop 开发工具。它拥有自己的 frontend、backend、SQLite 和依赖边界，未来可以直接搬到独立仓库。
 
-0.2 的核心是 **Context & Usage Provenance**：不仅能看到 Agent 做了什么，还能从 Span 追到 Python 源码位置、上下文来源、具体 Prompt/Memory/DB 数据，以及每轮真实 token / cache usage。
+0.3 的核心是 **Context & Usage Provenance**：不仅能看到 Agent 做了什么，还能从 Span 追到源码位置、上下文来源、具体 Prompt/Memory/DB 数据，以及每轮真实 token / cache usage。
 
 ## 主要能力
 
@@ -16,17 +16,15 @@ LoopScope 是 Gugu monorepo 中暂存的独立 AgentLoop 开发工具。它拥�
 
 ## 启动
 
-### Backend
+### Backend（TypeScript Collector）
 
 ```bash
-cd loopscope/backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-loopscope
+cd loopscope
+pnpm install
+pnpm --filter @loopscope/collector dev
 ```
 
-默认监听 `127.0.0.1:4320`，数据库默认在 `../data/loopscope.db`。0.1 数据库会自动原地升级到 0.2 schema。
+默认监听 `127.0.0.1:4320`，数据库默认在 `data/loopscope.db`。启动时会幂等补齐 0.3 schema。
 
 ### Frontend
 
@@ -56,7 +54,7 @@ cd loopscope
 docker compose up --build
 ```
 
-frontend `4319`、backend `4320` 仍是独立进程，SQLite 放在独立 volume。
+frontend `4319`、TypeScript Collector `4320` 仍是独立进程，SQLite 放在独立 volume。
 
 若 Gugu backend 也在 Docker 网络里运行，把 `LOOPSCOPE_ENDPOINT` 指到该网络中的 LoopScope backend；宿主机开发继续用 `http://127.0.0.1:4320`。
 

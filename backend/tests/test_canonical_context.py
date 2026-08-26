@@ -36,10 +36,10 @@ def test_section_digest_changes_only_when_section_changes():
     base = CanonicalContext(static_system=({"role": "system", "content": "固定"},))
     changed = CanonicalContext(
         static_system=base.static_system,
-        dynamic_tail=({"role": "system", "content": "现在"},),
+        current_turn=({"role": "system", "content": "现在"},),
     )
     assert base.section_digests["static_system"] == changed.section_digests["static_system"]
-    assert base.section_digests["dynamic_tail"] != changed.section_digests["dynamic_tail"]
+    assert base.section_digests["current_turn"] != changed.section_digests["current_turn"]
     assert base.canonical_digest != changed.canonical_digest
 
 

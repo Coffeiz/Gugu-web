@@ -49,14 +49,20 @@ def _identity_hash(identity: str | None) -> str | None:
     return sha256(identity.encode("utf-8")).hexdigest() if identity else None
 
 
-def _create_token(user_id, summary: str, identity: str | None = None) -> str:
+def _create_token(
+    user_id,
+    summary: str,
+    identity: str | None = None,
+    *,
+    ttl_minutes: int = _TOKEN_TTL_MINUTES,
+) -> str:
     return jwt.encode(
         {
             "sub": str(user_id),
             "role": _TOKEN_ROLE,
             "summary": _summary_hash(summary),
             "identity": _identity_hash(identity),
-            "exp": now_utc() + timedelta(minutes=_TOKEN_TTL_MINUTES),
+            "exp": now_utc() + timedelta(minutes=ttl_minutes),
         },
         get_settings().secret_key,
         algorithm="HS256",
@@ -79,7 +85,15 @@ def _has_valid_token(args: dict, user_id, summary: str, identity: str | None = N
     )
 
 
-def needs_confirmation(args: dict, summary: str, user_id, *, identity: str | None = None) -> str | None:
+def needs_confirmation(
+    args: dict,
+    summary: str,
+    user_id,
+    *,
+    identity: str | None = None,
+    ttl_minutes: int = _TOKEN_TTL_MINUTES,
+    instruction: str | None = None,
+) -> str | None:
     """返回 None=已确认可执行；否则签发确认凭证并返回需确认结果。"""
     if _truthy(args.get("confirm")) and _has_valid_token(args, user_id, summary, identity):
         return None
@@ -87,8 +101,11 @@ def needs_confirmation(args: dict, summary: str, user_id, *, identity: str | Non
         {
             "needs_confirm": True,
             "summary": summary,
-            "confirm_token": _create_token(user_id, summary, identity),
-            "instruction": "这是不可逆操作。请把上述影响转达用户；待用户明确同意后，带 confirm=true 和本次 confirm_token 再次调用本工具执行。",
+            "confirm_token": _create_token(
+                user_id, summary, identity, ttl_minutes=ttl_minutes,
+            ),
+            "instruction": instruction or "这是不可逆操作。请把上述影响转达用户；待用户明确同意后，带 confirm=true 和本次 confirm_token 再次调用本工具执行。",
+            **({"authorization_ttl_minutes": ttl_minutes} if ttl_minutes != _TOKEN_TTL_MINUTES else {}),
         },
         ensure_ascii=False,
     )

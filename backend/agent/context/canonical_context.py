@@ -96,27 +96,9 @@ class CanonicalTurn:
 _KNOWN_BLOCKS = frozenset({
     "text", "quote", "attachment_ref", "transcript", "attachment_text",
     "tool_call", "tool_use", "tool_result", "tool-schema", "skill-schema",
-    "tool-discovery", "knowledge-context", "interaction_request",
+    "tool-discovery", "knowledge-context", "stance-context", "time-context", "interaction_request",
     "interaction_result", "thinking", "reasoning_content",
 })
-
-
-class DynamicTailKind:
-    """动态内容的生命周期标签；标签不进入模型消息正文。"""
-
-    SESSION_STABLE = "session-stable"
-    TURN_STABLE = "turn-stable"
-    REQUEST_VOLATILE = "request-volatile"
-
-
-def classify_dynamic_tail(*, name: str, persistent: bool = False,
-                          changes_per_turn: bool = False) -> str:
-    """按生命周期而不是按内容文字分类动态尾部。"""
-    if persistent:
-        return DynamicTailKind.TURN_STABLE
-    if changes_per_turn:
-        return DynamicTailKind.REQUEST_VOLATILE
-    return DynamicTailKind.SESSION_STABLE
 
 
 def _value(message: Any, key: str, default: Any = None) -> Any:
@@ -272,7 +254,6 @@ class CanonicalContext:
     session_snapshot: tuple[dict[str, Any], ...] = ()
     canonical_history: tuple[dict[str, Any], ...] = ()
     current_turn: tuple[dict[str, Any], ...] = ()
-    dynamic_tail: tuple[dict[str, Any], ...] = ()
     history_units: tuple[CanonicalHistoryUnit, ...] = field(default_factory=tuple)
 
     @property
@@ -282,7 +263,6 @@ class CanonicalContext:
             "session_snapshot": digest(self.session_snapshot),
             "canonical_history": digest(self.canonical_history),
             "current_turn": digest(self.current_turn),
-            "dynamic_tail": digest(self.dynamic_tail),
         }
 
     @property
@@ -299,7 +279,6 @@ class CanonicalContext:
                 "session_snapshot": len(self.session_snapshot),
                 "canonical_history": len(self.canonical_history),
                 "current_turn": len(self.current_turn),
-                "dynamic_tail": len(self.dynamic_tail),
             },
             "history_unit_count": len(self.history_units),
             "tool_turn_count": sum(unit.kind == "tool_turn" for unit in self.history_units),

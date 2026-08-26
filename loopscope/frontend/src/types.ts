@@ -14,12 +14,19 @@ export interface ChatDebugEvent {
 
 export interface ChatMessage {
   id: number | string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
   createdAt?: string
+  canonicalId?: number
+  timelineOrder?: number
   pending?: boolean
   runId?: string
   debugEvents?: ChatDebugEvent[]
+  toolName?: string
+  toolLabel?: string
+  toolStatus?: string
+  toolInput?: unknown
+  toolResult?: unknown
 }
 
 export interface CodeProvenance {
@@ -89,6 +96,25 @@ export interface TraceRun {
   attributes: Record<string, any>
   usage?: TokenUsage
   spans?: TraceSpan[]
+  rounds?: TraceRoundExport[]
+}
+
+export interface TraceRoundExport {
+  round: number
+  span_id: string
+  span_ids: string[]
+  span_count: number
+  name: string
+  kind: string
+  status: string
+  started_at: number
+  ended_at?: number | null
+  duration_ms?: number | null
+  input: unknown
+  output: unknown
+  attributes: Record<string, any>
+  usage?: TokenUsage
+  token_impact?: TokenImpact
 }
 
 export interface CanonicalEventStats {

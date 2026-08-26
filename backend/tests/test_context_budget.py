@@ -6,7 +6,7 @@ from agent.context.budget import (
     estimate_tool_schema_tokens,
     truncate_messages,
 )
-from agent.context.message_assembly import PromptMessages
+from agent.context.assembly import PromptMessages
 from agent.context.tokens import estimate_tokens, message_text
 
 
@@ -15,7 +15,7 @@ def test_context_budget_uses_one_total_and_history_capacity_semantics():
         128_000,
         fixed_prefix_text="系统提示" * 100,
         tool_schema_tokens=300,
-        dynamic_tail_tokens=120,
+        turn_batch_tokens=120,
         current_turn_tokens=80,
     )
 
@@ -37,7 +37,7 @@ def test_context_budget_from_messages_has_one_breakdown():
         system_text="系统" * 10,
         fixed_prefix_size=1,
         tool_schema_tokens=31,
-        dynamic_tail_tokens=17,
+        turn_batch_tokens=17,
     )
 
     assert budget.total_tokens == (
@@ -45,7 +45,7 @@ def test_context_budget_from_messages_has_one_breakdown():
         + budget.snapshot_tokens
         + budget.history_tokens
         + budget.tool_schema_tokens
-        + budget.dynamic_tail_tokens
+        + budget.turn_batch_tokens
     )
     assert budget.snapshot_tokens == estimate_tokens(messages[0]["content"])
     assert budget.history_tokens == sum(
@@ -120,20 +120,18 @@ def test_tool_schema_reservation_is_included_in_hard_budget():
     assert stats.after_tokens <= ContextBudget(2500, provider_overhead_tokens=overhead).soft_limit_tokens + 10
 
 
-def test_dynamic_tail_is_counted_and_preserved_during_truncation():
-    """RAG/提醒等动态尾部不能绕过预算，也不能被历史截断逻辑删除。"""
+def test_turn_batch_is_counted_during_truncation():
+    """本轮 batch 消息参与预算，不能绕过历史截断逻辑。"""
     messages = PromptMessages(
         conversation=[
             {"role": "user", "content": "旧历史 " * 200},
             {"role": "user", "content": "当前问题"},
         ],
-        dynamic_tail=[{"role": "user", "content": "动态召回 " * 100}],
     )
-    tail_before = messages.dynamic_tail
+    messages.append({"role": "user", "content": "本轮 batch " * 100})
 
     result = enforce_message_budget(messages, "", 1200)
 
     assert result.changed
-    assert messages.dynamic_tail == tail_before
     assert result.after_tokens <= ContextBudget(1200).soft_limit_tokens + 10
-    assert len(messages.conversation) < 2
+    assert "旧历史" not in str(messages.conversation)

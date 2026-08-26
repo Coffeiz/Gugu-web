@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -13,6 +14,8 @@ from agent.sandbox.docker_runtime import (
     cleanup_sandboxes_for_root,
     image_available,
     probe_docker,
+    valid_egress_network_name,
+    valid_egress_proxy,
     valid_image_digest,
 )
 from app.core.config import get_settings, invalidate_settings_cache, write_override_json
@@ -27,6 +30,10 @@ router = APIRouter(prefix="/admin/sandbox", tags=["admin"])
 class SandboxLifecycleRequest(BaseModel):
     user_ids: list[str] = Field(default_factory=list, max_length=100)
     confirm_text: str = ""
+
+
+class EgressProxyConfigRequest(BaseModel):
+    proxy_url: str = Field(default="", max_length=2048)
 
 
 def _require_lifecycle_confirmation(body: SandboxLifecycleRequest, operation: str) -> None:
@@ -69,6 +76,15 @@ def _state(
 
 def _response():
     cfg = get_settings().sandbox
+    proxy_url = str(getattr(cfg, "egress_proxy_url", "") or "").strip()
+    proxy_safe = (
+        proxy_url
+        if valid_egress_proxy(proxy_url)
+        and not urlparse(proxy_url).query
+        and not urlparse(proxy_url).fragment
+        else ""
+    )
+    egress_error = _egress_proxy_error(cfg)
     runtime = probe_docker()
     image_ready = (
         runtime.daemon_ready
@@ -101,15 +117,71 @@ def _response():
         "persistent_quota_bytes": cfg.persistent_quota_bytes,
         "ephemeral_quota_bytes": cfg.ephemeral_quota_bytes,
         "network_profile": cfg.network_profile,
+        "egress_proxy_configured": bool(proxy_url),
+        # 代理地址不允许携带凭据；旧配置若不符合约束也不能原样回传到前端。
+        "egress_proxy_url": proxy_safe,
+        "egress_network_ready": bool(getattr(cfg, "egress_isolation_enabled", False)),
+        "egress_config_error": egress_error,
+        "egress_available": egress_error is None,
+        "egress_enabled": cfg.network_profile == "egress",
         "lifecycle_mode": "ephemeral",
         "rootless_required": cfg.rootless_required,
         "updated_at": None,
     }
 
 
+def _egress_proxy_error(cfg) -> str | None:
+    if not valid_egress_network_name(getattr(cfg, "egress_network_name", "")):
+        return "egress Docker 网络名无效"
+    if not getattr(cfg, "egress_isolation_enabled", False):
+        return "egress 隔离网络尚未启用"
+    proxy_url = str(getattr(cfg, "egress_proxy_url", "") or "").strip()
+    if not proxy_url:
+        return "尚未配置受控 HTTP(S) 代理"
+    if not valid_egress_proxy(proxy_url):
+        return "代理地址必须是无凭据的 HTTP(S) 地址"
+    parsed = urlparse(proxy_url)
+    if parsed.query or parsed.fragment:
+        return "代理地址不能包含查询参数或片段"
+    return None
+
+
 @router.get("/status")
 async def sandbox_status():
     return _response()
+
+
+@router.post("/egress/config")
+async def save_egress_proxy(body: EgressProxyConfigRequest):
+    proxy_url = body.proxy_url.strip()
+    if proxy_url:
+        if not valid_egress_proxy(proxy_url):
+            raise HTTPException(status_code=422, detail="代理地址必须是无凭据的 HTTP(S) 地址")
+        parsed = urlparse(proxy_url)
+        if parsed.query or parsed.fragment:
+            raise HTTPException(status_code=422, detail="代理地址不能包含查询参数或片段")
+    override = _read_override()
+    sandbox = override.setdefault("sandbox", {})
+    sandbox["egress_proxy_url"] = proxy_url
+    if not proxy_url and sandbox.get("network_profile") == "egress":
+        sandbox["network_profile"] = "none"
+    write_override_json(override)
+    invalidate_settings_cache()
+    return _response()
+
+
+@router.post("/egress/validate")
+async def validate_egress_proxy():
+    cfg = get_settings().sandbox
+    error = _egress_proxy_error(cfg)
+    if error:
+        raise HTTPException(status_code=409, detail=error)
+    return {
+        "ok": True,
+        "message": "代理配置有效；实际 Docker 网络和代理连通性将在 sandboxd 执行前再次校验",
+        "network_name": cfg.egress_network_name,
+        "proxy_configured": True,
+    }
 
 
 @router.post("/enable")

@@ -67,7 +67,10 @@
         <div v-if="cacheMode === 'passive'" class="cache-hint">
           💡 本轮使用被动前缀缓存，服务端可能已缓存前缀，但 API 不返回缓存命中统计
         </div>
-        <div v-if="cacheMode === 'none'" class="cache-hint">
+        <div v-if="cacheMode === 'none' && usage.cache_read" class="cache-hint">
+          ℹ️ 当前模型不支持主动缓存标记，已检测到被动缓存命中
+        </div>
+        <div v-else-if="cacheMode === 'none'" class="cache-hint">
           ℹ️ 当前模型不支持缓存机制
         </div>
 
@@ -111,7 +114,7 @@
           </div>
           <div class="span-list">
             <template v-for="span in rootSpans" :key="span.id">
-              <TraceSpanCard :span="span" />
+              <TraceSpanCard :span="span" :previous-span="previousRoundSpan(span)" />
               <div v-if="childrenOf(span.id).length" class="child-spans">
                 <TraceSpanCard v-for="child in childrenOf(span.id)" :key="child.id" :span="child" :depth="1" />
               </div>
@@ -207,6 +210,27 @@ function injectionSummary(span: any) {
   return `${input.skill ?? span.attributes?.skill ?? 'Skill'} · ${span.attributes?.action === 'reused' ? '复用' : '首次加载'}`
 }
 function childrenOf(id: string) { return (selected.value?.spans ?? []).filter(s => s.parent_span_id === id) }
+function previousRoundSpan(span: any) {
+  if (span.kind !== 'llm') return undefined
+  const rounds = rootSpans.value
+    .filter(item => item.kind === 'llm' && item.id !== span.id)
+    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
+  const currentRound = Number(span.attributes?.round ?? 0)
+  const previousInRun = rounds.reverse().find(item => Number(item.attributes?.round ?? 0) < currentRound)
+  if (previousInRun) return previousInRun
+  if (currentRound > 1) return undefined
+
+  const currentRun = selected.value
+  if (!currentRun) return undefined
+  const previousRun = props.runs
+    .filter(run => run.id !== currentRun.id && run.started_at < currentRun.started_at)
+    .sort((a, b) => b.started_at - a.started_at)[0]
+  const previousSpans = previousRun ? props.details?.[previousRun.id]?.spans ?? [] : []
+  return previousSpans
+    .filter(item => !item.parent_span_id && item.kind === 'llm')
+    .sort((a, b) => (Number(a.attributes?.round ?? 0) - Number(b.attributes?.round ?? 0)) || a.ordinal - b.ordinal)
+    .at(-1)
+}
 function selectRun(runId: string) {
   if (selectedId.value !== runId) selectedId.value = runId
   emit('select', runId)

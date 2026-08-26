@@ -15,6 +15,7 @@ from app.services.workspaces import (
     create_workspace,
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
+    effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
     get_workspace,
     delete_workspace,
@@ -48,9 +49,11 @@ async def list_workspaces(
         "globalEnabled": bool(get_settings().agent.shell_enabled),
         "systemGlobalEnabled": bool(get_settings().agent.shell_system_enabled),
         "dangerousGlobalEnabled": bool(get_settings().agent.shell_dangerous_enabled),
+        "autopilotGlobalEnabled": bool(get_settings().agent.shell_autopilot_enabled),
         "userEnabled": await effective_shell_enabled(db, user.id),
         "userSystemEnabled": await effective_shell_system_enabled(db, user.id),
         "userDangerousEnabled": await effective_shell_dangerous_enabled(db, user.id),
+        "userAutopilotEnabled": await effective_shell_autopilot_enabled(db, user.id),
         "items": [_response(row, counts.get(row.id, 0)) for row in rows],
     }
 

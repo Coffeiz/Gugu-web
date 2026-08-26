@@ -14,8 +14,7 @@ mutation 只 `flush`，由调用方（REST/Agent）统一 commit + 发事件 + s
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from sqlalchemy import func, select
+from uuid import uuid4
 
 from app.core.errors import Invalid, NotFound
 from app.core.ownership import get_owned
@@ -24,6 +23,7 @@ from app.models import File, Project
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.key_strategy import KeyContext
 from app.services.storage.keys import compose_logical_path
+from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
 
 
 def _fmt_size(size_bytes: int) -> str:
@@ -50,9 +50,8 @@ class FileOps:
         self.key_strategy = key_strategy
 
     async def _sum_used(self, user_id) -> int:
-        return (await self.db.execute(
-            select(func.sum(File.size_bytes)).where(File.user_id == user_id)
-        )).scalar() or 0
+        await reconcile_user_storage(self.db, user_id)
+        return (await get_quota(self.db, user_id, FILE_LIBRARY)).used_bytes
 
     async def _resolve_target(self, user_id, space, project_id, folder_id, *,
                               folder_msg, project_msg="项目不存在"):
@@ -98,7 +97,7 @@ class FileOps:
                           mind_map_id, display_name, ext, mime_type, data,
                           img_width=None, img_height=None,
                           on_conflict="keep_both", overwrite_file_id=None,
-                          storage_limit_bytes=None) -> FileResult:
+                          storage_limit_bytes=None, ledger_operation="file_upload") -> FileResult:
         project, project_year, project_month, folder_name, folder_path = await self._resolve_target(
             user_id, space, project_id, folder_id,
             folder_msg="文件夹不存在，或不属于指定的项目/个人空间")
@@ -109,10 +108,11 @@ class FileOps:
             existing = await get_owned(self.db, File, overwrite_file_id, user_id)
             if not existing:
                 raise Invalid("file.overwrite_target_not_found", "要覆盖的文件不存在")
+            used = await self._sum_used(user_id)
             if storage_limit_bytes is not None:
-                used = await self._sum_used(user_id)
                 if used - existing.size_bytes + size_bytes > storage_limit_bytes:
                     raise Invalid("storage.full", "存储空间已满，无法上传")
+            old_size_bytes = existing.size_bytes
             await self.storage.put(existing.storage_key, data, mime_type)
             existing.size = _fmt_size(size_bytes)
             existing.size_bytes = size_bytes
@@ -120,9 +120,16 @@ class FileOps:
             existing.img_width = img_width
             existing.img_height = img_height
             await self.db.flush()
+            await record_usage(
+                self.db, user_id, category=FILE_LIBRARY,
+                delta_bytes=size_bytes - old_size_bytes,
+                operation=ledger_operation, resource_type="file", resource_id=existing.id,
+                idempotency_key=f"file-overwrite:{existing.id}:{uuid4().hex}",
+            )
             return FileResult(existing, project, folder_name or None, was_overwrite=True)
 
         # 常规上传（同名自动加后缀）
+        used = await self._sum_used(user_id)
         base_key = self._build_key(
             user_id, file_id=None, space=space, name=display_name, ext=ext,
             project=project, project_id=project_id,
@@ -131,7 +138,6 @@ class FileOps:
         final_key, final_name = resolved.key, resolved.name
 
         if storage_limit_bytes is not None:
-            used = await self._sum_used(user_id)
             if used + size_bytes > storage_limit_bytes:
                 raise Invalid("storage.full", "存储空间已满，无法上传")
 
@@ -146,6 +152,11 @@ class FileOps:
         )
         self.db.add(db_file)
         await self.db.flush()
+        await record_usage(
+            self.db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,
+            operation=ledger_operation, resource_type="file", resource_id=db_file.id,
+            idempotency_key=f"file-upload:{db_file.id}",
+        )
         return FileResult(db_file, project, folder_name or None)
 
     # ── 改名 / 移动（PATCH）─────────────────────────────────────────────────────
@@ -243,9 +254,14 @@ class FileOps:
         await self.storage.put(new_key, data, f.mime_type)
         new_file = File(
             user_id=user_id, display_name=new_display, ext=f.ext, storage_key=new_key,
-            size=f.size, mime_type=f.mime_type, space=new_space,
+            size=f.size, size_bytes=f.size_bytes, mime_type=f.mime_type, space=new_space,
             project_id=project_id, folder_id=folder_id, stage_name=f.stage_name,
         )
         self.db.add(new_file)
         await self.db.flush()
+        await record_usage(
+            self.db, user_id, category=FILE_LIBRARY, delta_bytes=new_file.size_bytes,
+            operation="file_copy", resource_type="file", resource_id=new_file.id,
+            idempotency_key=f"file-copy:{new_file.id}",
+        )
         return FileResult(new_file, project, folder_name or None)

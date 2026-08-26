@@ -83,12 +83,33 @@ class LocalWorkspaceExecutor:
                 raise ValueError("命令路径超出 workspace 范围")
             # 只对显式路径形态解析，避免把普通参数当成文件名处理。
             if "/" not in value and "\\" not in value and not value.startswith("."):
+                # 硬链接不会通过路径 resolve 到 workspace 外；对已存在的普通文件
+                # 检查 inode 链数，避免把 workspace 内的名字当成外部文件的安全边界。
+                candidate = workdir / value
+                if candidate.is_symlink():
+                    resolved_link = candidate.resolve(strict=False)
+                    try:
+                        resolved_link.relative_to(self.root)
+                    except ValueError as exc:
+                        raise ValueError("命令路径超出 workspace 范围") from exc
+                try:
+                    stat = candidate.stat()
+                except OSError:
+                    stat = None
+                if stat is not None and candidate.is_file() and stat.st_nlink > 1:
+                    raise ValueError("workspace 命令不能使用硬链接文件")
                 continue
             candidate = (workdir / value).resolve(strict=False)
             try:
                 candidate.relative_to(self.root)
             except ValueError as exc:
                 raise ValueError("命令路径超出 workspace 范围") from exc
+            try:
+                stat = candidate.stat()
+            except OSError:
+                stat = None
+            if stat is not None and candidate.is_file() and stat.st_nlink > 1:
+                raise ValueError("workspace 命令不能使用硬链接文件")
 
     @staticmethod
     def _parse_command(command: str) -> list[str]:

@@ -274,10 +274,10 @@ def ensure_hooks() -> None:
             run.attach_context_spans(ctx_span.id)
 
             # 统一在 provider loop 入口记录实际收到的 messages。应用层 runner/web
-            # 的组装探针只提供 baseline/history 对照，不再作为最终输入的唯一依据。
+            # 的组装审计只提供 baseline/history 对照，不再作为最终输入的唯一依据。
             try:
-                from agent.context.audit import consume_context_layout_probe
-                application_layout = consume_context_layout_probe()
+                from agent.context.audit import consume_context_layout_audit
+                application_layout = consume_context_layout_audit()
             except Exception:
                 application_layout = None
             record_context_layout(

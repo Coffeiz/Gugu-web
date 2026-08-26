@@ -1,7 +1,7 @@
 import pytest
 from types import SimpleNamespace
 
-from agent.rag.index_cache import KnowledgeIndexCache, PythonLexicalIndex
+from agent.rag.index_cache import KnowledgeIndexCache
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.persistent_store import replace_source_documents
 
@@ -20,7 +20,7 @@ def _document(user_id: str, content: str, version: str) -> IndexDocument:
 
 
 def _use_fake_sidecar(monkeypatch):
-    """缓存测试只验证 revision/owner 隔离，不依赖本机架构的 Rust 二进制。"""
+    """缓存测试只验证 revision/owner 隔离，不启动真实 TS worker。"""
     from agent.rag.models import RecallResult
 
     class FakeSidecar:
@@ -30,18 +30,22 @@ def _use_fake_sidecar(monkeypatch):
         async def replace(self, _documents, _revision):
             return None
 
-        async def search(self, query, *, documents, **_kwargs):
+        async def reuse_if_current(self, _revision):
+            return False
+
+        async def search(self, query, *, documents, source_types=(), scope=None, **_kwargs):
             needle = query.casefold()
             return [
                 RecallResult(document, 1.0)
                 for document in documents.values()
-                if needle in (document.title + document.summary + document.content).casefold()
+                if (not source_types or document.source_type in set(source_types))
+                and needle in (document.title + document.summary + document.content).casefold()
             ]
 
         async def close(self):
             return None
 
-    monkeypatch.setattr("agent.rag.index_cache.RustSidecarClient", FakeSidecar)
+    monkeypatch.setattr("agent.rag.index_cache.TsSidecarClient", FakeSidecar)
 
 
 @pytest.mark.asyncio
@@ -86,64 +90,109 @@ async def test_index_cache_revision_invalidates_after_incremental_replace(db, us
 
 
 @pytest.mark.asyncio
-async def test_python_backend_reuses_transient_owner_index(monkeypatch):
-    document = _document("user-a", "项目 alpha", "v1")
-    monkeypatch.setattr(
-        "app.core.config.get_settings",
-        lambda: SimpleNamespace(search=SimpleNamespace(
-            rust_lexical_backend="python", rust_sidecar_enabled=True,
-        )),
+async def test_shared_snapshot_index_merges_sources_and_filters_by_source(monkeypatch):
+    from agent.rag.context import reset_shared_index_key, set_shared_index_key
+
+    document_a = IndexDocument(
+        document_id="memory:1", source_type="memory", source_id="1",
+        scope=Scope(owner_user_id="user-a"), title="记忆", summary="",
+        content="记忆 alpha", version="v1",
     )
-    cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
-
-    first = await cache.get_transient("user-a", [document], revision="v1")
-    second = await cache.get_transient("user-a", [document], revision="v1")
-
-    assert isinstance(first, PythonLexicalIndex)
-    assert first is second
-    assert [item.document.source_id for item in await second.search("alpha")] == ["1"]
-    assert cache.stats()["entries"] == 1
-
-
-@pytest.mark.asyncio
-async def test_backend_switch_does_not_reuse_other_backend_cache(monkeypatch):
-    document = _document("user-a", "项目 alpha", "v1")
+    document_b = IndexDocument(
+        document_id="project:2", source_type="project", source_id="2",
+        scope=Scope(owner_user_id="user-a"), title="项目 beta", summary="",
+        content="项目 beta", version="v1",
+    )
+    _use_fake_sidecar(monkeypatch)
     settings = SimpleNamespace(search=SimpleNamespace(
-        rust_lexical_backend="python", rust_sidecar_enabled=True,
-        rust_sidecar_command="", rust_sidecar_index_dir="",
+        ts_sidecar_command="", ts_sidecar_index_dir="",
     ))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
-    python_index = await cache.get_transient("user-a", [document], revision="v1")
+    token = set_shared_index_key("snapshot:revision-1")
+    try:
+        first = await cache.get_transient("user-a", [document_a], revision="memory-v1")
+        second = await cache.get_transient("user-a", [document_b], revision="project-v1")
+        assert first is not second
+        assert len(second.documents) == 2
+        assert [item.document.source_type for item in await second.search(
+            "beta", source_types={"project"}
+        )] == ["project"]
+        assert await second.search("alpha", source_types={"project"}) == []
+        assert cache.stats()["entries"] == 1
+    finally:
+        reset_shared_index_key(token)
 
-    class FakeSidecar:
-        def __init__(self, *_args, **_kwargs):
-            pass
 
-        async def replace(self, _documents, _revision):
-            return None
+@pytest.mark.asyncio
+async def test_shared_snapshot_index_merges_persistent_and_transient_documents(monkeypatch):
+    from agent.rag.context import reset_shared_index_key, set_shared_index_key
 
-        async def search(self, query, *, documents, **_kwargs):
-            return []
+    persistent_document = _document("user-a", "项目 alpha", "v1")
+    transient_document = IndexDocument(
+        document_id="memory:1", source_type="memory", source_id="1",
+        scope=Scope(owner_user_id="user-a"), title="记忆", summary="",
+        content="记忆 beta", version="v1",
+    )
+    _use_fake_sidecar(monkeypatch)
+    settings = SimpleNamespace(search=SimpleNamespace(
+        ts_sidecar_command="", ts_sidecar_index_dir="",
+    ))
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
 
-        async def close(self):
-            return None
+    async def load_documents(_db, _owner_user_id):
+        return [persistent_document]
 
-    monkeypatch.setattr("agent.rag.index_cache.RustSidecarClient", FakeSidecar)
-    settings.search.rust_lexical_backend = "rust"
-    rust_index = await cache.get_transient("user-a", [document], revision="v1")
+    monkeypatch.setattr("agent.rag.index_cache.load_index_documents", load_documents)
+    cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
+    token = set_shared_index_key("snapshot:revision-1")
+    try:
+        index = await cache.get(
+            object(), "user-a", "all", baseline_revision="db-v1",
+        )
+        merged = await cache.get_transient(
+            "user-a", [transient_document], revision="memory-v1",
+        )
+        assert len(index.documents) == 1
+        assert len(merged.documents) == 2
+        assert cache.stats()["entries"] == 1
+    finally:
+        reset_shared_index_key(token)
 
-    assert isinstance(python_index, PythonLexicalIndex)
-    assert rust_index is not python_index
-    assert cache.stats()["entries"] == 2
+
+@pytest.mark.asyncio
+async def test_shared_snapshot_reuses_complete_persistent_index_without_loading_documents(monkeypatch):
+    from agent.rag.context import reset_shared_index_key, set_shared_index_key
+
+    document = _document("user-a", "项目 alpha", "v1")
+    _use_fake_sidecar(monkeypatch)
+    settings = SimpleNamespace(search=SimpleNamespace(
+        ts_sidecar_command="", ts_sidecar_index_dir="",
+    ))
+    monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
+    calls = {"load": 0}
+
+    async def load_documents(_db, _owner_user_id):
+        calls["load"] += 1
+        return [document]
+
+    monkeypatch.setattr("agent.rag.index_cache.load_index_documents", load_documents)
+    cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
+    token = set_shared_index_key("snapshot:revision-stable")
+    try:
+        first = await cache.get(object(), "user-a", "all", baseline_revision="revision-1")
+        second = await cache.get(object(), "user-a", "all", baseline_revision="revision-1")
+        assert first is second
+        assert calls["load"] == 1
+    finally:
+        reset_shared_index_key(token)
 
 
 @pytest.mark.asyncio
 async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
     document = _document("user-a", "项目 alpha", "v1")
     settings = SimpleNamespace(search=SimpleNamespace(
-        rust_lexical_backend="rust", rust_sidecar_enabled=True,
-        rust_sidecar_command="/opt/gugu-rag-sidecar", rust_sidecar_index_dir="/var/lib/gugu/rag-index",
+        ts_sidecar_command="/opt/gugu-rag-ts-worker", ts_sidecar_index_dir="/var/lib/gugu/rag-ts-index",
     ))
     monkeypatch.setattr("app.core.config.get_settings", lambda: settings)
     calls = {"reuse": 0, "replace": 0}
@@ -165,7 +214,7 @@ async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
         async def close(self):
             return None
 
-    monkeypatch.setattr("agent.rag.index_cache.RustSidecarClient", PersistentSidecar)
+    monkeypatch.setattr("agent.rag.index_cache.TsSidecarClient", PersistentSidecar)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
     first = await cache.get_transient("user-a", [document], revision="v1")
     assert isinstance(first, object)

@@ -165,7 +165,7 @@ async def _group_context_search(db, user_id, args: dict):
         or not im.get("channel_id")
     ):
         return {"error": "当前不在群聊上下文中，不能使用群聊搜索"}
-    keyword = (args.get("keyword") or "").strip()
+    keyword = (args.get("query") or args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
     search_queries = normalize_queries(keyword, queries)
     mode = normalize_mode(args.get("mode"))
@@ -221,11 +221,12 @@ class GroupContextSkill(BaseSkill):
         Tool(
             name="group_context_search",
             label="搜当前群上下文",
-            description="只搜索当前 QQ 群最近保存的消息，支持一次传入多个关键词（默认 OR）；也可以按发言人查询（speaker 传群成员的名字/别名/群友称呼或 platform_user_id）。若返回 ambiguous=true，说明有多个成员匹配该称呼，需要向用户澄清后再查；不会读取其他群、私聊或网页历史对话。",
+            description="只搜索当前 QQ 群消息，可按关键词或发言人筛选；不会读取其他群、私聊或网页历史。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "query": {"type": "string", "description": "单个关键词；所有搜索工具统一使用此字段"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"},
                                 "description": "可选多个候选关键词，默认 OR，最多 8 个"},
                     "mode": {"type": "string", "enum": ["OR", "AND"],

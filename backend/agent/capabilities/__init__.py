@@ -2,7 +2,8 @@
 
 from .index import CapabilityIndex
 from .models import CapabilityMeta, CapabilitySnapshot, SelectedCapabilities
-from .selector import CapabilitySelector, RegistryCapabilitySelector
+from .selector import CapabilitySelector, RagCapabilitySelector, RegistryCapabilitySelector
+from .recommendation import recommend
 
 __all__ = [
     "CapabilityIndex",
@@ -11,4 +12,6 @@ __all__ = [
     "SelectedCapabilities",
     "CapabilitySelector",
     "RegistryCapabilitySelector",
+    "RagCapabilitySelector",
+    "recommend",
 ]

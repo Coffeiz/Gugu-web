@@ -123,6 +123,7 @@ def invalid_input_payload(tool_name: str, issues: list[dict[str, str]]) -> dict[
         "error": "tool_input_invalid",
         "tool": tool_name,
         "issues": bounded,
+        "_schema_recovery": {"needed": True, "reason": "validation_error"},
         "usage_hint": "参数不符合工具 schema。先按 issues 修正；缺少无法从上下文确定的必填信息时，先向用户询问。",
         "next_action": _invalid_input_next_action(bounded),
     }

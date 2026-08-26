@@ -102,6 +102,34 @@ async def test_qq_private_reply_uses_sender_target(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_send_agent_response_sends_each_round_separately(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = False
+            reason = None
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="最后一轮", round_texts=["第一轮", "最后一轮"]),
+    )
+
+    assert sent == ["第一轮", "最后一轮"]
+    assert result == "最后一轮"
+
+
+@pytest.mark.asyncio
 async def test_interaction_uses_qq_keyboard_and_keeps_text_fallback(monkeypatch):
     from agent.gateway import qq
     from agent.im.replies import send_interaction

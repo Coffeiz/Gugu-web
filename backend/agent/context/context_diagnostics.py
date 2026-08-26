@@ -16,6 +16,38 @@ def first_diff_index(previous: list[dict], current: list[dict]) -> int | None:
     return min(len(previous), len(current)) if len(previous) != len(current) else None
 
 
+def _representation_kind(message: dict[str, Any]) -> str:
+    """只标记消息外层表示，不记录正文，帮助定位包装/role 变化。"""
+    content = message.get("content")
+    if isinstance(content, str):
+        value = content.lstrip()
+        if value.startswith("<compacted-summary>"):
+            return "compacted-summary"
+        if value.startswith("## 早前对话摘要"):
+            return "legacy-summary-header"
+        if value.startswith("[system-reminder]"):
+            return "system-reminder-text"
+        return "text"
+    if isinstance(content, list):
+        return "blocks"
+    return type(content).__name__
+
+
+def first_diff_reason(previous: dict[str, Any], current: dict[str, Any]) -> str:
+    """返回首个变化消息的脱敏原因分类。"""
+    previous_shape = _wire_message_shape(previous)
+    current_shape = _wire_message_shape(current)
+    if previous_shape["role"] != current_shape["role"]:
+        return "role_changed"
+    if previous_shape["representation"] != current_shape["representation"]:
+        return "wrapper_changed"
+    if previous_shape["block_shapes"] != current_shape["block_shapes"]:
+        return "block_shape_changed"
+    if previous_shape["content_kind"] != current_shape["content_kind"]:
+        return "content_kind_changed"
+    return "content_changed"
+
+
 def _wire_message_shape(message: dict[str, Any]) -> dict[str, Any]:
     """返回消息的脱敏结构，不包含正文、工具参数或附件地址。"""
     role = str(message.get("role") or "")
@@ -38,6 +70,7 @@ def _wire_message_shape(message: dict[str, Any]) -> dict[str, Any]:
         content_count = 1 if content is not None else 0
     return {
         "role": role,
+        "representation": _representation_kind(message),
         "content_kind": content_kind,
         "content_count": content_count,
         "block_shapes": blocks,
@@ -83,12 +116,8 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
     result["wire_digest"] = digest(wire)
     result["wire_message_count"] = len(wire)
     wire_diagnostics = _wire_message_diagnostics(wire)
-    tail_count = len(getattr(messages, "dynamic_tail", ()) or ())
-    result["wire_conversation_message_count"] = max(0, len(wire) - tail_count)
-    result["wire_dynamic_tail_count"] = tail_count
-    result["wire_dynamic_tail_first_index"] = (
-        len(wire) - tail_count if tail_count else None
-    )
+    result["wire_conversation_message_count"] = len(wire)
+    result["wire_turn_batch_count"] = 0
     result["wire_total_token_estimate"] = (
         wire_diagnostics[-1]["cumulative_token_estimate"] if wire_diagnostics else 0
     )
@@ -100,8 +129,20 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
         previous_wire = list(previous_messages)
         diff_index = first_diff_index(previous_wire, wire)
         result["first_diff_index"] = diff_index
+        result["prefix_integrity"] = {
+            "stable": diff_index is None,
+            "previous_digest": digest(previous_wire[:diff_index]) if diff_index is not None else digest(previous_wire),
+            "current_digest": digest(wire[:diff_index]) if diff_index is not None else digest(wire),
+        }
         result["first_diff"] = {
             "index": diff_index,
+            "reason": (
+                first_diff_reason(previous_wire[diff_index], wire[diff_index])
+                if diff_index is not None
+                and diff_index < len(previous_wire)
+                and diff_index < len(wire)
+                else "message_count_changed"
+            ),
             "previous": (
                 _wire_message_diagnostics(previous_wire)[diff_index]
                 if diff_index is not None and diff_index < len(previous_wire) else None
@@ -113,5 +154,6 @@ def request_diagnostics(messages: Any, *, system_text: str, tools: list[dict],
         }
     else:
         result["first_diff_index"] = None
+        result["prefix_integrity"] = None
         result["first_diff"] = None
     return result

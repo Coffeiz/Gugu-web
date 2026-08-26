@@ -1,57 +1,69 @@
+import asyncio
+
 from agent.context.compaction import compact_context
 from agent.context.compress_conv import fixed_context_parts
-from agent.context.message_assembly import build_messages
+from agent.context.assembly import assemble, assemble_turn
 from agent.context.history import build_history_parts
 from agent.context.canonical_tool_history import render_events_for_provider
 
 
-def test_message_assembly_marks_snapshot_prefix():
-    messages = build_messages(
+def test_assembly_marks_snapshot_prefix():
+    messages = assemble(
         fixed_parts=[{"role": "system", "content": "固定系统"},
                      {"role": "user", "content": "固定 session info"}],
         history=[{"role": "user", "content": "旧消息"}],
-        current_user={"role": "user", "content": "当前消息"},
-        dynamic_tail=[{"role": "user", "content": "当前时间"}],
     )
+    batch, _ = assemble_turn(
+        current_user={"role": "user", "content": "当前消息"},
+        now_text="当前时间",
+    )
+    messages.append_batch(batch)
 
     assert messages.fixed_prefix_size == 2
     assert [m["content"] for m in messages.conversation[:2]] == ["固定系统", "固定 session info"]
-    assert messages.dynamic_tail[0]["content"] == "当前时间"
+    assert messages[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
 
 
 def test_openai_provider_render_keeps_snapshot_prefix():
     """OpenAI 路不经过 Anthropic 清洗器，provider 渲染也必须保留 snapshot。"""
-    messages = build_messages(
+    messages = assemble(
         fixed_parts=[
             {"role": "system", "content": "固定 snapshot"},
         ],
         history=[{"role": "user", "content": "旧消息"}],
-        current_user={"role": "user", "content": "当前消息"},
-        dynamic_tail=[{"role": "system", "content": "当前时间"}],
     )
+    batch, _ = assemble_turn(
+        current_user={"role": "user", "content": "当前消息"},
+        now_text="当前时间",
+    )
+    messages.append_batch(batch)
 
     outbound = render_events_for_provider(messages)
 
     assert outbound[0] == {"role": "system", "content": "固定 snapshot"}
-    assert [item["content"] for item in outbound.conversation] == [
+    assert [item["content"] for item in outbound.conversation][:3] == [
         "固定 snapshot", "旧消息", "当前消息",
     ]
-    assert [item["content"] for item in outbound.dynamic_tail] == ["当前时间"]
+    assert outbound[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
 
 
 def test_rag_tail_is_stable_conversation_after_current_user():
-    messages = build_messages(
+    messages = assemble(
         fixed_parts=[{"role": "user", "content": "固定 session info"}],
         history=[{"role": "assistant", "content": "上一轮回复"}],
+    )
+    batch, _ = assemble_turn(
         current_user={"role": "user", "content": "当前问题"},
         conversation_tail=[{"role": "user", "content": "[group-rag]\n稳定知识"}],
-        dynamic_tail=[{"role": "user", "content": "当前时间"}],
+        now_text="当前时间",
     )
+    messages.append_batch(batch)
 
     assert [item["content"] for item in messages.conversation] == [
         "固定 session info", "上一轮回复", "当前问题", "[group-rag]\n稳定知识",
+        [{"type": "time-context", "text": "[system-reminder]\n当前时间：当前时间\n[/system-reminder]"}],
     ]
-    assert [item["content"] for item in messages.dynamic_tail] == ["当前时间"]
+    assert messages[-1]["content"][0]["text"].endswith("当前时间\n[/system-reminder]")
 
 
 def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
@@ -90,5 +102,34 @@ def test_persisted_summary_is_first_history_message():
 
     parts = build_history_parts([Message()], object(), use_anthropic=True)
     assert parts[0]["role"] == "user"
-    assert "## 早前对话摘要" in parts[0]["content"]
-    assert "早前决定" in parts[0]["content"]
+    assert parts[0]["content"] == "<compacted-summary>\n早前决定\n</compacted-summary>"
+
+
+def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch):
+    """压缩所在 run 与下一 run 从数据库恢复的摘要必须字节一致。"""
+    async def fake_summary(_items, _previous=None):
+        return "稳定摘要"
+
+    monkeypatch.setattr("agent.context.compaction._generate_compact_summary", fake_summary)
+    messages = [
+        {"role": "system", "content": "固定系统"},
+        {"role": "user", "content": "固定 snapshot"},
+        {"role": "user", "content": "旧消息" * 80},
+        {"role": "assistant", "content": "旧回复" * 80},
+        {"role": "user", "content": "当前消息"},
+    ]
+
+    compacted, changed = asyncio.run(
+        compact_context(messages, "", context_tokens=100, fixed_prefix_size=2)
+    )
+
+    assert changed
+    inline_summary = compacted[2]["content"]
+
+    class PersistedSummary:
+        role = "summary"
+        content = "稳定摘要"
+        content_json = None
+
+    restored = build_history_parts([PersistedSummary()], object(), use_anthropic=True)
+    assert inline_summary == restored[0]["content"]

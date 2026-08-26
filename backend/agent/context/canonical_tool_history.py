@@ -36,7 +36,7 @@ def implementation_digest(tool) -> str:
 
 
 _CANONICAL_EVENT_TYPES = frozenset({
-    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
 })
 
 
@@ -240,17 +240,20 @@ def event_text(block: dict) -> str:
         return f"[canonical tool-discovery]\n可用工具：{names}"
     if kind == "knowledge-context":
         return str(block.get("text") or "")
+    if kind == "stance-context":
+        return str(block.get("text") or "")
+    if kind == "time-context":
+        return str(block.get("text") or "")
     return ""
 
 
 def render_events_for_provider(messages: list[dict]) -> list[dict]:
     """复制并渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
 
-    provider wire 渲染不能把动态尾部降级成普通 list，否则缓存层无法区分
-    稳定 conversation 和每轮变化的 dynamic_tail。
+    provider wire 渲染保持 PromptMessages 的固定前缀元数据。
     """
     conversation_count = len(getattr(messages, "conversation", messages))
-    is_prompt_messages = hasattr(messages, "dynamic_tail") and hasattr(messages, "fixed_prefix_size")
+    is_prompt_messages = hasattr(messages, "fixed_prefix_size")
     rendered: list[dict] = []
     for message in messages:
         clone = dict(message)
@@ -260,7 +263,7 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
             event_lines: list[str] = []
             for block in content:
                 if isinstance(block, dict) and block.get("type") in {
-                    "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+                    "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
                 }:
                     text = event_text(block)
                     if text:
@@ -268,22 +271,21 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
                 else:
                     ordinary.append(block)
             if event_lines:
-                if ordinary:
-                    ordinary.append({"type": "text", "text": "\n\n".join(event_lines)})
-                    clone["content"] = ordinary
-                else:
-                    clone["content"] = "\n\n".join(event_lines)
+                # canonical event 无论来自当前注入还是数据库恢复，都固定为
+                # 单个 text block。避免当前轮是 string、下一轮恢复是 block，
+                # 从第一个 RAG/schema 事件起断开 provider cache 前缀。
+                ordinary.append({"type": "text", "text": "\n\n".join(event_lines)})
+                clone["content"] = ordinary
         rendered.append(clone)
 
     if not is_prompt_messages:
         return rendered
 
-    # 延迟导入避免 message_assembly 与 canonical history 之间形成模块级循环依赖。
-    from agent.context.message_assembly import PromptMessages
+    # 延迟导入避免 assembly 与 canonical history 之间形成模块级循环依赖。
+    from agent.context.assembly import PromptMessages
 
     result = PromptMessages(
         rendered[:conversation_count],
-        rendered[conversation_count:],
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
     )
     canonical_context = getattr(messages, "canonical_context", None)

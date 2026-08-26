@@ -626,7 +626,9 @@ function onMoreDragItem(payload: { item: CalItem; event: MouseEvent }) {
   startMoreItemDrag(payload.item, payload.event)
 }
 
-const weekdays = ['一', '二', '三', '四', '五', '六', '日']
+const weekdays = computed(() => prefsStore.calendarWeekStart === 'sunday'
+  ? ['日', '一', '二', '三', '四', '五', '六']
+  : ['一', '二', '三', '四', '五', '六', '日'])
 
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -682,7 +684,8 @@ const monthDays = computed<MonthDayCell[]>(() => {
   const m = cursor.value.getMonth()
   const first    = new Date(y, m, 1)
   const last     = new Date(y, m + 1, 0)
-  const startDow = (first.getDay() + 6) % 7
+  const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
+  const startDow = (first.getDay() - weekStart + 7) % 7
   const days: MonthDayCell[]     = []
   for (let i = startDow - 1; i >= 0; i--) {
     const d = new Date(y, m, -i)
@@ -716,16 +719,14 @@ const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
 const _CN_DOW   = ['日','一','二','三','四','五','六']
 
-function _mondayOf(d: Date) {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7))   // 回到本周一
-  return x
-}
 const weekDays = computed<WeekViewDay[]>(() => {
-  const mon = _mondayOf(weekRef.value)
+  const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
+  const base = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), weekRef.value.getDate())
+  const offset = (base.getDay() - weekStart + 7) % 7
+  base.setDate(base.getDate() - offset)
   const out: WeekViewDay[] = []
   for (let i = 0; i < 7; i++) {
-    const d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i)
+    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i)
     const iso = toIso(d)
     out.push({ iso, dateNum: d.getDate(), cn: _CN_DOW[d.getDay()],
                md: (d.getMonth()+1) + '/' + d.getDate(),

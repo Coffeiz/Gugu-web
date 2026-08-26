@@ -1,0 +1,19 @@
+{
+  "name": "@gugu/backend-ts",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "workspaces": [
+    "packages/*",
+    "workers/*"
+  ],
+  "scripts": {
+    "build": "node scripts/build-rag.mjs",
+    "gen:api": "node scripts/generate-api-contract.mjs",
+    "lint": "node scripts/typecheck.mjs",
+    "test": "node --test --experimental-strip-types workers/rag/test/*.test.ts",
+    "typecheck": "node scripts/typecheck.mjs"
+  }
+}

@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy import text
 from jose import jwt, JWTError
 from fastapi import HTTPException
 from pathlib import Path
@@ -134,18 +135,48 @@ async def _db_retry_loop():
 # 数据库启动超时（秒）：超时后跳过建表，后台继续重试
 # 通过环境变量 DB_STARTUP_TIMEOUT 可覆盖，例如：DB_STARTUP_TIMEOUT=10 ./start.sh start
 DB_STARTUP_TIMEOUT = int(os.getenv("DB_STARTUP_TIMEOUT", "5"))
+# 生产服务由 deploy/migrate 步骤统一执行 DDL。多 worker 在 lifespan 中并发建表会
+# 与正常查询形成 AccessExclusive/AccessShare 锁环，因此 systemd 服务默认关闭启动迁移；
+# 本地单进程开发仍保留启动建表能力，可显式设置为 1。
+RUN_STARTUP_MIGRATIONS = os.getenv("GUGU_STARTUP_MIGRATIONS", "1").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        await asyncio.wait_for(create_all_tables(), timeout=DB_STARTUP_TIMEOUT)
-        logger.info("数据库表已就绪")
-    except asyncio.TimeoutError:
-        logger.warning("数据库 %ds 内未连通，已跳过建表（Admin 仍可用）", DB_STARTUP_TIMEOUT)
-    except Exception as e:
-        logger.warning("数据库连接失败，跳过建表：%s", e)
+    db_ready = False
+    if RUN_STARTUP_MIGRATIONS:
+        try:
+            await asyncio.wait_for(create_all_tables(), timeout=DB_STARTUP_TIMEOUT)
+            logger.info("数据库表已就绪")
+            db_ready = True
+        except asyncio.TimeoutError:
+            logger.warning("数据库 %ds 内未连通，已跳过建表（Admin 仍可用）", DB_STARTUP_TIMEOUT)
+        except Exception as e:
+            logger.warning("数据库连接失败，跳过建表：%s", e)
+    else:
+        # 生产启动只做无锁连通性检查，避免把业务查询和 DDL 放进同一个启动窗口。
+        try:
+            import app.db.session as db_session
+            db_session.ensure_engine()
+            async with db_session._SessionLocal() as db:
+                await db.execute(text("SELECT 1"))
+            db_ready = True
+            logger.info("数据库连接已就绪（已跳过启动期迁移）")
+        except Exception as e:
+            logger.warning("数据库连接失败，已跳过启动期迁移：%s", e)
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
+    if db_ready:
+        try:
+            from app.db.session import _SessionLocal
+            from app.services.storage.quota_ledger import ensure_all_user_storage_spaces
+            async with _SessionLocal() as storage_db:
+                count = await ensure_all_user_storage_spaces(storage_db)
+            logger.info("用户持久空间已初始化并登记配额：%d 个用户", count)
+        except Exception as e:
+            # 初始化失败不能伪造“已完成”；单用户访问时仍会重复校验并补齐。
+            logger.warning("用户持久空间初始化失败：%s", e)
     try:
         from app.services.files.previews import thumb_dir
         td = thumb_dir()
@@ -158,13 +189,17 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     task       = asyncio.create_task(_auto_cleanup_loop())
-    retry_task = asyncio.create_task(_db_retry_loop())
+    retry_task = asyncio.create_task(_db_retry_loop()) if RUN_STARTUP_MIGRATIONS else None
     log_task   = asyncio.create_task(flush_log_queue())
     yield
     task.cancel()
-    retry_task.cancel()
+    if retry_task is not None:
+        retry_task.cancel()
     log_task.cancel()
-    await asyncio.gather(task, retry_task, log_task, return_exceptions=True)
+    await asyncio.gather(
+        task, *( [retry_task] if retry_task is not None else [] ), log_task,
+        return_exceptions=True,
+    )
     from app.db.session import dispose_engine
     await dispose_engine()
 

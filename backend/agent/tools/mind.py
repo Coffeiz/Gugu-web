@@ -59,7 +59,7 @@ _CONTENT_ITEM_SCHEMA = {
 }
 _BLOCK_ITEM_SCHEMA = {
     "type": "object",
-    "description": "受限内容块，具体必填字段按 type 各不相同，见 description 里的示例",
+    "description": "内容块对象；字段随 type 变化。",
     "properties": {
         "type": {"type": "string", "enum": [
             "paragraph", "heading", "bullet_list", "ordered_list",
@@ -68,7 +68,7 @@ _BLOCK_ITEM_SCHEMA = {
         "content": {"type": "array", "description": "paragraph/heading 用", "items": _INLINE_ITEM_SCHEMA},
         "items": {
             "type": "array",
-            "description": "bullet_list/ordered_list 用时每项是 {content} 对象（不要带 checked）；task_list 用时每项是 {checked,content} 对象（checked 必填）",
+            "description": "列表条目用 content；task_list 另需 checked。",
             "items": _CONTENT_ITEM_SCHEMA,
         },
         "paragraphs": {
@@ -86,21 +86,7 @@ _BLOCK_ITEM_SCHEMA = {
 # `{"item":值}` 兜底包装；包一层对象把嵌套深度压回一层（跟 task_list 已有的
 # `{"checked":...,"content":[...]}` 同构），模型才能稳定生成（devlog 2026-07-14）。
 _BLOCKS_SCHEMA_HELP = (
-    "blocks 是对象数组，每个对象的 type 字段只能是以下 8 种之一（其余字段按 type 各不相同）：\n"
-    '- {"type":"paragraph","content":[行内...]}\n'
-    '- {"type":"heading","content":[行内...]}（渲染成标题）\n'
-    '- {"type":"bullet_list","items":[{"content":[行内...]},{"content":[行内...]}]}（每项是 {content} 对象，不是行内数组本身）\n'
-    '- {"type":"ordered_list","items":[{"content":[行内...]},{"content":[行内...]}]}（结构同 bullet_list，渲染成数字序号）\n'
-    '- {"type":"task_list","items":[{"checked":false,"content":[行内...]}]}（每项必须带 checked 布尔值）\n'
-    '- {"type":"blockquote","paragraphs":[{"content":[行内...]},{"content":[行内...]}]}（每段是 {content} 对象）\n'
-    '- {"type":"code_block","code":"...","language":"python"}（language 可省略，普通字符串，不能含反引号）\n'
-    '- {"type":"horizontal_rule"}（没有其它字段）\n'
-    "「行内」是数组，每个元素是：\n"
-    '- 文本：{"type":"text","text":"...","marks":[{"type":"bold"}]}（marks 可省略；可选 bold/italic/strike/code/link，link 要带 {"type":"link","href":"https://..."}）\n'
-    '- 引用：{"type":"reference","ref_type":"project"|"file"|"event","ref_id":123,"label":"显示名"}\n'
-    "示例（一段话 + 一条待办）：\n"
-    '[{"type":"paragraph","content":[{"type":"text","text":"今天开会讨论了预算"}]},'
-    '{"type":"task_list","items":[{"checked":false,"content":[{"type":"text","text":"周五前提交方案"}]}]}]'
+    "受限块数组；content/items/paragraphs 按 type 使用，task_list 条目需 checked；不要传 Markdown/HTML。"
 )
 
 
@@ -172,11 +158,12 @@ def _relation_summary(relation: Any, current_node_id: int, nodes: dict[int, Any]
 
 
 async def _mind_search(db, user_id, args: dict):
-    q = (args.get("q") or "").strip()
+    # 对模型统一暴露 query；q 保留为历史调用兼容别名。
+    q = (args.get("query") or args.get("q") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
     search_queries = normalize_queries(q, queries)
     if not search_queries:
-        return {"error": "需要提供搜索关键词 q"}
+        return {"error": "需要提供搜索关键词 query 或 queries"}
 
     limit = args.get("limit", 5)
     if not isinstance(limit, int):
@@ -339,7 +326,8 @@ class MindSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
+                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"},
                                 "description": "可选多个候选关键词，默认 OR，最多 8 个"},
                     "mode": {"type": "string", "enum": ["OR", "AND"],
@@ -367,15 +355,13 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="create_note", label="记录思维笔记",
-            description="在思维面板创建一条笔记。只在用户明确要求记录时调用；blocks 只能使用现有"
-                        "笔记编辑器支持的段落、标题、列表、待办、引用、文字样式、代码块、引用块和分割线。"
-                        "用户原话可直接记录；需要归纳或改写时，先在对话给草稿，等用户确认后再调用。",
+            description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string", "description": "可选标题；仅用于搜索与列表索引，便签卡片上用户不可见。用户可见的标题必须写成 blocks 中第一个 heading 块（渲染为正文首行 # 标题）"},
+                    "title": {"type": "string", "description": "可选索引标题；用户可见标题写在 blocks 首个 heading。"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "可选；null 为默认纸色，其余值必须选现有色板"},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"受限内容块数组；不得传任意 Markdown 或 HTML。{_BLOCKS_SCHEMA_HELP}"},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": _BLOCKS_SCHEMA_HELP},
                     "captured_at": {"type": "string", "description": "可选，带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["blocks"],
@@ -385,17 +371,16 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="update_note", label="更新思维笔记",
-            description="更新一条已知便签，可一次修改标题、卡片颜色、整篇 blocks、末尾追加 blocks 或记录时间。"
-                        "必须使用 mind_search/mind_get 返回的 node_id 和 version；整篇改写或改写原话前先向用户确认。",
+            description="更新已知笔记的标题、内容、颜色或时间；必须使用 node_id/version，整篇改写需先确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer", "description": "来自读取结果的便签 ID"},
                     "version": {"type": "integer", "description": "来自读取结果的当前版本"},
-                    "title": {"type": ["string", "null"], "description": "标题；null 清空标题。仅用于搜索与列表索引，便签卡片上用户不可见；用户可见标题请改为 blocks 第一个 heading 块"},
+                    "title": {"type": ["string", "null"], "description": "索引标题；null 清空。用户可见标题写在 blocks 首个 heading。"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"整篇替换的受限内容块；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
-                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"追加到笔记末尾的受限内容块；不能与 blocks 同时传。结构同 blocks，见其说明。{_BLOCKS_SCHEMA_HELP}"},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"整篇替换；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
+                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"追加到末尾；不能与 blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
                     "captured_at": {"type": "string", "description": "带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["node_id", "version"],

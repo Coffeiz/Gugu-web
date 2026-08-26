@@ -71,7 +71,7 @@ class StorageSettings(BaseModel):
 
 
 class AISettings(BaseModel):
-    provider: str = Field("qwen", description="AI 提供方: qwen | openai | ollama | deepseek | minimax | anthropic")
+    provider: str = Field("qwen", description="AI 提供方: qwen | openai | ollama | deepseek | minimax | anthropic | glm")
     api_key: str = Field("", description="API Key")
     base_url: str = Field(
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -125,7 +125,11 @@ class SandboxSettings(BaseModel):
         description="已验证的固定镜像 digest；必须与当前 daemon 已加载镜像一致",
     )
     rootless_required: bool = Field(True, description="是否要求 Rootless Docker")
-    network_profile: Literal["none"] = Field("none", description="容器网络策略；当前生产版本只允许断网")
+    network_profile: Literal["none", "egress"] = Field("none", description="容器网络策略；默认断网，egress 仅在受控代理部署后可用")
+    egress_proxy_url: str = Field("", description="受控 egress HTTP(S) 代理地址；为空时禁止临时联网")
+    egress_network_name: str = Field("gugu-sandbox-egress", description="仅供沙盒容器使用的内部 Docker 网络名")
+    egress_ttl_seconds: int = Field(600, ge=60, le=1800, description="单次 egress 授权最长有效期")
+    egress_isolation_enabled: bool = Field(False, description="是否已部署隔离 egress 网络；未部署时强制拒绝")
     cpu_limit: float = Field(1.0, ge=0.1, le=2.0, description="单用户容器 CPU 上限")
     memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
@@ -201,7 +205,10 @@ class QuotaSettings(BaseModel):
 
 class SearchSettings(BaseModel):
     rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
+    deep_research_provider: Literal["tavily", "baidu", "you"] = Field("tavily", description="深度研究 Provider")
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
+    deep_research_baidu_api_key: str = Field("", description="百度普通搜索 API Key")
+    deep_research_you_api_key: str = Field("", description="You.com Research API Key")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
     searxng_engines: str = Field(
         "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
@@ -212,16 +219,12 @@ class SearchSettings(BaseModel):
     global_search_backend: Literal["index", "ilike"] = Field(
         "ilike", description="全局搜索后端：持久化索引（index）或 ILIKE 兼容模式"
     )
-    rust_lexical_backend: Literal["rust", "python"] = Field(
-        "rust", description="RAG 词法召回后端：Rust/Tantivy 或 Python BM25"
+    ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
+    ts_sidecar_index_dir: str = Field(
+        "var/rag-ts-index",
+        description="TypeScript worker 持久化索引目录；默认保存在 backend/var/rag-ts-index",
     )
-    rust_sidecar_enabled: bool = Field(True, description="是否启用 Rust/Tantivy 词法检索 sidecar（默认开启）")
-    rust_sidecar_command: str = Field("", description="Rust 词法 sidecar 可执行文件及参数；为空则使用项目内置构建物")
-    rust_sidecar_index_dir: str = Field(
-        "var/rag-index",
-        description="Rust sidecar 持久化索引目录；默认保存在 backend/var/rag-index",
-    )
-    rust_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="Rust sidecar 单次请求超时毫秒数")
+    ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
     similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")

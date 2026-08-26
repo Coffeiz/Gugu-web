@@ -5,7 +5,11 @@ import re
 from dataclasses import replace
 
 from agent.rag.models import RecallCandidate
-from agent.rag.tokenizer import tokenize
+
+
+def _terms(text: str) -> list[str]:
+    """仅用于旧评分 API 的轻量字符串相似度，不参与 TS RAG 检索分词。"""
+    return re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", (text or "").casefold())
 
 RRF_K = 60
 BM25_WEIGHT = 0.45
@@ -46,7 +50,7 @@ def normalized_rrf(rank: int, *, weight: float = 1.0) -> float:
 
 def query_match(query: str, candidate: RecallCandidate) -> float:
     query_text = (query or "").strip()
-    query_tokens = set(tokenize(query_text))
+    query_tokens = set(_terms(query_text))
     meaningful_tokens = {
         token for token in query_tokens
         if not re.fullmatch(r"[\d\W_]+", token, flags=re.UNICODE)
@@ -54,7 +58,7 @@ def query_match(query: str, candidate: RecallCandidate) -> float:
     if not meaningful_tokens:
         return 0.0
     text = "\n".join((candidate.document.title, candidate.document.summary, candidate.document.content))
-    document_tokens = set(tokenize(text))
+    document_tokens = set(_terms(text))
     # 对中英文实体保留紧凑短语匹配：GTA 6、GTA6 视为同一实体。
     compact_query = re.sub(r"\s+", "", query_text).casefold()
     compact_document = re.sub(r"\s+", "", text).casefold()
@@ -108,8 +112,8 @@ def filter_confidence(query: str, candidates: list[RecallCandidate], *, limit: i
 
 def token_similarity(left: RecallCandidate, right: RecallCandidate) -> float:
     """轻量 Jaccard 多样性指标；不引入额外 embedding 请求。"""
-    left_tokens = set(tokenize(left.document.content))
-    right_tokens = set(tokenize(right.document.content))
+    left_tokens = set(_terms(left.document.content))
+    right_tokens = set(_terms(right.document.content))
     if not left_tokens or not right_tokens:
         return 0.0
     return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)

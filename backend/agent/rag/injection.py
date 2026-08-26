@@ -6,9 +6,13 @@ from collections.abc import Iterable
 import logging
 from typing import Any
 
+from agent.context.serialization import knowledge_context_block
+
 
 _log = logging.getLogger("agent.rag")
 AUTO_RECALL_TIMEOUT_SECONDS = 3.0
+MAX_BACKGROUND_RECALL_TASKS = 32
+_background_recall_tasks: set[asyncio.Task] = set()
 
 
 def _drain_background_task(task: asyncio.Task) -> None:
@@ -17,6 +21,8 @@ def _drain_background_task(task: asyncio.Task) -> None:
         task.result()
     except BaseException:
         pass
+    finally:
+        _background_recall_tasks.discard(task)
 
 
 async def _search_with_timeout(search_awaitable, timeout: float):
@@ -26,11 +32,24 @@ async def _search_with_timeout(search_awaitable, timeout: float):
     GC 回收并触发 ``greenlet is being finalized``。超时后让查询自行完成、由它的
     context manager 释放连接，主 Agent 不再等待它。
     """
+    if len(_background_recall_tasks) >= MAX_BACKGROUND_RECALL_TASKS:
+        # 避免异常上游把每条消息都变成一个永不收尾的后台任务。
+        if hasattr(search_awaitable, "close"):
+            search_awaitable.close()
+        _log.warning("自动知识召回后台任务达到上限，跳过本次查询，pending=%d",
+                     len(_background_recall_tasks))
+        raise asyncio.TimeoutError
     task = asyncio.create_task(search_awaitable)
+    _background_recall_tasks.add(task)
+    task.add_done_callback(_drain_background_task)
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
     except BaseException:
-        task.add_done_callback(_drain_background_task)
+        if task.done():
+            _log.info("自动知识召回超时边界任务已完成，未产生后台堆积")
+        else:
+            _log.warning("自动知识召回超时，后台任务继续收尾，pending=%d",
+                         len(_background_recall_tasks))
         raise
 _PASSIVE_HINTS = (
     "以前", "之前", "上次", "曾经", "当时", "历史", "记得", "记忆",
@@ -164,7 +183,7 @@ async def build_automatic_rag_context(
     """每条用户消息执行一次低成本 lexical 自动召回。
 
     返回本轮稳定 conversation 消息和可持久化的 canonical blocks。调用方应把
-    ``tail`` 放在当前用户消息之后，而不是放进 dynamic_tail；这样本轮组装与
+    ``tail`` 放在当前用户消息之后，并作为本轮 turn batch 的一部分；这样本轮组装与
     下一轮从 history 重建时保持相同的消息边界。召回失败只跳过可选上下文，
     不阻塞主 Agent；结果按 scope 顺序合并并共享 3000 字符上限。
     """
@@ -187,33 +206,37 @@ async def build_automatic_rag_context(
         scope_hits: list[dict[str, Any]] = []
         from app.core.redaction import diag_log
 
-        for label, scope in _request_scopes(request):
-            scope_stage = "search"
+        requested_scopes = _request_scopes(request)
+        if not requested_scopes:
+            return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
+        labels = [label for label, _ in requested_scopes]
+        label = "+".join(labels)
+        scopes = [scope for _, scope in requested_scopes]
+        try:
             try:
                 # 自动召回是可选增强，不能阻塞主 Agent 或让 IM 一直停在“思考中”。
                 # 显式 search_memory 工具仍保留自己的完整等待语义。
                 result = await _search_with_timeout(
                     search_knowledge(
-                        request.user_id, query, scope=scope, source="all",
+                        request.user_id, query, scope=scopes, source="all",
                         strategy="bm25", limit=5, mode="automatic",
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,
                 )
-                scope_stage = "result-shape"
                 if not isinstance(result, dict):
                     raise TypeError("RAG 返回值不是对象")
             except asyncio.TimeoutError:
-                _log.warning("自动知识召回超时，跳过当前 scope")
+                _log.warning("自动知识召回超时，跳过合并 scope")
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "timeout": True})
-                continue
+                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
             except Exception as exc:
                 # 单一来源（例如项目索引）异常不能让群记忆/其他 scope 全部失效。
                 # 原始异常只进入受限诊断出口，普通日志只保留类型和 scope。
                 diag_log(f"agent.rag.auto_recall.{label}", exc)
                 scope_hits.append({"scope": label, "candidate_count": 0, "hit_count": 0,
                                    "error": type(exc).__name__})
-                continue
+                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
             selected: list[dict[str, Any]] = []
             for item in result.get("results", []):
                 item_hash = str(item.get("content_hash") or content_hash(str(item.get("text") or "")))
@@ -231,13 +254,20 @@ async def build_automatic_rag_context(
             scope_hits.append({"scope": label, "candidate_count": result.get("candidate_count", 0),
                                "hit_count": len(selected)})
             if not selected:
-                continue
+                return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
             rendered = render_scoped_history_context(query, selected, label=label)
-            tail.append({"role": "user", "content": rendered})
-            blocks.append({"type": "knowledge-context", "scope": label,
-                           "content_hash": content_hash(rendered),
-                           "content_hashes": [item["content_hash"] for item in selected],
-                           "text": rendered})
+            block = knowledge_context_block(
+                scope=label,
+                text=rendered,
+                content_hash=content_hash(rendered),
+                content_hashes=[item["content_hash"] for item in selected],
+            )
+            # 当前轮和持久化历史必须从同一个 canonical block 渲染，不能一处
+            # 直接写纯文本、另一处恢复成 knowledge-context block。
+            tail.append({"role": "user", "content": [block]})
+            blocks.append(block)
+        except asyncio.TimeoutError:
+            return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
         return {"tail": tail, "blocks": blocks, "scope_hits": scope_hits,
                 "injected": bool(tail)}
     except Exception as exc:

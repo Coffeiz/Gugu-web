@@ -53,7 +53,9 @@ md.use({
 // DOMPurify 默认即剥离 <script> / on* 事件属性 / javascript: 协议，同时保留标准排版标签、
 // hljs 代码高亮的 span.class、代码块复制按钮及其内联 SVG 图标；ADD_ATTR:['target'] 保住链接新标签打开。
 export function sanitizeHtml(html: string): string {
-  return DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'] })
+  return ensureExternalLinksOpenInNewTab(
+    DOMPurify.sanitize(String(html ?? ''), { ADD_ATTR: ['target'] }),
+  )
 }
 
 // 聊天专用消毒：在通用严格策略之上，**只额外放行 `gugu://` 协议**——咕咕回复里的动作链接
@@ -62,10 +64,32 @@ export function sanitizeHtml(html: string): string {
 // URI 白名单 = DOMPurify 默认协议 + gugu（不删默认项，只加一个）。
 const _CHAT_URI_REGEXP = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|gugu):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i
 export function sanitizeChatHtml(html: string): string {
-  return DOMPurify.sanitize(String(html ?? ''), {
-    ADD_ATTR: ['target', 'loading', 'decoding', 'referrerpolicy'],
-    ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP,
+  return ensureExternalLinksOpenInNewTab(DOMPurify.sanitize(String(html ?? ''), {
+      ADD_ATTR: ['target', 'loading', 'decoding', 'referrerpolicy'],
+      ALLOWED_URI_REGEXP: _CHAT_URI_REGEXP,
+    }), true)
+}
+
+/**
+ * 统一 Markdown 生成链接的打开方式。
+ * gugu:// 是聊天内部动作链接，由事件委托处理，不能交给浏览器新开标签；
+ * 其余链接都在新标签打开，避免用户离开当前工作页面。
+ */
+function ensureExternalLinksOpenInNewTab(html: string, preserveChatActions = false): string {
+  if (typeof document === 'undefined' || !html) return html
+  const root = document.createElement('div')
+  root.innerHTML = html
+  root.querySelectorAll<HTMLAnchorElement>('a').forEach((anchor) => {
+    const href = (anchor.getAttribute('href') || '').trim().toLowerCase()
+    if (preserveChatActions && href.startsWith('gugu:')) {
+      anchor.removeAttribute('target')
+      anchor.removeAttribute('rel')
+      return
+    }
+    anchor.setAttribute('target', '_blank')
+    anchor.setAttribute('rel', 'noopener noreferrer')
   })
+  return root.innerHTML
 }
 
 export function renderMarkdown(text: string | null | undefined): string {

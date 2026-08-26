@@ -384,20 +384,29 @@ async def send_stream_with_fallback(
 
 
 async def send_agent_response(payload: dict, response: AgentResponse) -> str | None:
-    """统一收尾一轮 AgentResponse：先发送附件，再发送文本说明。
+    """统一收尾一轮 AgentResponse：先发送附件，再按 round 发送文本说明。
 
     IM Loop 不再分别判断平台、文件和文本入口；平台 capability 由
     ``send_reply``/``send_file`` 统一检查，返回最终实际发送的文本。
     """
     from agent.im.files import send_files
 
-    reply_text = _fix_loose_bold(response.text or "")
-    if not reply_text.strip():
-        reply_text = "给你～" if response.files else "嗯~在的，你说～"
     result = await send_files(payload, response.files)
     if result.failed:
-        reply_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
-    if payload.get("platform") != "feishu" or not response.files:
-        if not await send_text(payload, reply_text):
+        texts = [result.reason or "附件没有成功发出，你可以去网页或文件库查看。"]
+    else:
+        texts = [
+            _fix_loose_bold(text)
+            for text in (response.round_texts or [])
+            if str(text or "").strip()
+        ]
+        if not texts:
+            fallback = _fix_loose_bold(response.text or "")
+            texts = [fallback] if fallback.strip() else (["给你～"] if response.files else ["嗯~在的，你说～"])
+
+    # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
+    last_text = texts[-1]
+    for text in texts:
+        if not await send_text(payload, text):
             return None
-    return reply_text
+    return last_text

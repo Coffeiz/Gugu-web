@@ -9,11 +9,13 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const replyTone        = ref<string | null>(null)   // natural(null) / formal / lively
   const replyLength      = ref<string | null>(null)   // medium(null) / short / detailed
   const pmStagesExpanded  = ref(false)  // 项目编辑卡阶段区展开版面记忆
+  const calendarWeekStart = ref('monday') // 'monday' 或 'sunday'
   const calendarDoneMode  = ref('done') // 'done' = 已完成项目显示到完成日；'deadline' = 显示到截止日
   const defaultView       = ref(localStorage.getItem('gugu-default-view') ?? 'projects')
   const shellEnabled      = ref(false)
   const shellSystemEnabled = ref(false)
   const shellDangerousEnabled = ref(false)
+  const shellAutopilotEnabled = ref(false)
   const showToolInteractions = ref(false)
   const loaded            = ref(false)
 
@@ -25,11 +27,13 @@ export const usePreferencesStore = defineStore('preferences', () => {
       replyTone.value        = data.replyTone      ?? null
       replyLength.value      = data.replyLength    ?? null
       pmStagesExpanded.value = data.pmStagesExpanded ?? false
+      calendarWeekStart.value = (data as any).calendarWeekStart ?? 'monday'
       calendarDoneMode.value = (data as any).calendarDoneMode ?? 'done'   // 类型待后端 calendarDoneMode 入 OpenAPI 后 gen:types 收回
       defaultView.value      = (data as any).defaultView ?? 'projects'
       shellEnabled.value     = (data as any).shellEnabled ?? false
       shellSystemEnabled.value = (data as any).shellSystemEnabled ?? false
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
+      shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
       localStorage.setItem('gugu-default-view', defaultView.value)
       loaded.value = true
@@ -44,6 +48,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function saveCalendarDoneMode(v: string) {
     calendarDoneMode.value = v
     try { await preferencesApi.update({ calendarDoneMode: v } as any) } catch {}
+  }
+
+  async function saveCalendarWeekStart(v: string) {
+    calendarWeekStart.value = v === 'sunday' ? 'sunday' : 'monday'
+    try { await preferencesApi.update({ calendarWeekStart: calendarWeekStart.value } as any) } catch {}
   }
 
   async function saveDefaultView(v: string) {
@@ -65,6 +74,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
   async function saveShellDangerousEnabled(v: boolean) {
     shellDangerousEnabled.value = v
     try { await preferencesApi.update({ shellDangerousEnabled: v } as any) } catch {}
+  }
+
+  async function saveShellAutopilotEnabled(v: boolean) {
+    shellAutopilotEnabled.value = v
+    try { await preferencesApi.update({ shellAutopilotEnabled: v } as any) } catch {}
   }
 
   async function saveShowToolInteractions(v: boolean) {
@@ -94,7 +108,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, showToolInteractions,
-    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShowToolInteractions,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions,
+    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions,
   }
 })

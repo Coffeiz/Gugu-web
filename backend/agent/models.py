@@ -46,6 +46,9 @@ class AgentRequest:
 class AgentResponse:
     """预留：非流式场景的统一响应结构（Phase 4 平台接入用）。"""
     text: str = ""
+    # 本次 run 中各个有正文 round 的独立文本。`text` 保持兼容语义（最后一轮正文），
+    # IM 展示层使用此字段逐条发送，避免把多个 round 合并成一条消息。
+    round_texts: list[str] = field(default_factory=list)
     session_id: Optional[int] = None
     tokens_in: int = 0
     tokens_out: int = 0

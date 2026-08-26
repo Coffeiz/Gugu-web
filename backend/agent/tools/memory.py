@@ -173,11 +173,7 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="remember", label="记住",
-            description=(
-                "把一条关于用户的长期信息或行事模式记进记忆。默认写入 profile；"
-                "用户明确说要记住做事/决策/协作方式时，使用 target=pattern。"
-                "只记稳定信息，不记一次性琐事；工具会自动生成正确的 profile/pattern 结构并去重。"
-            ),
+            description="记录用户的稳定信息或做事方式；默认写入 profile，行为模式写入 pattern，并自动去重。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -215,19 +211,14 @@ class MemorySkill(BaseSkill):
         ),
         Tool(
             name="search_memory", label="搜索记忆",
-            description=(
-                "按关键词搜索过去的事件、对话背景、近期记录和长期记忆。"
-                "用户询问以前讨论过什么、某个决定的背景或历史记忆时使用；"
-                "source=knowledge 用于搜索用户明确保存的事实、规则和资料。"
-                "不用于搜索项目、文件或完整聊天记录。"
-            ),
+            description="搜索用户的历史记忆、事件和对话背景；source=knowledge 用于已保存的事实与规则。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "要检索的关键词或短语"},
                     "scope": {"type": "string", "enum": ["auto", "current_group", "all_my_groups", "private_memory"], "description": "记忆范围，默认 auto；群聊可指定当前群或本人可见的其他群"},
                     "source": {"type": "string", "enum": ["all", "knowledge", "profile", "pattern", "daily", "memory"], "description": "记忆或知识来源，默认 all"},
-                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 Rust lexical"},
+                    "strategy": {"type": "string", "enum": ["auto", "bm25", "embedding"], "description": "检索策略，默认 auto；向量不可用时使用 TypeScript lexical worker"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回数量，默认 5，最多 10"},
                 },
                 "required": ["query"],

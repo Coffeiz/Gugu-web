@@ -89,7 +89,6 @@ async def consume_text_choice(
     from app.models import InteractionPrompt
     from app.services.interactions import consume_choice_text
     from sqlalchemy import func, select
-    from app.core.redaction import diag_log_raw
 
     db_session.ensure_engine()
     if db_session._SessionLocal is None:
@@ -109,15 +108,6 @@ async def consume_text_choice(
                     InteractionPrompt.status == "active",
                 )
             ) or 0)
-        diag_log_raw(
-            "agent.im.interaction_text.probe",
-            " ".join((
-                f"platform={platform or 'unknown'}",
-                f"has_explicit_session={bool(session_id)}",
-                f"candidate_count={len(candidate_ids)}",
-                f"active_prompt_count={active_prompt_count}",
-            )),
-        )
         for candidate_id in candidate_ids:
             result = await consume_choice_text(
                 db,
@@ -127,9 +117,7 @@ async def consume_text_choice(
                 event_id=event_id,
             )
             if result is not None:
-                diag_log_raw("agent.im.interaction_text.probe", "result=matched")
                 return result
-        diag_log_raw("agent.im.interaction_text.probe", "result=miss")
         return None
 
 

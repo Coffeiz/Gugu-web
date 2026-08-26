@@ -14,9 +14,11 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     )
     assert messages[0] == {"role": "system", "content": "稳定系统"}
     assert "小北的计划" in messages[1]["content"]
-    assert messages[2] == {"role": "user", "content": "执行任务"}
-    assert not any("小北的计划" in item["content"] for item in messages.dynamic_tail)
-    assert "当前时间" in messages.dynamic_tail[-1]["content"]
+    assert messages[2]["role"] == "user"
+    assert "默认相处姿态" in messages[2]["content"]
+    assert messages[3] == {"role": "user", "content": "执行任务"}
+    assert sum("小北的计划" in item["content"] for item in messages) == 1
+    assert "当前时间" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio

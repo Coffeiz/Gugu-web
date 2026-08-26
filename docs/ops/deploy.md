@@ -89,6 +89,26 @@ sudo apt install -y python3-venv python3-dev build-essential \
 
 启用生产 Shell 沙盒时，还要确认运行用户的 Rootless Docker 已可用，并准备 `uidmap`、`rootlesskit`、`slirp4netns`、`fuse-overlayfs` 和 user lingering。沙盒默认使用 `network=none`，不需要开放 Docker TCP socket。固定镜像必须预先加载，运行时使用 `--pull=never`；Docker、Rootless daemon 或固定镜像未就绪时，Shell 应失败，不会回退到宿主机执行。
 
+Docker 日志必须启用轮转，避免 `json-file` 日志占满系统盘。仓库提供的开发/生产 Compose
+服务统一使用 `50m × 3`；Rootless Docker 主机还应在
+`~/.config/docker/daemon.json` 设置同样的全局默认值：
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "50m",
+    "max-file": "3"
+  }
+}
+```
+
+修改 Rootless Docker 配置后执行 `systemctl --user restart docker.service`。这只会重启容器进程，
+不会删除 Docker 数据卷；已有容器若要继承新的 Compose 日志选项，需要由对应项目重新创建，
+不能只依赖普通 `restart`。
+
+Docker Compose 同时提供一个受控的临时公网出口：`egress-proxy` 使用 `squid/egress.conf`，沙盒只加入内部网络 `gugu-sandbox-egress`，不能直接加入默认网络绕过代理。Admin 的“临时公网访问”开关只切换会话请求的网络 profile；每次实际 egress 执行仍由 sandboxd 校验内部网络、代理和用户确认，缺少任一条件都会保持断网。不要把沙盒改成 Docker `bridge` 或给业务进程开放 Docker socket。
+
 ---
 
 ## 3. 开发环境部署
@@ -212,7 +232,7 @@ cd backend
 
 ### 3.9 SearXNG 自建搜索（Compose 默认内置）
 
-咕咕的 `web_search`（通用搜索）走自建 **SearXNG**，免费、不计配额；`deep_research`（深度总结）才走 Tavily。
+咕咕的 `web_search`（通用搜索）走自建 **SearXNG**，免费、不计配额；`deep_research`（外部资料研究）走 Admin 选择的 Tavily、百度搜索或 You.com。百度分支使用普通 `/v2/ai_search/web_search`，不调用 DeepResearch Agent。
 根目录 `docker-compose.yml` 已默认包含 SearXNG，执行 `docker compose up -d` 后，后端自动使用
 Compose 内网地址 `http://searxng:8080`，不需要在 Admin 页面手填地址。
 
@@ -292,9 +312,20 @@ rootful Docker，必须明确设置 `GUGU_SANDBOX_ROOTLESS_REQUIRED=false`，不
 ```bash
 export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
 export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
-export POSTGRES_PASSWORD='生产数据库密码'
+export GUGU_DB_PASSWORD='生产数据库密码'
 docker compose -f docker-compose.prod.yml up -d
 ```
+
+生产 Compose 默认把数据库配置为内部 PostgreSQL 服务 `postgres`，因此只需设置
+`GUGU_DB_PASSWORD`。如果部署者已经有外部 PostgreSQL，可覆盖以下变量，后端会改连外部
+数据库：`GUGU_DB_HOST`、`GUGU_DB_PORT`、`GUGU_DB_NAME`、`GUGU_DB_USER`、
+`GUGU_DB_PASSWORD`。镜像和业务代码不需要修改；内部 `postgres` 服务仍会被 Compose
+创建，但不会被后端使用。
+
+Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
+`GUGU_REDIS_HOST`、`GUGU_REDIS_PORT`、`GUGU_REDIS_PASSWORD` 覆盖为外部 Redis。
+如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
+启用密码认证；不设置则保持开发默认的无密码内网连接。
 
 构建镜像示例（构建上下文必须是仓库根目录，以便包含同级 Runtime 依赖）：
 
@@ -313,7 +344,7 @@ Admin 的 `config.override.json`；不要删除 `pgdata`、`gugu_data` 或 `gugu
 
 生产部署目录仍需要提供 `backend/.env`（非代码构建物，用于 AI/IM 等运行配置）和
 `searxng/settings.yml`。镜像标签应使用 Git SHA 或版本号，不要依赖 `latest`。
-Shell 沙盒仍需额外提供宿主机 Rootless Docker Socket，并通过 `--profile sandbox` 启用：
+Shell 沙盒仍需额外提供宿主机 Rootless Docker Socket，并通过 `--profile sandbox` 启用。Compose 会同时启动受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`：
 
 ```bash
 GUGU_DOCKER_SOCKET=/run/user/$(id -u)/docker.sock \
@@ -321,10 +352,32 @@ GUGU_SANDBOX_ENABLED=true \
 docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```
 
+Compose 已自动向 backend、worker 和 sandboxd 注入：
+
+```text
+SANDBOX__EGRESS_PROXY_URL=http://egress-proxy:3128
+SANDBOX__EGRESS_NETWORK_NAME=gugu-sandbox-egress
+SANDBOX__EGRESS_ISOLATION_ENABLED=true
+```
+
+检查受控出口：
+
+```bash
+docker compose -f docker-compose.prod.yml ps egress-proxy sandboxd
+docker network inspect gugu-sandbox-egress
+```
+
+检查通过后，可以在 Admin → Shell 沙盒直接填写并保存受控代理地址，再打开“临时公网访问”。这不会把沙盒默认网络改成公网；
+只有当前会话显式选择 `network=egress` 且通过确认门时，sandboxd 才会使用内部 egress 网络。
+代理配置文件为 `squid/egress.conf`，禁止改为普通 `bridge`，也不要给 backend/worker 挂载
+Docker socket。非 Compose 部署需在 `config.override.json` 的 `sandbox` 中配置
+`egress_proxy_url`、`egress_network_name` 和 `egress_isolation_enabled`，并确保这些配置对
+sandboxd 可见；配置变更后重启 `gugu-sandboxd gugu-backend gugu-worker`。
+
 - 测试返回 **403** = 没开 `formats: json`；**0 结果** = 引擎被限/不可达；**连不上** = 端口没发布到 0.0.0.0 或地址填错。
 - **引擎**：国内服务器 google/bing/ddg 多会超时，一般只有 `sogou,quark,360search` 可达——按「测试」结果里列出的「超时引擎」调整「SearXNG 引擎」那栏。
 - **安全**：`0.0.0.0` + `limiter: false` = 内网无认证可用；要更严可用防火墙只放行后端那台访问 8888。
-- 关掉 SearXNG（清空地址）后，`web_search` 自动全部退到 Tavily。
+- 关掉 SearXNG（清空地址）后，`web_search` 不可用；需要深度总结时使用 Admin 配置的 `deep_research` Provider。
 
 ---
 
@@ -353,6 +406,19 @@ docker compose -f docker-compose.prod.yml --profile sandbox up -d
 ```bash
 cd backend && make migrate     # alembic upgrade head
 ```
+
+本次 Shell 沙盒收口会应用两条新迁移：创建用户存储配额账本，并删除不再使用的
+`conversation_sessions.shell_scope` 字段。迁移完成后可用下面的方式核对单一 head：
+
+```bash
+cd backend
+.venv/bin/alembic current
+.venv/bin/alembic heads
+```
+
+后端启动时会幂等扫描活跃用户，创建 `Gugu-data/users/<user-id>/shell`，登记文件库、
+Shell 持久空间和临时空间三类配额；文件写入、`web_download`、构建和 Shell 执行事件
+统一写入 `storage_quota_events`。不要手动删除账本行，异常用量应通过对账流程修复。
 
 ### 4.4 前端构建 → nginx 托管
 
@@ -461,6 +527,50 @@ sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-supervisor
 ```
 
 `gugu-sandboxd` 通过 `/run/user/<uid>/gugu-sandboxd.sock` 接收受限 JSON Lines 请求，业务进程不会直接持有 Docker socket。systemd 模板会自动注入 `DOCKER_HOST` 和 `GUGU_SANDBOXD_SOCKET`，不需要把它们配置成 TCP 地址，也不要把 Unix Socket 暴露给外部网络。
+
+### Rootless 用户目录 ACL（可选初始化）
+
+Rootless Docker 容器内的 `65532:65532` 需要通过宿主机 ACL 访问 `Gugu-data/users/*/shell`。ACL 初始化默认不执行，避免普通启动流程意外修改宿主机权限。
+
+先查看计划：
+
+```bash
+cd backend
+make sandbox-acl-plan ROOTLESS_LOGIN=gugu-sandbox
+```
+
+确认路径和映射无误后，显式执行：
+
+```bash
+cd backend
+SANDBOX_ACL=1 sudo make sandbox-acl-apply ROOTLESS_LOGIN=gugu-sandbox
+```
+
+安装 systemd 服务时也可以选择同步执行：
+
+```bash
+cd backend
+SANDBOX_ACL=1 sudo RUN_USER=gugu-sandbox make install
+```
+
+已经安装过服务时，也可以只在启动或重启前执行一次：
+
+```bash
+SANDBOX_ACL=1 RUN_USER=gugu-sandbox make start
+SANDBOX_ACL=1 RUN_USER=gugu-sandbox make restart
+```
+
+不传 `SANDBOX_ACL=1` 时，`make start`、`make restart` 和 `make install` 都不会修改 ACL。
+
+Compose 使用同一套宿主机初始化入口：
+
+```bash
+cd backend
+make compose-up                         # 普通 Compose，不修改 ACL
+SANDBOX_ACL=1 make compose-up           # 先应用 ACL，再启用 sandbox profile
+```
+
+直接执行 `docker compose up` 不会自动应用 ACL；`--profile sandbox` 只负责启动 sandboxd，不能替代宿主机权限初始化。初始化脚本只处理用户 Shell 持久目录，不会修改业务容器、镜像或数据库目录。
 
 启用沙盒前先检查 Rootless Docker 和固定镜像：
 

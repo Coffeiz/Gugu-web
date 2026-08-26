@@ -1,5 +1,41 @@
 # 咕咕 · 早期开发记录
 
+## 2026-08-26 · Skill 关联 Schema 按需注入与未声明工具执行门
+
+### 修复
+
+- `use_skill` 成功后，将 Skill 关联工具的当前 Schema 和实现指纹作为 canonical event
+  追加到历史尾部；不重排稳定前缀，也不把全量 Schema 放回首轮。
+- 固定 Adapter 模式下，业务工具没有当前版本 Schema 时，dispatch 前直接返回
+  `tool_schema_required`，要求先调用 `get_tool_schema`，避免模型凭记忆猜参数并触发副作用；参数校验失败时 Runtime 会自动回注当前工具 Schema。
+- Schema 判断同时比较 Schema digest 和 implementation digest；工具实现更新后会要求重新声明。
+
+### 验证
+
+- canonical history、Schema digest、工具契约和缓存边界专项测试通过。
+
+## 2026-08-26 · 统一上下文 canonical 序列化并修复工具续轮缓存断点
+
+### 根因
+
+- 自动 RAG 当前轮使用 `knowledge-context` block，历史中仍可能存在旧版
+  `[owner-rag]...[/owner-rag]` 纯文本；恢复后消息结构变化，provider cache 在首个
+  RAG 位置断开。
+- 工具续轮把旧动态 tail 插回新消息之前，会重排上一轮前缀；即使 schema 没有重复，
+  cache anchor 也会落在不稳定的消息边界。
+
+### 修复
+
+- 新增统一上下文序列化约定，RAG 当前注入、历史恢复和 provider wire 均使用同一
+  `knowledge-context -> text block` 结构。
+- 工具续轮首次追加时提升旧动态 tail，再按原顺序追加 assistant/tool 消息；动态 tail
+  不写回历史，旧 cache anchor 保持在原消息索引上。
+- 增加 RAG wire 形状一致性、旧记录恢复和工具续轮前缀稳定性回归测试。
+
+### 验证
+
+上下文、RAG、canonical tool history、provider 和 session snapshot 专项测试通过。
+
 ## 2026-08-25 · ContextBudget Phase 6/10 收口
 
 ### 完成内容
@@ -2072,3 +2108,22 @@ probe 证明 `canvasItems.splice()` 后约 1ms 内，`canvasProjectIds` 与 `fil
 - 诊断只保留模式、数量、长度、耗时和 hash 等脱敏字段，不记录历史正文。
 
 验证：上下文压缩专项 `41 passed`，Python compileall 与 `git diff --check` 通过；各 provider 的真实线上复测保留为发布后观测项。
+
+## 2026-08-26 · RAG scope 缓存与召回并行优化
+
+- 群组/成员记忆文档使用 `scope_version + updated_at` revision，并保留 30 分钟进程内投影缓存；记忆变更事件会主动失效对应 owner 的 scope 投影。
+- 自动召回把同一请求的群组与成员 scope 合并为一次检索；来源 Retriever、scope 文档加载和持久化索引查询不再串行等待。
+- Rust sidecar 继续作为跨 worker 的长期索引持有者；新增 `sidecar_reused`、`index_build_ms`、`search_ms`、来源 `retrieve_ms` 等脱敏阶段日志，区分本地缓存命中与 sidecar 复用。
+- 自动召回超时任务现在有完成回收和 32 个后台任务上限，避免上游超时导致任务无限堆积；超时仍不会取消可能持有数据库连接的查询协程。
+
+验证：RAG 模块 compileall、完整后端 pytest 与 `git diff --check` 通过；线上继续观察 `t=rag` 的 stages 和 `sidecar_reused` 分布。
+### 清理临时探针（2026-08-26）
+
+- 移除 IM 文本选项消费路径中遗留的原始诊断输出。
+- 清理 QQ 表情解析器中已过期的“入站探针”注释；保留 Context 布局审计、RAG 阶段耗时、能力检测和媒体元数据探测等正式功能。
+
+## 2026-08-26 · 工具 Schema 原文精简
+
+- 直接收短工具定义中的 `description` 与参数说明，去掉重复操作手册和大段示例；保留工具用途、关键限制、必填关系和危险操作提示。
+- 思维笔记块协议改为简短结构说明，真实 JSON Schema 的 `type`、`enum`、`required`、`items` 等约束未改变；Provider 仍直接使用 canonical schema，不再维护第二套投影或运行时补丁。
+- 颜色枚举、字段名和 handler 均未改动，便于后续继续按单个工具审阅文案。

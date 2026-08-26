@@ -224,7 +224,12 @@ cmd_install() {
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
     local run_user="${RUN_USER:-}"
     if [ -z "$run_user" ]; then
-        err "请显式指定服务运行用户，例如：RUN_USER=coffeiz ./start.sh install"
+        local suggested_user="${SUDO_USER:-$(id -un)}"
+        if [ "$suggested_user" = "root" ] && [ -z "${SUDO_USER:-}" ]; then
+            err "请显式指定非 root 服务运行用户，例如：RUN_USER=coffeiz ./start.sh install"
+        else
+            err "请显式指定服务运行用户，例如：RUN_USER=${suggested_user} ./start.sh install"
+        fi
         exit 1
     fi
 

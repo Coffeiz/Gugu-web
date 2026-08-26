@@ -639,12 +639,15 @@ async def test_connection(body: TestConnectionRequest):
 # ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "searxng_images", "tavily", "baidu_similar_images"]
+    target:          Literal["searxng", "searxng_images", "tavily", "deep_research", "baidu_similar_images"]
     searxng_url:     str = ""   # 留空=用已存配置
     searxng_engines: str = ""
     searxng_image_engines: str = ""
     tavily_api_key:  str = ""   # 留空=用已存配置
     baidu_qianfan_api_key: str = ""   # 留空=用已存配置
+    deep_research_provider: str = ""
+    deep_research_baidu_api_key: str = ""
+    deep_research_you_api_key: str = ""
 
 
 @router.post("/test-search")
@@ -684,6 +687,26 @@ async def test_search(body: SearchTestRequest):
         if dead:
             msg += f"（超时引擎：{'、'.join(dead)}）"
         return {"ok": True, "message": msg}
+
+    elif body.target == "deep_research":
+        provider = body.deep_research_provider or cfg.search.deep_research_provider
+        key = {
+            "tavily": body.tavily_api_key or cfg.search.tavily_api_key,
+            "baidu": body.deep_research_baidu_api_key or cfg.search.deep_research_baidu_api_key,
+            "you": body.deep_research_you_api_key or cfg.search.deep_research_you_api_key,
+        }.get(provider, "")
+        if not key:
+            return {"ok": False, "message": f"未配置 {provider} 深度研究 API Key"}
+        try:
+            from agent.tools.deep_research import run
+            result = await run(
+                provider, "测试深度研究连接", key, max_results=1, depth="basic",
+            )
+            if not result.get("answer") and not result.get("results"):
+                return {"ok": False, "message": f"{provider} 已连通但没有返回研究结果"}
+        except Exception as e:
+            return {"ok": False, "message": f"{provider} Key 无效或请求失败：{type(e).__name__}: {str(e)[:90]}"}
+        return {"ok": True, "message": f"OK — {provider} 深度研究连接正常（本次测试可能消耗 1 次调用）"}
 
     elif body.target == "tavily":
         key = body.tavily_api_key or cfg.search.tavily_api_key

@@ -154,7 +154,7 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
         record_recall(
             namespace="knowledge", source_type="memory", candidate_count=12,
             hit_count=3, elapsed_ms=17, fallback_reason="embedding_disabled",
-            index_version="memory-rag-v1", mode="passive", engine="rust",
+            index_version="memory-rag-v1", mode="passive", engine="typescript",
             cache_hit=True, cache_entries=1,
         )
     finally:
@@ -164,7 +164,7 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.kind == "rag"
     assert span.name == "Knowledge RAG recall"
     assert span.attributes["mode"] == "passive"
-    assert span.attributes["engine"] == "rust"
+    assert span.attributes["engine"] == "typescript"
     assert span.attributes["cache_hit"] is True
     assert span.attributes["cache_entries"] == 1
     assert span.output["hit_count"] == 3

@@ -15,6 +15,22 @@ class CapabilitySelector(Protocol):
     def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 5) -> SelectedCapabilities: ...
 
 
+class RagCapabilitySelector:
+    """复用统一 RAG 的能力目录 selector；只产生推荐顺序。"""
+
+    def __init__(self, owner_id: object, *, shadow: bool = True):
+        self.owner_id = owner_id
+        self.shadow = shadow
+
+    def select(self, query: str, snapshot: CapabilitySnapshot, limit: int = 5) -> SelectedCapabilities:
+        return RegistryCapabilitySelector(shadow=self.shadow).select(query, snapshot, limit)
+
+    async def select_async(self, query: str, snapshot: CapabilitySnapshot, limit: int = 5) -> SelectedCapabilities:
+        from .recommendation import recommend
+
+        return await recommend(query, snapshot, owner_id=self.owner_id, limit=limit, shadow=self.shadow)
+
+
 class RegistryCapabilitySelector:
     """把推荐结果适配为“推荐优先、授权全集保留”的选择结果。
 

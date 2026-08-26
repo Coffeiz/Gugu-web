@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Iterable
 
 from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, event_text
 from .canonical_context import HistoryEnvelope, normalize_history_message
 from .provider_history import strip_thinking_blocks
+from .summary_format import format_compacted_summary
 
-_SUMMARY_HEADER = "## 早前对话摘要（供参考，非最新消息）"
+_TIME_CONTEXT_RE = re.compile(
+    r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
+)
 
 
 def build_canonical_history_envelopes(history: Iterable, *, source: str | None = None) -> list[HistoryEnvelope]:
@@ -20,7 +24,7 @@ def build_canonical_history_envelopes(history: Iterable, *, source: str | None =
 def _summary_content(message) -> str:
     """将持久化 baseline 摘要恢复为普通历史 user 消息。"""
     text = (getattr(message, "content", "") or "").strip()
-    return f"\n\n{_SUMMARY_HEADER}\n{text}"
+    return format_compacted_summary(text)
 
 
 def _tool_label(tool_name: str) -> str:
@@ -177,7 +181,7 @@ def _canonical_block(block: dict) -> dict | None:
         return ToolCall.from_block(block).to_block()
     if block_type == "tool_result":
         return ToolResult.from_block(block).to_block()
-    if block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
+    if block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
         return dict(block)
     return None
 
@@ -209,15 +213,28 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 content=content,
                 is_error=_tool_result_is_error(message),
             ).to_block())
+        elif role == "user" and isinstance(content, str) and _TIME_CONTEXT_RE.fullmatch(content):
+            canonical.append({"type": "time-context", "text": content})
         else:
             for block in _blocks(content):
                 normalized = _canonical_block(block)
                 if normalized is not None:
                     canonical.append(normalized)
+                elif (
+                    role == "user"
+                    and block.get("type") == "text"
+                    and _TIME_CONTEXT_RE.fullmatch(str(block.get("text") or ""))
+                ):
+                    # 当前时间和消息时间原本是本轮动态 reminder；转成 canonical
+                    # event 后持久化，下一轮恢复时仍渲染为完全相同的文本位置。
+                    canonical.append({
+                        "type": "time-context",
+                        "text": str(block["text"]),
+                    })
                 elif role == "assistant" and block.get("type") == "text" and block.get("text"):
                     canonical.append({"type": "text", "text": str(block["text"])})
         if canonical and any(
-            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context")
+            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context")
             for block in canonical
         ):
             result.append({"role": role, "content": canonical})
@@ -261,15 +278,17 @@ def _anthropic_history_blocks(content_json, *, strip_thinking: bool = False) -> 
             if "is_error" in block:
                 result["is_error"] = block["is_error"]
             converted.append(result)
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
             converted.append({"type": "text", "text": event_text(block)})
         else:
             converted.append(block)
     return converted
 
 
-def _openai_history_message(message, request, *, strip_thinking: bool = False) -> list[dict]:
-    content_json = getattr(message, "content_json", None)
+def _openai_history_message(message, request, *, strip_thinking: bool = False,
+                            content_json=None) -> list[dict]:
+    if content_json is None:
+        content_json = getattr(message, "content_json", None)
     if content_json is None:
         from agent.im.context_loader import format_history_content
 
@@ -297,7 +316,7 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False) -
                 "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
                 "content": content_text(block.get("content", "")),
             })
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context"):
+        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
             # 保留 canonical event 的结构，直到 provider boundary 再统一渲染。
             # 如果这里提前转成字符串，下一轮从数据库恢复时会变成另一种消息形状，
             # 跨 run 的字节前缀会在第一个 schema event 处断开。
@@ -366,7 +385,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         # 如果把它们当成 user，会在每个 schema/RAG block 前重复插入 sent_at，
         # 让跨 run 的消息边界与上一轮请求不一致，直接打断 provider cache 前缀。
         is_canonical_event = any(block.get("type") in (
-            "knowledge-context", "tool-schema", "skill-schema", "tool-discovery"
+            "knowledge-context", "tool-schema", "skill-schema", "tool-discovery", "stance-context", "time-context"
         ) for block in blocks)
         is_user_message = (
             getattr(message, "role", None) == "user"
@@ -389,7 +408,7 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
                 if any(block.get("type") in (
-                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context"
+                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"
                 ) for block in blocks):
                     content = _anthropic_history_blocks(content_json, strip_thinking=strip_thinking)
                 else:
@@ -416,6 +435,9 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
 
                 parts.append({"role": message.role, "content": format_history_content(message, request)})
         else:
-            parts.extend(_openai_history_message(message, request, strip_thinking=strip_thinking))
+            parts.extend(_openai_history_message(
+                message, request, strip_thinking=strip_thinking,
+                content_json=content_json,
+            ))
 
     return parts

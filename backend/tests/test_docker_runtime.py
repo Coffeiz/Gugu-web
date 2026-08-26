@@ -151,6 +151,32 @@ def test_sandboxd_request_round_trips_as_json():
     assert value["quota_bytes"] == 512
 
 
+def test_sandboxd_egress_request_requires_future_expiry():
+    from agent.sandbox.protocol import ExecuteRequest
+    import time
+
+    request = ExecuteRequest(
+        "/data/user/shell", "curl https://example.com", network_profile="egress",
+        egress_expires_at=time.time() + 60,
+    )
+    value = json.loads(request.to_json())
+    assert value["network_profile"] == "egress"
+    assert value["egress_expires_at"] > time.time()
+
+
+def test_sandboxd_rejects_non_finite_egress_expiry():
+    from agent.sandbox.protocol import ExecuteRequest
+    import pytest
+
+    with pytest.raises(ValueError, match="egress 授权已过期"):
+        ExecuteRequest.from_dict({
+            "root": "/data/user/shell",
+            "command": "curl https://example.com",
+            "network_profile": "egress",
+            "egress_expires_at": "Infinity",
+        })
+
+
 def test_sandboxd_server_rejects_root_outside_allowed_root(tmp_path):
     from agent.sandbox.sandboxd import SandboxdServer
     import pytest
@@ -183,12 +209,37 @@ def test_sandbox_readiness_rejects_disabled(monkeypatch):
     assert reason == "Shell 沙盒未开启"
 
 
-def test_sandbox_readiness_rejects_network_profiles_not_supported_yet(monkeypatch):
-    settings = SimpleNamespace(enabled=True, rootless_required=True, network_profile="egress")
+def test_sandbox_readiness_rejects_invalid_egress_configuration(monkeypatch):
+    settings = SimpleNamespace(
+        enabled=True,
+        rootless_required=True,
+        network_profile="egress",
+        egress_proxy_url="",
+        egress_isolation_enabled=True,
+        egress_network_name="gugu-sandbox-egress",
+    )
     monkeypatch.setattr(docker_runtime, "probe_docker", lambda: (_ for _ in ()).throw(AssertionError("不应探测 Docker")))
     ready, reason = docker_runtime.sandbox_readiness(settings)
     assert ready is False
-    assert "断网" in reason
+    assert "代理未配置" in reason
+
+
+def test_egress_proxy_must_be_http_without_embedded_credentials():
+    assert docker_runtime.valid_egress_proxy("http://proxy.example:3128")
+    assert docker_runtime.valid_egress_proxy("https://proxy.example")
+    assert not docker_runtime.valid_egress_proxy("socks5://proxy.example:1080")
+    assert not docker_runtime.valid_egress_proxy("http://user:secret@proxy.example:3128")
+
+
+def test_admin_egress_proxy_config_rejects_credentials_and_query():
+    import asyncio
+    from fastapi import HTTPException
+    from app.api.v1.sandbox_admin import EgressProxyConfigRequest, save_egress_proxy
+
+    with pytest.raises(HTTPException, match="无凭据"):
+        asyncio.run(save_egress_proxy(EgressProxyConfigRequest(proxy_url="http://user:secret@proxy.example:3128")))
+    with pytest.raises(HTTPException, match="查询参数"):
+        asyncio.run(save_egress_proxy(EgressProxyConfigRequest(proxy_url="http://proxy.example:3128/?token=1")))
 
 
 def test_admin_sandbox_state_requires_loaded_image():
@@ -228,6 +279,30 @@ def test_admin_executor_readiness_is_independent_of_enabled_switch(monkeypatch):
     assert response["executor_ready"] is True
 
 
+def test_admin_sandbox_status_does_not_echo_invalid_proxy(monkeypatch):
+    from app.api.v1 import sandbox_admin
+    from app.core.config import SandboxSettings
+
+    settings = SandboxSettings(
+        enabled=False,
+        egress_proxy_url="http://user:secret@proxy.example:3128",
+        egress_isolation_enabled=True,
+    )
+    monkeypatch.setattr(sandbox_admin, "get_settings", lambda: SimpleNamespace(sandbox=settings))
+    monkeypatch.setattr(
+        sandbox_admin,
+        "probe_docker",
+        lambda: docker_runtime.DockerRuntimeStatus(True, True, True),
+    )
+    monkeypatch.setattr(sandbox_admin, "valid_image_digest", lambda value: True)
+    monkeypatch.setattr(sandbox_admin, "image_available", lambda *_args, **_kwargs: True)
+
+    response = sandbox_admin._response()
+    assert response["egress_proxy_url"] == ""
+    assert response["egress_available"] is False
+    assert "无凭据" in response["egress_config_error"]
+
+
 def test_docker_executor_builds_fixed_security_argv(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
@@ -260,6 +335,32 @@ def test_docker_executor_builds_fixed_security_argv(tmp_path):
     assert argv[-1] == "pwd"
 
 
+def test_docker_executor_uses_only_controlled_egress_network(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "d" * 64,
+        network_profile="egress",
+        egress_proxy_url="http://egress-proxy:3128",
+        egress_isolation_enabled=True,
+        egress_network_name="gugu-sandbox-egress",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+    )
+    argv = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_argv(
+        "curl https://example.com", network_profile="egress"
+    )
+    assert "--network=gugu-sandbox-egress" in argv
+    assert "--env=HTTP_PROXY=http://egress-proxy:3128" in argv
+    assert "--env=HTTPS_PROXY=http://egress-proxy:3128" in argv
+    assert "--env=NO_PROXY=127.0.0.1,localhost" in argv
+    assert "--network=none" not in argv
+
+
 def test_docker_executor_rejects_unpinned_image(tmp_path):
     from agent.sandbox.docker import DockerSandboxExecutor
 
@@ -276,6 +377,30 @@ def test_docker_executor_rejects_unpinned_image(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="sha256"):
         DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+
+
+def test_docker_executor_rejects_egress_with_invalid_network_name(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "b" * 64,
+        network_profile="none",
+        egress_proxy_url="http://proxy.example:3128",
+        egress_isolation_enabled=True,
+        egress_network_name="bad network",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        ephemeral_quota_bytes=1024 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+    )
+    import pytest
+    with pytest.raises(ValueError, match="egress 网络名无效"):
+        DockerSandboxExecutor(tmp_path, settings, docker_path="docker").build_argv(
+            "curl https://example.com", network_profile="egress"
+        )
 
 
 def test_docker_executor_applies_ephemeral_quota_to_tmpfs(tmp_path):

@@ -82,7 +82,7 @@ const routes: RouteRecordRaw[] = [
         path: 'skills',
         name: 'Skills',
         component: () => import('@/views/Skills/index.vue'),
-        meta: { title: '咕咕技能' },
+        meta: { title: '技能' },
       },
       {
         // 思维面板：记录时间流与空间画布共享便签本体，但各自拥有独立界面。

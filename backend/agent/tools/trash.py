@@ -198,7 +198,7 @@ class TrashSkill(BaseSkill):
         ),
         Tool(
             name="permanent_delete", label="永久删除",
-            description="永久删除回收站里的文件或顶层文件夹（不可恢复）。单项传 file_id/folder_id，批量传 file_ids/folder_ids；要清空整个回收站传 all=true。先不带 confirm 调用，确认整个目标集合后再带 confirm=true 和凭证执行，禁止逐项重复确认。",
+            description="永久删除回收站文件或顶层文件夹；必须先确认目标，再带 confirm 凭证执行。",
             input_schema={
                 "type": "object",
                 "properties": {

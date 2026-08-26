@@ -2,11 +2,14 @@
 
 ## 1. 状态
 
-**状态：Phase 5、6 已完成**
+**状态：已完成并被 PRD-RAG-6 取代**
+
+> 历史记录：Rust/Tantivy 曾是词法检索主链。当前生产主链已迁移到 TypeScript worker；
+> Rust sidecar 不再进入运行时回退链路；当前生产词法后端以 PRD-RAG-6 定义的 TypeScript worker 为准。
 
 ## 2. 背景与目标
 
-当前 RAG 的 Python BM25 在每次缓存重建时需要遍历文档、构建词频表，并在查询时扫描候选文档。真实数据测试表明，冷启动和高并发下存在明显的 CPU 与内存开销。项目已经完成 Rust/Tantivy sidecar 原型，因此本阶段将词法检索统一迁移到 Rust。
+当前 RAG 的 Python BM25 在每次缓存重建时需要遍历文档、构建词频表，并在查询时扫描候选文档。本文件记录此前迁移到 Rust/Tantivy 的历史方案；后续 TypeScript 直接替换以 PRD-RAG-6 为准。
 
 目标：
 

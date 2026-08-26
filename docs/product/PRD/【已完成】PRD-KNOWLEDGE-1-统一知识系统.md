@@ -245,7 +245,7 @@ Markdown 文件是可读、可编辑和可迁移的主数据；索引、embeddin
 ### Phase 3：检索与上下文（✅ 检索完成，自动注入后置）
 
 - `search_memory(source=knowledge)` 已接入现有统一召回服务；
-- Rust lexical 不可用时复用 Python BM25 fallback；
+- 词法召回固定使用 TypeScript BM25 worker；Rust/Python 实现仅保留在历史评估记录中，不进入生产 fallback；
 - `source=knowledge` 不返回 Memory 条目；`source=all` 可合并 Knowledge 与 Memory；
 - 结果带来源、时间和可信度，输出复用统一后端预算；
 - 自动 Knowledge 注入、文件/网页批量捕捉和 embedding 质量评估仍后置，不因 Phase 4-5 首版完成而自动开启。

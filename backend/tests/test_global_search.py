@@ -101,11 +101,11 @@ async def test_global_search_ranks_note_title_before_body_only_hit(db, user_a):
 async def test_global_search_tool_requires_query(db, user_a):
     res = await _global_search(db, user_a.id, {})
 
-    assert res == {"error": "需要提供搜索关键词 q 或 queries"}
+    assert res == {"error": "需要提供搜索关键词 query 或 queries"}
 
     res = await _global_search(db, user_a.id, {"queries": ["", "  "]})
 
-    assert res == {"error": "需要提供搜索关键词 q 或 queries"}
+    assert res == {"error": "需要提供搜索关键词 query 或 queries"}
 
 
 async def test_global_search_tool_adds_note_when_nothing_found(db, user_a):

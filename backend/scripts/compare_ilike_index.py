@@ -77,13 +77,11 @@ async def _run(user_id: UUID, queries: tuple[str, ...], repeat: int) -> None:
                 started = time.perf_counter()
                 await _ilike_source_ids(db, user_id, query)
                 ilike_times.append((time.perf_counter() - started) * 1000)
-                # Rust/Tantivy latency由独立 sidecar benchmark 测量；此脚本只保留
-                # ILIKE 的基线，避免重新引入 Python BM25 实现。
+                # 此脚本只保留 ILIKE 基线，词法召回由 TypeScript worker 单独测量。
             overlap = None
             rows.append({
                 "query_len": len(query),
                 "ilike_hits": len(ilike_ids),
-                "rust_hits": None,
                 "top10_overlap": overlap,
                 "ilike_median_ms": round(statistics.median(ilike_times), 2),
                 "ilike_p95_ms": round(_percentile(ilike_times, 0.95), 2),
@@ -99,7 +97,7 @@ async def _run(user_id: UUID, queries: tuple[str, ...], repeat: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="测量全局 ILIKE 基线；Rust sidecar 由独立 benchmark 测量")
+    parser = argparse.ArgumentParser(description="测量全局 ILIKE 基线；词法 worker 由独立 benchmark 测量")
     parser.add_argument("--user-id", required=True, type=UUID)
     parser.add_argument("--query", action="append", required=True)
     parser.add_argument("--repeat", type=int, default=10)

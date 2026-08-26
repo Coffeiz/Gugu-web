@@ -238,7 +238,7 @@ async def call_minimax(ai, system: str, messages: list[dict], tools: list[dict])
 
 async def run(args) -> int:
     from app.core.config import get_settings
-    from agent.context import message_assembly, session_snapshot
+    from agent.context import assembly, session_snapshot
     from agent.context.history import build_history_parts
 
     settings = get_settings()
@@ -274,12 +274,15 @@ async def run(args) -> int:
     for run_index in range(1, args.runs + 1):
         label, prompt = SCENARIOS[(run_index - 1) % len(SCENARIOS)]
         current_user = {"role": "user", "content": prompt}
-        tail = session_snapshot.reminder_message(f"诊断 run {run_index} 的动态尾部")
-        request_messages = message_assembly.PromptMessages(
-            conversation + [current_user],
-            dynamic_tail=[tail],
+        request_messages = assembly.PromptMessages(
+            conversation,
             fixed_prefix_size=1 if snapshot_context else 0,
         )
+        turn_batch, _ = assembly.assemble_turn(
+            stance=f"诊断 run {run_index} 的姿态",
+            current_user=current_user,
+        )
+        request_messages.append_batch(turn_batch)
         outbound = _with_history_cache(request_messages)
         started = time.perf_counter()
         try:

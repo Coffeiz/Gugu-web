@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import re
 import shutil
 import subprocess
+from urllib.parse import urlparse
 from dataclasses import dataclass
 
 from app.core.config import SandboxSettings
@@ -36,6 +38,33 @@ def valid_image_digest(value: str) -> bool:
     return digest.startswith("sha256:") and len(digest) == len("sha256:") + 64 and all(
         char in "0123456789abcdef" for char in digest[7:].lower()
     )
+
+
+def valid_egress_proxy(value: str) -> bool:
+    """只接受带主机的 HTTP(S) 代理，不允许把任意 URL 当代理注入容器。"""
+    parsed = urlparse((value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+
+
+def valid_egress_network_name(value: str) -> bool:
+    """只接受固定 Docker 网络名，避免把配置当成任意 CLI 参数。"""
+    return bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}", (value or "").strip()))
+
+
+def docker_network_available(name: str, *, timeout_seconds: float = 2.0) -> bool:
+    if not valid_egress_network_name(name):
+        return False
+    docker = shutil.which("docker")
+    if not docker:
+        return False
+    try:
+        result = subprocess.run(
+            [docker, "network", "inspect", name], capture_output=True, text=True,
+            timeout=timeout_seconds, env=docker_environment(), check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) -> bool:
@@ -174,8 +203,13 @@ def sandbox_readiness(settings: SandboxSettings) -> tuple[bool, str]:
     """
     if not settings.enabled:
         return False, "Shell 沙盒未开启"
-    if settings.network_profile != "none":
-        return False, "当前 Shell 沙盒只允许断网模式"
+    if settings.network_profile == "egress":
+        if not valid_egress_proxy(settings.egress_proxy_url):
+            return False, "egress 代理未配置"
+        if not settings.egress_isolation_enabled:
+            return False, "受控 egress 网络尚未启用"
+        if not valid_egress_network_name(settings.egress_network_name):
+            return False, "egress 网络名无效"
     status = probe_docker()
     if not status.installed:
         return False, status.message

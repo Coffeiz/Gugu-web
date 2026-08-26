@@ -8,6 +8,7 @@ from __future__ import annotations
 from .anthropic import AnthropicAdapter
 from .base import MediaLimits, ProviderAdapter, ProviderCapabilities
 from .deepseek import DeepSeekAdapter
+from .glm import GlmAdapter, GlmCodingAdapter
 from .mimo import MimoAdapter
 from .minimax import MiniMaxAdapter
 from .openai import OpenAIAdapter
@@ -21,6 +22,8 @@ _QWEN = QwenAdapter()
 _MINIMAX = MiniMaxAdapter()
 _MIMO = MimoAdapter()
 _DEEPSEEK = DeepSeekAdapter()
+_GLM = GlmAdapter()
+_GLM_CODING = GlmCodingAdapter()
 _OLLAMA = OllamaAdapter()
 _LOCAL = LocalAdapter()
 
@@ -30,6 +33,8 @@ _REGISTRY: dict[str, ProviderAdapter] = {
     "minimax": _MINIMAX,
     "mimo": _MIMO,
     "deepseek": _DEEPSEEK,
+    "glm": _GLM,
+    "glm-coding": _GLM_CODING,
     "ollama": _OLLAMA,
     "local": _LOCAL,
 }
@@ -80,6 +85,10 @@ def adapter_for(ai) -> ProviderAdapter:
         return _MINIMAX
     if "deepseek" in base_url:
         return _DEEPSEEK
+    if "bigmodel.cn" in base_url and "/api/coding/" in base_url:
+        return _GLM_CODING
+    if "bigmodel.cn" in base_url:
+        return _GLM
     if "ollama" in base_url or "11434" in base_url:
         return _OLLAMA
     return _DEFAULT

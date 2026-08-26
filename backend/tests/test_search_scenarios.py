@@ -27,6 +27,14 @@ async def test_scenario_without_target_searches_all_relevant_types(db, user_a):
     assert result["mode"] == "OR"
 
 
+async def test_scenario_global_search_accepts_unified_query_alias(db, user_a):
+    await _add(db, Project(user_id=user_a.id, name="统一搜索项目"))
+
+    result = await _global_search(db, user_a.id, {"query": "统一搜索", "types": ["project"]})
+
+    assert result["groups"][0]["items"][0]["title"] == "统一搜索项目"
+
+
 async def test_scenario_explicit_target_does_not_expand_search_scope(db, user_a):
     await _add(db, Project(user_id=user_a.id, name="部署项目"))
     await _add(db, File(user_id=user_a.id, display_name="部署说明", ext="md", storage_key="scenario-file", size=10))

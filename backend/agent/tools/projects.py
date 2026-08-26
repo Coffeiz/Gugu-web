@@ -481,9 +481,8 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="list_projects",
             label="查询项目列表",
-            description=("获取用户的项目列表，可按状态筛选。返回 id、名称、状态、截止日期、客户、阶段进度。"
-                        "默认只返回未归档项目；用户问「归档的项目/之前归档的 XX」时传 archived=true 单独查已归档的一批，"
-                        "不会跟未归档的混在一起返回。"),
+            description_short="查询项目及阶段进度",
+            description="查询项目列表，可按状态筛选；默认不含归档项目，返回阶段进度和截止日期。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -503,6 +502,7 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="update_project",
             label="更新项目",
+            description_short="修改项目资料和状态",
             description="修改项目的状态、截止日期、开始日期、客户名称、优先级。",
             input_schema={
                 "type": "object",
@@ -524,7 +524,8 @@ class ProjectsSkill(BaseSkill):
         Tool(
             name="create_project",
             label="新建项目",
-            description="创建新项目，可一次性带上自定义阶段和待办（无需再逐个 add_stage/add_todo）。用户没明确说日期时不用追问：开始日期默认今天、截止日期默认一周后；不传 stages 用默认「计划/执行/交付」三段。\n\n颜色（color）：不传则随机从预设中选。如果能从上下文清楚判断项目类型（如设计、开发、运营、拍摄等），直接选一个合适色系创建，无需追问。如果类型模糊或无法推断，在调用工具前先问一句，给出 2~3 个色系选项让用户选（如「暖橙金 / 薰衣草紫 / 薄荷绿，你倾向哪种风格？」），拿到答案后再建。\n\n优先级（priority）：不传则不设（None），不是每个项目都要有优先级，别为了凑一个值追问。分三种情况：① 对话里有明确的紧急/重要信号（如「赶紧」「很急」「不着急」），直接给一个合理优先级、顺带说一句判断依据，无需追问；② 看起来是个分量不轻的项目（阶段多、周期长、涉及客户交付等）但语气里判断不出紧急程度，创建前顺口问一句要不要标个优先级、可以带上你的推荐（如「这个项目看起来分量不小，要标成高优先级吗？」），别问开放式的「优先级是什么」；③ 明显是日常小事/临时任务，不问不设，别打扰。",
+            description_short="创建项目；后续阶段用 add_stage，待办用 add_todo",
+            description="创建项目，可一次设置日期、颜色、优先级、阶段和待办；未传日期使用默认值。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -537,7 +538,7 @@ class ProjectsSkill(BaseSkill):
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级；不传则不设"},
                     "stages": {
                         "type": "array",
-                        "description": '自定义阶段（按顺序）。两种写法：纯名称 ["需求","开发","测试"]，或带待办 [{"label":"开发","todos":["接口","联调"]}]。',
+                        "description": "自定义阶段列表；可传名称，或传带 todos 的阶段对象。",
                         "items": {
                             "type": ["string", "object"],
                             "properties": {
@@ -630,6 +631,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="get_project", label="项目详情",
+            description_short="读取项目结构后再管理阶段和待办",
             description="获取单个项目的完整结构：状态、日期、客户、当前阶段，以及每个阶段（含 key/label）下的待办列表（含 id/text/done）。管理阶段或待办前先用它看清结构。",
             input_schema={
                 "type": "object",
@@ -643,6 +645,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="add_stage", label="新增阶段",
+            description_short="给已有项目新增阶段，不会新建项目",
             description="给项目新增一个阶段（追加到末尾，或用 position 指定插入位置）。注意：这是给项目加阶段，不是新建项目。",
             input_schema={
                 "type": "object",
@@ -690,6 +693,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="add_todo", label="新增待办",
+            description_short="给项目阶段新增待办，可批量添加",
             description="给项目某阶段新增一条或多条待办（用 texts 数组一次加多条，可用于批量建待办模板）。",
             input_schema={
                 "type": "object",
@@ -722,7 +726,8 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="set_stages", label="整体设置阶段",
-            description="一次性把项目的阶段设成你想要的完整列表（增/删/改名/重排序一步到位，声明式）。同名阶段的待办会自动保留（除非你本次给了该阶段的 todos 则以本次为准）。适合重排或大改结构；只动一个阶段用 add_stage/rename_stage 即可。",
+            description_short="整体重排项目阶段；单个新增用 add_stage",
+            description="一次性声明项目的完整阶段列表，可增删、改名和重排；只改一个阶段用专用工具。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -730,7 +735,7 @@ class ProjectsSkill(BaseSkill):
                     "project": {"type": "string", "description": "项目名称（推荐：直接用名字）"},
                     "stages": {
                         "type": "array",
-                        "description": '想要的完整阶段列表（按顺序）。纯名称 ["需求","开发"] 或带待办 [{"label":"开发","todos":["接口"]}]。',
+                        "description": "完整阶段列表，按顺序传名称或带 todos 的阶段对象。",
                         "items": {
                             "type": ["string", "object"],
                             "properties": {

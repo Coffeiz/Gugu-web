@@ -69,7 +69,7 @@
 
 **IM 接入** · 飞书（WebSocket 长连）· QQ 官方机器人 · 微信
 
-**部署** · 生产用裸机 + systemd（[`backend/start.sh`](backend/start.sh)）· 本地开发用 Docker Compose，见下方「快速开始」
+**部署** · 本地开发用源码挂载 Docker Compose；生产用构建物 Docker Compose + Nginx（默认 `9595`），裸机 systemd 仍可用，详见 [部署文档](docs/ops/deploy.md)
 
 ---
 
@@ -112,6 +112,39 @@ docker compose up -d
 # 常用：docker compose logs -f backend worker   查日志
 #      docker compose down                      停止（加 -v 连数据卷一起删）
 ```
+
+### 方式一（生产）：构建物 Docker Compose + Nginx
+
+生产环境使用 `docker-compose.prod.yml`。它只消费已构建的前后端镜像，不挂载源码、不运行
+Vite 热更新或 Uvicorn reload；数据库迁移、PostgreSQL、Redis、SearXNG、文件存储和 Admin
+配置卷由 Compose 管理，默认通过 Nginx 从 `9595` 提供访问。
+
+```bash
+# 在仓库根目录构建并推送镜像；生产镜像构建上下文必须是仓库根目录
+docker build -f backend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
+docker build -f frontend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
+docker push ghcr.io/coffeiz/gugu-web-backend:版本号
+docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
+
+# 服务器准备 backend/.env、searxng/settings.yml 和生产密码
+export GUGU_BACKEND_IMAGE=ghcr.io/coffeiz/gugu-web-backend:版本号
+export GUGU_FRONTEND_IMAGE=ghcr.io/coffeiz/gugu-web-frontend:版本号
+export GUGU_DB_PASSWORD='生产数据库密码'
+docker compose -f docker-compose.prod.yml up -d
+```
+
+默认连接 Compose 内部的 PostgreSQL：`GUGU_DB_HOST=postgres`。如果已有外部数据库，
+只需覆盖 `GUGU_DB_HOST`、`GUGU_DB_PORT`、`GUGU_DB_NAME`、`GUGU_DB_USER` 和
+`GUGU_DB_PASSWORD`，后端会改连外部地址；不需要修改镜像。
+
+Redis 默认同样连接 Compose 内部的 `redis:6379`。使用外部 Redis 时覆盖
+`GUGU_REDIS_HOST`、`GUGU_REDIS_PORT` 和 `GUGU_REDIS_PASSWORD` 即可。
+
+访问 `http://服务器地址:9595`。Shell 沙盒不是默认开启；准备 Rootless Docker 后，使用
+`docker compose -f docker-compose.prod.yml --profile sandbox up -d` 启用。Compose 会同时启动
+受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`，但临时公网访问仍需在 Admin → Shell 沙盒
+中开启，并在会话首次使用时确认。完整的配置卷、
+迁移和 Nginx 说明见 [生产构建物 Compose](docs/ops/deploy.md#310-生产构建物-compose默认端口-9595)。
 
 ### 方式二：本地开发
 

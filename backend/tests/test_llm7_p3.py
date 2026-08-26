@@ -99,8 +99,7 @@ async def test_ollama_native_stream_and_tool_roundtrip(monkeypatch):
     assert client.calls[0][1].endswith("/chat")
     assert client.calls[0][2]["tools"][0]["function"]["name"] == "probe_noop"
 
-    messages = []
-    driver.append_tool_round(messages, result, [(result.tool_calls[0], '{"ok":true}')])
+    messages = driver.build_tool_round(result, [(result.tool_calls[0], '{"ok":true}')])
     assert messages[0]["role"] == "assistant"
     assert messages[0]["tool_calls"][0]["function"]["name"] == "probe_noop"
     assert messages[1] == {"role": "tool", "content": '{"ok":true}'}

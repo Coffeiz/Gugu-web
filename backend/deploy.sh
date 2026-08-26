@@ -119,6 +119,8 @@ async def t():
         await c.execute(text('SELECT 1'))
 asyncio.run(asyncio.wait_for(t(), timeout=3))
 " 2>/dev/null; then
+    # 迁移需要 AccessExclusiveLock；先停掉 web/worker，避免 DDL 与业务查询形成死锁。
+    ./start.sh stop
     "$VENV_BIN/alembic" upgrade head
     ok "迁移完成"
 else

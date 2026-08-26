@@ -71,6 +71,8 @@ export interface ChatSession {
   source?: string
   chatType?: string
   workspaceName?: string | null
+  goalActive?: boolean
+  goalStatus?: 'active' | 'paused' | null
   // /agent/sessions 已返回这两个 ISO 时间；侧栏用 updatedAt 显示“最后对话时间”。
   updatedAt?: string
   createdAt?: string

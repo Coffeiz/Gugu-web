@@ -11,7 +11,7 @@
     <!-- 标签栏 -->
     <AdminSegmentTabs v-if="!standaloneMode" :model-value="activeTab" :tabs="tabs" aria-label="Agent 配置分类" class="agent-tabs" @update:model-value="switchTab" />
 
-    <AdminSegmentTabs v-if="activeTab === 'behavior'" v-model="behaviorTab" :tabs="behaviorTabs" aria-label="行为配置分类" class="behavior-tabs" />
+    <AdminSegmentTabs v-if="activeTab === 'behavior'" v-model="behaviorTab" :tabs="behaviorTabs" aria-label="Agent 能力分类" class="behavior-tabs" />
 
     <div class="panels-wrap">
 
@@ -184,6 +184,11 @@
             <ToggleSwitch :model-value="agentDraft.shell_enabled" aria-label="切换 Shell 工具总开关" @update:model-value="agentDraft.shell_enabled = $event; saveBehavior()" />
           </div>
 
+          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
+            <div class="behavior-label"><span>Shell Autopilot 总开关</span><span class="behavior-desc">允许用户在个人设置中开启 Autopilot，跳过 Shell 确认门；沙盒、配额、超时和审计仍然生效。</span></div>
+            <ToggleSwitch :model-value="agentDraft.shell_autopilot_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换 Shell Autopilot 总开关" @update:model-value="agentDraft.shell_autopilot_enabled = $event; saveBehavior()" />
+          </div>
+
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label"><span>系统范围 Shell</span><span class="behavior-desc">允许访问系统范围，风险最高；建议仅本地管理员使用。</span></div>
             <ToggleSwitch :model-value="agentDraft.shell_system_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换系统范围 Shell" @update:model-value="agentDraft.shell_system_enabled = $event; saveBehavior()" />
@@ -278,7 +283,7 @@
           </div>
           <div class="card-title-block">
             <h3>联网搜索</h3>
-            <p>通用搜索走自建 SearXNG（免费、不计配额），深度研究 / 总结走 Tavily（有每日次数上限，在「配额管理」设置）</p>
+            <p>通用搜索走自建 SearXNG（免费、不计配额）；深度研究使用下方独立的 Provider 配置。</p>
           </div>
         </div>
 
@@ -299,22 +304,8 @@
           </div>
           <div class="behavior-item" style="grid-column: 1 / -1;">
             <div class="behavior-label">
-              <span>RAG 词法召回后端</span>
-              <span class="behavior-desc">Rust/Tantivy 为默认后端；选择 Python BM25 仅用于兼容与排障，不影响站内全局搜索的 ILIKE 选项。</span>
-            </div>
-            <AdminSelect
-              :model-value="generalSearchDraft.rust_lexical_backend"
-              :options="[
-                { value: 'rust', label: 'Rust/Tantivy BM25' },
-                { value: 'python', label: 'Python BM25（兼容）' },
-              ]"
-              @update:model-value="generalSearchDraft.rust_lexical_backend = $event"
-            />
-          </div>
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
               <span>SearXNG 地址（通用搜索 web_search）</span>
-              <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索、全部走 Tavily。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
+              <span class="behavior-desc">自建 SearXNG 实例地址，留空=禁用通用搜索。同机填 http://127.0.0.1:端口，内网/1Panel 部署填对应内网 IP:端口</span>
             </div>
             <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
               <span v-if="searchTest.searxng.msg" :title="searchTest.searxng.msg"
@@ -371,30 +362,6 @@
             </div>
           </div>
 
-          <div class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>Tavily API Key（深度研究 deep_research）</span>
-              <span class="behavior-desc">留空表示不修改；清空并保存不会删除已存的 key</span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; justify-content:flex-end; min-width:0;">
-              <span v-if="searchTest.tavily.msg" :title="searchTest.tavily.msg"
-                    :style="{ color: searchTest.tavily.ok ? '#4caf7d' : '#e07070', fontSize:'12px', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', minWidth:0 }">
-                {{ searchTest.tavily.msg }}
-              </span>
-              <button class="btn-ghost" style="flex-shrink:0;" :disabled="searchTest.tavily.loading" @click="testSearch('tavily')">
-                {{ searchTest.tavily.loading ? '测试中…' : '测试' }}
-              </button>
-              <input
-                type="password"
-                class="behavior-input"
-                style="width: 280px; flex-shrink:0;"
-                v-model="generalSearchDraft.tavily_api_key"
-                placeholder="tvly-… （留空表示不修改）"
-                autocomplete="new-password"
-              />
-            </div>
-          </div>
-
           <div class="behavior-item">
             <div class="behavior-label">
               <span>默认返回结果数</span>
@@ -422,6 +389,18 @@
           </button>
         </div>
       </section>
+
+      <DeepResearchConfig
+        v-if="activeTab === 'behavior' && behaviorTab === 'search'"
+        :draft="deepResearchDraft"
+        :test="deepResearchTest"
+        :saving="deepResearchSaving"
+        :saved="deepResearchSaved"
+        :error="deepResearchError"
+        @test="testDeepResearch"
+        @reset="resetDeepResearch"
+        @save="saveDeepResearch"
+      />
 
       <!-- ── 相似图搜索 ── -->
       <section v-if="activeTab === 'behavior' && behaviorTab === 'search'" class="config-card">
@@ -661,7 +640,7 @@
       -->
 
       <!-- ── 状态命名 ── -->
-      <StateLabelsPanel v-if="activeTab === 'labels'" />
+      <StateLabelsPanel v-if="activeTab === 'behavior' && behaviorTab === 'labels'" />
 
       <!-- ── 用量统计 ── -->
       <UsagePanel v-if="activeTab === 'usage'" />
@@ -692,19 +671,19 @@ import { useAdminStore } from '@/stores/admin'
 import ConfigField from '../Config/components/ConfigField.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import LlmPresetEditor from './llm/components/LlmPresetEditor.vue'
+import DeepResearchConfig from './runtime-config/components/DeepResearchConfig.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
 const route = useRoute()
 const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavior' : route.path === '/agent-usage' ? 'usage' : '')
 const runtimeConfig = useAgentRuntimeConfig()
-const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, saveSearch } = runtimeConfig
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
-  { key: 'labels',   label: '状态命名' },
   { key: 'trace',    label: '决策轨迹' },
   { key: 'prompts',  label: '系统提示词' },
 ]
@@ -714,6 +693,7 @@ const behaviorTabs = [
   { key: 'search', label: '搜索与图片' },
   { key: 'voice', label: '语音识别' },
   { key: 'capabilities', label: '能力目录' },
+  { key: 'labels', label: '状态命名' },
 ]
 const behaviorTab = ref('runtime')
 
@@ -727,6 +707,7 @@ const PROVIDERS = [
   { key: 'openai',    label: 'OpenAI 兼容', base_url: 'https://api.openai.com/v1',                          model: 'gpt-4o' },
   { key: 'anthropic', label: 'Anthropic',   base_url: 'https://api.anthropic.com/v1',                       model: 'claude-opus-4-8' },
   { key: 'qwen',      label: 'DashScope(百炼)', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-max' },
+  { key: 'glm',       label: '智谱 GLM',       base_url: 'https://open.bigmodel.cn/api/paas/v4',              model: 'glm-5.2' },
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-v4-flash-vision-exp' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
   { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },

@@ -34,9 +34,9 @@ class OpenAIHistoryAdapter(ContextAdapter):
                 if block.get("text"):
                     text_parts.append(str(block["text"]))
             elif block_type in {"quote", "attachment_ref", "transcript", "attachment_text",
-                                "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+                                "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
                                 "interaction_request", "interaction_result"}:
-                text_parts.append(event_text(block) if block_type.startswith("tool-") or block_type == "knowledge-context" else str(block.get("text") or block.get("title") or block))
+                text_parts.append(event_text(block) if block_type.startswith("tool-") or block_type in {"knowledge-context", "stance-context", "time-context"} else str(block.get("text") or block.get("title") or block))
         if envelope.quote:
             text_parts.insert(0, str(envelope.quote.get("text") or ""))
         if envelope.attachments:

@@ -243,7 +243,7 @@ class CalendarSkill(BaseSkill):
                     "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
                     "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
                     "reminders":  {"type": "array", "items": {"type": "integer"},
-                                   "description": "可选，给该活动设提醒，元素=提前分钟数：0=活动开始时、30=提前30分钟、60=1小时、1440=1天。可多个，如 [30, 1440]。无时间的全天活动按当天 09:00 计；已过的会跳过。"},
+                                   "description": "可选提前分钟数数组，如 [30,1440]；全天活动按 09:00，已过时间跳过。"},
                     "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
                                           "description": "提醒投递渠道，默认 [web]；仅在设了 reminders 时有用"},
                 },
@@ -312,12 +312,7 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="add_event_reminder",
             label="给活动加提醒",
-            description=("给某个已存在的日历活动添加提醒（到点把活动提醒推给用户）。提醒绑定到活动、与独立定时任务分开管理，"
-                         "也会出现在网页活动卡里。提前量单位分钟：0=活动开始时、30=提前30分钟、60=1小时、1440=1天。"
-                         "可一次加多个：用 reminders=[30,1440]；只加一个也可用 lead_minutes。"
-                         "无时间的全天活动按当天 09:00 计；已过的会跳过（在 skipped 里说明）。"
-                         "渠道 channels：web(默认)/feishu/qq/wechat，已连哪个看系统提示。"
-                         "（注：新建活动时直接用 create_event 的 reminders 一步到位，不必先建再调这个。）"),
+            description="给已有日历活动添加提醒；提醒绑定活动，不同于独立定时任务。",
             input_schema={
                 "type": "object",
                 "properties": {

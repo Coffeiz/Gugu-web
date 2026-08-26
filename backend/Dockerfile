@@ -21,7 +21,7 @@ FROM python:3.12-slim
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils ffmpeg curl build-essential docker.io
+        poppler-utils ffmpeg curl build-essential docker.io nodejs
 
 WORKDIR /app
 

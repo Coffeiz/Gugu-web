@@ -1,4 +1,4 @@
-"""meta 工具集：use_skill —— 渐进式披露的入口。
+"""meta 工具集：工具声明、调用与技能加载的固定入口。
 
 system prompt 里只放「可用技能」索引（每个一行 name + 何时用）；模型判断相关时调
 use_skill(name) 把该技能的正文（剧本）拉进上下文，再照着执行（可能再调 http_get 等 tool）。
@@ -13,6 +13,32 @@ import hashlib
 from agent import skills as _skills
 from agent.security.logsafe import fingerprint
 from agent.tools.base import BaseSkill, Tool
+
+
+async def _get_tool_schema(db, user_id, args: dict):
+    """获取本轮需要的业务工具 Schema；只读，不执行任何业务操作。"""
+    from agent.im import imctx
+    from agent.im.permissions import can_use_tool
+    from agent.tools import registry
+
+    requested = args.get("tools")
+    if not isinstance(requested, list) or not requested:
+        return {"error": "tools 必须是非空数组"}
+    current_im = imctx.get_im()
+    allowed = current_im.get("allowed_tool_names") if current_im else None
+    declared: list[str] = []
+    rejected: list[str] = []
+    for raw_name in requested[:12]:
+        name = str(raw_name or "").strip()
+        if not name or name in declared:
+            continue
+        if registry.get(name) is None or not can_use_tool(name, allowed):
+            rejected.append(name)
+            continue
+        declared.append(name)
+    if not declared and rejected:
+        return {"error": "没有可获取 Schema 的已授权工具", "rejected": rejected}
+    return {"tool_schemas": declared, "rejected": rejected}
 
 
 async def _use_skill(db, user_id, args: dict):
@@ -147,6 +173,26 @@ class MetaSkill(BaseSkill):
                 "additionalProperties": False,
             },
             handler=_call_tool,
+        ),
+        Tool(
+            name="get_tool_schema",
+            label="获取工具 Schema",
+            description=(
+                "获取本轮要使用的一个或多个已授权业务工具的完整参数 Schema。只读操作，不会执行工具。"
+                "未在当前对话历史中出现过完整 Schema 的工具，必须先获取 Schema。"
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "tools": {
+                        "type": "array", "minItems": 1, "maxItems": 12,
+                        "items": {"type": "string", "minLength": 1, "maxLength": 80},
+                    },
+                },
+                "required": ["tools"],
+                "additionalProperties": False,
+            },
+            handler=_get_tool_schema,
         ),
         Tool(
             name="use_skill",

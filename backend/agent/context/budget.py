@@ -30,7 +30,7 @@ class ContextBudget:
 
     model_context_tokens: int
     tool_schema_tokens: int = 0
-    dynamic_tail_tokens: int = 0
+    turn_batch_tokens: int = 0
     current_turn_tokens: int = 0
     output_reserve_tokens: int = 0
     provider_overhead_tokens: int = 0
@@ -47,7 +47,7 @@ class ContextBudget:
         *,
         fixed_prefix_text: str = "",
         tool_schema_tokens: int = 0,
-        dynamic_tail_tokens: int = 0,
+        turn_batch_tokens: int = 0,
         current_turn_tokens: int = 0,
         output_reserve_tokens: int = 0,
         provider_overhead_tokens: int = 0,
@@ -56,7 +56,7 @@ class ContextBudget:
         return cls(
             model_context_tokens=max(1, int(model_context_tokens or 0)),
             tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            dynamic_tail_tokens=max(0, int(dynamic_tail_tokens or 0)),
+            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
             current_turn_tokens=max(0, int(current_turn_tokens or 0)),
             output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
             provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
@@ -73,7 +73,7 @@ class ContextBudget:
         system_text: str = "",
         fixed_prefix_size: int = 0,
         tool_schema_tokens: int = 0,
-        dynamic_tail_tokens: int = 0,
+        turn_batch_tokens: int = 0,
         current_turn_tokens: int = 0,
         output_reserve_tokens: int = 0,
         provider_overhead_tokens: int = 0,
@@ -94,7 +94,7 @@ class ContextBudget:
         return cls.from_parts(
             model_context_tokens=max(1, int(model_context_tokens or 0)),
             tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            dynamic_tail_tokens=max(0, int(dynamic_tail_tokens or 0)),
+            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
             current_turn_tokens=max(0, int(current_turn_tokens or 0)),
             output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
             provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
@@ -112,7 +112,7 @@ class ContextBudget:
         snapshot_tokens: int = 0,
         history_tokens: int = 0,
         tool_schema_tokens: int = 0,
-        dynamic_tail_tokens: int = 0,
+        turn_batch_tokens: int = 0,
         current_turn_tokens: int = 0,
         output_reserve_tokens: int = 0,
         provider_overhead_tokens: int = 0,
@@ -121,7 +121,7 @@ class ContextBudget:
         return cls(
             model_context_tokens=max(1, int(model_context_tokens or 0)),
             tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            dynamic_tail_tokens=max(0, int(dynamic_tail_tokens or 0)),
+            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
             current_turn_tokens=max(0, int(current_turn_tokens or 0)),
             output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
             provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
@@ -136,7 +136,7 @@ class ContextBudget:
             self.system_prompt_tokens
             + self.snapshot_tokens
             + self.tool_schema_tokens
-            + self.dynamic_tail_tokens
+            + self.turn_batch_tokens
             + self.current_turn_tokens
             + self.output_reserve_tokens
             + self.provider_overhead_tokens
@@ -175,7 +175,7 @@ class ContextBudget:
         return ContextBudget(
             model_context_tokens=self.model_context_tokens,
             tool_schema_tokens=self.tool_schema_tokens,
-            dynamic_tail_tokens=self.dynamic_tail_tokens,
+            turn_batch_tokens=self.turn_batch_tokens,
             current_turn_tokens=self.current_turn_tokens,
             output_reserve_tokens=self.output_reserve_tokens,
             provider_overhead_tokens=self.provider_overhead_tokens,
@@ -193,7 +193,7 @@ class ContextBudget:
             "system_prompt_tokens": self.system_prompt_tokens,
             "snapshot_tokens": self.snapshot_tokens,
             "tool_schema_tokens": self.tool_schema_tokens,
-            "dynamic_tail_tokens": self.dynamic_tail_tokens,
+            "turn_batch_tokens": self.turn_batch_tokens,
             "current_turn_tokens": self.current_turn_tokens,
             "output_reserve_tokens": self.output_reserve_tokens,
             "provider_overhead_tokens": self.provider_overhead_tokens,
@@ -330,7 +330,7 @@ def truncate_messages(
         system_text=system_text,
         fixed_prefix_size=fixed_prefix_size,
         provider_overhead_tokens=overhead_tokens,
-        dynamic_tail_tokens=extra_tokens,
+        turn_batch_tokens=extra_tokens,
     )
     before = budget.total_tokens
     safe_budget = budget.truncation_limit_tokens
@@ -407,7 +407,7 @@ def truncate_messages(
         system_text=system_text,
         fixed_prefix_size=prefix_size,
         provider_overhead_tokens=overhead_tokens,
-        dynamic_tail_tokens=extra_tokens,
+        turn_batch_tokens=extra_tokens,
     ).total_tokens
     dropped = max(0, len(original) - len(result))
     return result, BudgetResult(True, before, after, dropped, oversized_item=oversized)
@@ -421,19 +421,15 @@ def enforce_message_budget(
     overhead_tokens: int = 0,
     protected_from: int | None = None,
 ) -> BudgetResult:
-    """就地应用强制截断，兼容 PromptMessages 的动态尾部。"""
+    """就地应用强制截断；本轮新增消息已经属于普通 history。"""
     conversation = list(getattr(messages, "conversation", messages))
-    dynamic_tail_tokens = sum(
-        estimate_tokens(message_text(message))
-        for message in getattr(messages, "dynamic_tail", ())
-    )
     truncated, result = truncate_messages(
         conversation,
         system_text,
         context_tokens,
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
         overhead_tokens=overhead_tokens,
-        extra_tokens=dynamic_tail_tokens,
+        extra_tokens=0,
         protected_from=protected_from,
     )
     if not result.changed:

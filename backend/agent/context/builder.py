@@ -164,7 +164,7 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     dynamic_parts = []
 
     # summary 属于 snapshot 前置上下文：在快照建立/过期/压缩时读取一次，避免作为
-    # 最后一条 role=user 动态消息被误判成当前请求。stance 仍由每轮动态尾部注入。
+    # 当前请求的新增消息被误判成当前用户输入。stance 由本轮 turn batch 按 digest 注入。
     mem_block = _memory_block(memory, include_summary=True)
     if mem_block:
         dynamic_parts.append(mem_block)
@@ -206,9 +206,8 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
         dynamic_parts.append(_NON_STREAMING_BLOCK)
 
     # 时间不放在 snapshot_context 中——它会变化导致 messages 前缀断裂。
-    # 时间作为最后一条独立消息追加（在 runner.py / web.py 中处理），
-    # snapshot 生成的 memory/projects/calendar/files/source 会作为固定前缀；
-    # 每轮只把 stance、摘要变化和当前时间放到 history 之后，保持缓存断点稳定。
+    # 时间由本轮 turn batch 追加；snapshot 生成的 memory/projects/calendar/files/source
+    # 作为固定前缀，避免每轮重新排列历史消息。
 
     if im_message_format == "compat":
         from agent.im.message_format import compatibility_prompt
@@ -220,18 +219,15 @@ def build_split(profile: str, user_name: str, projects: list, events: list,
     return static_text, dynamic_text, now_str
 
 
-def dynamic_tail(memory: dict | None = None) -> list[str]:
-    """生成每轮末尾的低频 stance；长期 summary 已由 snapshot 前置上下文承载。"""
+def stance_block(memory: dict | None = None) -> str:
+    """生成本轮姿态正文；是否追加由 turn batch 比较 session digest 决定。"""
     memory = memory or {}
-    parts: list[str] = []
     try:
         from agent import behaviors as _bh
         stance = _bh.render(_bh.select(memory.get("stance"), memory.get("stance_ts")))
     except Exception:
         stance = ""
-    if stance:
-        parts.append(stance)
-    return parts
+    return stance
 
 
 _SOURCE_NAME = {"qq": "QQ", "feishu": "飞书", "wechat": "微信", "web": "网页"}

@@ -15,7 +15,7 @@ from collections.abc import Awaitable, Callable
 
 from app.core.config import SandboxSettings
 
-from .docker_runtime import docker_environment, sandbox_root_label, valid_image_digest
+from .docker_runtime import docker_environment, sandbox_root_label, valid_egress_network_name, valid_egress_proxy, valid_image_digest
 from .local_executor import LocalWorkspaceExecutor, ShellResult
 from .quota import measure_directory
 
@@ -60,12 +60,21 @@ class DockerSandboxExecutor:
         # 复用本机执行器的相对路径和 symlink 约束；容器挂载后仍只暴露这个 root。
         return LocalWorkspaceExecutor(self.root)._resolve_cwd(cwd)
 
-    def build_argv(self, command: str, *, cwd: str = ".") -> list[str]:
+    def build_argv(self, command: str, *, cwd: str = ".", network_profile: str | None = None) -> list[str]:
         argv = LocalWorkspaceExecutor._parse_command(command)
         workdir = self._resolve_cwd(cwd)
         LocalWorkspaceExecutor(self.root)._validate_workspace_argv(argv, workdir)
-        if self.settings.network_profile != "none":
-            raise ValueError("当前 Shell 沙盒只允许断网模式")
+        profile = network_profile or self.settings.network_profile
+        if profile not in ("none", "egress"):
+            raise ValueError("当前 Shell 沙盒网络策略无效")
+        if profile == "egress":
+            if not valid_egress_proxy(self.settings.egress_proxy_url):
+                raise ValueError("egress 代理未配置")
+            if not self.settings.egress_isolation_enabled:
+                raise ValueError("受控 egress 网络尚未启用")
+            egress_network_name = getattr(self.settings, "egress_network_name", "")
+            if not valid_egress_network_name(egress_network_name):
+                raise ValueError("egress 网络名无效")
         relative_cwd = workdir.relative_to(self.root)
         container_cwd = _CONTAINER_ROOT / relative_cwd
         return [
@@ -76,7 +85,7 @@ class DockerSandboxExecutor:
             "--pull=never",
             "--label=com.gugu.sandbox=true",
             f"--label=com.gugu.sandbox.root-id={sandbox_root_label(str(self.root))}",
-            "--network=none",
+            f"--network={egress_network_name if profile == 'egress' else 'none'}",
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
@@ -94,6 +103,9 @@ class DockerSandboxExecutor:
             f"--workdir={container_cwd}",
             "--env=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "--env=LANG=C.UTF-8",
+            *([f"--env=HTTP_PROXY={self.settings.egress_proxy_url}",
+               f"--env=HTTPS_PROXY={self.settings.egress_proxy_url}",
+               "--env=NO_PROXY=127.0.0.1,localhost"] if profile == "egress" else []),
             self.image,
             *argv,
         ]
@@ -108,9 +120,10 @@ class DockerSandboxExecutor:
         authorization_check: Callable[[], Awaitable[bool]] | None = None,
         quota_root: str | Path | None = None,
         quota_bytes: int | None = None,
+        network_profile: str | None = None,
     ) -> ShellResult:
         workdir = self._resolve_cwd(cwd)
-        docker_argv = self.build_argv(command, cwd=cwd)
+        docker_argv = self.build_argv(command, cwd=cwd, network_profile=network_profile)
         timeout_value = max(0.1, min(float(timeout if timeout is not None else self.settings.timeout_seconds), _MAX_TIMEOUT))
         output_limit = max(1, min(int(max_output_chars if max_output_chars is not None else self.settings.output_limit_bytes), _MAX_OUTPUT))
 

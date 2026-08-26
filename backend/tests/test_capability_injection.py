@@ -10,6 +10,7 @@ from agent.tools.meta import _use_skill
 from agent.capabilities.diagnostics import capability_injection_diagnostics
 from agent.runtime.loopscope_trace.hooks import _skill_result_metadata
 from agent.runtime.loopscope_trace.hooks import _tool_names_from_schemas
+from agent.tools.tool_contract import invalid_input_payload
 
 
 def test_catalog_contains_short_descriptions_only():
@@ -23,6 +24,9 @@ def test_catalog_contains_short_descriptions_only():
     assert "联网查找资料" in block
     assert "input_schema" not in block
     assert "call_tool" in block
+    assert "get_tool_schema" in block
+    assert "只有没有对应 Schema 时才使用" in block
+    assert "权限和执行校验由代码完成" in block
 
 
 def test_catalog_truncates_long_description_to_keep_snapshot_compact():
@@ -136,4 +140,11 @@ def test_fixed_adapter_context_only_exposes_stable_provider_tools():
 
     context = build_fixed_adapter_context(["image_search"])
     assert context.fixed_adapter is True
-    assert context.select_for_messages([]).tool_names == ("call_tool", "use_skill", "ask_user")
+    assert context.select_for_messages([]).tool_names == ("call_tool", "get_tool_schema", "use_skill", "ask_user")
+
+
+def test_invalid_tool_input_requests_schema_recovery():
+    payload = invalid_input_payload("create_note", [{
+        "path": "blocks", "rule": "type", "message": "字段类型应为 array",
+    }])
+    assert payload["_schema_recovery"] == {"needed": True, "reason": "validation_error"}

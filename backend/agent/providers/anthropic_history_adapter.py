@@ -31,10 +31,10 @@ class AnthropicHistoryAdapter(ContextAdapter):
             elif block_type == "text":
                 if block.get("text"):
                     blocks.append({"type": "text", "text": str(block["text"])})
-            elif block_type in {"tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+            elif block_type in {"tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
                                 "quote", "attachment_ref", "transcript", "attachment_text",
                                 "interaction_request", "interaction_result"}:
-                text = event_text(block) if block_type.startswith("tool-") or block_type == "knowledge-context" else str(block.get("text") or block.get("title") or block)
+                text = event_text(block) if block_type.startswith("tool-") or block_type in {"knowledge-context", "stance-context", "time-context"} else str(block.get("text") or block.get("title") or block)
                 if text:
                     blocks.append({"type": "text", "text": text})
         if envelope.quote:

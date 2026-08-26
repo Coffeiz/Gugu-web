@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from agent.security import sanitize
 from agent import quota
-from agent.context import builder, loaders, tokens, session_snapshot, context_assembly as message_assembly, session_history, audit
+from agent.context import builder, loaders, tokens, session_snapshot, assembly, session_history, audit, run_context
 from agent.core import LLMRunner
 from agent.im.context_policy import IM_SOURCES, policy_for
 from agent.im.context_loader import load_context_data, load_platform_user_memory
@@ -28,7 +28,7 @@ from agent.im.session import (
     get_or_create_session,
     session_scope_filters,
 )
-from agent.llm.llm_select import pick_model, release as _release_model
+from agent.llm.llm_select import resolve_run_config, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -36,7 +36,7 @@ from agent.profiles import DefaultProfile
 _bg_tasks: set = set()
 
 
-async def _capability_context(tool_names, settings, *, db=None, owner_id=None):
+async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
     """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
     from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
     if db is None and owner_id is not None:
@@ -44,10 +44,23 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None):
         if _sess._engine is None:
             _sess._build_engine()
         async with _sess._SessionLocal() as capability_db:
-            return await build_fixed_adapter_context_for_user(tool_names, db=capability_db, owner_id=owner_id)
+            context = await build_fixed_adapter_context_for_user(
+                tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
+            )
+            if query:
+                await context.select_for_query(query)
+            return context
     if db is not None and owner_id is not None:
-        return await build_fixed_adapter_context_for_user(tool_names, db=db, owner_id=owner_id)
-    return build_fixed_adapter_context(tool_names)
+        context = await build_fixed_adapter_context_for_user(
+            tool_names, db=db, owner_id=owner_id, search_settings=settings,
+        )
+        if query:
+            await context.select_for_query(query)
+        return context
+    context = build_fixed_adapter_context(tool_names, search_settings=settings, owner_id=owner_id)
+    if query:
+        await context.select_for_query(query)
+    return context
 
 
 async def _filter_shell_tool(db, user_id, session_id: int | None, names: list[str], *, session=None) -> list[str]:
@@ -273,7 +286,8 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
-    model_cfg = pick_model(settings, req)   # 解析层：active/pool/router 选一个模型配置
+    run_config = resolve_run_config(settings, req)
+    model_cfg = run_config.model
     context_policy = policy_for(req)
     restricted_im = context_policy.restricted
     # 不强切 vision 模型：这轮 pick 到的模型看得了图就识图、看不了就当普通文件存（下面 resolve
@@ -282,9 +296,7 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
-    from app.models import (
-        AgentUsage, ConversationMessage, ConversationSession,
-    )
+    from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
         session_state = await get_or_create_session(db, req, user_id)
@@ -436,7 +448,7 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
     now_str = session_snapshot.current_time_text(user_tz)
-    dynamic_tail = builder.dynamic_tail(
+    stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
 
@@ -464,102 +476,57 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
         _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
-    from agent.llm.llm_select import use_anthropic_for
-    use_anthropic = use_anthropic_for(model_cfg)
+    use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
-    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id)
+    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id, query=aug_text)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 即使 LLM 在首轮失败，响应也要能安全走完错误收尾路径。
     im_used_tools = False
 
-    from app.core.chat_attach import build_user_content
     from agent.im.context_loader import format_current_content
-    from agent.context.history import build_history_parts
     current_llm_text = format_current_content(aug_text, req)
-    anthr_messages: list = []
-    anthr_initial_len = 0
-    oa_messages: list = []
-    oa_initial_len = 0
-    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection)
-    history_parts = build_history_parts(
-        history, req, use_anthropic=use_anthropic, user_tz=user_tz,
-        strip_thinking=strip_thinking)
-    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
-    if message_time:
-        history_parts.append(message_time)
-    from agent.rag.injection import build_automatic_rag_context
-    rag_context = await build_automatic_rag_context(
-        req, req.message, history=history, snapshot_text=snapshot_context,
+    prepared = await run_context.prepare_run(
+        system_prompt=system_prompt,
+        snapshot_context=snapshot_context,
+        history=history,
+        req=req,
+        user_tz=user_tz,
+        strip_thinking=strip_thinking,
+        use_anthropic=use_anthropic,
+        current_text=current_llm_text,
+        images=aug_images,
+        media=aug_media,
+        model_cfg=model_cfg,
+        stance_text=stance_text,
+        now_str=now_str,
+        snapshot_injection=_snapshot_injection,
+        extra_reminder="\n\n".join(_dynamic_extra_parts) if _dynamic_extra_parts else None,
+        user_message=user_message,
+        session=session,
+        snapshot=snapshot,
+        history_stats=history_stats,
     )
-    # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
-    tail_parts = []
-    if _ctx_injection:
-        tail_parts.append(_ctx_injection)
-    tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
-    tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
-    if use_anthropic:
-        assembly = message_assembly.assemble(
-            fixed_parts=fixed_parts, history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts,
-            conversation_tail=rag_context["tail"],
-            system_text=system_prompt,
-        )
-        # 清洗：去孤儿 tool_use/tool_result、空块、块里的 None 字段（MiniMax 严格校验，否则
-        # 历史里带非标字段/不配对工具块会报 `text is not set` 等）。**IM 路此前漏了这步，web 路一直有**。
-        sanitize_before_count = len(assembly.conversation)
-        fixed_boundary = assembly.fixed_prefix_size
-        merged_cross_segment = bool(
-            fixed_boundary > 0
-            and fixed_boundary < sanitize_before_count
-            and assembly.conversation[fixed_boundary - 1].get("role")
-            == assembly.conversation[fixed_boundary].get("role")
-        )
-        clean_conversation = sanitize.sanitize_messages(assembly.conversation)
-        merged_cross_segment = merged_cross_segment and len(clean_conversation) < sanitize_before_count
-        assembly.replace_conversation(clean_conversation)
-        sanitize_after_count = len(assembly.conversation)
-        anthr_messages = assembly
-        anthr_initial_len = len(assembly.conversation)
-        audit.context_layout_probe(
-            phase="assembled", session=session, snapshot=snapshot,
-            history=history, messages=assembly,
-            fixed_prefix_count=assembly.fixed_prefix_size,
-            dynamic_tail_count=len(assembly.dynamic_tail),
-            history_stats=history_stats,
-            sanitize_before_count=sanitize_before_count,
-            sanitize_after_count=sanitize_after_count,
-            merged_cross_segment=merged_cross_segment,
-        )
-        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id, session=session,
-                         on_interaction=on_interaction)
-    else:
-        oa_messages = message_assembly.assemble(
-            fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-            history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts,
-            conversation_tail=rag_context["tail"],
-            system_text=system_prompt,
-        )
-        oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
-        audit.context_layout_probe(
-            phase="assembled", session=session, snapshot=snapshot,
-            history=history, messages=oa_messages,
-            fixed_prefix_count=getattr(oa_messages, "fixed_prefix_size", None),
-            dynamic_tail_count=len(oa_messages.dynamic_tail) if hasattr(oa_messages, "dynamic_tail") else None,
-            history_stats=history_stats,
-        )
-        gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id, session=session,
-                         on_interaction=on_interaction)
+    anthr_messages = prepared.anthr_messages
+    anthr_initial_len = prepared.anthr_initial_len
+    oa_messages = prepared.oa_messages
+    oa_initial_len = prepared.oa_initial_len
+    rag_context = prepared.rag_context
+    gen = runner.run(
+        user_id,
+        system_prompt if use_anthropic else None,
+        anthr_messages if use_anthropic else oa_messages,
+        use_anthropic=use_anthropic,
+        model_cfg=model_cfg,
+        session_id=session_id,
+        session=session,
+        on_interaction=on_interaction,
+    )
 
     try:
         text, tin, tout, cache_read, cache_write, errored, sent_files, cancelled, meta = await _collect(
@@ -576,48 +543,44 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
         from agent.outbound import sanitize_outbound
         text = sanitize_outbound(text)
         text = sanitize.strip_disallowed_emoji(text)   # 出口兜底删白名单外 emoji（prompt 压不住）
+        round_texts = []
+        for round_text in meta.get("round_texts") or []:
+            cleaned = sanitize_outbound(round_text)
+            cleaned = sanitize.strip_disallowed_emoji(cleaned)
+            if cleaned.strip():
+                round_texts.append(cleaned)
+        meta["round_texts"] = round_texts
+
+    # IM/非流式生成也要保存逐轮展示时间线。canonical assistant.content 兼容旧历史，
+    # 但刷新回放必须依赖 display_timeline，否则多轮输出只剩最后一轮。
+    display_timeline = [
+        {"kind": "assistant", "text": round_text}
+        for round_text in (meta.get("round_texts") or [])
+        if str(round_text or "").strip()
+    ]
 
     # ── 持久化：工具调用轮次（anthropic）+ 回复 + 用量（报错不入历史）──
     if not errored:
-        async with _sess._SessionLocal() as db2:
-            # 两种 provider 都持久化同一套 canonical tool turn；守卫注入的合成 prompt
-            # /核实内心戏不会进入 canonical 结果。
-            for block in rag_context.get("blocks", []):
-                db2.add(ConversationMessage(
-                    session_id=session_id, role="user", content="",
-                    content_json=[block],
-                ))
-            tool_history = message_assembly.newly_appended(
-                anthr_messages if use_anthropic else oa_messages,
-                anthr_initial_len if use_anthropic else oa_initial_len,
-            )
-            from agent.context.history import canonicalize_tool_messages
-            for tm in canonicalize_tool_messages(tool_history):
-                db2.add(ConversationMessage(
-                    session_id=session_id, role=tm["role"], content="",
-                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                ))
-            if text or sent_files:
-                db2.add(ConversationMessage(session_id=session_id, role="assistant",
-                                            content=text, files=sent_files or None))
-            # 按 6h 剩余额度封顶本轮用量（精力条最多 100%，顶过线只记填满部分，超出不计 6h 与周）；已满则 (0,0) 不写
-            _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
-            if _cap_in or _cap_out:
-                db2.add(AgentUsage(
-                    user_id=user_id, session_id=session_id,
-                    tokens_in=_cap_in, tokens_out=_cap_out,
-                    cache_read=cache_read, cache_write=cache_write,
-                    model=model_cfg.model, provider=model_cfg.provider,
-                ))
-            await db2.commit()
-
-        from app.services.conversation_retention import trim_session_messages
-        await trim_session_messages(session_id)
-
-        from agent.context import compress_conv
-        compress_conv.schedule_baseline_update(
-            session_id, user_id, settings,
-            getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+        from agent.context.run_finalize import finalize_run
+        await finalize_run(
+            session_factory=_sess._SessionLocal,
+            session_id=session_id,
+            user_id=user_id,
+            settings=settings,
+            model_cfg=model_cfg,
+            rag_context=rag_context,
+            messages=anthr_messages if use_anthropic else oa_messages,
+            initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
+            stance_text=prepared.stance_to_persist,
+            user_message_id=getattr(user_message, "id", None),
+            text=text,
+            display_timeline=display_timeline or None,
+            files=sent_files,
+            tokens_in=tin,
+            tokens_out=tout,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            context_tokens=run_config.context_tokens,
             actual_usage_tokens=int(meta.get("context_input", tin) or 0),
             compaction_applied=bool(meta.get("compaction_applied", False)),
         )
@@ -634,9 +597,23 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
         # 网页就「先看到我发的、再看到回答」，而不是一轮结束一次性蹦出来）
         try:
             from app.core import events as _evmod
-            if text or sent_files:
+            assistant_rounds = [
+                {"role": "assistant", "text": round_text}
+                for round_text in (meta.get("round_texts") or [])
+                if str(round_text or "").strip()
+            ]
+            if not assistant_rounds and text:
+                assistant_rounds = [{"role": "assistant", "text": text}]
+            if assistant_rounds or sent_files:
+                appended = [
+                    {**item, "files": sent_files or None}
+                    if index == len(assistant_rounds) - 1 else item
+                    for index, item in enumerate(assistant_rounds)
+                ]
+                if not appended:
+                    appended = [{"role": "assistant", "text": "", "files": sent_files or None}]
                 await _evmod.publish(user_id, "sessions", session_id=session_id,
-                                     appended=[{"role": "assistant", "text": text, "files": sent_files or None}])
+                                     appended=appended)
             else:
                 await _evmod.publish(user_id, "sessions", session_id=session_id)  # 至少 bump 列表
         except Exception:
@@ -655,7 +632,7 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
                                     used_tools=im_used_tools, session_id=session_id,
                                     group_mode=bool(req.chat_id and req.source != "web"))
 
-    return AgentResponse(text=text, session_id=session_id, tokens_in=tin, tokens_out=tout,
+    return AgentResponse(text=text, round_texts=list(meta.get("round_texts") or []), session_id=session_id, tokens_in=tin, tokens_out=tout,
                          cache_read=cache_read, cache_write=cache_write,
                          files=sent_files, used_tools=im_used_tools,
                          interactions=meta.get("interactions", []),
@@ -708,16 +685,15 @@ async def _run_stream_unlocked(
     user_id = req.user_id
     profile = DefaultProfile()
     settings = get_settings()
-    model_cfg = pick_model(settings, req)
+    run_config = resolve_run_config(settings, req)
+    model_cfg = run_config.model
     context_policy = policy_for(req)
     restricted_im = context_policy.restricted
 
     import app.db.session as _sess
     if _sess._engine is None:
         _sess._build_engine()
-    from app.models import (
-        AgentUsage, ConversationMessage, ConversationSession,
-    )
+    from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
         session_state = await get_or_create_session(db, req, user_id)
@@ -851,7 +827,7 @@ async def _run_stream_unlocked(
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
     now_str = session_snapshot.current_time_text(user_tz)
-    dynamic_tail = builder.dynamic_tail(
+    stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
 
@@ -879,95 +855,57 @@ async def _run_stream_unlocked(
         _ctx_content = "\n\n".join(_dynamic_extra_parts)
         _ctx_injection = session_snapshot.reminder_message(_ctx_content)
 
-    from agent.llm.llm_select import use_anthropic_for
-    use_anthropic = use_anthropic_for(model_cfg)
+    use_anthropic = run_config.use_anthropic
     tool_names = filter_tool_names(profile.tool_names, req.allowed_tool_names)
     tool_names = await _filter_shell_tool(db, user_id, session_id, tool_names, session=session)
-    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id)
+    capability_context = await _capability_context(tool_names, settings, db=db, owner_id=user_id, query=aug_text)
     if capability_context is not None:
         from agent.capabilities.injector import catalog_block
         _snapshot_injection = session_snapshot.snapshot_message(
-            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
+            f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
         )
     runner = LLMRunner(tool_names, settings, capability_context=capability_context)
     # 流式 IM 失败时也会产出统一的 AgentResponse，不能依赖成功分支初始化。
     im_used_tools = False
 
-    from app.core.chat_attach import build_user_content
     from agent.im.context_loader import format_current_content
-    from agent.context.history import build_history_parts
     current_llm_text = format_current_content(aug_text, req)
-    anthr_messages: list = []
-    anthr_initial_len = 0
-    oa_messages: list = []
-    oa_initial_len = 0
-    fixed_parts = compress_conv.fixed_context_parts(_snapshot_injection)
-    history_parts = build_history_parts(
-        history, req, use_anthropic=use_anthropic, user_tz=user_tz,
-        strip_thinking=strip_thinking)
-    message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
-    if message_time:
-        history_parts.append(message_time)
-    from agent.rag.injection import build_automatic_rag_context
-    rag_context = await build_automatic_rag_context(
-        req, req.message, history=history, snapshot_text=snapshot_context,
+    prepared = await run_context.prepare_run(
+        system_prompt=system_prompt,
+        snapshot_context=snapshot_context,
+        history=history,
+        req=req,
+        user_tz=user_tz,
+        strip_thinking=strip_thinking,
+        use_anthropic=use_anthropic,
+        current_text=current_llm_text,
+        images=aug_images,
+        media=aug_media,
+        model_cfg=model_cfg,
+        stance_text=stance_text,
+        now_str=now_str,
+        snapshot_injection=_snapshot_injection,
+        extra_reminder="\n\n".join(_dynamic_extra_parts) if _dynamic_extra_parts else None,
+        user_message=user_message,
+        session=session,
+        snapshot=snapshot,
+        history_stats=history_stats,
     )
-    # RAG 会随本轮落库，放在当前用户消息之后的稳定 conversation 区域。
-    tail_parts = []
-    if _ctx_injection:
-        tail_parts.append(_ctx_injection)
-    tail_parts.extend(message_assembly.reminder(part) for part in dynamic_tail)
-    if use_anthropic:
-        tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
-        assembly = message_assembly.assemble(
-            fixed_parts=fixed_parts, history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, True, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"], system_text=system_prompt)
-        sanitize_before_count = len(assembly.conversation)
-        fixed_boundary = assembly.fixed_prefix_size
-        merged_cross_segment = bool(
-            fixed_boundary > 0
-            and fixed_boundary < sanitize_before_count
-            and assembly.conversation[fixed_boundary - 1].get("role")
-            == assembly.conversation[fixed_boundary].get("role")
-        )
-        clean_conversation = sanitize.sanitize_messages(assembly.conversation)
-        merged_cross_segment = merged_cross_segment and len(clean_conversation) < sanitize_before_count
-        assembly.replace_conversation(clean_conversation)
-        sanitize_after_count = len(assembly.conversation)
-        anthr_messages = assembly
-        anthr_initial_len = len(assembly.conversation)
-        audit.context_layout_probe(
-            phase="assembled", session=session, snapshot=snapshot,
-            history=history, messages=assembly,
-            fixed_prefix_count=assembly.fixed_prefix_size,
-            dynamic_tail_count=len(assembly.dynamic_tail),
-            history_stats=history_stats,
-            sanitize_before_count=sanitize_before_count,
-            sanitize_after_count=sanitize_after_count,
-            merged_cross_segment=merged_cross_segment,
-        )
-        gen = runner.run(user_id, system_prompt, anthr_messages, use_anthropic=True,
-                         model_cfg=model_cfg, session_id=session_id, session=session,
-                         on_interaction=on_interaction)
-    else:
-        tail_parts.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
-        oa_messages = message_assembly.assemble(
-            fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-            history=history_parts,
-            current_user={"role": "user", "content": build_user_content(current_llm_text, aug_images, False, media=aug_media, image_detail=getattr(model_cfg, "vision_detail", "auto"))},
-            dynamic_tail=tail_parts, conversation_tail=rag_context["tail"], system_text=system_prompt)
-        oa_initial_len = len(oa_messages.conversation) if hasattr(oa_messages, "conversation") else len(oa_messages)
-        audit.context_layout_probe(
-            phase="assembled", session=session, snapshot=snapshot,
-            history=history, messages=oa_messages,
-            fixed_prefix_count=getattr(oa_messages, "fixed_prefix_size", None),
-            dynamic_tail_count=len(oa_messages.dynamic_tail) if hasattr(oa_messages, "dynamic_tail") else None,
-            history_stats=history_stats,
-        )
-        gen = runner.run(user_id, None, oa_messages, use_anthropic=False,
-                         model_cfg=model_cfg, session_id=session_id, session=session,
-                         on_interaction=on_interaction)
+    anthr_messages = prepared.anthr_messages
+    anthr_initial_len = prepared.anthr_initial_len
+    oa_messages = prepared.oa_messages
+    oa_initial_len = prepared.oa_initial_len
+    rag_context = prepared.rag_context
+    gen = runner.run(
+        user_id,
+        system_prompt if use_anthropic else None,
+        anthr_messages if use_anthropic else oa_messages,
+        use_anthropic=use_anthropic,
+        model_cfg=model_cfg,
+        session_id=session_id,
+        session=session,
+        on_interaction=on_interaction,
+    )
 
 
     # ── 流式消费 generator（替代 _collect：逐字 yield + 末尾 yield final）──
@@ -1015,7 +953,7 @@ async def _run_stream_unlocked(
             elif t == "interaction_required":
                 interactions.append({
                     key: evt[key]
-                    for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id")
+                    for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id", "force_display")
                     if key in evt
                 })
             elif t == "_cancelled":
@@ -1054,41 +992,23 @@ async def _run_stream_unlocked(
 
     # 持久化（跟 run_collect 一致）：写入 db + schedule_title/summary/reflection/compress
     if not errored:
-        async with _sess._SessionLocal() as db2:
-            for block in rag_context.get("blocks", []):
-                db2.add(ConversationMessage(
-                    session_id=session_id, role="user", content="",
-                    content_json=[block],
-                ))
-            tool_history = message_assembly.newly_appended(
-                anthr_messages if use_anthropic else oa_messages,
-                anthr_initial_len if use_anthropic else oa_initial_len,
-            )
-            from agent.context.history import canonicalize_tool_messages
-            for tm in canonicalize_tool_messages(tool_history):
-                db2.add(ConversationMessage(
-                    session_id=session_id, role=tm["role"], content="",
-                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                ))
-            if text or files:
-                db2.add(ConversationMessage(session_id=session_id, role="assistant",
-                                            content=text, files=files or None))
-            _cap_in, _cap_out = await quota.cap_usage(db2, user_id, settings, tin, tout)
-            if _cap_in or _cap_out:
-                db2.add(AgentUsage(
-                    user_id=user_id, session_id=session_id,
-                    tokens_in=_cap_in, tokens_out=_cap_out,
-                    model=model_cfg.model, provider=model_cfg.provider,
-                ))
-            await db2.commit()
-
-        from app.services.conversation_retention import trim_session_messages
-        await trim_session_messages(session_id)
-
-        from agent.context import compress_conv
-        compress_conv.schedule_baseline_update(
-            session_id, user_id, settings,
-            getattr(model_cfg, "context_tokens", settings.ai.context_tokens),
+        from agent.context.run_finalize import finalize_run
+        await finalize_run(
+            session_factory=_sess._SessionLocal,
+            session_id=session_id,
+            user_id=user_id,
+            settings=settings,
+            model_cfg=model_cfg,
+            rag_context=rag_context,
+            messages=anthr_messages if use_anthropic else oa_messages,
+            initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
+            stance_text=prepared.stance_to_persist,
+            user_message_id=getattr(user_message, "id", None),
+            text=text,
+            files=files,
+            tokens_in=tin,
+            tokens_out=tout,
+            context_tokens=run_config.context_tokens,
             actual_usage_tokens=int(meta.get("context_input", tin) or 0),
             compaction_applied=bool(meta.get("compaction_applied", False)),
         )
@@ -1157,12 +1077,8 @@ async def _collect(
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
 
-    文本**按轮分段收集，只取最后一轮**：这条路径（run_collect/定时任务）不流式展示给
-    用户，工具调用之间模型说的过渡性旁白（"我先查一下""这条数据不对我再试试"）不该被当成
-    正文发出去——之前拼接所有轮次+简单去重，会把这些旁白原样推给用户（真实翻车案例：定时
-    任务查天气时反复重试，旁白被整段推送）。配合 builder._NON_STREAMING_BLOCK 提示模型把
-    完整答案收在最后一轮，这里只取 rounds[-1]（若为空则回退到最近一条非空轮次，不让用户
-    啥也没收到）。
+    文本按轮分段收集。兼容字段 ``text`` 仍取最后一轮；IM 展示层通过
+    meta.round_texts 逐条发送，避免把多个 round 合并成一条消息，空 round 不发送。
     """
     from agent import providers
     provider_adapter = providers.adapter_for(model_cfg) if model_cfg is not None else None
@@ -1220,7 +1136,7 @@ async def _collect(
             # token 只在当前事件中短暂存在，不能写入日志或历史；平台 adapter 负责决定是否展示。
             interactions.append({
                 key: evt[key]
-                for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id")
+                for key in ("prompt_id", "kind", "title", "body", "options", "expires_at", "round_id", "tool_call_id", "force_display")
                 if key in evt
             })
         elif t == "tool_done":
@@ -1235,7 +1151,8 @@ async def _collect(
             result = (detail, tin, tout, cache_read, cache_write, True, files, False)
             meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
                     "tool_events": tool_events, "compaction_applied": compaction_applied,
-                    "context_input": context_input}
+                    "context_input": context_input,
+                    "round_texts": [r.strip() for r in rounds if r.strip()]}
             return result + (meta,) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
@@ -1247,9 +1164,10 @@ async def _collect(
             text = r
             break
     result = (text, tin, tout, cache_read, cache_write, False, files, cancelled)
+    round_texts = [r.strip() for r in rounds if r.strip()]
     meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
             "tool_events": tool_events, "compaction_applied": compaction_applied,
-            "context_input": context_input}
+            "context_input": context_input, "round_texts": round_texts}
     return result + (meta,) if include_meta else result
 
 
@@ -1278,7 +1196,8 @@ async def _run_scheduled_once(
     minimal_context: bool = False,
 ):
     """执行一个非流式阶段；编排、重试和投递由 app.scheduled_tasks 负责。"""
-    model_cfg = pick_model(settings, None)
+    run_config = resolve_run_config(settings, None)
+    model_cfg = run_config.model
     try:
         import app.db.session as _sess
 
@@ -1316,9 +1235,7 @@ async def _run_scheduled_once(
         )
         system_prompt = static_prompt
 
-        from agent.llm.llm_select import use_anthropic_for
-
-        use_anthropic = use_anthropic_for(model_cfg)
+        use_anthropic = run_config.use_anthropic
         tool_names = (
             tool_names_override
             if tool_names_override is not None
@@ -1326,10 +1243,10 @@ async def _run_scheduled_once(
         )
         # 定时任务没有交互式 session workspace，不向模型暴露本机 Shell。
         tool_names = [name for name in tool_names if name != "shell"]
-        capability_context = await _capability_context(tool_names, settings, owner_id=user_id)
+        capability_context = await _capability_context(tool_names, settings, owner_id=user_id, query=prompt)
         if capability_context is not None:
             from agent.capabilities.injector import catalog_block
-            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot)}"
+            snapshot_context = f"{snapshot_context}\n\n{catalog_block(capability_context.snapshot, tool_order=capability_context.selection.tool_names)}"
         runner = LLMRunner(tool_names, settings, capability_context=capability_context)
 
         from app.core.chat_attach import build_user_content
@@ -1376,25 +1293,32 @@ def _build_scheduled_messages(system_prompt: str, snapshot_context: str,
     """scheduled 与 Web/IM 使用同样的动态上下文布局。"""
     fixed_parts = ([session_snapshot.snapshot_message(snapshot_context)]
                    if snapshot_context else [])
-    dynamic_tail = []
-    dynamic_tail.extend(message_assembly.reminder(part)
-                         for part in builder.dynamic_tail(memory))
-    dynamic_tail.append(session_snapshot.reminder_message(f"当前时间：{now_str}"))
+    stance_text = builder.stance_block(memory)
     if user_content is None:
         user_content = prompt
     if use_anthropic:
-        return message_assembly.assemble(
+        messages = assembly.assemble(
             fixed_parts=fixed_parts, history=[],
-            current_user={"role": "user", "content": user_content},
-            dynamic_tail=dynamic_tail,
             system_text=system_prompt,
         )
-    return message_assembly.assemble(
+        batch, _ = assembly.assemble_turn(
+            stance=stance_text,
+            current_user={"role": "user", "content": user_content},
+            now_text=now_str,
+        )
+        messages.append_batch(batch)
+        return messages
+    messages = assembly.assemble(
         fixed_parts=[{"role": "system", "content": system_prompt}] + fixed_parts,
-        history=[], current_user={"role": "user", "content": user_content},
-        dynamic_tail=dynamic_tail,
-        system_text=system_prompt,
+        history=[], system_text=system_prompt,
     )
+    batch, _ = assembly.assemble_turn(
+        stance=stance_text,
+        current_user={"role": "user", "content": user_content},
+        now_text=now_str,
+    )
+    messages.append_batch(batch)
+    return messages
 
 
 async def run_scheduled_execution(user_id, user_name: str, prompt: str):

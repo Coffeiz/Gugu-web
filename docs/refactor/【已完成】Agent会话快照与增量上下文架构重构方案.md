@@ -40,7 +40,7 @@ cache 统计永远不进入 LLM context。
 | `agent/context/builder.py` | `build_split()` 返回静态 system、动态文本、当前时间 | 动态业务数据每轮重新加载并重新序列化 |
 | `agent/runner.py` | `run_collect()` / `run_stream()` 各自组装一遍上下文 | Web/IM 两条路径存在重复编排逻辑 |
 | `agent/gateway/web.py` | Web 入口再次执行 loader、builder、reminder 组装 | 与 runner 的生命周期边界不统一 |
-| `agent/context/message_assembly.py` | 负责 reminder、当前消息和 system 注入包装 | 与 `session_snapshot` 通过统一快照生命周期协作 |
+| `agent/context/assembly/` | 负责 system、snapshot、history 与当前 turn batch 的统一组装 | 与 `session_snapshot` 通过统一快照生命周期协作 |
 | `agent/im/context_loader.py` | 每轮读取项目、日历、文件、记忆和渠道 | 不区分 session 初始化与普通 run |
 
 ### 2.2 历史消息与会话持久化

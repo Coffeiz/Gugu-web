@@ -202,7 +202,7 @@ def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[
             "volatile_image_present": volatile_index is not None,
             "volatile_image_first_index": volatile_index,
             "stable_message_count": stable_message_count,
-            "dynamic_tail_count": max(0, len(messages) - len(conversation)),
+            "turn_batch_count": 0,
             "stable_prefix_digest": _prompt_digest(conversation[:stable_message_count]),
             "tool_count": len(tools),
             "tool_schema_bytes": len(tool_json.encode("utf-8")),

@@ -21,7 +21,7 @@ from app.utils.romaji import is_romaji_query, romaji_match
 from app.core.config import get_settings
 from app.models import KnowledgeIndexEntry
 from agent.rag.persistent_store import search_persistent_index
-from agent.rag.rust_sidecar import RustSidecarUnavailable
+from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -370,8 +370,8 @@ async def _run_index_search(
                     db, user_id, " ".join(search_queries),
                     source_types={source}, limit=max(per_type * 3, per_type),
                 ))
-            except RustSidecarUnavailable:
-                # sidecar 未部署或临时不可用时，继续走同类型 ILIKE，避免全局搜索 500。
+            except TsSidecarUnavailable:
+                # 词法 worker 未部署或临时不可用时，继续走同类型 ILIKE，避免全局搜索 500。
                 ilike_types.add(source)
         # 一个业务对象可能有多个 chunk，只保留最高分 chunk，保持每类输出条数稳定。
         hit_ids: dict[str, list[str]] = {source: [] for source in ready_types}

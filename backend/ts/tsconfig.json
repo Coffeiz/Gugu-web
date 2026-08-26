@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": false,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "typeRoots": ["../../frontend/node_modules/@types"]
+  },
+  "include": [
+    "packages/**/*.ts",
+    "workers/**/*.ts"
+  ]
+}

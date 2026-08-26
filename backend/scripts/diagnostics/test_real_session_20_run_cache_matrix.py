@@ -262,7 +262,7 @@ async def call_openai(target: Target, system: str, messages: list[dict], tools: 
 
 
 async def run_target(target: Target, session, snapshot: dict, history: list, request, args) -> dict:
-    from agent.context import message_assembly, session_snapshot
+    from agent.context import assembly, session_snapshot
     from agent.context.history import build_history_parts
     from agent.llm.llm_select import use_anthropic_for
     from agent import providers
@@ -301,12 +301,15 @@ async def run_target(target: Target, session, snapshot: dict, history: list, req
     for run_index in range(1, args.runs + 1):
         label, prompt = SCENARIOS[run_index - 1]
         current_user = {"role": "user", "content": prompt}
-        tail = session_snapshot.reminder_message(f"诊断 {target.label} run {run_index} 的动态尾部")
-        prompt_messages = message_assembly.PromptMessages(
-            conversation + [current_user],
-            dynamic_tail=[tail],
+        prompt_messages = assembly.PromptMessages(
+            conversation,
             fixed_prefix_size=1 if snapshot_context else 0,
         )
+        turn_batch, _ = assembly.assemble_turn(
+            stance=f"诊断 {target.label} run {run_index} 的姿态",
+            current_user=current_user,
+        )
+        prompt_messages.append_batch(turn_batch)
         outbound = render_events_for_provider(prompt_messages)
         adapter = providers.adapter_for(target.ai)
         if ((target.anthropic or adapter.supports_explicit_cache(getattr(target.ai, "model", "") or ""))

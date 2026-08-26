@@ -67,12 +67,12 @@ def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
     assert any("conversation_messages.id >" in query for query in db.last_queries)
 
 
-def test_context_budget_reserves_fixed_context_and_dynamic_tail():
+def test_context_budget_reserves_fixed_context_and_turn_batch():
     full = ContextBudget.for_history(120_000)
     reserved = ContextBudget.for_history(
         120_000,
         fixed_prefix_text="系统提示" * 1000 + "群记忆" * 1000,
-        dynamic_tail_tokens=800,
+        turn_batch_tokens=800,
     )
     assert reserved.history_capacity_tokens < full.history_capacity_tokens
     assert reserved.history_capacity_tokens > 1

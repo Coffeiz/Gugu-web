@@ -1,6 +1,6 @@
 # RAG 召回评分、过滤与质量控制
 
-> 状态：Phase 0–6 已完成
+> 状态：Phase 0–6 已完成；评分正常路径已迁移至 TypeScript worker
 > 创建：2026-08-25
 > 最近更新：2026-08-25
 > 关联模块：`backend/agent/memory/`、`backend/agent/rag/`、`backend/agent/tools/search_memory.py`、`backend/agent/tools/global_search.py`
@@ -33,7 +33,7 @@ BM25 原始分、向量相似度和 `normalized_score` 的尺度不同，不能�
 
 目标是让无 embedding 时稳定使用 BM25，有 embedding 时使用 BM25 + 向量混合召回，并由统一 `confidence` 决定是否注入。该方案不替换 `global_search` 的精确对象搜索，也不改变工具授权边界。
 
-Phase 0–1 的现状结论：当前 BM25/Rust sidecar、LegacyBM25、向量缓存和 hybrid
+Phase 0–1 的历史结论：BM25/Rust sidecar、LegacyBM25、向量缓存和 hybrid
 仍保留各自的来源内分数；因此 Phase 0–1 先只把候选身份和权限边界统一，不把原始分数直接
 拿来跨来源比较；Phase 2–4 已在此基础上完成统一评分与质量控制。
 
@@ -123,7 +123,7 @@ confidence =
 
 最高分过低时返回空结果；第一名明显领先时优先只保留第一名；分数接近时允许多条，但受 Top-K 和预算限制。不得为了凑数量放宽阈值。
 
-实现位置：`scoring.filter_confidence()`。当前首版动态策略为“有 0.55 以上候选
+策略实现位置：`backend/ts/workers/rag/src/index.ts`；Python `scoring.py` 仅保留兼容诊断与测试。当前首版动态策略为“有 0.55 以上候选
 时只保留优先候选；否则在 0.35 以上候选中补位；低于 0.35 直接丢弃”。
 
 ### FR-RAG-06：去重、多样性与预算（✅ Phase 4）

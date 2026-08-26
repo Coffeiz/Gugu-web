@@ -8,6 +8,8 @@ COMMAND_HELP: dict[str, str] = {
     "stop": "/stop　停止当前任务；发送 /stop help 查看说明",
     "status": "/status　查看当前任务状态；发送 /status help 查看说明",
     "compact": "/compact　整理当前会话上下文；发送 /compact help 查看说明",
+    "goal": "/goal <目标>　创建目标任务；发送 /goal help 查看说明",
+    "unlimited": "/unlimited　开启或关闭当前会话的无限工具调用模式；发送 /unlimited help 查看说明",
     "new": "/new　清空当前对话上下文并开始新对话；发送 /new help 查看说明",
     "memory": "/memory　查看咕咕记住的内容；发送 /memory help 查看说明",
     "forget": "/forget <text>　忘记匹配的记忆；发送 /forget help 查看说明",
@@ -29,6 +31,17 @@ COMMAND_DETAILS: dict[str, str] = {
     "compact": (
         "立即整理当前会话的旧历史，不创建新会话。\n"
         "用法：/compact\n"
+        "无别名"
+    ),
+    "goal": (
+        "创建一个持续推进直到完成的目标任务。\n"
+        "用法：/goal <目标>、/goal status、/goal pause、/goal resume、/goal cancel\n"
+        "无别名"
+    ),
+    "unlimited": (
+        "切换当前会话的无限工具调用模式。开启后不受普通任务的工具调用次数限制，仍保留 /stop、"
+        "上下文预算和服务超时保护。\n"
+        "用法：/unlimited、/unlimited on、/unlimited off、/unlimited status\n"
         "无别名"
     ),
     "new": (
@@ -65,6 +78,8 @@ COMMAND_MENU: dict[str, tuple[str, str, str]] = {
     "stop": ("停止当前任务", "立即停止正在进行的任务", "/stop"),
     "status": ("查看进度", "查看当前任务状态", "/status"),
     "compact": ("整理上下文", "压缩当前会话的旧对话", "/compact"),
+    "goal": ("目标任务", "创建一个持续推进的目标", "/goal "),
+    "unlimited": ("解除工具限制", "解除当前任务的工具调用次数限制", "/unlimited"),
     "new": ("开启新对话", "清空当前对话上下文", "/new"),
     "memory": ("查看记忆", "查看咕咕记住的内容", "/memory"),
     "forget": ("忘记一条记忆", "输入要忘记的内容", "/forget "),
@@ -87,7 +102,7 @@ def is_help_arg(arg: str) -> bool:
 
 def all_help_text() -> str:
     lines = ["🤖 可用命令（确定性、立即生效）："]
-    lines.extend(COMMAND_HELP[name] for name in ("stop", "status", "compact", "new", "memory", "forget", "workspace", "help"))
+    lines.extend(COMMAND_HELP[name] for name in ("stop", "status", "compact", "goal", "unlimited", "new", "memory", "forget", "workspace", "help"))
     return "\n".join(lines)
 
 

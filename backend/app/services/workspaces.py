@@ -13,7 +13,7 @@ from app.core.ownership import get_owned
 from app.core.config import get_settings
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import compose_logical_path
-from agent.sandbox.quota import ensure_sandbox_root
+from app.services.storage.quota_ledger import ensure_user_storage_space, SHELL_PERSISTENT
 
 
 async def get_workspace(db: AsyncSession, user_id, workspace_id: int) -> Workspace | None:
@@ -129,6 +129,13 @@ async def effective_shell_dangerous_enabled(db: AsyncSession, user_id) -> bool:
     return bool(prefs and prefs.data.get("shell_dangerous_enabled", False))
 
 
+async def effective_shell_autopilot_enabled(db: AsyncSession, user_id) -> bool:
+    prefs = (await db.execute(
+        select(UserPreferences).where(UserPreferences.user_id == user_id)
+    )).scalar_one_or_none()
+    return bool(prefs and prefs.data.get("shell_autopilot_enabled", False))
+
+
 async def describe_session(db: AsyncSession, user_id, session_id: int) -> Workspace | None:
     session = await get_owned(db, ConversationSession, session_id, user_id)
     if session is None or session.workspace_id is None:
@@ -190,8 +197,15 @@ async def resolve_sandbox_root(db: AsyncSession, user_id) -> Path | None:
     settings = get_settings()
     if settings.storage.backend not in {"local", "oss"}:
         return None
-    root = (Path(settings.storage.local_path).resolve() / str(user_id) / "shell").resolve()
-    return ensure_sandbox_root(root)
+    if db is None:
+        # 纯路径解析测试/启动探测没有数据库上下文，不能伪造配额登记；正式
+        # Shell 请求始终传入 AsyncSession，并走统一账本初始化。
+        from agent.sandbox.quota import ensure_sandbox_root
+        root = (Path(settings.storage.local_path).resolve() / str(user_id) / "shell").resolve()
+        return ensure_sandbox_root(root)
+    rows = await ensure_user_storage_space(db, user_id)
+    row = next(item for item in rows if item.category == SHELL_PERSISTENT)
+    return Path(row.root_path).resolve()
 
 
 async def resolve_shell_root(db: AsyncSession, user_id, scope: str, workspace_id: int | None) -> Path | None:

@@ -439,7 +439,6 @@ class ConversationSession(Base):
     workspace_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
     )
-    shell_scope: Mapped[str] = mapped_column(String(20), default="off", server_default="off")
     # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
     context_epoch: Mapped[int] = mapped_column(Integer, default=1)
     session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
@@ -477,6 +476,8 @@ class ConversationMessage(Base):
     role:         Mapped[str]             = mapped_column(String(20))
     content:      Mapped[str]             = mapped_column(Text, default="")
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
+    # 实时展示时间线；canonical history 仍使用 content/content_json。
+    display_timeline: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
     # IM 引用/回复的原消息文字（仅 IM 来源的 user 消息可能有）；null=这条不是引用。
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
@@ -680,7 +681,7 @@ class KnowledgeIndexEntry(Base):
     """统一知识索引的持久化 chunk。
 
     业务表仍然是事实来源；这张表只保存可重建的检索投影。scope 字段与正文
-    同行保存，查询时先做 owner/scope 过滤，再进入 Rust lexical 或数据库 ILIKE 兼容路径。
+    同行保存，查询时先做 owner/scope 过滤，再进入 TypeScript lexical worker 或数据库 ILIKE 兼容路径。
     """
 
     __tablename__ = "knowledge_index_entries"
@@ -859,6 +860,50 @@ class StorageCategorySnapshot(Base):
     taken_at:     Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
     object_count: Mapped[int]      = mapped_column(Integer, default=0)
     total_bytes:  Mapped[int]      = mapped_column(BigInteger, default=0)
+
+
+# ── StorageQuotaLedger（用户存储配额统一账本）────────────────────────────────
+# ledger 保存当前事实，event 保存不可变的变更/校准审计；下载、构建和 Shell
+# 作为 operation 记录，不为每种业务动作复制一套配额算法。
+class StorageQuotaLedger(Base):
+    __tablename__ = "storage_quota_ledgers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", name="uq_storage_quota_user_category"),
+        Index("ix_storage_quota_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    root_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    initialized_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class StorageQuotaEvent(Base):
+    """配额账本的不可变审计事件；同一 idempotency_key 不重复计量。"""
+    __tablename__ = "storage_quota_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_storage_quota_event_idempotency"),
+        Index("ix_storage_quota_event_user_created", "user_id", "created_at"),
+        Index("ix_storage_quota_event_category_operation", "category", "operation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    operation: Mapped[str] = mapped_column(String(32), index=True)
+    delta_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 
 # ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────

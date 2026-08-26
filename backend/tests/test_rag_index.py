@@ -28,6 +28,24 @@ def test_invalidate_removes_all_chunks():
     assert index.documents() == []
 
 
+def test_index_invalidation_keeps_snapshot_baseline():
+    from agent.rag.index_cache import KnowledgeIndexCache, _Entry
+    import time
+
+    cache = KnowledgeIndexCache()
+    cache._entries[("user-a", "python", "all")] = _Entry(
+        object(), 1, "current", "python", time.monotonic(),
+    )
+    cache._entries[("user-a", "typescript", "shared:snapshot:7")] = _Entry(
+        object(), 1, "7", "typescript", time.monotonic(),
+    )
+
+    cache.invalidate("user-a")
+
+    assert ("user-a", "python", "all") not in cache._entries
+    assert ("user-a", "typescript", "shared:snapshot:7") in cache._entries
+
+
 @pytest.mark.asyncio
 async def test_persistent_memory_index_roundtrip(monkeypatch):
     from agent.rag.storage import PersistentMemoryIndex

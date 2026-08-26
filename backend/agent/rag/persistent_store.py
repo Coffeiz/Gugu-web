@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 
 from sqlalchemy import delete, select
 
@@ -153,38 +154,52 @@ async def search_persistent_index(
     limit: int = 10,
     diagnostics: dict[str, object] | None = None,
 ) -> list[RecallResult]:
-    """在持久化 chunk 上使用 Rust lexical index；权限先由 owner 收窄。"""
+    """在统一 lexical index 上查询持久化 chunk；权限先由 owner 收窄。"""
     requested_limit = max(1, min(int(limit), 50))
     types = sorted(source_types or {
         "memory", "project", "file", "note", "canvas", "calendar", "scheduled_task", "conversation",
     })
     from agent.rag.index_cache import get_index_cache
+    from agent.rag.context import get_snapshot_revision
 
     results = []
     cache_hits: list[bool] = []
     cache_miss_reasons: set[str] = set()
     engines: set[str] = set()
-    for source_type in types:
-        index_diagnostics: dict[str, object] = {}
-        index = await get_index_cache().get(
-            db, owner_user_id, source_type, scope, diagnostics=index_diagnostics,
-        )
-        if index_diagnostics.get("engine"):
-            engines.add(str(index_diagnostics["engine"]))
-        if "cache_hit" in index_diagnostics:
-            cache_hits.append(bool(index_diagnostics["cache_hit"]))
-        reason = index_diagnostics.get("cache_miss_reason")
-        if reason:
-            cache_miss_reasons.add(str(reason))
-        results.extend(await index.search(
-            query, limit=requested_limit, source_types={source_type}, scope=scope,
-        ))
+    index_diagnostics: dict[str, object] = {}
+    lookup_started = time.monotonic()
+    index = await get_index_cache().get(
+        db, owner_user_id, "all", scope, diagnostics=index_diagnostics,
+        baseline_revision=get_snapshot_revision() or None,
+    )
+    index_lookup_ms = int((time.monotonic() - lookup_started) * 1000)
+    if index_diagnostics.get("engine"):
+        engines.add(str(index_diagnostics["engine"]))
+    if "cache_hit" in index_diagnostics:
+        cache_hits.append(bool(index_diagnostics["cache_hit"]))
+    reason = index_diagnostics.get("cache_miss_reason")
+    if reason:
+        cache_miss_reasons.add(str(reason))
+    started = time.monotonic()
+    results.extend(await index.search(
+        query, limit=requested_limit, source_types=set(types), scope=scope,
+    ))
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
     if diagnostics is not None:
+        diagnostics["document_count"] = len(getattr(index, "documents", ()) or ())
         diagnostics["engine"] = next(iter(engines)) if len(engines) == 1 else "mixed"
         diagnostics["cache_hit"] = bool(cache_hits) and all(cache_hits)
         diagnostics["cache_entries"] = len(cache_hits)
+        if index_diagnostics.get("shared_index"):
+            diagnostics["shared_index"] = True
         diagnostics["cache_miss_reasons"] = ",".join(sorted(cache_miss_reasons))
+        sidecar_search_ms = int((time.monotonic() - started) * 1000)
+        diagnostics["index_lookup_ms"] = index_lookup_ms
+        diagnostics["sidecar_search_ms"] = sidecar_search_ms
+        diagnostics["search_ms"] = sidecar_search_ms
+        for key in ("index_build_ms", "sidecar_reused", "index_sync", "upsert_count", "delete_count"):
+            if key in index_diagnostics:
+                diagnostics[key] = index_diagnostics[key]
     return results[:requested_limit]
 
 

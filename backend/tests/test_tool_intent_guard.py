@@ -1,4 +1,8 @@
-from agent.security.core_guards import _could_be_tool_progress, _is_tool_progress_only
+from agent.security.core_guards import (
+    _could_be_tool_progress,
+    _is_tool_progress_only,
+    _looks_like_narration,
+)
 from agent.loop_drivers import RoundResult
 
 
@@ -19,3 +23,11 @@ def test_requires_tools_is_runtime_only_round_metadata():
 
     assert result.requires_tools is True
     assert "requires_tools" not in messages[0]
+
+
+def test_narration_guard_ignores_normal_conversation_looked_at_phrase():
+    assert not _looks_like_narration("收到，测试的事我看到了，你之前做过类似验证。")
+
+
+def test_narration_guard_keeps_object_context_for_read_claims():
+    assert _looks_like_narration("我看到了文件内容，正文已经整理好了。")

@@ -7,6 +7,7 @@ from agent.context.canonical_tool_history import (
     ToolSchemaEvent,
     append_event,
     canonical_event_stats,
+    tool_schema_event,
     render_events_for_provider,
     schema_digest,
 )
@@ -30,9 +31,11 @@ def test_canonical_events_render_as_text_without_provider_wire_blocks():
     append_event(messages, SkillSchemaEvent("image-analysis", ("image_search", "inspect_images")))
     rendered = render_events_for_provider(messages)
     assert rendered[0]["role"] == "user"
-    assert isinstance(rendered[0]["content"], str)
-    assert "canonical skill-schema" in rendered[0]["content"]
-    assert "tool_result" not in rendered[0]["content"]
+    assert isinstance(rendered[0]["content"], list)
+    assert rendered[0]["content"][0]["type"] == "text"
+    rendered_text = rendered[0]["content"][0]["text"]
+    assert "canonical skill-schema" in rendered_text
+    assert "tool_result" not in rendered_text
 
 
 def test_canonical_event_round_trips_through_persisted_history():
@@ -52,8 +55,34 @@ def test_canonical_event_round_trips_through_persisted_history():
     openai = build_history_parts([message], None, use_anthropic=False)
     anthropic = build_history_parts([message], None, use_anthropic=True)
     assert openai[0]["content"][0]["type"] == "tool-schema"
-    assert "weather" in render_events_for_provider(openai)[0]["content"]
+    assert "weather" in render_events_for_provider(openai)[0]["content"][0]["text"]
     assert anthropic[0]["content"][0]["type"] == "text"
+
+
+def test_time_reminders_round_trip_without_changing_provider_text():
+    original = [{
+        "role": "user",
+        "content": "[system-reminder]\n当前时间：2026-08-26（星期三）14:24\n[/system-reminder]",
+    }]
+
+    persisted = canonicalize_tool_messages(original)
+
+    assert persisted == [{
+        "role": "user",
+        "content": [{
+            "type": "time-context",
+            "text": original[0]["content"],
+        }],
+    }]
+    message = SimpleNamespace(
+        role="user", content="", content_json=persisted[0]["content"],
+        sent_at=None, chat_type=None, platform_user_id=None, platform_user_name=None,
+    )
+    restored = build_history_parts([message], None, use_anthropic=False)
+    assert render_events_for_provider(restored)[0]["content"] == [{
+        "type": "text",
+        "text": original[0]["content"],
+    }]
 
 
 def test_canonical_event_stats_are_aggregated_without_exposing_payloads():

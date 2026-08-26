@@ -16,6 +16,7 @@ from pathlib import Path
 from app.core.config import get_settings
 
 from .docker import DockerSandboxExecutor
+from .docker_runtime import docker_network_available, valid_egress_network_name
 from .protocol import ExecuteRequest, encode_response
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
@@ -70,6 +71,18 @@ class SandboxdServer:
                     self._active[request_id] = str(root)
                 try:
                     executor = DockerSandboxExecutor(root, get_settings().sandbox)
+                    if request.network_profile == "egress":
+                        sandbox_settings = get_settings().sandbox
+                        from .docker_runtime import valid_egress_proxy
+                        if not valid_egress_proxy(sandbox_settings.egress_proxy_url):
+                            raise ValueError("egress 需要配置受控 HTTP(S) 代理")
+                        if not sandbox_settings.egress_isolation_enabled:
+                            raise ValueError("受控 egress 网络尚未启用")
+                        egress_network_name = getattr(sandbox_settings, "egress_network_name", "")
+                        if not valid_egress_network_name(egress_network_name):
+                            raise ValueError("egress 网络名无效")
+                        if not docker_network_available(egress_network_name):
+                            raise ValueError("受控 egress Docker 网络不存在")
                     result = await executor.execute(
                         request.command,
                         cwd=request.cwd,
@@ -77,6 +90,7 @@ class SandboxdServer:
                         max_output_chars=request.max_output_chars,
                         quota_root=quota_root,
                         quota_bytes=request.quota_bytes,
+                        network_profile=request.network_profile,
                     )
                 finally:
                     async with self._active_lock:

@@ -10,7 +10,14 @@
 
 SHELL := /bin/bash
 .SILENT:
-.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev
+.PHONY: help start stop restart status logs fg foreground dev-web dev-worker deploy install uninstall update makeupdate migrate storage-migrate backup clean deps deps-dev rag-ts-build sandbox-acl-plan sandbox-acl-apply sandbox-acl-prepare compose-up
+
+# 沙盒 ACL 默认不自动修改宿主机权限；只有显式 SANDBOX_ACL=1 才执行。
+SANDBOX_ACL ?= 0
+ROOTLESS_USERS_ROOT ?= $(abspath ../Gugu-data/users)
+# sudo make 时 id -un 会变成 root；Rootless Docker 仍属于原登录用户。
+ROOTLESS_LOGIN ?= $(or $(RUN_USER),$(SUDO_USER),$(shell id -un))
+COMPOSE_FILE ?= ../docker-compose.yml
 
 # ── venv 路径自动检测 ───────────────────────────────────
 # 优先用 .venv，找不到退到 venv
@@ -27,17 +34,21 @@ help:        ## 显示帮助
 	@echo "常用：make start | stop | restart | status | logs | fg | dev-web | dev-worker | deploy | install"
 	@echo "开发：make dev-web（Web 热重载）| make deps-dev && make dev-worker（Worker 热重载）"
 	@echo "生产：make install 后 make start | stop | restart | status 自动管理并检查三个 systemd 服务"
+	@echo "沙盒：make sandbox-acl-plan；make install SANDBOX_ACL=1 显式初始化 Rootless ACL"
+	@echo "Compose：make compose-up；make compose-up SANDBOX_ACL=1 同时初始化 ACL 并开启 sandbox profile"
 	@echo "开发：GUGU_SERVICE_MODE=local make start | stop | restart | status 强制使用本地 PID 模式"
 	@echo "venv 路径：$(VENV_BIN)（自动检测）"
 
 # ── 生命周期 ─────────────────────────────────────────────
 start:       ## 后台启动
+	@$(MAKE) sandbox-acl-prepare
 	./start.sh start
 
 stop:        ## 停止
 	./start.sh stop
 
 restart:     ## 重启
+	@$(MAKE) sandbox-acl-prepare
 	./start.sh restart
 
 status:      ## 查状态 + 健康检查
@@ -87,6 +98,21 @@ deps-dev:    ## 装开发/测试依赖（包含 Worker 热重载 watcher）
 	@echo "  pip install -r requirements-dev.txt ..."
 	@$(VENV_BIN)/pip install -r requirements-dev.txt
 
+rag-ts-build: ## 构建固定的 TypeScript RAG worker 制品（不在运行时编译）
+	@cd ts && npm ci --omit=dev --include=optional --ignore-scripts --no-fund --no-audit
+	@cd ts && \
+	case "$$(uname -s):$$(uname -m)" in \
+		Linux:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-linux-x64-gnu@2.0.1 ;; \
+		Linux:aarch64|Linux:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-linux-arm64-gnu@2.0.1 ;; \
+		Darwin:x86_64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-x64@2.0.1 ;; \
+		Darwin:arm64) npm install --no-save --include=optional --ignore-scripts --no-fund --no-audit @node-rs/jieba@2.0.1 @node-rs/jieba-darwin-arm64@2.0.1 ;; \
+		esac
+	@../frontend/node_modules/.bin/esbuild ts/workers/rag/src/index.ts --platform=node --format=esm --bundle --banner:js='#!/usr/bin/env node' --external:@node-rs/jieba --external:@node-rs/jieba/* --outfile=bin/gugu-rag-ts-worker.mjs
+	@rm -rf bin/node_modules
+	@cp -R ts/node_modules bin/node_modules
+	@chmod 755 bin/gugu-rag-ts-worker.mjs
+	@node bin/gugu-rag-ts-worker.mjs --version
+
 update:      ## 装依赖 + 跑数据库和文件存储迁移（不用 git，适合 scp/rsync 部署）
 	@$(MAKE) deps
 	@$(MAKE) migrate
@@ -105,6 +131,33 @@ rootless-workspace-apply: ## 显式应用 Rootless Docker workspace ACL（需部
 		echo "ERROR: 请传入 ROOTLESS_WORKSPACE=/path/to/workspace"; exit 1; \
 	fi
 	@$(VENV_BIN)/python scripts/prepare_rootless_workspace.py "$(ROOTLESS_WORKSPACE)" $(if $(ROOTLESS_LOGIN),--login "$(ROOTLESS_LOGIN)",) --apply
+
+sandbox-acl-plan: ## 输出所有用户 Shell 目录的 Rootless ACL 计划（默认不修改权限）
+	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
+	@$(VENV_BIN)/python scripts/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)"
+
+sandbox-acl-apply: ## 显式应用所有用户 Shell 目录的 Rootless ACL（需部署权限）
+	@if [ "$(SANDBOX_ACL)" != "1" ]; then \
+		echo "ERROR: 权限初始化默认关闭；请使用 SANDBOX_ACL=1 make sandbox-acl-apply"; \
+		exit 1; \
+	fi
+	@if [ -z "$(VENV_BIN)" ]; then echo "ERROR: 未找到 venv，请先创建 .venv"; exit 1; fi
+	@$(VENV_BIN)/python scripts/prepare_rootless_users.py "$(ROOTLESS_USERS_ROOT)" --login "$(ROOTLESS_LOGIN)" --apply
+
+sandbox-acl-prepare: ## 按 SANDBOX_ACL 选择是否在启动前应用 ACL（默认跳过）
+	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
+		$(MAKE) sandbox-acl-apply SANDBOX_ACL=1 ROOTLESS_USERS_ROOT="$(ROOTLESS_USERS_ROOT)" ROOTLESS_LOGIN="$(ROOTLESS_LOGIN)"; \
+	elif [ "$(SANDBOX_ACL)" != "0" ]; then \
+		echo "ERROR: SANDBOX_ACL 只能是 0 或 1"; exit 1; \
+	fi
+
+compose-up: ## 启动 Compose；SANDBOX_ACL=1 时先初始化 ACL 并启用 sandbox profile
+	@$(MAKE) sandbox-acl-prepare
+	@if [ "$(SANDBOX_ACL)" = "1" ]; then \
+		docker compose -f "$(COMPOSE_FILE)" --profile sandbox up -d; \
+	else \
+		docker compose -f "$(COMPOSE_FILE)" up -d; \
+	fi
 
 storage-migrate:      ## 幂等迁移本地文件存储到同级 Gugu-data/users
 	@set -e; \
@@ -130,6 +183,7 @@ backup:      ## 备份数据库 + Gugu-data/users + override 配置
 
 # ── systemd ──────────────────────────────────────────────
 install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM supervisor）
+	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
 uninstall:   ## 卸载 systemd 服务（四个）

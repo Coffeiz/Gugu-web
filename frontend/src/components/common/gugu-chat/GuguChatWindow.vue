@@ -35,6 +35,10 @@
             :on-rename="(t) => onRenameSession(sessionId!, t)"
           />
           <span v-if="currentSessionWorkspaceName" class="chat-workspace-name">· {{ currentSessionWorkspaceName }}</span>
+          <span v-if="currentSessionGoalStatus" class="chat-goal-indicator" :class="`is-${currentSessionGoalStatus}`" :title="currentSessionGoalStatus === 'paused' ? '目标任务已暂停' : '目标任务进行中'">
+            <i :class="currentSessionGoalStatus === 'paused' ? 'ri-pause-circle-line' : 'ri-focus-3-line'" aria-hidden="true" />
+            {{ currentSessionGoalStatus === 'paused' ? '目标已暂停' : '目标进行中' }}
+          </span>
         </template>
         <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
         <span class="popup-status" :class="'is-' + presenceKind"
@@ -109,6 +113,8 @@ const props = defineProps<{
   isChatDragging: boolean
   currentSessionTitle: string
   currentSessionWorkspaceName: string | null
+  currentSessionGoalActive: boolean
+  currentSessionGoalStatus: 'active' | 'paused' | null
   sessionId: number | null
   presenceKind: string
   presenceText: string
@@ -251,6 +257,28 @@ defineExpose({
   color: var(--content-tertiary);
   font-size: 12px;
   font-weight: 500;
+}
+.chat-goal-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-width: 130px;
+  padding: 3px 7px;
+  border: 1px solid var(--action-primary);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--action-soft);
+  color: var(--action-primary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.chat-goal-indicator i { font-size: 13px; }
+.chat-goal-indicator.is-paused {
+  border-color: var(--border-subtle);
+  background: var(--surface-soft);
+  color: var(--content-secondary);
 }
 /* 让 im 状态 + 按钮组始终靠右，标题按内容收缩；不再用 flex: 1 撑大标题，避免把右侧元素挤变形 */
 .popup-status { margin-left: auto; }

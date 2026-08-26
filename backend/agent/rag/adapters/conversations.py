@@ -11,6 +11,8 @@ from app.models import ConversationMessage, ConversationSession
 from app.search.query import keyword_condition, keyword_score, normalize_queries
 from agent.rag.models import IndexDocument, Scope
 from agent.rag.retriever import RetrievalBatch
+from agent.rag.index_cache import search_documents_with_cache
+from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 
 class ConversationAdapter:
@@ -80,14 +82,24 @@ class ConversationAdapter:
                     "session_updated_at": session.updated_at.isoformat() if session.updated_at else None,
                 },
             ))
-        from agent.rag.legacy_lexical import LegacyBM25
-
-        results = LegacyBM25(documents).search(query, limit=candidate_limit)
+        search_metadata: dict[str, object] = {}
+        try:
+            results = await search_documents_with_cache(
+                self.user_id, documents, query, limit=candidate_limit,
+                source_types={"conversation"}, scope=query_scope,
+                diagnostics=search_metadata,
+            )
+        except TsSidecarUnavailable:
+            results = []
+            search_metadata["fallback"] = "lexical_worker_unavailable"
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(results),
             index_source="conversation-db",
             fallback_reason="embedding_not_indexed",
             candidate_count=len(documents),
-            metadata={"engine": "conversation-db-ilike"},
+            metadata={
+                "engine": str(search_metadata.get("engine") or "conversation-db"),
+                **{key: str(value) for key, value in search_metadata.items()},
+            },
         )

@@ -90,3 +90,38 @@ def test_local_sandbox_rejects_symlink_escape(tmp_path):
     sandbox = LocalWorkspaceExecutor(tmp_path)
     with pytest.raises(ValueError, match="超出 workspace"):
         asyncio.run(sandbox.execute("pwd", cwd="outside"))
+
+
+def test_local_sandbox_rejects_hardlink_to_outside_file(tmp_path):
+    outside = tmp_path.parent / "shell-hardlink-outside.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    hardlink = tmp_path / "inside-link.txt"
+    try:
+        hardlink.hardlink_to(outside)
+    except (NotImplementedError, OSError):
+        pytest.skip("当前平台不支持硬链接")
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    with pytest.raises(ValueError, match="硬链接"):
+        asyncio.run(sandbox.execute("cat inside-link.txt"))
+
+
+def test_local_sandbox_rejects_direct_file_symlink_to_outside(tmp_path):
+    outside = tmp_path.parent / "shell-file-link-outside.txt"
+    outside.write_text("outside secret", encoding="utf-8")
+    link = tmp_path / "inside-link.txt"
+    try:
+        link.symlink_to(outside)
+    except (NotImplementedError, OSError):
+        pytest.skip("当前平台不支持文件软链接")
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    with pytest.raises(ValueError, match="超出 workspace"):
+        asyncio.run(sandbox.execute("cat inside-link.txt"))
+
+
+def test_local_sandbox_allows_proc_word_but_not_proc_absolute_path(tmp_path):
+    sandbox = LocalWorkspaceExecutor(tmp_path)
+    created = asyncio.run(sandbox.execute("touch proc_test"))
+    assert created.ok
+    assert (tmp_path / "proc_test").is_file()
+    with pytest.raises(ValueError, match="绝对路径"):
+        asyncio.run(sandbox.execute("cat /proc/self/status"))

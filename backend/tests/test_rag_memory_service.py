@@ -3,19 +3,12 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _disable_persistent_index_in_service_tests(monkeypatch):
-    from agent.rag import service
+    from agent.rag.adapters.memory import MemoryAdapter
 
-    class EphemeralIndex:
-        def __init__(self, user_id):
-            self.user_id = user_id
+    async def owner_documents(self, *, scope):
+        return await self.build_documents(scope=scope), "owner-test"
 
-        async def load(self):
-            return None
-
-        async def replace(self, documents):
-            return None
-
-    monkeypatch.setattr(service, "PersistentMemoryIndex", EphemeralIndex)
+    monkeypatch.setattr(MemoryAdapter, "build_cached_owner_documents", owner_documents)
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,11 @@
+{
+  "name": "gugu-rag-ts-worker",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@node-rs/jieba": "2.0.1"
+  },
+  "scripts": {
+    "build": "esbuild src/index.ts --platform=node --format=esm --bundle --banner:js=\"#!/usr/bin/env node\" --outfile=../../bin/gugu-rag-ts-worker.mjs"
+  }
+}

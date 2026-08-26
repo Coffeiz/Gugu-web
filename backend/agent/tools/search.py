@@ -2,13 +2,13 @@
 
 - `web_search`：通用网页搜索，走自建 **SearXNG**（免费、快）。返回标题+链接+摘要，
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
-- `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
+- `deep_research`：按 Admin 选择的 Provider 查询外部资料。Tavily / You.com 返回研究答案；百度使用普通百度搜索并返回网页引用，适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
 - `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片以图搜图，返回相似候选。
   默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。
   真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
+成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research（Admin 选择的 Provider）。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
 sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
 是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
@@ -38,7 +38,6 @@ from app.services.search import (
 )
 from agent.tools.base import BaseSkill, Tool
 
-_TAVILY_URL = "https://api.tavily.com/search"
 _search_log = logging.getLogger("agent.search")
 
 # 每次模型工具循环独立计数，避免并发会话互相影响；单次调用仍最多读取 20 张。
@@ -51,9 +50,7 @@ def reset_image_inspection_budget() -> None:
     _url_inspection_count.set(0)
 
 _SEARCH_QUERY_DESCRIPTION = (
-    "搜索关键词。优先使用简短关键词组合，不要直接复制用户的完整问题或写成长句；"
-    "保留实体名、产品名、版本号、年份/日期和关键术语。精确文件名、报错文本、论文标题、"
-    "产品完整型号等本身是高价值检索词，应完整保留。"
+    "简短检索词；保留实体名、产品名、版本号、日期和关键术语，不要复制完整问题。"
 )
 
 
@@ -402,12 +399,18 @@ async def _inspect_images(db, user_id, args: dict):
     return response
 
 
-# ── deep_research：Tavily（深度、有配额）─────────────────────────────────────
+# ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
-    key = settings.search.tavily_api_key
+    provider = settings.search.deep_research_provider
+    keys = {
+        "tavily": settings.search.tavily_api_key,
+        "baidu": settings.search.deep_research_baidu_api_key,
+        "you": settings.search.deep_research_you_api_key,
+    }
+    key = keys.get(provider, "")
     if not key:
-        return json.dumps({"error": "管理员尚未配置深度研究（Tavily API Key）；普通查找可用 web_search"})
+        return json.dumps({"error": f"管理员尚未配置深度研究（{provider} API Key）；普通查找可用 web_search"})
 
     query = (args.get("query") or "").strip()
     if not query:
@@ -424,31 +427,20 @@ async def _deep_research(db, user_id, args: dict):
             return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找仍可用 web_search"})
 
     max_results = args.get("max_results") or settings.search.max_results
-    payload = {
-        "api_key": key,
-        "query": query,
-        "max_results": max_results,
-        "search_depth": args.get("depth", "basic"),
-        "include_answer": True,
-    }
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
-        ) as client:
-            resp = await client.post(_TAVILY_URL, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        from agent.tools.deep_research import run
+        data = await run(
+            provider, query, key,
+            max_results=max_results,
+            depth=args.get("depth", "basic"),
+        )
     except Exception as e:
         return json.dumps({"error": f"深度研究失败：{str(e)[:100]}"})
 
     # 记一次用量（成功才记，计入每日配额）
     await record_search_usage(db, user_id, query)
 
-    results = [
-        {"title": r.get("title"), "url": r.get("url"), "content": r.get("content")}
-        for r in (data.get("results") or [])
-    ]
-    return {"query": query, "answer": data.get("answer"), "results": results}
+    return data
 
 
 async def _resolve_similar_image(user_id, args: dict) -> tuple[bytes | None, str | None]:
@@ -609,12 +601,7 @@ class SearchSkill(BaseSkill):
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description=(
-                "通用网页搜索（自建 SearXNG，免费、快）：找官网 / 文档 / GitHub / 某个事实 / "
-                "新闻标题 / 下载地址等。返回标题+链接+摘要。**大多数联网查找都用这个**；"
-                "只有需要『读网页正文并总结 / 比较 / 研究 / 给引用』时才改用 deep_research。"
-                "查项目 / 文件 / 日历 / 客户等用户自己的数据请用对应工具，别用本工具。"
-            ),
+            description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -631,12 +618,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="image_search", label="图片搜索",
-            description=(
-                "统一图片搜索工具。mode=text 时按文字关键词找图/配图，走自建 SearXNG；"
-                "mode=image 时根据已有图片以图搜图（也称反向搜图），查找同款、相似图或相近风格，使用 attach_id 或 image_url，"
-                "走已配置的相似图服务。两种模式都只返回候选，不会自动读取或发送图片；需要视觉分析时再调用 inspect_images。"
-                "用户明确要看图/要一张图时，搜到后接着调用 files 技能的 send_file。"
-            ),
+            description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -659,12 +641,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="inspect_images", label="读取图片",
-            description=(
-                "读取 image_search 结果或历史消息附件并交给视觉模型分析。"
-                "搜索候选填写 result_id、img_src 或 image_url、title；"
-                "历史图片填写上下文中的 attach_id；"
-                "一次最多读取 20 张。"
-            ),
+            description="读取图片候选或历史附件并交给视觉模型分析；一次最多 20 张。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -697,12 +674,7 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="deep_research", label="深度研究",
-            description=(
-                "深度联网研究（Tavily，有每日次数配额）：需要**阅读网页正文并总结 / 比较 / "
-                "研究 / 给引用**时用——它会抓取并清洗正文、给出可直接用的内容与 answer。"
-                "普通『找个链接 / 查个事实 / 看新闻标题』用 web_search 就够，别用本工具。"
-                "SearXNG 没结果 / 超时时，也可用本工具兜底。"
-            ),
+            description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
             input_schema={
                 "type": "object",
                 "properties": {

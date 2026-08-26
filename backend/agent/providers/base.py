@@ -50,8 +50,12 @@ class ProviderAdapter:
         return self.capabilities(model).cache_mode == "active"
 
     def supports_explicit_cache(self, model: str = "") -> bool:
-        """该 provider 是否支持在 message content 上使用显式缓存锚点。"""
-        return False
+        """是否在 OpenAI-compatible 请求中尝试发送显式缓存锚点。
+
+        未声明专属拒绝行为的兼容端点默认忽略未知 content 字段，因此统一尝试
+        发送；真正的命中与计费仍以 provider 返回的 usage 为准。
+        """
+        return True
 
     def cache_capabilities(self, model: str = ""):
         """返回统一缓存能力描述，具体策略仍由现有驱动决定。"""

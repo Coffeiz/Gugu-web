@@ -709,7 +709,7 @@ async def dispatch_im_message(payload: dict):
     """
     from agent.security import logsafe
     from agent.runtime import trace
-    from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
+    from agent.im.replies import send_agent_response, send_text
 
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
@@ -834,6 +834,7 @@ async def dispatch_im_message(payload: dict):
         semantic_text,
         allow_leading_mention=False,
     )
+    goal_start, goal_text = _commands.is_goal_start(semantic_text)
     if command_name is not None:
         import app.db.session as _db_session
         from agent.im.session import get_or_create_session
@@ -853,10 +854,13 @@ async def dispatch_im_message(payload: dict):
         req.session_id,
         allow_leading_mention=False,
     )
-    if cmd_reply is not None:
+    if cmd_reply is not None and not goal_start:
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
         return None
+    if goal_start:
+        # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
+        req.message = f"请立即开始执行目标任务：{goal_text}"
 
     show_tool_interactions = await _should_show_tool_interactions(req.user_id)
     bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
@@ -876,10 +880,6 @@ async def dispatch_im_message(payload: dict):
         # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
         # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
         await stop_im_typing(activity)
-        # 流式消息必须先发送 DONE 帧；QQ 在 stream_messages 尚未结束时
-        # 不会可靠展示 Inline Keyboard。流式路径由回合结束后的统一分支发送。
-        if platform == "qq" and qq_private_streaming:
-            return
         try:
             await _send_interaction_prompts(payload, [interaction])
         except Exception as exc:
@@ -891,37 +891,15 @@ async def dispatch_im_message(payload: dict):
         if prompt_id is not None:
             shown_interaction_ids.add(int(prompt_id))
 
-    qq_private_streaming = False
-    if platform == "qq" and payload.get("chat_type") == "c2c":
-        from agent.im.message_format import resolve_private_streaming_enabled
-        qq_private_streaming = await resolve_private_streaming_enabled(route.bot_id)
-        # QQ 的私聊流消息在 ask_user/确认交互时会一直保持「发送中」，而
-        # Inline Keyboard 是另一条消息接口；部分 QQ 客户端在前一个 stream
-        # 未结束时不会展示键盘。启用交互提示时改走 collect，确保键盘可靠送达。
-        if qq_private_streaming and show_tool_interactions:
-            qq_private_streaming = False
+    # IM 统一按 round 收集并逐条发送。平台流式卡片只能原地替换同一条消息，
+    # 无法表达多个 round 的边界；这里统一走 collect，避免不同渠道出现合并/拆分差异。
     try:
-        if platform == "feishu":
-            token_iter = agent_loop.run_stream(
-                req,
-                on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
-            )
-            _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
-        elif qq_private_streaming:
-            token_iter = agent_loop.run_stream(
-                req,
-                on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
-            )
-            _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
-        else:
-            resp = await agent_loop.run_collect(
-                req,
-                on_interaction=_show_im_interaction,
-                on_tool_event=_show_tool_event,
-            )
-            reply_text = ""
+        resp = await agent_loop.run_collect(
+            req,
+            on_interaction=_show_im_interaction,
+            on_tool_event=_show_tool_event,
+        )
+        reply_text = ""
     except BaseException:
         trace.finish_run("error")
         raise
@@ -981,7 +959,7 @@ async def dispatch_im_message(payload: dict):
 
     # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
     show_interactions = show_tool_interactions
-    if resp.interactions and show_interactions:
+    if resp.interactions and (show_interactions or any(item.get("force_display") for item in resp.interactions)):
         pending_interactions = [
             item for item in resp.interactions
             if item.get("prompt_id") not in shown_interaction_ids
@@ -989,14 +967,9 @@ async def dispatch_im_message(payload: dict):
         if pending_interactions:
             await _send_interaction_prompts(payload, pending_interactions)
 
-    if platform == "qq" and qq_private_streaming and _stream_sent:
-        if resp.files:
-            from agent.im.files import send_files
-            file_result = await send_files(payload, resp.files)
-            if file_result.failed:
-                await send_text(payload, file_result.reason or "附件没有成功发出，你可以去网页或文件库查看。")
-    elif platform != "feishu" or resp.files:
-        reply_text = await send_agent_response(payload, resp)
+    # 非流式 IM（当前统一 round 出口）所有平台都走同一发送器；飞书不再
+    # 因为旧的流式卡片分支而跳过正文。
+    reply_text = await send_agent_response(payload, resp)
 
     if reply_text is None:
         # 生成成功不等于平台送达；避免把 QQ 400 等发送失败记录成成功回复。
@@ -1008,7 +981,15 @@ async def dispatch_im_message(payload: dict):
         )
         return resp
 
-    trace.finish_run("success", reply_text)
+    # IM 展示层按 round 分开发送，但 LoopScope 记录的是整个 run 的输出。
+    # 不能只传最后一个 reply_text，否则多工具轮次的前置回复会从 trace 中消失，
+    # 造成「Web 能看到、LoopScope 看不到」的观测差异。
+    trace_output = "\n\n".join(
+        str(text).strip()
+        for text in (resp.round_texts or [])
+        if str(text or "").strip()
+    ) or reply_text
+    trace.finish_run("success", trace_output)
     await finalize_im_response(platform, puid, False, reply_text)
     print(
         f"[im-loop] {platform} 回复(session={resp.session_id} trace={trace_id}) "

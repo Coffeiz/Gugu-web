@@ -10,17 +10,13 @@ def test_rendering_does_not_mutate_canonical_messages_or_lose_context_metadata()
     messages = build_messages(
         fixed_parts=[{"role": "system", "content": "固定"}],
         history=[],
-        current_user={
-            "role": "user",
-            "content": [{
+        current_batch=[{"role": "user", "content": [{
                 "type": "tool-schema",
                 "tool_name": "search",
                 "schema_version": 1,
                 "schema_digest": "abc",
                 "schema": {"name": "search"},
-            }],
-        },
-        dynamic_tail=[],
+            }]}],
     )
     original = list(messages)
     rendered = render_events_for_provider(messages)

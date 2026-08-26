@@ -1,6 +1,6 @@
 # 咕咕 · 后端现状总览
 
-> 最后更新：2026-08-23
+> 最后更新：2026-08-26
 >
 > 本文是代码盘点，不是目标架构或 PRD。涉及具体功能时，以当前 `backend/` 实现和测试为准；尚未完成的重构会在文末单列。
 
@@ -28,7 +28,13 @@
 
 ### 当前服务形态
 
-生产部署不是单一进程：`gugu-backend` 提供 FastAPI/uvicorn，`gugu-worker` 消费 Redis `im:inbound` 并执行 IM Agent，`gugu-supervisor` 按 `user_bots` 配置拉起 QQ/飞书/微信网关子进程。三者共享 PostgreSQL、Redis 和本地/OSS 存储，但职责不同。
+生产部署不是单一进程：`gugu-backend` 提供 FastAPI/uvicorn，`gugu-worker` 消费 Redis `im:inbound` 并执行 IM Agent，`gugu-supervisor` 按 `user_bots` 配置拉起 QQ/飞书/微信网关子进程；启用生产 Shell 沙盒时，`gugu-sandboxd` 独立承接 Rootless Docker 执行。三者共享 PostgreSQL、Redis 和本地/OSS 存储，但职责不同。
+
+### Shell 沙盒与临时公网出口
+
+普通用户的生产 Shell 请求必须经过 `sandboxd -> DockerSandboxExecutor`，Docker 不可用时不会回退到宿主机执行器。默认容器使用 `network=none`，只挂载对应用户的沙盒/工作区，使用固定 digest 镜像、非 root 用户、只读 rootfs 和资源限制。
+
+Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandbox-egress`。临时公网访问时，沙盒只加入这个内部网络并把 HTTP(S) 请求交给代理；代理连接默认网络访问公网，沙盒不能直接加入默认网络绕过代理。`sandboxd` 会在执行前检查代理、网络名、网络存在性和会话授权，Web/Worker 不持有 Docker socket。详细配置和运维步骤见 [`docs/ops/deploy.md`](../ops/deploy.md) 与 [Shell 沙盒 PRD](../product/PRD/PRD-SHELL-1-工作区Shell沙盒.md)。
 
 ### 本文边界
 
@@ -74,6 +80,7 @@ backend/
 │   ├── runtime/loopscope_trace/  # Agent run/round/span 旁路可观测性
 │   ├── memory/                   # 记忆系统（store / lens / reflection / compress）
 │   ├── context/                  # 上下文构建、token 预算、对话压缩
+│   ├── sandbox/                  # Rootless Docker sandboxd、执行器、网络与配额边界
 │   ├── gateway/                 # web / qq / wechat / supervisor 等渠道适配器
 │   └── tools/                    # Skill 化工具注册（含 call_tool/use_skill 元工具）
 └── app/
@@ -182,7 +189,7 @@ backend/
 | 表 | 用途 |
 |------|------|
 | `AgentUsage` | 每次 Agent 调用记一行：`tokens_in/out`、`model`、`provider`、`tools_used`（JSON），配额统计用 |
-| `SearchUsage` | 深度研究（Tavily）用量计数，`web_search`（自建 SearXNG）不计配额 |
+| `SearchUsage` | 深度研究 Provider 用量计数，`web_search`（自建 SearXNG）不计配额 |
 | `UserBot` | 用户自带 IM 机器人凭据（BYO），目前用于 QQ（`platform=qq`） |
 | `AuditLog` | 管理员操作审计 |
 | `SystemLog` | 系统级错误/警告日志 |
@@ -197,7 +204,7 @@ backend/
 
 ### 2.4 自动迁移
 
-不使用 Alembic。服务启动由 `session.py` 的 `create_all_tables()` 建表，并在 PostgreSQL advisory lock 下顺序执行 `_MIGRATIONS`（当前 8 条，包含 `ADD COLUMN IF NOT EXISTS`、索引和历史数据修复）。迁移是启动时幂等执行，不是独立版本表；新增字段或数据修复必须追加迁移 SQL，并为已有数据库验证。
+数据库迁移由 deploy/migrate 步骤统一执行 Alembic；生产 systemd 的多 worker 启动不会再执行 DDL。`create_all_tables()` 仅保留给单进程本地初始化（`GUGU_STARTUP_MIGRATIONS=1`），并在 PostgreSQL advisory lock 下顺序执行 `_MIGRATIONS`。这样避免启动期 `ALTER TABLE` 与业务查询并发形成死锁；生产新增字段或数据修复必须先完成迁移再重启服务。
 
 ### 2.5 API 端点
 
@@ -259,7 +266,7 @@ GET    /api/v1/admin/config
 PATCH  /api/v1/admin/config                    热更新，写入 config.override.json，无需重启
 POST   /api/v1/admin/config/init-db
 POST   /api/v1/admin/config/test-connection    测试 DB / OSS 连通性
-POST   /api/v1/admin/config/test-search        测试 SearXNG / Tavily
+POST   /api/v1/admin/config/test-search        测试 SearXNG / 深度研究 Provider / 相似图搜索
 POST   /api/v1/admin/config/test-smtp
 GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只读），见 storage.md §十
 POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
@@ -316,7 +323,7 @@ canonical tool history / interaction event / output
 | `agent` | Agent 行为：记忆开关、Reflection 阈值、worker 并发数、对话压缩开关等 |
 | `capabilities` / Agent 配置 | Tool/Skill 注册、按需能力、交互展示、模型与本地能力覆盖等 Admin 配置 |
 | `quota` | 全局默认配额上限（Token / 存储 / 搜索次数），None=不限 |
-| `search` | Tavily API Key（深度研究）+ SearXNG 地址与引擎列表 |
+| `search` | 外部研究/搜索 Provider 与 API Key + SearXNG 地址与引擎列表；百度 Provider 使用普通百度搜索 API |
 | `smtp` | 邮件发送配置（反馈通知、密码重置） |
 | `state_labels` | 对话中"状态指示"文案的自定义覆盖 |
 
@@ -334,7 +341,7 @@ canonical tool history / interaction event / output
 
 ### 2.9 启动流程（lifespan）
 
-1. `create_all_tables()` 建表（`DB_STARTUP_TIMEOUT` 环境变量控制超时，默认 5s，超时后跳过并后台重试）
+1. 生产部署先执行 `make migrate`，再重启 web/worker；本地单进程可用 `GUGU_STARTUP_MIGRATIONS=1` 启用启动初始化。生产服务默认设置为 `GUGU_STARTUP_MIGRATIONS=0`，不会在业务流量启动时执行 DDL。
 2. 清理旧 JPEG 缩略图缓存（历史遗留，迁移到 WebP 后的清理逻辑）
 3. 启动 `_auto_cleanup_loop()`：每小时清理过期回收站文件 + 每 24 小时驱逐冷缩略图（TTL 30 天）
 4. 启动 `_db_retry_loop()`：DB 不可达时每 30 秒重试建表，连上即建表退出
@@ -432,7 +439,7 @@ pytest -q
 
 - 数据库仍采用启动时幂等迁移，没有 Alembic 版本历史；复杂结构变更需要单独设计可回滚脚本。
 - `snapshot_hash` 当前主要用于 checkpoint/trace 标识，尚未完全覆盖所有 snapshot 输入的内容哈希；正确性依靠 snapshot payload、TTL 和 context revision。
-- 旧 `declare_tools` 动态注册路径已删除；OpenAI/Anthropic 的历史 wire format 仍由 history adapter 兼容转换。
+- 工具能力通过固定 Adapter 暴露；模型需要业务工具定义时调用 `get_tool_schema`，OpenAI/Anthropic 的历史 wire format 仍由 history adapter 兼容转换。
 - canonical history 已覆盖工具调用、工具结果、Tool/Skill schema 事件，并使用 `ToolCall`/`ToolResult` 领域对象统一归一；LoopScope 展示 canonical event、Schema digest 和 Adapter 统计。
-- RAG 的统一索引、切片和召回仍以 `PRD-RAG-1-统一知识召回与索引.md` 的实施状态为准，不能从当前 Agent 工具注册状态推断 RAG 已完成。
+- RAG 的统一索引、切片和召回以 `PRD-RAG-1-统一知识召回与索引.md`、`PRD-RAG-6-TypeScript词法检索与评分过滤直接替换.md` 为准；当前词法索引与 confidence/filter 正常路径由固定 Node TypeScript worker 执行，Python 负责权限、业务文档和正文回填；历史 Rust 实现不再进入运行时回退。
 - 配额模型字段和 onboarding 路由已经存在，但计费窗口、运营规则和完整协议仍应维护在专题文档，不在本总览中重复展开。

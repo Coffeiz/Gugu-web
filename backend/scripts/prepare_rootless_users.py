@@ -11,6 +11,12 @@ import os
 import sys
 from pathlib import Path
 
+# 该脚本由 Makefile 直接以 scripts/xxx.py 启动，此时 Python 默认只把
+# scripts/ 放入 sys.path；显式加入 backend 根目录，保证 sudo make 也能导入 agent。
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from agent.sandbox.rootless_permissions import apply_permission_plan, default_permission_plan
 
 

@@ -1,6 +1,6 @@
 # 持久化检索索引与搜索加速
 
-> 状态：Phase 4 已完成首版灰度接入；数据库 chunk 持久化、BM25 倒排索引与 Global Search 后端切换已落地。Global Search 默认仍使用 ILIKE；词法召回后端默认使用 Rust，Python BM25 可由 Admin 切换。
+> 状态：Phase 4 已完成首版灰度接入；数据库 chunk 持久化、BM25 倒排索引与 Global Search 后端切换已落地。Global Search 默认仍使用 ILIKE；RAG 词法召回当前固定使用 TypeScript BM25 worker。Rust/Python 仅保留在历史评估记录中。
 > 本文只描述索引存储、检索实现和性能优化，不替代 `PRD-RAG-1-统一知识召回与索引` 的 RAG 业务协议。
 
 ## 1. 背景与问题
@@ -9,7 +9,7 @@
 `knowledge_index_entries`。但查询时仍然会：
 
 1. 从数据库读取当前用户的全部 chunk；
-2. 在 Python 中重新分词并构建 BM25；
+2. 在业务进程中重新分词并构建 BM25；
 3. 执行本次查询；
 4. 丢弃本次构建的 BM25 结构。
 
@@ -86,7 +86,7 @@ Global Search / Knowledge Retriever
 
 - 存储在进程内并由版本变化触发重建；或
 - 存储为本地可恢复索引文件；或
-- 由 PostgreSQL/Rust 搜索引擎维护。
+- 由 PostgreSQL 或独立词法 worker 维护。
 
 具体实现必须保持同一个 `IndexDocument` 和 `IndexEntry` 契约，避免不同搜索后端产生不同权限和结果语义。
 
@@ -117,11 +117,11 @@ Global Search / Knowledge Retriever
 
 风险：默认 FTS 对中文分词和 BM25 语义不一定满足要求；扩展依赖需要纳入部署检查；与当前中文 BM25 的结果不可直接假设等价。
 
-### 5.3 方案 C：Rust/Tantivy 独立索引
+### 5.3 方案 C：独立词法索引 worker（历史方案）
 
 仅在数据规模或并发达到阈值后评估：
 
-- Rust 负责 tokenizer、倒排索引、BM25 和增量提交；
+- 独立词法 worker 负责 tokenizer、倒排索引、BM25 和增量提交；
 - Gugu-web 通过本地库、进程协议或独立服务调用；
 - 数据库仍作为可重建的 canonical chunk 来源。
 
@@ -159,11 +159,11 @@ Global Search / Knowledge Retriever
 
 状态：✅ 已完成
 
-- 按 owner/backend/index revision 缓存倒排结构；同一 owner 的 Rust 与 Python 后端不会复用彼此的缓存对象；
+- 按 owner/backend/index revision 缓存倒排结构；不同词法后端不会复用彼此的缓存对象；
 - 同一进程内查询不重复加载和构建；
 - 已接入 `RagIndexUpdated` 的 source 事件触发对应缓存失效；
 - 进程重启后从 `knowledge_index_entries` 恢复；
-- Rust 与 Python 共享同一套缓存生命周期：单用户累计上限 `32MB`，全局缓存上限 `512MB`；缓存条目可以是统一 owner 索引，也可以是带 fingerprint 的 transient 来源索引；
+- 词法后端共享同一套缓存生命周期：单用户累计上限 `32MB`，全局缓存上限 `512MB`；缓存条目可以是统一 owner 索引，也可以是带 fingerprint 的 transient 来源索引；
 - 空闲 `30 分钟`后卸载，超过上限按 LRU 淘汰；
 - 通过 `indexed_at` revision 检查其他 worker 的索引变更；
 - 已记录索引估算内存和热查询指标；
@@ -196,7 +196,7 @@ Global Search / Knowledge Retriever
 
 ### Phase 4：Global Search 灰度接入
 
-状态：✅ 已完成首版灰度；Global Search 默认使用 ILIKE，Admin 可开启持久化索引进行灰度验证；持久化词法索引内部默认使用 Rust，Python 可切换。
+状态：✅ 已完成首版灰度；Global Search 默认使用 ILIKE，Admin 可开启持久化索引进行灰度验证；RAG 词法索引固定使用 TypeScript worker。
 
 实现范围：
 
@@ -218,7 +218,7 @@ Phase 4 TODO / 验收：
 - [ ] 在召回重叠率和 P95 达到质量门槛后再切换默认路径；
 - [ ] 通过验收后再决定是否扩展文件夹、客户、日程和对话来源。
 
-### Phase 5：Rust/Tantivy 检索引擎构建
+### Phase 5：词法检索引擎评估（历史记录）
 
 状态：✅ Phase 5 Spike/sidecar 第一版完成，生产灰度待同机端到端验收。
 
@@ -226,15 +226,15 @@ Phase 4 TODO / 验收：
 
 评估报告：[`TEST-RAG-Phase5-Rust-Tantivy评估-2026-08-24.md`](../../reports/TEST-RAG-Phase5-Rust-Tantivy评估-2026-08-24.md)
 
-结论：独立 Rust BM25 原型已完成算法级对照，Tantivy JSONL sidecar 第一版也已完成。在 4,063 个真实 chunk 上，Rust 倒排核心的建索引和热查询均明显快于 Python BM25。当前运行时已经让 Rust 与 Python 共用 owner 级 TTL/LRU/预算缓存，Admin 可按后端切换；Rust 继续作为默认词法后端，Python 保留为可验证的兼容路径。
+结论：独立 Rust BM25 原型和 Tantivy sidecar 曾完成算法级对照，但该方案已被后续 TypeScript worker 迁移取代。当前运行时固定使用 TypeScript BM25 worker，不再通过 Admin 在 Rust/Python 之间切换。
 
 实施边界：
 
-1. Rust/Tantivy 只负责分词后的倒排索引、BM25、revision 和候选 ID/score；
+1. TypeScript worker 只负责分词后的倒排索引、BM25、revision 和候选 ID/score；
 2. Python 负责 owner/scope 权限、业务表回查、展示字段和最终 API 响应；
 3. 数据库事务成功后再投影索引，按 revision 批量提交；
-4. sidecar 不可用、revision 不一致、超时或协议错误时回退 ILIKE；
-5. 首阶段保留 Admin 的 Rust/Python 词法后端开关；Rust sidecar 不可用时按既有错误边界回退兼容路径，不改变缓存预算和 TTL 语义。
+4. worker 不可用、revision 不一致、超时或协议错误时回退 ILIKE；
+5. 当前不保留 Rust/Python 词法后端切换；缓存预算和 TTL 语义对 TypeScript worker 固定生效。
 
 已完成文件：
 

@@ -365,6 +365,7 @@ async def _web_download(db, user_id, args: dict):
             ext=ext,
             mime_type=content_type,
             data=data,
+            ledger_operation="web_download",
         )
         await db.commit()
     except Exception as e:
@@ -392,14 +393,7 @@ class WebSkill(BaseSkill):
         Tool(
             name="http_get",
             label="联网取数 / 读网页",
-            description="对一个或多个 URL 发 GET 请求（仅公网、不跟随重定向）。网页（text/html）自动提取正文转 "
-                        "markdown（去导航/广告/JS 噪音，带内联链接——想接着读某条链接就再调一次 http_get 传"
-                        "那个 URL，不用重新搜）；传 urls 数组时会并行获取多个 URL，并按输入顺序返回结果。"
-                        "PDF 自动提取文字；其它（JSON/纯文本等）原样返回，内容截断。"
-                        "读不出正文（返回 error 提示可能是 JS 渲染页面）就换 web_search/deep_research。"
-                        "也供天气等技能取实时数据用——通常由 use_skill 拉到的技能说明里指示你调用。"
-                        "返回 truncated=true 且 total_chars 远大于已返回长度时，可用 max_chars 参数"
-                        "请求更多内容（上限 40000）。",
+            description="读取公网 URL；HTML/PDF 提取正文，可并行多个 URL，不跟随重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -424,12 +418,7 @@ class WebSkill(BaseSkill):
         Tool(
             name="web_download",
             label="下载到文件库",
-            description="仅当用户提供了明确的公网 URL，并明确要求下载、保存或导入时调用。用户只是询问工具是否存在、"
-                        "查看用法或没有提供 URL 时不要调用，应先向用户索要 URL；不要用空参数试探。只读网页内容用 http_get，"
-                        "向聊天发送已有文件用 send_file。默认保存到个人空间根目录；可用 space/project_id/folder_id 指定落点，"
-                        "folder_id 会自动决定所属空间和项目。不跟随重定向，只允许公网地址，单文件最大 50MB。"
-                        "成功回执会返回真实 file_id；用户询问位置、路径、打开或查看时，回复使用"
-                        "[文件名](gugu://open-file/{file_id}) 生成文件库跳转按钮，不要调用 send_file 代替跳转。",
+            description="按用户提供的公网 URL 下载或导入文件；不用于读取网页或发送已有文件。",
             input_schema={
                 "type": "object",
                 "properties": {

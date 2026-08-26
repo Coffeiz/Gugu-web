@@ -31,10 +31,12 @@ def _to_response(data: dict) -> PreferencesResponse:
         replyTone=data.get("reply_tone"),
         replyLength=data.get("reply_length"),
         pmStagesExpanded=data.get("pm_stages_expanded", False),
+        calendarWeekStart=data.get("calendar_week_start", "monday") if data.get("calendar_week_start", "monday") in {"monday", "sunday"} else "monday",
         defaultView=data.get("default_view", "projects") if data.get("default_view", "projects") in _DEFAULT_VIEWS else "projects",
         shellEnabled=bool(data.get("shell_enabled", False)),
         shellSystemEnabled=bool(data.get("shell_system_enabled", False)),
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", False)),
+        shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
     )
 
@@ -76,6 +78,8 @@ async def update_preferences(
             data["reply_length"] = body.replyLength
     if body.pmStagesExpanded is not None:
         data["pm_stages_expanded"] = body.pmStagesExpanded
+    if body.calendarWeekStart is not None and body.calendarWeekStart in {"monday", "sunday"}:
+        data["calendar_week_start"] = body.calendarWeekStart
     if body.defaultView is not None and body.defaultView in _DEFAULT_VIEWS:
         data["default_view"] = body.defaultView
     if body.shellEnabled is not None:
@@ -84,6 +88,8 @@ async def update_preferences(
         data["shell_system_enabled"] = body.shellSystemEnabled
     if body.shellDangerousEnabled is not None:
         data["shell_dangerous_enabled"] = body.shellDangerousEnabled
+    if body.shellAutopilotEnabled is not None:
+        data["shell_autopilot_enabled"] = body.shellAutopilotEnabled
     if body.showToolInteractions is not None:
         data["show_tool_interactions"] = body.showToolInteractions
     prefs.data = data

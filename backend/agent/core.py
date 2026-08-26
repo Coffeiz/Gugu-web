@@ -60,6 +60,32 @@ def _resolve_adapter_arguments(tool_input: Any) -> dict[str, Any]:
     return {key: value for key, value in tool_input.items() if key != "name"}
 
 
+def _inject_pending_confirmation(tool_input: Any, adapter_target: str | None,
+                                 confirmation: dict[str, Any] | None) -> tuple[Any, bool]:
+    """把刚确认的凭证续接到同名工具的一次调用中。
+
+    返回 ``(参数, 是否消费凭证)``。确认续接集中在这里，避免 direct tool 与
+    ``call_tool`` 两条 dispatch 分支各自维护一套容易漂移的安全判断。
+    """
+    if not confirmation or not confirmation.get("confirm_token"):
+        return tool_input, False
+
+    original = _resolve_adapter_arguments(tool_input) if adapter_target else tool_input
+    if not isinstance(original, dict):
+        return tool_input, False
+    confirm_value = original.get("confirm")
+    explicitly_denied = isinstance(confirm_value, str) and confirm_value.strip().lower() in {"false", "0", "no"}
+    if explicitly_denied or original.get("confirm_token"):
+        return tool_input, True
+
+    merged = {**original, "confirm": True, "confirm_token": confirmation["confirm_token"]}
+    if adapter_target:
+        if isinstance(tool_input, dict) and isinstance(tool_input.get("arguments"), dict):
+            return {**tool_input, "arguments": merged}, True
+        return {"name": adapter_target, **merged}, True
+    return merged, True
+
+
 async def _stream_round(client, kwargs, adapter=None):
     """跑一轮 Anthropic 流式，遇瞬时错误在出 token 前退避重试（P2-b §4-A 标杆模板）。
     yield ('token', delta) 逐字；结束 yield ('final', message)。
@@ -111,7 +137,15 @@ async def _stream_round(client, kwargs, adapter=None):
         raise last
 
 # 工具循环最大轮次。普通任务和核实轮分开计数，核实预算不能放大普通任务的上限。
-MAX_ROUNDS = 8
+MAX_ROUNDS = 30
+_GOAL_DONE_MARKER = "<!-- GUGU_GOAL_DONE -->"
+_GOAL_POLICY = (
+    "\n\n[内部目标任务规则] 当前会话处于目标任务模式。"
+    "除非用户主动暂停或取消，不要因为完成一个子任务就结束整个目标。"
+    "只有确认用户声明的完整目标已经完成时，才在最终答复末尾单独输出 "
+    f"{_GOAL_DONE_MARKER}；未完成时不要输出该标记，并继续推进剩余工作。"
+    "不要向用户解释这个内部标记。"
+)
 # 一个 run 内模型实际请求的工具调用总数。工具自身仍可有更细的专用额度。
 MAX_TOOL_CALLS = 10
 _CANCEL_CHECK_EVERY = 24   # 流式途中每 N 个 token 协作检查一次取消（单轮长回答只能在这里掐断）
@@ -122,6 +156,36 @@ MAX_VERIFY = 5
 # 最后一轮核实允许模型在完成最后一次查询后输出收束文本。
 MAX_VERIFY_LLM_ROUNDS = MAX_VERIFY + 1
 _TOOL_BUDGET_EXHAUSTED = "工具调用额度已用完。请不要再调用工具，直接根据已经获得的结果回复用户。"
+
+
+def _goal_mode_enabled(session: Any) -> bool:
+    """读取会话级长任务标记；缺失或旧数据一律按普通模式处理。"""
+    context = getattr(session, "session_context", None)
+    return (
+        isinstance(context, dict)
+        and bool(str(context.get("goal_text") or "").strip())
+        and context.get("goal_status", "active") != "paused"
+        and bool(context.get("goal_mode", False))
+    )
+
+
+def _unlimited_mode_enabled(session: Any) -> bool:
+    """读取仅解除单次工具调用上限的会话标记，不进入目标任务循环。"""
+    context = getattr(session, "session_context", None)
+    if not isinstance(context, dict):
+        return False
+    # 兼容旧版本把 /unlimited 错写进 goal_mode 的状态，但只在没有目标正文时视为旧无限模式。
+    return bool(context.get("unlimited_mode") or (context.get("goal_mode") and not context.get("goal_text")))
+
+
+def _goal_completed(text: str) -> bool:
+    """只接受模型显式完成标记，避免把子任务完成误判成整个目标完成。"""
+    return _GOAL_DONE_MARKER in (text or "")
+
+
+def _strip_goal_marker(text: str) -> str:
+    """移除仅供 Runner 判定的完成标记，不让它进入用户可见回复。"""
+    return (text or "").replace(_GOAL_DONE_MARKER, "").rstrip()
 _VERIFY_PROMPT = (
     "【内部核验 · 请执行】你刚才执行了增删改操作。现在用对应的查询工具检查结果是否生效且完整："
     "查询工具一般是 `list_*` / `get_*` / `read_*`（建项目用 `get_project` 看阶段待办、定时任务用 `list_scheduled_tasks` 看 cron/内容……照此类推）。"
@@ -439,9 +503,21 @@ class LLMRunner:
         # "当前模型支持什么"必须看这个，不能重新读静态的 get_settings().ai。
         from agent.llm import modelctx
         modelctx.set_model_cfg(ai)
+        # 入口统一提升为带固定前缀边界的消息容器。直接调用 runner 的测试和少量
+        # 内部调用仍可能传入普通 list，但运行中的追加、压缩和审计必须走同一套批次语义。
+        if not hasattr(messages, "append_batch"):
+            from agent.context.assembly import PromptMessages
+            messages = PromptMessages(messages)
         # 每轮对话只允许 inspect_images 对网络图片发起一次读取；历史附件不占用该额度。
         from agent.tools import search as search_tools
         search_tools.reset_image_inspection_budget()
+        goal_mode = _goal_mode_enabled(session)
+        unlimited_mode = _unlimited_mode_enabled(session)
+        if goal_mode:
+            if system_text:
+                system_text = f"{system_text}{_GOAL_POLICY}"
+            else:
+                messages.insert(0, {"role": "system", "content": _GOAL_POLICY.strip()})
         initial_tool_names = self.tool_names
         if self.capability_context is not None:
             initial_tool_names = list(self.capability_context.select_for_messages(messages).tool_names)
@@ -460,6 +536,8 @@ class LLMRunner:
         did_mutate = False; verify_count = 0; task_rounds = 0; verify_rounds = 0; empty_retry = 0
         any_tool_called = False; narration_retry = 0; decision_retry = 0; intent_retry = 0
         tool_intent_retry = 0   # “只说正在查询”或显式 requires_tools 未执行的守卫
+        guard_retry_pending = False
+        guard_retry_buf: list[str] = []
         tool_calls_used = 0
         _request_conversation = getattr(messages, "conversation", messages)
         _user_req = _user_text(_request_conversation[-1]["content"]) if _request_conversation and _request_conversation[-1].get("role") == "user" else ""
@@ -470,6 +548,10 @@ class LLMRunner:
         # 干净通过则整段丢弃（不把"已核实…"那种重复确认刷给用户）；发现并补做了，才在补做那轮发一次说明。
         verify_mode = False; verify_fixed = False; verify_queried = False
         finalize_pending = False
+        # 交互确认只对“刚刚被用户确认的同一个破坏性工具”续接一次。
+        # 确认结果会进入 tool_result，但模型有时不会把凭证原样带回下一次调用；
+        # 若不在运行时续接，就会再次触发同一个确认门。
+        pending_confirmation: dict[str, Any] | None = None
         total_in = total_out = total_cache = 0
         # 一个 run 内 provider 每次返回的是该次请求的 context input；压缩判定使用
         # 这个 run 观察到的最高值，不能把多次请求相加，否则工具轮数越多越会误触发。
@@ -507,14 +589,21 @@ class LLMRunner:
                  if item is _run_start_message),
                 max(0, len(conversation) - 1),
             )
-            result = await compaction.compact_context(
-                list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
-                session_id=session_id, user_id=user_id,
-                fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
-                overhead_tokens=0,
-                protected_from=protected_from,
-                force=True,
-            )
+            try:
+                result = await compaction.compact_context(
+                    list(conversation), system_text or "", getattr(ai, "context_tokens", 256000),
+                    session_id=session_id, user_id=user_id,
+                    fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+                    overhead_tokens=0,
+                    protected_from=protected_from,
+                    force=True,
+                )
+            except Exception as exc:
+                # 压缩失败时由调用方继续走确定性截断；不能让原始 overflow 变成
+                # “开小差”并丢掉本轮已有输出。
+                diag_log("agent.context.compaction.provider_overflow", exc)
+                _log.warning("上下文压缩失败，继续使用确定性截断：%s", type(exc).__name__)
+                return False
             compacted_messages, changed = result
             after_summary = [
                 item for item in compacted_messages
@@ -559,6 +648,15 @@ class LLMRunner:
                 return False
             return await compact_after_provider_overflow()
 
+        async def compact_after_usage_threshold_safely() -> bool:
+            """run 已有最终回复后执行压缩；失败不能覆盖成功回复。"""
+            try:
+                return await compact_after_usage_threshold()
+            except Exception as exc:
+                diag_log("agent.context.compaction.after_response", exc)
+                _log.warning("回复完成后的上下文压缩失败，保留本轮回复：%s", type(exc).__name__)
+                return False
+
         _context_compaction_event = [None]
 
         while True:
@@ -570,7 +668,51 @@ class LLMRunner:
                 verify_rounds += 1
             else:
                 if task_rounds >= MAX_ROUNDS:
-                    break
+                    from app.services.interactions import create_goal_mode_prompt
+
+                    interaction = await create_goal_mode_prompt(
+                        user_id=user_id, session_id=session_id,
+                    )
+                    if interaction is None:
+                        yield f"data: {json.dumps({'type': 'token', 'content': '本次已达到 30 轮。想继续的话，请发送 /unlimited 开启无限工具调用模式，再发送“继续”。'}, ensure_ascii=False)}\n\n"
+                        return
+                    prompt, options = interaction
+                    yield stream_event(
+                        "interaction_required",
+                        round_id=round_id if round_number else None,
+                        prompt_id=prompt.id,
+                        kind=prompt.kind,
+                        title=prompt.title,
+                        body=prompt.body,
+                        options=options,
+                        expires_at=prompt.expires_at.isoformat(),
+                        force_display=True,
+                    )
+                    from app.services.interactions import wait_for_resolution
+                    answer = await wait_for_resolution(
+                        user_id=user_id,
+                        prompt_id=prompt.id,
+                        heartbeat=lambda: genstream.touch(session_id),
+                        cancel_check=lambda: _im_cancelled(session_id),
+                    )
+                    if isinstance(answer, dict) and answer.get("status") == "cancelled":
+                        yield f"data: {json.dumps({'type': '_cancelled'}, ensure_ascii=False)}\n\n"
+                        return
+                    if answer is None:
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次继续操作已过期，请重新发起任务。'}, ensure_ascii=False)}\n\n"
+                        return
+                    if answer.get("option_id") in {"continue", "goal"}:
+                        # 该按钮的语义是解除本次 run 的工具调用限制，不创建 goal
+                        # 目标任务；清零轮次后回到同一主循环继续执行。
+                        unlimited_mode = True
+                        task_rounds = 0
+                        yield stream_event(
+                            "_new_round",
+                            round_id=round_id if round_number else "round-0",
+                            next_round=round_number + 1,
+                        )
+                        continue
+                    return
                 task_rounds += 1
             # 用户中途「算了」→ 轮间协作中断（单次 LLM 流式调用本身切不了，故粒度是轮与轮之间）
             if await _im_cancelled(session_id):
@@ -586,8 +728,8 @@ class LLMRunner:
             _progress_buf: list[str] = []
             _progress_pending = False
             try:
-                # 每次 provider 请求前刷新 selected tools。工具调用/结果仍由下方现有
-                # append_tool_round 写入 history；这里仅更新原生 tools 参数。
+                # 每次 provider 请求前刷新 selected tools。工具调用/结果由驱动构造批次，
+                # 再由核心循环一次性提交到 history；这里仅更新原生 tools 参数。
                 if self.capability_context is not None and not getattr(self.capability_context, "fixed_adapter", False):
                     selected = self.capability_context.select_for_messages(messages)
                     driver.update_tools(ctx, list(selected.tool_names))
@@ -598,6 +740,13 @@ class LLMRunner:
                         break
                     if verify_mode:
                         _verify_buf.append(_val)   # 核实阶段文字不实时发，先缓冲
+                    elif goal_mode:
+                        # 等待完成标记判定，避免把内部标记流给用户。
+                        pass
+                    elif guard_retry_pending:
+                        # 守卫追问后的正文先不展示；只有该轮真的发起工具调用时，
+                        # 才说明守卫生效并丢弃这段自我辩解。
+                        guard_retry_buf.append(_val)
                     else:
                         # 对可能是“正在查询”占位话术的前缀暂存到 round 结束；如果后续
                         # 变成正常句子则原样 flush，只有确认是纯占位且无 tool call 时丢弃。
@@ -727,6 +876,9 @@ class LLMRunner:
                 initial_volatile_indices = set()
 
             if result.tool_calls:
+                if guard_retry_pending:
+                    guard_retry_pending = False
+                    guard_retry_buf.clear()
                 if _progress_pending:
                     for _pending in _progress_buf:
                         yield f"data: {json.dumps({'type': 'token', 'content': _pending})}\n\n"
@@ -743,8 +895,13 @@ class LLMRunner:
                         yield _line
                 dispatched = []
                 pending_interaction = None
-                remaining_tool_calls = max(0, MAX_TOOL_CALLS - tool_calls_used)
-                tool_budget_exceeded = len(result.tool_calls) > remaining_tool_calls
+                remaining_tool_calls = (
+                    None if (goal_mode or unlimited_mode) else max(0, MAX_TOOL_CALLS - tool_calls_used)
+                )
+                tool_budget_exceeded = (
+                    remaining_tool_calls is not None
+                    and len(result.tool_calls) > remaining_tool_calls
+                )
                 for call_index, tc in enumerate(result.tool_calls):
                     adapter_target = None
                     if tc.name == "call_tool" and isinstance(tc.input, dict):
@@ -753,7 +910,7 @@ class LLMRunner:
                     label = self._label(effective_tool_name)
                     if verify_mode:   # 复查前缀后端拼接（可在「状态命名」面板改 _verify_prefix；支持多候选随机）
                         label = self._label("_verify_prefix", "复查 · ") + label
-                    if call_index >= remaining_tool_calls:
+                    if remaining_tool_calls is not None and call_index >= remaining_tool_calls:
                         # 仍然为 provider 的每个 tool call 补一个结果，避免留下孤儿 tool_call；
                         # 但不再执行真实工具，随后直接结束本轮，防止模型继续扩张搜索。
                         tool_call_id = getattr(tc, "id", None) or f"{round_id}-tool-{call_index + 1}"
@@ -811,12 +968,21 @@ class LLMRunner:
                         }, ensure_ascii=False)
                         artifact = None
                     else:
+                        dispatch_input = tc.input
+                        confirmation = pending_confirmation
+                        if confirmation and confirmation.get("tool_name") == effective_tool_name:
+                            dispatch_input, consumed = _inject_pending_confirmation(
+                                tc.input, adapter_target, confirmation,
+                            )
+                            if consumed:
+                                # 凭证是一次性的，仅供本次同名工具调用尝试使用。
+                                pending_confirmation = None
                         if adapter_target is not None:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
                             _dispatch_token = set_dispatch_session(session_id, session)
                             try:
                                 res, artifact = await registry.dispatch(
-                                    user_id, adapter_target, _resolve_adapter_arguments(tc.input)
+                                    user_id, adapter_target, _resolve_adapter_arguments(dispatch_input)
                                 )
                             finally:
                                 reset_dispatch_session(_dispatch_token)
@@ -824,7 +990,7 @@ class LLMRunner:
                             from agent.tools.base import set_dispatch_session, reset_dispatch_session
                             _dispatch_token = set_dispatch_session(session_id, session)
                             try:
-                                res, artifact = await registry.dispatch(user_id, tc.name, tc.input)
+                                res, artifact = await registry.dispatch(user_id, tc.name, dispatch_input)
                             finally:
                                 reset_dispatch_session(_dispatch_token)
                         if skill_slug and _is_successful_tool_result(res) and current_skill_digest:
@@ -855,7 +1021,7 @@ class LLMRunner:
                                 "prompt_id": prompt.id,
                             }, ensure_ascii=False)
                             dispatched.append((tc, pending_result))
-                            pending_interaction = (prompt.id, tool_call_id)
+                            pending_interaction = (prompt.id, tool_call_id, effective_tool_name)
                             yield stream_event("tool_done", round_id=round_id,
                                                tool_call_id=tool_call_id, name=effective_tool_name, label=label,
                                                verify=verify_mode, status="waiting", result=pending_result)
@@ -890,7 +1056,7 @@ class LLMRunner:
                         tool_call_id=tool_call_id, result=res,
                     )
                     if interaction:
-                        pending_interaction = (interaction["prompt_id"], tool_call_id)
+                        pending_interaction = (interaction["prompt_id"], tool_call_id, effective_tool_name)
                         dispatched.append((tc, res))
                         yield stream_event("interaction_required", round_id=round_id,
                                            tool_call_id=tool_call_id, **interaction)
@@ -917,12 +1083,59 @@ class LLMRunner:
                     if artifact:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
-                driver.append_tool_round(messages, result, dispatched)
+                from agent.context.assembly import NewMessageBatch
+
+                batch = NewMessageBatch(driver.build_tool_round(result, dispatched))
                 if getattr(self.capability_context, "fixed_adapter", False):
                     from agent.context.canonical_tool_history import (
-                        SkillSchemaEvent, append_event, tool_schema_event,
+                        SkillSchemaEvent, ToolDiscoveryEvent, append_event, tool_schema_event,
                     )
+                    # canonical event 也先进入同一批次，不能在工具 round 提交后再单独
+                    # 修改 history；否则下一次重建时消息粒度和顺序可能发生变化。
+                    batch_history = list(getattr(messages, "conversation", messages)) + batch.messages
+
+                    def add_event(event) -> None:
+                        before = len(batch_history)
+                        append_event(batch_history, event)
+                        if len(batch_history) > before:
+                            event_message = batch_history[-1]
+                            if (
+                                getattr(driver, "api_format", "") == "anthropic"
+                                and batch.messages
+                                and batch.messages[-1].get("role") == "user"
+                                and isinstance(batch.messages[-1].get("content"), list)
+                            ):
+                                # Anthropic 的 tool_result 本身位于 user content blocks；
+                                # Schema 事件直接并入同一条消息，避免 sanitize/reload 后
+                                # 相邻 user 消息被重新合并成另一种历史形状。
+                                batch.messages[-1]["content"].extend(
+                                    event_message.get("content") or ()
+                                )
+                            else:
+                                batch.append(event_message)
+
                     for tc, _res in dispatched:
+                        if tc.name == "get_tool_schema":
+                            try:
+                                declaration = json.loads(_res) if isinstance(_res, str) else _res
+                            except (TypeError, ValueError):
+                                declaration = None
+                            declared = (
+                                declaration.get("tool_schemas", ())
+                                if isinstance(declaration, dict) else ()
+                            )
+                            valid_names = tuple(
+                                name for name in declared
+                                if isinstance(name, str)
+                                and name in getattr(self.capability_context.snapshot, "tools", {})
+                            )
+                            if valid_names:
+                                add_event(ToolDiscoveryEvent(valid_names))
+                                for name in valid_names:
+                                    tool = registry.get(name)
+                                    if tool is not None:
+                                        add_event(tool_schema_event(tool))
+                            continue
                         if tc.name == "use_skill":
                             skill_name = str((tc.input or {}).get("name") or "").strip()
                             resolved_skill = None
@@ -932,22 +1145,37 @@ class LLMRunner:
                             skill_meta = getattr(skill_meta, "skills", {}).get(resolved_skill)
                             related = tuple(getattr(skill_meta, "related_tools", ()) or ())
                             if related:
-                                append_event(messages, SkillSchemaEvent(skill_name, related))
+                                add_event(SkillSchemaEvent(skill_name, related))
                                 for name in related:
                                     tool = registry.get(name)
                                     if tool is not None:
-                                        append_event(messages, tool_schema_event(tool))
+                                        add_event(tool_schema_event(tool))
                             continue
                         target_name = None
                         if tc.name == "call_tool" and isinstance(tc.input, dict):
                             target_name = str(tc.input.get("name") or "").strip() or None
+                        if not target_name and tc.name != "call_tool":
+                            try:
+                                error_payload = json.loads(_res) if isinstance(_res, str) else _res
+                            except (TypeError, ValueError):
+                                error_payload = None
+                            recovery = (
+                                error_payload.get("_schema_recovery")
+                                if isinstance(error_payload, dict) else None
+                            )
+                            if isinstance(recovery, dict) and recovery.get("needed") is True:
+                                # 动态 Provider 直接调用业务工具且参数校验失败时，
+                                # 也把当前工具 Schema 写入 canonical history；下一轮
+                                # 不再让模型继续凭记忆猜参数。
+                                target_name = tc.name
                         if target_name:
                             tool = registry.get(target_name)
                             if tool is not None:
-                                append_event(messages, tool_schema_event(tool))
+                                add_event(tool_schema_event(tool))
+                messages.append_batch(batch)
                 if pending_interaction is not None:
                     from app.services.interactions import wait_for_resolution
-                    prompt_id, pending_tool_call_id = pending_interaction
+                    prompt_id, pending_tool_call_id, pending_tool_name = pending_interaction
                     answer = await wait_for_resolution(
                         user_id=user_id, prompt_id=prompt_id,
                         heartbeat=lambda: genstream.touch(session_id),
@@ -959,6 +1187,15 @@ class LLMRunner:
                     if answer is None:
                         yield f"data: {json.dumps({'type': 'error', 'detail': '这次交互已过期，请重新告诉我你的选择。'}, ensure_ascii=False)}\n\n"
                         return
+                    if (
+                        isinstance(answer, dict)
+                        and answer.get("status") == "confirmed"
+                        and isinstance(answer.get("confirm_token"), str)
+                    ):
+                        pending_confirmation = {
+                            "tool_name": pending_tool_name,
+                            "confirm_token": answer["confirm_token"],
+                        }
                     _replace_tool_result(
                         messages,
                         tool_call_id=pending_tool_call_id,
@@ -973,7 +1210,23 @@ class LLMRunner:
                     continue
                 if tool_budget_exceeded:
                     _log.warning("[core] 工具调用达到 run 上限：used=%s limit=%s", tool_calls_used, MAX_TOOL_CALLS)
-                    yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
+                    from app.services.interactions import create_tool_budget_prompt
+                    interaction = await create_tool_budget_prompt(user_id=user_id, session_id=session_id)
+                    if interaction is not None:
+                        prompt, options = interaction
+                        yield stream_event(
+                            "interaction_required",
+                            round_id=round_id,
+                            prompt_id=prompt.id,
+                            kind=prompt.kind,
+                            title=prompt.title,
+                            body=prompt.body,
+                            options=options,
+                            expires_at=prompt.expires_at.isoformat(),
+                            force_display=True,
+                        )
+                    else:
+                        yield f"data: {json.dumps({'type': 'error', 'detail': '这次查询步骤有点多，咕咕先停在这里了；前面已经获得的结果仍然有效。'}, ensure_ascii=False)}\n\n"
                     return
                 # 工具结果已经入历史，直接接复查 prompt。旧流程会先多请求一次模型来生成
                 # "已完成"，随后才开始复查；这轮没有新信息，只会徒增一次等待。
@@ -982,7 +1235,7 @@ class LLMRunner:
                     did_mutate = False
                     verify_mode = True
                     verify_queried = False
-                    messages.append({"role": "user", "content": _VERIFY_PROMPT})
+                    messages.append_batch([{"role": "user", "content": _VERIFY_PROMPT}])
                 if await compact_after_usage_threshold():
                     _event = _context_compaction_event[0]
                     _context_compaction_event[0] = None
@@ -1000,7 +1253,9 @@ class LLMRunner:
                 verify_count += 1
                 did_mutate = False
                 verify_mode = True   # 进入/保持核实阶段 → 之后文字先缓冲
-                driver.append_followup(messages, result, _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT)
+                messages.append_batch(driver.build_followup(
+                    result, _VERIFY_FORCE_PROMPT if _need_force else _VERIFY_PROMPT,
+                ))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1010,7 +1265,7 @@ class LLMRunner:
             if (verify_mode and verify_queried and not finalize_pending
                     and _is_verify_placeholder("".join(_verify_buf))):
                 finalize_pending = True
-                driver.append_followup(messages, result, _FINALIZE_PROMPT)
+                messages.append_batch(driver.build_followup(result, _FINALIZE_PROMPT))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
 
@@ -1022,6 +1277,26 @@ class LLMRunner:
             _verify_buf = []
 
             _final_text = result.text
+            if goal_mode:
+                completed = _goal_completed(_final_text)
+                _final_text = _strip_goal_marker(_final_text)
+                if _final_text.strip():
+                    async for _line in genstream.typed_stream(_final_text):
+                        yield _line
+                if not completed:
+                    messages.append_batch(driver.build_guard_followup(
+                        result,
+                        "目标尚未完成。继续执行剩余步骤；只有完整目标全部完成后，才输出内部完成标记。",
+                    ))
+                    yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
+                    continue
+            if guard_retry_pending:
+                # 守卫后的模型仍未真实调用工具：不把“我刚才只是……”之类的
+                # 守卫回应作为第二条用户可见消息输出。
+                guard_retry_pending = False
+                guard_retry_buf.clear()
+                yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
+                return
             # 只有在确认是正常回复时才把此前暂存的进度片段发给前端；纯占位输出会被
             # 丢弃并重试，避免用户看到“正在查询”后流程已经结束。
             if _progress_pending and not _is_tool_progress_only(_final_text):
@@ -1033,7 +1308,7 @@ class LLMRunner:
             if not _final_text.strip() and not did_mutate and not verify_mode:
                 if empty_retry < 1:
                     empty_retry += 1
-                    driver.append_empty_retry(messages, result)
+                    messages.append_batch(driver.build_empty_retry(result))
                     yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                     continue
                 fb = "嗯…我这下没太接住，你再说一遍、或者换个说法，我马上跟上～"
@@ -1045,14 +1320,18 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and narration_retry < 1
                     and _looks_like_narration(_final_text)):
                 narration_retry += 1
-                driver.append_guard_followup(messages, result, _NARRATION_NUDGE)
+                guard_retry_pending = True
+                guard_retry_buf.clear()
+                messages.append_batch(driver.build_guard_followup(result, _NARRATION_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 意图守卫（B）：宣告「我这就去查/建/改…」却本轮零工具 → 逼它当场做（_announces_intent 已排除问句/征询）。只追一次。
             if (not any_tool_called and not verify_mode and intent_retry < 1
                     and _announces_intent(_final_text)):
                 intent_retry += 1
-                driver.append_guard_followup(messages, result, _INTENT_NUDGE)
+                guard_retry_pending = True
+                guard_retry_buf.clear()
+                messages.append_batch(driver.build_guard_followup(result, _INTENT_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 若 provider 将显式决策放进 RoundResult，或模型只返回纯进度占位话术，
@@ -1061,14 +1340,18 @@ class LLMRunner:
             if (not any_tool_called and not verify_mode and tool_intent_retry < 1
                     and (_requires_tools is True or _is_tool_progress_only(_final_text))):
                 tool_intent_retry += 1
-                driver.append_guard_followup(messages, result, _TOOL_REQUIRED_NUDGE)
+                guard_retry_pending = True
+                guard_retry_buf.clear()
+                messages.append_batch(driver.build_guard_followup(result, _TOOL_REQUIRED_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # P3 决策守卫：用户明确要改、模型零工具却用「不用改/已合理」驳回 → 逼它执行或问清，别擅自不做。
             if (not any_tool_called and not verify_mode and decision_retry < 1
                     and _is_decision_dodge(_user_req, _final_text)):
                 decision_retry += 1
-                driver.append_guard_followup(messages, result, _DECISION_NUDGE)
+                guard_retry_pending = True
+                guard_retry_buf.clear()
+                messages.append_batch(driver.build_guard_followup(result, _DECISION_NUDGE))
                 yield stream_event("_new_round", round_id=round_id, next_round=round_number + 1)
                 continue
             # 即时复查时，前面还没有生成过最终说明；保留最终收束轮的确认给用户，
@@ -1080,7 +1363,7 @@ class LLMRunner:
             # 普通最终回复也必须经过同一条 90% 检查。此前这里直接结束，导致没有
             # tool call 的长回复不会触发 baseline 更新；检查发生在最终正文已经确定后，
             # 不会打断输出，且 compaction_applied 防止本 run 重复压缩。
-            if await compact_after_usage_threshold():
+            if await compact_after_usage_threshold_safely():
                 _event = _context_compaction_event[0]
                 _context_compaction_event[0] = None
                 if _event:
@@ -1089,4 +1372,4 @@ class LLMRunner:
             yield f"data: {json.dumps({'type': '_usage', 'input': total_in, 'context_input': run_context_usage, 'output': total_out, 'cache_read': total_cache})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'error', 'detail': '这步操作有点多，咕咕没在一口气里全做完，前面几步已经生效了，要我接着把剩下的做完吗？'}, ensure_ascii=False)}\n\n"
+        # 没有提前命中轮次上限时不会走到这里；保留统一收尾出口。

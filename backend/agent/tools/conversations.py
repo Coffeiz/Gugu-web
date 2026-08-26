@@ -18,7 +18,7 @@ def _fmt(dt) -> str:
 
 
 async def _search_conversations(db, user_id, args: dict):
-    keyword = (args.get("keyword") or "").strip()
+    keyword = (args.get("query") or args.get("keyword") or "").strip()
     queries = args.get("queries") if isinstance(args.get("queries"), list) else None
     search_queries = normalize_queries(keyword, queries)
     mode = normalize_mode(args.get("mode"))
@@ -127,11 +127,12 @@ class ConversationsSkill(BaseSkill):
     tools = [
         Tool(
             name="search_conversations", label="搜历史对话",
-            description="搜用户**过去的对话**（其他 session）。当用户提到「上次/之前那次聊的」「我们以前说过的 X」等，用它按一个或多个关键词找（默认 OR）。不传 keyword/queries 则列最近对话。只搜当前用户自己的，安全。",
+            description="搜索用户过去的其他对话；可按关键词查找，不传关键词则列最近对话。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "keyword": {"type": "string", "description": "兼容旧调用的单个关键词；优先使用 queries"},
+                    "query": {"type": "string", "description": "搜索关键词；所有搜索工具统一使用此字段"},
+                    "keyword": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"},
                                 "description": "可选多个候选关键词，默认 OR，最多 8 个"},
                     "mode": {"type": "string", "enum": ["OR", "AND"],

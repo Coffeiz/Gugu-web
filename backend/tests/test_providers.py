@@ -92,15 +92,59 @@ def test_adapter_for_deepseek_by_provider():
     assert a.name == "deepseek"
     assert a.api_format == "openai"
     assert a.supports_active_cache("")
-    assert not a.supports_explicit_cache("")
+    assert a.supports_explicit_cache("")
     assert a.supports_thinking_toggle
+
+
+def test_unknown_openai_compatible_provider_uses_explicit_history_cache():
+    adapter = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
+    assert adapter.supports_active_cache("")
+    assert adapter.supports_explicit_cache("")
+
+
+def test_adapter_for_glm_uses_openai_compatible_endpoint():
+    adapter = adapter_for(_ai(provider="glm", model="glm-5.2"))
+    assert adapter.name == "glm"
+    assert adapter.api_format == "openai"
+    assert adapter.resolve_base_url(SimpleNamespace(provider="glm", base_url="")) == \
+        "https://open.bigmodel.cn/api/paas/v4"
+    assert adapter.capabilities("glm-5.2").thinking
+    assert adapter.capabilities("glm-5.2").tools
+    assert not adapter.supports_active_cache("glm-5.2")
+
+
+def test_glm_thinking_parameters_are_model_scoped():
+    adapter = adapter_for(_ai(provider="glm"))
+    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
+        provider="glm", model="glm-5.2", thinking="adaptive"
+    )) == {"extra_body": {"thinking": {"type": "enabled"}}}
+    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
+        provider="glm", model="glm-5.2", thinking="disabled"
+    )) == {"extra_body": {"thinking": {"type": "disabled"}}}
+    assert adapter.build_thinking_params(SimpleNamespace(
+        provider="glm", model="glm-4-air", thinking="adaptive"
+    )) == {}
+
+
+def test_adapter_for_glm_by_base_url_fallback():
+    assert adapter_for(_ai(base_url="https://open.bigmodel.cn/api/paas/v4")).name == "glm"
+
+
+def test_adapter_for_glm_coding_plan_uses_dedicated_endpoint():
+    adapter = adapter_for(_ai(provider="glm-coding", model="glm-5.2"))
+    assert adapter.name == "glm-coding"
+    assert adapter.resolve_base_url(SimpleNamespace(provider="glm-coding", base_url="")) == \
+        "https://open.bigmodel.cn/api/coding/paas/v4"
+    assert adapter.capabilities("glm-5.2").tools
+    assert not adapter.capabilities("glm-5.2").vision
+    assert adapter_for(_ai(base_url="https://open.bigmodel.cn/api/coding/paas/v4")).name == "glm-coding"
 
 
 def test_cache_capabilities_are_separate_by_provider():
     deepseek = adapter_for(_ai(provider="deepseek", model="deepseek-chat")).cache_capabilities("deepseek-chat")
     qwen = adapter_for(_ai(provider="qwen", model="qwen3.6-flash")).cache_capabilities("qwen3.6-flash")
     minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3")).cache_capabilities("MiniMax-M3")
-    assert deepseek.automatic_prefix_cache and not deepseek.explicit_cache_control
+    assert deepseek.automatic_prefix_cache and deepseek.explicit_cache_control
     assert qwen.automatic_prefix_cache and qwen.explicit_cache_control and qwen.single_history_anchor
     assert minimax.automatic_prefix_cache
 
@@ -224,7 +268,8 @@ def test_adapter_for_unknown_provider_falls_back_to_default():
 def test_adapter_for_truly_unknown_provider_also_falls_back_to_default():
     a = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
     assert a.name == "unknown"
-    assert not a.supports_active_cache("")
+    assert a.supports_active_cache("")
+    assert a.supports_explicit_cache("")
     assert a.transient_exceptions == ()
 
 

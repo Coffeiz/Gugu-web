@@ -98,6 +98,9 @@ export function useChatStream(options: {
     const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
     let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
+    // 多 round 流中 aiIdx 会在 round_start 时归零；它只表示“当前气泡”，不能用来
+    // 判断整条流是否已经收到过正文。否则第一轮有回复、第二轮空回合时会误加兜底气泡。
+    let receivedAssistantContent = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
@@ -168,6 +171,12 @@ export function useChatStream(options: {
           } else if (evt.type === 'session_title') {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
             if (s) s.title = evt.title
+          } else if (evt.type === 'session_goal') {
+            const s = sessions.value.find(s => s.id === Number(evt.session_id || sid))
+            if (s) {
+              s.goalActive = Boolean(evt.active)
+              s.goalStatus = evt.status === 'active' || evt.status === 'paused' ? evt.status : null
+            }
           } else if (evt.type === 'round_start') {
             finishRoundMessage()
             currentRunId = String(evt.run_id || currentRunId)
@@ -249,6 +258,7 @@ export function useChatStream(options: {
             }
           } else if (evt.type === 'token') {
             if (live()) {
+              if (String(evt.content || '').trim()) receivedAssistantContent = true
               // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记
               // 尚未来得及清掉。resume 的首个 token 是同一段 Redis snapshot，
               // 这时跳过它；真正后续新增 token 仍正常创建/追加流式气泡。
@@ -274,6 +284,7 @@ export function useChatStream(options: {
             }
           } else if (evt.type === 'file') {
             if (live()) {
+              receivedAssistantContent = true
               options.clearStatus()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
@@ -350,7 +361,7 @@ export function useChatStream(options: {
         }
       } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
     }
-    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused }
+    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
@@ -453,7 +464,7 @@ export function useChatStream(options: {
       aiIdx = r.aiIdx
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-      if (aiIdx === -1 && !r.detached && !r.aborted && !r.interactionPaused) {
+      if (aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
         messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
         await options.scrollBottom()
       }
@@ -486,6 +497,10 @@ export function useChatStream(options: {
         await options.scrollBottom()
       }
       if (activeSessionId === resolvedSid) activeSessionId = null
+      // 目标/工具限制命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
+      if (ownsView && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
+        await options.fetchSessions()
+      }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)
       // 生成期间排队的消息：取队首接着发（其自身 finally 会继续取下一条，逐条处理）。

@@ -12,6 +12,7 @@ context_tokens/thinking/vision —— `AIPresetItem` 和 `AISettings` 都满足�
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
 
 from agent import providers
 
@@ -20,6 +21,15 @@ _router = None
 
 _rr_counter = 0                  # round_robin 轮询游标
 _inflight: dict[str, int] = {}   # least_loaded 每 key 在途计数（pick 时 +1，release 时 -1）
+
+
+@dataclass(frozen=True)
+class ModelRunConfig:
+    """一次生成所需的稳定模型派生配置，避免入口各自重复解析。"""
+
+    model: object
+    use_anthropic: bool
+    context_tokens: int
 
 # 下面这几个判断函数（PRD-LLM-1 FR-LLM-2）改成委托 agent/providers.py 的
 # adapter_for()——provider 差异知识收拢到那一个文件，这里只是保留现有签名/
@@ -111,3 +121,13 @@ def pick_model(settings, ctx=None):
                 return _pick_pool(pool, getattr(presets, "pool_mode", "random"))
     # active（默认）/ 兜底：用顶层 settings.ai（activate 时已把激活预设同步到这里）
     return settings.ai
+
+
+def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
+    """统一解析模型、协议和上下文预算；Web/IM/定时任务共用。"""
+    model = pick_model(settings, ctx)
+    return ModelRunConfig(
+        model=model,
+        use_anthropic=use_anthropic_for(model),
+        context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
+    )

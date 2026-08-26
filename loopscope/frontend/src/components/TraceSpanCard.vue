@@ -23,7 +23,9 @@
       <button v-if="sourceContent" :class="{ active: open.content }" @click="toggle('content')">Content</button>
       <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
       <button v-if="diagnostics" :class="{ active: open.diagnostics }" @click="toggle('diagnostics')">Diagnostics</button>
-      <button :class="{ active: open.input }" @click="toggle('input')">Input</button>
+      <button :class="{ active: open.input }" @click="toggle('input')">
+        {{ firstDiff ? `Input · #${firstDiff.index}` : 'Input' }}
+      </button>
       <button :class="{ active: open.output }" @click="toggle('output')">Output</button>
       <button v-if="hasSource" :class="{ active: open.source }" @click="toggle('source')">Source</button>
       <button v-if="hasAttributes" :class="{ active: open.attributes }" @click="toggle('attributes')">Attributes</button>
@@ -42,13 +44,65 @@
       </div>
       <p class="assembly-note">完整 system 文本只在 Context assembly 中展示；本轮通过 digest 与来源重建实际组装关系。</p>
     </section>
+    <section v-if="firstDiff" class="panel first-diff-panel">
+      <div class="first-diff-head">
+        <div>
+          <div class="panel-label">Earliest input change</div>
+          <strong>消息 #{{ firstDiff.index }}</strong>
+        </div>
+        <span class="diff-reason">{{ diffReasonLabel }}</span>
+      </div>
+      <div class="first-diff-meta">
+        <span>上一轮：{{ firstDiff.previous?.shape?.representation || '—' }}</span>
+        <span>本轮：{{ firstDiff.current?.shape?.representation || '—' }}</span>
+        <span>前缀：{{ prefixStable ? '未变化' : '已断开' }}</span>
+      </div>
+      <div class="first-diff-actions">
+        <p class="first-diff-note">Input 已标记这条消息，可直接查看完整正文。</p>
+        <div class="first-diff-buttons">
+          <button class="jump-input" @click="jumpToFirstDiff">定位到 Input</button>
+          <button class="compare-input" :class="{ active: comparisonOpen }" @click="comparisonOpen = !comparisonOpen">对比上一轮 Input</button>
+        </div>
+      </div>
+    </section>
+    <section v-if="comparisonOpen && firstDiff" class="panel comparison-panel">
+      <div class="comparison-head">
+        <div class="panel-label">Input comparison</div>
+        <span>消息 #{{ firstDiff.index }} · {{ diffReasonLabel }}</span>
+      </div>
+      <div class="comparison-grid">
+        <article class="comparison-column">
+          <div class="comparison-label">上一轮 Input</div>
+          <pre>{{ pretty(previousInputMessages[firstDiff.index]) }}</pre>
+        </article>
+        <article class="comparison-column is-current">
+          <div class="comparison-label">本轮 Input</div>
+          <pre>{{ pretty(inputMessages[firstDiff.index]) }}</pre>
+        </article>
+      </div>
+    </section>
     <section v-if="open.diagnostics && diagnostics" class="panel diagnostics-panel">
       <div class="panel-label">Context diagnostics</div>
       <pre>{{ pretty(diagnostics) }}</pre>
     </section>
-    <section v-if="open.input" class="panel">
+    <section v-if="open.input" ref="inputPanel" class="panel input-panel">
       <div class="panel-label">Input</div>
-      <pre>{{ pretty(inputForDisplay) }}</pre>
+      <div v-if="inputMessages.length && firstDiff" ref="inputMessageList" class="input-message-list">
+        <article
+          v-for="(message, index) in inputMessages"
+          :key="index"
+          class="input-message"
+          :class="{ 'is-first-diff': index === firstDiff.index }"
+          :data-message-index="index"
+        >
+          <div class="input-message-label">
+            <span>Message #{{ index }}</span>
+            <b v-if="index === firstDiff.index">最早变化点</b>
+          </div>
+          <pre>{{ pretty(message) }}</pre>
+        </article>
+      </div>
+      <pre v-else>{{ pretty(inputForDisplay) }}</pre>
     </section>
     <section v-if="open.output" class="panel">
       <div class="panel-label">Output</div>
@@ -70,13 +124,24 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive } from 'vue'
+import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
 
-const props = withDefaults(defineProps<{ span: TraceSpan; depth?: number }>(), { depth: 0 })
+const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
 const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, input: false, output: false, source: false, attributes: false })
+const inputMessageList = ref<HTMLElement | null>(null)
+const comparisonOpen = ref(false)
 
-function toggle(key: string) { open[key] = !open[key] }
+function toggle(key: string) {
+  open[key] = !open[key]
+}
+function jumpToFirstDiff() {
+  open.input = true
+  void nextTick(() => {
+    const target = inputMessageList.value?.querySelector<HTMLElement>('.is-first-diff')
+    target?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
 function fmtMs(v: number) { return v >= 1000 ? `${(v / 1000).toFixed(2)}s` : `${Math.round(v)}ms` }
 function fmtTokens(v: number | undefined) {
   if (!v) return ''
@@ -105,6 +170,73 @@ const diagnostics = computed(() => {
   const value = assembly.value?.canonical_context
   return value && typeof value === 'object' ? value : null
 })
+const firstDiff = computed(() => {
+  const value = diagnostics.value?.first_diff
+  if (value && value.index != null) {
+    return value as {
+      index: number
+      reason?: string
+      previous?: { shape?: { representation?: string } }
+      current?: { shape?: { representation?: string } }
+    }
+  }
+  const previousMessages = messagesFrom(props.previousSpan)
+  const currentMessages = inputMessages.value
+  if (!previousMessages.length || !currentMessages.length) return null
+  const limit = Math.min(previousMessages.length, currentMessages.length)
+  let index = 0
+  while (index < limit && stableStringify(previousMessages[index]) === stableStringify(currentMessages[index])) index += 1
+  if (index === limit && previousMessages.length === currentMessages.length) return null
+  const previous = previousMessages[index]
+  const current = currentMessages[index]
+  const previousRepresentation = messageRepresentation(previous)
+  const currentRepresentation = messageRepresentation(current)
+  return {
+    index,
+    reason: previousRepresentation !== currentRepresentation ? 'wrapper_changed' : 'content_changed',
+    previous: { shape: { representation: previousRepresentation } },
+    current: { shape: { representation: currentRepresentation } },
+  }
+})
+const prefixStable = computed(() => diagnostics.value?.prefix_integrity?.stable === true)
+const diffReasonLabel = computed(() => {
+  const labels: Record<string, string> = {
+    wrapper_changed: '包装格式变化',
+    role_changed: 'Role 变化',
+    block_shape_changed: 'Block 结构变化',
+    content_kind_changed: 'Content 类型变化',
+    content_changed: '正文变化',
+    message_count_changed: '消息数量变化',
+  }
+  return labels[String(firstDiff.value?.reason || '')] || String(firstDiff.value?.reason || '结构变化')
+})
+const inputMessages = computed(() => messagesFrom(props.span))
+const previousInputMessages = computed(() => messagesFrom(props.previousSpan))
+function messagesFrom(span?: TraceSpan) {
+  const input = span?.input
+  if (!input || typeof input !== 'object') return []
+  const messages = (input as Record<string, unknown>).messages
+  return Array.isArray(messages) ? messages : []
+}
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+function messageRepresentation(message: any): string {
+  const content = message?.content
+  if (typeof content === 'string') {
+    const value = content.trimStart()
+    if (value.startsWith('<compacted-summary>')) return 'compacted-summary'
+    if (value.startsWith('## 早前对话摘要')) return 'legacy-summary-header'
+    if (value.startsWith('[system-reminder]')) return 'system-reminder-text'
+    return 'text'
+  }
+  if (Array.isArray(content)) return 'blocks'
+  return typeof content
+}
 const inputForDisplay = computed(() => {
   const input = props.span.input
   if (!input || typeof input !== 'object' || !assembly.value || !('canonical_context' in assembly.value)) {
@@ -186,6 +318,32 @@ const tokenChips = computed(() => {
 .panel { border-top:1px solid var(--border-subtle); padding:11px 14px; background:var(--surface-raised); }
 .panel-label { margin-bottom:7px; color:var(--content-tertiary); font-size:8px; letter-spacing:.1em; text-transform:uppercase; }
 pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.58 var(--font-mono); color:var(--content-primary); }
+.first-diff-panel { background:color-mix(in srgb,var(--status-warning) 7%,var(--surface-raised)); }
+.first-diff-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.first-diff-head strong { font-size:12px; }
+.diff-reason { flex:none; padding:3px 7px; border-radius:var(--radius-pill); color:var(--status-warning); background:color-mix(in srgb,var(--status-warning) 14%,transparent); font-size:9px; }
+.first-diff-meta { display:flex; flex-wrap:wrap; gap:6px; margin-top:9px; color:var(--content-secondary); font:9px var(--font-mono); }
+.first-diff-meta span { padding:3px 6px; border:1px solid var(--border-subtle); border-radius:var(--radius-pill); background:var(--surface-card); }
+.first-diff-actions { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:9px; }
+.first-diff-buttons { display:flex; align-items:center; gap:6px; flex:none; }
+.first-diff-note { margin:0; color:var(--content-tertiary); font-size:10px; line-height:1.5; }
+.jump-input,.compare-input { border:1px solid color-mix(in srgb,var(--status-warning) 45%,var(--border-subtle)); border-radius:var(--radius-sm); padding:5px 8px; background:var(--surface-card); color:var(--status-warning); font-size:9px; }
+.jump-input:hover { background:color-mix(in srgb,var(--status-warning) 12%,var(--surface-card)); }
+.compare-input:hover,.compare-input.active { background:color-mix(in srgb,var(--action-primary) 12%,var(--surface-card)); border-color:color-mix(in srgb,var(--action-primary) 45%,var(--border-subtle)); color:var(--action-primary); }
+.comparison-panel { background:color-mix(in srgb,var(--action-primary) 5%,var(--surface-raised)); }
+.comparison-head { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--content-tertiary); font:9px var(--font-mono); }
+.comparison-head .panel-label { margin:0; }
+.comparison-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin-top:9px; }
+.comparison-column { min-width:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.comparison-column.is-current { border-color:color-mix(in srgb,var(--action-primary) 42%,var(--border-subtle)); }
+.comparison-label { padding:6px 8px; color:var(--content-secondary); background:var(--surface-soft); font-size:9px; }
+.comparison-column pre { max-height:360px; padding:8px; }
+.input-message-list { display:grid; gap:7px; max-height:600px; overflow:auto; padding-right:2px; }
+.input-message { border:1px solid var(--border-subtle); border-radius:var(--radius-sm); overflow:hidden; background:var(--surface-card); }
+.input-message.is-first-diff { border-color:var(--status-warning); box-shadow:0 0 0 2px color-mix(in srgb,var(--status-warning) 18%,transparent); }
+.input-message-label { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 8px; color:var(--content-tertiary); background:var(--surface-soft); font:9px var(--font-mono); }
+.input-message-label b { color:var(--status-warning); font:9px var(--font-sans); }
+.input-message pre { max-height:none; padding:8px; }
 .content-panel pre { font-family:var(--font-sans); font-size:11px; line-height:1.65; }
 .assembly-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px 18px; }
 .assembly-grid div { min-width:0; }
@@ -196,4 +354,9 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
 .source-grid div { min-width:0; }
 .source-grid span { display:block; color:var(--content-tertiary); font-size:8px; margin-bottom:3px; text-transform:uppercase; letter-spacing:.08em; }
 .source-grid code { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:10px; }
+@media (max-width:720px) {
+  .first-diff-actions { align-items:flex-start; flex-direction:column; }
+  .first-diff-buttons { width:100%; flex-wrap:wrap; }
+  .comparison-grid { grid-template-columns:1fr; }
+}
 </style>

@@ -21,7 +21,6 @@ def _result():
 
 
 def test_openai_tool_round_converts_anthropic_image_block():
-    messages = []
     dispatched = [(
         SimpleNamespace(id="call-1"),
         [
@@ -32,7 +31,7 @@ def test_openai_tool_round_converts_anthropic_image_block():
         ],
     )]
 
-    OpenAIDriver().append_tool_round(messages, _result(), dispatched)
+    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
 
     assert messages[1] == {
         "role": "tool",
@@ -47,10 +46,9 @@ def test_openai_tool_round_converts_anthropic_image_block():
 
 
 def test_openai_tool_round_keeps_text_result_shape():
-    messages = []
     dispatched = [(SimpleNamespace(id="call-1"), '{"count": 0}')]
 
-    OpenAIDriver().append_tool_round(messages, _result(), dispatched)
+    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
 
     assert len(messages) == 2
     assert messages[1]["role"] == "tool"
@@ -172,4 +170,4 @@ def test_cache_diagnostics_reports_effective_runtime_anchors():
 
     assert diagnostics["cache_anchor_count"] == 2
     assert diagnostics["cache_anchor_last_index"] == 2
-    assert diagnostics["dynamic_tail_count"] == 0
+    assert diagnostics["turn_batch_count"] == 0

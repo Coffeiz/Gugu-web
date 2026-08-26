@@ -43,6 +43,8 @@
       :streaming="streaming" :is-chat-dragging="isChatDragging"
       :current-session-title="currentSessionTitle"
       :current-session-workspace-name="currentSessionWorkspaceName"
+      :current-session-goal-active="currentSessionGoalActive"
+      :current-session-goal-status="currentSessionGoalStatus"
       :session-id="sessionId"
       :presence-kind="presenceKind" :presence-text="presenceText" :presence-title="presenceTitle"
       :messages="messages" :is-group-session="isGroupSession"
@@ -347,7 +349,7 @@ const {
   messages, mkid, now, sessionSettling,
   inputText, thinkingLabels, streaming, statusKind, statusTyped, isTypingText,
   sessionId, ownerPlatformUserId, isGroupSession,
-  sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName,
+  sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
   stick, lastTop,
   fetchSessions, loadSession, newSession, deleteSession, renameSession,
   send, stopStreaming,
@@ -364,7 +366,10 @@ async function onInteractionSelect(_msg: ChatMessage, option: { id: string; labe
   }
   try {
     const token = getToken()
-    const res = await fetch(`${API_BASE}/agent/interactions/${promptId}/resume`, {
+    const endpoint = _msg.interaction?.toolCallId
+      ? `${API_BASE}/agent/interactions/${promptId}/resume`
+      : `${API_BASE}/agent/interactions/${promptId}/respond`
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ token: option.token }),

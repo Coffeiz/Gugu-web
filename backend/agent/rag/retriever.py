@@ -1,6 +1,8 @@
 """Knowledge RAG 的来源无关 Retriever 注册与候选契约。"""
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -74,15 +76,19 @@ class UnifiedRetriever:
         else:
             retriever = self._retrievers.get(source)
             selected = [retriever] if retriever is not None else []
-        return [
-            await retriever.retrieve(
-                query,
-                scope=scope,
-                strategy=strategy,
-                candidate_limit=candidate_limit,
+        async def run_one(retriever: SourceRetriever) -> RetrievalBatch:
+            started = time.monotonic()
+            batch = await retriever.retrieve(
+                query, scope=scope, strategy=strategy, candidate_limit=candidate_limit,
             )
-            for retriever in selected
-        ]
+            metadata = dict(batch.metadata)
+            metadata["retrieve_ms"] = str(int((time.monotonic() - started) * 1000))
+            return RetrievalBatch(
+                source_type=batch.source_type, results=batch.results,
+                index_source=batch.index_source, fallback_reason=batch.fallback_reason,
+                candidate_count=batch.candidate_count, metadata=metadata,
+            )
+        return list(await asyncio.gather(*(run_one(retriever) for retriever in selected)))
 
 
 __all__ = ["RecallCandidate", "RetrievalBatch", "SourceRetriever", "UnifiedRetriever"]

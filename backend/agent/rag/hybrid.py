@@ -1,4 +1,4 @@
-"""Rust lexical score 与已有 embedding 缓存的确定性混合排序。"""
+"""TypeScript lexical score 与已有 embedding 缓存的确定性混合排序。"""
 from __future__ import annotations
 
 from agent.rag.models import IndexDocument, RecallResult

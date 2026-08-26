@@ -44,11 +44,19 @@ class KnowledgeAdapter:
     ) -> RetrievalBatch:
         if strategy not in {"auto", "bm25", "embedding"}:
             raise ValueError("策略只能是 auto、bm25 或 embedding")
-        from agent.rag.index_cache import search_documents_with_cache
+        from agent.rag.index_cache import get_index_cache, search_documents_with_cache
         query_scopes = normalize_memory_scopes(self.user_id, scope)
-        documents = []
-        for query_scope in query_scopes:
-            documents.extend(await self.build_documents(scope=query_scope))
+        import asyncio
+        load_started = asyncio.get_running_loop().time()
+        document_sets = await asyncio.gather(*[
+            get_index_cache().get_snapshot_documents(
+                self.user_id,
+                f"knowledge:{query_scope.key()}",
+                lambda query_scope=query_scope: self.build_documents(scope=query_scope),
+            )
+            for query_scope in query_scopes
+        ])
+        documents = [document for documents_for_scope in document_sets for document in documents_for_scope]
         if not documents:
             return RetrievalBatch(
                 source_type=self.source_type, results=(),
@@ -58,6 +66,7 @@ class KnowledgeAdapter:
         diagnostics: dict[str, object] = {}
         results = await search_documents_with_cache(
             self.user_id, documents, query, limit=candidate_limit,
+            source_types={"knowledge"},
             diagnostics=diagnostics,
         )
         fusion = "bm25"
@@ -83,6 +92,7 @@ class KnowledgeAdapter:
             candidate_count=len(documents),
             metadata={
                 **{key: str(value) for key, value in diagnostics.items()},
+                "document_load_ms": str(int((asyncio.get_running_loop().time() - load_started) * 1000)),
                 "fusion": fusion,
             },
         )

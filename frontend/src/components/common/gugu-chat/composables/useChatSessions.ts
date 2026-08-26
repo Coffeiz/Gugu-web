@@ -15,6 +15,8 @@ interface RawSessionMessage {
   platformUserId?: string | null
   platformUserName?: string | null
   createdAt: string
+  runId?: string
+  roundId?: string
 }
 
 interface RawToolEvent {
@@ -27,6 +29,22 @@ interface RawToolEvent {
   toolResult?: unknown
   toolStatus?: ChatMessage['toolStatus']
   toolDurationMs?: number
+  createdAt: string
+}
+
+interface RawTimelineEvent {
+  id: string
+  kind: 'assistant' | 'tool'
+  text?: string
+  runId?: string
+  roundId?: string
+  toolCallId?: string
+  toolName?: string
+  toolLabel?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolStatus?: ChatMessage['toolStatus']
+  timelineOrder: number
   createdAt: string
 }
 
@@ -97,6 +115,12 @@ export function useChatSessions(options: {
   const currentSessionWorkspaceName = computed(() =>
     !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.workspaceName ?? null)
   )
+  const currentSessionGoalActive = computed(() =>
+    !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.goalActive)
+  )
+  const currentSessionGoalStatus = computed(() =>
+    !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.goalStatus ?? null)
+  )
 
   async function loadSession(id: number) {
     if (id === sessionId.value) return
@@ -119,6 +143,8 @@ export function useChatSessions(options: {
       sessionId.value = id
       const loadedSession = sessions.value.find(s => s.id === id)
       if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
+      if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
+      if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
       options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
@@ -139,6 +165,8 @@ export function useChatSessions(options: {
           time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
           _createdAt: m.createdAt,
           _timelineOrder: m.timelineOrder ?? m.id,
+          runId: m.runId,
+          roundId: m.roundId,
         }
       })
       const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
@@ -149,7 +177,28 @@ export function useChatSessions(options: {
         toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
         toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
       }))
-      messages.value = sortTimelineMessages([...loadedMessages, ...loadedTools])
+      const loadedTimeline = ((data.timelineEvents || []) as RawTimelineEvent[]).map((event) =>
+        event.kind === 'assistant'
+          ? {
+              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              runId: event.runId, roundId: event.roundId,
+              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+            }
+          : {
+              id: mkid(), role: 'tool', text: '',
+              toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
+              toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
+              toolInput: event.toolInput, toolResult: event.toolResult,
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+            },
+      )
+      messages.value = sortTimelineMessages([
+        ...loadedMessages,
+        ...loadedTimeline,
+        ...loadedTools,
+      ])
       // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
       // 因而前端不需要、也不会持久化旧 token。
       try {
@@ -241,7 +290,7 @@ export function useChatSessions(options: {
   }
 
   return {
-    webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName,
+    webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     loadSession, newSession, deleteSession, renameSession,
   }
 }

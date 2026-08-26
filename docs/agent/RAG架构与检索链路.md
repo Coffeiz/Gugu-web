@@ -29,9 +29,8 @@ backend/agent/rag/
 ├── adapters/             # Memory、Project 等来源适配器
 ├── index_builder.py      # 从业务数据构建统一 IndexDocument
 ├── persistent_store.py   # knowledge_index_entries 持久化索引读写
-├── index_cache.py        # Rust/Python 词法索引缓存与 TTL/容量管理
-├── rust_sidecar.py       # Rust/Tantivy sidecar 异步客户端
-├── legacy_lexical.py     # Python BM25 回退实现
+├── index_cache.py        # TypeScript 词法索引、snapshot 文档缓存与 TTL/容量管理
+├── ts_sidecar.py         # TypeScript worker 异步客户端
 ├── tokenizer.py          # Jieba + 中英文实体统一分词
 ├── retriever.py          # 来源无关 Retriever 调度协议
 ├── service.py            # UnifiedRecallService 统一召回、融合和预算
@@ -57,9 +56,7 @@ IndexDocument + Scope + stable version/content hash
         ↓
 scope-first 硬过滤
         ↓
-Rust lexical index（默认）
-        ↓ Rust 不可用时
-Python BM25 fallback
+TypeScript BM25 worker
         ↓
 可选向量混合（只使用已有向量缓存）
         ↓
@@ -136,7 +133,7 @@ Scope 关键字段：
 
 来源的 owner、群聊和成员范围必须在构建文档时写入 Scope。适配器不能绕过对象归属检查，也不能把二进制正文直接塞进上下文。
 
-### 5.2 持久化索引
+### 5.2 持久化索引与 snapshot 缓存
 
 `knowledge_index_entries` 保存统一索引条目，负责：
 
@@ -146,6 +143,21 @@ Scope 关键字段：
 - 通过最大 `indexed_at` 生成 owner 级 revision。
 
 索引是可重建缓存，不是权限事实来源。权限变化时仍必须重新生成 scope 并执行过滤。
+
+同一 `snapshot revision` 内，来源文档集合视为不可变：首次查询读取 Knowledge、Project
+等来源并建立共享 TypeScript BM25 索引，后续查询直接复用完整索引，不再重复加载来源文档。
+没有 snapshot 的显式请求使用 request 级缓存，不承诺跨请求复用。缓存和 LoopScope 诊断记录：
+
+当 snapshot revision 变化时，业务层按稳定的 chunk slot（来源类型、父文档和
+`chunk_index`，不包含可变版本号）对比前后文档集合，只向 TypeScript worker 发送新增/修改
+chunk（`upserts`）和删除 chunk（`deletes`）。对外引用仍使用带版本的 `chunk_id`；worker
+内部 slot 只更新发生变化的 chunk，因此同一文档只改一段内容时不会重建其它段。revision
+以 patch 事务原子推进；patch 基线不一致时拒绝应用，避免把不同 snapshot 的内容混在一起。
+
+- `document_load_ms`：来源文档读取与分块；
+- `index_lookup_ms`：统一索引查找及必要的首次构建；
+- `sidecar_search_ms`：TypeScript worker 的 BM25 查询；
+- `score_filter_ms`：统一候选评分与过滤。
 
 ## 6. 过滤与筛选顺序
 
@@ -187,22 +199,19 @@ Capability RAG 尚未接入运行时，但离线探针已经按以下边界验�
 - 对英文数字组合补充紧凑 token，例如 `GTA 6` 与 `GTA6`。
 - 中文保留 Jieba 词和完整原词，减少专有名词被拆散后的召回损失。
 
-Rust sidecar 接收已经规范化后的文档文本和查询，Python fallback 复用同一词法边界。
+TypeScript lexical worker 接收已经规范化后的文档文本和查询，Python 负责文档映射、权限和生命周期管理。
 
-### 7.2 Rust lexical / Tantivy
+### 7.2 TypeScript lexical worker
 
-当前默认后端由 `search.rust_lexical_backend` 和 `rust_sidecar_enabled` 决定：
+当前生产后端固定为 TypeScript worker：
 
-- 默认优先使用 Rust/Tantivy sidecar。
-- sidecar 负责倒排索引和词法查询。
-- Python 只负责异步协议、文档映射、Scope 二次过滤和生命周期管理。
-- sidecar 不可用时抛出 `RustSidecarUnavailable`，调用方退回 Python BM25。
+- `backend/ts/workers/rag/src/index.ts` 负责倒排索引和词法查询。
+- `backend/agent/rag/ts_sidecar.py` 负责异步协议、文档映射、Scope 二次过滤和生命周期管理。
+- worker 不可用时按统一 RAG 错误边界返回错误，不切换到历史 Rust/Python 词法实现。
 
-### 7.3 Python BM25 fallback
+### 7.3 兼容与错误边界
 
-`LegacyBM25` 是 Rust sidecar 不可用时的兼容后端。它与 Rust 使用相同的查询契约和过滤边界，不能成为另一套业务排序逻辑。
-
-Python fallback 查询会先取较大的候选窗口，随后执行 source、scope 和最终 limit 过滤，以避免硬过滤后结果不足。
+兼容实现仅保留在历史评估代码和报告中，不进入生产检索路径；生产查询失败必须暴露结构化错误，不能静默回退为另一套排序逻辑。
 
 ### 7.4 向量混合
 
@@ -232,14 +241,14 @@ confidence = 0.55 × fused_score
 
 ### 8.1 索引缓存
 
-`KnowledgeIndexCache` 统一管理 Rust 和 Python 后端：
+`KnowledgeIndexCache` 管理 TypeScript worker 的索引生命周期：
 
 | 项目 | 当前值 |
 |---|---:|
 | TTL | 30 分钟，按最后访问时间续期 |
 | 单 owner 容量 | 32 MiB |
 | 全局容量 | 512 MiB |
-| 缓存 key | owner + backend + index/fingerprint |
+| 缓存 key | owner + TypeScript worker + index/fingerprint |
 | 并发构建 | 同一 key 使用 asyncio lock，避免重复建索引 |
 
 缓存有效条件：
@@ -249,13 +258,13 @@ confidence = 0.55 × fused_score
 - backend 未变化。
 - transient 文档 fingerprint 未变化。
 
-超过容量时优先淘汰最久未访问条目，并释放 Rust sidecar 客户端。索引缓存失效不会改变数据库内容。
+超过容量时优先淘汰最久未访问条目，并释放 TypeScript worker 客户端。索引缓存失效不会改变数据库内容。
 
 ### 8.2 失效来源
 
 - 持久化索引最大更新时间变化。
 - 文档内容、版本或结构变化导致 fingerprint 变化。
-- Rust/Python 后端切换。
+- TypeScript worker 版本或协议变化。
 - 显式 owner/source cache invalidate。
 - TTL 到期或容量淘汰。
 
@@ -320,8 +329,8 @@ backend/scripts/diagnostics/capability_recommendation_probe.py
 
 - 统一入口：`backend/agent/rag/service.py`
 - Scope 过滤：`backend/agent/rag/scope.py`
-- Rust/Python 缓存：`backend/agent/rag/index_cache.py`
-- Rust sidecar：`backend/agent/rag/rust_sidecar.py`
+- TypeScript worker 缓存：`backend/agent/rag/index_cache.py`
+- TypeScript sidecar：`backend/agent/rag/ts_sidecar.py`
 - 分词与评分：`backend/agent/rag/tokenizer.py`、`backend/agent/rag/scoring.py`
 - 自动注入：`backend/agent/rag/injection.py`
 - 诊断：`backend/agent/rag/diagnostics.py`

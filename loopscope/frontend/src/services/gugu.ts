@@ -80,10 +80,58 @@ export async function loadMessagePage(
   if (!r.ok) throw new Error(`Gugu messages ${r.status}`)
   const data = await r.json()
   const page = data.pagination ?? {}
+  const timeline: any[] = Array.isArray(data.timelineEvents) ? data.timelineEvents : []
+  const tools: any[] = Array.isArray(data.toolEvents) ? data.toolEvents : []
+  const messages: ChatMessage[] = (data.messages ?? [])
+    .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+    .map((m: any) => ({
+      id: m.id,
+      role: m.role,
+      content: m.content ?? '',
+      createdAt: m.createdAt,
+      canonicalId: Number(m.id),
+      timelineOrder: Number(m.timelineOrder ?? Number(m.id) * 1000),
+    }))
+  // 新接口把一个 assistant 消息的多轮正文拆到 timelineEvents；不能只恢复
+  // messages，否则刷新后只剩用户气泡。timeline 中的工具项也一并恢复，兼容
+  // web/IM 两种持久化形态。
+  for (const event of timeline) {
+    if (!event || event.kind !== 'assistant' && event.kind !== 'tool') continue
+    const order = Number(event.timelineOrder ?? 0)
+    messages.push({
+      id: String(event.id ?? `timeline:${order}`),
+      role: event.kind === 'tool' ? 'tool' : 'assistant',
+      content: event.text ?? '',
+      createdAt: event.createdAt,
+      canonicalId: Math.floor(order / 1000) || undefined,
+      timelineOrder: order,
+      runId: event.runId,
+      toolName: event.toolName,
+      toolLabel: event.toolLabel,
+      toolStatus: event.toolStatus,
+      toolInput: event.toolInput,
+      toolResult: event.toolResult,
+    })
+  }
+  for (const event of tools) {
+    const order = Number(event.timelineOrder ?? 0)
+    messages.push({
+      id: String(event.id ?? `tool:${event.toolCallId ?? order}`),
+      role: 'tool',
+      content: '',
+      createdAt: event.createdAt,
+      canonicalId: Math.floor(order / 1000) || undefined,
+      timelineOrder: order,
+      toolName: event.toolName,
+      toolLabel: event.toolLabel,
+      toolStatus: event.toolStatus,
+      toolInput: event.toolInput,
+      toolResult: event.toolResult,
+    })
+  }
+  messages.sort((a, b) => (a.timelineOrder ?? 0) - (b.timelineOrder ?? 0) || String(a.id).localeCompare(String(b.id)))
   return {
-    messages: (data.messages ?? [])
-      .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-      .map((m: any) => ({ id: m.id, role: m.role, content: m.content ?? '', createdAt: m.createdAt })),
+    messages,
     hasMore: Boolean(page.hasMore),
     oldestId: page.oldestId ?? null,
     newestId: page.newestId ?? null,

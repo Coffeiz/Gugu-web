@@ -16,20 +16,19 @@
 这个文件把这几件事收拢成两个 `LoopDriver` 实现（`AnthropicDriver`/`OpenAIDriver`），
 `core.py` 只写一条共享的 `_run_loop`，需要跟 provider 打交道时调用驱动。
 
-驱动接口四个方法：
+驱动接口四个构造方法：
 - `prepare(tool_names, ai, messages, system_text)`：调用一次的一次性准备（建 client、
   算 tools schema/缓存能力/思考参数），返回 `(client, ctx)`。
 - `run_round(client, ctx, messages)`：跑一轮，是个 async generator——流式 yield
   `("token", str)`，最后 yield `("done", RoundResult)`。
-- `append_tool_round(messages, result, dispatched)`：把这一轮的 assistant 消息 + 工具
-  结果消息追加进 `messages`（原地修改）——两边格式差异大，整段交给驱动自己拼，不硬拆。
-- `append_followup(messages, result, next_content, assistant_fallback="（…）")`：核实
-  prompt / 三条守卫 nudge 共用的形状——都是"这轮的 assistant 文本 + 一条后续 user
-  提示"，只有提示内容不一样。`assistant_fallback` 是 assistant 内容为空时的占位——
+- `build_tool_round(result, dispatched)`：构造这一轮的 assistant 消息 + 工具结果消息，
+  不直接修改 history；两边格式差异大，整段交给驱动自己拼。
+- `build_followup(result, next_content, assistant_fallback="（…）")`：构造核实 prompt
+  或守卫 nudge 使用的消息批次。`assistant_fallback` 是 assistant 内容为空时的占位——
   两边各自的占位规则跟改动前逐条对齐，见各自实现里的注释。
-- `append_empty_retry(messages, result)`：空回复追问兜底单独一个方法——两边这里
-  "assistant 是否入历史"本身就不一样（Anthropic 入、OpenAI 不入），不是同一个形状
-  加参数能糊过去的，改动前就是这样，这里原样保留。
+- `build_guard_followup(result, next_content)`：构造内部守卫消息批次。
+- `build_empty_retry(result)`：构造空回复追问批次。两边这里"assistant 是否入历史"
+  本身就不一样，因此保留在各自 Provider renderer 中。
 """
 from __future__ import annotations
 
@@ -45,7 +44,7 @@ from agent.context.canonical_tool_history import ToolCall
 _log = logging.getLogger("agent.core")
 
 # OpenAI 路工具参数 JSON 截断（多为 max_tokens 截断）的统一错误文案——两边共用同一份文字，
-# 只是各自的 append_tool_round 决定怎么包装成 tool_result 消息。
+# 只是各自的 build_tool_round 决定怎么包装成 tool_result 消息。
 TOOL_ARGS_TRUNCATED_ERROR = json.dumps(
     {"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False)
 
@@ -78,11 +77,11 @@ class LoopDriver(Protocol):
     def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None): ...
     def update_tools(self, ctx, tool_names: list[str]) -> None: ...
     def run_round(self, client, ctx, messages: list) -> AsyncGenerator[tuple, None]: ...
-    def append_tool_round(self, messages: list, result: RoundResult, dispatched: list) -> None: ...
-    def append_followup(self, messages: list, result: RoundResult, next_content: str,
-                          assistant_fallback: str = "（…）") -> None: ...
-    def append_guard_followup(self, messages: list, result: RoundResult, next_content: str) -> None: ...
-    def append_empty_retry(self, messages: list, result: RoundResult) -> None: ...
+    def build_tool_round(self, result: RoundResult, dispatched: list) -> list[dict]: ...
+    def build_followup(self, result: RoundResult, next_content: str,
+                       assistant_fallback: str = "（…）") -> list[dict]: ...
+    def build_guard_followup(self, result: RoundResult, next_content: str) -> list[dict]: ...
+    def build_empty_retry(self, result: RoundResult) -> list[dict]: ...
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -161,24 +160,33 @@ def _history_cache_state(messages: list) -> tuple[int, set[int]]:
         None,
     )
     stable_limit = volatile_index if volatile_index is not None else cache_limit
-    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
-    anchor_indices = {index for index in anchor_indices if 0 <= index < stable_limit}
+    anchor_indices = {
+        index for index in getattr(messages, "cache_anchor_indices", [])
+        if 0 <= index < stable_limit
+    }
     latest_anchor = stable_limit - 1
+    if anchor_indices:
+        # 续轮只保留最早 baseline 和当前尾部；不要再把中间普通 user 消息
+        # 提升为断点，否则工具结果会把稳定前缀缓存锚点挤掉。
+        anchor_indices = {min(anchor_indices)}
+    else:
+        if latest_anchor >= 0:
+            anchor_indices.add(latest_anchor)
+        # 新请求会重建 PromptMessages，因此首轮需要从稳定 conversation 中
+        # 找到 baseline；工具结果不能作为首轮 baseline。
+        for index in range(stable_limit - 2, -1, -1):
+            message = conversation[index]
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            blocks = content if isinstance(content, list) else []
+            if blocks and all(isinstance(block, dict) and block.get("type") == "tool_result"
+                              for block in blocks):
+                continue
+            anchor_indices.add(index)
+            break
     if latest_anchor >= 0:
         anchor_indices.add(latest_anchor)
-
-    # 新请求会重建 PromptMessages，因此需要从稳定 conversation 中重建上一轮边界。
-    for index in range(stable_limit - 2, -1, -1):
-        message = conversation[index]
-        if message.get("role") != "user":
-            continue
-        content = message.get("content")
-        blocks = content if isinstance(content, list) else []
-        if blocks and all(isinstance(block, dict) and block.get("type") == "tool_result"
-                          for block in blocks):
-            continue
-        anchor_indices.add(index)
-        break
     return stable_limit, anchor_indices
 
 
@@ -207,9 +215,9 @@ def _with_history_cache(messages: list) -> list:
     if stable_limit <= 0:
         return list(messages)
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
-    latest_anchor = stable_limit - 1
-    if remember_anchor is not None and latest_anchor >= 0:
-        remember_anchor(latest_anchor)
+    if remember_anchor is not None:
+        for index in sorted(anchor_indices):
+            remember_anchor(index)
 
     # 浅拷贝 messages 列表
     new_messages = []
@@ -339,28 +347,35 @@ class AnthropicDriver:
     def _content_dicts(self, result: RoundResult) -> list:
         return [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in result.raw]
 
-    def append_tool_round(self, messages, result, dispatched):
+    def build_tool_round(self, result, dispatched):
         # 序列化为 dict：让 messages 列表 JSON 可序列化（便于持久化），
         # 同时保留 thinking blocks（MiniMax / Anthropic 多轮时原样回传）
-        messages.append({"role": "assistant", "content": self._content_dicts(result)})
+        messages = [{"role": "assistant", "content": self._content_dicts(result)}]
         tool_results = [{"type": "tool_result", "tool_use_id": tc.id, "content": res} for tc, res in dispatched]
         messages.append({"role": "user", "content": tool_results})
+        return messages
 
-    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
-        messages.append({"role": "assistant", "content": self._content_dicts(result)})
-        messages.append({"role": "user", "content": next_content})
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            {"role": "assistant", "content": self._content_dicts(result)},
+            {"role": "user", "content": next_content},
+        ]
 
-    def append_guard_followup(self, messages, result, next_content):
+    def build_guard_followup(self, result, next_content):
         """追加内部守卫控制消息；守卫不是用户新消息，保留 system 语义。"""
-        messages.append({"role": "assistant", "content": self._content_dicts(result)})
-        messages.append({"role": "system", "content": next_content})
+        return [
+            {"role": "assistant", "content": self._content_dicts(result)},
+            {"role": "system", "content": next_content},
+        ]
 
-    def append_empty_retry(self, messages, result):
+    def build_empty_retry(self, result):
         # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；
         # 这条守卫消息不入历史（tool_rounds_only 过滤）
         content_dicts = self._content_dicts(result) or [{"type": "text", "text": "（…）"}]
-        messages.append({"role": "assistant", "content": content_dicts})
-        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+        return [
+            {"role": "assistant", "content": content_dicts},
+            {"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"},
+        ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -586,16 +601,16 @@ class OpenAIDriver:
             m["reasoning_content"] = raw.reasoning
         return m
 
-    def append_tool_round(self, messages, result, dispatched):
+    def build_tool_round(self, result, dispatched):
         raw = result.raw
-        messages.append(self._asst(
+        messages = [self._asst(
             raw, raw.content or None,
             tool_calls_payload=[
                 {"id": b["id"], "type": "function",
                  "function": {"name": b["name"], "arguments": b["args"]}}
                 for b in raw.tool_calls_payload
             ],
-        ))
+        )]
         visual_parts: list[dict] = []
         for tc, res in dispatched:
             content, images = _openai_tool_result(res)
@@ -610,19 +625,25 @@ class OpenAIDriver:
                 }, *visual_parts],
             })
 
-    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
-        messages.append(self._asst(result.raw, result.text or assistant_fallback))
-        messages.append({"role": "user", "content": next_content})
+        return messages
 
-    def append_guard_followup(self, messages, result, next_content):
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            self._asst(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ]
+
+    def build_guard_followup(self, result, next_content):
         """追加内部守卫控制消息，不把它伪装成用户指令。"""
-        messages.append(self._asst(result.raw, result.text or "（…）"))
-        messages.append({"role": "system", "content": next_content})
+        return [
+            self._asst(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ]
 
-    def append_empty_retry(self, messages, result):
+    def build_empty_retry(self, result):
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
-        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -777,19 +798,24 @@ class OllamaDriver:
             message["tool_calls"] = raw.tool_calls_payload
         return message
 
-    def append_tool_round(self, messages, result, dispatched):
-        messages.append(self._assistant(result.raw, result.raw.content))
+    def build_tool_round(self, result, dispatched):
+        messages = [self._assistant(result.raw, result.raw.content)]
         for tc, res in dispatched:
             content, _images = _openai_tool_result(res)
             messages.append({"role": "tool", "content": content})
+        return messages
 
-    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
-        messages.append(self._assistant(result.raw, result.text or assistant_fallback))
-        messages.append({"role": "user", "content": next_content})
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            self._assistant(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ]
 
-    def append_guard_followup(self, messages, result, next_content):
-        messages.append(self._assistant(result.raw, result.text or "（…）"))
-        messages.append({"role": "system", "content": next_content})
+    def build_guard_followup(self, result, next_content):
+        return [
+            self._assistant(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ]
 
-    def append_empty_retry(self, messages, result):
-        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+    def build_empty_retry(self, result):
+        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]

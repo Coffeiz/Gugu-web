@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from dataclasses import replace
 
 from agent.rag.adapters.memory import MemoryAdapter
@@ -14,17 +15,15 @@ from agent.rag.hybrid import hybrid_results
 from agent.rag.models import RecallCandidate, RecallResult, Scope
 from agent.rag.persistent_store import load_index_documents, replace_source_documents, search_persistent_index
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.scoring import filter_confidence, normalize_scores, token_similarity
+from agent.rag.scoring import normalize_scores, token_similarity
 from agent.rag.index_cache import search_documents_with_cache
-from agent.rag.rust_sidecar import RustSidecarUnavailable
+from agent.rag.ts_sidecar import TsSidecarUnavailable, score_candidates_with_cache
 from agent.rag.scope import (
     matches_any_scope,
     matches_scope,
-    normalize_memory_scope,
     normalize_memory_scopes,
     resolve_memory_query_scopes,
 )
-from agent.rag.storage import PersistentMemoryIndex
 from agent.rag.vector_cache import cache_key
 
 
@@ -59,24 +58,9 @@ def _snapshot_covers_document(text: str, snapshot_text: str) -> bool:
 async def _load_memory_documents(user_id, query_scope):
     """优先读取持久化索引；缺失时重建一次并尽力回填。"""
     if query_scope.scope_type != "owner":
-        return await MemoryAdapter(user_id).build_documents(scope=query_scope), "scope-rebuild"
-    index = PersistentMemoryIndex(user_id)
-    documents = await index.load()
-    if documents is not None:
-        # daily 是高频追加来源，事件索引更新是异步的；查询时只刷新 daily，
-        # 避免在反思刚写完、RAG 事件尚未完成时继续命中旧持久索引。
-        adapter = MemoryAdapter(user_id)
-        fresh_daily = await adapter.build_daily_documents(scope=query_scope)
-        documents = [document for document in documents if document.source_id != "daily"]
-        documents.extend(fresh_daily)
-        return documents, "persistent+daily-refresh"
-    documents = await MemoryAdapter(user_id).build_documents(scope=query_scope)
-    try:
-        await index.replace(documents)
-    except Exception:
-        # 索引是可重建缓存，落盘失败不阻塞本轮主动查询。
-        pass
-    return documents, "rebuild"
+        documents, source = await MemoryAdapter(user_id).build_cached_documents(scope=query_scope)
+        return documents, source
+    return await MemoryAdapter(user_id).build_cached_owner_documents(scope=query_scope)
 
 
 class MemoryRetriever:
@@ -97,10 +81,13 @@ class MemoryRetriever:
         candidate_limit: int,
     ) -> RetrievalBatch:
         query_scopes = normalize_memory_scopes(self.user_id, scope)
-        loaded = [
-            await _load_memory_documents(self.user_id, query_scope)
+        import asyncio
+        document_load_started = time.monotonic()
+        loaded = await asyncio.gather(*[
+            _load_memory_documents(self.user_id, query_scope)
             for query_scope in query_scopes
-        ]
+        ])
+        document_load_ms = int((time.monotonic() - document_load_started) * 1000)
         documents = [document for docs, _ in loaded for document in docs]
         index_source = ",".join(sorted({source for _, source in loaded}))
         allowed_sources = {"profile", "pattern", "daily", "memory"}
@@ -122,14 +109,13 @@ class MemoryRetriever:
         try:
             lexical = await search_documents_with_cache(
                 self.user_id, documents, query, limit=candidate_limit,
+                source_types={"memory"},
                 diagnostics=search_metadata,
             )
-        except RustSidecarUnavailable:
-            from agent.rag.legacy_lexical import LegacyBM25
-
-            lexical = LegacyBM25(documents).search(query, limit=candidate_limit)
-            search_metadata.update({"engine": "python", "cache_hit": False,
-                                    "fallback": "rust_sidecar_unavailable"})
+        except TsSidecarUnavailable:
+            lexical = []
+            search_metadata.update({"engine": "unavailable", "cache_hit": False,
+                                    "fallback": "lexical_worker_unavailable"})
         final: list[RecallResult] = lexical
         fusion = "bm25"
         fallback_reason = "embedding_disabled"
@@ -158,13 +144,14 @@ class MemoryRetriever:
             candidate_count=len(documents),
             metadata={
                 **{key: str(value) for key, value in search_metadata.items()},
+                "document_load_ms": str(document_load_ms),
                 "fusion": fusion,
             },
         )
 
 
 class ProjectRetriever:
-    """Project 来源候选召回器；词法检索由 Rust sidecar 执行。"""
+    """Project 来源候选召回器；词法检索由 TypeScript worker 执行。"""
 
     source_type = "project"
 
@@ -179,7 +166,18 @@ class ProjectRetriever:
         strategy: str,
         candidate_limit: int,
     ) -> RetrievalBatch:
-        query_scope = normalize_memory_scope(self.adapter.user_id, scope)
+        query_scopes = normalize_memory_scopes(self.adapter.user_id, scope)
+        query_scope = next(
+            (item for item in query_scopes if item.scope_type == "owner"),
+            None,
+        )
+        if query_scope is None:
+            return RetrievalBatch(
+                source_type=self.source_type,
+                index_source="projects-db" if self.adapter._db is not None else "projects-store",
+                fallback_reason="scope_not_supported",
+                candidate_count=0,
+            )
         if strategy not in {"auto", "bm25", "embedding"}:
             raise ValueError("strategy 只能是 auto、bm25 或 embedding")
         if self.adapter._db is not None:
@@ -188,9 +186,7 @@ class ProjectRetriever:
                 self.adapter._db, query, query_scope, candidate_limit,
                 diagnostics=search_metadata,
             )
-            candidate_count = len(await load_index_documents(
-                self.adapter._db, self.adapter.user_id, source_types={self.source_type},
-            ))
+            candidate_count = int(search_metadata.get("document_count", 0) or 0)
             return RetrievalBatch(
                 source_type=self.source_type,
                 results=tuple(results),
@@ -202,19 +198,24 @@ class ProjectRetriever:
                     "fusion": "bm25",
                 },
             )
-        documents = await self.adapter.build_documents(scope=query_scope)
+        from agent.rag.index_cache import get_index_cache
+        load_started = time.monotonic()
+        documents = await get_index_cache().get_snapshot_documents(
+            self.adapter.user_id,
+            f"project:{query_scope.key()}",
+            lambda: self.adapter.build_documents(scope=query_scope),
+        )
         search_metadata = {}
         try:
             results = await search_documents_with_cache(
                 self.adapter.user_id, documents, query, limit=candidate_limit,
+                source_types={"project"}, scope=query_scope,
                 diagnostics=search_metadata,
             )
-        except RustSidecarUnavailable:
-            from agent.rag.legacy_lexical import LegacyBM25
-
-            results = LegacyBM25(documents).search(query, limit=candidate_limit)
-            search_metadata.update({"engine": "python", "cache_hit": False,
-                                    "fallback": "rust_sidecar_unavailable"})
+        except TsSidecarUnavailable:
+            results = []
+            search_metadata.update({"engine": "unavailable", "cache_hit": False,
+                                    "fallback": "lexical_worker_unavailable"})
         return RetrievalBatch(
             source_type=self.source_type,
             results=tuple(results),
@@ -223,15 +224,41 @@ class ProjectRetriever:
             candidate_count=len(documents),
             metadata={
                 **{key: str(value) for key, value in search_metadata.items()},
+                "document_load_ms": str(int((time.monotonic() - load_started) * 1000)),
                 "fusion": "bm25",
             },
         )
 
     async def _search_db(self, db, query: str, scope, limit: int,
                          diagnostics: dict[str, object] | None = None):
+        from agent.rag.context import get_snapshot_revision
+
+        # snapshot-bound index 已经固定了文档集合；不要每轮再次读取整张索引表。
+        # 只有首次发现索引为空时，才走一次原有的构建路径。
+        if get_snapshot_revision():
+            results = await search_persistent_index(
+                db, self.adapter.user_id, query,
+                source_types={self.source_type}, scope=scope, limit=limit,
+                diagnostics=diagnostics,
+            )
+            if int((diagnostics or {}).get("document_count", 0) or 0) > 0:
+                return results
+            documents = await self.adapter.build_documents(scope=scope)
+            if documents:
+                await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
+                await db.commit()
+                return await search_persistent_index(
+                    db, self.adapter.user_id, query,
+                    source_types={self.source_type}, scope=scope, limit=limit,
+                    diagnostics=diagnostics,
+                )
+            return results
+
         documents = await load_index_documents(
             db, self.adapter.user_id, source_types={self.source_type},
         )
+        if diagnostics is not None:
+            diagnostics["document_count"] = len(documents)
         if not documents:
             documents = await self.adapter.build_documents(scope=scope)
             await replace_source_documents(db, self.adapter.user_id, self.source_type, documents)
@@ -242,14 +269,11 @@ class ProjectRetriever:
                 source_types={self.source_type}, scope=scope, limit=limit,
                 diagnostics=diagnostics,
             )
-        except RustSidecarUnavailable:
-            from agent.rag.legacy_lexical import LegacyBM25
-
-            scoped_documents = [document for document in documents if matches_scope(document, scope)]
+        except TsSidecarUnavailable:
             if diagnostics is not None:
-                diagnostics.update({"engine": "python", "cache_hit": False,
-                                    "fallback": "rust_sidecar_unavailable"})
-            return LegacyBM25(scoped_documents).search(query, limit=limit)
+                diagnostics.update({"engine": "unavailable", "cache_hit": False,
+                                    "fallback": "lexical_worker_unavailable"})
+            return []
 
 
 class UnifiedRecallService:
@@ -268,13 +292,25 @@ class UnifiedRecallService:
         limit: int = DEFAULT_RESULTS,
     ) -> dict:
         requested_limit = max(1, min(int(limit or DEFAULT_RESULTS), MAX_ACTIVE_RESULTS))
-        batches = await self.retriever.retrieve(
-            query,
-            source=source,
-            scope=scope,
-            strategy=strategy,
-            candidate_limit=20,
+        from agent.rag.context import (
+            get_snapshot_revision, reset_shared_index_key, set_shared_index_key,
         )
+        snapshot_revision = get_snapshot_revision()
+        shared_key = (
+            f"snapshot:{snapshot_revision}"
+            if snapshot_revision != "" else f"request:{uuid.uuid4().hex}"
+        )
+        shared_token = set_shared_index_key(shared_key)
+        try:
+            batches = await self.retriever.retrieve(
+                query,
+                source=source,
+                scope=scope,
+                strategy=strategy,
+                candidate_limit=20,
+            )
+        finally:
+            reset_shared_index_key(shared_token)
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
@@ -319,9 +355,25 @@ class UnifiedRecallService:
         candidates.sort(key=lambda item: item[1].document.chunk_id)
         candidates.sort(key=lambda item: item[1].document.updated_at or "", reverse=True)
         candidates.sort(key=lambda item: item[1].fused_score, reverse=True)
-        scored_candidates, score_stats = filter_confidence(
-            query, [candidate for _, candidate in candidates], limit=requested_limit,
-        )
+        candidate_values = [candidate for _, candidate in candidates]
+        score_filter_started = time.monotonic()
+        try:
+            owner_id = candidate_values[0].scope.owner_user_id if candidate_values else ""
+            scored_candidates, score_stats = await score_candidates_with_cache(
+                owner_id, query, candidate_values, limit=requested_limit,
+            )
+        except TsSidecarUnavailable:
+            # worker 故障不再回退到另一套 Python 评分算法，避免语义悄悄漂移。
+            scored_candidates, score_stats = [], {
+                "accepted_count": 0,
+                "rejected_low_score": len(candidate_values),
+                "rejected_not_preferred": 0,
+                "top_confidence": 0.0,
+                "threshold": 0.35,
+                "preferred_threshold": 0.55,
+                "scoring_version": "confidence-v1",
+            }
+        score_filter_ms = int((time.monotonic() - score_filter_started) * 1000)
         accepted = {
             (candidate.source_type, candidate.document.chunk_id)
             for candidate in scored_candidates
@@ -405,6 +457,21 @@ class UnifiedRecallService:
             ).split(",")
             if reason
         })
+        sidecar_values = [batch.metadata.get("sidecar_reused") == "True" for batch in batches
+                          if "sidecar_reused" in batch.metadata]
+        index_syncs = sorted({batch.metadata.get("index_sync") for batch in batches
+                              if batch.metadata.get("index_sync")})
+        upsert_count = sum(int(batch.metadata.get("upsert_count", "0") or 0) for batch in batches)
+        delete_count = sum(int(batch.metadata.get("delete_count", "0") or 0) for batch in batches)
+        stage_ms: dict[str, int] = {}
+        for batch in batches:
+            for key, value in batch.metadata.items():
+                if key.endswith("_ms"):
+                    try:
+                        stage_ms[f"{batch.source_type}.{key}"] = int(float(value))
+                    except (TypeError, ValueError):
+                        continue
+        stage_ms["score_filter_ms"] = score_filter_ms
         return {
             "query": query,
             "results": selected,
@@ -428,8 +495,18 @@ class UnifiedRecallService:
             "scoring_version": score_stats["scoring_version"],
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
-            "cache_entries": sum(int(batch.metadata.get("cache_entries", "0")) for batch in batches),
+            "cache_entries": (
+                1
+                if any(batch.metadata.get("shared_index") == "True" for batch in batches)
+                else sum(int(batch.metadata.get("cache_entries", "0")) for batch in batches)
+            ),
             "cache_miss_reasons": cache_miss_reasons,
+            "sidecar_reused": bool(sidecar_values) and all(sidecar_values),
+            "index_sync": index_syncs[-1] if index_syncs else None,
+            "upsert_count": upsert_count,
+            "delete_count": delete_count,
+            "score_filter_ms": score_filter_ms,
+            "stage_ms": stage_ms,
         }
 
 
@@ -472,6 +549,8 @@ async def search_memory(
         cache_hit=result.get("cache_hit"),
         cache_entries=result.get("cache_entries"),
         cache_miss_reasons=result.get("cache_miss_reasons"),
+        stages=result.get("stage_ms"),
+        sidecar_reused=result.get("sidecar_reused"),
         quality={
             key: result.get(key)
             for key in (
@@ -500,7 +579,7 @@ async def search_knowledge(
         return {"query": "", "results": [], "has_more": False, "message": "需要提供检索关键词"}
     if db is None:
         # Web/IM 的自动召回通常没有沿调用链携带 DB session；在这里短暂打开一份，
-        # 让 Project 等数据库来源也能复用持久化 Rust lexical 索引。
+        # 让 Project 等数据库来源也能复用统一持久化 TypeScript lexical 索引。
         import app.db.session as db_session
         # 统一走 ensure_engine，处理跨事件循环和 reset_engine 的生命周期，
         # 不要直接读取 _engine 再调用私有构造函数。
@@ -534,6 +613,8 @@ async def search_knowledge(
         cache_hit=result.get("cache_hit"),
         cache_entries=result.get("cache_entries"),
         cache_miss_reasons=result.get("cache_miss_reasons"),
+        stages=result.get("stage_ms"),
+        sidecar_reused=result.get("sidecar_reused"),
         quality={
             key: result.get(key)
             for key in (
@@ -576,6 +657,7 @@ async def search_conversations(
         index_version="conversation-rag-v1", mode=mode,
         scope_type="owner", scope_key="", injected=False,
         engine=result.get("engine", "unknown"),
+        stages=result.get("stage_ms"),
         quality={
             key: result.get(key)
             for key in (

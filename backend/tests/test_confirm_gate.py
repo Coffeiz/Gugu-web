@@ -8,6 +8,7 @@
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
+from datetime import timedelta
 from app.core.tz import now_utc
 import logging
 
@@ -95,6 +96,28 @@ async def test_delete_client_with_prior_token_executes(db, user_a):
     })
     assert isinstance(res, dict) and res.get("success")
     assert await db.get(Client, c.id) is None
+
+
+def test_confirmation_lease_can_use_explicit_ttl(user_a):
+    from agent.security import confirm
+    from app.core.config import get_settings
+    from jose import jwt
+
+    blocked = confirm.needs_confirmation(
+        {},
+        "允许当前会话执行只读网络请求",
+        user_a.id,
+        identity="shell:network-read:1:sandbox",
+        ttl_minutes=30,
+    )
+    payload = jwt.decode(
+        json.loads(blocked)["confirm_token"],
+        get_settings().secret_key,
+        algorithms=["HS256"],
+    )
+    remaining = payload["exp"] - now_utc().timestamp()
+    assert 29 * 60 < remaining <= 30 * 60
+    assert json.loads(blocked)["authorization_ttl_minutes"] == 30
 
 
 async def test_batch_delete_client_uses_one_target_bound_confirmation(db, user_a):

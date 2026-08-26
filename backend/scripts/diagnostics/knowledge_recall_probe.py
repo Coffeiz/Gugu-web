@@ -23,10 +23,7 @@ from app.services.storage import LocalStorageBackend
 from agent.knowledge.models import KnowledgeEntry, KnowledgeScope, KnowledgeSource
 from agent.knowledge.store import KnowledgeStore
 from agent.rag.adapters.knowledge import KnowledgeAdapter
-from agent.rag.legacy_lexical import LegacyBM25
 from agent.rag.models import RecallCandidate, Scope
-from agent.rag.retriever import RetrievalBatch
-from agent.rag.rust_sidecar import RustSidecarUnavailable
 from agent.rag.scoring import filter_confidence
 
 
@@ -60,10 +57,10 @@ def mock_entries() -> list[KnowledgeEntry]:
               "当配置值已经确认传入但行为仍不一致时，优先沿配置定义和消费链检查各生命周期阶段是否实际读取该配置；若配置没有传入，先检查上游组装。", confidence="probable"),
         entry("Knowledge RAG 作用", "知识系统",
               "Knowledge RAG 是被动上下文检索，用于补充项目私有规则和流程，不代表 Agent 拥有可主动执行的 Skill。"),
-        entry("Rust 召回缓存", "RAG 性能",
-              "Rust BM25 召回应复用现有索引缓存和 TTL，不应在业务侧为同一用户维护第二套预热生命周期。", source="derived", confidence="probable"),
-        entry("Rust 召回缓存（外部资料）", "RAG 性能",
-              "Rust BM25 每次查询都应重新构建索引，避免缓存导致结果过期。", source="web", confidence="conflict"),
+        entry("词法召回缓存", "RAG 性能",
+              "词法召回应复用现有索引缓存和 TTL，不应在业务侧为同一用户维护第二套预热生命周期。", source="derived", confidence="probable"),
+        entry("词法召回缓存（外部资料）", "RAG 性能",
+              "词法索引每次查询都应重新构建索引，避免缓存导致结果过期。", source="web", confidence="conflict"),
         entry("群聊测试规则", "群聊约定",
               "Mock 群聊中的测试知识只允许在当前群 scope 内召回。", scope=group),
         entry("无关知识", "天气",
@@ -120,22 +117,10 @@ async def run_probe(top_k: int) -> dict:
         output = []
         for label, scope, query in SCENARIOS:
             started = time.perf_counter()
-            engine = "rust-or-cache"
-            try:
-                batch = await adapter.retrieve(
-                    query, scope=scope, strategy="bm25", candidate_limit=top_k,
-                )
-            except RustSidecarUnavailable:
-                documents = await adapter.build_documents(scope=scope)
-                batch = RetrievalBatch(
-                    source_type="knowledge",
-                    results=tuple(LegacyBM25(documents).search(query, limit=top_k)),
-                    index_source="python-fallback",
-                    fallback_reason="rust_sidecar_unavailable",
-                    candidate_count=len(documents),
-                    metadata={"engine": "python-fallback"},
-                )
-                engine = "python-fallback"
+            batch = await adapter.retrieve(
+                query, scope=scope, strategy="bm25", candidate_limit=top_k,
+            )
+            engine = str(batch.metadata.get("engine") or "typescript")
             elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
             accepted, quality = quality_view(query, batch.results, top_k)
             output.append({

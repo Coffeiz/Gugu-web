@@ -11,13 +11,20 @@
 #   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose build
 #   PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple docker compose up -d --build
 
+x-json-file-logging: &json-file-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "3"
+
 services:
   postgres:
+    logging: *json-file-logging
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: gugu
-      POSTGRES_PASSWORD: gugu_docker_pw
-      POSTGRES_DB: gugu
+      POSTGRES_USER: ${GUGU_DB_USER:-gugu}
+      POSTGRES_PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      POSTGRES_DB: ${GUGU_DB_NAME:-gugu}
     ports:
       - "5432:5432"
     volumes:
@@ -29,11 +36,15 @@ services:
       retries: 10
 
   redis:
+    logging: *json-file-logging
     image: redis:7-alpine
+    environment:
+      GUGU_REDIS_PASSWORD: ${GUGU_REDIS_PASSWORD:-}
+    command: ["sh", "-c", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then exec redis-server --requirepass \"$${GUGU_REDIS_PASSWORD}\"; else exec redis-server; fi"]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "if [ -n \"$${GUGU_REDIS_PASSWORD}\" ]; then redis-cli -a \"$${GUGU_REDIS_PASSWORD}\" ping; else redis-cli ping; fi"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -41,6 +52,7 @@ services:
   # 普通联网搜索和图片搜索的本地引擎。后端通过 Compose 内网地址访问，
   # 宿主机只绑定 127.0.0.1，避免把未带认证的 JSON 搜索接口暴露到局域网。
   searxng:
+    logging: *json-file-logging
     image: searxng/searxng:latest
     ports:
       - "127.0.0.1:8888:8080"
@@ -53,9 +65,22 @@ services:
     mem_limit: 350m
     restart: unless-stopped
 
+  # 受控 egress 代理。沙盒只连接 egress_internal，代理通过 default 网络访问公网；
+  # 沙盒容器没有 default/bridge 网络，因此不能绕过代理直连外网。
+  egress-proxy:
+    logging: *json-file-logging
+    image: ubuntu/squid:latest
+    volumes:
+      - ./squid/egress.conf:/etc/squid/squid.conf:ro
+    networks:
+      - default
+      - egress_internal
+    restart: unless-stopped
+
   # 只执行一次的数据库初始化/迁移任务。Web 和 Worker 都等它成功后再启动，
   # 避免两个容器同时执行 alembic 产生迁移竞态。
   migrate:
+    logging: *json-file-logging
     build:
       context: ./backend
       args:
@@ -64,11 +89,11 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      DB__HOST: postgres
-      DB__PORT: 5432
-      DB__NAME: gugu
-      DB__USER: gugu
-      DB__PASSWORD: gugu_docker_pw
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
       STORAGE__LOCAL_PATH: /data/users
     depends_on:
       postgres:
@@ -78,6 +103,7 @@ services:
       - gugu_data:/data
 
   backend:
+    logging: *json-file-logging
     build:
       context: ./backend
       # 裸变量名（不是 `PIP_INDEX_URL: ${PIP_INDEX_URL:-}` 那种带默认值写法）——环境变量没设置
@@ -94,16 +120,20 @@ services:
       # 不冲突——environment 优先级更高，专门覆盖成 compose 网络里的服务名。
       - ./backend/.env
     environment:
-      DB__HOST: postgres
-      DB__PORT: 5432
-      DB__NAME: gugu
-      DB__USER: gugu
-      DB__PASSWORD: gugu_docker_pw
-      REDIS__HOST: redis
-      REDIS__PORT: 6379
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -122,6 +152,7 @@ services:
   # 只是 command 换成 worker 入口；没配 IM 频道凭据也能起，只是收不到消息，不影响
   # web API 本身。
   worker:
+    logging: *json-file-logging
     build:
       context: ./backend
       args:
@@ -130,16 +161,20 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      DB__HOST: postgres
-      DB__PORT: 5432
-      DB__NAME: gugu
-      DB__USER: gugu
-      DB__PASSWORD: gugu_docker_pw
-      REDIS__HOST: redis
-      REDIS__PORT: 6379
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -157,6 +192,7 @@ services:
   # 生产 Shell 沙盒的 Docker 权限只给这个进程。默认不启动，必须显式使用
   # `docker compose --profile sandbox up -d`，并提供宿主机 Rootless Docker Socket。
   sandboxd:
+    logging: *json-file-logging
     profiles: ["sandbox"]
     build:
       context: ./backend
@@ -171,6 +207,9 @@ services:
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
       SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-false}
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
+      SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
+      SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
+      SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
     volumes:
       - gugu_data:/data
       - sandbox_socket:/run/gugu
@@ -181,6 +220,7 @@ services:
     restart: unless-stopped
 
   frontend:
+    logging: *json-file-logging
     build: ./frontend
     ports:
       - "9595:5173"   # 宿主机 9595 → 容器内 vite dev server 仍然是 5173，容器内部端口不用改
@@ -200,3 +240,8 @@ volumes:
   pgdata:
   gugu_data:
   sandbox_socket:
+
+networks:
+  egress_internal:
+    name: gugu-sandbox-egress
+    internal: true

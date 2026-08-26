@@ -120,7 +120,7 @@ static system
 2. `system_digest` / `snapshot_digest`：稳定前缀是否变化；
 3. `history_digest`：第一条变化消息、role、block shape 和工具配对位置；
 4. `current_turn_digest`：新增消息是否被放到了上一轮历史之前或顺序变化；
-5. `dynamic_tail_digest`：时间、stance、RAG 是否移动或重复注入；
+5. `current_turn_digest`：时间、姿态、RAG 是否移动或重复注入；
 6. `tool_schema_digest`：工具数量、排序、名称和 schema 是否变化；
 7. 图片边界：是否出现 base64/attach_id/占位文本切换；
 8. provider 参数：thinking、response format、tool choice、stream 等是否变化；

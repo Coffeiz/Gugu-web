@@ -1,6 +1,6 @@
 # 上下文预算与 Baseline 设计
 
-> 本文历史设计已由 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](../../product/PRD/PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 收口；分支式候选生成的新增规则见 [`PRD-AGENT-5：分支式上下文压缩与缓存保持`](../../product/PRD/PRD-AGENT-5-分支式上下文压缩与缓存保持.md)。当前实现只维护一个 baseline；下文出现的 checkpoint 仅用于解释旧迁移背景，新的代码和流程不得新增该语义。provider overflow 或成功 usage ≥90% 时才推进压缩；在安全输入范围内优先一次性分支生成 summary，超限才使用滚动 fallback；最终 summary 不超过 10,000 字符，50% 仅用 provider 实际 usage 检测。
+> 本文历史设计已由 [`PRD-AGENT-4：统一 ContextBudget 上下文压缩重构`](../../product/PRD/PRD-AGENT-4-统一ContextBudget上下文压缩重构.md) 收口；分支式候选生成的新增规则见 [`PRD-AGENT-5：分支式上下文压缩与缓存保持`](../../product/PRD/PRD-AGENT-5-分支式上下文压缩与缓存保持.md)。当前实现只维护一个 baseline；下文出现的 checkpoint 仅用于解释旧迁移背景，新的代码和流程不得新增该语义。provider overflow 或成功 usage ≥90% 时才推进压缩；在安全输入范围内优先一次性分支生成 summary，超限才使用滚动 fallback；最终 summary 不超过 10,000 字符，50% 仅用 provider 实际 usage 检测。当前轮由统一 `NewMessageBatch` 组装；姿态变化和 RAG 的跨轮语义由 canonical history 承接，时间 reminder 不持久化。
 
 ## 1. 背景
 
@@ -43,7 +43,7 @@ provider 返回的 usage 是唯一的压缩触发事实。`ContextBudget` 负责
 - 每次强制截断或正常 LLM 压缩完成后，baseline 推进到最后一个已处理的完整消息。
 - 工具调用和对应工具结果视为不可拆分的消息组；不能只保留其中一半。
 - 压缩 summary 是 baseline 的第一条 history：持久化层保留 `role="summary"` 以便覆盖更新，发送边界将其规范化为普通 `role="user"` 消息。
-- summary 不再从 history 弹出到 system/reminder，也不作为动态尾部重复注入；snapshot 只保存稳定业务上下文。
+- summary 不再从 history 弹出到 system/reminder，也不作为当前轮 batch 重复注入；snapshot 只保存稳定业务上下文。
 
 ### 3.3 两种压缩
 
@@ -113,10 +113,10 @@ run 输出完成
 
 正常请求不做本地 token 预检，直接把完整的 canonical context 发送给 provider。provider 返回的
 usage 统一归一化为 `ContextBudget`，至少记录未命中缓存、缓存命中和 cache write 三项；
-工具 schema、动态尾部、system、snapshot、history 和当前 round 都由 provider 的实际口径覆盖。
+工具 schema、system、snapshot、history 和当前 turn batch 都由 provider 的实际口径覆盖。
 
 本地只保留两类保护：数据库读取的字符/条数上限，以及 provider overflow retry 仍失败时的确定性 payload 兜底。
-这些保护不能生成 90%/95% 的本地 token 触发语义，也不能删除当前消息、动态尾部或不完整的工具调用链。
+这些保护不能生成 90%/95% 的本地 token 触发语义，也不能删除当前消息、turn batch 或不完整的工具调用链。
 
 为诊断和读取保护保留的本地分项如下；它们不决定是否发送，也不触发压缩：
 
@@ -126,7 +126,7 @@ total_tokens = system_prompt_tokens
              + history_tokens
              + current_turn_tokens
              + tool_schema_tokens
-             + dynamic_tail_tokens
+             + turn_batch_tokens
              + output_reserve_tokens
              + provider_overhead_tokens
 ```
@@ -259,7 +259,7 @@ owner、member、group、私聊和群聊可以有不同的动态上下文，但�
 - [x] provider overflow 时压缩旧 history，保留最近 5k 原文和 ≤10,000 字符 summary，再 retry。
 - [x] overflow retry 仍失败时只允许一次确定性字符/条数兜底。
 - [x] 统一 Web、IM、定时任务的预算入口。
-- [x] 将动态尾部纳入 provider 请求与压缩重组；动态尾部只保留、不参与历史删除。
+- [x] 将当前 `NewMessageBatch` 纳入 provider 请求与压缩重组；姿态/RAG 等需要跨轮保留的事件进入 canonical history，时间和临时提醒保持 request-volatile，不参与历史删除。
 
 ### Phase 4：Baseline 与正常维护衔接
 
@@ -274,7 +274,7 @@ owner、member、group、私聊和群聊可以有不同的动态上下文，但�
 
 ### Phase 5：验证与上线
 
-- [x] 回归验证动态 RAG/提醒尾部超预算时会截断旧历史而不是直接返回“内容太多”，且动态尾部保持不变。
+- [x] 回归验证当前轮 RAG/提醒超预算时会截断旧历史而不是直接返回“内容太多”，且当前轮 batch 保持不变。
 - [ ] 用长会话验证“低于预算继续累积”。
 - [ ] 用 provider overflow 会话验证“压缩后 retry 并读取真实 usage”。
 - [ ] 用 overflow retry 失败模拟验证最多一次确定性兜底。

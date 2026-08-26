@@ -10,6 +10,19 @@
         <div class="behavior-label"><span>自动知识召回（RAG）</span><span class="behavior-desc">关闭后本轮不自动检索 Memory、群组记忆或其他已接入知识源；显式工具仍按工具权限执行。</span></div>
         <AgentMemoryToggle v-model="ragEnabled" ariaLabel="切换自动知识召回" />
       </div>
+      <div class="section-label full-row">能力目录推荐</div>
+      <div class="behavior-item full-row">
+        <div class="behavior-label"><span>能力目录 RAG 推荐</span><span class="behavior-desc">根据本轮请求优先排列相关工具；不会隐藏授权工具，也不会改变权限和执行校验。</span></div>
+        <AgentMemoryToggle v-model="capabilityRagEnabled" ariaLabel="切换能力目录 RAG 推荐" />
+      </div>
+      <div class="behavior-item full-row" :class="{ 'is-disabled': !capabilityRagEnabled }">
+        <div class="behavior-label"><span>Shadow 模式</span><span class="behavior-desc">开启时只记录推荐结果，不改变目录顺序；适合先观察 LoopScope 指标。</span></div>
+        <AgentMemoryToggle v-model="capabilityRagShadow" ariaLabel="切换能力目录 RAG Shadow 模式" :disabled="!capabilityRagEnabled" />
+      </div>
+      <div class="behavior-item full-row" :class="{ 'is-disabled': !capabilityRagEnabled }">
+        <div class="behavior-label"><span>每轮推荐上限</span><span class="behavior-desc">只限制优先推荐数量，完整授权能力目录仍然保留，范围 1–20。</span></div>
+        <input v-model.number="capabilityRagLimit" class="behavior-input compact-input" type="number" min="1" max="20" step="1" :disabled="!capabilityRagEnabled" />
+      </div>
       <div class="behavior-item full-row">
         <div class="behavior-label"><span>向量 Embedding</span><span class="behavior-desc">关闭＝使用词法相关性；开启后供记忆语义召回使用。换模型或维度后需要重建向量。</span></div>
         <AgentMemoryToggle v-model="embeddingDraft.enabled" ariaLabel="切换向量 Embedding" />
@@ -36,12 +49,13 @@ import Icon from '@/components/common/Icon.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
 import AgentMemoryToggle from './AgentMemoryToggle.vue'
 import { useMemoryRecallConfig } from '../useMemoryRecallConfig'
-const { configStore, embeddingDraft, ragEnabled, ragSaving, ragSaved, ragError, embeddingSaving, embeddingSaved, embeddingError, embTest, rebuild, startRebuild, resetEmbedding, resetRag, syncFromStore, saveAll, testEmbedding } = useMemoryRecallConfig()
+const { configStore, embeddingDraft, ragEnabled, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit, ragSaving, ragSaved, ragError, embeddingSaving, embeddingSaved, embeddingError, embTest, rebuild, startRebuild, resetEmbedding, resetRag, syncFromStore, saveAll, testEmbedding } = useMemoryRecallConfig()
 onMounted(async () => { await configStore.fetchConfig(); syncFromStore() })
 </script>
 
 <style scoped>
 .config-card{background:var(--panel-glass-bg);border:1px solid var(--panel-glass-border);border-radius:var(--radius-lg);padding:22px 24px;color:var(--content-primary);box-shadow:var(--elevation-card);backdrop-filter:var(--panel-glass-blur);-webkit-backdrop-filter:var(--panel-glass-blur)}
 .card-head{display:flex;align-items:center;gap:13px;margin-bottom:20px}.card-icon{width:38px;height:38px;border-radius:11px;background:var(--selection-bg);color:var(--action-primary);display:flex;align-items:center;justify-content:center;flex:0 0 38px}.card-title-block{flex:1;min-width:0}.card-title-block h3{color:var(--content-primary);font-size:var(--font-size-md,14px);font-weight:700}.card-title-block p{margin-top:3px;color:var(--content-tertiary);font-size:var(--font-size-sm,12px);line-height:1.5}.behavior-grid{display:flex;flex-direction:column;gap:2px}.behavior-item{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid var(--panel-divider)}.behavior-item:last-child{border-bottom:0}.full-row{grid-column:1/-1}.behavior-label{display:flex;flex-direction:column;gap:3px;min-width:0}.behavior-label>span:first-child{color:var(--content-primary);font-size:13px;font-weight:500}.behavior-desc{color:var(--content-tertiary);font-size:12px;line-height:1.5}.behavior-input{width:280px;box-sizing:border-box;padding:7px 10px;border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-glass);color:var(--content-primary);outline:none}.behavior-input:focus{border-color:var(--action-primary)}.secret-mark{margin-left:6px;color:var(--status-success);font-size:11px}.action-row,.card-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px}.card-actions{margin-top:18px;padding-top:16px;border-top:1px solid var(--panel-divider)}.action-message,.save-hint{max-width:420px;overflow:hidden;color:var(--status-success);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.action-message.error,.save-hint.error{color:var(--status-danger)}.btn-ghost,.btn-primary{display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;cursor:pointer;white-space:nowrap}.btn-ghost{border:1px solid var(--border-subtle);background:var(--surface-glass);color:var(--content-secondary)}.btn-primary{border:0;background:var(--action-primary-bg);color:var(--content-on-accent);font-weight:600}.btn-ghost:disabled,.btn-primary:disabled{opacity:.5;cursor:default}@media(max-width:720px){.behavior-item{align-items:flex-start;flex-direction:column}.behavior-input{width:100%}.card-actions{justify-content:flex-start;flex-wrap:wrap}}
+.section-label{padding:18px 0 4px;color:var(--content-secondary);font-size:12px;font-weight:700;letter-spacing:.02em}.behavior-item.is-disabled{opacity:.58}.compact-input{width:96px}.behavior-input:disabled{cursor:not-allowed}
 /* Agent 记忆开关复用 Admin 通用控件 motion contract。 */
 </style>

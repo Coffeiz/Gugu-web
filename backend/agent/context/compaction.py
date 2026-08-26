@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 
 from .tokens import content_text, message_text
 from .tokens import estimate_tokens, msg_tokens
 from .audit import summary_change
 from .canonical_context import tool_call_ids, tool_result_ids
+from .summary_format import SUMMARY_CLOSE, SUMMARY_OPEN, format_compacted_summary
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +245,7 @@ async def compact_context(
     # 添加压缩摘要
     compact_summary_msg = {
         "role": "user",
-        "content": f"<compacted-summary>\n{compact_summary}\n</compacted-summary>"
+        "content": format_compacted_summary(compact_summary),
     }
     new_messages.append(compact_summary_msg)
 
@@ -355,7 +357,7 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     has_summary = False
     for msg in new_messages:
         content = msg.get("content", "")
-        if isinstance(content, str) and "<compacted-summary>" in content:
+        if isinstance(content, str) and SUMMARY_OPEN in content:
             has_summary = True
             break
 
@@ -366,7 +368,7 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     summary_idx = -1
     for i, msg in enumerate(new_messages):
         content = msg.get("content", "")
-        if isinstance(content, str) and "<compacted-summary>" in content:
+        if isinstance(content, str) and SUMMARY_OPEN in content:
             summary_idx = i
             break
 
@@ -392,7 +394,7 @@ def validate_compact_summary(summary: object) -> tuple[bool, str]:
     value = summary.strip()
     if len(value) > COMPACT_SUMMARY_MAX_CHARS:
         return False, "摘要超过长度上限"
-    if "<compacted-summary>" in value or "</compacted-summary>" in value:
+    if SUMMARY_OPEN in value or SUMMARY_CLOSE in value:
         return False, "摘要包含外层包裹标记"
     return True, "摘要候选有效"
 
@@ -471,8 +473,12 @@ async def _generate_compact_summary_once(
         sys_prompt = prompt_path.read_text(encoding="utf-8").strip()
     except Exception:
         sys_prompt = (
-            "请将历史对话压缩为 300 字以内的中文摘要，保留决定、偏好、事实、待办和未解决问题；"
-            "工具结果只保留结论，不复述原文、凭据或敏感细节。只输出摘要正文。"
+            "请将历史对话压缩为供后续任务继续使用的中文状态摘要，并严格按“### 1. 对话摘要、"
+            "### 2. 当前任务、### 3. 遗留问题、### 4. 重要决策与约束、### 5. 关键细节”分章节输出。"
+            "保留用户目标、关键经历、"
+            "已确认事实、决定、已完成/未完成状态、阻塞原因和待确认事项。默认丢弃附件、引用、"
+            "完整工具参数、原始 JSON、URL 和中间调用，只保留会影响后续工作的结论。"
+            "不确定内容标记为待确认，不要把口头说明写成已完成；只输出摘要正文。"
         )
 
     try:

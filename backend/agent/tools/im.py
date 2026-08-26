@@ -46,13 +46,7 @@ class IMSkill(BaseSkill):
     tools = [
         Tool(
             name="react", label="表情回应",
-            description=(
-                "给用户刚发的这条消息加一个贴切的表情回应（像微信/飞书里点个表情）。"
-                "仅 IM（飞书）对话可用。**每条用户消息都要点一个**，按内容选最贴切的："
-                "认同用 agree、好笑用 laugh、暖心用 love、搞定用 done、惊讶用 wow、"
-                "在想用 thinking、可惜用 sad、庆祝用 celebrate、谢谢用 thanks、收到用 ok。"
-                "一条消息只加一次，回复前先点。"
-            ),
+            description="仅飞书 IM 可用；给用户消息添加一次合适的表情回应。",
             input_schema={
                 "type": "object",
                 "properties": {

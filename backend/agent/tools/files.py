@@ -275,7 +275,7 @@ async def _list_files(db, user_id, args: dict):
                 return error
             folder_id = folder.id
     file_queries = normalize_queries(
-        args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
+        args.get("query") or args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
     )
     requested_limit = args.get("limit", 100)
     try:
@@ -1282,9 +1282,7 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、一个或多个名称关键词（默认 OR）筛选。"
-                        "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
-                        "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
+            description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1293,7 +1291,8 @@ class FilesSkill(BaseSkill):
                     "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
                     "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
                     "ext": {"type": "string", "description": "扩展名，如 png/md"},
-                    "q": {"type": "string", "description": "兼容旧调用的单个名称关键词；优先使用 queries"},
+                    "query": {"type": "string", "description": "单个名称关键词；所有搜索工具统一使用此字段"},
+                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"},
                                 "description": "可选多个名称关键词，默认 OR，最多 8 个"},
                     "mode": {"type": "string", "enum": ["OR", "AND"],
@@ -1306,8 +1305,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="read_file", label="读取文件",
-            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片可识别图像；音频转写；视频提取代表画面并转写音频（需配置对应模型）。"
-                        "读到后按需提炼、别整段复述给用户：大文件挑相关部分讲；JSON/YAML 点出顶层键和关键字段；CSV/TSV 给表头+前几行再总结各列；只回答用户问的那块。",
+            description="读取文本、文档、表格、图片、音频或视频；返回与问题相关的内容摘要。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1320,8 +1318,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description="修改文本类文件内容。mode=replace_all 整体替换(content)；append 追加(content)；find_replace 查找替换(find/replace)。"
-                        "**要改多个文件用 edits=[{file,mode,...},...] 一次调用全改**（如多文件统一把某词查找替换：每项填同样的 find/replace）。逐项回报成功/失败。",
+            description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1354,15 +1351,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="create_document", label="生成文档",
-            description=(
-                "新建一个文件。format 为可编辑文本类型时 content 按原文直接写入；"
-                "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
-                "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
-                "工具成功后会返回真实 file_id；用户询问位置、路径、打开或查看时，回复使用"
-                "[文件名](gugu://open-file/{file_id}) 生成文件库跳转按钮，不要把保存误说成已发送。"
-                "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
-                "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**"
-            ),
+            description="创建文件；文本直接写入，docx/pdf 用 HTML，xlsx 用 CSV，返回 file_id。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1380,10 +1369,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_file", label="重命名文件",
-            description="重命名文件（不改位置）。单个：file + new_name。"
-                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。"
-                        "**可选 format**：传了就同时改后缀（修双后缀 bug：format=\"md\" 把 README.md.markdown 改回 README.md），"
-                        "不传沿用原 ext。仅文本类同族（md↔txt↔yaml…）互转允许；二进制约等于当前 ext 才允许。",
+            description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1412,10 +1398,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
-            description="把一批文件和/或文件夹移到同一个目标位置，**一次调用搞定**——不用一个个移。"
-                        "files 填文件名/id 数组，folders 填文件夹名/id 数组（两者可只给其一）。"
-                        "**移动文件夹会连同里面的所有文件、子文件夹一起递归搬过去，你不需要知道里面有几个文件**——只表达「把这个文件夹搬到那儿」即可，后端负责展开。"
-                        "目标用 target.folder 填目标文件夹名（移到空间根填空串）或 target.folder_id。返回逐项注明落点与成功/失败数。",
+            description="批量移动文件或文件夹到同一目标位置；文件夹会递归携带内容。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1537,17 +1520,7 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
-                        "它不是文件库跳转工具；用户只问位置/路径/打开时不要调用 send_file，而应在文字中使用"
-                        "[文件名](gugu://open-file/{file_id})。"
-                        "三种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
-                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）；"
-                        "③ 之前收到/发过、还在暂存区的附件——用 attach_id 直接重发，不重新下载、不进文件库。"
-                        "attach_id 来自当轮上下文「用户上传了文件…(attach_id=X)」的提示；如果用户说「刚刚的图/那张图/X平台发的那个」"
-                        "但你不知道 attach_id，先调 list_recent_attachments 查出来再传。"
-                        "当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。"
-                        "文件库文件**仅在用户明确要文件时才调**；创建/保存文档后**别自动发**——一句话告诉用户存在哪个目录即可。"
-                        "但用 url/attach_id 发图时不受此限——用户要找图/要一张图本身就是要看/要发，搜到/查到后可直接调用，不用再问一句「要不要发」。",
+            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1563,24 +1536,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
-            description="列出该用户当前所有还在暂存区、未过期的聊天附件（用户发来的图/文件、机器人搜图发过的图等，暂存 7 天）。"
-                        "当用户提到「刚刚的图/那张图/昨天发的那个/X平台那张」但当轮上下文里没有 attach_id 提示时用——"
-                        "查到后从返回列表里挑出匹配的（按名称/平台/大约多久前判断），再用 send_file(attach_id=...) 重发，"
-                        "或 save_uploaded_file(attach_id=...) 存进文件库。列表按暂存时间从新到旧排。",
+            description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_recent_attachments,
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description="把用户在对话里**上传的附件**保存进文件库。当用户上传文件后说「存一下/保存到文件库/存到某项目」时用。"
-                        "**用户一次发了多个附件（如连拍的几张图）要用 attach_ids 传数组一次性存全部**——"
-                        "别为每张图分别调用，那样每次没对上 id 都各自回退，容易存漏、甚至存错成不相关的附件。"
-                        "单个附件用 attach_id。attach_id(s) 来自上下文「用户上传了文件…(attach_id=X)」的提示——"
-                        "抄不准也没关系，系统会尽量容错匹配；但当前暂存区里同时有多种不同类型附件（比如图+语音）"
-                        "时无法安全瞎猜，会报错列出候选，需要照着给准。"
-                        "要存进某个项目就带上 project_id（不传则进 personal）。"
-                        "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
-                        "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**",
+            description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
             input_schema={
                 "type": "object",
                 "properties": {

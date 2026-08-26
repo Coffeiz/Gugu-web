@@ -1,4 +1,5 @@
 import json
+import pytest
 
 from agent.runner import _collect, _scheduled_collect_result
 from agent.im.replies import format_tool_event
@@ -136,6 +137,21 @@ async def test_collect_keeps_multiple_rounds_and_run_boundaries():
             ]
     assert [(event["round_id"], event["seq"])
             for event in result[-1]["tool_events"]] == [(1, 1), (1, 2), (2, 3), (2, 4)]
+
+
+@pytest.mark.asyncio
+async def test_collect_exposes_nonempty_round_texts_for_im_output():
+    async def stream():
+        for event in (
+            {"type": "token", "content": "第一轮"},
+            {"type": "_new_round"},
+            {"type": "token", "content": "第二轮"},
+        ):
+            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+
+    result = await _collect(stream(), include_meta=True)
+    assert result[0] == "第二轮"
+    assert result[-1]["round_texts"] == ["第一轮", "第二轮"]
 
 
 def test_tool_event_text_does_not_expose_input_schema():

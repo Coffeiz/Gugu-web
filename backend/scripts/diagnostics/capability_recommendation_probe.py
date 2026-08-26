@@ -16,7 +16,6 @@ from typing import Iterable
 
 from agent.capabilities.index import CapabilityIndex
 from agent.capabilities.models import CapabilityMeta, CapabilitySnapshot
-from agent.rag.tokenizer import tokenize
 
 
 DEFAULT_LIMIT = 5
@@ -34,7 +33,7 @@ class ProbeContext:
 
 
 def _terms(text: str) -> set[str]:
-    return {token for token in tokenize(text) if token.strip()}
+    return set(re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", (text or "").casefold()))
 
 
 def _score(

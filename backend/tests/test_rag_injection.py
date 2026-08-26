@@ -113,8 +113,9 @@ async def test_automatic_recall_uses_group_then_member_scope_and_deduplicates(mo
 
     async def fake_search(user_id, query, **kwargs):
         calls.append(kwargs["scope"])
-        scope = kwargs["scope"]
-        label = "群组" if scope.scope_type == "group" else "群友"
+        scopes = kwargs["scope"]
+        assert isinstance(scopes, list)
+        label = "群组+群友"
         return {"candidate_count": 1, "results": [{
             "text": f"{label}记忆：项目已经确认。", "title": label,
             "content_hash": f"hash-{label}",
@@ -129,10 +130,11 @@ async def test_automatic_recall_uses_group_then_member_scope_and_deduplicates(mo
     )
     result = await injection.build_automatic_rag_context(request, "项目", history=[])
 
-    assert [scope.scope_type for scope in calls] == ["group", "member"]
-    assert "[group-rag]" in result["tail"][0]["content"]
-    assert "[group-member-rag]" in result["tail"][1]["content"]
-    assert len(result["blocks"]) == 2
+    assert len(calls) == 1
+    assert [scope.scope_type for scope in calls[0]] == ["group", "member"]
+    assert result["tail"][0]["content"][0]["type"] == "knowledge-context"
+    assert "[group-rag+group-member-rag]" in result["tail"][0]["content"][0]["text"]
+    assert len(result["blocks"]) == 1
 
 
 @pytest.mark.asyncio

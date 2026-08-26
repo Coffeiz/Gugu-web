@@ -8,7 +8,7 @@
 
 ## 易读概述
 
-咕咕不是绑死在某一家大模型上——后台可以配置多个 LLM 厂商（MiniMax、Anthropic、DeepSeek、小米 MiMo、通义千问、OpenAI 兼容），随时切换用哪个来驱动咕咕的大脑，也可以同时留几个作为备用池。
+咕咕不是绑死在某一家大模型上——后台可以配置多个 LLM 厂商（MiniMax、Anthropic、DeepSeek、小米 MiMo、通义千问、智谱 GLM、OpenAI 兼容），随时切换用哪个来驱动咕咕的大脑，也可以同时留几个作为备用池。
 
 这带来一个麻烦：**不同厂商的 API 协议不一样**。业内主要分两大流派——Anthropic（Claude）风格和 OpenAI 风格，字段名、流式返回格式、"思考过程"怎么表示都不同。咕咕内部把所有厂商归到这两套格式里的一套，调用逻辑按格式分叉，而不是每家写一套。
 
@@ -20,7 +20,7 @@
 
 ## 专业细节
 
-### 1. 概览：6 个厂商 × 2 套 API 格式
+### 1. 概览：7 个厂商 × 2 套 API 格式
 
 | 厂商（provider） | 默认 base_url | 默认模型 | API 格式 | 调用路径 |
 |---|---|---|---|---|
@@ -29,6 +29,7 @@
 | **deepseek** | `api.deepseek.com` | `deepseek-chat` | OpenAI | `_run_openai` |
 | **mimo**（小米） | `token-plan-cn.xiaomimimo.com/v1` | `mimo-v2.5` | OpenAI（可选 Anthropic） | `_run_openai` |
 | **qwen**（通义千问，默认 provider） | `dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-max` | OpenAI | `_run_openai` |
+| **glm**（智谱 GLM） | `open.bigmodel.cn/api/paas/v4` | `glm-5.2` | OpenAI | `_run_openai` |
 | **openai**（OpenAI 兼容） | `api.openai.com/v1` | `gpt-4o` | OpenAI | `_run_openai` |
 
 以上厂商列表、默认 base_url/模型已与 `agent/llm_select.py`、`app/core/config.py`（`AISettings.provider` 默认 `qwen`）、`views/Admin/Agent/index.vue` 的 `PROVIDERS` 三处比对一致。
@@ -94,6 +95,12 @@
 #### Qwen / 通义千问（`qwen-max`，OpenAI 格式）—— 默认 provider
 - **优化**：无专门适配，走通用 OpenAI 路。
 - **注意**：Qwen3 的 `enable_thinking` 参数**未接**（如需可仿 deepseek 加判定）；JSON/工具走通用。
+
+#### 智谱 GLM（`glm-5.2`，OpenAI 格式）
+- **默认地址**：`https://open.bigmodel.cn/api/paas/v4`；Admin 的同一个 GLM 预设可切换到 Coding Plan 专属地址 `https://open.bigmodel.cn/api/coding/paas/v4`。
+- **适配**：复用 OpenAI 兼容调用、工具和 JSON mode；GLM-4.5/4.6/4.7/5 系列按 Admin 的深度思考开关发送 `thinking.type`。
+- **能力声明**：GLM-V 系列才声明图片能力；缓存先保持未声明，待真实模型验证后再单独接入，避免误发缓存参数。
+
 
 #### OpenAI 兼容（`gpt-4o`，OpenAI 格式）
 - 通用路，无专门适配。任何 OpenAI 兼容端点的兜底选项。

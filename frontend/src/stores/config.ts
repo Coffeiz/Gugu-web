@@ -3,7 +3,7 @@ import { ref, reactive } from 'vue'
 import { useAdminStore } from './admin'
 
 // 后端对密码类字段返回 "****"，前端拿到后清空，存回时跳过空值（视为"未修改"）
-const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key', 'baidu_qianfan_api_key'])
+const PASSWORD_FIELDS = new Set(['password', 'api_key', 'oss_access_key_id', 'oss_access_key_secret', 'tavily_api_key', 'baidu_qianfan_api_key', 'deep_research_baidu_api_key', 'deep_research_you_api_key'])
 
 function sanitizeForEdit(obj: Record<string, unknown>) {
   const out: Record<string, unknown> = {}
@@ -88,11 +88,16 @@ export const useConfigStore = defineStore('config', () => {
       persistent_quota_bytes: 536870912,
       ephemeral_quota_bytes: 1073741824,
       network_profile: 'none',
+      egress_proxy_url: '',
+      egress_network_name: 'gugu-sandbox-egress',
+      egress_ttl_seconds: 600,
+      egress_isolation_enabled: false,
     },
     agent: {
       shell_enabled: false,
       shell_system_enabled: false,
       shell_dangerous_enabled: false,
+      shell_autopilot_enabled: false,
       memory_enabled: true,
       reflection_threshold: 10,
       worker_concurrency: 16,
@@ -109,13 +114,18 @@ export const useConfigStore = defineStore('config', () => {
     },
     search: {
       rag_enabled: true,
+      capability_rag_enabled: false,
+      capability_rag_shadow: true,
+      capability_rag_limit: 5,
+      deep_research_provider: 'tavily',
       tavily_api_key: '',
+      deep_research_baidu_api_key: '',
+      deep_research_you_api_key: '',
       searxng_url: '',
       searxng_engines: 'baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google',
       searxng_image_engines: '',
       max_results: 5,
       global_search_backend: 'ilike',
-      rust_lexical_backend: 'rust',
       similar_image_enabled: false,
       baidu_qianfan_api_key: '',
       similar_image_default_count: 15,

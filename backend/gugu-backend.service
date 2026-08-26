@@ -16,6 +16,8 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
 Environment="DB_STARTUP_TIMEOUT=10"
+# DDL 由 deploy/migrate 步骤单独执行，禁止 2 个 uvicorn worker 在业务流量启动时建表。
+Environment="GUGU_STARTUP_MIGRATIONS=0"
 # 与 worker/supervisor 保持一致，网页请求也可继续上报 LoopScope
 Environment="LOOPSCOPE_ENABLED=1"
 Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"

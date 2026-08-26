@@ -18,6 +18,7 @@ from app.models import ConversationSession, Workspace
 from app.services.workspaces import (
     effective_shell_dangerous_enabled,
     effective_shell_enabled,
+    effective_shell_autopilot_enabled,
     effective_shell_system_enabled,
 )
 from agent.sandbox.docker_runtime import sandbox_readiness
@@ -106,7 +107,7 @@ async def evaluate(
     if not session or session.user_id != user_id:
         return ShellDecision(False, "会话不存在", risk)
     # Shell 只有 sandbox/system 两种执行后端。会话绑定只改变 sandbox 的挂载目录，
-    # 历史 shell_scope 字段不再参与授权，避免旧状态与当前会话绑定分叉。
+    # Shell 范围只由当前权限快照和 workspace 绑定派生，避免持久化状态分叉。
     scope = ShellScope.SANDBOX
     workspace = None
     if session.workspace_id is not None:
@@ -117,7 +118,6 @@ async def evaluate(
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
     elif (
         getattr(settings.agent, "shell_system_enabled", False)
-        and getattr(getattr(settings, "ai", None), "deployment_mode", "cloud") == "local"
         and await effective_shell_system_enabled(db, user_id)
     ):
         scope = ShellScope.SYSTEM
@@ -136,7 +136,11 @@ async def evaluate(
             return ShellDecision(False, "管理员未开启危险 Shell 命令", risk, scope=scope)
         if not await effective_shell_dangerous_enabled(db, user_id):
             return ShellDecision(False, "用户未开启危险 Shell 命令", risk, scope=scope)
-        if not confirm:
+        autopilot_enabled = (
+            bool(getattr(settings.agent, "shell_autopilot_enabled", False))
+            and await effective_shell_autopilot_enabled(db, user_id)
+        )
+        if not confirm and not autopilot_enabled:
             return ShellDecision(True, "危险命令需要用户确认", risk, True, workspace.id if workspace else None, scope)
     return ShellDecision(True, f"允许在 {scope.value} 范围执行", risk, False, workspace.id if workspace else None, scope)
 

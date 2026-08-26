@@ -118,7 +118,7 @@ ContextBudget {
   system_prompt_tokens        # system prompt
   snapshot_tokens             # 稳定 snapshot/固定前缀消息
   tool_schema_tokens          # 当前可用工具定义
-  dynamic_tail_tokens         # 当前时间、RAG、提醒、渠道动态提示
+  turn_batch_tokens            # 当前时间、RAG、提醒、渠道本轮新增消息
   current_turn_tokens         # 当前 user + 当前 run 的 tool 链
   history_tokens              # baseline 之后可注入的 history
   total_tokens                # 上述各项总和
@@ -312,7 +312,7 @@ baseline 更新事务必须：
 | `backend/agent/context/session_history.py` | `history_budget_for_context` 固定 reserve 35%，入口各自计算 | 只保留 baseline 增量读取，预算由 ContextBudget 传入；统一工具消息组选择 | 删除 `history_budget_for_context`、固定 reserve heuristic |
 | `backend/agent/context/tokens.py` | `HISTORY_TOKEN_BUDGET=120000`、`HISTORY_MAX_MSGS=500` 作为独立上限 | 将条数/单页保护变成 ContextBudget 的查询安全上限 | 删除与模型预算冲突的固定 history token 常量；保留必要的查询保护常量并改名说明 |
 | `backend/agent/context/session_snapshot.py` | snapshot TTL、hash、baseline 辅助函数并存，存在旧兼容路径 | 明确一个 active baseline revision；统一 snapshot、summary 与 baseline 的提交/读取契约 | 清理旧 snapshot/summary 双水位、无效 invalidate 顺序和临时 legacy 注入分支 |
-| `backend/agent/context/message_assembly.py` | fixed prefix、dynamic tail、conversation replacement 边界 | 由 ContextBudget 输出组装计划，保证动态尾部不被误裁剪 | 删除入口自定义拼接分支和重复的固定前缀计数 |
+| `backend/agent/context/assembly/` | fixed prefix、turn batch、conversation replacement 边界 | 由 ContextBudget 输出组装计划，保证本轮新增批次不被误裁剪 | 删除入口自定义拼接分支和重复的固定前缀计数 |
 | `backend/agent/context/history.py` | tool history 规范化、时间提示和原子消息组 | 保留原子化能力，接入统一 history unit/token 计量 | 不删除 provider/tool 合法性清理；删除重复的窗口裁剪实现 |
 | `backend/agent/context/provider_history.py` | provider tool_use/tool_result 规范化 | 保持 provider payload 合法性，预算只由 ContextBudget 决定 | 删除与会话压缩重复的历史裁剪；保留 provider 特有格式清理 |
 | `backend/agent/core.py` | provider round、overflow retry 和 baseline 事件曾分散在多套预算分支 | 统一 provider usage/round retry/baseline 事件；压缩完成强制重试当前 round | 删除重复 safe/hard 预算分支、重复计数器和无进展 retry |
@@ -362,7 +362,7 @@ baseline 更新事务必须：
 - `backend/agent/context/compress_conv.py`
 - `backend/agent/context/session_history.py`
 - `backend/agent/context/session_snapshot.py`
-- `backend/agent/context/message_assembly.py`
+- `backend/agent/context/assembly/`
 - `backend/agent/context/tokens.py`
 - `backend/agent/core.py`
 - `backend/agent/runner.py`
@@ -511,7 +511,7 @@ Phase 6 自动化与 devserver 收口已完成：本次清理后的上下文/压
   "cached_input_tokens": 0,
   "cache_write_tokens": 0,
   "fixed_prefix_tokens": 0,
-  "dynamic_tail_tokens": 0,
+  "turn_batch_tokens": 0,
   "history_tokens": 0,
   "current_turn_tokens": 0,
   "usage_ratio": 0,

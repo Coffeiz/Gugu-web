@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 
 import app.db.session as _db_session
@@ -12,15 +13,34 @@ from agent.security.logsafe import fingerprint
 from agent.security.shell_policy import evaluate, session_shell_lock
 from agent.tools.base import current_dispatch_session
 from agent.sandbox import LocalWorkspaceExecutor
-from agent.sandbox.docker_runtime import sandbox_readiness
-from agent.sandbox.quota import snapshot_quota
+from agent.sandbox.docker_runtime import sandbox_readiness, valid_egress_network_name, valid_egress_proxy
+from agent.sandbox.quota import measure_directory, snapshot_quota
 from agent.sandbox.client import SandboxdClient, SandboxdUnavailable
 from agent.sandbox.protocol import ExecuteRequest
 from app.core.config import get_settings
 from agent.tools.base import BaseSkill, Tool
 from app.services.workspaces import resolve_shell_root
+from app.services.storage.quota_ledger import SHELL_PERSISTENT, record_usage, reconcile_user_storage
 
 logger = logging.getLogger(__name__)
+
+
+_SHELL_LEASE_OPERATION = re.compile(
+    r"\b(?:curl|wget|python|pytest|node|npm|pnpm|yarn|pip|git|make|sh|bash|zsh|"
+    r"perl|ruby)\b|[|><]",
+    re.IGNORECASE,
+)
+_SHELL_LEASE_BLOCKERS = re.compile(
+    r"\b(?:rm|mv|chmod|chown|kill|pkill|dd|mkfs|shutdown|reboot|sudo|doas)\b"
+    r"|\bgit\s+(?:reset|clean)\b|\b(?:drop|delete|truncate)\b",
+    re.IGNORECASE,
+)
+
+
+def _can_use_shell_lease(command: str) -> bool:
+    """给受限 Shell 操作复用短期授权，但保留不可逆操作的单次确认。"""
+    text = (command or "").strip()
+    return bool(_SHELL_LEASE_OPERATION.search(text)) and not _SHELL_LEASE_BLOCKERS.search(text)
 
 
 def _audit(**fields) -> None:
@@ -68,17 +88,66 @@ async def _shell(db, user_id, args: dict):
 async def _run_shell(db, user_id, args: dict):
     command = str(args.get("command") or "").strip()
     session_id = args.get("_session_id")
+    network_profile = str(args.get("network") or "none").strip().lower()
+    if network_profile not in {"none", "egress"}:
+        return {"error": "network 只能是 none 或 egress", "_audit_event": "rejected"}
     decision = await evaluate(
         db, user_id, session_id, command, confirm=bool(args.get("confirm")),
         session=current_dispatch_session(),
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
-    if decision.needs_confirmation:
+    if network_profile == "egress":
+        if decision.scope.value != "sandbox":
+            return {"error": "临时 egress 只支持沙盒范围，system 请使用宿主机自身网络策略", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+        sandbox_settings = get_settings().sandbox
+        if not valid_egress_proxy(getattr(sandbox_settings, "egress_proxy_url", "")):
+            return {"error": "临时 egress 尚未配置受控 HTTP(S) 代理", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+        if not getattr(sandbox_settings, "egress_isolation_enabled", False):
+            return {"error": "受控 egress 网络尚未启用，当前沙盒保持断网", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+        if not valid_egress_network_name(getattr(sandbox_settings, "egress_network_name", "")):
+            return {"error": "受控 egress Docker 网络名无效，当前沙盒保持断网", "_risk": decision.risk.value, "_scope": decision.scope.value, "_audit_event": "denied"}
+    egress_authorized = False
+    egress_expires_at = None
+    if network_profile == "egress":
+        egress_ttl = int(getattr(get_settings().sandbox, "egress_ttl_seconds", 600))
         blocked = confirm.needs_confirmation(
             args,
-            f"将在当前工作区执行危险命令：{command}",
+            "允许当前会话在沙盒内临时访问公网（仅通过受控代理，有效期10分钟）",
             user_id,
+            identity=f"shell:egress:{session_id}:{decision.workspace_id or 'user'}",
+            ttl_minutes=max(1, (egress_ttl + 59) // 60),
+            instruction=(
+                "这是当前会话的临时沙盒联网授权，只允许通过受控代理访问公网，"
+                "有效期10分钟；请把授权范围告知用户，用户明确同意后带 confirm=true 和本次 confirm_token 再次调用。"
+            ),
+        )
+        if blocked is not None:
+            return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "confirmation_required"}
+        egress_authorized = True
+        egress_expires_at = time.time() + egress_ttl
+    if decision.needs_confirmation and not (egress_authorized and _can_use_shell_lease(command)):
+        shell_lease = _can_use_shell_lease(command)
+        confirmation_summary = (
+            f"允许当前会话在 {decision.scope.value} 范围执行受限 Shell 操作（30分钟）"
+            if shell_lease
+            else f"将在当前工作区执行危险命令：{command}"
+        )
+        confirmation_identity = (
+            f"shell:operation:{session_id}:{decision.scope.value}"
+            if shell_lease else None
+        )
+        blocked = confirm.needs_confirmation(
+            args,
+            confirmation_summary,
+            user_id,
+            identity=confirmation_identity,
+            ttl_minutes=30 if shell_lease else 5,
+            instruction=(
+                "这是当前会话的受限 Shell 操作授权，有效期 30 分钟；"
+                "请把授权范围告知用户，用户明确同意后带 confirm=true 和本次 confirm_token 再次调用。"
+                if shell_lease else None
+            ),
         )
         if blocked is not None:
             return {"error": blocked, "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_audit_event": "confirmation_required"}
@@ -88,6 +157,7 @@ async def _run_shell(db, user_id, args: dict):
         return {"error": "当前 Shell 范围没有可用的本地目录，未执行命令", "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "denied"}
     quota_root = None
     quota_bytes = None
+    quota_before = None
     if decision.scope.value == "sandbox":
         sandbox_settings = get_settings().sandbox
         ready, reason = sandbox_readiness(sandbox_settings)
@@ -96,7 +166,9 @@ async def _run_shell(db, user_id, args: dict):
         # 文件库/项目工作区沿用文件服务自己的存储配额；只有未绑定 workspace
         # 时才检查独立 Shell 持久目录，避免把项目文件误计入 Shell 配额。
         if decision.workspace_id is None:
+            await reconcile_user_storage(db, user_id)
             quota = snapshot_quota(root, sandbox_settings.persistent_quota_bytes)
+            quota_before = quota.used_bytes
             if quota.exceeded:
                 return {
                     "error": "Shell 持久空间已超过配额，请先清理文件后再执行命令",
@@ -146,6 +218,8 @@ async def _run_shell(db, user_id, args: dict):
                     max_output_chars=int(args.get("max_output_chars", 12_000)),
                     quota_root=str(quota_root) if quota_root else None,
                     quota_bytes=quota_bytes,
+                    network_profile=network_profile,
+                    egress_expires_at=egress_expires_at,
                 )
             )
             if result_data.get("error"):
@@ -164,6 +238,19 @@ async def _run_shell(db, user_id, args: dict):
         return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "sandboxd_unavailable"}
     except ValueError as exc:
         return {"error": str(exc), "_risk": decision.risk.value, "_workspace_id": decision.workspace_id, "_scope": decision.scope.value, "_audit_event": "rejected"}
+    if decision.scope.value == "sandbox" and decision.workspace_id is None and quota_before is not None:
+        quota_after = measure_directory(root)
+        operation = (
+            "build" if any(token in command for token in ("npm ", "pnpm ", "yarn ", "cargo ", "make ", "gradle ", "build"))
+            else "shell_exec"
+        )
+        await record_usage(
+            db, user_id, category=SHELL_PERSISTENT,
+            delta_bytes=quota_after - quota_before,
+            operation=operation, resource_type="shell", resource_id=session_id or "none",
+            idempotency_key=f"shell:{session_id or 'none'}:{time.monotonic_ns()}",
+            metadata={"command_fingerprint": fingerprint(command), "measured_bytes": quota_after},
+        )
     return {
         "ok": result.ok,
         "exit_code": result.exit_code,
@@ -190,12 +277,7 @@ class ShellSkill(BaseSkill):
         Tool(
             name="shell",
             label="执行 Shell 命令",
-            description=(
-                "在当前会话自动匹配的 Shell 范围内执行一条受控命令。默认使用用户 sandbox；"
-                "绑定工作区时只把工作区作为 sandbox 的默认目录；明确开启 system 权限时才使用宿主机执行器；"
-                "只能使用相对 cwd，不支持管道、重定向或命令替换。危险命令会先要求用户确认；"
-                "没有可用 Shell 权限时不要调用。会话身份由系统注入，不需要传 session_id。"
-            ),
+            description="在授权 Shell 范围执行一条受控命令；默认 sandbox，危险命令需确认，不支持管道和重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -203,6 +285,7 @@ class ShellSkill(BaseSkill):
                     "cwd": {"type": "string", "description": "workspace 内相对目录，默认 ."},
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300, "description": "超时时间，秒，默认 30"},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "输出字符上限，默认 12000"},
+                    "network": {"type": "string", "enum": ["none", "egress"], "description": "默认 none；需要联网时请求 egress，首次使用必须经用户确认"},
                     "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
                     "confirm_token": {"type": "string", "description": "危险命令确认凭证"},
                 },

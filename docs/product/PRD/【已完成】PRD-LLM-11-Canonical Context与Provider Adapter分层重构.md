@@ -1,6 +1,6 @@
 # Canonical Context、History 与 Provider Adapter 分层重构 PRD
 
-> 状态：🟡 Phase 0-6 核心链路已完成，完整数据库历史迁移与真实 Provider 长跑验证待后续收尾
+> 状态：✅ 核心链路已完成；历史数据库结构保持兼容，当前重点是运行观测和 Provider 长跑验证
 > 创建：2026-08-25
 > 所属层：LLM / Context Assembly / Provider Adapter
 > 关联 PRD：[[PRD-LLM-3-provider供应商适配层整体整理.md]]、[[PRD-LLM-8-Prompt-Caching优化.md]]、[[PRD-LLM-9-工具与Skill注册制及按需注入.md]]
@@ -11,7 +11,7 @@
 本轮已落地 Canonical Context 的核心垂直链路：
 
 - `CanonicalContext`、`CanonicalHistoryUnit`、`CanonicalRequest` 和稳定 digest 已建立；
-- Web、IM、定时任务统一经过 `context_assembly`，保持原有消息顺序和动态尾部行为；
+- Web、IM、定时任务统一经过 `run_context.prepare_run()` 和 `context/assembly/`，保持同一消息顺序与当前轮 batch 语义；
 - Provider 历史渲染统一从 `ProviderAdapter.render_history()` 出口执行；
 - automatic prefix cache、explicit cache control、single history anchor 已拆成独立能力描述；
 - LoopScope 已增加 canonical、wire、schema、cache policy 和 first diff 的脱敏诊断字段；
@@ -44,7 +44,7 @@ Provider-specific wire request 稳定
 
 当前 Web、IM、定时任务和 Agent runner 已经部分共享上下文，但仍存在两层边界混杂：
 
-- `PromptMessages` 同时承担业务消息顺序、动态尾部、压缩边界和缓存锚点记录；
+- `PromptMessages` 现在只承担请求期消息顺序、固定前缀边界和缓存锚点记录；本轮业务组装由 `run_context.prepare_run()` 完成，持久化由 `run_finalize.finalize_run()` 完成；
 - `history.py` 已经在做 OpenAI/Anthropic 历史转换，但 canonical block、普通消息、引用和附件的边界仍由多个入口共同决定；
 - `loop_drivers.py` 既处理 provider wire format，也决定部分 cache marker 行为；
 - 工具 Schema 由运行时能力变化驱动，容易造成同一 session 的 tools payload 重建；
@@ -58,7 +58,7 @@ Provider-specific wire request 稳定
 ```text
 稳定 snapshot / history
 → 当前用户消息
-→ 每轮变化的 dynamic tail
+→ 当前轮 `NewMessageBatch`
 ```
 
 下一轮会变成：
@@ -67,10 +67,10 @@ Provider-specific wire request 稳定
 稳定 snapshot / history
 → 当前用户消息
 → assistant 历史消息
-→ 新 dynamic tail
+→ 新的当前轮 `NewMessageBatch`
 ```
 
-第一处结构差异落在上一轮 dynamic tail 位置。DeepSeek 依赖服务端自动缓存，不能通过业务层随意添加显式 cache marker 修复。该问题必须由统一 Context 边界和 Provider 缓存能力声明共同处理。
+第一处结构差异曾落在上一轮 dynamic tail 位置。现行实现把当前轮内容集中到单一 `NewMessageBatch`，需要跨轮保留的姿态、RAG 和工具事件在 run 收尾进入 canonical history；时间和临时提醒不持久化。DeepSeek 依赖服务端自动缓存，不能通过业务层随意添加显式 cache marker 修复，因此必须保持 canonical history 和 batch 的顺序稳定。
 
 ### 1.3 现状痛点
 
@@ -79,7 +79,7 @@ Provider-specific wire request 稳定
 | 业务层直接拼 OpenAI/Anthropic 消息 | Provider 切换后历史语义可能变化 |
 | 同一消息在不同入口重复归一化 | Web、QQ、群聊、定时任务出现不同前缀 |
 | 工具 Schema 变化没有独立 digest | 无法判断缓存断点来自工具还是 history |
-| dynamic tail 边界没有统一 contract | 下一 run 可能从尾部重新开始缓存 |
+| 当前轮 batch 与持久历史边界没有统一 contract | 下一 run 可能重新拼接相同内容，造成缓存断点 |
 | cache capability 与 active cache 混用 | DeepSeek 被误加 Qwen/MiniMax 策略 |
 | diagnostics 混在实际消息对象 | 观测字段可能污染 prompt 前缀 |
 
@@ -94,8 +94,7 @@ CanonicalContext
 ├── static_system       # 人格、政策、稳定规则
 ├── session_snapshot    # snapshot 生命周期内稳定的项目/日历/文件/memory/source
 ├── canonical_history   # 连续消息、工具调用、工具结果、RAG、交互事件
-├── current_turn        # 当前用户消息及本轮已确定的持久化事件
-└── dynamic_tail        # 当前时间、最新 stance 等真正每轮变化的内容
+└── current_turn        # NewMessageBatch：姿态变化、RAG、用户消息和临时提醒
 ```
 
 固定顺序：
@@ -105,15 +104,14 @@ static_system
 → session_snapshot
 → canonical_history
 → current_turn
-→ dynamic_tail
 ```
 
 约束：
 
 1. `static_system` 和 `session_snapshot` 不由 Provider Adapter 修改。
 2. `canonical_history` 只追加或按 canonical unit 压缩，不重新拼装旧消息。
-3. `current_turn` 中需要进入下一轮的内容必须可持久化、可重建、可去重。
-4. `dynamic_tail` 不得混入 snapshot hash、history baseline 或诊断字段。
+3. `current_turn` 中需要进入下一轮的内容必须有明确的 canonical 持久化契约；姿态变化和 RAG 追加历史，时间和临时提醒不持久化。
+4. `current_turn` 只追加本轮新增消息，不得改写已有 history、snapshot hash 或 baseline。
 5. 工具调用与工具结果、交互请求与交互结果必须保持原子关系。
 
 ### 2.2 Provider Adapter 两阶段出口
@@ -170,10 +168,10 @@ ProviderCacheCapabilities(
 
 ### P0：统一 Context Contract
 
-- 为 static system、snapshot、history、current turn、dynamic tail 建立明确的数据结构和生命周期。
+- 为 static system、snapshot、canonical history 和 current-turn batch 建立明确的数据结构和生命周期。
 - 让 Web、IM、定时任务使用同一个 assembly 入口。
 - 将 `PromptMessages` 降级为请求期容器，不再承担业务层 canonical 规则。
-- 统一固定前缀、历史区、动态尾部的边界诊断。
+- 统一固定前缀、历史区、当前 batch 和缓存锚点的边界诊断。
 
 ### P0：Provider Adapter 成为唯一 wire 出口
 
@@ -200,7 +198,7 @@ ProviderCacheCapabilities(
   "static_digest": "...",
   "snapshot_digest": "...",
   "history_digest": "...",
-  "dynamic_tail_digest": "...",
+  "current_turn_digest": "...",
   "tool_schema_digest": "...",
   "tool_schema_count": 3,
   "first_diff_index": 26,
@@ -210,17 +208,17 @@ ProviderCacheCapabilities(
 
 正文、工具参数、附件名、URL、token、密钥和用户身份不得写入诊断。
 
-### P1：动态尾部生命周期明确化
+### P1：当前轮 batch 与持久历史生命周期明确化
 
-将动态内容分成三类：
+将当前轮内容按是否跨轮持久化分成三类：
 
 | 类型 | 示例 | 处理 |
 |---|---|---|
-| session-stable | stance、低频会话状态 | 可随 snapshot/turn policy 更新 |
-| turn-stable | 当前消息时间、RAG 结果、Skill/Tool schema event | 进入 canonical turn，下一轮可重建 |
-| request-volatile | 当前时刻、临时诊断、provider usage | 只进入 dynamic tail，不持久化 |
+| session-stable | snapshot 内稳定业务上下文 | 仅在 TTL/业务 revision 变化时更新 |
+| canonical-event | 姿态变化、RAG 结果、工具/Skill 事件 | 先进入当前 `NewMessageBatch`，run 收尾追加到 canonical history；已追加内容不删除、不按正文去重 |
+| request-volatile | 当前时间、临时提醒、诊断、provider usage | 只进入当前 batch，不持久化 |
 
-任何内容只能属于一个区域，禁止同一内容同时出现在 snapshot、history 和 dynamic tail。
+任何内容只能属于一个生命周期区域，禁止同一内容同时出现在 snapshot、canonical history 和当前 batch；当前 batch 是组装边界，不是第四份长期状态。
 
 ## 4. 计划修改的文件与目录
 
@@ -250,8 +248,8 @@ backend/tests/
 ### 4.2 重点修改文件
 
 ```text
-backend/agent/context/message_assembly.py
-  # 保留 PromptMessages 的请求期动态尾部能力，移除业务规则重复实现
+backend/agent/context/assembly/
+  # fixed/history/current-turn 的唯一组装边界与缓存锚点
 
 backend/agent/context/history.py
   # 只负责 canonical history -> provider-neutral history 的恢复
@@ -374,7 +372,7 @@ History 归一化不再单独维护另一份 PRD，而是作为 Canonical Contex
 
 - 压缩只能按 `CanonicalHistoryUnit` 进行，不能拆开工具调用/结果或交互请求/结果。
 - 历史归一化必须确定性：同一数据库消息和同一 Provider 能力产生相同 canonical digest。
-- dynamic tail、RAG、时间和 stance 不得重复出现在 snapshot、history 和 dynamic tail 多个区域。
+- 当前 batch、RAG、时间和 stance 不得重复出现在 snapshot、canonical history 和当前 batch 多个生命周期区域；需要跨轮的事件只在 run 收尾持久化一次。
 - base64、远程签名 URL、Provider 私有签名和诊断字段不得成为稳定缓存前缀。
 - Provider 切换只改变 wire format，不改变历史事实和 canonical digest。
 
@@ -410,14 +408,14 @@ backend/tests/test_provider_history_adapters.py
 
 - [x] 记录 Web、QQ、微信群聊、飞书和定时任务的当前 assembly 结构。
 - [x] 对 DeepSeek、Qwen、MiniMax 的既有连续 run 基线纳入现有缓存报告。
-- [x] 记录 canonical digest、wire digest、schema digest、dynamic tail digest 和 first diff。
-- [x] 确认当前低缓存的结构诊断字段覆盖 dynamic tail、tool schema、图片、压缩和 Provider 分块。
+- [x] 记录 canonical digest、wire digest、schema digest、current-turn digest 和 first diff。
+- [x] 确认当前低缓存的结构诊断字段覆盖 current-turn batch、tool schema、图片、压缩和 Provider 分块。
 - [x] 冻结当前行为报告，作为重构前基线。
 
 ### Phase 1：Canonical Context 数据模型
 
 - [x] 新增 `CanonicalContext`、`CanonicalRequest`、`CanonicalTurn`、`CanonicalHistoryUnit` 和 `HistoryEnvelope`。
-- [x] 明确 static/snapshot/history/current-turn/dynamic-tail 的字段边界。
+- [x] 明确 static/snapshot/canonical-history/current-turn-batch 的字段边界。
 - [x] 固化普通文本、引用、附件、转写、RAG、工具、交互和未知 block contract。
 - [x] 为每个区域增加稳定 digest；诊断字段与模型字段分离。
 - [x] 保持现有 `ConversationMessage` 数据库结构不变。
@@ -426,7 +424,7 @@ backend/tests/test_provider_history_adapters.py
 ### Phase 2：统一入口组装
 
 - [x] 抽出 Web、IM、定时任务共用的 `context_assembly.build_messages()`。
-- [x] 统一 snapshot、history baseline、current message 和 dynamic tail 的顺序。
+- [x] 统一 snapshot、history baseline 和 `NewMessageBatch` 的顺序，并收敛为 `run_context.prepare_run()` 单一业务组装入口。
 - [x] 为同一 assembly 生成一致的 canonical digest。
 - [x] 维持当前权限、群聊 scope、owner scope 和工具过滤行为（本轮只替换组装入口，不改变过滤逻辑）。
 - [x] 删除入口侧重复的消息组装调用，统一改用 `context_assembly.assemble()`；旧函数仅作为短期薄包装保留。
@@ -449,13 +447,13 @@ backend/tests/test_provider_history_adapters.py
 - [x] 本地模型默认不注入云厂商专属 cache 字段。
 - [x] Provider cache capability 与结构 digest 已进入 LoopScope 诊断；真实 usage 继续沿用现有缓存报告。
 
-### Phase 5：Schema 与动态尾部稳定化
+### Phase 5：Schema 与当前轮 batch 稳定化
 
 - [x] 工具/Skill schema 生成稳定 digest，并进入脱敏诊断。
-- [x] 区分 session-stable、turn-stable、request-volatile 内容。
+- [x] 区分 session-stable、canonical-event、request-volatile 内容。
 - [x] turn-stable metadata 已具备 canonical history event/envelope 承载方式。
-- [x] 保持时间、stance、RAG 的现有语义位置；本阶段不把它们移动到 system，也不以缓存优化改变其注入语义。
-- [x] 用 10 次确定性 assembly 回归验证固定区稳定、动态尾部独立变化。
+- [x] 保持时间、stance、RAG 的现有语义位置；姿态变化和 RAG 在 run 收尾进入 canonical history，时间保持 request-volatile；不把它们移动到 system，也不以缓存优化改变其注入语义。
+- [x] 用 10 次确定性 assembly 回归验证固定区稳定、当前 batch 独立变化以及姿态 digest 变化时的历史追加。
 
 ### Phase 6：压缩、LoopScope 与清理
 
@@ -472,7 +470,7 @@ backend/tests/test_provider_history_adapters.py
 
 - 同一 session 连续 run 的稳定历史 canonical digest 不变。
 - 相同 canonical input 在 OpenAI/Anthropic adapter 下每次 wire digest 可复现。
-- dynamic tail 变化不会修改 static system 或 snapshot digest。
+- 当前 batch 变化不会修改 static system 或 snapshot digest；姿态/RAG 持久化后的下一轮变化体现在 canonical history，而不是改写旧 history。
 - 工具 schema 未变化时 count、顺序和 digest 保持一致。
 
 ### 6.2 语义完整性
@@ -523,7 +521,7 @@ canonical_digest / wire_digest / schema_digest / first_diff_index
 
 1. 所有入口共用一个 Canonical Context assembly。
 2. Provider wire 差异集中在 adapter，业务层不再拼 provider-specific history。
-3. 工具 Schema、历史、动态尾部和 snapshot 均有明确生命周期与 digest。
+3. 工具 Schema、历史、当前 batch 和 snapshot 均有明确生命周期与 digest。
 4. OpenAI、Anthropic、DeepSeek、Qwen、MiniMax 至少各有一组跨 run 回归测试。
 5. LoopScope 可以解释缓存断点，但不泄漏模型上下文正文。
 6. 旧 history 可读取，压缩、引用、附件、RAG 和工具调用行为无回归。

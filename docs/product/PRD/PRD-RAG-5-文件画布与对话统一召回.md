@@ -1,9 +1,9 @@
 # PRD-RAG-5：文件、画布与对话统一召回
 
-> 状态：规划中
+> 状态：规划中（目标已调整为 TypeScript 实现，相关 RAG 模块同步 TS 化）
 > 创建：2026-08-25
 > 所属层：Agent / Knowledge RAG / Source Adapter
-> 关联文档：`docs/agent/RAG架构与检索链路.md`、`PRD-RAG-1-统一知识召回与索引.md`
+> 关联文档：`docs/agent/RAG架构与检索链路.md`、`PRD-RAG-1-统一知识召回与索引.md`、`PRD-ARCH-1-TypeScript后端迁移与API-Worker分层架构.md`
 
 ## 1. 背景
 
@@ -19,12 +19,13 @@
 
 ### 2.1 目标
 
-1. 文件、画布、对话统一转换为 `IndexDocument`。
-2. 复用现有 Scope、Rust BM25、Python fallback、缓存、置信度和诊断链路。
-3. 每类来源保留自己的归属校验和业务权限适配器。
-4. 自动召回结果带有可追溯的来源引用。
-5. 内容更新后可以增量失效和重建，不依赖每次查询全量扫描。
-6. 召回失败不阻塞主 Agent，专用工具仍可正常使用。
+1. 文件、画布、对话统一转换为 TypeScript `IndexDocument`。
+2. 以 TypeScript Worker 作为统一 RAG 的生产实现，顺带完成相关 RAG、Source Adapter、索引生命周期和召回服务的 TS 化。
+3. 复用现有 Scope、TypeScript BM25 worker、缓存、置信度和诊断链路。
+4. 每类来源保留自己的归属校验和业务权限适配器。
+5. 自动召回结果带有可追溯的来源引用。
+6. 内容更新后可以增量失效和重建，不依赖每次查询全量扫描。
+7. 召回失败不阻塞主 Agent，专用工具仍可正常使用。
 
 ### 2.2 非目标
 
@@ -49,7 +50,7 @@ scope-first 业务权限过滤
           ↓
 KnowledgeIndexCache
           ↓
-Rust BM25（默认）/ Python BM25 fallback
+TypeScript BM25 worker（唯一生产词法后端）
           ↓
 UnifiedRecallService
   ├─ 置信度
@@ -66,7 +67,7 @@ history 自动召回 / 显式搜索结果
 | 层 | 共用内容 | 来源独立内容 |
 |---|---|---|
 | 文档契约 | `IndexDocument`、`Scope`、version、hash | 文本抽取和 metadata |
-| 索引 | 持久化表、Rust/Python lexical index | source type、更新事件 |
+| 索引 | 持久化表、TypeScript lexical worker | source type、更新事件 |
 | 过滤 | scope-first、confidence、预算、去重 | 文件/画布/对话归属校验 |
 | 输出 | 统一 public result、citation | 文件路径、节点位置、会话时间 |
 
@@ -200,7 +201,7 @@ metadata:
 1. 生成已完成身份校验的 Scope。
 2. 来源 Adapter 做归属和业务权限过滤。
 3. Retriever 做 source type 过滤。
-4. Rust BM25 或 Python fallback 召回候选。
+4. TypeScript BM25 worker 召回候选。
 5. 统一 scope 二次校验，防止新 Adapter 漏过滤。
 6. 置信度过滤：硬下限 0.35，优先阈值 0.55。
 7. 正文 hash 去重。
@@ -239,7 +240,7 @@ conversation 50
 
 - 索引更新失败记录受限诊断并有限重试。
 - 查询发现 revision 不一致时重建对应 owner/source index。
-- Rust sidecar 失败只退回 Python BM25，不改变业务结果权限。
+- TypeScript worker 失败按统一 RAG 错误边界处理，不切换到历史 Rust/Python 词法实现，也不改变业务结果权限。Python 侧只在迁移期间保留数据读取、事件桥接或离线对照职责，不作为新的生产 RAG 实现。
 - 文本抽取失败时保留标题和 metadata，但不伪造正文命中。
 - 召回超时只跳过当前来源，不阻塞其他来源和主 Agent。
 
@@ -267,33 +268,42 @@ RAG 负责“找到可能相关的来源”，专用工具负责“读取完整�
 
 ## 8. 实施阶段
 
-### Phase 1：文件来源
+### Phase 0：TypeScript RAG 基础边界
 
-- 新增 `FileAdapter` 和文件文本抽取边界。
-- 接入 file scope、项目/folder scope 和回收站过滤。
-- 建立文件更新事件和来源级索引回归。
-- 验证自动召回不暴露内部路径和未授权文件。
+- [ ] 固定 TypeScript `IndexDocument`、`Scope`、source result、revision、version 和诊断事件 contract。
+- [ ] 将现有 RAG service、retriever、scoring、index cache 和 injection 的生产职责迁入 `backend/ts/workers/rag` 或对应共享包。
+- [ ] 确认 Python 业务层到 TypeScript Worker 的输入/输出协议，禁止 TS 重新解析 Python 私有结构。
+- [ ] 保留 Python 适配器作为迁移期桥接或离线对照，不新增 Python 生产 fallback。
+- [ ] 建立 Python/TypeScript 结果 parity、权限和错误边界测试。
 
-### Phase 2：画布来源
+### Phase 1：文件来源（TypeScript）
 
-- 新增 `CanvasAdapter`。
-- 索引画布、便签、节点类型、分组和关系摘要。
-- 接入 canvas ownership、共享 scope 和删除失效。
-- 验证召回不会直接执行画布写操作。
+- [ ] 在 TypeScript RAG worker 新增 `FileAdapter` 和文件文本抽取边界。
+- [ ] 接入 file scope、项目/folder scope 和回收站过滤。
+- [ ] 建立文件更新事件和来源级索引回归。
+- [ ] 验证自动召回不暴露内部路径和未授权文件。
 
-### Phase 3：对话来源
+### Phase 2：画布来源（TypeScript）
 
-- 新增 `ConversationAdapter`。
-- 优先索引 summary 和稳定消息切片。
-- 接入 owner/group/member scope。
-- 验证删除、压缩和权限变化后的索引失效。
+- [ ] 在 TypeScript RAG worker 新增 `CanvasAdapter`。
+- [ ] 索引画布、便签、节点类型、分组和关系摘要。
+- [ ] 接入 canvas ownership、共享 scope 和删除失效。
+- [ ] 验证召回不会直接执行画布写操作。
 
-### Phase 4：统一自动召回与评估
+### Phase 3：对话来源（TypeScript）
 
-- 为三类来源增加独立 LoopScope source diagnostics。
-- 进行 shadow mode，暂不改变专用工具行为。
-- 评估命中率、误召回率、平均延迟、P95 延迟和上下文成本。
-- 通过后再按来源打开自动召回开关。
+- [ ] 在 TypeScript RAG worker 新增 `ConversationAdapter`。
+- [ ] 优先索引 summary 和稳定消息切片。
+- [ ] 接入 owner/group/member scope。
+- [ ] 验证删除、压缩和权限变化后的索引失效。
+
+### Phase 4：TypeScript 统一自动召回与评估
+
+- [ ] 将 UnifiedRecallService、预算、去重、排序和注入边界落在 TypeScript。
+- [ ] 为三类来源增加独立 LoopScope source diagnostics。
+- [ ] 进行 shadow mode，暂不改变专用工具行为。
+- [ ] 评估命中率、误召回率、平均延迟、P95 延迟和上下文成本。
+- [ ] 通过后再按来源打开自动召回开关。
 
 ## 9. 验收标准
 
@@ -311,7 +321,7 @@ RAG 负责“找到可能相关的来源”，专用工具负责“读取完整�
 
 ### 性能
 
-- Rust lexical 为默认后端，Python 仅作为可验证 fallback。
+- TypeScript RAG worker 及其 lexical engine 为唯一生产后端；Rust/Python 仅作为历史评估或迁移期桥接，不进入运行时 fallback。
 - 索引缓存沿用 30 分钟 TTL、单 owner 32 MiB、全局 512 MiB。
 - 自动召回单 scope 等待不超过 3 秒。
 - 召回结果总正文不超过 3000 字符。
@@ -327,26 +337,38 @@ LoopScope 至少能区分：
 
 ## 10. 代码与测试规划
 
-预计新增或修改：
+预计新增或修改的 TypeScript 模块：
 
 ```text
-backend/agent/rag/adapters/files.py
-backend/agent/rag/adapters/canvas.py
-backend/agent/rag/adapters/conversations.py
-backend/agent/rag/index_builder.py
+backend/ts/packages/contracts/src/rag.ts
+backend/ts/workers/rag/src/adapters/files.ts
+backend/ts/workers/rag/src/adapters/canvas.ts
+backend/ts/workers/rag/src/adapters/conversations.ts
+backend/ts/workers/rag/src/index-builder.ts
+backend/ts/workers/rag/src/service.ts
+backend/ts/workers/rag/src/injection.ts
+backend/ts/workers/rag/src/diagnostics.ts
+backend/ts/workers/rag/test/files.test.ts
+backend/ts/workers/rag/test/canvas.test.ts
+backend/ts/workers/rag/test/conversations.test.ts
+```
+
+迁移期允许保留或修改以下 Python 桥接/对照模块，但不再把它们作为目标生产实现：
+
+```text
+backend/agent/rag/adapters/*.py
 backend/agent/rag/service.py
 backend/agent/rag/injection.py
 backend/agent/rag/diagnostics.py
-backend/tests/test_rag_files.py
-backend/tests/test_rag_canvas.py
-backend/tests/test_rag_conversations.py
+backend/agent/rag/tokenizer.py
 ```
 
 测试必须覆盖：
 
 - source adapter 文档结构和版本稳定性。
 - owner/group/member scope 越权回归。
-- Rust/Python 后端结果契约一致。
+- TypeScript worker 与 Python 业务层结果契约一致，且 TypeScript contract 是唯一 canonical contract。
+- 文件、画布、对话相关 RAG 生产模块不再新增 Python 实现；迁移完成后 Python RAG 仅保留必要桥接或离线工具。
 - 增量更新、删除和缓存失效。
 - 正文去重、parent/source 限制和 3000 字符预算。
 - 自动召回超时不阻塞主 Agent。

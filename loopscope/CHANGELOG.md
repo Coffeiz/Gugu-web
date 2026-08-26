@@ -29,6 +29,7 @@ LoopScope 的用户可见能力、Trace 协议和持久化结构变更记录。
 ## 0.1.0 — 2026-08-17
 
 - 独立 `loopscope/frontend` + `loopscope/backend` + SQLite + Docker。
+- 0.3：LoopScope 后端迁移为 TypeScript Collector，保留 SQLite 和 HTTP API 兼容性。
 - 多 Session 真实 Web Agent 对话。
 - 普通 / 详细对话模式。
 - Run / Span Monitor，支持 Prompt、LLM draft、Tool、Guard 输入输出查看。

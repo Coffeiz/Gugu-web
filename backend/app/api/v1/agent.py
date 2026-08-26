@@ -373,6 +373,16 @@ async def list_sessions(
         .limit(50)
     )
     sessions = res.all()
+    def goal_active(session: ConversationSession) -> bool:
+        context = session.session_context if isinstance(session.session_context, dict) else {}
+        return bool(context.get("goal_mode") and context.get("goal_text"))
+
+    def goal_status(session: ConversationSession) -> str | None:
+        context = session.session_context if isinstance(session.session_context, dict) else {}
+        if not context.get("goal_text"):
+            return None
+        return "paused" if context.get("goal_status") == "paused" else "active"
+
     return [
         {
             "id": s.id,
@@ -380,6 +390,8 @@ async def list_sessions(
             "source": s.source,
             "chatType": s.chat_type,
             "workspaceName": workspace_name,
+            "goalActive": goal_active(s),
+            "goalStatus": goal_status(s),
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
@@ -493,6 +505,12 @@ async def get_session_messages(
         ]
     else:
         tool_events = []
+    # assistant timeline 可能只包含正文轮次；只有 timeline 已经包含工具项时，
+    # 才抑制兼容 toolEvents，避免刷新后工具气泡消失或重复。
+    timeline_has_tools = any(
+        any(isinstance(item, dict) and item.get("kind") == "tool" for item in (message.display_timeline or []))
+        for message in msgs
+    )
     for message in msgs:
         if message.platform_bot_user_id:
             mention_names[message.platform_bot_user_id] = "咕咕"
@@ -519,10 +537,13 @@ async def get_session_messages(
         return replace_mention_ids(text, mention_names)
 
     workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
+    session_context = session.session_context if isinstance(session.session_context, dict) else {}
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
                     "ownerPlatformUserId": owner_platform_user_id,
-                    "workspaceName": workspace.name if workspace else None},
+                    "workspaceName": workspace.name if workspace else None,
+                    "goalActive": bool(session_context.get("goal_mode") and session_context.get("goal_text")),
+                    "goalStatus": "paused" if session_context.get("goal_status") == "paused" and session_context.get("goal_text") else ("active" if session_context.get("goal_text") else None)},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
         "pagination": {
             "limit": limit,
@@ -532,7 +553,7 @@ async def get_session_messages(
         },
         "messages": [
             {"id": m.id, "role": m.role,
-             "timelineOrder": m.id,
+             "timelineOrder": m.id * 1000,
              "content": render_content(m.content),
              "files": m.files or [],
              "quotedText": m.quoted_text,
@@ -541,11 +562,21 @@ async def get_session_messages(
              "platformBotUserId": m.platform_bot_user_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
+            if not (m.role == "assistant" and m.display_timeline)
+        ],
+        "timelineEvents": [
+            {**item,
+             "id": f"{m.id}:{index}",
+             "timelineOrder": m.id * 1000 + index + 1,
+             "createdAt": iso_utc(m.created_at)}
+            for m in msgs
+            for index, item in enumerate(m.display_timeline or [])
         ],
         "toolEvents": [
-            {**event, "createdAt": iso_utc(event["createdAt"]),
+            {**event, "timelineOrder": int(event.get("timelineOrder") or 0) * 1000,
+             "createdAt": iso_utc(event["createdAt"]),
              **({"updatedAt": iso_utc(event["updatedAt"])} if event.get("updatedAt") else {})}
-            for event in tool_events
+            for event in ([] if timeline_has_tools else tool_events)
         ],
     }
 

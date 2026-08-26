@@ -46,8 +46,13 @@
           </div>
 
           <article v-for="(m, idx) in messages" :key="m.id" class="message" :class="m.role">
-            <div class="role">{{ m.role === 'user' ? 'YOU' : 'GUGU' }}</div>
-            <div class="bubble">{{ m.content }}<span v-if="m.pending" class="typing">▋</span></div>
+            <div class="role">{{ m.role === 'user' ? 'YOU' : m.role === 'tool' ? 'TOOL' : 'GUGU' }}</div>
+            <div v-if="m.role === 'tool'" class="bubble tool-bubble">
+              <strong>{{ m.toolLabel || m.toolName || '工具调用' }}</strong>
+              <span class="tool-status">{{ m.toolStatus === 'error' ? '失败' : m.toolStatus === 'running' ? '执行中' : '完成' }}</span>
+              <pre v-if="mode === 'detail' && (m.toolInput !== undefined || m.toolResult !== undefined)">{{ preview({ input: m.toolInput, result: m.toolResult }) }}</pre>
+            </div>
+            <div v-else class="bubble">{{ m.content }}<span v-if="m.pending" class="typing">▋</span></div>
 
             <div v-if="mode==='detail' && m.role==='assistant' && (m.debugEvents?.length || runForAssistant(idx))" class="inline-trace">
               <div v-if="m.debugEvents?.length" class="live-debug">
@@ -107,6 +112,7 @@ import type { ChatMessage, GuguSession, TraceRun } from '../types'
 import { listGuguSessions, loadBootstrap, loadMessagePage, sendMessage } from '../services/gugu'
 import { getRun, getRunSpans, listRuns } from '../services/api'
 import SessionMonitor from '../components/SessionMonitor.vue'
+import { buildTraceRounds } from '../utils/runExport'
 
 const sessions = ref<GuguSession[]>([])
 const activeId = ref<number | null>(null)
@@ -161,13 +167,24 @@ async function loadOlderRuns() {
     loadingOlderRuns.value = false
   }
 }
-async function loadRunDetail(runId: string) {
+function previousRunFor(runId: string) {
+  const current = runs.value.find(run => run.id === runId)
+  if (!current) return undefined
+  return runs.value
+    .filter(run => run.id !== runId && run.started_at < current.started_at)
+    .sort((a, b) => b.started_at - a.started_at)[0]
+}
+async function loadRunDetail(runId: string, loadPrevious = true) {
   if (!runId || runDetails.value[runId] || loadingRunId.value === runId) return
   loadingRunId.value = runId
   try {
     const detail = await getRun(runId, { includeSpans: false })
     runDetails.value = { ...runDetails.value, [runId]: detail }
     await loadSpans(runId, 0)
+    if (loadPrevious) {
+      const previous = previousRunFor(runId)
+      if (previous && !runDetails.value[previous.id]) await loadRunDetail(previous.id, false)
+    }
   } finally {
     loadingRunId.value = ''
   }
@@ -213,11 +230,15 @@ async function exportRuns(runIds: string[]) {
   error.value = ''
   try {
     const exported = await Promise.all(ids.map(loadCompleteRun))
+    const runsWithRounds = exported.map(run => ({
+      ...run,
+      rounds: buildTraceRounds(run),
+    }))
     const payload = {
       format: 'loopscope-run-export',
-      version: 1,
+      version: 2,
       exported_at: new Date().toISOString(),
-      runs: exported,
+      runs: runsWithRounds,
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -238,8 +259,9 @@ async function loadLatestMessages(sessionId: number) {
 }
 async function refreshAll() {
   if (!activeId.value) return
-  if (messages.value.length && typeof messages.value[messages.value.length - 1].id === 'number') {
-    const newestId = Number(messages.value[messages.value.length - 1].id)
+  const newestCanonicalId = messages.value.reduce((max, message) => Math.max(max, message.canonicalId ?? 0), 0)
+  if (messages.value.length && newestCanonicalId) {
+    const newestId = newestCanonicalId
     const page = await loadMessagePage(activeId.value, { limit: 50, afterId: newestId })
     const known = new Set(messages.value.map(message => String(message.id)))
     messages.value = [...messages.value, ...page.messages.filter(message => !known.has(String(message.id)))]
@@ -334,7 +356,7 @@ async function send() {
   sending.value = true
   draft.value = ''
   const user: ChatMessage = { id: `u-${Date.now()}`, role:'user', content:text }
-  const ai: ChatMessage = {
+  let ai: ChatMessage = {
     id: `a-${Date.now()}`, role:'assistant', content:'', pending:true,
     debugEvents: [{ kind:'status', label:'Agent loop started' }],
   }
@@ -342,6 +364,7 @@ async function send() {
   await nextTick()
   scrollEl.value?.scrollTo({ top: scrollEl.value.scrollHeight, behavior:'smooth' })
   try {
+    let lastTool: ChatMessage | null = null
     const sid = await sendMessage(text, activeId.value, evt => {
       if (evt.type === 'session_id') activeId.value = Number(evt.session_id)
       else if (evt.type === 'token') {
@@ -351,11 +374,22 @@ async function send() {
         }
       } else if (evt.type === 'tool_call') {
         ai.debugEvents?.push({ kind:'tool', label: evt.label || evt.name || 'tool call', detail: evt.input })
+        lastTool = { id: `tool-${Date.now()}-${Math.random()}`, role: 'tool', content: '', toolName: evt.name, toolLabel: evt.label || evt.name, toolStatus: 'running', toolInput: evt.input }
+        messages.value.push(lastTool)
       } else if (evt.type === 'tool_done') {
         const active = [...(ai.debugEvents ?? [])].reverse().find(x => x.kind === 'tool' && !x.done)
         if (active) active.done = true
+        if (lastTool) {
+          lastTool.toolStatus = evt.status || 'success'
+          lastTool.toolResult = evt.result
+        }
       } else if (evt.type === '_new_round') {
         ai.debugEvents?.push({ kind:'round', label:'Agent continues to next model round' })
+        if (ai.content.trim()) {
+          ai.pending = false
+          ai = { id: `a-${Date.now()}-${Math.random()}`, role:'assistant', content:'', pending:true, debugEvents: [{ kind:'status', label:'Agent loop continues' }] }
+          messages.value.push(ai)
+        }
       } else if (evt.type === 'error') {
         ai.content += evt.message || evt.detail || 'Agent error'
       }
@@ -436,6 +470,11 @@ h1,h2 { margin:3px 0 0; font-size:18px; }
 .message { max-width:720px; margin:0 auto 24px; }
 .role { font-size:9px; letter-spacing:.12em; color:var(--content-tertiary); margin-bottom:6px; }
 .message.user .bubble { margin-left:auto; background:var(--action-soft); }
+.message.tool { max-width:680px; }
+.tool-bubble { display:flex; align-items:center; gap:8px; color:var(--content-secondary); font-size:11px; }
+.tool-bubble strong { color:var(--content-primary); font-weight:600; }
+.tool-status { color:var(--content-tertiary); }
+.tool-bubble pre { flex-basis:100%; max-height:140px; margin:4px 0 0; overflow:auto; white-space:pre-wrap; font:10px/1.5 var(--font-mono); color:var(--content-tertiary); }
 .bubble { width:fit-content; max-width:85%; white-space:pre-wrap; line-height:1.7; padding:11px 14px; border-radius:15px; background:var(--surface-raised); border:1px solid var(--border-subtle); box-shadow:var(--elevation-card); }
 .typing { opacity:.45; animation:blink 1s infinite; }
 @keyframes blink { 50% { opacity:0; } }

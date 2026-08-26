@@ -44,8 +44,22 @@
       <div class="config-row"><span>持久空间配额</span><strong>{{ formatBytes(status.persistent_quota_bytes) }}</strong></div>
       <div class="config-row"><span>临时构建 / cache 配额</span><strong>{{ formatBytes(status.ephemeral_quota_bytes) }}</strong></div>
       <div class="config-row"><span>网络策略</span><strong>{{ status.network_profile === 'none' ? '断网（固定）' : status.network_profile }}</strong></div>
+      <div class="config-row config-row-switch">
+        <div class="config-row-copy"><span>临时公网访问</span><small>{{ egressHint }}</small></div>
+        <ToggleSwitch :model-value="status.network_profile === 'egress'" :disabled="!status.egress_available || egressSaving" aria-label="切换临时公网访问" @update:model-value="toggleEgress" />
+      </div>
+      <div class="egress-editor">
+        <label class="egress-label" for="egress-proxy-url">受控代理地址</label>
+        <div class="egress-input-row">
+          <input id="egress-proxy-url" v-model="proxyDraft" class="egress-input" type="url" inputmode="url" placeholder="http://egress-proxy:3128" autocomplete="off" />
+          <button type="button" class="btn-ghost" :disabled="egressSaving" @click="saveEgressProxy">{{ egressSaving ? '保存中…' : '保存代理' }}</button>
+          <button type="button" class="btn-ghost" :disabled="egressTesting || !status.egress_proxy_configured" @click="validateEgressProxy">{{ egressTesting ? '检查中…' : '验证配置' }}</button>
+        </div>
+        <p class="egress-note">仅接受不含账号密码的 HTTP(S) 地址。验证配置会检查字段、隔离网络和 sandboxd 前置条件；实际连通性仍由 sandboxd 在执行前确认。</p>
+        <p v-if="egressMessage" class="action-message" :class="{ error: egressError }">{{ egressMessage }}</p>
+      </div>
       <div class="config-row"><span>容器生命周期</span><strong>{{ status.lifecycle_mode === 'ephemeral' ? '单次命令临时容器' : status.lifecycle_mode }}</strong></div>
-      <p class="section-note">镜像、配额和网络策略通过 Admin 配置保存。当前网络只允许断网模式；配额强制写入仍由后续 sandboxd/文件系统层负责。</p>
+      <p class="section-note">默认断网。临时公网访问需要隔离 egress 网络、受控代理和每次会话确认；配置不完整时开关不可用。</p>
       <div class="quota-editor">
         <label><span>持久空间（MB）</span><input v-model.number="quotaDraft.persistentMb" type="number" min="64" step="64" /></label>
         <label><span>临时构建 / cache（MB）</span><input v-model.number="quotaDraft.ephemeralMb" type="number" min="64" step="64" /></label>
@@ -62,6 +76,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 type SandboxStatus = {
   enabled: boolean
@@ -77,6 +92,12 @@ type SandboxStatus = {
   persistent_quota_bytes: number
   ephemeral_quota_bytes: number
   network_profile: string
+  egress_proxy_configured: boolean
+  egress_proxy_url: string
+  egress_network_ready: boolean
+  egress_config_error: string | null
+  egress_available: boolean
+  egress_enabled: boolean
   lifecycle_mode: string
 }
 
@@ -84,12 +105,23 @@ const adminStore = useAdminStore()
 const configStore = useConfigStore()
 const loading = ref(false)
 const error = ref('')
-const status = reactive<SandboxStatus>({ enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', lifecycle_mode: 'ephemeral' })
+const status = reactive<SandboxStatus>({ enabled: false, docker_installed: false, docker_daemon_ready: false, rootless: null, image_ready: false, executor_ready: false, state: 'unknown', message: '', image: '', image_digest: '', persistent_quota_bytes: 0, ephemeral_quota_bytes: 0, network_profile: 'none', egress_proxy_configured: false, egress_proxy_url: '', egress_network_ready: false, egress_config_error: null, egress_available: false, egress_enabled: false, lifecycle_mode: 'ephemeral' })
 const quotaDraft = reactive({ persistentMb: 512, ephemeralMb: 1024 })
 const quotaSaving = ref(false)
 const quotaMessage = ref('')
 const quotaError = ref(false)
+const egressSaving = ref(false)
+const egressTesting = ref(false)
+const proxyDraft = ref('')
+const egressMessage = ref('')
+const egressError = ref(false)
 const canEnable = computed(() => status.docker_installed && status.docker_daemon_ready && status.rootless === true && status.image_ready)
+const egressHint = computed(() => {
+  if (status.egress_config_error) return status.egress_config_error
+  if (!status.egress_proxy_configured) return '尚未配置受控代理'
+  if (!status.egress_network_ready) return '隔离网络尚未部署'
+  return status.network_profile === 'egress' ? '已启用，会话仍需单独确认' : '可按会话临时启用'
+})
 const stateLabel = computed(() => ({ ready: '已就绪', disabled: '已关闭', docker_missing: '未安装 Docker', docker_unavailable: 'Docker 不可用', rootless_required: '需要 Rootless', image_unavailable: '镜像未加载' } as Record<string, string>)[status.state] || '未知')
 function formatBytes(value: number) {
   if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`
@@ -111,11 +143,60 @@ async function saveQuotas() {
   } catch (cause) { quotaError.value = true; quotaMessage.value = cause instanceof Error ? cause.message : String(cause) }
   finally { quotaSaving.value = false }
 }
+async function toggleEgress(enabled: boolean) {
+  egressSaving.value = true
+  try {
+    await configStore.saveConfig({ sandbox: { network_profile: enabled ? 'egress' : 'none' } })
+    await loadStatus()
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally { egressSaving.value = false }
+}
+
+async function saveEgressProxy() {
+  egressSaving.value = true
+  egressMessage.value = ''
+  egressError.value = false
+  try {
+    const response = await adminStore.authFetch('/api/v1/admin/sandbox/egress/config', {
+      method: 'POST',
+      body: JSON.stringify({ proxy_url: proxyDraft.value.trim() }),
+    })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.detail || `保存代理失败（${response.status}）`)
+    Object.assign(status, body)
+    proxyDraft.value = body.egress_proxy_url || ''
+    egressMessage.value = '代理配置已保存'
+  } catch (cause) {
+    egressError.value = true
+    egressMessage.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    egressSaving.value = false
+  }
+}
+
+async function validateEgressProxy() {
+  egressTesting.value = true
+  egressMessage.value = ''
+  egressError.value = false
+  try {
+    const response = await adminStore.authFetch('/api/v1/admin/sandbox/egress/validate', { method: 'POST' })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(body.detail || `验证代理失败（${response.status}）`)
+    egressMessage.value = body.message || '代理配置有效'
+  } catch (cause) {
+    egressError.value = true
+    egressMessage.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    egressTesting.value = false
+  }
+}
 
 async function loadStatus() {
   const response = await adminStore.authFetch('/api/v1/admin/sandbox/status')
   if (!response.ok) throw new Error(`读取沙盒状态失败（${response.status}）`)
   Object.assign(status, await response.json())
+  proxyDraft.value = status.egress_proxy_url || ''
 }
 
 async function toggleSandbox() {
@@ -166,7 +247,16 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .config-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 0; border-bottom: 1px solid var(--panel-divider); }
 .config-row:last-of-type { border-bottom: 0; }
 .config-row strong { color: var(--content-secondary); font-size: 12px; font-weight: 600; }
+.config-row-switch { align-items: center; }
+.config-row-copy { min-width: 0; }
+.config-row-copy small { display: block; margin-top: 4px; color: var(--content-tertiary); font-size: 11px; line-height: 1.4; }
 .config-row code { max-width: 72%; overflow: hidden; color: var(--content-secondary); font-family: var(--font-mono); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.egress-editor { padding: 14px 0 4px; border-bottom: 1px solid var(--panel-divider); }
+.egress-label { display: block; margin-bottom: 8px; color: var(--content-secondary); font-size: 12px; font-weight: 600; }
+.egress-input-row { display: flex; align-items: center; gap: 8px; }
+.egress-input { min-width: 0; flex: 1; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-primary); font-family: var(--font-mono); font-size: 12px; outline: none; }
+.egress-input:focus { border-color: var(--action-primary); box-shadow: var(--control-focus-shadow); }
+.egress-note { margin: 8px 0 0; color: var(--content-tertiary); font-size: 11px; line-height: 1.5; }
 .quota-editor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--panel-divider); }
 .quota-editor label { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; color: var(--content-secondary); font-size: 12px; }
 .quota-editor input { width: 150px; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-glass); color: var(--content-primary); outline: none; }
@@ -177,4 +267,5 @@ h3 { margin: 0; color: var(--content-primary); font-size: 14px; font-weight: 700
 .error-message { margin: 16px 36px 0; color: var(--status-danger); font-size: 12px; }
 @media (max-width: 760px) { .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .page-header { padding-left: 20px; padding-right: 20px; } .section-wrap { padding-left: 20px; padding-right: 20px; } .error-message { margin-left: 20px; margin-right: 20px; } }
 @media (max-width: 520px) { .page-header { flex-direction: column; gap: 12px; } .btn-primary { align-self: flex-start; } }
+@media (max-width: 620px) { .egress-input-row { align-items: stretch; flex-wrap: wrap; } .egress-input { flex-basis: 100%; } }
 </style>

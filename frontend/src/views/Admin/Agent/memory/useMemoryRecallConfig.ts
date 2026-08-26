@@ -8,6 +8,9 @@ export function useMemoryRecallConfig() {
   const adminStore = useAdminStore()
   const embeddingDraft = reactive({ ...configStore.cfg.embedding })
   const ragEnabled = ref(Boolean(configStore.cfg.search.rag_enabled))
+  const capabilityRagEnabled = ref(Boolean(configStore.cfg.search.capability_rag_enabled))
+  const capabilityRagShadow = ref(Boolean(configStore.cfg.search.capability_rag_shadow ?? true))
+  const capabilityRagLimit = ref(Number(configStore.cfg.search.capability_rag_limit || 5))
   const embeddingSaving = ref(false)
   const embeddingSaved = ref(false)
   const embeddingError = ref('')
@@ -18,10 +21,15 @@ export function useMemoryRecallConfig() {
   const { rebuild, pollRebuild, startRebuild } = useEmbeddingRebuild(adminStore)
 
   function resetEmbedding() { Object.assign(embeddingDraft, configStore.cfg.embedding) }
-  function resetRag() { ragEnabled.value = Boolean(configStore.cfg.search.rag_enabled) }
+  function resetRag() {
+    ragEnabled.value = Boolean(configStore.cfg.search.rag_enabled)
+    capabilityRagEnabled.value = Boolean(configStore.cfg.search.capability_rag_enabled)
+    capabilityRagShadow.value = Boolean(configStore.cfg.search.capability_rag_shadow ?? true)
+    capabilityRagLimit.value = Number(configStore.cfg.search.capability_rag_limit || 5)
+  }
   function syncFromStore() {
     Object.assign(embeddingDraft, configStore.cfg.embedding)
-    ragEnabled.value = Boolean(configStore.cfg.search.rag_enabled)
+    resetRag()
   }
 
   async function saveEmbedding() {
@@ -58,7 +66,15 @@ export function useMemoryRecallConfig() {
     ragError.value = ''
     embeddingError.value = ''
     try {
-      await configStore.saveConfig({ search: { rag_enabled: ragEnabled.value }, embedding: { ...embeddingDraft } })
+      await configStore.saveConfig({
+        search: {
+          rag_enabled: ragEnabled.value,
+          capability_rag_enabled: capabilityRagEnabled.value,
+          capability_rag_shadow: capabilityRagShadow.value,
+          capability_rag_limit: Math.max(1, Math.min(20, Number(capabilityRagLimit.value) || 5)),
+        },
+        embedding: { ...embeddingDraft },
+      })
       ragSaved.value = true
       embeddingSaved.value = true
       syncFromStore()
@@ -95,7 +111,8 @@ export function useMemoryRecallConfig() {
   }
 
   return {
-    configStore, embeddingDraft, ragEnabled, embeddingSaving, embeddingSaved, embeddingError,
+    configStore, embeddingDraft, ragEnabled, capabilityRagEnabled, capabilityRagShadow, capabilityRagLimit,
+    embeddingSaving, embeddingSaved, embeddingError,
     ragSaving, ragSaved, ragError, embTest, rebuild, pollRebuild, startRebuild,
     resetEmbedding, resetRag, syncFromStore, saveEmbedding, saveRag, saveAll, testEmbedding,
   }

@@ -133,7 +133,7 @@ DeepSeek Adapter 不得：
   "snapshot_digest": "...",
   "history_digest": "...",
   "current_turn_digest": "...",
-  "dynamic_tail_digest": "...",
+  "current_turn_digest": "...",
   "tool_schema_digest": "...",
   "tool_schema_count": 3,
   "history_message_count": 24,

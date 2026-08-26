@@ -84,6 +84,20 @@
               <div v-if="draft.provider === 'qwen'" class="modal-hint">
                 百炼建议使用业务空间专属域名：<code>https://&#123;WorkspaceId&#125;.cn-beijing.maas.aliyuncs.com/compatible-mode/v1</code>（WorkspaceId 在控制台业务空间详情页查看）；通用域名 dashscope.aliyuncs.com 仍可用
               </div>
+              <div v-if="draft.provider === 'glm'" class="modal-field glm-mode-field">
+                <label>GLM 接口类型</label>
+                <div class="toggle-group" style="margin-bottom:0">
+                  <button type="button" class="toggle-btn"
+                    :class="{ active: !(draft.base_url || '').includes('/api/coding/') }"
+                    @click="draft.base_url = 'https://open.bigmodel.cn/api/paas/v4'">通用 API</button>
+                  <button type="button" class="toggle-btn"
+                    :class="{ active: (draft.base_url || '').includes('/api/coding/') }"
+                    @click="draft.base_url = 'https://open.bigmodel.cn/api/coding/paas/v4'">Coding Plan</button>
+                </div>
+                <div class="modal-hint">
+                  通用 API 与 Coding Plan 使用不同额度和 API Key；Coding Plan 按官方要求使用专属端点。模型示例：<code>glm-5.2</code>、<code>glm-4.7</code>
+                </div>
+              </div>
             </div>
 
             <div class="modal-field">
@@ -137,7 +151,7 @@
             <div class="modal-field modal-field--row">
               <div class="thinking-label">
                 <span>深度思考</span>
-                <span class="thinking-hint">MiniMax M3、Anthropic、MiMo、DeepSeek（自适应模式）</span>
+                <span class="thinking-hint">MiniMax M3、Anthropic、MiMo、DeepSeek、GLM（自适应模式）</span>
               </div>
               <ToggleSwitch :model-value="draft.thinking === 'adaptive'" aria-label="切换深度思考" @update:model-value="draft.thinking = $event ? 'adaptive' : 'disabled'" />
             </div>

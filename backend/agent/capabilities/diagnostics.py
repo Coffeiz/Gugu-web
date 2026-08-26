@@ -14,6 +14,7 @@ def capability_injection_diagnostics(context) -> dict:
         return {}
     snapshot = context.snapshot
     selection = context.selection
+    recommendation = getattr(context, "recommendation_selection", selection)
     catalog = catalog_block(snapshot)
     names = list(selection.tool_names)
     name_digest = hashlib.sha256(
@@ -43,5 +44,13 @@ def capability_injection_diagnostics(context) -> dict:
             for name, meta in context.snapshot.skills.items()
         },
         "shadow": bool(selection.shadow),
+        "recommendation_enabled": bool(getattr(context, "recommendation_enabled", False)),
+        "recommendation_count": len(recommendation.reasons),
+        "recommended_tool_digest": hashlib.sha256(
+            json.dumps(list(recommendation.tool_names), ensure_ascii=False, separators=(",", ":")).encode()
+        ).hexdigest()[:16],
+        "recommendation_digest": hashlib.sha256(
+            json.dumps(list(recommendation.reasons), ensure_ascii=False, separators=(",", ":")).encode()
+        ).hexdigest()[:16],
         "diagnostic_count": len(snapshot.diagnostics),
     }

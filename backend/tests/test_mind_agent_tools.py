@@ -36,6 +36,14 @@ async def test_mind_search_returns_matches_and_one_hop_neighbors(db, user_a):
     assert result["related"][0]["node"]["node_id"] == neighbor.id
 
 
+async def test_mind_search_accepts_unified_query_alias(db, user_a):
+    matched = await _mk_note(db, user_a, "统一搜索参数", "搜索参数")
+
+    result = await _mind_search(db, user_a.id, {"query": "统一搜索"})
+
+    assert result["matches"][0]["node_id"] == matched.id
+
+
 async def test_mind_search_accepts_multiple_keywords(db, user_a):
     await _mk_note(db, user_a, "部署方案", "部署")
     await _mk_note(db, user_a, "上线清单", "上线")

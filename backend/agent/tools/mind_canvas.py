@@ -241,7 +241,7 @@ async def _mind_search_canvas(db, user_id, args: dict):
         return {"error": "需要提供 canvas_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    q = (args.get("q") or "").strip()
+    q = (args.get("query") or args.get("q") or "").strip()
     raw_queries = args.get("queries")
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
@@ -278,12 +278,12 @@ def _placeable_summary(entity, ref_node: Any, item: Any, ref_type: str) -> dict[
 
 
 async def _mind_search_placeable_nodes(db, user_id, args: dict):
-    q = (args.get("q") or "").strip()
+    q = (args.get("query") or args.get("q") or "").strip()
     raw_queries = args.get("queries")
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
     if not normalized:
-        return {"error": "需要提供搜索关键词 q 或 queries"}
+        return {"error": "需要提供搜索关键词 query 或 queries"}
     selected = [item for item in (args.get("types") or list(_PLACEABLE_TYPES)) if item in _PLACEABLE_TYPES]
     limit = _limit(args.get("limit"), 10)
     offset = args.get("offset", 0)
@@ -767,7 +767,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_get_canvas", label="读取思维画布",
-            description="读取当前用户指定画布的节点摘要、连接和最后查看的 camera/viewport。节点带有 layout.effective_size、layout.default_size 与推荐间距，排布时按实际尺寸避让。完整正文只在用户明确要求时读取。",
+            description="读取画布节点、连接和最后查看的 camera/viewport；排布时参考节点实际尺寸。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -788,7 +788,8 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "q": {"type": "string"},
+                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
+                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_CANVAS_TYPES)}},
                     "mode": {"type": "string", "enum": ["OR", "AND"]},
@@ -805,7 +806,8 @@ class MindCanvasSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string"},
+                    "query": {"type": "string", "description": "单个关键词或短语；所有搜索工具统一使用此字段"},
+                    "q": {"type": "string", "description": "兼容旧调用的别名；新调用请使用 query"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_PLACEABLE_TYPES)}},
                     "canvas_id": {"type": "integer"},
@@ -855,7 +857,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"},
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
@@ -868,7 +870,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_add_canvas_node", label="放置画布节点",
-            description="把当前用户的项目、文件或日历活动引用放入画布，单次最多 20 个。卡片大小由系统管理，不能传 w/h。单项调用使用 node_id 或 ref_type/ref_id，批量调用使用 nodes 数组。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 避让。",
+            description="把项目、文件或活动引用放入画布，最多 20 个；位置按节点实际尺寸避让。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -918,7 +920,7 @@ class MindCanvasSkill(BaseSkill):
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"}, "version": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
@@ -941,7 +943,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_connect_nodes", label="连接画布节点",
-            description="连接同一张画布中已经放置的画布便签或业务引用节点；默认 related 且幂等。可选 source_side/target_side 指定两端连接点，未指定时沿用已有端点或由画布自动决定。",
+            description="连接同一画布中的节点；默认 related 且幂等，可指定两端连接点。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -984,7 +986,7 @@ class MindCanvasSkill(BaseSkill):
         ),
         Tool(
             name="mind_batch_canvas", label="批量编排画布",
-            description="在一个事务内最多 20 个操作：创建便签、放置项目/文件/活动引用、调整位置/层级/折叠状态、移除视图、删除便签和创建 related 连接。卡片大小由系统管理，不能传 w/h。失败会整批回滚，删除便签会先统一确认；使用 request_id 重试可复用已有对象。",
+            description="在一个事务内批量编排画布节点、便签和连接，最多 20 个操作；失败整批回滚。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -997,7 +999,7 @@ class MindCanvasSkill(BaseSkill):
                             "node_id": {"type": "integer"}, "version": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
-                            "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
+                            "title": {"type": "string", "maxLength": 300, "description": "可选索引标题；用户可见标题写在 content 第一行。"}, "content": {"type": "string"},
                             "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                             "x": {"type": "number"}, "y": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},

@@ -2,6 +2,7 @@
 import asyncio
 import pytest
 from agent.context import compress_conv
+import agent.context.compaction as compaction_module
 from agent.context.compaction import (
     estimate_context_length,
     compact_context,
@@ -33,6 +34,28 @@ def _fake_summary(monkeypatch):
 
 
 class TestEstimateContextLength:
+    def test_compaction_prompt_path_dependency_is_available(self):
+        """90% 压缩触发时提示词路径解析不能因缺少标准库依赖而中断。"""
+        assert compaction_module.Path("compress_conv.md").name == "compress_conv.md"
+
+    def test_compaction_summary_loads_prompt_before_calling_llm(self, monkeypatch):
+        captured = {}
+
+        async def fake_complete_text(sys, user, settings, max_tokens):
+            captured["system_prompt"] = sys
+            captured["user_prompt"] = user
+            return "压缩摘要"
+
+        monkeypatch.setattr("app.core.config.get_settings", lambda: object())
+        monkeypatch.setattr("agent.memory._llm.complete_text", fake_complete_text)
+        result = asyncio.get_event_loop().run_until_complete(
+            compaction_module._generate_compact_summary_once(["用户：测试压缩"])
+        )
+
+        assert result == "压缩摘要"
+        assert "历史对话" in captured["system_prompt"]
+        assert captured["user_prompt"] == "用户：测试压缩"
+
     def test_empty(self):
         assert 0 == asyncio.get_event_loop().run_until_complete(
             estimate_context_length([], "")
