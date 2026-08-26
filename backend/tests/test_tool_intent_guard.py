@@ -2,6 +2,7 @@ from agent.security.core_guards import (
     _could_be_tool_progress,
     _is_tool_progress_only,
     _looks_like_narration,
+    _announces_intent,
 )
 from agent.loop_drivers import RoundResult
 
@@ -31,3 +32,13 @@ def test_narration_guard_ignores_normal_conversation_looked_at_phrase():
 
 def test_narration_guard_keeps_object_context_for_read_claims():
     assert _looks_like_narration("我看到了文件内容，正文已经整理好了。")
+
+
+def test_colon_ended_file_action_is_guarded_in_chinese_and_english():
+    assert _announces_intent("先把文件移动到目标文件夹：")
+    assert _announces_intent("Let me move the file to the target folder:")
+
+
+def test_colon_ended_explanation_is_not_treated_as_action_intent():
+    assert not _announces_intent("下面是本次测试的说明：")
+    assert not _announces_intent("Here is the explanation:")

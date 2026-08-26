@@ -93,6 +93,15 @@ _INTENT_RE = re.compile(
     r"(帮你|帮您|给你|重新|再)?\s*"
     r"(查|搜索?|找|看|读|翻|问|建|创建|新建|做|改|修改|删除?|发送?|存|保存|记录?|整理|安排|设置?|调取?|生成|算|统计)"
 )
+# 有些模型会把“准备执行的动作”停在冒号上，下一 token/轮本应继续工具调用，却直接收束成文字。
+# 不能仅按冒号拦截；要求句首有行动引导词、正文含明确动作词，并同时支持中英文句末冒号。
+_COLON_INTENT_RE = re.compile(
+    r"^(?:(?:先|然后|接下来|现在|让我|我先|我会)|(?:then|next|now|let me|i will))"
+    r".*(?:移|移动|复制|删除|删掉|修改|编辑|写入|创建|读取|查看|查|搜索|整理|重命名|保存|更新|"
+    r"move|copy|delete|edit|write|create|read|check|search|organize|rename|save|update)"
+    r".*[:：]\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 # 问句/征询硬排除：「要我去查吗?」是在等用户拍板，绝不能逼它执行（误逼=替用户做没同意的事，比卡住还糟）。
 _QUESTION_RE = re.compile(r"[?？]|吗|呢|要不要|需不需要|好不好|可不可以|行不行|是否|要我帮|需要我")
 
@@ -102,7 +111,7 @@ def _announces_intent(text: str) -> bool:
     先排除问句/征询（要我去查吗?）——那是在等用户拍板，命中即返回 False、绝不逼。"""
     if not text or _QUESTION_RE.search(text):
         return False
-    return bool(_INTENT_RE.search(text))
+    return bool(_INTENT_RE.search(text)) or bool(_COLON_INTENT_RE.search(text.strip()))
 
 
 _INTENT_NUDGE = (
