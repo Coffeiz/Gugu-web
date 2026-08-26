@@ -2,6 +2,20 @@
 
 LoopScope 的用户可见能力、Trace 协议和持久化结构变更记录。
 
+## Unreleased
+
+### Added
+
+- Run 列表支持多选导出，并在导出数据中保留按 round 组织的索引。
+- LLM round 支持显示 Input 最早变化点、前缀稳定性和变化原因，并可一键定位到对应消息。
+- 支持对比同一 Run 的上一 round；round1 支持自动加载并对比时间上一个 Run 的最后一个 LLM round。
+- LoopScope 前端补充 TypeScript workspace、Collector 迁移基础设施与存储契约。
+
+### Changed
+
+- Input 面板保持原有手动展开行为，定位和上一轮对比改为独立的显式操作，避免查看长输入时被自动滚动打断。
+- Trace 诊断继续沿用结构化 metadata，变化定位不复制用户正文到后端日志。
+
 ## 0.2.0 — 2026-08-17
 
 ### Added

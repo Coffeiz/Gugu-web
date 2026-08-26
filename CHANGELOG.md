@@ -9,6 +9,9 @@
 
 ### 新增
 
+- **TS RAG 稳定构建物**：新增 TypeScript RAG worker、协议契约、词法检索测试与 `backend/bin/gugu-rag-ts-worker.mjs` 部署产物；运行环境直接消费稳定构建物，不再要求业务侧现场构建。
+- **Rootless Docker Shell 沙盒**：新增用户级沙盒执行链、Rootless Docker/sandboxd 接入、配额账本、持久空间管理、网络策略与 Admin 沙盒配置入口。
+- **能力与上下文诊断**：补充工具/Skill 能力目录、上下文组装拆分、缓存前缀诊断、压缩基线生命周期和 LoopScope 输入变化定位能力。
 - **上下文缓存与会话快照**：为 Web/IM Agent 引入稳定的会话上下文、增量历史、压缩与 TTL 刷新策略，拆分静态前缀和动态消息区域，显著提升多轮对话的 Prompt Cache 命中率；补充跨模型缓存能力识别、回归脚本与实测报告。
 - **LoopScope 可观测性**：升级并启用 LoopScope 0.2，展示真实的 Agent run、LLM 轮次、工具调用、上下文来源和 token/cache 用量，方便定位长任务与缓存问题。
 - **画布 Agent 工具**：增加画布、节点、关系的查询与操作能力，支持通过对话创建和删除画布，并补齐工具 schema、权限边界和回归测试。
@@ -16,6 +19,10 @@
 
 ### 改进
 
+- **RAG 索引与检索链路**：统一 TS worker、快照复用、索引缓存、分词契约和检索诊断，支持按文档变化进行增量更新并保留 Python/旧实现迁移边界。
+- **Shell 权限与资源治理**：统一用户持久空间、下载/构建/Shell 配额账本和审计字段；危险操作支持确认与 TTL 授权，沙盒关闭时不回退到宿主机执行。
+- **工具与 Skill 注册**：统一能力目录、简介、Schema 声明、按需注入和错误反馈规范，减少每轮全量注入并保持工具历史可恢复。
+- **LoopScope 诊断体验**：支持 Run 多选导出、round 索引、输入最早变化点标记、相邻 round 及跨 Run Input 对比和一键定位。
 - **上下文压缩与会话稳定性**：Web、IM 和定时任务统一按 provider usage/overflow 管理 ContextBudget；长会话压缩只处理旧历史并保留当前工具轮，baseline 更新后继续增量运行，减少重复压缩和并发生成造成的上下文抖动
 
 - **上下文预算收口**：统一 provider usage 驱动的 ContextBudget 压缩、baseline 提交与 session gate，避免同一会话并行生成和重复压缩。
