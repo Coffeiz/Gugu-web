@@ -30,8 +30,8 @@ pnpm --filter @loopscope/collector dev
 
 ```bash
 cd loopscope/frontend
-npm install
-npm run dev
+pnpm install --frozen-lockfile
+pnpm dev
 ```
 
 默认监听 `127.0.0.1:4319`。

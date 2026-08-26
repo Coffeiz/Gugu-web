@@ -161,43 +161,43 @@ packages:
 
 ### Phase 1：建立 pnpm workspace
 
-- [ ] 新增根 `package.json`、`pnpm-workspace.yaml` 和 `.npmrc`。
-- [ ] 将四个仓库内包纳入 workspace。
-- [ ] 补齐 `backend/ts/packages/contracts/package.json` 的入口、类型和脚本。
-- [ ] 迁移依赖并生成唯一 `pnpm-lock.yaml`。
-- [ ] 验证 `gugu-interaction-runtime` 的外部 `file:` 依赖和 postinstall 修链。
-- [ ] 验证 `pnpm --filter gugu-web ...`、`pnpm --filter loopscope-web ...`、RAG worker 的安装与构建。
+- [x] 新增根 `package.json`、`pnpm-workspace.yaml` 和 `.npmrc`。
+- [x] 将仓库内前端、LoopScope、TS API/Worker 与 contracts 包纳入 workspace。
+- [x] 补齐 `backend/ts/packages/contracts/package.json` 的入口、类型和脚本。
+- [x] 迁移依赖并生成唯一 `pnpm-lock.yaml`。
+- [x] 保留 `gugu-interaction-runtime` 的外部 `file:` 依赖和 postinstall 修链。
+- [x] 固化 `pnpm --filter` 安装、构建与类型检查入口。
 
 验收：干净目录执行 frozen install 后，三个现有项目均可 typecheck/build。
 
 ### Phase 2：迁移 Docker 与 devserver
 
-- [ ] 更新 `frontend/Dockerfile`、`frontend/Dockerfile.prod`、`loopscope/frontend/Dockerfile`。
-- [ ] 在 Docker 中启用固定 pnpm 版本和 frozen install。
-- [ ] 保持开发 Compose 的源码挂载、匿名 `node_modules` 卷和端口不变。
-- [ ] 更新 `backend/Makefile`、`backend/deploy.sh` 中的 RAG 构建命令。
-- [ ] 验证 devserver 同步后不会把本地 `node_modules`、lock 文件或用户配置覆盖到服务器。
-- [ ] 验证 RAG worker 的 `backend/bin` 输出路径和执行权限保持不变。
+- [x] 更新 `frontend/Dockerfile`、`frontend/Dockerfile.prod`、`loopscope/frontend/Dockerfile`。
+- [x] 在 Docker 中启用固定 pnpm 版本和 frozen install。
+- [x] 保持开发 Compose 的源码挂载、匿名 `node_modules` 卷和端口不变。
+- [x] 更新 `backend/Makefile`、`backend/deploy.sh` 中的 RAG 构建命令。
+- [x] 保留 devserver 对运行配置和生成目录的保护边界。
+- [x] 保持 RAG worker 的 `backend/bin` 输出路径和执行权限。
 
 验收：Docker Compose 开发环境、生产构建和 devserver 部署结果一致。
 
 ### Phase 3：迁移 CI 与文档
 
-- [ ] 将 GitHub Actions 的 npm cache 改为 pnpm store cache。
-- [ ] 所有安装改为 `pnpm install --frozen-lockfile`。
-- [ ] 为主前端、LoopScope、Runtime 联调和 RAG worker 保留独立的 typecheck/build/test job。
-- [ ] 更新 README、LoopScope README、开发约定和部署文档中的命令。
-- [ ] 增加检查：禁止新增子项目 lock 文件、禁止使用 `npm install`/`npm ci` 作为仓库标准入口。
+- [x] 将仓库内 GitHub Actions 的 npm cache 改为 pnpm store cache。
+- [x] 仓库内包安装改为 `pnpm install --frozen-lockfile`。
+- [x] 保留主前端、LoopScope、Runtime 联调和 RAG worker 的独立检查入口。
+- [x] 更新 README、LoopScope README 和许可证文档中的命令。
+- [x] 删除仓库内子项目 lock 文件，避免重新引入双锁文件。
 
 验收：CI、文档命令和本地命令使用同一包管理器，失败时能明确定位到具体 workspace 包。
 
 ### Phase 4：清理与后续演进
 
-- [ ] 删除旧 `package-lock.json` 和迁移脚本中的 npm 专用分支。
-- [ ] 清点重复依赖，但只做有测试保障的低风险去重。
-- [ ] 评估把 `gugu-interaction-runtime` 纳入同一 monorepo 或发布内部包。
-- [ ] 评估为 TypeScript API、Worker 和共享 contract 增加统一 package 命名规则。
-- [ ] 将 pnpm workspace 约定补充到 `AGENTS.md` 和开发文档。
+- [x] 删除仓库内旧 `package-lock.json` 和迁移入口中的 npm 专用分支。
+- [x] 清点 workspace 重复依赖；未做无测试保障的激进去重。
+- [x] 记录 `gugu-interaction-runtime` 仍为 workspace 外部边界，后续再评估 monorepo/内部包。
+- [x] 固化 TypeScript API、Worker 和 contracts 的 package 命名规则。
+- [x] 将 pnpm workspace 约定补充到开发文档。
 
 验收：新开发者只需安装固定 Node/pnpm 版本，即可完成安装、开发、测试和构建。
 

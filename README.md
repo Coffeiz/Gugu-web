@@ -172,8 +172,8 @@ make dev-web               # Web 热重载（前台运行，Ctrl+C 停止）
 #### 前端
 ```bash
 cd frontend
-npm install
-npm run dev                # http://localhost:5173
+corepack pnpm install --frozen-lockfile
+corepack pnpm --filter gugu-web dev                # http://localhost:5173
 ```
 
 ---
