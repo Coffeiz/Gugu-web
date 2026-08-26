@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-07-11（§2.8 前端缓存与实时刷新重写；Tier 0–3 全部落地：三套缓存收敛为单一 `filesCache` store + SSE 细粒度化（origin 回声抑制 / fileOp remove 快路径 / 合并刷新），详见 §2.8.8）
+> 更新：2026-08-26（§2.8 前端缓存与实时刷新重写；实时事件已统一为 TypeScript Live 的 canonical envelope，详见 §2.8.8）
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -290,18 +290,15 @@ const _folderIdx = computed(() => { ... })
 
 > 移动/剪切文件到"项目根"时**必须显式带 `projectId`**：后端 `update_file` 在未传 `project_id` 时保留原值，而项目文件夹内文件的 `project_id` 可能为 null，只传 `folderId:null` 会让 `new_space` 退成 personal、文件落到个人库根（项目根视图按 `project_id` 查不到 → 看似"移不过去"）。参见 §2.3 `update_file` 与 `ProjectModal.movePmFilesInto`。
 
-#### 2.8.6 缓存失效与实时刷新（三条通道叠加）
+#### 2.8.6 缓存失效与实时刷新（canonical 事件通道）
 
 1. **写操作乐观增量**：发起视图先本地改，后台同步服务端，失败回滚（见 §2.8.5）。
-2. **SSE 实时通道**（`stores/live.ts` ← 后端 `/live/stream`）：
-   - **粒度**：**粗粒度 bump**——后端只推 `{"resources":["files"]}`，**不带文件 id、不带操作类型**（`backend/app/core/events.py:47-65`）；前端 `rev.files++`，订阅者一律 `cacheStore.refresh()` **全量重拉整个文件库**（有意为之，`filesCache.ts:146`：GET `/files/version` 可能被浏览器缓存到旧值，不敢做版本门控）。
-   - **谁推**：**只有咕咕/IM 走 tool-dispatch 那条唯一钩子会 publish**（`backend/agent/tools/base.py:354-362` + `events.py:28-39` 的 `RESOURCE_BY_TOOL`）；`app/api/v1/files.py`/`folders.py` 这些 **REST 端点完全不 publish** → **用户自己在网页上的操作后端不广播**。这是"跨标签页 / 不共享缓存的面收不到用户自己操作"的根因。
-   - **谁订阅**：Files 页（`index.vue:1189`）、ProjectModal（`:1428`，只对当前项目重拉、且不刷 `subFolderMap`）。**FilePanel 没订阅**。
-   - 另有 `uploadSignal` / `liveStore.bump('files')` 纯前端递增（不过网络、不跨标签页），仅 Files 页 watch（`index.vue:1182`）。
-3. **版本校验兜底**：Tab 切回前台（`visibilitychange`）调 `GET /files/version`，与上次不一致则静默重拉。**只有全局 cacheStore 有**（`filesCache.ts:88-94`）；ProjectModal 本地缓存、FilePanel 都没绑。
+2. **SSE 实时通道**（`stores/live.ts` ← TypeScript Live `/live/stream`）：
+   - 后端发布 `live-event-v1` canonical envelope，包含资源、操作、revision、实体和可选 `origin`；网页按 `event_id` 去重、按 revision 丢弃旧事件，必要时触发资源级补刷。
+   - Python 业务 API、Agent 和 IM 只负责产生业务事件，不再提供 SSE 代理或自定义旧字段；网页写操作与咕咕/IM 写操作共用同一 publisher。
+   - `filesCache` 消费文件实体事件：删除走本地剔除，其他变更防抖刷新；预览窗、项目卡片等只需要粗粒度信号的消费者继续监听资源 rev。
+3. **断线补偿**：TS Live 重连后由前端错峰 bump 所有资源；文件、画布、会话和终端等领域再按各自接口/sequence 做完整性补偿。
 4. **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删 DB 记录（不进回收站），保证 UI 与文件系统一致。
-
-> 早期本节曾写"多标签/多设备由版本校验覆盖，无需 WebSocket"——**已过时**：现已有 SSE `/live/stream`，但它只广播咕咕/IM 侧改动；用户自己的网页操作仍只靠本标签乐观更新 + 回前台版本校验，跨标签页/跨面尚未打通（见 §2.8.8）。
 
 #### 2.8.7 加载体验优化
 
@@ -339,18 +336,18 @@ const _folderIdx = computed(() => { ... })
 | **1 兜底** | FilePanel 订阅 SSE(`liveStore.rev.files`)+`uploadSignal`（版本门控重拉）；计数徽标改本地增减 `_pmAdjustFolderCount`（逐层找卡片，接入删/移/传）；visibilitychange 兜底经评估**冗余**（SSE 重连 `_catchUp` 已错峰 bump 所有资源，覆盖切回标签页）→ 不做 | ✅ 已实现 |
 | **2 关键** | `files.py`/`folders.py`/`trash.py` 的所有增删改端点（16 处）commit 后 `await events.publish(current_user.id, "files")` → 用户自己的网页操作也广播，跨标签页/跨面自动同步 | ✅ 已实现（需重启后端生效） |
 | **3-A 缓存收敛** | 三套缓存统一到单一 store：Dashboard/FilePanel（Phase A，5e7f422）+ ProjectModal（Phase B，c4b725b）都改从全局 `filesCache` 派生，删除各自本地并行缓存（projectFiles/folderFilesMap/subFolderMap、services/cache 的 filesCache），所有增删改走 store 增量 API | ✅ 已实现 |
-| **3-B SSE 细粒度化 + 回声抑制** | SSE 载荷带 `origin`（发起标签页 client-id）+ `fileOp`（{op,kind,id/ids}）。前端：① 发起页收到自己的回声 → 跳过重拉（已乐观更新）；② 删除类 → 本地直接剔除（零网络）；③ 其余 → 防抖合并后全量刷新 | ✅ 已实现（需重启后端生效） |
+| **3-B canonical 事件 + 回声抑制** | TypeScript Live 推送带 `origin` 的 canonical envelope。前端按事件实体做删除快路径，其余变更防抖合并刷新，并按 event_id/revision 去重 | ✅ 已实现 |
 
 **Tier 3-B 契约（新增，2026-07-11）：**
 
 - **前端**：`api.ts` 每标签页生成 `CLIENT_ID`，所有写操作（`request()` + `uploadWithProgress`）带 `X-Client-Id` 头。
-- **后端**：`get_client_id` 依赖读该头 → `events.publish(..., origin=<client_id>, file_op={...})`。删除类端点（`delete_file`/`batch_delete`/`delete_folder`，及咕咕 `_delete_file`/`_delete_folder` 经 `_file_op` 结果字段）带 `file_op={"op":"remove","kind":"file|folder","id"|"ids"}`；增改类只带 `origin`。咕咕/IM 侧无 client-id → `origin=None`，不被抑制，所有端都刷新（正确）。
-- **SSE payload**：`{"resources":["files"], "origin":"<id>|null", "fileOp":{...}?}`。
+- **后端**：文件写入仍由 Python 业务侧调用统一 publisher，事件通过 TypeScript Live 服务发送；删除类端点传入 canonical `payload` 的实体信息，咕咕/IM 侧无 client-id → `origin=None`，所有在线端刷新。
+- **SSE payload**：使用 `live-event-v1` canonical envelope：`resource`、`operation`、`revision`、`entity_id/entity_ids`、`payload` 和可选 `origin`。
 - **前端消费分工**：
   - `rev.files` 仍照旧 bump —— 预览窗（FilePreviewModal/FloatPreviewWindow）、回收站视图、项目卡片计数等**粗信号**消费者不动。
-  - `live.fileEvent`（新通道）供 `filesCache` 独家消费：回声抑制 / remove 快路径 / 防抖合并刷新。`filesCache` 不再订阅 `rev.files`。
+  - canonical `resourceEvent`（resource=`files`）供 `filesCache` 消费：回声抑制 / remove 快路径 / 防抖合并刷新。事件实体统一放在 `payload`。
   - `Files/index.vue` 的 `contents` 是手动投影快照 → 改为 `watch([allFiles, allFolders])` 重投影（filesCache 统一负责刷新/patch，本页不再自持重拉，回声抑制对本页同样生效）。ProjectModal/FilePanel 用 computed 派生，天然响应。
-- **边界**：还原（trash→库）是唯一「不乐观更新」的网页写操作，发起页 SSE 回声被抑制拉不回来 → `restoreFile`/`restoreSelected` 显式 `cacheStore.refresh()` 自刷。断线重连 `_catchUp` 对 files 额外 poke 一次 `fileEvent` refresh（`origin=null`，不抑制）补回漏掉的改动。
+- **边界**：还原（trash→库）是唯一「不乐观更新」的网页写操作，发起页 SSE 回声被抑制拉不回来 → `restoreFile`/`restoreSelected` 显式 `cacheStore.refresh()` 自刷。断线重连 `_catchUp` 通过 `rev.files` 补回漏掉的改动。
 
 **落地后现状**：Tier 0/1/2/3 全部闭环。"所有页面免刷新即更新"保证达成；三套缓存收敛为单一 `filesCache` store；SSE 细粒度化后——发起页零重拉（回声抑制）、其它端删除零网络（remove 快路径）、增改合并刷新，"任意小改动全库重拉"的性能天花板消除。回声成本（Tier 2 遗留）随回声抑制一并解决。
 

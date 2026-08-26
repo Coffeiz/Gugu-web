@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -83,7 +82,6 @@ async def bump_context_revision(user_id, *resources: str) -> None:
     except Exception:
         pass
 
-
 async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
                   entity_id: int | str | None = None,
@@ -95,9 +93,9 @@ async def publish(user_id, *resources: str, origin: str | None = None,
       自己发起的回声事件时据此**跳过**重拉（它已经乐观更新过了）。咕咕/IM 侧改动没有
       client-id，origin=None → 所有端都刷新（正确）。
     - file_op：文件库细粒度增量提示 {op, kind, id}，如 {"op":"remove","kind":"file","id":12}。
-      前端对 remove 直接本地剔除（零网络），其余（add/update/移动/批量）回退到合并刷新。
-    - extra 里可带别的细粒度信息，如 session_id + appended（新消息增量），供前端把消息
-      直接追加进当前打开的会话（消息级实时，不必整列表 refetch）。
+      统一转换到 canonical payload，前端对 remove 直接本地剔除，其余操作回退到合并刷新。
+    - extra 里的 session_id/appended/title 只用于构造 canonical 会话事件 payload，不再作为
+      顶层兼容字段输出。
     """
     payload: dict = {}
     res = [r for r in resources if r]
@@ -110,7 +108,6 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     except Exception:
         pass
     if res:
-        payload["resources"] = res
         inferred_operation = operation or ((file_op or {}).get("op") if file_op else None)
         if inferred_operation is None and res[0] == "sessions":
             inferred_operation = "append" if extra.get("appended") is not None else (
@@ -139,15 +136,14 @@ async def publish(user_id, *resources: str, origin: str | None = None,
             if hasattr(event_payload, "model_dump"):
                 event_payload = event_payload.model_dump(mode="json", by_alias=True)
             payload["payload"] = event_payload
+        elif file_op:
+            payload["payload"] = {
+                "kind": file_op.get("kind"),
+                "entity": {key: file_op[key] for key in ("id", "ids") if key in file_op},
+            }
     if origin:
         payload["origin"] = origin
-    if file_op:
-        payload["fileOp"] = file_op
-    for k, v in extra.items():
-        if v is not None:
-            payload[k] = v
-    # 会话消息和标题历史上通过 extra 传递；同时写入 canonical 字段，
-    # 让新消费者不再依赖旧的顶层 session_id/appended 形状。
+    # 会话事件只写入 canonical payload，不再同时输出旧的顶层 session_id/appended。
     if res and payload.get("resource") == "sessions":
         if payload.get("entity_id") is None and extra.get("session_id") is not None:
             payload["entity_id"] = extra["session_id"]
@@ -180,37 +176,3 @@ async def broadcast(title: str, content: str = "", color: str = "#7b7fb2", nid=N
         await get_redis().publish(BROADCAST_CHANNEL, __import__("json").dumps(payload, ensure_ascii=False))
     except Exception:
         pass
-
-
-async def stream(user_id):
-    """SSE 生成器：订阅该用户频道 + 全局广播频道，把每条事件以 `data: {...}` 推给浏览器。
-
-    无消息时每 ~20s 发一个注释行做 keepalive（防代理掐断空闲连接）。
-    连接断开时 finally 里清理订阅。
-    """
-    pubsub = get_redis().pubsub()
-    ch = _channel(user_id)
-    await pubsub.subscribe(ch, BROADCAST_CHANNEL)
-    try:
-        yield ": connected\n\n"
-        while True:
-            try:
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20.0)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # 连接抖动：发个 keepalive，下轮重试
-                yield ": retry\n\n"
-                continue
-            if msg is None:
-                yield ": ping\n\n"
-                continue
-            data = msg.get("data")
-            if data:
-                yield f"data: {data}\n\n"
-    finally:
-        try:
-            await pubsub.unsubscribe(ch)
-            await pubsub.aclose()
-        except Exception:
-            pass

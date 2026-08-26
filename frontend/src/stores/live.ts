@@ -9,41 +9,10 @@
  */
 import { defineStore } from 'pinia'
 import { reactive, ref } from 'vue'
-import { getToken, CLIENT_ID } from '@/services/api'
+import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
 
-// 细粒度会话事件：后端 SSE 推送的会话追加，供 GuguChat 增量追加消息
-interface SessionEvent {
-  session_id: number | string
-  title?: string
-  appended: Array<{
-    role?: string; text?: string; files?: unknown[]; quoted_text?: string
-    platform_user_id?: string | null; platform_user_name?: string | null
-    platform_bot_user_id?: string | null
-  }>
-  origin?: string | null
-  _t: number
-}
-
-// 文件库细粒度事件：filesCache 据此做「回声抑制 / remove 快路径 / 合并刷新」（见 filesCache.ts）。
-// op='remove' 带 kind+id(或 ids) → 本地直接剔除；其余(add/update/移动/批量/重连补刷) → 合并全量刷新。
-// origin=发起改动的标签页 client-id：等于自己就是回声，本页已乐观更新过 → 跳过。
-export interface FileEvent {
-  op: 'remove' | 'refresh'
-  kind?: 'file' | 'folder'
-  id?: number
-  ids?: number[]
-  origin?: string | null
-  _t: number
-}
-
-export interface ProjectEvent {
-  origin?: string | null
-  _t: number
-}
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const LIVE_URL = import.meta.env.VITE_LIVE_API_URL
   ?? (typeof window === 'undefined'
     ? '/live/stream'
@@ -55,12 +24,7 @@ export const useLiveStore = defineStore('live', () => {
   const rev = reactive(Object.fromEntries(RESOURCES.map(r => [r, 0])))
   const connected = ref(false)
 
-  // 细粒度会话事件：{ session_id, appended:[{role,text}], _t }，供 GuguChat 追加消息
-  const sessionEvent = ref<SessionEvent | null>(null)
-  // 文件库细粒度事件（供 filesCache 消费，见上方 FileEvent 注释）
-  const fileEvent = ref<FileEvent | null>(null)
-  const projectEvent = ref<ProjectEvent | null>(null)
-  // canonical 业务事件；rev/fileEvent/projectEvent 在迁移期间继续保留给旧消费者。
+  // 所有实时变化统一通过 canonical 事件传递；业务 store 自己决定增量应用或重拉。
   const resourceEvent = ref<(LiveEventPayload & { _t: number }) | null>(null)
   let _seq = 0
   const seenEventIds = new Set<string>()
@@ -79,15 +43,12 @@ export const useLiveStore = defineStore('live', () => {
   }
 
   // 重连补刷：错峰逐个 bump，别在回到前台那一帧挤爆主线程（见 _loop 注释）。
-  // files 资源额外 poke 一次 fileEvent refresh：filesCache 只订阅 fileEvent（不再订阅 rev.files），
-  // 断线期间漏掉的文件改动靠这步全量刷回来（origin=null → 不会被回声抑制）。
+  // 断线期间漏掉的变更靠各资源的 rev 补刷回来。
   let _catchUpTimers: ReturnType<typeof setTimeout>[] = []
   function _catchUp() {
     _catchUpTimers.forEach(clearTimeout)   // 短时间多次重连不叠加
     _catchUpTimers = RESOURCES.map((r, i) => setTimeout(() => {
       bump(r)
-      if (r === 'projects') projectEvent.value = { origin: null, _t: ++_seq }
-      if (r === 'files') fileEvent.value = { op: 'refresh', origin: null, _t: ++_seq }
     }, 300 + i * 250))
   }
 
@@ -123,9 +84,7 @@ export const useLiveStore = defineStore('live', () => {
             const raw = line.slice(5).trim(); if (!raw) continue
             try {
               const evt = JSON.parse(raw)
-              const resources = evt.resources || []
-              const isCanonical = isLiveEventPayload(evt)
-              if (isCanonical) {
+              if (isLiveEventPayload(evt)) {
                 const canonical = evt as LiveEventPayload
                 if (seenEventIds.has(canonical.event_id)) continue
                 seenEventIds.add(canonical.event_id)
@@ -137,32 +96,8 @@ export const useLiveStore = defineStore('live', () => {
                 if (previousRevision != null && canonical.revision <= previousRevision) continue
                 if (previousRevision != null && canonical.revision > previousRevision + 1) bump(canonical.resource)
                 lastCanonicalRevision.set(canonical.resource, canonical.revision)
-                resourceEvent.value = { ...evt, _t: ++_seq }
-                if (evt.resource === 'sessions' && evt.entity_id != null) {
-                  const sessionPayload = evt.payload && typeof evt.payload === 'object'
-                    ? evt.payload as Record<string, unknown> : {}
-                  sessionEvent.value = {
-                    session_id: evt.entity_id,
-                    title: typeof sessionPayload.title === 'string' ? sessionPayload.title : undefined,
-                    appended: (Array.isArray(sessionPayload.appended) ? sessionPayload.appended : []) as SessionEvent['appended'],
-                    origin: evt.origin ?? null,
-                    _t: ++_seq,
-                  }
-                }
-              }
-              for (const r of resources) bump(r)   // 粗信号：预览窗、Trash、项目卡片计数等仍照旧消费
-              if (resources.includes('projects') && !isCanonical) {
-                projectEvent.value = { origin: evt.origin ?? null, _t: ++_seq }
-              }
-              // 文件库细粒度事件：交给 filesCache 决定回声抑制 / remove 快路径 / 合并刷新
-              if (resources.includes('files')) {
-                const fo = evt.fileOp
-                fileEvent.value = fo && fo.op === 'remove'
-                  ? { op: 'remove', kind: fo.kind, id: fo.id, ids: fo.ids, origin: evt.origin ?? null, _t: ++_seq }
-                  : { op: 'refresh', origin: evt.origin ?? null, _t: ++_seq }
-              }
-              if (evt.session_id != null) {
-                sessionEvent.value = { session_id: evt.session_id, appended: evt.appended || [], origin: evt.origin ?? null, _t: ++_seq }
+                resourceEvent.value = { ...canonical, _t: ++_seq }
+                bump(canonical.resource)
               }
               if (evt.notification) {
                 uiStore.pushNotification(evt.notification)
@@ -194,7 +129,7 @@ export const useLiveStore = defineStore('live', () => {
     if (abort) { abort.abort(); abort = null }
   }
 
-  return { rev, connected, sessionEvent, fileEvent, projectEvent, resourceEvent, bump, connect, disconnect }
+  return { rev, connected, resourceEvent, bump, connect, disconnect }
 })
 
 function _sleep(ms: number) {

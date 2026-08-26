@@ -349,7 +349,7 @@ def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
 
     query = tools["web_search"].input_schema["properties"]["query"]
     max_results = tools["web_search"].input_schema["properties"]["max_results"]
-    assert "不要直接复制用户的完整问题" in query["description"]
+    assert "不要复制完整问题" in query["description"]
     assert max_results["minimum"] == 1
     assert max_results["maximum"] == 20
 

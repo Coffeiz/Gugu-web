@@ -72,7 +72,7 @@ Web API / QQ / 飞书 / 微信 / 定时任务 / Agent 工具
 | 项目 | `/live/stream` | `projects` 事件后刷新项目列表；部分自身操作用 `origin` 回声抑制 | 项目级 create/update/delete/move 增量 patch |
 | 日历 | `/live/stream` | `calendar` 事件后重新加载当前月、下月和溢出事件 | 按事件操作更新对应事件，跨月事件再按 revision 校验 |
 | 文件库 | `/live/stream` | 删除使用本地快路径，其他操作合并后全量刷新 | 文件/文件夹增量 patch，批量事件可携带 ID 集合 |
-| 文件预览窗口 | `/live/stream` | 监听 `fileEvent` 后刷新当前文件 | 按文件版本或实体事件更新预览，必要时重新取内容 |
+| 文件预览窗口 | `/live/stream` | 监听 canonical `resourceEvent`（resource=files） | 按文件版本或实体事件更新预览，必要时重新取内容 |
 | 画布/笔记 | `/live/stream` | `mind` revision 变化后重新加载笔记 | 画布节点、关系和笔记按实体事件更新 |
 | 定时任务 | `/live/stream` | `scheduled_tasks` 变化后重新加载列表 | 定时任务增删改直接更新列表 |
 | 会话列表 | `/live/stream` | `sessions` 变化后刷新列表 | 会话元数据增量更新；消息追加使用 `session.appended` |
@@ -331,7 +331,7 @@ Phase 2 交付物：
 - [x] canonical 事件在前端按 `event_id` 去重，并按资源 revision 忽略旧事件；发现 revision 缺口时触发资源级补刷。
 - [x] 终端按 sequence 补偿，文件/画布/会话 payload 缺失时按领域回退刷新，重连继续使用错峰补偿。
 - [x] 完成笔记/画布所有后端写入路径的 canonical 事件生产，并补齐事件生产边界回归测试。
-- [x] 旧 `resources/fileOp/rev` 不再作为 Live 入口协议；新增生产者统一发布 canonical envelope，旧字段仅由现有领域 store 内部兼容消费。
+- [x] 旧 `resources/fileOp` 与 Python Live 入口已移除；所有生产者和前端消费者统一使用 canonical envelope，`rev` 仅作为前端本地刷新计数。
 - [x] TypeScript Live 服务、systemd 单元和运行说明已接入，协议契约与关键领域测试通过；浏览器已直连 TypeScript Live。
 - [x] 完成协议文档、后端 overview 和前端事件消费说明的同步。
 

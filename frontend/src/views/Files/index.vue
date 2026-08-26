@@ -403,7 +403,7 @@ watch(uploadSignal, () => {
 
 // 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
 // contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
-// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts fileEvent 消费）；本页不再自己
+// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts canonical event 消费）；本页不再自己
 // 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
 watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
   loadContents()

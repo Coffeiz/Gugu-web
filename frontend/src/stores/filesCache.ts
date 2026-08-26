@@ -193,7 +193,7 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
     return true
   }
 
-  // ── 细粒度实时同步：消费 live.fileEvent（Tier 3-B）──────────────────────────
+  // ── canonical 实时同步：能增量应用实体就直接应用，否则合并重拉。 ──
   // 三种处理：
   //  ① 回声抑制：origin === 本页 client-id → 本页发起的改动，早已乐观更新过，跳过（不再全量重拉自己）。
   //  ② remove 快路径：别的标签页/端删了文件/文件夹 → 本地直接剔除（零网络），文件夹级联剔子树。
@@ -208,17 +208,6 @@ export const useFilesCacheStore = defineStore('filesCache', () => {
   watch(() => useLiveStore().resourceEvent, (event) => {
     if (!event || event.resource !== 'files' || event.origin === CLIENT_ID || !loaded.value) return
     if (!applyCanonicalEvent(event)) _scheduleRefresh()
-  })
-  watch(() => useLiveStore().fileEvent, (ev) => {
-    if (!ev || !loaded.value) return
-    if (ev.origin && ev.origin === CLIENT_ID) return          // ① 回声抑制
-    if (ev.op === 'remove') {                                  // ② remove 快路径
-      const ids = ev.ids ?? (ev.id != null ? [ev.id] : [])
-      if (ev.kind === 'folder') ids.forEach(id => removeFolder(id))
-      else removeFiles(ids)
-    } else {
-      _scheduleRefresh()                                       // ③ 合并全量刷新
-    }
   })
 
   return {

@@ -226,12 +226,12 @@ async def test_feishu_stream_keeps_ok_when_finalize_fails(monkeypatch):
     assert resp.text == "最终文本"
 
 
-async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
+async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch, db, user_a):
     sent_texts: list[str] = []
 
     async def fake_resolve_owner(payload):
         from agent.im.identity import ImIdentity
-        return ImIdentity(1, "测试用户")
+        return ImIdentity(user_a.id, "测试用户")
 
     async def fake_get_session(platform, bot_id, puid):
         return None
@@ -243,11 +243,16 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
         sent_texts.append(text)
 
     async def fake_send_files(payload, files):
-        return None
+        from agent.im.files import FileSendResult
+        return FileSendResult(requested=len(files), sent=len(files))
 
     async def fake_run_stream(req):
         if False:
             yield ("token", "")
+
+    class FakeAgentLoop:
+        async def run_collect(self, req, *, on_interaction=None, on_tool_event=None):
+            return AgentResponse(text="最终文本", session_id=456, tokens_in=1, tokens_out=2)
 
     async def fake_send_text_stream(receive_id, token_iter, channel_id=None):
         return False, AgentResponse(text="最终文本", session_id=456, tokens_in=1, tokens_out=2)
@@ -290,6 +295,7 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch):
     monkeypatch.setattr(wechat, "stop_typing", fake_stop_typing)
     monkeypatch.setattr(schedtasks, "save_imreach", fake_async_noop)
     monkeypatch.setattr(runner_mod, "run_stream", fake_run_stream)
+    monkeypatch.setattr(im_loop, "select_loop", lambda req: FakeAgentLoop())
     monkeypatch.setattr(feishu_mod, "send_text_stream", fake_send_text_stream)
     monkeypatch.setattr(im_loop, "remember_im_reach", fake_async_noop)
     monkeypatch.setattr(im_loop, "start_im_activity", lambda *args, **kwargs: fake_async_noop())

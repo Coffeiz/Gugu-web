@@ -18,7 +18,8 @@ def test_scheduled_messages_keep_snapshot_context_before_tail():
     assert "默认相处姿态" in messages[2]["content"]
     assert messages[3] == {"role": "user", "content": "执行任务"}
     assert sum("小北的计划" in item["content"] for item in messages) == 1
-    assert "当前时间" in messages[-1]["content"]
+    assert messages[-1]["content"][0]["type"] == "time-context"
+    assert "当前时间" in messages[-1]["content"][0]["text"]
 
 
 @pytest.mark.asyncio

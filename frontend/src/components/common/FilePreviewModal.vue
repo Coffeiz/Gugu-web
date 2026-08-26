@@ -203,7 +203,8 @@ watch(() => [props.show, props.file] as [boolean, Partial<FileMeta> | undefined]
 }, { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.fileEvent, (event) => {
+watch(() => liveStore.resourceEvent, (event) => {
+  if (event?.resource !== 'files') return
   if (event?.origin === CLIENT_ID) return
   if (props.show && props.file && isText.value) load(props.file, true)
 })

@@ -355,12 +355,6 @@ export const useProjectStore = defineStore('projects', () => {
       rememberConfirmed(next)
     } catch { void fetchProjects() }
   })
-  watch(() => live.projectEvent, (event) => {
-    // 本页已经应用了乐观更新并消费了 API 响应；跳过自己的 SSE 回声，避免再次
-    // 拉取整份项目列表。其它标签页、Gugu/IM（origin 为空）仍然正常刷新。
-    if (event?.origin === CLIENT_ID) return
-    if (projectsLoaded.value) fetchProjects()
-  })
   watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 
   return {

@@ -345,8 +345,10 @@ export function useChatConversation(options: {
   // 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
   // origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
   // 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
-  watch(() => liveStore.sessionEvent, async (e) => {
-    if (!e || String(e.session_id) !== String(sessionId.value)) return
+  watch(() => liveStore.resourceEvent, async (event) => {
+    if (!event || event.resource !== 'sessions' || String(event.entity_id) !== String(sessionId.value)) return
+    const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : {}
+    const e = { ...payload, session_id: event.entity_id, origin: event.origin } as any
     const session = sessions.value.find(item => item.id === Number(e.session_id))
     if (session && e.title) session.title = e.title
     if (!e.appended?.length) return

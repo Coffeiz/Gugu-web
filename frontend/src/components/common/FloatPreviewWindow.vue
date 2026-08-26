@@ -432,7 +432,8 @@ async function load(f: Partial<FileMeta>, refresh = false) {
 watch(() => props.win.file, f => load(f), { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.fileEvent, (event) => {
+watch(() => liveStore.resourceEvent, (event) => {
+  if (event?.resource !== 'files') return
   if (event?.origin === CLIENT_ID) return
   if (isText.value && !props.win.file.attach_id) load(props.win.file, true)
 })
