@@ -71,6 +71,9 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(settings).toContain('background:var(--settings-popup-bg,rgba(255,255,255,.44))')
     expect(settings).toContain('border:1px solid var(--settings-popup-border,rgba(255,255,255,.72))')
     expect(settings).toContain('box-shadow:var(--settings-popup-shadow,')
+    expect(settings).toContain('backdrop-filter:var(--popup-surface-blur)')
+    expect(appSidebar).toContain('<Teleport to="body">')
+    expect(appSidebar).toContain(':style="settingsStyle"')
 
     expect(appSidebar).toContain('class="settings-menu-item"')
     expect(appSidebar).toContain('class="settings-menu-item danger"')

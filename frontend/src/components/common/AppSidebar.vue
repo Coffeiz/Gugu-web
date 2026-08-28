@@ -36,7 +36,7 @@
       </div>
     </nav>
 
-    <div class="user-card" :class="{ open: settingsOpen }" @click.stop="settingsOpen = !settingsOpen">
+    <div ref="userCardRef" class="user-card" :class="{ open: settingsOpen }" @click.stop="toggleSettings">
       <div class="avatar"><img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" /><template v-else>{{ userInitial }}</template></div>
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
       <div class="theme-mode-quick" role="group" aria-label="主题模式" @click.stop>
@@ -48,21 +48,21 @@
         ><Icon v-if="preference === 'system'" name="theme.system" size="sm" tone="inherit" /><Icon v-else-if="resolved === 'light'" name="theme.light" size="sm" tone="inherit" /><Icon v-else name="theme.dark" size="sm" tone="inherit" /></button>
       </div>
 
-      <Transition name="popup">
-        <div v-if="settingsOpen" class="settings-popup" @click.stop>
-          <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />提交反馈</button>
-          <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />个人设置</button>
-          <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />退出登录</button>
-        </div>
-      </Transition>
     </div>
   </aside>
 
   <FeedbackModal :show="feedbackOpen" @close="feedbackOpen = false" />
 
   <Teleport to="body">
+    <Transition name="popup">
+      <div v-if="settingsOpen" class="settings-popup" :style="settingsStyle" @click.stop>
+        <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />提交反馈</button>
+        <div class="settings-menu-sep"></div>
+        <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />个人设置</button>
+        <div class="settings-menu-sep"></div>
+        <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />退出登录</button>
+      </div>
+    </Transition>
     <Transition name="notif-pop">
       <div v-if="notifOpen" class="notif-popup" ref="notifPopupRef" :style="notifStyle" @click.stop>
         <div class="notif-header"><span class="notif-title">通知</span><button class="notif-mark-all" @click="markAllRead">全部已读</button></div>
@@ -123,11 +123,31 @@ async function refreshTerminalVisibility() {
 }
 
 const settingsOpen = ref(false)
+const userCardRef = ref<HTMLElement | null>(null)
+const settingsStyle = ref<Record<string, string>>({})
 const notifOpen = ref(false)
 const notifBtnRef = ref<HTMLElement | null>(null)
 const notifPopupRef = ref<HTMLElement | null>(null)
 const notifStyle = ref({})
 const notifications = computed(() => uiStore.notifications)
+
+function updateSettingsPosition() {
+  if (!settingsOpen.value) return
+  const rect = userCardRef.value?.getBoundingClientRect()
+  if (!rect) return
+  settingsStyle.value = {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    bottom: `${window.innerHeight - rect.top + 8}px`,
+    width: `${rect.width}px`,
+    zIndex: '1000',
+  }
+}
+
+function toggleSettings() {
+  settingsOpen.value = !settingsOpen.value
+  if (settingsOpen.value) nextTick(updateSettingsPosition)
+}
 
 function toggleNotif() {
   if (notifOpen.value) { notifOpen.value = false; return }
@@ -152,10 +172,14 @@ onMounted(() => document.addEventListener('click', closeAll))
 onMounted(() => {
   refreshTerminalVisibility()
   window.addEventListener('focus', refreshTerminalVisibility)
+  window.addEventListener('resize', updateSettingsPosition)
+  window.addEventListener('scroll', updateSettingsPosition, true)
 })
 onUnmounted(() => {
   document.removeEventListener('click', closeAll)
   window.removeEventListener('focus', refreshTerminalVisibility)
+  window.removeEventListener('resize', updateSettingsPosition)
+  window.removeEventListener('scroll', updateSettingsPosition, true)
 })
 </script>
 
@@ -189,15 +213,15 @@ onUnmounted(() => {
 </style>
 
 <style>
-/* Settings menu is not a generic popup-menu. It keeps the historical Aero geometry/paint exactly,
-   while theme-refinements.css only remaps --settings-popup-* values for dark/Mono. This makes the
-   component the single final-paint owner and prevents generic danger:hover from stacking underneath. */
+/* Settings menu is not a generic popup-menu. It keeps its own geometry/paint contract while using
+   the shared popup blur and theme-refinements.css only remaps --settings-popup-* values. */
 .settings-popup {
-  position:absolute; bottom:calc(100% + 8px); left:0; right:0; z-index:100; overflow:hidden;
+  position:fixed; overflow:hidden; box-sizing:border-box;
   background:var(--settings-popup-bg,rgba(255,255,255,.44));
   border:1px solid var(--settings-popup-border,rgba(255,255,255,.72));
   border-radius:var(--radius-md);
   box-shadow:var(--settings-popup-shadow,inset 0 1px 0 rgba(255,255,255,.95),0 4px 16px rgba(0,0,0,.08));
+  backdrop-filter:var(--popup-surface-blur); -webkit-backdrop-filter:var(--popup-surface-blur);
   user-select:none;
 }
 .settings-popup .settings-menu-item {
