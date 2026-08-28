@@ -181,13 +181,17 @@ async def send_reply(payload: dict, reply: PlatformReply) -> bool:
     elif platform == "qq" and reply.target.id:
         from agent.gateway import qq
         if reply.target.type == "group":
-            return await qq.send_group(
+            mention_user_id = payload.get("platform_user_id")
+            args = (
                 reply.target.id,
                 text,
                 reply.reply_to_message_id,
                 payload.get("channel_id"),
                 payload.get("message_format"),
             )
+            if mention_user_id:
+                return await qq.send_group(*args, mention_user_id)
+            return await qq.send_group(*args)
         return await qq.send_c2c(
             reply.target.id,
             text,
