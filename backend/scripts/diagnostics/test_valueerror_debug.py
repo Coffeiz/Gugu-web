@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import argparse
 import json
 import sys
 import traceback
@@ -13,6 +14,21 @@ from pathlib import Path
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="运行会写入真实数据库/存储的画布链路诊断")
+    parser.add_argument(
+        "--allow-real-data",
+        action="store_true",
+        help="明确允许该诊断使用当前配置的真实数据库和存储（默认拒绝）",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__" and not _parse_args().allow_real_data:
+    print("为避免污染真实用户数据，该诊断默认拒绝运行；需要时显式传入 --allow-real-data")
+    raise SystemExit(2)
 
 from agent.core import _stream_round
 from agent.providers import _MINIMAX
