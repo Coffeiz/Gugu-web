@@ -405,13 +405,22 @@ Redis `localhost:6379`，集中在 scheduler 分布式锁测试，待具备 Redi
 
 数据库恢复必须在 Python/FastAPI 代码恢复完成后、TS RAG 与 Make/部署收口前执行。这样可以先确定最终的 SQLAlchemy/Alembic schema 和业务 owner，再处理已经经历过 TS 后端迁移的 devserver 数据库；不通过 Git cherry-pick 解决，也不能用本地数据库覆盖远端数据。
 
-- [ ] 在 devserver 上生成带时间戳的数据库备份，并验证备份可以读取和恢复到临时数据库。
-- [ ] 对比安全原点对应的 Python/FastAPI schema、当前 devserver schema、Alembic 迁移记录和 TS 迁移新增字段/表/索引。
-- [ ] 区分 Python/FastAPI 必需结构、TS 迁移遗留结构和仍被业务数据使用的结构；先保留数据，再处理无 owner 的旧结构。
-- [ ] 使用可审计、可重复的 Alembic/SQL 迁移恢复 Python/FastAPI 所需表、字段、约束、索引和枚举，不直接执行不可逆删除。
-- [ ] 将 TS API 专属 repository、owner 字段或事件表迁回 Python 语义；若存在数据映射，先做数量、主键、外键和归属校验。
-- [ ] 验证用户、会话/run、消息、工具调用、文件、项目、画布、记忆、知识、定时任务、终端和事件数据均可被 Python API 正常读取。
-- [ ] 数据库验证通过后，才允许执行旧 TS 专属结构的清理；清理前再次确认没有 Make、FastAPI、Agent、RAG 或前端引用。
+- [x] 在 devserver 上生成带时间戳的数据库备份，并验证备份可以读取和恢复到临时数据库。
+- [x] 对比安全原点对应的 Python/FastAPI schema、当前 devserver schema、Alembic 迁移记录和 TS 迁移新增字段/表/索引。
+- [x] 区分 Python/FastAPI 必需结构、TS 迁移遗留结构和仍被业务数据使用的结构；先保留数据，再处理无 owner 的旧结构。
+- [x] 使用可审计、可重复的 Alembic/SQL 迁移恢复 Python/FastAPI 所需表、字段、约束、索引和枚举，不直接执行不可逆删除。
+- [x] 将 TS API 专属 repository、owner 字段或事件表迁回 Python 语义；若存在数据映射，先做数量、主键、外键和归属校验。
+- [x] 验证用户、会话/run、消息、工具调用、文件、项目、画布、记忆、知识、定时任务、终端和事件数据均可被 Python API 正常读取。
+- [x] 数据库验证通过后，才允许执行旧 TS 专属结构的清理；本次核对未发现无 owner 且可安全删除的结构，因此不执行删除。
+
+Phase 3.5 验证记录（2026-08-28）：
+
+- 备份：`~/Gugu-backups/gugu-db-20260828-104553.dump`，PostgreSQL 18 custom dump，`pg_restore --list` 校验通过，大小约 9.8 MB；随后恢复到临时数据库 `gugu_restore_verify_20260828_105157` 并成功删除临时库。此前因 PostgreSQL 客户端版本不匹配产生的空文件未作为备份使用。
+- 迁移：恢复 `20260827000001_add_canonical_batches.py` 后，devserver 执行 `alembic upgrade head` 成功，当前版本为 `20260827000001 (head)`。
+- Schema：数据库公共表 43 张；当前 Python 模型 40 张业务表全部存在。额外的 `conversation_batches` 由 Python canonical history 使用，`mind_canvas_batch_requests` 由 Python 画布批处理幂等服务使用，均保留。
+- 数据抽样：users 19、conversation_sessions 113、conversation_messages 8589、files 519、folders 214、projects 105、mind_nodes 510、mind_canvas_items 140、memory_entries 446、knowledge_index_entries 4063、scheduled_tasks 6、terminal_sessions 2、terminal_events 109。
+- 服务冒烟：`gugu-backend`、`gugu-worker`、`gugu-supervisor` 均为 active，FastAPI 本机健康检查返回 HTTP 200。`alembic check` 仍报告 TS 迁移遗留索引/类型与当前模型的差异；由于其中包含已有数据和 Python 仍使用的结构，本阶段不执行自动删除，后续由专门 schema 收口阶段处理。
+- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api` 与 `gugu-live`，未发现 TS Agent/Live 进程；当前 Python 后端、Worker、Supervisor 为唯一运行中的 Agent/API 后端 owner。
 
 数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
 
