@@ -116,8 +116,10 @@
 
   /* Brand + shared environment */
   --brand-gradient: var(--theme-brand-gradient);
-  /* GuguChat 发送按钮专属：themes/*.css 提供 --theme-gugu-chat-send-bg 暗色变体，
-     亮色/glass 主题下走 fallback。业务 CSS 引 --gugu-chat-send-bg。 */
+  --brand-logo-color: var(--theme-brand-logo-color);
+  --brand-logo-filter: var(--theme-brand-logo-filter);
+  /* GuguChat 发送按钮专属：palette 层提供可选的暗色变体，
+     没有专属变体时走主操作色 fallback。业务 CSS 引 --gugu-chat-send-bg。 */
   --gugu-chat-send-bg: var(--action-primary-bg);
   --app-background: var(--surface-page);
   --column-bg: var(--surface-column);

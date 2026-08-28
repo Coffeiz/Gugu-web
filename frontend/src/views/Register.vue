@@ -5,19 +5,9 @@
 
     <div class="auth-card">
       <div class="card-brand">
-        <div class="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">咕咕</div>
-          <div class="brand-sub">创建新账号</div>
+        <div class="brand-logo-wrap">
+          <img class="brand-mark" src="/logo-large2.png" alt="" aria-hidden="true" />
+          <img class="brand-wordmark" src="/logo-text2.png" alt="咕咕" />
         </div>
       </div>
 
@@ -120,22 +110,35 @@ async function handleRegister() {
   background: rgba(255,255,255,0.56);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.76);
-  border-radius: 20px; padding: 36px 32px;
+  border-radius: 20px; padding: 28px 32px 32px;
   box-shadow:
     0 20px 60px rgba(80,90,110,0.12),
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
 
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-.brand-icon {
-  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
-  background: var(--action-primary-bg);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
+.card-brand {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  margin-bottom: 18px;
 }
-.brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
-.brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
+.brand-logo-wrap {
+  width: 244px; height: 82px; position: relative;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+}
+.brand-logo-wrap::before {
+  content: ''; position: absolute; inset: 18% 4%; z-index: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--action-primary) 32%, transparent),
+    color-mix(in srgb, var(--action-secondary) 28%, transparent));
+  filter: blur(22px); opacity: 0.8;
+}
+.brand-mark, .brand-wordmark {
+  position: relative; z-index: 1; object-fit: contain; display: block;
+  filter: var(--brand-logo-filter);
+}
+.brand-mark { width: 68px; height: 68px; }
+.brand-wordmark { width: 158px; height: 80px; }
 
 .field { margin-bottom: 14px; }
 .field label {
@@ -179,7 +182,7 @@ async function handleRegister() {
   margin-bottom: 12px;
 }
 .ack-label {
-  font-size: 12px; color: #8a8fa8; line-height: 16px;
+  font-size: 12px; color: var(--content-secondary); line-height: 16px;
 }
 
 .card-footer {

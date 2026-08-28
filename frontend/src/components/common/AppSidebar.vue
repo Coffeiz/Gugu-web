@@ -187,10 +187,10 @@ onUnmounted(() => {
 .sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:16px 14px; position:relative; z-index:40; }
 .logo { display:flex; align-items:center; justify-content:center; gap:4px; padding:0 8px; margin-bottom:10px; }
 .logo-icon { width:38px; height:38px; display:flex; align-items:center; justify-content:center; }
-.logo-mark { width:34px; height:34px; display:block; background:var(--brand-gradient); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
+.logo-mark { width:34px; height:34px; display:block; background:var(--brand-logo-color); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
 .logo-text {
   width: 56px; height: 30px; display: block; flex-shrink: 0;
-  background: var(--content-primary);
+  background: var(--brand-logo-color);
   -webkit-mask-image: url('/logo-text.png');
   -webkit-mask-mode: alpha;
   -webkit-mask-position: center;
