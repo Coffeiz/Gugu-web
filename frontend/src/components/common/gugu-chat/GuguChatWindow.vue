@@ -34,13 +34,15 @@
             :title="currentSessionTitle"
             :on-rename="(t) => onRenameSession(sessionId!, t)"
           />
-          <span v-if="currentSessionWorkspaceName" class="chat-workspace-name">· {{ currentSessionWorkspaceName }}</span>
           <span v-if="currentSessionGoalStatus" class="chat-goal-indicator" :class="`is-${currentSessionGoalStatus}`" :title="currentSessionGoalStatus === 'paused' ? '目标任务已暂停' : '目标任务进行中'">
             <i :class="currentSessionGoalStatus === 'paused' ? 'ri-pause-circle-line' : 'ri-focus-3-line'" aria-hidden="true" />
             {{ currentSessionGoalStatus === 'paused' ? '目标已暂停' : '目标进行中' }}
           </span>
         </template>
         <span v-else class="chat-title" :class="{ 'is-new-session': expanded && !sessionId }">{{ expanded ? currentSessionTitle : '咕咕' }}</span>
+        <span v-if="currentSessionWorkspaceName" class="chat-workspace-name" :class="{ 'is-compact': !expanded }">
+          · {{ currentSessionWorkspaceName }}
+        </span>
         <span class="popup-status" :class="'is-' + presenceKind"
               @click="presenceKind === 'offline' && onPromptConnect()"
               :title="presenceTitle">
@@ -258,6 +260,7 @@ defineExpose({
   font-size: 12px;
   font-weight: 500;
 }
+.chat-workspace-name.is-compact { flex: 1 1 auto; }
 .chat-goal-indicator {
   display: inline-flex;
   align-items: center;
