@@ -251,7 +251,7 @@ async def test_worker_feishu_falls_back_to_text_when_stream_failed(monkeypatch, 
             yield ("token", "")
 
     class FakeAgentLoop:
-        async def run_collect(self, req, *, on_interaction=None, on_tool_event=None):
+        async def run_collect(self, req, *, on_interaction=None, on_tool_event=None, on_round=None):
             return AgentResponse(text="最终文本", session_id=456, tokens_in=1, tokens_out=2)
 
     async def fake_send_text_stream(receive_id, token_iter, channel_id=None):

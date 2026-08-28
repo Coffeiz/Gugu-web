@@ -281,7 +281,9 @@ async def _im_continuity_bridge(db, user_id, current_session_id, user_msg: str,
     return block
 
 
-async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
+async def _run_collect_unlocked(
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
+) -> AgentResponse:
     """找/建会话 + 读历史 → 跑工具循环 → 攒完整回复 + 存盘 + 反思。"""
     user_id = req.user_id
     profile = DefaultProfile()
@@ -528,7 +530,8 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
 
     try:
         text, tin, tout, cache_read, cache_write, errored, sent_files, cancelled, meta = await _collect(
-            gen, model_cfg=model_cfg, include_meta=True, on_tool_event=on_tool_event)
+            gen, model_cfg=model_cfg, include_meta=True, on_tool_event=on_tool_event,
+            on_round=on_round)
     finally:
         _release_model(model_cfg)   # least_loaded：请求结束减在途计数（其他方式 no-op）
 
@@ -638,13 +641,16 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
                          compaction_applied=bool(meta.get("compaction_applied", False)))
 
 
-async def run_collect(req: AgentRequest, *, on_interaction=None, on_tool_event=None) -> AgentResponse:
+async def run_collect(
+    req: AgentRequest, *, on_interaction=None, on_tool_event=None, on_round=None
+) -> AgentResponse:
     """同一 session 串行生成；不同 session 仍可并行。"""
     from agent.context import compress_conv
 
     async with compress_conv.session_run_gate(req):
         response = await _run_collect_unlocked(
             req, on_interaction=on_interaction, on_tool_event=on_tool_event,
+            on_round=on_round,
         )
         # baseline 是 run 末尾提交的安全点。释放 gate 前必须等待它完成，
         # 否则下一个 worker 可能在 summary/baseline 提交前读取旧快照并再次压缩。
@@ -661,6 +667,19 @@ async def _notify_tool_event(callback, event: dict) -> None:
     except Exception as exc:
         from app.core.redaction import diag_log
         diag_log("agent.im.tool_event_display", exc)
+
+
+async def _notify_round(callback, text: str) -> bool:
+    """通知 IM 展示已完成的正文 round；展示失败不影响 Agent 执行。"""
+    if callback is None:
+        return False
+    try:
+        result = await callback(text)
+        return result is not False
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("agent.im.round_display", exc)
+        return False
 
 
 # ── 流式版本（飞书 send_text_stream 用，2026-07-09 接入）──────────────────────
@@ -1081,7 +1100,7 @@ async def run_stream(
 
 async def _collect(
     gen: AsyncGenerator[str, None], include_meta: bool = False,
-    model_cfg=None, on_tool_event=None,
+    model_cfg=None, on_tool_event=None, on_round=None,
 ) -> Tuple:
     """消费 LLMRunner 的 SSE 流：清洗后攒文本 + 取用量 + 收集咕咕要发的文件。
     返回 (文本, in, out, errored, files)；errored=True 时文本是错误文案（不入历史/不反思）。
@@ -1113,6 +1132,10 @@ async def _collect(
         if t == "_new_round":
             cur += san.flush()
             rounds.append(cur)
+            if cur.strip():
+                from agent.outbound import sanitize_outbound
+                display_round = sanitize.strip_disallowed_emoji(sanitize_outbound(cur)).strip()
+                await _notify_round(on_round, display_round)
             cur = ""
             san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置清洗器
             continuation_pending = True

@@ -84,11 +84,14 @@ class ImActivity:
 class OwnerAgentLoop:
     """Web/owner IM 共用的完整 Agent Loop 门面。"""
 
-    async def run_collect(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
+    async def run_collect(self, request: AgentRequest, *, on_interaction=None,
+                          on_tool_event=None, on_round=None):
         from agent.runner import run_collect
         kwargs = {"on_interaction": on_interaction}
         if on_tool_event is not None:
             kwargs["on_tool_event"] = on_tool_event
+        if on_round is not None:
+            kwargs["on_round"] = on_round
         return await run_collect(request, **kwargs)
 
     def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
@@ -872,12 +875,25 @@ async def dispatch_im_message(payload: dict):
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
     shown_interaction_ids: set[int] = set()
+    sent_round_count = 0
     async def _show_tool_event(event: dict) -> None:
         """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
         if not show_tool_interactions:
             return
         from agent.im.replies import send_tool_event
         await send_tool_event(payload, event)
+
+    async def _show_round(text: str) -> bool:
+        """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
+        nonlocal sent_round_count
+        from agent.im.replies import send_text
+
+        if not str(text or "").strip():
+            return True
+        sent = await send_text(payload, str(text))
+        if sent:
+            sent_round_count += 1
+        return sent
 
     async def _show_im_interaction(interaction: dict) -> None:
         """在共享 Runner 进入等待前发送交互，并结束 IM typing。"""
@@ -902,6 +918,7 @@ async def dispatch_im_message(payload: dict):
             req,
             on_interaction=_show_im_interaction,
             on_tool_event=_show_tool_event,
+            on_round=_show_round,
         )
         reply_text = ""
     except BaseException:
@@ -973,7 +990,9 @@ async def dispatch_im_message(payload: dict):
 
     # 非流式 IM（当前统一 round 出口）所有平台都走同一发送器；飞书不再
     # 因为旧的流式卡片分支而跳过正文。
-    reply_text = await send_agent_response(payload, resp)
+    reply_text = await send_agent_response(
+        payload, resp, already_sent_rounds=sent_round_count
+    )
 
     if reply_text is None:
         # 生成成功不等于平台送达；避免把 QQ 400 等发送失败记录成成功回复。

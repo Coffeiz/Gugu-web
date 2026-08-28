@@ -387,7 +387,12 @@ async def send_stream_with_fallback(
     return bool(stream_sent), response, reply_text
 
 
-async def send_agent_response(payload: dict, response: AgentResponse) -> str | None:
+async def send_agent_response(
+    payload: dict,
+    response: AgentResponse,
+    *,
+    already_sent_rounds: int = 0,
+) -> str | None:
     """统一收尾一轮 AgentResponse：先发送附件，再按 round 发送文本说明。
 
     IM Loop 不再分别判断平台、文件和文本入口；平台 capability 由
@@ -410,7 +415,7 @@ async def send_agent_response(payload: dict, response: AgentResponse) -> str | N
 
     # 每个 round 独立发送；返回值仍使用最后一条，供 trace/日志兼容。
     last_text = texts[-1]
-    for text in texts:
+    for text in texts[max(0, already_sent_rounds):]:
         if not await send_text(payload, text):
             return None
     return last_text
