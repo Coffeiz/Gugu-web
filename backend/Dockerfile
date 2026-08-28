@@ -6,7 +6,8 @@
 ## web（uvicorn）和 worker（IM 队列消费）两个进程，够本地跑通全栈、验证功能。
 FROM python:3.12-slim
 
-# poppler-utils → pdftotext（文件预览正文提取）；ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
+# poppler-utils → pdftotext（文件预览正文提取）；fonts-noto-cjk → LibreOffice 中文 PDF 字形；
+# ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
 # 用；build-essential → pilk（SILK 语音编解码）在 PyPI 只发布了 Windows 预编译 wheel，Linux 下
 # 装它一定要从源码编译内嵌的 C 语言 SILK 编解码库，slim 镜像默认没有编译工具链
 # （2026-07-14 排查：先只装 gcc 报 `command 'gcc' failed: No such file or directory`；
@@ -21,7 +22,7 @@ FROM python:3.12-slim
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils ffmpeg curl build-essential docker.io nodejs
+        poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker.io nodejs
 
 WORKDIR /app
 

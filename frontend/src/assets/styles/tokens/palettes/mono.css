@@ -26,8 +26,8 @@
   --theme-selection: rgba(177,173,185,.16);
   --theme-focus: rgba(177,173,185,.38);
   --theme-sidebar-active-fg: #d2ced7;
-  --theme-brand-logo-color: #b4adb9;
-  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(73%) sepia(8%) saturate(520%) hue-rotate(216deg) brightness(102%) contrast(91%);
+  --theme-brand-logo-color: #96919e;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(62%) sepia(7%) saturate(420%) hue-rotate(216deg) brightness(94%) contrast(90%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.075) 20%,rgba(255,255,255,.075) 80%,transparent);
   --theme-gugu-chat-send-bg: linear-gradient(135deg,#817d89,#9d99a6);
   --theme-success: #92b9a7;

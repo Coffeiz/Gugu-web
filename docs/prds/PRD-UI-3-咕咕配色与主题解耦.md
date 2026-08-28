@@ -1,6 +1,6 @@
 # PRD-UI-3：咕咕配色选项与 Aero/Mono 主题解耦
 
-> 状态：Phase 0 已完成，Phase 1 待实施
+> 状态：Phase 0-1 已完成，Phase 2 部分完成，Phase 3 待实施
 > 创建：2026-08-27
 > 最近更新：2026-08-27
 > 关联模块：`frontend/src/composables/useTheme.ts`、`frontend/src/components/common/ProfileModal/ProfilePreferencesPane.vue`、`frontend/src/assets/styles/tokens/themes/`、`frontend/src/assets/styles/tokens/semantic.css`
@@ -11,8 +11,8 @@
 | 阶段 | 状态 | 说明 |
 |---|---|---|
 | Phase 0：边界与 token 盘点 | ✅ 已完成 | 已确认三维模型、变量归属、硬编码迁移范围和验证矩阵 |
-| Phase 1：配色状态与设置入口 | 🔲 待评估 | 新增配色持久化、根节点属性和设置项 |
-| Phase 2：配色 token 化 | 🔲 待评估 | 配色独立维护，Aero/Mono 不再分别维护品牌色和语义色 |
+| Phase 1：配色状态与设置入口 | ✅ 已完成 | 新增配色持久化、根节点属性、个人设置入口和 Design 验收入口 |
+| Phase 2：配色 token 化 | 🟡 部分完成 | 已建立语义配色层；完整页面色板仍需迁移 |
 | Phase 3：组件迁移与视觉回归 | 🔲 待评估 | 清理硬编码颜色，覆盖聊天、文件、日历、Mind、Admin 等页面 |
 
 ### 0.1 Phase 0 结论
@@ -49,9 +49,9 @@ Phase 0 的架构结论：主题应采用 `theme × family × palette` 三维组
 配色方案：Lavender / Ocean / Rose / Mono 等
 ```
 
-用户在设置中修改配色后，页面主要颜色、按钮、选中态、焦点态、品牌渐变和状态色应即时更新，并在刷新后保持。
+用户在设置中修改配色后，页面背景、表面、文字、边框、按钮、选中态、焦点态、品牌渐变、状态色和滚动条应整体切换为同一套色系，并在刷新后保持。
 
-本 PRD 不改变页面布局、交互流程、动画归属、项目自定义颜色和用户内容中的颜色；Aero/Mono 仍可以保留不同的玻璃、模糊、圆角、阴影和密度表现。
+本 PRD 不改变页面布局、交互流程、动画归属、项目自定义颜色和用户内容中的颜色；Aero/Mono 仍可以保留不同的玻璃、模糊、圆角、阴影和密度表现，但不能继续拥有独立的配色色板。
 
 ## 2. 功能需求
 
@@ -117,10 +117,11 @@ Aero/Mono 主题文件只拥有视觉体系相关变量和规则：
 - 圆角、阴影、边框表现；
 - 卡片、侧栏和浮层的密度与几何差异。
 
-配色文件拥有品牌和语义颜色：
+配色文件拥有完整的界面颜色体系：
 
 - 页面背景和表面颜色；
 - 内容层级颜色；
+- 边框、高光和遮罩颜色；
 - 主操作、选中、焦点颜色；
 - 成功、警告、危险、信息色；
 - 品牌渐变和滚动条色。
@@ -146,6 +147,56 @@ export type ThemePalette = 'lavender' | 'ocean' | 'rose' | 'mono'
 ```
 
 新增 `palette`、`setPalette` 和初始化/强制主题时的配色处理。写入 localStorage 前只接受白名单值，未知值回退到 Lavender；不得把用户输入直接拼接到 CSS 选择器或样式值中。
+
+配色的正式用户入口是**个人设置 → 偏好设置 → 外观**。用户可以在这里独立修改配色，不需要进入 Design 页面；Design 页面中的切换器只用于设计验收和开发调试，并复用同一套 `useTheme` 状态，不维护第二套设置逻辑。
+
+### 3.1.1 文件目标目录与职责
+
+本 PRD 涉及的新增和调整文件固定放在以下目录：
+
+```text
+frontend/src/composables/useTheme.ts
+  # theme / family / palette 状态、持久化、根节点 data 属性
+
+frontend/src/components/common/ProfileModal/ProfilePreferencesPane.vue
+  # 用户个人设置中的外观配置入口；配色名称、色板预览、选中态和键盘交互
+
+frontend/src/views/Design/components/DesignSystemPage.vue
+frontend/src/views/Design/components/ThemeSwitcher.vue
+  # Design 页面验收入口，调用 useTheme，不单独保存配色状态
+
+frontend/src/assets/styles/tokens/palettes/
+  # 配色文件，按 palette × light/dark 拆分
+  # 例如 lavender-light.css、lavender-dark.css、ocean-light.css
+
+frontend/src/assets/styles/tokens/themes/
+  # Aero/Mono 材质与几何文件；迁移后不再拥有完整语义颜色表
+
+frontend/src/assets/styles/tokens/themes/index.css
+  # 主题层统一导入入口，仅负责 family 相关 token
+
+frontend/src/assets/styles/tokens/palettes/index.css
+  # 配色层统一导入入口，负责 palette × resolved theme 的选择
+
+frontend/src/assets/styles/tokens/semantic.css
+frontend/src/assets/styles/tokens/semantic/index.css
+  # 稳定语义 token 消费层，不直接绑定具体 palette 文件
+
+frontend/src/assets/styles/tokens/components/
+  # 按钮、表面、输入、Mind 等组件契约；只引用 semantic token
+
+frontend/src/assets/styles/theme-regression.test.ts
+frontend/src/assets/styles/tokens/*.test.ts
+  # 配色白名单、token 合同和组合回归测试
+```
+
+目录约束：
+
+- 不在 `useTheme.ts` 中写具体颜色值。
+- 不在个人设置组件中直接修改 CSS 变量；设置组件只调用 `setPalette`。
+- 不为每个 palette 新建一套页面或组件样式。
+- 不在 `themes/` 目录继续新增完整的 `*-light.css` / `*-dark.css` 配色副本。
+- 旧主题文件在迁移期间可以作为临时兼容来源，但最终颜色所有权必须移动到 `tokens/palettes/`。
 
 ### 3.2 CSS token 分层
 
@@ -190,22 +241,26 @@ tokens/components/        # 组件契约
 
 #### Phase 1：配色状态与设置入口
 
-- [ ] 在 `useTheme` 中新增 `ThemePalette` 类型、默认值读取和白名单校验。
-- [ ] 新增 `palette`、`setPalette`，写入 `gugu-palette`，并设置 `data-palette`。
-- [ ] 保证旧用户没有 `gugu-palette` 时继续使用 Lavender，不影响已有 `theme/family`。
-- [ ] 在 `ProfilePreferencesPane.vue` 增加配色选择、色板预览和选中态。
-- [ ] 在设计系统 `ThemeSwitcher.vue` 增加配色切换，用于组合验收。
-- [ ] 为状态初始化、非法值、刷新恢复和 system 模式补充单元测试。
+- [x] 在 `useTheme` 中新增 `ThemePalette` 类型、默认值读取和白名单校验。
+- [x] 新增 `palette`、`setPalette`，写入 `gugu-palette`，并设置 `data-palette`。
+- [x] 保证旧用户没有 `gugu-palette` 时继续使用 Lavender，不影响已有 `theme/family`。
+- [x] 在个人设置 `ProfilePreferencesPane.vue` 的“外观”区域增加配色选择、色板预览和选中态；这是用户正式配置入口。
+- [x] 在设计系统 `ThemeSwitcher.vue` 增加配色切换，用于组合验收，并确保它与个人设置共享同一状态。
+- [x] 明确个人设置修改后即时更新当前页面，不刷新路由、不重置聊天、画布、弹窗或表单状态。
+- [x] 为状态初始化、非法值、刷新恢复和 system 模式补充单元测试。
 - [ ] 风险等级：中；回滚方式：隐藏配色入口并忽略 `gugu-palette`，保留旧 `theme/family` 行为。
 
 #### Phase 2：配色 token 化
 
-- [ ] 建立 `tokens/palettes/`，定义首批 palette × light/dark 的颜色 token。
-- [ ] 将页面背景、表面、文字、主操作、选中、焦点、状态、品牌渐变和滚动条颜色迁入 palette 层。
-- [ ] 保留必要的 `--theme-*` 兼容别名，避免一次性改动全部组件。
-- [ ] 从 `glass-*.css`、`mono-*.css` 移除重复的配色所有权变量，仅保留材质和几何差异。
-- [ ] 明确 `--gugu-chat-*`、`--file-card-*` 等组件 token 只引用语义变量或业务颜色。
-- [ ] 增加 CSS token 合同测试：每个 palette 提供必需变量，family 不覆盖 palette 变量。
+- [x] 建立 `tokens/palettes/`，定义首批 palette × light/dark 的颜色 token。
+- [x] 将主操作、选中、焦点、状态、品牌渐变、Logo、分隔线和滚动条颜色迁入 palette 层。
+- [ ] 将页面背景、表面、文字、边框、高光和遮罩迁入 palette 层，形成每套 palette 独立完整的 light/dark 色板。
+- [x] 保留必要的 `--theme-*` 兼容别名，避免一次性改动全部组件。
+- [ ] 从 `glass-*.css`、`mono-*.css` 移除剩余颜色所有权，仅保留材质、透明度、模糊、圆角、阴影、密度和几何差异。
+- [x] 明确 `--gugu-chat-*`、`--file-card-*` 等组件 token 只引用语义变量或业务颜色。
+- [x] 增加 CSS token 合同测试：每个 palette 提供必需变量，family 不覆盖 palette 变量。
+- [x] 固定职责边界：palette 管完整界面色系，family 管材质和几何表现；新增 palette 不复制 family 文件。
+- [ ] 只有完整色板和 family 无颜色覆盖通过合同测试后，才将 Phase 2 标记为完成。
 
 #### Phase 3：组件迁移与视觉回归
 

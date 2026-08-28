@@ -262,6 +262,10 @@ body {
   background: var(--rename-input-bg); border: 1px solid var(--rename-input-border);
   border-radius: var(--rename-input-radius); padding: var(--rename-input-padding);
   font: inherit; color: var(--rename-input-fg); caret-color: var(--action-primary);
+  box-shadow: var(--input-hover-shadow);
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+              border-color var(--motion-hover-control) var(--motion-ease-standard),
+              box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
 .fc-name:has(.rename-input-inline),
 .fd-name:has(.rename-input-inline) { overflow: visible; }

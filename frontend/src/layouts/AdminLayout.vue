@@ -2,13 +2,7 @@
   <div class="admin-layout">
     <aside class="admin-sidebar">
       <!-- 品牌 -->
-      <div class="sidebar-brand">
-        <span class="brand-mark" aria-hidden="true" />
-        <div class="brand-text">
-          <span class="logo-text" aria-label="咕咕" />
-          <div class="brand-tag">管理后台</div>
-        </div>
-      </div>
+      <Brand variant="admin" subtitle="管理后台" />
 
       <div class="sidebar-rule" />
 
@@ -128,6 +122,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAdminStore } from '@/stores/admin'
+import Brand from '@/components/common/Brand.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -174,46 +169,6 @@ function handleLogout() {
   padding: 24px 14px;
   gap: 0;
 }
-
-/* 品牌 — 水平居中，对齐前端 logo 布局 */
-.sidebar-brand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  padding: 0 8px;
-  margin-bottom: 20px;
-}
-.brand-mark {
-  width: 30px; height: 30px; display: block; flex-shrink: 0;
-  background: var(--content-primary);
-  -webkit-mask-image: url('/logo-small.png');
-  -webkit-mask-mode: alpha;
-  -webkit-mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-image: url('/logo-small.png');
-  mask-mode: alpha;
-  mask-position: center;
-  mask-repeat: no-repeat;
-  mask-size: contain;
-}
-.brand-text { line-height: 1; }
-.logo-text {
-  width: 42px; height: 23px; display: block; flex-shrink: 0;
-  background: var(--content-primary);
-  -webkit-mask-image: url('/logo-text.png');
-  -webkit-mask-mode: alpha;
-  -webkit-mask-position: center;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-size: contain;
-  mask-image: url('/logo-text.png');
-  mask-mode: alpha;
-  mask-position: center;
-  mask-repeat: no-repeat;
-  mask-size: contain;
-}
-.brand-tag  { font-size: var(--font-size-xs); color: var(--content-muted); margin-top: 3px; }
 
 .sidebar-rule {
   height: 1px;

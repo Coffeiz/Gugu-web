@@ -12,7 +12,7 @@
           </svg>
         </div>
         <div class="heading"><h1>咕咕 Design Tokens</h1><p>{{ familyLabel }} · {{ familyDescription }}</p></div>
-        <ThemeSwitcher :model-value="preference" :family="family" @update:model-value="setTheme" @update:family="setFamily" />
+        <ThemeSwitcher :model-value="preference" :family="family" :palette="palette" @update:model-value="setTheme" @update:family="setFamily" @update:palette="setPalette" />
       </header>
 
       <section class="hero-note">
@@ -114,7 +114,7 @@ import { tokenCatalog, type DesignToken } from '../data/tokenCatalog'
 import ThemeSwitcher from './ThemeSwitcher.vue'
 import TokenSection from './TokenSection.vue'
 import Icon from '@/components/common/Icon.vue'
-const { preference, resolved, family, setTheme, setFamily } = useTheme()
+const { preference, resolved, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const { valueOf, copyToken: copy } = useDesignTokens()
 const copied = ref<string | null>(null)
 const snippetCopied = ref(false)

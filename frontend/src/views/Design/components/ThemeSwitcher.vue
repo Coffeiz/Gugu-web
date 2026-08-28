@@ -1,6 +1,12 @@
 <template>
   <div class="theme-controls" aria-label="主题切换">
     <div class="control-cluster">
+      <span class="control-label">配色</span>
+      <div class="segmented">
+        <button v-for="item in palettes" :key="item.value" :class="{ active: palette === item.value }" @click="$emit('update:palette', item.value)">{{ item.label }}</button>
+      </div>
+    </div>
+    <div class="control-cluster">
       <span class="control-label">主题</span>
       <div class="segmented">
         <button v-for="item in families" :key="item.value" :class="{ active: family === item.value }" @click="$emit('update:family', item.value)">{{ item.label }}</button>
@@ -16,15 +22,19 @@
 </template>
 
 <script setup lang="ts">
-import type { ThemeFamily, ThemePreference } from '@/composables/useTheme'
+import type { ThemeFamily, ThemePalette, ThemePreference } from '@/composables/useTheme'
 
-defineProps<{ modelValue: ThemePreference; family: ThemeFamily }>()
-defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily] }>()
+defineProps<{ modelValue: ThemePreference; family: ThemeFamily; palette: ThemePalette }>()
+defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily]; 'update:palette': [value: ThemePalette] }>()
 const families: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'glass', label: 'Aero' }, { value: 'v2', label: 'Mono' },
 ]
 const themes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' },
+]
+const palettes: Array<{ value: ThemePalette; label: string }> = [
+  { value: 'lavender', label: 'Lavender' }, { value: 'ocean', label: 'Ocean' },
+  { value: 'rose', label: 'Rose' }, { value: 'mono', label: 'Mono' },
 ]
 </script>
 

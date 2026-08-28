@@ -74,6 +74,7 @@
 | PostgreSQL      | 15+   | 数据库                                                                 |
 | Redis           | 7+    | IM 队列（接 IM 才需）                                                      |
 | **LibreOffice** | 任意    | 咕咕生成 Word/PDF/Excel（`create_document`）靠 `libreoffice --headless` 转换 |
+| **CJK 字体** | `fonts-noto-cjk` | LibreOffice 生成 PDF 时提供中文/日文/韩文字形；浏览器字体另由前端构建产物提供 |
 | **ffmpeg**      | 任意    | IM 语音理解：把 QQ/飞书语音（SILK/opus）转成 mp3 喂 mimo（配合 pip 的 `pilk` 解 SILK）。只装在跑 IM 网关的机器；没装则语音退文字提示 |
 | **Docker Rootless** | Docker CLI + Rootless daemon | Shell 沙盒的固定镜像、断网容器和资源限制；只在启用生产 Shell 沙盒时需要 |
 
@@ -83,9 +84,15 @@
 ```bash
 sudo apt update
 sudo apt install -y python3-venv python3-dev build-essential \
-                    postgresql redis-server libreoffice ffmpeg nginx
+                    postgresql redis-server libreoffice fonts-noto-cjk ffmpeg nginx
 # Node 用 nvm 或 nodesource 装 18+
+
+# 部署后只读检查 PDF 转换器和中文字体
+python3 backend/scripts/check_pdf_fonts.py
 ```
+
+检查结果应能看到 LibreOffice 版本，并且中文字体匹配到 CJK 字体；如果只匹配到
+`Noto Sans` 或显示「未匹配到」，不要上线 PDF 生成功能。
 
 启用生产 Shell 沙盒时，还要确认运行用户的 Rootless Docker 已可用，并准备 `uidmap`、`rootlesskit`、`slirp4netns`、`fuse-overlayfs` 和 user lingering。沙盒默认使用 `network=none`，不需要开放 Docker TCP socket。固定镜像必须预先加载，运行时使用 `--pull=never`；Docker、Rootless daemon 或固定镜像未就绪时，Shell 应失败，不会回退到宿主机执行。
 
@@ -442,6 +449,12 @@ server {
     # 后台 SPA：路由 base 为 /admin，深链/刷新均回退到 admin/index.html（必须在 location / 之前）
     location /admin {
         try_files $uri $uri/ /admin/index.html;
+    }
+
+    # 字体是静态二进制资源，缺失时不能回退到 index.html，否则浏览器只会静默放弃字体。
+    location ^~ /fonts/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
     }
 
     # 主站 SPA

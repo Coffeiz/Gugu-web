@@ -5,7 +5,7 @@
         <div class="hero-title-row"><span class="eyebrow">GUGU · DESIGN</span><h1>Design Tokens</h1></div>
         <p>Glass / V2 × Light / Dark · 产品样板只消费真实 Semantic / Component tokens。</p>
       </div>
-      <ThemeSwitcher :model-value="preference" :family="family" @update:model-value="setTheme" @update:family="setFamily" />
+      <ThemeSwitcher :model-value="preference" :family="family" :palette="palette" @update:model-value="setTheme" @update:family="setFamily" @update:palette="setPalette" />
     </header>
 
     <main class="design-content">
@@ -292,7 +292,7 @@ import GuguChatMock from './GuguChatMock.vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
-const { preference, resolved, family, setTheme, setFamily } = useTheme()
+const { preference, resolved, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const chatOpen = ref(false)
 async function openConfirmPreview() {
   await confirmDialog({
@@ -474,7 +474,6 @@ const notes = [
 .contracts-detail .choice-chip { padding: var(--choice-chip-padding); }
 .rename-token-preview { min-height: 74px; display: flex; align-items: center; padding: var(--space-lg); overflow: visible; }
 .rename-token-preview .rename-sizer { min-width: 86px; }
-.rename-token-preview .rename-input-inline { box-shadow: var(--input-focus-shadow); }
 .rename-token-grid { margin-top: var(--space-md); }
 .rename-token-swatch { height: 56px; display: grid; place-items: center; border-bottom: 1px solid var(--border-hairline); }
 .rename-token-swatch > span { display: block; min-width: 38px; height: 20px; border: 1px solid var(--border-default); background: var(--surface-raised); }

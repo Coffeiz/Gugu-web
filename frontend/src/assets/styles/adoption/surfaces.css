@@ -90,7 +90,10 @@ html[data-theme][data-family] .rename-input-inline {
 }
 html[data-theme][data-family] .form-input:hover,
 html[data-theme][data-family] .title-edit-input:hover,
-html[data-theme][data-family] .rename-input-inline:hover { border-color: var(--input-border-hover); }
+html[data-theme][data-family] .rename-input-inline:hover {
+  border-color: var(--input-border-hover);
+  box-shadow: var(--input-hover-shadow);
+}
 html[data-theme][data-family] .form-input:focus,
 html[data-theme][data-family] .title-edit-input:focus,
 html[data-theme][data-family] .rename-input-inline:focus {

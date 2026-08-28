@@ -14,6 +14,15 @@
           <button v-for="item in modes" :key="item.value" class="pm-style-chip" :class="{ active: preference === item.value }" @click="setTheme(item.value)">{{ item.label }}</button>
         </div>
       </div>
+      <div class="pm-field-row">
+        <div class="pm-field-desc"><span class="pm-field-name">配色</span><span class="pm-field-hint">独立于 Aero / Mono 的主色调</span></div>
+        <div class="pm-style-group pm-palette-group" role="group" aria-label="选择配色">
+          <button v-for="item in palettes" :key="item.value" type="button" class="pm-palette-chip" :class="{ active: palette === item.value }" :aria-label="`配色：${item.label}`" :aria-pressed="palette === item.value" @click="setPalette(item.value)">
+            <span class="pm-palette-swatch" :class="`palette-${item.value}`" aria-hidden="true" />
+            <span>{{ item.label }}</span>
+          </button>
+        </div>
+      </div>
       <div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">语言</span><span class="pm-field-hint">界面显示语言</span></div><div class="pm-static">简体中文</div></div>
     </div>
     <div class="pm-sep"></div>
@@ -43,10 +52,10 @@
 
 <script setup lang="ts">
 import { usePreferencesStore } from '@/stores/preferences'
-import { useTheme, type ThemeFamily, type ThemePreference } from '@/composables/useTheme'
+import { useTheme, type ThemeFamily, type ThemePalette, type ThemePreference } from '@/composables/useTheme'
 
 const prefsStore = usePreferencesStore()
-const { preference, family, setTheme, setFamily } = useTheme()
+const { preference, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const families: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'glass', label: 'Aero' },
   { value: 'v2', label: 'Mono' },
@@ -55,6 +64,12 @@ const modes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: '亮色' },
   { value: 'dark', label: '暗色' },
   { value: 'system', label: '跟随系统' },
+]
+const palettes: Array<{ value: ThemePalette; label: string }> = [
+  { value: 'lavender', label: 'Lavender' },
+  { value: 'ocean', label: 'Ocean' },
+  { value: 'rose', label: 'Rose' },
+  { value: 'mono', label: 'Mono' },
 ]
 const views = [
   { value: 'projects', label: '项目' },

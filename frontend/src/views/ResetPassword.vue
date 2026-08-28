@@ -4,22 +4,7 @@
     <div class="bg-glow glow-2" />
 
     <div class="auth-card">
-      <div class="card-brand">
-        <div class="brand-icon">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
-        <div>
-          <div class="brand-name">咕咕</div>
-          <div class="brand-sub">设置新密码</div>
-        </div>
-      </div>
+      <AuthBrand />
 
       <template v-if="done">
         <div class="done-box">
@@ -71,6 +56,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import AuthBrand from '@/components/common/AuthBrand.vue'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? '/api/v1'
 const route   = useRoute()
@@ -136,16 +122,6 @@ function goLogin() { router.push('/login') }
     inset 0 1px 0 rgba(255,255,255,0.95),
     inset 1px 0 0 rgba(255,255,255,0.55);
 }
-
-.card-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
-.brand-icon {
-  width: 44px; height: 44px; border-radius: 13px; flex-shrink: 0;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 18px rgba(123,127,178,0.35);
-}
-.brand-name { font-size: 18px; font-weight: 700; color: #1e2028; }
-.brand-sub  { font-size: 12px; color: #8a8fa8; margin-top: 2px; }
 
 .field { margin-bottom: 14px; }
 .field label {

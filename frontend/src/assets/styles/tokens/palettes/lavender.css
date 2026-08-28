@@ -26,8 +26,8 @@
   --theme-selection: rgba(149,144,196,.16);
   --theme-focus: rgba(149,144,196,.42);
   --theme-sidebar-active-fg: #c2bee3;
-  --theme-brand-logo-color: #aaa6d8;
-  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(70%) sepia(18%) saturate(680%) hue-rotate(202deg) brightness(104%) contrast(91%);
+  --theme-brand-logo-color: #918cb8;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(60%) sepia(16%) saturate(560%) hue-rotate(202deg) brightness(92%) contrast(90%);
   --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
   --theme-success: #80b4a2;
   --theme-warning: #cea07f;

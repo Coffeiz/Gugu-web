@@ -13,6 +13,7 @@ describe('主题令牌状态', () => {
     localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
     document.documentElement.removeAttribute('data-family')
+    document.documentElement.removeAttribute('data-palette')
     vi.resetModules()
   })
 
@@ -52,5 +53,28 @@ describe('主题令牌状态', () => {
     expect(localStorage.getItem('gugu-theme-family')).toBe('v2')
     expect(document.documentElement.dataset.family).toBe('v2')
     expect(useTheme().family.value).toBe('v2')
+  })
+
+  it('切换配色会持久化并更新根节点属性', async () => {
+    installMatchMedia()
+    const { initializeTheme, useTheme } = await import('./useTheme')
+    initializeTheme()
+
+    useTheme().setPalette('ocean')
+
+    expect(localStorage.getItem('gugu-palette')).toBe('ocean')
+    expect(document.documentElement.dataset.palette).toBe('ocean')
+    expect(useTheme().palette.value).toBe('ocean')
+  })
+
+  it('非法配色回退为 Lavender', async () => {
+    installMatchMedia()
+    localStorage.setItem('gugu-palette', 'unknown')
+    const { initializeTheme, useTheme } = await import('./useTheme')
+
+    initializeTheme()
+
+    expect(useTheme().palette.value).toBe('lavender')
+    expect(document.documentElement.dataset.palette).toBe('lavender')
   })
 })
