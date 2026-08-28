@@ -12,7 +12,12 @@ from sqlalchemy import func, select
 from agent.rag.models import IndexDocument
 from agent.rag.persistent_store import load_index_documents
 from agent.rag.models import Scope
-from agent.rag.ts_sidecar import TsLexicalIndex, TsSidecarClient, TsSidecarUnavailable
+from agent.rag.ts_sidecar import (
+    TsLexicalIndex,
+    TsSidecarUnavailable,
+    _index_document_digest,
+    get_lexical_client,
+)
 from agent.rag.scope import matches_scope
 from app.models import KnowledgeIndexEntry
 
@@ -254,7 +259,7 @@ class KnowledgeIndexCache:
                            previous_revision: str | None = None):
         started = time.monotonic()
         if backend == "typescript":
-            client = TsSidecarClient(
+            client = await get_lexical_client(
                 owner_user_id,
                 command=settings.ts_sidecar_command,
                 index_dir=settings.ts_sidecar_index_dir,
@@ -275,7 +280,7 @@ class KnowledgeIndexCache:
                         current = {_worker_document_key(document): document for document in documents}
                         upserts = [
                             document for key, document in current.items()
-                            if key not in previous or previous[key].identity() != document.identity()
+                            if key not in previous or _index_document_digest(previous[key]) != _index_document_digest(document)
                         ]
                         deletes = [
                             _worker_document_key(document) for key, document in previous.items()
@@ -304,11 +309,20 @@ class KnowledgeIndexCache:
     async def _revision(self, db, owner_user_id: object) -> str | None:
         from agent.rag.protocol import TOKENIZER_VERSION
 
-        value = (await db.execute(select(func.max(KnowledgeIndexEntry.indexed_at)).where(
+        rows = (await db.execute(select(
+            KnowledgeIndexEntry.source_type,
+            func.max(KnowledgeIndexEntry.indexed_at),
+        ).where(
             KnowledgeIndexEntry.owner_user_id == owner_user_id,
             KnowledgeIndexEntry.deleted_at.is_(None),
-        ))).scalar_one_or_none()
-        return f"{TOKENIZER_VERSION}:{value.isoformat()}" if value is not None else None
+        ).group_by(KnowledgeIndexEntry.source_type))).all()
+        if not rows:
+            return None
+        revisions = ";".join(
+            f"{source}:{value.isoformat() if value is not None else ''}"
+            for source, value in sorted(rows, key=lambda item: str(item[0]))
+        )
+        return f"{TOKENIZER_VERSION}:{revisions}"
 
     def invalidate(self, owner_user_id: object, source_type: str | None = None) -> int:
         owner_key = str(owner_user_id)
@@ -448,15 +462,10 @@ class KnowledgeIndexCache:
 
     @staticmethod
     def _dispose(entry: _Entry) -> None:
-        """异步回收 owner sidecar；Python 索引由 GC 回收。"""
-        client = getattr(entry.index, "client", None)
-        if client is None:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        loop.create_task(client.close())
+        """释放 Python 索引包装；常驻 TS worker 由应用生命周期统一回收。"""
+        # lexical client 由应用级 manager 持有，缓存淘汰只释放 Python entry，
+        # 保留 worker 内存索引以便后续 revision 变化直接 patch。
+        return
 
 
 _CACHE = KnowledgeIndexCache()

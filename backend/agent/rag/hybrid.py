@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from agent.rag.models import IndexDocument, RecallResult
-from agent.rag.scoring import BM25_WEIGHT, VECTOR_WEIGHT, normalized_rrf
+from agent.rag.fusion import BM25_WEIGHT, VECTOR_WEIGHT, normalized_rrf
 
 
 def hybrid_results(

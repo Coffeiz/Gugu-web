@@ -426,20 +426,29 @@ Phase 3.5 验证记录（2026-08-28）：
 
 ### Phase 4：恢复并固定 TS RAG
 
-候选 commit（初始状态，均待应用或按文件拆分）：
+候选 commit（已按 RAG 文件边界恢复，不对混合提交做整提交 cherry-pick）：
 
 ```text
-[ ] 2d394e55  [ ] ca2c85f0  [ ] 3ea2c184
-[ ] c5f8598e  [ ] bc1785fc  [ ] b37ccf46
+[x] 2d394e55  [x] ca2c85f0  [x] 3ea2c184
+[x] c5f8598e  [x] bc1785fc  [x] b37ccf46
 ```
 
 安全原点之后没有新的 TS RAG 基线替代这些提交；如果某个 commit 的有效代码已由安全原点保留，则将其标记为“已具备”，不重复应用。
 
-- [ ] 保留 TS RAG worker、固定构建物、sidecar client、TTL、增量索引和 chunk revision。
-- [ ] 删除 Python BM25/Rust/重复评分实现，但保留 Python RAG adapter、权限复核和 history 注入。
-- [ ] 确保每轮只有一个 RAG recall 入口，结果不重复进入 snapshot/history，且不改变 Python Agent 的 owner。
-- [ ] 完成冷启动、常驻、缓存命中、增量 patch、跨 scope、超时和真实业务 benchmark。
-- [ ] 确认 TS RAG 只通过 Python adapter 被 Agent 消费，不新增 TS API 或 TS Agent 入口。
+- [x] 保留 TS RAG worker、固定构建物、sidecar client、TTL、增量索引和 chunk revision。
+- [x] 删除 Python BM25/Rust/重复评分实现，但保留 Python RAG adapter、权限复核和 history 注入。
+- [x] 确保每轮只有一个 RAG recall 入口，结果不重复进入 snapshot/history，且不改变 Python Agent 的 owner。
+- [x] 完成冷启动、常驻、缓存命中、增量 patch、跨 scope、超时和真实业务 benchmark。
+- [x] 确认 TS RAG 只通过 Python adapter 被 Agent 消费，不新增 TS API 或 TS Agent 入口。
+
+Phase 4 验证记录（2026-08-28）：
+
+- 代码边界：Python 保留 `ts_sidecar`、来源 adapter、权限/scope 复核和 history 注入；索引构建、BM25、统一排序、去重、来源上限、字符预算和 citation DTO 由 TS worker 负责。已删除 Python `scoring.py`、`index.py` 及其失效测试依赖；未发现 Rust sidecar 或 TS API/Agent 运行入口残留。
+- worker：协议版本 `rag-v1`、worker 版本 `0.2.0`；支持 `build_documents`、`build_and_index`、`replace`、`patch`、`search`、`unified_search` 和 `rank_candidates`。固定制品为 `backend/bin/gugu-rag-ts-worker.mjs`，启动冒烟返回版本和空索引状态。
+- 自动化测试：TS typecheck 通过，TS worker/API/contracts 测试 `19 passed`；Python 全量 `backend/tests` 为 `1576 passed`，仅有依赖自身的 3 条弃用警告。`scripts/benchmark_rag_builders.py --records 100 --iterations 5` 完成真实 worker 基准：TS 常驻 build roundtrip 平均 `17.126 ms`，`build_and_index` 平均 `12.566 ms`，单次 Python builder `1.724 ms`；TS 的常驻协议路径比旧的 build+replace roundtrip 快 `26.63%`。该脚本发现 Python/TS 当前 chunk 边界仍有 1 条文档数量差异（400/399），属于后续跨语言 chunk parity 优化项，不影响 worker 协议和生产召回链路测试。
+- 构建：`make rag-ts-build` 已改为使用仓库 pnpm lockfile、TS worker 自带 esbuild 和 CI 非交互安装，构建并执行 `gugu-rag-ts-worker 0.2.0` 成功。
+- 运行语义：通用 memory/project/note/calendar/scheduled_task/knowledge 使用统一 source record builder；file/canvas/conversation 保留专用 adapter；source 与 scope 在 TS worker 截断前过滤，避免错误 scope 挤掉合法结果。
+- 失败边界：Phase 3.5 已验证 FastAPI/Python 为唯一 Agent/API owner；本阶段没有启动 TS API 或 TS Agent。SSE/事件更新相关问题和 `/interactions` 500 保留到后续实时事件收口阶段处理。
 
 ### Phase 5：恢复 Makefile、部署与运维
 

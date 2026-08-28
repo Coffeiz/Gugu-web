@@ -196,11 +196,10 @@ async def build_automatic_rag_context(
     if not query:
         return {"tail": [], "blocks": [], "scope_hits": [], "injected": False}
     try:
-        from agent.rag.service import MAX_OUTPUT_CHARS, search_knowledge
+        from agent.rag.service import search_knowledge
         from agent.rag.models import content_hash
 
         seen = _history_rag_hashes(history)
-        remaining = MAX_OUTPUT_CHARS
         tail: list[dict[str, str]] = []
         blocks: list[dict[str, Any]] = []
         scope_hits: list[dict[str, Any]] = []
@@ -220,6 +219,7 @@ async def build_automatic_rag_context(
                     search_knowledge(
                         request.user_id, query, scope=scopes, source="all",
                         strategy="bm25", limit=5, mode="automatic",
+                        exclude_content_hashes=seen,
                     ),
                     AUTO_RECALL_TIMEOUT_SECONDS,
                 )
@@ -240,17 +240,11 @@ async def build_automatic_rag_context(
             selected: list[dict[str, Any]] = []
             for item in result.get("results", []):
                 item_hash = str(item.get("content_hash") or content_hash(str(item.get("text") or "")))
-                if item_hash in seen:
-                    continue
                 text = str(item.get("text") or "").strip()
-                if not text or remaining <= 0:
-                    break
-                text = text[:remaining].rstrip()
                 if not text:
                     break
                 selected.append({**item, "text": text, "content_hash": item_hash})
                 seen.add(item_hash)
-                remaining -= len(text)
             scope_hits.append({"scope": label, "candidate_count": result.get("candidate_count", 0),
                                "hit_count": len(selected)})
             if not selected:

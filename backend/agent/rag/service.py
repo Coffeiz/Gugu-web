@@ -9,15 +9,18 @@ from dataclasses import replace
 from agent.rag.adapters.memory import MemoryAdapter
 from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.adapters.knowledge import KnowledgeAdapter
+from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
 from agent.rag.context import get_snapshot_context
 from agent.rag.diagnostics import record_recall
 from agent.rag.hybrid import hybrid_results
 from agent.rag.models import RecallCandidate, RecallResult, Scope
 from agent.rag.persistent_store import load_index_documents, replace_source_documents, search_persistent_index
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
-from agent.rag.scoring import normalize_scores, token_similarity
 from agent.rag.index_cache import search_documents_with_cache
-from agent.rag.ts_sidecar import TsSidecarUnavailable, score_candidates_with_cache
+from agent.rag.ts_sidecar import (
+    TsSidecarUnavailable,
+    rank_candidates_with_cache,
+)
 from agent.rag.scope import (
     matches_any_scope,
     matches_scope,
@@ -31,14 +34,6 @@ MAX_ACTIVE_RESULTS = 10
 DEFAULT_RESULTS = 5
 MAX_OUTPUT_CHARS = 3000
 MAX_PER_SOURCE = 3
-SOURCE_PRIORITY = {
-    "memory": 0,
-    "project": 10,
-    "file": 20,
-    "journal": 30,
-    "canvas": 40,
-    "conversation": 50,
-}
 
 
 def _snapshot_covers_document(text: str, snapshot_text: str) -> bool:
@@ -155,8 +150,8 @@ class ProjectRetriever:
 
     source_type = "project"
 
-    def __init__(self, user_id, *, db=None):
-        self.adapter = ProjectAdapter(user_id, db=db)
+    def __init__(self, user_id, *, db=None, db_factory=None):
+        self.adapter = ProjectAdapter(user_id, db=db, db_factory=db_factory)
 
     async def retrieve(
         self,
@@ -290,6 +285,7 @@ class UnifiedRecallService:
         scope: str = "auto",
         strategy: str = "auto",
         limit: int = DEFAULT_RESULTS,
+        exclude_content_hashes: set[str] | None = None,
     ) -> dict:
         requested_limit = max(1, min(int(limit or DEFAULT_RESULTS), MAX_ACTIVE_RESULTS))
         from agent.rag.context import (
@@ -314,19 +310,9 @@ class UnifiedRecallService:
         batch_order = {batch.source_type: index for index, batch in enumerate(batches)}
         candidates: list[tuple[int, RecallCandidate]] = []
         for batch in batches:
-            batch_candidates = normalize_scores(list(batch.candidates()))
-            fusion = batch.metadata.get("fusion")
-            batch_candidates = [
-                replace(
-                    candidate,
-                    fused_score=(
-                        candidate.raw_score
-                        if fusion == "hybrid-rrf"
-                        else candidate.normalized_score
-                    ),
-                )
-                for candidate in batch_candidates
-            ]
+            # 来源内归一化、confidence 和最终预算统一交给 TS worker；Python
+            # 只保留来源批次、权限边界和 canonical candidate 映射。
+            batch_candidates = list(batch.candidates())
             candidates.extend(
                 (batch_order.get(batch.source_type, 999), candidate)
                 for candidate in batch_candidates
@@ -347,24 +333,23 @@ class UnifiedRecallService:
                     continue
                 authorized.append((order, candidate))
             candidates = authorized
-        # Phase 2 后统一使用 fused_score 跨来源排序；来源优先级、更新时间和
-        # chunk id 只作为同分时的稳定 tie-breaker。稳定排序顺序不能拆到调用方。
-        candidates.sort(key=lambda item: SOURCE_PRIORITY.get(
-            item[1].document.source_type, 100 + item[0]
-        ))
-        candidates.sort(key=lambda item: item[1].document.chunk_id)
-        candidates.sort(key=lambda item: item[1].document.updated_at or "", reverse=True)
-        candidates.sort(key=lambda item: item[1].fused_score, reverse=True)
         candidate_values = [candidate for _, candidate in candidates]
-        score_filter_started = time.monotonic()
         try:
-            owner_id = candidate_values[0].scope.owner_user_id if candidate_values else ""
-            scored_candidates, score_stats = await score_candidates_with_cache(
-                owner_id, query, candidate_values, limit=requested_limit,
+            rank_kwargs = {
+                "limit": requested_limit,
+                "max_chars": MAX_OUTPUT_CHARS,
+                "max_per_source": MAX_PER_SOURCE,
+                "max_per_parent": 3,
+            }
+            if exclude_content_hashes is not None:
+                rank_kwargs["exclude_content_hashes"] = exclude_content_hashes
+            ranked_candidates, rank_stats = await rank_candidates_with_cache(
+                candidate_values[0].scope.owner_user_id if candidate_values else "",
+                query, candidate_values, **rank_kwargs,
             )
         except TsSidecarUnavailable:
-            # worker 故障不再回退到另一套 Python 评分算法，避免语义悄悄漂移。
-            scored_candidates, score_stats = [], {
+            ranked_candidates, rank_stats = [], {
+                "candidate_count": len(candidate_values),
                 "accepted_count": 0,
                 "rejected_low_score": len(candidate_values),
                 "rejected_not_preferred": 0,
@@ -372,76 +357,31 @@ class UnifiedRecallService:
                 "threshold": 0.35,
                 "preferred_threshold": 0.55,
                 "scoring_version": "confidence-v1",
+                "rejected_duplicate": 0,
+                "rejected_parent": 0,
+                "rejected_source": 0,
+                "rejected_similarity": 0,
+                "output_chars": 0,
             }
-        score_filter_ms = int((time.monotonic() - score_filter_started) * 1000)
-        accepted = {
-            (candidate.source_type, candidate.document.chunk_id)
-            for candidate in scored_candidates
-        }
-        candidates = [
-            item for item in candidates
-            if (item[1].source_type, item[1].document.chunk_id) in accepted
-        ]
-        scored_by_key = {
-            (candidate.source_type, candidate.document.chunk_id): candidate
-            for candidate in scored_candidates
-        }
-        candidates = [
-            (order, scored_by_key[(candidate.source_type, candidate.document.chunk_id)])
-            for order, candidate in candidates
-        ]
-        candidates.sort(key=lambda item: item[1].fused_score, reverse=True)
 
-        # 同一正文从多个来源返回时只占一份预算；引用合并由下面保留的 public item 表达。
         selected: list[dict] = []
-        selected_candidates: list[RecallCandidate] = []
-        by_hash: dict[str, dict] = {}
-        used_sources: dict[str, int] = {}
-        used_parents: dict[str, int] = {}
-        rejected_duplicate = 0
-        rejected_parent = 0
-        rejected_source = 0
-        rejected_diversity = 0
-        output_chars = 0
-        for _, candidate in candidates:
-            document = candidate.document
+        for candidate, selected_text, rank_item in ranked_candidates:
             public_item = candidate.as_public()
-            content_key = document.content_hash
-            existing = by_hash.get(content_key)
-            if existing is not None:
-                rejected_duplicate += 1
-                citation = public_item.get("citation")
-                if citation and citation not in existing.setdefault("citations", []):
-                    existing["citations"].append(citation)
-                continue
-            parent = document.parent_document_id or document.document_id
-            if used_parents.get(parent, 0) >= 3:
-                rejected_parent += 1
-                continue
-            if used_sources.get(document.source_type, 0) >= MAX_PER_SOURCE:
-                rejected_source += 1
-                continue
-            if any(token_similarity(candidate, previous) >= 0.85 for previous in selected_candidates):
-                rejected_diversity += 1
-                continue
-            remaining = MAX_OUTPUT_CHARS - output_chars
-            if remaining <= 0:
-                break
-            if len(public_item["text"]) > remaining:
-                if selected:
-                    break
-                public_item = {**public_item, "text": public_item["text"][:remaining].rstrip()}
-            if not public_item["text"]:
-                continue
-            public_item["citations"] = [public_item["citation"]]
+            public_item.update({
+                "text": selected_text,
+                "confidence": round(float(rank_item.get("confidence") or 0), 6),
+                "source_quality": round(float(rank_item.get("source_quality") or 0), 6),
+                "normalized_score": round(float(rank_item.get("normalized_score") or 0), 6),
+                "fused_score": round(float(rank_item.get("fused_score") or 0), 6),
+            })
+            public_item["citation"] = rank_item.get("citation") or public_item["citation"]
+            public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
             selected.append(public_item)
-            selected_candidates.append(candidate)
-            by_hash[content_key] = public_item
-            used_sources[document.source_type] = used_sources.get(document.source_type, 0) + 1
-            used_parents[parent] = used_parents.get(parent, 0) + 1
-            output_chars += len(public_item["text"])
-            if len(selected) >= requested_limit:
-                break
+        rejected_duplicate = int(rank_stats.get("rejected_duplicate", 0) or 0)
+        rejected_parent = int(rank_stats.get("rejected_parent", 0) or 0)
+        rejected_source = int(rank_stats.get("rejected_source", 0) or 0)
+        rejected_diversity = int(rank_stats.get("rejected_similarity", 0) or 0)
+        output_chars = int(rank_stats.get("output_chars", 0) or 0)
 
         fallback_reasons = [batch.fallback_reason for batch in batches if batch.fallback_reason]
         engines = {batch.metadata.get("engine") for batch in batches if batch.metadata.get("engine")}
@@ -471,28 +411,36 @@ class UnifiedRecallService:
                         stage_ms[f"{batch.source_type}.{key}"] = int(float(value))
                     except (TypeError, ValueError):
                         continue
-        stage_ms["score_filter_ms"] = score_filter_ms
+        stage_ms["rank_candidates_ms"] = int(rank_stats.get("elapsed_ms", 0) or 0)
+        source_diagnostics = rank_stats.get("source_diagnostics") or {
+            batch.source_type: {
+                "candidate_count": batch.candidate_count,
+                "hit_count": len(batch.results),
+                **batch.metadata,
+            }
+            for batch in batches
+        }
         return {
             "query": query,
             "results": selected,
-            "has_more": len(candidates) > len(selected),
+            "has_more": int(rank_stats.get("candidate_count", len(candidate_values)) or 0) > len(selected),
             "strategy": "hybrid" if batches and not all(fallback_reasons) else "bm25",
             "fallback_reason": fallback_reasons[0] if fallback_reasons else None,
             "index_source": ",".join(sorted({batch.index_source for batch in batches})),
             "sources": sorted({batch.source_type for batch in batches}),
             "candidate_count": sum(batch.candidate_count for batch in batches),
             "permission_rejected": permission_rejected,
-            "rejected_low_score": score_stats["rejected_low_score"],
-            "rejected_not_preferred": score_stats["rejected_not_preferred"],
+            "rejected_low_score": rank_stats.get("rejected_low_score", 0),
+            "rejected_not_preferred": rank_stats.get("rejected_not_preferred", 0),
             "rejected_duplicate": rejected_duplicate,
             "rejected_parent": rejected_parent,
             "rejected_source": rejected_source,
             "rejected_diversity": rejected_diversity,
             "accepted_count": len(selected),
-            "top_confidence": score_stats["top_confidence"],
-            "confidence_threshold": score_stats["threshold"],
-            "preferred_confidence_threshold": score_stats["preferred_threshold"],
-            "scoring_version": score_stats["scoring_version"],
+            "top_confidence": rank_stats.get("top_confidence", 0),
+            "confidence_threshold": rank_stats.get("threshold", 0.35),
+            "preferred_confidence_threshold": rank_stats.get("preferred_threshold", 0.55),
+            "scoring_version": rank_stats.get("scoring_version", "confidence-v1"),
             "engine": next(iter(engines)) if len(engines) == 1 else ("mixed" if engines else "unknown"),
             "cache_hit": bool(cache_values) and all(cache_values),
             "cache_entries": (
@@ -505,8 +453,9 @@ class UnifiedRecallService:
             "index_sync": index_syncs[-1] if index_syncs else None,
             "upsert_count": upsert_count,
             "delete_count": delete_count,
-            "score_filter_ms": score_filter_ms,
+            "rank_candidates_ms": int(rank_stats.get("elapsed_ms", 0) or 0),
             "stage_ms": stage_ms,
+            "source_diagnostics": source_diagnostics,
         }
 
 
@@ -550,6 +499,7 @@ async def search_memory(
         cache_entries=result.get("cache_entries"),
         cache_miss_reasons=result.get("cache_miss_reasons"),
         stages=result.get("stage_ms"),
+        source_diagnostics=result.get("source_diagnostics"),
         sidecar_reused=result.get("sidecar_reused"),
         quality={
             key: result.get(key)
@@ -567,19 +517,26 @@ async def search_memory(
 
 async def search_knowledge(
     user_id, query: str, *, scope="auto", source: str = "all", strategy: str = "bm25",
-    limit: int = DEFAULT_RESULTS, mode: str = "automatic", db=None,
+    limit: int = DEFAULT_RESULTS, mode: str = "automatic", db=None, db_factory=None,
+    exclude_content_hashes: set[str] | None = None,
 ) -> dict:
-    """统一 Knowledge 入口：当前阶段注册 Memory 与 Project 两个来源。
+    """统一 Knowledge 入口：注册 memory、knowledge、project、file、canvas、conversation 来源。
 
-    `search_memory` 保持记忆专用工具语义；自动召回和后续跨来源入口使用本函数。
+    `search_memory` 保持记忆专用工具语义；自动召回和跨来源入口使用本函数。
     """
     started = time.monotonic()
     query = (query or "").strip()
     if not query:
         return {"query": "", "results": [], "has_more": False, "message": "需要提供检索关键词"}
-    if db is None:
-        # Web/IM 的自动召回通常没有沿调用链携带 DB session；在这里短暂打开一份，
-        # 让 Project 等数据库来源也能复用统一持久化 TypeScript lexical 索引。
+    if scope == "auto":
+        # 自动 Knowledge 召回没有直接的 IM scope 参数时只允许 owner 范围；
+        # 群聊调用方必须先传入已完成 ACL 校验的 Scope，不能把字符串 auto
+        # 传给来源适配器后静默跳过所有新增来源。
+        from agent.rag.scope import owner_scope
+        scope = owner_scope(user_id)
+    if db is None and db_factory is None:
+        # Web/IM 的自动召回通常没有沿调用链携带 DB session。把 sessionmaker
+        # 传给各数据库来源，让并行 retriever 各自创建和释放独立会话。
         import app.db.session as db_session
         # 统一走 ensure_engine，处理跨事件循环和 reset_engine 的生命周期，
         # 不要直接读取 _engine 再调用私有构造函数。
@@ -587,18 +544,23 @@ async def search_knowledge(
         session_factory = db_session._SessionLocal
         if session_factory is None:
             raise RuntimeError("RAG 数据库会话工厂未初始化")
-        async with session_factory() as search_db:
-            return await search_knowledge(
-                user_id, query, scope=scope, source=source, strategy=strategy,
-                limit=limit, mode=mode, db=search_db,
-            )
-    service = UnifiedRecallService(UnifiedRetriever([
+        db_factory = session_factory
+    retrievers = [
         MemoryRetriever(user_id),
         KnowledgeAdapter(user_id),
-        ProjectRetriever(user_id, db=db),
-    ]))
+        ProjectRetriever(user_id, db=db, db_factory=db_factory),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="file"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="canvas"),
+        IndexedSourceRetriever(user_id, db=db, db_factory=db_factory, source_type="conversation"),
+    ]
+    if mode == "automatic" and source == "all":
+        from app.core.config import get_settings
+        enabled = set(get_settings().search.rag_auto_sources)
+        retrievers = [item for item in retrievers if item.source_type in enabled]
+    service = UnifiedRecallService(UnifiedRetriever(retrievers))
     result = await service.search(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
+        exclude_content_hashes=exclude_content_hashes,
     )
     record_recall(
         namespace="knowledge", source_type="all" if source == "all" else source,

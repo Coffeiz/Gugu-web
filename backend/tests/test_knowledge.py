@@ -132,26 +132,6 @@ async def test_knowledge_delete_is_tombstoned_and_removed_from_active_results(kn
     assert history[0].active is False
 
 
-def test_knowledge_confidence_affects_unified_recall_score():
-    from agent.rag.models import IndexDocument, RecallCandidate, Scope
-    from agent.rag.scoring import confidence_for
-
-    def candidate(confidence):
-        document = IndexDocument(
-            document_id=f"knowledge-{confidence}", source_type="knowledge",
-            source_id=f"knowledge-{confidence}", scope=Scope(owner_user_id="user-a"),
-            title="部署规则", summary="部署", content="只使用 Linux",
-            version="1", metadata={"confidence": confidence},
-        )
-        return RecallCandidate.from_result(
-            type("Result", (), {"document": document, "score": 1.0})(), rank=1,
-        )
-
-    confirmed = confidence_for("部署规则", candidate("confirmed"))
-    conflict = confidence_for("部署规则", candidate("conflict"))
-    assert confirmed.confidence > conflict.confidence
-
-
 @pytest.mark.asyncio
 async def test_knowledge_store_uses_one_markdown_file_per_entry(knowledge_storage):
     store = KnowledgeStore("user-a")

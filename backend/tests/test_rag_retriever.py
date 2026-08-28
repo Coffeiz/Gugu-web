@@ -1,11 +1,71 @@
+import asyncio
 import pytest
+from contextlib import asynccontextmanager
 
+from agent.rag import service as rag_service
 from agent.rag.adapters.projects import ProjectAdapter
 from agent.rag.models import IndexDocument, RecallResult, Scope
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.service import UnifiedRecallService
 from agent.rag.scope import group_scope, owner_scope
 from app.models import Project
+
+
+@pytest.fixture(autouse=True)
+def _mock_ts_ranker(monkeypatch):
+    """服务单测隔离进程边界；完整 TS 选择算法由 Worker protocol 测试覆盖。"""
+    async def rank(_owner, _query, candidates, *, limit, max_chars, max_per_source, max_per_parent):
+        selected = []
+        hashes = set()
+        source_counts = {}
+        parent_counts = {}
+        output_chars = 0
+        duplicate = parent = source = 0
+        for candidate in candidates:
+            document = candidate.document
+            if document.content_hash in hashes:
+                duplicate += 1
+                for previous_candidate, _, rank_item in selected:
+                    if previous_candidate.document.content == document.content:
+                        rank_item["citations"].append(candidate.as_public()["citation"])
+                        break
+                continue
+            parent_id = document.parent_document_id or document.document_id
+            if parent_counts.get(parent_id, 0) >= max_per_parent:
+                parent += 1
+                continue
+            if source_counts.get(document.source_type, 0) >= max_per_source:
+                source += 1
+                continue
+            remaining = max_chars - output_chars
+            if remaining <= 0:
+                break
+            from dataclasses import replace
+            if len(document.content) > remaining:
+                candidate = replace(candidate, document=replace(document, content=document.content[:remaining]))
+            selected.append((candidate, candidate.document.content, {
+                "confidence": 0.9, "source_quality": 0.9,
+                "normalized_score": candidate.normalized_score,
+                "fused_score": candidate.fused_score or candidate.raw_score,
+                "citation": candidate.as_public()["citation"],
+                "citations": [candidate.as_public()["citation"]],
+            }))
+            hashes.add(document.content_hash)
+            source_counts[document.source_type] = source_counts.get(document.source_type, 0) + 1
+            parent_counts[parent_id] = parent_counts.get(parent_id, 0) + 1
+            output_chars += len(candidate.document.content)
+            if len(selected) >= limit:
+                break
+        return selected, {
+            "candidate_count": len(candidates), "accepted_count": len(selected),
+            "rejected_duplicate": duplicate, "rejected_parent": parent,
+            "rejected_source": source, "rejected_similarity": 0,
+            "output_chars": output_chars, "rejected_low_score": 0,
+            "rejected_not_preferred": 0, "top_confidence": 0.9,
+            "threshold": 0.35, "preferred_threshold": 0.55,
+            "scoring_version": "confidence-v1", "elapsed_ms": 0,
+        }
+    monkeypatch.setattr(rag_service, "rank_candidates_with_cache", rank)
 
 
 class FakeRetriever:
@@ -42,6 +102,36 @@ async def test_unified_retriever_dispatches_registered_source():
 
     assert retriever.sources() == ("fake",)
     assert batches[0].results[0].document.content == "缓存"
+
+
+@pytest.mark.asyncio
+async def test_database_retrievers_use_independent_sessions_for_parallel_recall():
+    """并行来源不能共享 AsyncSession，否则超时收尾会触发 SQLAlchemy 状态竞争。"""
+    from agent.rag.adapters.indexed_sources import IndexedSourceRetriever
+
+    sessions = []
+
+    @asynccontextmanager
+    async def session_factory():
+        session = object()
+        sessions.append(session)
+        yield session
+
+    retrievers = [
+        IndexedSourceRetriever(
+            "user-a", db_factory=session_factory, source_type=source_type,
+        )
+        for source_type in ("file", "canvas", "conversation")
+    ]
+
+    async def use_session(retriever):
+        async with retriever.session_scope() as session:
+            await asyncio.sleep(0)
+            return session
+
+    acquired = await asyncio.gather(*(use_session(item) for item in retrievers))
+    assert len({id(session) for session in acquired}) == 3
+    assert len(sessions) == 3
 
 
 def test_unified_retriever_rejects_duplicate_source():

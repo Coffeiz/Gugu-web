@@ -1,7 +1,6 @@
 import pytest
 
 from agent.events.types import RagIndexUpdated
-from agent.rag.index import InMemoryIndex
 from agent.rag.models import IndexDocument, Scope
 
 
@@ -10,22 +9,6 @@ def _doc(version: str, position: int = 0):
         "memory:event", "memory", "memory", Scope("user-a"), "事件", "", "内容", version,
         chunk_index=position, parent_document_id="memory:event",
     )
-
-
-def test_upsert_replaces_old_document_version():
-    index = InMemoryIndex()
-    index.upsert(_doc("v1", 0))
-    index.upsert(_doc("v1", 1))
-    index.upsert(_doc("v2", 0))
-    assert [item.version for item in index.documents()] == ["v2"]
-
-
-def test_invalidate_removes_all_chunks():
-    index = InMemoryIndex()
-    index.upsert(_doc("v1", 0))
-    index.upsert(_doc("v1", 1))
-    assert index.invalidate("memory:event") == 2
-    assert index.documents() == []
 
 
 def test_index_invalidation_keeps_snapshot_baseline():

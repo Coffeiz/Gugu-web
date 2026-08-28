@@ -24,7 +24,7 @@ from agent.rag.models import RecallCandidate, Scope
 from agent.rag.scope import owner_scope, group_scope
 from agent.rag.service import _load_cached_vectors
 from agent.rag.index_cache import search_documents_with_cache
-from agent.rag.ts_sidecar import score_candidates_with_cache
+from agent.rag.ts_sidecar import rank_candidates_with_cache
 from app.models import MemoryReflectionCursor, User
 
 
@@ -91,19 +91,6 @@ def public(
     return value
 
 
-def _normalize_candidates(candidates: list[RecallCandidate]) -> list[RecallCandidate]:
-    if not candidates:
-        return []
-    scores = [candidate.raw_score for candidate in candidates]
-    low, high = min(scores), max(scores)
-    if high <= low:
-        values = [max(0.0, score) / (1.0 + max(0.0, score)) for score in scores]
-    else:
-        values = [(score - low) / (high - low) for score in scores]
-    from dataclasses import replace
-    return [replace(candidate, normalized_score=value) for candidate, value in zip(candidates, values)]
-
-
 async def quality_views(
     owner_id: str, query: str, results, *, top_k: int, full: bool = False,
 ) -> dict[str, Any]:
@@ -113,23 +100,17 @@ async def quality_views(
         RecallCandidate.from_result(item, rank=index)
         for index, item in enumerate(raw, start=1)
     ]
-    normalized = _normalize_candidates(candidates)
-    normalized_kept = [item for item in normalized if item.normalized_score >= 0.35]
-    from dataclasses import replace
-    confidence_candidates = [replace(item, fused_score=item.normalized_score) for item in normalized]
-    confidence_kept, confidence_stats = await score_candidates_with_cache(
-        owner_id, query, confidence_candidates, limit=top_k,
+    confidence_kept, confidence_stats = await rank_candidates_with_cache(
+        owner_id, query, candidates, limit=top_k, max_chars=3000,
+        max_per_source=3, max_per_parent=3,
     )
     return {
         "unfiltered": [public(item, item.score, mode="unfiltered", full=full) for item in raw[:top_k]],
         "raw_score": [public(item, item.score, mode="raw_score", full=full) for item in raw[:top_k]],
-        "normalized_score": [
-            public(item, item.raw_score, mode="normalized_score", norm=item.normalized_score, full=full)
-            for item in normalized_kept[:top_k]
-        ],
+        "normalized_score": [],
         "confidence": [
-            public(item.document, item.confidence, mode="confidence", norm=item.confidence, full=full)
-            for item in confidence_kept
+            public(item.document, item.get("confidence", 0), mode="confidence", norm=item.get("confidence", 0), full=full)
+            for _, _, item in confidence_kept
         ],
         "confidence_stats": confidence_stats,
     }

@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from agent.rag.models import IndexDocument, RecallResult, Scope
+from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.scope import matches_scope
 
 
@@ -30,6 +30,7 @@ class TsSidecarClient:
         self._lock = asyncio.Lock()
         self._revision: str | None = None
         self._document_count = 0
+        self.last_search_diagnostics: dict[str, Any] = {}
 
     async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
         response = await self._request({
@@ -39,6 +40,17 @@ class TsSidecarClient:
         })
         self._revision = response.get("revision")
         self._document_count = int(response.get("document_count") or len(documents))
+
+    async def build_documents(self, batch: dict[str, list[dict]]) -> list[dict]:
+        """让 TS builder 从统一 source batch 生成 canonical 文档；不读取业务数据库。"""
+        response = await self._request({"op": "build_documents", "batch": batch})
+        return list(response.get("documents") or [])
+
+    async def build_and_index(self, batch: dict[str, list[dict]], revision: str) -> dict:
+        """在 TS worker 内完成 source projection、分块和索引更新，避免回传完整文档。"""
+        return await self._request({
+            "op": "build_and_index", "revision": revision, "batch": batch,
+        })
 
     async def patch(
         self,
@@ -92,6 +104,7 @@ class TsSidecarClient:
                 "scope_id": scope.scope_id,
             }} if scope is not None else {}),
         })
+        self.last_search_diagnostics = dict(response.get("diagnostics") or {})
         results: list[RecallResult] = []
         for item in response.get("results") or []:
             document = documents.get(str(item.get("id")))
@@ -104,12 +117,21 @@ class TsSidecarClient:
             results.append(RecallResult(document, float(item.get("score") or 0)))
         return results
 
-    async def score_filter(self, query: str, candidates: list[dict], *, limit: int) -> tuple[list[dict], dict]:
+    async def rank_candidates(
+        self, query: str, candidates: list[dict], *, limit: int,
+        max_chars: int, max_per_source: int, max_per_parent: int,
+        exclude_content_hashes: set[str] | None = None,
+    ) -> tuple[list[dict], dict]:
+        """调用 TS 完成来源归一化、confidence 过滤和统一预算。"""
         response = await self._request({
-            "op": "score_filter",
+            "op": "rank_candidates",
             "query": query,
-            "limit": max(1, int(limit)),
             "candidates": candidates,
+            "limit": max(1, int(limit)),
+            "max_chars": max(1, int(max_chars)),
+            "max_per_source": max(1, int(max_per_source)),
+            "max_per_parent": max(1, int(max_per_parent)),
+            "exclude_content_hashes": sorted(exclude_content_hashes or set()),
         })
         return list(response.get("selected") or []), dict(response.get("stats") or {})
 
@@ -220,75 +242,126 @@ def _worker_document_key(document: IndexDocument) -> str:
     return f"{document.source_type}:{parent}:{document.chunk_index}"
 
 
-_score_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, TsSidecarClient] = weakref.WeakKeyDictionary()
+_lexical_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, TsSidecarClient]] = weakref.WeakKeyDictionary()
 
 
-async def score_candidates_with_cache(
+def _index_document_digest(document: IndexDocument) -> str:
+    """只计算影响词法索引的字段，版本变化不应触发无意义 upsert。"""
+    payload = "\x1f".join((
+        _worker_document_key(document),
+        document.source_type,
+        document.title,
+        document.summary,
+        document.content,
+    ))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+async def get_lexical_client(owner_user_id: object, *, command: str, index_dir: str) -> TsSidecarClient:
+    """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。"""
+    owner_key = str(owner_user_id)
+    loop = asyncio.get_running_loop()
+    clients = _lexical_clients.setdefault(loop, {})
+    client = clients.get(owner_key)
+    if client is None:
+        client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
+        clients[owner_key] = client
+    return client
+
+
+_rank_clients: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, TsSidecarClient] = weakref.WeakKeyDictionary()
+
+
+async def rank_candidates_with_cache(
     owner_user_id: object,
     query: str,
-    candidates: list[Any],
+    candidates: list[RecallCandidate],
     *,
     limit: int,
-) -> tuple[list[Any], dict]:
-    """用复用的 TS worker 完成 confidence/filter，返回更新后的候选。"""
-
-    from dataclasses import replace
-    from app.core.config import get_settings
-
+    max_chars: int,
+    max_per_source: int,
+    max_per_parent: int,
+    exclude_content_hashes: set[str] | None = None,
+) -> tuple[list[tuple[RecallCandidate, str, dict]], dict]:
+    """调用 TS 完成完整的候选评分、过滤、去重和预算。"""
     if not candidates:
         return [], {
-            "accepted_count": 0,
-            "rejected_low_score": 0,
-            "rejected_not_preferred": 0,
-            "top_confidence": 0.0,
-            "threshold": 0.35,
-            "preferred_threshold": 0.55,
+            "candidate_count": 0, "accepted_count": 0,
+            "rejected_duplicate": 0, "rejected_parent": 0,
+            "rejected_source": 0, "rejected_similarity": 0,
+            "output_chars": 0, "rejected_low_score": 0,
+            "rejected_not_preferred": 0, "top_confidence": 0.0,
+            "threshold": 0.35, "preferred_threshold": 0.55,
             "scoring_version": "confidence-v1",
         }
-    # score_filter 不持有 owner-specific index；按 event loop 共享一个 worker，
-    # 避免每个用户永久保留一个 Node 子进程。
+    from app.core.config import get_settings
+
     loop = asyncio.get_running_loop()
-    client = _score_clients.get(loop)
+    client = _rank_clients.get(loop)
     if client is None:
         settings = get_settings().search
         client = TsSidecarClient(
-            f"score:{id(loop)}",
-            command=settings.ts_sidecar_command,
-            index_dir="",
+            f"score:{id(loop)}", command=settings.ts_sidecar_command, index_dir="",
         )
-        _score_clients[loop] = client
+        _rank_clients[loop] = client
+    by_id: dict[str, RecallCandidate] = {}
     payload = []
-    by_id = {}
     for index, candidate in enumerate(candidates):
         candidate_id = f"{candidate.source_type}:{candidate.document.chunk_id}:{index}"
         by_id[candidate_id] = candidate
+        document = candidate.document
         payload.append({
             "id": candidate_id,
             "source_type": candidate.source_type,
-            "title": candidate.document.title,
-            "summary": candidate.document.summary,
-            "content": candidate.document.content,
-            "confidence": candidate.document.metadata.get("confidence"),
-            "normalized_score": candidate.normalized_score,
-            "fused_score": candidate.fused_score,
+            "raw_score": candidate.raw_score,
+            "rank": candidate.rank,
+            "fusion": "hybrid-rrf" if candidate.fused_score else "bm25",
+            "fused_score": candidate.fused_score if candidate.fused_score else None,
+            "document": {
+                "id": candidate_id,
+                "text": document.content,
+                "source_type": document.source_type,
+                "title": document.title,
+                "summary": document.summary,
+                "scope_type": document.scope.scope_type,
+                "scope_id": document.scope.scope_id,
+                "platform": document.scope.platform,
+                "bot_id": document.scope.bot_id,
+                "group_id": document.scope.group_id,
+                "document_version": document.version,
+                "parent_id": document.parent_document_id or document.document_id,
+                "chunk_index": document.chunk_index,
+                "chunk_count": document.chunk_count,
+                "updated_at": document.updated_at,
+                "metadata": document.metadata,
+            },
         })
-    selected, stats = await client.score_filter(query, payload, limit=limit)
-    updated = []
+    selected, stats = await client.rank_candidates(
+        query, payload, limit=limit, max_chars=max_chars,
+        max_per_source=max_per_source, max_per_parent=max_per_parent,
+        exclude_content_hashes=exclude_content_hashes,
+    )
+    output = []
     for item in selected:
-        candidate = by_id.get(str(item.get("id")))
-        if candidate is not None:
-            updated.append(replace(
-                candidate,
-                confidence=float(item.get("confidence") or 0),
-                source_quality=float(item.get("source_quality") or 0),
-            ))
-    return updated, stats
+        candidate = by_id.get(str(item.get("id") or ""))
+        if candidate is None:
+            continue
+        output.append((candidate, str(item.get("text") or ""), item))
+    return output, stats
 
 
-async def close_score_clients() -> None:
-    """关闭 score_filter 共享 worker，供应用和 worker shutdown 调用。"""
-    clients = list(_score_clients.values())
-    _score_clients.clear()
+async def close_lexical_clients() -> None:
+    """应用退出时统一关闭 owner 级常驻 lexical worker。"""
+    clients = [client for group in _lexical_clients.values() for client in group.values()]
+    _lexical_clients.clear()
+    if clients:
+        await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+
+
+async def close_rank_clients() -> None:
+    """应用退出时关闭共享的 TS 候选排序 worker。"""
+    clients = list(_rank_clients.values())
+    _rank_clients.clear()
     if clients:
         await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
 
@@ -314,5 +387,6 @@ def _timeout_seconds() -> float:
 
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
-    "score_candidates_with_cache", "close_score_clients",
+    "rank_candidates_with_cache",
+    "get_lexical_client", "close_lexical_clients", "close_rank_clients",
 ]

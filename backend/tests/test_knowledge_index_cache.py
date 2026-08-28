@@ -45,7 +45,10 @@ def _use_fake_sidecar(monkeypatch):
         async def close(self):
             return None
 
-    monkeypatch.setattr("agent.rag.index_cache.TsSidecarClient", FakeSidecar)
+    async def get_fake_sidecar(*_args, **_kwargs):
+        return FakeSidecar()
+
+    monkeypatch.setattr("agent.rag.index_cache.get_lexical_client", get_fake_sidecar)
 
 
 @pytest.mark.asyncio
@@ -214,7 +217,10 @@ async def test_cache_build_reuses_persistent_sidecar_revision(monkeypatch):
         async def close(self):
             return None
 
-    monkeypatch.setattr("agent.rag.index_cache.TsSidecarClient", PersistentSidecar)
+    async def get_persistent_sidecar(*_args, **_kwargs):
+        return PersistentSidecar()
+
+    monkeypatch.setattr("agent.rag.index_cache.get_lexical_client", get_persistent_sidecar)
     cache = KnowledgeIndexCache(ttl_seconds=1800, owner_limit_bytes=10_000_000)
     first = await cache.get_transient("user-a", [document], revision="v1")
     assert isinstance(first, object)

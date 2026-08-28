@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-from typing import Protocol
 
 from app.services.storage import get_storage
-from agent.rag.index import InMemoryIndex
 from agent.rag.models import IndexDocument, Scope
 
 
@@ -70,12 +68,6 @@ def _document_from_record(record: dict) -> IndexDocument | None:
         return None
 
 
-class IndexStore(Protocol):
-    def upsert(self, document: IndexDocument) -> None: ...
-    def invalidate(self, document_id: str) -> int: ...
-    def documents(self) -> list[IndexDocument]: ...
-
-
 class PersistentMemoryIndex:
     """按 owner 保存的可重建 JSON 索引。
 
@@ -119,4 +111,4 @@ class PersistentMemoryIndex:
         await get_storage().delete(_index_key(self.user_id))
 
 
-__all__ = ["IndexStore", "InMemoryIndex", "PersistentMemoryIndex"]
+__all__ = ["PersistentMemoryIndex"]

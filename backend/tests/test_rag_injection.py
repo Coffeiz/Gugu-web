@@ -158,8 +158,12 @@ async def test_automatic_recall_respects_global_rag_switch(monkeypatch):
 @pytest.mark.asyncio
 async def test_automatic_recall_does_not_repeat_persisted_hash(monkeypatch):
     from agent.rag import injection
+    captured: dict = {}
 
     async def fake_search(*args, **kwargs):
+        captured.update(kwargs)
+        if "already-there" in kwargs["exclude_content_hashes"]:
+            return {"candidate_count": 1, "results": []}
         return {"candidate_count": 1, "results": [{
             "text": "稳定记忆", "content_hash": "already-there",
             "citation": {"source_type": "memory", "title": "记忆"},
@@ -176,6 +180,7 @@ async def test_automatic_recall_does_not_repeat_persisted_hash(monkeypatch):
 
     assert result["tail"] == []
     assert result["blocks"] == []
+    assert captured["exclude_content_hashes"] == {"already-there", "block-hash"}
 
 
 @pytest.mark.asyncio
