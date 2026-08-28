@@ -258,7 +258,24 @@ const todayStr = computed(() => {
 
 .topbar-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+/* 顶栏搜索框和操作按钮共享同一个中号控件高度，避免 Arco 默认尺寸让按钮比搜索框短。 */
+.topbar-actions .arco-btn {
+  box-sizing: border-box;
+  height: var(--control-height-md);
+  min-height: var(--control-height-md);
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: var(--control-height-md);
+}
+.topbar-actions .btn-content {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  line-height: var(--line-height-ui);
 }
 
 /* 顶栏按钮不做悬停上浮；上传文件走次要按钮 token，新建项目走全局 press-fx 阴影。 */

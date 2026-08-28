@@ -359,10 +359,12 @@ Phase 1 实际补充修复：为 `backend/ts` 声明 `@types/node`，并让其 `
 
 每完成一个 commit 或一个拆分后的前端补丁，将对应 `[ ]` 改为 `[x]`，并在阶段记录实际保留的文件范围。
 
-- [ ] 按前端提交清单恢复 Vue 页面、组件、交互、样式、LoopScope 和 Admin 修复。
-- [ ] 保持现有 design token、多主题、权限边界和路由行为，不引入 TS API 地址或 TS Agent 依赖。
-- [ ] 修复前端对 FastAPI SSE/WebSocket、文件流、工具事件和实时资源事件的调用契约。
-- [ ] 完成前端 typecheck/build、关键页面回归和 LoopScope 数据展示验证。
+- [x] 按前端提交清单恢复 Vue 页面、组件、交互、样式、LoopScope 和 Admin 修复。
+- [x] 保持现有 design token、多主题、权限边界和路由行为，不引入 TS API 地址或 TS Agent 依赖。
+- [x] 修复前端对 FastAPI SSE/WebSocket、文件流、工具事件和实时资源事件的调用契约。
+- [x] 完成前端 typecheck/build、关键页面回归和 LoopScope 数据展示验证。
+
+Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为 `2fda197b`、`ff4dabc9` 及当前收尾提交；`89862932` 无前端改动，`8dc3b228` 仅含后端改动，均按恢复范围排除。最终验证通过：Vitest `50 files / 323 tests`、`vue-tsc --noEmit`、Vite 生产构建。
 
 ### Phase 3：恢复 Python Agent 与 FastAPI 平台
 
