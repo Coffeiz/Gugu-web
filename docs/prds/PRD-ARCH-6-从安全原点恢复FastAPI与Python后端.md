@@ -420,7 +420,7 @@ Phase 3.5 验证记录（2026-08-28）：
 - Schema：数据库公共表 43 张；当前 Python 模型 40 张业务表全部存在。额外的 `conversation_batches` 由 Python canonical history 使用，`mind_canvas_batch_requests` 由 Python 画布批处理幂等服务使用，均保留。
 - 数据抽样：users 19、conversation_sessions 113、conversation_messages 8589、files 519、folders 214、projects 105、mind_nodes 510、mind_canvas_items 140、memory_entries 446、knowledge_index_entries 4063、scheduled_tasks 6、terminal_sessions 2、terminal_events 109。
 - 服务冒烟：`gugu-backend`、`gugu-worker`、`gugu-supervisor` 均为 active，FastAPI 本机健康检查返回 HTTP 200。`alembic check` 仍报告 TS 迁移遗留索引/类型与当前模型的差异；由于其中包含已有数据和 Python 仍使用的结构，本阶段不执行自动删除，后续由专门 schema 收口阶段处理。
-- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api` 与 `gugu-live`，未发现 TS Agent/Live 进程；当前 Python 后端、Worker、Supervisor 为唯一运行中的 Agent/API 后端 owner。
+- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api`，未启动 TS Agent；`gugu-live` 仍作为实时事件迁移前的过渡入口保留，待 Phase 6 由 FastAPI 接管后再清理。当前 Python 后端、Worker、Supervisor 是唯一的 Agent/API 业务 owner。
 
 数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
 
@@ -452,21 +452,29 @@ Phase 4 验证记录（2026-08-28）：
 
 ### Phase 5：恢复 Makefile、部署与运维
 
-候选 commit（初始状态，均待按 Makefile、部署和运维路径拆分）：
+候选 commit（按 Makefile、部署和运维路径拆分后已完成）：
 
 ```text
-[ ] 767419d0  [ ] f555af75  [ ] 13b70e68  [ ] fd1cf6b9  [ ] bf5af00e
-[ ] 8a2f1c9d  [ ] f358ec66  [ ] 0978e462  [ ] b4cbd230  [ ] fc59c63d
-[ ] 821b4393
+[x] 767419d0  [x] f555af75  [x] 13b70e68  [x] fd1cf6b9  [x] bf5af00e
+[x] 8a2f1c9d  [x] f358ec66  [x] 0978e462  [x] b4cbd230  [x] fc59c63d
+[x] 821b4393
 ```
 
 本阶段允许一个 commit 拆成多个职责补丁：pnpm、Python、TS RAG 和 sandbox 相关部分可以保留；TS API/TS Agent 服务部分必须排除并记录。
 
-- [ ] 重新整理 `make install/update/start/stop/restart`，默认只启动 FastAPI、Python worker 和 TS RAG worker。
-- [ ] 保留 pnpm workspace、前端/RAG 构建和固定构建物，不在业务运行时自建 TS API/TS Agent。
-- [ ] 保留必要的数据库、文件迁移、sandbox、ACL、Compose 和部署能力，但按当前 Python/FastAPI owner 更新依赖顺序。
-- [ ] 清理 TS API/TS Agent systemd、Compose、Dockerfile、bin、环境变量和默认启动项。
-- [ ] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有悬挂 TS API/Agent 入口。
+- [x] 重新整理 `make install/update/start/stop/restart`；核心服务只启动 FastAPI、Python worker/supervisor 和 sandboxd，TS RAG 由 Python adapter 按需复用固定制品。
+- [x] 保留 pnpm workspace、前端/RAG 构建和固定构建物，不在业务运行时编译或启动 TS API/TS Agent。
+- [x] 保留数据库、文件迁移、sandbox、ACL、Compose 和部署能力，并按当前 Python/FastAPI owner 保持依赖顺序。
+- [x] 清理 TS API/TS Agent 的独立启动入口、systemd/Compose/build 依赖和默认启动项；当前仓库仅保留 `gugu-live` 作为 Phase 6 实时事件迁移遗留入口。
+- [x] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有 TS API/TS Agent 业务入口；实时事件相关引用统一登记到 Phase 6。
+
+Phase 5 实施记录（2026-08-28）：
+
+- `backend/start.sh` 与 `backend/Makefile` 已统一四个核心 systemd 服务清单，不再安装或默认启动 TS API/TS Agent；TS RAG 仅通过 `backend/bin/gugu-rag-ts-worker.mjs` 由 Python sidecar 拉起。
+- `backend/deploy.sh` 的默认构建流程已先构建固定 TS RAG 制品，再构建前端；`--no-build` 仍可跳过全部构建。
+- Docker Compose 保留 Python backend/worker、迁移、sandboxd、文件数据和受控 egress；未发现 TS API/TS Agent Compose 服务。
+- `gugu-live.service`、`backend/ts/api/live.ts` 和前端 Live SSE 配置未在本阶段删除，因为实时事件入口回迁属于 Phase 6；删除它们前必须先完成 FastAPI SSE/事件替代并回归实时刷新。
+- 校验：`bash -n backend/start.sh backend/deploy.sh`、`make -C backend help`、TS RAG 固定制品版本检查通过；未执行会修改用户配置或数据库的安装动作。
 
 ### Phase 6：全链路验收与实时事件收口
 
