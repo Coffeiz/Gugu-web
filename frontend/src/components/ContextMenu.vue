@@ -1,36 +1,15 @@
 <template>
-  <Teleport to="body">
-    <Transition name="menu-pop">
-      <div v-if="show" ref="el" class="ctx-menu popup-menu" :style="style" @click.stop @contextmenu.prevent>
+  <PopupMenu :show="show" :position="{ x: x ?? 0, y: y ?? 0 }" popup-class="ctx-menu popup-menu">
         <slot />
-      </div>
-    </Transition>
-  </Teleport>
+  </PopupMenu>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
-import { nextZ, registerPopover } from '@/composables/windowz'
+import { watch, nextTick, onUnmounted } from 'vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({ show: Boolean, x: Number, y: Number })
 const emit  = defineEmits(['close'])
-const el    = ref<HTMLElement | null>(null)
-
-// 每次弹出领新 z：保证盖在当前最顶的窗口（编辑卡/预览器…）之上
-const myZ = ref(0)
-watch(() => props.show, v => { if (v) myZ.value = nextZ() })
-let unregisterPopover: (() => void) | null = null
-watch(() => props.show, v => {
-  unregisterPopover?.()
-  unregisterPopover = v ? registerPopover(z => { myZ.value = z }) : null
-})
-
-const style = computed(() => ({
-  position: 'fixed' as const,
-  left: (props.x ?? 0) + 'px',
-  top:  (props.y ?? 0) + 'px',
-  zIndex: myZ.value,
-}))
 
 function close() { emit('close') }
 
@@ -42,11 +21,7 @@ watch(() => props.show, async (v) => {
   if (v) {
     await nextTick()
     // 边缘修正
-    if (el.value) {
-      const rect = el.value.getBoundingClientRect()
-      if (rect.right  > window.innerWidth)  el.value.style.left = ((props.x ?? 0) - rect.width)  + 'px'
-      if (rect.bottom > window.innerHeight) el.value.style.top  = ((props.y ?? 0) - rect.height) + 'px'
-    }
+    // PopupMenu 负责 Teleport、层级和定位；菜单内容只处理边界关闭事件。
     setTimeout(() => document.addEventListener('click',       close, { once: true }), 0)
     setTimeout(() => document.addEventListener('contextmenu', close, { once: true }), 0)
     document.addEventListener('keydown', onKey)
@@ -58,7 +33,6 @@ watch(() => props.show, async (v) => {
 })
 
 onUnmounted(() => {
-  unregisterPopover?.()
   document.removeEventListener('keydown', onKey)
   document.removeEventListener('click',       close)
   document.removeEventListener('contextmenu', close)

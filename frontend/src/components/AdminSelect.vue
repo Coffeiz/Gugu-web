@@ -5,25 +5,21 @@
       <FlipChevron :open="show" :size="11" class="asel-chevron" />
     </div>
 
-    <Teleport to="body">
-      <Transition name="menu-pop">
-        <div v-if="show" class="asel-popup popup-menu-dark asel-popup--model-list" :style="popupStyle">
+    <PopupMenu :show="show" :anchor="wrapRef" popup-class="asel-popup popup-menu-dark asel-popup--model-list">
           <button
             v-for="opt in options" :key="opt.value"
             class="popup-menu-item"
             :class="{ active: modelValue === opt.value }"
-            @click="select(opt.value)"
+            @mousedown.prevent="select(opt.value)"
           >{{ opt.label }}</button>
-        </div>
-      </Transition>
-    </Teleport>
+    </PopupMenu>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch, type PropType } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import FlipChevron from '@/components/common/FlipChevron.vue'
-import { nextZ, registerPopover } from '@/composables/windowz'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -34,9 +30,6 @@ const emit = defineEmits(['update:modelValue'])
 
 const show      = ref(false)
 const wrapRef   = ref<HTMLElement | null>(null)
-const popupStyle = ref({})
-const popupZ = ref(0)
-let unregisterPopover: (() => void) | null = null
 
 const selectedLabel = computed(() =>
   props.options.find(o => o.value === props.modelValue)?.label ?? props.placeholder
@@ -56,30 +49,6 @@ const triggerMinW = computed(() => {
 
 function toggle() {
   show.value = !show.value
-  if (show.value) {
-    popupZ.value = nextZ()
-    setTimeout(position, 0)
-  }
-}
-
-function position() {
-  const rect = wrapRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const below = rect.bottom + props.options.length * 36 + 16 < window.innerHeight
-  // Trigger already auto-sized to fit longest option; popup matches trigger width
-  const overflow = rect.right > window.innerWidth - 8
-  const style: Record<string, any> = {
-    position: 'fixed',
-    minWidth: `${rect.width}px`,
-    top: below ? `${rect.bottom + 5}px` : `${rect.top - props.options.length * 36 - 16}px`,
-    zIndex: popupZ.value || nextZ(),
-  }
-  if (overflow) {
-    style.right = `${window.innerWidth - rect.right}px`
-  } else {
-    style.left = `${rect.left}px`
-  }
-  popupStyle.value = style
 }
 
 function select(value: any) {
@@ -92,16 +61,9 @@ function onClickOutside(e: MouseEvent) {
   if (!wrapRef.value?.contains(t) && !t?.closest('.asel-popup'))
     show.value = false
 }
-watch(show, v => {
-  // 关闭过渡期间节点仍在 Teleport 到 body，重新领一次层级，避免 leave 动画落到面板后面。
-  if (!v) popupZ.value = nextZ()
-  unregisterPopover?.()
-  unregisterPopover = v ? registerPopover(z => { popupZ.value = z }) : null
-})
 onMounted(() => document.addEventListener('mousedown', onClickOutside))
 onBeforeUnmount(() => {
   document.removeEventListener('mousedown', onClickOutside)
-  unregisterPopover?.()
 })
 </script>
 
@@ -145,5 +107,9 @@ onBeforeUnmount(() => {
   padding: var(--popup-item-padding);
   border-radius: var(--popup-item-radius);
   text-align: left;
+}
+:global(.asel-popup.menu-pop-leave-active) {
+  /* leave 期间仍在 body 中，层级必须高于会动态置顶的 BaseModal 面板。 */
+  z-index: 100001 !important;
 }
 </style>

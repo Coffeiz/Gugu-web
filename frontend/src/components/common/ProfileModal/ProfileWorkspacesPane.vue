@@ -189,7 +189,7 @@ onMounted(load)
 .pm-workspaces-intro { margin: -4px 0 16px; color: var(--content-secondary); font-size: 12px; line-height: 1.6; }
 .pm-workspace-list { display: flex; flex-direction: column; gap: 10px; }
 .pm-workspace-card { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 14px; border: 1px solid var(--workspace-card-border); border-radius: var(--radius-md); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
-.pm-workspace-card:hover { border-color: var(--workspace-card-border-hover); background: var(--workspace-card-bg-hover); box-shadow: var(--workspace-card-shadow-hover); }
+.pm-workspace-card:hover { border-color: var(--theme-action-primary); background: var(--workspace-card-bg); box-shadow: var(--workspace-card-shadow); }
 .pm-workspace-main { min-width: 0; }
 .pm-workspace-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--content-primary); }
 .pm-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 650; }

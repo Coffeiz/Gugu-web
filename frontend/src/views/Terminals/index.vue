@@ -47,7 +47,6 @@
             <input ref="commandInput" v-model="command" :disabled="selected.status === 'terminated' || selected.status === 'exited'" placeholder="输入受控 Shell 命令" autocomplete="off" />
             <ActionButton fit type="submit" :disabled="!command.trim() || submitting || selected.status === 'terminated' || selected.status === 'exited'"><Icon name="action.send" :size="14" />执行</ActionButton>
           </form>
-          <div v-else-if="selected" class="terminal-input-hint">该终端已停止，点击“开启”后可继续输入。</div>
         </main>
       </div>
     </section>
@@ -83,7 +82,7 @@ const live = useLiveStore()
 
 const selected = computed(() => terminals.value.find(item => item.id === selectedId.value) ?? null)
 
-async function load() {
+async function load(options: { autoOpen?: boolean } = {}) {
   try {
     const data = await terminalsApi.list()
     enabled.value = data.enabled
@@ -92,7 +91,7 @@ async function load() {
     if (requestedId && terminals.value.some(item => item.id === requestedId)) selectedId.value = requestedId
     else if (!selectedId.value || !terminals.value.some(item => item.id === selectedId.value)) selectedId.value = terminals.value[0]?.id ?? null
     const current = selected.value
-    if (current?.source === 'user' && current.mode === 'interactive-pty' && ['terminated', 'exited'].includes(current.status)) {
+    if (options.autoOpen && current?.source === 'user' && current.mode === 'interactive-pty' && ['terminated', 'exited'].includes(current.status)) {
       try {
         const reopened = await terminalsApi.reopen(current.id)
         const index = terminals.value.findIndex(item => item.id === reopened.id)
@@ -256,7 +255,7 @@ function closeCurrentTerminal() {
     // 路由离开时请求可能被浏览器取消，后端 detached TTL 仍会回收 PTY。
   })
 }
-onMounted(load)
+onMounted(() => { void load({ autoOpen: true }) })
 onUnmounted(() => {
   streamGeneration++
   eventsAbortController?.abort()
@@ -327,6 +326,7 @@ onUnmounted(() => {
 .terminals-page .terminal-item > * { position:relative; z-index:1; }
 .terminals-page .terminal-item:hover,
 .terminals-page .terminal-item.active { background:var(--surface-raised); border-color:var(--border-hover); box-shadow:var(--elevation-card-hover); }
+.terminals-page .terminal-item.active { outline:1px solid var(--action-outline); outline-offset:1px; }
 .terminals-page .terminal-item:hover::after,
 .terminals-page .terminal-item.active::after { opacity:1; }
 @media(max-width:700px){.terminals-panel{padding:16px}.terminal-layout{grid-template-columns:1fr}.terminal-list{max-height:170px}.terminal-main{min-height:360px}}

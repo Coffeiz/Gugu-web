@@ -1,7 +1,5 @@
 <template>
-  <Teleport to="body">
-    <Transition name="more-pop">
-      <div v-if="open" ref="popup" class="overflow-popup" :style="style">
+  <PopupMenu ref="popup" :show="open" :style="style" popup-class="overflow-popup">
         <div class="overflow-popup-title">{{ dateLabel }}</div>
         <div class="overflow-list">
           <div v-for="item in items" :key="item.id" class="overflow-item cal-chip"
@@ -14,13 +12,12 @@
             <span class="overflow-name">{{ item.name }}</span>
           </div>
         </div>
-      </div>
-    </Transition>
-  </Teleport>
+  </PopupMenu>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { capBg, darkenHex } from '../utils/calendarColors'
 import type { CalendarRenderItem } from '../domain/calendarTypes'
 
@@ -37,7 +34,7 @@ defineEmits<{
   'drag-item': [payload: { item: CalendarRenderItem; event: MouseEvent }]
 }>()
 
-const popup = ref<HTMLElement | null>(null)
+const popup = ref<InstanceType<typeof PopupMenu> | null>(null)
 defineExpose({ contains: (target: Node) => !!popup.value?.contains(target) })
 </script>
 
@@ -50,7 +47,4 @@ defineExpose({ contains: (target: Node) => !!popup.value?.contains(target) })
 .overflow-tag { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; background: rgba(255,255,255,0.5); border-radius: 3px; padding: 0 3px; line-height: 11px; flex-shrink: 0; margin-right: 2px; }
 .overflow-tag-ev { background: rgba(210,175,40,0.35); color: #7a5c00; }
 .overflow-name { overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
-.more-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
-.more-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }
-.more-pop-enter-from,.more-pop-leave-to { opacity: 0; transform: scaleY(0.88); }
 </style>

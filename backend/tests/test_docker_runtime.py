@@ -420,7 +420,7 @@ def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
 
     assert argv[1:5] == ["run", "--interactive", "--tty", "--rm"]
     assert argv[-4].startswith("debian:bookworm-slim@sha256:")
-    assert argv[-3:] == ["bash", "--noprofile", "--norc"]
+    assert argv[-3:] == ["sh", "-c", "printf '%s\\n' '$if Bash' 'set enable-bracketed-paste on' '$endif' > /tmp/gugu-inputrc; export INPUTRC=/tmp/gugu-inputrc; exec bash --noprofile --norc -i"]
     assert r"--env=PS1=gugu-sandbox:\w\$ " in argv
     assert "--cap-drop=ALL" in argv
     assert "--security-opt=no-new-privileges" in argv

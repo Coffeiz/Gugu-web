@@ -194,10 +194,20 @@ class DockerSandboxExecutor:
         """生成交互式 PTY 的固定启动参数，不接受用户自定义 Shell argv。"""
         # 交互式终端需要 readline；Debian 的 /bin/sh 通常是 dash，Tab 只会被
         # 当作制表符回显，无法提供传统 CLI 的命令和路径补全。
+        # --norc 会跳过用户配置；临时 inputrc 放在容器 tmpfs 中，确保 Bash
+        # 真正开启 bracketed paste，避免浏览器粘贴多行内容时逐行执行。
+        shell_command = (
+            "printf '%s\\n' '$if Bash' 'set enable-bracketed-paste on' "
+            "'$endif' > /tmp/gugu-inputrc; export INPUTRC=/tmp/gugu-inputrc; "
+            "exec bash --noprofile --norc -i"
+        )
         argv = self.build_argv(
             "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
             container_name=container_name,
         )
+        # 这段命令是服务端固定的启动脚本，不经过用户命令校验器；前面的
+        # build_argv 仍负责统一应用镜像、挂载、网络和资源限制参数。
+        argv[-3:] = ["sh", "-c", shell_command]
         run_index = argv.index("run")
         argv[run_index + 1:run_index + 1] = ["--interactive", "--tty"]
         # 沙盒用户是刻意固定的数字 UID，镜像未必为它提供 passwd 名称；

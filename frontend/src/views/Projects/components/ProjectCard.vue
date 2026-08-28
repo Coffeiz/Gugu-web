@@ -126,8 +126,8 @@
     </button>
     <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
-  <Teleport to="body">
-    <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
+  <PopupMenu :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-host">
+    <div class="todo-pop" ref="stagePopRef" @click.stop @mousedown.stop>
       <div class="tp-header">
         <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
@@ -163,7 +163,7 @@
       <div v-else class="tp-empty">还没有待办</div>
       <button class="tp-add" @click="addTodo">＋ 添加待办</button>
     </div>
-  </Teleport>
+  </PopupMenu>
   </div>
 </template>
 
@@ -176,6 +176,7 @@ import { runtime } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
 import Icon from '@/components/common/Icon.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
@@ -546,6 +547,7 @@ async function setPriority(n: number) {
 .proj-stage.open .ps-caret { transform: translateY(-0.35px) rotate(180deg); }
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
+.todo-pop-host { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .todo-pop {
   background: rgba(255,255,255,0.6);
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
