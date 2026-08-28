@@ -446,7 +446,7 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 [ ] 未归类但通过功能扫描发现的必要 parity 补丁
 ```
 
-Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的拆分残余、数据库恢复和验收发现；每个残余项必须先归属到具体 owner，再决定保留、重写或排除。
+Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的拆分残余和验收发现；每个残余项必须先归属到具体 owner，再决定保留、重写或排除。
 
 - [ ] 将实时事件 HTTP/SSE/WebSocket owner 明确收口为 FastAPI。
 - [ ] 保留 Python canonical publisher、Redis event bus、事件游标、重连补偿、幂等去重、前端 stores 和 LoopScope 记录。
