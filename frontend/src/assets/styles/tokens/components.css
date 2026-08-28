@@ -132,6 +132,7 @@
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;
+  --gugu-fab-logo-size: 32px;
   --gugu-fab-bg: var(--theme-fab-gradient);
   --gugu-fab-border: transparent;
   --gugu-fab-shadow: 0 4px 18px color-mix(in srgb,var(--action-primary) 32%,transparent), inset 0 1px 0 rgba(255,255,255,.45);

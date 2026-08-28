@@ -715,7 +715,6 @@ backend/agent/rag/
 ├── models.py                # IndexDocument、Scope、RecallResult、IndexVersion
 ├── adapters/
 │   ├── __init__.py
-│   ├── base.py              # SourceAdapter 协议、摘要/分块/版本接口
 │   ├── memory.py             # Memory 来源 adapter
 │   └── projects.py           # Project 来源 adapter（Phase 5）
 ├── chunking.py               # 语义边界、atomic/expandable chunk 和稳定 chunk_id

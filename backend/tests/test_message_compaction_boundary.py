@@ -126,6 +126,34 @@ def test_submitted_batch_is_frozen_and_keeps_canonical_projection():
     assert rendered.canonical_batch_digests == messages.canonical_batch_digests
     with pytest.raises(RuntimeError, match="已提交"):
         batch.append({"role": "user", "content": "不应追加"})
+    with pytest.raises(RuntimeError, match="已提交"):
+        batch.messages.append({"role": "user", "content": "不应直接追加"})
+
+
+def test_prompt_messages_exposes_immutable_batch_records_for_finalize():
+    batch = NewMessageBatch.from_canonical_messages(
+        [{"role": "assistant", "content": [{
+            "type": "tool_call", "id": "call-1", "name": "weather", "arguments": {},
+        }]}],
+        metadata={"round_id": "round-1"},
+    )
+    messages = PromptMessages()
+    messages.append_batch(batch)
+
+    records = messages.canonical_batch_records
+    assert records[0]["digest"] == batch.batch_digest
+    assert records[0]["metadata"] == {"round_id": "round-1"}
+    records[0]["metadata"]["round_id"] = "mutated"
+    assert messages.canonical_batch_records[0]["metadata"]["round_id"] == "round-1"
+
+
+def test_canonical_batch_rejects_provider_wire_shape():
+    with pytest.raises(TypeError, match="Provider tool wire"):
+        NewMessageBatch.from_canonical_messages([{
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [],
+        }])
 
 
 def test_canonical_batch_is_fixed_before_seal_and_append_updates_both_projections():

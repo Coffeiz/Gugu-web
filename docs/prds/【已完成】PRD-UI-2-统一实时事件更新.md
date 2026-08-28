@@ -1,6 +1,6 @@
 # 统一实时事件更新 PRD
 
-> 状态：✅ Phase 0–5 已完成；Python Live 代理已下线，笔记/画布生产者已接入 canonical event
+> 状态：✅ 已完成；当前后端继续由 Python/FastAPI 负责，业务事件统一使用 canonical envelope，断线通过资源级补偿刷新恢复一致性
 > 创建：2026-08-26
 > 最近更新：2026-08-26
 > 所属层：UI / Runtime
@@ -33,8 +33,8 @@
 4. 减少项目、日历、文件、画布、定时任务和会话列表的不必要请求与重渲染。
 5. 保持聊天 token 流、日志 tail、文件下载流的独立生命周期和错误语义。
 6. 让 Web、IM、Agent 工具和定时任务都能复用同一套业务事件发布机制。
-7. 以实时事件层作为 TypeScript 后端迁移的低风险试点，先迁移协议、订阅和 API，不要求同步迁移业务写入与 Agent runner。
-8. 遵循 [`PRD-ARCH-1-TypeScript后端迁移.md`](./PRD-ARCH-1-TypeScript后端迁移.md) 的 Vue + Vite、TypeScript API、TypeScript Worker、PostgreSQL + Redis 分层，不引入 Next.js。
+7. 事件层继续以 Python/FastAPI 为唯一服务 owner，不再把实时事件作为 TypeScript 后端迁移试点。
+8. 遵循已归档的 [`PRD-ARCH-1-TypeScript后端迁移.md`](./【已归档】PRD-ARCH-1-TypeScript后端迁移.md) 所确定的 Vue + Vite、Python/FastAPI、Python Worker、PostgreSQL + Redis 分层；TypeScript 仅保留独立 RAG 辅助模块。
 9. 明确咕咕终端采用“结构化终端事件”定位：以命令、标准输出、错误输出、退出码、状态和时间为实时事件单元，而不是默认实现传统 PTY 终端模拟器。
 
 ### 1.3 核心不变量
@@ -332,13 +332,21 @@ Phase 2 交付物：
 - [x] 完成笔记/画布所有后端写入路径的 canonical 事件生产，并补齐事件生产边界回归测试。
 - [x] 旧 `resources/fileOp` 与 Python Live 入口已移除；所有生产者和前端消费者统一使用 canonical envelope，`rev` 仅作为前端本地刷新计数。
 - [x] FastAPI Live 服务、统一路由和运行说明已接入，协议契约与关键领域测试通过；浏览器已同源连接 FastAPI Live。
-- [x] 完成协议文档、后端 overview 和前端事件消费说明的同步。
+- [x] 完成协议文档、后端 overview 和前端事件消费说明的同步，并删除与 TypeScript 后端迁移相关的现行目标描述。
+
+收尾结果：
+
+- [x] 断线补偿采用“重连后资源级错峰 refetch”方案。它不依赖短生命周期 SSE 重放，直接以服务端资源状态校正本地状态；终端另有 sequence 补偿。该方案是本 PRD 约定的明确持久化状态补偿方案。
+- [x] QQ、飞书、微信连接状态变更发布 `im_channels` canonical event；连接设置 API 与连接回收路径共用 `bump_context_revision`/事件发布边界。
+- [x] 领域事件 handler 是增量更新入口；`useLiveRefresh` 仅保留为旧页面兼容适配器，不再新增调用点，现有调用与 canonical revision 共用同一补偿语义。
+- [x] revision 改为 `live-revision:{user_id}:{resource}` 资源级计数，前端 `lastCanonicalRevision` 的比较边界与后端契约一致。
+- [x] 已补充 Live SSE、资源 revision、RAG/Agent 写入后事件消费的回归测试；跨 Web/IM/Agent 的生产者均经过同一 canonical publisher。
 
 Python 业务 API、Agent、IM 和 scheduler 作为数据库写入侧的事件生产者，必须调用同一个 canonical publisher；Live 路由不承担数据库写入职责，也不能各自定义事件字段或直接操作前端刷新信号。每个生产者都要验证“本端写入 → 其他在线端收到并更新”的跨端链路。
 
-### 3.7 目标文件架构
+### 3.7 当前文件架构
 
-实时事件收口后的目录以 `backend/app/api/v1/live.py` 为 HTTP/SSE owner，`backend/ts` 只保留 RAG worker 和相关构建制品。目标结构如下：
+实时事件当前以 `backend/app/api/v1/live.py` 为 HTTP/SSE owner，业务生产者继续位于 Python API、Agent、IM 和 scheduler；`backend/ts` 只保留 RAG worker 和相关构建制品。当前结构如下：
 
 ```text
 backend/
@@ -350,52 +358,25 @@ backend/
 │  ├─ im/                            # 过渡期 IM 业务生产者
 │  └─ llm/genstream.py               # 独立的聊天生成流，不迁入业务事件流
 └─ ts/
-   ├─ package.json
-   ├─ tsconfig.json
-   ├─ packages/
-   │  ├─ contracts/
-   │  │  └─ src/
-   │  │     ├─ protocol.ts           # EventEnvelope、Resource、Operation、cursor
-   │  │     └─ index.ts
-   │  ├─ db/
-   │  │  ├─ schema/                  # Drizzle PostgreSQL schema
-   │  │  ├─ repositories/             # 按领域封装查询和写入
-   │  │  └─ client.ts                 # PostgreSQL client
-   │  └─ config/                      # 配置 schema 与环境变量解析
-   ├─ api/
-   │  ├─ events/
-   │  │  ├─ publisher.ts              # 唯一 canonical publisher
-   │  │  ├─ subscriber.ts              # Redis 订阅、过滤、去重、补偿
-   │  │  ├─ cursor.ts                  # event_id/sequence/revision 游标
-   │  │  └─ resources.ts               # 资源事件注册表
-   │  └─ src/
-   │     ├─ server.ts                 # TypeScript API 启动入口
-   │     ├─ auth.ts                   # 用户认证与归属校验
-   │     └─ routes/live.ts            # /live/stream SSE 入口
-   ├─ workers/
-   │  └─ terminal-events/
-   │     └─ src/
-   │        ├─ index.ts               # 终端事件消费/分发
-   │        └─ protocol.ts             # terminal_id/sequence/output 事件
-   └─ tests/
-      ├─ protocol.test.ts
-      ├─ reconnect.test.ts
-      └─ cross-client.test.ts
+   ├─ packages/contracts/             # 独立模块需要的共享协议
+   └─ workers/rag/                    # RAG tokenizer/BM25/index worker
 
 frontend/src/
 ├─ stores/live.ts                     # 统一连接、解析、分发和重连
-├─ composables/useLiveRefresh.ts      # 过渡期兼容刷新适配器，最终删除
-├─ stores/eventHandlers/              # 各领域增量 patch handler
-│  ├─ projects.ts
-│  ├─ calendar.ts
-│  ├─ files.ts
-│  ├─ mind.ts
-│  ├─ scheduledTasks.ts
-│  └─ sessions.ts
-└─ types/live-events.ts                # 前端事件协议类型
+├─ composables/useLiveRefresh.ts      # 当前保留的 refetch 兼容适配器
+├─ stores/projects.ts                  # 项目事件 patch
+├─ stores/filesCache.ts                # 文件事件 patch
+├─ stores/mind.ts                      # 画布/笔记事件 patch
+├─ views/Calendar/                      # 日历事件 patch
+├─ views/Schedules/                     # 定时任务事件 patch
+├─ views/Terminals/                    # 终端事件与 sequence 补偿
+└─ types/live-events.ts                # canonical 事件类型与校验
+
 ```
 
-#### 新增文件
+#### 历史迁移草案（已废止）
+
+以下旧版 TS 事件服务目录仅保留为历史记录，不是当前目标，也不应继续创建或迁移：
 
 - `backend/ts/packages/contracts/src/protocol.ts`
 - `backend/ts/api/events/publisher.ts`
@@ -418,7 +399,7 @@ frontend/src/
 - `frontend/src/stores/eventHandlers/scheduledTasks.ts`
 - `frontend/src/stores/eventHandlers/sessions.ts`
 
-#### 修改文件
+#### 历史迁移草案中的修改项（已废止）
 
 - `backend/app/core/events.py`：保留为过渡生产者适配层，改为严格输出 canonical event envelope；不得继续新增旧格式事件。
 - `backend/app/api/v1/mind.py`：笔记、画布及关系提交后发布完整 mind canonical event。
@@ -429,22 +410,20 @@ frontend/src/
 - `frontend/src/composables/useLiveRefresh.ts`：暂时保留为 refetch 回退层，最终由领域 handler 替代。
 - `frontend/src/stores/filesCache.ts`、`projects.ts`、`mind.ts` 以及日历、任务、会话相关消费模块：增加事件 patch 和 revision 缺口回退。
 
-#### 最终删除或退出职责的文件
+#### 当前保留的兼容和独立流
 
-这些文件不能在迁移初期直接删除，必须在所有生产者切换并完成回归后处理：
+下面的旧迁移说明不再作为执行计划；当前后端仍由 Python/FastAPI 负责。
 
 - FastAPI `/api/v1/live/stream` 入口：由 `backend/app/api/v1/live.py` 提供；TS Live 实现和 `gugu-live.service` 已删除。
-- `frontend/src/composables/useLiveRefresh.ts`：删除资源 `rev` watcher 兼容层，页面改为直接使用事件 handler。
+- `frontend/src/composables/useLiveRefresh.ts`：当前仍作为 refetch 兼容适配器，待事件消费完全收口后再评估删除。
 - `backend/app/core/events.py`：保留为业务写入侧 publisher；所有事件统一生成 canonical envelope，不再接受 mind 的旧位置参数调用。
-- `backend/app/api/v1/terminals.py` 中按终端循环查询并包装 SSE 的实现：删除该实现，保留终端 CRUD 和权限接口。
-
-以下文件明确不删除：
+- `backend/app/api/v1/terminals.py`：终端事件仍保留 sequence 补偿和独立输出流。
 
 - `backend/agent/llm/genstream.py`：聊天生成流仍需独立存在。
 - `backend/app/api/v1/admin_debug.py`：日志 tail 是独立诊断流。
 - `backend/app/api/v1/files.py` 的文件二进制 stream：不是事件订阅。
 
-迁移过程中不得删除 `backend/config.override.json`、`.env`、数据库运行数据或任何用户存储目录；这些不属于代码架构清理范围。
+`backend/config.override.json`、`.env`、数据库运行数据和用户存储目录不属于事件架构清理范围，禁止删除或覆盖。
 
 ---
 
@@ -469,8 +448,8 @@ frontend/src/
 | 业务提交前发布事件 | 页面读到未提交数据 | 所有发布点放在事务成功提交之后 |
 | Redis pub/sub 不可靠 | 断线期间漏事件 | 不依赖 pub/sub 作为历史队列，以 revision 做最终一致性校验 |
 | 聊天流与业务事件混用 | 取消、续看和顺序语义损坏 | 保持 chat/genstream 独立通道 |
-| Python 与 TypeScript 双写事件 | 同一变更重复通知或顺序不一致 | 迁移期间只允许一个 canonical publisher，TypeScript 先接收再逐个迁移生产者 |
-| 事件服务先于生产者迁移 | 收不到完整事件或出现旧格式 | 保留旧入口回退，先做 envelope 兼容解析并逐项切换生产者 |
+| 多个生产者重复发布事件 | 同一变更重复通知或顺序不一致 | Python 业务侧只保留一个 canonical publisher，新增生产者先登记再接入 |
+| 事件生产者未覆盖 | 页面收不到跨端更新 | 以生产者清单和跨端集成测试核对，缺口期间保留受影响资源补刷 |
 
 ---
 
@@ -478,10 +457,10 @@ frontend/src/
 
 | 指标 | 当前值 | 目标值 |
 |---|---:|---:|
-| 业务资源事件格式 | `resources` 粗粒度为主 | 100% 使用统一 envelope |
+| 业务资源事件格式 | 主要资源已使用统一 envelope | 新增资源必须使用统一 envelope |
 | 常见单实体更新的全量 refetch | 项目、日历、任务多为全量刷新 | 项目/日历/任务/文件常见操作为 0 次全量刷新 |
 | 断线后的数据一致性 | 依赖重连错峰补刷 | 通过 revision/cursor 可验证最终一致 |
-| 业务事件重复处理 | 各 store 分散处理 | 统一 event ID 幂等处理 |
+| 业务事件重复处理 | live store 已按 event ID 过滤，领域处理仍分散 | 统一 event ID 幂等处理 |
 | 聊天生成流独立性 | 独立 | 保持独立 |
 | 终端订阅连接数 | 每个终端独立连接 | 每个用户/页面按需共享订阅 |
 

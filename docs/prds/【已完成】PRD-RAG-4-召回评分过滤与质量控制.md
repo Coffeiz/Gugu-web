@@ -96,8 +96,8 @@ fused_score =
 
 默认权重为 BM25 0.45、Embedding 0.55。明确实体、编号、文件名或版本号查询可提高 BM25 权重，但必须记录并可复现。
 
-实现位置：`backend/agent/rag/scoring.py` 和 `hybrid.py`。来源批次先独立归一化，
-混合召回按 rank 计算 RRF；无向量或向量缓存失效时保留 BM25 回退。
+实现位置：`backend/ts/workers/rag/src/service.ts` 和 `backend/agent/rag/hybrid.py`。来源批次先独立归一化，
+混合召回按 rank 计算 RRF；无向量或向量缓存失效时保留 TS worker 的 BM25 回退。
 
 ### FR-RAG-04：统一置信度（✅ Phase 3）
 

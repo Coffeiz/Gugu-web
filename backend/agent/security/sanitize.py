@@ -99,6 +99,28 @@ def _is_time_reminder_block(block: dict) -> bool:
     return bool(re.fullmatch(r"(?:\d{1,2}-\d{1,2} \d{1,2}:\d{2}|当前时间：.+)", body))
 
 
+_CANONICAL_BOUNDARY_TYPES = frozenset({
+    "tool_call",
+    "tool_use",
+    "tool_result",
+    "tool-schema",
+    "skill-schema",
+    "tool-discovery",
+    "knowledge-context",
+    "stance-context",
+    "time-context",
+    "runtime-context",
+})
+
+
+def _contains_canonical_boundary(blocks: list) -> bool:
+    """识别不能与相邻消息合并的 canonical event。"""
+    return any(
+        isinstance(block, dict) and block.get("type") in _CANONICAL_BOUNDARY_TYPES
+        for block in blocks
+    )
+
+
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────
 # token 预算窗口「整条进出」裁剪，但不守 tool_use/tool_result 配对：窗口可能从一个
 # 带 tool_result 的 user 消息开头（对应的 assistant tool_use 被裁掉）→ 孤儿 tool_result，
@@ -221,7 +243,7 @@ def sanitize_messages(messages: list) -> list:
                 norm.pop(0)
     norm = leading_system + norm
 
-    # 5) 合并相邻同角色，但保留 reminder 与真实消息的独立边界。
+    # 5) 合并相邻同角色，但保留 reminder 与 canonical event 的独立边界。
     # reminder 现在使用 user role；如果无条件合并，当前用户消息会和时间/快照
     # reminder 粘成一条，下一轮从历史恢复时会再次改变消息形状并破坏缓存前缀。
     merged: list = []
@@ -250,8 +272,16 @@ def sanitize_messages(messages: list) -> list:
             or (isinstance(block, dict) and block.get("type") == "time-context")
             for block in m["content"]
         )
+        previous_has_canonical_boundary = (
+            _contains_canonical_boundary(merged[-1]["content"])
+            if merged else False
+        )
+        current_has_canonical_boundary = _contains_canonical_boundary(m["content"])
         if merged and merged[-1]["role"] == m["role"] and not (
-            previous_is_reminder or current_is_reminder
+            previous_is_reminder
+            or current_is_reminder
+            or previous_has_canonical_boundary
+            or current_has_canonical_boundary
         ):
             merged[-1]["content"] = merged[-1]["content"] + m["content"]
         else:

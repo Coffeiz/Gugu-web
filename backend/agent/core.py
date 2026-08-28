@@ -1147,14 +1147,23 @@ class LLMRunner:
                         yield f"data: {json.dumps({'type': 'file', 'file': artifact}, ensure_ascii=False)}\n\n"
                     dispatched.append((tc, res))
                 from agent.context.assembly import NewMessageBatch
+                from agent.context.canonical_tool_history import canonical_tool_round
 
                 provider_round = driver.build_tool_round(result, dispatched)
-                from agent.context.history import canonicalize_tool_messages
                 batch = NewMessageBatch.from_canonical_messages(
-                    canonicalize_tool_messages(provider_round),
+                    canonical_tool_round(result, dispatched),
                     provider_messages=provider_round,
                     metadata={"round_id": round_id},
                 )
+                try:
+                    from agent.runtime.loopscope_trace.state import record_canonical_batch
+                    record_canonical_batch(
+                        digest=batch.batch_digest,
+                        round_id=round_id,
+                        message_count=len(batch.canonical_messages),
+                    )
+                except Exception:
+                    pass
                 if getattr(self.capability_context, "fixed_adapter", False):
                     from agent.context.canonical_tool_history import (
                         SkillSchemaEvent, ToolDiscoveryEvent, append_event, tool_schema_event,
@@ -1168,20 +1177,10 @@ class LLMRunner:
                         append_event(batch_history, event)
                         if len(batch_history) > before:
                             event_message = batch_history[-1]
-                            if (
-                                getattr(driver, "api_format", "") == "anthropic"
-                                and batch.messages
-                                and batch.messages[-1].get("role") == "user"
-                                and isinstance(batch.messages[-1].get("content"), list)
-                            ):
-                                # Anthropic 的 tool_result 本身位于 user content blocks；
-                                # Schema 事件直接并入同一条消息，避免 sanitize/reload 后
-                                # 相邻 user 消息被重新合并成另一种历史形状。
-                                batch.messages[-1]["content"].extend(
-                                    event_message.get("content") or ()
-                                )
-                            else:
-                                batch.append(event_message)
+                            # Schema/discovery 是 capability context，不是工具回执。
+                            # 必须保持独立的 canonical user message，禁止并入
+                            # tool_result，否则 sanitize/reload 后消息边界会漂移。
+                            batch.append(event_message)
 
                     for tc, _res in dispatched:
                         if tc.name == "get_tool_schema":

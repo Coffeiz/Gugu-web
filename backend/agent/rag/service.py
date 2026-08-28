@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
+import hashlib
 from dataclasses import replace
 
 from agent.rag.adapters.memory import MemoryAdapter
@@ -34,6 +35,46 @@ MAX_ACTIVE_RESULTS = 10
 DEFAULT_RESULTS = 5
 MAX_OUTPUT_CHARS = 3000
 MAX_PER_SOURCE = 3
+
+
+def _scope_list(scope) -> list[Scope]:
+    """把单 scope / 多 scope 统一成诊断用列表，不暴露 scope 原始标识。"""
+    if isinstance(scope, Scope):
+        return [scope]
+    if isinstance(scope, (list, tuple)):
+        return [item for item in scope if isinstance(item, Scope)]
+    return []
+
+
+def _scope_details(scope, candidates, ranked_candidates) -> list[dict[str, object]]:
+    """返回逐 scope 的脱敏候选统计，避免多 scope 被误记为 owner。"""
+    scopes = _scope_list(scope)
+    selected = [item[0] for item in ranked_candidates]
+    details = []
+    for item in scopes:
+        digest = hashlib.sha256(item.key().encode("utf-8")).hexdigest()[:12]
+        details.append({
+            "scope_type": item.scope_type,
+            "scope_digest": digest,
+            "candidate_count": sum(
+                1 for candidate in candidates
+                if matches_scope(candidate.document, item)
+            ),
+            "selected_count": sum(
+                1 for candidate in selected
+                if matches_scope(candidate.document, item)
+            ),
+        })
+    return details
+
+
+def _scope_record_fields(scope) -> tuple[str, str]:
+    scopes = _scope_list(scope)
+    if len(scopes) == 1:
+        return scopes[0].scope_type, scopes[0].key()
+    if len(scopes) > 1:
+        return "multi", ""
+    return "owner", ""
 
 
 def _snapshot_covers_document(text: str, snapshot_text: str) -> bool:
@@ -377,6 +418,7 @@ class UnifiedRecallService:
             public_item["citation"] = rank_item.get("citation") or public_item["citation"]
             public_item["citations"] = rank_item.get("citations") or [public_item["citation"]]
             selected.append(public_item)
+        scope_details = _scope_details(scope, candidate_values, ranked_candidates)
         rejected_duplicate = int(rank_stats.get("rejected_duplicate", 0) or 0)
         rejected_parent = int(rank_stats.get("rejected_parent", 0) or 0)
         rejected_source = int(rank_stats.get("rejected_source", 0) or 0)
@@ -456,6 +498,7 @@ class UnifiedRecallService:
             "rank_candidates_ms": int(rank_stats.get("elapsed_ms", 0) or 0),
             "stage_ms": stage_ms,
             "source_diagnostics": source_diagnostics,
+            "scope_diagnostics": scope_details,
         }
 
 
@@ -482,6 +525,7 @@ async def search_memory(
         strategy=strategy,
         limit=limit,
     )
+    scope_type, scope_key = _scope_record_fields(query_scopes)
     record_recall(
         namespace="knowledge",
         source_type="memory",
@@ -491,8 +535,8 @@ async def search_memory(
         fallback_reason=result.get("fallback_reason"),
         index_version="memory-rag-v1",
         mode=mode,
-        scope_type=getattr(scope, "scope_type", "owner"),
-        scope_key=getattr(scope, "key", lambda: "")() if hasattr(scope, "key") else "",
+        scope_type=scope_type,
+        scope_key=scope_key,
         injected=bool(result.get("results")),
         engine=result.get("engine", "unknown"),
         cache_hit=result.get("cache_hit"),
@@ -500,6 +544,7 @@ async def search_memory(
         cache_miss_reasons=result.get("cache_miss_reasons"),
         stages=result.get("stage_ms"),
         source_diagnostics=result.get("source_diagnostics"),
+        scope_details=result.get("scope_diagnostics"),
         sidecar_reused=result.get("sidecar_reused"),
         quality={
             key: result.get(key)
@@ -562,14 +607,15 @@ async def search_knowledge(
         query, source=source, scope=scope, strategy=strategy, limit=limit,
         exclude_content_hashes=exclude_content_hashes,
     )
+    scope_type, scope_key = _scope_record_fields(scope)
     record_recall(
         namespace="knowledge", source_type="all" if source == "all" else source,
         candidate_count=result.get("candidate_count", 0), hit_count=len(result["results"]),
         elapsed_ms=int((time.monotonic() - started) * 1000),
         fallback_reason=result.get("fallback_reason"),
         index_version="knowledge-rag-v1", mode=mode,
-        scope_type=getattr(scope, "scope_type", "owner"),
-        scope_key=getattr(scope, "key", lambda: "")() if hasattr(scope, "key") else "",
+        scope_type=scope_type,
+        scope_key=scope_key,
         injected=bool(result.get("results")),
         engine=result.get("engine", "unknown"),
         cache_hit=result.get("cache_hit"),
@@ -577,6 +623,7 @@ async def search_knowledge(
         cache_miss_reasons=result.get("cache_miss_reasons"),
         stages=result.get("stage_ms"),
         sidecar_reused=result.get("sidecar_reused"),
+        scope_details=result.get("scope_diagnostics"),
         quality={
             key: result.get(key)
             for key in (

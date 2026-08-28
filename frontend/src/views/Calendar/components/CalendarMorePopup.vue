@@ -6,7 +6,7 @@
         <div class="overflow-list">
           <div v-for="item in items" :key="item.id" class="overflow-item cal-chip"
                :class="{ 'overflow-clickable': !!item.calendarType, 'cal-done': item.calendarType === 'project' && item.status === 'done' }"
-               :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType ? 'grab' : 'default' }"
+               :style="{ background: item.calendarType === 'project' ? capBg(item.accent, item.progress) : item.accent + '28', borderColor: item.accent + '70', color: darkenHex(item.accent), cursor: item.calendarType === 'project' && item.status === 'done' ? 'pointer' : (item.calendarType ? 'grab' : 'default') }"
                @click.stop="item.calendarType === 'project' ? $emit('open-project', item) : (item.calendarType === 'event' && $emit('edit-event', { item, event: $event }))"
                @mousedown.stop="item.calendarType && $emit('drag-item', { item, event: $event })">
             <span class="overflow-tag" :class="{ 'overflow-tag-ev': item.calendarType !== 'project' }">{{ item.calendarType === 'project' ? '项目' : '活动' }}</span>

@@ -38,6 +38,8 @@ async def finalize_run(
     session_exists_required: bool = False,
     stance_text: str | None = None,
     user_message_id: int | None = None,
+    run_id: str | None = None,
+    canonical_batches: list[dict] | tuple[dict, ...] | None = None,
 ) -> FinalizeResult:
     """用一个契约完成 canonical turn、展示时间线、trim 与 baseline 调度。
 
@@ -47,7 +49,6 @@ async def finalize_run(
     """
     from agent import quota
     from agent.context import assembly, compress_conv
-    from agent.context.history import canonicalize_tool_messages
     from app.models import AgentUsage, ConversationMessage, ConversationSession
     from app.core import chat_attach
     from app.services.conversation_retention import trim_session_messages
@@ -85,14 +86,61 @@ async def finalize_run(
                     session_row.session_context = context
             for block in (rag_context or {}).get("blocks", []):
                 db.add(ConversationMessage(session_id=session_id, role="user", content="", content_json=[block]))
-            tool_history = assembly.newly_appended(messages, initial_len)
-            for tm in canonicalize_tool_messages(tool_history):
-                db.add(ConversationMessage(
-                    session_id=session_id,
-                    role=tm["role"],
-                    content="",
-                    content_json=chat_attach.strip_vision_for_history(tm["content"]),
-                ))
+            if canonical_batches is None:
+                # 旧调用方/旧 worker 的过渡路径。新 runner 必须传入已封存的
+                # canonical batch，不能在这里从 provider wire 二次推导。
+                from agent.context.history import canonicalize_tool_messages
+                tool_history = assembly.newly_appended(messages, initial_len)
+                for tm in canonicalize_tool_messages(tool_history):
+                    db.add(ConversationMessage(
+                        session_id=session_id,
+                        role=tm["role"],
+                        content="",
+                        content_json=chat_attach.strip_vision_for_history(tm["content"]),
+                    ))
+            else:
+                from app.models import ConversationBatch
+                from sqlalchemy import select
+                for record in canonical_batches:
+                    if not isinstance(record, dict):
+                        continue
+                    canonical_messages = record.get("messages") or []
+                    if not canonical_messages:
+                        continue
+                    digest = str(record.get("digest") or "")
+                    metadata = record.get("metadata") or {}
+                    batch_row = None
+                    if digest:
+                        batch_row = (await db.execute(
+                            select(ConversationBatch).where(
+                                ConversationBatch.session_id == session_id,
+                                ConversationBatch.digest == digest,
+                            )
+                        )).scalars().first()
+                    is_new_batch = batch_row is None
+                    if batch_row is None:
+                        from agent.context.canonical_context import digest as canonical_digest
+                        batch_row = ConversationBatch(
+                            session_id=session_id,
+                            version="v1",
+                            run_id=run_id or str(metadata.get("run_id") or "") or None,
+                            round_id=str(metadata.get("round_id") or "") or None,
+                            digest=digest or canonical_digest({"messages": canonical_messages, "metadata": metadata}),
+                        )
+                        db.add(batch_row)
+                        await db.flush()
+                    if is_new_batch:
+                        for message in canonical_messages:
+                            db.add(ConversationMessage(
+                                session_id=session_id,
+                                role=message["role"],
+                                content=message.get("content") if isinstance(message.get("content"), str) else "",
+                                content_json=(
+                                    chat_attach.strip_vision_for_history(message["content"])
+                                    if not isinstance(message.get("content"), str) else None
+                                ),
+                                canonical_batch_id=batch_row.id,
+                            ))
             if text or files or display_timeline:
                 db.add(ConversationMessage(
                     session_id=session_id,

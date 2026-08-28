@@ -1,0 +1,113 @@
+from types import SimpleNamespace
+
+import pytest
+
+from agent.context.branch import ContextBranch
+from agent.context.branch_types import BranchInput, BranchPolicy
+from agent.context import provider_runner
+
+
+@pytest.mark.asyncio
+async def test_context_branch_assembles_stable_order_and_json(monkeypatch):
+    captured = {}
+
+    async def fake_complete_json(system, user, settings, **kwargs):
+        captured.update(system=system, user=user, kwargs=kwargs)
+        return {"summary": "ok"}
+
+    monkeypatch.setattr(provider_runner, "complete_json", fake_complete_json)
+    result = await ContextBranch().run(
+        BranchInput(
+            stable_system="stable",
+            baseline="base",
+            scope="owner",
+            dynamic_context="now",
+            delta="turn",
+            session_id=7,
+            run_id="run-test",
+        ),
+        BranchPolicy(name="reflection"),
+        SimpleNamespace(),
+    )
+
+    assert result.ok is True
+    assert captured["system"] == "stable"
+    assert captured["user"] == (
+        "【baseline】\nbase\n\n【动态上下文】\nnow\n\n【本次增量】\nturn"
+    )
+    assert result.metadata["branch"] == "reflection"
+    assert result.metadata["session_id"] == 7
+
+
+@pytest.mark.asyncio
+async def test_context_branch_retries_empty_output(monkeypatch):
+    calls = 0
+
+    async def fake_complete_text(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return "" if calls == 1 else "done"
+
+    monkeypatch.setattr(provider_runner, "complete_text", fake_complete_text)
+    result = await ContextBranch().run(
+        BranchInput(stable_system="stable", delta="turn"),
+        BranchPolicy(name="compaction", output_mode="text", max_retries=1),
+        SimpleNamespace(),
+    )
+
+    assert calls == 2
+    assert result.ok is True
+    assert result.output == "done"
+    assert result.attempts == 2
+    assert result.return_reason == "completed"
+
+
+@pytest.mark.asyncio
+async def test_context_branch_classifies_provider_error(monkeypatch):
+    async def fake_complete_json(*args, **kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr(provider_runner, "complete_json", fake_complete_json)
+    result = await ContextBranch().run(
+        BranchInput(stable_system="stable"),
+        BranchPolicy(name="reflection"),
+        SimpleNamespace(),
+    )
+
+    assert result.ok is False
+    assert result.output is None
+    assert result.return_reason == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_context_branch_classifies_invalid_json_shape(monkeypatch):
+    async def fake_complete_json(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(provider_runner, "complete_json", fake_complete_json)
+    result = await ContextBranch().run(
+        BranchInput(stable_system="stable"),
+        BranchPolicy(name="reflection"),
+        SimpleNamespace(),
+    )
+
+    assert result.ok is False
+    assert result.return_reason == "schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
+    captured = []
+
+    async def fake_complete_text(system, user, settings, max_tokens):
+        captured.append(user)
+        return "summary"
+
+    monkeypatch.setattr(provider_runner, "complete_text", fake_complete_text)
+    base = BranchInput(stable_system="stable", delta="same", scope="owner")
+    revised = BranchInput(stable_system="stable", delta="same", scope="group", scope_revision="r2")
+    first = await ContextBranch().run(base, BranchPolicy(name="compaction", output_mode="text"), SimpleNamespace())
+    second = await ContextBranch().run(revised, BranchPolicy(name="compaction", output_mode="text"), SimpleNamespace())
+    assert captured == ["same", "same"]
+    assert first.input_fingerprint == second.input_fingerprint
+    assert second.metadata["scope_revision"] == "r2"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable
@@ -100,6 +101,26 @@ _KNOWN_BLOCKS = frozenset({
     "interaction_request", "interaction_result", "thinking", "reasoning_content",
 })
 
+_TIME_CONTEXT_RE = re.compile(
+    r"^\[system-reminder\]\n(?:当前时间：)?[^\n]+\n\[/system-reminder\]$"
+)
+
+
+def is_time_context_text(value: Any) -> bool:
+    """识别旧版本以普通 text 持久化的时间 reminder。"""
+    return isinstance(value, str) and bool(_TIME_CONTEXT_RE.fullmatch(value))
+
+
+def canonicalize_time_context_blocks(role: str, blocks: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """把 legacy time text 归一为稳定的 canonical event，不改写调用方输入。"""
+    result: list[dict[str, Any]] = []
+    for block in blocks:
+        value = dict(block)
+        if role == "user" and value.get("type") == "text" and is_time_context_text(value.get("text")):
+            value = {"type": "time-context", "text": value["text"]}
+        result.append(value)
+    return result
+
 
 def _value(message: Any, key: str, default: Any = None) -> Any:
     if isinstance(message, dict):
@@ -160,6 +181,10 @@ def normalize_history_message(message: Any, *, source: str | None = None) -> His
         else:
             blocks.append({"type": "text", "text": stable_json(raw), "source_type": block_type})
             unknown_count += 1
+
+    blocks = canonicalize_time_context_blocks(
+        str(_value(message, "role", "user") or "user"), blocks
+    )
 
     quote_text = _value(message, "quoted_text")
     quote = {"type": "quote", "text": str(quote_text)} if quote_text else None

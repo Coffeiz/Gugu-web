@@ -5,7 +5,7 @@
       <button class="nav-btn" @click="$emit('prev')"><Icon name="action.back" :size="14" /></button>
       <button ref="periodButton" class="period-btn" @click="$emit('toggle-picker', periodButton)">
         <span>{{ periodLabel }}</span>
-        <Icon name="action.down" :size="11" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
+        <FlipChevron :open="pickerOpen" :size="11" aria-hidden="true" />
       </button>
       <button class="nav-btn" @click="$emit('next')"><Icon name="action.next" :size="14" /></button>
     </div>
@@ -24,6 +24,7 @@ import { ref } from 'vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import Icon from '@/components/common/Icon.vue'
+import FlipChevron from '@/components/common/FlipChevron.vue'
 defineProps<{ periodLabel: string; viewMode: 'month' | 'week'; pickerOpen: boolean }>()
 defineEmits<{
   prev: []

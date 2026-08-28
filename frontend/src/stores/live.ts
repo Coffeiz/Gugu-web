@@ -15,7 +15,7 @@ import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
 
 // live 事件与业务 API 使用同一 FastAPI owner，避免回退到已移除的 TS Live 服务。
 const LIVE_URL = '/api/v1/live/stream'
-const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals']
+const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals', 'im_channels']
 
 export const useLiveStore = defineStore('live', () => {
   // 每个资源一个递增计数，视图 watch 它来触发 refetch

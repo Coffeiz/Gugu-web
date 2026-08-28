@@ -3,18 +3,9 @@
     <aside class="admin-sidebar">
       <!-- 品牌 -->
       <div class="sidebar-brand">
-        <div class="brand-icon">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M16 7h.01"/>
-            <path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/>
-            <path d="M20 7l2 .5-2 .5"/>
-            <path d="M10 18v3"/>
-            <path d="M14 17.75V21"/>
-            <path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-          </svg>
-        </div>
+        <span class="brand-mark" aria-hidden="true" />
         <div class="brand-text">
-          <div class="brand-name">咕咕</div>
+          <span class="logo-text" aria-label="咕咕" />
           <div class="brand-tag">管理后台</div>
         </div>
       </div>
@@ -193,15 +184,35 @@ function handleLogout() {
   padding: 0 8px;
   margin-bottom: 20px;
 }
-.brand-icon {
-  width: 34px; height: 34px; border-radius: 10px;
-  background: linear-gradient(135deg, var(--palette-purple-500), var(--palette-purple-400));
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25);
+.brand-mark {
+  width: 30px; height: 30px; display: block; flex-shrink: 0;
+  background: var(--content-primary);
+  -webkit-mask-image: url('/logo-small.png');
+  -webkit-mask-mode: alpha;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: url('/logo-small.png');
+  mask-mode: alpha;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
 }
 .brand-text { line-height: 1; }
-.brand-name { font-size: var(--font-size-lg); font-weight: 700; color: var(--content-primary); }
+.logo-text {
+  width: 42px; height: 23px; display: block; flex-shrink: 0;
+  background: var(--content-primary);
+  -webkit-mask-image: url('/logo-text.png');
+  -webkit-mask-mode: alpha;
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: url('/logo-text.png');
+  mask-mode: alpha;
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
 .brand-tag  { font-size: var(--font-size-xs); color: var(--content-muted); margin-top: 3px; }
 
 .sidebar-rule {

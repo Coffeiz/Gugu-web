@@ -13,6 +13,7 @@
   "include": [
     "api/**/*.ts",
     "packages/**/*.ts",
-    "workers/**/*.ts"
+    "workers/**/*.ts",
+    "packages/data-runtime/**/*.ts"
   ]
 }

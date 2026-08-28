@@ -61,6 +61,8 @@ Thumbs.db
 .settings/
 
 # ===== 项目特定 =====
+# 本机开发连接、代理和凭据信息，不入版本控制
+agentskills/local/
 docs/development/local.md
 
 # 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/

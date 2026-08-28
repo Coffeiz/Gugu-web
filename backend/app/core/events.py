@@ -19,6 +19,7 @@ from app.core.redis import get_redis
 _CONTEXT_RESOURCES = {"projects", "calendar", "files", "memory"}
 # snapshot 新鲜度覆盖的输入比前端 SSE 资源集合更大。
 _CONTEXT_REVISION_SOURCES = _CONTEXT_RESOURCES | {"preferences", "timezone", "im_channels"}
+_DATA_RUNTIME_RESOURCES = {"projects", "files", "sessions", "conversation"}
 
 # 改动型工具 → 受影响的前端资源。只列「会变数据」的工具（list_/get_/read_ 等只读不列）。
 # 新增改动型工具时记得在这里登记，否则网页不会实时刷新。
@@ -82,6 +83,33 @@ async def bump_context_revision(user_id, *resources: str) -> None:
     except Exception:
         pass
 
+
+async def publish_data_runtime_invalidation(user_id, resource: str,
+                                            *, operation: str = "refresh",
+                                            scope_type: str = "owner",
+                                            scope_id: str | None = None,
+                                            revision: int | str | None = None) -> None:
+    """向 TS Data Runtime 发布来源级失效事件；失败不影响业务写入。"""
+    canonical = {"projects": "project", "files": "file", "sessions": "conversation"}.get(resource, resource)
+    if canonical not in {"project", "file", "conversation"}:
+        return
+    try:
+        payload = {
+            "protocol_version": "data-runtime-invalidation-v1",
+            "event_id": f"data-{uuid.uuid4().hex}",
+            "owner_id": str(user_id),
+            "resource": canonical,
+            "scope_type": scope_type,
+            "scope_id": scope_id or str(user_id),
+            "operation": operation,
+        }
+        if revision is not None:
+            payload["revision"] = revision
+        redis = get_redis()
+        await redis.publish(f"data-runtime:invalidate:{user_id}", json.dumps(payload, ensure_ascii=False))
+    except Exception:
+        pass
+
 async def publish(user_id, *resources: str, origin: str | None = None,
                   file_op: dict | None = None, operation: str | None = None,
                   entity_id: int | str | None = None,
@@ -100,13 +128,6 @@ async def publish(user_id, *resources: str, origin: str | None = None,
     payload: dict = {}
     res = [r for r in resources if r]
     await bump_context_revision(user_id, *res)
-    live_revision = 0
-    try:
-        redis = get_redis()
-        live_revision = int(await redis.incr(f"live-revision:{user_id}"))
-        await redis.expire(f"live-revision:{user_id}", 60 * 60 * 24 * 7)
-    except Exception:
-        pass
     if res:
         inferred_operation = operation or ((file_op or {}).get("op") if file_op else None)
         if inferred_operation is None and res[0] == "sessions":
@@ -117,6 +138,16 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         if inferred_operation == "remove":
             inferred_operation = "delete"
         canonical_resource = {"mind.canvas": "mind"}.get(res[0], res[0])
+        # revision 的比较边界是资源而不是用户。用户级全局计数会让 A 资源
+        # 的事件把 B 资源的 revision 撞出“缺口”，造成无意义的补刷。
+        live_revision = 0
+        try:
+            redis = get_redis()
+            revision_key = f"live-revision:{user_id}:{canonical_resource}"
+            live_revision = int(await redis.incr(revision_key))
+            await redis.expire(revision_key, 60 * 60 * 24 * 7)
+        except Exception:
+            pass
         payload.update({
             "protocol_version": "live-event-v1",
             "event_id": f"evt-{uuid.uuid4().hex}",
@@ -160,6 +191,12 @@ async def publish(user_id, *resources: str, origin: str | None = None,
         await get_redis().publish(_channel(user_id), json.dumps(payload, ensure_ascii=False))
     except Exception:
         pass
+    for resource in res:
+        if resource in _DATA_RUNTIME_RESOURCES:
+            invalidation_operation = inferred_operation if res else (operation or "refresh")
+            if invalidation_operation == "append":
+                invalidation_operation = "update"
+            await publish_data_runtime_invalidation(user_id, resource, operation=invalidation_operation)
 
 
 BROADCAST_CHANNEL = "events:__broadcast__"

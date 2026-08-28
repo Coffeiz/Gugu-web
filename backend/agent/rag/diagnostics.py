@@ -20,7 +20,8 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
                   cache_miss_reasons: list[str] | None = None,
                   quality: dict[str, object] | None = None,
                   stages: dict[str, object] | None = None,
-                  source_diagnostics: dict[str, object] | None = None) -> None:
+                  source_diagnostics: dict[str, object] | None = None,
+                  scope_details: list[dict[str, object]] | None = None) -> None:
     """记录脱敏召回日志和 LoopScope span。"""
     scope_digest = hashlib.sha256(scope_key.encode()).hexdigest()[:12] if scope_key else ""
     try:
@@ -36,6 +37,7 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
             "index_version": index_version,
             "scope_type": scope_type,
             "scope_digest": scope_digest,
+            "scope_details": scope_details or [],
             "injected": injected,
             "engine": engine,
             "cache_hit": cache_hit,
@@ -68,6 +70,7 @@ def record_recall(*, namespace: str, source_type: str, candidate_count: int,
         quality=quality,
         stages=stages,
         source_diagnostics=source_diagnostics,
+        scope_details=scope_details,
     )
 
 
@@ -82,7 +85,8 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
                              cache_miss_reasons: list[str] | None = None,
                              quality: dict[str, object] | None = None,
                              stages: dict[str, object] | None = None,
-                             source_diagnostics: dict[str, object] | None = None) -> None:
+                             source_diagnostics: dict[str, object] | None = None,
+                             scope_details: list[dict[str, object]] | None = None) -> None:
     """把召回指标写入当前 LoopScope run；绝不携带 query、正文或 owner。"""
     try:
         from agent.runtime.loopscope_trace.state import _scope_run, _enabled
@@ -109,6 +113,7 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             mode=mode,
             scope_type=scope_type,
             scope_digest=scope_digest,
+            scope_details=scope_details or [],
             injected=injected,
             engine=engine,
             cache_hit=cache_hit,
@@ -130,6 +135,7 @@ def _record_loopscope_recall(*, namespace: str, source_type: str,
             "index_version": index_version,
             "scope_type": scope_type,
             "scope_digest": scope_digest,
+            "scope_details": scope_details or [],
             "injected": injected,
             "engine": engine,
             "cache_hit": cache_hit,

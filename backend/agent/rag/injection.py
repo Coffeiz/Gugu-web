@@ -246,7 +246,8 @@ async def build_automatic_rag_context(
                 selected.append({**item, "text": text, "content_hash": item_hash})
                 seen.add(item_hash)
             scope_hits.append({"scope": label, "candidate_count": result.get("candidate_count", 0),
-                               "hit_count": len(selected)})
+                               "hit_count": len(selected),
+                               "scope_details": result.get("scope_diagnostics", [])})
             if not selected:
                 return {"tail": [], "blocks": [], "scope_hits": scope_hits, "injected": False}
             rendered = render_scoped_history_context(query, selected, label=label)

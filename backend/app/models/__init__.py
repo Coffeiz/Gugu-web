@@ -508,6 +508,39 @@ class ConversationSession(Base):
         order_by="ConversationMessage.created_at",
         cascade="all, delete-orphan",
     )
+    batches: Mapped[list["ConversationBatch"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ConversationBatch.created_at",
+    )
+
+
+class ConversationBatch(Base):
+    """Provider-neutral canonical history 批次身份。"""
+
+    __tablename__ = "conversation_batches"
+    __table_args__ = (
+        UniqueConstraint("session_id", "digest", name="uq_conversation_batches_session_digest"),
+        Index("ix_conversation_batches_session_round", "session_id", "round_id"),
+    )
+
+    # PostgreSQL 使用 BIGINT；SQLite 测试库需要 INTEGER 才能启用自增主键。
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[str] = mapped_column(String(32), default="v1")
+    run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    round_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    session: Mapped["ConversationSession"] = relationship(back_populates="batches")
+    messages: Mapped[list["ConversationMessage"]] = relationship(back_populates="canonical_batch")
 
 
 class ConversationMessage(Base):
@@ -531,8 +564,12 @@ class ConversationMessage(Base):
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     sent_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=now_utc, index=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
+    canonical_batch_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("conversation_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
+    canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
 
 
 class InteractionPrompt(Base):

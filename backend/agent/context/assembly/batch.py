@@ -8,6 +8,42 @@ from typing import Any, Iterable
 from ..canonical_context import digest
 
 
+class _FrozenMessages(list):
+    """提交后阻止通过公开 messages 列表修改批次外层结构。"""
+
+    def _raise(self, *args, **kwargs):
+        raise RuntimeError("NewMessageBatch 已提交，不能再次修改")
+
+    __setitem__ = __delitem__ = append = clear = extend = insert = pop = remove = reverse = sort = _raise
+
+
+_CANONICAL_BLOCK_TYPES = frozenset({
+    "text", "tool_call", "tool_result", "tool-schema", "skill-schema",
+    "tool-discovery", "knowledge-context", "stance-context", "time-context",
+    "runtime-context",
+})
+
+
+def _validate_canonical_messages(messages: Iterable[dict]) -> list[dict]:
+    """校验 canonical batch 的外形，避免把 provider wire 泄漏进历史契约。"""
+    values = copy.deepcopy(list(messages))
+    for message in values:
+        if not isinstance(message, dict) or not isinstance(message.get("role"), str):
+            raise TypeError("Canonical batch 消息必须是带 role 的对象")
+        if "tool_calls" in message or message.get("role") == "tool":
+            raise TypeError("Canonical batch 不得包含 Provider tool wire 字段")
+        content = message.get("content")
+        if not isinstance(content, (str, list)):
+            raise TypeError("Canonical batch content 必须是字符串或 block 列表")
+        if isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or not isinstance(block.get("type"), str):
+                    raise TypeError("Canonical batch block 必须是带 type 的对象")
+                if block["type"] not in _CANONICAL_BLOCK_TYPES:
+                    raise TypeError(f"Canonical batch 不支持 block 类型：{block['type']}")
+    return values
+
+
 @dataclass
 class NewMessageBatch:
     """本轮新增消息的唯一组装结果。"""
@@ -61,7 +97,9 @@ class NewMessageBatch:
         provider_messages = list(messages)
         instance = cls(provider_messages, metadata=metadata or {})
         from ..history import canonicalize_tool_messages
-        instance._canonical_messages = tuple(canonicalize_tool_messages(provider_messages))
+        instance._canonical_messages = tuple(
+            _validate_canonical_messages(canonicalize_tool_messages(provider_messages))
+        )
         instance._provider_messages = tuple(copy.deepcopy(provider_messages))
         instance._canonical_initialized = True
         instance._provider_initialized = True
@@ -76,7 +114,7 @@ class NewMessageBatch:
         metadata: dict[str, Any] | None = None,
     ) -> "NewMessageBatch":
         """以 canonical batch 为事实源，附带一次性的 provider 请求投影。"""
-        canonical = copy.deepcopy(list(canonical_messages))
+        canonical = _validate_canonical_messages(canonical_messages)
         provider = copy.deepcopy(list(provider_messages)) if provider_messages is not None else copy.deepcopy(canonical)
         instance = cls(provider, metadata=metadata or {})
         instance._canonical_messages = tuple(canonical)
@@ -97,13 +135,16 @@ class NewMessageBatch:
                 message for index, message in enumerate(self.messages)
                 if index not in excluded
             ]
-            self._canonical_messages = tuple(canonicalize_tool_messages(canonical_source))
+            self._canonical_messages = tuple(
+                _validate_canonical_messages(canonicalize_tool_messages(canonical_source))
+            )
             self._canonical_initialized = True
         if not self._provider_initialized:
             self._provider_messages = tuple(copy.deepcopy(self.messages))
             self._provider_initialized = True
         self._provider_digest = digest(self.messages)
         self._digest = digest({"messages": self._canonical_messages, "metadata": self.metadata})
+        self.messages = _FrozenMessages(self.messages)
         self._sealed = True
         return self
 
@@ -116,7 +157,9 @@ class NewMessageBatch:
         values = list(messages)
         self.messages.extend(copy.deepcopy(values))
         if self._canonical_initialized:
-            self._canonical_messages = self._canonical_messages + tuple(copy.deepcopy(values))
+            self._canonical_messages = self._canonical_messages + tuple(
+                _validate_canonical_messages(values)
+            )
         if self._provider_initialized:
             self._provider_messages = self._provider_messages + tuple(copy.deepcopy(values))
 
@@ -125,6 +168,8 @@ class NewMessageBatch:
         value = copy.deepcopy(message)
         self.messages.append(value)
         if self._canonical_initialized:
-            self._canonical_messages = self._canonical_messages + (copy.deepcopy(value),)
+            self._canonical_messages = self._canonical_messages + tuple(
+                _validate_canonical_messages([value])
+            )
         if self._provider_initialized:
             self._provider_messages = self._provider_messages + (copy.deepcopy(value),)

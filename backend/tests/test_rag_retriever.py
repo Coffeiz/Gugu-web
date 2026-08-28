@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from agent.rag import service as rag_service
 from agent.rag.adapters.projects import ProjectAdapter
-from agent.rag.models import IndexDocument, RecallResult, Scope
+from agent.rag.models import IndexDocument, RecallCandidate, RecallResult, Scope
 from agent.rag.retriever import RetrievalBatch, UnifiedRetriever
 from agent.rag.service import UnifiedRecallService
 from agent.rag.scope import group_scope, owner_scope
@@ -201,6 +201,23 @@ async def test_project_adapter_is_owner_only_and_keeps_project_citation(db, user
     ) == []
 
 
+@pytest.mark.asyncio
+async def test_project_adapter_accepts_db_factory(db, user_a):
+    """自动召回使用独立会话工厂时，项目来源不能因旧签名而初始化失败。"""
+    project = Project(user_id=user_a.id, name="工厂会话项目", status="active", version=1)
+    db.add(project)
+    await db.commit()
+
+    @asynccontextmanager
+    async def session_factory():
+        yield db
+
+    adapter = ProjectAdapter(user_a.id, db_factory=session_factory)
+    documents = await adapter.build_documents(scope=owner_scope(user_a.id))
+
+    assert [item.source_id for item in documents] == [str(project.id)]
+
+
 class _ManyProjects:
     source_type = "project"
 
@@ -259,6 +276,61 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.attributes["cache_entries"] == 1
     assert span.output["hit_count"] == 3
     assert "query" not in str(span.payload())
+
+
+def test_recall_diagnostics_preserves_multiple_scope_identity(monkeypatch):
+    from agent.rag.diagnostics import record_recall
+    from agent.rag.models import Scope
+    from agent.runtime.loopscope_trace import state
+
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = state._ScopeRun(
+        id="run-rag-multi-scope", trace_id="trace-rag-multi-scope", session_key="test",
+        external_session_id="1", source="qq", started_at=state._now(),
+    )
+    token = state._scope_run.set(run)
+    try:
+        record_recall(
+            namespace="knowledge", source_type="all", candidate_count=2,
+            hit_count=0, elapsed_ms=3, fallback_reason="low_score",
+            index_version="knowledge-rag-v1", scope_type="multi",
+            scope_details=[
+                {"scope_type": "group", "scope_digest": "group-digest", "candidate_count": 1},
+                {"scope_type": "member", "scope_digest": "member-digest", "candidate_count": 1},
+            ],
+        )
+    finally:
+        state._scope_run.reset(token)
+
+    span = run.spans[0]
+    assert span.attributes["scope_type"] == "multi"
+    assert [item["scope_type"] for item in span.attributes["scope_details"]] == [
+        "group", "member",
+    ]
+    assert "group-digest" in str(span.payload())
+    assert "member-digest" in str(span.payload())
+    assert "group-1" not in str(span.payload())
+
+
+def test_recall_scope_details_split_group_and_member_candidates():
+    from agent.rag.service import _scope_details
+    from agent.rag.scope import member_scope
+
+    group = group_scope("user-a", "qq", "bot-1", "group-1")
+    member = member_scope("user-a", "qq", "bot-1", "group-1", "member-1")
+    candidates = [
+        RecallCandidate.from_result(RecallResult(IndexDocument(
+            "group-memory", "memory", "memory", group, "群", "", "群内容", "v1",
+        ), 1.0), rank=1),
+        RecallCandidate.from_result(RecallResult(IndexDocument(
+            "member-memory", "memory", "memory", member, "群友", "", "群友内容", "v1",
+        ), 0.9), rank=2),
+    ]
+
+    details = _scope_details([group, member], candidates, [])
+
+    assert [(item["scope_type"], item["candidate_count"], item["selected_count"])
+            for item in details] == [("group", 1, 0), ("member", 1, 0)]
 
 
 def test_conversation_rag_excludes_current_message_watermark():

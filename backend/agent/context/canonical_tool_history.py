@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -157,6 +158,43 @@ def canonical_event_stats(messages: list[dict]) -> dict[str, Any]:
     }
 
 
+def canonical_tool_round(result: Any, dispatched: list[tuple[Any, Any]]) -> list[dict]:
+    """从统一的 round 结果直接构造 canonical 工具批次。
+
+    这里刻意不接收 Provider wire message。Provider 的 assistant/tool 消息可能
+    使用不同 role、字段名和图片包装；如果先拼 wire 再反向归一化，容易把
+    Provider 形状误当成历史事实，也会让 batch 包装在跨 provider 时漂移。
+    """
+    assistant_blocks: list[dict] = []
+    text = str(getattr(result, "text", "") or "")
+    if text:
+        assistant_blocks.append({"type": "text", "text": text})
+    for call in getattr(result, "tool_calls", ()) or ():
+        if not getattr(call, "id", None) or not getattr(call, "name", None):
+            continue
+        assistant_blocks.append(ToolCall(
+            id=str(call.id),
+            name=str(call.name),
+            input=getattr(call, "input", getattr(call, "arguments", {})),
+        ).to_block())
+
+    canonical: list[dict] = []
+    if assistant_blocks:
+        canonical.append({"role": "assistant", "content": assistant_blocks})
+
+    result_blocks: list[dict] = []
+    for call, value in dispatched:
+        result_blocks.append(ToolResult(
+            tool_call_id=str(getattr(call, "id", "")),
+            content=value,
+            is_error=_tool_result_is_error({"content": value}),
+            tool_name=str(getattr(call, "name", "")) or None,
+        ).to_block())
+    if result_blocks:
+        canonical.append({"role": "user", "content": result_blocks})
+    return canonical
+
+
 @dataclass(frozen=True)
 class ToolSchemaEvent:
     tool_name: str
@@ -297,6 +335,9 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
     result._canonical_batch_digests = list(
         getattr(messages, "_canonical_batch_digests", ())
     )
+    result._canonical_batch_metadata = copy.deepcopy(list(
+        getattr(messages, "_canonical_batch_metadata", ())
+    ))
     remember_anchor = getattr(result, "remember_cache_anchor", None)
     if remember_anchor is not None:
         for index in getattr(messages, "cache_anchor_indices", ()):

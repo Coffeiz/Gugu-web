@@ -307,21 +307,8 @@ watch(mainRef, (element, previous) => {
   runtime.surfaces.setElement(runtimeBrowserSurfaceId, element)
 }, { flush: 'post' })
 
-/** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
-function hasActiveMove(): boolean {
-  const root = mainRef.value
-  if (!root) return false
-  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
-  for (const card of cards) {
-    const key = card.dataset.layoutKey
-    if (key && runtime.isControlled(key)) return true
-  }
-  return false
-}
-
-/** 目录切换只保留拖拽事务守卫；通过后立即切换，不创建 FLIP/Presence 离场代理。 */
+/** 目录切换不创建 FLIP/Presence 离场代理；Runtime 对受控对象负责延迟注销。 */
 function withDirectNav(mutate: () => void): void {
-  if (hasActiveMove()) return
   mutate()
 }
 
@@ -643,6 +630,9 @@ const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
 useRuntimeAction(action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
   suppressNextSelectionPageClick = true
+  // 只吞掉拖拽结束时浏览器合成的那一次 click；不能让标记跨到用户下一次
+  // 点击目标文件夹，否则目标会被选择模式拦截而无法导航。
+  window.setTimeout(() => { suppressNextSelectionPageClick = false }, 0)
   void handleRuntimeMoveAction(action.type === 'move-group' ? action.objectIds : [action.objectId], action.toSurfaceId)
 })
 

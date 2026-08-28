@@ -20,6 +20,12 @@ importers:
 
   backend/ts/packages/contracts: {}
 
+  backend/ts/packages/data-runtime:
+    dependencies:
+      postgres:
+        specifier: 3.4.9
+        version: 3.4.9
+
   backend/ts/workers/rag:
     dependencies:
       '@node-rs/jieba':
@@ -5720,8 +5726,7 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  postgres@3.4.9:
-    optional: true
+  postgres@3.4.9: {}
 
   prebuild-install@7.1.3:
     dependencies:

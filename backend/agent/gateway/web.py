@@ -28,6 +28,14 @@ from agent.profiles import DefaultProfile
 from agent.llm.llm_select import resolve_run_config
 
 
+def _canonical_tool_batch_records(messages) -> list[dict]:
+    """只把已封存的工具批次交给统一收尾，避免从 provider wire 反推历史。"""
+    records = getattr(messages, "canonical_batch_records", ())
+    return [record for record in records
+            if isinstance(record, dict)
+            and (record.get("metadata") or {}).get("round_id")]
+
+
 async def _generate_title(user_msg: str, ai_reply: str, settings, use_anthropic: bool, ai=None) -> str:
     """用 LLM 为新对话起标题（非流式，快速调用）。失败时回退到截断用户消息。"""
     prompt = (
@@ -594,6 +602,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                 initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
                 stance_text=prepared.stance_to_persist,
                 user_message_id=getattr(user_message, "id", None),
+                canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
                 text=full_reply,
                 display_timeline=[
                     item for item in display_timeline

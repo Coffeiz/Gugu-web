@@ -7,7 +7,11 @@ from typing import Iterable
 
 from .tokens import content_text
 from .canonical_tool_history import ToolCall, ToolResult, event_text
-from .canonical_context import HistoryEnvelope, normalize_history_message
+from .canonical_context import (
+    HistoryEnvelope,
+    canonicalize_time_context_blocks,
+    normalize_history_message,
+)
 from .provider_history import strip_thinking_blocks
 from .summary_format import format_compacted_summary
 
@@ -100,6 +104,9 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
                     "toolStatus": "running",
                     "createdAt": message.created_at,
                 }
+                batch_id = getattr(message, "canonical_batch_id", None)
+                if batch_id is not None:
+                    events[call_id]["canonicalBatchId"] = int(batch_id)
             elif block_type == "tool_result":
                 call_id = str(block.get("tool_call_id") or block.get("tool_use_id") or "")
                 if not call_id:
@@ -130,6 +137,9 @@ def build_chat_tool_events(messages: Iterable) -> list[dict]:
         event["toolDurationMs"] = max(
             0, int((message.created_at - event["createdAt"]).total_seconds() * 1000)
         )
+        batch_id = getattr(message, "canonical_batch_id", None)
+        if batch_id is not None:
+            event["canonicalBatchId"] = int(batch_id)
     return sorted(events.values(), key=lambda item: (item["createdAt"], item["id"]))
 
 
@@ -391,6 +401,12 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
             parts.append({"role": "user", "content": _summary_content(message)})
             continue
         content_json = getattr(message, "content_json", None)
+        if isinstance(content_json, list):
+            # 旧数据可能把时间 reminder 存成 text；在 provider 分支前统一恢复
+            # canonical 类型，确保跨 run 的消息结构不会漂移。
+            content_json = canonicalize_time_context_blocks(
+                str(getattr(message, "role", "user") or "user"), content_json
+            )
         blocks = _blocks(content_json)
         is_tool_message = any(block.get("type") == "tool_result" for block in blocks)
         # canonical event 是上一条真实用户 turn 的附属上下文，不是新用户发言。
@@ -411,7 +427,15 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         if is_user_message:
             timestamp = message_time_reminder(getattr(message, "sent_at", None), user_tz)
             if timestamp:
-                parts.append(timestamp)
+                # 与本轮 assemble_turn 使用同一 canonical 形状。若这里保留为
+                # plain string，provider 的相邻 user 合并会让下一轮前缀边界漂移。
+                parts.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "time-context",
+                        "text": str(timestamp.get("content") or ""),
+                    }],
+                })
 
         if use_anthropic:
             if content_json is not None:

@@ -113,6 +113,9 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
         "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
         "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
         "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
+        "用户要求创建、保存或定义一套可复用做法时，使用 `create_skill`；不要把创建技能误当成 `create_project`，"
+        "也不要先调用 `use_skill`。创建用户 Skill 时至少准备 name、description_short、body 和 related_tools，"
+        "无关联工具时 related_tools 使用空数组 []。",
     ]
     ordered_tools = tuple(tool_order or snapshot.tools)
     catalog = tuple(snapshot.tools[name] for name in ordered_tools if name in snapshot.tools) + tuple(snapshot.skills.values())

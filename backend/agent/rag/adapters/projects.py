@@ -19,15 +19,20 @@ class ProjectAdapter:
 
     source_type = "project"
 
-    def __init__(self, user_id: object, *, db=None):
+    def __init__(self, user_id: object, *, db=None, db_factory=None):
         self.user_id = user_id
         self._db = db
+        self._db_factory = db_factory
 
     async def build_documents(self, *, scope: Scope) -> list[IndexDocument]:
         if scope.owner_user_id != str(self.user_id) or scope.scope_type != "owner":
             return []
         if self._db is not None:
             return await self._build_from_db(self._db, scope)
+
+        if self._db_factory is not None:
+            async with self._db_factory() as db:
+                return await self._build_from_db(db, scope)
 
         import app.db.session as db_session
 

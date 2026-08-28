@@ -1,6 +1,7 @@
 """可变消息列表与缓存边界。"""
 from __future__ import annotations
 
+import copy
 from typing import Iterable
 
 from .batch import NewMessageBatch
@@ -17,6 +18,7 @@ class PromptMessages(list):
         self._cache_anchor_indices: list[int] = []
         self._canonical_batches: list[tuple[dict, ...]] = []
         self._canonical_batch_digests: list[str] = []
+        self._canonical_batch_metadata: list[dict] = []
         super().__init__(conversation)
 
     def _sync_backing(self) -> None:
@@ -58,6 +60,7 @@ class PromptMessages(list):
             items = list(batch.provider_messages)
             self._canonical_batches.append(batch.canonical_messages)
             self._canonical_batch_digests.append(batch.batch_digest)
+            self._canonical_batch_metadata.append(copy.deepcopy(batch.metadata))
         else:
             items = list(batch)
         if not items:
@@ -74,6 +77,19 @@ class PromptMessages(list):
     def canonical_batch_digests(self) -> tuple[str, ...]:
         """返回已提交 canonical batch 的脱敏身份指纹。"""
         return tuple(self._canonical_batch_digests)
+
+    @property
+    def canonical_batch_records(self) -> tuple[dict, ...]:
+        """返回 canonical 批次及其脱敏元数据，供持久化和诊断复用。"""
+        return tuple({
+            "messages": copy.deepcopy(messages),
+            "digest": digest,
+            "metadata": copy.deepcopy(metadata),
+        } for messages, digest, metadata in zip(
+            self._canonical_batches,
+            self._canonical_batch_digests,
+            self._canonical_batch_metadata,
+        ))
 
     def extend(self, items) -> None:
         for item in items:

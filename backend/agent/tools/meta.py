@@ -216,10 +216,11 @@ class MetaSkill(BaseSkill):
         Tool(
             name="create_skill",
             label="创建咕咕技能",
-            description_short='创建咕咕技能；关键字段 name',
+            description_short='创建用户自定义技能；保存可复用做法，关键字段 name/description_short/body/related_tools',
             description=(
-                "当用户明确要求记住一套可复用做法时，创建一个 Prompt Skill。"
-                "只能保存指导文本，不能写代码、注册新工具或扩大权限。"
+                "当用户要求创建、保存或定义一套可复用的做法、流程或提示词技能时，使用这个工具创建用户自己的 Prompt Skill；"
+                "这不是创建项目，也不是调用已有技能。最少需要提供 name、description_short、body 和 related_tools，"
+                "没有关联工具时 related_tools 传空数组 []。只能保存指导文本，不能写代码、注册新工具或扩大工具权限。"
             ),
             input_schema={
                 "type": "object",

@@ -45,6 +45,22 @@ def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> Non
     bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
 
 
+def record_canonical_batch(*, digest: str, round_id: str | None, message_count: int) -> None:
+    """记录已提交 canonical batch 的脱敏身份，便于核对持久化与请求投影。"""
+    run = _scope_run.get()
+    if run is None or run.ended_at is not None:
+        return
+    bucket = _diagnostic_bucket(run, "canonical_batches", {
+        "count": 0, "digests": [], "round_ids": [], "message_count": 0,
+    })
+    bucket["count"] = int(bucket.get("count", 0) or 0) + 1
+    bucket["message_count"] = int(bucket.get("message_count", 0) or 0) + int(message_count or 0)
+    if digest:
+        bucket["digests"] = sorted({*bucket.get("digests", []), str(digest)})
+    if round_id:
+        bucket["round_ids"] = sorted({*bucket.get("round_ids", []), str(round_id)})
+
+
 def record_context_compaction(
     *,
     phase: str,

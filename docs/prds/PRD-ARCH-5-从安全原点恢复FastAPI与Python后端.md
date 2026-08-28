@@ -1,8 +1,8 @@
-# PRD-ARCH-6：从安全原点恢复 FastAPI 与 Python 后端
+# PRD-ARCH-5：从安全原点恢复 FastAPI 与 Python 后端
 
 ## 1. 文档状态
 
-- 状态：恢复目标与实施方案已确定，待实施。
+- 状态：主体恢复已完成，自动化 E2E 已接入 CI；剩余真实第三方账号和人工回归项待完成。
 - 基线原点：`8bad5dcd7883d1d7a63d7362482108ce54d6ad02`。
 - 目标：恢复原本的 Python/FastAPI API 与 Python Agent 生产链路，保留 pnpm 迁移、完整 TypeScript RAG 链路、后续 Python/前端补丁，并将实时事件能力迁回 Python/FastAPI。
 - 本文是独立的功能恢复目标，不要求通过回退或重写当前 Git 历史实现。实施时可以从安全原点建立临时恢复分支，也可以在新分支按文件和功能重新应用补丁。
@@ -507,10 +507,21 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 
 以下检查在 devserver 和真实测试账号上执行。每项记录日期、环境、结果及关键 run/trace；截图、日志和文档不得包含 Token、Cookie、Authorization、API Key 或真实用户隐私。失败项记录复现步骤，不以刷新页面后恢复替代根因说明。
 
+自动化 E2E 已覆盖的项目单独记录如下；“通过”只代表 Playwright 在 devserver 的自动化验证通过，
+不等同于真实第三方账号人工回归完成：
+
+- [x] 服务入口与登录态：E2E setup 登录通过，浏览器请求进入 FastAPI；devserver 的 backend、worker、supervisor、sandboxd 均为 active。
+- [x] 日历：月/周视图、日期范围项目、活动创建与浮动编辑窗日期选择通过；活动被收进“更多”时也能进入编辑。
+- [x] 文件库：上传/删除、个人文件区单文件/多选/混合拖拽、项目文件区拖拽及 409/403 回滚通过。
+- [x] 定时任务：空状态、新建、编辑、启停、应用内确认删除、间隔/渠道选项，以及真实 Python worker 试运行通过。
+- [x] Mind：画布首屏、项目抽屉、相机控制和 Mono 亮/暗主题回归通过。
+- [x] 测试数据隔离：文件拖拽和真实定时任务用例按精确名称清理本轮资源；CI 每轮使用全新数据库。
+- [ ] Chat：已有会话排队和侧栏切换的 2 条 E2E 仍需单独修复，不能据此标记 Chat 全链路通过。
+
 **服务与入口**
 
 - [x] `gugu-backend`、`gugu-worker`、`gugu-supervisor`、`gugu-sandboxd` 均为 `active`。
-- [x] Web、Admin、LoopScope 可登录、刷新和退出；浏览器请求只进入 FastAPI，没有 TS API 端口请求。
+- [ ] Web、Admin、LoopScope 可登录、刷新和退出；浏览器请求只进入 FastAPI，没有 TS API 端口请求。（Web 登录与 FastAPI 入口已有自动化覆盖，Admin/LoopScope 及退出仍需人工确认。）
 - [x] 新建 Web 会话并连续发送两轮普通文本；回复、生成状态和历史各只出现一次。
 
 **Agent、工具与上下文**
@@ -535,7 +546,7 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 
 - [ ] 两个窗口之间的新建、修改、删除项目/文件能实时同步。
 - [ ] SSE 断线重连后按游标补齐，不重复插入、不回滚状态。
-- [ ] 项目、日历、笔记、画布、文件库、定时任务分别完成一次创建、修改和删除/归档，刷新后数据一致。
+- [ ] 项目、日历、笔记、画布、文件库、定时任务分别完成一次创建、修改和删除/归档，刷新后数据一致。（日历、文件库、定时任务已有自动化覆盖；项目、笔记、画布仍需人工补齐完整 CRUD。）
 - [ ] 普通用户访问其他用户资源被拒绝，响应和日志不泄露内容。
 - [ ] Admin 读取/保存 LLM preset、模型列表和多模态检测；未保存表单 key 能直接用于检测。
 
@@ -551,7 +562,7 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 
 - [ ] 无 P0/P1；P2 已记录风险、后续 owner 和 issue。
 - [ ] 关键路径完成刷新后复验：聊天、工具、RAG、实时事件、文件库、终端和 IM。
-- [ ] 清理测试文件、任务、沙盒、临时会话和后台进程；确认没有遗留容器。
+- [ ] 清理测试文件、任务、沙盒、临时会话和后台进程；确认没有遗留容器。（本轮自动化用例已清理自身创建的文件、文件夹和任务；历史 devserver 测试数据仍需专项清理确认。）
 - [ ] 本表全部完成后，才能把 Phase 6 和本 PRD 标记为完成。
 
 人工回归记录模板：
@@ -577,6 +588,33 @@ Phase 6 实施记录（2026-08-28）：
   大 chunk 警告，不影响构建结果。
 - 本轮未把真实第三方 IM 账号交互或依赖完整 devserver 数据的 Playwright 场景冒充为本地
   测试结果；这些仍属于部署后的人工回归范围。
+
+#### E2E 自动化验收记录（2026-08-28）
+
+本轮在 devserver `192.168.110.51` 使用专用 E2E 账号完成回归。测试访问 FastAPI，文件/文件夹
+移动使用真实 API，定时任务 UI 使用 Playwright 路由 mock，定时任务执行链路使用真实 Python
+worker；本轮没有重启后端，避免把服务重启造成的连接失败混入结果。
+
+- 初始完整回归：`23 passed / 4 failed / 1 skipped / 9 did not run`。4 个失败分别是日历活动被
+  “更多”容量隐藏、文件拖拽后导航时序、定时任务空状态选择器漂移和 Checkbox 选择器漂移。
+- 修复后目标范围：日历 3 条、文件拖拽 11 条、定时任务 UI 2 条、定时任务真实执行 1 条均通过；
+  devserver `vue-tsc --noEmit` 通过，`git diff --check` 通过。
+- 日历测试现在可从可见 chip 或“更多”弹层进入活动，并在创建后强制重新加载取数；活动继续在
+  `finally` 中删除。
+- 文件 Runtime 移动在落点确认后立即退出选择模式；目录导航不再丢弃 Runtime 收尾期间的用户点击，
+  E2E 等待移动 API 持久化后再验证目标目录内容。
+- 文件拖拽测试记录本轮创建的文件夹和文件，并在 `afterEach` 按精确名称删除；定时任务真实执行
+  测试同样在 `afterEach` 删除本轮创建的任务。CI 每轮使用全新 PostgreSQL，不依赖历史测试数据，
+  不会重复创建测试项目或长期测试资源。
+- 已将以下确定性用例固化到 `.github/workflows/runtime-integration.yml`：
+  `file-lifecycle.spec.ts`、`file-drag-runtime.spec.ts`、`scheduled-task-ui.spec.ts`、
+  `scheduled-task-run.spec.ts`、`chat.spec.ts`、`calendar.spec.ts`、
+  `mind-canvas-runtime.spec.ts`。
+- devserver 组合回归仍有 2 条既有 Chat 会话切换/排队用例失败；它们不属于本轮修复范围，且不应
+  在本记录中标记为通过，后续需单独处理后再把 CI 全量结果标记为绿色。
+
+本次 E2E 发现的修复项已纳入 Phase 6 验收；依赖长期账号既有数据、以 `test.skip()` 兜底的
+`filesystem-phases.spec.ts` 等场景仍不纳入 CI，继续保留为人工/专项回归。
 
 ### 6.3 全部阶段完成后的剩余清点
 

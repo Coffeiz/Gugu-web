@@ -3,6 +3,7 @@ import json
 import pytest
 
 from app.api.v1 import live
+from app.core import events
 
 
 def _event(**overrides):
@@ -87,3 +88,30 @@ async def test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub(m
     assert pubsub.subscribed == ("events:user-1", live.BROADCAST_CHANNEL)
     assert pubsub.unsubscribed == pubsub.subscribed
     assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_resource_revision_not_global_revision(monkeypatch):
+    class Redis:
+        def __init__(self):
+            self.keys = []
+            self.published = []
+
+        async def incr(self, key):
+            self.keys.append(key)
+            return 1
+
+        async def expire(self, *_args):
+            return True
+
+        async def publish(self, channel, value):
+            self.published.append((channel, json.loads(value)))
+
+    redis = Redis()
+    monkeypatch.setattr(events, "get_redis", lambda: redis)
+    await events.publish("user-1", "projects", operation="update", entity_id=7)
+
+    event = redis.published[0][1]
+    assert event["revision"] == 1
+    assert "live-revision:user-1:projects" in redis.keys
+    assert all("live-revision:user-1" not in key or key.endswith(":projects") for key in redis.keys)

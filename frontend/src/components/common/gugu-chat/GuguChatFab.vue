@@ -57,7 +57,7 @@ defineExpose({ svgEl: computed(() => svgRef.value) })
   box-shadow: var(--gugu-fab-hover-shadow);
 }
 .ai-fab:focus-visible { outline: none; box-shadow: var(--gugu-fab-hover-shadow), var(--control-focus-shadow); }
-.ai-fab-logo { position: relative; z-index: 1; width:28px; height:28px; display:block; background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(255,255,255,.78)); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
+.ai-fab-logo { position:relative; left:1px; z-index:1; width:var(--gugu-fab-logo-size); height:var(--gugu-fab-logo-size); display:block; background:linear-gradient(135deg,rgba(255,255,255,.98),rgba(255,255,255,.78)); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
 .ai-fab-spin { animation: fab-spin 8s linear infinite; transform-origin: center; }
 @keyframes fab-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .ai-fab--playing::before, .ai-fab--playing::after {

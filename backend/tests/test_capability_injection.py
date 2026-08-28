@@ -30,6 +30,20 @@ def test_catalog_contains_short_descriptions_only():
     assert "权限和执行校验由代码完成" in block
 
 
+def test_catalog_routes_user_skill_creation_to_create_skill():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"create_skill": CapabilityMeta(
+            "create_skill", "tool", "创建用户自定义技能；保存可复用做法。", "meta"
+        )},
+        skills={},
+    )
+    block = catalog_block(snapshot)
+    assert "创建用户自定义技能" in block
+    assert "创建技能误当成 `create_project`" in block
+    assert "related_tools 使用空数组 []" in block
+
+
 def test_catalog_rejects_long_description_instead_of_truncating():
     snapshot = CapabilitySnapshot(
         generation=1,

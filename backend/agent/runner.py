@@ -36,6 +36,14 @@ from agent.profiles import DefaultProfile
 _bg_tasks: set = set()
 
 
+def _canonical_tool_batch_records(messages) -> list[dict]:
+    """只取已封存的工具批次；动态尾缀和普通控制提示不进入 canonical history。"""
+    records = getattr(messages, "canonical_batch_records", ())
+    return [record for record in records
+            if isinstance(record, dict)
+            and (record.get("metadata") or {}).get("round_id")]
+
+
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
     """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
     from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
@@ -574,6 +582,7 @@ async def _run_collect_unlocked(
             initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
             stance_text=prepared.stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
+            canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
             text=text,
             display_timeline=display_timeline or None,
             files=sent_files,
@@ -1032,6 +1041,7 @@ async def _run_stream_unlocked(
             initial_len=anthr_initial_len if use_anthropic else oa_initial_len,
             stance_text=prepared.stance_to_persist,
             user_message_id=getattr(user_message, "id", None),
+            canonical_batches=_canonical_tool_batch_records(anthr_messages if use_anthropic else oa_messages),
             text=text,
             files=files,
             tokens_in=tin,
