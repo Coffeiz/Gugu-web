@@ -33,7 +33,7 @@
   --selected-pill-shadow: var(--segmented-pill-shadow);
 
   /* Dark FAB keeps depth, but removes the coloured outer glow. */
-  --gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 28%,var(--action-primary) 72%);
+  --gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 64%,var(--action-primary) 36%);
   --gugu-fab-shadow: 0 4px 16px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.12);
   --gugu-fab-hover-shadow: 0 6px 20px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.16);
 }

@@ -129,6 +129,11 @@ describe('主题 CSS 回归契约', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
   })
 
+  it('暗色咕咕悬浮球以深色表面为主，避免亮色强调色过曝', () => {
+    const darkRefinements = load('./tokens/interaction-refinements.css')
+    expect(darkRefinements).toContain('--gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 64%,var(--action-primary) 36%)')
+  })
+
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
     expect(datePickerCss).toContain(
       '.drp-day:hover:not(.sel-start):not(.sel-end):not(.in-range)',
