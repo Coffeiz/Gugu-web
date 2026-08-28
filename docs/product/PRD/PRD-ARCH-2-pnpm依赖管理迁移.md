@@ -2,12 +2,10 @@
 
 ## 1. 背景
 
-当前仓库同时使用多个独立的 npm 依赖边界：
+迁移前仓库曾同时使用多个独立的 npm 依赖边界；本 PRD 的执行结果已统一为根 pnpm workspace：
 
-- `frontend/`：Gugu 主前端，Vue + Vite，使用 `frontend/package-lock.json`。
-- `loopscope/frontend/`：LoopScope 前端，使用独立的 `package-lock.json`。
-- `backend/ts/workers/rag/`：TypeScript RAG worker，使用独立的 `package-lock.json`，构建后输出 `backend/bin/gugu-rag-ts-worker.mjs`。
-- 仓库根目录存在一个没有实际依赖包的 `package-lock.json`，但没有根 `package.json`。
+- `frontend/`、`loopscope/frontend/`、`loopscope/apps/*`、`loopscope/packages/*`、`backend/ts`、`backend/ts/packages/*`、`backend/ts/workers/*` 均由根 workspace 管理。
+- 迁移前的各目录 `package-lock.json` 及根部空锁文件已删除，当前仅保留根 `pnpm-lock.yaml`。
 - 主前端通过 `file:../../gugu-interaction-runtime` 引用同级目录的 Interaction Runtime；该目录不在当前仓库根目录内。
 
 依赖安装和构建入口目前还分散在：
@@ -52,7 +50,7 @@
 | `gugu-interaction-runtime` | 仓库外 `file:` 依赖 | 高 | pnpm workspace 无法直接把仓库外目录纳入当前 workspace |
 | Docker/CI/deploy | 多处硬编码 npm | 中 | 漏改会造成不同锁文件和不同安装器并存 |
 
-总体评估：**中等复杂度，预计分 4 个阶段完成；依赖迁移本身风险可控，但 Runtime 外部依赖和 Docker/CI 一致性是关键风险。**
+总体评估：**迁移已完成；根 workspace 当前纳入 10 个仓库内包。Runtime 外部依赖边界和 Docker/CI 一致性仍是后续维护重点。**
 
 ### 3.2 已确认的特殊约束
 
@@ -60,9 +58,9 @@
 - 生产 Docker 构建需要同时提供 `frontend/` 和同级 `gugu-interaction-runtime/` 内容。
 - 开发 Compose 使用源码挂载和匿名 `node_modules` 卷，不能简单把宿主机 `node_modules` 映射进容器。
 - RAG worker 使用 `@node-rs/jieba`，必须验证 macOS arm64、Linux x64 和容器平台的可选 native 包解析。
-- 当前 CI 使用 `actions/setup-node` 的 npm cache，并在多个目录分别执行 `npm ci`。
-- `backend/Makefile` 和 `backend/deploy.sh` 仍直接执行 `npm ci` / `npm run build`。
-- 根部空 `package-lock.json` 没有提供 workspace 能力，迁移时应删除或替换，不能继续作为安装入口。
+- CI 使用 pnpm store cache，并在根 workspace 通过 filter 安装和构建；外部 Runtime 仍在其自身目录使用 npm ci。
+- `backend/Makefile` 和 `backend/deploy.sh` 的仓库内构建入口已切换为 Corepack/pnpm。
+- 根部空 `package-lock.json` 已删除，不再作为安装入口。
 
 ## 4. 目标目录结构
 

@@ -65,7 +65,10 @@
     "vue": "^3.4.0",
     "vue-chartjs": "^5.3.3",
     "vue-codemirror": "^6.1.1",
-    "vue-router": "^4.3.0"
+    "vue-router": "^4.3.0",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@lezer/highlight": "^1.2.3",
+    "@tiptap/extension-blockquote": "^3.30.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

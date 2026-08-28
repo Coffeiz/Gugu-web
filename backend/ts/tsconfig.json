@@ -8,7 +8,7 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "typeRoots": ["../../frontend/node_modules/@types"]
+    "typeRoots": ["./node_modules/@types", "../../frontend/node_modules/@types"]
   },
   "include": [
     "api/**/*.ts",

@@ -204,8 +204,8 @@ export GUGU_SANDBOXD_SOCKET="/run/user/$(id -u)/gugu-sandboxd.sock"
 
 ```bash
 cd frontend
-npm install
-npm run dev        # Vite :5173，已设 host:true 可局域网访问
+corepack pnpm install --filter gugu-web...
+corepack pnpm --filter gugu-web dev        # Vite :5173，已设 host:true 可局域网访问
 ```
 
 浏览器开 `http://localhost:5173`。
@@ -424,8 +424,8 @@ Shell 持久空间和临时空间三类配额；文件写入、`web_download`、
 
 ```bash
 cd frontend
-npm install
-npm run build                  # 产物在 frontend/dist/
+corepack pnpm install --filter gugu-web...
+corepack pnpm --filter gugu-web build                  # 产物在 frontend/dist/
 ```
 
 nginx 配置（`/etc/nginx/sites-available/gugu`）：
@@ -822,7 +822,7 @@ sudo systemctl restart gugu-backend   # 重启 web（生产走 systemd，别用 
 sudo systemctl restart gugu-worker gugu-supervisor   # 重启 IM（若改了 agent 代码，见 §6.1）
 # 若更新了 sandboxd / Docker 执行策略，再重启沙盒执行服务
 sudo systemctl restart gugu-sandboxd
-cd ../frontend && npm install && npm run build        # 前端重新构建
+cd .. && corepack pnpm install --filter gugu-web... && corepack pnpm --filter gugu-web build        # 前端重新构建
 # 或一键：make deploy（备份 + 依赖 + 迁移 + 前端 build + 重启）
 ```
 

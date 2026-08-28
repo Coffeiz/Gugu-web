@@ -6,10 +6,10 @@
 
 - Node.js：推荐 `>=22 <23`；devserver 当前使用 Node 20，由 `tsx` 负责运行 TypeScript。
 - TypeScript：使用仓库现有 `frontend/node_modules/typescript` 做无输出类型检查，配置见 `tsconfig.json`。
-- lint：Phase 0 以 TypeScript 类型检查作为基线，命令为 `npm run lint`；引入独立 lint 规则前不得伪造通过结果。
-- test：使用 Node 内置 test runner 和 `tsx` loader，命令为 `npm test`。
-- build：`npm run build` 只生成固定制品 `backend/bin/gugu-rag-ts-worker.mjs`，运行时不编译 TypeScript。
-- API contract：`npm run gen:api` 从 FastAPI `/openapi.json` 生成 `packages/contracts/src/api.d.ts`；可用参数或 `OPENAPI_SOURCE` 指定文件/URL。
+- lint：Phase 0 以 TypeScript 类型检查作为基线，命令为 `pnpm --filter @gugu/backend-ts typecheck`；引入独立 lint 规则前不得伪造通过结果。
+- test：使用 Node 内置 test runner 和 `tsx` loader，命令为 `pnpm --filter @gugu/backend-ts test`。
+- build：`pnpm --filter gugu-rag-ts-worker build` 只生成固定制品 `backend/bin/gugu-rag-ts-worker.mjs`，运行时不编译 TypeScript。
+- API contract：`pnpm --filter @gugu/backend-ts gen:api` 从 FastAPI `/openapi.json` 生成 `packages/contracts/src/api.d.ts`；可用参数或 `OPENAPI_SOURCE` 指定文件/URL。
 
 ## 存储边界
 
@@ -22,8 +22,8 @@ PostgreSQL 是用户、session、message、tool event、任务、RAG 元数据�
 ## Live API 试点
 
 ```sh
-npm install
-GUGU_SECRET_KEY=... REDIS_URL=redis://127.0.0.1:6379 npm run start:live
+corepack pnpm install
+GUGU_SECRET_KEY=... REDIS_URL=redis://127.0.0.1:6379 corepack pnpm --filter @gugu/backend-ts start:live
 ```
 
 监听 `GET /live/stream`。它只接受 `role=user` 的 HS256 JWT，并只订阅 `events:{user_id}` 与全局通知频道；业务消息必须是 `live-event-v1` canonical envelope，断开连接会取消订阅并释放 Redis 连接。生产环境由 `gugu-live.service` 托管；跨端口浏览器访问需配置 `TS_LIVE_ALLOWED_ORIGINS`。
