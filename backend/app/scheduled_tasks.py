@@ -621,9 +621,9 @@ _STATUS_PREFIX = {
 def _parse_report_schema(execution_text: str) -> dict:
     """从 execution 最后一轮文本里抠出 report schema。
 
-    复用 agent/memory/_llm.py 的 _parse_json（容忍 ```json 围栏与前后杂字）。
+    复用 ContextBranch 的 provider runner `_parse_json`（容忍 ```json 围栏与前后杂字）。
     解析失败返回 {}，由调用方决定 fallback。"""
-    from agent.memory._llm import _parse_json
+    from agent.context.provider_runner import _parse_json
     return _parse_json(execution_text or "")
 
 

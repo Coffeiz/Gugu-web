@@ -1,7 +1,7 @@
-"""记忆系统共用的轻量 LLM 调用。
+"""ContextBranch 共用的 provider 调用器。
 
-复用 settings.ai 的 provider 做单次非流式调用，返回解析后的 JSON dict。
-反思（reflection）与压缩（compress）共用，避免两处重复 provider 路由 + 解析。
+只负责 provider 路由、调用参数和结果解析；不负责记忆字段、session baseline 或
+任何领域写入；反思与压缩均通过 ``ContextBranch`` 调用这里。
 """
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ import json
 
 
 async def complete_text(sys: str, user: str, settings, max_tokens: int = 800) -> str:
-    """单次非流式调用 → 返回纯文本。失败返回空串。"""
     from agent.llm.llm_select import use_anthropic_for
+
     use_anthropic = use_anthropic_for(settings.ai)
     try:
         return (
@@ -30,17 +30,16 @@ async def complete_json(
     temperature: float = 0.3,
     thinking: str | None = None,
 ) -> dict:
-    """单次非流式调用 → 解析 JSON。失败/解析不出返回 {}。
-    ⚠️ max_tokens 太小会把 JSON 截断 → 解析失败静默返回 {}；要回显大内容（如反思回显整份
-    pattern）的调用方必须按内容量调大 max_tokens（默认曾 500，导致老用户反思全静默，踩过大坑）。
-    temperature 默认 0.3（跟反思/压缩一致）；判断稳定性要求高、容错低的调用方（如批量删除类）
-    可传更低的值换取更一致的输出。"""
     from agent.llm.llm_select import use_anthropic_for
+
     use_anthropic = use_anthropic_for(settings.ai)
     text = (
         await _anthropic(sys, user, settings, max_tokens, temperature, thinking=thinking)
         if use_anthropic
-        else await _openai(sys, user, settings, max_tokens, temperature, json_mode=True, thinking=thinking)
+        else await _openai(
+            sys, user, settings, max_tokens, temperature,
+            json_mode=True, thinking=thinking,
+        )
     )
     return _parse_json(text)
 
@@ -104,18 +103,19 @@ async def _openai(
 
 
 def _parse_json(text: str) -> dict:
-    """从模型输出里抠出 JSON 对象，容忍 ```json 围栏与前后杂字。"""
+    """从模型输出里提取 JSON 对象，容忍 markdown 围栏。"""
     if not text:
         return {}
-    s = text.strip()
-    if "```" in s:
-        s = s.split("```")[1]
-        if s.startswith("json"):
-            s = s[4:]
-    lo, hi = s.find("{"), s.rfind("}")
+    value = text.strip()
+    if "```" in value:
+        value = value.split("```", 2)[1]
+        if value.startswith("json"):
+            value = value[4:]
+    lo, hi = value.find("{"), value.rfind("}")
     if lo == -1 or hi == -1:
         return {}
     try:
-        return json.loads(s[lo:hi + 1])
+        parsed = json.loads(value[lo:hi + 1])
     except Exception:
         return {}
+    return parsed if isinstance(parsed, dict) else {}

@@ -55,7 +55,7 @@ async def test_compaction_keeps_working_when_event_recall_fails(monkeypatch, sto
         return None
 
     monkeypatch.setattr(compress, "retrieve_event_references", failed_recall)
-    monkeypatch.setattr(compress, "complete_json", fake_complete)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
     monkeypatch.setattr(compress.store, "sync_memory_vecs", fake_sync)
 
     assert await compress.compact(uid, SimpleNamespace()) is True

@@ -253,7 +253,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
         calls["n"] += 1
         return {"remove": list(vote_sequences[idx])}
 
-    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
 
     result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
 
@@ -275,7 +275,7 @@ async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monk
     async def fake_complete_json(*a, **kw):
         return {}   # 解析不出 remove 字段
 
-    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
 
     result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
     assert result["removed"] == 0
@@ -392,7 +392,7 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
     async def fake_sync_memory_vecs(user_id, memory_text, force=False):
         captured["synced"] = (user_id, memory_text, force)
 
-    monkeypatch.setattr("agent.memory.compress.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     monkeypatch.setattr("agent.memory.store.sync_memory_vecs", fake_sync_memory_vecs)
 
     ok = await compress.compact(UID, SimpleNamespace())

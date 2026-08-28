@@ -97,7 +97,8 @@ async def reflect_if_candidate(
     from agent.rag.service import search_knowledge
     from agent.knowledge.models import KnowledgeEntry, KnowledgeScope
     from agent.knowledge.store import KnowledgeStore, source_from_input
-    from agent.memory._llm import complete_json
+    from agent.context.branch import ContextBranch
+    from agent.context.branch_types import BranchInput, BranchPolicy
 
     recall = await search_knowledge(
         user_id, candidate_query, scope="auto", source="knowledge",
@@ -107,7 +108,24 @@ async def reflect_if_candidate(
     request = build_request(
         user_message, assistant_message, candidates, save_mode=save_mode,
     )
-    raw = await complete_json(load_prompt(), request, settings, max_tokens=900)
+    # Knowledge 反思与 Memory 反思共用同一分支组装和重试审计；revision
+    # 由本次候选查询稳定生成，避免 scope 更新时污染主对话 history。
+    import hashlib
+    scope_revision = hashlib.sha256(
+        f"knowledge:{candidate_query}".encode("utf-8")
+    ).hexdigest()[:16]
+    branch = await ContextBranch().run(
+        BranchInput(
+            stable_system=load_prompt(),
+            delta=request,
+            scope="knowledge",
+            scope_revision=scope_revision,
+            session_id=int(session_id) if isinstance(session_id, int) else None,
+        ),
+        BranchPolicy(name="knowledge", output_mode="json", max_tokens=900),
+        settings,
+    )
+    raw = branch.output if branch.ok else {}
     operations = normalize_operations(raw, save_mode=save_mode)
     saved = 0
     store = KnowledgeStore(user_id)

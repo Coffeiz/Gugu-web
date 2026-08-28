@@ -407,8 +407,9 @@ async def _compress_if_needed_unlocked(
 
 
 async def _call_llm(conv_text: str, prev_summary: str | None, settings) -> str:
-    """调 LLM 生成/合并摘要，复用现有 provider 路由。"""
-    from agent.memory._llm import complete_text
+    """通过 ContextBranch 生成/合并摘要，保持与反思相同的 provider 路由。"""
+    from agent.context.branch import ContextBranch
+    from agent.context.branch_types import BranchInput, BranchPolicy
     try:
         sys_prompt = _PROMPT_PATH.read_text(encoding="utf-8").strip()
     except Exception:
@@ -418,4 +419,9 @@ async def _call_llm(conv_text: str, prev_summary: str | None, settings) -> str:
                      f"【新增对话】\n{conv_text}")
     else:
         user_text = conv_text
-    return await complete_text(sys_prompt, user_text, settings, max_tokens=600)
+    result = await ContextBranch().run(
+        BranchInput(stable_system=sys_prompt, delta=user_text, scope="conversation-compaction"),
+        BranchPolicy(name="compaction", output_mode="text", max_tokens=600, max_retries=0),
+        settings,
+    )
+    return str(result.output or "").strip() if result.ok else ""

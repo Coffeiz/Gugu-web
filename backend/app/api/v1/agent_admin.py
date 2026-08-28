@@ -156,7 +156,8 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
     """逐 scope 调用 IM 反思模型，只保存汇总进度，不保存正文或 scope 标识。"""
     from types import SimpleNamespace
 
-    from agent.memory._llm import complete_json
+    from agent.context.branch import ContextBranch
+    from agent.context.branch_types import BranchInput, BranchPolicy
     from agent.memory.im_reflection import _db_session, _message_text, _messages_for_job, _scope_prompt
     from agent.memory.scoped_store import read_scope
     from agent.memory.scopes import MemoryScope
@@ -188,7 +189,21 @@ async def _im_model_preview_worker(cursors: list[dict], settings) -> None:
                 f"已有群组/用户记忆：\n{json.dumps(current, ensure_ascii=False)}\n\n"
                 f"本批新增消息：\n{payload or '（无新增消息；请仅检查现有记忆是否需要整理）'}"
             )
-            output = await complete_json(_scope_prompt(scope), prompt_input, settings, max_tokens=2500, thinking="disabled")
+            branch = await ContextBranch().run(
+                BranchInput(
+                    stable_system=_scope_prompt(scope),
+                    delta=prompt_input,
+                    scope=scope.scope_type,
+                ),
+                BranchPolicy(
+                    name="reflection-preview",
+                    output_mode="json",
+                    max_tokens=2500,
+                    thinking="disabled",
+                ),
+                settings,
+            )
+            output = branch.output if branch.ok and isinstance(branch.output, dict) else {}
             if output:
                 needs_review += 1
                 plans.append({

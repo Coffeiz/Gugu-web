@@ -194,7 +194,7 @@ async def test_knowledge_reflection_runs_after_candidate_and_downgrades_automati
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
     settings = SimpleNamespace(ai=SimpleNamespace(max_tokens=900))
 
     saved = await reflect_if_candidate(
@@ -221,7 +221,7 @@ async def test_knowledge_reflection_explicit_save_can_be_confirmed(monkeypatch, 
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
     settings = SimpleNamespace(ai=SimpleNamespace(max_tokens=900))
 
     await reflect_if_candidate(
@@ -254,7 +254,7 @@ async def test_knowledge_reflection_conflict_keeps_parent_and_new_id(monkeypatch
         }]}
 
     monkeypatch.setattr("agent.rag.service.search_knowledge", fake_search)
-    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete)
     await reflect_if_candidate(
         "user-a", "发现另一种规则", "收到", SimpleNamespace(ai=SimpleNamespace(max_tokens=900)), "规则",
     )

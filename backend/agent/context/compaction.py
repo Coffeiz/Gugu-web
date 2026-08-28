@@ -491,10 +491,22 @@ async def _generate_compact_summary_once(
 
     try:
         from app.core.config import get_settings
-        from agent.memory._llm import complete_text
+        from agent.context.branch import ContextBranch
+        from agent.context.branch_types import BranchInput, BranchPolicy
         settings = get_settings()
-        summary = await complete_text(sys_prompt, user_text, settings=settings, max_tokens=COMPACT_SUMMARY_MAX_TOKENS)
-        return summary.strip() if summary else ""
+        result = await ContextBranch().run(
+            # 保持旧压缩 Prompt 的 user 正文逐字稳定；分支标识只进入审计元数据。
+            BranchInput(stable_system=sys_prompt, delta=user_text),
+            BranchPolicy(
+                name="compaction",
+                output_mode="text",
+                max_tokens=COMPACT_SUMMARY_MAX_TOKENS,
+                max_retries=0,
+            ),
+            settings,
+        )
+        summary = result.output if result.ok else ""
+        return str(summary).strip() if summary else ""
     except Exception as e:
         logger.warning("[compaction] 摘要生成失败: %s", e)
         return ""

@@ -17,7 +17,8 @@ from datetime import datetime
 from pathlib import Path
 
 from agent.memory import store
-from agent.memory._llm import complete_json
+from agent.context.branch import ContextBranch
+from agent.context.branch_types import BranchInput, BranchPolicy
 
 # 保持后台任务引用，防止被 GC（fire-and-forget 必须）
 _bg_tasks: set = set()
@@ -530,4 +531,14 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
     # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
     # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
-    return await complete_json(_load_sys(), user, settings, max_tokens=min(_cap, 900))
+    result = await ContextBranch().run(
+        BranchInput(stable_system=_load_sys(), delta=user, scope="owner"),
+        BranchPolicy(
+            name="reflection",
+            output_mode="json",
+            max_tokens=min(_cap, 900),
+            max_retries=0,
+        ),
+        settings,
+    )
+    return result.output if result.ok and isinstance(result.output, dict) else {}

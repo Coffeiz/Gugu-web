@@ -191,4 +191,4 @@ PRD-IM-11：群压缩派生成员事件记忆
   └── 复用 MEM-2 的事件合并、去重、hash、向量和删除能力
 ```
 
-推荐顺序已完成：MEM-2 公共事件契约 → IM-11 Phase 0–1 → Phase 4 生命周期/RAG 回归 → Phase 5 自动化与 devserver 同步。剩余工作仅是 devserver 多人群人工验收和压缩频率/成本观察。
+推荐顺序已完成：MEM-2 公共事件契约 → IM-11 Phase 0–1 → Phase 4 生命周期/RAG 回归 → Phase 5 自动化与 devserver 同步。剩余工作仅是 devserver 多人群人工验收和压缩频率/成本观察。群组/成员反思的公共分支执行统一遵循 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md)，本 PRD 不再复制 provider 调用与预算逻辑。

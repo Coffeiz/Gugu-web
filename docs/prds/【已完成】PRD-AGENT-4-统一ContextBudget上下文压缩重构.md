@@ -456,7 +456,7 @@ Phase 4.1 已完成：baseline 更新状态写入 `ConversationSession.execution
 - [x] 复核 provider history/loop driver，确保只保留 payload 合法性处理。
 - [x] 更新旧 PRD 的替代说明，删除互相矛盾的 TODO 和 20%描述。
 
-Phase 5 已完成：预算、压缩、snapshot、baseline 的旧兼容 wrapper 与重复比例常量已删除；旧文档中的 checkpoint 仅保留迁移背景，并明确指向本 PRD。
+Phase 5 已完成：预算、压缩、snapshot、baseline 的旧兼容 wrapper 与重复比例常量已删除；旧文档中的 checkpoint 仅保留迁移背景，并明确指向本 PRD。反思与压缩的公共 provider 分支执行由 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md) 统一维护。
 
 ### Phase 6：测试、压测、部署与收口
 

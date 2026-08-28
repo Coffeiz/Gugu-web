@@ -47,7 +47,7 @@ class TestEstimateContextLength:
             return "压缩摘要"
 
         monkeypatch.setattr("app.core.config.get_settings", lambda: object())
-        monkeypatch.setattr("agent.memory._llm.complete_text", fake_complete_text)
+        monkeypatch.setattr("agent.context.provider_runner.complete_text", fake_complete_text)
         result = asyncio.get_event_loop().run_until_complete(
             compaction_module._generate_compact_summary_once(["用户：测试压缩"])
         )

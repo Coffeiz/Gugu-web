@@ -19,7 +19,7 @@ async def test_group_compaction_normalizes_and_deduplicates_memory(monkeypatch):
     async def fake_write(scope, filename, text):
         writes[filename] = text
 
-    monkeypatch.setattr(im_reflection, "complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     monkeypatch.setattr(im_reflection, "write_scope_file", fake_write)
     scope = MemoryScope("owner", "qq", "bot", "group", "group-1")
     entries = [("2026-08-20", f"记录 {index}") for index in range(301)]
@@ -44,7 +44,7 @@ async def test_group_compaction_failure_does_not_write_or_trim_daily(monkeypatch
     async def fake_write(*args, **_kwargs):
         writes.append(args)
 
-    monkeypatch.setattr(im_reflection, "complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     monkeypatch.setattr(im_reflection, "write_scope_file", fake_write)
     scope = MemoryScope("owner", "qq", "bot", "group", "group-1")
 
@@ -88,7 +88,7 @@ async def test_group_compaction_derives_only_batch_member_events(monkeypatch):
     async def fake_documents(*_args, **_kwargs):
         return []
 
-    monkeypatch.setattr(im_reflection, "complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     monkeypatch.setattr(im_reflection, "write_scope_file", fake_write)
     monkeypatch.setattr(im_reflection, "merge_scope_event_memory", fake_merge)
     monkeypatch.setattr("agent.rag.adapters.memory.MemoryAdapter.build_documents", fake_documents)
@@ -142,7 +142,7 @@ async def test_member_event_failure_does_not_block_other_members(monkeypatch):
     async def fake_sync(*_args, **_kwargs):
         return 0
 
-    monkeypatch.setattr(im_reflection, "complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
     monkeypatch.setattr(im_reflection, "write_scope_file", fake_write)
     monkeypatch.setattr(im_reflection, "read_scope_json", fake_members)
     monkeypatch.setattr(im_reflection, "merge_scope_event_memory", fake_merge)

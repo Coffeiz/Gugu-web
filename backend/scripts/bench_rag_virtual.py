@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from math import log
 from pathlib import Path
 
-from agent.memory._llm import complete_json
+from agent.context.provider_runner import complete_json
 from agent.memory.embedding import cosine, embed_multimodal, model_tag
 from app.core.config import get_settings
 

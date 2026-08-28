@@ -1,6 +1,8 @@
 # 事件型长期记忆与压缩去重
 
 > 状态：Phase 0–4 已完成，Phase 5 待实施
+
+> 执行边界：记忆反思与事件压缩的 provider 分支、稳定前缀组装、重试和审计统一由 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md) 维护；本 PRD 只定义事件记忆的领域规则与持久化。
 > 创建：2026-08-24
 > 关联文档：[`docs/agent/11-记忆系统.md`](../../agent/11-记忆系统.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)
 > 目标：明确 profile、pattern、memory 的边界，把 memory.md 收敛为事件/对话记忆，并在 daily 压缩时用少量 RAG 历史参考减少重复。

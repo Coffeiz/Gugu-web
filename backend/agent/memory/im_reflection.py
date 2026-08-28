@@ -16,7 +16,8 @@ from sqlalchemy import select
 
 from app.core import redis as R
 from app.core.tz import now_utc
-from agent.memory._llm import complete_json
+from agent.context.branch import ContextBranch
+from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
 from agent.memory.reflection_jobs import MAX_RETRIES, RETRY_BACKOFF_MINUTES
@@ -261,7 +262,19 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                 f"已有群组/用户记忆：\n{json.dumps(reflection_current, ensure_ascii=False)}\n\n"
                 f"本批新增消息：\n{payload or '（无消息）'}"
             )
-            out = await complete_json(_scope_prompt(scope), user, settings, max_tokens=2500, thinking="disabled")
+            branch = await ContextBranch().run(
+                BranchInput(stable_system=_scope_prompt(scope), delta=user, scope=scope.scope_type),
+                BranchPolicy(
+                    name="reflection",
+                    output_mode="json",
+                    max_tokens=2500,
+                    thinking="disabled",
+                ),
+                settings,
+            )
+            out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
+            if branch.return_reason == "provider_error":
+                raise RuntimeError("memory_reflection_provider_error")
             if not out and messages:
                 raise RuntimeError("memory_reflection_empty_result")
             await _apply_output(scope, current, out, messages, settings)
@@ -616,13 +629,23 @@ async def _compact_group_daily(
         return
     prompt = (Path(__file__).resolve().parents[1] / "prompts" / "im" / "group_compress.md").read_text(encoding="utf-8")
     daily = _render_daily(batch)
-    result = await complete_json(
-        prompt,
-        f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
+    branch = await ContextBranch().run(
+        BranchInput(
+            stable_system=prompt,
+            delta=f"已有长期记忆：\n{current_memory}\n\n近期群聊记录：\n{daily}",
+            scope="group-daily-compaction",
+        ),
+        BranchPolicy(
+            name="compaction",
+            output_mode="json",
+            max_tokens=GROUP_MEMORY_MAX_TOKENS,
+            thinking="disabled",
+        ),
         settings,
-        max_tokens=GROUP_MEMORY_MAX_TOKENS,
-        thinking="disabled",
     )
+    result = branch.output if branch.ok and isinstance(branch.output, dict) else {}
+    if branch.return_reason == "provider_error":
+        raise RuntimeError("group_daily_compaction_provider_error")
     memory = str(result.get("memory") or "").strip() if isinstance(result, dict) else ""
     memory = deduplicate_event_sections(normalize_event_memory(memory, fallback_title="群组事件记录"))
     if not memory or not _preserves_group_dates(batch, memory):

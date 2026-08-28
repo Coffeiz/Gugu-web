@@ -14,7 +14,8 @@ from pathlib import Path
 from agent.memory import store
 from agent.memory.daily_compaction import merge_remaining, should_compact, split_batch
 from agent.memory.event_memory import deduplicate_event_sections, normalize_event_memory
-from agent.memory._llm import complete_json
+from agent.context.branch import ContextBranch
+from agent.context.branch_types import BranchInput, BranchPolicy
 from agent.memory.memory_references import render_event_references, retrieve_event_references
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -78,7 +79,16 @@ async def compact(user_id, settings) -> bool:
             f"要沉淀进来的近期记录（按日期保留有价值的历史，不要丢掉日期）：\n" + "\n".join(overflow) + "\n\n"
             f"请输出整理后的完整长期记忆主档。"
         )
-        out = await complete_json(_load_sys(), user, settings, max_tokens=10000)
+        branch = await ContextBranch().run(
+            BranchInput(stable_system=_load_sys(), delta=user, scope="owner-memory-compaction"),
+            BranchPolicy(
+                name="compaction",
+                output_mode="json",
+                max_tokens=10000,
+            ),
+            settings,
+        )
+        out = branch.output if branch.ok and isinstance(branch.output, dict) else {}
         new_memory = normalize_event_memory(
             (out.get("memory") or "").strip(),
             fallback_title=(
