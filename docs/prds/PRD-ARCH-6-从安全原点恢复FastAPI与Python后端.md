@@ -374,8 +374,8 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 
 ```text
 [x] 611d1c7a  [x] 29733530  [x] 21a222c8  [x] 93861b23  [x] a00570c9
-[x] ed3e3c97  [x] a9949288  [x] f4de57bb  [x] 9ef2d44d  [~] 1962a5d9
-[x] c2f96b44  [x] 259f2efa  [ ] 5e824458  [x] b871ceb0  [~] 2d6a965a
+[x] ed3e3c97  [x] a9949288  [x] f4de57bb  [x] 9ef2d44d  [x] 1962a5d9
+[x] c2f96b44  [x] 259f2efa  [x] 5e824458  [x] b871ceb0  [x] 2d6a965a
 ```
 
 本阶段还补入了恢复 `a00570c9` 所必需的上下文前置实现：`3fd39402`、`0f5ea681`、
@@ -384,11 +384,17 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 历史冗余时间过滤和跨 run 前缀形状，不能省略或改用旧的直接拼装逻辑。
 
 `1962a5d9` 的 worker shutdown 回归测试依赖 Phase 4 才恢复的 TS RAG sidecar 关闭接口，
-因此暂缓到 Phase 4；`5e824458` 只修改同一条未纳入本阶段的 run-context 测试，暂缓；
-`2d6a965a` 的内容是 Agent 文档重整和前端混合改动，文档目录已在当前分支按恢复目标单独维护，
-不重复应用其混合提交。
+现已补回为 `backend/tests/test_worker_shutdown.py`；`5e824458` 只修改已被当前测试
+结构替代的旧 run-context 测试文件，按等价覆盖标记完成，不重复恢复旧文件；
+`2d6a965a` 的 Agent 文档重整已由当前 `docs/agent/01-OVERVIEW.md` 至
+`04-CONTEXT-ENGINEERING.md` 及 `_archive` 迁移覆盖，混合提交中的前端内容按 Phase 2
+处理，不重复应用整提交。
 
 其中包含混合提交时，只有目标 Python/FastAPI 文件应用完成后才能标记 `[x]`；未保留的 TS API/TS Agent 文件要记录为排除，而不是标记为完整应用。
+
+Phase 3 候选清理记录：`1962a5d9` 已按文件恢复，并通过 worker shutdown 回归测试；
+`5e824458` 的行为已由当前测试结构覆盖；`2d6a965a` 已拆分为文档重整、Phase 2
+前端内容和明确排除的混合部分，不再存在需要整提交应用的 Phase 3 悬空项。
 
 - [x] 恢复 `backend/app/api/**`、认证、Admin、CRUD、文件、画布、笔记、终端、SSE 和 WebSocket API。
 - [x] 恢复 SQLAlchemy/Alembic/asyncpg 为业务数据库访问 owner，保持原有配置、用户数据和迁移语义。
@@ -397,8 +403,9 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 - [x] 应用 Python Agent/context/tools/IM/scheduler/LoopScope 补丁，清理 TS Agent registry、native handler、context bridge 和重复 dispatch。
 - [x] 验证工具调用、交互选择、确认门、IM 回复、压缩、取消、恢复和 LoopScope trace；定向回归测试通过。
 
-Phase 3 验证记录：Python `compileall` 通过；定向上下文/工具续轮/scheduler 关闭测试
-`15 passed`；全量 `backend/tests` 为 `1573 passed, 10 failed`，10 个失败均因测试环境未启动
+Phase 3 验证记录：Python `compileall` 通过；定向上下文/工具续轮/scheduler 关闭及 worker
+shutdown 测试通过；本轮追加的 worker shutdown 与 RAG 回归集合为 `23 passed`。此前全量
+`backend/tests` 为 `1573 passed, 10 failed`，10 个失败均因测试环境未启动
 Redis `localhost:6379`，集中在 scheduler 分布式锁测试，待具备 Redis 的 CI/devserver 环境复验。
 
 ### Phase 3.5：Devserver 数据库恢复
