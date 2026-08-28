@@ -241,11 +241,13 @@ html[data-theme][data-family] .sched-page .btn-primary {
 
 /* ── Sidebar logo + Gugu FAB ── */
 html[data-theme][data-family] .sidebar .logo-icon {
+  background: transparent;
+  box-shadow: none;
   transition: background-color var(--hover-motion-control), box-shadow var(--hover-motion-control);
 }
 html[data-theme='dark'][data-family] .sidebar .logo-icon {
-  background: color-mix(in srgb,var(--surface-raised) 28%,var(--action-primary) 72%);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.12);
+  background: transparent;
+  box-shadow: none;
 }
 html[data-theme][data-family] .gugu-fab {
   transition:

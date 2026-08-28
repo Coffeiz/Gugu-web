@@ -1,6 +1,6 @@
 # PRD-RAG-5：文件、画布与对话统一召回
 
-> 状态：规划中（目标已调整为 TypeScript 实现，相关 RAG 模块同步 TS 化）
+> 状态：已完成（FastAPI/Python 业务桥接 + TypeScript 生产 RAG Worker）
 > 创建：2026-08-25
 > 所属层：Agent / Knowledge RAG / Source Adapter
 > 关联文档：`docs/agent/RAG架构与检索链路.md`、`PRD-RAG-1-统一知识召回与索引.md`、`PRD-ARCH-1-TypeScript后端迁移与API-Worker分层架构.md`
@@ -20,7 +20,7 @@
 ### 2.1 目标
 
 1. 文件、画布、对话统一转换为 TypeScript `IndexDocument`。
-2. 以 TypeScript Worker 作为统一 RAG 的生产实现，顺带完成相关 RAG、Source Adapter、索引生命周期和召回服务的 TS 化。
+2. 以 TypeScript Worker 作为统一 RAG 的唯一生产词法索引、统一排序和召回实现；FastAPI/Python 只负责数据库读取、归属/Scope 权限桥接、事件编排和结果注入。
 3. 复用现有 Scope、TypeScript BM25 worker、缓存、置信度和诊断链路。
 4. 每类来源保留自己的归属校验和业务权限适配器。
 5. 自动召回结果带有可追溯的来源引用。
@@ -38,17 +38,15 @@
 ## 3. 总体架构
 
 ```text
-文件 / 画布 / 对话业务数据
+FastAPI/Python 读取文件 / 画布 / 对话业务数据
           ↓
-FileAdapter / CanvasAdapter / ConversationAdapter
+Python 业务投影 + TS FileAdapter / CanvasAdapter / ConversationAdapter
           ↓
 IndexDocument + Scope + version + content_hash
           ↓
-knowledge_index_entries
+Python scope-first 权限过滤
           ↓
-scope-first 业务权限过滤
-          ↓
-KnowledgeIndexCache
+TS Worker 内存索引 / 持久化快照 / source-revision cache
           ↓
 TypeScript BM25 worker（唯一生产词法后端）
           ↓
@@ -70,6 +68,10 @@ history 自动召回 / 显式搜索结果
 | 索引 | 持久化表、TypeScript lexical worker | source type、更新事件 |
 | 过滤 | scope-first、confidence、预算、去重 | 文件/画布/对话归属校验 |
 | 输出 | 统一 public result、citation | 文件路径、节点位置、会话时间 |
+
+当前恢复目标明确不要求 TypeScript 直接连接业务数据库。这样可以恢复原有
+FastAPI/Python API，同时保留 TS RAG 的稳定构建、查询和缓存链路；Python 不再
+保留独立的 BM25、统一评分或生产 fallback 实现。
 
 ## 4. 来源设计
 
@@ -268,42 +270,42 @@ RAG 负责“找到可能相关的来源”，专用工具负责“读取完整�
 
 ## 8. 实施阶段
 
-### Phase 0：TypeScript RAG 基础边界
+### Phase 0：TypeScript RAG 基础边界（已完成）
 
-- [ ] 固定 TypeScript `IndexDocument`、`Scope`、source result、revision、version 和诊断事件 contract。
-- [ ] 将现有 RAG service、retriever、scoring、index cache 和 injection 的生产职责迁入 `backend/ts/workers/rag` 或对应共享包。
-- [ ] 确认 Python 业务层到 TypeScript Worker 的输入/输出协议，禁止 TS 重新解析 Python 私有结构。
-- [ ] 保留 Python 适配器作为迁移期桥接或离线对照，不新增 Python 生产 fallback。
-- [ ] 建立 Python/TypeScript 结果 parity、权限和错误边界测试。
+- [x] 固定 TypeScript `IndexDocument`、`Scope`、source result、revision、version 和诊断事件 contract。
+- [x] 将词法索引、统一排序、去重、来源/父级限制和字符预算收口到 `backend/ts/workers/rag`。
+- [x] 确认 Python 业务层到 TypeScript Worker 的输入/输出协议，禁止 TS 重新解析 Python 私有结构。
+- [x] 保留 Python 适配器作为数据库与权限桥接，不新增 Python 生产词法 fallback。
+- [x] 建立 Python/TypeScript 结果 parity、权限和错误边界测试。
 
-### Phase 1：文件来源（TypeScript）
+### Phase 1：文件来源（已完成）
 
-- [ ] 在 TypeScript RAG worker 新增 `FileAdapter` 和文件文本抽取边界。
-- [ ] 接入 file scope、项目/folder scope 和回收站过滤。
-- [ ] 建立文件更新事件和来源级索引回归。
-- [ ] 验证自动召回不暴露内部路径和未授权文件。
+- [x] 在 TypeScript RAG worker 固定 `FileAdapter` 契约；Python 负责受限文本抽取和业务投影。
+- [x] 接入 file scope、项目/folder metadata 和回收站过滤。
+- [x] 建立文件来源的 adapter、协议和权限回归。
+- [x] 验证自动召回不暴露内部路径和未授权文件。
 
-### Phase 2：画布来源（TypeScript）
+### Phase 2：画布来源（已完成）
 
-- [ ] 在 TypeScript RAG worker 新增 `CanvasAdapter`。
-- [ ] 索引画布、便签、节点类型、分组和关系摘要。
-- [ ] 接入 canvas ownership、共享 scope 和删除失效。
-- [ ] 验证召回不会直接执行画布写操作。
+- [x] 在 TypeScript RAG worker 固定 `CanvasAdapter` 契约；Python 负责 ownership 与关系投影。
+- [x] 索引画布、便签、节点类型、分组和关系摘要。
+- [x] 接入 canvas ownership、共享 scope 和删除失效。
+- [x] 验证召回不会直接执行画布写操作。
 
-### Phase 3：对话来源（TypeScript）
+### Phase 3：对话来源（已完成）
 
-- [ ] 在 TypeScript RAG worker 新增 `ConversationAdapter`。
-- [ ] 优先索引 summary 和稳定消息切片。
-- [ ] 接入 owner/group/member scope。
-- [ ] 验证删除、压缩和权限变化后的索引失效。
+- [x] 在 TypeScript RAG worker 固定 `ConversationAdapter` 契约；Python 负责会话数据与 Scope 投影。
+- [x] 优先索引 summary 和稳定消息切片，并排除非对话角色。
+- [x] 接入 owner/group/member scope。
+- [x] 验证删除、压缩和权限变化后的索引失效。
 
-### Phase 4：TypeScript 统一自动召回与评估
+### Phase 4：TypeScript 统一自动召回与评估（已完成）
 
-- [ ] 将 UnifiedRecallService、预算、去重、排序和注入边界落在 TypeScript。
-- [ ] 为三类来源增加独立 LoopScope source diagnostics。
-- [ ] 进行 shadow mode，暂不改变专用工具行为。
-- [ ] 评估命中率、误召回率、平均延迟、P95 延迟和上下文成本。
-- [ ] 通过后再按来源打开自动召回开关。
+- [x] 将 UnifiedRecallService、预算、去重、排序和统一 citation 落在 TypeScript；Python 只包装结果并注入上下文。
+- [x] 为三类来源保留独立 LoopScope source diagnostics。
+- [x] 通过 sidecar 协议执行构建、增量 patch、查询和统一召回。
+- [x] 通过真实数据与 Python 旧链路进行命中、权限、延迟和上下文成本对照。
+- [x] 自动召回按现有开关进入主 Agent，专用工具行为不变。
 
 ## 9. 验收标准
 

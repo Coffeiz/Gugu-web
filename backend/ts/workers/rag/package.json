@@ -9,6 +9,7 @@
     "esbuild": "^0.28.1"
   },
   "scripts": {
-    "build": "esbuild src/index.ts --platform=node --format=esm --bundle --banner:js=\"#!/usr/bin/env node\" --external:@node-rs/jieba --external:@node-rs/jieba/* --outfile=../../bin/gugu-rag-ts-worker.mjs"
+    "build": "esbuild src/index.ts --platform=node --format=esm --bundle --banner:js=\"#!/usr/bin/env node\" --external:@node-rs/jieba --external:@node-rs/jieba/* --outfile=../../bin/gugu-rag-ts-worker.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
   }
 }

@@ -7,7 +7,7 @@ html[data-theme][data-family] .sidebar {
   box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   color: var(--content-primary);
 }
-html[data-theme][data-family] .sidebar .logo-icon { background: var(--brand-gradient); }
+html[data-theme][data-family] .sidebar .logo-icon { background: transparent; }
 html[data-theme][data-family] .sidebar .nav-label { color: var(--sidebar-label-fg); }
 html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
 html[data-theme][data-family] .sidebar .notif-btn:hover { color: var(--content-primary); background: var(--sidebar-item-hover); }

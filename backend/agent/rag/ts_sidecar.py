@@ -19,6 +19,10 @@ class TsSidecarUnavailable(RuntimeError):
     """TS worker 未配置、启动失败或协议请求失败。"""
 
 
+SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
+SIDE_CAR_REAPER_INTERVAL_SECONDS = 60
+
+
 class TsSidecarClient:
     """一个 owner 一个 worker 进程，索引目录按 owner 隔离。"""
 
@@ -31,6 +35,16 @@ class TsSidecarClient:
         self._revision: str | None = None
         self._document_count = 0
         self.last_search_diagnostics: dict[str, Any] = {}
+        self._last_used_at = asyncio.get_running_loop().time()
+        self._active_requests = 0
+
+    def touch(self) -> None:
+        """刷新 worker 空闲 TTL；TTL 不会打断正在执行的请求。"""
+        self._last_used_at = asyncio.get_running_loop().time()
+
+    def is_idle(self, now: float | None = None) -> bool:
+        current = now if now is not None else asyncio.get_running_loop().time()
+        return self._active_requests == 0 and current - self._last_used_at >= SIDE_CAR_IDLE_TTL_SECONDS
 
     async def replace(self, documents: list[IndexDocument], revision: str | None) -> None:
         response = await self._request({
@@ -71,13 +85,19 @@ class TsSidecarClient:
         self._document_count = int(response.get("document_count") or 0)
 
     async def reuse_if_current(self, revision: str | None) -> bool:
-        await self._ensure_process()
-        expected = revision or ""
-        return bool(
-            self.index_dir
-            and self._revision == expected
-            and (self._document_count > 0 or not expected)
-        )
+        self.touch()
+        self._active_requests += 1
+        try:
+            await self._ensure_process()
+            expected = revision or ""
+            return bool(
+                self.index_dir
+                and self._revision == expected
+                and (self._document_count > 0 or not expected)
+            )
+        finally:
+            self._active_requests -= 1
+            self.touch()
 
     async def search(
         self,
@@ -150,8 +170,14 @@ class TsSidecarClient:
 
     async def _request(self, payload: dict) -> dict:
         async with self._lock:
-            await self._ensure_process()
-            return await self._request_unlocked(payload)
+            self.touch()
+            self._active_requests += 1
+            try:
+                await self._ensure_process()
+                return await self._request_unlocked(payload)
+            finally:
+                self._active_requests -= 1
+                self.touch()
 
     async def _ensure_process(self) -> None:
         if self._process is not None and self._process.returncode is None:
@@ -261,11 +287,13 @@ async def get_lexical_client(owner_user_id: object, *, command: str, index_dir: 
     """按 owner 复用常驻 TS worker；索引缓存淘汰不再立即杀掉进程。"""
     owner_key = str(owner_user_id)
     loop = asyncio.get_running_loop()
+    _ensure_sidecar_reaper(loop)
     clients = _lexical_clients.setdefault(loop, {})
     client = clients.get(owner_key)
     if client is None:
         client = TsSidecarClient(owner_key, command=command, index_dir=index_dir)
         clients[owner_key] = client
+    client.touch()
     return client
 
 
@@ -297,6 +325,7 @@ async def rank_candidates_with_cache(
     from app.core.config import get_settings
 
     loop = asyncio.get_running_loop()
+    _ensure_sidecar_reaper(loop)
     client = _rank_clients.get(loop)
     if client is None:
         settings = get_settings().search
@@ -356,6 +385,7 @@ async def close_lexical_clients() -> None:
     _lexical_clients.clear()
     if clients:
         await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+    await _stop_sidecar_reaper_if_empty()
 
 
 async def close_rank_clients() -> None:
@@ -364,6 +394,49 @@ async def close_rank_clients() -> None:
     _rank_clients.clear()
     if clients:
         await asyncio.gather(*(client.close() for client in clients), return_exceptions=True)
+    await _stop_sidecar_reaper_if_empty()
+
+
+_sidecar_reaper_tasks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Task] = weakref.WeakKeyDictionary()
+
+
+def _ensure_sidecar_reaper(loop: asyncio.AbstractEventLoop) -> None:
+    task = _sidecar_reaper_tasks.get(loop)
+    if task is None or task.done():
+        _sidecar_reaper_tasks[loop] = loop.create_task(_reap_idle_sidecars(loop))
+
+
+async def _reap_idle_sidecars(loop: asyncio.AbstractEventLoop) -> None:
+    """回收连续空闲 30 分钟的 worker；不影响活跃请求。"""
+    current = asyncio.current_task()
+    try:
+        while True:
+            await asyncio.sleep(SIDE_CAR_REAPER_INTERVAL_SECONDS)
+            idle_clients: list[TsSidecarClient] = []
+            for registry in (_lexical_clients.get(loop, {}), _rank_clients.get(loop, {})):
+                for key, client in list(registry.items()):
+                    if not client.is_idle():
+                        continue
+                    if registry.get(key) is client:
+                        registry.pop(key, None)
+                        idle_clients.append(client)
+            if idle_clients:
+                await asyncio.gather(*(client.close() for client in idle_clients), return_exceptions=True)
+            if not _lexical_clients.get(loop) and not _rank_clients.get(loop):
+                return
+    finally:
+        if _sidecar_reaper_tasks.get(loop) is current:
+            _sidecar_reaper_tasks.pop(loop, None)
+
+
+async def _stop_sidecar_reaper_if_empty() -> None:
+    loop = asyncio.get_running_loop()
+    if _lexical_clients.get(loop) or _rank_clients.get(loop):
+        return
+    task = _sidecar_reaper_tasks.pop(loop, None)
+    if task is not None and task is not asyncio.current_task():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def _worker_command(command: str, index_dir: str, owner_user_id: str) -> list[str]:
@@ -388,5 +461,6 @@ def _timeout_seconds() -> float:
 __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
     "rank_candidates_with_cache",
+    "SIDE_CAR_IDLE_TTL_SECONDS",
     "get_lexical_client", "close_lexical_clients", "close_rank_clients",
 ]

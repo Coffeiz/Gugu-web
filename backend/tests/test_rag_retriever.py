@@ -259,3 +259,16 @@ def test_recall_diagnostics_creates_redacted_loopscope_span(monkeypatch):
     assert span.attributes["cache_entries"] == 1
     assert span.output["hit_count"] == 3
     assert "query" not in str(span.payload())
+
+
+def test_conversation_rag_excludes_current_message_watermark():
+    from types import SimpleNamespace
+    from agent.rag.adapters.indexed_sources import _conversation_document_visible
+
+    old = SimpleNamespace(metadata={"kind": "message", "message_id": 10})
+    current = SimpleNamespace(metadata={"kind": "message", "message_id": 11})
+    summary = SimpleNamespace(metadata={"kind": "summary"})
+
+    assert _conversation_document_visible(old, 11) is True
+    assert _conversation_document_visible(current, 11) is False
+    assert _conversation_document_visible(summary, 11) is True

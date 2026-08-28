@@ -7,6 +7,9 @@ from contextvars import ContextVar
 _snapshot_context: ContextVar[str] = ContextVar("rag_snapshot_context", default="")
 _snapshot_revision: ContextVar[str] = ContextVar("rag_snapshot_revision", default="")
 _shared_index_key: ContextVar[str] = ContextVar("rag_shared_index_key", default="")
+_conversation_before_message_id: ContextVar[int | None] = ContextVar(
+    "rag_conversation_before_message_id", default=None,
+)
 
 
 def set_snapshot_context(text: str | None) -> None:
@@ -42,3 +45,18 @@ def set_shared_index_key(value: str):
 
 def reset_shared_index_key(token) -> None:
     _shared_index_key.reset(token)
+
+
+def get_conversation_before_message_id() -> int | None:
+    """返回本轮 conversation RAG 的排他上界；当前消息及之后的消息不可见。"""
+    return _conversation_before_message_id.get()
+
+
+def set_conversation_before_message_id(value: object | None):
+    """绑定当前 run 的 conversation 可见性水位并返回 ContextVar token。"""
+    normalized = None if value is None else int(value)
+    return _conversation_before_message_id.set(normalized)
+
+
+def reset_conversation_before_message_id(token) -> None:
+    _conversation_before_message_id.reset(token)

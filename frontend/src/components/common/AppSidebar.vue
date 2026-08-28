@@ -1,11 +1,7 @@
 <template>
   <aside class="sidebar">
     <div class="logo">
-      <div class="logo-icon">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="M20 7l2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-        </svg>
-      </div>
+      <div class="logo-icon" aria-hidden="true"><span class="logo-mark" /></div>
       <span class="logo-text">咕咕</span>
     </div>
 
@@ -165,9 +161,10 @@ onUnmounted(() => {
 
 <style scoped>
 .sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:24px 14px; position:relative; z-index:40; }
-.logo { display:flex; align-items:center; justify-content:center; gap:10px; padding:0 8px; margin-bottom:20px; }
-.logo-icon { width:34px; height:34px; border-radius:10px; background:linear-gradient(135deg,#7b7fb2,#c4afc8); display:flex; align-items:center; justify-content:center; color:white; box-shadow:inset 0 1px 0 rgba(255,255,255,.4); }
-.logo-text { font-size:16px; font-weight:700; }
+.logo { display:flex; align-items:center; justify-content:center; gap:6px; padding:0 8px; margin-bottom:20px; }
+.logo-icon { width:34px; height:34px; display:flex; align-items:center; justify-content:center; }
+.logo-mark { width:30px; height:30px; display:block; background:var(--brand-gradient); -webkit-mask-image:url('/logo-small.png'); -webkit-mask-mode:alpha; -webkit-mask-position:center; -webkit-mask-repeat:no-repeat; -webkit-mask-size:contain; mask-image:url('/logo-small.png'); mask-mode:alpha; mask-position:center; mask-repeat:no-repeat; mask-size:contain; }
+.logo-text { font-size:16px; font-weight:700; letter-spacing:2px; }
 .nav { flex:1; display:flex; flex-direction:column; gap:2px; overflow-y:auto; margin-right:-14px; padding-right:14px; scrollbar-gutter:auto; }
 .nav-section { display:flex; flex-direction:column; gap:2px; }
 .nav-divider { height:1px; background:var(--divider-line); margin:6px 4px; flex-shrink:0; }

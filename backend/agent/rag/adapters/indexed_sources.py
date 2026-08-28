@@ -17,6 +17,20 @@ from agent.rag.scope import matches_scope
 from agent.rag.ts_sidecar import TsSidecarUnavailable
 
 
+def _conversation_document_visible(document, before_message_id: int | None) -> bool:
+    """按当前 run 的消息水位过滤 conversation 文档。"""
+    if before_message_id is None:
+        return True
+    metadata = getattr(document, "metadata", None) or {}
+    if metadata.get("kind") != "message":
+        return True
+    raw_id = metadata.get("message_id") or getattr(document, "source_id", None)
+    try:
+        return int(raw_id) < int(before_message_id)
+    except (TypeError, ValueError):
+        return False
+
+
 class IndexedSourceRetriever:
     """把文件、画布和对话来源接入统一的 TS lexical index。"""
 
@@ -60,14 +74,18 @@ class IndexedSourceRetriever:
             valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project", "folder"}]
         elif self.source_type == "canvas":
             valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project"}]
-        elif self.source_type == "conversation":
-            valid_scopes = [item for item in valid_scopes if item.scope_type == "owner"]
         if not valid_scopes:
             return RetrievalBatch(
                 source_type=self.source_type,
                 index_source=f"{self.source_type}-db",
                 fallback_reason="scope_rejected",
             )
+
+        conversation_before_message_id = None
+        if self.source_type == "conversation":
+            from agent.rag.context import get_conversation_before_message_id
+
+            conversation_before_message_id = get_conversation_before_message_id()
 
         async with self.session_scope() as db:
             started = time.monotonic()
@@ -82,10 +100,19 @@ class IndexedSourceRetriever:
                 document for document in documents
                 if any(matches_scope(document, item) for item in valid_scopes)
             ]
+            if self.source_type == "conversation":
+                scoped_documents = [
+                    document for document in scoped_documents
+                    if _conversation_document_visible(
+                        document, conversation_before_message_id,
+                    )
+                ]
             metadata: dict[str, object] = {
                 "document_load_ms": int((time.monotonic() - started) * 1000),
                 "source_adapter": self.source_type,
             }
+            if conversation_before_message_id is not None:
+                metadata["conversation_before_message_id"] = conversation_before_message_id
             try:
                 results = await search_documents_with_cache(
                     self.user_id,

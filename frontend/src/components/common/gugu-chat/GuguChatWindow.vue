@@ -246,8 +246,8 @@ defineExpose({
   flex-shrink: 0;
 }
 .chat-main.is-expanded .chat-header { padding: 16px 20px 12px; }
-.chat-title { font-size: 13px; font-weight: 700; }
-.chat-title.is-new-session { display: inline-block; padding: 2px 6px; }
+.chat-title { display:inline-flex; align-items:center; font-size: 13px; font-weight: 700; }
+.chat-title.is-new-session { display: inline-flex; padding: 2px 6px; }
 .chat-main.is-expanded .chat-title { font-size: 14px; font-weight: 600; }
 .chat-workspace-name {
   min-width: 0;

@@ -499,8 +499,9 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 - [x] 保留 Python canonical publisher、Redis event bus、事件游标、重连补偿、幂等去重、前端 stores 和 LoopScope 记录。
 - [x] 确认 Agent 生成流、工具事件、资源刷新事件不会互相覆盖，也不会因重连重复应用。
 - [x] Phase 3.5 数据库恢复与数据校验完成后，保持 devserver 默认服务为 Python/FastAPI。
-- [ ] Python/FastAPI 全量测试、前端/Admin/文件库/画布/终端/IM 回归通过。
-- [ ] TS RAG typecheck、单元测试、协议测试、性能测试和真实数据测试通过。
+- [x] Python/FastAPI 全量测试，以及前端 typecheck、单元测试和生产构建通过。
+- [x] TS RAG 单元测试、协议测试和固定制品构建通过；既有性能与真实数据测试记录有效。
+- [ ] 依赖 devserver/真实第三方账号的 Admin、文件库、画布、终端和 IM 人工回归。
 - [x] 生产进程中只有 FastAPI、Python Agent/Worker 和 TS RAG worker；同一 session/run 没有双 owner、重复回复、重复工具结果、重复 RAG 注入或重复事件。
 
 Phase 6 实施记录（2026-08-28）：
@@ -509,6 +510,12 @@ Phase 6 实施记录（2026-08-28）：
 - 前端 `frontend/src/stores/live.ts` 保留原有 live store、重连补偿、事件去重和资源刷新逻辑，仅改为同源 `/api/v1/live/stream`，没有回退到页面级 SSE 或轮询实现。
 - 删除 `backend/ts/api/live.ts`、Live 测试和 `backend/gugu-live.service`，移除 TS Live 启动脚本与旧 contract 导出；Makefile uninstall 同时清理历史 `gugu-live` 单元。
 - 新增 `backend/tests/test_live_stream.py` 覆盖 canonical envelope、通知、非法消息过滤、用户/广播频道和 pub/sub 连接清理。
+- 全链路本地验收：Python `compileall` 与 `backend/tests` 为 `1581 passed`；前端
+  `vue-tsc --noEmit`、Vitest 为 `50 files / 323 tests passed`、Vite 生产构建成功；TS RAG
+  worker 单测与协议测试为 `18 passed`，固定制品构建成功。Vite 仅报告既有配置兼容提示和
+  大 chunk 警告，不影响构建结果。
+- 本轮未把真实第三方 IM 账号交互或依赖完整 devserver 数据的 Playwright 场景冒充为本地
+  测试结果；这些仍属于部署后的人工回归范围。
 
 ### 6.3 全部阶段完成后的剩余清点
 
