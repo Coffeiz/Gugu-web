@@ -4,6 +4,25 @@
   /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
   --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
   --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
+  --gugu-chat-search-flash: var(--selection-bg);
+  --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
+  --gugu-chat-assistant-border: var(--border-subtle);
+  --gugu-chat-member-bg: var(--action-soft);
+  --gugu-chat-member-border: var(--action-outline);
+  --gugu-chat-user-fg: var(--content-on-accent);
+  --gugu-chat-file-ext-bg: var(--action-primary-bg);
+  --gugu-chat-file-name: var(--content-primary);
+  --gugu-chat-file-meta: var(--content-tertiary);
+  --gugu-chat-file-download-hover: var(--surface-soft-hover);
+  --gugu-chat-voice-bg: var(--gugu-chat-assistant-bg);
+  --gugu-chat-voice-border: var(--gugu-chat-assistant-border);
+  --gugu-chat-voice-highlight: var(--highlight-soft);
+  --gugu-chat-voice-button-bg: var(--action-primary-bg);
+  --gugu-chat-voice-wave: var(--content-tertiary);
+  --gugu-chat-voice-wave-playing: var(--action-primary);
+  --gugu-chat-voice-duration: var(--content-secondary);
+  --gugu-chat-copy-hover-bg: var(--surface-soft-hover);
+  --gugu-chat-tool-border: var(--action-outline);
   --panel-glass-bg: var(--surface-glass);
   --panel-glass-border: var(--border-default);
   --panel-glass-highlight: var(--border-highlight);
@@ -237,9 +256,17 @@
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
+/* Light navigation selection keeps the pre-palette white surface. Dark mode remains palette-aware. */
+html[data-theme='light'][data-family] {
+  --sidebar-item-active: var(--sidebar-item-active-light-bg);
+  --sidebar-item-active-fg: var(--sidebar-item-active-light-fg);
+  --sidebar-item-active-border: var(--sidebar-item-active-light-border);
+  --sidebar-item-active-shadow: var(--sidebar-item-active-light-shadow);
+}
+
 /* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,
    not a .fc-card/.folder-card selector, so component state paint cannot race the family theme. */
-html[data-theme='light'][data-family='v2'] {
+html[data-theme='light'][data-family='mono'] {
   --file-card-bg: var(--surface-card-solid);
   --file-card-border: var(--border-strong);
   --file-card-shadow: var(--elevation-card);
@@ -281,6 +308,13 @@ html[data-theme='dark'][data-family] {
   --workspace-card-bg-hover: var(--surface-soft-hover);
   --gugu-chat-user-highlight: color-mix(in srgb,var(--border-highlight) 82%,transparent);
   --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
+  --gugu-chat-assistant-bg: var(--surface-raised);
+  --gugu-chat-assistant-border: var(--border-subtle);
+  --gugu-chat-member-bg: var(--action-soft);
+  --gugu-chat-member-border: var(--action-outline);
+  --gugu-chat-voice-highlight: var(--highlight-soft);
+  --gugu-chat-voice-wave: var(--content-tertiary);
+  --gugu-chat-voice-wave-playing: var(--action-primary);
   --panel-divider: var(--border-subtle);
   --subpanel-border: var(--border-subtle);
 

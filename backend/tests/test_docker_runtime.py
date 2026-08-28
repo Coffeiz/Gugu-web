@@ -209,6 +209,26 @@ def test_sandboxd_server_rejects_root_outside_allowed_root(tmp_path):
         server._validate_root(str(other))
 
 
+def test_cleanup_orphan_pty_containers_only_uses_fixed_namespace(monkeypatch):
+    from agent.sandbox import docker_runtime
+
+    calls = []
+    monkeypatch.setattr(docker_runtime.shutil, "which", lambda name: "/usr/bin/docker")
+
+    class Result:
+        returncode = 0
+        stdout = "a" * 12 + "\n" + "not-a-container\n"
+
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return Result()
+
+    monkeypatch.setattr(docker_runtime.subprocess, "run", run)
+    assert docker_runtime.cleanup_orphan_pty_containers() == 1
+    assert calls[0] == ["/usr/bin/docker", "ps", "-aq", "--filter", "name=^gugu-pty-"]
+    assert calls[1] == ["/usr/bin/docker", "rm", "-f", "a" * 12]
+
+
 def test_sandbox_override_includes_sandboxd_socket(monkeypatch, tmp_path):
     from app.core.config import AppSettings
 
@@ -378,6 +398,56 @@ def test_docker_executor_uses_only_controlled_egress_network(tmp_path):
     assert "--env=HTTPS_PROXY=http://egress-proxy:3128" in argv
     assert "--env=NO_PROXY=127.0.0.1,localhost" in argv
     assert "--network=none" not in argv
+
+
+def test_docker_executor_builds_fixed_interactive_pty_argv(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="debian:bookworm-slim",
+        image_digest="sha256:" + "e" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        ephemeral_quota_bytes=64 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+    )
+    argv = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker").build_pty_argv(
+        cwd=".", container_name="gugu-pty-test",
+    )
+
+    assert argv[1:5] == ["run", "--interactive", "--tty", "--rm"]
+    assert argv[-4].startswith("debian:bookworm-slim@sha256:")
+    assert argv[-3:] == ["bash", "--noprofile", "--norc"]
+    assert r"--env=PS1=gugu-sandbox:\w\$ " in argv
+    assert "--cap-drop=ALL" in argv
+    assert "--security-opt=no-new-privileges" in argv
+    assert "--network=none" in argv
+
+
+def test_docker_executor_uses_one_image_reference_for_command_and_pty(tmp_path):
+    from agent.sandbox.docker import DockerSandboxExecutor
+
+    settings = SimpleNamespace(
+        image="gugu-sandbox:bookworm-dev",
+        image_digest="sha256:" + "d" * 64,
+        network_profile="none",
+        pids_limit=64,
+        cpu_limit=1.0,
+        memory_limit_bytes=512 * 1024 * 1024,
+        ephemeral_quota_bytes=64 * 1024 * 1024,
+        timeout_seconds=30,
+        output_limit_bytes=12_000,
+    )
+    executor = DockerSandboxExecutor(tmp_path, settings, docker_path="/usr/bin/docker")
+    command_argv = executor.build_argv("printf hello", cwd=".", container_name="gugu-sandbox-test")
+    pty_argv = executor.build_pty_argv(cwd=".", container_name="gugu-pty-test")
+
+    command_image = next(value for value in command_argv if value.startswith("gugu-sandbox:bookworm-dev@"))
+    pty_image = next(value for value in pty_argv if value.startswith("gugu-sandbox:bookworm-dev@"))
+    assert command_image == pty_image
 
 
 def test_docker_executor_rejects_unpinned_image(tmp_path):

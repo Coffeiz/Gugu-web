@@ -57,6 +57,9 @@ class User(Base):
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
     user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
 
 
 # ── UserPreferences ──────────────────────────────────────────────────────────
@@ -81,6 +84,33 @@ class UserPreferences(Base):
     @data.setter
     def data(self, value: dict):
         self.data_json = json.dumps(value, ensure_ascii=False)
+
+
+class UserProviderCredential(Base):
+    """用户 BYOK 凭据；密文由服务端信封加密保存，业务查询不得直接回显。"""
+    __tablename__ = "user_provider_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    api_format: Mapped[str] = mapped_column(String(32), default="")
+    capability: Mapped[str] = mapped_column(String(32), index=True)
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(String(64))
+    encrypted_data_key: Mapped[str] = mapped_column(Text)
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    base_url: Mapped[str] = mapped_column(String(500), default="")
+    model: Mapped[str] = mapped_column(String(200), default="")
+    vision: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_detail: Mapped[str] = mapped_column(String(16), default="auto")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="provider_credentials")
 
 
 class UserSkill(Base):
@@ -136,11 +166,16 @@ class TerminalSessionRecord(Base):
     workspace_id: Mapped[Optional[int]] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200), default="终端")
     source: Mapped[str] = mapped_column(String(16), default="agent")
+    mode: Mapped[str] = mapped_column(String(24), default="agent-events")
     status: Mapped[str] = mapped_column(String(32), default="idle", index=True)
     shell_mode: Mapped[str] = mapped_column(String(16), default="sandbox")
     network_profile: Mapped[str] = mapped_column(String(16), default="none")
     last_sequence: Mapped[int] = mapped_column(Integer, default=0)
     output_chars: Mapped[int] = mapped_column(Integer, default=0)
+    pty_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pty_sandbox_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    pty_cols: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pty_rows: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
     closed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)

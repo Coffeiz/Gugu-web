@@ -27,6 +27,7 @@ class TerminalOperation(StrEnum):
     TERMINATE = "terminate"
     DELETE = "delete"
     REOPEN = "reopen"
+    RESET = "reset"
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ async def authorize_operation(
         session = await get_owned(db, ConversationSession, session_id, user_id)
         if session is None:
             return TerminalAccessDecision(False, "终端会话不存在", operation)
-    if operation in {TerminalOperation.DELETE, TerminalOperation.TERMINATE}:
+    if operation in {TerminalOperation.DELETE, TerminalOperation.TERMINATE, TerminalOperation.RESET}:
         return TerminalAccessDecision(True, "允许清理终端", operation)
     if operation is TerminalOperation.REOPEN:
         return await page_access(db, user_id)

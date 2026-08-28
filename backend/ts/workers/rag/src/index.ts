@@ -56,6 +56,7 @@ async function restore(state: State): Promise<void> {
   if (!state.indexDir) return;
   try {
     const raw = JSON.parse(await readFile(join(state.indexDir, "index.json"), "utf8"));
+    if (raw.version !== VERSION) return;
     replaceInMemory(state, raw.revision ?? "", raw.documents ?? []);
   } catch {
     // 空目录或旧版本索引由上层 replace；不能把恢复失败伪装成有数据。
@@ -198,7 +199,7 @@ function search(
   }
   for (const [id, score] of scores) {
     const document = state.documentsById.get(id);
-    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version });
+    if (document && score > 0) scored.push({ id, score, source_type: document.source_type, document_version: document.document_version, document });
   }
   return {
     results: scored

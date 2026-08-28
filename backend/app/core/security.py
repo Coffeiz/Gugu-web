@@ -74,6 +74,18 @@ async def get_current_user_id(
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
 
+def decode_user_token(token: str) -> UUID:
+    """解析 WebSocket 等无法自定义 Authorization 头的长连接令牌。"""
+    settings = get_settings()
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        if payload.get("role") != "user":
+            raise ValueError
+        return UUID(payload["sub"])
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
     db: AsyncSession = Depends(get_db),

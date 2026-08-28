@@ -30,6 +30,13 @@ class TerminalShellMode(StrEnum):
     SYSTEM = "system"
 
 
+class TerminalMode(StrEnum):
+    """终端执行协议；两种模式共享记录，但不共享输入通道。"""
+
+    INTERACTIVE_PTY = "interactive-pty"
+    AGENT_EVENTS = "agent-events"
+
+
 @dataclass(frozen=True)
 class TerminalSession:
     """终端会话的跨层最小契约，不代表数据库模型。"""
@@ -39,12 +46,20 @@ class TerminalSession:
     session_id: int | None
     workspace_id: int | None
     source: TerminalSource
+    mode: TerminalMode
     status: TerminalStatus
     shell_mode: TerminalShellMode
     network_profile: str
     created_at: datetime
     updated_at: datetime
     closed_at: datetime | None = None
+    pty_pid: int | None = None
+    pty_sandbox_id: str | None = None
+    pty_cols: int | None = None
+    pty_rows: int | None = None
+    attached_clients: int = 0
+    last_attached_at: datetime | None = None
+    detached_at: datetime | None = None
 
 
 @dataclass(frozen=True)

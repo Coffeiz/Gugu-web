@@ -18,6 +18,7 @@ from app.services.terminals import (
     append_shell_result,
     get_terminal,
     reopen_terminal,
+    reset_terminal,
     rename_terminal,
     terminal_events,
     terminate_terminal,
@@ -76,7 +77,7 @@ async def test_terminal_owner_can_terminate_or_close_after_permission_revoked(db
     db.add(session)
     await db.flush()
 
-    for operation in (TerminalOperation.TERMINATE, TerminalOperation.DELETE):
+    for operation in (TerminalOperation.TERMINATE, TerminalOperation.DELETE, TerminalOperation.RESET):
         decision = await authorize_operation(
             db, user_a.id, owner_id=user_a.id, session_id=session.id,
             operation=operation,
@@ -113,6 +114,29 @@ async def test_terminal_events_preserve_user_source_and_sequence(db, user_a):
 
     await rename_terminal(db, terminal, "用户终端")
     assert terminal.name == "用户终端"
+
+
+@pytest.mark.asyncio
+async def test_reset_terminal_keeps_history_but_clears_runtime_state(db, user_a):
+    terminal = TerminalSessionRecord(
+        id="term-reset", owner_id=user_a.id, name="重置终端", source="user",
+        status="running", shell_mode="sandbox", network_profile="none",
+        pty_pid=123, pty_sandbox_id="sandbox-test", pty_cols=120, pty_rows=32,
+        output_chars=12, last_sequence=1,
+    )
+    db.add(terminal)
+    await db.flush()
+
+    await reset_terminal(db, terminal)
+
+    assert terminal.status == "idle"
+    assert terminal.closed_at is None
+    assert terminal.pty_pid is None
+    assert terminal.pty_sandbox_id is None
+    assert terminal.pty_cols is None
+    assert terminal.pty_rows is None
+    assert terminal.output_chars == 12
+    assert terminal.last_sequence == 1
 
 
 @pytest.mark.asyncio

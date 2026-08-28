@@ -1,0 +1,34 @@
+/* Palette owns hue and color bases; family themes own opacity, blur, gradients and shadows. */
+:root[data-theme='light'][data-palette] {
+  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 8%, #ffffff);
+  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 5%, #eef0f6);
+  --palette-page-end: color-mix(in srgb, var(--theme-action-primary) 10%, #c7cbd8);
+  --palette-surface: color-mix(in srgb, var(--theme-action-primary) 3%, #ffffff);
+  --palette-surface-strong: color-mix(in srgb, var(--theme-action-primary) 5%, #ffffff);
+  --palette-surface-raised: color-mix(in srgb, var(--theme-action-primary) 4%, #ffffff);
+  --palette-text-primary: #1e2028;
+  --palette-text-secondary: color-mix(in srgb, var(--theme-action-primary) 12%, #747985);
+  --palette-text-tertiary: color-mix(in srgb, var(--theme-action-primary) 8%, #969bab);
+  --palette-text-disabled: #b8bdc8;
+  --palette-border: color-mix(in srgb, var(--theme-action-primary) 20%, transparent);
+  --palette-border-strong: color-mix(in srgb, var(--theme-action-primary) 32%, transparent);
+  --palette-highlight: color-mix(in srgb, var(--theme-action-primary) 16%, #ffffff);
+  --palette-scrim: rgba(31,34,45,.22);
+}
+
+:root[data-theme='dark'][data-palette] {
+  --palette-page-start: color-mix(in srgb, var(--theme-action-primary) 7%, #0e101a);
+  --palette-page-mid: color-mix(in srgb, var(--theme-action-primary) 5%, #11131f);
+  --palette-page-end: color-mix(in srgb, var(--theme-action-primary) 9%, #17192b);
+  --palette-surface: color-mix(in srgb, var(--theme-action-primary) 5%, #1e2133);
+  --palette-surface-strong: color-mix(in srgb, var(--theme-action-primary) 7%, #242735);
+  --palette-surface-raised: color-mix(in srgb, var(--theme-action-primary) 9%, #2a2d42);
+  --palette-text-primary: rgba(255,255,255,.92);
+  --palette-text-secondary: color-mix(in srgb, var(--theme-action-primary) 14%, rgba(255,255,255,.62));
+  --palette-text-tertiary: color-mix(in srgb, var(--theme-action-primary) 10%, rgba(255,255,255,.40));
+  --palette-text-disabled: rgba(255,255,255,.24);
+  --palette-border: color-mix(in srgb, var(--theme-action-primary) 13%, transparent);
+  --palette-border-strong: color-mix(in srgb, var(--theme-action-primary) 22%, transparent);
+  --palette-highlight: color-mix(in srgb, var(--theme-action-primary) 12%, transparent);
+  --palette-scrim: rgba(0,0,0,.50);
+}

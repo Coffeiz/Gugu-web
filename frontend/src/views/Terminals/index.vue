@@ -10,7 +10,6 @@
             <span class="terminal-item-copy"><b>{{ item.name }}</b><small>{{ item.source === 'agent' ? '咕咕' : '用户' }} · {{ statusLabel(item.status) }}</small></span>
             <span class="terminal-status" :class="item.status"></span>
           </button>
-          <div v-if="!terminals.length" class="terminal-list-empty">暂无终端</div>
           <button class="terminal-add-card" :disabled="!enabled" @click="createTerminal">
             <Icon name="action.add" :size="20" style="opacity:0.5" />
             <span class="terminal-add-card-text">添加终端</span>
@@ -28,10 +27,11 @@
               <ActionButton v-if="renaming" variant="secondary" fit @click="saveRename">保存</ActionButton>
               <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">取消</ActionButton>
               <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />重命名</ActionButton>
-              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
+              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />重置环境</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
             </div>
           </div>
-          <div v-if="selected" ref="outputRef" class="terminal-output">
+          <InteractivePtyTerminal v-if="selected?.mode === 'interactive-pty'" :key="`${selected.id}:${ptyRevision}`" :terminal-id="selected.id" @error="error = $event" />
+          <div v-else-if="selected" ref="outputRef" class="terminal-output">
             <div v-if="error" class="terminal-output-error" role="alert">[错误] {{ error }}</div>
             <div v-for="event in events" :key="event.sequence" class="terminal-event">
               <div v-if="event.type === 'command'" class="terminal-command"><span>$</span> {{ event.command }}</div>
@@ -43,7 +43,7 @@
             <div v-if="!events.length" class="terminal-output-empty">等待终端输出</div>
           </div>
           <div v-else class="terminal-empty">选择一个终端开始查看</div>
-          <form v-if="selected && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
+          <form v-if="selected && selected.mode !== 'interactive-pty' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
             <input ref="commandInput" v-model="command" :disabled="selected.status === 'terminated' || selected.status === 'exited'" placeholder="输入受控 Shell 命令" autocomplete="off" />
             <ActionButton fit type="submit" :disabled="!command.trim() || submitting || selected.status === 'terminated' || selected.status === 'exited'"><Icon name="action.send" :size="14" />执行</ActionButton>
           </form>
@@ -59,6 +59,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import ActionButton from '@/components/common/ActionButton.vue'
 import Icon from '@/components/common/Icon.vue'
+import InteractivePtyTerminal from './components/InteractivePtyTerminal.vue'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 import { terminalsApi, type TerminalEventItem, type TerminalItem } from '@/services/api'
 import { useLiveStore } from '@/stores/live'
@@ -72,6 +73,7 @@ const outputRef = ref<HTMLElement | null>(null)
 const commandInput = ref<HTMLInputElement | null>(null)
 const command = ref('')
 const submitting = ref(false)
+const ptyRevision = ref(0)
 const renaming = ref(false)
 const renameValue = ref('')
 let streamGeneration = 0
@@ -89,11 +91,22 @@ async function load() {
     const requestedId = typeof route.query.terminalId === 'string' ? route.query.terminalId : null
     if (requestedId && terminals.value.some(item => item.id === requestedId)) selectedId.value = requestedId
     else if (!selectedId.value || !terminals.value.some(item => item.id === selectedId.value)) selectedId.value = terminals.value[0]?.id ?? null
+    const current = selected.value
+    if (current?.source === 'user' && current.mode === 'interactive-pty' && ['terminated', 'exited'].includes(current.status)) {
+      try {
+        const reopened = await terminalsApi.reopen(current.id)
+        const index = terminals.value.findIndex(item => item.id === reopened.id)
+        if (index >= 0) terminals.value[index] = reopened
+      } catch (cause) {
+        error.value = cause instanceof Error ? cause.message : '终端自动开启失败'
+      }
+    }
     if (selectedId.value) await loadEvents(selectedId.value, true)
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端读取失败' }
 }
 
 async function loadEvents(id: string, reset = false, controller?: AbortController) {
+  if (selected.value?.mode === 'interactive-pty') return
   if (reset) {
     eventsAbortController?.abort()
     eventsAbortController = new AbortController()
@@ -126,6 +139,10 @@ watch(() => live.resourceEvent, (event) => {
   if (!event || event.resource !== 'terminals') return
   const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : null
   const terminalId = String(event.entity_id ?? payload?.terminal_id ?? '')
+  if (event.operation === 'refresh') {
+    void load()
+    return
+  }
   if (event.operation === 'delete') {
     terminals.value = terminals.value.filter(item => item.id !== terminalId)
     if (selectedId.value === terminalId) {
@@ -140,6 +157,7 @@ watch(() => live.resourceEvent, (event) => {
     const index = terminals.value.findIndex(item => item.id === terminal.id)
     if (event.operation === 'create' && index < 0) terminals.value.unshift(terminal)
     else if (index >= 0) terminals.value[index] = terminal
+    if (payload?.reset === true && terminal.id === selectedId.value) ptyRevision.value++
   }
   const terminalEvent = payload?.event as TerminalEventItem | undefined
   if (event.operation === 'append' && terminalEvent && terminalId === selectedId.value
@@ -183,7 +201,7 @@ async function submitCommand() {
   }
 }
 async function createTerminal() {
-  try { const item = await terminalsApi.create({ name: `终端 ${terminals.value.length + 1}` }); terminals.value.unshift(item); select(item.id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端创建失败' }
+  try { const item = await terminalsApi.create({ name: `终端 ${terminals.value.length + 1}`, mode: 'interactive-pty' }); terminals.value.unshift(item); select(item.id) } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端创建失败' }
 }
 async function terminate() { if (selected.value) { await terminalsApi.terminate(selected.value.id); await load() } }
 async function reopenTerminal() {
@@ -194,6 +212,23 @@ async function reopenTerminal() {
     if (index >= 0) terminals.value[index] = item
     await loadEvents(item.id, true)
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端开启失败' }
+}
+async function resetSelected() {
+  if (!selected.value) return
+  const target = selected.value
+  if (!await confirmDialog({
+    title: '重置终端环境',
+    message: `重建终端“${target.name}”的沙盒环境？容器内未持久化内容将丢失，但 /workspace 文件和输出历史会保留。`,
+    tone: 'danger',
+    confirmText: '重置环境',
+  })) return
+  error.value = ''
+  try {
+    const item = await terminalsApi.reset(target.id)
+    const index = terminals.value.findIndex(value => value.id === item.id)
+    if (index >= 0) terminals.value[index] = item
+    ptyRevision.value++
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : '终端环境重置失败' }
 }
 async function deleteSelected() {
   if (!selected.value) return
@@ -211,8 +246,22 @@ async function deleteSelected() {
 }
 function statusLabel(status: string) { return ({ idle: '空闲', running: '运行中', waiting_confirm: '等待确认', exited: '已退出', failed: '异常', terminated: '已停止' } as Record<string, string>)[status] ?? status }
 function formatTime(value: string) { return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }
+let closingCurrentTerminal = false
+function closeCurrentTerminal() {
+  const current = selected.value
+  if (closingCurrentTerminal || !current || current.source !== 'user' || current.mode !== 'interactive-pty') return
+  if (['terminated', 'exited'].includes(current.status)) return
+  closingCurrentTerminal = true
+  void terminalsApi.terminate(current.id).catch(() => {
+    // 路由离开时请求可能被浏览器取消，后端 detached TTL 仍会回收 PTY。
+  })
+}
 onMounted(load)
-onUnmounted(() => { streamGeneration++; eventsAbortController?.abort() })
+onUnmounted(() => {
+  streamGeneration++
+  eventsAbortController?.abort()
+  closeCurrentTerminal()
+})
 </script>
 
 <style scoped>
@@ -234,7 +283,7 @@ onUnmounted(() => { streamGeneration++; eventsAbortController?.abort() })
 .terminal-status { width:7px; height:7px; flex:none; border-radius:50%; background:var(--content-tertiary); }
 .terminal-status.running { background:var(--success-fg); }
 .terminal-status.failed { background:var(--danger-fg); }
-.terminal-list-empty,.terminal-output-empty,.terminal-empty { display:grid; place-items:center; min-height:180px; color:var(--content-tertiary); font-size:12px; }
+.terminal-output-empty,.terminal-empty { display:grid; place-items:center; min-height:180px; color:var(--content-tertiary); font-size:12px; }
 .terminal-page-error { margin:0 0 var(--space-md); padding:8px 12px; color:var(--danger-fg); font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .terminal-main { display:flex; flex-direction:column; min-width:0; min-height:0; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-card-solid); overflow:hidden; }
 .terminal-main.is-empty { border-color:transparent; background:transparent; }

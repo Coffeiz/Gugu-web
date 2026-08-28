@@ -5,7 +5,7 @@
       <div class="pm-field-row">
         <div class="pm-field-desc"><span class="pm-field-name">主题</span><span class="pm-field-hint">选择 Aero 或 Mono 视觉体系</span></div>
         <div class="pm-style-group">
-          <button v-for="item in families" :key="item.value" class="pm-style-chip" :class="{ active: family === item.value }" @click="setFamily(item.value)">{{ item.label }}</button>
+          <button v-for="item in families" :key="item.value" class="pm-style-chip pm-family-chip" :class="{ active: family === item.value }" @click="setFamily(item.value)">{{ item.label }}</button>
         </div>
       </div>
       <div class="pm-field-row">
@@ -58,7 +58,7 @@ const prefsStore = usePreferencesStore()
 const { preference, family, palette, setTheme, setFamily, setPalette } = useTheme()
 const families: Array<{ value: ThemeFamily; label: string }> = [
   { value: 'glass', label: 'Aero' },
-  { value: 'v2', label: 'Mono' },
+  { value: 'mono', label: 'Mono' },
 ]
 const modes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: '亮色' },
@@ -66,10 +66,11 @@ const modes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'system', label: '跟随系统' },
 ]
 const palettes: Array<{ value: ThemePalette; label: string }> = [
-  { value: 'lavender', label: 'Lavender' },
-  { value: 'ocean', label: 'Ocean' },
-  { value: 'rose', label: 'Rose' },
+  { value: 'aero', label: 'Aero' },
   { value: 'mono', label: 'Mono' },
+  { value: 'rose', label: 'Rose' },
+  { value: 'sky', label: 'Sky' },
+  { value: 'sage', label: 'Sage' },
 ]
 const views = [
   { value: 'projects', label: '项目' },

@@ -28,7 +28,7 @@ from agent.im.session import (
     get_or_create_session,
     session_scope_filters,
 )
-from agent.llm.llm_select import resolve_run_config, release as _release_model
+from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user, release as _release_model
 from agent.models import AgentRequest, AgentResponse
 from agent.profiles import DefaultProfile
 
@@ -47,11 +47,21 @@ def _canonical_tool_batch_records(messages) -> list[dict]:
 async def _capability_context(tool_names, settings, *, db=None, owner_id=None, query=""):
     """创建固定 Adapter 能力上下文。业务工具不再回退到全量原生 Schema。"""
     from agent.capabilities.injector import build_fixed_adapter_context, build_fixed_adapter_context_for_user
+    async def _full_schema_preference(session):
+        if owner_id is None:
+            return False
+        from app.models import UserPreferences
+        from sqlalchemy import select
+        row = await session.scalar(select(UserPreferences).where(UserPreferences.user_id == owner_id))
+        return bool(row and (row.data or {}).get("tool_injection_mode") == "full_schema")
+
     if db is None and owner_id is not None:
         import app.db.session as _sess
         if _sess._engine is None:
             _sess._build_engine()
         async with _sess._SessionLocal() as capability_db:
+            if await _full_schema_preference(capability_db):
+                return None
             context = await build_fixed_adapter_context_for_user(
                 tool_names, db=capability_db, owner_id=owner_id, search_settings=settings,
             )
@@ -59,6 +69,8 @@ async def _capability_context(tool_names, settings, *, db=None, owner_id=None, q
                 await context.select_for_query(query)
             return context
     if db is not None and owner_id is not None:
+        if await _full_schema_preference(db):
+            return None
         context = await build_fixed_adapter_context_for_user(
             tool_names, db=db, owner_id=owner_id, search_settings=settings,
         )
@@ -309,9 +321,15 @@ async def _run_collect_unlocked(
     from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
+        run_config = await resolve_run_config_for_user(settings, db, user_id, req)
+        model_cfg = run_config.model
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        from app.services.workspaces import resolve_workspace_target
+        workspace_target = await resolve_workspace_target(
+            db, user_id, session.workspace_id,
+        ) if session.workspace_id is not None else None
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -432,7 +450,7 @@ async def _run_collect_unlocked(
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
         if transcript is None:        # 未配置语音模型
             _release_model(model_cfg)
             return AgentResponse(
@@ -476,6 +494,17 @@ async def _run_collect_unlocked(
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
+    if workspace_target:
+        _workspace_name = workspace_target.get("workspace_name") or "当前工作区"
+        _dynamic_extra_parts.append(
+            "## 当前会话工作区（文件工具必须遵守）\n"
+            f"当前绑定：{_workspace_name}；"
+            f"规范落点 space={workspace_target['space']}, "
+            f"project_id={workspace_target.get('project_id')}, "
+            f"folder_id={workspace_target.get('folder_id')}。\n"
+            "workspace_id 与 project_id/folder_id 不同命名空间；创建、保存、移动、复制、"
+            "按名称查找文件时，省略目标参数即使用上述落点，不要把 workspace_id 当作 project_id。"
+        )
 
     from agent.context import compress_conv
 
@@ -722,9 +751,15 @@ async def _run_stream_unlocked(
     from app.models import ConversationMessage, ConversationSession
 
     async with _sess._SessionLocal() as db:
+        run_config = await resolve_run_config_for_user(settings, db, user_id, req)
+        model_cfg = run_config.model
         session_state = await get_or_create_session(db, req, user_id)
         session, is_new_session = session_state.session, session_state.is_new
         session_id = session.id
+        from app.services.workspaces import resolve_workspace_target
+        workspace_target = await resolve_workspace_target(
+            db, user_id, session.workspace_id,
+        ) if session.workspace_id is not None else None
 
         async def _load_snapshot():
             data = await load_context_data(
@@ -839,7 +874,7 @@ async def _run_stream_unlocked(
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
         if transcript is None:
             _release_model(model_cfg)
             yield ("final", AgentResponse(
@@ -871,6 +906,17 @@ async def _run_stream_unlocked(
         _dynamic_extra_parts.append(im_bridge)
     if _proactive_lead:
         _dynamic_extra_parts.append("\n## 你刚主动发给 TA 的消息（TA 接下来很可能在回应这条）\n\n" + _proactive_lead)
+    if workspace_target:
+        _workspace_name = workspace_target.get("workspace_name") or "当前工作区"
+        _dynamic_extra_parts.append(
+            "## 当前会话工作区（文件工具必须遵守）\n"
+            f"当前绑定：{_workspace_name}；"
+            f"规范落点 space={workspace_target['space']}, "
+            f"project_id={workspace_target.get('project_id')}, "
+            f"folder_id={workspace_target.get('folder_id')}。\n"
+            "workspace_id 与 project_id/folder_id 不同命名空间；创建、保存、移动、复制、"
+            "按名称查找文件时，省略目标参数即使用上述落点，不要把 workspace_id 当作 project_id。"
+        )
 
     from agent.context import compress_conv
 

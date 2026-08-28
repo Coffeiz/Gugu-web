@@ -155,10 +155,12 @@ async function submit() {
 }
 .cat-btn:hover { background: var(--option-bg-hover); border-color: var(--option-border-hover); }
 .cat-btn.active {
-  background: var(--action-primary-bg);
+  /* 分类胶囊不是主操作按钮：使用纯主题色，避免渐变和卡片内描边制造白色高光。 */
+  background: var(--action-primary);
   border-color: transparent; color: var(--content-on-accent);
-  box-shadow: var(--elevation-card);
+  box-shadow: none;
 }
+.cat-btn.active:hover { background: var(--action-primary-hover); }
 
 .feedback-textarea {
   width: 100%; padding: 10px 12px; resize: none;

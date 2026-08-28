@@ -662,7 +662,6 @@ async def activate_llm_preset(preset_id: str):
 
 @router.post("/llm-presets/{preset_id}/test")
 async def test_llm_preset(preset_id: str):
-    import httpx
     override = _read_override()
     presets = _ensure_presets(override)
     item = next((it for it in presets["items"] if it["id"] == preset_id), None)
@@ -672,24 +671,10 @@ async def test_llm_preset(preset_id: str):
     api_key  = item.get("api_key", "")
     base_url = item.get("base_url", "").rstrip("/")
     model    = item.get("model", "")
-    from types import SimpleNamespace
-    from agent import providers
-    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_format=item.get("api_format", ""), api_key=api_key)
-    _ns.model = model
-    adapter = providers.adapter_for(_ns)
-    base_url = adapter.resolve_base_url(_ns)
-    declared_capabilities = providers.capability_snapshot(_ns)
-    try:
-        request = adapter.diagnostic_request(_ns)
-        url = f"{base_url}{request['path']}"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, headers=request["headers"], json=request["payload"])
-        ok = resp.status_code < 500
-        return {"ok": ok, "status": resp.status_code, "detail": "" if ok else resp.text[:300],
-                "declared_capabilities": declared_capabilities, "probe": {"status": resp.status_code}}
-    except Exception as e:
-        return {"ok": False, "status": 0, "detail": str(e)[:300],
-                "declared_capabilities": declared_capabilities, "probe": {"status": 0}}
+    from app.services.provider_diagnostics import test_provider_credential
+    result = await test_provider_credential(provider=provider, api_key=api_key, base_url=base_url,
+                                            model=model, api_format=item.get("api_format", ""))
+    return {**result, "probe": {"status": result["status"]}}
 
 
 def _capability_fingerprint(item: dict) -> str:
@@ -970,18 +955,36 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
     `dim`：image | video | audio，决定探测哪种媒体块。
     返回 (supported, status, detail)：True=支持 / False=纯文本 / None=测不准。"""
     import httpx
+    import inspect
     from types import SimpleNamespace
     from agent import providers
-    _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
-                          model=model, api_format=api_format)
-    # 与 runner 同一判定口（含显式 api_format）
-    adapter = providers.adapter_for(_ns)
-    is_anthropic = adapter.protocol_format(_ns) == "anthropic"
-    # 视频理解（真实 mp4）耗时明显更长：百炼实测约 40s，图像列表形式甚至 80s+。
-    # 视频探测单独放宽 read 超时，避免 25s 默认值导致前端一直"检测中"。
-    read_timeout = 90.0 if dim == "video" else 25.0
-    timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=5.0)
     dim_label = {"image": "图片", "video": "视频", "audio": "音频"}.get(dim, dim)
+    # 适配器解析和客户端构造也放进统一诊断边界。此前这里任一配置/依赖异常
+    # 会在 BYOK 路由被统一改写成 502「检测失败」，用户看不到可行动原因。
+    client = None
+
+    async def close_probe_client() -> None:
+        close = getattr(client, "close", None)
+        if close is not None:
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                pass
+
+    try:
+        _ns = SimpleNamespace(provider=provider, base_url=base_url, api_key=api_key,
+                              model=model, api_format=api_format)
+        adapter = providers.adapter_for(_ns)
+        is_anthropic = adapter.protocol_format(_ns) == "anthropic"
+        # 视频理解耗时明显更长，单独放宽 read 超时，避免前端误判为失败。
+        read_timeout = 90.0 if dim == "video" else 25.0
+        timeout = httpx.Timeout(connect=10.0, read=read_timeout, write=10.0, pool=5.0)
+    except Exception as exc:
+        from app.core.redaction import diag_log
+        diag_log("admin.vision_probe.setup", exc)
+        return None, 0, f"检测初始化失败（{type(exc).__name__}），请检查 Provider、协议和 Base URL"
 
     # 视频在 Anthropic 路（MiniMax M3）是硬编码已知能力，无需探测；其余 Anthropic 路不支持视频块
     if dim == "video" and is_anthropic:
@@ -1043,8 +1046,10 @@ async def _do_vision_probe(provider, api_key, base_url, model, api_format="", di
                 ]
             await client.chat.completions.create(model=model, max_tokens=16,
                                                  messages=[{"role": "user", "content": content}])
+        await close_probe_client()
         return True, 200, f"模型接受了{dim_label}输入 ✅"
     except Exception as e:
+        await close_probe_client()
         sc = getattr(e, "status_code", None) or 0
         msg = str(e)[:200]
         if sc in (400, 422):

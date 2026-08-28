@@ -18,7 +18,7 @@
       </button>
       <button class="icon-btn" @click="clearLines" title="清空显示">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2 3h10M5 3V2h4v1M3.5 3l.5 9h6l.5-9"/>
+          <path d="M2 3h10M5 3Monoh4v1M3.5 3l.5 9h6l.5-9"/>
         </svg>
       </button>
       <span class="live-dot" :class="{ connected }"></span>

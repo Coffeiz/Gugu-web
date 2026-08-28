@@ -1,4 +1,4 @@
-"""config.override 校验：db.password 必须从 override.json 显式提供。
+"""config.override 校验：db.password 必须从环境变量或 override.json 提供。
 
 回归测试 — 真实踩过的坑：业务后端 config.py 默认 db.user="pm" / password="pm123"，
 业务 config.override.json 只覆盖了 host/port/name/user，没写 password → 后端用
@@ -6,7 +6,7 @@
 用户感觉「消息收不到」。
 
 修法：默认值改成 user="gugu" / password=""，并在 apply_override 里强制要求
-override 显式提供 password（不能空、不能是 "pm123"/"pm" 占位符）。
+最终合并配置提供 password（不能空、不能是 "pm123"/"pm" 占位符）。
 """
 from __future__ import annotations
 
@@ -47,14 +47,16 @@ def test_storage_defaults_to_migrated_user_data_root():
     assert cfg.StorageSettings().local_path == "../Gugu-data/users"
 
 
-def test_apply_override_requires_db_password(tmp_path, monkeypatch):
-    """override.json 没写 password → 启动直接抛错，不允许静默用空密码连 DB。"""
+def test_apply_override_requires_effective_db_password(tmp_path, monkeypatch):
+    """环境变量和 override 都没写 password → 启动直接抛错。"""
     fake = tmp_path / "config.override.json"
     fake.write_text(json.dumps({
         "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
         # 故意不写 password
     }), encoding="utf-8")
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+    monkeypatch.chdir(tmp_path)
 
     s = cfg.AppSettings()
     with pytest.raises(RuntimeError, match="db.password"):
@@ -71,7 +73,7 @@ def test_apply_override_rejects_placeholder_password(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
 
     s = cfg.AppSettings()
-    with pytest.raises(RuntimeError, match="占位符|pm123"):
+    with pytest.raises(RuntimeError, match="占位符"):
         s.apply_override()
 
 
@@ -101,6 +103,19 @@ def test_apply_override_accepts_real_password(tmp_path, monkeypatch):
     s = cfg.AppSettings().apply_override()
     assert s.db.password == "RealSecret_abc123"
     assert "RealSecret_abc123" in s.db.url
+
+
+def test_apply_override_accepts_password_from_environment(tmp_path, monkeypatch):
+    """override.json 只覆盖连接信息时，允许使用受保护环境变量中的密码。"""
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.setenv("DB__PASSWORD", "EnvSecret_abc123")
+
+    s = cfg.AppSettings().apply_override()
+    assert s.db.password == "EnvSecret_abc123"
 
 
 def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):

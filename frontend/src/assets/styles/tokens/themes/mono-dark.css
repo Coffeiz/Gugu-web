@@ -1,5 +1,5 @@
-/* V2 / Mono dark values. */
-:root[data-family='v2'][data-theme='dark'] {
+/* Mono / Mono dark values. */
+:root[data-family='mono'][data-theme='dark'] {
   color-scheme: dark;
   --theme-page: radial-gradient(900px 560px at 80% -10%,rgba(130,116,180,.115),transparent 62%),radial-gradient(760px 480px at 16% 110%,rgba(88,133,143,.09),transparent 66%),linear-gradient(180deg,#1c1921,#17151b);
   --theme-sidebar: rgba(25,23,30,.92); --theme-base: #201d25; --theme-glass: rgba(34,31,40,.78); --theme-glass-hover: rgba(43,39,49,.94); --theme-card-solid: #24212a;
@@ -10,7 +10,7 @@
   --theme-sidebar-active-border: rgba(164,154,203,.10); --theme-sidebar-active-highlight: transparent;
   --theme-shadow-1: 0 2px 8px rgba(0,0,0,.14); --theme-shadow-2: 0 7px 20px rgba(0,0,0,.20); --theme-shadow-3: 0 14px 38px rgba(0,0,0,.26); --theme-shadow-4: 0 24px 64px rgba(0,0,0,.34);
   
-  /* GuguChat 发送按钮暗色专用背景：v2 dark 用相对更冷的紫调，避免和
+  /* GuguChat 发送按钮暗色专用背景：mono dark 用相对更冷的紫调，避免和
      page radial gradient 抢色。 */
   --theme-topbar-bg: rgba(36,33,42,.74); --theme-topbar-bg-hover: rgba(42,38,48,.84); --theme-topbar-border: rgba(255,255,255,.05); --theme-topbar-shadow: 0 2px 10px rgba(0,0,0,.10); --theme-topbar-shadow-hover: 0 4px 14px rgba(0,0,0,.15);
   --theme-project-overlay-start: rgba(32,29,38,.88); --theme-project-overlay-end: rgba(36,33,42,.98); --theme-project-border: rgba(255,255,255,.075); --theme-project-hover-border: rgba(255,255,255,.12); --theme-project-shadow: 0 2px 8px rgba(0,0,0,.18); --theme-project-hover-shadow: 0 7px 20px rgba(0,0,0,.26); --theme-project-sheen-rest: rgba(255,255,255,.018); --theme-project-highlight-rest: rgba(255,255,255,.04); --theme-project-sheen-hover: rgba(255,255,255,.075); --theme-project-sheen-hover-mid: rgba(255,255,255,.018); --theme-project-highlight-hover: rgba(255,255,255,.11);

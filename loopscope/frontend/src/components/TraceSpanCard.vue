@@ -23,6 +23,7 @@
       <button v-if="sourceContent" :class="{ active: open.content }" @click="toggle('content')">Content</button>
       <button v-if="assembly" :class="{ active: open.assembly }" @click="toggle('assembly')">Assembly</button>
       <button v-if="diagnostics" :class="{ active: open.diagnostics }" @click="toggle('diagnostics')">Diagnostics</button>
+      <button v-if="schemaError" :class="{ active: open.schema }" @click="toggle('schema')">Schema</button>
       <button :class="{ active: open.input }" @click="toggle('input')">
         {{ firstDiff ? `Input · #${firstDiff.index}` : 'Input' }}
       </button>
@@ -85,6 +86,20 @@
       <div class="panel-label">Context diagnostics</div>
       <pre>{{ pretty(diagnostics) }}</pre>
     </section>
+    <section v-if="open.schema && schemaError" class="panel schema-error-panel">
+      <div class="panel-label">Schema error trace</div>
+      <div class="schema-error-meta">
+        <span>工具：<code>{{ schemaError.tool_name || '—' }}</code></span>
+        <span>类型：<code>{{ schemaError.error_kind || '—' }}</code></span>
+        <span>Digest：<code>{{ schemaError.schema_digest || '—' }}</code></span>
+      </div>
+      <div class="schema-error-grid">
+        <div><div class="panel-label">Model schema</div><pre>{{ pretty(schemaError.provider_schema || schemaError.schema) }}</pre></div>
+        <div><div class="panel-label">Validation error</div><pre>{{ pretty(schemaError.error) }}</pre></div>
+      </div>
+      <div class="panel-label">Arguments shape</div>
+      <pre>{{ pretty(schemaError.arguments_shape) }}</pre>
+    </section>
     <section v-if="open.input" ref="inputPanel" class="panel input-panel">
       <div class="panel-label">Input</div>
       <div v-if="inputMessages.length && firstDiff" ref="inputMessageList" class="input-message-list">
@@ -128,7 +143,7 @@ import { computed, nextTick, reactive, ref } from 'vue'
 import type { TraceSpan } from '../types'
 
 const props = withDefaults(defineProps<{ span: TraceSpan; previousSpan?: TraceSpan; depth?: number }>(), { depth: 0 })
-const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, input: false, output: false, source: false, attributes: false })
+const open = reactive<Record<string, boolean>>({ content: false, assembly: false, diagnostics: false, schema: false, input: false, output: false, source: false, attributes: false })
 const inputMessageList = ref<HTMLElement | null>(null)
 const comparisonOpen = ref(false)
 
@@ -169,6 +184,11 @@ const assembly = computed(() => {
 const diagnostics = computed(() => {
   const value = assembly.value?.canonical_context
   return value && typeof value === 'object' ? value : null
+})
+const schemaError = computed(() => {
+  if (props.span.attributes?.context_source !== 'tool_schema_error') return null
+  const input = props.span.input
+  return input && typeof input === 'object' ? input as Record<string, unknown> : null
 })
 const firstDiff = computed(() => {
   const value = diagnostics.value?.first_diff
@@ -252,6 +272,7 @@ const contextLabel = computed(() => {
   if (!source) return ''
   const labels: Record<string, string> = {
     tool_schema: '工具 Schema',
+    tool_schema_error: 'Schema 错误',
     capability_catalog: '能力目录',
     skill_index: 'Skill 索引',
     skill_body: 'Skill 正文',
@@ -316,6 +337,9 @@ const tokenChips = computed(() => {
 .panel-actions button { border:1px solid var(--border-subtle); border-radius:7px; padding:4px 7px; background:transparent; color:var(--content-secondary); font-size:9px; }
 .panel-actions button:hover,.panel-actions button.active { background:var(--surface-raised); color:var(--content-primary); border-color:var(--border-default); }
 .panel { border-top:1px solid var(--border-subtle); padding:11px 14px; background:var(--surface-raised); }
+.schema-error-meta { display:flex; flex-wrap:wrap; gap:6px 14px; margin-bottom:10px; color:var(--content-secondary); font-size:9px; }
+.schema-error-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+.schema-error-grid > div { min-width:0; }
 .panel-label { margin-bottom:7px; color:var(--content-tertiary); font-size:8px; letter-spacing:.1em; text-transform:uppercase; }
 pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:10px/1.58 var(--font-mono); color:var(--content-primary); }
 .first-diff-panel { background:color-mix(in srgb,var(--status-warning) 7%,var(--surface-raised)); }
@@ -358,5 +382,6 @@ pre { margin:0; max-height:420px; overflow:auto; white-space:pre-wrap; overflow-
   .first-diff-actions { align-items:flex-start; flex-direction:column; }
   .first-diff-buttons { width:100%; flex-wrap:wrap; }
   .comparison-grid { grid-template-columns:1fr; }
+  .schema-error-grid { grid-template-columns:1fr; }
 }
 </style>

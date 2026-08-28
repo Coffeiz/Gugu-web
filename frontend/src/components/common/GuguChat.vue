@@ -588,8 +588,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.msg.user) { align-items: flex-end; }
 :deep(.msg-search-flash) { animation: msg-search-flash 1.8s ease forwards; border-radius: 12px; }
 @keyframes msg-search-flash {
-  0%   { background: rgba(123,127,178,0.18); }
-  35%  { background: rgba(123,127,178,0.18); }
+  0%   { background: var(--gugu-chat-search-flash); }
+  35%  { background: var(--gugu-chat-search-flash); }
   100% { background: transparent; }
 }
 
@@ -603,15 +603,15 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   word-break: break-word; overflow-wrap: break-word;
 }
 :deep(.msg.ai .msg-bubble) {
-  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
-  border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+  background: var(--gugu-chat-assistant-bg); border: 1px solid var(--gugu-chat-assistant-border);
+  border-bottom-left-radius: 4px; box-shadow: inset 0 1px 0 var(--gugu-chat-file-highlight);
 }
 :deep(.msg.member .msg-bubble) {
-  background: rgba(123,127,178,0.08); border: 1px solid rgba(123,127,178,0.18);
+  background: var(--gugu-chat-member-bg); border: 1px solid var(--gugu-chat-member-border);
   border-bottom-left-radius: 4px;
 }
 :deep(.msg.user .msg-bubble) {
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: white;
+  background: var(--gugu-chat-user-bg); color: var(--gugu-chat-user-fg);
   border-bottom-right-radius: 4px;
 }
 :deep(.msg-speaker) {
@@ -623,7 +623,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.msg-quoted) {
   max-width: 88%; margin-bottom: 4px; padding: 6px 10px;
   font-size: 12.5px; line-height: 1.5; color: var(--text-secondary);
-  background: rgba(123,127,178,0.08); border-left: 2.5px solid rgba(123,127,178,0.45);
+  background: var(--gugu-chat-member-bg); border-left: 2.5px solid var(--gugu-chat-member-border);
   border-radius: 4px; white-space: pre-wrap; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
 }
@@ -664,8 +664,8 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   position: relative; overflow: hidden;
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; font-weight: 700; color: #fff; letter-spacing: 0.02em;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  font-size: 11px; font-weight: 700; color: var(--gugu-chat-user-fg); letter-spacing: 0.02em;
+  background: var(--gugu-chat-file-ext-bg);
 }
 /* 图片附件：缩略图覆盖 ext 角标；加载失败时 @error 移除自身，露出底下角标 */
 :deep(.msg-file-thumb) {
@@ -673,35 +673,35 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   object-fit: cover; display: block;
 }
 :deep(.msg-file-info) { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-:deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: #2a2c3a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-:deep(.msg-file-meta) { font-size: 12px; color: #9296ad; }
+:deep(.msg-file-name) { font-size: 15px; font-weight: 500; color: var(--gugu-chat-file-name); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:deep(.msg-file-meta) { font-size: 12px; color: var(--gugu-chat-file-meta); }
 :deep(.msg-file-dl) {
-  flex-shrink: 0; color: #7b7fb2; cursor: pointer; border-radius: 4px; padding: 3px;
+  flex-shrink: 0; color: var(--action-primary); cursor: pointer; border-radius: 4px; padding: 3px;
   margin: -3px; box-sizing: content-box; transition: background 0.12s, color 0.12s;
 }
-:deep(.msg-file-dl:hover) { background: rgba(0,0,0,0.07); color: var(--color-primary); }
+:deep(.msg-file-dl:hover) { background: var(--gugu-chat-file-download-hover); color: var(--action-primary); }
 /* 语音条：迷你播放条（播放钮 + 波形 + 时长），和文件卡同款气泡质感 */
 :deep(.msg-voice) {
   display: inline-flex; align-items: center; gap: 9px; padding: 8px 13px; cursor: pointer;
   max-width: 100%; box-sizing: border-box; user-select: none;
-  background: rgba(255,255,255,0.5); border: 1px solid rgba(255,255,255,0.65);
+  background: var(--gugu-chat-voice-bg); border: 1px solid var(--gugu-chat-voice-border);
   border-radius: 14px; border-bottom-left-radius: 5px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.8), 0 1px 3px rgba(80,80,120,0.06);
+  box-shadow: inset 0 1px 0 var(--gugu-chat-voice-highlight), var(--elevation-card);
   transition: background 0.15s, box-shadow 0.15s;
 }
-:deep(.msg-voice:hover) { background: rgba(255,255,255,0.72); box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 3px 10px rgba(100,110,200,0.14); }
+:deep(.msg-voice:hover) { background: var(--surface-glass-hover); box-shadow: inset 0 1px 0 var(--highlight-strong), var(--elevation-card-hover); }
 :deep(.msg-voice .mv-btn) {
   flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; color: #fff;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4); box-shadow: 0 1px 3px rgba(110,110,170,0.3);
+  display: flex; align-items: center; justify-content: center; color: var(--gugu-chat-user-fg);
+  background: var(--gugu-chat-voice-button-bg); box-shadow: var(--elevation-card);
 }
 :deep(.msg-voice .mv-wave) { display: flex; align-items: center; gap: 2px; height: 18px; }
-:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: #b0b2cc; transition: background 0.2s; }
-:deep(.msg-voice.playing .mv-wave i) { background: #8186bd; animation: mv-pulse 0.9s ease-in-out infinite; }
+:deep(.msg-voice .mv-wave i) { width: 2.5px; border-radius: 2px; background: var(--gugu-chat-voice-wave); transition: background 0.2s; }
+:deep(.msg-voice.playing .mv-wave i) { background: var(--gugu-chat-voice-wave-playing); animation: mv-pulse 0.9s ease-in-out infinite; }
 :deep(.msg-voice .mv-wave i:nth-child(even)) { animation-delay: 0.15s; }
 :deep(.msg-voice .mv-wave i:nth-child(3n)) { animation-delay: 0.3s; }
 @keyframes mv-pulse { 0%,100% { transform: scaleY(0.6); } 50% { transform: scaleY(1); } }
-:deep(.msg-voice .mv-dur) { font-size: 12.5px; color: #7e82a6; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+:deep(.msg-voice .mv-dur) { font-size: 12.5px; color: var(--gugu-chat-voice-duration); font-variant-numeric: tabular-nums; flex-shrink: 0; }
 /* 用户(右侧)发的附件卡：气泡尾巴翻到右下、左下回正常圆角、容器右对齐 */
 :deep(.msg.user .msg-files) { align-items: flex-end; }
 :deep(.msg.user .msg-file) { border-bottom-left-radius: 14px; border-bottom-right-radius: 5px; }
@@ -719,7 +719,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
   transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 :deep(.msg:hover .msg-copy-btn) { opacity: 1; }
-:deep(.msg-copy-btn:hover) { background: rgba(0,0,0,0.07); color: var(--color-primary); }
+:deep(.msg-copy-btn:hover) { background: var(--gugu-chat-copy-hover-bg); color: var(--action-primary); }
 :deep(.msg-copy-btn svg) { display: block; }
 
 /* ── 思考/工具动画（状态气泡渲染于 GuguChatMessageList.vue，同样需要 :deep()） ── */
@@ -739,7 +739,7 @@ const presenceTitle = computed(() => presenceKind.value === 'resting' ? '咕咕�
 :deep(.tool-bubble) { display: flex; align-items: center; gap: 8px; color: var(--color-primary); }
 :deep(.tool-spinner) {
   width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
-  border: 2px solid rgba(123,127,178,0.25); border-top-color: var(--color-primary);
+  border: 2px solid var(--gugu-chat-tool-border); border-top-color: var(--action-primary);
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }

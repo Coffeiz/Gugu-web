@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.terminal.access import TerminalAccessDecision, TerminalOperation, page_access
-from agent.terminal.contracts import TerminalShellMode, TerminalSource, TerminalStatus
+from agent.terminal.contracts import TerminalMode, TerminalShellMode, TerminalSource, TerminalStatus
 from app.core.ownership import get_owned
 from app.core.tz import now_utc
 from app.models import ConversationSession, TerminalEventRecord, TerminalSessionRecord, Workspace
@@ -25,9 +25,12 @@ def _terminal_id() -> str:
 def serialize_terminal(row: TerminalSessionRecord) -> dict:
     return {
         "id": row.id, "name": row.name, "sessionId": row.session_id, "runId": row.run_id,
-        "workspaceId": row.workspace_id, "source": row.source, "status": row.status,
+        "workspaceId": row.workspace_id, "source": row.source,
+        "mode": row.mode or TerminalMode.AGENT_EVENTS.value, "status": row.status,
         "shellMode": row.shell_mode, "networkProfile": row.network_profile,
         "lastSequence": row.last_sequence, "outputChars": row.output_chars,
+        "ptyPid": row.pty_pid, "ptySandboxId": row.pty_sandbox_id,
+        "ptyCols": row.pty_cols, "ptyRows": row.pty_rows,
         "createdAt": row.created_at.isoformat(), "updatedAt": row.updated_at.isoformat(),
         "closedAt": row.closed_at.isoformat() if row.closed_at else None,
     }
@@ -53,6 +56,7 @@ async def get_terminal(db: AsyncSession, user_id, terminal_id: str) -> TerminalS
 async def create_terminal(
     db: AsyncSession, user_id, *, name: str | None = None,
     session_id: int | None = None, workspace_id: int | None = None,
+    mode: str = TerminalMode.INTERACTIVE_PTY.value,
 ) -> TerminalSessionRecord:
     access = await page_access(db, user_id)
     if not access.allowed:
@@ -63,10 +67,12 @@ async def create_terminal(
         workspace = await get_owned(db, Workspace, workspace_id, user_id)
         if workspace is None or not workspace.enabled:
             raise LookupError("工作区不存在或已停用")
+    if mode not in {item.value for item in TerminalMode}:
+        raise ValueError("终端模式无效")
     row = TerminalSessionRecord(
         id=_terminal_id(), owner_id=user_id, session_id=session_id,
         workspace_id=workspace_id, name=(name or "终端").strip() or "终端",
-        source=TerminalSource.USER.value, status=TerminalStatus.IDLE.value,
+        source=TerminalSource.USER.value, mode=mode, status=TerminalStatus.IDLE.value,
         shell_mode=TerminalShellMode.SANDBOX.value, network_profile="none",
     )
     db.add(row)
@@ -88,6 +94,7 @@ async def ensure_agent_terminal(db: AsyncSession, user_id, *, session_id: int, w
             id=_terminal_id(), owner_id=user_id, session_id=session_id,
             run_id=run_id,
             workspace_id=workspace_id, name="咕咕终端", source=TerminalSource.AGENT.value,
+            mode=TerminalMode.AGENT_EVENTS.value,
             status=TerminalStatus.RUNNING.value, shell_mode=shell_mode,
             network_profile=network_profile,
         )
@@ -135,6 +142,19 @@ async def reopen_terminal(db: AsyncSession, row: TerminalSessionRecord) -> Termi
     """重新开启已停止终端，保留原有输出事件。"""
     row.status = TerminalStatus.IDLE.value
     row.closed_at = None
+    row.updated_at = now_utc()
+    await db.flush()
+    return row
+
+
+async def reset_terminal(db: AsyncSession, row: TerminalSessionRecord) -> TerminalSessionRecord:
+    """重置终端运行态；保留终端记录、输出历史和用户工作区文件。"""
+    row.status = TerminalStatus.IDLE.value
+    row.closed_at = None
+    row.pty_pid = None
+    row.pty_sandbox_id = None
+    row.pty_cols = None
+    row.pty_rows = None
     row.updated_at = now_utc()
     await db.flush()
     return row

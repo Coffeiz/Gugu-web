@@ -21,6 +21,8 @@ export type RagDocument = {
   id: string;
   text: string;
   source_type: RagSourceType | string;
+  source_id?: string;
+  content?: string;
   title?: string;
   summary?: string;
   platform?: string;
@@ -69,6 +71,7 @@ export type RagSearchResult = {
   score: number;
   source_type: RagSourceType | string;
   document_version: string;
+  document?: RagDocument;
 };
 
 export type RagSearchDiagnostics = {

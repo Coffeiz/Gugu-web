@@ -42,10 +42,9 @@ class DatabaseSettings(BaseModel):
     port: int = Field(5432, description="端口")
     name: str = Field("gugu_web", description="数据库名")
     user: str = Field("gugu", description="用户名")
-    # password 默认空串：业务必须从 config.override.json 显式提供；缺失会被
-    # apply_override 校验抛错，避免「默默用空密码连 DB」导致 worker 反复启动失败
-    # 又被「im:inbound 队列堆积 → 用户看不到任何回复」这种症状掩盖。
-    password: str = Field("", description="密码（必须从 config.override.json 显式提供）")
+    # password 默认空串：业务必须从环境变量或 config.override.json 提供；缺失会被
+    # apply_override 校验抛错，避免「默默用空密码连 DB」导致 worker 反复启动失败。
+    password: str = Field("", description="密码（必须从环境变量或 config.override.json 提供）")
 
     @property
     def url(self) -> str:
@@ -140,6 +139,8 @@ class SandboxSettings(BaseModel):
     pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
     timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
     output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
+    pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
+    pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
     persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 持久空间配额")
     ephemeral_quota_bytes: int = Field(1024 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 临时构建/cache 配额")
     sandboxd_socket: str = Field(
@@ -235,7 +236,13 @@ class SearchSettings(BaseModel):
     ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
     ts_sidecar_index_dir: str = Field(
         "var/rag-ts-index",
-        description="TypeScript worker 持久化索引目录；默认保存在 backend/var/rag-ts-index",
+        description="旧版 TypeScript 索引目录；新索引默认保存在用户存储目录的 .system/rag/ts-index 下",
+    )
+    ts_sidecar_index_ttl_seconds: int = Field(
+        30 * 24 * 3600,
+        ge=7 * 24 * 3600,
+        le=365 * 24 * 3600,
+        description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
     )
     ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
@@ -250,6 +257,12 @@ class StateLabelSettings(BaseModel):
     _verify_prefix），value=自定义显示名；未设的 key 自动回退到代码默认（工具的 label / 内置默认）。
     后台「状态命名」面板写入，core/前端热读。"""
     overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")
+
+
+class BYOKSettings(BaseModel):
+    """用户自带凭据开关；主密钥只允许由运行环境注入。"""
+    enabled: bool = Field(False, description="是否开放用户 BYOK（托管服务由后台权益控制）")
+    master_key: str = Field("", repr=False, description="BYOK 主密钥（仅从 CREDENTIALS_MASTER_KEY 注入，不写入响应）")
 
 
 class SmtpSettings(BaseModel):
@@ -305,6 +318,7 @@ class AppSettings(BaseSettings):
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
+    byok: BYOKSettings = Field(default_factory=BYOKSettings)
     # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
@@ -320,32 +334,30 @@ class AppSettings(BaseSettings):
             updates: dict = {}
 
             if "db" in override:
-                # 强制要求：override["db"] 必须显式声明 password 字段，且不能是占位符/空串。
-                # 真实踩过的坑：默认值是 "pm123"，业务 config.override.json 只覆盖
-                # host/port/name/user，没写 password → 后端用 "gugu" + "pm123" 连 DB 失败 →
-                # worker 进程反复 restart → im:inbound 队列堆积 → 用户感觉「消息收不到」。
-                # 报错比静默 fail 好：进程直接拒绝启动，问题在部署阶段就暴露。
-                #
-                # 注意：必须 check override["db"] 而不是 merged.password —— 因为 pydantic-settings
-                # 会从 backend/.env 读 DB__PASSWORD 注入 self.db.password（默认是 ""，但
-                # .env 提供真实值）。如果只看 merged 结果，会把"override 没写 password
-                # 但 env 给了真值"当成通过，掩盖 override 漏配 password 这个真正的根因。
                 override_db = override["db"] or {}
-                if "password" not in override_db:
+                override_pw = override_db.get("password")
+                if "password" in override_db and (
+                    not isinstance(override_pw, str)
+                    or not override_pw.strip()
+                    or override_pw in ("pm123", "pm")
+                ):
                     raise RuntimeError(
-                        f"db.password 未在 {OVERRIDE_FILE} 中提供。"
-                        f"请在 db 节里写明真实密码（不要省略）。"
+                        "db.password 是空值、占位符或无效类型，请在运行环境或配置文件中提供真实密码。"
                     )
-                override_pw = override_db["password"]
-                if not override_pw or override_pw in ("pm123", "pm"):
-                    raise RuntimeError(
-                        f"db.password 仍是占位符或空串 (当前值 {override_pw!r})。"
-                        f"请在 {OVERRIDE_FILE} 的 db 节里写明真实密码。"
-                    )
+
                 merged = {**self.db.model_dump(), **{
                     k: v for k, v in override_db.items()
                     if k in DatabaseSettings.model_fields
                 }}
+                effective_pw = merged.get("password", "")
+                if (
+                    not isinstance(effective_pw, str)
+                    or not effective_pw.strip()
+                    or effective_pw in ("pm123", "pm")
+                ):
+                    raise RuntimeError(
+                        "db.password 未配置或仍是占位符，请在运行环境或配置文件中提供真实密码。"
+                    )
                 updates["db"] = DatabaseSettings.model_construct(**merged)
 
             if "redis" in override:
@@ -383,6 +395,13 @@ class AppSettings(BaseSettings):
                 }}
                 merged["dimensions"] = normalize_dimensions(merged.get("dimensions"))
                 updates["embedding"] = EmbeddingSettings.model_construct(**merged)
+
+            if "byok" in override:
+                merged = {**self.byok.model_dump(), **{
+                    k: v for k, v in (override["byok"] or {}).items()
+                    if k in BYOKSettings.model_fields
+                }}
+                updates["byok"] = BYOKSettings.model_construct(**merged)
 
             if "sandbox" in override:
                 merged = {**self.sandbox.model_dump(), **{
@@ -440,7 +459,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding", "sandbox"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding", "sandbox", "byok"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

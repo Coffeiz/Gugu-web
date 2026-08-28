@@ -180,13 +180,6 @@
               </div>
             </div>
 
-            <div class="modal-field modal-field--row">
-              <div class="thinking-label">
-                <span>多模态能力</span>
-                <span class="thinking-hint">图片/视频/音频分别开关；点「检测」自动判定该维度是否支持，成功后自动开启</span>
-              </div>
-            </div>
-
             <div v-if="draft.provider === 'local'" class="modal-field">
               <div class="thinking-label">
                 <span>本地能力覆盖</span>
@@ -203,29 +196,12 @@
               />
             </div>
 
-            <div class="modal-field modal-field--row" v-for="dim in visionDims" :key="dim.key">
-              <div class="thinking-label">
-                <span>{{ dim.label }}</span>
-                <span class="thinking-hint">{{ dim.hint }}</span>
-              </div>
-              <div class="option-button-row option-button-row--center">
-                <button
-                  type="button"
-                  class="pca-btn pca-btn--sm"
-                  :class="{ 'pca-btn--testing': probingDim === dim.key }"
-                  :disabled="probingDim !== null && probingDim !== dim.key"
-                  :title="isNew ? '检测草稿，不会写入配置；保存后生效' : ''"
-                  @click="$emit('probe-vision', draft.id, dim.key)"
-                >{{ probingDim === dim.key ? '检测中…' : '检测' }}</button>
-                <ToggleSwitch :model-value="Boolean(draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key])" :aria-label="`切换${dim.label}`" @update:model-value="draft[dim.key === 'image' ? 'vision' : 'vision_' + dim.key] = $event" />
-              </div>
-            </div>
-
+            <MultimodalCapabilities :model="draft" :dims="visionDims" variant="admin" :probing="probingDim" title="多模态能力" hint="图片/视频/音频分别开关；点「检测」自动判定该维度是否支持，成功后自动开启" @probe="$emit('probe-vision', draft.id, $event)" />
             <div class="modal-actions">
               <span class="save-hint" :class="{ error: !!error }">{{ error }}</span>
               <button class="btn-ghost" @click="$emit('close')">取消</button>
               <button class="btn-primary" :disabled="saving" @click="$emit('save')">
-                <svg v-if="saving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+                <svg v-if="saving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
                 {{ saving ? '保存中…' : '保存' }}
               </button>
             </div>
@@ -237,6 +213,7 @@
 import { ref } from 'vue'
 import LocalCapabilityOverrides from '../../components/LocalCapabilityOverrides.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import MultimodalCapabilities from '@/components/common/MultimodalCapabilities.vue'
 
 interface Provider { key: string; label: string; base_url: string; model: string }
 interface Option { key: string; label: string; hint?: string }

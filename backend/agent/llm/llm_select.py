@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from sqlalchemy import select
 
 from agent import providers
 
@@ -131,3 +132,28 @@ def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
         use_anthropic=use_anthropic_for(model),
         context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
     )
+
+
+async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelRunConfig:
+    """解析主模型并应用当前用户的 LLM BYOK 覆盖。"""
+    config = resolve_run_config(settings, ctx)
+    if not (getattr(settings, "byok", None) and
+            (settings.byok.enabled or settings.ai.deployment_mode == "local")):
+        return config
+    from app.byok.service import decrypt_value
+    from app.models import UserProviderCredential
+    rows = (await db.execute(select(UserProviderCredential).where(
+        UserProviderCredential.user_id == user_id,
+        UserProviderCredential.capability == "llm",
+        UserProviderCredential.enabled.is_(True),
+    ).order_by(UserProviderCredential.id))).scalars().all()
+    row = next(iter(rows), None)
+    if row is None:
+        return config
+    base = config.model
+    updates = {"provider": row.provider, "api_format": row.api_format,
+               "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
+               "model": row.model or getattr(base, "model", "")}
+    model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
+    return ModelRunConfig(model=model, use_anthropic=use_anthropic_for(model),
+                          context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)))

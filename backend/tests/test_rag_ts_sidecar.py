@@ -14,6 +14,29 @@ from agent.rag.ts_sidecar import (
 )
 
 
+def test_wire_document_keeps_business_fields_for_cold_restore():
+    from agent.rag.ts_sidecar import _wire_document
+
+    document = IndexDocument("project:1", "project", "1", Scope("owner"), "标题", "摘要", "正文", "v1")
+    wire = _wire_document(document)
+    assert wire["content"] == "正文"
+    assert wire["source_id"] == "1"
+
+
+def test_index_dir_for_owner_uses_hidden_user_storage(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from agent.rag.ts_sidecar import index_dir_for_owner
+
+    monkeypatch.setattr(
+        "app.core.config.get_settings",
+        lambda: SimpleNamespace(
+            storage=SimpleNamespace(local_path=str(tmp_path)),
+            search=SimpleNamespace(ts_sidecar_index_dir="var/legacy"),
+        ),
+    )
+    assert index_dir_for_owner("user-a").endswith("/user-a/.system/rag/ts-index")
+
+
 def _worker_command() -> str:
     worker = Path(__file__).parents[1] / "ts" / "workers" / "rag" / "src" / "index.ts"
     return f"node --experimental-strip-types {worker}"

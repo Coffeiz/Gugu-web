@@ -138,8 +138,8 @@ withDefaults(defineProps<{
 
 .brand--sidebar .brand-mark,
 .brand--sidebar .brand-mark-mask {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
 }
 
 .brand--sidebar .brand-wordmark,

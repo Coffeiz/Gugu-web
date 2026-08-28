@@ -18,6 +18,19 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _schema_dict(value: object) -> dict:
+    """统一读取 JSON 列，兼容历史库中被序列化为字符串的记录。"""
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 async def create_prompt(
     db: AsyncSession,
     *,
@@ -240,7 +253,7 @@ async def wait_for_resolution(
             ))
             if prompt is None:
                 return None
-            schema = dict(prompt.schema_json or {})
+            schema = _schema_dict(prompt.schema_json)
             resolved = schema.get("resolved_result")
             if prompt.status == "resolved" and isinstance(resolved, dict):
                 return resolved
@@ -326,7 +339,7 @@ async def consume_action(
         result_text = next(
             (
                 str(item.get("label") or action.option_id)
-                for item in (prompt.schema_json or {}).get("options", [])
+                for item in _schema_dict(prompt.schema_json).get("options", [])
                 if isinstance(item, dict) and str(item.get("id") or "") == action.option_id
             ),
             action.option_id,
@@ -371,7 +384,7 @@ async def consume_action(
         for message in rows:
             if _replace_pending_tool_result(message, tool_call_id=tool_call_id, result=result):
                 break
-    prompt.schema_json = {**dict(prompt.schema_json or {}), "resolved_result": result}
+    prompt.schema_json = {**_schema_dict(prompt.schema_json), "resolved_result": result}
     await db.commit()
     return {
         "prompt_id": prompt.id,
@@ -405,13 +418,13 @@ async def consume_text(
         prompt.resolved_at = now
         await db.commit()
         raise ValueError("交互已过期")
-    if not bool((prompt.schema_json or {}).get("allow_text_input")):
+    if not bool(_schema_dict(prompt.schema_json).get("allow_text_input")):
         raise ValueError("该交互不接受文本回答")
     text = str(text or "").strip()
     if not text or len(text) > 2000:
         raise ValueError("回答不能为空或过长")
     # 文本型 Prompt 可能没有 Action，context 存在 Prompt schema 的内部字段中。
-    schema = dict(prompt.schema_json or {})
+    schema = _schema_dict(prompt.schema_json)
     context = dict(schema.get("context") or {})
     result = {
         "kind": prompt.kind,
@@ -466,7 +479,7 @@ async def consume_choice_text(
     )
     if prompt is None:
         return None
-    schema = dict(prompt.schema_json or {})
+    schema = _schema_dict(prompt.schema_json)
     options = [item for item in schema.get("options", []) if isinstance(item, dict)]
     if not options:
         return None
@@ -562,7 +575,7 @@ async def list_active(db: AsyncSession, *, user_id, session_id: int) -> list[dic
             options.append({
                 "id": action.option_id,
                 "label": next(
-                    (str(item.get("label") or "") for item in (prompt.schema_json or {}).get("options", [])
+                    (str(item.get("label") or "") for item in _schema_dict(prompt.schema_json).get("options", [])
                      if str(item.get("id") or "") == action.option_id),
                     action.option_id,
                 ),
@@ -602,7 +615,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
         )).scalars().all()
         options = []
         selected = None
-        schema_options = (prompt.schema_json or {}).get("options", [])
+        schema_options = _schema_dict(prompt.schema_json).get("options", [])
         for action in actions:
             label = next(
                 (str(item.get("label") or "") for item in schema_options
@@ -625,7 +638,7 @@ async def list_history(db: AsyncSession, *, user_id, session_id: int) -> list[di
             "body": prompt.body,
             # 交互由某次工具调用暂停产生。前端恢复时间线时需要这个关联，
             # 才能稳定保持“工具气泡 -> 交互气泡”的实时顺序。
-            "tool_call_id": str((prompt.schema_json or {}).get("context", {}).get("tool_call_id") or "") or None,
+            "tool_call_id": str(_schema_dict(prompt.schema_json).get("context", {}).get("tool_call_id") or "") or None,
             "options": options,
             "resolved": prompt.status != "active" or prompt.expires_at <= now,
             "selected_option_id": selected,

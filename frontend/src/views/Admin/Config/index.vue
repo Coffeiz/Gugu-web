@@ -48,14 +48,14 @@
             <button class="btn-test" :class="{ loading: testLoading.db }" @click="testDb">
               <svg v-if="testLoading.db" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.db ? '测试中…' : '测试连接' }}
             </button>
             <button class="btn-test btn-init" :class="{ loading: initing }" :disabled="initing" @click="initDb" title="重置连接 + 重建所有表（幂等）">
               <svg v-if="initing" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
               </svg>
               {{ initing ? '初始化中…' : '初始化数据库' }}
             </button>
@@ -92,7 +92,7 @@
             <button class="btn-test" :class="{ loading: testLoading.redis }" @click="testRedis">
               <svg v-if="testLoading.redis" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.redis ? '测试中…' : '测试连接' }}
             </button>
@@ -139,7 +139,7 @@
             <button class="btn-test" :class="{ loading: testLoading.oss }" @click="testOss">
               <svg v-if="testLoading.oss" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.oss ? '测试中…' : '测试 OSS 连接' }}
             </button>
@@ -189,12 +189,30 @@
             <button class="btn-test" :class="{ loading: testSmtpLoading }" :disabled="testSmtpLoading" @click="testSmtp">
               <svg v-if="testSmtpLoading" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
               </svg>
               {{ testSmtpLoading ? '发送中…' : '测试发送' }}
             </button>
           </div>
         </div>
+      </section>
+
+      <!-- ── 用户 BYOK ── -->
+      <section id="sec-byok" class="config-card">
+        <div class="card-head">
+          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
+            <Icon name="user.security" size="md" />
+          </div>
+          <div class="card-title-block">
+            <h3>用户 BYOK</h3>
+            <p>允许用户使用自己的 API Key；凭据由服务端加密保存</p>
+          </div>
+        </div>
+        <div class="toggle-group">
+          <button class="toggle-btn" :class="{ active: draft.byok.enabled }" @click="draft.byok.enabled = true">开放 BYOK</button>
+          <button class="toggle-btn" :class="{ active: !draft.byok.enabled }" @click="draft.byok.enabled = false">关闭</button>
+        </div>
+        <p class="config-note">托管服务可用此开关控制付费权益；本地部署模式默认开放。登录 JWT 仅用于身份认证，不会保存或承载用户 API Key。</p>
       </section>
 
       <!-- ── 保存栏 ── -->
@@ -214,7 +232,7 @@
         <button class="btn-primary" :class="{ loading: configStore.saving }" :disabled="configStore.saving" @click="save">
           <svg v-if="configStore.saving" class="spin-icon" width="13" height="13" viewBox="0 0 12 12"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
+            <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
           </svg>
           {{ configStore.saving ? '保存中…' : '保存配置' }}
         </button>
@@ -237,6 +255,7 @@ const draft = reactive({
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
+  byok:    JSON.parse(JSON.stringify(configStore.cfg.byok)),
 })
 
 onMounted(async () => {
@@ -245,6 +264,7 @@ onMounted(async () => {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
+  Object.assign(draft.byok,    configStore.cfg.byok)
 })
 
 // ── 连接字符串预览 ────────────────────────────────────────────────────────
@@ -382,6 +402,7 @@ async function save() {
     redis:   { ...draft.redis },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
+    byok:    { ...draft.byok },
   })
 }
 
@@ -390,6 +411,7 @@ function resetDraft() {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
+  Object.assign(draft.byok,    configStore.cfg.byok)
   testStatus.db    = null
   testStatus.redis = null
   testStatus.oss   = null

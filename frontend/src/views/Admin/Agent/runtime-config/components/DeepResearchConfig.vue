@@ -19,7 +19,7 @@
         <input v-model="draft.tavily_api_key" type="password" class="behavior-input deep-research-input" placeholder="tvly-…" autocomplete="new-password" />
       </div>
       <template v-else-if="draft.deep_research_provider === 'baidu'">
-        <div class="behavior-item"><div class="behavior-label"><span>百度搜索 API Key</span><span class="behavior-desc">调用 /v2/ai_search/web_search，返回网页标题、摘要和 URL</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
+        <div class="behavior-item"><div class="behavior-label"><span>百度搜索 API Key</span><span class="behavior-desc">调用 /mono/ai_search/web_search，返回网页标题、摘要和 URL</span></div><input v-model="draft.deep_research_baidu_api_key" type="password" class="behavior-input deep-research-input" placeholder="API Key" autocomplete="new-password" /></div>
       </template>
       <div v-else class="behavior-item"><div class="behavior-label"><span>You.com API Key</span><span class="behavior-desc">Research API 使用 X-API-Key；需要 Research scope</span></div><input v-model="draft.deep_research_you_api_key" type="password" class="behavior-input deep-research-input" placeholder="YDC_API_KEY" autocomplete="new-password" /></div>
       <div class="behavior-item deep-research-test-row">

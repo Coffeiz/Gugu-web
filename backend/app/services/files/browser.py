@@ -230,9 +230,20 @@ async def get_user_folder(db: AsyncSession, user_id, folder_id):
     return await get_owned(db, Folder, folder_id, user_id)
 
 
-async def find_user_files_by_name(db: AsyncSession, user_id, base_name: str):
+async def find_user_files_by_name(
+    db: AsyncSession, user_id, base_name: str, *,
+    space=None, project_id=None, folder_id=None, root=False,
+):
     """按文件名查找当前用户存活文件，精确结果优先。"""
     base_stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
+    if space:
+        base_stmt = base_stmt.where(File.space == space)
+    if project_id is not None:
+        base_stmt = base_stmt.where(File.project_id == project_id)
+    if folder_id is not None:
+        base_stmt = base_stmt.where(File.folder_id == folder_id)
+    elif root:
+        base_stmt = base_stmt.where(File.folder_id.is_(None))
     rows = (await db.execute(base_stmt.where(File.display_name == base_name))).scalars().all()
     if not rows:
         rows = (await db.execute(

@@ -17,6 +17,7 @@ from agent.rag.ts_sidecar import (
     TsSidecarUnavailable,
     _index_document_digest,
     get_lexical_client,
+    index_dir_for_owner,
 )
 from agent.rag.scope import matches_scope
 from app.models import KnowledgeIndexEntry
@@ -137,6 +138,20 @@ class KnowledgeIndexCache:
                 if diagnostics is not None:
                     diagnostics["cache_hit"] = True
                 return entry.index
+            # 冷启动优先让 TS worker 从持久化索引恢复。只有索引不存在、版本不匹配或
+            # revision 变化时才读取完整 DB 文档并重建，避免每次进程重启都拉全量正文。
+            if backend == "typescript" and not shared_key:
+                restored = await self._build_index(
+                    backend, owner_user_id, None, revision, search_settings, diagnostics,
+                )
+                if restored is not None:
+                    if diagnostics is not None:
+                        diagnostics["cache_hit"] = True
+                        diagnostics["cache_hit_layer"] = "persistent_sidecar"
+                    self._store(key, _Entry(
+                        restored, 1, revision, backend, time.monotonic(),
+                    ))
+                    return restored
             documents = await load_index_documents(db, owner_user_id)
             index_documents = list(documents)
             base_entry = entry or self._latest_snapshot_entry(owner_key, backend, key)
@@ -262,12 +277,18 @@ class KnowledgeIndexCache:
             client = await get_lexical_client(
                 owner_user_id,
                 command=settings.ts_sidecar_command,
-                index_dir=settings.ts_sidecar_index_dir,
+                index_dir=index_dir_for_owner(owner_user_id),
             )
             try:
                 reused = await client.reuse_if_current(revision)
                 if diagnostics is not None:
                     diagnostics["sidecar_reused"] = bool(reused)
+                if documents is None:
+                    if reused:
+                        if diagnostics is not None:
+                            diagnostics["disk_index_reused"] = True
+                        return TsLexicalIndex([], client, revision)
+                    return None
                 if not reused:
                     can_patch = bool(
                         settings.ts_sidecar_index_dir

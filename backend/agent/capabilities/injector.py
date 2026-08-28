@@ -11,6 +11,53 @@ CATALOG_DESCRIPTION_MAX_CHARS = DESCRIPTION_SHORT_MAX_CHARS
 FIXED_ADAPTER_TOOL_NAMES = ("call_tool", "get_tool_schema", "use_skill", "ask_user")
 
 
+def _compact_schema_type(schema: dict) -> str:
+    """把工具字段压缩成可读签名，只保留一层结构，不复制完整 JSON Schema。"""
+    if not isinstance(schema, dict):
+        return "unknown"
+    schema_type = schema.get("type")
+    if schema_type == "array":
+        item = schema.get("items")
+        if isinstance(item, dict) and item.get("type") == "object":
+            names = tuple((item.get("properties") or {}).keys())
+            return f"array<object:{','.join(map(str, names))}>" if names else "array<object>"
+        return f"array<{_compact_schema_type(item)}>" if isinstance(item, dict) else "array"
+    if schema_type == "object":
+        names = tuple((schema.get("properties") or {}).keys())
+        return f"object:{','.join(map(str, names))}" if names else "object"
+    if schema_type:
+        return str(schema_type)
+    choices = schema.get("anyOf") or schema.get("oneOf")
+    if isinstance(choices, list):
+        types = tuple(_compact_schema_type(item) for item in choices if isinstance(item, dict))
+        return "|".join(dict.fromkeys(types)) or "unknown"
+    return "unknown"
+
+
+def _compact_tool_fields(name: str) -> str:
+    """从唯一工具注册表生成字段签名，避免 description_short 再维护一份字段文案。"""
+    try:
+        from agent.tools import registry
+
+        tool = registry.get(name)
+        schema = getattr(tool, "input_schema", None)
+    except Exception:
+        schema = None
+    if not isinstance(schema, dict):
+        return ""
+    properties = schema.get("properties") or {}
+    if not isinstance(properties, dict):
+        return ""
+    required = set(schema.get("required") or ())
+    fields = []
+    for field_name, field_schema in properties.items():
+        field = f"{field_name}({_compact_schema_type(field_schema)})"
+        if field_name in required:
+            field += ",必填"
+        fields.append(field)
+    return "、".join(fields)
+
+
 class CapabilityToolContext:
     """Run 内的能力上下文。
 
@@ -106,10 +153,10 @@ async def build_fixed_adapter_context_for_user(
 def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool_order=None) -> str:
     lines = [
         "## 当前可用能力索引",
-        "这里只是稳定的能力名称、用途和少量关键字段，不是完整工具 Schema，也不是已经发生的工具调用记录；"
+        "这里只是稳定的能力名称、用途和紧凑字段签名，不是完整工具 Schema，也不是已经发生的工具调用记录；"
         "固定 Adapter 模式下使用 `call_tool(name, arguments)` 调用业务工具。"
         "工具名必须逐字复用目录中的 canonical name，不得把自然语言翻译成自造的别名；"
-        "简介中的字段列表不完整，实际调用前必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
+        "字段签名只展示类型、必填状态和一层结构，嵌套细节及枚举值必须确认历史里有当前版本的完整 Schema；不要凭简介猜参数。"
         "本轮历史中已经存在且版本未变化的 Schema 直接复用，否则先使用 `get_tool_schema`。"
         "不要重复获取已经存在的工具 Schema；Schema 只用于理解参数，权限和执行校验由代码完成。"
         "`use_skill` 只用于加载技能正文及其关联工具 Schema。",
@@ -129,5 +176,7 @@ def catalog_block(snapshot: CapabilitySnapshot, *, kind: str | None = None, tool
             raise ValueError(
                 f"能力 {item.name} 的 description_short 超过 {CATALOG_DESCRIPTION_MAX_CHARS} 字符"
             )
-        lines.append(f"- {item.name}：{description}")
+        fields = _compact_tool_fields(item.name) if item.kind == "tool" else ""
+        suffix = f"；字段：{fields}" if fields else ""
+        lines.append(f"- {item.name}：{description}{suffix}")
     return "\n".join(lines)

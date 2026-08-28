@@ -4,7 +4,7 @@ import pytest
 from types import SimpleNamespace
 
 from app.core.config import AgentBehaviorSettings
-from app.models import ConversationSession, Project
+from app.models import ConversationSession, Folder, Project
 from app.services.workspaces import (
     bind_session,
     create_workspace,
@@ -81,3 +81,34 @@ async def test_workspace_can_be_renamed_disabled_and_deleted_without_deleting_pr
     await db.commit()
     assert await describe_session(db, user_a.id, session.id) is None
     assert (await db.get(Project, project.id)).name == "保留项目"
+
+
+@pytest.mark.asyncio
+async def test_bound_workspace_resolves_file_target_and_rejects_other_project(db, user_a):
+    """绑定个人文件夹时，文件工具默认落到该文件夹，不能被同值项目 id 带偏。"""
+    personal = Folder(user_id=user_a.id, name="工作区文件夹", project_id=None)
+    project = Project(user_id=user_a.id, name="另一个项目")
+    db.add_all([personal, project])
+    await db.flush()
+    workspace = await create_workspace(
+        db, user_a.id, name="个人工作区", kind="folder", folder_id=personal.id,
+    )
+    session = ConversationSession(user_id=user_a.id, title="绑定文件夹", source="web")
+    session.workspace_id = workspace.id
+    db.add(session)
+    await db.flush()
+
+    from agent.tools.base import reset_dispatch_session, set_dispatch_session
+    from agent.tools.files import _resolve_create_location
+
+    token = set_dispatch_session(session.id, session, "test-workspace-target")
+    try:
+        assert await _resolve_create_location(db, user_a.id, {}) == (
+            "personal", None, personal.id, None,
+        )
+        conflict = await _resolve_create_location(
+            db, user_a.id, {"space": "project", "project_id": project.id},
+        )
+        assert "不能写入其它项目或文件夹" in conflict[3]
+    finally:
+        reset_dispatch_session(token)

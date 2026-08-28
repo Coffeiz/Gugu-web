@@ -83,6 +83,10 @@ const lightPaletteCss = [
   load('./tokens/palettes/sky.css'),
   load('./tokens/palettes/sage.css'),
 ]
+const guguChatVue = load('../../components/common/GuguChat.vue')
+const usagePanelVue = load('../../views/Admin/Agent/observability/components/UsagePanel.vue')
+const promptPanelVue = load('../../views/Admin/Agent/prompting/components/PromptPanel.vue')
+const stateLabelsPanelVue = load('../../views/Admin/Agent/prompting/components/StateLabelsPanel.vue')
 
 describe('主题 CSS 回归契约', () => {
   it('字体资源层与字体族 token 保持单一契约', () => {
@@ -151,6 +155,21 @@ describe('主题 CSS 回归契约', () => {
 
   it('亮色导航选中项使用实体亮面，通知 active paint 不重复', () => {
     expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
+    expect(componentCss).toContain('--sidebar-item-active-light-bg: rgba(255,255,255,.94)')
+    expect(componentSurfacesCss).toContain("html[data-theme='light'][data-family]")
+    expect(componentSurfacesCss).toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
+  })
+
+  it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
+    expect(guguChatVue).toContain('background: var(--gugu-chat-user-bg)')
+    expect(guguChatVue).toContain('background: var(--gugu-chat-voice-bg)')
+    expect(guguChatVue).not.toMatch(/background:\s*(?:linear-gradient|rgba?\(|#[0-9a-f]{3,8})/i)
+
+    for (const source of [usagePanelVue, promptPanelVue, stateLabelsPanelVue]) {
+      expect((source.match(/<style scoped>/g) ?? [])).toHaveLength(1)
+    }
+    expect(componentCss).not.toMatch(/--gugu-chat-(?:assistant-bg|user-highlight|user-shadow):/)
+    expect(componentSurfacesCss).toContain('--gugu-chat-assistant-bg:')
   })
 
   it('暗色咕咕悬浮球以深色表面为主，避免亮色强调色过曝', () => {

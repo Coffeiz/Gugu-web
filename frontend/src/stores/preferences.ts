@@ -17,6 +17,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   const shellDangerousEnabled = ref(false)
   const shellAutopilotEnabled = ref(false)
   const showToolInteractions = ref(false)
+  const toolInjectionMode = ref<'catalog' | 'full_schema'>('catalog')
   const loaded            = ref(false)
 
   async function fetch() {
@@ -35,6 +36,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
       shellDangerousEnabled.value = (data as any).shellDangerousEnabled ?? false
       shellAutopilotEnabled.value = (data as any).shellAutopilotEnabled ?? false
       showToolInteractions.value = (data as any).showToolInteractions ?? false
+      toolInjectionMode.value = (data as any).toolInjectionMode === 'full_schema' ? 'full_schema' : 'catalog'
       localStorage.setItem('gugu-default-view', defaultView.value)
       loaded.value = true
     } catch {}
@@ -86,6 +88,11 @@ export const usePreferencesStore = defineStore('preferences', () => {
     try { await preferencesApi.update({ showToolInteractions: v } as any) } catch {}
   }
 
+  async function saveToolInjectionMode(v: 'catalog' | 'full_schema') {
+    toolInjectionMode.value = v === 'full_schema' ? 'full_schema' : 'catalog'
+    try { await preferencesApi.update({ toolInjectionMode: toolInjectionMode.value } as any) } catch {}
+  }
+
   async function saveLastStages(stages: any[]) {
     lastStages.value = stages
     try { await preferencesApi.update({ lastStages: stages }) } catch {}
@@ -108,7 +115,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
   }
 
   return {
-    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions,
-    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions,
+    lastStages, stageTemplates, replyTone, replyLength, pmStagesExpanded, calendarWeekStart, calendarDoneMode, defaultView, shellEnabled, shellSystemEnabled, shellDangerousEnabled, shellAutopilotEnabled, showToolInteractions, toolInjectionMode,
+    loaded, fetch, saveLastStages, saveTemplates, saveStyle, savePmStagesExpanded, saveCalendarWeekStart, saveCalendarDoneMode, saveDefaultView, saveShellEnabled, saveShellSystemEnabled, saveShellDangerousEnabled, saveShellAutopilotEnabled, saveShowToolInteractions, saveToolInjectionMode,
   }
 })

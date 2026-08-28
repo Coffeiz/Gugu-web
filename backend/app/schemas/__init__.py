@@ -606,6 +606,7 @@ class PreferencesResponse(CamelModel):
     shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
     shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
     showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
+    toolInjectionMode: str = "catalog"       # catalog = 轻量能力目录；full_schema = 全量工具定义
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -620,6 +621,7 @@ class PreferencesUpdate(CamelModel):
     shellDangerousEnabled: Optional[bool] = None
     shellAutopilotEnabled: Optional[bool] = None
     showToolInteractions: Optional[bool] = None
+    toolInjectionMode: Optional[str] = None
 
 
 class WorkspaceCreate(CamelModel):

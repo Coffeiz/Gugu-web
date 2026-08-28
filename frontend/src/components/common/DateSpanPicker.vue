@@ -3,7 +3,7 @@
     <div class="drp-input" :class="{ open, 'has-value': startDate || endDate, placeholder: !startDate && !endDate }" @click="toggle">
       <svg class="drp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
-        <path d="M4 1v2M10 1v2M1 6h12"/>
+        <path d="M4 1monoM10 1monoM1 6h12"/>
       </svg>
       <span v-if="startDate || endDate">
         <span>{{ fmt(startDate) }}</span>

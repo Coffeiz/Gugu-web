@@ -43,6 +43,7 @@
             <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
+            <ProfileByokPane v-else-if="activeNav === 'byok'" />
             <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
             <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
@@ -86,6 +87,7 @@ import ProfileGuguPane from './ProfileModal/ProfileGuguPane.vue'
 import ProfileImPane from './ProfileModal/ProfileImPane.vue'
 import ProfileToolPermissionsPane from './ProfileModal/ProfileToolPermissionsPane.vue'
 import ProfileWorkspacesPane from './ProfileModal/ProfileWorkspacesPane.vue'
+import ProfileByokPane from './ProfileModal/ProfileByokPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
 import Icon from '@/components/common/Icon.vue'
@@ -104,7 +106,8 @@ const navItems = [
   { divider: true },
   { key: 'gugu', label: '咕咕设置', icon: 'user.gugu' },
   { key: 'im', label: '接入咕咕', icon: 'communication.chat' },
-  { key: 'tools', label: '工具权限', icon: 'admin.wrench' },
+  { key: 'byok', label: '模型配置', icon: 'user.security' },
+  { key: 'tools', label: '能力配置', icon: 'admin.wrench' },
   { key: 'workspaces', label: '工作区', icon: 'admin.folder' },
 ]
 const activeNav = ref('info')
@@ -340,8 +343,9 @@ async function doDeleteAccount() {
 .pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
 .pm-add-bot:hover { color: var(--action-primary); border-color: var(--action-outline); }
 .pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
-.pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; }
-.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-bot-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
+.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
 .pm-bot-check { font-size: 12px; color: var(--content-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-text-link { margin-top: 8px; background: none; border: none; cursor: pointer; font-size: 12px; color: var(--content-secondary); text-decoration: underline; padding: 0; }

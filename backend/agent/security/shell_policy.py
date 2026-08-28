@@ -95,21 +95,27 @@ async def evaluate(
     confirm: bool = False,
     session: ConversationSession | None = None,
     workspace_id: int | None = None,
+    requested_scope: ShellScope | str | None = None,
 ) -> ShellDecision:
     """计算最终 Shell 权限；会话或独立终端均可提供工作区上下文。"""
     risk = classify_command(command)
     settings = get_settings()
+    try:
+        scope = ShellScope(requested_scope or ShellScope.SANDBOX)
+    except ValueError:
+        return ShellDecision(False, "Shell 范围无效，只能是 sandbox 或 system", risk)
     if not settings.agent.shell_enabled:
         return ShellDecision(False, "管理员未开启 Shell 工具", risk)
     if session_id and session is None:
         session = await db.get(ConversationSession, session_id)
     if session_id and (not session or session.user_id != user_id):
         return ShellDecision(False, "会话不存在", risk)
-    # Shell 只有 sandbox/system 两种执行后端。会话绑定只改变 sandbox 的挂载目录，
-    # Shell 范围只由当前权限快照和 workspace 绑定派生，避免持久化状态分叉。
-    scope = ShellScope.SANDBOX
+    # scope 在本轮调用开始时固定。默认只能进 sandbox，system 必须由调用方显式选择，
+    # 防止权限配置或会话状态在连续调用之间把执行器从容器漂移到宿主机。
     workspace = None
     if session is not None and session.workspace_id is not None:
+        if scope is ShellScope.SYSTEM:
+            return ShellDecision(False, "绑定工作区只能在 sandbox 范围执行", risk, scope=scope)
         workspace_id = session.workspace_id
         if not await effective_shell_enabled(db, user_id):
             return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
@@ -122,11 +128,12 @@ async def evaluate(
         workspace = await db.get(Workspace, workspace_id)
         if not workspace or workspace.user_id != user_id or not workspace.enabled:
             return ShellDecision(False, "工作区不存在或已停用", risk, scope=scope)
-    elif (
-        getattr(settings.agent, "shell_system_enabled", False)
-        and await effective_shell_system_enabled(db, user_id)
-    ):
-        scope = ShellScope.SYSTEM
+    elif scope is ShellScope.SYSTEM:
+        if not (
+            getattr(settings.agent, "shell_system_enabled", False)
+            and await effective_shell_system_enabled(db, user_id)
+        ):
+            return ShellDecision(False, "用户未开启 system 范围 Shell", risk, scope=scope)
     elif not await effective_shell_enabled(db, user_id):
         return ShellDecision(False, "用户未开启 Shell", risk, scope=scope)
 

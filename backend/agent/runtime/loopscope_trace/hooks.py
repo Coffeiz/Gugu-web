@@ -11,7 +11,7 @@ from .context import install_context_hooks
 from .state import (
     _ScopeRun, _enabled, _finish_run, _now, _scope_run, get_trace,
     record_adapter_call, record_adapter_result, record_canonical_event_stats,
-    record_context_layout,
+    record_context_layout, record_tool_schema_error,
 )
 from .utils import (
     _classify_followup, _code_ref, _estimate_tokens, _extract_last_user,
@@ -34,6 +34,72 @@ def _tool_names_from_schemas(tools: Any) -> list[str]:
         if isinstance(name, str) and name and name not in names:
             names.append(name)
     return names
+
+
+def _provider_schema_for_tool(tools: Any, tool_name: str) -> dict[str, Any] | None:
+    """从 provider 本轮实际收到的工具声明中提取目标工具。"""
+    for declaration in tools or ():
+        if not isinstance(declaration, dict):
+            continue
+        if declaration.get("name") == tool_name and isinstance(declaration.get("input_schema"), dict):
+            return declaration
+        function = declaration.get("function")
+        if isinstance(function, dict) and function.get("name") == tool_name:
+            return declaration
+    return None
+
+
+def _argument_shape(value: Any) -> Any:
+    """只保留参数类型/键结构，避免 schema 诊断复制模型参数正文。"""
+    if isinstance(value, dict):
+        return {str(key): _argument_shape(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return {"type": "array", "length": len(value), "items": [_argument_shape(item) for item in value[:8]]}
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float)):
+        return "number"
+    return "string"
+
+
+def _registered_schema(registry: Any, tool_name: str) -> tuple[dict[str, Any], Any] | None:
+    tool = registry.get(tool_name) if registry is not None else None
+    schema = getattr(tool, "input_schema", None)
+    if tool is None or not isinstance(schema, dict):
+        return None
+    return schema, tool
+
+
+def _record_schema_error(
+    run: _ScopeRun | None,
+    registry: Any,
+    *,
+    tool_name: str,
+    error: Any,
+    error_kind: str,
+    arguments: Any = None,
+    provider_tools: Any = None,
+    parent_span_id: str | None = None,
+) -> None:
+    if run is None:
+        return
+    registered = _registered_schema(registry, tool_name)
+    if registered is None:
+        return
+    schema, _tool = registered
+    provider_schema = _provider_schema_for_tool(provider_tools, tool_name)
+    record_tool_schema_error(
+        run,
+        tool_name=tool_name,
+        schema=schema,
+        provider_schema=provider_schema,
+        error=error,
+        error_kind=error_kind,
+        arguments_shape=_argument_shape(arguments),
+        parent_span_id=parent_span_id,
+    )
 
 
 def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
@@ -152,8 +218,29 @@ def ensure_hooks() -> None:
             result = await original_dispatch(user_id, name, args)
             if span:
                 tool_result, artifact = result
+                try:
+                    payload = json.loads(tool_result) if isinstance(tool_result, str) else tool_result
+                except (TypeError, ValueError):
+                    payload = None
+                recovery = payload.get("_schema_recovery") if isinstance(payload, dict) else None
+                if name != "call_tool" and isinstance(recovery, dict) and recovery.get("needed") is True:
+                    _record_schema_error(
+                        run,
+                        registry,
+                        tool_name=str(payload.get("tool") or name),
+                        error={
+                            "issues": payload.get("issues") or [],
+                            "schema_hints": payload.get("schema_hints") or [],
+                        },
+                        error_kind=str(recovery.get("reason") or "validation_error"),
+                        arguments=args,
+                        parent_span_id=run.spans[-2].id if run and len(run.spans) >= 2 else None,
+                    )
                 span.token_impact["result_tokens"] = _estimate_tokens(tool_result)
-                span.finish({"result": _jsonable(tool_result), "artifact": _jsonable(artifact)})
+                span.finish(
+                    {"result": _jsonable(tool_result), "artifact": _jsonable(artifact)},
+                    status="error" if isinstance(recovery, dict) and recovery.get("needed") is True else "success",
+                )
                 if name == "use_skill" and run:
                     metadata = _skill_result_metadata(tool_result)
                     if metadata:
@@ -429,6 +516,18 @@ def ensure_hooks() -> None:
                         # 所以 usage 必须在这里（yield 之前）就落地,不能放在循环结束后。
                         if span:
                             details = _round_result(final, getattr(driver, "api_format", ""))
+                            for call in getattr(final, "tool_calls", None) or ():
+                                if bool(getattr(call, "parse_error", False)):
+                                    _record_schema_error(
+                                        run,
+                                        registry,
+                                        tool_name=str(getattr(call, "name", "") or "unknown"),
+                                        error={"parse_error": True, "message": "工具参数 JSON 解析失败"},
+                                        error_kind="parse_error",
+                                        arguments=getattr(call, "input", {}),
+                                        provider_tools=getattr(ctx, "tools", None),
+                                        parent_span_id=span.id,
+                                    )
                             span.usage = _jsonable(details.get("usage") or {})
                             # 估算值用于请求开始前的可视化；LLM 返回后补上供应商实际口径，
                             # 避免 LoopScope 把本地估算误看成 provider prompt token。

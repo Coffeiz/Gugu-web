@@ -17,15 +17,6 @@
   --topbar-bg-hover: var(--topbar-bg);
   --topbar-shadow-hover: var(--topbar-shadow);
 
-  /* Content-object feedback must remain visible in dark mode. */
-  --surface-hover-tint: rgba(255,255,255,.075);
-  --card-hover-overlay: rgba(255,255,255,.075);
-  --calendar-cell-hover-bg: rgba(255,255,255,.065);
-  --calendar-weekend-hover-bg: color-mix(in srgb,var(--status-danger) 11%,transparent);
-  --calendar-chip-hover-overlay: rgba(255,255,255,.075);
-  --calendar-capsule-hover-overlay: rgba(255,255,255,.085);
-  --gugu-chat-session-hover: var(--sidebar-item-hover);
-
   /* Selected pills need to read as selected against dark tracks. */
   --segmented-pill-bg: color-mix(in srgb,var(--surface-raised) 78%,var(--action-primary) 22%);
   --segmented-pill-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 2px 8px rgba(0,0,0,.24);
@@ -66,20 +57,20 @@ html[data-theme][data-family] .topbar .btn-primary-custom {
 }
 /* Restore the intended light upload affordance instead of inheriting a generic surface hover. */
 html[data-theme='light'][data-family] .topbar .btn-ghost-custom:hover {
-  background: var(--action-secondary-bg-hover) !important;
-  border-color: var(--action-secondary-border-hover) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border-hover) !important;
   box-shadow: none !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom {
-  background: var(--action-secondary-bg) !important;
-  border-color: var(--action-secondary-border) !important;
-  color: var(--action-secondary-fg) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border) !important;
+  color: var(--control-fg) !important;
   box-shadow: none !important;
 }
 html[data-theme='dark'][data-family] .topbar .btn-ghost-custom:hover {
-  background: var(--action-secondary-bg-hover) !important;
-  border-color: var(--action-secondary-border-hover) !important;
-  color: var(--action-secondary-fg-hover) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border-hover) !important;
+  color: var(--control-fg-strong) !important;
   box-shadow: none !important;
 }
 
@@ -109,11 +100,11 @@ html[data-theme='dark'][data-family] .cal-toolbar .period-btn:hover {
 }
 html[data-theme='dark'][data-family] .cal-toolbar .today-btn {
   background: var(--surface-soft);
-  border-color: var(--border-default);
+  border-color: var(--input-border);
 }
 html[data-theme='dark'][data-family] .cal-toolbar .today-btn:hover {
   background: var(--surface-soft-hover);
-  border-color: var(--border-hover);
+  border-color: var(--input-border-hover);
   color: var(--content-primary);
 }
 

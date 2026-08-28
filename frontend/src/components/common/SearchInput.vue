@@ -47,10 +47,10 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 <style scoped>
 .search-input {
   display:flex; align-items:center; gap:var(--space-2); width:100%; height:var(--control-height-md); min-height:var(--control-height-md);
-  box-sizing:border-box; padding:0 12px; color:var(--control-fg); background:var(--control-bg); border:1px solid var(--control-border);
+  box-sizing:border-box; padding:0 12px; color:var(--input-fg); background:var(--input-bg); border:1px solid var(--input-border);
   border-radius:var(--control-radius); transition:background var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);
 }
-.search-input:focus-within, .search-input.active { background:var(--control-bg-hover); border-color:var(--border-focus); box-shadow:var(--control-focus-shadow); }
+.search-input:focus-within, .search-input.active { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-focus-shadow); }
 .search-input.no-focus-ring:focus-within, .search-input.no-focus-ring.active { box-shadow:none; }
 .search-input-icon { flex:0 0 auto; }
 .search-input:focus-within .search-input-icon, .search-input.active .search-input-icon { color:var(--action-primary); }

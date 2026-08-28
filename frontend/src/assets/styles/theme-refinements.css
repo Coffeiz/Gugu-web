@@ -14,7 +14,7 @@
   --highlight-muted: color-mix(in srgb, var(--theme-highlight-side) 64%, transparent);
 
   /* Floating app chrome is distinct from content cards. Aero resolves to its normal glass surface;
-     Mono/V2 remaps only this role below so cards keep their quieter solid language while
+     Mono remaps only this role below so cards keep their quieter solid language while
      navigation/drawers/toolbars retain backdrop glass. */
   --chrome-glass-bg: var(--surface-glass);
   --chrome-glass-border: var(--border-strong);
@@ -22,9 +22,9 @@
   --chrome-glass-blur: var(--glass-blur);
 }
 
-/* Mono/V2 uses quieter card separation than Aero, so key content cards should not rely on elevation
+/* Mono uses quieter card separation than Aero, so key content cards should not rely on elevation
    alone. Floating chrome remains translucent rather than reusing the more solid content surface. */
-html[data-family='v2'] {
+html[data-family='mono'] {
   --project-card-border: var(--border-strong);
   --project-card-hover-border: var(--border-hover);
   --chrome-glass-bg: color-mix(in srgb,var(--surface-floating) 76%,transparent);
@@ -93,7 +93,7 @@ html[data-theme='dark'][data-family] {
 
 /* Mono settings uses the same geometry as Aero but switches only its surface vocabulary: a solid
    neutral card plus the family border. No final paint property lives here, so there is no CSS race. */
-html[data-theme='light'][data-family='v2'] {
+html[data-theme='light'][data-family='mono'] {
   --settings-popup-bg: var(--surface-card-solid);
   --settings-popup-border: var(--border-strong);
   --settings-popup-shadow: var(--elevation-popup);
@@ -103,7 +103,7 @@ html[data-theme='light'][data-family='v2'] {
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
   --settings-popup-divider: var(--border-subtle);
 }
-html[data-theme='dark'][data-family='v2'] {
+html[data-theme='dark'][data-family='mono'] {
   --settings-popup-bg: var(--surface-card-solid);
   --settings-popup-border: var(--border-strong);
   --settings-popup-shadow: var(--elevation-popup);

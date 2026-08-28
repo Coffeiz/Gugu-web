@@ -25,9 +25,22 @@ def test_catalog_contains_short_descriptions_only():
     assert "input_schema" not in block
     assert "call_tool" in block
     assert "get_tool_schema" in block
-    assert "简介中的字段列表不完整" in block
-    assert "实际调用前必须确认历史里有当前版本的完整 Schema" in block
+    assert "紧凑字段签名" in block
+    assert "字段签名只展示类型、必填状态和一层结构" in block
     assert "权限和执行校验由代码完成" in block
+
+
+def test_catalog_derives_compact_field_signature_from_tool_registry():
+    snapshot = CapabilitySnapshot(
+        generation=1,
+        tools={"list_files": CapabilityMeta("list_files", "tool", "列出文件。")},
+        skills={},
+    )
+    block = catalog_block(snapshot)
+    assert "list_files" in block
+    assert "limit(integer" in block
+    assert "例如" not in block
+    assert "input_schema" not in block
 
 
 def test_catalog_routes_user_skill_creation_to_create_skill():

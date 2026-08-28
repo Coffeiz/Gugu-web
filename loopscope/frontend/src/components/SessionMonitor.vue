@@ -192,10 +192,10 @@ const modelLabel = computed(() => {
 const rootSpans = computed(() => (selected.value?.spans ?? []).filter(s => !s.parent_span_id))
 const injectionSpans = computed(() => (selected.value?.spans ?? []).filter((span) => {
   const source = span.attributes?.context_source
-  return source === 'tool_schema' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body'
+  return source === 'tool_schema' || source === 'tool_schema_error' || source === 'capability_catalog' || source === 'skill_index' || source === 'skill_body'
 }))
 function injectionLabel(span: any) {
-  const labels: Record<string, string> = { tool_schema: '工具 Schema', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文' }
+  const labels: Record<string, string> = { tool_schema: '工具 Schema', tool_schema_error: 'Schema 错误', capability_catalog: '能力目录', skill_index: 'Skill 索引', skill_body: 'Skill 正文' }
   return labels[String(span.attributes?.context_source)] || span.name
 }
 function injectionSummary(span: any) {

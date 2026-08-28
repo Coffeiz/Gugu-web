@@ -281,8 +281,8 @@ const todayStr = computed(() => {
 /* 顶栏按钮不做悬停上浮；上传文件走次要按钮 token，新建项目走全局 press-fx 阴影。 */
 .btn-ghost-custom {
   --topbar-btn-shadow: none;
-  background: var(--action-secondary-bg) !important;
-  border: 1px solid var(--action-secondary-border) !important;
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--action-outline) !important;
   border-radius: var(--radius-sm) !important;
   color: var(--action-secondary-fg) !important;
   box-shadow: none !important;
@@ -291,9 +291,9 @@ const todayStr = computed(() => {
               transform 0.15s ease, opacity 0.15s ease !important;
 }
 .topbar .btn-ghost-custom:hover {
-  background: var(--action-secondary-bg-hover) !important;
-  border-color: var(--action-secondary-border-hover) !important;
-  color: var(--action-secondary-fg-hover) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border-hover) !important;
+  color: var(--control-fg-strong) !important;
   box-shadow: none !important;
 }
 .btn-ghost-custom:active { transform: translateY(1px) !important; opacity: 0.93; }

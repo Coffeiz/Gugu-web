@@ -67,6 +67,36 @@ def docker_network_available(name: str, *, timeout_seconds: float = 2.0) -> bool
     return result.returncode == 0
 
 
+def cleanup_orphan_pty_containers(*, timeout_seconds: float = 5.0) -> int:
+    """清理 sandboxd 重启后遗留的交互式 PTY 容器。
+
+    只查询并删除固定的 ``gugu-pty-`` 命名空间，不接受调用方传入容器名或
+    任意 Docker 参数；sandboxd 启动时调用一次即可恢复运行状态一致性。
+    """
+    docker = shutil.which("docker")
+    if not docker:
+        return 0
+    try:
+        listed = subprocess.run(
+            [docker, "ps", "-aq", "--filter", "name=^gugu-pty-"],
+            capture_output=True, text=True, timeout=timeout_seconds,
+            env=docker_environment(), check=False,
+        )
+        if listed.returncode != 0:
+            return 0
+        container_ids = [value for value in listed.stdout.split() if re.fullmatch(r"[0-9a-fA-F]{12,64}", value)]
+        if not container_ids:
+            return 0
+        removed = subprocess.run(
+            [docker, "rm", "-f", *container_ids[:128]],
+            capture_output=True, text=True, timeout=timeout_seconds,
+            env=docker_environment(), check=False,
+        )
+        return len(container_ids[:128]) if removed.returncode == 0 else 0
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
 def image_available(image: str, digest: str, *, timeout_seconds: float = 3.0) -> bool:
     """确认固定 digest 已加载到当前 Docker daemon，避免执行时隐式拉取失败。"""
     if not image or not valid_image_digest(digest):

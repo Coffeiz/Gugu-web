@@ -49,6 +49,7 @@ from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import notifications as notifications_router
 from app.api.v1 import user_skills as user_skills_router
+from app.api.v1 import byok as byok_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
@@ -144,8 +145,24 @@ RUN_STARTUP_MIGRATIONS = os.getenv("GUGU_STARTUP_MIGRATIONS", "1").strip().lower
 }
 
 
+async def _shutdown_step(name: str, operation, *, timeout: float = 5.0) -> None:
+    """限制单个退出清理阶段的等待时间，避免一个外部资源拖住整个服务。"""
+    logger.info("开始关闭阶段：%s", name)
+    try:
+        await asyncio.wait_for(operation(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("关闭阶段超时，继续退出：%s（上限 %.1fs）", name, timeout)
+    except Exception as exc:
+        logger.warning("关闭阶段失败，继续退出：%s（%s）", name, type(exc).__name__)
+    else:
+        logger.info("完成关闭阶段：%s", name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from agent.terminal.runtime import close_pty_manager, start_pty_manager
+
+    start_pty_manager()
     db_ready = False
     if RUN_STARTUP_MIGRATIONS:
         try:
@@ -169,6 +186,14 @@ async def lifespan(app: FastAPI):
             logger.warning("数据库连接失败，已跳过启动期迁移：%s", e)
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
     if db_ready:
+        try:
+            from app.byok.service import validate_master_key
+            from app.db.session import _SessionLocal
+            async with _SessionLocal() as byok_db:
+                status = await validate_master_key(byok_db)
+            logger.info("BYOK 主密钥校验状态：%s", status)
+        except Exception as e:
+            logger.warning("BYOK 主密钥校验失败：%s", type(e).__name__)
         try:
             from app.db.session import _SessionLocal
             from app.services.storage.quota_ledger import ensure_all_user_storage_spaces
@@ -201,11 +226,12 @@ async def lifespan(app: FastAPI):
         task, *( [retry_task] if retry_task is not None else [] ), log_task,
         return_exceptions=True,
     )
+    await _shutdown_step("PTY", close_pty_manager)
     from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
-    await close_lexical_clients()
-    await close_rank_clients()
+    await _shutdown_step("RAG lexical worker", close_lexical_clients)
+    await _shutdown_step("RAG rank worker", close_rank_clients)
     from app.db.session import dispose_engine
-    await dispose_engine()
+    await _shutdown_step("数据库连接池", dispose_engine)
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
@@ -350,6 +376,7 @@ app.include_router(
 )
 app.include_router(notifications_router.router, prefix="/api/v1")
 app.include_router(user_skills_router.router, prefix="/api/v1")
+app.include_router(byok_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

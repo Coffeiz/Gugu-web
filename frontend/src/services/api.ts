@@ -136,6 +136,17 @@ export const scheduledTasksApi = {
   testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
+// ── 用户 BYOK ────────────────────────────────────────────────────────────────
+export const byokApi = {
+  list: () => get<{ enabled: boolean; status?: string; items: any[] }>('/byok'),
+  create: (data: any) => post('/byok', data),
+  update: (id: number, data: any) => patch(`/byok/${id}`, data),
+  remove: (id: number) => del(`/byok/${id}`),
+  test: (id: number) => post<{ ok: boolean; status: string; message: string }>(`/byok/${id}/test`, {}),
+  modelsPreview: (data: any) => post<{ models: string[] }>('/byok/models-preview', data),
+  visionProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/vision-probe', data),
+}
+
 // ── Files ─────────────────────────────────────────────────────────────────────
 interface FileListParams {
   space?: string
@@ -475,6 +486,7 @@ export type TerminalItem = {
   workspaceId: number | null
   runId: string | null
   source: 'user' | 'agent'
+  mode: 'interactive-pty' | 'agent-events'
   status: string
   shellMode: string
   networkProfile: string
@@ -483,6 +495,10 @@ export type TerminalItem = {
   createdAt: string
   updatedAt: string
   closedAt: string | null
+  ptyPid?: number | null
+  ptySandboxId?: string | null
+  ptyCols?: number | null
+  ptyRows?: number | null
 }
 
 export type TerminalEventItem = {
@@ -499,7 +515,7 @@ export type TerminalEventItem = {
 
 export const terminalsApi = {
   list: () => get<{ enabled: boolean; items: TerminalItem[] }>('/terminals'),
-  create: (data: { name?: string; sessionId?: number; workspaceId?: number }) => post<TerminalItem>('/terminals', data),
+  create: (data: { name?: string; sessionId?: number; workspaceId?: number; mode?: TerminalItem['mode'] }) => post<TerminalItem>('/terminals', data),
   detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
   events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
     const token = getToken()
@@ -540,6 +556,7 @@ export const terminalsApi = {
   }) => post<{ terminal: TerminalItem; result: Record<string, unknown> }>(`/terminals/${encodeURIComponent(id)}/input`, data),
   terminate: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/terminate`, {}),
   reopen: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reopen`, {}),
+  reset: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reset`, {}),
   delete: (id: string) => del<{ deleted: boolean; terminalId: string }>(`/terminals/${encodeURIComponent(id)}`),
   metrics: () => get<{ total: number; running: number; outputChars: number; retentionDays: number; outputRetentionChars: number }>('/terminals/metrics'),
 }
@@ -551,6 +568,7 @@ export const notificationsApi = {
 }
 
 export const agentApi = {
+  rebuildSandbox: () => post<{ ok: boolean; operation: string; root_ready: boolean; reclaimed_containers: number }>('/agent/sandbox/rebuild'),
   listSessions:    ()                  => get('/agent/sessions'),
   listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）

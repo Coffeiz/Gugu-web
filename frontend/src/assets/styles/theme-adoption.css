@@ -15,28 +15,29 @@ html[data-theme][data-family] .theme-mode-quick button {
   width: 28px;
   height: 28px;
   color: var(--control-fg);
-  background: var(--control-bg);
-  border: 1px solid var(--control-border);
+  background: var(--surface-raised);
+  border: 1px solid var(--input-border);
   border-radius: var(--control-radius);
   box-shadow: none;
 }
 html[data-theme][data-family] .theme-mode-quick button:hover {
   color: var(--control-fg-strong);
-  background: var(--control-bg-hover);
+  background: var(--surface-soft-hover);
+  border-color: var(--input-border-hover);
   box-shadow: none;
 }
 
 /* ── Real Topbar controls ─────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .topbar .btn-ghost-custom {
   color: var(--control-fg) !important;
-  background: var(--control-bg) !important;
-  border-color: var(--control-border) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border) !important;
   box-shadow: none !important;
 }
 html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
   color: var(--control-fg-strong) !important;
-  background: var(--control-bg-hover) !important;
-  border-color: var(--control-border-hover) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--input-border-hover) !important;
   box-shadow: none !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom {
@@ -129,7 +130,7 @@ html[data-theme][data-family] .column .add-card:hover {
 html[data-theme][data-family] .done-col .archived-entry-mini {
   color: var(--control-fg);
   background: var(--control-bg);
-  border-color: var(--control-border);
+  border-color: var(--input-border);
 }
 html[data-theme][data-family] .done-col .year-row:hover,
 html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
@@ -178,7 +179,7 @@ html[data-theme][data-family] .cal-toolbar .today-btn {
 html[data-theme][data-family] .cal-toolbar .today-btn:hover {
   color: var(--control-fg-strong);
   background: var(--control-bg-hover);
-  border-color: var(--control-border-hover);
+  border-color: var(--input-border-hover);
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle { background: var(--action-soft); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--content-secondary); }

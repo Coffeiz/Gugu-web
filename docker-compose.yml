@@ -3,7 +3,7 @@
 #
 # 用法：
 #   cp .env.example backend/.env   # 按需填 SECRET_KEY / AI__* 等，DB__*/REDIS__* 已由本文件覆盖
-#   docker compose up -d
+#   docker compose up -d                    # 默认包含 sandboxd、工具执行和受控 egress
 #   前端 → http://localhost:9595   后端 → http://localhost:8000/docs
 #
 # 直连 PyPI 官方源慢（部分网络环境常见，见 backend/Dockerfile 里 PIP_INDEX_URL 的注释）？
@@ -131,6 +131,8 @@ services:
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
+      SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
@@ -172,6 +174,8 @@ services:
       SEARCH__SEARXNG_URL: http://searxng:8080
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
+      SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
@@ -189,11 +193,11 @@ services:
       - gugu_data:/data
       - sandbox_socket:/run/gugu
 
-  # 生产 Shell 沙盒的 Docker 权限只给这个进程。默认不启动，必须显式使用
-  # `docker compose --profile sandbox up -d`，并提供宿主机 Rootless Docker Socket。
+  # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
+  # 默认启动；如不需要沙盒，
+  # 设置 GUGU_SANDBOX_ENABLED=false 即可关闭执行能力，仍不会让业务进程接触 Docker。
   sandboxd:
     logging: *json-file-logging
-    profiles: ["sandbox"]
     build:
       context: ./backend
       args:
@@ -205,7 +209,8 @@ services:
       DOCKER_HOST: unix:///run/gugu/docker.sock
       STORAGE__LOCAL_PATH: /data/users
       GUGU_SANDBOXD_SOCKET: /run/gugu/sandboxd.sock
-      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-false}
+      SANDBOX__ENABLED: ${GUGU_SANDBOX_ENABLED:-true}
+      SANDBOX__NETWORK_PROFILE: ${GUGU_SANDBOX_NETWORK_PROFILE:-egress}
       SANDBOX__ROOTLESS_REQUIRED: ${GUGU_SANDBOX_ROOTLESS_REQUIRED:-true}
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress

@@ -7,9 +7,14 @@ Linux capability 配置。
 from __future__ import annotations
 
 import asyncio
+import errno
+import fcntl
 import os
+import pty
 import signal
 import shutil
+import struct
+import termios
 from uuid import uuid4
 from pathlib import Path
 from collections.abc import Awaitable, Callable
@@ -25,6 +30,66 @@ _MAX_TIMEOUT = 300
 _MAX_OUTPUT = 120_000
 _CONTAINER_ROOT = Path("/workspace")
 _CONTAINER_USER = "65532:65532"
+
+
+class DockerPtyHandle:
+    """sandboxd 内部的 Docker PTY 句柄；不允许由 Web 进程直接构造。"""
+
+    def __init__(self, process: asyncio.subprocess.Process, master_fd: int, sandbox_id: str):
+        self.process = process
+        self.master_fd = master_fd
+        self.pid = process.pid
+        self.sandbox_id = sandbox_id
+        self._closed = False
+
+    async def write(self, data: bytes) -> None:
+        if self._closed:
+            raise RuntimeError("PTY 已关闭")
+        await asyncio.to_thread(os.write, self.master_fd, data)
+
+    async def resize(self, cols: int, rows: int) -> None:
+        if not self._closed:
+            packed = struct.pack("HHHH", rows, cols, 0, 0)
+            await asyncio.to_thread(fcntl.ioctl, self.master_fd, termios.TIOCSWINSZ, packed)
+
+    async def signal(self, signal_name: str) -> None:
+        if signal_name not in {"SIGINT", "SIGTERM", "SIGTSTP"}:
+            raise ValueError("PTY signal 不受支持")
+        if self.process.returncode is None:
+            await asyncio.to_thread(os.killpg, self.process.pid, getattr(signal, signal_name))
+
+    async def close(self, *, force: bool = False) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            if self.process.returncode is None:
+                await asyncio.to_thread(
+                    os.killpg, self.process.pid, signal.SIGKILL if force else signal.SIGTERM,
+                )
+                try:
+                    await asyncio.wait_for(self.process.wait(), timeout=3)
+                except asyncio.TimeoutError:
+                    await asyncio.to_thread(os.killpg, self.process.pid, signal.SIGKILL)
+                    await self.process.wait()
+        finally:
+            os.close(self.master_fd)
+
+    async def output(self):
+        while not self._closed:
+            try:
+                chunk = await asyncio.to_thread(os.read, self.master_fd, 64 * 1024)
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    return
+                if self._closed:
+                    return
+                raise
+            if not chunk:
+                return
+            yield chunk
+
+
 def _tmpfs_spec(settings: SandboxSettings) -> str:
     """把临时配额落实为容器 /tmp 上限，而不是只在宿主机计数。"""
     size = max(64 * 1024 * 1024, int(getattr(settings, "ephemeral_quota_bytes", 64 * 1024 * 1024)))
@@ -118,6 +183,57 @@ class DockerSandboxExecutor:
             self.image,
             *argv,
         ]
+
+    def build_pty_argv(
+        self,
+        *,
+        cwd: str = ".",
+        network_profile: str | None = None,
+        container_name: str | None = None,
+    ) -> list[str]:
+        """生成交互式 PTY 的固定启动参数，不接受用户自定义 Shell argv。"""
+        # 交互式终端需要 readline；Debian 的 /bin/sh 通常是 dash，Tab 只会被
+        # 当作制表符回显，无法提供传统 CLI 的命令和路径补全。
+        argv = self.build_argv(
+            "bash --noprofile --norc", cwd=cwd, network_profile=network_profile,
+            container_name=container_name,
+        )
+        run_index = argv.index("run")
+        argv[run_index + 1:run_index + 1] = ["--interactive", "--tty"]
+        # 沙盒用户是刻意固定的数字 UID，镜像未必为它提供 passwd 名称；
+        # 明确提示符，避免 Bash 显示 "I have no name!"，同时标识当前处于沙盒。
+        image_index = argv.index(self.image)
+        argv[image_index:image_index] = [r"--env=PS1=gugu-sandbox:\w\$ "]
+        return argv
+
+    async def open_pty(
+        self,
+        *,
+        cwd: str = ".",
+        network_profile: str | None = None,
+        container_name: str | None = None,
+    ) -> DockerPtyHandle:
+        """在固定安全参数的 Docker 容器内启动交互式 PTY。"""
+        docker_argv = self.build_pty_argv(
+            cwd=cwd, network_profile=network_profile, container_name=container_name,
+        )
+        master_fd, slave_fd = pty.openpty()
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *docker_argv,
+                cwd=self.root,
+                env=docker_environment(),
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+            )
+        except BaseException:
+            os.close(master_fd)
+            os.close(slave_fd)
+            raise
+        os.close(slave_fd)
+        return DockerPtyHandle(process, master_fd, container_name or "sandbox-pty")
 
     async def execute(
         self,

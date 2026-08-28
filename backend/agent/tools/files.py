@@ -31,7 +31,7 @@ from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
-from agent.tools.base import BaseSkill, Tool
+from agent.tools.base import BaseSkill, Tool, current_dispatch_session
 
 # 可读/可改的文本类扩展名
 TEXT_EXTS = frozenset({
@@ -254,8 +254,76 @@ def _target_loc(f, target: dict):
     return space, project_id, folder_id
 
 
+async def _bound_workspace_target(db, user_id):
+    """返回当前工具调用所属会话的文件库落点；没有绑定工作区则返回 None。"""
+    session = current_dispatch_session()
+    workspace_id = getattr(session, "workspace_id", None)
+    if workspace_id is None:
+        return None
+    from app.services.workspaces import resolve_workspace_target
+    return await resolve_workspace_target(db, user_id, workspace_id)
+
+
+def _workspace_location(target: dict) -> tuple[str, int | None, int | None]:
+    return target["space"], target.get("project_id"), target.get("folder_id")
+
+
+def _location_matches(space, project_id, folder_id, target: dict) -> bool:
+    wanted = _workspace_location(target)
+    return (space, project_id, folder_id) == wanted
+
+
+def _workspace_conflict(target: dict) -> str:
+    location = target.get("workspace_name") or f"工作区 {target['workspace_id']}"
+    return json.dumps({
+        "error": f"当前会话已绑定工作区「{location}」，不能写入其它项目或文件夹。",
+        "workspace_id": target["workspace_id"],
+        "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
+        "hint": "省略目标位置参数即可使用当前工作区；workspace_id 不能当作 project_id 使用。",
+    }, ensure_ascii=False)
+
+
+async def _resolve_create_location(db, user_id, args: dict):
+    target = await _bound_workspace_target(db, user_id)
+    explicit = any(args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id"))
+    if target is not None:
+        if not explicit:
+            return (*_workspace_location(target), None)
+        # folder_id 本身足以确定空间；不要因为模型省略 space/project_id 而把项目文件夹误判为 personal。
+        explicit_folder_id = args.get("folder_id")
+        if explicit_folder_id not in (None, "") and args.get("space") in (None, "") and args.get("project_id") in (None, ""):
+            try:
+                folder = await get_user_folder(db, user_id, int(explicit_folder_id))
+            except (TypeError, ValueError):
+                folder = None
+            if folder is not None:
+                inferred_space = "project" if folder.project_id is not None else "personal"
+                if _location_matches(inferred_space, folder.project_id, folder.id, target):
+                    return inferred_space, folder.project_id, folder.id, None
+        space, project_id, folder_id, error = _coerce_loc(
+            args.get("space") or ("project" if args.get("project_id") else "personal"),
+            args.get("project_id"), args.get("folder_id"),
+        )
+        if error:
+            return None, None, None, error
+        if not _location_matches(space, project_id, folder_id, target):
+            return None, None, None, _workspace_conflict(target)
+        return space, project_id, folder_id, None
+    space = args.get("space", "personal")
+    return _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+
+
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
+    workspace_target = await _bound_workspace_target(db, user_id)
+    if workspace_target is not None and not any(
+        args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
+    ):
+        args = {**args, **{
+            "space": workspace_target["space"],
+            "project_id": workspace_target.get("project_id"),
+            "folder_id": workspace_target.get("folder_id"),
+        }}
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
@@ -445,10 +513,7 @@ async def _create_document(db, user_id, args: dict):
     if not name:
         return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
     display_name = _strip_ext(name, ext)
-    space = args.get("space", "personal")
-    space, project_id, folder_id, loc_err = _coerce_loc(
-        space, args.get("project_id"), args.get("folder_id"),
-    )
+    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
     if loc_err:
         return loc_err
     content = args.get("content", "")
@@ -526,8 +591,7 @@ async def _save_uploaded_file(db, user_id, args: dict):
     如把连发图片之外的一条语音存进来了；见 resolve_attach 的歧义防护）。"""
     from app.core import chat_attach
 
-    space = args.get("space") or ("project" if args.get("project_id") else "personal")
-    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
+    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
     if loc_err:
         return loc_err
 
@@ -649,7 +713,16 @@ async def _resolve_file(db, user_id, args):
     if name:
         name = str(name).strip()
         base = name.rsplit(".", 1)[0] if "." in name else name
-        rows = await find_user_files_by_name(db, user_id, base)
+        workspace_target = await _bound_workspace_target(db, user_id)
+        rows = await find_user_files_by_name(
+            db, user_id, base,
+            **({
+                "space": workspace_target["space"],
+                "project_id": workspace_target.get("project_id"),
+                "folder_id": workspace_target.get("folder_id"),
+                "root": workspace_target.get("kind") == "project",
+            } if workspace_target else {}),
+        )
         if not rows:
             return None, json.dumps({"error": f"未找到文件「{name}」"})
         if len(rows) > 1:
@@ -805,10 +878,17 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
 async def _move_items(db, user_id, args: dict):
     """统一移动：files + folders 一次搬到同一 target。文件夹连内容递归搬（后端展开，
     Agent 不必知道里面有多少文件）。逐条如实回报成功/失败。"""
-    target = args.get("target", {})
+    target = _norm_target(args.get("target", {}))
+    workspace_target = await _bound_workspace_target(db, user_id)
+    if workspace_target is not None and not any(
+        target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
+    ):
+        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
     t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
     if terr:
         return terr
+    if workspace_target is not None and not _location_matches(t_space, t_pid, t_folder_id, workspace_target):
+        return _workspace_conflict(workspace_target)
     file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
 
     moved_files, moved_folders, failed = [], [], []
@@ -851,10 +931,31 @@ async def _move_items(db, user_id, args: dict):
 
 
 async def _create_folder(db, user_id, args: dict):
+    workspace_target = await _bound_workspace_target(db, user_id)
+    project_id = args.get("project_id")
+    parent_id = args.get("parent_id")
+    if workspace_target is not None:
+        try:
+            explicit_project_id = int(project_id) if project_id not in (None, "") else None
+            explicit_parent_id = int(parent_id) if parent_id not in (None, "") else None
+        except (TypeError, ValueError):
+            return _workspace_conflict(workspace_target)
+        if explicit_project_id is not None and explicit_project_id != workspace_target.get("project_id"):
+            return _workspace_conflict(workspace_target)
+        project_id = workspace_target.get("project_id")
+        if explicit_parent_id is None:
+            parent_id = workspace_target.get("folder_id")
+        else:
+            parent = await get_user_folder(db, user_id, explicit_parent_id)
+            if not parent or parent.project_id != workspace_target.get("project_id"):
+                return _workspace_conflict(workspace_target)
+            if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
+                return _workspace_conflict(workspace_target)
+            parent_id = explicit_parent_id
     try:
         fo = await FileService(db).create_folder(
-            user_id, name=args["name"], parent_id=args.get("parent_id"),
-            project_id=args.get("project_id"),
+            user_id, name=args["name"], parent_id=parent_id,
+            project_id=project_id,
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -994,6 +1095,11 @@ async def _copy_file(db, user_id, args: dict):
     if _err:
         return _err
     target = _norm_target(args.get("target", {}))
+    workspace_target = await _bound_workspace_target(db, user_id)
+    if workspace_target is not None and not any(
+        target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
+    ):
+        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
     space, project_id, folder_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
@@ -1012,6 +1118,8 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
+    if workspace_target is not None and not _location_matches(space, project_id, folder_id, workspace_target):
+        return _workspace_conflict(workspace_target)
     try:
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,

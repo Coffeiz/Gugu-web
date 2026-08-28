@@ -21,8 +21,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, type PropType } from 'vue'
 import FlipChevron from '@/components/common/FlipChevron.vue'
+import { nextZ, registerPopover } from '@/composables/windowz'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -34,6 +35,8 @@ const emit = defineEmits(['update:modelValue'])
 const show      = ref(false)
 const wrapRef   = ref<HTMLElement | null>(null)
 const popupStyle = ref({})
+const popupZ = ref(0)
+let unregisterPopover: (() => void) | null = null
 
 const selectedLabel = computed(() =>
   props.options.find(o => o.value === props.modelValue)?.label ?? props.placeholder
@@ -53,7 +56,10 @@ const triggerMinW = computed(() => {
 
 function toggle() {
   show.value = !show.value
-  if (show.value) setTimeout(position, 0)
+  if (show.value) {
+    popupZ.value = nextZ()
+    setTimeout(position, 0)
+  }
 }
 
 function position() {
@@ -66,7 +72,7 @@ function position() {
     position: 'fixed',
     minWidth: `${rect.width}px`,
     top: below ? `${rect.bottom + 5}px` : `${rect.top - props.options.length * 36 - 16}px`,
-    zIndex: 9999,
+    zIndex: popupZ.value || nextZ(),
   }
   if (overflow) {
     style.right = `${window.innerWidth - rect.right}px`
@@ -86,8 +92,17 @@ function onClickOutside(e: MouseEvent) {
   if (!wrapRef.value?.contains(t) && !t?.closest('.asel-popup'))
     show.value = false
 }
+watch(show, v => {
+  // 关闭过渡期间节点仍在 Teleport 到 body，重新领一次层级，避免 leave 动画落到面板后面。
+  if (!v) popupZ.value = nextZ()
+  unregisterPopover?.()
+  unregisterPopover = v ? registerPopover(z => { popupZ.value = z }) : null
+})
 onMounted(() => document.addEventListener('mousedown', onClickOutside))
-onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onClickOutside)
+  unregisterPopover?.()
+})
 </script>
 
 <style scoped>
@@ -96,17 +111,17 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 .asel-trigger {
   display: flex; align-items: center; gap: 8px;
   height: 34px; padding: 0 12px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.75); font-size: 13px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg); font-size: 13px;
   cursor: pointer; transition: border-color 0.15s, background 0.15s;
   user-select: none; min-width: 110px;
   font-family: var(--font-sans);
 }
 .asel-trigger:hover,
-.asel-trigger.open { border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.08); }
+.asel-trigger.open { border-color: var(--input-border-hover); background: var(--input-bg-hover); }
 .asel-trigger span { flex: 1; }
-.placeholder { color: rgba(255,255,255,0.28); }
+.placeholder { color: var(--input-placeholder); }
 
 .asel-chevron { color: var(--popup-item-fg-muted); }
 

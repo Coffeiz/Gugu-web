@@ -140,10 +140,11 @@ docker compose -f docker-compose.prod.yml up -d
 Redis 默认同样连接 Compose 内部的 `redis:6379`。使用外部 Redis 时覆盖
 `GUGU_REDIS_HOST`、`GUGU_REDIS_PORT` 和 `GUGU_REDIS_PASSWORD` 即可。
 
-访问 `http://服务器地址:9595`。Shell 沙盒不是默认开启；准备 Rootless Docker 后，使用
-`docker compose -f docker-compose.prod.yml --profile sandbox up -d` 启用。Compose 会同时启动
-受控 `egress-proxy` 和内部网络 `gugu-sandbox-egress`，但临时公网访问仍需在 Admin → Shell 沙盒
-中开启，并在会话首次使用时确认。完整的配置卷、
+访问 `http://服务器地址:9595`。Shell 沙盒和受控 egress 默认随 Compose 启动；准备 Rootless Docker
+后，`sandboxd` 会通过宿主机 Docker Socket 提供沙盒执行，`egress-proxy` 只通过内部网络提供公网出口。
+不需要时可设置 `GUGU_SANDBOX_ENABLED=false` 关闭沙盒执行，或设置
+`GUGU_SANDBOX_NETWORK_PROFILE=none` 让沙盒默认断网；两者都不需要修改 Compose 文件。临时公网访问仍需
+在 Admin → Shell 沙盒中开启，并在会话首次使用时确认。完整的配置卷、
 迁移和 Nginx 说明见 [生产构建物 Compose](docs/ops/deploy.md#310-生产构建物-compose默认端口-9595)。
 
 ### 方式二：本地开发

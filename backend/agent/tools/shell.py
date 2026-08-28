@@ -99,6 +99,7 @@ async def _run_shell(db, user_id, args: dict):
         db, user_id, session_id, command, confirm=bool(args.get("confirm")),
         session=current_dispatch_session(),
         workspace_id=requested_workspace_id,
+        requested_scope=args.get("scope"),
     )
     if not decision.allowed:
         return {"error": decision.reason, "_risk": decision.risk.value, "_audit_event": "denied"}
@@ -224,6 +225,7 @@ async def _run_shell(db, user_id, args: dict):
                     confirm=True,
                     session=current_dispatch_session(),
                     workspace_id=requested_workspace_id,
+                    requested_scope=decision.scope,
                 )
                 return (
                     current.allowed
@@ -325,6 +327,7 @@ class ShellSkill(BaseSkill):
                     "timeout": {"type": "number", "minimum": 0.1, "maximum": 300, "description": "超时时间，秒，默认 30"},
                     "max_output_chars": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "输出字符上限，默认 12000"},
                     "network": {"type": "string", "enum": ["none", "egress"], "description": "默认 none；需要联网时请求 egress，首次使用必须经用户确认"},
+                    "scope": {"type": "string", "enum": ["sandbox", "system"], "description": "执行范围，默认 sandbox；system 必须显式选择并具备对应权限"},
                     "confirm": {"type": "boolean", "description": "仅用于携带确认凭证后的二次调用"},
                     "confirm_token": {"type": "string", "description": "危险命令确认凭证"},
                 },

@@ -265,7 +265,7 @@
           </span>
           <button class="btn-ghost" @click="resetBehavior">撤销修改</button>
           <button class="btn-primary" :class="{ loading: behaviorSaving }" :disabled="behaviorSaving" @click="saveBehavior">
-            <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
             {{ behaviorSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -375,6 +375,23 @@
             />
           </div>
 
+          <div class="behavior-item">
+            <div class="behavior-label">
+              <span>RAG 索引缓存保留时间</span>
+              <span class="behavior-desc">长期未使用的用户索引会自动清理；索引可由业务数据重新生成，范围 7～365 天</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <input
+                type="number"
+                class="behavior-input"
+                style="width: 120px;"
+                v-model.number="ragIndexTtlDays"
+                min="7" max="365"
+              />
+              <span class="behavior-desc">天</span>
+            </div>
+          </div>
+
         </div>
 
         <div class="card-actions">
@@ -384,7 +401,7 @@
           </span>
           <button class="btn-ghost" @click="resetGeneralSearch">撤销修改</button>
           <button class="btn-primary" :class="{ loading: generalSearchSaving }" :disabled="generalSearchSaving" @click="saveSearch('general')">
-            <svg v-if="generalSearchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            <svg v-if="generalSearchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
             {{ generalSearchSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -471,7 +488,7 @@
           </span>
           <button class="btn-ghost" @click="resetSimilarImageSearch">撤销修改</button>
           <button class="btn-primary" :class="{ loading: similarImageSaving }" :disabled="similarImageSaving" @click="saveSearch('similar')">
-            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
             {{ similarImageSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -534,7 +551,7 @@
             {{ voiceTesting ? '测试中…' : '测试接入' }}
           </button>
           <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
-            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
             {{ voiceSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -631,7 +648,7 @@
           </span>
           <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
           <button class="btn-primary" :class="{ loading: embeddingSaving }" :disabled="embeddingSaving" @click="saveEmbedding">
-            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
+            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
             {{ embeddingSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -678,7 +695,7 @@ const adminStore  = useAdminStore()
 const route = useRoute()
 const standaloneMode = computed(() => route.path === '/agent-behavior' ? 'behavior' : route.path === '/agent-usage' ? 'usage' : '')
 const runtimeConfig = useAgentRuntimeConfig()
-const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
+const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
 
@@ -710,7 +727,7 @@ const PROVIDERS = [
   { key: 'glm',       label: '智谱 GLM',       base_url: 'https://open.bigmodel.cn/api/paas/v4',              model: 'glm-5.2' },
   { key: 'deepseek',  label: 'DeepSeek',    base_url: 'https://api.deepseek.com',                           model: 'deepseek-v4-flash-vision-exp' },
   { key: 'minimax',   label: 'MiniMax',     base_url: 'https://api.minimaxi.com/anthropic',                 model: 'MiniMax-M3' },
-  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-v2.5' },
+  { key: 'mimo',      label: 'MiMo (小米)',  base_url: 'https://api.xiaomimimo.com/v1',                       model: 'mimo-mono.5' },
   { key: 'ollama',    label: 'Ollama',      base_url: 'http://127.0.0.1:11434/v1',                          model: 'qwen3:8b' },
   { key: 'local',     label: '本地兼容服务', base_url: '',                                                   model: '' },
 ]

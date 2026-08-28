@@ -186,7 +186,7 @@ async def search_persistent_index(
     ))
     results.sort(key=lambda item: (-item.score, item.document.chunk_id))
     if diagnostics is not None:
-        diagnostics["document_count"] = len(getattr(index, "documents", ()) or ())
+        diagnostics["document_count"] = getattr(index, "document_count", len(getattr(index, "documents", ()) or ()))
         diagnostics["engine"] = next(iter(engines)) if len(engines) == 1 else "mixed"
         diagnostics["cache_hit"] = bool(cache_hits) and all(cache_hits)
         diagnostics["cache_entries"] = len(cache_hits)

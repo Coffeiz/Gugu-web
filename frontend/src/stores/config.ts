@@ -126,6 +126,7 @@ export const useConfigStore = defineStore('config', () => {
       searxng_image_engines: '',
       max_results: 5,
       global_search_backend: 'ilike',
+      ts_sidecar_index_ttl_seconds: 30 * 24 * 3600,
       similar_image_enabled: false,
       baidu_qianfan_api_key: '',
       similar_image_default_count: 15,
@@ -140,6 +141,9 @@ export const useConfigStore = defineStore('config', () => {
       from_addr: '',
       to_addr: '',
       use_ssl: true,
+    },
+    byok: {
+      enabled: false,
     },
   })
 
@@ -159,6 +163,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
       if (data.smtp)    Object.assign(cfg.smtp,    sanitizeForEdit(data.smtp))
+      if (data.byok)    Object.assign(cfg.byok,    data.byok)
     } catch {
       // 后端未启动时静默，使用默认值
     } finally {

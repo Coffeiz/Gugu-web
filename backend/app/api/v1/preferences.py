@@ -10,6 +10,7 @@ from app.core.security import get_current_user
 router = APIRouter(prefix="/preferences", tags=["preferences"])
 
 _DEFAULT_VIEWS = {"projects", "calendar", "files", "mind"}
+_TOOL_INJECTION_MODES = {"catalog", "full_schema"}
 
 
 async def _get_or_create(user: User, db: AsyncSession) -> UserPreferences:
@@ -38,6 +39,7 @@ def _to_response(data: dict) -> PreferencesResponse:
         shellDangerousEnabled=bool(data.get("shell_dangerous_enabled", False)),
         shellAutopilotEnabled=bool(data.get("shell_autopilot_enabled", False)),
         showToolInteractions=bool(data.get("show_tool_interactions", False)),
+        toolInjectionMode=data.get("tool_injection_mode", "catalog") if data.get("tool_injection_mode", "catalog") in _TOOL_INJECTION_MODES else "catalog",
     )
 
 
@@ -92,8 +94,19 @@ async def update_preferences(
         data["shell_autopilot_enabled"] = body.shellAutopilotEnabled
     if body.showToolInteractions is not None:
         data["show_tool_interactions"] = body.showToolInteractions
+    if body.toolInjectionMode is not None and body.toolInjectionMode in _TOOL_INJECTION_MODES:
+        data["tool_injection_mode"] = body.toolInjectionMode
     prefs.data = data
     await db.commit()
+    shell_changed = any(
+        field in body.model_fields_set
+        for field in {
+            "shellEnabled", "shellSystemEnabled", "shellDangerousEnabled", "shellAutopilotEnabled",
+        }
+    )
+    if shell_changed:
+        from app.core import events
+        await events.publish(user.id, "terminals", operation="refresh")
     if style_changed:
         from app.core import events
         await events.bump_context_revision(user.id, "preferences")

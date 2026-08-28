@@ -353,12 +353,12 @@ function handleToggleTodo(todo: ProjectTodo) {
 .todo-count { font-size: 10px; color: var(--content-tertiary); white-space: nowrap; }
 .stage-input {
   width: 110px; padding: 1px 6px; border-radius: var(--radius-xs); outline: none;
-  font: 13px var(--font-sans); color: var(--input-fg); background: var(--input-bg-focus);
-  border: 1px solid var(--input-border-focus); box-shadow: var(--input-focus-shadow);
+  font: 13px var(--font-sans); color: var(--input-fg); background: var(--input-bg);
+  border: 1px solid var(--input-border); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent;
   transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.stage-input:hover,
-.stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
+.stage-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
+.stage-input:focus { background: var(--input-bg-focus); border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
 .del-stage {
   display: flex; align-items: center; flex-shrink: 0; padding: 2px;
   background: none; border: none; cursor: pointer; color: var(--content-tertiary); opacity: 0;

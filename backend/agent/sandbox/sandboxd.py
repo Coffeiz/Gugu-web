@@ -6,17 +6,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import os
 import socket
 import struct
 import logging
 import uuid
+import json
 from pathlib import Path
 
 from app.core.config import get_settings
 
 from .docker import DockerSandboxExecutor
-from .docker_runtime import docker_network_available, valid_egress_network_name
+from .docker_runtime import cleanup_orphan_pty_containers, docker_network_available, valid_egress_network_name
 from .protocol import ExecuteRequest, encode_response
 
 logger = logging.getLogger("agent.sandbox.sandboxd")
@@ -53,14 +55,19 @@ class SandboxdServer:
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         result = None
+        value = None
         try:
             self._validate_peer(writer)
             line = await asyncio.wait_for(reader.readline(), timeout=5)
             if not line or len(line) > 1_048_576:
                 raise ValueError("sandboxd 请求无效")
-            import json
             value = json.loads(line.decode("utf-8"))
-            if not isinstance(value, dict) or value.get("operation") != "execute":
+            if not isinstance(value, dict):
+                raise ValueError("sandboxd operation 无效")
+            if value.get("operation") == "pty_open":
+                await self._handle_pty(value, reader, writer)
+                return
+            if value.get("operation") != "execute":
                 raise ValueError("sandboxd operation 无效")
             request = ExecuteRequest.from_dict(value)
             root = self._validate_root(request.root)
@@ -108,14 +115,84 @@ class SandboxdServer:
                 "quota_exceeded": result.quota_exceeded,
             }
         except Exception as exc:
-            logger.warning("sandbox_execute rejected: %s", type(exc).__name__)
-            response = {"error": str(exc)}
+            logger.warning("sandbox request rejected operation=%s error=%s", value.get("operation") if isinstance(value, dict) else None, type(exc).__name__)
+            response = {"error": str(exc) or type(exc).__name__}
         writer.write(encode_response(response))
         await writer.drain()
         writer.close()
         await writer.wait_closed()
 
+    async def _handle_pty(self, value: dict, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        root = self._validate_root(str(value.get("root") or ""))
+        if value.get("shell_mode") != "sandbox":
+            raise ValueError("sandboxd PTY 只支持 sandbox 范围")
+        cols, rows = int(value.get("cols", 120)), int(value.get("rows", 32))
+        if not 20 <= cols <= 500 or not 5 <= rows <= 200:
+            raise ValueError("sandboxd PTY 尺寸无效")
+        settings = get_settings().sandbox
+        executor = DockerSandboxExecutor(root, settings)
+        container_name = f"gugu-pty-{uuid.uuid4().hex}"
+        handle = await executor.open_pty(
+            cwd=".", network_profile=str(value.get("network_profile") or "none"),
+            container_name=container_name,
+        )
+        await handle.resize(cols, rows)
+        writer.write((json.dumps({"type": "ready", "pid": handle.pid, "sandbox_id": handle.sandbox_id}) + "\n").encode())
+        await writer.drain()
+
+        output_total_bytes = 0
+        output_window_bytes = 0
+        output_started = asyncio.get_running_loop().time()
+
+        async def pump() -> None:
+            nonlocal output_total_bytes, output_window_bytes, output_started
+            async for chunk in handle.output():
+                output_total_bytes += len(chunk)
+                output_window_bytes += len(chunk)
+                now = asyncio.get_running_loop().time()
+                if now - output_started >= 1:
+                    output_started = now
+                    output_window_bytes = len(chunk)
+                if (
+                    output_total_bytes > settings.pty_output_limit_bytes
+                    or output_window_bytes > settings.pty_output_rate_bytes
+                ):
+                    await handle.close(force=True)
+                    break
+                writer.write((json.dumps({"type": "output", "data": base64.b64encode(chunk).decode("ascii")}) + "\n").encode())
+                await writer.drain()
+            writer.write(b'{"type":"exit"}\n')
+            await writer.drain()
+
+        pump_task = asyncio.create_task(pump())
+        try:
+            while True:
+                control = await reader.readline()
+                if not control:
+                    break
+                message = json.loads(control.decode("utf-8"))
+                message_type = message.get("type")
+                if message_type == "input":
+                    await handle.write(base64.b64decode(message.get("data", ""), validate=True))
+                elif message_type == "resize":
+                    await handle.resize(int(message["cols"]), int(message["rows"]))
+                elif message_type == "signal":
+                    await handle.signal(str(message["signal"]))
+                elif message_type == "close":
+                    await handle.close(force=bool(message.get("force")))
+                    break
+                else:
+                    raise ValueError("sandboxd PTY 控制消息无效")
+        finally:
+            if not pump_task.done():
+                pump_task.cancel()
+                await asyncio.gather(pump_task, return_exceptions=True)
+            await handle.close(force=True)
+
     async def serve(self) -> None:
+        cleaned = await asyncio.to_thread(cleanup_orphan_pty_containers)
+        if cleaned:
+            logger.info("sandboxd 已清理 %d 个遗留 PTY 容器", cleaned)
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             self.socket_path.unlink()

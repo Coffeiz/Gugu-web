@@ -92,11 +92,11 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     const dark = cssBlock(themeRefinements, "html[data-theme='dark'][data-family]")
     expect(dark).toContain('--settings-popup-border: var(--border-default);')
     expect(dark).toContain('--settings-popup-hover-bg: var(--color-accent-faint);')
-    const monoLight = cssBlock(themeRefinements, "html[data-theme='light'][data-family='v2']")
+    const monoLight = cssBlock(themeRefinements, "html[data-theme='light'][data-family='mono']")
     expect(monoLight).toContain('--settings-popup-bg: var(--surface-card-solid);')
     expect(monoLight).toContain('--settings-popup-border: var(--border-strong);')
     expect(monoLight).toContain('--settings-popup-hover-bg: var(--surface-soft-hover);')
-    const monoDark = cssBlock(themeRefinements, "html[data-theme='dark'][data-family='v2']")
+    const monoDark = cssBlock(themeRefinements, "html[data-theme='dark'][data-family='mono']")
     expect(monoDark).toContain('--settings-popup-bg: var(--surface-card-solid);')
     expect(monoDark).toContain('--settings-popup-border: var(--border-strong);')
 

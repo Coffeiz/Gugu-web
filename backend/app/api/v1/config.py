@@ -59,6 +59,16 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
+        agent_patch = body.patch.get("agent")
+        shell_fields = {
+            "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled",
+        }
+        if isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch):
+            from app.core import events
+            from app.models import User
+            user_ids = (await db.execute(select(User.id))).scalars().all()
+            for user_id in user_ids:
+                await events.publish(user_id, "terminals", operation="refresh")
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
         print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)

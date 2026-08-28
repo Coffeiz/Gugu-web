@@ -17,6 +17,14 @@ from app.services.interactions import (
 )
 
 
+def test_schema_dict_accepts_legacy_json_string_and_rejects_invalid_values():
+    from app.services.interactions import _schema_dict
+
+    assert _schema_dict('{"options":[{"id":"a"}]}')["options"][0]["id"] == "a"
+    assert _schema_dict("not-json") == {}
+    assert _schema_dict(["not", "an", "object"]) == {}
+
+
 def test_event_identity_survives_round_trip():
     line = encode_event(
         INTERACTION_REQUIRED,

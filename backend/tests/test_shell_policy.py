@@ -137,7 +137,7 @@ async def test_legacy_personal_scope_is_ignored(monkeypatch):
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
-    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
     assert decision.allowed
     assert decision.scope.value == "system"
 
@@ -150,7 +150,7 @@ async def test_unbound_session_uses_system_scope(monkeypatch):
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
-    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
     assert decision.allowed
     assert decision.scope.value == "system"
 
@@ -166,7 +166,7 @@ async def test_system_scope_uses_explicit_permissions_even_with_cloud_model(monk
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
 
-    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
 
     assert decision.allowed
     assert decision.scope.value == "system"
@@ -199,6 +199,35 @@ async def test_system_scope_off_uses_default_sandbox(monkeypatch):
 
     assert decision.allowed
     assert decision.scope.value == "sandbox"
+
+
+@pytest.mark.asyncio
+async def test_system_permission_does_not_change_default_scope(monkeypatch):
+    db = _PolicyDB()
+    db.session = SimpleNamespace(user_id="user-1", workspace_id=None)
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", _true)
+    monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", _true)
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd")
+
+    assert decision.allowed
+    assert decision.scope.value == "sandbox"
+
+
+@pytest.mark.asyncio
+async def test_workspace_cannot_opt_into_system_scope(monkeypatch):
+    db = _PolicyDB()
+    settings = _settings(shell=True)
+    settings.agent.shell_system_enabled = True
+    monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+
+    decision = await shell_policy.evaluate(db, "user-1", 1, "pwd", requested_scope="system")
+
+    assert not decision.allowed
+    assert decision.scope.value == "system"
 
 
 @pytest.mark.asyncio

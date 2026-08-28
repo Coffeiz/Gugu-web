@@ -143,6 +143,50 @@ async def describe_session(db: AsyncSession, user_id, session_id: int) -> Worksp
     return await get_workspace(db, user_id, session.workspace_id)
 
 
+async def resolve_workspace_target(
+    db: AsyncSession, user_id, workspace_id: int,
+) -> dict | None:
+    """解析会话工作区对应的文件库规范落点。
+
+    工作区 id 与项目/文件夹 id 属于不同命名空间；文件工具只消费这里返回的
+    ``space/project_id/folder_id``，避免把同数值的 workspace_id 误当成 project_id。
+    """
+    workspace = await get_workspace(db, user_id, workspace_id)
+    if workspace is None or not workspace.enabled:
+        return None
+    if workspace.kind == "project" and workspace.project_id is not None:
+        project = await get_owned(db, Project, workspace.project_id, user_id)
+        if project is None:
+            return None
+        return {
+            "workspace_id": workspace.id, "workspace_name": workspace.name,
+            "kind": "project", "space": "project",
+            "project_id": project.id, "folder_id": None,
+            "project_name": project.name,
+        }
+    if workspace.kind == "folder" and workspace.folder_id is not None:
+        folder = await get_owned(db, Folder, workspace.folder_id, user_id)
+        if folder is None or folder.deleted_at is not None:
+            return None
+        if folder.project_id is None:
+            return {
+                "workspace_id": workspace.id, "workspace_name": workspace.name,
+                "kind": "folder", "space": "personal",
+                "project_id": None, "folder_id": folder.id,
+                "folder_name": folder.name,
+            }
+        project = await get_owned(db, Project, folder.project_id, user_id)
+        if project is None:
+            return None
+        return {
+            "workspace_id": workspace.id, "workspace_name": workspace.name,
+            "kind": "folder", "space": "project",
+            "project_id": project.id, "folder_id": folder.id,
+            "project_name": project.name, "folder_name": folder.name,
+        }
+    return None
+
+
 async def resolve_workspace_root(db: AsyncSession, user_id, workspace_id: int) -> Path | None:
     """把已归属的工作区解析为本地存储根下的真实目录。
 

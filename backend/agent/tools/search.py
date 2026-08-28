@@ -29,6 +29,7 @@ from app.core.tz import local_day_start_utc
 import httpx
 from app.core.config import get_settings
 from app.core import chat_attach
+from app.byok.service import decrypt_value, get_active_credential
 from app.services.search import (
     count_daily_search_usage,
     count_similar_image_usage,
@@ -402,13 +403,14 @@ async def _inspect_images(db, user_id, args: dict):
 # ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
-    provider = settings.search.deep_research_provider
+    user_credential = await get_active_credential(db, user_id, "deep_research")
+    provider = user_credential.provider if user_credential else settings.search.deep_research_provider
     keys = {
         "tavily": settings.search.tavily_api_key,
         "baidu": settings.search.deep_research_baidu_api_key,
         "you": settings.search.deep_research_you_api_key,
     }
-    key = keys.get(provider, "")
+    key = decrypt_value(user_credential) if user_credential else keys.get(provider, "")
     if not key:
         return json.dumps({"error": f"管理员尚未配置深度研究（{provider} API Key）；普通查找可用 web_search"})
 
@@ -545,7 +547,9 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
 async def _image_search_by_image(db, user_id, args: dict):
     settings = get_settings()
     cfg = settings.search
-    if not cfg.similar_image_enabled or not cfg.baidu_qianfan_api_key:
+    user_credential = await get_active_credential(db, user_id, "similar_image_search")
+    image_key = decrypt_value(user_credential) if user_credential else cfg.baidu_qianfan_api_key
+    if (not user_credential and not cfg.similar_image_enabled) or not image_key:
         return {"error": "相似图搜索尚未配置或未启用，请管理员先在 Admin 配置百度千帆 API Key"}
 
     count = args.get("max_results") or cfg.similar_image_default_count
@@ -566,7 +570,7 @@ async def _image_search_by_image(db, user_id, args: dict):
     if error:
         return {"error": error}
     result = await _call_baidu_similar_image(
-        raw, cfg.baidu_qianfan_api_key, count, cfg.similar_image_timeout_seconds,
+        raw, image_key, count, cfg.similar_image_timeout_seconds,
     )
     if "error" not in result:
         await record_similar_image_usage(db, user_id)

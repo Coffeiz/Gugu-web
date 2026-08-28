@@ -178,13 +178,13 @@ html[data-theme][data-family] .cal-toolbar .period-btn:hover { background: var(-
 html[data-theme][data-family] .cal-toolbar .today-btn {
   color: var(--control-fg);
   background: var(--control-bg);
-  border-color: var(--control-border);
+  border-color: var(--input-border);
   box-shadow: none;
 }
 html[data-theme][data-family] .cal-toolbar .today-btn:hover {
   color: var(--control-fg-strong);
   background: var(--control-bg-hover);
-  border-color: var(--control-border-hover);
+  border-color: var(--input-border-hover);
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle {
   --pill-bg: var(--segmented-pill-bg);

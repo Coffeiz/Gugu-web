@@ -25,7 +25,7 @@ from agent.context import builder, loaders, session_snapshot, session_history, r
 from agent.core import LLMRunner
 from agent.models import AgentRequest
 from agent.profiles import DefaultProfile
-from agent.llm.llm_select import resolve_run_config
+from agent.llm.llm_select import resolve_run_config, resolve_run_config_for_user
 
 
 def _canonical_tool_batch_records(messages) -> list[dict]:
@@ -131,6 +131,8 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         _sess._build_engine()
 
     async with _sess._SessionLocal() as db:
+        run_config = await resolve_run_config_for_user(settings, db, user_id, req)
+        model_cfg = run_config.model
         # ── 精力耗尽硬拦判定（与 IM/定时任务 runner 同口径，走 quota.is_exhausted 的 CST 6h/周窗口）──
         quota_exceeded = await quota.is_exhausted(db, user_id, settings)
 
@@ -274,7 +276,7 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
     if _transcribe_media:
         from agent import voice as _voice
-        transcript = await _voice.transcribe(_transcribe_media, settings)
+        transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
         if transcript is None:        # 未配置语音模型
             block_msg = "抱歉，我现在还不能处理语音 / 音视频消息哦，打字告诉我就行～"
             async with _sess._SessionLocal() as db2:
@@ -384,6 +386,9 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     # 只有模型获取后才把对应工具 schema 写入后续轮次。
     from agent.runner import _capability_context, _filter_shell_tool
     async with _sess._SessionLocal() as db:
+        if model_cfg is None:
+            run_config = await resolve_run_config_for_user(settings, db, user_id, req)
+            model_cfg = run_config.model
         tool_names = await _filter_shell_tool(db, user_id, session_id, list(profile.tool_names))
     capability_context = await _capability_context(
         tool_names, settings, owner_id=user_id, query=getattr(req, "message", ""),

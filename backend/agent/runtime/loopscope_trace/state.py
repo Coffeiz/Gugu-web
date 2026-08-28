@@ -123,6 +123,55 @@ def record_adapter_result(run: "_ScopeRun", status: str) -> None:
     key = "success" if status == "success" else "errors"
     bucket[key] = int(bucket.get(key, 0) or 0) + 1
 
+
+def record_tool_schema_error(
+    run: "_ScopeRun",
+    *,
+    tool_name: str,
+    schema: Any,
+    error: Any,
+    error_kind: str,
+    arguments_shape: Any = None,
+    provider_schema: Any = None,
+    parent_span_id: str | None = None,
+) -> None:
+    """记录一次工具 schema 错误及模型实际看到的声明。
+
+    schema 是工具注册表的权威声明；provider_schema 由调用轮提供时，优先用于
+    对照 wire 格式。参数只记录结构，不记录字符串正文或文件名等实际值。
+    """
+    if not _enabled() or run.ended_at is not None:
+        return
+    try:
+        schema_value = _jsonable(schema if isinstance(schema, dict) else {})
+        provider_value = _jsonable(provider_schema) if isinstance(provider_schema, dict) else None
+        canonical = provider_value if provider_value is not None else schema_value
+        schema_text = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(schema_text.encode("utf-8")).hexdigest()[:16]
+        span = run.span(
+            "tool",
+            f"Tool schema error · {tool_name}",
+            {
+                "tool_name": tool_name,
+                "schema": schema_value,
+                "provider_schema": provider_value,
+                "schema_digest": digest,
+                "arguments_shape": _jsonable(arguments_shape or {}),
+                "error": _jsonable(error),
+            },
+            parent_span_id=parent_span_id,
+            context_source="tool_schema_error",
+            error_kind=error_kind,
+            schema_digest=digest,
+        )
+        span.finish({
+            "tool_name": tool_name,
+            "schema_digest": digest,
+            "error_kind": error_kind,
+        }, status="error")
+    except Exception:
+        pass
+
 @dataclass
 class _Span:
     id: str

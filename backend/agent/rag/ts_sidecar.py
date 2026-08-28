@@ -19,6 +19,22 @@ class TsSidecarUnavailable(RuntimeError):
     """TS worker 未配置、启动失败或协议请求失败。"""
 
 
+def index_dir_for_owner(owner_user_id: object) -> str:
+    """返回用户私有的隐藏 RAG 索引根目录。
+
+    生产环境把派生索引放在用户存储目录下；没有完整运行配置的单测继续使用
+    search.ts_sidecar_index_dir，避免测试依赖真实用户存储。
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    storage = getattr(settings, "storage", None)
+    local_path = getattr(storage, "local_path", "") if storage is not None else ""
+    if local_path:
+        return str(Path(local_path).expanduser() / str(owner_user_id) / ".system" / "rag" / "ts-index")
+    return str(Path(settings.search.ts_sidecar_index_dir).expanduser())
+
+
 SIDE_CAR_IDLE_TTL_SECONDS = 30 * 60
 SIDE_CAR_REAPER_INTERVAL_SECONDS = 60
 
@@ -128,6 +144,8 @@ class TsSidecarClient:
         results: list[RecallResult] = []
         for item in response.get("results") or []:
             document = documents.get(str(item.get("id")))
+            if document is None and isinstance(item.get("document"), dict):
+                document = _from_wire_document(item["document"], self.owner_user_id)
             if document is None:
                 continue
             if source_type_set and document.source_type not in source_type_set:
@@ -238,6 +256,11 @@ class TsLexicalIndex:
         self.client = client
         self.revision = revision
 
+    @property
+    def document_count(self) -> int:
+        """返回 TS worker 中的实际文档数；冷恢复时 Python 不必保留全量文档。"""
+        return self.client._document_count if not self.documents else len(self.documents)
+
     async def search(
         self, query: str, *, limit: int = 10, source_types: Iterable[str] = (), scope: Scope | None = None,
     ) -> list[RecallResult]:
@@ -246,13 +269,17 @@ class TsLexicalIndex:
         )
 
 
-def _wire_document(document: IndexDocument) -> dict[str, str]:
+def _wire_document(document: IndexDocument) -> dict[str, Any]:
     return {
         # worker 内部使用稳定的 chunk slot；版本变化只更新同一 slot 的内容，
         # 避免一个文档改动后把所有未变化 chunk 当成删除再新增。
         "id": _worker_document_key(document),
         # 保留原文，避免 Python 侧预分词导致 TS/Python 两套语义漂移。
         "text": "\n".join((document.title, document.summary, document.content)),
+        "source_id": document.source_id,
+        "title": document.title,
+        "summary": document.summary,
+        "content": document.content,
         "source_type": document.source_type,
         "platform": document.scope.platform,
         "bot_id": document.scope.bot_id,
@@ -260,7 +287,41 @@ def _wire_document(document: IndexDocument) -> dict[str, str]:
         "scope_type": document.scope.scope_type,
         "scope_id": document.scope.scope_id or "",
         "document_version": document.version or "",
+        "parent_id": document.parent_document_id or "",
+        "chunk_index": document.chunk_index,
+        "chunk_count": document.chunk_count,
+        "updated_at": document.updated_at,
+        "metadata": document.metadata,
     }
+
+
+def _from_wire_document(raw: dict[str, Any], owner_user_id: str) -> IndexDocument | None:
+    """从已持久化索引的命中结果恢复业务文档，不读取用户数据库。"""
+    try:
+        return IndexDocument(
+            document_id=str(raw.get("id") or ""),
+            source_type=str(raw.get("source_type") or ""),
+            source_id=str(raw.get("source_id") or raw.get("id") or ""),
+            scope=Scope(
+                owner_user_id=owner_user_id,
+                platform=str(raw.get("platform") or ""),
+                bot_id=str(raw.get("bot_id") or ""),
+                group_id=str(raw.get("group_id") or ""),
+                scope_type=str(raw.get("scope_type") or "owner"),
+                scope_id=str(raw.get("scope_id") or ""),
+            ),
+            title=str(raw.get("title") or ""),
+            summary=str(raw.get("summary") or ""),
+            content=str(raw.get("content") or raw.get("text") or ""),
+            version=str(raw.get("document_version") or ""),
+            chunk_index=int(raw.get("chunk_index") or 0),
+            chunk_count=int(raw.get("chunk_count") or 1),
+            parent_document_id=str(raw.get("parent_id") or "") or None,
+            updated_at=str(raw.get("updated_at") or "") or None,
+            metadata=raw.get("metadata") if isinstance(raw.get("metadata"), dict) else {},
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _worker_document_key(document: IndexDocument) -> str:
@@ -467,6 +528,17 @@ def _worker_command(command: str, index_dir: str, owner_user_id: str) -> list[st
     return parts
 
 
+def active_index_dirs() -> set[Path]:
+    """返回当前进程仍持有的持久化索引目录，供磁盘 GC 避免误删活跃索引。"""
+    active: set[Path] = set()
+    for clients in _lexical_clients.values():
+        for client in clients.values():
+            if client._process is not None and client._process.returncode is None and client.index_dir:
+                owner_hash = hashlib.sha256(client.owner_user_id.encode("utf-8")).hexdigest()[:32]
+                active.add(Path(client.index_dir).expanduser() / owner_hash)
+    return active
+
+
 def _timeout_seconds() -> float:
     from app.core.config import get_settings
 
@@ -478,5 +550,5 @@ __all__ = [
     "TsLexicalIndex", "TsSidecarClient", "TsSidecarUnavailable",
     "rank_candidates_with_cache",
     "SIDE_CAR_IDLE_TTL_SECONDS",
-    "get_lexical_client", "close_lexical_clients", "close_rank_clients",
+    "get_lexical_client", "close_lexical_clients", "close_rank_clients", "index_dir_for_owner",
 ]
