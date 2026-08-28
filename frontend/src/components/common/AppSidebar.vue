@@ -209,7 +209,6 @@ onUnmounted(() => {
 .notif-anchor { position:relative; }
 .notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-sm); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
 .notif-btn:hover { background:rgba(123,127,178,.08); color:var(--text-primary); }
-.notif-btn.notif-active { background:rgba(255,255,255,.38); color:#6b6fa0; font-weight:700; border-color:rgba(255,255,255,.62); box-shadow:none; }
 .nav-icon { flex-shrink:0; }.nav-label-text { flex:1; }.badge { background:rgba(123,127,178,.42); color:white; font-size:10px; font-weight:700; padding:1px 6px; border-radius:20px; min-width:18px; text-align:center; }
 .user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-md); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
 .user-card:hover { background:rgba(255,255,255,.38); }

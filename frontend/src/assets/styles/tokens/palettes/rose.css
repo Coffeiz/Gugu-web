@@ -1,0 +1,42 @@
+/* Warm rose accent palette. */
+:root[data-palette='rose'][data-theme='light'] {
+  --theme-action-primary: #a9667c;
+  --theme-action-hover: #95566d;
+  --theme-action-pressed: #7f465d;
+  --theme-selection: rgba(169,102,124,.14);
+  --theme-focus: rgba(169,102,124,.38);
+  --theme-sidebar-active-bg: var(--theme-card-solid);
+  --theme-sidebar-active-fg: #95566d;
+  --theme-brand-logo-color: #a9667c;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(49%) sepia(20%) saturate(720%) hue-rotate(294deg) brightness(90%) contrast(89%);
+  --theme-divider: linear-gradient(90deg,transparent,rgba(95,48,65,.10) 20%,rgba(95,48,65,.10) 80%,transparent);
+  --theme-success: #5d957d;
+  --theme-warning: #aa7c4f;
+  --theme-danger: #bd5b64;
+  --theme-info: #638fa3;
+  --theme-brand-gradient: linear-gradient(135deg,#a9667c,#c18ba1);
+  --theme-fab-gradient: linear-gradient(135deg,#a9667c,#bd8299);
+  --theme-scrollbar-thumb: rgba(169,102,124,.24);
+  --theme-scrollbar-thumb-hover: rgba(169,102,124,.33);
+}
+:root[data-palette='rose'][data-theme='dark'] {
+  --theme-action-primary: #ca8da2;
+  --theme-action-hover: #dda1b4;
+  --theme-action-pressed: #b9788f;
+  --theme-selection: rgba(202,141,162,.16);
+  --theme-focus: rgba(202,141,162,.42);
+  --theme-sidebar-active-fg: #e4b9c7;
+  --theme-brand-logo-color: #ca8da2;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(70%) sepia(18%) saturate(700%) hue-rotate(294deg) brightness(102%) contrast(91%);
+  --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
+  --theme-gugu-chat-send-bg: linear-gradient(135deg,#98677a,#b9788f);
+  --theme-success: #83b99f;
+  --theme-warning: #d0a477;
+  --theme-danger: #e18a91;
+  --theme-info: #8fb8c7;
+  --theme-brand-gradient: linear-gradient(135deg,#ca8da2,#c6a0d0);
+  --theme-fab-gradient: linear-gradient(135deg,#b9788f,#ca8da2);
+  --theme-gugu-chat-send-bg: linear-gradient(135deg,#98677a,#b9788f);
+  --theme-scrollbar-thumb: rgba(202,141,162,.28);
+  --theme-scrollbar-thumb-hover: rgba(202,141,162,.38);
+}

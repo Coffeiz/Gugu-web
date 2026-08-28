@@ -191,6 +191,14 @@ function dismiss(id: number) {
   pointer-events: none;
 }
 
+/* 暗色只重映射边缘 token，避免沿用亮色主题的纯白高光；亮色基线保持不变。 */
+:global(html[data-theme='dark'][data-family]) .nb-item {
+  border-color: var(--border-default);
+}
+:global(html[data-theme='dark'][data-family]) .nb-item::after {
+  box-shadow: inset 0 1px 0 var(--highlight-soft), inset 1px 0 0 var(--highlight-muted);
+}
+
 /* 标题行：圆点 + 标题，预留右上角关闭按钮的位置 */
 .nb-head {
   display: flex; align-items: center; gap: 8px;

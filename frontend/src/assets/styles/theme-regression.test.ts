@@ -42,6 +42,43 @@ const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
+const paletteFiles = ['lavender', 'ocean', 'rose', 'mono'].map(name => ({
+  name,
+  css: load(`./tokens/palettes/${name}.css`),
+}))
+const themeCss = [
+  load('./tokens/themes/glass-light.css'),
+  load('./tokens/themes/glass-dark.css'),
+  load('./tokens/themes/mono-light.css'),
+  load('./tokens/themes/mono-dark.css'),
+].join('\n')
+
+const paletteTokens = [
+  '--theme-action-primary',
+  '--theme-action-hover',
+  '--theme-action-pressed',
+  '--theme-selection',
+  '--theme-focus',
+  '--theme-sidebar-active-fg',
+  '--theme-success',
+  '--theme-warning',
+  '--theme-danger',
+  '--theme-info',
+  '--theme-brand-gradient',
+  '--theme-fab-gradient',
+  '--theme-brand-logo-color',
+  '--theme-brand-logo-filter',
+  '--theme-divider',
+  '--theme-scrollbar-thumb',
+  '--theme-scrollbar-thumb-hover',
+]
+const notificationBubbleVue = load('../../components/common/NotificationBubble.vue')
+const lightPaletteCss = [
+  load('./tokens/palettes/lavender.css'),
+  load('./tokens/palettes/ocean.css'),
+  load('./tokens/palettes/rose.css'),
+  load('./tokens/palettes/mono.css'),
+]
 
 describe('主题 CSS 回归契约', () => {
   it('字体资源层与字体族 token 保持单一契约', () => {
@@ -55,6 +92,41 @@ describe('主题 CSS 回归契约', () => {
     expect(primitivesCss).toContain('--font-family-mono: var(--font-system-mono);')
     expect(primitivesCss).toContain('--font-sans: var(--font-family-ui);')
     expect(primitivesCss).toContain('--font-mono: var(--font-family-mono);')
+  })
+
+  it('每套配色提供完整的明暗语义色，family 不再重复持有配色变量', () => {
+    for (const { name, css } of paletteFiles) {
+      expect(css, `${name} palette`).toContain(`data-palette='${name}'`)
+      expect(css, `${name} palette`).toContain("data-theme='light'")
+      expect(css, `${name} palette`).toContain("data-theme='dark'")
+      for (const token of paletteTokens) {
+        expect(css, `${name} palette missing ${token}`).toContain(`${token}:`)
+      }
+    }
+    for (const token of paletteTokens) {
+      expect(themeCss, `family owns ${token}`).not.toContain(`${token}:`)
+    }
+  })
+
+  it('通知气泡暗色不继承亮色纯白高光，亮色实体样式保持唯一', () => {
+    const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item")
+    const darkHighlight = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item::after")
+    expect(darkEdge).toContain('border-color: var(--border-default)')
+    expect(darkHighlight).toContain('var(--highlight-soft)')
+    expect(darkHighlight).toContain('var(--highlight-muted)')
+    expect(notificationBubbleVue).toContain('border: 1px solid rgba(255,255,255,0.65)')
+    expect(notificationBubbleVue).not.toMatch(/:global\(html\[data-theme='dark'\]\[data-family\][^)]*\)[^{]*\{[^}]*rgba\(255,255,255/i)
+  })
+
+  it('亮色调色板将导航选中面统一为实体亮面', () => {
+    for (const paletteCss of lightPaletteCss) {
+      const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+      expect(lightBlock).toContain('--theme-sidebar-active-bg: var(--theme-card-solid)')
+    }
+  })
+
+  it('亮色导航选中项使用实体亮面，通知 active paint 不重复', () => {
+    expect(load('../../components/common/AppSidebar.vue')).not.toContain('.notif-btn.notif-active {')
   })
 
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
