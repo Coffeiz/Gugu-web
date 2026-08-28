@@ -21,7 +21,7 @@ export const fileAdapter: SourceAdapter<FileSourceRecord> = {
   sourceType: "file",
   toDocuments(records): RagDocument[] {
     return records.flatMap((record) => {
-      if (!record.id || !record.display_name || !validScope(record.scope)) return [];
+      if (record.id === null || record.id === undefined || !record.display_name || !validScope(record.scope)) return [];
       const text = [
         `文件：${record.display_name}`,
         record.ext ? `类型：${record.ext}` : "",

@@ -18,6 +18,15 @@ test("文件适配器输出稳定 chunk，并且不写入内部存储路径", ()
   assert.equal(document.metadata?.storage_path, undefined);
 });
 
+test("来源适配器接受数值 0 作为合法标识", () => {
+  const [document] = buildSourceDocuments({
+    files: [{
+      id: 0, display_name: "零号文件.md", content: "正文", document_version: "v1", scope: ownerScope,
+    }],
+  });
+  assert.equal(document.id, "file:0:0");
+});
+
 test("画布适配器保留节点和关系引用，但不把普通时间流笔记混入", () => {
   const [document] = buildSourceDocuments({
     canvas: [{

@@ -21,7 +21,7 @@ export const conversationAdapter: SourceAdapter<ConversationSourceRecord> = {
   sourceType: "conversation",
   toDocuments(records): RagDocument[] {
     return records.flatMap((record) => {
-      if (!record.session_id || !record.message_id || !record.content || !validScope(record.scope)) return [];
+      if (record.session_id === null || record.session_id === undefined || record.message_id === null || record.message_id === undefined || !record.content || !validScope(record.scope)) return [];
       const text = `${record.role}：${record.content}`;
       return buildDocuments({
         id: `${record.session_id}:${record.message_id}`,

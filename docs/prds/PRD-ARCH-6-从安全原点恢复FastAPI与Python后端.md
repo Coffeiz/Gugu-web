@@ -445,7 +445,7 @@ Phase 4 验证记录（2026-08-28）：
 
 - 代码边界：Python 保留 `ts_sidecar`、来源 adapter、权限/scope 复核和 history 注入；索引构建、BM25、统一排序、去重、来源上限、字符预算和 citation DTO 由 TS worker 负责。已删除 Python `scoring.py`、`index.py` 及其失效测试依赖；未发现 Rust sidecar 或 TS API/Agent 运行入口残留。
 - worker：协议版本 `rag-v1`、worker 版本 `0.2.0`；支持 `build_documents`、`build_and_index`、`replace`、`patch`、`search`、`unified_search` 和 `rank_candidates`。固定制品为 `backend/bin/gugu-rag-ts-worker.mjs`，启动冒烟返回版本和空索引状态。
-- 自动化测试：TS typecheck 通过，TS worker/API/contracts 测试 `19 passed`；Python 全量 `backend/tests` 为 `1576 passed`，仅有依赖自身的 3 条弃用警告。`scripts/benchmark_rag_builders.py --records 100 --iterations 5` 完成真实 worker 基准：TS 常驻 build roundtrip 平均 `17.126 ms`，`build_and_index` 平均 `12.566 ms`，单次 Python builder `1.724 ms`；TS 的常驻协议路径比旧的 build+replace roundtrip 快 `26.63%`。该脚本发现 Python/TS 当前 chunk 边界仍有 1 条文档数量差异（400/399），属于后续跨语言 chunk parity 优化项，不影响 worker 协议和生产召回链路测试。
+- 自动化测试：TS worker/API/contracts 测试 `20 passed`；Python 全量 `backend/tests` 为 `1576 passed`，仅有依赖自身的 3 条弃用警告。`scripts/benchmark_rag_builders.py --records 100 --iterations 5` 完成真实 worker 基准：TS 常驻 build roundtrip 平均 `16.629 ms`，`build_and_index` 平均 `12.604 ms`，单次 Python builder `1.819 ms`；TS 的常驻协议路径比旧的 build+replace roundtrip 快 `24.21%`。修正数值 `0` 被适配器误判为空 ID 后，Python/TS 文档数量均为 `400`，公共投影 `semantic_equal=true`，digest 一致。
 - 构建：`make rag-ts-build` 已改为使用仓库 pnpm lockfile、TS worker 自带 esbuild 和 CI 非交互安装，构建并执行 `gugu-rag-ts-worker 0.2.0` 成功。
 - 运行语义：通用 memory/project/note/calendar/scheduled_task/knowledge 使用统一 source record builder；file/canvas/conversation 保留专用 adapter；source 与 scope 在 TS worker 截断前过滤，避免错误 scope 挤掉合法结果。
 - 失败边界：Phase 3.5 已验证 FastAPI/Python 为唯一 Agent/API owner；本阶段没有启动 TS API 或 TS Agent。SSE/事件更新相关问题和 `/interactions` 500 保留到后续实时事件收口阶段处理。

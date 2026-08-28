@@ -8,7 +8,7 @@ export type { RagSourceBatch } from "../../../packages/contracts/src/rag.ts";
 
 function buildGenericDocuments(records: readonly RagSourceRecord[]): RagDocument[] {
   return records.flatMap((record) => {
-    if (!record.id || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
+    if (record.id === null || record.id === undefined || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
     return buildDocuments(record);
   });
 }

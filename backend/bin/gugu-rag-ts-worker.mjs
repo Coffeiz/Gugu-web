@@ -98,7 +98,7 @@ var canvasAdapter = {
   sourceType: "canvas",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (!record.canvas_id || !record.node_id || !validScope(record.scope)) return [];
+      if (record.canvas_id === null || record.canvas_id === void 0 || record.node_id === null || record.node_id === void 0 || !validScope(record.scope)) return [];
       const text = [
         `\u753B\u5E03\uFF1A${record.canvas_title || "\u672A\u547D\u540D\u753B\u5E03"}`,
         `\u8282\u70B9\uFF1A${record.node_title || "\u672A\u547D\u540D\u8282\u70B9"}`,
@@ -132,7 +132,7 @@ var conversationAdapter = {
   sourceType: "conversation",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (!record.session_id || !record.message_id || !record.content || !validScope(record.scope)) return [];
+      if (record.session_id === null || record.session_id === void 0 || record.message_id === null || record.message_id === void 0 || !record.content || !validScope(record.scope)) return [];
       const text = `${record.role}\uFF1A${record.content}`;
       return buildDocuments({
         id: `${record.session_id}:${record.message_id}`,
@@ -161,7 +161,7 @@ var fileAdapter = {
   sourceType: "file",
   toDocuments(records) {
     return records.flatMap((record) => {
-      if (!record.id || !record.display_name || !validScope(record.scope)) return [];
+      if (record.id === null || record.id === void 0 || !record.display_name || !validScope(record.scope)) return [];
       const text = [
         `\u6587\u4EF6\uFF1A${record.display_name}`,
         record.ext ? `\u7C7B\u578B\uFF1A${record.ext}` : "",
@@ -190,7 +190,7 @@ var fileAdapter = {
 // ts/workers/rag/src/index-builder.ts
 function buildGenericDocuments(records) {
   return records.flatMap((record) => {
-    if (!record.id || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
+    if (record.id === null || record.id === void 0 || !record.source_type || !record.title || !record.scope?.scope_type || !record.scope?.scope_id) return [];
     return buildDocuments(record);
   });
 }

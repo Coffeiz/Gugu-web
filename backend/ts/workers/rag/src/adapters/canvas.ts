@@ -20,7 +20,7 @@ export const canvasAdapter: SourceAdapter<CanvasSourceRecord> = {
   sourceType: "canvas",
   toDocuments(records): RagDocument[] {
     return records.flatMap((record) => {
-      if (!record.canvas_id || !record.node_id || !validScope(record.scope)) return [];
+      if (record.canvas_id === null || record.canvas_id === undefined || record.node_id === null || record.node_id === undefined || !validScope(record.scope)) return [];
       const text = [
         `画布：${record.canvas_title || "未命名画布"}`,
         `节点：${record.node_title || "未命名节点"}`,
