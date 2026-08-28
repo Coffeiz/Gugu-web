@@ -290,14 +290,17 @@ async function doDeleteAccount() {
 }
 .pm-style-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
 .pm-style-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
+.pm-family-chip.active { background: var(--surface-raised); border-color: var(--border-default); color: var(--content-primary); }
 .pm-palette-group { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .pm-palette-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 9px; border: 1px solid var(--choice-chip-border); border-radius: var(--choice-chip-radius); background: var(--choice-chip-bg); color: var(--choice-chip-fg); font: 500 12px var(--font-sans); cursor: pointer; transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-palette-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
 .pm-palette-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
-.pm-palette-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: var(--action-primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--content-on-accent) 55%, transparent); }
-.pm-palette-swatch.palette-ocean { background: #4f91a8; }
-.pm-palette-swatch.palette-rose { background: #b6758e; }
-.pm-palette-swatch.palette-mono { background: #8b8796; }
+.pm-palette-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #7b7fb2; box-shadow: 0 0 0 2px color-mix(in srgb, var(--content-on-accent) 55%, transparent); }
+.pm-palette-swatch.palette-aero { background: #7b7fb2; }
+.pm-palette-swatch.palette-mono { background: #746b78; }
+.pm-palette-swatch.palette-rose { background: #c98f98; }
+.pm-palette-swatch.palette-sky { background: #83a9c2; }
+.pm-palette-swatch.palette-sage { background: #84ab9e; }
 
 .pm-bind-btn {
   padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);

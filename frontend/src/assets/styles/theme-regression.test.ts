@@ -42,10 +42,12 @@ const filesViewVue = load('../../views/Files/index.vue')
 const projectFilesPanelVue = load('../../views/Projects/components/ProjectFilesPanel.vue')
 const primitivesCss = load('./tokens/primitives.css')
 const fontsCss = load('./fonts.css')
-const paletteFiles = ['lavender', 'ocean', 'rose', 'mono'].map(name => ({
+const paletteFiles = ['aero', 'mono', 'rose', 'sky', 'sage'].map(name => ({
   name,
-  css: load(`./tokens/palettes/${name}.css`),
+  css: load(`./tokens/palettes/${name}.css`) + load('./tokens/palettes/color-base.css'),
 }))
+const paletteColorBaseCss = load('./tokens/palettes/color-base.css')
+const materialCompositionCss = load('./tokens/themes/material-composition.css')
 const themeCss = [
   load('./tokens/themes/glass-light.css'),
   load('./tokens/themes/glass-dark.css'),
@@ -73,11 +75,13 @@ const paletteTokens = [
   '--theme-scrollbar-thumb-hover',
 ]
 const notificationBubbleVue = load('../../components/common/NotificationBubble.vue')
+const designOverridesCss = load('./design-overrides.css')
 const lightPaletteCss = [
-  load('./tokens/palettes/lavender.css'),
-  load('./tokens/palettes/ocean.css'),
-  load('./tokens/palettes/rose.css'),
+  load('./tokens/palettes/aero.css'),
   load('./tokens/palettes/mono.css'),
+  load('./tokens/palettes/rose.css'),
+  load('./tokens/palettes/sky.css'),
+  load('./tokens/palettes/sage.css'),
 ]
 
 describe('主题 CSS 回归契约', () => {
@@ -108,6 +112,26 @@ describe('主题 CSS 回归契约', () => {
     }
   })
 
+  it('面板颜色与视觉材质分层，palette 改色不吞掉 family 效果', () => {
+    for (const token of [
+      '--palette-page-start', '--palette-page-mid', '--palette-page-end', '--palette-surface',
+      '--palette-surface-strong', '--palette-surface-raised', '--palette-text-primary',
+      '--palette-text-secondary', '--palette-text-tertiary', '--palette-border',
+      '--palette-border-strong', '--palette-highlight', '--palette-scrim',
+    ]) {
+      expect(paletteColorBaseCss, `palette color base missing ${token}`).toContain(`${token}:`)
+    }
+    expect(materialCompositionCss).toContain("[data-family='glass'][data-theme='light']")
+    expect(materialCompositionCss).toContain('var(--palette-surface)')
+    expect(materialCompositionCss).toContain('var(--palette-page-start)')
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='light']")
+    expect(materialCompositionCss).toContain(":root[data-family='mono'][data-theme='dark']")
+    expect(materialCompositionCss).toContain(":not([data-palette='mono'])")
+    expect(materialCompositionCss).not.toMatch(/--theme-(shadow|blur|radius)\s*:/)
+    expect(load('./tokens/themes/mono-light.css')).toContain("--theme-border-strong: rgba(42,35,49,.15)")
+    expect(load('./tokens/themes/mono-dark.css')).toContain("--theme-border-strong: rgba(255,255,255,.145)")
+  })
+
   it('通知气泡暗色不继承亮色纯白高光，亮色实体样式保持唯一', () => {
     const darkEdge = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item")
     const darkHighlight = cssBlock(notificationBubbleVue, ":global(html[data-theme='dark'][data-family]) .nb-item::after")
@@ -120,7 +144,7 @@ describe('主题 CSS 回归契约', () => {
 
   it('亮色调色板将导航选中面统一为实体亮面', () => {
     for (const paletteCss of lightPaletteCss) {
-      const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+      const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)(?:\n| )\}/)?.[1] ?? ''
       expect(lightBlock).toContain('--theme-sidebar-active-bg: var(--theme-card-solid)')
     }
   })
@@ -132,6 +156,19 @@ describe('主题 CSS 回归契约', () => {
   it('暗色咕咕悬浮球以深色表面为主，避免亮色强调色过曝', () => {
     const darkRefinements = load('./tokens/interaction-refinements.css')
     expect(darkRefinements).toContain('--gugu-fab-bg: color-mix(in srgb,var(--surface-raised) 64%,var(--action-primary) 36%)')
+  })
+
+  it('暗色 surface hover 只由主题 refinement 负责', () => {
+    const interactionCss = load('./tokens/interaction-refinements.css')
+    const themeRefinementCss = load('./theme-refinements.css')
+    for (const token of [
+      '--surface-hover-tint', '--card-hover-overlay', '--calendar-cell-hover-bg',
+      '--calendar-weekend-hover-bg', '--calendar-chip-hover-overlay',
+      '--calendar-capsule-hover-overlay', '--gugu-chat-session-hover',
+    ]) {
+      expect(interactionCss, `interaction duplicate ${token}`).not.toContain(`${token}:`)
+    }
+    expect(themeRefinementCss).toContain('--surface-hover-tint: transparent')
   })
 
   it('DateSpan 区间内部不叠加普通 hover 背景', () => {
@@ -213,22 +250,22 @@ describe('主题 CSS 回归契约', () => {
 
     // Legacy bridge / Mono adoption 不得重新获得 fc-card paint 或 border ownership。
     expect(themeAdoptionCss).not.toMatch(/html\[data-theme[^\n]*\.fc-card/)
-    expect(surfacesCss).not.toMatch(/html\[data-family='v2'\][^{]*\.fc-card/)
+    expect(surfacesCss).not.toMatch(/html\[data-family='mono'\][^{]*\.fc-card/)
   })
 
   it('Mono 内容卡关闭 blur、画布浮动 chrome 通过同一 glass-card token 恢复 blur', () => {
     expect(componentCss).toContain('--glass-card-blur: var(--glass-blur)')
 
-    const monoFamily = cssBlock(productCss, "html[data-family='v2'] { --glass-card-blur: none;")
+    const monoFamily = cssBlock(productCss, "html[data-family='mono'] { --glass-card-blur: none;")
     expect(monoFamily.trim()).toBe('--glass-card-blur: none;')
 
-    const monoGlassCard = cssBlock(productCss, "html[data-family='v2'] .glass-card:not(.topbar)")
+    const monoGlassCard = cssBlock(productCss, "html[data-family='mono'] .glass-card:not(.topbar)")
     expect(monoGlassCard).toContain('backdrop-filter: var(--glass-card-blur)')
     expect(monoGlassCard).not.toContain('backdrop-filter: none')
 
     const chromeBlock = cssBlock(
       mindCss,
-      "html[data-family='v2'] :is(.canvas-drawer, .canvas-toolbar, .note-picker)",
+      "html[data-family='mono'] :is(.canvas-drawer, .canvas-toolbar, .note-picker)",
     )
     expect(chromeBlock).toContain('--glass-card-background: var(--chrome-glass-bg)')
     expect(chromeBlock).toContain('--glass-card-background-hover: var(--chrome-glass-bg)')
@@ -241,12 +278,12 @@ describe('主题 CSS 回归契约', () => {
   })
 
   it('Mono 音乐播放器和暗色播放按钮复用主题 token，不回退到旧亮色渐变', () => {
-    const monoPlayer = cssBlock(surfacesCss, "html[data-family='v2'] .mini-player")
+    const monoPlayer = cssBlock(surfacesCss, "html[data-family='mono'] .mini-player")
     expect(monoPlayer).toContain('background: var(--chrome-glass-bg)')
     expect(monoPlayer).toContain('border-color: var(--chrome-glass-border)')
     expect(monoPlayer).toContain('backdrop-filter: var(--chrome-glass-blur)')
 
-    const playButton = cssBlock(surfacesCss, "html[data-family='v2'] .mini-player .mp-btn--play,")
+    const playButton = cssBlock(surfacesCss, "html[data-family='mono'] .mini-player .mp-btn--play,")
     expect(surfacesCss).toContain("html[data-theme='dark'][data-family] .mini-player .mp-btn--play")
     expect(playButton).toContain('background: var(--action-primary-bg)')
     expect(playButton).toContain('color: var(--content-on-accent)')
@@ -263,5 +300,29 @@ describe('主题 CSS 回归契约', () => {
     expect(selectors.length).toBeGreaterThan(0)
     expect(selectors.every(selector => selector.startsWith("html[data-theme='dark'][data-family]"))).toBe(true)
     expect(publicPagesCss).not.toMatch(/(?:background|border(?:-color)?)\s*:[^;]*(?:#fff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i)
+  })
+
+  it('页面 Mono 配色与便签 Amber 色卡保持独立', () => {
+    const monoCss = load('./tokens/palettes/mono.css')
+    expect(monoCss).toContain('--theme-action-primary: #746b78')
+    expect(monoCss).toContain('--theme-action-primary: #c0b5c4')
+    expect(monoCss).not.toContain('#ffc05f')
+    expect(load('../../views/Design/components/DesignSystemPage.vue')).toContain("label: 'Amber', token: '--note-paper-amber'")
+  })
+
+  it('真实项目页样板按主题族选择材质层', () => {
+    const designPageVue = load('../../views/Design/components/DesignSystemPage.vue')
+    expect(designPageVue).toContain('<GlassBg />')
+    expect(designPageVue).toContain('class="sample-topbar topbar glass-card"')
+    expect(designPageVue).toContain(":global(html[data-family='mono']) .sample-sidebar{background:var(--chrome-glass-bg);border-right-color:var(--chrome-glass-border);box-shadow:var(--chrome-glass-shadow);backdrop-filter:var(--chrome-glass-blur);-webkit-backdrop-filter:var(--chrome-glass-blur)}")
+    expect(designPageVue).toContain('background:var(--design-card-bg);border:1px solid var(--design-card-border)')
+    expect(designPageVue).toContain('.sample-main > .sample-topbar { --gb-tint: var(--glass-bg);')
+    expect(designPageVue).toContain('.sample-main > .sample-topbar:hover { --gb-tint: var(--glass-bg-hover); }')
+    expect(designPageVue).toContain('.project-column.glass-card { --glass-card-background: var(--column-bg); --glass-card-background-hover: var(--column-bg); }')
+    expect(designPageVue).not.toContain('border: 1px solid transparent;border-radius:var(--radius-md)')
+    expect(designPageVue).not.toContain('border:1px solid var(--border-hairline);border-radius:var(--radius-md);background:var(--column-bg)')
+    expect(designOverridesCss).not.toContain('.design-page .sample-topbar')
+    expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .product-frame")
+    expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .sample-main > .sample-topbar")
   })
 })
