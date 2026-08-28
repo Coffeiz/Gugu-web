@@ -159,7 +159,6 @@ backend/agent/rag/ts_sidecar.py
 backend/ts/workers/rag/**
 backend/tests/test_rag_*.py
 backend/scripts/*rag*
-.github/workflows/rag-sidecar-release.yml
 ```
 
 RAG 的索引、召回、BM25、评分、过滤、去重、预算、TTL、chunk revision 和诊断必须继续由 TS worker 承担；Python 只做调用、权限复核、正文回填和上下文注入。
@@ -504,6 +503,68 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 - [ ] 依赖 devserver/真实第三方账号的 Admin、文件库、画布、终端和 IM 人工回归。
 - [x] 生产进程中只有 FastAPI、Python Agent/Worker 和 TS RAG worker；同一 session/run 没有双 owner、重复回复、重复工具结果、重复 RAG 注入或重复事件。
 
+#### 人工回归检查表
+
+以下检查在 devserver 和真实测试账号上执行。每项记录日期、环境、结果及关键 run/trace；截图、日志和文档不得包含 Token、Cookie、Authorization、API Key 或真实用户隐私。失败项记录复现步骤，不以刷新页面后恢复替代根因说明。
+
+**服务与入口**
+
+- [x] `gugu-backend`、`gugu-worker`、`gugu-supervisor`、`gugu-sandboxd` 均为 `active`。
+- [x] Web、Admin、LoopScope 可登录、刷新和退出；浏览器请求只进入 FastAPI，没有 TS API 端口请求。
+- [x] 新建 Web 会话并连续发送两轮普通文本；回复、生成状态和历史各只出现一次。
+
+**Agent、工具与上下文**
+
+- [ ] 普通问题只产生一个 LLM round，不出现无工具调用的多余续轮。
+- [ ] 调用只读工具；工具气泡显示具体工具名、输入和结果，完成后无需刷新即可看到结果。
+- [ ] destructive 工具验证确认、取消和重复点击；不会重复执行。
+- [ ] 工具参数错误能给出 schema 修正提示，不重复提交相同参数。
+- [ ] `/help`、`/status`、`/compact`、`/new`、`/stop` 均直接响应，不误进入普通 Agent loop。
+- [ ] `/compact` 后继续对话；system、snapshot、工具 schema 边界未被压缩，失败时有明确错误。
+- [ ] 接近上下文预算时继续发送；按规定压缩/重试，不丢失本轮最终回复。
+
+**RAG 与 LoopScope**
+
+- [ ] 分别查询 memory、Knowledge、项目、文件、画布和历史对话；LoopScope 显示 recall、来源、命中数、耗时和注入状态。
+- [ ] 无命中查询明确显示过滤原因，不伪造知识片段。
+- [ ] 连续两轮内容不变时复用 TS worker/index cache；修改一条测试知识后只更新相关 source/chunk。
+- [ ] conversation RAG 不召回当前消息；scope、水位和权限过滤正确。
+- [ ] LoopScope 的 Input、RAG、tool、output、cache 和首个变化点均可查看，未出现重复注入或无 trace。
+
+**实时事件与数据操作**
+
+- [ ] 两个窗口之间的新建、修改、删除项目/文件能实时同步。
+- [ ] SSE 断线重连后按游标补齐，不重复插入、不回滚状态。
+- [ ] 项目、日历、笔记、画布、文件库、定时任务分别完成一次创建、修改和删除/归档，刷新后数据一致。
+- [ ] 普通用户访问其他用户资源被拒绝，响应和日志不泄露内容。
+- [ ] Admin 读取/保存 LLM preset、模型列表和多模态检测；未保存表单 key 能直接用于检测。
+
+**Shell、终端与 IM**
+
+- [ ] 未授权 Shell 被拒绝，不回退到宿主机执行器。
+- [ ] Sandbox 执行读写、超时、取消、配额超限和临时 egress；容器清理、审计和 TTL 正确。
+- [ ] 终端创建、连续输入、回车执行、停止、重命名和关闭正常；停止与启动按钮互斥。
+- [ ] Web、QQ、微信、飞书各发送普通消息、工具调用和交互选项；回复、暂停、恢复、取消和过期选项符合渠道策略。
+- [ ] IM 工具调用信息开关分别验证；关闭时不发送慢进度声明，开启时显示渠道适配后的工具结果。
+
+**通过与收尾**
+
+- [ ] 无 P0/P1；P2 已记录风险、后续 owner 和 issue。
+- [ ] 关键路径完成刷新后复验：聊天、工具、RAG、实时事件、文件库、终端和 IM。
+- [ ] 清理测试文件、任务、沙盒、临时会话和后台进程；确认没有遗留容器。
+- [ ] 本表全部完成后，才能把 Phase 6 和本 PRD 标记为完成。
+
+人工回归记录模板：
+
+```text
+日期 / 环境 / 服务版本：
+测试范围：服务 / Agent / RAG / 事件 / 数据 / Shell / 终端 / IM
+通过项 / 失败项 / 未执行项：
+关键 run 或 trace：
+失败复现、日志位置与后续 owner：
+清理确认：
+```
+
 Phase 6 实施记录（2026-08-28）：
 
 - 新增 `backend/app/api/v1/live.py`，使用 JWT-only 鉴权和独立 Redis pub/sub 订阅，不占用数据库连接；统一输出 `live-event-v1` 与广播通知 SSE frame。
@@ -536,6 +597,37 @@ Phase 6 实施记录（2026-08-28）：
 - 入口扫描结果：生产服务仅保留 `gugu-sandboxd`、`gugu-backend`、`gugu-worker` 和
   `gugu-supervisor`；前端 live store 使用 FastAPI `/api/v1/live/stream`；TypeScript 运行时
   仅保留固定 TS RAG worker，未发现 TS API/TS Agent 启动入口。
+
+### Phase 7：补回 Python 侧安全/兼容补丁与文档结构
+
+本阶段处理提交清点中发现的、属于当前 Python/FastAPI 生产 owner 但尚未恢复的内容；不重新启用 TS API 或 TS Agent。
+
+候选 commit：
+
+```text
+59e65b40  整理 TypeScript 迁移基线与运行配置（拆出其中的 Python 文件补丁）
+2d6a965a  重整 Agent 文档与上下文工程说明（仅恢复文档结构）
+78fd82b0  新增 TypeScript 后端目录职责重组 PRD（恢复为迁移参考文档）
+89862932  新增咕咕配色与主题解耦 PRD（恢复 UI 设计参考文档）
+```
+
+- [x] 从 `59e65b40` 单独恢复 `backend/agent/security/sanitize.py` 的时间 reminder 合并边界，避免同一轮产生重复时间上下文。
+- [x] 从 `59e65b40` 单独恢复 `backend/app/services/files/previews.py` 的旧 MIME 检测逻辑，并补齐对应回归测试。
+- [x] 将 Agent 文档整理为 `00-INDEX.md`、`01-OVERVIEW.md`、`02-ARCHITECTURE.md`、`03-AGENT-LOOP.md` 和 `04-CONTEXT-ENGINEERING.md`；旧文档保持为历史参考，不改变运行时注入。
+- [x] 恢复 `PRD-ARCH-4-TypeScript后端目录职责重组.md` 和 `PRD-UI-3-咕咕配色与主题解耦.md`；它们只作为设计/迁移参考，不改变当前 FastAPI/Python owner。
+- [x] 审核 RAG、pnpm 和 Phase 0 验收报告的路径迁移；保留内容等价的现有报告，只有确实缺失的报告才恢复，避免同一报告出现两份。
+- [x] 检查恢复后的 Python 安全模块、文件预览和文档链接，确保不引入第二套 owner、兼容分支或敏感信息。
+- [x] 完成 Python 单元测试、文件安全测试和文档路径扫描，并将结果写回本 PRD。
+
+明确排除：`4d89a4d1`、`9fe3900d`、`953dde7f`、`bfed8e3b`、`90645356`、`8080742a`、
+`6e0f9036`、`15621bf2` 等 TS API/TS Agent 鉴权、写入门、项目校验、事件事务、命令 lease
+续期和终态回收补丁。它们只能在 TS owner 恢复时重新评估，当前不得直接应用到 Python 生产链路。
+
+Phase 7 实施记录（2026-08-28）：
+
+- Python `sanitize_messages()` 现在区分可合并的时间 reminder 与需要保持边界的其他 reminder；文件预览可从旧记录的泛化 MIME 中安全识别常见图片格式。
+- 新增 Agent 文档 canonical 入口和 ARCH-4、UI-3 参考 PRD；未恢复 TS API/TS Agent 运行入口。
+- 针对历史清洗和文件预览安全执行 `16 passed`；`git diff --check` 和文档路径扫描通过。
 
 ## 7. 最终验收标准
 

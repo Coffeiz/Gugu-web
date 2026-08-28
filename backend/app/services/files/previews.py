@@ -19,6 +19,17 @@ IMAGE_MIMES = frozenset({
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "image/avif", "image/bmp", "image/svg+xml", "image/heic", "image/heif",
 })
+_DETECTED_IMAGE_MIMES = {
+    "JPEG": "image/jpeg",
+    "PNG": "image/png",
+    "GIF": "image/gif",
+    "WEBP": "image/webp",
+    "AVIF": "image/avif",
+    "BMP": "image/bmp",
+    "HEIC": "image/heic",
+    "HEIF": "image/heif",
+}
+GENERIC_IMAGE_MIMES = frozenset({"", "application/octet-stream", "binary/octet-stream"})
 _PDF_CACHE: dict[str, bytes] = {}
 
 
@@ -29,6 +40,25 @@ class PreviewError(ValueError):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+def resolve_image_mime(raw: bytes, declared_mime: str | None) -> str | None:
+    """为旧上传记录从图片内容推断缺失或泛化的 MIME 类型。"""
+    declared = (declared_mime or "").lower().strip()
+    if declared == "image/jpg":
+        declared = "image/jpeg"
+    if declared in IMAGE_MIMES:
+        return declared
+    if declared not in GENERIC_IMAGE_MIMES:
+        return None
+    try:
+        from io import BytesIO
+        from PIL import Image
+
+        with Image.open(BytesIO(raw)) as image:
+            return _DETECTED_IMAGE_MIMES.get(str(image.format or "").upper())
+    except Exception:
+        return None
 
 
 def read_image_dimensions(raw: bytes, mime_type: str | None) -> tuple[int | None, int | None]:
@@ -155,8 +185,10 @@ async def read_file_thumbnail(
     size: str,
 ) -> tuple[bytes, str]:
     """读取并渲染文件缩略图；存储不存在由调用方映射为 HTTP 404。"""
-    mime = mime_type.lower()
     raw = await storage.get(storage_key)
+    mime = resolve_image_mime(raw, mime_type)
+    if mime is None:
+        raise PreviewError(415, "不是图片文件")
     if size == "full" or mime == "image/svg+xml":
         return raw, mime
     return await render_thumbnail(raw, file_id, size, mime)

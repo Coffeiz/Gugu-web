@@ -38,6 +38,7 @@ from app.services.storage import get_storage
 from app.services.storage.file_service import FileService
 from app.services.files.selection import build_batch_zip
 from app.services.files.previews import (
+    GENERIC_IMAGE_MIMES,
     IMAGE_MIMES,
     PreviewError,
     delete_thumb_cache,
@@ -534,7 +535,7 @@ async def get_thumb(
         raise HTTPException(404, "文件不存在")
 
     mime = (f.mime_type or '').lower()
-    if mime not in IMAGE_MIMES:
+    if mime not in IMAGE_MIMES and mime not in GENERIC_IMAGE_MIMES:
         raise HTTPException(415, "不是图片文件")
 
     try:
@@ -547,6 +548,8 @@ async def get_thumb(
         )
     except FileNotFoundError:
         raise HTTPException(404, "物理文件丢失")
+    except PreviewError as error:
+        raise HTTPException(error.status_code, error.detail)
     return FastAPIResponse(content=content, media_type=media_type,
                            headers={"Cache-Control": "private, max-age=86400"})
 

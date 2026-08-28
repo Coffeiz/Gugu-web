@@ -31,10 +31,10 @@ backend/agent/rag/
 ├── persistent_store.py   # knowledge_index_entries 持久化索引读写
 ├── index_cache.py        # TypeScript 词法索引、snapshot 文档缓存与 TTL/容量管理
 ├── ts_sidecar.py         # TypeScript worker 异步客户端
-├── tokenizer.py          # Jieba + 中英文实体统一分词
+├── tokenizer.py          # 业务侧查询规范化辅助；词法分词由 TypeScript worker 负责
 ├── retriever.py          # 来源无关 Retriever 调度协议
 ├── service.py            # UnifiedRecallService 统一召回、融合和预算
-├── scoring.py            # 归一化、RRF、置信度和多样性评分
+├── scoring.py            # 已删除；归一化、RRF、置信度和多样性评分由 TypeScript worker 负责
 ├── hybrid.py             # 词法结果与已有向量缓存的混合排序
 ├── scope.py              # owner/group/member scope 与硬权限过滤
 ├── injection.py          # 自动召回结果编码为 history 消息
@@ -331,7 +331,7 @@ backend/scripts/diagnostics/capability_recommendation_probe.py
 - Scope 过滤：`backend/agent/rag/scope.py`
 - TypeScript worker 缓存：`backend/agent/rag/index_cache.py`
 - TypeScript sidecar：`backend/agent/rag/ts_sidecar.py`
-- 分词与评分：`backend/agent/rag/tokenizer.py`、`backend/agent/rag/scoring.py`
+- 查询规范化：`backend/agent/rag/tokenizer.py`；分词、评分和过滤由 `backend/ts/workers/rag/` 负责
 - 自动注入：`backend/agent/rag/injection.py`
 - 诊断：`backend/agent/rag/diagnostics.py`
 - Capability 离线推荐：`backend/scripts/diagnostics/capability_recommendation_probe.py`

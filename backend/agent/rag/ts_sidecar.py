@@ -406,20 +406,36 @@ def _ensure_sidecar_reaper(loop: asyncio.AbstractEventLoop) -> None:
         _sidecar_reaper_tasks[loop] = loop.create_task(_reap_idle_sidecars(loop))
 
 
+def _take_idle_sidecars(
+    loop: asyncio.AbstractEventLoop, *, now: float | None = None,
+) -> list[TsSidecarClient]:
+    """从两种注册表中摘除空闲 client，返回交给调用方关闭的实例。"""
+    idle_clients: list[TsSidecarClient] = []
+    lexical_clients = _lexical_clients.get(loop, {})
+    for key, client in list(lexical_clients.items()):
+        if not client.is_idle(now):
+            continue
+        # 只有注册表仍指向同一个实例时才删除，避免并发重建时误删新 client。
+        if lexical_clients.get(key) is client:
+            lexical_clients.pop(key, None)
+            idle_clients.append(client)
+
+    # 排序 worker 是每个 event loop 一个实例，不是 owner -> client 映射。
+    rank_client = _rank_clients.get(loop)
+    if rank_client is not None and rank_client.is_idle(now):
+        if _rank_clients.get(loop) is rank_client:
+            _rank_clients.pop(loop, None)
+            idle_clients.append(rank_client)
+    return idle_clients
+
+
 async def _reap_idle_sidecars(loop: asyncio.AbstractEventLoop) -> None:
     """回收连续空闲 30 分钟的 worker；不影响活跃请求。"""
     current = asyncio.current_task()
     try:
         while True:
             await asyncio.sleep(SIDE_CAR_REAPER_INTERVAL_SECONDS)
-            idle_clients: list[TsSidecarClient] = []
-            for registry in (_lexical_clients.get(loop, {}), _rank_clients.get(loop, {})):
-                for key, client in list(registry.items()):
-                    if not client.is_idle():
-                        continue
-                    if registry.get(key) is client:
-                        registry.pop(key, None)
-                        idle_clients.append(client)
+            idle_clients = _take_idle_sidecars(loop)
             if idle_clients:
                 await asyncio.gather(*(client.close() for client in idle_clients), return_exceptions=True)
             if not _lexical_clients.get(loop) and not _rank_clients.get(loop):

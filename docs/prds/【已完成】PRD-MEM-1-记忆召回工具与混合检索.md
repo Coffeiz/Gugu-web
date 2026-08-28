@@ -40,9 +40,8 @@ Memory 映射，不另起一套协议。
 
 本 PRD 不替换 `global_search`，也不把 `search_conversations` / `read_conversation` 合并进记忆工具。三者可以共用底层排序组件，但数据源、权限和返回格式保持独立。
 
-记忆来源不再维护独立的最低分、归一化或排序规则；统一交给
-`backend/agent/rag/scoring.py` 和 `UnifiedRecallService`，工具层只负责参数、scope
-和返回格式。
+记忆来源不再维护独立的最低分、归一化或排序规则；统一交给 TS RAG worker 和
+`UnifiedRecallService`，工具层只负责参数、scope 和返回格式。
 
 ## 2. 功能需求
 

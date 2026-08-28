@@ -116,3 +116,18 @@ def test_sanitize_keeps_user_reminder_boundary():
     assert [item["role"] for item in cleaned] == ["user", "user"]
     assert cleaned[0]["content"][0]["text"].startswith("[system-reminder]")
     assert cleaned[1]["content"][0]["text"] == "当前问题"
+
+
+def test_sanitize_merges_current_time_with_same_user_message():
+    messages = [
+        {"role": "user", "content": "[system-reminder]\n08-28 12:00\n[/system-reminder]"},
+        {"role": "user", "content": "当前问题"},
+    ]
+
+    cleaned = sanitize_messages(messages)
+
+    assert len(cleaned) == 1
+    assert [block["text"] for block in cleaned[0]["content"]] == [
+        "[system-reminder]\n08-28 12:00\n[/system-reminder]",
+        "当前问题",
+    ]
