@@ -29,13 +29,15 @@
   >
 
     <template #breadcrumb>
-      <FileBrowserBreadcrumb>
+      <div class="breadcrumb-nav">
         <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
           <Icon name="action.back" :size="14" />
         </button>
         <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" title="前进">
           <Icon name="action.next" :size="14" />
         </button>
+      </div>
+      <FileBrowserBreadcrumb>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
           <span class="bc-label">全部文件</span>
         </button>
@@ -853,32 +855,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
-/* 面包屑 */
-.breadcrumb {
-  display: flex; align-items: center; gap: 4px;
-  flex: 1; min-width: 0; overflow: hidden;
-}
-.nav-hist-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 7px; border: none;
-  background: none; cursor: pointer; color: var(--text-secondary);
-  transition: all 0.13s; flex-shrink: 0;
-}
-.nav-hist-btn:hover:not(:disabled) { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-.nav-hist-btn:disabled { opacity: 0.28; cursor: default; }
-.bc-item {
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px; border-radius: 7px; border: none;
-  background: none; cursor: pointer;
-  font-size: 12px; font-weight: 500; color: var(--text-secondary);
-  font-family: var(--font-sans);
-  white-space: nowrap; flex-shrink: 0;
-}
-.bc-item:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-.bc-item.active { color: var(--text-primary); font-weight: 600; cursor: default; }
-.bc-item.active:hover { background: none; }
-.bc-item.bc-drop-target { background: rgba(123,127,178,0.15); color: var(--color-primary); }
-.bc-arrow { color: var(--text-secondary); opacity: 0.4; flex-shrink: 0; }
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 /* 视图切换 */

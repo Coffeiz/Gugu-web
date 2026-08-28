@@ -4,7 +4,8 @@
     <div ref="breadcrumbViewport" class="breadcrumb-viewport"
       @pointerdown="startBreadcrumbDrag" @pointermove="moveBreadcrumbDrag"
       @pointerup="endBreadcrumbDrag" @pointercancel="endBreadcrumbDrag"
-      @click.capture="cancelBreadcrumbClick">
+      @click.capture="cancelBreadcrumbClick"
+    >
       <slot name="breadcrumb" />
     </div>
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
@@ -41,7 +42,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch, type PropType } from 'vue'
+import { nextTick, onMounted, onUnmounted, onUpdated, ref, watch, type PropType } from 'vue'
 import Icon from '@/components/common/Icon.vue'
 import CloseButton from '@/components/common/CloseButton.vue'
 import SortMenu from '@/components/common/SortMenu.vue'
@@ -86,9 +87,50 @@ let dragStartScroll = 0
 let activeBreadcrumbPointerId: number | null = null
 let breadcrumbDragging = false
 let suppressBreadcrumbClick = false
+let breadcrumbLayoutFrame = 0
+let breadcrumbResizeObserver: ResizeObserver | null = null
+
+function scheduleBreadcrumbLayout() {
+  if (breadcrumbLayoutFrame) cancelAnimationFrame(breadcrumbLayoutFrame)
+  breadcrumbLayoutFrame = requestAnimationFrame(() => {
+    breadcrumbLayoutFrame = 0
+    updateBreadcrumbOverflow()
+  })
+}
+
+/** 保持当前目录为右侧锚点，从最上级开始逐项压缩目录文字。 */
+function updateBreadcrumbOverflow() {
+  const scroller = breadcrumbScroller()
+  if (!scroller) return
+  const items = Array.from(scroller.querySelectorAll<HTMLElement>('.bc-item, .bc-seg'))
+  items.forEach(item => {
+    item.style.width = ''
+    item.style.flexShrink = '0'
+    item.classList.remove('is-breadcrumb-compressed')
+  })
+
+  let overflow = Math.max(0, scroller.scrollWidth - scroller.clientWidth)
+  const activeIndex = items.findIndex(item => item.classList.contains('active'))
+  items.forEach((item, index) => {
+    if (index === activeIndex || overflow <= 0) return
+    const naturalWidth = item.getBoundingClientRect().width
+    const labelWidth = item.querySelector<HTMLElement>('.bc-label')?.getBoundingClientRect().width ?? 0
+    const minimum = Math.max(30, naturalWidth - labelWidth + 18)
+    const reduction = Math.min(overflow, Math.max(0, naturalWidth - minimum))
+    if (reduction <= 0) return
+    item.style.width = `${naturalWidth - reduction}px`
+    item.classList.add('is-breadcrumb-compressed')
+    overflow -= reduction
+  })
+}
+
+function breadcrumbScroller() {
+  return breadcrumbViewport.value?.querySelector<HTMLElement>('.breadcrumb, .file-breadcrumb') ?? null
+}
 
 function startBreadcrumbDrag(event: PointerEvent) {
-  const el = breadcrumbViewport.value
+  if ((event.target as HTMLElement).closest('.breadcrumb-nav')) return
+  const el = breadcrumbScroller()
   if (!el || event.button !== 0) return
   dragStartX = event.clientX
   dragStartScroll = el.scrollLeft
@@ -96,7 +138,7 @@ function startBreadcrumbDrag(event: PointerEvent) {
   breadcrumbDragging = false
 }
 function moveBreadcrumbDrag(event: PointerEvent) {
-  const el = breadcrumbViewport.value
+  const el = breadcrumbScroller()
   if (!el || activeBreadcrumbPointerId !== event.pointerId) return
   const delta = event.clientX - dragStartX
   if (!breadcrumbDragging && Math.abs(delta) < 4) return
@@ -107,7 +149,7 @@ function moveBreadcrumbDrag(event: PointerEvent) {
   event.preventDefault()
 }
 function endBreadcrumbDrag(event: PointerEvent) {
-  const el = breadcrumbViewport.value
+  const el = breadcrumbScroller()
   if (el?.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId)
   if (activeBreadcrumbPointerId === event.pointerId) activeBreadcrumbPointerId = null
   breadcrumbDragging = false
@@ -118,6 +160,19 @@ function cancelBreadcrumbClick(event: MouseEvent) {
   event.stopPropagation()
   suppressBreadcrumbClick = false
 }
+onMounted(() => {
+  breadcrumbResizeObserver = new ResizeObserver(() => scheduleBreadcrumbLayout())
+  if (breadcrumbViewport.value) breadcrumbResizeObserver.observe(breadcrumbViewport.value)
+  scheduleBreadcrumbLayout()
+})
+onUpdated(() => {
+  scheduleBreadcrumbLayout()
+})
+onUnmounted(() => {
+  if (breadcrumbLayoutFrame) cancelAnimationFrame(breadcrumbLayoutFrame)
+  breadcrumbResizeObserver?.disconnect()
+  breadcrumbResizeObserver = null
+})
 function cancelFolder() {
   emit('update:show-new-folder', false)
   emit('update:new-folder-name', '')
@@ -145,22 +200,26 @@ watch(() => props.showNewFolder, value => {
 }
 .breadcrumb-viewport {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   cursor: grab;
   touch-action: pan-x;
 }
-.breadcrumb-viewport:active { cursor: grabbing; }
 .breadcrumb-viewport :deep(.breadcrumb),
 .breadcrumb-viewport :deep(.file-breadcrumb) {
-  flex: 0 0 auto;
-  width: 100%;
-  min-width: 100%;
-  overflow-x: auto;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  overflow: hidden;
   overflow-y: hidden;
+  overflow-x: auto;
   scrollbar-width: none;
 }
+.breadcrumb-viewport:active { cursor: grabbing; }
 .breadcrumb-viewport :deep(.breadcrumb::-webkit-scrollbar),
 .breadcrumb-viewport :deep(.file-breadcrumb::-webkit-scrollbar) { display: none; }
 .new-folder-inline {
