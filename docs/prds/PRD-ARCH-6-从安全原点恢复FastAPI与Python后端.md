@@ -387,6 +387,20 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 - [ ] 应用 Python Agent/context/tools/IM/scheduler/LoopScope 补丁，清理 TS Agent registry、native handler、context bridge 和重复 dispatch。
 - [ ] 验证工具调用、交互选择、确认门、IM 回复、压缩、取消、恢复和 LoopScope trace。
 
+### Phase 3.5：Devserver 数据库恢复
+
+数据库恢复必须在 Python/FastAPI 代码恢复完成后、TS RAG 与 Make/部署收口前执行。这样可以先确定最终的 SQLAlchemy/Alembic schema 和业务 owner，再处理已经经历过 TS 后端迁移的 devserver 数据库；不通过 Git cherry-pick 解决，也不能用本地数据库覆盖远端数据。
+
+- [ ] 在 devserver 上生成带时间戳的数据库备份，并验证备份可以读取和恢复到临时数据库。
+- [ ] 对比安全原点对应的 Python/FastAPI schema、当前 devserver schema、Alembic 迁移记录和 TS 迁移新增字段/表/索引。
+- [ ] 区分 Python/FastAPI 必需结构、TS 迁移遗留结构和仍被业务数据使用的结构；先保留数据，再处理无 owner 的旧结构。
+- [ ] 使用可审计、可重复的 Alembic/SQL 迁移恢复 Python/FastAPI 所需表、字段、约束、索引和枚举，不直接执行不可逆删除。
+- [ ] 将 TS API 专属 repository、owner 字段或事件表迁回 Python 语义；若存在数据映射，先做数量、主键、外键和归属校验。
+- [ ] 验证用户、会话/run、消息、工具调用、文件、项目、画布、记忆、知识、定时任务、终端和事件数据均可被 Python API 正常读取。
+- [ ] 数据库验证通过后，才允许执行旧 TS 专属结构的清理；清理前再次确认没有 Make、FastAPI、Agent、RAG 或前端引用。
+
+数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
+
 ### Phase 4：恢复并固定 TS RAG
 
 候选 commit（初始状态，均待应用或按文件拆分）：
@@ -422,37 +436,22 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 - [ ] 清理 TS API/TS Agent systemd、Compose、Dockerfile、bin、环境变量和默认启动项。
 - [ ] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有悬挂 TS API/Agent 入口。
 
-### Phase 6：数据库恢复、全链路验收与实时事件收口
+### Phase 6：全链路验收与实时事件收口
 
 候选 commit：
 
 ```text
 [ ] 各阶段标记为“拆分待复核”的剩余补丁
-[ ] FastAPI/SQLAlchemy/Alembic 数据库恢复所需的文件级迁移补丁
 [ ] 实时事件回迁所需的 Python/FastAPI 文件级补丁
 [ ] 未归类但通过功能扫描发现的必要 parity 补丁
 ```
 
 Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的拆分残余、数据库恢复和验收发现；每个残余项必须先归属到具体 owner，再决定保留、重写或排除。
 
-#### 6.2 Devserver 数据库恢复
-
-Devserver 数据库已经经历过 TS 后端迁移，数据库恢复是最终切换步骤，不通过 Git cherry-pick 解决，也不能用本地数据库覆盖远端数据。
-
-- [ ] 在 devserver 上生成带时间戳的数据库备份，并验证备份可以读取和恢复到临时数据库。
-- [ ] 对比安全原点对应的 Python/FastAPI schema、当前 devserver schema、Alembic 迁移记录和 TS 迁移新增字段/表/索引。
-- [ ] 区分 Python/FastAPI 必需结构、TS 迁移遗留结构和仍被业务数据使用的结构；先保留数据，再处理无 owner 的旧结构。
-- [ ] 使用可审计、可重复的 Alembic/SQL 迁移恢复 Python/FastAPI 所需表、字段、约束、索引和枚举，不直接执行不可逆删除。
-- [ ] 将 TS API 专属 repository、owner 字段或事件表迁回 Python 语义；若存在数据映射，先做数量、主键、外键和归属校验。
-- [ ] 验证用户、会话/run、消息、工具调用、文件、项目、画布、记忆、知识、定时任务、终端和事件数据均可被 Python API 正常读取。
-- [ ] 数据库验证通过后，才允许执行旧 TS 专属结构的清理；清理前再次确认没有 Make、FastAPI、Agent、RAG 或前端引用。
-
-数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
-
 - [ ] 将实时事件 HTTP/SSE/WebSocket owner 明确收口为 FastAPI。
 - [ ] 保留 Python canonical publisher、Redis event bus、事件游标、重连补偿、幂等去重、前端 stores 和 LoopScope 记录。
 - [ ] 确认 Agent 生成流、工具事件、资源刷新事件不会互相覆盖，也不会因重连重复应用。
-- [ ] 数据库恢复、数据校验和 Python/FastAPI 读写冒烟全部通过后，再切换 devserver 默认服务。
+- [ ] Phase 3.5 数据库恢复与数据校验完成后，再切换 devserver 默认服务。
 - [ ] Python/FastAPI 全量测试、前端/Admin/文件库/画布/终端/IM 回归通过。
 - [ ] TS RAG typecheck、单元测试、协议测试、性能测试和真实数据测试通过。
 - [ ] 生产进程中只有 FastAPI、Python Agent/Worker 和 TS RAG worker；同一 session/run 没有双 owner、重复回复、重复工具结果、重复 RAG 注入或重复事件。
