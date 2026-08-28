@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -41,6 +42,7 @@ const task = { id: 7, name: '科技新闻', payload: '收集新闻', cron: '5 9 
 
 describe('useScheduledTasks', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.clearAllMocks()
     mocks.refresh = null
     mocks.list.mockResolvedValue({ tasks: [task] })

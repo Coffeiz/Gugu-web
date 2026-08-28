@@ -44,9 +44,11 @@ html[data-theme][data-family] .topbar .btn-primary-custom {
   background: var(--action-primary-bg) !important;
   border-color: transparent !important;
   box-shadow: none !important;
+  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover {
-  background: var(--action-primary-bg-hover) !important;
+  background: var(--action-primary-bg) !important;
+  filter: brightness(1.05);
   box-shadow: none !important;
 }
 

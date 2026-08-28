@@ -38,7 +38,47 @@ function fixLooseBold(text: string) {
   ).join('')
 }
 
-export function renderMd(text: string) { return text ? marked.parse(fixLooseBold(text)) as string : '' }
+function normalizeTableLine(line: string) {
+  return line.replace(/\\\|/g, '|').replace(/\|\\\s*$/, '|')
+}
+
+function isTableDelimiter(line: string) {
+  const normalized = normalizeTableLine(line).trim()
+  return /^\|?\s*:?-{3,}(?:\s*\|\s*:?-{3,})+\s*\|?$/.test(normalized)
+}
+
+// 有些模型为了把 Markdown 放进 JSON/富文本，会把表格竖线输出成 \\|。
+// 只在已确认的“表头 + 分隔行”表格块内还原，避免破坏正文、代码和 URL 中的转义符。
+function fixEscapedTablePipes(text: string) {
+  const lines = text.split('\n')
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    if (!lines[index].includes('|') || !isTableDelimiter(lines[index + 1])) continue
+    // 模型偶尔会把标题和表头粘成“标题|列 1|列 2”。只有下一行已经确认是
+    // 分隔行时才拆开，避免把普通含竖线的句子误判成表格。
+    const firstPipe = lines[index].indexOf('|')
+    let tableStart = index
+    if (firstPipe > 0 && lines[index].slice(firstPipe).split('|').length >= 4) {
+      const heading = lines[index].slice(0, firstPipe).trimEnd()
+      const header = lines[index].slice(firstPipe)
+      lines[index] = heading
+      lines.splice(index + 1, 0, '', header)
+      tableStart = index + 2
+    }
+    let row = tableStart
+    while (row < lines.length && lines[row].trim() && lines[row].includes('|')) {
+      lines[row] = normalizeTableLine(lines[row])
+      row += 1
+    }
+    index = row - 1
+  }
+  return lines.join('\n')
+}
+
+function prepareMarkdown(text: string) {
+  return fixLooseBold(fixEscapedTablePipes(text))
+}
+
+export function renderMd(text: string) { return text ? marked.parse(prepareMarkdown(text)) as string : '' }
 
 // 流式渲染专用：补全未闭合的代码围栏，避免 marked 把半段代码块解析成残缺 HTML
 // 单条缓存：同一帧内 text 未变则直接返回上次结果，避免重复解析
@@ -48,7 +88,7 @@ export function renderMdStream(text: string) {
   if (_mdStreamCache?.text === text) return _mdStreamCache.html
   const fences = (text.match(/^```/gm) || []).length
   const patched = fences % 2 === 1 ? text + '\n```' : text
-  const html = marked.parse(patched) as string
+  const html = marked.parse(prepareMarkdown(patched)) as string
   _mdStreamCache = { text, html }
   return html
 }

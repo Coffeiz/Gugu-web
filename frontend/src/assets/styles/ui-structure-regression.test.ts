@@ -165,7 +165,8 @@ describe('导航 / popup / disclosure 结构回归契约', () => {
     expect(analyticsUsage).toContain('.expand-btn svg { transform: rotate(-90deg);')
     expect(analyticsUsage).toContain('.expand-btn svg.open { transform: rotate(0deg); }')
 
-    expect(trashView).toContain('.trash-expand-btn svg { transform: rotate(-90deg);')
-    expect(trashView).toContain('.trash-expand-btn svg.rotated { transform: rotate(0deg); }')
+    expect(trashView).toContain('<FlipChevron :open="expandedTrashFolders.has(folder.id)" :size="8" />')
+    expect(trashView).toContain('.trash-folder-contents[data-layout-open="false"]')
+    expect(trashView).toContain('.trash-folder-contents::before')
   })
 })

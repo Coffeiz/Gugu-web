@@ -46,8 +46,8 @@
   --confirm-dialog-confirm-fg: var(--content-on-accent);
   --confirm-dialog-confirm-bg: var(--action-primary-bg);
   --confirm-dialog-confirm-bg-hover: var(--action-primary-bg-hover);
-  --confirm-dialog-confirm-border: var(--action-primary-bg);
-  --confirm-dialog-confirm-border-hover: var(--action-primary-bg-hover);
+  --confirm-dialog-confirm-border: var(--action-primary-fill);
+  --confirm-dialog-confirm-border-hover: var(--action-primary-fill-hover);
   --confirm-dialog-danger-confirm-fg: var(--content-on-accent);
   --confirm-dialog-danger-confirm-bg: var(--status-danger);
   --confirm-dialog-danger-confirm-bg-hover: color-mix(in srgb,var(--status-danger) 84%,#000);
@@ -207,8 +207,14 @@
   --rename-input-fg: var(--input-fg);
 
   /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
-  --danger-button-bg: var(--status-danger-bg);
-  --danger-button-bg-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-fill: var(--status-danger-bg);
+  --danger-button-fill-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-bg: linear-gradient(to bottom,
+    color-mix(in srgb, var(--danger-button-fill) 94%, white),
+    color-mix(in srgb, var(--danger-button-fill) 94%, black));
+  --danger-button-bg-hover: linear-gradient(to bottom,
+    color-mix(in srgb, var(--danger-button-fill-hover) 94%, white),
+    color-mix(in srgb, var(--danger-button-fill-hover) 94%, black));
   --danger-button-fg: var(--status-danger);
   --danger-button-border: color-mix(in srgb,var(--status-danger) 30%,transparent);
   --danger-button-border-hover: color-mix(in srgb,var(--status-danger) 48%,transparent);
@@ -344,6 +350,7 @@ html[data-theme='dark'][data-family] {
   --folder-card-checkbox-fg-checked: var(--content-on-accent);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
+  --switch-track-bg-active: color-mix(in srgb,var(--action-primary) 46%,var(--surface-card-solid));
   --switch-thumb-bg: var(--content-on-accent);
   /* 暗色用户气泡不能直接用 action-primary（暗色主题下是浅亮紫）：白色文字下
      对比不足且整块偏亮。混入深色卡面后保持品牌紫身份但收敛亮度。 */

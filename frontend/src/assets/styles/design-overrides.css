@@ -124,8 +124,10 @@ html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample
   box-shadow:none;
 }
 
-html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:70; }
-html[data-theme][data-family] .design-page .sample-gugu-fab { z-index:69; }
+/* Design page hero must remain above the product preview's floating controls;
+   keep the chat mock above the preview topbar without escaping the page layer. */
+html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:40; }
+html[data-theme][data-family] .design-page .sample-gugu-fab { z-index:39; }
 
 html[data-theme][data-family] .design-page .add-project {
   width:100%;

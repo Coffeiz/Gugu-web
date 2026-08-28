@@ -49,7 +49,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, beginMindLanding, endMindLanding, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
 import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
@@ -265,20 +265,27 @@ const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
 function onRuntimeVisual(event: RuntimeEvent) {
-  if (event.type === 'move-visual-end') {
+  if (event.type === 'move-visual-end' || event.type === 'move-visual-settled') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
-    landingObjectNodeIds.delete(event.objectId)
+    if (event.type === 'move-visual-settled') {
+      endMindLanding(event.objectId)
+      landingObjectNodeIds.delete(event.objectId)
+    }
     if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
-    if (nodeId == null) return
-    landingPositions.delete(nodeId)
-    landingNodeIds.delete(nodeId)
-    const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
-      .some(element => element.matches(':hover'))
-    if (hovered) hoveredNodeId.value = nodeId
+    if (nodeId != null) {
+      landingPositions.delete(nodeId)
+      landingNodeIds.delete(nodeId)
+      const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
+        .some(element => element.matches(':hover'))
+      if (hovered) hoveredNodeId.value = nodeId
+    }
     return
   }
   if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
+  // 实时事件不能在 active 阶段刷新正在被 regrab 的对象；否则旧 landing
+  // 收尾时的 refresh 会把新 session 使用的 optimistic DOM 替换掉。
+  beginMindLanding(event.objectId)
   runtimeVisualFrame.value++
   const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return

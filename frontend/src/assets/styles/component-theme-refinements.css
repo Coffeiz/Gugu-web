@@ -56,13 +56,15 @@ html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
   box-shadow: none !important;
+  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover,
 html[data-theme][data-family] .sample-topbar .sample-primary:hover,
 html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
 html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
-  background: var(--action-primary-bg-hover) !important;
+  background: var(--action-primary-bg) !important;
+  filter: brightness(1.05);
   box-shadow: none !important;
 }
 

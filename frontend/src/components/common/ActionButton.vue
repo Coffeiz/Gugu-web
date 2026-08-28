@@ -36,7 +36,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   word-break: keep-all;
   writing-mode: horizontal-tb;
   cursor: pointer;
-  transition: background-color var(--motion-hover-control) var(--motion-ease-standard),
+  transition: filter var(--motion-hover-control) var(--motion-ease-standard),
     border-color var(--motion-hover-control) var(--motion-ease-standard),
     color var(--motion-hover-control) var(--motion-ease-standard),
     box-shadow var(--motion-hover-control) var(--motion-ease-standard),
@@ -49,7 +49,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   background: var(--action-primary-bg);
   box-shadow: none;
 }
-.app-action-button.is-primary:hover:not(:disabled) { background: var(--action-primary-bg-hover); box-shadow: none; opacity: .92; }
+.app-action-button.is-primary:hover:not(:disabled) { background: var(--action-primary-bg); filter: brightness(1.05); box-shadow: none; opacity: .92; }
 .app-action-button.is-secondary {
   border: 1px solid var(--action-secondary-border);
   color: var(--action-secondary-fg);
@@ -59,7 +59,8 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
 .app-action-button.is-secondary:hover:not(:disabled) {
   border-color: var(--action-secondary-border-hover);
   color: var(--action-secondary-fg-hover);
-  background: var(--action-secondary-bg-hover);
+  background: var(--action-secondary-bg);
+  filter: brightness(1.04);
   box-shadow: none;
 }
 .app-action-button:disabled { opacity: .5; cursor: default; }
