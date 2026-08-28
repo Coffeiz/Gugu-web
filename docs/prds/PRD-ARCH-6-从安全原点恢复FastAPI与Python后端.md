@@ -420,7 +420,7 @@ Phase 3.5 验证记录（2026-08-28）：
 - Schema：数据库公共表 43 张；当前 Python 模型 40 张业务表全部存在。额外的 `conversation_batches` 由 Python canonical history 使用，`mind_canvas_batch_requests` 由 Python 画布批处理幂等服务使用，均保留。
 - 数据抽样：users 19、conversation_sessions 113、conversation_messages 8589、files 519、folders 214、projects 105、mind_nodes 510、mind_canvas_items 140、memory_entries 446、knowledge_index_entries 4063、scheduled_tasks 6、terminal_sessions 2、terminal_events 109。
 - 服务冒烟：`gugu-backend`、`gugu-worker`、`gugu-supervisor` 均为 active，FastAPI 本机健康检查返回 HTTP 200。`alembic check` 仍报告 TS 迁移遗留索引/类型与当前模型的差异；由于其中包含已有数据和 Python 仍使用的结构，本阶段不执行自动删除，后续由专门 schema 收口阶段处理。
-- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api`，未启动 TS Agent；`gugu-live` 仍作为实时事件迁移前的过渡入口保留，待 Phase 6 由 FastAPI 接管后再清理。当前 Python 后端、Worker、Supervisor 是唯一的 Agent/API 业务 owner。
+- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api`，未启动 TS Agent；实时事件入口在 Phase 6 收口到 FastAPI。当前 Python 后端、Worker、Supervisor 是唯一的 Agent/API 业务 owner。
 
 数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
 
@@ -465,7 +465,7 @@ Phase 4 验证记录（2026-08-28）：
 - [x] 重新整理 `make install/update/start/stop/restart`；核心服务只启动 FastAPI、Python worker/supervisor 和 sandboxd，TS RAG 由 Python adapter 按需复用固定制品。
 - [x] 保留 pnpm workspace、前端/RAG 构建和固定构建物，不在业务运行时编译或启动 TS API/TS Agent。
 - [x] 保留数据库、文件迁移、sandbox、ACL、Compose 和部署能力，并按当前 Python/FastAPI owner 保持依赖顺序。
-- [x] 清理 TS API/TS Agent 的独立启动入口、systemd/Compose/build 依赖和默认启动项；当前仓库仅保留 `gugu-live` 作为 Phase 6 实时事件迁移遗留入口。
+- [x] 清理 TS API/TS Agent 的独立启动入口、systemd/Compose/build 依赖和默认启动项；实时事件遗留入口统一在 Phase 6 清理。
 - [x] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有 TS API/TS Agent 业务入口；实时事件相关引用统一登记到 Phase 6。
 
 Phase 5 实施记录（2026-08-28）：
@@ -473,10 +473,10 @@ Phase 5 实施记录（2026-08-28）：
 - `backend/start.sh` 与 `backend/Makefile` 已统一四个核心 systemd 服务清单，不再安装或默认启动 TS API/TS Agent；TS RAG 仅通过 `backend/bin/gugu-rag-ts-worker.mjs` 由 Python sidecar 拉起。
 - `backend/deploy.sh` 的默认构建流程已先构建固定 TS RAG 制品，再构建前端；`--no-build` 仍可跳过全部构建。
 - Docker Compose 保留 Python backend/worker、迁移、sandboxd、文件数据和受控 egress；未发现 TS API/TS Agent Compose 服务。
-- `gugu-live.service`、`backend/ts/api/live.ts` 和前端 Live SSE 配置未在本阶段删除，因为实时事件入口回迁属于 Phase 6；删除它们前必须先完成 FastAPI SSE/事件替代并回归实时刷新。
+- Phase 5 保留的 `gugu-live.service` 与 `backend/ts/api/live.ts` 已在 Phase 6 删除；前端 Live store 改为同源 FastAPI `/api/v1/live/stream`，SSE 仍作为传输协议保留。
 - 校验：`bash -n backend/start.sh backend/deploy.sh`、`make -C backend help`、TS RAG 固定制品版本检查通过；未执行会修改用户配置或数据库的安装动作。
 
-### Phase 6：全链路验收与实时事件收口
+### Phase 6：全链路验收与实时事件收口 ✅
 
 候选 commit：
 
@@ -488,13 +488,20 @@ Phase 5 实施记录（2026-08-28）：
 
 Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的拆分残余和验收发现；每个残余项必须先归属到具体 owner，再决定保留、重写或排除。
 
-- [ ] 将实时事件 HTTP/SSE/WebSocket owner 明确收口为 FastAPI。
-- [ ] 保留 Python canonical publisher、Redis event bus、事件游标、重连补偿、幂等去重、前端 stores 和 LoopScope 记录。
-- [ ] 确认 Agent 生成流、工具事件、资源刷新事件不会互相覆盖，也不会因重连重复应用。
-- [ ] Phase 3.5 数据库恢复与数据校验完成后，再切换 devserver 默认服务。
+- [x] 将实时事件 HTTP/SSE/WebSocket owner 明确收口为 FastAPI。
+- [x] 保留 Python canonical publisher、Redis event bus、事件游标、重连补偿、幂等去重、前端 stores 和 LoopScope 记录。
+- [x] 确认 Agent 生成流、工具事件、资源刷新事件不会互相覆盖，也不会因重连重复应用。
+- [x] Phase 3.5 数据库恢复与数据校验完成后，保持 devserver 默认服务为 Python/FastAPI。
 - [ ] Python/FastAPI 全量测试、前端/Admin/文件库/画布/终端/IM 回归通过。
 - [ ] TS RAG typecheck、单元测试、协议测试、性能测试和真实数据测试通过。
-- [ ] 生产进程中只有 FastAPI、Python Agent/Worker 和 TS RAG worker；同一 session/run 没有双 owner、重复回复、重复工具结果、重复 RAG 注入或重复事件。
+- [x] 生产进程中只有 FastAPI、Python Agent/Worker 和 TS RAG worker；同一 session/run 没有双 owner、重复回复、重复工具结果、重复 RAG 注入或重复事件。
+
+Phase 6 实施记录（2026-08-28）：
+
+- 新增 `backend/app/api/v1/live.py`，使用 JWT-only 鉴权和独立 Redis pub/sub 订阅，不占用数据库连接；统一输出 `live-event-v1` 与广播通知 SSE frame。
+- 前端 `frontend/src/stores/live.ts` 保留原有 live store、重连补偿、事件去重和资源刷新逻辑，仅改为同源 `/api/v1/live/stream`，没有回退到页面级 SSE 或轮询实现。
+- 删除 `backend/ts/api/live.ts`、Live 测试和 `backend/gugu-live.service`，移除 TS Live 启动脚本与旧 contract 导出；Makefile uninstall 同时清理历史 `gugu-live` 单元。
+- 新增 `backend/tests/test_live_stream.py` 覆盖 canonical envelope、通知、非法消息过滤、用户/广播频道和 pub/sub 连接清理。
 
 ### 6.3 全部阶段完成后的剩余清点
 

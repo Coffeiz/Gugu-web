@@ -17,13 +17,8 @@ PostgreSQL 是用户、session、message、tool event、任务、RAG 元数据�
 
 ## 当前制品
 
-`workers/rag` 是独立 JSONL Worker。`api/live.ts` 是实时事件 TypeScript 服务：只负责 JWT 用户隔离、Redis 用户频道/广播订阅和 SSE 输出，不在 API 进程内运行 Agent loop。前端通过 `VITE_LIVE_API_URL` 或当前主机的 8585 端口直接订阅。
+`workers/rag` 是独立 JSONL Worker。实时事件不属于 TypeScript 运行时，已由 `backend/app/api/v1/live.py` 的 FastAPI 接口统一提供；TypeScript 目录不得新增 Live API 或 Agent API 入口。
 
-## Live API 试点
+## 实时事件边界
 
-```sh
-corepack pnpm install
-GUGU_SECRET_KEY=... REDIS_URL=redis://127.0.0.1:6379 corepack pnpm --filter @gugu/backend-ts start:live
-```
-
-监听 `GET /live/stream`。它只接受 `role=user` 的 HS256 JWT，并只订阅 `events:{user_id}` 与全局通知频道；业务消息必须是 `live-event-v1` canonical envelope，断开连接会取消订阅并释放 Redis 连接。生产环境由 `gugu-live.service` 托管；跨端口浏览器访问需配置 `TS_LIVE_ALLOWED_ORIGINS`。
+前端通过同源 `GET /api/v1/live/stream` 连接 FastAPI。该接口只接受用户 JWT，订阅 `events:{user_id}` 和全局通知频道，并过滤非 `live-event-v1` 业务事件。TypeScript 不再提供实时事件服务、systemd 单元或独立端口。

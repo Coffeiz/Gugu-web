@@ -20,8 +20,7 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
-# 生产核心 owner：FastAPI、Python IM worker/supervisor 与 sandboxd。
-# gugu-live 仍是 Phase 6 的实时事件迁移遗留服务，不应再被本脚本安装或默认拉起。
+# 生产核心 owner：FastAPI、Python IM worker/supervisor 与 sandboxd；实时事件入口也由 FastAPI 提供。
 SYSTEMD_SERVICES="gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
 
 # ── 工具函数 ────────────────────────────────────────────

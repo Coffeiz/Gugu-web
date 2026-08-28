@@ -1,6 +1,6 @@
 # 文件存储结构规范
 
-> 更新：2026-08-26（§2.8 前端缓存与实时刷新重写；实时事件已统一为 TypeScript Live 的 canonical envelope，详见 §2.8.8）
+> 更新：2026-08-28（§2.8 前端缓存与实时刷新重写；实时事件由 FastAPI Live 输出 canonical envelope，详见 §2.8.8）
 > 项目：咕咕 / gugugu.site
 
 ---
@@ -293,11 +293,11 @@ const _folderIdx = computed(() => { ... })
 #### 2.8.6 缓存失效与实时刷新（canonical 事件通道）
 
 1. **写操作乐观增量**：发起视图先本地改，后台同步服务端，失败回滚（见 §2.8.5）。
-2. **SSE 实时通道**（`stores/live.ts` ← TypeScript Live `/live/stream`）：
+2. **SSE 实时通道**（`stores/live.ts` ← FastAPI `/api/v1/live/stream`）：
    - 后端发布 `live-event-v1` canonical envelope，包含资源、操作、revision、实体和可选 `origin`；网页按 `event_id` 去重、按 revision 丢弃旧事件，必要时触发资源级补刷。
    - Python 业务 API、Agent 和 IM 只负责产生业务事件，不再提供 SSE 代理或自定义旧字段；网页写操作与咕咕/IM 写操作共用同一 publisher。
    - `filesCache` 消费文件实体事件：删除走本地剔除，其他变更防抖刷新；预览窗、项目卡片等只需要粗粒度信号的消费者继续监听资源 rev。
-3. **断线补偿**：TS Live 重连后由前端错峰 bump 所有资源；文件、画布、会话和终端等领域再按各自接口/sequence 做完整性补偿。
+3. **断线补偿**：FastAPI live 重连后由前端错峰 bump 所有资源；文件、画布、会话和终端等领域再按各自接口/sequence 做完整性补偿。
 4. **本地文件删除检测**：`GET /files/all` 在 LocalStorageBackend 下扫描每个文件实体是否存在；不存在的直接硬删 DB 记录（不进回收站），保证 UI 与文件系统一致。
 
 #### 2.8.7 加载体验优化
@@ -336,12 +336,12 @@ const _folderIdx = computed(() => { ... })
 | **1 兜底** | FilePanel 订阅 SSE(`liveStore.rev.files`)+`uploadSignal`（版本门控重拉）；计数徽标改本地增减 `_pmAdjustFolderCount`（逐层找卡片，接入删/移/传）；visibilitychange 兜底经评估**冗余**（SSE 重连 `_catchUp` 已错峰 bump 所有资源，覆盖切回标签页）→ 不做 | ✅ 已实现 |
 | **2 关键** | `files.py`/`folders.py`/`trash.py` 的所有增删改端点（16 处）commit 后 `await events.publish(current_user.id, "files")` → 用户自己的网页操作也广播，跨标签页/跨面自动同步 | ✅ 已实现（需重启后端生效） |
 | **3-A 缓存收敛** | 三套缓存统一到单一 store：Dashboard/FilePanel（Phase A，5e7f422）+ ProjectModal（Phase B，c4b725b）都改从全局 `filesCache` 派生，删除各自本地并行缓存（projectFiles/folderFilesMap/subFolderMap、services/cache 的 filesCache），所有增删改走 store 增量 API | ✅ 已实现 |
-| **3-B canonical 事件 + 回声抑制** | TypeScript Live 推送带 `origin` 的 canonical envelope。前端按事件实体做删除快路径，其余变更防抖合并刷新，并按 event_id/revision 去重 | ✅ 已实现 |
+| **3-B canonical 事件 + 回声抑制** | FastAPI Live 推送带 `origin` 的 canonical envelope。前端按事件实体做删除快路径，其余变更防抖合并刷新，并按 event_id/revision 去重 | ✅ 已实现 |
 
 **Tier 3-B 契约（新增，2026-07-11）：**
 
 - **前端**：`api.ts` 每标签页生成 `CLIENT_ID`，所有写操作（`request()` + `uploadWithProgress`）带 `X-Client-Id` 头。
-- **后端**：文件写入仍由 Python 业务侧调用统一 publisher，事件通过 TypeScript Live 服务发送；删除类端点传入 canonical `payload` 的实体信息，咕咕/IM 侧无 client-id → `origin=None`，所有在线端刷新。
+- **后端**：文件写入由 Python 业务侧调用统一 publisher，事件通过 FastAPI Live 发送；删除类端点传入 canonical `payload` 的实体信息，咕咕/IM 侧无 client-id → `origin=None`，所有在线端刷新。
 - **SSE payload**：使用 `live-event-v1` canonical envelope：`resource`、`operation`、`revision`、`entity_id/entity_ids`、`payload` 和可选 `origin`。
 - **前端消费分工**：
   - `rev.files` 仍照旧 bump —— 预览窗（FilePreviewModal/FloatPreviewWindow）、回收站视图、项目卡片计数等**粗信号**消费者不动。

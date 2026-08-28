@@ -1,5 +1,5 @@
 /**
- * 实时事件 store：开一条 SSE 订阅后端 `/live/stream`，
+ * 实时事件 store：开一条 SSE 订阅 FastAPI `/api/v1/live/stream`，
  * 收到「资源变了」就递增对应 rev 计数，各视图/store watch 自己的 rev 重新拉数据。
  *
  * 这样咕咕在 web 聊天或 IM（飞书/QQ）里改了项目/日历/文件/客户、或 IM 来了新消息，
@@ -13,10 +13,8 @@ import { getToken } from '@/services/api'
 import { useUiStore } from '@/stores/ui'
 import { isLiveEventPayload, type LiveEventPayload } from '@/types/live-events'
 
-const LIVE_URL = import.meta.env.VITE_LIVE_API_URL
-  ?? (typeof window === 'undefined'
-    ? '/live/stream'
-    : `${window.location.protocol}//${window.location.hostname}:8585/live/stream`)
+// live 事件与业务 API 使用同一 FastAPI owner，避免回退到已移除的 TS Live 服务。
+const LIVE_URL = '/api/v1/live/stream'
 const RESOURCES = ['projects', 'calendar', 'files', 'clients', 'sessions', 'scheduled_tasks', 'mind', 'terminals']
 
 export const useLiveStore = defineStore('live', () => {

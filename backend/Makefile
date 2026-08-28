@@ -186,14 +186,19 @@ install:     ## 装成 systemd 服务（sandboxd + web + IM worker + IM supervis
 	@$(MAKE) sandbox-acl-prepare
 	./start.sh install
 
-uninstall:   ## 卸载 systemd 服务（四个核心服务）
+uninstall:   ## 卸载 systemd 服务（四个核心服务，并清理旧实时事件服务）
 	for s in gugu-sandboxd gugu-backend gugu-worker gugu-supervisor; do \
 	  systemctl stop $$s 2>/dev/null || true; \
 	  systemctl disable $$s 2>/dev/null || true; \
 	  rm -f /etc/systemd/system/$$s.service; \
 	done
+	for s in gugu-live; do \
+	  systemctl stop $$s 2>/dev/null || true; \
+	  systemctl disable $$s 2>/dev/null || true; \
+	  rm -f /etc/systemd/system/$$s.service; \
+	done
 	systemctl daemon-reload
-	@echo "已卸载 systemd 核心服务（gugu-sandboxd / gugu-backend / gugu-worker / gugu-supervisor）；实时事件服务留待 Phase 6 回迁"
+	@echo "已卸载 systemd 核心服务，并清理旧 gugu-live 实时事件服务"
 
 # ── 清理 ─────────────────────────────────────────────────
 clean:       ## 清缓存 + 日志 + pid（不删 venv / Gugu-data/users / override）

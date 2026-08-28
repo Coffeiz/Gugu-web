@@ -22,6 +22,7 @@ from app.api.v1 import projects as projects_router
 from app.api.v1 import files as files_router
 from app.api.v1 import folders as folders_router
 from app.api.v1 import events as events_router
+from app.api.v1 import live as live_router
 from app.api.v1 import clients as clients_router
 from app.api.v1 import trash as trash_router
 from app.api.v1 import agent as agent_router
@@ -257,6 +258,7 @@ app.include_router(projects_router.router, prefix="/api/v1")
 app.include_router(files_router.router,    prefix="/api/v1")
 app.include_router(folders_router.router,  prefix="/api/v1")
 app.include_router(events_router.router,   prefix="/api/v1")
+app.include_router(live_router.router,     prefix="/api/v1")
 app.include_router(clients_router.router,  prefix="/api/v1")
 app.include_router(trash_router.router,       prefix="/api/v1")
 app.include_router(agent_router.router,       prefix="/api/v1")
