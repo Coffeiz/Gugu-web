@@ -483,7 +483,7 @@ Phase 5 实施记录（2026-08-28）：
 - Phase 5 保留的 `gugu-live.service` 与 `backend/ts/api/live.ts` 已在 Phase 6 删除；前端 Live store 改为同源 FastAPI `/api/v1/live/stream`，SSE 仍作为传输协议保留。
 - 校验：`bash -n backend/start.sh backend/deploy.sh`、`make -C backend help`、TS RAG 固定制品版本检查通过；未执行会修改用户配置或数据库的安装动作。
 
-### Phase 6：全链路验收与实时事件收口 ✅
+### Phase 6：全链路验收与实时事件收口
 
 候选 commit：
 
@@ -519,10 +519,23 @@ Phase 6 实施记录（2026-08-28）：
 
 ### 6.3 全部阶段完成后的剩余清点
 
-- [ ] 汇总每个阶段仍为 `[ ]` 的候选 commit，区分“尚未处理”“已由其他提交覆盖”“按文件拆分保留”“明确排除”四类。
-- [ ] 对所有未处理 commit 重新执行路径和运行入口扫描，确认没有遗漏 FastAPI、Python Agent、前端、TS RAG、Make 或实时事件补丁。
-- [ ] 确认排除的 TS API/TS Agent commit 不再被 Make、Compose、systemd、前端 API base、CI 或文档引用。
-- [ ] 将最终清点结果写回本 PRD，只有剩余项全部有明确归类后才允许标记恢复完成。
+- [x] 汇总每个阶段仍为 `[ ]` 的候选 commit，区分“尚未处理”“已由其他提交覆盖”“按文件拆分保留”“明确排除”四类。
+- [x] 对所有未处理 commit 重新执行路径和运行入口扫描，确认没有遗漏 FastAPI、Python Agent、前端、TS RAG、Make 或实时事件补丁。
+- [x] 确认排除的 TS API/TS Agent commit 不再被 Make、Compose、systemd、前端 API base、CI 或文档引用。
+- [x] 将最终清点结果写回本 PRD，所有剩余项均已明确归类；真实环境人工回归仍单独保留为未完成项。
+
+提交清点记录（2026-08-28）：
+
+- 已归入阶段文档或阶段收口：`84406807`（Phase 0 计划）、`ea46f642`（前端清单）、
+  `3d79b18d`、`4a28b219`（数据库阶段说明）。
+- 已归入实现阶段：`7e347209`（pnpm 基础/Phase 1）、`3492501f`（Python Agent/Phase 3）、
+  `2b0c410d`（前端/Phase 2）、`8e821d88`（数据库/Phase 3.5）、`f3b02f27` 与
+  `d7f58a17`（TS RAG/Phase 4）、`690b376f`（Make/Phase 5）、`b475b326`（FastAPI 实时事件/Phase 6）。
+- 当前恢复分支新增的验收收口提交：`8bc8e02a`（Phase 3 测试清理）和 `b8393cb9`
+  （Phase 6 测试、RAG 补充实现及文档目录整理）。这些提交均已记录，未发现尚未归类的提交。
+- 入口扫描结果：生产服务仅保留 `gugu-sandboxd`、`gugu-backend`、`gugu-worker` 和
+  `gugu-supervisor`；前端 live store 使用 FastAPI `/api/v1/live/stream`；TypeScript 运行时
+  仅保留固定 TS RAG worker，未发现 TS API/TS Agent 启动入口。
 
 ## 7. 最终验收标准
 
