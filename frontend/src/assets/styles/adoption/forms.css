@@ -65,6 +65,12 @@ html[data-theme][data-family] :is(
   box-shadow: var(--input-focus-shadow);
 }
 
+/* 外发光由 rename-sizer 的伪元素独立过渡，输入框本身只保留内侧高光，
+   避免 inset 与外部 box-shadow 之间发生不可插值的离散切换。 */
+html[data-theme][data-family] .rename-input-inline:focus:not(:disabled) {
+  box-shadow: var(--input-hover-shadow);
+}
+
 html[data-theme][data-family] :is(
   .form-input,
   .title-edit-input,

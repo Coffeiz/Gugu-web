@@ -251,6 +251,18 @@ body {
   display: inline-block; position: relative;
   max-width: 100%; vertical-align: top;
 }
+.rename-sizer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: var(--rename-input-radius);
+  box-shadow: var(--input-focus-shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+}
+.rename-sizer:focus-within::after { opacity: 1; }
 .rename-ghost {
   display: block; visibility: hidden; white-space: pre;
   font: inherit; padding: 0 5px; min-width: 2ch;
