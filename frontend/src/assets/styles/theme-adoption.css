@@ -42,9 +42,9 @@ html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
 html[data-theme][data-family] .topbar .btn-primary-custom {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
+  filter: none !important;
   border-color: transparent !important;
   box-shadow: none !important;
-  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover {
   background: var(--action-primary-bg) !important;
@@ -108,8 +108,8 @@ html[data-theme][data-family] .proj-card .tp-title,
 html[data-theme][data-family] .proj-card .tp-name,
 html[data-theme][data-family] .proj-card .tp-input { color: var(--content-primary); }
 html[data-theme][data-family] .proj-card .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .proj-card .tp-check { border-color: var(--border-default); color: var(--content-on-accent); }
-html[data-theme][data-family] .proj-card .tp-check.checked { background: var(--action-primary); border-color: var(--action-primary); }
+html[data-theme][data-family] .proj-card .tp-check { background: var(--control-bg); border-color: var(--action-outline); color: var(--content-on-accent); }
+html[data-theme][data-family] .proj-card .tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
 html[data-theme][data-family] .proj-card .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
 html[data-theme][data-family] .proj-card .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
 

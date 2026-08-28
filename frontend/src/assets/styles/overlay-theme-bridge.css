@@ -13,11 +13,11 @@ html[data-theme][data-family] .todo-pop .tp-empty { color: var(--content-seconda
 html[data-theme][data-family] .todo-pop .tp-item:hover { background: var(--surface-soft-hover); }
 html[data-theme][data-family] .todo-pop .tp-check {
   color: var(--content-on-accent);
-  background: transparent;
-  border-color: var(--border-default);
+  background: var(--control-bg);
+  border-color: var(--action-outline);
 }
 html[data-theme][data-family] .todo-pop .tp-check.checked {
-  background: var(--action-primary);
+  background: var(--action-primary-bg);
   border-color: var(--action-primary);
 }
 html[data-theme][data-family] .todo-pop .tp-del { color: var(--content-secondary); }

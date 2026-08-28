@@ -11,8 +11,8 @@
         </div>
         <GlobalSearch />
         <div class="topbar-actions">
-          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />上传文件</a-button>
-          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />新建项目</a-button>
+          <a-button class="btn-ghost-custom press-fx" @click="openUpload"><span class="btn-content"><Icon name="action.upload" :size="13" style="vertical-align:-1px;margin-right:5px" />上传文件</span></a-button>
+          <a-button type="primary" class="btn-primary-custom press-fx" @click="openNewProject"><span class="btn-content"><Icon name="action.add" :size="13" style="vertical-align:-1px;margin-right:5px" />新建项目</span></a-button>
         </div>
       </header>
 

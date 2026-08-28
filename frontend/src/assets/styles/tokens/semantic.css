@@ -38,6 +38,8 @@
   --border-hover: var(--theme-border-hover);
   --border-highlight: var(--theme-highlight-rest);
   --border-focus: var(--theme-focus);
+  /* 文档内容需要在亮色玻璃表面保持可读的表格分隔线；通用玻璃边框可能是白色。 */
+  --border-document-table: color-mix(in srgb, var(--theme-content-primary) 18%, transparent);
 
   /* Actions / selection */
   --action-primary: var(--theme-action-primary);
@@ -58,14 +60,14 @@
   /* Secondary action: a quieter sibling of the primary fill. Used by topbar "上传文件" and
      other secondary toolbar actions. Light keeps a translucent glass fill; resolved dark mode
      derives a surface-based fill in theme-refinements.css. */
-  --action-secondary-fill: rgba(255,255,255,.52);
-  --action-secondary-fill-hover: rgba(255,255,255,.72);
+  --action-secondary-fill: rgba(255,255,255,.66);
+  --action-secondary-fill-hover: rgba(255,255,255,.82);
   --action-secondary-bg: linear-gradient(to bottom,
     color-mix(in srgb, var(--action-secondary-fill) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill) 94%, black));
+    color-mix(in srgb, var(--action-secondary-fill) 98%, black));
   --action-secondary-bg-hover: linear-gradient(to bottom,
     color-mix(in srgb, var(--action-secondary-fill-hover) 94%, white),
-    color-mix(in srgb, var(--action-secondary-fill-hover) 94%, black));
+    color-mix(in srgb, var(--action-secondary-fill-hover) 98%, black));
   --action-secondary-border: rgba(255,255,255,.78);
   --action-secondary-border-hover: rgba(255,255,255,.88);
   --action-secondary-fg: var(--content-secondary);

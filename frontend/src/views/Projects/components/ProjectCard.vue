@@ -565,11 +565,12 @@ async function setPriority(n: number) {
 .tp-ghost { opacity: 0.35; }
 .tp-check {
   width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
-  border: 1.5px solid rgba(0,0,0,0.22); background: none; color: #fff;
+  border: var(--control-checkbox-border-width) solid var(--action-outline); background: var(--control-bg); color: var(--content-on-accent);
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tp-check.checked { background: var(--color-primary); border-color: var(--color-primary); }
+.tp-check:hover { border-color: var(--border-focus); }
+.tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
 .tp-input {
   flex: 1; min-width: 0; border: none; background: none; outline: none;
   font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: 2px 0;

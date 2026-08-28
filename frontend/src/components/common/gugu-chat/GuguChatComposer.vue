@@ -262,6 +262,13 @@ defineExpose({
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
 }
+/* 命令菜单有圆角，原生滑块轨道必须避开上下边缘，避免伸出弹窗轮廓。 */
+.chat-command-menu::-webkit-scrollbar {
+  width: calc(var(--scrollbar-size-default) + 2px);
+}
+.chat-command-menu::-webkit-scrollbar-track {
+  margin-block: var(--scrollbar-safe-inset);
+}
 .chat-command-item {
   display: flex;
   align-items: center;

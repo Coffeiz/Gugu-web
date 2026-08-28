@@ -1021,7 +1021,7 @@ tr:hover .tv-code { background: color-mix(in srgb, var(--action-primary) 4%, tra
 .tv-md :deep(th),
 .tv-md :deep(td) {
   padding: 8px 14px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-document-table);
   text-align: left;
 }
 .tv-md :deep(th) { background: var(--surface-soft); font-weight: 600; }

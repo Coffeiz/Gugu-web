@@ -37,7 +37,7 @@
           <Icon name="action.next" :size="14" />
         </button>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
-          全部文件
+          <span class="bc-label">全部文件</span>
         </button>
         <template v-for="(seg, i) in navPath" :key="i">
           <svg class="bc-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -51,14 +51,14 @@
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            {{ seg.name }}
+            <span class="bc-label">{{ seg.name }}</span>
           </RuntimeBreadcrumbTarget>
           <button v-else class="bc-item"
             :class="{ active: i === navPath.length - 1 }"
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            {{ seg.name }}
+            <span class="bc-label">{{ seg.name }}</span>
           </button>
         </template>
       </FileBrowserBreadcrumb>
@@ -871,7 +871,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
   padding: 4px 8px; border-radius: 7px; border: none;
   background: none; cursor: pointer;
   font-size: 12px; font-weight: 500; color: var(--text-secondary);
-  font-family: var(--font-sans); transition: all 0.13s;
+  font-family: var(--font-sans);
   white-space: nowrap; flex-shrink: 0;
 }
 .bc-item:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }

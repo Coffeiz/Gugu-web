@@ -255,14 +255,23 @@ html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg) {
   font-weight: var(--file-toolbar-font-weight);
   line-height: 1;
   white-space: nowrap;
+  transition: none;
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item, .bc-seg):hover:not(.active):not(.bc-cur) {
   color: var(--file-toolbar-fg-hover);
   background: var(--action-soft);
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.active, .bc-cur) {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--file-toolbar-fg);
   background: transparent;
+}
+html[data-theme][data-family] .file-browser-toolbar .bc-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 html[data-theme][data-family] .file-browser-toolbar :is(.bc-item.bc-drop-target, .bc-seg.bc-drop-target) {
   color: var(--file-toolbar-fg);

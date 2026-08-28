@@ -55,7 +55,12 @@ html[data-theme][data-family] .event-form-body .popup-save,
 html[data-theme][data-family] .sched-page .btn-primary {
   color: var(--content-on-accent) !important;
   background: var(--action-primary-bg) !important;
+  filter: none !important;
   box-shadow: none !important;
+  transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
+}
+/* 顶栏按钮沿用定时任务按钮的亮度 hover；仅过渡 filter，避免渐变背景切换造成闪烁。 */
+html[data-theme][data-family] .topbar .btn-primary-custom {
   transition: filter var(--motion-hover-control) var(--motion-ease-standard) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover,
@@ -64,7 +69,7 @@ html[data-theme][data-family] .cal-sidebar .add-proj-btn:hover,
 html[data-theme][data-family] .event-form-body .popup-save:not(:disabled):hover,
 html[data-theme][data-family] .sched-page .btn-primary:not(:disabled):hover {
   background: var(--action-primary-bg) !important;
-  filter: brightness(1.05);
+  filter: brightness(1.05) !important;
   box-shadow: none !important;
 }
 

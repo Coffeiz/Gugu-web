@@ -32,18 +32,6 @@ html[data-theme][data-family] *::-webkit-scrollbar {
   height: calc(var(--scrollbar-size-default) + 2px);
 }
 
-/* 技能编辑器是唯一保留原生滚动条的业务表单，边框只用于保留可读的细滑块宽度。 */
-html[data-theme][data-family] .skill-form::-webkit-scrollbar { width: 8px; }
-html[data-theme][data-family] .skill-form::-webkit-scrollbar-track { background: transparent; }
-html[data-theme][data-family] .skill-form::-webkit-scrollbar-thumb {
-  border: 2px solid transparent;
-  border-radius: var(--radius-pill);
-  background-clip: padding-box;
-}
-html[data-theme][data-family] .skill-form::-webkit-scrollbar-thumb:hover {
-  background-clip: padding-box;
-}
-
 html[data-theme][data-family] .scroll-surface,
 html[data-theme][data-family] .page-content,
 html[data-theme][data-family] .task-grid,

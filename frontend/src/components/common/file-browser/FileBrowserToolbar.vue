@@ -1,7 +1,12 @@
 <template>
   <div class="file-browser-toolbar right-header">
     <GlassBg />
-    <slot name="breadcrumb" />
+    <div ref="breadcrumbViewport" class="breadcrumb-viewport"
+      @pointerdown="startBreadcrumbDrag" @pointermove="moveBreadcrumbDrag"
+      @pointerup="endBreadcrumbDrag" @pointercancel="endBreadcrumbDrag"
+      @click.capture="cancelBreadcrumbClick">
+      <slot name="breadcrumb" />
+    </div>
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
     <button v-if="showSelection" class="sel-mode-btn select-mode-btn" :class="{ on: selectionMode }"
       @click.stop="emit('toggle-selection')" title="多选模式">
@@ -75,6 +80,44 @@ const emit = defineEmits<{
   close: []
 }>()
 const folderInput = ref<HTMLInputElement | null>(null)
+const breadcrumbViewport = ref<HTMLElement | null>(null)
+let dragStartX = 0
+let dragStartScroll = 0
+let activeBreadcrumbPointerId: number | null = null
+let breadcrumbDragging = false
+let suppressBreadcrumbClick = false
+
+function startBreadcrumbDrag(event: PointerEvent) {
+  const el = breadcrumbViewport.value
+  if (!el || event.button !== 0) return
+  dragStartX = event.clientX
+  dragStartScroll = el.scrollLeft
+  activeBreadcrumbPointerId = event.pointerId
+  breadcrumbDragging = false
+}
+function moveBreadcrumbDrag(event: PointerEvent) {
+  const el = breadcrumbViewport.value
+  if (!el || activeBreadcrumbPointerId !== event.pointerId) return
+  const delta = event.clientX - dragStartX
+  if (!breadcrumbDragging && Math.abs(delta) < 4) return
+  if (!breadcrumbDragging) el.setPointerCapture?.(event.pointerId)
+  breadcrumbDragging = true
+  suppressBreadcrumbClick = true
+  el.scrollLeft = dragStartScroll - delta
+  event.preventDefault()
+}
+function endBreadcrumbDrag(event: PointerEvent) {
+  const el = breadcrumbViewport.value
+  if (el?.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId)
+  if (activeBreadcrumbPointerId === event.pointerId) activeBreadcrumbPointerId = null
+  breadcrumbDragging = false
+}
+function cancelBreadcrumbClick(event: MouseEvent) {
+  if (!suppressBreadcrumbClick) return
+  event.preventDefault()
+  event.stopPropagation()
+  suppressBreadcrumbClick = false
+}
 function cancelFolder() {
   emit('update:show-new-folder', false)
   emit('update:new-folder-name', '')
@@ -100,6 +143,26 @@ watch(() => props.showNewFolder, value => {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
+.breadcrumb-viewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: pan-x;
+}
+.breadcrumb-viewport:active { cursor: grabbing; }
+.breadcrumb-viewport :deep(.breadcrumb),
+.breadcrumb-viewport :deep(.file-breadcrumb) {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.breadcrumb-viewport :deep(.breadcrumb::-webkit-scrollbar),
+.breadcrumb-viewport :deep(.file-breadcrumb::-webkit-scrollbar) { display: none; }
 .new-folder-inline {
   display: flex;
   align-items: center;

@@ -8,12 +8,12 @@
     </button>
     <button v-if="folderStack.length === 0" class="bc-seg"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      项目文件
+      <span class="bc-label">项目文件</span>
     </button>
     <RuntimeBreadcrumbTarget v-else class="bc-seg" target-id="bc:-1"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      项目文件
+        <span class="bc-label">项目文件</span>
     </RuntimeBreadcrumbTarget>
     <template v-for="(segment, index) in folderStack" :key="segment.id">
       <Icon name="action.next" :size="10" class="bc-sep" />
@@ -22,9 +22,9 @@
         :surface-id="breadcrumbSurfaceId(runtimeScope, index)"
         :data-bc-idx="index"
         @click="emit('navigate', index)">
-        {{ segment.name }}
+        <span class="bc-label">{{ segment.name }}</span>
       </RuntimeBreadcrumbTarget>
-      <span v-else class="bc-seg bc-cur">{{ segment.name }}</span>
+      <span v-else class="bc-seg bc-cur"><span class="bc-label">{{ segment.name }}</span></span>
     </template>
   </FileBrowserBreadcrumb>
 </template>

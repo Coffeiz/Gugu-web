@@ -36,6 +36,7 @@ withDefaults(defineProps<{ variant?: 'primary' | 'secondary'; disabled?: boolean
   word-break: keep-all;
   writing-mode: horizontal-tb;
   cursor: pointer;
+  filter: none;
   transition: filter var(--motion-hover-control) var(--motion-ease-standard),
     border-color var(--motion-hover-control) var(--motion-ease-standard),
     color var(--motion-hover-control) var(--motion-ease-standard),
