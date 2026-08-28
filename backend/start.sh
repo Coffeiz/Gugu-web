@@ -50,6 +50,24 @@ use_systemd() {
     systemctl list-unit-files 2>/dev/null | grep -q '^gugu-backend.service[[:space:]]'
 }
 
+# systemd 的批量操作只认证一次。普通用户先建立 sudo 凭据缓存，
+# 再以 root 重新执行同一个子命令，避免每个服务单独触发认证。
+elevate_systemd_once() {
+    if ! use_systemd || [ "$(id -u)" -eq 0 ] || [ "${GUGU_SYSTEMD_PRIV_ESCALATED:-0}" = "1" ]; then
+        return 0
+    fi
+    command -v sudo >/dev/null 2>&1 || {
+        err "systemd 操作需要 root 权限，但未找到 sudo"
+        return 1
+    }
+    sudo -v || {
+        err "sudo 认证失败，未执行 systemd 操作"
+        return 1
+    }
+    export GUGU_SYSTEMD_PRIV_ESCALATED=1
+    exec sudo -n -E "$0" "$@"
+}
+
 check_systemd_services() {
     local attempts="${GUGU_SYSTEMD_CHECK_ATTEMPTS:-10}"
     local delay="${GUGU_SYSTEMD_CHECK_DELAY:-1}"
@@ -295,6 +313,10 @@ cmd_install() {
 }
 
 # ── 入口 ───────────────────────────────────────────────
+if ! elevate_systemd_once "$@"; then
+    exit 1
+fi
+
 case "${1:-start}" in
     start)         cmd_start ;;
     stop)          cmd_stop ;;
