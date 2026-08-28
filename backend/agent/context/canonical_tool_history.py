@@ -36,7 +36,13 @@ def implementation_digest(tool) -> str:
 
 
 _CANONICAL_EVENT_TYPES = frozenset({
-    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
+    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery",
+    "knowledge-context", "stance-context", "time-context", "runtime-context",
+})
+
+_PROVIDER_TEXT_EVENT_TYPES = frozenset({
+    "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+    "stance-context", "time-context", "runtime-context",
 })
 
 
@@ -238,19 +244,19 @@ def event_text(block: dict) -> str:
     if kind == "tool-discovery":
         names = ", ".join(str(item) for item in block.get("tool_names") or ())
         return f"[canonical tool-discovery]\n可用工具：{names}"
-    if kind == "knowledge-context":
-        return str(block.get("text") or "")
-    if kind == "stance-context":
-        return str(block.get("text") or "")
-    if kind == "time-context":
+    if kind in {"knowledge-context", "stance-context", "time-context", "runtime-context"}:
         return str(block.get("text") or "")
     return ""
 
 
 def render_events_for_provider(messages: list[dict]) -> list[dict]:
-    """复制并渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
+    """复制并原位渲染 canonical blocks，同时保留 PromptMessages 的边界元数据。
 
-    provider wire 渲染保持 PromptMessages 的固定前缀元数据。
+    canonical event 必须在原 block 位置转换成 provider text。不能先摘出再统一
+    append 到 content 尾部，否则 ``[time-context, user text]`` 会被翻成
+    ``[user text, time-context]``，下一 run 从持久化 history 恢复后前缀立刻失配。
+    dynamic tail 也是 provider boundary 的一部分：只随本次请求渲染并保持在末尾，
+    但绝不混进 conversation/canonical history。
     """
     conversation_count = len(getattr(messages, "conversation", messages))
     is_prompt_messages = hasattr(messages, "fixed_prefix_size")
@@ -259,23 +265,15 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
         clone = dict(message)
         content = clone.get("content")
         if isinstance(content, list):
-            ordinary: list[Any] = []
-            event_lines: list[str] = []
+            rendered_content: list[Any] = []
             for block in content:
-                if isinstance(block, dict) and block.get("type") in {
-                    "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context",
-                }:
+                if isinstance(block, dict) and block.get("type") in _PROVIDER_TEXT_EVENT_TYPES:
                     text = event_text(block)
                     if text:
-                        event_lines.append(text)
+                        rendered_content.append({"type": "text", "text": text})
                 else:
-                    ordinary.append(block)
-            if event_lines:
-                # canonical event 无论来自当前注入还是数据库恢复，都固定为
-                # 单个 text block。避免当前轮是 string、下一轮恢复是 block，
-                # 从第一个 RAG/schema 事件起断开 provider cache 前缀。
-                ordinary.append({"type": "text", "text": "\n\n".join(event_lines)})
-                clone["content"] = ordinary
+                    rendered_content.append(block)
+            clone["content"] = rendered_content
         rendered.append(clone)
 
     if not is_prompt_messages:
@@ -288,9 +286,17 @@ def render_events_for_provider(messages: list[dict]) -> list[dict]:
         rendered[:conversation_count],
         fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
     )
+    # conversation 之后的内容只可能是 provider-only dynamic tail。原位渲染后
+    # 重新挂回 PromptMessages，后续 cache helper 才能继续把断点限制在稳定前缀。
+    if len(rendered) > conversation_count:
+        result.set_dynamic_tail(rendered[conversation_count:])
     canonical_context = getattr(messages, "canonical_context", None)
     if canonical_context is not None:
         result.canonical_context = canonical_context
+    result._canonical_batches = list(getattr(messages, "_canonical_batches", ()))
+    result._canonical_batch_digests = list(
+        getattr(messages, "_canonical_batch_digests", ())
+    )
     remember_anchor = getattr(result, "remember_cache_anchor", None)
     if remember_anchor is not None:
         for index in getattr(messages, "cache_anchor_indices", ()):

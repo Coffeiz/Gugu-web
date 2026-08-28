@@ -116,10 +116,49 @@ def _invalid_input_next_action(issues: list[dict[str, str]]) -> str:
     return "请根据 issues 修正参数后再调用；不要重复提交相同参数，也不要猜测用户未提供的值。"
 
 
-def invalid_input_payload(tool_name: str, issues: list[dict[str, str]]) -> dict[str, Any]:
+def _schema_repair_hints(schema: dict[str, Any] | None, issues: list[dict[str, str]]) -> list[str]:
+    """从 schema 生成短修正示例，不回显模型传入的实际参数。"""
+    if not isinstance(schema, dict):
+        return []
+
+    hints: list[str] = []
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return hints
+    for issue in issues:
+        path = issue.get("path", "")
+        if issue.get("rule") != "type" or "." in path:
+            continue
+        definition = properties.get(path)
+        if not isinstance(definition, dict):
+            continue
+        expected = definition.get("type")
+        if expected == "array":
+            item_schema = definition.get("items")
+            example = "[]"
+            if isinstance(item_schema, dict):
+                enum = item_schema.get("enum")
+                if isinstance(enum, list) and enum:
+                    example = json.dumps([enum[0]], ensure_ascii=False)
+            hints.append(f"{path} 必须是数组，例如 {example}；不要传对象。")
+        elif expected == "object":
+            hints.append(f"{path} 必须是对象（{{...}}），不要传数组或字符串。")
+        elif expected == "boolean":
+            hints.append(f"{path} 必须是 boolean：使用 true 或 false，不要加引号。")
+        elif expected:
+            hints.append(f"{path} 必须是 {expected} 类型。")
+    return hints
+
+
+def invalid_input_payload(
+    tool_name: str,
+    issues: list[dict[str, str]],
+    *,
+    schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """返回统一、短小且可执行的参数纠错提示；完整 schema 仍由工具声明负责。"""
     bounded = issues[:MAX_VALIDATION_ISSUES]
-    return {
+    payload = {
         "error": "tool_input_invalid",
         "tool": tool_name,
         "issues": bounded,
@@ -127,6 +166,10 @@ def invalid_input_payload(tool_name: str, issues: list[dict[str, str]]) -> dict[
         "usage_hint": "参数不符合工具 schema。先按 issues 修正；缺少无法从上下文确定的必填信息时，先向用户询问。",
         "next_action": _invalid_input_next_action(bounded),
     }
+    hints = _schema_repair_hints(schema, bounded)
+    if hints:
+        payload["schema_hints"] = hints
+    return payload
 
 
 def enrich_tool_error(tool_name: str, result: Any) -> Any:

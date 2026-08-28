@@ -100,6 +100,44 @@ async def test_dispatch_rejects_type_enum_and_numeric_boundaries():
     assert "VERY_SECRET_BAD_VALUE" not in raw
 
 
+async def test_type_error_includes_schema_shape_hint_without_echoing_input():
+    reg, _ = _make_registry({
+        "type": "object",
+        "properties": {
+            "channels": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["web", "qq"]},
+            },
+        },
+    })
+
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
+        "channels": {"item": "qq"},
+    })
+    payload = json.loads(raw)
+
+    assert payload["schema_hints"] == [
+        'channels 必须是数组，例如 ["web"]；不要传对象。',
+    ]
+    assert '"item": "qq"' not in raw
+
+
+async def test_boolean_type_error_explains_native_json_value():
+    reg, _ = _make_registry({
+        "type": "object",
+        "properties": {"confirm": {"type": "boolean"}},
+    })
+
+    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
+        "confirm": "true",
+    })
+    payload = json.loads(raw)
+
+    assert payload["schema_hints"] == [
+        "confirm 必须是 boolean：使用 true 或 false，不要加引号。",
+    ]
+
+
 async def test_additional_properties_default_allowed(db, user_a):
     reg, _ = _make_registry({
         "type": "object",

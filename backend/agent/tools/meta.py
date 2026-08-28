@@ -162,13 +162,15 @@ class MetaSkill(BaseSkill):
         Tool(
             name="call_tool",
             label="调用工具",
-            description_short='按名称调用已授权工具；arguments 必须匹配 Schema',
-            description="固定工具适配入口。根据工具目录调用一个已授权业务工具。",
+            description_short='按名称调用工具；arguments 保留 JSON 类型并匹配目标 Schema',
+            description=("固定工具适配入口。根据已获取的目标工具 Schema 调用一个已授权业务工具。"
+                         "arguments 必须是 JSON object，内部字段必须保留原生 JSON 类型：数组用 [..]，布尔值用 true/false（不要加引号），"
+                         "数字不要写成字符串；不要把字段包装成 {\"item\": ...}。"),
             input_schema={
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "minLength": 1, "maxLength": 80},
-                    "arguments": {"type": "object"},
+                    "arguments": {"type": "object", "description": "目标工具参数；保留数组、布尔值和数字的 JSON 原生类型"},
                 },
                 "required": ["name", "arguments"],
                 "additionalProperties": False,

@@ -373,19 +373,33 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 候选 commit（初始状态，均待按 Python/FastAPI 路径应用）：
 
 ```text
-[ ] 611d1c7a  [ ] 29733530  [ ] 21a222c8  [ ] 93861b23  [ ] a00570c9
-[ ] ed3e3c97  [ ] a9949288  [ ] f4de57bb  [ ] 9ef2d44d  [ ] 1962a5d9
-[ ] c2f96b44  [ ] 259f2efa  [ ] 5e824458  [ ] b871ceb0  [ ] 2d6a965a
+[x] 611d1c7a  [x] 29733530  [x] 21a222c8  [x] 93861b23  [x] a00570c9
+[x] ed3e3c97  [x] a9949288  [x] f4de57bb  [x] 9ef2d44d  [~] 1962a5d9
+[x] c2f96b44  [x] 259f2efa  [ ] 5e824458  [x] b871ceb0  [~] 2d6a965a
 ```
+
+本阶段还补入了恢复 `a00570c9` 所必需的上下文前置实现：`3fd39402`、`0f5ea681`、
+`ebf335a1`、`1eaa9293`、`2302bbba`、`5a98d215` 和 `5c4d1de9` 的 Python/context
+部分。它们用于固定 Batch 的 canonical/provider 双投影、provider-only dynamic tail、
+历史冗余时间过滤和跨 run 前缀形状，不能省略或改用旧的直接拼装逻辑。
+
+`1962a5d9` 的 worker shutdown 回归测试依赖 Phase 4 才恢复的 TS RAG sidecar 关闭接口，
+因此暂缓到 Phase 4；`5e824458` 只修改同一条未纳入本阶段的 run-context 测试，暂缓；
+`2d6a965a` 的内容是 Agent 文档重整和前端混合改动，文档目录已在当前分支按恢复目标单独维护，
+不重复应用其混合提交。
 
 其中包含混合提交时，只有目标 Python/FastAPI 文件应用完成后才能标记 `[x]`；未保留的 TS API/TS Agent 文件要记录为排除，而不是标记为完整应用。
 
-- [ ] 恢复 `backend/app/api/**`、认证、Admin、CRUD、文件、画布、笔记、终端、SSE 和 WebSocket API。
-- [ ] 恢复 SQLAlchemy/Alembic/asyncpg 为业务数据库访问 owner，保持原有配置、用户数据和迁移语义。
-- [ ] Python Agent 恢复为 command、session/run、tool、Skill、provider、context 和 compaction 的唯一 owner。
-- [ ] QQ、微信、飞书、Web 和 scheduler 统一进入 Python Agent，不启动 TS Agent host/worker。
-- [ ] 应用 Python Agent/context/tools/IM/scheduler/LoopScope 补丁，清理 TS Agent registry、native handler、context bridge 和重复 dispatch。
-- [ ] 验证工具调用、交互选择、确认门、IM 回复、压缩、取消、恢复和 LoopScope trace。
+- [x] 恢复 `backend/app/api/**`、认证、Admin、CRUD、文件、画布、笔记、终端、SSE 和 WebSocket API。
+- [x] 恢复 SQLAlchemy/Alembic/asyncpg 为业务数据库访问 owner，保持原有配置、用户数据和迁移语义。
+- [x] Python Agent 恢复为 command、session/run、tool、Skill、provider、context 和 compaction 的唯一 owner。
+- [x] QQ、微信、飞书、Web 和 scheduler 统一进入 Python Agent，不启动 TS Agent host/worker。
+- [x] 应用 Python Agent/context/tools/IM/scheduler/LoopScope 补丁，清理 TS Agent registry、native handler、context bridge 和重复 dispatch。
+- [x] 验证工具调用、交互选择、确认门、IM 回复、压缩、取消、恢复和 LoopScope trace；定向回归测试通过。
+
+Phase 3 验证记录：Python `compileall` 通过；定向上下文/工具续轮/scheduler 关闭测试
+`15 passed`；全量 `backend/tests` 为 `1573 passed, 10 failed`，10 个失败均因测试环境未启动
+Redis `localhost:6379`，集中在 scheduler 分布式锁测试，待具备 Redis 的 CI/devserver 环境复验。
 
 ### Phase 3.5：Devserver 数据库恢复
 

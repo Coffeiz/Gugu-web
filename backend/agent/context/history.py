@@ -181,7 +181,10 @@ def _canonical_block(block: dict) -> dict | None:
         return ToolCall.from_block(block).to_block()
     if block_type == "tool_result":
         return ToolResult.from_block(block).to_block()
-    if block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
+    if block_type in (
+        "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+        "stance-context", "time-context", "runtime-context",
+    ):
         return dict(block)
     return None
 
@@ -234,7 +237,10 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
                 elif role == "assistant" and block.get("type") == "text" and block.get("text"):
                     canonical.append({"type": "text", "text": str(block["text"])})
         if canonical and any(
-            block.get("type") in ("tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context")
+            block.get("type") in (
+                "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery",
+                "knowledge-context", "stance-context", "time-context", "runtime-context",
+            )
             for block in canonical
         ):
             result.append({"role": role, "content": canonical})
@@ -278,7 +284,10 @@ def _anthropic_history_blocks(content_json, *, strip_thinking: bool = False) -> 
             if "is_error" in block:
                 result["is_error"] = block["is_error"]
             converted.append(result)
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
+        elif block_type in (
+            "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+            "stance-context", "time-context", "runtime-context",
+        ):
             converted.append({"type": "text", "text": event_text(block)})
         else:
             converted.append(block)
@@ -316,7 +325,10 @@ def _openai_history_message(message, request, *, strip_thinking: bool = False,
                 "tool_call_id": str(block.get("tool_call_id") or block.get("tool_use_id") or ""),
                 "content": content_text(block.get("content", "")),
             })
-        elif block_type in ("tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"):
+        elif block_type in (
+            "tool-schema", "skill-schema", "tool-discovery", "knowledge-context",
+            "stance-context", "time-context", "runtime-context",
+        ):
             # 保留 canonical event 的结构，直到 provider boundary 再统一渲染。
             # 如果这里提前转成字符串，下一轮从数据库恢复时会变成另一种消息形状，
             # 跨 run 的字节前缀会在第一个 schema event 处断开。
@@ -382,10 +394,11 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
         blocks = _blocks(content_json)
         is_tool_message = any(block.get("type") == "tool_result" for block in blocks)
         # canonical event 是上一条真实用户 turn 的附属上下文，不是新用户发言。
-        # 如果把它们当成 user，会在每个 schema/RAG block 前重复插入 sent_at，
+        # 如果把它们当成 user，会在每个 schema/RAG/runtime block 前重复插入 sent_at，
         # 让跨 run 的消息边界与上一轮请求不一致，直接打断 provider cache 前缀。
         is_canonical_event = any(block.get("type") in (
-            "knowledge-context", "tool-schema", "skill-schema", "tool-discovery", "stance-context", "time-context"
+            "knowledge-context", "tool-schema", "skill-schema", "tool-discovery",
+            "stance-context", "time-context", "runtime-context",
         ) for block in blocks)
         is_user_message = (
             getattr(message, "role", None) == "user"
@@ -408,7 +421,8 @@ def build_history_parts(history: Iterable, request, *, use_anthropic: bool,
                 attachment_refs = format_attachment_refs(message)
                 blocks = _blocks(content_json)
                 if any(block.get("type") in (
-                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery", "knowledge-context", "stance-context", "time-context"
+                    "tool_call", "tool_result", "tool-schema", "skill-schema", "tool-discovery",
+                    "knowledge-context", "stance-context", "time-context", "runtime-context",
                 ) for block in blocks):
                     content = _anthropic_history_blocks(content_json, strip_thinking=strip_thinking)
                 else:

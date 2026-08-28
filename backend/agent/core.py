@@ -428,18 +428,81 @@ class LLMRunner:
             ) -> AsyncGenerator[str, None]:
         # model_cfg：pick_model 解析出的模型配置（预设或 settings.ai）；None 时退回 settings.ai
         ai = model_cfg if model_cfg is not None else self.settings.ai
+        generation = self._run_provider(
+            user_id, system_text, messages, use_anthropic=use_anthropic,
+            model_cfg=ai, session_id=session_id, session=session,
+            on_interaction=on_interaction,
+        )
+        return self._recover_interrupted_continuation(
+            generation, user_id, system_text, messages,
+            use_anthropic=use_anthropic, model_cfg=ai,
+            session_id=session_id, session=session,
+        )
+
+    def _run_provider(
+        self, user_id, system_text: str | None, messages: list, *,
+        use_anthropic: bool, model_cfg, session_id: int | None, session=None,
+        on_interaction: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """启动一条未包装的 provider 流，续轮恢复只能调用这里。"""
+        ai = model_cfg if model_cfg is not None else self.settings.ai
         if (getattr(ai, "provider", "") or "").lower() == "ollama" and \
                 getattr(ai, "ollama_api_mode", "native") == "native":
-            return self._run_ollama(user_id, messages, ai, session_id=session_id,
-                                    session=session,
-                                    on_interaction=on_interaction)
+            return self._run_ollama(
+                user_id, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+            )
         if use_anthropic:
-            return self._run_anthropic(user_id, system_text, messages, ai, session_id=session_id,
-                                       session=session,
-                                       on_interaction=on_interaction)
-        return self._run_openai(user_id, messages, ai, session_id=session_id,
-                                session=session,
-                                on_interaction=on_interaction)
+            return self._run_anthropic(
+                user_id, system_text, messages, ai, session_id=session_id,
+                session=session, on_interaction=on_interaction,
+            )
+        return self._run_openai(
+            user_id, messages, ai, session_id=session_id,
+            session=session, on_interaction=on_interaction,
+        )
+
+    async def _recover_interrupted_continuation(
+        self, generation: AsyncGenerator[str, None], user_id, system_text,
+        messages: list, *, use_anthropic: bool, model_cfg, session_id: int | None,
+        session=None,
+    ) -> AsyncGenerator[str, None]:
+        """统一处理工具续轮生成器提前结束。
+
+        ``_new_round`` 表示工具结果已经写回 messages，后续模型轮次必须继续。
+        如果 provider 流在 ``round_start`` 前异常结束，复用同一批已变更消息重试一次；
+        第二次仍未启动则输出错误，禁止网关把半截工具过程当成成功回复。
+        """
+        retried = False
+        continuation_pending = False
+        while True:
+            async for line in generation:
+                try:
+                    event = json.loads(line[6:])
+                except Exception:
+                    yield line
+                    continue
+                event_type = event.get("type")
+                if event_type == "_new_round":
+                    continuation_pending = True
+                elif event_type == "round_start":
+                    continuation_pending = False
+                elif event_type in {"_cancelled", "error"}:
+                    continuation_pending = False
+                yield line
+
+            if not continuation_pending:
+                return
+            if retried:
+                yield f"data: {json.dumps({'type': 'error', 'detail': '工具结果已返回，但后续回复没有完成，请重试。'}, ensure_ascii=False)}\n\n"
+                return
+            retried = True
+            _log.warning("工具续轮未开始，复用已提交工具结果恢复 LLM 请求 session=%s", session_id)
+            generation = self._run_provider(
+                user_id, system_text, messages, use_anthropic=use_anthropic,
+                model_cfg=model_cfg, session_id=session_id, session=session,
+            )
+            continuation_pending = False
 
     async def _run_ollama(self, user_id, messages: list, ai=None,
                           session_id: int | None = None,
@@ -1085,7 +1148,13 @@ class LLMRunner:
                     dispatched.append((tc, res))
                 from agent.context.assembly import NewMessageBatch
 
-                batch = NewMessageBatch(driver.build_tool_round(result, dispatched))
+                provider_round = driver.build_tool_round(result, dispatched)
+                from agent.context.history import canonicalize_tool_messages
+                batch = NewMessageBatch.from_canonical_messages(
+                    canonicalize_tool_messages(provider_round),
+                    provider_messages=provider_round,
+                    metadata={"round_id": round_id},
+                )
                 if getattr(self.capability_context, "fixed_adapter", False):
                     from agent.context.canonical_tool_history import (
                         SkillSchemaEvent, ToolDiscoveryEvent, append_event, tool_schema_event,

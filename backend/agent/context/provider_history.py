@@ -18,11 +18,31 @@ def render_anthropic_message_roles(messages: list[dict], adapter) -> list[dict]:
     ``system_prompt`` 仍由调用层放在顶层 ``system`` 字段；消息数组中的
     snapshot 只是内部语义标记，原生 Anthropic 和 MiniMax 兼容端都统一按
     ``user`` 发送，避免 provider 分叉改变消息边界。
+
+    PromptMessages 的 provider-only dynamic tail/cache 边界必须跨这次 role 渲染
+    保留下来，否则后续 cache helper 会把日期尾缀错误算进稳定 conversation。
     """
-    return [
-        {**message, "role": "user"} if message.get("role") == "system" else message
+    rendered = [
+        {**message, "role": "user"} if message.get("role") == "system" else dict(message)
         for message in messages
     ]
+    if not hasattr(messages, "fixed_prefix_size"):
+        return rendered
+
+    from agent.context.assembly import PromptMessages
+
+    conversation_count = len(getattr(messages, "conversation", messages))
+    result = PromptMessages(
+        rendered[:conversation_count],
+        fixed_prefix_size=getattr(messages, "fixed_prefix_size", 0),
+    )
+    if len(rendered) > conversation_count:
+        result.set_dynamic_tail(rendered[conversation_count:])
+    remember_anchor = getattr(result, "remember_cache_anchor", None)
+    if remember_anchor is not None:
+        for index in getattr(messages, "cache_anchor_indices", ()):
+            remember_anchor(index)
+    return result
 
 
 @dataclass(frozen=True)

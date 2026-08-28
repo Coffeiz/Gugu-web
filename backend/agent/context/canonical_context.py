@@ -96,8 +96,8 @@ class CanonicalTurn:
 _KNOWN_BLOCKS = frozenset({
     "text", "quote", "attachment_ref", "transcript", "attachment_text",
     "tool_call", "tool_use", "tool_result", "tool-schema", "skill-schema",
-    "tool-discovery", "knowledge-context", "stance-context", "time-context", "interaction_request",
-    "interaction_result", "thinking", "reasoning_content",
+    "tool-discovery", "knowledge-context", "stance-context", "time-context", "runtime-context",
+    "interaction_request", "interaction_result", "thinking", "reasoning_content",
 })
 
 

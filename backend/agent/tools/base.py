@@ -344,8 +344,7 @@ class SkillRegistry:
         return self._tools.get(name)
 
     def known_skill_names(self) -> set[str]:
-        """已注册的 skill 组名集合，供调用方校验存量数据里的组名是否还认识
-        （比如定时任务存的 tool_groups——组名改了/拼错了不该悄悄裁没工具）。"""
+        """返回已注册的 skill 组名，供能力目录和注册数据校验使用。"""
         return set(self._skills.keys())
 
     def labels(self) -> dict[str, str]:
@@ -394,6 +393,7 @@ class SkillRegistry:
             payload = invalid_input_payload(
                 name,
                 [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}],
+                schema=tool.input_schema,
             )
             _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
             return json.dumps(payload, ensure_ascii=False), None
@@ -409,7 +409,7 @@ class SkillRegistry:
             tool._input_validator = build_validator(tool.input_schema)
         issues = validate_input(tool._input_validator, args)
         if issues:
-            payload = invalid_input_payload(name, issues)
+            payload = invalid_input_payload(name, issues, schema=tool.input_schema)
             first_rule = issues[0].get("rule", "invalid")
             _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}", t0)
             return json.dumps(payload, ensure_ascii=False), None

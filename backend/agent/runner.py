@@ -923,6 +923,7 @@ async def _run_stream_unlocked(
     cancelled = False
     errored = False
     errored_text = ""
+    continuation_pending = False
     try:
         async for evt_str in gen:
             try:
@@ -935,6 +936,12 @@ async def _run_stream_unlocked(
                 rounds.append(cur)
                 cur = ""
                 san = sanitize.StreamSanitizer(adapter=provider_adapter)
+                # 这个事件由核心循环在工具结果写回后发出，表示下一轮 LLM
+                # 请求已经被承诺。若生成器随后异常结束，不能把前面已流出的
+                # 工具前置说明误当作最终回复。
+                continuation_pending = True
+            elif t == "round_start":
+                continuation_pending = False
             elif t == "_usage":
                 tin = evt.get("input", 0)
                 tout = evt.get("output", 0)
@@ -965,6 +972,12 @@ async def _run_stream_unlocked(
                 break
     finally:
         _release_model(model_cfg)
+
+    if continuation_pending and not cancelled and not errored:
+        # 工具轮之后没有收到下一次 round_start，说明续轮在核心循环之外
+        # 被截断（例如生成器提前关闭）。不允许静默成功或发布半截回复。
+        errored = True
+        errored_text = "工具结果已返回，但后续回复没有完成，请重试。"
 
     if cancelled:
         yield ("final", AgentResponse(text="", session_id=session_id,
@@ -1094,6 +1107,7 @@ async def _collect(
     mutated = False
     cancelled = False
     compaction_applied = False
+    continuation_pending = False
     async for evt_str in gen:
         try:
             evt = json.loads(evt_str[6:])
@@ -1105,6 +1119,9 @@ async def _collect(
             rounds.append(cur)
             cur = ""
             san = sanitize.StreamSanitizer(adapter=provider_adapter)  # 新一轮重置清洗器
+            continuation_pending = True
+        elif t == "round_start":
+            continuation_pending = False
         elif t == "_usage":
             tin = evt.get("input", 0)
             context_input = max(context_input, int(evt.get("context_input", tin) or 0))
@@ -1154,6 +1171,16 @@ async def _collect(
                     "context_input": context_input,
                     "round_texts": [r.strip() for r in rounds if r.strip()]}
             return result + (meta,) if include_meta else result
+    if continuation_pending and not cancelled:
+        # 工具结果后的续轮没有真正开始时，禁止把上一轮的过程文字作为成功回复。
+        # 这也覆盖 IM 的非流式消费路径。
+        result = ("工具结果已返回，但后续回复没有完成，请重试。", tin, tout,
+                  cache_read, cache_write, True, files, False)
+        meta = {"tool_names": tool_names, "mutated": mutated, "interactions": interactions,
+                "tool_events": tool_events, "compaction_applied": compaction_applied,
+                "context_input": context_input,
+                "round_texts": [r.strip() for r in rounds if r.strip()]}
+        return result + (meta,) if include_meta else result
     cur += san.flush()
     rounds.append(cur)
 

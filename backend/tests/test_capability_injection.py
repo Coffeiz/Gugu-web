@@ -146,3 +146,13 @@ def test_invalid_tool_input_requests_schema_recovery():
         "path": "blocks", "rule": "type", "message": "字段类型应为 array",
     }])
     assert payload["_schema_recovery"] == {"needed": True, "reason": "validation_error"}
+
+
+def test_scheduled_tasks_skill_documents_channel_array_shape():
+    from agent.skills import load_skill
+
+    content = load_skill("scheduled-tasks")
+    assert content is not None
+    assert 'channels=["qq"]' in content
+    assert 'channels={"item":"qq"}' in content
+    assert "不修改的字段直接省略" in content

@@ -48,6 +48,26 @@ def _history_stance_digest(history: list) -> str | None:
     return None
 
 
+def _is_legacy_persisted_time_context(message: Any) -> bool:
+    """识别误持久化的独立 time-context canonical 行。
+
+    普通用户消息的时间现在统一以真实 ``ConversationMessage.sent_at`` 为事实源，
+    history restore 会在原 user row 前重新生成相同 reminder。因此历史中任何只包含
+    ``time-context`` 的独立 canonical 行都属于旧实现/回归产生的冗余投影：继续恢复
+    会形成 ``sent_at time -> user -> persisted time`` 的重复前缀。
+
+    这里只过滤“整行都是 time-context”的附属 canonical 消息，不会过滤真实用户行，
+    也不会碰包含工具、RAG、runtime-context 等其它 canonical 事件的消息。
+    """
+    content = getattr(message, "content_json", None)
+    if not isinstance(content, list) or not content:
+        return False
+    blocks = [block for block in content if isinstance(block, dict)]
+    if len(blocks) != len(content) or not blocks:
+        return False
+    return all(block.get("type") == "time-context" for block in blocks)
+
+
 async def prepare_run(
     *,
     system_prompt: str,
@@ -73,18 +93,39 @@ async def prepare_run(
 ) -> PreparedRun:
     """按固定顺序组装消息，并返回本轮 RAG 持久化信息。"""
     fixed_parts = compress_conv.fixed_context_parts(snapshot_injection)
+    # 兼容曾经误写入 canonical history 的动态 now/message-time 行。数据库旧行可以
+    # 留给后续压缩/清理，但运行时只认真实 user row 的 sent_at，避免重复时间块污染
+    # provider 前缀和 RAG 输入。
+    effective_history = [
+        message for message in history
+        if not _is_legacy_persisted_time_context(message)
+    ]
     history_parts = build_history_parts(
-        history, req, use_anthropic=use_anthropic, user_tz=user_tz,
+        effective_history, req, use_anthropic=use_anthropic, user_tz=user_tz,
         strip_thinking=strip_thinking,
     )
     message_time = None
     if user_message is not None and not resume_interaction:
         message_time = session_snapshot.message_time_reminder(user_message.sent_at, user_tz)
 
+    # 当前用户消息在进入 Agent 前已经落库。自动 conversation RAG 必须以它的 id
+    # 作为排他水位，只允许召回本轮之前的消息；ContextVar 会随自动召回创建的
+    # asyncio task 一起复制，因此即使超时后任务后台收尾，也不会串到其它请求。
+    from agent.rag import context as rag_request_context
     from agent.rag.injection import build_automatic_rag_context
-    rag_context = await build_automatic_rag_context(
-        req, req.message, history=history, snapshot_text=snapshot_context,
+    current_message_id = (
+        getattr(user_message, "id", None)
+        if user_message is not None and not resume_interaction else None
     )
+    watermark_token = rag_request_context.set_conversation_before_message_id(
+        current_message_id
+    )
+    try:
+        rag_context = await build_automatic_rag_context(
+            req, req.message, history=effective_history, snapshot_text=snapshot_context,
+        )
+    finally:
+        rag_request_context.reset_conversation_before_message_id(watermark_token)
     images = images or []
     media = media or []
 
@@ -104,12 +145,20 @@ async def prepare_run(
     }
     current_stance_digest = assembly.stance_digest(stance_text)
     stance_changed = current_stance_digest != (previous_stance_digest or "")
+    # dynamic tail 是 provider-only 的稳定尾缀，不属于 turn batch/canonical history。
+    # 精确消息时间由 sent_at 在 user 前重建；这里只告诉模型当前日期/星期，并保持
+    # 在所有后续工具 round 的最末尾，因此日期变化只影响最后这一小段 cache。
+    dynamic_tail = (
+        [session_snapshot.reminder_message(f"当前时间：{now_str}")]
+        if now_str else []
+    )
     if use_anthropic:
         assembled = assembly.assemble(
             fixed_parts=fixed_parts,
             history=history_parts,
             system_text=system_prompt,
         )
+        assembled.set_dynamic_tail(dynamic_tail)
         turn_batch, current_stance_digest = assembly.assemble_turn(
             stance=stance_text,
             previous_stance_digest=previous_stance_digest,
@@ -117,7 +166,6 @@ async def prepare_run(
             current_user=current_user,
             conversation_tail=rag_context["tail"],
             extra_reminder=extra_reminder,
-            now_text=now_str,
         )
         assembled.append_batch(turn_batch)
         before = len(assembled.conversation)
@@ -143,7 +191,7 @@ async def prepare_run(
         )
         return PreparedRun(
             use_anthropic=True, anthr_messages=assembled,
-            anthr_initial_len=len(assembled.conversation),
+            anthr_initial_len=len(assembled),
             oa_messages=[], oa_initial_len=0, rag_context=rag_context,
             stance_to_persist=stance_text if stance_changed else None,
         )
@@ -153,6 +201,7 @@ async def prepare_run(
         history=history_parts,
         system_text=system_prompt,
     )
+    assembled.set_dynamic_tail(dynamic_tail)
     turn_batch, current_stance_digest = assembly.assemble_turn(
         stance=stance_text,
         previous_stance_digest=previous_stance_digest,
@@ -160,7 +209,6 @@ async def prepare_run(
         current_user=current_user,
         conversation_tail=rag_context["tail"],
         extra_reminder=extra_reminder,
-        now_text=now_str,
     )
     assembled.append_batch(turn_batch)
     audit.context_layout_audit(
@@ -173,8 +221,7 @@ async def prepare_run(
     return PreparedRun(
         use_anthropic=False, anthr_messages=[], anthr_initial_len=0,
         oa_messages=assembled,
-        oa_initial_len=len(assembled.conversation)
-        if hasattr(assembled, "conversation") else len(assembled),
+        oa_initial_len=len(assembled),
         rag_context=rag_context,
         stance_to_persist=stance_text if stance_changed else None,
     )

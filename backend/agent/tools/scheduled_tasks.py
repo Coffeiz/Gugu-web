@@ -273,8 +273,9 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="create_scheduled_task", label="新建定时任务",
-            description_short='创建独立定时任务；活动提醒用 create_event/add_event_reminder',
-            description="创建独立定时任务并按渠道投递；日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
+            description_short='创建定时任务；channels 用数组，如 ["qq"]，活动提醒另用日历工具',
+            description=("创建独立定时任务并按渠道投递；channels 必须是渠道字符串数组，例如 [\"qq\"] 或 [\"web\", \"qq\"]，"
+                         "不能传 {\"item\": \"qq\"} 这类对象。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -282,7 +283,8 @@ class ScheduledTasksSkill(BaseSkill):
                     "instruction": {"type": "string", "description": "到点要做的事，自然语言指令（如「汇总今天到期的待办发我」）"},
                     "cron":        {"type": "string", "description": "cron「分 时 日 月 周」或 @once:<ISO>，时区 Asia/Shanghai"},
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
-                                    "description": "投递渠道，默认 [web]"},
+                                    "minItems": 1, "uniqueItems": True,
+                                    "description": "投递渠道数组，例如 [\"qq\"]；不要传对象。默认 [\"web\"]"},
                     "enabled":     {"type": "boolean", "description": "是否启用，默认 true"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
                                       "description": "QQ 投递模式：owner_private=私聊提醒我；current_group=发送到当前 QQ 群，仅群聊中可用。QQ 群聊创建任务前必须先确认"},
@@ -294,9 +296,10 @@ class ScheduledTasksSkill(BaseSkill):
         ),
         Tool(
             name="update_scheduled_task", label="更新定时任务",
-            description_short='修改独立定时任务；关键字段 task/task_id、cron/enabled',
-            description=("改定时任务的内容或启停。按 task_id 或任务名 task 定位（推荐直接用名字，免得先查）。"
-                         "改时间同样用 cron/@once。停用传 enabled=false、启用传 true。"),
+            description_short='修改定时任务；channels 用数组，如 ["qq"]，不改渠道时省略',
+            description=("修改定时任务的内容、投递渠道或启停。按 task_id 或任务名 task 定位（推荐直接用名字）。"
+                         "channels 必须是渠道字符串数组，例如 [\"qq\"] 或 [\"web\", \"qq\"]，不能传 {\"item\": \"qq\"}。"
+                         "只改 delivery_mode 时省略 channels；改时间用 cron/@once，停用传 enabled=false，启用传 true。"),
             input_schema={
                 "type": "object",
                 "properties": {
@@ -306,7 +309,8 @@ class ScheduledTasksSkill(BaseSkill):
                     "instruction": {"type": "string", "description": "改指令（可选）"},
                     "cron":        {"type": "string", "description": "改触发时间，cron 或 @once:<ISO>（可选）"},
                     "channels":    {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq"]},
-                                    "description": "改投递渠道（可选）"},
+                                    "minItems": 1, "uniqueItems": True,
+                                    "description": "改投递渠道数组，例如 [\"qq\"]；不改渠道时省略，不能传对象"},
                     "enabled":     {"type": "boolean", "description": "启用/停用（可选）"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
                                       "description": "QQ 投递模式：owner_private=私聊；current_group=当前群（可选）"},
@@ -319,14 +323,15 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
             description_short='删除定时任务；关键字段 task_id',
-            description="删除一个或多个定时任务（不可恢复）。单项按 task_id/task 定位，批量传 task_ids；批量目标一次确认。",
+            description=("删除一个或多个定时任务（不可恢复）。单项按 task_id/task 定位，批量传 task_ids；批量目标一次确认。"
+                         "确认后必须传 confirm=true（JSON boolean，不要传字符串 \"true\"）和上一步返回的 confirm_token。"),
             input_schema={
                 "type": "object",
                 "properties": {
                     "task_id": {"type": "integer", "description": "任务 ID（可选）"},
                     "task":    {"type": "string", "description": "任务名（推荐：直接用名字）"},
                     "task_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50, "description": "批量删除任务 id"},
-                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后传 true，不要写成 \"true\""},
                     "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],

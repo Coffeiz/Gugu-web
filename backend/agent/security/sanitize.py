@@ -222,6 +222,8 @@ def sanitize_messages(messages: list) -> list:
                 isinstance(block, dict)
                 and block.get("type") == "text"
                 and str(block.get("text") or "").startswith("[system-reminder]")
+                or isinstance(block, dict)
+                and block.get("type") == "time-context"
                 for block in merged[-1]["content"]
             )
         )
@@ -229,6 +231,8 @@ def sanitize_messages(messages: list) -> list:
             isinstance(block, dict)
             and block.get("type") == "text"
             and str(block.get("text") or "").startswith("[system-reminder]")
+            or isinstance(block, dict)
+            and block.get("type") == "time-context"
             for block in m["content"]
         )
         if merged and merged[-1]["role"] == m["role"] and not (

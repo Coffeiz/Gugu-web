@@ -449,6 +449,44 @@ def _install_signals(loop):
             pass  # 某些平台不支持
 
 
+async def _emergency_shutdown(*, tasks=None) -> None:
+    """serve 异常退出时，在 event loop 关闭前释放所有异步资源。
+
+    正常 SIGTERM 仍走 ``serve`` 自己的 graceful drain；这里只兜底启动/清理阶段
+    的异常。先取消并等待残留 task，让它们的 AsyncSession ``__aexit__`` 有机会把
+    checked-out connection 归还连接池，再 dispose engine。各资源独立 best-effort，
+    Redis/sidecar 的清理失败不能阻止数据库释放。
+    """
+    _stop.set()
+    current = asyncio.current_task()
+    pending = list(tasks) if tasks is not None else [
+        task for task in asyncio.all_tasks()
+        if task is not current and not task.done()
+    ]
+    for task in pending:
+        if not task.done():
+            task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+    try:
+        from app.db.session import dispose_engine
+        await dispose_engine()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放数据库失败: {type(exc).__name__}: {exc}", flush=True)
+
+    try:
+        await R.reset()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放 Redis 失败: {type(exc).__name__}: {exc}", flush=True)
+
+    try:
+        from agent.rag.ts_sidecar import close_rank_clients
+        await close_rank_clients()
+    except Exception as exc:
+        print(f"[worker] 异常退出释放 RAG sidecar 失败: {type(exc).__name__}: {exc}", flush=True)
+
+
 def main():
     from app.core.logging import setup_process_output
     setup_process_output()
@@ -457,6 +495,15 @@ def main():
     _install_signals(loop)
     try:
         loop.run_until_complete(serve())
+    except BaseException:
+        # serve 正常退出时已完成 graceful drain；只有异常逃出 serve 才走兜底。
+        # 必须在 loop.close() 之前 await 清理，否则 asyncpg connection 最后只能由
+        # GC 在 greenlet finalize 阶段强制 terminate。
+        try:
+            loop.run_until_complete(_emergency_shutdown())
+        except BaseException as exc:
+            print(f"[worker] 异常退出兜底清理失败: {type(exc).__name__}: {exc}", flush=True)
+        raise
     finally:
         loop.close()
 

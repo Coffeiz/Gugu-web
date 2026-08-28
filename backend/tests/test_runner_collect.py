@@ -17,6 +17,19 @@ async def test_collect_reads_core_error_detail():
     assert cancelled is False
 
 
+async def test_collect_does_not_finalize_after_interrupted_tool_continuation():
+    """回归：工具结果后的续轮被截断时，不能把前置说明伪装成成功回复。"""
+    async def stream():
+        yield "data: " + json.dumps({"type": "token", "content": "正在核验"}) + "\n\n"
+        yield "data: " + json.dumps({"type": "tool_done", "name": "shell", "status": "error"}) + "\n\n"
+        yield "data: " + json.dumps({"type": "_new_round", "next_round": 2}) + "\n\n"
+
+    result = await _collect(stream(), include_meta=True)
+    assert result[0] == "工具结果已返回，但后续回复没有完成，请重试。"
+    assert result[5] is True
+    assert result[-1]["round_texts"] == ["正在核验"]
+
+
 async def test_collect_keeps_legacy_error_message():
     text, _, _, _, _, errored, _, _ = await _collect(_error_stream("message"))
     assert text == "上游暂时繁忙"
@@ -145,6 +158,7 @@ async def test_collect_exposes_nonempty_round_texts_for_im_output():
         for event in (
             {"type": "token", "content": "第一轮"},
             {"type": "_new_round"},
+            {"type": "round_start", "round_id": "round-2"},
             {"type": "token", "content": "第二轮"},
         ):
             yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"

@@ -407,6 +407,7 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
     }
     compaction_applied = False
     run_completed = False
+    cancelled = False
     generation_failed = False
     anthr_messages: list = []
     anthr_initial_len: int = 0
@@ -566,7 +567,14 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
                         break
             if etype == "file" and evt.get("file"):
                 sent_files.append(evt["file"])   # 捕获以便持久化，仍转发给前端
+            if etype == "_cancelled":
+                cancelled = True
+            elif etype == "error":
+                generation_failed = True
             await genstream.publish(session_id, evt)
+
+        if cancelled or generation_failed:
+            return
 
         # 冲洗清洗器残留（未触发截断时的尾部）
         tail = san.flush()
