@@ -82,7 +82,6 @@ async def prepare_run(
     media: list | None,
     model_cfg: Any,
     stance_text: str | None,
-    now_str: str,
     snapshot_injection: Any | None,
     extra_reminder: str | None = None,
     user_message: Any = None,
@@ -145,20 +144,12 @@ async def prepare_run(
     }
     current_stance_digest = assembly.stance_digest(stance_text)
     stance_changed = current_stance_digest != (previous_stance_digest or "")
-    # dynamic tail 是 provider-only 的稳定尾缀，不属于 turn batch/canonical history。
-    # 精确消息时间由 sent_at 在 user 前重建；这里只告诉模型当前日期/星期，并保持
-    # 在所有后续工具 round 的最末尾，因此日期变化只影响最后这一小段 cache。
-    dynamic_tail = (
-        [session_snapshot.reminder_message(f"当前时间：{now_str}")]
-        if now_str else []
-    )
     if use_anthropic:
         assembled = assembly.assemble(
             fixed_parts=fixed_parts,
             history=history_parts,
             system_text=system_prompt,
         )
-        assembled.set_dynamic_tail(dynamic_tail)
         turn_batch, current_stance_digest = assembly.assemble_turn(
             stance=stance_text,
             previous_stance_digest=previous_stance_digest,
@@ -201,7 +192,6 @@ async def prepare_run(
         history=history_parts,
         system_text=system_prompt,
     )
-    assembled.set_dynamic_tail(dynamic_tail)
     turn_batch, current_stance_digest = assembly.assemble_turn(
         stance=stance_text,
         previous_stance_digest=previous_stance_digest,

@@ -60,7 +60,7 @@ def message_time_reminder(sent_at, user_tz=None) -> dict | None:
     if sent_at.tzinfo is None:
         sent_at = sent_at.replace(tzinfo=timezone.utc)
     local_time = sent_at.astimezone(user_tz or LOCAL_TZ)
-    return reminder_message(local_time.strftime("%m-%d %H:%M"))
+    return reminder_message(local_time.strftime("消息时间：%Y-%m-%d %H:%M"))
 
 
 def time_message(user_tz=None) -> dict:

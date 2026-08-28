@@ -447,7 +447,6 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
-    now_str = session_snapshot.current_time_text(user_tz)
     stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
@@ -504,7 +503,6 @@ async def _run_collect_unlocked(req: AgentRequest, *, on_interaction=None, on_to
         media=aug_media,
         model_cfg=model_cfg,
         stance_text=stance_text,
-        now_str=now_str,
         snapshot_injection=_snapshot_injection,
         extra_reminder="\n\n".join(_dynamic_extra_parts) if _dynamic_extra_parts else None,
         user_message=user_message,
@@ -826,7 +824,6 @@ async def _run_stream_unlocked(
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
-    now_str = session_snapshot.current_time_text(user_tz)
     stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
@@ -883,7 +880,6 @@ async def _run_stream_unlocked(
         media=aug_media,
         model_cfg=model_cfg,
         stance_text=stance_text,
-        now_str=now_str,
         snapshot_injection=_snapshot_injection,
         extra_reminder="\n\n".join(_dynamic_extra_parts) if _dynamic_extra_parts else None,
         user_message=user_message,

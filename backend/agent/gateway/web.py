@@ -356,7 +356,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
 
     system_prompt = snapshot["system_prompt"]
     snapshot_context = snapshot["snapshot_context"]
-    now_str = session_snapshot.current_time_text(user_tz)
     stance_text = builder.stance_block(
         await loaders.load_dynamic_memory(user_id) if profile.memory_enabled else {}
     )
@@ -440,7 +439,6 @@ async def _generate_unlocked(req, session_id, snapshot, history, is_new_session,
             media=user_media,
             model_cfg=model_cfg,
             stance_text=stance_text,
-            now_str=now_str,
             snapshot_injection=_snapshot_injection,
             user_message=user_message,
             resume_interaction=resume_interaction,

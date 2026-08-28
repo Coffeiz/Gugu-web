@@ -147,7 +147,7 @@ def test_legacy_persisted_time_context_rows_are_filtered():
 
 def test_last_round_conversation_replays_as_next_run_prefix_without_dynamic_tail():
     sent_at = datetime(2026, 8, 27, 17, 8, tzinfo=timezone.utc)
-    message_time = reminder("08-27 17:08")
+    message_time = reminder("消息时间：2026-08-27 17:08")
     runtime_context = "## 当前 IM 身份事实（只供内部核对）\n- 平台：qq\n- 会话类型：私聊"
     now_text = "2026-08-27（星期四）"
 
