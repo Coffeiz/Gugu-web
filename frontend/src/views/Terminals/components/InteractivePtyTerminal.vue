@@ -27,7 +27,6 @@ let reconnectAttempt = 0
 let outputDecoder: TextDecoder | null = null
 let suppressPasteSubmitUntil = 0
 let promptRecoveryTimer: number | null = null
-let receivedOutput = false
 let hasEstablishedConnection = false
 
 function socketUrl(id: string): string {
@@ -49,10 +48,9 @@ function scheduleReconnect() {
   statusText.value = `连接已断开，${Math.ceil(delay / 1000)} 秒后重连…`
   reconnectTimer = window.setTimeout(() => { reconnectTimer = null; connect() }, delay)
 }
-function connect() {
+function connect(forcePromptRecovery = false) {
   if (intentionalClose) return
   if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
-  receivedOutput = false
   const generation = ++socketGeneration
   const previous = socket
   if (previous && previous.readyState !== WebSocket.CLOSED) previous.close()
@@ -63,12 +61,13 @@ function connect() {
   current.onopen = () => {
     if (!isCurrent()) return
     connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize()
-    // 只有首次连接允许用 Ctrl-L 兜底重绘提示符。重连和重启时后端会从
-    // 新订阅推送 PTY 输出，重复重绘会把两个提示符写到同一行。
-    if (!hasEstablishedConnection) {
+    // 首次连接和显式重启允许用 Ctrl-L 兜底重绘提示符。普通断线重连时
+    // PTY 仍在运行，后端会从新订阅推送输出，重复重绘会把两个提示符写到一行。
+    if (forcePromptRecovery || !hasEstablishedConnection) {
       promptRecoveryTimer = window.setTimeout(() => {
         promptRecoveryTimer = null
-        if (isCurrent() && !receivedOutput) send({ type: 'input', data: '\u000c' })
+        const shouldRecover = isCurrent() && !hasWorkspacePrompt()
+        if (shouldRecover) send({ type: 'input', data: '\u000c' })
       }, 700)
     }
     hasEstablishedConnection = true
@@ -78,8 +77,6 @@ function connect() {
     try {
       const message = JSON.parse(event.data) as { type?: string; data?: string; cols?: number; rows?: number; message?: string }
       if (message.type === 'output' && message.data) {
-        receivedOutput = true
-        if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
         const bytes = Uint8Array.from(atob(message.data), char => char.charCodeAt(0))
         terminal?.write((outputDecoder ??= new TextDecoder()).decode(bytes, { stream: true }))
       } else if (message.type === 'ready' || message.type === 'status') emit('status', { terminalId: props.terminalId, cols: message.cols, rows: message.rows })
@@ -99,6 +96,14 @@ function connect() {
     connected.value = false
     if (!intentionalClose) scheduleReconnect()
   }
+}
+function hasWorkspacePrompt(): boolean {
+  if (!terminal) return false
+  const buffer = terminal.buffer.active
+  for (let index = 0; index < buffer.length; index += 1) {
+    if (buffer.getLine(index)?.translateToString(true).includes('gugu-sandbox:/workspace$')) return true
+  }
+  return false
 }
 function handleResize() { resize() }
 function handlePaste(event: ClipboardEvent) {
@@ -151,7 +156,7 @@ onMounted(() => {
   window.addEventListener('resize', handleResize)
   themeObserver = new MutationObserver(applyTheme)
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette', 'data-family'] })
-  connect()
+  connect(true)
 })
 onActivated(activateTerminal)
 onDeactivated(() => { /* 保留 WebSocket 与 xterm 状态，切回时继续使用同一 PTY */ })
