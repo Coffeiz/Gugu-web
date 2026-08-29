@@ -761,7 +761,9 @@ async def dispatch_im_message(payload: dict):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
         await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
         trace.bind_im_run(passive_sid, platform)
-        trace.finish_run("success")
+        # 被动群消息只落库/供反思，不进入 Agent 执行链路；不要把零 usage
+        # 的临时 trace 上报给 LoopScope，避免污染运行次数和缓存统计。
+        trace.discard_run()
         print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
         return None
 

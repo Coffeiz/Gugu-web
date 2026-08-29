@@ -226,6 +226,8 @@ import {
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/Checkbox.vue'
+import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import { browserTz } from '@/utils/dateAttribution'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts,
   BLUE, pct, convRate, dailyAvg,
@@ -295,8 +297,8 @@ async function load() {
   try {
     const xd = xdQuery('&')
     const [sumRes, trdRes, cfRes] = await Promise.all([
-      admin.authFetch(`/api/v1/admin/analytics/summary?_=1${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/trends?days=60${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/chat-funnel?_=1${xd}`),
     ])
     if (!sumRes.ok) throw new Error(`summary ${sumRes.status}`)

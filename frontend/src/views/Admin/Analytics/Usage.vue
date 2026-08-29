@@ -242,6 +242,8 @@ import {
 } from 'chart.js'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/Checkbox.vue'
+import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import { browserTz } from '@/utils/dateAttribution'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
   BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
@@ -366,9 +368,9 @@ async function load() {
   try {
     const xd = xdQuery('&')
     const [sumRes, trdRes, useRes, dpRes, dimRes, tdRes] = await Promise.all([
-      admin.authFetch(`/api/v1/admin/analytics/summary?_=1${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/trends?days=60${xd}`),
-      admin.authFetch('/api/v1/admin/agent/usage'),
+      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${xd}`),
+      admin.authFetch(`/api/v1/admin/agent/usage?timezone=${encodeURIComponent(browserTz())}`),
       admin.authFetch(`/api/v1/admin/analytics/session-depth?_=1${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/active-dimensions?_=1${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/tool-distribution?_=1${xd}`),

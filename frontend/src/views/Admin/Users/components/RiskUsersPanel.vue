@@ -58,6 +58,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { fmtLocalDateTime } from '@/utils/dateAttribution'
 
 const adminStore = useAdminStore()
 const items = ref<any[]>([])
@@ -116,7 +117,7 @@ async function unsuspend(user: any) {
 
 function formatDate(value: string | null) {
   if (!value) return '—'
-  return new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return fmtLocalDateTime(value).slice(5)
 }
 
 onMounted(load)

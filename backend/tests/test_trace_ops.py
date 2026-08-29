@@ -97,6 +97,21 @@ async def test_finish_run_closes_non_web_scope_run(monkeypatch):
     await asyncio.gather(*list(trace_state._send_tasks), return_exceptions=True)
 
 
+def test_discard_run_does_not_close_or_publish(monkeypatch):
+    monkeypatch.setenv("LOOPSCOPE_ENABLED", "1")
+    run = _ScopeRun(
+        id="run-passive", trace_id="trace-passive", session_key="gugu:qq:388",
+        external_session_id="388", source="qq", started_at=_now(),
+    )
+    token = _scope_run.set(run)
+    try:
+        trace.discard_run()
+        assert _scope_run.get() is None
+        assert run.ended_at is None
+    finally:
+        _scope_run.reset(token)
+
+
 def test_bucket_edges():
     assert opsmetrics._bucket(0) == "50"
     assert opsmetrics._bucket(50) == "50"

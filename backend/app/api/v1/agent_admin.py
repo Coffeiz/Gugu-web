@@ -21,11 +21,11 @@ import asyncio
 import hashlib
 import json
 import time
-from app.core.tz import now_utc
+from app.core.tz import now_utc, resolve_tz
 import uuid as _uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import case, select, func, text, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -344,9 +344,33 @@ async def update_prompt(profile: str, body: PromptUpdate, request: Request, db: 
     return {"profile": profile, "saved": True}
 
 
+def _usage_timezone_expr(name: str | None) -> tuple[object, str]:
+    """返回用户时区和可安全嵌入 PostgreSQL 的时区表达式。"""
+    tz = resolve_tz(name)
+    key = getattr(tz, "key", None)
+    if key:
+        return tz, "'" + key.replace("'", "''") + "'"
+    offset = int((tz.utcoffset(None) or timedelta()).total_seconds())
+    sign = "+" if offset >= 0 else "-"
+    hours, remainder = divmod(abs(offset), 3600)
+    if remainder:
+        return tz, f"INTERVAL '{sign}{hours} hours {remainder // 60} minutes'"
+    return tz, f"INTERVAL '{sign}{hours} hours'"
+
+
+def _utc_naive(dt: datetime) -> datetime:
+    """将用户本地边界转成兼容旧 DB 驱动的 UTC naive datetime。"""
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 @router.get("/usage")
-async def get_usage(month: str | None = None, model: str | None = None, db: AsyncSession = Depends(get_db)):
+async def get_usage(month: str | None = None, model: str | None = None,
+                    timezone_name: str | None = Query(default=None, alias="timezone"),
+                    db: AsyncSession = Depends(get_db)):
     import calendar as cal
+
+    user_tz, tz_expr = _usage_timezone_expr(timezone_name)
+    today = datetime.now(user_tz).date()
 
     # 总计
     total_row = await db.execute(
@@ -361,8 +385,8 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     total_calls, total_in, total_out, total_cache_read, total_cache_write = total_row.one()
 
     # 今日
-    today = now_utc().date()
-    today_start = datetime(today.year, today.month, today.day)
+    today_start_local = datetime(today.year, today.month, today.day, tzinfo=user_tz)
+    today_start = _utc_naive(today_start_local)
     today_row = await db.execute(
         select(
             func.count(AgentUsage.id),
@@ -394,10 +418,10 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
 
     # 有数据的月份列表（最近 12 个月）
     months_rows = await db.execute(
-        text("""
-            SELECT to_char(created_at, 'YYYY-MM') AS m
+        text(f"""
+            SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM') AS m
             FROM agent_usage
-            GROUP BY to_char(created_at, 'YYYY-MM')
+            GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM')
             ORDER BY m DESC
             LIMIT 12
         """)
@@ -418,25 +442,25 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     except Exception:
         year, mon = today.year, today.month
 
-    month_start = datetime(year, mon, 1)
+    month_start_local = datetime(year, mon, 1, tzinfo=user_tz)
     days_in_month = cal.monthrange(year, mon)[1]
-    month_end = datetime(year, mon, days_in_month, 23, 59, 59)
+    month_end_local = month_start_local + timedelta(days=days_in_month)
 
     daily_sql = f"""
-            SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+            SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
                    COALESCE(SUM({_effective_input_sql()}), 0) AS tokens_in,
                    COALESCE(SUM(tokens_out), 0) AS tokens_out,
                    COALESCE(SUM(cache_read), 0) AS cache_read,
                    COALESCE(SUM(cache_write), 0) AS cache_write
             FROM agent_usage
-            WHERE created_at >= :month_start AND created_at <= :month_end
+            WHERE created_at >= :month_start AND created_at < :month_end
     """
-    daily_params = {"month_start": month_start, "month_end": month_end}
+    daily_params = {"month_start": _utc_naive(month_start_local), "month_end": _utc_naive(month_end_local)}
     if model:
         daily_sql += " AND model = :model"
         daily_params["model"] = model
-    daily_sql += " GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY day"
+    daily_sql += f" GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') ORDER BY day"
     daily_rows = await db.execute(text(daily_sql), daily_params)
     daily_map = {r[0]: {"calls": r[1], "tokens_in": r[2], "tokens_out": r[3], "cache_read": r[4], "cache_write": r[5]}
                  for r in daily_rows.all()}
@@ -454,9 +478,10 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
         })
 
     # 最近 7 天独立于当前月，避免月初/月末查看时被月份边界截断。
-    recent_start = datetime(today.year, today.month, today.day) - timedelta(days=6)
+    recent_start_local = today_start_local - timedelta(days=6)
+    recent_end_local = today_start_local + timedelta(days=1)
     recent_sql = f"""
-            SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
+            SELECT to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
                    COALESCE(SUM({_effective_input_sql()}), 0) AS tokens_in,
                    COALESCE(SUM(tokens_out), 0) AS tokens_out,
@@ -466,13 +491,13 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
             WHERE created_at >= :recent_start AND created_at < :recent_end
     """
     recent_params = {
-        "recent_start": recent_start,
-        "recent_end": datetime(today.year, today.month, today.day) + timedelta(days=1),
+        "recent_start": _utc_naive(recent_start_local),
+        "recent_end": _utc_naive(recent_end_local),
     }
     if model:
         recent_sql += " AND model = :model"
         recent_params["model"] = model
-    recent_sql += " GROUP BY to_char(created_at, 'YYYY-MM-DD') ORDER BY day"
+    recent_sql += f" GROUP BY to_char(created_at AT TIME ZONE {tz_expr}, 'YYYY-MM-DD') ORDER BY day"
     recent_rows = await db.execute(text(recent_sql), recent_params)
     recent_map = {
         r[0]: {
@@ -501,6 +526,8 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
         "month":    target_month,
         "daily":    daily,
         "recent_daily": recent_daily,
+        "timezone": getattr(user_tz, "key", None) or str(user_tz),
+        "usage_basis": "已落库的成功 LLM 调用；输入 token 按供应商 usage 合约折算，缓存命中率按完整输入加权",
     }
 
 

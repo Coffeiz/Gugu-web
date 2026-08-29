@@ -146,6 +146,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import AdminDatePicker from '@/components/AdminDatePicker.vue'
 import AdminSelect from '@/components/AdminSelect.vue'
+import { fmtLocalDateTime, localDayKey } from '@/utils/dateAttribution'
 
 const actionOptions = [
   { value: '',       label: '全部操作' },
@@ -263,16 +264,13 @@ function exportCsv() {
   const url  = URL.createObjectURL(blob)
   const a    = document.createElement('a')
   a.href = url
-  a.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `audit-log-${localDayKey(new Date())}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
 
 function formatTime(ts: any) {
-  if (!ts) return '—'
-  const d   = new Date(ts)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  return fmtLocalDateTime(ts, { seconds: true }) || '—'
 }
 
 function actionLabel(action: string) {

@@ -106,6 +106,7 @@ import { ref, reactive, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { showAppNotice } from '@/composables/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
+import { fmtLocalDateTime } from '@/utils/dateAttribution'
 
 const admin = useAdminStore()
 
@@ -175,10 +176,7 @@ async function deleteRecord(id: number) {
 }
 
 function fmtTime(iso: string) {
-  try {
-    const d = new Date(iso)
-    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-  } catch { return '' }
+  return fmtLocalDateTime(iso).replace(/^(\d{4})-0?(\d+)-0?(\d+) /, '$2/$3 ')
 }
 
 onMounted(loadHistory)

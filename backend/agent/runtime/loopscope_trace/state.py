@@ -493,6 +493,10 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
     except Exception:
         pass
 
+def _discard_run() -> None:
+    """丢弃没有进入 Agent 执行链路的临时 run，不向 Collector 上报。"""
+    _scope_run.set(None)
+
 def create_trace() -> str:
     t = uuid.uuid4().hex[:12]
     _trace.set(t)

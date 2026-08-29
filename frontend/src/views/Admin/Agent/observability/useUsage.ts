@@ -1,5 +1,6 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useAdminStore } from '@/stores/admin'
+import { browserTz } from '@/utils/dateAttribution'
 
 export function useUsage() {
   const adminStore = useAdminStore()
@@ -12,7 +13,7 @@ export function useUsage() {
   const CHART_H = 240; const PAD_L = 40; const PAD_R = 12; const PAD_T = 14; const PAD_B = 28
   async function fetchUsage(month?: string, model = activeModel.value) {
     usageLoading.value = true
-    try { const params = new URLSearchParams(); if (month) params.set('month', month); if (model) params.set('model', model); const res = await adminStore.authFetch(`/api/v1/admin/agent/usage?${params}`); if (!res.ok) throw new Error(`加载失败（${res.status}）`); usage.value = await res.json() }
+    try { const params = new URLSearchParams({ timezone: browserTz() }); if (month) params.set('month', month); if (model) params.set('model', model); const res = await adminStore.authFetch(`/api/v1/admin/agent/usage?${params}`); if (!res.ok) throw new Error(`加载失败（${res.status}）`); usage.value = await res.json() }
     finally { usageLoading.value = false }
   }
   function fmtNum(n: number | null | undefined) { if (n == null) return '0'; if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`; if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`; return String(n) }
