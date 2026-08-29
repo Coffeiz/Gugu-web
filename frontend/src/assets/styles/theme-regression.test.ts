@@ -34,6 +34,7 @@ const overlayCss = load('./overlay-theme-bridge.css')
 const fileToolbarCss = load('./file-toolbar-theme-refinements.css')
 const themeAdoptionCss = load('./theme-adoption.css')
 const productCss = load('./tokens/product.css')
+const runtimeCss = load('./adoption/runtime.css')
 const componentCss = load('./tokens/components.css')
 const componentSurfacesCss = load('./tokens/components/surfaces.css')
 const fileCardVue = load('../../components/common/file-browser/FileCard.vue')
@@ -146,6 +147,18 @@ describe('主题 CSS 回归契约', () => {
     expect(notificationBubbleVue).not.toMatch(/:global\(html\[data-theme='dark'\]\[data-family\][^)]*\)[^{]*\{[^}]*rgba\(255,255,255/i)
   })
 
+  it('项目卡不再拥有重复的伪元素内描边', () => {
+    const projectCardVue = load('../../views/Projects/components/ProjectCard.vue')
+    expect(projectCardVue).not.toContain('.proj-card::after')
+    expect(projectCardVue).not.toContain('.proj-card::before')
+    expect(themeAdoptionCss).not.toContain('.proj-card::after')
+    expect(themeAdoptionCss).not.toContain('.proj-card::before')
+    expect(productCss).not.toContain('.proj-card::after')
+    expect(productCss).not.toContain('.proj-card::before')
+    expect(runtimeCss).not.toContain('.proj-card::after')
+    expect(runtimeCss).not.toContain('.proj-card::before')
+  })
+
   it('亮色调色板将导航选中面统一为实体亮面', () => {
     for (const paletteCss of lightPaletteCss) {
       const lightBlock = paletteCss.match(/:root\[data-palette='[^']+'\]\[data-theme='light'\]\s*\{([\s\S]*?)(?:\n| )\}/)?.[1] ?? ''
@@ -158,6 +171,20 @@ describe('主题 CSS 回归契约', () => {
     expect(componentCss).toContain('--sidebar-item-active-light-bg: rgba(255,255,255,.94)')
     expect(componentSurfacesCss).toContain("html[data-theme='light'][data-family]")
     expect(componentSurfacesCss).toContain('--sidebar-item-active: var(--sidebar-item-active-light-bg)')
+  })
+
+  it('Mono 导航不再被旧 chrome 边框覆盖，Admin 与前台复用同一组选中 token', () => {
+    expect(surfacesCss).not.toMatch(/html\[data-family='mono'\] \.sidebar\s*\{/)
+
+    const adminLayoutVue = load('../../layouts/AdminLayout.vue')
+    const adminNavActive = cssBlock(adminLayoutVue, '.nav-item.active')
+    expect(adminLayoutVue).toContain('background: var(--sidebar-bg);')
+    expect(adminLayoutVue).toContain('border-right: 1px solid var(--sidebar-border);')
+    expect(adminNavActive).toContain('background: var(--sidebar-item-active);')
+    expect(adminNavActive).toContain('border-color: var(--sidebar-item-active-border);')
+    expect(adminNavActive).toContain('box-shadow: var(--sidebar-item-active-shadow);')
+    expect(adminNavActive).not.toContain('border-color: var(--border-strong);')
+    expect(adminNavActive).not.toContain('inset 0 1px 0 var(--border-subtle)')
   })
 
   it('组件主题颜色只通过语义 token 注入，Admin 面板不保留重复 scoped 样式块', () => {
@@ -343,5 +370,34 @@ describe('主题 CSS 回归契约', () => {
     expect(designOverridesCss).not.toContain('.design-page .sample-topbar')
     expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .product-frame")
     expect(designOverridesCss).not.toContain("html[data-family='mono'] .design-page .sample-main > .sample-topbar")
+  })
+
+  it('日历工具栏和终端顶部不重复绘制玻璃边界', () => {
+    const componentCss = load('./component-theme-refinements.css')
+    expect(componentCss).toContain('--gb-highlight-strong: transparent')
+    expect(componentCss).toContain('--gb-highlight-side: transparent')
+
+    const productCss = load('./tokens/product.css')
+    const terminalBlock = cssBlock(productCss, 'html[data-theme][data-family] .terminal-main-head.glass-card')
+    expect(terminalBlock).toContain('--glass-card-shadow: none')
+    expect(terminalBlock).toContain('--glass-card-shadow-hover: none')
+    expect(terminalBlock).toContain('box-shadow: none')
+
+    const terminalsVue = load('../../views/Terminals/index.vue')
+    expect(terminalsVue).toContain('box-shadow:var(--design-section-shadow);')
+    expect(terminalsVue).not.toContain('box-shadow:var(--design-section-shadow), inset 0 1px 0 var(--design-section-highlight)')
+  })
+
+  it('咕咕聊天窗口不重复绘制外壳和输入区高光', () => {
+    const productCss = load('./tokens/product.css')
+    const chatBlock = cssBlock(productCss, 'html[data-theme][data-family] .chat-window::after')
+    expect(chatBlock).toContain('box-shadow: none')
+
+    const composerBlock = cssBlock(productCss, 'html[data-theme][data-family] .chat-window .chat-input-row')
+    expect(composerBlock).toContain('box-shadow: none')
+
+    const adoptionCss = load('./theme-adoption.css')
+    const darkChatBlock = cssBlock(adoptionCss, "html[data-theme='dark'][data-family] .chat-window::after")
+    expect(darkChatBlock).toContain('box-shadow: none')
   })
 })

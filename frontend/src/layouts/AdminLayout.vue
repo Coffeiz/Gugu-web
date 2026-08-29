@@ -161,10 +161,13 @@ function handleLogout() {
 .admin-sidebar {
   width: 220px;
   flex-shrink: 0;
-  background: var(--surface-page);
+  background: var(--sidebar-bg);
+  backdrop-filter: var(--popup-blur);
+  -webkit-backdrop-filter: var(--popup-blur);
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--sidebar-border);
+  box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   overflow: hidden;
   padding: 24px 14px;
   gap: 0;
@@ -202,13 +205,13 @@ function handleLogout() {
 }
 .nav-item:hover:not(.disabled) {
   color: var(--content-primary);
-  background: var(--surface-glass);
+  background: var(--sidebar-item-hover);
 }
 .nav-item.active {
-  color: var(--content-primary);
-  background: var(--surface-glass-hover);
-  border-color: var(--border-strong);
-  box-shadow: inset 0 1px 0 var(--border-subtle);
+  color: var(--sidebar-item-active-fg);
+  background: var(--sidebar-item-active);
+  border-color: var(--sidebar-item-active-border);
+  box-shadow: var(--sidebar-item-active-shadow);
   font-weight: 600;
 }
 .nav-item.disabled { color: var(--content-muted); cursor: default; }

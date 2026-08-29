@@ -6,16 +6,6 @@ html[data-theme][data-family] .panel-left {
   box-shadow: var(--panel-glass-shadow);
 }
 
-/* Mono keeps content cards quieter, but app chrome still needs a translucent backdrop surface.
-   This family-only bridge does not touch Aero light/dark values. */
-html[data-family='mono'] .sidebar {
-  background: var(--chrome-glass-bg);
-  border-right-color: var(--chrome-glass-border);
-  box-shadow: var(--chrome-glass-shadow);
-  backdrop-filter: var(--chrome-glass-blur);
-  -webkit-backdrop-filter: var(--chrome-glass-blur);
-}
-
 /* The mini player is floating app chrome, not a content card. Mono reuses the same chrome material
    as the sidebar/Mind controls; Glass light keeps the component's legacy paint untouched. */
 html[data-family='mono'] .mini-player {
