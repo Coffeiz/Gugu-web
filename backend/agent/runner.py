@@ -445,10 +445,10 @@ async def _run_collect_unlocked(
             except Exception:
                 im_bridge = ""
 
-    # 语音 / 音视频：用独立配置的「语音识别模型」转成文字 → 交主模型，**主模型不再被强切**（见 agent/voice.py）。
-    # 没配语音模型 → 切断，回「不支持」（用户消息已存，不再生成）。
+    # 主模型支持音频时直接保留音频块；否则才用独立配置的「语音识别模型」
+    # 转成文字交给主模型。两者都不可用时，resolve_for_message 已留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    if _transcribe_media:
+    if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
         transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
         if transcript is None:        # 未配置语音模型

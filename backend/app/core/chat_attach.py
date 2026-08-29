@@ -769,19 +769,35 @@ def _audio_enabled(model_cfg=None) -> bool:
     """音频理解是否开启：主模型 vision_audio 开，且走 OpenAI 兼容 input_audio 块。
     独立语音识别模型（ASR 转写）由 _voice_recognition_enabled 单独判定，两者解耦。"""
     try:
+        from agent import providers
         if model_cfg is not None:
             from agent.llm.llm_select import use_anthropic_for
             if not getattr(model_cfg, "vision_audio", False):
                 return False
-            return not use_anthropic_for(model_cfg)
+            if use_anthropic_for(model_cfg):
+                return False
+            # vision_audio 是产品开关，不能越过 provider 的协议能力；否则 GLM
+            # 等文本端点会收到 input_audio，并以 content.type 400 拒绝请求。
+            return bool(providers.capability_snapshot(model_cfg).get("audio", False))
         from app.core.config import get_settings
         from agent.llm.llm_select import use_anthropic_for
         ai = get_settings().ai
         if not getattr(ai, "vision_audio", False):
             return False
-        return not use_anthropic_for(ai)
+        if use_anthropic_for(ai):
+            return False
+        return bool(providers.capability_snapshot(ai).get("audio", False))
     except Exception:
         return False
+
+
+def should_transcribe_audio(model_cfg=None) -> bool:
+    """判断音频是否需要回退到独立语音识别模型。
+
+    主模型具备原生音频能力时，音频应直接随本轮请求发送给主模型；只有
+    主模型不支持音频时，才由独立语音识别模型转写成文字。
+    """
+    return not _audio_enabled(model_cfg)
 
 
 def _minimax_video_enabled(model_cfg) -> bool:

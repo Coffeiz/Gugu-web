@@ -125,6 +125,35 @@ def test_minimax_video_enabled_other_provider():
     assert _minimax_video_enabled(cfg) is False
 
 
+def test_text_only_provider_does_not_receive_audio_or_video_blocks():
+    from types import SimpleNamespace
+    from app.core.chat_attach import _audio_enabled, _video_enabled
+
+    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=True,
+                          vision_video=True, api_format="", base_url="")
+
+    assert _audio_enabled(cfg) is False
+    assert _video_enabled(cfg) is False
+
+
+def test_native_audio_model_does_not_fallback_to_transcription():
+    from types import SimpleNamespace
+    from app.core.chat_attach import should_transcribe_audio
+
+    cfg = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", vision_audio=True,
+                          api_format="", base_url="https://token-plan-cn.xiaomimimo.com/v1")
+    assert should_transcribe_audio(cfg) is False
+
+
+def test_text_only_model_falls_back_to_transcription():
+    from types import SimpleNamespace
+    from app.core.chat_attach import should_transcribe_audio
+
+    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=False,
+                          api_format="", base_url="")
+    assert should_transcribe_audio(cfg) is True
+
+
 # ── _compress_video：竖屏长边限制 + 不阻塞事件循环 ───────────────────────────
 def test_compress_video_uses_portrait_scale_filter(monkeypatch):
     """竖屏视频的 ffmpeg 滤镜必须限制长边（force_original_aspect_ratio=decrease），

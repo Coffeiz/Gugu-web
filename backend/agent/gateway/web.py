@@ -272,9 +272,10 @@ async def stream(req: AgentRequest) -> AsyncGenerator[str, None]:
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
-    # 语音 / 音视频：用独立「语音识别模型」转文字 → 交主模型（不强切）；没配 → 切断回「不支持」。
+    # 主模型支持音频时直接保留音频块；否则才用独立「语音识别模型」转文字。
+    # 两者都不可用时，resolve_for_message 已在 aug_text 中留下不支持提示。
     _transcribe_media = [m for m in aug_media if m.get("type") != "video"]
-    if _transcribe_media:
+    if _transcribe_media and chat_attach.should_transcribe_audio(model_cfg):
         from agent import voice as _voice
         transcript = await _voice.transcribe(_transcribe_media, settings, db=db, user_id=user_id)
         if transcript is None:        # 未配置语音模型
