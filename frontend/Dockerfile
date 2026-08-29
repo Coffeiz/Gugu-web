@@ -11,7 +11,9 @@ RUN corepack enable && corepack prepare pnpm@10.15.0 --activate
 COPY Gugu-web/package.json Gugu-web/pnpm-lock.yaml Gugu-web/pnpm-workspace.yaml Gugu-web/.npmrc ./
 COPY Gugu-web/frontend/package.json ./frontend/package.json
 COPY Gugu-web/frontend/scripts/ ./frontend/scripts/
-COPY gugu-interaction-runtime/ ./gugu-interaction-runtime/
+# package.json 中的 file:../../gugu-interaction-runtime 从 /workspace/frontend
+# 解析到容器根目录，依赖必须放在这里才能让 pnpm 正确读取。
+COPY gugu-interaction-runtime/ /gugu-interaction-runtime/
 RUN pnpm install --filter gugu-web --frozen-lockfile
 
 COPY Gugu-web/frontend/ ./frontend/
