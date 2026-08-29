@@ -87,7 +87,49 @@ Teleport、浮层和弹窗需要脱离组件 scoped 作用域时，应放入明�
 
 采用按组件域的渐进迁移：先处理日历、GuguChat、文件工具栏和项目弹窗等已有主题回归的高风险域，再处理全局卡片、按钮、Admin 和 Mind。每次只迁移一个职责域，迁移前后比较编译后的选择器、计算样式和浏览器截图。
 
-### 3.4 安全与隐私边界
+### 3.4 目标目录变化
+
+目标是让“主题值、语义 token、组件契约、跨 DOM 树覆盖和回归测试”各自只有一个主要归属。迁移完成后的目录职责如下：
+
+```text
+frontend/src/assets/styles/
+├── variables.css                    # 唯一总入口，只负责按顺序引入各层
+├── tokens/
+│   ├── foundation/                  # reset、原子尺寸、字体、动效等基础值
+│   ├── themes/                      # light/dark 与 Aero/Mono 的主题原始值
+│   ├── palettes/                    # 品牌和产品调色板原始值
+│   ├── semantic/                    # surface、content、border、action 等语义映射
+│   └── components/                  # 页面和组件可消费的 paint contract
+├── components/                      # 跨页面组件的非 scoped 共享样式（必要时新增）
+│   ├── surfaces.css                 # 卡片、面板、弹窗、输入和通用表面
+│   ├── navigation.css               # 前台与 Admin 导航及选中态
+│   ├── chat.css                     # GuguChat 共享 paint
+│   └── ...                          # 只按稳定组件域拆分
+├── bridges/                         # Teleport / 跨 DOM 树的最小覆盖
+│   ├── calendar.css
+│   ├── overlays.css
+│   ├── file-browser.css
+│   └── ...
+├── adoption/                        # 迁移期间的旧组件兼容层，最终清空并删除
+├── global.css                       # reset、基础排版和真正全局 utility
+└── *-regression.test.ts             # CSS ownership、主题和结构回归
+```
+
+目录迁移关系：
+
+| 当前文件/目录 | 目标归属 | 处理方式 |
+|---|---|---|
+| `tokens/foundation/`、`tokens/themes/`、`tokens/palettes/`、`tokens/semantic/`、`tokens/components/` | `tokens/` 对应层 | 保留并继续作为 token 唯一来源；只允许按职责补齐，不复制同名 token |
+| `tokens/product.css` | `components/` 或对应组件域 | 将仍属于具体组件的最终 paint 规则迁入组件域；全局产品规则迁入 `global.css` 或语义层 |
+| `theme-adoption.css`、`theme-refinements.css`、`component-theme-refinements.css` | `components/`、`bridges/` | 按 selector 的实际职责拆分后删除旧总文件，禁止继续叠加同名覆盖 |
+| `calendar-theme-bridge.css`、`overlay-theme-bridge.css`、`file-drop-theme-refinements.css`、`file-toolbar-theme-refinements.css` | `bridges/` 对应域 | 仅保留 Teleport、浮层根节点和跨组件边界；组件结构与状态回到 Vue 组件或 `components/` |
+| `adoption/*.css` | 迁移完成后的对应域 | 作为临时兼容层保留；每个文件清空后删除，不作为新的长期目录 |
+| `global.css`、根级 `scrollbars.css`、`fonts.css` | `global.css`、`tokens/foundation/` 或专用基础文件 | 只保留真正全局内容；业务选择器迁出，重复 scrollbar 规则合并 |
+| `*-regression.test.ts`、`ui-structure-regression.test.ts` | `styles/tests/`（可选）或当前样式目录 | 统一测试入口和 fixture 归属；测试必须覆盖最终 owner，不依赖旧文件名 |
+
+迁移期间允许旧目录与目标目录并存，但入口只能有一个，且每条最终 paint 规则必须注明 owner。完成后应删除空的 adoption/refinement/bridge 旧入口；若某个 bridge 仍有真实跨 DOM 树职责，则移动后保留，不以“文件数量少”为删除标准。目标目录不改变 Vue 组件自身的结构样式归属，也不把 Runtime 的 `transform`、`transition` 和拖拽状态搬进主题层。
+
+### 3.5 安全与隐私边界
 
 本 PRD 仅涉及前端静态样式，不新增日志、网络请求、用户数据或权限边界。不得把用户输入、凭据、token 或诊断内容写入 CSS、测试快照或提交记录。
 
