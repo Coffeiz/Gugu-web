@@ -77,6 +77,28 @@ services:
       - egress_internal
     restart: unless-stopped
 
+  # 开发观测 Collector。Gugu 的 backend/worker/gateway 默认通过 Compose 内网
+  # 上报 LoopScope；数据保存在独立 volume，不混入业务 PostgreSQL。
+  loopscope-collector:
+    logging: *json-file-logging
+    build:
+      context: ./loopscope
+      dockerfile: apps/collector/Dockerfile
+    environment:
+      LOOPSCOPE_HOST: 0.0.0.0
+      LOOPSCOPE_PORT: 4320
+      LOOPSCOPE_DB_PATH: /data/loopscope.db
+    ports:
+      - "127.0.0.1:4320:4320"
+    volumes:
+      - loopscope_data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4320/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # 只执行一次的数据库初始化/迁移任务。Web 和 Worker 都等它成功后再启动，
   # 避免两个容器同时执行 alembic 产生迁移竞态。
   migrate:
@@ -136,6 +158,8 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +169,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - gugu_data:/data
@@ -179,6 +205,8 @@ services:
       SANDBOX__EGRESS_PROXY_URL: http://egress-proxy:3128
       SANDBOX__EGRESS_NETWORK_NAME: gugu-sandbox-egress
       SANDBOX__EGRESS_ISOLATION_ENABLED: "true"
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -188,6 +216,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - gugu_data:/data
@@ -213,6 +243,8 @@ services:
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
       STORAGE__LOCAL_PATH: /data/users
+      LOOPSCOPE_ENABLED: "1"
+      LOOPSCOPE_ENDPOINT: http://loopscope-collector:4320
     depends_on:
       postgres:
         condition: service_healthy
@@ -220,6 +252,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      loopscope-collector:
+        condition: service_healthy
     volumes:
       - ./backend:/app
       - gugu_data:/data
@@ -278,6 +312,7 @@ volumes:
   pgdata:
   gugu_data:
   sandbox_socket:
+  loopscope_data:
 
 networks:
   egress_internal:

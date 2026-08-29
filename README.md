@@ -82,7 +82,7 @@
 
 ### 方式一：Docker Compose（本地开发，推荐新人上手）
 
-只覆盖 web（uvicorn）+ worker（IM 消息处理）+ Postgres + Redis，跑 vite dev server 带热更新；
+包含 web（uvicorn）+ worker（IM 消息处理）+ gateway（IM 长连接）+ Postgres + Redis + LoopScope Collector，跑 vite dev server 带热更新；
 不是生产部署方式（生产用裸机 systemd，见上方「部署」）。
 
 ```bash
@@ -108,10 +108,15 @@ docker compose up -d
 # 管理后台 → http://localhost:9595/admin/  （独立打包入口，见 frontend/admin/；账号密码见
 #            backend/.env 的 ADMIN_USERNAME/ADMIN_PASSWORD，默认 admin/admin123，生产部署务必改掉）
 # 后端    → http://localhost:8000/docs
+# LoopScope Collector → http://localhost:4320
 
 # 常用：docker compose logs -f backend worker   查日志
 #      docker compose down                      停止（加 -v 连数据卷一起删）
 ```
+
+开发 Compose 默认开启 LoopScope trace，`backend`、`worker` 和 `gateway` 会通过 Compose 内网连接
+Collector；Collector 数据保存在独立的 `loopscope_data` volume。LoopScope 前端仍独立运行，启动方式见
+[`loopscope/README.md`](loopscope/README.md)，默认访问 `http://localhost:4319`。
 
 ### 方式一（生产）：构建物 Docker Compose + Nginx
 
