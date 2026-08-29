@@ -95,14 +95,13 @@ def adapter_for(ai) -> ProviderAdapter:
 
 
 def build_anthropic_client(ai, timeout):
-    import httpx
     from anthropic import AsyncAnthropic
 
     from app.core.credentials import normalize_ascii_api_key
     return AsyncAnthropic(
         api_key=normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key"),
         base_url=adapter_for(ai).resolve_base_url(ai),
-        http_client=httpx.AsyncClient(timeout=timeout),
+        timeout=timeout,
         default_headers=adapter_for(ai).auth_headers(ai),
     )
 

@@ -17,7 +17,7 @@ date:   2026-08-26 23:07:31 +0800
 subject: 修正 RAG worker 的 pnpm 构建依赖
 ```
 
-该提交位于 TypeScript API/Agent 迁移提交之前，同时已经包含 RAG worker 的 pnpm 构建依赖修复，因此作为恢复原点可以保留 pnpm 与 TS RAG 基础。
+该提交位于 TypeScript api/Agent 迁移提交之前，同时已经包含 RAG worker 的 pnpm 构建依赖修复，因此作为恢复原点可以保留 pnpm 与 TS RAG 基础。
 
 ## 3. FastAPI API 基线
 
@@ -105,10 +105,10 @@ PostgreSQL / Redis / sandboxd（按配置启用）
 gugu-ts-api.service
 gugu-ts-agent-runtime.service
 gugu-ts-agent-worker.service
-TS API/Agent 专属 build、start、owner switch 和生产 Compose service
+TS api/Agent 专属 build、start、owner switch 和生产 Compose service
 ```
 
-Makefile 允许继续使用 Node/pnpm 构建固定 RAG 制品，但不得因 `make install` 或 `make start` 隐式启动 TS API/TS Agent。
+Makefile 允许继续使用 Node/pnpm 构建固定 RAG 制品，但不得因 `make install` 或 `make start` 隐式启动 TS api/TS Agent。
 
 ## 7. 实时事件基线
 
@@ -124,10 +124,10 @@ Makefile 允许继续使用 Node/pnpm 构建固定 RAG 制品，但不得因 `ma
 ## 8. Phase 0 验收
 
 - [x] 已从安全原点创建独立恢复分支。
-- [x] 已确认原点位于 TS API/Agent 迁移前，并包含 pnpm/RAG 构建基础。
+- [x] 已确认原点位于 TS api/Agent 迁移前，并包含 pnpm/RAG 构建基础。
 - [x] 已完成 95 个后续提交的保留、排除和拆分应用分类。
 - [x] 已盘点 FastAPI 路由、Python Agent/Worker、TS RAG 和实时事件边界。
 - [x] 已定义 Makefile/Compose 保留和排除规则。
 - [x] 未修改远端历史，未执行 force push，未覆盖运行配置、数据库或用户数据。
 
-下一步进入 Phase 1：恢复 FastAPI API owner，不先应用 TS API/Agent 迁移提交。
+下一步进入 Phase 1：恢复 FastAPI API owner，不先应用 TS api/Agent 迁移提交。

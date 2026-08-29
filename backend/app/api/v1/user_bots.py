@@ -1,7 +1,7 @@
 """用户自带机器人（BYO）：每个用户管理自己的 QQ bot 凭据。
 
 与 Admin 的共享频道（/admin/agent/bots，飞书用）不同——这里是**用户级**：
-每人填自己在 q.qq.com 创建的 bot 的 AppID/AppSecret，咕咕的 supervisor 据此
+每人填自己在 q.qq.com 创建的 bot 的 AppID/AppSecret，咕咕的 gateway 据此
 为该用户起一条独立 QQ 网关。bot 收到的消息天然归属该用户，无需再做绑定。
 """
 from __future__ import annotations
@@ -50,10 +50,10 @@ def _out(b: UserBot) -> dict:
     }
 
 
-async def _touch_supervisor():
-    """通知 supervisor 立即重扫（不必等轮询周期）。失败无所谓，下轮也会同步。"""
+async def _touch_gateway():
+    """通知 gateway 立即重扫（不必等轮询周期）。失败无所谓，下轮也会同步。"""
     try:
-        await R.get_redis().publish("im:supervisor:reload", "1")
+        await R.get_redis().publish("im:gateway:reload", "1")
     except Exception:
         pass
 
@@ -104,7 +104,7 @@ async def create_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_supervisor()
+    await _touch_gateway()
     return _out(bot)
 
 
@@ -197,7 +197,7 @@ async def update_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_supervisor()
+    await _touch_gateway()
     return _out(bot)
 
 
@@ -221,4 +221,4 @@ async def delete_my_bot(
         pass
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_supervisor()
+    await _touch_gateway()

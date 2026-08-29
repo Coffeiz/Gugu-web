@@ -179,9 +179,12 @@ async def test_existing_session_object_avoids_stale_im_session_id(monkeypatch):
     settings = _settings(shell=True)
     settings.agent.shell_system_enabled = True
     monkeypatch.setattr(shell_policy, "get_settings", lambda: settings)
+    monkeypatch.setattr(shell_policy, "effective_shell_enabled", lambda *_: _true())
     monkeypatch.setattr(shell_policy, "effective_shell_system_enabled", lambda *_: _true())
 
-    decision = await shell_policy.evaluate(db, "user-1", 999, "pwd", session=db.session)
+    decision = await shell_policy.evaluate(
+        db, "user-1", 999, "pwd", session=db.session, requested_scope="system"
+    )
 
     assert decision.allowed
     assert decision.scope.value == "system"
@@ -271,9 +274,9 @@ async def test_workspace_scope_requires_user_permission(monkeypatch):
     assert decision.reason == "用户未开启 Shell"
 
 
-async def _true():
+async def _true(*_args):
     return True
 
 
-async def _false():
+async def _false(*_args):
     return False

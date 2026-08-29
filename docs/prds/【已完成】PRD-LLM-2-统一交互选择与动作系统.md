@@ -6,7 +6,7 @@
 > 所属层：LLM / Agent 交互层
 > 关联模块：`backend/agent/interactions/`、`backend/agent/core.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/app/models/__init__.py`、`frontend/src/components/common/gugu-chat/`
 > 平台适配：`backend/agent/gateway/qq.py`、Guguchat、网页、飞书
-> 关联文档：[[【已完成】PRD-LLM-1-provider适配层重构与core瘦身.md]]；[[【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md]]；[[../../agent/22-IM用户数据结构.md]]
+> 关联文档：[[【已完成】PRD-LLM-1-PROVIDER适配层重构与CORE瘦身.md]]；[[【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md]]；[`08-CHANNELS.md`](../agent/08-CHANNELS.md)
 
 本 PRD 定义 Agent 在“需要用户输入后才能继续”时的统一交互协议。QQ Keyboard、Guguchat 按钮、网页弹窗和飞书卡片都是该协议的渲染与回调适配器，不在各平台内重复实现确认逻辑。
 

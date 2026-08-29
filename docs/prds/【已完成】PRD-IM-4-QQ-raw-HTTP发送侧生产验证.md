@@ -4,7 +4,7 @@
 > 创建：2026-08-06
 > 最近更新：2026-08-06
 > 关联模块：`backend/agent/gateway/qq.py`（`send_c2c`/`send_group`/`send_file`/`_send_token`/`_qq_request`）
-> 关联文档：[`【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md`](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md)（Phase 3，代码已完成，本 PRD 只跟踪生产环境端到端验证与并发加固）
+> 关联文档：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)（Phase 3，代码已完成，本 PRD 只跟踪生产环境端到端验证与并发加固）
 
 ---
 
@@ -20,7 +20,7 @@
 
 ## 1. 背景与目标
 
-[`PRD-IM-1`](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md) Phase 3 把 QQ 发送侧从 botpy 全部改成 raw HTTP 直连（`_qq_request()` + 按 `channel_id` 缓存 access token），并彻底移除了 `qq-botpy` 依赖。这部分代码已经合并、本地测试全过，且实际上是当前生产环境唯一的 QQ 发送路径（没有回退开关）——但当时是在**未经过 3-7 天灰度期就直接实施**的情况下上线的，且从未在真实 QQ Bot API 上做过端到端验证，只有本地 mock 测试覆盖。
+[`PRD-IM-1`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md) Phase 3 把 QQ 发送侧从 botpy 全部改成 raw HTTP 直连（`_qq_request()` + 按 `channel_id` 缓存 access token），并彻底移除了 `qq-botpy` 依赖。这部分代码已经合并、本地测试全过，且实际上是当前生产环境唯一的 QQ 发送路径（没有回退开关）——但当时是在**未经过 3-7 天灰度期就直接实施**的情况下上线的，且从未在真实 QQ Bot API 上做过端到端验证，只有本地 mock 测试覆盖。
 
 把这部分单独拆出来跟踪，是因为：
 
@@ -47,7 +47,7 @@
 - 群消息：`_post_group()` 全流程，包括 markdown 回退分支。
 - 401 重试：人为让缓存 token 失效（或等待自然过期），确认 `_qq_request()` 清缓存重试一次后成功，且不会死循环（`retry_on_401` 只允许一次）。
 
-验收标准：以上 5 类场景各至少成功跑通一次，并在 [`docs/ops/known-issues.md`](../../ops/known-issues.md) 记录真实响应体结构与 mock 假设的任何出入。
+验收标准：以上 5 类场景各至少成功跑通一次，并在 [`docs/ops/KNOWN-ISSUES.md`](../../ops/KNOWN-ISSUES.md) 记录真实响应体结构与 mock 假设的任何出入。
 
 ### FR-QQ-2：`_send_tokens` 并发加锁（🔲 待做）
 

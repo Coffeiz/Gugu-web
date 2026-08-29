@@ -402,7 +402,7 @@ Authorization: Bearer <user_token>
 
 #### 2.9.5 缩略图加载并发限流
 
-懒加载只控制「进视口才请求」，但一屏内仍可能同时进入几十张卡片。`useThumbCache.js` 的 `getThumb`/`getThumbUrl` 经 `@/utils/concurrency` 的 `pLimit(THUMB_CONCURRENCY=6)` 限流——与批量上传共用同一限流器实现，把同时在途的 `/thumb` 请求压在 6 个内，尾部不再超时。详见 [`../ops/performance.md`](../ops/performance.md) 十三节。
+懒加载只控制「进视口才请求」，但一屏内仍可能同时进入几十张卡片。`useThumbCache.js` 的 `getThumb`/`getThumbUrl` 经 `@/utils/concurrency` 的 `pLimit(THUMB_CONCURRENCY=6)` 限流——与批量上传共用同一限流器实现，把同时在途的 `/thumb` 请求压在 6 个内，尾部不再超时。详见 [`../ops/PERFORMANCE.md`](../ops/PERFORMANCE.md) 十三节。
 
 #### 2.9.6 缓存层汇总
 

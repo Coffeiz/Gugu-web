@@ -3,8 +3,6 @@ import type { LandingRect } from './index'
 export const MIND_CANVAS_SURFACE_ID = 'mind:canvas'
 export const MIND_CANVAS_DRAWER_SURFACE_ID = 'mind:canvas-drawer'
 export const MIND_PROJECT_DRAWER_SURFACE_ID = 'mind:project-drawer'
-/** @deprecated 使用画布/项目抽屉的独立 Surface ID。 */
-export const MIND_DRAWER_SURFACE_ID = MIND_PROJECT_DRAWER_SURFACE_ID
 export const MIND_CANVAS_OBJECT_TYPE = 'mind-canvas-object'
 export const MIND_PROJECT_OBJECT_TYPE = 'mind-project-object'
 export const MIND_CANVAS_OBJECT_TYPES = [MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE] as const

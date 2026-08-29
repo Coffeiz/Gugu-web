@@ -1,7 +1,7 @@
 # 提案：用户报 bug 时，咕咕辅助生成结构化报告
 
 > 💡 **提案阶段，未实现**（核对时点：2026-07）。现有反馈系统（`backend/app/api/v1/feedback.py` + `models.Feedback` + 前端 `FeedbackModal.vue` + 后台 `Admin/Feedback`）只是一个纯手动的分类+文本框表单：用户自己选分类、自己写内容、直接提交，全程没有咕咕参与生成或分析，`Feedback` 表也没有本文提议的 `user_raw`/`agent_report`/`context` 字段。本文设计的"咕咕辅助分析生成报告"能力**完全没有代码落地**，供日后做时参照。
-> 相关：现有反馈系统（`api/v1/feedback.py` + `models.Feedback` + `Admin/Feedback`）、[[安全-工具错误信息脱敏]]、[[gugu-privacy-redaction]]、[[wishlist.md]]。
+> 相关：现有反馈系统（`api/v1/feedback.py` + `models.Feedback` + `Admin/Feedback`）、[[安全-工具错误信息脱敏]]、[[gugu-privacy-redaction]]、[[WISHLIST.md]]。
 
 ---
 

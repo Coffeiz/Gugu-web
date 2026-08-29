@@ -1,14 +1,14 @@
 """飞书网关：WebSocket 长连接收消息 → 规范化 → 入队 im:inbound（BYO 每用户自带 app）。
 
 不需要公网 URL（lark-oapi WebSocket 长连）。与 QQ 同 BYO 模型：每个用户在「个人设置 →
-接入咕咕 → 飞书」用 device flow 扫码创建自己的飞书 app（存 user_bots 表），supervisor 为每个
+接入咕咕 → 飞书」用 device flow 扫码创建自己的飞书 app（存 user_bots 表），gateway 为每个
 启用的 user_bot 起一条本网关子进程，凭据走**环境变量注入**。bot 收到的消息天然归属其 owner，
 入队 payload 带 owner_user_id，worker 无需再做绑定。
 
 lark 的 `ws.Client.start()` 同步阻塞、事件 handler 同步，故用 `produce_sync` 入队。
-lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 supervisor 起停（kill）。
+lark 无 stop()，单连接断不掉 → 一个 bot 一个子进程，由 gateway 起停（kill）。
 
-启动（由 supervisor 拉起，注入 FEISHU_* 环境变量）：
+启动（由 gateway 拉起，注入 FEISHU_* 环境变量）：
     FEISHU_BOT_ID=.. FEISHU_APP_ID=.. FEISHU_APP_SECRET=.. FEISHU_OWNER=.. \
       .venv/bin/python -m agent.gateway.feishu
 """
@@ -377,7 +377,7 @@ def serve() -> None:
     channel_id = os.environ.get("FEISHU_BOT_ID", "")
     owner = os.environ.get("FEISHU_OWNER", "")
     if not app_id or not app_secret:
-        raise SystemExit("缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量（应由 supervisor 注入）。")
+        raise SystemExit("缺少 FEISHU_APP_ID / FEISHU_APP_SECRET 环境变量（应由 gateway 注入）。")
     api_client = lark.Client.builder().app_id(app_id).app_secret(app_secret).build()   # 下载收到的文件/图片用
     # 表情事件空处理器：咕咕加表情后飞书会回推 reaction.created 事件，不注册的话 lark 每条都报
     # 「processor not found」ERROR 刷屏（看着像断开，其实不是）。注册个 no-op 吞掉即可。

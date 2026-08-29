@@ -9,22 +9,16 @@
 3. [03-AGENT-LOOP.md](./03-AGENT-LOOP.md)：消息进入 Agent 后的完整执行链路。
 4. [04-CONTEXT-ENGINEERING.md](./04-CONTEXT-ENGINEERING.md)：上下文分层、组装、压缩和缓存前缀。
 5. [05-TOOLS-AND-SKILLS.md](./05-TOOLS-AND-SKILLS.md)：工具、Skill、能力索引、Schema 和执行边界。
+6. [06-RAG-AND-KNOWLEDGE.md](./06-RAG-AND-KNOWLEDGE.md)：RAG、Knowledge、索引、scope 和上下文注入。
+7. [07-MEMORY-AND-REFLECTION.md](./07-MEMORY-AND-REFLECTION.md)：Memory、Knowledge 生命周期、反思触发和长期信息维护。
+8. [08-CHANNELS.md](./08-CHANNELS.md)：Web、QQ、微信和飞书接入、身份、会话和出站协议。
+9. [09-MESSAGE-PROTOCOL.md](./09-MESSAGE-PROTOCOL.md)：流式事件、工具消息、交互、附件、引用和 canonical history。
+10. [10-RELIABILITY.md](./10-RELIABILITY.md)：重试、取消、压缩失败、并发、关闭和恢复。
+11. [11-LoopScope.md](./11-LOOPSCOPE.md)：开发观测、Context Provenance、Prefix Diff 和 cache 排障。
 
 ## 参考文档
 
 - [COMMANDS.md](./COMMANDS.md)：统一斜杠命令、会话控制和目标命令。
-
-## 后续专题文档（规划中）
-
-以下编号是原定的后续写作计划，入口保留但正文尚未补齐：
-
-- `06-RAG-AND-KNOWLEDGE.md`：知识召回、索引、TS worker 和注入。
-- `07-MEMORY-AND-REFLECTION.md`：Memory、Knowledge 和反思机制。
-- `08-CHANNELS.md`：Web、QQ、微信和飞书接入。
-- `09-MESSAGE-PROTOCOL.md`：流式输出、工具消息、交互消息和附件。
-- `10-RELIABILITY.md`：重试、取消、压缩失败、并发和恢复。
-
-专题正文完成后，再将对应条目移入上方阅读顺序并补充链接。
 
 ## 领域文档
 

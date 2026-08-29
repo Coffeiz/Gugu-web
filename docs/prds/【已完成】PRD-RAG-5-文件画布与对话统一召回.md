@@ -3,7 +3,7 @@
 > 状态：已完成（FastAPI/Python 业务桥接 + TypeScript 生产 RAG Worker）
 > 创建：2026-08-25
 > 所属层：Agent / Knowledge RAG / Source Adapter
-> 关联文档：`docs/agent/RAG架构与检索链路.md`、`PRD-RAG-1-统一知识召回与索引.md`、`PRD-ARCH-1-TypeScript后端迁移与API-Worker分层架构.md`
+> 关联文档：[`06-RAG-AND-KNOWLEDGE.md`](../agent/06-RAG-AND-KNOWLEDGE.md)、`PRD-RAG-1-统一知识召回与索引.md`、[`【已归档】PRD-ARCH-1-TYPESCRIPT后端迁移.md`](./【已归档】PRD-ARCH-1-TYPESCRIPT后端迁移.md)
 
 ## 1. 背景
 

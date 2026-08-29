@@ -18,7 +18,7 @@
 - **Agent 系统**（`agent/`，独立于 `app/`）：统一承接 Web、QQ、飞书、微信和定时任务的 Agent 执行。这里包含上下文快照、连续历史、压缩、模型适配、能力注册、工具、Skill、记忆和跨渠道编排。
 - **Admin 后台**：一整套独立鉴权的管理端 API（配置热切换、用户管理、数据分析、系统日志、存储对账……），路由文件名多带 `_admin` 后缀。
 - **配置系统**：`.env` 打底，Admin 后台改的配置写进 `config.override.json`，改完不用重启就能生效。
-- **存储**：本地磁盘或阿里云 OSS 二选一，聊天附件另有 draft/attached 所有权生命周期；存储细节见 [`storage.md`](./storage.md)。
+- **存储**：本地磁盘或阿里云 OSS 二选一，聊天附件另有 draft/attached 所有权生命周期；存储细节见 [`STORAGE.md`](./STORAGE.md)。
 
 ### 谁在用它
 
@@ -28,13 +28,13 @@
 
 ### 当前服务形态
 
-生产部署不是单一进程：`gugu-backend` 提供 FastAPI/uvicorn，`gugu-worker` 消费 Redis `im:inbound` 并执行 IM Agent，`gugu-supervisor` 按 `user_bots` 配置拉起 QQ/飞书/微信网关子进程；启用生产 Shell 沙盒时，`gugu-sandboxd` 独立承接 Rootless Docker 执行。三者共享 PostgreSQL、Redis 和本地/OSS 存储，但职责不同。
+生产部署不是单一进程：`gugu-backend` 提供 FastAPI/uvicorn，`gugu-worker` 消费 Redis `im:inbound` 并执行 IM Agent，`gugu-gateway` 按 `user_bots` 配置拉起 QQ/飞书/微信网关子进程；启用生产 Shell 沙盒时，`gugu-sandboxd` 独立承接 Rootless Docker 执行。三者共享 PostgreSQL、Redis 和本地/OSS 存储，但职责不同。
 
 ### Shell 沙盒与临时公网出口
 
 普通用户的生产 Shell 请求必须经过 `sandboxd -> DockerSandboxExecutor`，Docker 不可用时不会回退到宿主机执行器。默认容器使用 `network=none`，只挂载对应用户的沙盒/工作区，使用固定 digest 镜像、非 root 用户、只读 rootfs 和资源限制。
 
-Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandbox-egress`。临时公网访问时，沙盒只加入这个内部网络并把 HTTP(S) 请求交给代理；代理连接默认网络访问公网，沙盒不能直接加入默认网络绕过代理。`sandboxd` 会在执行前检查代理、网络名、网络存在性和会话授权，Web/Worker 不持有 Docker socket。详细配置和运维步骤见 [`docs/ops/deploy.md`](../ops/deploy.md) 与 [Shell 沙盒 PRD](../product/PRD/PRD-SHELL-1-工作区Shell沙盒.md)。
+Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandbox-egress`。临时公网访问时，沙盒只加入这个内部网络并把 HTTP(S) 请求交给代理；代理连接默认网络访问公网，沙盒不能直接加入默认网络绕过代理。`sandboxd` 会在执行前检查代理、网络名、网络存在性和会话授权，Web/Worker 不持有 Docker socket。详细配置和运维步骤见 [`docs/ops/DEPLOY.md`](../ops/DEPLOY.md) 与 [Shell 沙盒 PRD](../product/PRD/PRD-SHELL-1-工作区Shell沙盒.md)。
 
 ### 本文边界
 
@@ -54,7 +54,7 @@ Docker Compose 额外提供 `egress-proxy`（Squid）和内部网络 `gugu-sandb
 | 缓存/消息 | Redis（配置热加载、聊天附件暂存元数据、通知 pub/sub 等） |
 | 鉴权 | JWT（`python-jose` 签发验证 + `bcrypt` 直接哈希密码），User / Admin / Stream 三种 Token 分离 |
 | 配置 | pydantic-settings + `.env` + `config.override.json`（热加载） |
-| 存储 | 本地磁盘 / 阿里云 OSS，Admin 面板热切换无需重启，详见 [`storage.md`](./storage.md) |
+| 存储 | 本地磁盘 / 阿里云 OSS，Admin 面板热切换无需重启，详见 [`STORAGE.md`](./STORAGE.md) |
 | AI | Anthropic / OpenAI / 通义千问 / DeepSeek / MiniMax 等，共用 OpenAI-compatible 或 Anthropic 两套接口格式，支持多 key 分流（`ai_presets`，见配置系统） |
 | IM 接入 | 飞书（`lark-oapi` WebSocket 长连）、QQ 官方机器人（`qq-botpy` WebSocket，C2C/群聊）、微信 iLink；统一进入 Redis inbound stream + Agent IM loop |
 
@@ -81,14 +81,14 @@ backend/
 │   ├── memory/                   # 记忆系统（store / lens / reflection / compress）
 │   ├── context/                  # 上下文构建、token 预算、对话压缩
 │   ├── sandbox/                  # Rootless Docker sandboxd、执行器、网络与配额边界
-│   ├── gateway/                 # web / qq / wechat / supervisor 等渠道适配器
+│   ├── gateway/                 # web / qq / wechat / gateway 等渠道适配器
 │   └── tools/                    # Skill 化工具注册（含 call_tool/use_skill 元工具）
 └── app/
     ├── main.py                   # FastAPI 入口，路由注册（约 30 个 router），lifespan
     ├── core/
     │   ├── config.py             # pydantic-settings，见 §2.6
     │   ├── security.py           # JWT 签发 / 验证，get_current_user 依赖
-    │   ├── chat_attach.py        # 聊天附件暂存（见 storage.md）
+    │   ├── chat_attach.py        # 聊天附件暂存（见 STORAGE.md）
     │   ├── redis.py               # Redis 客户端（异步 + 同步两套）
     │   └── ...                   # ownership / tz / health / scheduler / media_transcode 等
     ├── db/
@@ -155,7 +155,7 @@ backend/
 | user_id | FK → users | |
 | display_name | String(300) | 文件名（不含扩展名） |
 | ext | String(20) | 扩展名小写 |
-| space | String(20) | `personal` / `project` / `mind` / `asset`，详见 [`storage.md`](./storage.md) |
+| space | String(20) | `personal` / `project` / `mind` / `asset`，详见 [`STORAGE.md`](./STORAGE.md) |
 | project_id | FK → projects? | NULL = 个人文件 |
 | folder_id | FK → folders? | NULL = 所属空间根目录 |
 | stage_name | String(100) | 文件标签（非导航层级） |
@@ -234,7 +234,7 @@ PATCH  /api/v1/projects/{id}    乐观锁校验 version；改名时联动重命�
 DELETE /api/v1/projects/{id}    项目下文件软删（进回收站），文件夹随 CASCADE 自动删除
 ```
 
-**文件 / 文件夹 / 回收站**：详见 [`storage.md`](./storage.md)，那边有完整的端点表和存储 key 规则。这里只提示 `files.py` 是目前最大的路由文件（约 1100 行），新增了 `GET /files/tree`、`GET /files/storage`（用量统计）、`PUT /files/{id}/content`（内容编辑保存）、`POST /files/batch-download`、OSS 直传的 `POST /files/presign` + `POST /files/confirm` 等端点。
+**文件 / 文件夹 / 回收站**：详见 [`STORAGE.md`](./STORAGE.md)，那边有完整的端点表和存储 key 规则。这里只提示 `files.py` 是目前最大的路由文件（约 1100 行），新增了 `GET /files/tree`、`GET /files/storage`（用量统计）、`PUT /files/{id}/content`（内容编辑保存）、`POST /files/batch-download`、OSS 直传的 `POST /files/presign` + `POST /files/confirm` 等端点。
 
 **日历事件**（`events.py`）：`GET/POST /events`、`PATCH/DELETE /events/{id}`（`PATCH` 同样走乐观锁 `version`，`DELETE` 会级联删除绑定的 `ScheduledTask` 提醒）。
 
@@ -252,7 +252,7 @@ GET  /api/v1/agent/sessions              会话列表
 GET  /api/v1/agent/sessions/{id}/messages
 GET  /api/v1/agent/greeting              开场白
 GET  /api/v1/agent/ui-labels             状态标签
-POST /api/v1/agent/upload                聊天内联上传（走暂存，见 storage.md）
+POST /api/v1/agent/upload                聊天内联上传（走暂存，见 STORAGE.md）
 GET  /api/v1/agent/attachment/{id}/thumb|download|preview-pdf
 DELETE /api/v1/agent/attachments | /memory | /sessions/{id}
 ```
@@ -270,7 +270,7 @@ POST   /api/v1/admin/config/init-db
 POST   /api/v1/admin/config/test-connection    测试 DB / OSS 连通性
 POST   /api/v1/admin/config/test-search        测试 SearXNG / 深度研究 Provider / 相似图搜索
 POST   /api/v1/admin/config/test-smtp
-GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只读），见 storage.md §十
+GET    /api/v1/admin/config/reconcile-storage         存储↔DB 对账（只读），见 STORAGE.md §十
 POST   /api/v1/admin/config/reconcile-storage/repair  对账修复
 ```
 
@@ -380,10 +380,10 @@ make restart
 ```bash
 make status
 make restart
-systemctl status gugu-backend gugu-worker gugu-supervisor
+systemctl status gugu-backend gugu-worker gugu-gateway
 ```
 
-改动 `agent/gateway` 或机器人凭据后，至少需要重启 `gugu-supervisor`；改动 Agent/worker 代码则需要同步并重启对应 web/worker 进程。不要把网关凭据放入命令行参数，supervisor 通过环境变量注入子进程。
+改动 `agent/gateway` 或机器人凭据后，至少需要重启 `gugu-gateway`；改动 Agent/worker 代码则需要同步并重启对应 web/worker 进程。不要把网关凭据放入命令行参数，gateway 通过环境变量注入子进程。
 
 ### 2.12 添加新端点
 
@@ -422,7 +422,7 @@ systemctl status gugu-backend gugu-worker gugu-supervisor
 
 - 用户数据访问优先走 `app/core/ownership.py` 的 `get_owned()`；跨用户查询不能只依赖前端传入的 ID。
 - 外部 URL 复用 URL safety 校验，禁止未经校验的自动重定向；聊天正文、附件名和用户输入不能写入可见日志，诊断日志使用脱敏 fingerprint。
-- 删除、永久删除、批量 destructive 操作必须经过 `confirm` 门；IM 的 QQ/飞书/微信凭据由 supervisor 通过环境变量传给子进程，不进 argv。
+- 删除、永久删除、批量 destructive 操作必须经过 `confirm` 门；IM 的 QQ/飞书/微信凭据由 gateway 通过环境变量传给子进程，不进 argv。
 - Agent run/round/tool/数据库 loader 通过 `agent/runtime/loopscope_trace` 写入旁路 trace；LoopScope 只消费脱敏元数据，不应把 prompt、聊天正文、token 或凭据当作普通业务日志。
 - `app.core.logging` 统一处理进程日志；HTTP 未处理异常对外只返回通用错误，原始异常留在服务端诊断日志。
 

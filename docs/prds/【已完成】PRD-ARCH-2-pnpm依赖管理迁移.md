@@ -160,7 +160,7 @@ packages:
 ### Phase 1：建立 pnpm workspace
 
 - [x] 新增根 `package.json`、`pnpm-workspace.yaml` 和 `.npmrc`。
-- [x] 将仓库内前端、LoopScope、TS API/Worker 与 contracts 包纳入 workspace。
+- [x] 将仓库内前端、LoopScope、TS api/Worker 与 contracts 包纳入 workspace。
 - [x] 补齐 `backend/ts/packages/contracts/package.json` 的入口、类型和脚本。
 - [x] 迁移依赖并生成唯一 `pnpm-lock.yaml`。
 - [x] 保留 `gugu-interaction-runtime` 的外部 `file:` 依赖和 postinstall 修链。

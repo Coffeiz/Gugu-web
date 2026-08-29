@@ -4,7 +4,7 @@
 > 创建：2026-08-04
 > 最近更新：2026-08-25
 > 关联模块：`backend/agent/memory/store.py`、`backend/agent/memory/embedding.py`、`backend/agent/tools/memory.py`、`backend/agent/rag/service.py`
-> 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
+> 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`07-MEMORY-AND-REFLECTION.md`](../agent/07-MEMORY-AND-REFLECTION.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)
 
 本 PRD 是 `PRD-RAG-1` 的首个单来源落地方案，只负责 Memory 来源和记忆专用
 `search_memory` 工具。通用 `IndexDocument`、切片、索引版本、BM25/Embedding

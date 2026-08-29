@@ -200,7 +200,7 @@ def test_canonical_history_normalizes_openai_tool_turn():
             "type": "tool_call", "id": "call-1", "name": "weather",
             "arguments": '{"city":"南京"}',
         }]},
-        {"role": "tool", "content": [{
+        {"role": "user", "content": [{
             "type": "tool_result", "tool_call_id": "call-1", "content": "晴天",
         }]},
     ]

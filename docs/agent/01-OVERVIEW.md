@@ -18,7 +18,7 @@ Agent 不直接等同于网页聊天页面，也不等同于某个模型供应�
 | 模型适配 | `backend/agent/providers/` | Anthropic、OpenAI-compatible、Ollama 等供应商协议适配 |
 | RAG 检索服务 | Python 业务层 + 常驻 TypeScript lexical worker | 文档投影、索引缓存、BM25 召回、评分过滤和诊断 |
 | 可观测性 | `backend/agent/runtime/loopscope_trace/` + LoopScope 前端 | Run、Round、Span、输入输出和性能诊断 |
-| IM 进程 | Worker、Supervisor 和渠道适配器 | 接收外部消息、执行 Agent、推送回复和处理平台差异 |
+| IM 进程 | Worker、Gateway 和渠道适配器 | 接收外部消息、执行 Agent、推送回复和处理平台差异 |
 | Shell 沙盒 | `sandboxd` + Docker 执行器 | 在权限、配额和容器边界内执行 Shell 命令 |
 
 TS worker 和 LoopScope 是配合 Python 业务后端运行的专项服务；当前不能把它们描述为完整 TypeScript 后端。

@@ -11,6 +11,7 @@
 | testing | `agentskills/testing/SKILL.md` | 写/改测试 |
 | devserver | `agentskills/devserver/SKILL.md` | 部署/同步/运维 |
 | local | `agentskills/local/SKILL.md` | 使用本地开发机、代理和 devserver 连接信息 |
+| loopscope | `agentskills/loopscope/SKILL.md` | LoopScope trace、Collector、上下文观测与脱敏边界 |
 
 完整设计文档见 `agentskills/design/references/`。历史开发文档见 `docs/development/`。
 
@@ -46,7 +47,7 @@
 ## 语言与提交
 
 - 注释、日志、用户文案、文档和 commit message 使用简体中文。
-- Changelog 只记录简短用户可感知变化；详细排查过程写入 `docs/devlog.md`。
+- Changelog 只记录简短用户可感知变化；详细排查过程写入 `docs/DEVLOG.md`。
 
 ## Git 提交完整性
 

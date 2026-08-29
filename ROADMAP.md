@@ -39,12 +39,12 @@ Alpha（内部）→ MVP 内测 → Public Beta → V1.0 正式版 → ToB
 - 公开注册（注册限流与账号管理）
 - SMTP 邮件通知（反馈提交 → 邮件推送）
 - OSS 预签名直传（后端已完成，OSS 切换即生效）
-- systemd 三服务托管（web / worker / supervisor）
+- systemd 三服务托管（web / worker / gateway）
 
 ### 📋 上线前检查项
 
 - [ ] **SMTP 配置验证** — Admin → 邮件系统 → 测试发送，确认反馈通知能到
-- [ ] **生产机 systemd 状态** — `systemctl status gugu-web gugu-worker gugu-supervisor`
+- [ ] **生产机 systemd 状态** — `systemctl status gugu-web gugu-worker gugu-gateway`
 - [ ] **数据备份** — PostgreSQL 定期 dump + uploads 目录备份策略
 - [ ] **空状态体验** — 新用户首次进入时各页面空态是否友好
 - [ ] **错误监控** — 目前只有 Admin 系统日志；考虑是否接入 Sentry 或定期巡检日志

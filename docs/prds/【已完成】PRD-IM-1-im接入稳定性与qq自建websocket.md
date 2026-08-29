@@ -310,7 +310,7 @@ QQ 群聊增加独立的“普通消息读取”模式。该模式与“群聊�
 
 ### 5.5 群聊身份权限与工具白名单（✅ 已完成，Phase 6）
 
-Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保存 owner `sender_id`，但不负责身份绑定本身。具体身份绑定见下方 Phase 5 说明和 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md)。
+Phase 6 是独立的权限实施阶段，依赖 Phase 5 已经为当前 Bot 保存 owner `sender_id`，但不负责身份绑定本身。具体身份绑定见下方 Phase 5 说明和 [`08-CHANNELS.md`](../agent/08-CHANNELS.md)。
 
 第一版权限模型：
 
@@ -593,11 +593,11 @@ worker.py/logsafe.py/runner.py 的每一条 print/log）：
 
 - ✅ QQ raw WS 已按 `QQ_SANDBOX` 切 `api.sgroup.qq.com` / `sandbox.api.sgroup.qq.com`，仍需真实 sandbox/生产各测一次。
 - 🔲 QQ `GROUP_AT_MESSAGE_CREATE` raw payload 中引用消息的 `msg_elements` 是否在所有群类型都稳定提供。
-- ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。引用消息 `msg_elements=0` 的已知限制（疑似平台时效窗口）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。
+- ✅ QQ 引用图片 attachments URL 可直接沿用现有 `_ingest_qq_media()` 下载逻辑（devserver 日志实测 `att=1` 成功下载暂存）。引用消息 `msg_elements=0` 的已知限制（疑似平台时效窗口）详见 [`docs/ops/KNOWN-ISSUES.md`](../../ops/KNOWN-ISSUES.md)。
 - ✅ 飞书 stale retry 首期使用本机时间，后续如遇误杀再补平台 Date header 校时。
 - ✅ Phase 2 原计划保留 botpy 接收路径开关至少一个小版本，实际因功能验证完成、决定直接全部移除（`_GuguQQClient`/monkey patch/`QQ_RAW_WS_ENABLED`/`qq-botpy` 依赖），不再保留回退路径。
 - Phase 3 raw HTTP 发送侧的真实环境端到端验证与 `_send_tokens` 并发加锁已抽出为独立 PRD，见 [`PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md`](./PRD-IM-4-QQ-raw-HTTP发送侧生产验证.md)。
 - ✅ QQ 群聊 raw WebSocket、@ 回复和普通消息读取已在当前 bot 环境验证；仍需补做关闭开关后的真实平台验收，并确认不同 QQ 权限配置下 `GROUP_MESSAGE_CREATE` 的覆盖范围。
-- ✅ 群聊身份权限与工具白名单：当前按 Bot owner 身份、member/unknown 角色和白名单实现；完整 `platform_identities` / `im_chats` / `im_chat_members` 持久化模型及群级覆盖仍是后续事项。具体边界见 [`IM 用户数据结构`](../../agent/22-IM用户数据结构.md) 第 6 节。
+- ✅ 群聊身份权限与工具白名单：当前按 Bot owner 身份、member/unknown 角色和白名单实现；完整 `platform_identities` / `im_chats` / `im_chat_members` 持久化模型及群级覆盖仍是后续事项。具体边界见 [`08-CHANNELS.md`](../agent/08-CHANNELS.md)。
 - ✅ 群聊短期/长期记忆：PRD-IM-3 的独立 scope、活跃窗口、异步反思、daily 压缩和删除屏障已实现，并已完成真实多平台人工验收。
-- ✅ 微信 iLink 引用消息无法识别原文，已确认是平台/协议限制（`getupdates` 接口本身不回传引用原文，不分发送者），非代码 bug。已核实 `@tencent-weixin/openclaw-weixin` 真实源码同样无法覆盖这一场景。占位文案统一为「[微信暂不支持消息引用识别]」。完整排查过程（含参考实现对比）详见 [`docs/ops/known-issues.md`](../../ops/known-issues.md)。引用图片下载失败已修复（`encrypt_query_param` vs `full_url`）。
+- ✅ 微信 iLink 引用消息无法识别原文，已确认是平台/协议限制（`getupdates` 接口本身不回传引用原文，不分发送者），非代码 bug。已核实 `@tencent-weixin/openclaw-weixin` 真实源码同样无法覆盖这一场景。占位文案统一为「[微信暂不支持消息引用识别]」。完整排查过程（含参考实现对比）详见 [`docs/ops/KNOWN-ISSUES.md`](../../ops/KNOWN-ISSUES.md)。引用图片下载失败已修复（`encrypt_query_param` vs `full_url`）。

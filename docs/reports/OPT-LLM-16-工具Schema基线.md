@@ -245,4 +245,4 @@ Phase 8 checklist 收尾：关键业务语义已改为显式字段、枚举、`o
 
 简介模式的首轮到末轮增长 29,595 input token，主要来自连续历史和首次按需加载的工具 Schema；第 6 轮以后同一批工具重复调用时，Schema 本身没有按轮无限复制，但复杂工具仍可能触发关联工具（如 `list_projects`、`note_search`），因此会出现阶段性增长。全量模式从首轮就携带全部工具 Schema，连续历史叠加后末轮达到 78,067 input token。本轮全量模式第 1 轮将 `list_folders` 误选为 `list_files`，属于工具选择错误，不是参数 Schema 解析错误。该结果也说明连续多轮对话下，简介模式的固定目录成本会持续存在，按需 Schema 和关联工具事件会分阶段增加；不能只用单轮 Schema 大小判断总消耗。
 
-原始脱敏结果：[schema-accumulation-5tools-20260829.json](schema-probes/schema-accumulation-5tools-20260829.json)；测试脚本：[test_schema_accumulation_5tools.py](../../backend/scripts/diagnostics/test_schema_accumulation_5tools.py)。
+原始脱敏结果：[SCHEMA-ACCUMULATION-5TOOLS-20260829.json](schema-probes/SCHEMA-ACCUMULATION-5TOOLS-20260829.json)；测试脚本：[test_schema_accumulation_5tools.py](../../backend/scripts/diagnostics/test_schema_accumulation_5tools.py)。

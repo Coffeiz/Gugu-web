@@ -4,7 +4,7 @@
 
 - 根 `package.json` 固定 `pnpm@10.15.0`，并由 `pnpm-workspace.yaml` 纳入 10 个仓库内 JS/TS workspace 包。
 - 根 `pnpm-lock.yaml` 已按当前 manifest 更新，`pnpm install --frozen-lockfile --lockfile-only` 通过。
-- 前端、LoopScope、TS API/Worker、contracts 的 Docker、部署和 CI 入口统一使用 Corepack/pnpm；外部 `gugu-interaction-runtime` 保留独立安装边界。
+- 前端、LoopScope、TS api/Worker、contracts 的 Docker、部署和 CI 入口统一使用 Corepack/pnpm；外部 `gugu-interaction-runtime` 保留独立安装边界。
 - 已删除仓库内 4 个子项目 `package-lock.json`，避免 npm/pnpm 双锁文件漂移。
 - README、LoopScope README、许可证文档已改为根 workspace 命令。
 

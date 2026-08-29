@@ -3,7 +3,7 @@
 **日期**：2026-08-26  
 **状态**：✅ 已完成（Phase 0-6）  
 **完成日期**：2026-08-26  
-**关联**：Prompt Cache 优化（`OPT-Cache-Assembly-2026-08-19.md`）
+**关联**：Prompt Cache 优化（`OPT-CACHE-ASSEMBLY-2026-08-19.md`）
 
 ## 1. 现状与问题
 

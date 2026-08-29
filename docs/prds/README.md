@@ -1,6 +1,17 @@
 # PRD 撰写规范
 
-本目录存放咕咕的产品需求文档（PRD）。为保证 AI/人协作时格式一致、便于检索和跨文档比对，新增 PRD 请遵循本规范。参考范例：[【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md)。
+本目录存放咕咕的产品需求文档（PRD）。为保证 AI/人协作时格式一致、便于检索和跨文档比对，新增 PRD 请遵循本规范。参考范例：[【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)。
+
+## 当前产品基线
+
+产品文档以当前运行代码和可复现验收结果为准，当前生产边界如下：
+
+- Web、Admin、文件/项目/日历/画布等公开 API 由 Python 3.12 + FastAPI 提供；Agent Loop、IM worker、网关和 scheduler 仍由 Python 负责。
+- TypeScript 只保留前端构建和独立 RAG worker，不作为公开 API、Agent、IM 或 scheduler 的替代后端；数据库 schema 迁移继续由 Alembic 负责。
+- 业务实时更新由 Python 业务写入侧发布 canonical event，经 Redis event bus 由 FastAPI SSE 提供给前端；聊天生成流、Admin 日志流、文件下载流和终端 PTY WebSocket 保持独立生命周期。
+- 群级反思只维护群本身；被动群消息累计 50 条后，由一次 member-batch 使用完整群上下文批量维护多个群友的 `profile`、`pattern`、`summary` 和长期 `memory`。私聊继续使用 `private_reflection`，不与群友批反思混用。
+
+`docs/agent/` 记录实现架构和运行链路，`docs/prds/` 记录产品目标、功能边界和验收状态；两者出现冲突时，先核对代码和测试，再在对应文档中修正，不在 PRD 内保留第二套实现说明。
 
 ## 文件命名
 

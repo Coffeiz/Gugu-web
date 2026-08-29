@@ -565,7 +565,7 @@ def test_systemd_templates_pin_rootless_socket():
     from pathlib import Path
 
     backend = Path(__file__).parents[1]
-    for name in ("gugu-backend.service", "gugu-worker.service", "gugu-supervisor.service"):
+    for name in ("gugu-backend.service", "gugu-worker.service", "gugu-gateway.service"):
         text = (backend / name).read_text(encoding="utf-8")
         assert 'DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock' in text
         assert 'GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock' in text

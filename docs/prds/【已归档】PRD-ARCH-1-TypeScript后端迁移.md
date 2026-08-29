@@ -59,7 +59,7 @@ backend/
 │   ├── core/                         # 配置、Redis、事件、权限、基础设施
 │   ├── db/                           # SQLAlchemy session 与数据库依赖
 │   ├── models/                       # SQLAlchemy ORM model
-│   ├── schemas/                      # API/Pydantic schema
+│   ├── schemas/                      # api/Pydantic schema
 │   ├── search/                       # Global Search 等 API 搜索能力
 │   └── services/                     # CRUD、存储、日历等领域服务
 ├── agent/                            # Agent 业务域与 Worker 逻辑
@@ -159,10 +159,10 @@ Python 调用 TS 模块必须使用 stdin/stdout 或明确的本地协议，输�
 当前继续维护：
 
 - [x] Python/FastAPI 作为唯一后端 API owner；
-- [x] Python Agent 细分目录：context、memory、prompts、skills、sandbox、tools、runtime、im；
+- [x] Python Agent 细分目录：context、memory、prompts、skills、sandbox、tools、runtime、IM；
 - [x] TypeScript RAG/BM25 独立模块和固定制品边界；
 - [x] PostgreSQL/Alembic 与 Redis 的单一职责边界；
-- [ ] 清理未使用的 TS API/迁移脚本和与当前架构冲突的文档；
+- [ ] 清理未使用的 TS api/迁移脚本和与当前架构冲突的文档；
 - [ ] 为关键领域补充跨 Web/IM/Agent 的一致性测试。
 
 ## 8. 运行配置与安全约束

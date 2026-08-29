@@ -48,7 +48,7 @@ FastAPI 业务服务，提供用户态和 Admin API，同时承载 Web Agent 请
 
 消费 Redis 中的 IM 入站消息，调用统一 Agent loop，并把阶段性结果和最终结果交给对应渠道发送。
 
-### 3.3 `gugu-supervisor`
+### 3.3 `gugu-gateway`
 
 根据用户机器人配置管理 QQ、飞书、微信等 IM 网关进程或连接生命周期。它负责连接和进程管理，不负责重新实现 Agent 推理。
 

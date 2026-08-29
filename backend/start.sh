@@ -20,8 +20,8 @@ WORKERS="${WORKERS:-1}"
 LOG_DIR="${APP_DIR}/logs"
 LOG_FILE="${LOG_DIR}/gugu.log"
 PID_FILE="${APP_DIR}/.gugu.pid"
-# 生产核心 owner：FastAPI、Python IM worker/supervisor 与 sandboxd；实时事件入口也由 FastAPI 提供。
-SYSTEMD_SERVICES="gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
+# 生产核心 owner：FastAPI、Python IM worker/gateway 与 sandboxd；实时事件入口也由 FastAPI 提供。
+SYSTEMD_SERVICES="gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
 
 # ── 工具函数 ────────────────────────────────────────────
 log()  { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
@@ -315,7 +315,7 @@ cmd_foreground() {
 }
 
 cmd_install() {
-    # 四个核心常驻服务：sandboxd、web(uvicorn)、IM worker、IM supervisor(网关管家)。
+    # 四个核心常驻服务：sandboxd、web(uvicorn)、IM worker、IM gateway(网关管家)。
     # TS RAG 不是独立服务，由 Python adapter 按需复用固定 worker 制品。
     local services="$SYSTEMD_SERVICES"
     # 必须显式指定服务运行用户，避免安装脚本擅自改变项目归属。
@@ -382,11 +382,11 @@ cmd_install() {
     check_systemd_services
     log ""
     log "常用命令（sandboxd / web / IM 大脑 / IM 网关）："
-    log "  systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-supervisor"
+    log "  systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway"
     log "  journalctl -u gugu-worker -f        # IM 大脑日志"
-    log "  journalctl -u gugu-supervisor -f    # IM 网关日志"
+    log "  journalctl -u gugu-gateway -f    # IM 网关日志"
     log "  systemctl restart gugu-worker       # 改了 agent 代码后重启大脑"
-    log "  systemctl restart gugu-supervisor   # 改了网关/凭据后重启网关"
+    log "  systemctl restart gugu-gateway   # 改了网关/凭据后重启网关"
 }
 
 # ── 入口 ───────────────────────────────────────────────
@@ -415,7 +415,7 @@ case "${1:-start}" in
   status       查看状态 + 健康检查
   logs         实时跟踪日志（Ctrl+C 退出）
   foreground   前台启动（带 --reload，用于调试）
-  install      安装为 systemd 服务（sandboxd + gugu-backend + worker + supervisor）
+  install      安装为 systemd 服务（sandboxd + gugu-backend + worker + gateway）
 
 环境变量:
   HOST=0.0.0.0           监听地址

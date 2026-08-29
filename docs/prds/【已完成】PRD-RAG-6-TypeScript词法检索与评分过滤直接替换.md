@@ -77,7 +77,7 @@ JSONL 协议、超时、重启和结构化错误；Python 只负责文档加载�
 - `backend/agent/rag/index_cache.py`：将词法索引调用切换到 TS client；
 - `backend/agent/rag/service.py`：移除生产路径对 Python `filter_confidence` 的直接调用；
 - `backend/agent/rag/scoring.py`：已删除；评分、过滤、去重和预算前质量筛选统一由 TS worker 负责；
-- `backend/config.py`、`backend/app/core/config.py`：只保留 TypeScript worker 配置；
+- `backend/app/core/config.py`：只保留 TypeScript worker 配置；根目录旧版 `backend/config.py` 已移除。
 - `backend/tests/`：协议、语义等价、权限、故障、重启、预算与性能回归；
 - `frontend/package.json` 或 release 目录：固定构建产物和 Node runtime 约束，不能在部署时临时 `npm install`。
 

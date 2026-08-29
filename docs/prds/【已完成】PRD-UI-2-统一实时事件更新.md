@@ -2,10 +2,10 @@
 
 > 状态：✅ 已完成；当前后端继续由 Python/FastAPI 负责，业务事件统一使用 canonical envelope，断线通过资源级补偿刷新恢复一致性
 > 创建：2026-08-26
-> 最近更新：2026-08-26
+> 最近更新：2026-08-29
 > 所属层：UI / Runtime
 > 关联模块：`backend/app/core/events.py`、`backend/app/api/v1/live.py`、`frontend/src/stores/live.ts`
-> 关联文档：[`PRD-LoopScope-0.2-Context-Usage-Provenance.md`](./【已完成】PRD-LoopScope-0.2-Context-Usage-Provenance.md)、[`PRD-SHELL-2-共享协作终端.md`](./PRD-SHELL-2-共享协作终端.md)
+> 关联文档：[`PRD-LoopScope-0.2-Context-Usage-Provenance.md`](./【已完成】PRD-LOOPSCOPE-0.2-CONTEXT-USAGE-PROVENANCE.md)、[`PRD-SHELL-2-共享协作终端.md`](./PRD-SHELL-2-共享协作终端.md)
 
 ---
 
@@ -34,7 +34,7 @@
 5. 保持聊天 token 流、日志 tail、文件下载流的独立生命周期和错误语义。
 6. 让 Web、IM、Agent 工具和定时任务都能复用同一套业务事件发布机制。
 7. 事件层继续以 Python/FastAPI 为唯一服务 owner，不再把实时事件作为 TypeScript 后端迁移试点。
-8. 遵循已归档的 [`PRD-ARCH-1-TypeScript后端迁移.md`](./【已归档】PRD-ARCH-1-TypeScript后端迁移.md) 所确定的 Vue + Vite、Python/FastAPI、Python Worker、PostgreSQL + Redis 分层；TypeScript 仅保留独立 RAG 辅助模块。
+8. 遵循已归档的 [`PRD-ARCH-1-TypeScript后端迁移.md`](./【已归档】PRD-ARCH-1-TYPESCRIPT后端迁移.md) 所确定的 Vue + Vite、Python/FastAPI、Python Worker、PostgreSQL + Redis 分层；TypeScript 仅保留独立 RAG 辅助模块。
 9. 明确咕咕终端采用“结构化终端事件”定位：以命令、标准输出、错误输出、退出码、状态和时间为实时事件单元，而不是默认实现传统 PTY 终端模拟器。
 
 ### 1.3 核心不变量
@@ -112,11 +112,10 @@ Web API / QQ / 飞书 / 微信 / 定时任务 / Agent 工具
 
 终端的产品边界如下：
 
-- 当前终端是“受控 Shell 会话 + 可重放事件日志”，不是 xterm.js 一类的完整终端模拟器；
-- 每条命令及其 stdout、stderr、退出码、状态和发生时间作为结构化事件持久化并实时推送；
-- 终端列表、工作区/会话/Run 关联、权限状态和事件输出属于同一终端领域，但不混入聊天生成流；
-- 不要求当前版本支持光标控制、ANSI 全量渲染、交互式 `vim`/`top`/`less` 或持续输入型程序；
-- 如果未来需要完整交互式终端，应新增 PTY + 终端模拟器模式，不能改变结构化终端事件的既有协议。
+- 用户终端当前采用 PTY + xterm.js + WebSocket，支持页面内输入、Tab 补全、方向键、Ctrl-C、ANSI 输出和 resize；
+- 咕咕 Shell 仍保留一次性受控命令链，结构化终端事件继续记录命令、输出、状态和退出信息；
+- 终端列表、工作区/会话/Run 关联、权限状态、PTY 输出和结构化事件属于同一终端领域，但不混入聊天生成流；
+- PTY 不绕过 Shell policy、workspace 隔离、确认门或终端资源限制；断线恢复和孤儿 PTY 清理由终端服务负责。
 
 #### 文件内容流
 

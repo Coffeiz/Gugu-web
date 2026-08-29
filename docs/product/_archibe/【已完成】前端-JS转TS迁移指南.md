@@ -13,7 +13,7 @@
 简单说，TypeScript 是给 JavaScript 加了"类型标注"的升级版——写代码时编辑器能提前告诉你"这里传错类型了""这个字段不存在"，减少上线后才发现的低级 bug，重构时也更有信心。咕咕前端从 2026-06-30 开始渐进式地把 `.js` 文件和 Vue 组件迁移到 TS，不是一次性推倒重写，而是"改到哪个文件就顺手把哪个文件转掉"，避免大改动和别人的并发提交打架。
 
 **目前进度（本次核实，2026-07-02）**：
-- 所有"逻辑类"代码（api 请求封装、状态管理 store、composable、工具函数、路由、入口文件）**已经 100% 是 TS**，`frontend/src/` 目录下已经找不到一个 `.js` 文件了。
+- 所有"逻辑类"代码（API 请求封装、状态管理 store、composable、工具函数、路由、入口文件）**已经 100% 是 TS**，`frontend/src/` 目录下已经找不到一个 `.js` 文件了。
 - Vue 组件（`.vue` 文件）还在推进：全项目 67 个 `.vue` 文件里，14 个已经加上 `lang="ts"`（约 21%），其余大部分是还没排上号的中小型组件，加上 5 个"巨型视图"（1000+ 行的大文件）是剩余工作量的大头。
 - 类型检查命令 `npm run typecheck` 目前是绿的（没有类型错误），说明这套渐进迁移的门禁是真实生效的，不是摆设。
 
@@ -93,7 +93,7 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
   ```bash
   grep -rn "from '.*<文件名>\.js'" frontend/src
   ```
-- `services/api.ts`（原 `api.js`，已完成迁移）是**类型咽喉**：请求/响应泛型化后，类型顺着 api → store → 组件全链路自动流。
+- `services/api.ts`（原 `api.js`，已完成迁移）是**类型咽喉**：请求/响应泛型化后，类型顺着 API → store → 组件全链路自动流。
 
 #### 4.3 自动导入
 项目用 `unplugin-auto-import`，`ref`/`computed`/`watch`/`defineProps` 等**全局可用、可不显式 import**。`dts` 已开，vue-tsc 认得。但**新代码建议显式 import**（TS 下更清晰、利于 tree-shaking 判断）。
@@ -114,7 +114,7 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
    npx openapi-typescript http://127.0.0.1:8000/openapi.json -o src/types/api.ts
    ```
    拿到 Project / Event / File / Stage / Todo / Message 等类型，替代手搓对象（`normalizeEvent` 之类）。**已完成**，见 §6 阶段 1。
-2. **api 层**：`services/api.ts`，请求/响应套上 §1 生成的类型。**已完成**。
+2. **API 层**：`services/api.ts`，请求/响应套上 §1 生成的类型。**已完成**。
 3. **stores（12 个）**：Pinia 原生 TS，setup store 类型很顺。**已完成**。
 4. **composables（11 个）**：通常干净好类型；`usePhysicsDrag` 这种重逻辑较费劲。**已完成**。
 5. **utils（5 个）**：纯函数，最易转，可当练手。**已完成**。
@@ -172,7 +172,7 @@ npm run typecheck:strict   # vue-tsc -p tsconfig.strict.json（严格档白名�
 
 - [x] 建棘轮：`tsconfig.strict.json` + `typecheck:strict` 脚本（2026-07-11）
 - [x] 首批入档：`src/utils/**` + `src/types/**` strict-clean；新建 `src/types/project.ts` 领域模型（绑定 OpenAPI `ProjectResponse`）；Projects 组件 `PropType<any[]>` → `Project[]`
-- [x] stores 底座入档（2026-07-11）：`projects.ts`（105→0，`ref<Project[]>` 消 ~80）+ `ui.ts` + `live.ts` + `services/**` + `composables/useOnboarding.ts`。确立「api 边界一次性收紧 wire→紧类型」模式
+- [x] stores 底座入档（2026-07-11）：`projects.ts`（105→0，`ref<Project[]>` 消 ~80）+ `ui.ts` + `live.ts` + `services/**` + `composables/useOnboarding.ts`。确立「API 边界一次性收紧 wire→紧类型」模式
 - [x] 轻量 store/composable 尾批（2026-07-11）：admin/clipboard/audio/config/preferences + useSorting/useLiveRefresh/useHolidays/useStageTemplates/useThumbCache（10 文件、51 错）
 - [x] 文件簇 ③-a（2026-07-11）：filesCache/preview/useUploadQueue/useBoxSelection。定义 `FileMeta`（=OpenAPI `FileResponse` + 客户端增补字段交集）、`FolderMeta`（=`FolderResponse`）领域类型；preview 承载聊天附件故用 `Partial<FileMeta>`
 - [x] 文件簇 ③-b（2026-07-11）：usePhysicsDrag（959 行/67 错→0，拖拽引擎）+ useFileDragDrop。加 `Box`/`ActiveDrag` 类型、DOM 参数标注、`event: PointerEvent\|DragEvent` 联合就地 cast、`pointerId!`/`_active!` 断言——纯类型标注零逻辑改动。**棘轮累计 30 源文件；stores/composables/services/utils/types 底座已全 strict-clean**

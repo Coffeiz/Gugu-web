@@ -645,14 +645,12 @@ class SearchSkill(BaseSkill):
                 "properties": {
                     "mode": {
                         "type": "string", "enum": ["text", "image"],
-                        "description": "搜索模式：text 按关键词搜图；image 以图搜图。省略时按输入自动判断。",
                     },
-                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
-                    "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
-                    "image_url": {"type": "string", "description": "已有图片搜索结果中的图片直链"},
+                    "query": {"type": "string"},
+                    "attach_id": {"type": "string"},
+                    "image_url": {"type": "string"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
-                        "description": "返回候选数（默认使用 Admin 配置，范围 1~20）",
                     },
                 },
             },
@@ -670,14 +668,13 @@ class SearchSkill(BaseSkill):
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 20,
-                        "description": "图片结果；使用 result_id、img_src/image_url 和 title。",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "result_id": {"type": "string"},
                                 "img_src": {"type": "string"},
-                                "image_url": {"type": "string", "description": "image_search 结果中的图片直链"},
-                                "attach_id": {"type": "string", "description": "历史消息中的图片附件 ID"},
+                                "image_url": {"type": "string"},
+                                "attach_id": {"type": "string"},
                                 "title": {"type": "string"},
                             },
                             "anyOf": [

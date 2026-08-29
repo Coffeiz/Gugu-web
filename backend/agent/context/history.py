@@ -253,7 +253,9 @@ def canonicalize_tool_messages(messages: Iterable[dict]) -> list[dict]:
             )
             for block in canonical
         ):
-            result.append({"role": role, "content": canonical})
+            # Provider 的 tool 结果统一落在 canonical 的 user 侧；role=tool
+            # 只属于 OpenAI wire，不能泄漏到持久化批次。
+            result.append({"role": "user" if role == "tool" else role, "content": canonical})
     return result
 
 

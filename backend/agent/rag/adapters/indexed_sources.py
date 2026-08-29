@@ -1,4 +1,4 @@
-"""文件、画布和对话的统一业务来源桥接。
+"""文件、画布、笔记和对话的统一业务来源桥接。
 
 这里只负责数据库/存储读取和业务 scope 校验；文档转换交给 TS Worker 的 source
 adapter，词法检索交给 TS lexical index，避免为每个来源重复维护搜索算法。
@@ -32,10 +32,10 @@ def _conversation_document_visible(document, before_message_id: int | None) -> b
 
 
 class IndexedSourceRetriever:
-    """把文件、画布和对话来源接入统一的 TS lexical index。"""
+    """把文件、画布、笔记和对话来源接入统一的 TS lexical index。"""
 
     def __init__(self, user_id: object, *, db=None, db_factory=None, source_type: str):
-        if source_type not in {"file", "canvas", "conversation"}:
+        if source_type not in {"file", "canvas", "note", "conversation"}:
             raise ValueError(f"不支持的统一来源：{source_type}")
         self.user_id = user_id
         self.db = db
@@ -74,6 +74,8 @@ class IndexedSourceRetriever:
             valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project", "folder"}]
         elif self.source_type == "canvas":
             valid_scopes = [item for item in valid_scopes if item.scope_type in {"owner", "project"}]
+        elif self.source_type == "note":
+            valid_scopes = [item for item in valid_scopes if item.scope_type == "owner"]
         if not valid_scopes:
             return RetrievalBatch(
                 source_type=self.source_type,

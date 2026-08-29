@@ -65,15 +65,15 @@
 | 前端 | Vue 3、TypeScript、Vite、Pinia、Arco Design Vue、TipTap |
 | 后端 | FastAPI、SQLAlchemy 2.0、PostgreSQL、Redis、Alembic、APScheduler |
 | 文件存储 | 本地磁盘或阿里云 OSS；存储 key 统一，可在后台热切换 |
-| 对话与 IM | 流式 Web 对话；飞书 WebSocket、QQ 官方机器人、微信适配器由独立 supervisor 管理 |
+| 对话与 IM | 流式 Web 对话；飞书 WebSocket、QQ 官方机器人、微信适配器由独立 gateway 管理 |
 | 本地开发 | 开发 Docker Compose 提供 web、worker、PostgreSQL、Redis、SearXNG；前端使用 Vite 热更新 |
-| 生产部署 | 构建物 Docker Compose + Nginx（默认 9595），或裸机 + systemd 分别托管 backend、worker 与 IM supervisor |
+| 生产部署 | 构建物 Docker Compose + Nginx（默认 9595），或裸机 + systemd 分别托管 backend、worker 与 IM gateway |
 
 | 想了解 | 文档入口 |
 |--------|----------|
 | 后端与接口 | [后端与 API 参考](../backend/backend.md) |
-| 文件存储 | [文件存储规范](../backend/storage.md) |
-| 本地与生产 | [部署文档](../ops/deploy.md) |
+| 文件存储 | [文件存储规范](../backend/STORAGE.md) |
+| 本地与生产 | [部署文档](../ops/DEPLOY.md) |
 | 全部资料 | [完整文档导航](../README.md) |
 
 ### 四、主要页面
@@ -115,4 +115,4 @@ cd backend && PYTHONPATH=. .venv/bin/pytest
 - [ ] 客户管理前端页面
 - [ ] 团队 / 企业版（ToB）
 
-候选方向与优先级见 [wishlist.md](wishlist.md)。
+候选方向与优先级见 [WISHLIST.md](WISHLIST.md)。

@@ -15,7 +15,7 @@
 | Agent | `backend/agent/tools/` |
 | Service | `backend/app/services/` |
 
-扫描识别 SQLAlchemy 构造器（`select/update/delete/insert`）、`db/session/self.db` 上的 ORM 方法，以及 API/Agent 直接导入文件域 Model 的位置。它是静态候选清单，不替代人工判断：管理员接口、无归属表、存储修复任务和查询 Service 可能是合法例外。
+扫描识别 SQLAlchemy 构造器（`select/update/delete/insert`）、`db/session/self.db` 上的 ORM 方法，以及 api/Agent 直接导入文件域 Model 的位置。它是静态候选清单，不替代人工判断：管理员接口、无归属表、存储修复任务和查询 Service 可能是合法例外。
 
 ## 当前数量
 
@@ -27,7 +27,7 @@
 
 另外，按主键裸 `db.get()`/`self.db.get()` 共 16 处：API 14 处、Agent 1 处、Service 1 处。API 结果包含管理员和认证等已在现有 ownership 守卫中列出的合法豁免候选；具体行号由脚本实时输出，避免报告与代码漂移。
 
-文件域直接从 API/Agent 导入 Model 的候选文件包括：
+文件域直接从 api/Agent 导入 Model 的候选文件包括：
 
 - API：`config.py`、`files.py`、`folders.py`、`mind.py`、`projects.py`、`search.py`、`trash.py`、`users_admin.py`、`admin_analytics.py`
 - Agent：`files.py`、`overview.py`、`projects.py`、`trash.py`

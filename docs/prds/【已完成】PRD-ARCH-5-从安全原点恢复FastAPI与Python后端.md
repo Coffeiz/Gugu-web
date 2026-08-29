@@ -18,7 +18,7 @@
 - TypeScript RAG worker 的完整链路增强；
 - TypeScript API、TypeScript Agent Runtime、TS DB 和 TS 工具注册迁移。
 
-后续变更不是单一方向的连续迁移，直接整段回退会丢失大量有效修复；直接保留当前 HEAD 又会使 TS API/Agent 与 Python/FastAPI 并存，形成双 owner、启动入口冲突和协议漂移。
+后续变更不是单一方向的连续迁移，直接整段回退会丢失大量有效修复；直接保留当前 HEAD 又会使 TS api/Agent 与 Python/FastAPI 并存，形成双 owner、启动入口冲突和协议漂移。
 
 本 PRD 采用“安全原点 + 领域筛选 + 目标架构验收”的恢复方式：Git 提交只作为补丁来源，最终是否保留由代码职责和验收结果决定。
 
@@ -62,7 +62,7 @@ flowchart TD
 - TS Agent Runtime、TS Agent command host、TS context bridge 和 TS Agent worker。
 - TS native business tools、迁移期 Python tool bridge 和第二套工具注册事实源。
 - TS DB repository 对业务 PostgreSQL 的写入 owner。
-- 仅为了 TS API/TS Agent 迁移增加的启动参数、Compose 服务和 feature flag。
+- 仅为了 TS api/TS Agent 迁移增加的启动参数、Compose 服务和 feature flag。
 
 ### 3.3 必须保留
 
@@ -70,7 +70,7 @@ flowchart TD
 - `backend/ts/workers/rag/`、TS RAG sidecar 协议、Python `ts_sidecar` client、索引缓存、TTL、chunk revision 和诊断 trace。
 - 安全原点之后已经完成的 Python Agent、FastAPI、前端、LoopScope、上下文、缓存、工具和 IM 修复。
 - 实时事件功能的产品行为、Redis event bus、前端实时刷新和 LoopScope 事件观测；传输入口迁回 FastAPI/Python。
-- Makefile 中的 pnpm、Python、RAG 构建、测试、部署、迁移和服务管理命令；删除或隔离 TS API/TS Agent 专属目标。
+- Makefile 中的 pnpm、Python、RAG 构建、测试、部署、迁移和服务管理命令；删除或隔离 TS api/TS Agent 专属目标。
 
 ## 4. 安全原点之后的提交盘点
 
@@ -163,7 +163,7 @@ backend/scripts/*rag*
 
 RAG 的索引、召回、BM25、评分、过滤、去重、预算、TTL、chunk revision 和诊断必须继续由 TS worker 承担；Python 只做调用、权限复核、正文回填和上下文注入。
 
-### 4.2 排除 TS API/TS Agent 迁移提交
+### 4.2 排除 TS api/TS Agent 迁移提交
 
 以下提交只作为 parity 参考，不进入最终生产实现：
 
@@ -220,8 +220,8 @@ fc59c63d  固定TypeScript API构建制品
 保留规则：
 
 1. 保留 pnpm workspace、前端构建、Python 安装、数据库迁移、测试、RAG worker 构建、RAG sidecar 启动和 devserver 同步命令。
-2. 删除或改为 no-op 的 TS API/TS Agent build、start、restart、systemd、Compose service 和 owner switch。
-3. `make update`、`make install`、`make restart`、`make stop/start` 的默认路径必须启动 FastAPI、Python worker 和 TS RAG worker，不得隐式启动 TS API/TS Agent。
+2. 删除或改为 no-op 的 TS api/TS Agent build、start、restart、systemd、Compose service 和 owner switch。
+3. `make update`、`make install`、`make restart`、`make stop/start` 的默认路径必须启动 FastAPI、Python worker 和 TS RAG worker，不得隐式启动 TS api/TS Agent。
 4. Makefile 中的 RAG 构建物必须来自固定 TS worker 构建流程；业务部署不能在运行时临时编译 TS。
 5. 运行配置、数据库、用户文件、RAG 索引和密钥不参与 Git 回退或补丁应用。
 
@@ -277,7 +277,7 @@ Vue stores / LoopScope
 1. 以 `8bad5dcd...` 或上一组已验证的提交为基点，先阅读 `git show --stat`、完整 diff 和涉及目录。
 2. 按本阶段保留清单筛选提交；混合提交使用 `cherry-pick --no-commit` 后按文件撤掉非目标改动，不直接整提交照搬。
 3. 完成当前组的静态扫描、定向测试和构建，再提交一个或多个职责清晰的恢复 commit。
-4. 每组结束记录实际保留、拆分和排除的 commit，确认没有引入 TS API/TS Agent 的隐式启动或重复实现。
+4. 每组结束记录实际保留、拆分和排除的 commit，确认没有引入 TS api/TS Agent 的隐式启动或重复实现。
 
 阶段顺序固定为：
 
@@ -322,7 +322,7 @@ Makefile、部署与运维
 - [x] 按 pnpm 提交清单恢复根目录 `package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`.npmrc` 及相关 workspace manifest。
 - [x] 恢复前端、LoopScope 和 TS RAG 的依赖声明、脚本、类型配置与构建入口。
 - [x] 确认依赖安装、前端 typecheck/build、TS RAG build/test 均可独立执行。
-- [x] 扫描并排除 TS API/TS Agent 专属依赖、启动脚本和生产入口，避免依赖恢复顺带改变后端 owner。
+- [x] 扫描并排除 TS api/TS Agent 专属依赖、启动脚本和生产入口，避免依赖恢复顺带改变后端 owner。
 
 Phase 1 实际补充修复：为 `backend/ts` 声明 `@types/node`，并让其 `tsconfig` 优先解析本 workspace 的 Node 类型；按当前 manifest 清理锁文件中已删除的 TS API 专属依赖。该补充不恢复 TS API 或 TS Agent。
 
@@ -343,7 +343,7 @@ Phase 1 实际补充修复：为 `backend/ts` 声明 `@types/node`，并让其 `
 第一组实际处理记录：
 
 - `50d48882`、`81477f84`、`0c1ef88c`、`b7d151f1`、`905f0af7`、`6b7fda51`、`ef2ea9e6`、`e4841cff`：按前端文件应用。
-- `3a504875`：仅应用前端 Markdown 解析实现及其回归测试，排除 TS API/TS Agent 文件。
+- `3a504875`：仅应用前端 Markdown 解析实现及其回归测试，排除 TS api/TS Agent 文件。
 - `8dc3b228`：该提交没有前端文件，按恢复范围跳过后端内容。
 - `d04124c7`：前端测试已随第一组纳入；其中 scheduledTasks 测试补充 Pinia 测试上下文，未改变生产逻辑。
 
@@ -389,7 +389,7 @@ Phase 2 完成记录：三组前端补丁已按文件级应用并分别提交为
 `04-CONTEXT-ENGINEERING.md` 及 `_archive` 迁移覆盖，混合提交中的前端内容按 Phase 2
 处理，不重复应用整提交。
 
-其中包含混合提交时，只有目标 Python/FastAPI 文件应用完成后才能标记 `[x]`；未保留的 TS API/TS Agent 文件要记录为排除，而不是标记为完整应用。
+其中包含混合提交时，只有目标 Python/FastAPI 文件应用完成后才能标记 `[x]`；未保留的 TS api/TS Agent 文件要记录为排除，而不是标记为完整应用。
 
 Phase 3 候选清理记录：`1962a5d9` 已按文件恢复，并通过 worker shutdown 回归测试；
 `5e824458` 的行为已由当前测试结构覆盖；`2d6a965a` 已拆分为文档重整、Phase 2
@@ -425,8 +425,8 @@ Phase 3.5 验证记录（2026-08-28）：
 - 迁移：恢复 `20260827000001_add_canonical_batches.py` 后，devserver 执行 `alembic upgrade head` 成功，当前版本为 `20260827000001 (head)`。
 - Schema：数据库公共表 43 张；当前 Python 模型 40 张业务表全部存在。额外的 `conversation_batches` 由 Python canonical history 使用，`mind_canvas_batch_requests` 由 Python 画布批处理幂等服务使用，均保留。
 - 数据抽样：users 19、conversation_sessions 113、conversation_messages 8589、files 519、folders 214、projects 105、mind_nodes 510、mind_canvas_items 140、memory_entries 446、knowledge_index_entries 4063、scheduled_tasks 6、terminal_sessions 2、terminal_events 109。
-- 服务冒烟：`gugu-backend`、`gugu-worker`、`gugu-supervisor` 均为 active，FastAPI 本机健康检查返回 HTTP 200。`alembic check` 仍报告 TS 迁移遗留索引/类型与当前模型的差异；由于其中包含已有数据和 Python 仍使用的结构，本阶段不执行自动删除，后续由专门 schema 收口阶段处理。
-- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api`，未启动 TS Agent；实时事件入口在 Phase 6 收口到 FastAPI。当前 Python 后端、Worker、Supervisor 是唯一的 Agent/API 业务 owner。
+- 服务冒烟：`gugu-backend`、`gugu-worker`、`gugu-gateway` 均为 active，FastAPI 本机健康检查返回 HTTP 200。`alembic check` 仍报告 TS 迁移遗留索引/类型与当前模型的差异；由于其中包含已有数据和 Python 仍使用的结构，本阶段不执行自动删除，后续由专门 schema 收口阶段处理。
+- 运行态收口：停止并禁用 devserver 上残留的 `gugu-ts-api`，未启动 TS Agent；实时事件入口在 Phase 6 收口到 FastAPI。当前 Python 后端、Worker、Gateway 是唯一的 Agent/API 业务 owner。
 
 数据库恢复验收必须记录：备份位置和校验结果、schema 差异、执行的迁移、保留/转换/清理的数据范围，以及 Python/FastAPI 冒烟结果。
 
@@ -449,9 +449,9 @@ Phase 3.5 验证记录（2026-08-28）：
 
 Phase 4 验证记录（2026-08-28）：
 
-- 代码边界：Python 保留 `ts_sidecar`、来源 adapter、权限/scope 复核和 history 注入；索引构建、BM25、统一排序、去重、来源上限、字符预算和 citation DTO 由 TS worker 负责。已删除 Python `scoring.py`、`index.py` 及其失效测试依赖；未发现 Rust sidecar 或 TS API/Agent 运行入口残留。
+- 代码边界：Python 保留 `ts_sidecar`、来源 adapter、权限/scope 复核和 history 注入；索引构建、BM25、统一排序、去重、来源上限、字符预算和 citation DTO 由 TS worker 负责。已删除 Python `scoring.py`、`index.py` 及其失效测试依赖；未发现 Rust sidecar 或 TS api/Agent 运行入口残留。
 - worker：协议版本 `rag-v1`、worker 版本 `0.2.0`；支持 `build_documents`、`build_and_index`、`replace`、`patch`、`search`、`unified_search` 和 `rank_candidates`。固定制品为 `backend/bin/gugu-rag-ts-worker.mjs`，启动冒烟返回版本和空索引状态。
-- 自动化测试：TS worker/API/contracts 测试 `20 passed`；Python 全量 `backend/tests` 为 `1576 passed`，仅有依赖自身的 3 条弃用警告。`scripts/benchmark_rag_builders.py --records 100 --iterations 5` 完成真实 worker 基准：TS 常驻 build roundtrip 平均 `16.629 ms`，`build_and_index` 平均 `12.604 ms`，单次 Python builder `1.819 ms`；TS 的常驻协议路径比旧的 build+replace roundtrip 快 `24.21%`。修正数值 `0` 被适配器误判为空 ID 后，Python/TS 文档数量均为 `400`，公共投影 `semantic_equal=true`，digest 一致。
+- 自动化测试：TS worker/api/contracts 测试 `20 passed`；Python 全量 `backend/tests` 为 `1576 passed`，仅有依赖自身的 3 条弃用警告。`scripts/benchmark_rag_builders.py --records 100 --iterations 5` 完成真实 worker 基准：TS 常驻 build roundtrip 平均 `16.629 ms`，`build_and_index` 平均 `12.604 ms`，单次 Python builder `1.819 ms`；TS 的常驻协议路径比旧的 build+replace roundtrip 快 `24.21%`。修正数值 `0` 被适配器误判为空 ID 后，Python/TS 文档数量均为 `400`，公共投影 `semantic_equal=true`，digest 一致。
 - 构建：`make rag-ts-build` 已改为使用仓库 pnpm lockfile、TS worker 自带 esbuild 和 CI 非交互安装，构建并执行 `gugu-rag-ts-worker 0.2.0` 成功。
 - 运行语义：通用 memory/project/note/calendar/scheduled_task/knowledge 使用统一 source record builder；file/canvas/conversation 保留专用 adapter；source 与 scope 在 TS worker 截断前过滤，避免错误 scope 挤掉合法结果。
 - 失败边界：Phase 3.5 已验证 FastAPI/Python 为唯一 Agent/API owner；本阶段没有启动 TS API 或 TS Agent。SSE/事件更新相关问题和 `/interactions` 500 保留到后续实时事件收口阶段处理。
@@ -466,19 +466,19 @@ Phase 4 验证记录（2026-08-28）：
 [x] 821b4393
 ```
 
-本阶段允许一个 commit 拆成多个职责补丁：pnpm、Python、TS RAG 和 sandbox 相关部分可以保留；TS API/TS Agent 服务部分必须排除并记录。
+本阶段允许一个 commit 拆成多个职责补丁：pnpm、Python、TS RAG 和 sandbox 相关部分可以保留；TS api/TS Agent 服务部分必须排除并记录。
 
-- [x] 重新整理 `make install/update/start/stop/restart`；核心服务只启动 FastAPI、Python worker/supervisor 和 sandboxd，TS RAG 由 Python adapter 按需复用固定制品。
-- [x] 保留 pnpm workspace、前端/RAG 构建和固定构建物，不在业务运行时编译或启动 TS API/TS Agent。
+- [x] 重新整理 `make install/update/start/stop/restart`；核心服务只启动 FastAPI、Python worker/gateway 和 sandboxd，TS RAG 由 Python adapter 按需复用固定制品。
+- [x] 保留 pnpm workspace、前端/RAG 构建和固定构建物，不在业务运行时编译或启动 TS api/TS Agent。
 - [x] 保留数据库、文件迁移、sandbox、ACL、Compose 和部署能力，并按当前 Python/FastAPI owner 保持依赖顺序。
-- [x] 清理 TS API/TS Agent 的独立启动入口、systemd/Compose/build 依赖和默认启动项；实时事件遗留入口统一在 Phase 6 清理。
-- [x] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有 TS API/TS Agent 业务入口；实时事件相关引用统一登记到 Phase 6。
+- [x] 清理 TS api/TS Agent 的独立启动入口、systemd/Compose/build 依赖和默认启动项；实时事件遗留入口统一在 Phase 6 清理。
+- [x] 扫描 import、服务名、端口、反向代理、前端 API base、文档和 CI，确认没有 TS api/TS Agent 业务入口；实时事件相关引用统一登记到 Phase 6。
 
 Phase 5 实施记录（2026-08-28）：
 
-- `backend/start.sh` 与 `backend/Makefile` 已统一四个核心 systemd 服务清单，不再安装或默认启动 TS API/TS Agent；TS RAG 仅通过 `backend/bin/gugu-rag-ts-worker.mjs` 由 Python sidecar 拉起。
+- `backend/start.sh` 与 `backend/Makefile` 已统一四个核心 systemd 服务清单，不再安装或默认启动 TS api/TS Agent；TS RAG 仅通过 `backend/bin/gugu-rag-ts-worker.mjs` 由 Python sidecar 拉起。
 - `backend/deploy.sh` 的默认构建流程已先构建固定 TS RAG 制品，再构建前端；`--no-build` 仍可跳过全部构建。
-- Docker Compose 保留 Python backend/worker、迁移、sandboxd、文件数据和受控 egress；未发现 TS API/TS Agent Compose 服务。
+- Docker Compose 保留 Python backend/worker、迁移、sandboxd、文件数据和受控 egress；未发现 TS api/TS Agent Compose 服务。
 - Phase 5 保留的 `gugu-live.service` 与 `backend/ts/api/live.ts` 已在 Phase 6 删除；前端 Live store 改为同源 FastAPI `/api/v1/live/stream`，SSE 仍作为传输协议保留。
 - 校验：`bash -n backend/start.sh backend/deploy.sh`、`make -C backend help`、TS RAG 固定制品版本检查通过；未执行会修改用户配置或数据库的安装动作。
 
@@ -510,7 +510,7 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 自动化 E2E 已覆盖的项目单独记录如下；“通过”只代表 Playwright 在 devserver 的自动化验证通过，
 不等同于真实第三方账号人工回归完成：
 
-- [x] 服务入口与登录态：E2E setup 登录通过，浏览器请求进入 FastAPI；devserver 的 backend、worker、supervisor、sandboxd 均为 active。
+- [x] 服务入口与登录态：E2E setup 登录通过，浏览器请求进入 FastAPI；devserver 的 backend、worker、gateway、sandboxd 均为 active。
 - [x] 日历：月/周视图、日期范围项目、活动创建与浮动编辑窗日期选择通过；活动被收进“更多”时也能进入编辑。
 - [x] 文件库：上传/删除、个人文件区单文件/多选/混合拖拽、项目文件区拖拽及 409/403 回滚通过。
 - [x] 定时任务：空状态、新建、编辑、启停、应用内确认删除、间隔/渠道选项，以及真实 Python worker 试运行通过。
@@ -520,7 +520,7 @@ Phase 6 不预先批量应用新功能 commit，只处理前五阶段留下的�
 
 **服务与入口**
 
-- [x] `gugu-backend`、`gugu-worker`、`gugu-supervisor`、`gugu-sandboxd` 均为 `active`。
+- [x] `gugu-backend`、`gugu-worker`、`gugu-gateway`、`gugu-sandboxd` 均为 `active`。
 - [x] Web、Admin、LoopScope 可登录、刷新和退出；浏览器请求只进入 FastAPI，没有 TS API 端口请求。（Web 登录与 FastAPI 入口已有自动化覆盖，Admin/LoopScope 及退出仍需人工确认。）
 - [x] 新建 Web 会话并连续发送两轮普通文本；回复、生成状态和历史各只出现一次。
 
@@ -620,7 +620,7 @@ worker；本轮没有重启后端，避免把服务重启造成的连接失败�
 
 - [x] 汇总每个阶段仍为 `[ ]` 的候选 commit，区分“尚未处理”“已由其他提交覆盖”“按文件拆分保留”“明确排除”四类。
 - [x] 对所有未处理 commit 重新执行路径和运行入口扫描，确认没有遗漏 FastAPI、Python Agent、前端、TS RAG、Make 或实时事件补丁。
-- [x] 确认排除的 TS API/TS Agent commit 不再被 Make、Compose、systemd、前端 API base、CI 或文档引用。
+- [x] 确认排除的 TS api/TS Agent commit 不再被 Make、Compose、systemd、前端 API base、CI 或文档引用。
 - [x] 将最终清点结果写回本 PRD，所有剩余项均已明确归类；真实环境人工回归仍单独保留为未完成项。
 
 提交清点记录（2026-08-28）：
@@ -633,8 +633,8 @@ worker；本轮没有重启后端，避免把服务重启造成的连接失败�
 - 当前恢复分支新增的验收收口提交：`8bc8e02a`（Phase 3 测试清理）和 `b8393cb9`
   （Phase 6 测试、RAG 补充实现及文档目录整理）。这些提交均已记录，未发现尚未归类的提交。
 - 入口扫描结果：生产服务仅保留 `gugu-sandboxd`、`gugu-backend`、`gugu-worker` 和
-  `gugu-supervisor`；前端 live store 使用 FastAPI `/api/v1/live/stream`；TypeScript 运行时
-  仅保留固定 TS RAG worker，未发现 TS API/TS Agent 启动入口。
+  `gugu-gateway`；前端 live store 使用 FastAPI `/api/v1/live/stream`；TypeScript 运行时
+  仅保留固定 TS RAG worker，未发现 TS api/TS Agent 启动入口。
 
 ### Phase 7：补回 Python 侧安全/兼容补丁与文档结构
 
@@ -658,13 +658,13 @@ worker；本轮没有重启后端，避免把服务重启造成的连接失败�
 - [x] 完成 Python 单元测试、文件安全测试和文档路径扫描，并将结果写回本 PRD。
 
 明确排除：`4d89a4d1`、`9fe3900d`、`953dde7f`、`bfed8e3b`、`90645356`、`8080742a`、
-`6e0f9036`、`15621bf2` 等 TS API/TS Agent 鉴权、写入门、项目校验、事件事务、命令 lease
+`6e0f9036`、`15621bf2` 等 TS api/TS Agent 鉴权、写入门、项目校验、事件事务、命令 lease
 续期和终态回收补丁。它们只能在 TS owner 恢复时重新评估，当前不得直接应用到 Python 生产链路。
 
 Phase 7 实施记录（2026-08-28）：
 
 - Python `sanitize_messages()` 现在区分可合并的时间 reminder 与需要保持边界的其他 reminder；文件预览可从旧记录的泛化 MIME 中安全识别常见图片格式。
-- 新增 Agent 文档 canonical 入口和 ARCH-4、UI-3 参考 PRD；未恢复 TS API/TS Agent 运行入口。
+- 新增 Agent 文档 canonical 入口和 ARCH-4、UI-3 参考 PRD；未恢复 TS api/TS Agent 运行入口。
 - 针对历史清洗和文件预览安全执行 `16 passed`；`git diff --check` 和文档路径扫描通过。
 
 ## 7. 最终验收标准
@@ -674,7 +674,7 @@ Phase 7 实施记录（2026-08-28）：
 3. TS RAG 从索引到召回仍为完整生产链路，Python 只负责适配、权限复核和注入。
 4. pnpm 迁移仍然有效，Makefile 能构建和部署前端、Python 后端与 TS RAG 固定构建物。
 5. 实时事件能力保留，但其入口和发布链路为 Python/FastAPI + Redis，不再由 TS API 承担。
-6. 不存在 TS API/TS Agent 双启动、隐式 fallback、重复 API repository、重复工具注册或重复事件协议。
+6. 不存在 TS api/TS Agent 双启动、隐式 fallback、重复 API repository、重复工具注册或重复事件协议。
 7. 恢复过程不覆盖用户运行配置、数据库、用户文件、凭据和运行时 RAG 索引。
 
 ## 8. 风险与处理
@@ -683,7 +683,7 @@ Phase 7 实施记录（2026-08-28）：
 |---|---|
 | 混合提交无法直接 cherry-pick | 使用 `cherry-pick --no-commit` 或按文件重新应用，只保留目标领域文件 |
 | TS API 迁移曾删除 FastAPI 路由 | 以 `backend/app/api`、OpenAPI 和前端实际请求清单为恢复依据 |
-| Makefile 同时服务两套后端 | 先固定默认进程图，再逐项删除 TS API/Agent target |
+| Makefile 同时服务两套后端 | 先固定默认进程图，再逐项删除 TS api/Agent target |
 | 实时事件回迁后前端无刷新 | 保持 canonical envelope、游标和 SSE URL 语义，只替换 owner |
 | RAG 被误清理 | 以 `backend/agent/rag/ts_sidecar.py` 和 `backend/ts/workers/rag/**` 为保留白名单 |
 | 旧 session/run 格式不兼容 | 保留 Python canonical history、snapshot、baseline 和必要的一次性读取兼容，不维护第二套长期组装逻辑 |

@@ -265,7 +265,7 @@ canonical batch/history → Provider wire messages
 - [x] 附件、引用、base64 和工具结果继续经过既有清洗，canonical 持久化不写入 provider wire；
 - [x] 同一 Session 重复 finalize 时按 `(session_id, digest)` 去重，不重复插入 batch 消息；
 - [x] 删除新主链中的 Provider → canonical 反向转换；`from_provider_messages()` 与 finalize fallback 仅保留旧历史/旧调用方兼容用途；
-- [x] 完成 `git diff --check`、Python compileall、provider history 和 canonical batch 回归用例补充；完整 pytest、数据库迁移和 UI/LoopScope 回放需在依赖环境执行。
+- [x] 完成 `git diff --check`、Python compileall、provider history 和 canonical batch 回归用例补充；完整 pytest、数据库迁移和 ui/LoopScope 回放需在依赖环境执行。
 
 ## 7. 验收标准
 

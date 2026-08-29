@@ -4,7 +4,7 @@
 
 > 执行边界：记忆反思与事件压缩的 provider 分支、稳定前缀组装、重试和审计统一由 [PRD-AGENT-5：ContextBranch 反思与压缩统一架构](PRD-AGENT-5-ContextBranch反思与压缩统一架构.md) 维护；本 PRD 只定义事件记忆的领域规则与持久化。
 > 创建：2026-08-24
-> 关联文档：[`docs/agent/11-记忆系统.md`](../../agent/11-记忆系统.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)
+> 关联文档：[`docs/agent/07-MEMORY-AND-REFLECTION.md`](../agent/07-MEMORY-AND-REFLECTION.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)
 > 目标：明确 profile、pattern、memory 的边界，把 memory.md 收敛为事件/对话记忆，并在 daily 压缩时用少量 RAG 历史参考减少重复。
 
 ## 1. 背景
@@ -225,7 +225,7 @@ Phase 3–4 已完成的验收：
 
 - `PRD-MEM-1` 负责记忆召回工具与混合检索能力；
 - `PRD-RAG-1` 负责统一 Source、Chunk、Index、Retriever 和权限协议；
-- `docs/agent/11-记忆系统.md` 继续作为现有记忆系统实现说明，实施完成后同步更新；
+- `docs/agent/07-MEMORY-AND-REFLECTION.md` 继续作为现有记忆系统实现说明，实施完成后同步更新；
 - 本 PRD 不改变 `profile`、`pattern` 的独立存储，也不把所有记忆改造成单一向量数据库。
 
 ## 10. 与 PRD-IM-11 的依赖关系

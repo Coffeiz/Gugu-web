@@ -157,8 +157,9 @@ class NewMessageBatch:
         values = list(messages)
         self.messages.extend(copy.deepcopy(values))
         if self._canonical_initialized:
+            from ..history import canonicalize_tool_messages
             self._canonical_messages = self._canonical_messages + tuple(
-                _validate_canonical_messages(values)
+                _validate_canonical_messages(canonicalize_tool_messages(values))
             )
         if self._provider_initialized:
             self._provider_messages = self._provider_messages + tuple(copy.deepcopy(values))
@@ -168,8 +169,9 @@ class NewMessageBatch:
         value = copy.deepcopy(message)
         self.messages.append(value)
         if self._canonical_initialized:
+            from ..history import canonicalize_tool_messages
             self._canonical_messages = self._canonical_messages + tuple(
-                _validate_canonical_messages([value])
+                _validate_canonical_messages(canonicalize_tool_messages([value]))
             )
         if self._provider_initialized:
             self._provider_messages = self._provider_messages + (copy.deepcopy(value),)

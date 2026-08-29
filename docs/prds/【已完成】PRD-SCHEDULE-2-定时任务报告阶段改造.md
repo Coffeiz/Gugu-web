@@ -4,7 +4,7 @@
 > 创建：2026-08-07
 > 最近更新：2026-08-08
 > 关联模块：`backend/app/scheduled_tasks.py`、`backend/agent/runner.py`、`backend/agent/scheduled_report.py`
-> 关联文档：[`【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AgentLoop执行.md)、[`【已完成】PRD-IM-7-群定时任务完整loop.md`](./【已完成】PRD-IM-7-群定时任务完整loop.md)
+> 关联文档：[`【已完成】PRD-SCHEDULE-1-定时任务完整AGENTLOOP执行.md`](./【已完成】PRD-SCHEDULE-1-定时任务完整AGENTLOOP执行.md)、[`【已完成】PRD-IM-7-群定时任务完整LOOP.md`](./【已完成】PRD-IM-7-群定时任务完整LOOP.md)
 
 ## 0. 实施状态
 

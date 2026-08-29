@@ -4,7 +4,7 @@
 > 创建：2026-08-03
 > 最近更新：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/gateway/feishu.py`、`backend/agent/gateway/wechat.py`、`backend/worker.py`、`backend/agent/runner.py`
-> 关联文档：[`【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md`](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`20-IM接入架构.md`](../../agent/20-IM接入架构.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)、[`22-IM用户数据结构.md`](../../agent/22-IM用户数据结构.md)
+> 关联文档：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)、[`【已完成】PRD-IM-3-群组与成员记忆.md`](./【已完成】PRD-IM-3-群组与成员记忆.md)、[`08-CHANNELS.md`](../agent/08-CHANNELS.md)、[`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md)
 
 ## 0. 实施状态
 
@@ -75,7 +75,7 @@ flowchart TD
 
 ### 审查结论
 
-Phase 5 已完成上述职责收口。历史审查中记录的 P1/P2 已逐项修复；当前唯一保留的重复代码是 `run_collect()` 与 `run_stream()` 的 token 消费循环，这是流式平台输出的必要差异，其他上下文、权限、session、附件、持久化、反思和压缩收尾均由同一套组件驱动。详细证据和测试命令见 [Phase 5 代码审查报告](./PRD-IM-2-Phase5-代码审查报告.md)。
+Phase 5 已完成上述职责收口。历史审查中记录的 P1/P2 已逐项修复；当前唯一保留的重复代码是 `run_collect()` 与 `run_stream()` 的 token 消费循环，这是流式平台输出的必要差异，其他上下文、权限、session、附件、持久化、反思和压缩收尾均由同一套组件驱动。详细证据和测试命令见 [Phase 5 代码审查报告](./PRD-IM-2-PHASE5-代码审查报告.md)。
 
 ## 1. 背景与目标
 
@@ -352,7 +352,7 @@ backend/agent/
 │   ├── qq.py                   # QQ Gateway：连接、解析、发送
 │   ├── feishu.py               # 飞书 Gateway：连接、解析、发送
 │   ├── wechat.py               # 微信 Gateway：轮询、解析、发送
-│   └── supervisor.py            # Gateway 进程生命周期
+│   └── gateway.py            # Gateway 进程生命周期
 ├── im/
 │   ├── __init__.py
 │   ├── models.py               # PlatformMessage / PlatformReply / identity DTO

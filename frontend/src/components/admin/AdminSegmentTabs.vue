@@ -1,5 +1,5 @@
 <template>
-  <div class="segment-tabs" role="tablist" :aria-label="ariaLabel">
+  <div class="segment-tabs" :class="{ compact: size === 'compact' }" role="tablist" :aria-label="ariaLabel">
     <button
       v-for="tab in tabs"
       :key="tab.key"
@@ -20,7 +20,8 @@ withDefaults(defineProps<{
   tabs: TabItem[]
   modelValue: string
   ariaLabel?: string
-}>(), { ariaLabel: '页面分类' })
+  size?: 'default' | 'compact'
+}>(), { ariaLabel: '页面分类', size: 'default' })
 
 defineEmits<{ (event: 'update:modelValue', value: string): void }>()
 </script>
@@ -57,5 +58,16 @@ defineEmits<{ (event: 'update:modelValue', value: string): void }>()
   color: rgba(255,255,255,0.92);
   background: rgba(123,127,178,0.28);
   box-shadow: inset 0 1px rgba(255,255,255,0.08);
+}
+.segment-tabs.compact {
+  height: 32px;
+  box-sizing: border-box;
+  padding: 2px;
+  border-radius: 8px;
+}
+.segment-tabs.compact .segment-tab {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 6px;
 }
 </style>

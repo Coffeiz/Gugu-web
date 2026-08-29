@@ -84,7 +84,7 @@
 #### DeepSeek（`deepseek-chat`，OpenAI 格式）
 - **优化**：① **思考开关生效**；② **思考强度 `reasoning_effort`（low/high/max）后台可调**——思考模式下 temperature 失效，effort 是质量/成本旋钮；③ **DeepSeek Vision** 使用 `deepseek-v4-flash-vision-exp`，OpenAI `image_url.detail` 默认 `auto`；④ **反思走 `json_object` + thinking:disabled**；⑤ **自动上下文缓存命中监控**（`prompt_cache_hit_tokens` → `_usage.cache_read`）；⑥ `reasoning_content` 多轮回传（横切，自动受益）。（Unreleased）
 - **特性**：上下文缓存**全自动**（无需 `cache_control`），咕咕「稳定前缀在前」的 system 拆分天然吃到命中；多轮无状态、客户端重发全历史（咕咕本就如此）。
-- **坑**：思考模式忽略 temperature/top_p；`json_object` 要求 prompt 含 "json" 字样+样例（反思 prompt 已满足）。
+- **坑**：思考模式忽略 temperature/top_p；`json_object` 要求 prompt 含 "JSON" 字样+样例（反思 prompt 已满足）。
 - **可选未做**：Tool strict 模式（beta）；前缀续写 / FIM（与咕咕场景无关）。
 
 #### mimo / 小米（`mimo-v2.5`，OpenAI 格式，可选 Anthropic）

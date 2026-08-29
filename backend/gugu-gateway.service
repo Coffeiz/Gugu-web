@@ -1,5 +1,5 @@
 [Unit]
-Description=Gugu IM Supervisor (拉起并看管飞书/QQ 网关子进程)
+Description=Gugu IM Gateway (拉起并看管飞书/QQ 网关子进程)
 After=network.target
 
 [Service]
@@ -13,10 +13,10 @@ Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin
 Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
 Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
 Environment="DB_STARTUP_TIMEOUT=10"
-# supervisor 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
+# gateway 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
 Environment="LOOPSCOPE_ENABLED=1"
 Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
-ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.supervisor
+ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.gateway
 # 网关管家，死了连带网关一起没，必须自动拉起
 Restart=always
 RestartSec=3
@@ -24,8 +24,8 @@ RestartSec=3
 KillMode=control-group
 
 # 写进 Debug 面板读的日志文件（而非 journal），让后台「Debug 实时日志」能 tail 到
-StandardOutput=append:__APP_DIR__/logs/gugu-supervisor.log
-StandardError=append:__APP_DIR__/logs/gugu-supervisor.log
+StandardOutput=append:__APP_DIR__/logs/gugu-gateway.log
+StandardError=append:__APP_DIR__/logs/gugu-gateway.log
 
 NoNewPrivileges=true
 PrivateTmp=true

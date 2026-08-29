@@ -124,7 +124,7 @@ backend/
    └─ test_terminal_ws.py          # WebSocket 连接、重连、resize 和退出测试
 
 backend/ts/packages/contracts/
-├─ src/terminal.ts                 # API/Worker 共用的终端模式和消息联合类型
+├─ src/terminal.ts                 # api/Worker 共用的终端模式和消息联合类型
 └─ src/index.ts                    # 导出终端契约
 
 frontend/src/

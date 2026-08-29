@@ -19,7 +19,7 @@ _LINE_TIMESTAMP_RE = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\s|$)")
 
 
 class _TimestampedStream:
-    """给 worker/supervisor 的 print 输出补行首时间戳。
+    """给 worker/gateway 的 print 输出补行首时间戳。
 
     systemd 的 ``StandardOutput=append:`` 会绕过 journald 的时间元数据，
     而这些常驻进程仍有大量历史 ``print``。包装 stdout/stderr 可以在不改动
@@ -59,7 +59,7 @@ class _TimestampedStream:
 
 
 def setup_process_output() -> None:
-    """为独立 worker/supervisor/网关进程的标准输出补时间戳。"""
+    """为独立 worker/gateway/网关进程的标准输出补时间戳。"""
     if not isinstance(sys.stdout, _TimestampedStream):
         sys.stdout = _TimestampedStream(sys.stdout)
     if not isinstance(sys.stderr, _TimestampedStream):

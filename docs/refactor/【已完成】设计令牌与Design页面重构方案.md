@@ -433,12 +433,8 @@ frontend/src/views/Design/
 ├── index.vue
 ├── components/
 │   ├── TokenSection.vue
-│   ├── TokenRow.vue
-│   ├── ColorTokenPreview.vue
-│   ├── SurfaceTokenPreview.vue
-│   ├── TypographyTokenPreview.vue
-│   ├── ComponentStatesPreview.vue
-│   ├── BusinessComponentsPreview.vue
+│   ├── DesignSystemPage.vue
+│   ├── GuguChatMock.vue
 │   └── ThemeSwitcher.vue
 ├── composables/
 │   └── useDesignTokens.ts
@@ -499,12 +495,8 @@ const value = getComputedStyle(document.documentElement)
 #### 预览组件
 
 - `TokenSection`：分类和折叠布局
-- `TokenRow`：名称、值、说明和复制操作
-- `ColorTokenPreview`：颜色和透明度
-- `SurfaceTokenPreview`：背景、边框、blur 和 shadow
-- `TypographyTokenPreview`：字号、字重、行高和示例
-- `ComponentStatesPreview`：共享组件状态矩阵
-- `BusinessComponentsPreview`：项目、文件、画布和聊天业务组件
+- `DesignSystemPage`：设计令牌、产品样板和状态预览的页面组合
+- `GuguChatMock`：设计页内聊天样板
 - `ThemeSwitcher`：主应用和 Admin 主题切换
 
 ### 5.4 路由与访问范围

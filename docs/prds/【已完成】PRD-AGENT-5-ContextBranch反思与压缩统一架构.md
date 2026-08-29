@@ -211,7 +211,7 @@ provider system / stable prompt
 - [x] 实现稳定前缀 + delta 组装，统一 fingerprint 和 provider usage 日志。
 - [x] 增加 branch 单元测试、schema 错误测试、provider overflow 测试和 cache 顺序测试。
 
-完成记录（2026-08-28）：`ContextBranch` 已提供固定顺序组装、text/json 两种输出模式、
+完成记录（2026-08-28）：`ContextBranch` 已提供固定顺序组装、text/JSON 两种输出模式、
 重试、provider 错误/空输出/schema 无效分类和脱敏 fingerprint 日志。`memory/_llm.py`
 仅保留兼容导出，不再维护 provider 实现。Phase 2/3 才会替换现有业务调用，因此本阶段
 不会改变反思、压缩或 memory writer 的运行行为。
@@ -243,7 +243,7 @@ Prompt 的前提下继续拆分结构化 baseline/snapshot。
 - [x] scope 与 revision 仅进入审计元数据，不进入 provider user 输入，RAG revision 更新不污染主 history 或前缀缓存。
 - [x] 增加跨 scope 前缀稳定、失败重试、provider error 和旧结果不覆盖回归测试。
 
-完成记录（2026-08-28）：Knowledge 反思已迁移到 `ContextBranch`；新增 `scope_revision` 审计字段。组装器不再将 scope/revision 写入模型正文，保证不同 scope 的相同 system+delta 保持相同输入前缀；回归测试覆盖跨 scope 指纹稳定与失败分类。三组 devserver 真实会话的反思/压缩 A/B 结果见 `docs/reports/TEST-ContextBranch-Phase4-AB-20260828.md`；未脱敏正文仅保存在本机 `/tmp/ContextBranch-Phase4-AB-20260828-未脱敏.md` 与同名 JSON。
+完成记录（2026-08-28）：Knowledge 反思已迁移到 `ContextBranch`；新增 `scope_revision` 审计字段。组装器不再将 scope/revision 写入模型正文，保证不同 scope 的相同 system+delta 保持相同输入前缀；回归测试覆盖跨 scope 指纹稳定与失败分类。三组 devserver 真实会话的反思/压缩 A/B 结果见 `docs/reports/TEST-CONTEXTBRANCH-PHASE4-AB-20260828.md`；未脱敏正文仅保存在本机 `/tmp/ContextBranch-Phase4-AB-20260828-未脱敏.md` 与同名 JSON。
 
 ### Phase 5：清理重复实现与上线验证
 

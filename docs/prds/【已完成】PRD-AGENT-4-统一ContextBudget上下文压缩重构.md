@@ -24,8 +24,8 @@ baseline
 
 - `docs/product/PRD/【已归档】PRD-AGENT-1-会话上下文增量与压缩.md`
 - `docs/product/PRD/PRD-AGENT-3-统一会话历史窗口与持久化基线.md`
-- `docs/agent/context/context-budget-baseline-design.md`
-- `docs/product/PRD/【已完成】PRD-LLM-8-Prompt-Caching优化.md` 中的上下文压缩部分
+- `docs/agent/04-CONTEXT-ENGINEERING.md`
+- `docs/product/PRD/【已完成】PRD-LLM-8-PROMPT-CACHING优化.md` 中的上下文压缩部分
 - `docs/product/PRD/【已完成】PRD-IM-6-IM会话复用与消息窗口裁剪.md` 中的窗口裁剪部分
 
 长期记忆（daily、profile、pattern、群成员记忆）的内容压缩仍由对应 Memory/RAG PRD 负责；本 PRD 只处理「单个会话发给模型的对话上下文」和其持久化 baseline，不把两种压缩混成一个任务。
@@ -556,10 +556,10 @@ Phase 6 自动化与 devserver 收口已完成：本次清理后的上下文/压
 
 ## 12. 文档与发布要求
 
-- [x] `docs/agent/context/context-budget-baseline-design.md` 已引用本 PRD 的唯一预算语义。
+- [x] `docs/agent/04-CONTEXT-ENGINEERING.md` 已引用本 PRD 的唯一预算语义。
 - [x] `PRD-AGENT-3` 已归档，并标注其历史窗口方案已被本 PRD 替代。
 - [x] `PRD-LLM-8` 已改为完成状态；旧 20% 压缩目标和重复 baseline TODO 不再作为实现依据。
 - [x] `PRD-IM-6` 已收窄为渠道会话复用、物理保留和消息窗口兼容说明。
-- [x] `docs/devlog.md` 已记录专项验证结果；未伪造线上 token/cache 对比，真实脱敏长群 trace 仍作为上线后观察项。
+- [x] `docs/DEVLOG.md` 已记录专项验证结果；未伪造线上 token/cache 对比，真实脱敏长群 trace 仍作为上线后观察项。
 - [x] `CHANGELOG.md` 只记录用户可感知的上下文稳定性、长群会话和并发行为变化。
 - [x] 代码审查确认本 PRD 范围内未保留无效探针、旧 ratio、重复 API 或未使用类型；保留的 `context-layout`/baseline 生命周期日志属于脱敏诊断，不进入模型上下文。

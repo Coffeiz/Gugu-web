@@ -727,7 +727,7 @@ backend/agent/capabilities/
 - 🔲 现有工具业务文件只出现 metadata 增量，不出现 selector/import 循环。
 - 🔲 `runner.py`、`core.py`、`loop_drivers.py` 的 Adapter Tool、canonical history 和工具执行职责边界保持清晰。
 - ✅ 删除旧目录生成逻辑前已确认 Capability Injector 覆盖 Web、IM、定时任务和 LoopScope；当前仅保留 Builder 的 Skill 索引职责。
-- 🔲 每个删除项继续在 `docs/devlog.md` 留下独立迁移记录。
+- 🔲 每个删除项继续在 `docs/DEVLOG.md` 留下独立迁移记录。
 
 #### 两个目录 README 的最低内容
 
@@ -926,7 +926,7 @@ Phase 6 验收目标：
 - ✅ OpenAI、Anthropic、Ollama、MiniMax、DeepSeek 继续复用同一 Tool contract；Provider 差异只保留在 Driver/适配器测试中。
 - ✅ 写工具继续由 `mutates`、`destructive`、确认 token 和既有 dispatch 核验链负责，能力目录不改变执行语义。
 - ✅ 新增 `backend/scripts/diagnostics/capability_baseline.py`，采集注册目录、原生全量 Schema、固定 Adapter Schema、目录构建平均/P95；可选读取 LoopScope 导出统计 provider input/cache。
-- ✅ 生成 `docs/product/PRD/report/PRD-LLM-9-capability-baseline-2026-08-26.md`，记录当前真实 Registry 基线。
+- ✅ 生成 `docs/product/PRD/report/PRD-LLM-9-CAPABILITY-BASELINE-2026-08-26.md`，记录当前真实 Registry 基线。
 
 ### Phase 5：固定 Adapter Tool 与 canonical history（新增主实施阶段）
 

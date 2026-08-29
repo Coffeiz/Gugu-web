@@ -23,7 +23,7 @@ _hooks_installed = False
 
 
 def _tool_names_from_schemas(tools: Any) -> list[str]:
-    """从 provider 已收到的 Schema 提取名称，仅用于脱敏的数量/名称观测。"""
+    """从 provider 已收到的 Schema 提取工具名称。"""
     names: list[str] = []
     for schema in tools or ():
         if not isinstance(schema, dict):
@@ -50,7 +50,7 @@ def _provider_schema_for_tool(tools: Any, tool_name: str) -> dict[str, Any] | No
 
 
 def _argument_shape(value: Any) -> Any:
-    """只保留参数类型/键结构，避免 schema 诊断复制模型参数正文。"""
+    """生成参数结构摘要，方便快速筛选 Schema 错误。"""
     if isinstance(value, dict):
         return {str(key): _argument_shape(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -97,6 +97,7 @@ def _record_schema_error(
         provider_schema=provider_schema,
         error=error,
         error_kind=error_kind,
+        arguments=arguments,
         arguments_shape=_argument_shape(arguments),
         parent_span_id=parent_span_id,
     )
@@ -118,7 +119,7 @@ def _trace_conversation_messages(messages: Any, system_location: str) -> Any:
 
 
 def _skill_result_metadata(value: Any) -> dict[str, Any]:
-    """只提取 Skill 注入的脱敏元数据，不把正文复制到诊断 Span。"""
+    """提取 Skill 注入的索引元数据；完整正文已保留在父级工具结果 Span。"""
     try:
         payload = json.loads(value) if isinstance(value, str) else value
     except (TypeError, ValueError):

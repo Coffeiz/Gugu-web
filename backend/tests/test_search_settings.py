@@ -12,6 +12,7 @@ def test_rag_auto_sources_are_enabled_by_default():
         "project",
         "file",
         "canvas",
+        "note",
         "conversation",
     ]
 

@@ -6,14 +6,14 @@ group_requires_at 表示只回复 @ 消息，group_read_enabled 表示全部静�
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
-supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到的消息天然归属该 bot 的 owner，
+gateway 为每个启用的 user_bot 起一条本网关子进程。bot 收到的消息天然归属该 bot 的 owner，
 所以入队 payload 直接带 owner_user_id，worker 无需再做绑定。
 
 凭据来源分两端：
-  - 接收（本网关子进程）：由 supervisor 通过环境变量注入（不走 argv，避免 ps 泄漏 secret）
+  - 接收（本网关子进程）：由 gateway 通过环境变量注入（不走 argv，避免 ps 泄漏 secret）
   - 发送（worker 进程）：按 bot id 现查 user_bots 表
 
-启动（由 supervisor 拉起，注入 QQ_* 环境变量）：
+启动（由 gateway 拉起，注入 QQ_* 环境变量）：
     QQ_BOT_ID=.. QQ_APP_ID=.. QQ_APP_SECRET=.. QQ_SANDBOX=0 QQ_OWNER=.. \
       .venv/bin/python -m agent.gateway.qq
 """
@@ -665,7 +665,7 @@ def serve() -> None:
     channel_id = os.environ.get("QQ_BOT_ID", "")
     owner = os.environ.get("QQ_OWNER", "")
     if not app_id or not secret:
-        raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 supervisor 注入）。")
+        raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 gateway 注入）。")
     from agent.security import logsafe
     print(f"[qq:{logsafe.fingerprint(channel_id)}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
     asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))

@@ -6,13 +6,16 @@
         <p class="page-desc">用户怎么用：趋势、会话深度、活跃维度、工具与模型</p>
       </div>
       <div class="header-right">
-        <Checkbox :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
-        <div class="range-tabs">
-          <button v-for="r in ranges" :key="r.days"
-            :class="['range-tab', { active: rangeDays === r.days }]"
-            @click="setRange(r.days)">{{ r.label }}</button>
-        </div>
-        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
+        <AdminSegmentTabs
+          :model-value="String(rangeDays)"
+          :tabs="ranges"
+          size="compact"
+          class="data-header-control"
+          aria-label="使用分析时间范围"
+          @update:model-value="setRange"
+        />
+        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
           <Icon name="action.refresh" size="sm" />
         </button>
       </div>
@@ -265,9 +268,9 @@ const err = ref('')
 const rangeDays = ref(30)
 
 const ranges = [
-  { days: 7,  label: '7 天' },
-  { days: 30, label: '30 天' },
-  { days: 60, label: '60 天' },
+  { key: '7',  label: '7 天' },
+  { key: '30', label: '30 天' },
+  { key: '60', label: '60 天' },
 ]
 
 const visibleTools = computed(() =>
@@ -389,7 +392,7 @@ async function load() {
   }
 }
 
-function setRange(days: number) { rangeDays.value = days }
+function setRange(days: string) { rangeDays.value = Number(days) }
 
 onMounted(load)
 </script>
@@ -405,15 +408,8 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
-.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
-
-.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
-.range-tab {
-  font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
-  color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s;
-}
-.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
-.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
+.header-right { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
+.header-right > .data-header-control { height: 32px; box-sizing: border-box; }
 
 .state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
 .state-msg.err { color: #e07070; }

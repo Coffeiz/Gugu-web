@@ -162,7 +162,7 @@
           </div>
           <div class="card-title-block">
             <h3>邮件系统</h3>
-            <p>SMTP 发信配置，用于反馈通知和未来的用户邮件功能</p>
+            <p>SMTP 发信配置，用于用户反馈邮件提醒</p>
           </div>
         </div>
 
@@ -179,7 +179,6 @@
           <ConfigField label="登录账号" v-model="draft.smtp.user" placeholder="noreply@example.com" />
           <ConfigField label="登录密码" v-model="draft.smtp.password" type="password" placeholder="留空表示不修改" />
           <ConfigField label="发件人地址" v-model="draft.smtp.from_addr" placeholder="留空则同登录账号" />
-          <ConfigField label="通知收件人" v-model="draft.smtp.to_addr" placeholder="admin@example.com" />
         </div>
 
         <div class="card-footer">
@@ -196,6 +195,12 @@
           </div>
         </div>
       </section>
+
+      <!-- ── 用户反馈邮件 ── -->
+      <FeedbackEmailSettings
+        v-model:enabled="draft.smtp.feedback_email_enabled"
+        v-model:email="draft.smtp.to_addr"
+      />
 
       <!-- ── 安全告警 ── -->
       <SecurityAlertSettings v-model="draft.security" />
@@ -232,6 +237,7 @@ import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from './components/ConfigField.vue'
+import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
 import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 
 const configStore = useConfigStore()

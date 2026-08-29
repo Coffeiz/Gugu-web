@@ -131,6 +131,7 @@ def record_tool_schema_error(
     schema: Any,
     error: Any,
     error_kind: str,
+    arguments: Any = None,
     arguments_shape: Any = None,
     provider_schema: Any = None,
     parent_span_id: str | None = None,
@@ -138,7 +139,7 @@ def record_tool_schema_error(
     """记录一次工具 schema 错误及模型实际看到的声明。
 
     schema 是工具注册表的权威声明；provider_schema 由调用轮提供时，优先用于
-    对照 wire 格式。参数只记录结构，不记录字符串正文或文件名等实际值。
+    对照 wire 格式。LoopScope 是开发诊断工具，同时保留完整参数和结构摘要。
     """
     if not _enabled() or run.ended_at is not None:
         return
@@ -156,6 +157,7 @@ def record_tool_schema_error(
                 "schema": schema_value,
                 "provider_schema": provider_value,
                 "schema_digest": digest,
+                "arguments": _jsonable(arguments if arguments is not None else {}),
                 "arguments_shape": _jsonable(arguments_shape or {}),
                 "error": _jsonable(error),
             },

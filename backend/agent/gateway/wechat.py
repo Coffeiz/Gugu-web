@@ -1,17 +1,17 @@
 """微信 iLink Bot 网关（个人微信，BYO 每用户自带 bot）。
 
-和飞书/QQ 同模式（BYO + supervisor 子进程 + `im:inbound` 队列 + worker run_collect），
+和飞书/QQ 同模式（BYO + gateway 子进程 + `im:inbound` 队列 + worker run_collect），
 但 iLink 是 **HTTP long-poll**（非 WebSocket SDK）：本网关 `getupdates` 长轮询拉消息入队。
 凭据是扫码拿的单个 `bot_token`（复用 `user_bots.app_secret` 存），`base_url` 复用 `app_id` 存。
 
 凭据来源分两端（同 qq）：
-  - 接收（本网关子进程）：supervisor 经环境变量注入 `WECHAT_*`（不走 argv，避免 ps 泄漏）
+  - 接收（本网关子进程）：gateway 经环境变量注入 `WECHAT_*`（不走 argv，避免 ps 泄漏）
   - 发送（worker 进程）：按 bot id 现查 `user_bots`
 
 ⚠️ iLink **回复必须带入站消息给的 `context_token`**（端到端会话凭证）——入队 payload 带上
 `context_token`，worker 回复时透传回 `send_text`。这是和飞书/QQ 唯一的接口差异。
 
-启动（由 supervisor 拉起，注入 WECHAT_* 环境变量）：
+启动（由 gateway 拉起，注入 WECHAT_* 环境变量）：
     WECHAT_BOT_ID=.. WECHAT_BOT_TOKEN=.. WECHAT_BASE_URL=.. WECHAT_OWNER=.. \
       .venv/bin/python -m agent.gateway.wechat
 """
@@ -44,7 +44,7 @@ _config_managers: dict[str, WeixinConfigManager] = {}
 def _get_config_manager(channel_id: str) -> WeixinConfigManager:
     """按 channel_id 取（首次懒创建）/ 取缓存的 WeixinConfigManager。
 
-    网关子进程的 bot_token 由 supervisor 注入到 `WECHAT_BOT_TOKEN` 环境变量，
+    网关子进程的 bot_token 由 gateway 注入到 `WECHAT_BOT_TOKEN` 环境变量，
     所以这里直接读环境变量构造 manager（不用像 worker 那样走 user_bots 现查）。
     """
     if channel_id not in _config_managers:
@@ -133,7 +133,7 @@ async def _handle_msg(msg: dict, channel_id: str, owner: str, client) -> None:
     if not text and not attachments:   # 只有不支持的媒体、啥也没取到 → 不入队（agent 无内容）
         return
     # typing_ticket（per-user, 24h 有效）——同步等 + 超时兜底，避免 race condition
-    # （OpenClaw 做法也是同步 await，但 Gugu-web 这里加 500ms 上限防网络抖动拖慢 supervisor 拉消息节奏）
+    # （OpenClaw 做法也是同步 await，但 Gugu-web 这里加 500ms 上限防网络抖动拖慢 gateway 拉消息节奏）
     # 拿不到时 worker 端按空 ticket 走"不发 typing"分支（与 OpenClaw 退化策略一致）
     typing_ticket = ""
     try:
@@ -209,9 +209,9 @@ def serve() -> None:
     bot_token = os.environ.get("WECHAT_BOT_TOKEN", "")
     base_url = os.environ.get("WECHAT_BASE_URL", "") or DEFAULT_BASE_URL
     if not bot_token:
-        raise SystemExit("缺少 WECHAT_BOT_TOKEN 环境变量（应由 supervisor 注入）。")
+        raise SystemExit("缺少 WECHAT_BOT_TOKEN 环境变量（应由 gateway 注入）。")
     print(f"[wechat:{channel_id}] 网关启动…", flush=True)
-    # 注册 SIGTERM handler——supervisor 发 SIGTERM 时优雅退出（先 notifystop、再退出），
+    # 注册 SIGTERM handler——gateway 发 SIGTERM 时优雅退出（先 notifystop、再退出），
     # 避免上游服务器侧 long-poll 悬挂等 35s 超时才发现连接断了。
     # asyncio.run 跑在子线程没法直接装 signal handler，所以通过 main_thread_loop 桥接：
     # SIGTERM 到达时把 notifystop 调度进 running loop 跑（独立 timeout，不受主退出流程影响）。

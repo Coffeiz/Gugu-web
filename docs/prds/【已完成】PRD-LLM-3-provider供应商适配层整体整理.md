@@ -4,7 +4,7 @@
 > 创建：2026-08-06
 > 最近更新：2026-08-22
 > 所属层：LLM / Provider 适配层
-> 关联 PRD：[[【已完成】PRD-LLM-1-provider适配层重构与core瘦身.md]]、[[PRD-LLM-6-百炼文本模型能力适配.md]]
+> 关联 PRD：[[【已完成】PRD-LLM-1-PROVIDER适配层重构与CORE瘦身.md]]、[[PRD-LLM-6-百炼文本模型能力适配.md]]
 
 ## 1. 为什么现在先做这个
 

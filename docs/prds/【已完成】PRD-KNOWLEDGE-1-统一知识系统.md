@@ -4,7 +4,7 @@
 > 创建：2026-08-04
 > 最近更新：2026-08-25
 > 关联模块：`backend/agent/knowledge/`、`backend/agent/memory/`、`backend/agent/tools/global_search.py`、`backend/agent/tools/files.py`
-> 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`11-记忆系统.md`](../../agent/11-记忆系统.md)
+> 关联文档：[`PRD-RAG-1-统一知识召回与索引.md`](./PRD-RAG-1-统一知识召回与索引.md)、[`PRD-MEM-1-记忆召回工具与混合检索.md`](./PRD-MEM-1-记忆召回工具与混合检索.md)、[`07-MEMORY-AND-REFLECTION.md`](../agent/07-MEMORY-AND-REFLECTION.md)
 
 ## 0. 实施状态
 

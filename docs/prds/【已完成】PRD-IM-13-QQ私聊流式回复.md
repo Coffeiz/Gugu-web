@@ -1,8 +1,8 @@
 # QQ 私聊流式回复 PRD
 
-> 状态：Phase 2 已实施，真实 QQ 客户端验证待完成
+> 状态：代码与自动化回归已完成，真实 QQ 客户端验证待完成
 > 创建：2026-08-21
-> 最近更新：2026-08-21
+> 最近更新：2026-08-29
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/im/loop.py`、`backend/agent/im/replies.py`、`backend/agent/runner.py`
 > 背景参考：本地 `dsh-qqchat/docs/STREAMING.md` 及其 `stream_messages` 实现
 

@@ -86,7 +86,7 @@ Session
 - 可创建新会话并连续发送多轮消息。
 - 会话切换后加载对应历史。
 - 通过 `/dev` 打开时，用 `postMessage` 在内存/SessionStorage 中传递本地开发 token 与 API 地址；token 不进入 URL，也不写 LoopScope SQLite。
-- 支持直接打开 LoopScope 后在 Settings 手工配置 Gugu API/token。
+- 支持直接打开 LoopScope 后在 Settings 手工配置 Gugu api/token。
 
 ### FR-2 普通 / 详细对话模式
 

@@ -64,7 +64,7 @@ async def preview_models(body: CredentialModelsPreview, user: User = Depends(get
     _gate()
     api_key = body.api_key
     if not api_key and body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
         if row is None or row.user_id != user.id:
             raise HTTPException(status_code=404, detail="凭据不存在")
         api_key = decrypt_value(row)
@@ -84,7 +84,7 @@ async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_cur
     _gate()
     api_key = body.api_key
     if not api_key and body.credential_id is not None:
-        row = await db.get(UserProviderCredential, body.credential_id)
+        row = await db.get(UserProviderCredential, body.credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
         if row is None or row.user_id != user.id:
             raise HTTPException(status_code=404, detail="凭据不存在")
         api_key = decrypt_value(row)
@@ -104,7 +104,7 @@ async def probe_vision(body: CredentialVisionProbe, user: User = Depends(get_cur
 @router.patch("/{credential_id}")
 async def patch_credential(credential_id: int, body: CredentialPatch, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)
+    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="凭据不存在")
     if body.enabled is True:
@@ -133,7 +133,7 @@ async def patch_credential(credential_id: int, body: CredentialPatch, user: User
 @router.delete("/{credential_id}", status_code=204)
 async def delete_credential(credential_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)
+    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="凭据不存在")
     await db.delete(row)
@@ -179,7 +179,7 @@ async def test_credential_preview(body: CredentialTestPreview, user: User = Depe
 async def test_credential(credential_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """校验凭据，并对模型类配置执行一次无副作用的连通性请求。"""
     _gate()
-    row = await db.get(UserProviderCredential, credential_id)
+    row = await db.get(UserProviderCredential, credential_id)  # ownership-exempt: 下方按当前用户校验凭据归属
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=404, detail="凭据不存在")
     try:

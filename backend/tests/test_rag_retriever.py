@@ -121,7 +121,7 @@ async def test_database_retrievers_use_independent_sessions_for_parallel_recall(
         IndexedSourceRetriever(
             "user-a", db_factory=session_factory, source_type=source_type,
         )
-        for source_type in ("file", "canvas", "conversation")
+        for source_type in ("file", "canvas", "note", "conversation")
     ]
 
     async def use_session(retriever):
@@ -130,8 +130,8 @@ async def test_database_retrievers_use_independent_sessions_for_parallel_recall(
             return session
 
     acquired = await asyncio.gather(*(use_session(item) for item in retrievers))
-    assert len({id(session) for session in acquired}) == 3
-    assert len(sessions) == 3
+    assert len({id(session) for session in acquired}) == 4
+    assert len(sessions) == 4
 
 
 def test_unified_retriever_rejects_duplicate_source():

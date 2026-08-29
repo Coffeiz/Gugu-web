@@ -37,8 +37,8 @@ description: 后端开发约定。Python 规范、FastAPI 层级、Pydantic 命�
 
 - 本地编辑后通过 Mutagen session `gugu-web` 同步到 devserver。
 - Web 使用 `cd backend && make dev-web`；Worker 使用 `make dev-worker`，启动前确保没有重复 Worker。
-- 生产环境 `make install` 后，`make start/stop/restart/status` 管理 `gugu-backend`、`gugu-worker`、`gugu-supervisor` 三个 systemd 服务。
-- 改动网关适配器时只重启对应平台子进程，不重启整个 supervisor。
+- 生产环境 `make install` 后，`make start/stop/restart/status` 管理 `gugu-backend`、`gugu-worker`、`gugu-gateway` 三个 systemd 服务。
+- 改动网关适配器时只重启对应平台子进程，不重启整个 gateway。
 - 后端修改后在 devserver 运行 `PYTHONPATH=. .venv/bin/pytest`。
 
 ## LLM Prompt 缓存策略

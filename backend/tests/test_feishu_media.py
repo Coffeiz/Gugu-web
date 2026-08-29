@@ -58,6 +58,16 @@ def test_ingest_interactive_falls_back_when_empty():
     assert feishu._ingest_interactive(msg) == "[卡片消息]"
 
 
+def test_ingest_post_falls_back_on_malformed_json():
+    """帖子内容不是 JSON 时返回空正文，不把解析异常扩散到网关。"""
+    msg = SimpleNamespace(content="{not valid json", message_id="om_x")
+
+    text, attachments = feishu._ingest_post(client=None, msg=msg, owner="u1")
+
+    assert text == ""
+    assert attachments == []
+
+
 def test_ingest_post_joins_text_and_downloads_media(monkeypatch):
     msg = _msg("post", {
         "title": "标题",

@@ -7,9 +7,9 @@
 
 ## 易读概述（不懂运维也能看懂）
 
-咕咕不是一个程序，是**好几个程序配合着跑**：一个负责网页和 API（web），一个负责在飞书/QQ 里聊天时"思考"（worker，咕咕的"大脑"其实在这），一个负责管理各平台的连接（supervisor）。这三个是核心服务；启用生产 Shell 沙盒时，还要运行独立的 `gugu-sandboxd`，由它承接 Rootless Docker 执行。三个核心服务都要活着，IM 才能正常收发消息；只用网页版，可以只跑 web。
+咕咕不是一个程序，是**好几个程序配合着跑**：一个负责网页和 API（web），一个负责在飞书/QQ 里聊天时"思考"（worker，咕咕的"大脑"其实在这），一个负责管理各平台的连接（gateway）。这三个是核心服务；启用生产 Shell 沙盒时，还要运行独立的 `gugu-sandboxd`，由它承接 Rootless Docker 执行。三个核心服务都要活着，IM 才能正常收发消息；只用网页版，可以只跑 web。
 
-生产服务器上这些服务一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。开发机则可以用前台热重载：web 用 Uvicorn reload，worker 用 `watchfiles` 监听代码后自动重启；supervisor 和 sandboxd 按需单独重启。开发热重载与生产 systemd 是两套互斥的启动方式，不能让同一个进程同时跑两份。
+生产服务器上这些服务一般交给 **systemd** 管——相当于给每个程序配一个"看护人"，程序崩了自动拉起来，开机自动启动，不用人盯着。开发机则可以用前台热重载：web 用 Uvicorn reload，worker 用 `watchfiles` 监听代码后自动重启；gateway 和 sandboxd 按需单独重启。开发热重载与生产 systemd 是两套互斥的启动方式，不能让同一个进程同时跑两份。
 
 日常最容易迷糊的两件事：
 1. **改了代码该重启哪个**——大脑逻辑在 worker，不在 web，改错了重启等于没改，见 §6.1。
@@ -26,7 +26,7 @@
 | 上线到生产服务器                                       | §4 生产环境部署（nginx + systemd + HTTPS）        |
 | 接入飞书 / QQ / 微信                                 | §5 接入 IM 频道                               |
 | **改了代码，该重启哪个进程？**（最常踩）                         | **§6.1 重启决策表**                            |
-| 启停 / 重启 backend·worker·supervisor·sandboxd              | §6.2 / §6.3                               |
+| 启停 / 重启 backend·worker·gateway·sandboxd              | §6.2 / §6.3                               |
 | 增删启停某个 IM bot                                   | §6.4                                      |
 | 更新线上代码（scp / zip / git）                        | §7 更新线上代码                                 |
 | **改了数据库模型 / 加字段（schema 更新流程）**                  | **§7.1 Schema / 版本更新流程**                  |
@@ -41,7 +41,7 @@
 
 ## 1. 架构总览：要跑哪些进程
 
-> **大白话**：咕咕 = 一个网页前端 + 三个核心后端"常驻程序" + 一个按需启用的 Shell 沙盒执行服务 + 两个基础服务（数据库、消息队列）。前端只是个展示界面；web 接网页/API 请求，worker 是"大脑"，supervisor 是"门卫"，sandboxd 是不让业务进程直接碰 Docker 的"执行闸门"。只用网页聊天不接 IM 的话，后两个核心进程和 Redis 都可以不开；不启用 Shell 沙盒时也不需要启动 sandboxd。
+> **大白话**：咕咕 = 一个网页前端 + 三个核心后端"常驻程序" + 一个按需启用的 Shell 沙盒执行服务 + 两个基础服务（数据库、消息队列）。前端只是个展示界面；web 接网页/API 请求，worker 是"大脑"，gateway 是"门卫"，sandboxd 是不让业务进程直接碰 Docker 的"执行闸门"。只用网页聊天不接 IM 的话，后两个核心进程和 Redis 都可以不开；不启用 Shell 沙盒时也不需要启动 sandboxd。
 
 咕咕分前端 + 后端，后端由 **3 个核心常驻进程**、**1 个按需启用的沙盒执行进程** 和 **2 个依赖服务**组成：
 
@@ -50,7 +50,7 @@
 | -------------- | ---------------------------------- | ----------------------------------------------- | ------ |
 | **web**        | FastAPI（API + Admin），uvicorn :8000 | `make start` / `./start.sh start`               | 必须     |
 | **worker**     | 消费 IM 队列 → 跑咕咕大脑 → 发回平台            | `.venv/bin/python -m worker`                    | 接 IM 时 |
-| **supervisor** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.gateway.supervisor` | 接 IM 时 |
+| **gateway** | 频道管家：按 Admin 频道面板起停各平台网关子进程        | `.venv/bin/python -m agent.gateway.gateway` | 接 IM 时 |
 | **sandboxd**   | 通过 Unix Socket 承接 Rootless Docker 沙盒执行；不接受调用方传入 Docker 参数 | `.venv/bin/python -m agent.sandbox.sandboxd --socket ... --allowed-root ...` | 启用生产 Shell 沙盒时 |
 | PostgreSQL     | 主数据库                               | 系统服务 / Docker                                   | 必须     |
 | Redis          | IM 消息队列（Streams）                   | 系统服务 / Docker                                   | 接 IM 时 |
@@ -58,7 +58,7 @@
 
 
 > 前端：开发用 `npm run dev`（:5173）；生产 `npm run build` 出 `dist/`，由 nginx 托管。
-> 不接 IM（飞书/QQ/微信）时，worker / supervisor / Redis 可以不跑。
+> 不接 IM（飞书/QQ/微信）时，worker / gateway / Redis 可以不跑。
 >
 > 💡 **「咕咕的大脑跑在 worker，不在 web」**——记住这条，能省掉一半运维困惑（改大脑代码要重启 worker 而非 backend，详见 §6.1）。
 
@@ -223,13 +223,13 @@ corepack pnpm --filter gugu-web dev        # Vite :5173，已设 host:true 可�
 
 ```bash
 cd backend
-.venv/bin/python -m agent.gateway.supervisor   # 频道管家
+.venv/bin/python -m agent.gateway.gateway   # 频道管家
 .venv/bin/python -m worker                        # 队列消费 worker
 ```
 
 频道在 **Admin → Agent 配置 → 频道** 里加（详见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`）。
 
-> ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 supervisor）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
+> ⚠️ 改了 `agent/` 大脑代码后要重启 **worker**（不是 web、也不是 gateway）——「改了什么、重启哪个」的完整决策表见 **§6.1**。
 
 ### 3.8 Admin 初始化
 
@@ -533,11 +533,11 @@ sudo nginx -t && sudo systemctl reload nginx
 > # 然后用同一个 RUN_USER 补跑 make install，再 systemctl restart gugu-backend
 > ```
 
-项目自带四个单元模板（`gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` / `gugu-supervisor.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并立即重启四个单元，因此启用前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
+项目自带四个单元模板（`gugu-sandboxd.service` / `gugu-backend.service` / `gugu-worker.service` / `gugu-gateway.service`，均用 `__APP_DIR__`/`__RUN_USER__` 占位符）。`make install` 会安装并立即重启四个单元，因此启用前必须先准备 Rootless Docker、固定镜像和用户数据根目录：
 
 ```bash
 cd backend && RUN_USER=youruser make install
-sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-supervisor
+sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway
 ```
 
 `gugu-sandboxd` 通过 `/run/user/<uid>/gugu-sandboxd.sock` 接收受限 JSON Lines 请求，业务进程不会直接持有 Docker socket。systemd 模板会自动注入 `DOCKER_HOST` 和 `GUGU_SANDBOXD_SOCKET`，不需要把它们配置成 TCP 地址，也不要把 Unix Socket 暴露给外部网络。
@@ -620,7 +620,7 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 > **备选方案（不走 systemd、免 sudo，目前没有环境在用）**：想避开 sudo、图快速迭代的场合，`scripts/dev-restart.sh` 提供了另一条路——把 `gugu-backend` 保持 `disable`，用脚本一条命令干净重启（自带腾端口，不撞冲突、不用手动 pkill）：
 > ```bash
-> bash scripts/dev-restart.sh          # 全部：web + worker + supervisor
+> bash scripts/dev-restart.sh          # 全部：web + worker + gateway
 > bash scripts/dev-restart.sh web      # 也可只重启某一个
 > ```
 > ⚠️ 若某台机器要切到这条路，先 `sudo systemctl disable --now gugu-backend` 再用脚本，避免两边抢 8000。
@@ -639,18 +639,18 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 | ----------------- | ------------------- | ------------------------------------- | -------------------------- |
 | `gugu-backend`    | uvicorn 网页          | on-failure                            | `logs/gugu.log`            |
 | `gugu-worker`     | IM 大脑（消费队列、跑 agent） | **always**                            | `logs/gugu-worker.log`     |
-| `gugu-supervisor` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-supervisor.log` |
+| `gugu-gateway` | IM 网关管家（拉飞书/QQ 子进程） | **always** + `KillMode=control-group` | `logs/gugu-gateway.log` |
 | `gugu-sandboxd`   | Rootless Docker 沙盒执行服务 | **always** | `logs/` 或 systemd journal |
 
 
-- **worker/supervisor/sandboxd 用 `Restart=always`**：IM 进程死了必须秒拉起；sandboxd 退出后也应尽快恢复，否则生产 Shell 请求会明确失败。这是安全优先的失败方式，不会回退到宿主机执行。
+- **worker/gateway/sandboxd 用 `Restart=always`**：IM 进程死了必须秒拉起；sandboxd 退出后也应尽快恢复，否则生产 Shell 请求会明确失败。这是安全优先的失败方式，不会回退到宿主机执行。
 - 三个核心单元的 `StandardOutput` 都 **append 到 `logs/gugu*.log`**（不走 journald）；sandboxd 的 systemd 日志以 `journalctl -u gugu-sandboxd` 为准。建议给 `logs/` 配 logrotate，免得 append 文件无限涨。
 
 > 1Panel 部署：backend 一般在 `/opt/1panel/www/sites/<域名>/backend`，直接在该目录 `make install`，路径自动对上。
 
 > ⚠️ **ProtectSystem=strict 沙箱 + LibreOffice**（2026-07-07 实测踩过、已修）：单元开了 `ProtectSystem=strict`，`$HOME/.config` 对进程只读，LibreOffice 转 Office（docx/xlsx/pptx 预览、`read_file` 读 Office）默认要在那建用户 profile，建不了直接 `returncode=1` 失败（PDF 走 pdftotext 不受影响，stderr 只留一条不相关的 `javaldx` 警告，真实原因不会自己冒出来）。**已在代码里修好，不用改 systemd 配置**：`app/api/v1/files.py` 的 `_office_to_pdf` 和 `app/core/doctext.py` 的 `_lo_convert` 调 LibreOffice 时都带了 `-env:UserInstallation=file://<本次临时目录>/loprofile`，把 profile 指到 `PrivateTmp=true` 保证可写的临时目录，不用放宽 `ProtectSystem=strict`、也不用碰 HOME。
 
-> worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；supervisor 一台机一个即可。多机拆分见 §5.2。
+> worker 想扩吞吐可起多个实例（共享 Redis 消费组自动负载均衡）；gateway 一台机一个即可。多机拆分见 §5.2。
 
 ### 4.6 Admin 安全
 
@@ -667,19 +667,19 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 ## 5. 接入 IM 频道（飞书 / QQ / 微信）
 
-> **大白话**：咕咕除了网页版，还能接到飞书、QQ、微信里当机器人用。接入靠 supervisor（门卫）+ worker（大脑）两个进程配合：supervisor 负责按 Admin 后台的开关去连/断某个平台，worker 负责真正处理消息、想回复内容。不接 IM 就不需要看这一节。
+> **大白话**：咕咕除了网页版，还能接到飞书、QQ、微信里当机器人用。接入靠 gateway（门卫）+ worker（大脑）两个进程配合：gateway 负责按 Admin 后台的开关去连/断某个平台，worker 负责真正处理消息、想回复内容。不接 IM 就不需要看这一节。
 
 ### 5.1 接入步骤
 
 飞书 bot 创建、权限、长连接事件订阅、凭据填写、频道面板原理，**完整步骤见 `[22-飞书接入指南.md](../agent/22-飞书接入指南.md)`**。QQ / 微信（个人微信 iLink）走 Admin 面板扫码自连。
 
-生产前提：确保 `gugu-supervisor` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
+生产前提：确保 `gugu-gateway` + `gugu-worker` 两个服务在跑（§4.5），频道在 Admin 面板增删启停**即时生效**（日常增删启停、重启管家见 §6.4 / §6.3）。
 
-网关 = `supervisor` 按 Admin「频道」面板里**启用的 bot** 动态 `spawn` 的子进程（每个 bot 一条 WS 长连，飞书 `lark.ws` / QQ `botpy`），凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
+网关 = `gateway` 按 Admin「频道」面板里**启用的 bot** 动态 `spawn` 的子进程（每个 bot 一条 WS 长连，飞书 `lark.ws` / QQ `botpy`），凭据由 gateway 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
 
 ### 5.2 多机部署：把网关 / worker 拆到独立服务器（可选，非默认）
 
-> **默认单机部署**（web + worker + supervisor + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用。
+> **默认单机部署**（web + worker + gateway + 网关同机）——一套配置管全部、Admin 配置/重启全生效、扩量靠单机内手段就够（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` 部署形态决策）。**以下拆机为可选路径**，仅当确有多机需求时用。
 
 > 网关/worker 和后台**不直接通信**，只在 **Redis + DB** 这条共享总线上碰头。所以拆机要配的就这两个 IP——**没有「web 的 IP」要填**。
 
@@ -690,19 +690,19 @@ REDIS__HOST=<共享 Redis IP>      REDIS__PASSWORD=...
 DB__HOST=<共享 DB IP>            DB__PASSWORD=...
 ```
 
-起 worker + supervisor（这台不必跑 web）：
+起 worker + gateway（这台不必跑 web）：
 
 ```bash
 ./start.sh install                         # 装 systemd 三单元
 sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
-# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.gateway.supervisor
+# 或手动：.venv/bin/python -m worker  &  .venv/bin/python -m agent.gateway.gateway
 ```
 
-起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；supervisor 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
+起来即**自动接入**：worker 加入共享 Redis 消费组 `agent-workers` 分摊队列；gateway 读共享 DB 的 `user_bots` 拉网关。后台（在另一台）零改动，**「服务状态」页直接显示这台机**（host = 它的 hostname）。
 
 **三条铁律：**
 
-1. **全网只能一个 supervisor** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 supervisor，其余机器只跑 worker。
+1. **全网只能一个 gateway** —— 两个会给每个 bot 各拉一条 WS → 同 bot 双连接、平台冲突。网关机只此一台跑 gateway，其余机器只跑 worker。
 2. **worker 可多台**（消费组自动分摊），但同用户并发目前会乱序/串取消——多机前先做 `user_gate`/分片（见 `[并发优化ROADMAP.md](并发优化ROADMAP.md)` ①/③）。
 3. **周期清理任务只一处跑**（web 那台），别在网关机重复（见 roadmap 进程优化 A）。
 
@@ -729,7 +729,7 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 | ----------------------------------------------------------------- | -------------------------------------- | --------------------------------- |
 | API / Admin 接口、`app/`、`main.py`、路由、新接口                            | **backend (web)**                      | `systemctl restart gugu-backend`  |
 | 咕咕大脑：`agent/` 下 runner / core / skills / tools / 上下文 / 记忆 / prompts | **worker**                             | 开发：`make dev-worker`；生产：`systemctl restart gugu-worker`   |
-| IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **supervisor**（连带重起所有网关子进程）            | `systemctl restart gugu-supervisor` |
+| IM 网关代码：`agent/gateway/`（feishu / qq / wechat）、`router.py`        | **gateway**（连带重起所有网关子进程）            | `systemctl restart gugu-gateway` |
 | Shell 沙盒：`agent/sandbox/`、固定镜像或 sandboxd 配置                  | **sandboxd + worker**                         | `systemctl restart gugu-sandboxd gugu-worker` |
 | 前端 `frontend/`                                                    | 重新构建（不必重启服务）                           | `cd frontend && npm run build`    |
 | 配置 `.env`（含 `SECRET_KEY` / 管理员账号）                                 | **backend**                            | `systemctl restart gugu-backend`  |
@@ -739,8 +739,8 @@ sudo systemctl disable --now gugu-backend   # 只做网关/worker，不跑网页
 
 ⚠️ **三个最常见的错**：
 
-- **只重启了 web、漏了 worker**：改了大脑代码却只 `make restart` / `systemctl restart gugu-backend`，结果「网页/IM 行为没按新代码变」（实时事件不发、新字段不写）——因为大脑在 worker。见 `../devlog.md` 2026-06-23「漏重启 worker」。
-- **以为 `make restart` 管全部**：它**只重启 web（uvicorn）**，不动 worker/supervisor。IM 相关改动要单独重启对应进程。
+- **只重启了 web、漏了 worker**：改了大脑代码却只 `make restart` / `systemctl restart gugu-backend`，结果「网页/IM 行为没按新代码变」（实时事件不发、新字段不写）——因为大脑在 worker。见 `../DEVLOG.md` 2026-06-23「漏重启 worker」。
+- **以为 `make restart` 管全部**：它**只重启 web（uvicorn）**，不动 worker/gateway。IM 相关改动要单独重启对应进程。
 - **改了 DB 模型只重启没迁移**：`create_all` 只建新表、**不给旧表加列** → 写入报「列不存在」。要 `make migrate`（见 §7 的 ⚠️）。
 
 ### 6.2 启停 / 重启 backend（web）
@@ -766,7 +766,7 @@ ss -ltnp | grep :8000 || echo "8000 已空闲"
 > ⚠️ 改了 `agent/` 大脑代码要重启的是 **worker**，不是 backend（见 §6.1）。
 > ⚠️ **生产别用 `make start/stop/restart` 控制 backend**：生产的 web 是 systemd `gugu-backend.service` 在跑，而 `make start/stop` 管的是 Makefile 另起的「手动 uvicorn」——两者不是同一个进程。曾出现 `make stop` 报「未运行」但 `systemctl status` 显示服务正跑的迷惑现象，还可能两份一起起来抢 8000 端口。**生产一律 `systemctl`，`make` 留给开发机。**
 
-### 6.3 启停 / 重启 worker / supervisor
+### 6.3 启停 / 重启 worker / gateway
 
 **开发机 Worker 热重载：**
 ```bash
@@ -781,23 +781,23 @@ sudo systemctl start gugu-worker # 不再开发时恢复常驻 worker
 ```bash
 # 生产（systemd）
 sudo systemctl restart gugu-worker       # 改了 agent/ 大脑代码后
-sudo systemctl restart gugu-supervisor   # 改了 adapters(feishu/qq/wechat)/router 后；KillMode=control-group 连带重起全部网关子进程
-sudo systemctl stop gugu-supervisor      # 停掉所有网关（连带子进程）
-journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
+sudo systemctl restart gugu-gateway   # 改了 adapters(feishu/qq/wechat)/router 后；KillMode=control-group 连带重起全部网关子进程
+sudo systemctl stop gugu-gateway      # 停掉所有网关（连带子进程）
+journalctl -u gugu-gateway -f         # 或 tail logs/gugu-gateway.log
 
 # 开发（无 systemd）
 .venv/bin/python -m worker                       # 前台 worker
-.venv/bin/python -m agent.gateway.supervisor   # 前台 supervisor；Ctrl+C 停、连带杀子进程
+.venv/bin/python -m agent.gateway.gateway   # 前台 gateway；Ctrl+C 停、连带杀子进程
 ```
 
 也可在 **Admin → 服务状态** 页点「重启」（仅同主机有效，靠 kill + systemd 自愈）。
 
-> ⚠️ `**systemctl stop gugu-supervisor` 报 `Unit not loaded`**：说明这台机的 worker/supervisor 是**手动 `python -m ...` 起的、没装成 systemd**，systemctl 自然不认。两条路：
+> ⚠️ `**systemctl stop gugu-gateway` 报 `Unit not loaded`**：说明这台机的 worker/gateway 是**手动 `python -m ...` 起的、没装成 systemd**，systemctl 自然不认。两条路：
 >
 > ```bash
-> # A. 手动停（按进程，supervisor 收 TERM 会连带杀网关子进程）
-> ps aux | grep -E "agent\.adapters\.supervisor|python -m worker" | grep -v grep   # 先看 pid
-> pkill -TERM -f "agent.gateway.supervisor"
+> # A. 手动停（按进程，gateway 收 TERM 会连带杀网关子进程）
+> ps aux | grep -E "agent\.adapters\.gateway|python -m worker" | grep -v grep   # 先看 pid
+> pkill -TERM -f "agent.gateway.gateway"
 > pkill -TERM -f "python -m worker"
 > # B. 装成 systemd（推荐，之后 systemctl 可用 + 崩溃自拉 + 开机自启）
 > cd backend && RUN_USER=youruser make install
@@ -807,8 +807,8 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 
 ### 6.4 增删 / 启停单个 IM 网关（不用重启服务）
 
-- **增 / 删 / 开 / 关某个 bot**：在 **Admin → Agent 配置 → 频道** 里操作（或扫码自连）→ 写 `user_bots` 表 → supervisor **每 ~1s 对账自动 spawn/kill** → **无需重启任何服务，秒级生效**。
-- 凭据由 supervisor 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
+- **增 / 删 / 开 / 关某个 bot**：在 **Admin → Agent 配置 → 频道** 里操作（或扫码自连）→ 写 `user_bots` 表 → gateway **每 ~1s 对账自动 spawn/kill** → **无需重启任何服务，秒级生效**。
+- 凭据由 gateway 以**环境变量注入**子进程（不进 argv，`ps` 看不到）。
 - 要重启整个网关管家（改了 adapters 代码时）见 §6.3。
 
 ### 6.5 看状态 / 日志
@@ -817,9 +817,9 @@ journalctl -u gugu-supervisor -f         # 或 tail logs/gugu-supervisor.log
 cd backend
 make status              # web 状态 + 健康检查；完整 systemd 状态见下一行
 make logs                # web 实时日志
-sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-supervisor
+sudo systemctl status gugu-sandboxd gugu-backend gugu-worker gugu-gateway
 sudo journalctl -u gugu-sandboxd -f                      # 沙盒执行服务
-sudo journalctl -u gugu-supervisor -f                    # 看频道起停日志
+sudo journalctl -u gugu-gateway -f                    # 看频道起停日志
 ```
 
 ---
@@ -833,7 +833,7 @@ sudo journalctl -u gugu-supervisor -f                    # 看频道起停日志
 cd backend
 make update              # = deps + migrate（装依赖 + 跑迁移）
 sudo systemctl restart gugu-backend   # 重启 web（生产走 systemd，别用 make restart，见 §6.2）
-sudo systemctl restart gugu-worker gugu-supervisor   # 重启 IM（若改了 agent 代码，见 §6.1）
+sudo systemctl restart gugu-worker gugu-gateway   # 重启 IM（若改了 agent 代码，见 §6.1）
 # 若更新了 sandboxd / Docker 执行策略，再重启沙盒执行服务
 sudo systemctl restart gugu-sandboxd
 cd .. && corepack pnpm install --filter gugu-web... && corepack pnpm --filter gugu-web build        # 前端重新构建
@@ -903,7 +903,7 @@ make migrate                                 # 有新模型列时（见上 ⚠�
 systemctl restart gugu-backend               # 改了 web/后端
 systemctl restart gugu-worker                # 改了 agent/ 大脑代码
 systemctl restart gugu-sandboxd              # 改了 agent/sandbox 或 sandboxd 配置
-systemctl restart gugu-supervisor            # 改了 IM 网关代码
+systemctl restart gugu-gateway            # 改了 IM 网关代码
 ```
 
 > **更稳的做法**：生产配一次 git deploy key（见 §4.4.1），以后更新就 `git pull` + 重启——git 只动跟踪文件，`.env`/`.venv`/`Gugu-data/users` 都不应被代码更新覆盖，天然无「覆盖状态」风险，省去每次手动排除。
@@ -932,7 +932,7 @@ cd backend && make backup     # 备份数据库 + Gugu-data/users + config.overr
 
 > **大白话**：便宜的云服务器常见配置是 2 核 CPU + 2G 内存。咕咕同时要跑好几个 Python 进程 + 数据库 + Redis，这点内存**跑得起来但很紧张**，稍微多几个人同时用就可能被系统"内存不够杀进程"（OOM）强制干掉，表现为服务莫名其妙掉线。下面几条是从紧到松的调优手段：加交换空间兜底、别在这台机上开耗资源的管理工具、把咕咕自己的进程数调小。都是配置层面的调整，不用改代码。
 
-咕咕 = Python web + worker + supervisor + 可选 sandboxd + 网关 + PostgreSQL + Redis，2C/2G 上跑得起来但**很紧**，容易 OOM / CPU 打满。启用 Shell 沙盒时还要给 Rootless Docker daemon 和容器预留内存、临时空间与 PID 配额。按这套调：
+咕咕 = Python web + worker + gateway + 可选 sandboxd + 网关 + PostgreSQL + Redis，2C/2G 上跑得起来但**很紧**，容易 OOM / CPU 打满。启用 Shell 沙盒时还要给 Rootless Docker daemon 和容器预留内存、临时空间与 PID 配额。按这套调：
 
 **① 加 swap（2G 内存必配，防 OOM 杀进程）**
 ```bash
@@ -960,7 +960,7 @@ sudo sed -i '/^vm\.swappiness/d' /etc/sysctl.conf && echo 'vm.swappiness=40' | s
   systemctl daemon-reload && systemctl restart gugu-backend
   ```
 - worker 并发度调小：后台 → Agent → `worker_concurrency` 设 **4**（默认 16，小核机器吃不消）；
-- 不用 IM 就在后台**停用 bot**，supervisor 不拉网关子进程，每个省 ~60–80M。
+- 不用 IM 就在后台**停用 bot**，gateway 不拉网关子进程，每个省 ~60–80M。
 
 **④（可选）systemd 给服务设资源上限**，防单个吃爆整机（`systemctl edit gugu-worker`，drop-in 里写——**不能写行内注释**）：
 ```ini
@@ -988,7 +988,7 @@ MemoryMax=512M
 | 后端 500 / 启动失败                          | 必须从 `backend/` 目录起（否则 `.env` 不加载）；查 `logs/gugu.log`     |
 | 生成 Word/PDF/Excel 失败                   | 没装 **LibreOffice**（`apt install libreoffice`）           |
 | 聊天流式（SSE）被截断                           | nginx 要 `proxy_buffering off` + 拉长 `proxy_read_timeout` |
-| IM 收不到/回不出                             | Redis 没起；或 supervisor/worker 没跑；详见 飞书接入指南排错表        |
+| IM 收不到/回不出                             | Redis 没起；或 gateway/worker 没跑；详见 飞书接入指南排错表        |
 | 「改了代码但行为没变」                            | 多半漏重启 worker（大脑在 worker，不在 web）——见 §6.1 重启决策表          |
 | worker `Timeout reading from ...:6379` | 已修：`app/core/redis.py` `socket_timeout=None`（旧版本需更新代码）  |
 | Admin 频道保存「消失」                         | 后端加了 `/admin/agent/bots` 接口后要 `make restart`            |
@@ -1039,7 +1039,7 @@ MemoryMax=512M
    - `upgrade()` 只有 `pass` → 库已和模型完全一致，收工。
    - 有 `op.add_column`/`op.create_table` → 真要补；`op.drop_column`（NOT NULL 无默认那种）→ 真要删；`op.alter_column`（类型/server_default/索引命名）→ **多为假阳性噪音，逐条看、别整份 apply**。
    - 挑出真要动的，写成幂等 DDL 在库上跑。**这是排查全量 schema 差异的标准手段，比逐个撞错快且全。**
-4. 补完启动 + 验证：`systemctl restart gugu-sandboxd gugu-backend gugu-worker gugu-supervisor` → `curl 127.0.0.1:8000/health`；若未启用 Shell 沙盒，只重启三个核心服务即可。
+4. 补完启动 + 验证：`systemctl restart gugu-sandboxd gugu-backend gugu-worker gugu-gateway` → `curl 127.0.0.1:8000/health`；若未启用 Shell 沙盒，只重启三个核心服务即可。
 
 **预防（迁移作者）**：删模型字段时，配套的 `DROP COLUMN` 迁移要写成幂等并**确实部署执行**；列的「非空 + 默认」尽量用 DB 级 `server_default`（而非纯 Python 侧 `default=`），这样即使迁移漏跑，旧列也有默认值兜底、不会卡 INSERT。
 

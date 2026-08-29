@@ -1,8 +1,9 @@
 # 群组与成员记忆 PRD
 
-> 状态：✅ 全部完成（代码实现 + devserver 多平台人工验收）
+> 状态：🟡 群级记忆与成员批量反思已完成；成员主体归属的自动化回归已完成，真实多人群验收待补
 > 创建：2026-08-04
-> 关联：[`【已完成】PRD-IM-2-im-loop与gateway解耦.md`](./【已完成】PRD-IM-2-im-loop与gateway解耦.md)、[`11-记忆系统.md`](../../agent/11-记忆系统.md)、[`21-群聊消息架构.md`](../../agent/21-群聊消息架构.md)、[`22-IM用户数据结构.md`](../../agent/22-IM用户数据结构.md)
+> 最近更新：2026-08-29
+> 关联：[`【已完成】PRD-IM-2-IM-LOOP与GATEWAY解耦.md`](./【已完成】PRD-IM-2-IM-LOOP与GATEWAY解耦.md)、[`07-MEMORY-AND-REFLECTION.md`](../agent/07-MEMORY-AND-REFLECTION.md)、[`08-CHANNELS.md`](../agent/08-CHANNELS.md)、[`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md)、[`【已完成】PRD-IM-11-群成员长期记忆.md`](./【已完成】PRD-IM-11-群成员长期记忆.md)
 
 ## 1. 背景与目标
 
@@ -432,7 +433,7 @@ backend/agent/
 
 ## 7. 数据生命周期与隐私
 
-1. 数据库短期群消息继续按 `platform + bot_id + chat_id` 隔离，当前保留上限由 `21-群聊消息架构.md` 维护。
+1. 数据库短期群消息继续按 `platform + bot_id + chat_id` 隔离，当前保留上限由 [`09-MESSAGE-PROTOCOL.md`](../agent/09-MESSAGE-PROTOCOL.md) 维护。
 2. 记忆文件按相同 scope 保存，不能因清理 Redis session 而误删长期记忆。
 3. 成员记忆必须支持按 `platform_user_id` 删除；群解散或 Bot 解绑时必须支持按整个 group scope 删除。
 4. 群记忆删除不影响 owner 个人记忆；owner 记忆维护也不应扫描 IM namespace。

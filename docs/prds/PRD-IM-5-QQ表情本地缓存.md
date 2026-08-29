@@ -3,7 +3,7 @@
 > 状态：讨论稿，未开始实现
 > 创建：2026-08-04
 > 关联模块：`backend/agent/gateway/qq.py`、`backend/agent/im/parsers/qq.py`、`backend/agent/im/media_ingress.py`、`backend/app/core/chat_attach.py`
-> 相关方案：[`【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md`](./【已完成】PRD-IM-1-im接入稳定性与qq自建websocket.md)
+> 相关方案：[`【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md`](./【已完成】PRD-IM-1-IM接入稳定性与QQ自建WEBSOCKET.md)
 
 ## 1. 背景
 

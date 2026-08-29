@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 ## 咕咕后端镜像 —— 本地/本机开发用的快速启动方式，不是生产部署方式。
-## 生产环境用的是裸机 systemd 三服务（gugu-backend / gugu-worker / gugu-supervisor，
+## 生产环境用的是裸机 systemd 三服务（gugu-backend / gugu-worker / gugu-gateway，
 ## 见 start.sh install），原因是 IM 网关（飞书/QQ/微信）常驻长连接 + 语音/文档转码要调
 ## libreoffice/ffmpeg 等系统工具，装进容器体积和运维复杂度都不划算；这个镜像只覆盖
 ## web（uvicorn）和 worker（IM 队列消费）两个进程，够本地跑通全栈、验证功能。

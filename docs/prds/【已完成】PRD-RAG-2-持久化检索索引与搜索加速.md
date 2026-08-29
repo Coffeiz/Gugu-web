@@ -224,7 +224,7 @@ Phase 4 TODO / 验收：
 
 > **运行时制品约束（2026-08-24）**：sidecar 不在业务环境自行构建。Docker/Linux 首期统一消费 release pipeline 生成并验收的 `x86_64-unknown-linux-musl` 稳定制品；业务代码只启动项目内固定路径或镜像内制品。ARM 作为未来独立制品维护。
 
-评估报告：[`TEST-RAG-Phase5-Rust-Tantivy评估-2026-08-24.md`](../../reports/TEST-RAG-Phase5-Rust-Tantivy评估-2026-08-24.md)
+评估报告：[`TEST-RAG-PHASE5-RUST-TANTIVY评估-2026-08-24.md`](../../reports/TEST-RAG-PHASE5-RUST-TANTIVY评估-2026-08-24.md)
 
 结论：独立 Rust BM25 原型和 Tantivy sidecar 曾完成算法级对照，但该方案已被后续 TypeScript worker 迁移取代。当前运行时固定使用 TypeScript BM25 worker，不再通过 Admin 在 Rust/Python 之间切换。
 

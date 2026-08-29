@@ -5,7 +5,7 @@
 > 最近更新：2026-08-25
 > 所属层：LLM / Prompt 缓存
 > 关联模块：`backend/agent/context/builder.py`、`backend/agent/runner.py`、`backend/agent/loop_drivers.py`
-> 关联文档：[[../../reports/INVEST-Cross-Call-Prompt-Caching.md]]、[[../../reports/OPT-Cache-Strategy-Aggressive.md]]
+> 关联文档：[[../../reports/INVEST-CROSS-CALL-PROMPT-CACHING.md]]、[[../../reports/OPT-CACHE-STRATEGY-AGGRESSIVE.md]]
 
 > 说明：本文继续记录 Prompt Cache 的业务目标和 provider 观察结果；上下文预算、压缩触发、baseline
 > 和 retry 的唯一实现规范改为 [`PRD-AGENT-4`](./PRD-AGENT-4-统一ContextBudget上下文压缩重构.md)。
@@ -204,7 +204,7 @@ system = [{"type": "text", "text": static_text, "cache_control": {"type": "ephem
 
 2. **缓存命中测试**
    - 跨 call 缓存命中率 > 90%
-   - Loopscope 正确显示缓存数据
+   - LoopScope 正确显示缓存数据
 
 3. **内容准确性测试**
    - 记忆更新后，下一轮对话能看到最新内容
@@ -335,5 +335,5 @@ messages = [
 
 - dsh 缓存诊断：`backend/scripts/diagnostics/test_cross_call_cache.py`
 - Session 增量缓存诊断：`backend/scripts/diagnostics/test_session_incremental_cache.py`
-- 调查报告：`docs/reports/INVEST-Cross-Call-Prompt-Caching.md`
-- 优化报告：`docs/reports/OPT-Cache-Strategy-Aggressive.md`
+- 调查报告：`docs/reports/INVEST-CROSS-CALL-PROMPT-CACHING.md`
+- 优化报告：`docs/reports/OPT-CACHE-STRATEGY-AGGRESSIVE.md`

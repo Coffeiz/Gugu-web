@@ -76,7 +76,7 @@ const sourceOptions = [
   { label: '全部来源',   value: '' },
   { label: 'web',        value: 'web' },
   { label: 'worker',     value: 'worker' },
-  { label: 'supervisor', value: 'supervisor' },
+  { label: 'gateway', value: 'gateway' },
 ]
 const levelOptions = [
   { label: '全部级别', value: '' },
@@ -277,5 +277,5 @@ onUnmounted(() => {
 }
 .src-web        { background: rgba(80,140,255,0.12); color: rgba(120,170,255,0.9); }
 .src-worker     { background: rgba(80,200,160,0.12); color: rgba(100,210,170,0.9); }
-.src-supervisor { background: rgba(200,140,80,0.12); color: rgba(220,170,100,0.9); }
+.src-gateway { background: rgba(200,140,80,0.12); color: rgba(220,170,100,0.9); }
 </style>

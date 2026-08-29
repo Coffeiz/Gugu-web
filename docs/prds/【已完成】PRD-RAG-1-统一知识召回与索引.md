@@ -599,7 +599,7 @@ backend/scripts/bench_rag_virtual.py
 
 ```bash
 cd /home/coffeiz/文档/Workspace/Gugu-web/backend
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 30 \
   --top-k 20 \
@@ -616,7 +616,7 @@ backend/scripts/.bench_rag_embeddings.json
 后续测试直接复用缓存，不重复生成文档向量：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
   --docs 30 \
   --embed-docs 0 \
   --top-k 20 \
@@ -642,7 +642,7 @@ PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
 召回延迟测试示例：
 
 ```bash
-PYTHONPATH=. .venv/bin/python scripts/bench_rag_virtual.py \
+PYTHONPATH=. .venv/bin/Python scripts/bench_rag_virtual.py \
   --docs 1000 \
   --embed-docs 0 \
   --top-k 100
@@ -710,7 +710,7 @@ Memory 试点通过后，才对明确要求跨来源检索的请求接入对应�
 ### 需要新建的 Knowledge RAG 核心文件
 
 ```text
-backend/agent/rag/
+backend/agent/RAG/
 ├── __init__.py              # 对外导出召回服务和数据类型
 ├── models.py                # IndexDocument、Scope、RecallResult、IndexVersion
 ├── adapters/
@@ -736,10 +736,10 @@ backend/agent/rag/
 ### 需要新建的工具、任务和测试文件
 
 ```text
-backend/agent/rag/service.py               # 统一内部召回服务和结果契约
-backend/agent/rag/chunking.py              # 来源无关的切片边界和 chunk 身份
-backend/agent/rag/injection.py             # 当前消息 history 注入与 content_hash 去重
-backend/agent/rag/pipeline.py              # Memory 索引异步更新、upsert/invalidate 和有限重试
+backend/agent/RAG/service.py               # 统一内部召回服务和结果契约
+backend/agent/RAG/chunking.py              # 来源无关的切片边界和 chunk 身份
+backend/agent/RAG/injection.py             # 当前消息 history 注入与 content_hash 去重
+backend/agent/RAG/pipeline.py              # Memory 索引异步更新、upsert/invalidate 和有限重试
 backend/tests/test_rag_models.py           # 文档、scope、版本和引用模型
 backend/tests/test_rag_lexical.py          # 中文/英文/混合词法召回
 backend/tests/test_rag_scope.py             # owner、项目、群组、平台隔离
@@ -756,7 +756,7 @@ backend/scripts/bench_rag_<pilot_source>.py # 真实试点数据的脱敏评估�
 | 文件 | 修改内容 | 阶段 |
 |---|---|---|
 | `backend/agent/tools/__init__.py` 或领域工具入口 | 由 `search_memory` 等领域工具接入统一服务，不修改 `global_search` 的精确搜索语义 | P1 |
-| `backend/agent/events/types.py`、`backend/agent/events/bus.py` | 增加 `rag.index.upsert/invalidate` 事件或等价内部事件；SSE 通知与索引失效分开 | P0/P2 |
+| `backend/agent/events/types.py`、`backend/agent/events/bus.py` | 增加 `RAG.index.upsert/invalidate` 事件或等价内部事件；SSE 通知与索引失效分开 | P0/P2 |
 | `backend/app/core/ownership.py` | 只复用/补齐统一 scope 查询所需的 ownership helper，不把权限判断复制到 RAG | P0 |
 | `backend/app/core/events.py` | 在业务 mutation 已有事件链上接入 snapshot/index invalidation 的独立分支 | P2 |
 | `backend/app/models/__init__.py` | 仅当确认数据库持久化索引元数据时增加模型；不提前新增向量表 | P1/P2 |

@@ -168,7 +168,7 @@ html[data-theme='dark'][data-family] .cal-page .wv-ev {
 html[data-theme][data-family] .cal-toolbar { --gb-tint: var(--surface-glass); }
 html[data-theme][data-family] .cal-toolbar:hover { --gb-tint: var(--surface-glass-hover); }
 /* 当前页面可使用任意调色板，但这两个玻璃面板沿用 Aero 的白色高光契约。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .cal-toolbar {
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .cal-toolbar {
   --gb-highlight-strong: var(--aero-glass-highlight);
   --gb-highlight-side: var(--aero-glass-highlight-side);
   border-top-color: var(--aero-glass-border);
@@ -200,13 +200,25 @@ html[data-theme][data-family] .cal-toolbar .view-toggle {
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--control-fg); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button.on { color: var(--selection-fg); }
 
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .chat-window {
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .chat-window {
   --gugu-chat-highlight: var(--aero-glass-highlight);
   border-top-color: var(--aero-glass-border);
 }
 
+/* Mono 亮色是实体中性表面，不应继承其他亮色调色板的 Aero 白色高光。
+   两个组件都显式回到 Mono 的弱高光和中性边界，避免 GlassBg/窗口伪元素再次叠出白线。 */
+html[data-theme='light'][data-family='mono'] .cal-toolbar {
+  --gb-highlight-strong: var(--highlight-strong);
+  --gb-highlight-side: var(--highlight-side);
+  border-top-color: var(--border-strong);
+}
+html[data-theme='light'][data-family='mono'] .chat-window {
+  --gugu-chat-highlight: var(--highlight-strong);
+  border-top-color: var(--border-strong);
+}
+
 /* 个人设置左侧栏的分界线同样由 border-right + inset 侧向高光组成，亮色非 Aero 时保持一致。 */
-html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']) .bm-card .pm-layout > .pm-nav.panel-left {
+html[data-theme='light'][data-family][data-palette]:not([data-palette='aero']):not([data-palette='mono']) .bm-card .pm-layout > .pm-nav.panel-left {
   --panel-glass-border: var(--aero-glass-border);
   --panel-glass-side-highlight: var(--aero-glass-highlight-side);
 }

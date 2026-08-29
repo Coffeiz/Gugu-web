@@ -95,7 +95,8 @@ class ProviderAdapter:
                        "content-type": "application/json"}
             # Anthropic SDK 的 base_url 可带 /v1；MiniMax 兼容端点通常只到
             # /anthropic，需要把版本路径补上，否则诊断请求会落到 404。
-            path = "/messages" if (getattr(ai, "base_url", "") or "").rstrip("/").endswith("/v1") else "/v1/messages"
+            base_url = (getattr(ai, "base_url", "") or "").rstrip("/")
+            path = "/messages" if not base_url or base_url.endswith("/v1") else "/v1/messages"
             payload = {"model": getattr(ai, "model", ""), "max_tokens": 1,
                        "messages": [{"role": "user", "content": "hi"}]}
         else:

@@ -115,7 +115,7 @@ frontend/src/views/Admin/
 │   │   │   └── usageChart.ts
 │   │   ├── useUsage.ts
 │   │   └── useTrace.ts
-│   └── shared/                           # 仅限 Agent 区域内部复用的 UI/类型
+│   └── shared/                           # 仅限 Agent 区域内部复用的 ui/类型
 │       ├── components/
 │       ├── types.ts
 │       └── formatters.ts

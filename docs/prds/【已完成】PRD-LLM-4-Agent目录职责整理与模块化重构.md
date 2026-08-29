@@ -131,7 +131,7 @@ from agent.llm.providers import *
 - 先迁生产代码，再迁测试和脚本。
 - 使用 `rg` 检查 `backend/`、`tests/`、`scripts/` 中旧导入路径全部收敛。
 - 至少经过一个完整测试周期后，才删除兼容入口。
-- 不修改对外 API、Supervisor 启动命令、日志 logger 名称或测试 monkeypatch 路径，除非在对应阶段单独记录。
+- 不修改对外 API、Gateway 启动命令、日志 logger 名称或测试 monkeypatch 路径，除非在对应阶段单独记录。
 
 ## 3. 技术方案
 
@@ -325,7 +325,7 @@ cd backend && PYTHONPATH=. .venv/bin/pytest
 ### 上线与回滚
 
 - 每个 Phase 使用独立 commit，commit message 使用简体中文并说明“纯目录迁移/无行为变化”。
-- Agent 根目录、`core.py`、`runner.py` 或 `runtime/` 变更后，在 devserver 重启对应的 backend/worker；只有实际改动 `gateway/` 或 IM adapter 时才重启对应平台子进程，不重启整个 supervisor。
+- Agent 根目录、`core.py`、`runner.py` 或 `runtime/` 变更后，在 devserver 重启对应的 backend/worker；只有实际改动 `gateway/` 或 IM adapter 时才重启对应平台子进程，不重启整个 gateway。
 - 若发现循环依赖、导入失败或 monkeypatch 失效，优先恢复该 Phase 的兼容入口，不回滚无关改动。
 - 迁移阶段不需要数据库迁移和前端发布。
 
