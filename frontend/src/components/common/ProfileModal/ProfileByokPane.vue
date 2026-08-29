@@ -99,6 +99,7 @@ function applyProvider() {
 }
 async function fetchModels() {
   if (!editor.value || !editor.value.provider) return
+  if (modelMenuOpen.value && !modelLoading.value) { modelMenuOpen.value = false; return }
   modelLoading.value = true; modelError.value = ''; modelMenuOpen.value = true
   try {
     const result = await byokApi.modelsPreview({ provider: editor.value.provider, base_url: editor.value.base_url, api_format: editor.value.api_format, api_key: editor.value.value, credential_id: editor.value.id })

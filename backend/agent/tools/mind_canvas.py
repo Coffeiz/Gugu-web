@@ -859,7 +859,7 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_create_note", label="创建画布便签",
             description_short='创建画布专属便签；不进入时间流 note',
-            description="在指定画布创建一个或多个专属便签，最多 20 个。它们不会进入时间流 note；普通时间流笔记不能通过此工具放入画布。卡片大小由系统管理，不能传 w/h。单项调用使用 title/content，批量调用使用 notes 数组。",
+            description="在指定画布创建专属便签，不进入时间流 note；卡片大小由系统管理。单项传 title/content，批量传 notes。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -897,7 +897,7 @@ class MindCanvasSkill(BaseSkill):
         Tool(
             name="canvas_update_node", label="调整画布节点",
             description_short='调整画布节点位置/层级；关键字段 item_id/updates',
-            description="调整一个或多个已放置节点的位置、层级或折叠状态，最多 20 个；卡片大小由系统按节点类型统一管理，工具不支持修改 w/h。只改变画布视图，不改变原项目、文件或活动。单项调用使用 item_id，批量调用使用 updates 数组。",
+            description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项传 item_id，批量传 updates；不支持修改 w/h。",
             input_schema={
                 "type": "object",
                 "properties": {

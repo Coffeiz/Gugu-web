@@ -151,6 +151,7 @@
   --popup-surface-shadow: var(--popup-shadow);
   --popup-surface-blur: var(--popup-blur);
   --popup-surface-radius: var(--radius-sm);
+  --event-popup-radius: 16px;
   --popup-surface-padding: 4px;
   --popup-item-fg: var(--content-primary);
   --popup-item-fg-muted: var(--content-secondary);

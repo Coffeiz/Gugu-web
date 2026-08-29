@@ -100,6 +100,7 @@ backend/scripts/.bench_rag_embeddings.json
 
 # QQ 引用索引（运行时聊天正文、身份和媒体 URL，不入版本控制）
 /backend/data/qq-ref-index/
+/backend/data/.byok-master-key
 
 # 部署打包产物
 backend.zip

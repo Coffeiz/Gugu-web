@@ -163,9 +163,7 @@ class MetaSkill(BaseSkill):
             name="call_tool",
             label="调用工具",
             description_short='按名称调用工具；arguments 保留 JSON 类型并匹配目标 Schema',
-            description=("固定工具适配入口。根据已获取的目标工具 Schema 调用一个已授权业务工具。"
-                         "arguments 必须是 JSON object，内部字段必须保留原生 JSON 类型：数组用 [..]，布尔值用 true/false（不要加引号），"
-                         "数字不要写成字符串；不要把字段包装成 {\"item\": ...}。"),
+            description="适配入口：根据已获取的目标工具 Schema 调用一个已授权业务工具。arguments 必须是原生 JSON object，数组、布尔值和数字保持原生类型。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -218,9 +216,7 @@ class MetaSkill(BaseSkill):
             label="创建咕咕技能",
             description_short='创建用户自定义技能；保存可复用做法，关键字段 name/description_short/body/related_tools',
             description=(
-                "当用户要求创建、保存或定义一套可复用的做法、流程或提示词技能时，使用这个工具创建用户自己的 Prompt Skill；"
-                "这不是创建项目，也不是调用已有技能。最少需要提供 name、description_short、body 和 related_tools，"
-                "没有关联工具时 related_tools 传空数组 []。只能保存指导文本，不能写代码、注册新工具或扩大工具权限。"
+                "创建可复用的 Prompt Skill；不是项目，也不是调用已有技能。需要 name、description_short、body、related_tools；不能注册工具或扩大权限。"
             ),
             input_schema={
                 "type": "object",

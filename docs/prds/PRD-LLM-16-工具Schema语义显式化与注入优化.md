@@ -1,6 +1,6 @@
 # PRD-LLM-16：工具 Schema 语义显式化与注入优化
 
-> 状态：Phase 0 规划中
+> 状态：Phase 0-5 已完成，Phase 6 A/B 已完成，真实业务灰度待完成
 > 创建：2026-08-29
 > 最近更新：2026-08-29
 > 关联模块：`backend/agent/tools/`、`backend/agent/capabilities/injector.py`、`backend/agent/runner.py`、`backend/agent/tools/base.py`、`backend/tests/`
@@ -10,11 +10,13 @@
 
 | 阶段 | 状态 | 说明 |
 |---|---|---|
-| Phase 0：语义盘点与契约基线 | 🚧 进行中 | 已完成第一轮工具描述扫描，待固化字段分类和兼容规则 |
-| Phase 1：Schema 语义规范 | 🔲 待评估 | 建立显式状态字段、互斥结构和默认值边界 |
-| Phase 2：工具契约改造 | 🔲 待评估 | 按优先级改造日历、文件、项目和任务工具 |
-| Phase 3：注入器与错误恢复 | 🔲 待评估 | 保持轻量注入，按需获取当前完整 Schema |
-| Phase 4：测试与灰度 | 🔲 待评估 | 对比错误率、token、恢复轮数和真实业务成功率 |
+| Phase 0：语义盘点与契约基线 | ✅ 已完成 | 已固化高风险工具清单、错误分类和 A/B 评测口径，见 `docs/reports/OPT-LLM-16-工具Schema基线.md` |
+| Phase 1：Schema 语义规范 | ✅ 已完成 | 已增加来源互斥、条件必填、action 分支和 validator 回归测试 |
+| Phase 2：工具契约改造 | ✅ 已完成 | 已落地日历全天、附件来源、文件来源/目标和提醒定位约束，并保留旧调用兼容 |
+| Phase 3：注入器与错误恢复 | ✅ 已完成 | 保持轻量注入，按需获取当前完整 Schema |
+| Phase 4：测试与灰度 | ✅ 已完成 | 已完成契约回归和错误 trace 验证；A/B 灰度进入 Phase 5 |
+| Phase 5：description 优化 | ✅ 已完成 | 完成全量审计和第一批高成本工具压缩，保留不可结构化语义 |
+| Phase 6：A/B 与真实业务灰度 | 🔄 进行中 | 已完成当前全量与精简全量的 20-case A/B；真实业务灰度和默认模式决策待完成 |
 
 ## 1. 背景与目标
 
@@ -32,6 +34,20 @@
 这些语义对人类描述看似简短，对模型却容易造成三类错误：漏传关键状态、把“保持不变”误解成“清空”、同时填写互斥字段导致执行路径不确定。
 
 全量 Schema 基线也暴露出评测口径问题：20 个脱敏 case 的全量模式为 14/20（70%），但失败不等同于 Schema 校验错误。`memory_search` 不是注册工具名（实际为 `search_memory`）；`create_event` 后查询事件、`create_document` 后读取文件可能是合理的多步核实；`save_uploaded_file` 的 `attach_id` 允许在暂存区无歧义时省略。只有未路由到目标工具、字段缺失或值格式不符，才应分别计入路由、字段或值错误。本轮使用 no-op dispatch，`schema_errors=0` 仅表示没有进入真实校验失败路径，不能代表任务全部正确。
+
+静态契约核对确认，部分失败确实来自 Schema 过于宽松：
+
+| 工具 | 当前缺口 | 优化方向 |
+| --- | --- | --- |
+| `copy_file` | `file_id`/`file` 没有来源互斥或至少一个必填，`target` 也无法表达原位复制与目标复制 | 用 `oneOf` 表达来源；显式区分原位复制与目标位置 |
+| `send_file` | `file`、`file_id`、`url`、`attach_id` 均可同时省略，handler 实际有静默优先级 | 四选一来源结构；`title` 仅随 `url` 出现 |
+| `add_event_reminder` | `event_id`/`event` 均可省略，空对象在 Schema 层合法但 handler 无法定位活动 | 活动定位二选一；`reminders` 与 `lead_minutes` 互斥 |
+| `update_todo` | 只有 `todo` 必填，没有要求至少提供 `done`、`text` 或 `to_stage` 之一 | 将定位字段与修改动作分组，动作至少一个 |
+| `search_conversations` | 搜索输入与“列最近对话”共用宽松结构，并保留多个别名 | 明确搜索分支；逐步收敛 `keyword` 兼容字段 |
+| `http_get` | 已有 `url`/`urls` 的 `anyOf` 互斥约束 | 保持现状，重复调用单列为轨迹问题 |
+| `save_uploaded_file` | 无参数是“唯一最近附件”的有意默认，不应简单改成必填 | 增加显式来源模式，仅在唯一附件时允许隐式默认 |
+
+因此优化顺序必须是“先收紧高风险契约，再压缩解释文本”，不能通过删除 description 掩盖来源、定位和动作没有结构化的问题。
 
 ### 1.2 目标
 
@@ -78,6 +94,38 @@
 
 如果 `null` 与业务值本身仍有冲突，再增加 `*_action` 枚举，不使用空字符串承载清空语义。
 
+### 2.4 Action 显式表达可执行动作
+
+同一资源存在多个互斥修改动作时，使用 `action` 枚举表达动作，并让动作与参数形成条件约束。不得只列出动作名称而把字段关系留给 description 猜测。
+
+以待办为例：
+
+```json
+{
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": ["complete", "rename", "move"],
+      "description": "complete=完成或取消完成；rename=修改待办文本；move=移动到其他阶段"
+    },
+    "todo": {"type": "string"},
+    "done": {"type": "boolean"},
+    "text": {"type": "string"},
+    "to_stage": {"type": "string"}
+  },
+  "required": ["action", "todo"],
+  "allOf": [
+    {"if": {"properties": {"action": {"const": "complete"}}}, "then": {"required": ["done"]}},
+    {"if": {"properties": {"action": {"const": "rename"}}}, "then": {"required": ["text"]}},
+    {"if": {"properties": {"action": {"const": "move"}}}, "then": {"required": ["to_stage"]}}
+  ]
+}
+```
+
+完整模式使用 `enum` 加 `oneOf`/`if/then` 表达完整约束；轻量模式至少注入 `action` 的可选值和对应字段签名。若 provider 对条件 Schema 支持不足，由服务端按 `action` 做同一份条件校验，不能退回到多个可选字段互相猜优先级。
+
+`action` 只适用于同一资源的紧密动作集合。不得把项目、阶段、待办、删除和权限确认全部合并为一个超级工具；权限、确认门和 handler 仍按资源边界独立负责。
+
 ## 3. 功能需求
 
 ### FR-SCHEMA-1：显式表达全天事件
@@ -110,14 +158,18 @@
 
 ### FR-SCHEMA-2：显式表达默认日期和无日期
 
-`create_project` 保留日期字段可选，但补足“默认值”和“禁用值”的表达能力：
+`create_project` 必须同时填写开始日期和结束日期，避免项目时间范围依赖服务端默认值：
 
-- `deadline` 传具体日期：使用该日期；
-- `deadline_mode="none"`：明确无截止日期；
-- `deadline_mode="default"`：使用系统默认截止日期；
-- 三者同时出现时由 Schema 拒绝，而不是由 handler 猜优先级。
+- `start_date` 和 `deadline` 均为必填日期；
+- `deadline` 必须不早于 `start_date`，由 Schema 表达格式、由 service 校验日期先后；
+- 暂不增加“无开始日期”或“无结束日期”模式；
+- 旧调用缺少日期时由版本适配层处理，不让 handler 静默补今天或默认截止日。
 
-`start_date` 暂时保留“省略即今天”，只有出现“无开始日期”的产品需求时再增加对应模式字段。
+### FR-SCHEMA-2A：项目日期迁移
+
+- 新版本 Schema 将 `start_date`、`deadline` 放入 `required`；
+- 历史项目数据继续可读，不回写虚构日期；
+- 创建和更新项目的日期校验保持一致，跨日范围错误在 service 层返回结构化错误。
 
 ### FR-SCHEMA-3：显式表达文件来源和目标
 
@@ -132,7 +184,7 @@
 
 - `update_event.time/end_time` 使用 `string | null`，省略表示不修改，`null` 表示清空。
 - `update_project.priority` 保留 `none` 作为显式清除值，禁止再依赖空字符串。
-- `update_todo` 评估将 `done` 收敛为 `action="complete" | "reopen"`；如果保留布尔值，必须让省略只表示“不修改”。
+- `update_todo` 采用 `action="complete" | "rename" | "move"`；分别条件必填 `done`、`text`、`to_stage`，`todo` 负责定位。
 - 定时任务更新中，渠道使用 `channels_action="keep" | "replace" | "clear"` 的方案评估，避免 `[]` 的含义依赖 description。
 
 ### FR-SCHEMA-5：维持两档工具注入模式
@@ -240,53 +292,73 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 
 待确认问题：
 
-- [ ] `create_event.all_day` 是否在第一批改造中直接设为必填，还是先通过版本适配兼容旧调用。
-- [ ] `create_project` 是否需要支持“无开始日期”，还是仅处理截止日期的默认/无值区分。
-- [ ] provider 对 `if/then`、`oneOf` 和 `additionalProperties` 的实际支持矩阵。
-- [ ] `update_todo` 是否采用 `action` 替代可选 `done`。
+- [x] `create_event.all_day` 第一批直接设为必填；旧调用通过版本适配兼容。
+- [x] `create_project` 必须填写开始日期和结束日期，不新增无日期模式。
+- [ ] provider 对 `if/then`、`oneOf` 和 `additionalProperties` 的实际支持矩阵，需用各真实预设做 wire-level 回归。
+- [x] `update_todo` 采用 action 表达互斥修改动作；保留旧字段的版本适配由 Phase 3 处理。
 
 ## 7. 实施 TODO
 
 ### Phase 0：语义盘点与契约基线
 
-- [ ] 固化全部工具的“省略/空值/默认/互斥/优先级”扫描结果，形成机器可检查的候选清单。
-- [ ] 为每个候选标注：是否影响副作用、是否存在无歧义默认值、是否需要迁移。
-- [ ] 修正 A/B case 的注册工具名、合法枚举和默认行为，建立“工具轨迹 / 参数契约 / 任务结果”三层评测口径。
-- [ ] 为每个失败 case 记录唯一根因类别，避免把合理辅助调用、测试期望错误和真实 Schema 校验错误合并为一个错误率。
-- [ ] 确认 Schema 版本字段、错误类型和 LoopScope trace 的最小结构。
+- [x] 固化高风险工具的“省略/空值/默认/互斥/优先级”扫描结果，形成候选清单。
+- [x] 为候选标注副作用、默认值和迁移风险。
+- [x] 修正 A/B case 的注册工具名、合法枚举和默认行为，建立“工具轨迹 / 参数契约 / 任务结果”三层评测口径。
+- [x] 为失败 case 记录根因类别，避免污染 Schema 错误率。
+- [x] 确认 Schema 版本字段、错误类型和 LoopScope trace 的最小结构。
 
 ### Phase 1：Schema 规范与公共校验
 
-- [ ] 增加统一的 `oneOf`、条件必填、可清空字段和额外字段校验测试。
-- [ ] 为轻量注入器增加稳定字段签名生成和 token 基线。
-- [ ] 明确 Schema digest 与 implementation digest 的生成和错误回执格式。
+- [x] 增加统一的 `oneOf`、条件必填、可清空字段和额外字段校验测试。
+- [x] 为 `copy_file`、`send_file`、`add_event_reminder`、`update_todo` 补齐来源、定位和动作的互斥与条件必填约束。
+- [x] 收敛 `search_conversations` 的搜索分支，保留明确的无参数“列最近对话”分支。
+- [x] 为轻量注入器增加稳定字段签名生成和 token 基线。
+- [x] 明确 Schema digest 与 implementation digest 的生成和错误回执格式。
 
 ### Phase 2：高风险工具改造
 
-- [ ] 改造 `create_event`/`update_event` 的 `all_day` 与时间清空语义。
-- [ ] 改造 `save_uploaded_file` 的附件来源选择。
-- [ ] 改造 `copy_file` 的原位/目标位置选择。
-- [ ] 改造 `send_file` 的来源互斥结构。
+- [x] 改造 `create_event`/`update_event` 的 `all_day` 与时间清空语义。
+- [x] 改造 `save_uploaded_file` 的附件来源选择。
+- [x] 改造 `copy_file` 的原位/目标位置选择。
+- [x] 改造 `send_file` 的来源互斥结构。
+- [x] 改造 `add_event_reminder` 的活动定位与提醒输入结构。
+- [x] 改造 `update_todo` 的待办定位与修改动作结构。
 
 ### Phase 3：中风险工具与兼容层
 
-- [ ] 处理 `create_project.deadline` 的默认/无截止日期语义。
-- [ ] 评估 `update_todo`、定时任务更新和项目优先级的显式动作字段。
-- [ ] 增加旧历史和旧调用的版本化适配，删除 handler 内重复猜测逻辑。
+- [x] `create_project` 要求显式填写 `start_date` 和 `deadline`，不再由 handler 静默生成日期；历史数据继续可读。
+- [x] `update_todo` 已采用显式 `action`；项目优先级已使用 `none` 表达清除，定时任务渠道动作暂不扩大本轮契约范围。
+- [x] 增加集中式旧调用适配入口：仅对 `create_event` 无歧义地补齐 `all_day`；项目日期等业务值缺失时返回结构化缺字段错误，不伪造默认值。
 
 ### Phase 4：错误 trace 与恢复
 
-- [ ] 在 LoopScope run 中记录脱敏 Schema 错误 trace。
-- [ ] 轻量模式错误时只回注当前工具 Schema，并验证不会重复扩大注入。
-- [ ] 在 Admin/报告中提供按工具、字段路径和 provider 聚合的错误统计。
+- [x] 在 LoopScope run 中记录脱敏 Schema 错误 trace，保留 Schema/provider Schema、digest、字段形状和错误类别。
+- [x] 轻量模式错误时只回注当前工具 Schema，并通过回归测试确认不会重复扩大注入。
+- [x] 在 LoopScope run 诊断数据中提供按工具、字段路径、错误类别和 provider 的聚合统计，供 Admin/报告读取。
 
-### Phase 5：A/B 与真实业务灰度
+### Phase 5：description 优化
 
-- [ ] 使用固定脱敏 case 对轻量模式和完整模式进行多轮 A/B。
-- [ ] 对比每轮 token、总 token、错误率、恢复轮数、成功率和耗时。
-- [ ] 在完成根因分类后，再比较优化前后；单独报告路由、字段和值格式准确率，以及合理多步调用率。
+- [x] 按工具统计完整 description 和字段 description 的 token 占比，生成候选清单。
+- [x] 删除可由 `type`、`enum`、`required`、`oneOf` 和条件 Schema 直接表达的重复说明。
+- [x] 保留日期格式、清空语义、来源边界、确认要求和 provider 兼容等不可由结构推断的说明。
+- [x] 优先处理定时任务、文件、技能适配和画布工具，并保留前后字符统计与注册校验。
+- [x] 更新 `backend/agent/tools/README.md`，把 description 编写规范和审计脚本作为新增工具入口。
+
+### Phase 6：A/B 与真实业务灰度
+
+- [x] 完成旧版与当前版完整 Schema 的共同工具结构对照，不混入轻量目录指标。
+- [x] 使用固定脱敏 case 对当前完整 Schema 和精简后的完整 Schema 进行 20 轮 shadow A/B。
+- [x] 对比每轮 token、总 token、错误率、恢复轮数、成功率和耗时，并保留原始 JSON 结果。
+- [x] 完成初步根因分类；单独区分工具路由/调用轨迹与 Schema 校验错误，避免把合理辅助调用计入 Schema 错误率。
 - [ ] 使用 devserver 测试账号完成只读、创建、更新和副作用工具的真实业务回归。
 - [ ] 根据结果决定默认模式，保留可回滚开关并更新报告。
+
+### Phase 7：工具编写规范与文档收尾
+
+- [ ] 更新 `backend/agent/tools/README.md`，明确工具命名、资源边界、`action` 设计、条件必填、互斥输入、默认值、错误回执和脱敏要求。
+- [ ] 将 Schema、handler、service、权限/确认门和测试的职责边界写成新增工具的检查清单。
+- [ ] 补充一个完整工具和一个 action 工具的正例、缺字段反例、互斥字段反例及 provider 兼容注意事项。
+- [ ] 更新 PRD 的实施状态、变更记录和相关开发 README，确保 README 的工具规范成为后续新增工具的入口。
 
 ## 8. 验收标准
 
@@ -295,6 +367,7 @@ create_event(title(string,必填), date(string,必填), all_day(boolean,必填),
 - 文件来源、复制目标和发送来源不存在静默优先级冲突。
 - 轻量注入保持低 token；完整模式可按用户开关启用，并提供更完整的参数约束。
 - Schema 错误可以定位到工具和字段路径，但不泄露用户正文或参数值。
+- 高风险工具不会再接受缺少来源、定位或修改动作的空对象；互斥来源不依赖 handler 的静默优先级。
 - A/B 报告同时包含每轮 token、总 token、错误率、恢复轮数和最终成功率。
 - A/B 报告能回溯每个失败到唯一根因类别，并证明测试用例错误、合理辅助调用不会污染 Schema 错误率。
 - 任一工具改造均有新旧契约、正反例和回滚边界，未完成迁移的工具不宣称已完成。

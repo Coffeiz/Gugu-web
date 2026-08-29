@@ -40,7 +40,7 @@
               <pre v-if="event.stderr" class="stderr">{{ event.stderr }}</pre>
               <small>退出码 {{ event.exitCode ?? '—' }} · {{ formatTime(event.occurredAt) }}</small>
             </div>
-            <div v-if="!events.length" class="terminal-output-empty">等待终端输出</div>
+            <div v-if="!events.length && !error" class="terminal-output-empty">等待终端输出</div>
           </div>
           <div v-else class="terminal-empty">选择一个终端开始查看</div>
           <form v-if="selected && selected.mode !== 'interactive-pty' && selected.status !== 'terminated' && selected.status !== 'exited'" class="terminal-input" @submit.prevent="submitCommand">
@@ -291,8 +291,9 @@ onUnmounted(() => {
 .terminal-main-head h2 { height:var(--control-height-sm); margin:0; font-size:14px; line-height:var(--control-height-sm); }
 .terminal-main-head span { display:block; margin-top:4px; color:var(--content-tertiary); font-size:10px; }
 .terminal-actions { display:flex; gap:8px; }
-.terminal-output { min-height:0; flex:1; overflow:auto; padding:16px; background:#101319; color:#e7edf7; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em; }
+.terminal-output { min-height:0; flex:1; display:flex; flex-direction:column; overflow:auto; padding:16px; background:#101319; color:#e7edf7; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.01em; }
 .terminal-output-empty { color:#778196; }
+.terminal-output-empty { flex:1; min-height:0; display:grid; place-items:center; }
 .terminal-output-error { padding:0 0 12px; margin-bottom:14px; border-bottom:1px solid color-mix(in srgb,var(--danger-fg) 32%,transparent); color:var(--danger-fg); font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
 .terminal-event { padding-bottom:14px; margin-bottom:14px; border-bottom:1px solid var(--divider-line); }
 .terminal-command { color:var(--selection-fg); white-space:pre-wrap; overflow-wrap:anywhere; }

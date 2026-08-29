@@ -591,6 +591,14 @@ async def _save_uploaded_file(db, user_id, args: dict):
     如把连发图片之外的一条语音存进来了；见 resolve_attach 的歧义防护）。"""
     from app.core import chat_attach
 
+    source = args.get("source")
+    if source == "latest":
+        args = {**args, "attach_id": None, "attach_ids": None}
+    elif source == "attach_id" and not args.get("attach_id"):
+        return {"error": "source=attach_id 时必须提供 attach_id"}
+    elif source == "attach_ids" and not args.get("attach_ids"):
+        return {"error": "source=attach_ids 时必须提供 attach_ids"}
+
     space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
     if loc_err:
         return loc_err
@@ -1094,6 +1102,8 @@ async def _copy_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
+    if args.get("destination") == "same" and args.get("target"):
+        return {"error": "destination=same 时不能同时提供 target"}
     target = _norm_target(args.get("target", {}))
     workspace_target = await _bound_workspace_target(db, user_id)
     if workspace_target is not None and not any(
@@ -1342,6 +1352,12 @@ async def _send_file(db, user_id, args: dict):
     im = imctx.get_im()
     is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
 
+    source_type = args.get("source_type")
+    if source_type:
+        source_key = "file_id" if source_type == "file_id" else source_type
+        if not args.get(source_key):
+            return {"error": f"source_type={source_type} 时必须提供 {source_key}"}
+
     url = (args.get("url") or "").strip()
     if url:
         return await _send_file_from_url(user_id, url, args.get("title") or "")
@@ -1435,7 +1451,7 @@ class FilesSkill(BaseSkill):
                 "properties": {
                     "edits": {
                         "type": "array",
-                        "description": "批量：每项一个独立编辑 {file 或 file_id, mode, content/find/replace}。改多个文件用这个",
+                        "description": "批量编辑；每项传 file/file_id、mode 及对应内容字段。",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -1488,7 +1504,7 @@ class FilesSkill(BaseSkill):
                 "properties": {
                     "renames": {
                         "type": "array",
-                        "description": "批量改名：每项 {file 或 file_id, new_name, format?}。按顺序编号等多文件场景用这个",
+                        "description": "批量改名；每项传 file/file_id、new_name，可选 format。",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -1512,13 +1528,7 @@ class FilesSkill(BaseSkill):
         Tool(
             name="move_items", label="移动文件/文件夹",
             description_short='移动文件或文件夹；批量传 files/folders，目标传 target',
-            description=(
-                "移动文件库中的文件或文件夹，可混合批量处理；文件夹会递归携带子文件夹和文件。"
-                "源项用 files/folders（名称或 id），目标用 target.folder_id 或 target.folder；"
-                "移到个人根目录传 target.space=personal、target.folder=根目录，"
-                "移到项目需传 target.space=project 和真实 target.project_id。"
-                "workspace_id 不是 project_id/folder_id，不能直接填入 target。"
-            ),
+            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。项目目标用 project_id，workspace_id 不能代替它。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1536,6 +1546,7 @@ class FilesSkill(BaseSkill):
                             "project_id": {"type": "integer", "description": "真实项目 id；space=project 时必填，不能填 workspace_id"},
                         },
                     },
+                    "destination": {"type": "string", "enum": ["same", "folder"], "description": "复制目标；same=原位，folder=目标文件夹"},
                 },
                 "required": ["target"],
             },
@@ -1561,6 +1572,14 @@ class FilesSkill(BaseSkill):
                         },
                     },
                 },
+                "oneOf": [
+                    {"required": ["file_id"], "not": {"required": ["file"]}},
+                    {"required": ["file"], "not": {"required": ["file_id"]}},
+                ],
+                "allOf": [
+                    {"if": {"required": ["destination"], "properties": {"destination": {"const": "folder"}}}, "then": {"required": ["target"]}},
+                    {"if": {"required": ["destination"], "properties": {"destination": {"const": "same"}}}, "then": {"not": {"required": ["target"]}}},
+                ],
             },
             handler=_copy_file,
             mutates=True,
@@ -1653,10 +1672,24 @@ class FilesSkill(BaseSkill):
                 "properties": {
                     "file": {"type": "string", "description": "文件名（如 合同.pdf），发文件库文件时用"},
                     "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
-                    "url": {"type": "string", "description": "网络图片直链（如 image_search 结果的 img_src），传了则忽略 file/file_id"},
+                    "url": {"type": "string", "description": "网络图片直链；与 file/file_id 互斥"},
                     "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
-                    "attach_id": {"type": "string", "description": "之前暂存过的附件 attach_id（见上下文提示，或先调 list_recent_attachments 查），传了则忽略 file/file_id/url"},
+                    "attach_id": {"type": "string", "description": "暂存附件 ID；与其它来源互斥"},
+                    "source_type": {"type": "string", "enum": ["file", "file_id", "url", "attach_id"], "description": "来源类型；必须与对应来源字段一致"},
                 },
+                "oneOf": [
+                    {"required": ["file"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["url"]}, {"required": ["attach_id"]}]}},
+                    {"required": ["file_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["url"]}, {"required": ["attach_id"]}]}},
+                    {"required": ["url"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["file_id"]}, {"required": ["attach_id"]}]}},
+                    {"required": ["attach_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["file_id"]}, {"required": ["url"]}]}},
+                ],
+                "allOf": [
+                    {"if": {"required": ["title"]}, "then": {"required": ["url"]}},
+                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file"}}}, "then": {"required": ["file"]}},
+                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file_id"}}}, "then": {"required": ["file_id"]}},
+                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "url"}}}, "then": {"required": ["url"]}},
+                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "attach_id"}}}, "then": {"required": ["attach_id"]}},
+                ],
             },
             handler=_send_file,
             mutates=True,
@@ -1675,13 +1708,20 @@ class FilesSkill(BaseSkill):
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string", "description": "单个附件的 attach_id（见上下文提示；可不填，自动取最近上传的——仅当前暂存区无歧义时有效）"},
+                    "attach_id": {"type": "string", "description": "单个暂存附件 ID；省略时仅在来源无歧义时取最近附件"},
                     "attach_ids": {"type": "array", "items": {"type": "string"},
-                                   "description": "批量保存多个附件时用（如用户连发的几张图），传所有 attach_id，比逐个调用更可靠"},
+                                   "description": "批量保存的暂存附件 ID 数组"},
                     "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
                     "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
+                    "source": {"type": "string", "enum": ["latest", "attach_id", "attach_ids"], "description": "附件来源；latest=唯一最近附件"},
                 },
                 "required": [],
+                "allOf": [
+                    {"if": {"required": ["source"], "properties": {"source": {"const": "latest"}}}, "then": {"not": {"anyOf": [{"required": ["attach_id"]}, {"required": ["attach_ids"]}]} }},
+                    {"if": {"required": ["source"], "properties": {"source": {"const": "attach_id"}}}, "then": {"required": ["attach_id"]}},
+                    {"if": {"required": ["source"], "properties": {"source": {"const": "attach_ids"}}}, "then": {"required": ["attach_ids"]}},
+                    {"not": {"required": ["attach_id", "attach_ids"]}},
+                ],
             },
             handler=_save_uploaded_file,
             mutates=True,

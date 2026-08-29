@@ -4,9 +4,7 @@ prompt 是概率性的（模型大概率守规矩但偶尔破）；这里做**�
 - 小泄露（tool_call id / 内部 id 噪声）→ 抹掉
 - 大泄露（系统提示词被复述出来，多为 prompt injection 得手）→ 整条换成安全话术
 
-只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）
-和网页流式路（run_stream）都会调用，但网页流式是在整段 token 收完之后、写历史前才清洗——
-用户已经实时看过的原始 token 不受影响，这里防的是「脏内容混进历史，污染下一轮」。
+只管**字面**泄露；语义层（「我是个 agent」这种换说法）仍靠 policy 提示词。IM 路（run_collect）会调用，防止「脏内容混进历史，污染下一轮」。
 """
 from __future__ import annotations
 

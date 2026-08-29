@@ -169,6 +169,31 @@ def record_tool_schema_error(
             "schema_digest": digest,
             "error_kind": error_kind,
         }, status="error")
+        issues = error.get("issues") if isinstance(error, dict) else []
+        field_paths = sorted({
+            str(item.get("path")) for item in issues
+            if isinstance(item, dict) and item.get("path")
+        })
+        provider_name = "unknown"
+        adapter_calls = run.attributes.get("adapter_calls")
+        if isinstance(adapter_calls, dict):
+            providers = adapter_calls.get("by_provider")
+            if isinstance(providers, dict) and len(providers) == 1:
+                provider_name = str(next(iter(providers)))
+        aggregate = _diagnostic_bucket(run, "tool_schema_errors", {
+            "count": 0, "by_tool": {}, "by_error_kind": {},
+            "by_field_path": {}, "by_provider": {},
+        })
+        aggregate["count"] = int(aggregate.get("count", 0) or 0) + 1
+        for bucket_name, values in (
+            ("by_tool", [tool_name]),
+            ("by_error_kind", [error_kind]),
+            ("by_field_path", field_paths),
+            ("by_provider", [provider_name]),
+        ):
+            counts = aggregate.setdefault(bucket_name, {})
+            for value in values:
+                counts[value] = int(counts.get(value, 0) or 0) + 1
     except Exception:
         pass
 

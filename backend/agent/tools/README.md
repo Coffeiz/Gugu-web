@@ -19,6 +19,11 @@ Tool(
 枚举长列表或权限事实。完整 `description` 只用于 provider Schema。`category`、`permissions`、`platforms`、
 `related_skills` 和 `source` 用于能力目录，不承担第二套权限判断。
 
+完整 Schema 的 description 优化规则：类型、枚举、必填、互斥和条件分支交给 JSON Schema；description
+只保留模型无法从结构推断的日期格式、清空语义、资源边界、确认要求和 provider 兼容说明。修改后运行
+`PYTHONPATH=. .venv/bin/python scripts/audit_tool_descriptions.py`，按字段描述总字符数从高到低处理，
+并保留对应的 Schema 正反例测试，避免只删文字而丢失业务语义。
+
 短简介的推荐形状：
 
 ```text
@@ -31,6 +36,34 @@ Tool(
 该工具的完整 Schema 时，必须先调用 `get_tool_schema`；工具错误回执也会提示重新获取
 当前工具 Schema。所有 96 个内置工具都必须显式填写 `description_short`，注册表会拒绝
 缺失或超过 100 个 Unicode 字符的简介，不再静默截断。
+
+## Action 工具规范
+
+同一资源存在多个互斥修改动作时，用 `action` 枚举表达动作，不把多个可选字段的优先级交给模型猜测。
+`action` 必须同时满足以下要求：
+
+- 枚举值使用稳定、短小的英文动词，例如 `complete`、`rename`、`move`；
+- 在 `description` 中说明每个 action 的含义；
+- 用 `oneOf` 或 `if/then` 表达 action 对应的条件必填字段；
+- action 只覆盖一个资源边界，不把项目、阶段、待办和删除合成超级工具；
+- 旧字段兼容必须放在版本适配层，handler 内只接收规范化参数。
+
+推荐形状：
+
+```json
+{
+  "required": ["action", "todo"],
+  "properties": {
+    "action": {"type": "string", "enum": ["complete", "rename", "move"]},
+    "todo": {"type": "string"},
+    "done": {"type": "boolean"},
+    "text": {"type": "string"},
+    "to_stage": {"type": "string"}
+  }
+}
+```
+
+新增或收紧互斥字段时，必须同时添加：合法正例、缺字段反例、互斥字段反例、旧调用兼容测试。
 
 新增工具后运行：
 

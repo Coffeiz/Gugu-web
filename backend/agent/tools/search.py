@@ -655,7 +655,7 @@ class SearchSkill(BaseSkill):
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 20,
-                        "description": "要读取的图片结果，使用搜索结果的 result_id、img_src/image_url 和 title。",
+                        "description": "图片结果；使用 result_id、img_src/image_url 和 title。",
                         "items": {
                             "type": "object",
                             "properties": {

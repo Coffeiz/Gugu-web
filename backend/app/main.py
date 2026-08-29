@@ -258,13 +258,25 @@ app.add_middleware(
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     """基础安全响应头。CSP 未加（Vue 内联样式/脚本易误伤，需单独调），先补低风险的几项。"""
-    resp = await call_next(request)
-    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    # HSTS：仅 HTTPS 下浏览器生效，纯 HTTP 部署忽略之，带着无副作用
-    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    return resp
+    from app.security.events import reset_request_context, set_request_context
+    forwarded = request.headers.get("X-Forwarded-For")
+    ip_address = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else None
+    context_token = set_request_context({
+        "client_id": request.headers.get("X-Client-Id"),
+        "ip_address": ip_address,
+        "user_agent": request.headers.get("User-Agent"),
+        "metadata": {"source": "http", "client_type": request.headers.get("X-Client-Type")},
+    })
+    try:
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # HSTS：仅 HTTPS 下浏览器生效，纯 HTTP 部署忽略之，带着无副作用
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return resp
+    finally:
+        reset_request_context(context_token)
 
 
 def require_admin(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):

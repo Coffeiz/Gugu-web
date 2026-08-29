@@ -142,6 +142,10 @@ export const useConfigStore = defineStore('config', () => {
       to_addr: '',
       use_ssl: true,
     },
+    security: {
+      alert_email_enabled: false,
+      alert_email_recipients: [] as string[],
+    },
     byok: {
       enabled: false,
     },
@@ -163,6 +167,7 @@ export const useConfigStore = defineStore('config', () => {
       if (data.quota)   Object.assign(cfg.quota,   data.quota)
       if (data.search)  Object.assign(cfg.search,  sanitizeForEdit(data.search))
       if (data.smtp)    Object.assign(cfg.smtp,    sanitizeForEdit(data.smtp))
+      if (data.security) Object.assign(cfg.security, data.security)
       if (data.byok)    Object.assign(cfg.byok,    data.byok)
     } catch {
       // 后端未启动时静默，使用默认值

@@ -15,10 +15,9 @@
         <div class="pm-bot-item-top"><div class="pm-bot-info"><span class="pm-bot-name">{{ bot.name }}<span v-if="bot.sandbox" class="pm-bot-tag">沙箱</span></span><span class="pm-bot-appid">{{ bot.app_id }}</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.enabled === true" :aria-label="bot.enabled === true ? '停用机器人' : '启用机器人'" @update:model-value="toggleBot(bot)" /><span class="pm-switch-label" :class="{ on: bot.enabled === true }">{{ bot.enabled === true ? '已启用' : '已停用' }}</span></span><button class="pm-bot-del" @click="removeBot(bot)">删除</button></div>
         <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">QQ 身份绑定</span><span class="pm-field-hint">未绑定时生成验证码，在 QQ 私聊机器人发送“绑定 6 位验证码”</span></div><div class="pm-binding-code"><button v-if="!bot.owner_bound" type="button" class="pm-style-chip" :disabled="bindingBotId === bot.id" @click="createBindingCode(bot)">{{ bindingBotId === bot.id ? '生成中…' : '生成验证码' }}</button><div v-if="bindingCodes[bot.id]" class="pm-binding-code-result"><span class="pm-binding-code-command" title="发送给 QQ 机器人"><span class="pm-binding-code-prefix">绑定</span><code class="pm-binding-code-value">{{ bindingCodes[bot.id].code }}</code></span><span class="pm-binding-code-expiry">{{ bindingCodes[bot.id].expiresIn }} 秒内有效</span><button type="button" class="pm-binding-copy-btn" :class="{ copied: copiedBindingBotId === bot.id }" :title="copiedBindingBotId === bot.id ? '已复制绑定指令' : '复制绑定指令'" @click="copyBindingCode(bot.id)"><Icon name="status.success" v-if="copiedBindingBotId === bot.id" :size="12" /><Icon name="action.copy" v-else :size="12" /><span>{{ copiedBindingBotId === bot.id ? '已复制' : '复制' }}</span></button></div><span v-else-if="bot.owner_bound" class="pm-field-hint">已绑定</span></div></div>
         <div v-if="platform.key === 'qq'" class="pm-bot-group-row"><div class="pm-field-desc"><span class="pm-field-name">群聊回应</span><span class="pm-field-hint">开启后，咕咕会参与群聊，默认无需 @ 机器人</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_chat_enabled === true" aria-label="切换群聊回应" @update:model-value="toggleGroupChat(bot)" /><span class="pm-switch-label" :class="{ on: bot.group_chat_enabled === true }">{{ bot.group_chat_enabled === true ? '已开启' : '已关闭' }}</span></span></div>
-        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">回应方式</span><span class="pm-help-row"><span class="pm-field-hint">选择群消息的处理方式</span><button type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">设置方法</button></span><div v-if="helpPopBotId === bot.id" class="pm-help-pop" @click.stop><div class="pm-help-pop-title">开启全量消息接收</div><div class="pm-help-pop-step">1. 手机端 QQ 打开机器人所在的群</div><div class="pm-help-pop-step">2. 点机器人的头像进入资料页</div><div class="pm-help-pop-step">3. 点右上角「设置」</div><div class="pm-help-pop-step">4. 打开「全量消息接收」</div><div class="pm-help-pop-note">不开启时机器人只能收到 @ 消息，非 @ 消息不会进入会话记录</div></div></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ option.label }}</button></div></div>
+        <div v-if="platform.key === 'qq' && bot.group_chat_enabled" class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc pm-help-anchor"><span class="pm-field-name">回应方式</span><span class="pm-help-row"><span class="pm-field-hint">选择群消息的处理方式</span><button :ref="el => setHelpAnchorRef(bot.id, el)" type="button" class="pm-help-toggle" @click.stop="toggleHelpPop(bot.id)">设置方法</button></span><PopupMenu :show="helpPopBotId === bot.id" :anchor="helpAnchorRefs[bot.id]" popup-class="pm-help-popup-host"><div class="pm-help-pop" @click.stop><div class="pm-help-pop-title">开启全量消息接收</div><div class="pm-help-pop-step">1. 手机端 QQ 打开机器人所在的群</div><div class="pm-help-pop-step">2. 点机器人的头像进入资料页</div><div class="pm-help-pop-step">3. 点右上角「设置」</div><div class="pm-help-pop-step">4. 打开「全量消息接收」</div><div class="pm-help-pop-note">不开启时机器人只能收到 @ 消息，非 @ 消息不会进入会话记录</div></div></PopupMenu></div><div class="pm-style-group pm-tool-options"><button v-for="option in groupResponseOptions" :key="option.key" type="button" class="pm-style-chip" :class="{ active: groupResponseMode(bot) === option.key }" @click="setGroupResponseMode(bot, option.key)">{{ option.label }}</button></div></div>
         <template v-if="platform.key === 'qq'">
           <MessageFormatSettings :bot="bot" @change="(scope, mode) => setMessageFormat(bot, scope, mode)" />
-          <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">私聊流式回复</span><span class="pm-field-hint">使用 QQ 官方接口逐步更新同一条私聊消息；部分客户端可能不显示过程</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.private_streaming_enabled === true" aria-label="切换私聊流式回复" @update:model-value="togglePrivateStreaming(bot)" /><span class="pm-switch-label" :class="{ on: bot.private_streaming_enabled === true }">{{ bot.private_streaming_enabled === true ? '已开启' : '已关闭' }}</span></span></div>
         </template>
         <template v-if="platform.key === 'qq' && bot.group_chat_enabled">
           <div class="pm-bot-group-row pm-bot-tools-row"><div class="pm-field-desc"><span class="pm-field-name">群组记忆</span><span class="pm-field-hint">允许咕咕读取并沉淀当前群的公开信息</span></div><span class="pm-switch-wrap"><ToggleSwitch size="sm" :model-value="bot.group_memory_enabled !== false" aria-label="切换群组记忆" @update:model-value="toggleMemory(bot, 'group_memory_enabled')" /><span class="pm-switch-label" :class="{ on: bot.group_memory_enabled !== false }">{{ bot.group_memory_enabled !== false ? '已开启' : '已关闭' }}</span></span></div>
@@ -36,6 +35,7 @@
 import { nextTick, onActivated, onDeactivated, onMounted, ref } from 'vue'
 import QRCode from 'qrcode'
 import Icon from '@/components/common/Icon.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { fireHint } from '@/composables/useOnboarding'
 import { feishuConnectApi, qqConnectApi, userBotsApi, wechatConnectApi } from '@/services/api'
@@ -45,10 +45,10 @@ import MessageFormatSettings from './MessageFormatSettings.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { confirmDialog } from '@/composables/useConfirmDialog'
 
-interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; private_streaming_enabled?: boolean; owner_bound?: boolean }
+interface Bot { id: number; platform: string; name?: string; sandbox?: boolean; app_id?: string; enabled?: boolean; group_chat_enabled?: boolean; group_requires_at?: boolean; group_read_enabled?: boolean; group_memory_enabled?: boolean; member_memory_enabled?: boolean; group_response_mode?: string; group_allowed_tools?: string[]; group_message_format?: string; private_message_format?: string; owner_bound?: boolean }
 type BotSettingPatch = Partial<Pick<Bot,
   'enabled' | 'group_chat_enabled' | 'group_response_mode' | 'group_allowed_tools' |
-  'group_message_format' | 'private_message_format' | 'private_streaming_enabled' |
+  'group_message_format' | 'private_message_format' |
   'group_memory_enabled' | 'member_memory_enabled'
 >>
 
@@ -69,6 +69,8 @@ const platforms = [
 ]
 const bots = ref<Bot[]>([]); const botsOf = (platform: string) => bots.value.filter(bot => bot.platform === platform)
 const helpPopBotId = ref<number | null>(null)
+const helpAnchorRefs = ref<Record<number, HTMLElement | null>>({})
+function setHelpAnchorRef(botId: number, el: unknown) { helpAnchorRefs.value[botId] = el instanceof HTMLElement ? el : null }
 function toggleHelpPop(botId: number) { helpPopBotId.value = helpPopBotId.value === botId ? null : botId }
 function onDocClickCloseHelp() { helpPopBotId.value = null }
 const connecting = ref(''); const connect = ref<{ platform: string; id: string } | null>(null); const connectHint = ref(''); const connectErr = ref(''); const connectCanvas = ref<HTMLCanvasElement | null>(null); const bindingBotId = ref<number | null>(null); const bindingCodes = ref<Record<number, { code: string; expiresIn: number }>>({}); const copiedBindingBotId = ref<number | null>(null); let poll: ReturnType<typeof setInterval> | null = null; let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
@@ -199,10 +201,6 @@ function toggleGroupTool(bot: Bot, option: (typeof groupToolOptions)[number]) {
 function setMessageFormat(bot: Bot, scope: 'group' | 'private', mode: string) {
   const patch = scope === 'group' ? { group_message_format: mode } : { private_message_format: mode }
   void updateBotSetting(bot.id, patch, '消息格式设置失败')
-}
-function togglePrivateStreaming(bot: Bot) {
-  const current = botById(bot.id)
-  if (current) void updateBotSetting(bot.id, { private_streaming_enabled: current.private_streaming_enabled === false }, '私聊流式设置失败')
 }
 async function removeBot(bot: Bot) { if (!await confirmDialog({ title: '删除机器人', message: `删除「${bot.name}」？删除后这个机器人不再连咕咕。`, tone: 'danger', confirmText: '删除' })) return; try { await waitForSettingWrites(); await userBotsApi.remove(bot.id); await loadBots() } catch (error) { connectErr.value = error instanceof Error ? error.message : '连接失败' } }
 onMounted(() => { void preferences.fetch(); loadBots(); document.addEventListener('click', onDocClickCloseHelp) })
@@ -335,14 +333,8 @@ onActivated(resumePoll)
 .pm-help-toggle:focus { outline: none; }
 .pm-help-toggle:focus-visible { outline: 2px solid var(--action-outline); outline-offset: 2px; border-radius: 2px; }
 .pm-help-toggle:active { transform: none; opacity: 1; }
-.pm-help-pop {
-  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
-  z-index: 30; width: max-content; max-width: 300px; padding: 10px 12px;
-  border-radius: var(--popup-surface-radius); border: 1px solid var(--popup-surface-border);
-  background: var(--popup-surface-bg); color: var(--popup-item-fg);
-  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
-  backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur);
-}
+:global(.popup-menu-host.pm-help-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.pm-help-pop { width: max-content; max-width: 300px; padding: 10px 12px; color: var(--popup-item-fg); }
 .pm-help-pop-title { font-size: 12px; font-weight: 700; color: var(--content-primary); margin-bottom: 6px; }
 .pm-help-pop-step { font-size: 12px; color: var(--content-secondary); line-height: 1.7; }
 .pm-help-pop-note { margin-top: 6px; font-size: 11px; color: var(--popup-item-fg-muted); border-top: 1px solid var(--popup-divider); padding-top: 6px; line-height: 1.6; }

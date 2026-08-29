@@ -7,14 +7,13 @@
     >
       <svg class="dp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
-        <path d="M4 1monoM10 1monoM1 6h12"/>
+        <path d="M4 1v3M10 1v3M1 6h12"/>
       </svg>
       <span>{{ displayValue || placeholder }}</span>
     </div>
 
-    <Teleport to="body">
-      <Transition name="dp-pop">
-        <div v-if="open" class="dp-popup" :class="popupClass" :style="popupStyle" ref="popupRef">
+    <PopupMenu :show="open" :style="popupStyle" popup-class="dp-popup-host">
+      <div class="dp-popup" :class="popupClass" ref="popupRef">
 
           <!-- 月份导航 -->
           <div v-if="!yearMode" class="dp-header">
@@ -86,14 +85,14 @@
             <button class="dp-today" @click.stop="select(todayIso)">今天</button>
           </div>
         </div>
-      </Transition>
-    </Teleport>
+    </PopupMenu>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { nextZ, registerPopover } from '@/composables/windowz'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -371,7 +370,5 @@ watch(() => props.modelValue, v => {
    justify-content:space-between 只剩一个子元素就跳到左边 */
 .dp-today { margin-left: auto; }
 
-.dp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
-.dp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }
-.dp-pop-enter-from, .dp-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
+:global(.popup-menu-host.dp-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 </style>

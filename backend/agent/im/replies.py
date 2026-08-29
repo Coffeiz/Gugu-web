@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Set
-from typing import AsyncIterator, Tuple
+from typing import Tuple
 
 from agent.im.models import PlatformReply
 from agent.models import AgentResponse
@@ -24,18 +24,6 @@ _FEISHU_IMAGE_MAX = 10 * 1024 * 1024
 _FEISHU_FILE_MAX = 30 * 1024 * 1024
 _WECHAT_FILE_MAX = 30 * 1024 * 1024
 _QQ_FILE_MAX = 10 * 1024 * 1024
-
-
-async def _close_async_iterator(iterator) -> None:
-    """确保流式 agent 生成器退出，从而释放其内部 AsyncSession。"""
-    close = getattr(iterator, "aclose", None)
-    if close is None:
-        return
-    try:
-        await close()
-    except Exception:
-        # 发送链路的原始异常不能被清理动作覆盖；诊断由调用方记录。
-        pass
 
 
 async def send_text(payload: dict, text: str) -> bool:
@@ -311,21 +299,6 @@ async def _send_file_qq(
     return ok
 
 
-async def send_stream(payload: dict, token_iter: AsyncIterator[tuple[str, object]]) -> Tuple[bool, object]:
-    """发送飞书流式回复，返回发送是否成功及 Gateway 收集的最终响应。"""
-    stream_reply = PlatformReply.from_parts(payload, [{"type": "stream"}])
-    if stream_reply.unsupported_capabilities(payload.get("platform") or ""):
-        return False, None
-    from agent.gateway import feishu
-
-    receive_id = payload.get("chat_id") or payload.get("platform_user_id")
-    return await feishu.send_text_stream(
-        receive_id,
-        token_iter,
-        payload.get("channel_id"),
-    )
-
-
 def _fix_loose_bold(text: str) -> str:
     """修正 IM markdown 渲染器不接受的宽松加粗写法，代码片段保持原样。"""
     parts = _CODE_SPLIT_RE.split(text)
@@ -333,59 +306,6 @@ def _fix_loose_bold(text: str) -> str:
         parts[i] = _BOLD_LEAD_WS_RE.sub(r'**\1**', parts[i])
         parts[i] = _BOLD_TRAIL_WS_RE.sub(r'**\1**', parts[i])
     return ''.join(parts)
-
-
-async def send_stream_with_fallback(
-    payload: dict,
-    token_iter: AsyncIterator[tuple[str, object]],
-) -> Tuple[bool, AgentResponse, str]:
-    """发送流式回复；QQ 首帧前失败时回退普通消息，已发送部分后不重复全文。"""
-    if payload.get("platform") == "qq" and payload.get("chat_type") != "group":
-        from agent.gateway import qq
-
-        stream = qq.create_private_text_stream(
-            payload.get("platform_user_id") or "",
-            channel_id=payload.get("channel_id") or "",
-            message_id=payload.get("message_id"),
-            message_format=payload.get("message_format"),
-        )
-        response: AgentResponse | None = None
-        try:
-            async for kind, value in token_iter:
-                if kind == "token":
-                    stream.push(str(value or ""))
-                elif kind == "final" and isinstance(value, AgentResponse):
-                    response = value
-            response = response or AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
-            reply_text = _fix_loose_bold(response.text or "")
-            if not reply_text.strip():
-                reply_text = "给你～" if response.files else "嗯~在的，你说～"
-            await stream.finish(reply_text)
-            return stream.has_sent(), response, reply_text
-        except Exception:
-            response = response or AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
-            reply_text = _fix_loose_bold(response.text or "")
-            if not reply_text.strip():
-                reply_text = "给你～" if response.files else "嗯~在的，你说～"
-            # 首帧前失败才允许普通发送；已有部分帧时保留客户端已经看到的内容，
-            # 不能再补发整段文本制造重复回复。
-            return stream.has_sent(), response, reply_text
-        finally:
-            await _close_async_iterator(token_iter)
-
-    try:
-        stream_sent, response = await send_stream(payload, token_iter)
-    finally:
-        await _close_async_iterator(token_iter)
-    if response is None:
-        response = AgentResponse(text="", session_id=None, tokens_in=0, tokens_out=0)
-
-    reply_text = _fix_loose_bold(response.text or "")
-    if not reply_text.strip():
-        reply_text = "给你～" if response.files else "嗯~在的，你说～"
-    if not stream_sent and reply_text.strip():
-        await send_text(payload, reply_text)
-    return bool(stream_sent), response, reply_text
 
 
 async def send_agent_response(

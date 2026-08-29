@@ -48,14 +48,14 @@
             <button class="btn-test" :class="{ loading: testLoading.db }" @click="testDb">
               <svg v-if="testLoading.db" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.db ? '测试中…' : '测试连接' }}
             </button>
             <button class="btn-test btn-init" :class="{ loading: initing }" :disabled="initing" @click="initDb" title="重置连接 + 重建所有表（幂等）">
               <svg v-if="initing" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
               {{ initing ? '初始化中…' : '初始化数据库' }}
             </button>
@@ -92,7 +92,7 @@
             <button class="btn-test" :class="{ loading: testLoading.redis }" @click="testRedis">
               <svg v-if="testLoading.redis" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.redis ? '测试中…' : '测试连接' }}
             </button>
@@ -139,7 +139,7 @@
             <button class="btn-test" :class="{ loading: testLoading.oss }" @click="testOss">
               <svg v-if="testLoading.oss" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
               {{ testLoading.oss ? '测试中…' : '测试 OSS 连接' }}
             </button>
@@ -189,13 +189,16 @@
             <button class="btn-test" :class="{ loading: testSmtpLoading }" :disabled="testSmtpLoading" @click="testSmtp">
               <svg v-if="testSmtpLoading" class="spin-icon" width="12" height="12" viewBox="0 0 12 12"
                 fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+                <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
               </svg>
               {{ testSmtpLoading ? '发送中…' : '测试发送' }}
             </button>
           </div>
         </div>
       </section>
+
+      <!-- ── 安全告警 ── -->
+      <SecurityAlertSettings v-model="draft.security" />
 
       <!-- ── 用户 BYOK ── -->
       <section id="sec-byok" class="config-card">
@@ -231,7 +234,7 @@
         <button class="btn-primary" :class="{ loading: configStore.saving }" :disabled="configStore.saving" @click="save">
           <svg v-if="configStore.saving" class="spin-icon" width="13" height="13" viewBox="0 0 12 12"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M6 1monoM6 9monoM1 6h2M9 6h2"/>
+            <path d="M6 1v2M6 9v2M1 6h2M9 6h2"/>
           </svg>
           {{ configStore.saving ? '保存中…' : '保存配置' }}
         </button>
@@ -246,6 +249,7 @@ import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from './components/ConfigField.vue'
+import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -254,6 +258,10 @@ const draft = reactive({
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
+  security: JSON.parse(JSON.stringify(configStore.cfg.security ?? {
+    alert_email_enabled: false,
+    alert_email_recipients: [],
+  })),
   byok:    JSON.parse(JSON.stringify(configStore.cfg.byok)),
 })
 
@@ -263,6 +271,7 @@ onMounted(async () => {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
+  Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
   Object.assign(draft.byok,    configStore.cfg.byok)
 })
 
@@ -401,6 +410,7 @@ async function save() {
     redis:   { ...draft.redis },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
+    security: { ...draft.security },
     byok:    { ...draft.byok },
   })
 }
@@ -410,6 +420,7 @@ function resetDraft() {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
+  Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
   Object.assign(draft.byok,    configStore.cfg.byok)
   testStatus.db    = null
   testStatus.redis = null
@@ -502,6 +513,8 @@ async function testSmtp() {
   background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35);
   color: rgba(255,255,255,0.88);
 }
+.toggle-btn { display: inline-flex; flex-direction: column; align-items: center; }
+.toggle-btn[data-label]::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 600; }
 .toggle-btn:hover:not(.active) { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
 
 /* ── 卡片底栏 ── */

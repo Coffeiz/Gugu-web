@@ -248,6 +248,17 @@ def format_group_memory(data: dict) -> str:
     return "## 当前群组记忆（仅限本群公开信息）\n\n" + "\n\n".join(parts)
 
 
+def restore_group_memory_snapshot(snapshot: dict) -> dict:
+    """兼容旧 snapshot：把仍保存在 im_memory 的群记忆恢复到正文。"""
+    if not isinstance(snapshot, dict):
+        return snapshot
+    snapshot_text = str(snapshot.get("snapshot_context") or "")
+    group_text = format_group_memory({"group": (snapshot.get("im_memory") or {}).get("group") or {}})
+    if group_text and "## 当前群组记忆（仅限本群公开信息）" not in snapshot_text:
+        snapshot["snapshot_context"] = f"{snapshot_text}\n\n---\n\n{group_text}"
+    return snapshot
+
+
 def format_platform_user_memory(data: dict) -> str:
     """格式化当前发言人的动态个人记忆，不包含群记忆标题。"""
     personal = (data or {}).get("platform_user") or {}

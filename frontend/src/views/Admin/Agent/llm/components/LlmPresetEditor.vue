@@ -201,7 +201,7 @@
               <span class="save-hint" :class="{ error: !!error }">{{ error }}</span>
               <button class="btn-ghost" @click="$emit('close')">取消</button>
               <button class="btn-primary" :disabled="saving" @click="$emit('save')">
-                <svg v-if="saving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+                <svg v-if="saving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
                 {{ saving ? '保存中…' : '保存' }}
               </button>
             </div>

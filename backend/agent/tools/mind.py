@@ -52,14 +52,14 @@ _INLINE_ITEM_SCHEMA = {
 _CONTENT_ITEM_SCHEMA = {
     "type": "object",
     "properties": {
-        "checked": {"type": "boolean", "description": "仅 task_list 用；bullet_list/ordered_list/blockquote 不要传这个字段"},
+        "checked": {"type": "boolean", "description": "仅 task_list 使用"},
         "content": {"type": "array", "items": _INLINE_ITEM_SCHEMA},
     },
     "required": ["content"],
 }
 _BLOCK_ITEM_SCHEMA = {
     "type": "object",
-    "description": "内容块对象；字段随 type 变化。",
+    "description": "内容块；字段随 type 变化。",
     "properties": {
         "type": {"type": "string", "enum": [
             "paragraph", "heading", "bullet_list", "ordered_list",
@@ -85,9 +85,7 @@ _BLOCK_ITEM_SCHEMA = {
 # 数组本身——两层裸嵌套数组（`items:[[...],[...]]`）实测模型生成不稳定，几乎每次都退化成
 # `{"item":值}` 兜底包装；包一层对象把嵌套深度压回一层（跟 task_list 已有的
 # `{"checked":...,"content":[...]}` 同构），模型才能稳定生成（devlog 2026-07-14）。
-_BLOCKS_SCHEMA_HELP = (
-    "受限块数组；content/items/paragraphs 按 type 使用，task_list 条目需 checked；不要传 Markdown/HTML。"
-)
+_BLOCKS_SCHEMA_HELP = "块数组；按 type 使用；task_list 需 checked；禁用 Markdown。"
 
 
 def _node_summary(node: Any) -> dict:
@@ -357,7 +355,7 @@ class MindSkill(BaseSkill):
         ),
         Tool(
             name="note_create", label="记录思维笔记",
-            description_short='创建时间流笔记；标题写入 heading block',
+            description_short='创建时间流笔记；blocks=[{type,content/items}]，标题写入 heading block',
             description="按用户要求创建时间流笔记；blocks 使用受限块结构，需改写时先确认草稿。",
             input_schema={
                 "type": "object",
@@ -383,8 +381,8 @@ class MindSkill(BaseSkill):
                     "version": {"type": "integer", "description": "来自读取结果的当前版本"},
                     "title": {"type": ["string", "null"], "description": "索引标题；null 清空。用户可见标题写在 blocks 首个 heading。"},
                     "color": {"type": ["string", "null"], "enum": ["amber", "coral", "blue", "teal", None], "description": "五种卡片颜色之一；null 恢复默认纸色"},
-                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"整篇替换；不能与 append_blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
-                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": f"追加到末尾；不能与 blocks 同时传。{_BLOCKS_SCHEMA_HELP}"},
+                    "blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": "整篇替换；不能与 append_blocks 同传。"},
+                    "append_blocks": {"type": "array", "items": _BLOCK_ITEM_SCHEMA, "description": "追加到末尾；不能与 blocks 同传。"},
                     "captured_at": {"type": "string", "description": "带时区的 ISO 8601 时间；只能是现在或过去"},
                 },
                 "required": ["node_id", "version"],

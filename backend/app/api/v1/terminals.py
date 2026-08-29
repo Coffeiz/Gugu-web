@@ -130,8 +130,13 @@ async def get_terminal_detail(terminal_id: str, user: User = Depends(get_current
 @router.websocket("/{terminal_id}/ws")
 async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSession = Depends(get_db)):
     """交互式 PTY 网关；agent-events 终端继续使用原有事件接口。"""
+    manager = None
+    queue = None
+    attached = False
     try:
         user_id = decode_user_token(_websocket_token(websocket))
+        from app.security.risk_policy import enforce_user_throttle
+        await enforce_user_throttle(user_id)
         user = await db.get(User, user_id)
         row = await get_terminal(db, user_id, terminal_id) if account_is_active(user) else None
         if row is None or row.mode != "interactive-pty":
@@ -145,6 +150,9 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         root = await resolve_shell_root(db, user_id, row.shell_mode, row.workspace_id)
         if root is None:
             raise HTTPException(status_code=403, detail="终端没有可用的沙盒目录")
+        # 先完成 WebSocket 握手，再启动 PTY/发布状态事件，避免慢沙盒或事件总线让
+        # 浏览器/Nginx 在握手阶段超时后，服务端仍尝试 accept 已断开的连接。
+        await websocket.accept(subprotocol=_websocket_auth_protocol(websocket))
         manager = get_pty_manager()
         spec = PtyLaunchSpec(
             terminal_id=row.id, root=str(root), shell_mode=row.shell_mode,
@@ -154,6 +162,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         if session is None:
             session = await manager.start(spec)
         await manager.attach(row.id)
+        attached = True
         queue = await manager.subscribe(row.id)
         row.status = TerminalStatus.RUNNING.value
         row.pty_pid = session.handle.pid
@@ -163,14 +172,22 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         await db.commit()
         await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
                              event_payload=serialize_terminal(row))
-        # 浏览器通过 Sec-WebSocket-Protocol 携带认证令牌时，服务端必须回显
-        # 同一个协议名，否则浏览器会在握手后立即以协议错误断开连接。
-        await websocket.accept(subprotocol=_websocket_auth_protocol(websocket))
         logger.info("terminal_pty websocket_open terminal=%s user=%s", row.id, str(user_id)[:8])
         await websocket.send_json({
             "type": "ready", "terminalId": row.id, "mode": "interactive-pty",
             "cols": session.cols, "rows": session.rows,
         })
+    except WebSocketDisconnect:
+        logger.info("terminal_pty websocket_disconnected_during_setup")
+        if manager is not None:
+            try:
+                if queue is not None:
+                    await manager.unsubscribe(row.id, queue)
+                if attached:
+                    await manager.detach(row.id)
+            except (LookupError, RuntimeError):
+                logger.info("terminal_pty setup_cleanup_skipped")
+        return
     except HTTPException as exc:
         logger.info("terminal_pty websocket_rejected status=%s", exc.status_code)
         await websocket.close(code=4401 if exc.status_code == 401 else 4403)

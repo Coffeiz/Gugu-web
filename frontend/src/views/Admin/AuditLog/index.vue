@@ -7,8 +7,13 @@
       </div>
     </div>
 
+    <div class="audit-tabs" role="tablist">
+      <button class="audit-tab" :class="{ active: view === 'ops' }" @click="view = 'ops'">操作日志</button>
+      <button class="audit-tab" :class="{ active: view === 'security' }" @click="view = 'security'">安全事件</button>
+    </div>
+
     <!-- 筛选栏 -->
-    <div class="filter-bar">
+    <div v-if="view === 'ops'" class="filter-bar">
       <div class="filter-group">
         <AdminSelect v-model="filter.action" :options="actionOptions" placeholder="全部操作" />
         <input
@@ -39,7 +44,7 @@
     </div>
 
     <!-- 日志表格 -->
-    <div class="log-table-wrap">
+    <div v-if="view === 'ops'" class="log-table-wrap">
       <div v-if="loading" class="state-center">
         <div class="spinner" />
       </div>
@@ -101,6 +106,39 @@
         </div>
       </template>
     </div>
+
+    <div v-else class="security-events">
+      <div class="security-toolbar">
+        <AdminSelect v-model="securityFilter.action" :options="securityActionOptions" placeholder="全部动作" />
+        <AdminSelect v-model="securityFilter.eventType" :options="securityEventOptions" placeholder="全部事件" />
+        <select v-model.number="securityFilter.sinceMinutes" class="filter-select">
+          <option :value="60">近 1 小时</option>
+          <option :value="1440">近 24 小时</option>
+          <option :value="10080">近 7 天</option>
+          <option :value="129600">近 90 天</option>
+        </select>
+        <button class="icon-btn" :class="{ spinning: securityLoading }" @click="loadSecurity" title="刷新安全事件">
+          <Icon name="action.refresh" size="sm" />
+        </button>
+      </div>
+      <div class="log-table-wrap">
+        <div v-if="securityLoading" class="state-center"><div class="spinner" /></div>
+        <div v-else-if="!securityRows.length" class="state-center empty">暂无安全事件</div>
+        <table v-else class="log-table security-table">
+          <thead><tr><th>时间</th><th>用户指纹</th><th>事件</th><th>资源</th><th>动作</th><th>来源指纹</th></tr></thead>
+          <tbody>
+            <tr v-for="row in securityRows" :key="row.id">
+              <td class="col-time">{{ formatTime(row.occurred_at) }}</td>
+              <td><code>{{ shortFingerprint(row.user_id) }}</code></td>
+              <td>{{ row.event_type }}</td>
+              <td>{{ row.resource_type }} <code>{{ shortFingerprint(row.resource_fingerprint) }}</code></td>
+              <td><span class="tag" :class="`tag-${row.action}`">{{ securityActionLabel(row.action) }}</span></td>
+              <td><code>{{ shortFingerprint(row.ip_fingerprint || row.client_fingerprint || row.user_agent_fingerprint) }}</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -117,6 +155,16 @@ const actionOptions = [
   { value: 'prompt', label: '提示词' },
   { value: 'user',   label: '用户管理' },
 ]
+const securityActionOptions = [
+  { value: '', label: '全部动作' },
+  { value: 'logged', label: '记录' },
+  { value: 'throttled', label: '限流' },
+  { value: 'suspended', label: '冻结' },
+]
+const securityEventOptions = [
+  { value: '', label: '全部事件' },
+  { value: 'ownership.denied', label: '越权拒绝' },
+]
 
 const BASE  = import.meta.env.VITE_API_URL ?? '/api/v1'
 const token = localStorage.getItem('admin_token')
@@ -127,9 +175,14 @@ const rows     = ref<any[]>([])
 const page     = ref(1)
 const pageSize = ref(20)
 const filter   = ref({ action: '', keyword: '', dateFrom: '', dateTo: '' })
+const view = ref<'ops' | 'security'>('ops')
+const securityRows = ref<any[]>([])
+const securityLoading = ref(false)
+const securityFilter = ref({ action: '', eventType: '', sinceMinutes: 1440 })
 
 watch(filter, () => { page.value = 1 }, { deep: true })
 watch(pageSize, () => { page.value = 1 })
+watch(securityFilter, loadSecurity, { deep: true })
 
 const filtered = computed(() => {
   let list = rows.value
@@ -174,6 +227,26 @@ async function load(manual = false) {
   }
 }
 
+async function loadSecurity() {
+  securityLoading.value = true
+  try {
+    const params = new URLSearchParams({
+      since_minutes: String(securityFilter.value.sinceMinutes),
+      limit: '500',
+    })
+    if (securityFilter.value.action) params.set('action', securityFilter.value.action)
+    if (securityFilter.value.eventType) params.set('event_type', securityFilter.value.eventType)
+    const res = await fetch(`${BASE}/admin/audit-log/security-events?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    securityRows.value = (await res.json().catch(() => ({}))).items ?? []
+  } catch {
+    securityRows.value = []
+  } finally {
+    securityLoading.value = false
+  }
+}
+
 function exportCsv() {
   const header = ['时间', '操作者', '操作类型', '描述', 'IP']
   const csvRows = [
@@ -207,11 +280,25 @@ function actionLabel(action: string) {
   return map[action as keyof typeof map] ?? action
 }
 
-onMounted(load)
+function securityActionLabel(action: string) {
+  return ({ logged: '记录', throttled: '限流', suspended: '冻结' } as Record<string, string>)[action] ?? action
+}
+
+function shortFingerprint(value: string | null | undefined) {
+  return value ? value.slice(0, 16) : '—'
+}
+
+onMounted(() => { load(); loadSecurity() })
 </script>
 
 <style scoped>
 .audit-log { min-height: 100%; }
+.audit-tabs { display: flex; gap: 6px; padding: 22px 36px 0; }
+.audit-tab { padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: rgba(255,255,255,.48); cursor: pointer; }
+.audit-tab.active { border-color: rgba(150,170,220,.35); background: rgba(150,170,220,.12); color: rgba(255,255,255,.88); }
+.security-events { padding: 18px 36px 32px; }
+.security-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+.security-table code { color: rgba(180,190,230,.75); font-size: 11px; }
 
 .page-header      { padding: 32px 36px 0; }
 .page-title-block { display: flex; flex-direction: column; }

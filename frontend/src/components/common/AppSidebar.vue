@@ -227,13 +227,15 @@ onUnmounted(() => {
 .settings-popup .settings-menu-item::before {
   content:''; position:absolute; z-index:-1; inset:-3px 0;
   background:var(--settings-popup-hover-bg,rgba(255,255,255,.55));
-  opacity:0; pointer-events:none; transition:opacity .15s ease;
+  opacity:0; pointer-events:auto; transition:opacity .15s ease;
 }
 .settings-popup .settings-menu-item:hover:not(:disabled) { background:transparent; }
 .settings-popup .settings-menu-item:hover:not(:disabled)::before { opacity:1; }
 .settings-popup .settings-menu-item.danger { color:var(--settings-popup-danger,#c84a4a); }
-.settings-popup .settings-menu-item.danger:hover:not(:disabled)::before { background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1)); }
-.settings-popup .settings-menu-sep { height:1px; background:var(--settings-popup-divider,rgba(0,0,0,.06)); margin:3px 0; }
+.settings-popup .settings-menu-item.danger:hover:not(:disabled) { background:transparent; }
+.settings-popup .settings-menu-item.danger::before { background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1)); opacity:0; transition:opacity .15s ease; }
+.settings-popup .settings-menu-item.danger:hover:not(:disabled)::before { opacity:1; }
+.settings-popup .settings-menu-sep { height:1px; background:var(--settings-popup-divider,rgba(0,0,0,.06)); margin:3px 0; pointer-events:none; }
 
 .notif-popup { background:rgba(255,255,255,.6); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border:1px solid rgba(255,255,255,.75); border-radius:10px; box-shadow:0 4px 20px rgba(0,0,0,.1); overflow:hidden; display:flex; flex-direction:column; }
 .notif-header { display:flex; align-items:center; justify-content:space-between; padding:13px 14px 10px; border-bottom:1px solid rgba(0,0,0,.06); }.notif-title { font-size:13px; font-weight:700; color:#1e2028; }.notif-mark-all { font-size:11px; font-weight:500; color:var(--text-secondary); background:none; border:none; cursor:pointer; font-family:var(--font-family-ui); padding:2px 6px; border-radius:6px; transition:background .12s; }.notif-mark-all:hover { background:rgba(123,127,178,.1); }

@@ -22,12 +22,13 @@ from agent.tools.base import BaseSkill, Tool
 
 async def _create_event(db, user_id, args: dict):
     pid = args.get("project_id")
+    all_day = bool(args.get("all_day"))
     ev = await create_event(
         db, user_id,
         title=args["title"],
         date=args["date"],
-        time=args.get("time") or None,
-        end_time=args.get("end_time") or None,
+        time=None if all_day else (args.get("time") or None),
+        end_time=None if all_day else (args.get("end_time") or None),
         event_type=args.get("type", "event"),
         project_id=pid,
     )
@@ -93,6 +94,11 @@ async def _update_event(db, user_id, args: dict):
     if _err:
         return _err
     fields = ("title", "date", "time", "end_time", "type", "project_id", "description")
+    if "all_day" in args:
+        if args["all_day"]:
+            args = {**args, "time": None, "end_time": None}
+        elif "time" not in args:
+            return json.dumps({"error": "all_day=false 时必须提供 time"})
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
         return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
@@ -244,11 +250,18 @@ class CalendarSkill(BaseSkill):
                     "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
                     "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
                     "reminders":  {"type": "array", "items": {"type": "integer"},
-                                   "description": "可选提前分钟数数组，如 [30,1440]；全天活动按 09:00，已过时间跳过。"},
+                                   "description": "提前分钟数数组；全天活动按 09:00 计算"},
                     "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
                                           "description": "提醒投递渠道，默认 [web]；仅在设了 reminders 时有用"},
+                    "all_day":   {"type": "boolean", "description": "是否全天；true=全天，false=定时"},
                 },
-                "required": ["title", "date"],
+                "required": ["title", "date", "all_day"],
+                "allOf": [
+                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": True}}},
+                     "then": {"not": {"anyOf": [{"required": ["time"]}, {"required": ["end_time"]}]}}},
+                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": False}}},
+                     "then": {"required": ["time"]}},
+                ],
             },
             handler=_create_event,
             mutates=True,
@@ -286,8 +299,18 @@ class CalendarSkill(BaseSkill):
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
                     "project_id": {"type": "integer", "description": "关联项目 ID"},
                     "description": {"type": "string"},
+                    "all_day":   {"type": "boolean", "description": "更新全天状态；true 时清除时间，false 时必须同时传 time"},
                 },
-                "required": [],
+                "anyOf": [
+                    {"required": ["event_id"]},
+                    {"required": ["event"]},
+                ],
+                "allOf": [
+                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": True}}},
+                     "then": {"not": {"anyOf": [{"required": ["time"]}, {"required": ["end_time"]}]}}},
+                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": False}}},
+                     "then": {"required": ["time"]}},
+                ],
             },
             handler=_update_event,
             mutates=True,
@@ -330,7 +353,13 @@ class CalendarSkill(BaseSkill):
                     "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
                                      "description": "投递渠道，默认 [web]"},
                 },
-                "required": [],
+                "oneOf": [
+                    {"required": ["event_id"], "not": {"required": ["event"]}},
+                    {"required": ["event"], "not": {"required": ["event_id"]}},
+                ],
+                "allOf": [
+                    {"not": {"required": ["reminders", "lead_minutes"]}},
+                ],
             },
             handler=_add_event_reminder,
             mutates=True,

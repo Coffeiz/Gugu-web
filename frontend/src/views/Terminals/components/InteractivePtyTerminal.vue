@@ -20,6 +20,7 @@ const statusText = ref('正在连接…')
 let terminal: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let socket: WebSocket | null = null
+let socketGeneration = 0
 let intentionalClose = false
 let reconnectTimer: number | null = null
 let reconnectAttempt = 0
@@ -47,11 +48,19 @@ function scheduleReconnect() {
 }
 function connect() {
   if (intentionalClose) return
-  socket?.close()
+  const generation = ++socketGeneration
+  const previous = socket
+  if (previous && previous.readyState !== WebSocket.CLOSED) previous.close()
   const token = getToken()
-  socket = new WebSocket(socketUrl(props.terminalId), token ? [`gugu-auth.${token}`] : [])
-  socket.onopen = () => { connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize() }
-  socket.onmessage = (event) => {
+  const current = new WebSocket(socketUrl(props.terminalId), token ? [`gugu-auth.${token}`] : [])
+  socket = current
+  const isCurrent = () => socket === current && socketGeneration === generation
+  current.onopen = () => {
+    if (!isCurrent()) return
+    connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize()
+  }
+  current.onmessage = (event) => {
+    if (!isCurrent()) return
     try {
       const message = JSON.parse(event.data) as { type?: string; data?: string; cols?: number; rows?: number; message?: string }
       if (message.type === 'output' && message.data) {
@@ -66,8 +75,13 @@ function connect() {
       else if (message.type === 'error') emit('error', message.message ?? '终端连接失败')
     } catch { emit('error', '终端输出格式无效') }
   }
-  socket.onerror = () => { connected.value = false }
-  socket.onclose = () => { connected.value = false; if (!intentionalClose) scheduleReconnect() }
+  current.onerror = () => { if (isCurrent()) connected.value = false }
+  current.onclose = () => {
+    if (!isCurrent()) return
+    socket = null
+    connected.value = false
+    if (!intentionalClose) scheduleReconnect()
+  }
 }
 function handleResize() { resize() }
 function handlePaste(event: ClipboardEvent) {
@@ -120,9 +134,12 @@ onMounted(() => {
 watch(() => props.terminalId, () => { intentionalClose = true; socket?.close(); intentionalClose = false; reconnectAttempt = 0; connect() })
 onUnmounted(() => {
   intentionalClose = true
+  socketGeneration++
   if (reconnectTimer !== null) window.clearTimeout(reconnectTimer)
-  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'detach' }))
-  socket?.close()
+  const current = socket
+  socket = null
+  if (current?.readyState === WebSocket.OPEN) current.send(JSON.stringify({ type: 'detach' }))
+  current?.close()
   window.removeEventListener('resize', handleResize)
   themeObserver?.disconnect()
   themeObserver = null

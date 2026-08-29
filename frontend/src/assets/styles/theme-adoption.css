@@ -99,20 +99,20 @@ html[data-theme][data-family] .proj-card .done-label {
   background: var(--status-success-bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--status-success) 34%,transparent);
 }
-html[data-theme][data-family] .proj-card .todo-pop {
+html[data-theme][data-family] .todo-pop-popup {
   color: var(--content-primary);
   background: var(--popup-background);
   border-color: var(--popup-border);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
 }
-html[data-theme][data-family] .proj-card .tp-title,
-html[data-theme][data-family] .proj-card .tp-name,
-html[data-theme][data-family] .proj-card .tp-input { color: var(--content-primary); }
-html[data-theme][data-family] .proj-card .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .proj-card .tp-check { background: var(--control-bg); border-color: var(--action-outline); color: var(--content-on-accent); }
-html[data-theme][data-family] .proj-card .tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
-html[data-theme][data-family] .proj-card .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
-html[data-theme][data-family] .proj-card .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
+html[data-theme][data-family] .todo-pop-popup .tp-title,
+html[data-theme][data-family] .todo-pop-popup .tp-name,
+html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .todo-pop-popup .tp-check { background: var(--control-bg); border-color: var(--action-outline); color: var(--content-on-accent); }
+html[data-theme][data-family] .todo-pop-popup .tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
+html[data-theme][data-family] .todo-pop-popup .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
+html[data-theme][data-family] .todo-pop-popup .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
 
 html[data-theme][data-family] .seg-bar .seg,
 html[data-theme][data-family] .progress-bar { background: var(--surface-soft-hover) !important; }

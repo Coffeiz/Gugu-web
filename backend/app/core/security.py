@@ -93,6 +93,8 @@ async def get_current_user_id(
         user_id = UUID(payload["sub"])
         if not await is_user_active(user_id):
             raise HTTPException(status_code=401, detail="用户不存在或已停用")
+        from app.security.risk_policy import enforce_user_throttle
+        await enforce_user_throttle(user_id)
         return user_id
     except (JWTError, KeyError, ValueError):
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
@@ -128,4 +130,6 @@ async def get_current_user(
     user = await db.get(User, user_id)
     if not account_is_active(user):
         raise HTTPException(status_code=401, detail="用户不存在或已停用")
+    from app.security.risk_policy import enforce_user_throttle
+    await enforce_user_throttle(user_id)
     return user

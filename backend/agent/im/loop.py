@@ -94,32 +94,6 @@ class OwnerAgentLoop:
             kwargs["on_round"] = on_round
         return await run_collect(request, **kwargs)
 
-    def run_stream(self, request: AgentRequest, *, on_interaction=None, on_tool_event=None):
-        from agent.runner import run_stream
-        if on_interaction is None and on_tool_event is None:
-            # 保持旧的测试/扩展实现兼容：未使用交互回调时不强行传新关键字。
-            return run_stream(request)
-        kwargs = {}
-        if on_interaction is not None:
-            kwargs["on_interaction"] = on_interaction
-        if on_tool_event is not None:
-            kwargs["on_tool_event"] = on_tool_event
-        # 旧的外部 Loop 替身/扩展可能还没有其中一个回调；只对明确的
-        # 关键字不兼容回退，不能吞掉生成器内部的 TypeError。
-        while kwargs:
-            try:
-                return run_stream(request, **kwargs)
-            except TypeError as exc:
-                unsupported = next(
-                    (name for name in ("on_interaction", "on_tool_event") if name in str(exc)),
-                    None,
-                )
-                if unsupported is None:
-                    raise
-                kwargs.pop(unsupported, None)
-        return run_stream(request)
-
-
 class MemberAgentLoop(OwnerAgentLoop):
     """member/unknown 的轻量入口，权限和上下文由 request policy 收紧。"""
 

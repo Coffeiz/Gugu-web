@@ -43,12 +43,41 @@ async def get_owned(db, model, obj_id, user_id):
             security_fingerprint(user_id)[:16],
         )
         try:
+            from app.security.events import get_request_context
+            context = get_request_context()
+            from app.security.risk_policy import apply_risk_decision, register_ownership_denial
+            decision = await register_ownership_denial(
+                user_id=user_id,
+                client_id=context.get("client_id"),
+                ip_address=context.get("ip_address"),
+            )
+            applied = await apply_risk_decision(user_id, decision)
+            event_metadata = dict(context.get("metadata") or {})
+            if decision is not None:
+                event_metadata["applied"] = applied
             await record_ownership_denied(
                 requester_id=user_id,
                 model=model,
                 resource_id=obj_id,
                 owner_id=owner,
+                client_id=context.get("client_id"),
+                ip_address=context.get("ip_address"),
+                user_agent=context.get("user_agent"),
+                action=decision.action if decision else "logged",
+                reason_code=(
+                    "ownership_auto_suspend" if applied else
+                    "ownership_throttled" if decision and decision.action == "throttled" else
+                    "ownership_mismatch"
+                ),
+                metadata=event_metadata,
             )
+            if decision:
+                from app.security.alerts import notify_risk_action
+                await notify_risk_action(
+                    action=decision.action,
+                    user_count=decision.user_count,
+                    reason_code="ownership_mismatch",
+                )
         except Exception:
             # 安全事件写入故障不能改变授权失败的统一响应，也不记录原始字段。
             try:
@@ -56,9 +85,6 @@ async def get_owned(db, model, obj_id, user_id):
                 opsmetrics.record_security("security_event.write_failed")
             except Exception:
                 pass
-        try:
-            from app.security.risk_policy import register_ownership_denial
-            await register_ownership_denial(user_id=user_id)
         except Exception:
             # Redis 仅用于短窗口策略，故障时继续保持原有授权拒绝语义。
             pass

@@ -265,7 +265,7 @@
           </span>
           <button class="btn-ghost" @click="resetBehavior">撤销修改</button>
           <button class="btn-primary" :class="{ loading: behaviorSaving }" :disabled="behaviorSaving" @click="saveBehavior">
-            <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+            <svg v-if="behaviorSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ behaviorSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -401,7 +401,7 @@
           </span>
           <button class="btn-ghost" @click="resetGeneralSearch">撤销修改</button>
           <button class="btn-primary" :class="{ loading: generalSearchSaving }" :disabled="generalSearchSaving" @click="saveSearch('general')">
-            <svg v-if="generalSearchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+            <svg v-if="generalSearchSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ generalSearchSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -488,7 +488,7 @@
           </span>
           <button class="btn-ghost" @click="resetSimilarImageSearch">撤销修改</button>
           <button class="btn-primary" :class="{ loading: similarImageSaving }" :disabled="similarImageSaving" @click="saveSearch('similar')">
-            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+            <svg v-if="similarImageSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ similarImageSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -551,7 +551,7 @@
             {{ voiceTesting ? '测试中…' : '测试接入' }}
           </button>
           <button class="btn-primary" :class="{ loading: voiceSaving }" :disabled="voiceSaving" @click="saveVoice">
-            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+            <svg v-if="voiceSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ voiceSaving ? '保存中…' : '保存' }}
           </button>
         </div>
@@ -648,7 +648,7 @@
           </span>
           <button class="btn-ghost" @click="resetEmbedding">撤销修改</button>
           <button class="btn-primary" :class="{ loading: embeddingSaving }" :disabled="embeddingSaving" @click="saveEmbedding">
-            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1monoM6 9monoM1 6h2M9 6h2"/></svg>
+            <svg v-if="embeddingSaving" class="spin-icon" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 1v2M6 9v2M1 6h2M9 6h2"/></svg>
             {{ embeddingSaving ? '保存中…' : '保存' }}
           </button>
         </div>

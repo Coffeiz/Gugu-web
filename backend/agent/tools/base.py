@@ -18,6 +18,7 @@ from agent.tools.tool_contract import (
     build_validator,
     enrich_tool_error,
     invalid_input_payload,
+    normalize_legacy_input,
     validate_input,
 )
 
@@ -397,6 +398,9 @@ class SkillRegistry:
             )
             _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
             return json.dumps(payload, ensure_ascii=False), None
+
+        # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
+        args, _legacy_adaptations = normalize_legacy_input(name, args)
 
         # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
         # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。

@@ -15,6 +15,16 @@ from jsonschema.exceptions import SchemaError, ValidationError
 MAX_VALIDATION_ISSUES = 5
 
 
+def normalize_legacy_input(tool_name: str, instance: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """把已知旧调用转换为当前契约，禁止猜测业务数据。"""
+    normalized = dict(instance)
+    adaptations: list[str] = []
+    if tool_name == "create_event" and "all_day" not in normalized:
+        normalized["all_day"] = not bool(normalized.get("time") or normalized.get("end_time"))
+        adaptations.append("create_event.all_day_inferred")
+    return normalized, adaptations
+
+
 def build_validator(schema: dict) -> Draft202012Validator:
     """检查并构建全项目统一的 Draft 2020-12 validator。"""
     Draft202012Validator.check_schema(schema)
@@ -206,5 +216,6 @@ __all__ = [
     "build_validator",
     "invalid_input_payload",
     "enrich_tool_error",
+    "normalize_legacy_input",
     "validate_input",
 ]

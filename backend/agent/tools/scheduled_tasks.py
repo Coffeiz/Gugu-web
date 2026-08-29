@@ -274,8 +274,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="create_scheduled_task", label="新建定时任务",
             description_short='创建定时任务；channels 用数组，如 ["qq"]，活动提醒另用日历工具',
-            description=("创建独立定时任务并按渠道投递；channels 必须是渠道字符串数组，例如 [\"qq\"] 或 [\"web\", \"qq\"]，"
-                         "不能传 {\"item\": \"qq\"} 这类对象。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。"),
+            description="创建独立定时任务并按渠道投递；channels 是渠道字符串数组。日历活动提醒请用 create_event(reminders) 或 add_event_reminder。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -287,7 +286,7 @@ class ScheduledTasksSkill(BaseSkill):
                                     "description": "投递渠道数组，例如 [\"qq\"]；不要传对象。默认 [\"web\"]"},
                     "enabled":     {"type": "boolean", "description": "是否启用，默认 true"},
                     "delivery_mode": {"type": "string", "enum": ["owner_private", "current_group"],
-                                      "description": "QQ 投递模式：owner_private=私聊提醒我；current_group=发送到当前 QQ 群，仅群聊中可用。QQ 群聊创建任务前必须先确认"},
+                                      "description": "QQ 投递：owner_private=私聊；current_group=当前群，创建前需确认"},
                 },
                 "required": ["name", "instruction", "cron"],
             },
@@ -297,9 +296,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="update_scheduled_task", label="更新定时任务",
             description_short='修改定时任务；channels 用数组，如 ["qq"]，不改渠道时省略',
-            description=("修改定时任务的内容、投递渠道或启停。按 task_id 或任务名 task 定位（推荐直接用名字）。"
-                         "channels 必须是渠道字符串数组，例如 [\"qq\"] 或 [\"web\", \"qq\"]，不能传 {\"item\": \"qq\"}。"
-                         "只改 delivery_mode 时省略 channels；改时间用 cron/@once，停用传 enabled=false，启用传 true。"),
+            description="修改定时任务内容、投递渠道或启停；按 task_id 或 task 定位。只改 delivery_mode 时省略 channels，改时间用 cron/@once。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -323,8 +320,7 @@ class ScheduledTasksSkill(BaseSkill):
         Tool(
             name="delete_scheduled_task", label="删除定时任务",
             description_short='删除定时任务；关键字段 task_id',
-            description=("删除一个或多个定时任务（不可恢复）。单项按 task_id/task 定位，批量传 task_ids；批量目标一次确认。"
-                         "确认后必须传 confirm=true（JSON boolean，不要传字符串 \"true\"）和上一步返回的 confirm_token。"),
+            description="删除定时任务，不可恢复；单项传 task_id/task，批量传 task_ids。确认后传 confirm=true 和上一步的 confirm_token。",
             input_schema={
                 "type": "object",
                 "properties": {

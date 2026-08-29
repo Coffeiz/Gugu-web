@@ -56,8 +56,7 @@ class GlobalSearchSkill(BaseSkill):
                     "mode": {"type": "string", "enum": ["OR", "AND"],
                              "description": "关键词匹配模式，默认 OR"},
                     "types": {"type": "array", "items": {"type": "string", "enum": ALL_TYPES},
-                              "description": "可选，限定只搜这些类型（project/file/folder/event/"
-                                            "client/conversation/note）；不传则全搜"},
+                              "description": "限定类型；省略则全搜"},
                 },
                 # query / queries 至少传一个；具体校验由 handler 统一完成，避免只传 queries 时被 schema 拦截。
                 "required": [],

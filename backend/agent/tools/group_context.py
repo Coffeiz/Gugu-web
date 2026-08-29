@@ -233,7 +233,7 @@ class GroupContextSkill(BaseSkill):
                     "mode": {"type": "string", "enum": ["OR", "AND"],
                              "description": "关键词匹配模式，默认 OR"},
                     "speaker": {"type": "string",
-                                "description": "按发言人过滤：传群成员的名字/别名/群友称呼或 platform_user_id；返回 ambiguous=true 时需向用户澄清"},
+                                "description": "按名字、别名或 platform_user_id 过滤；ambiguous=true 时先澄清"},
                     "limit": {"type": "integer", "description": "返回条数，默认 10，最多 30"},
                 },
             },

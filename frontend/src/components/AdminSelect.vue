@@ -108,8 +108,4 @@ onBeforeUnmount(() => {
   border-radius: var(--popup-item-radius);
   text-align: left;
 }
-:global(.asel-popup.menu-pop-leave-active) {
-  /* leave 期间仍在 body 中，层级必须高于会动态置顶的 BaseModal 面板。 */
-  z-index: 100001 !important;
-}
 </style>

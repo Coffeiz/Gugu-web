@@ -120,9 +120,10 @@ Vite 热更新或 Uvicorn reload；数据库迁移、PostgreSQL、Redis、SearXN
 配置卷由 Compose 管理，默认通过 Nginx 从 `9595` 提供访问。
 
 ```bash
-# 在仓库根目录构建并推送镜像；生产镜像构建上下文必须是仓库根目录
+# 在仓库根目录构建并推送镜像；前端还需要提供同级 gugu-interaction-runtime
 docker build -f backend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
-docker build -f frontend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
+docker build --build-context runtime=../gugu-interaction-runtime \
+  -f frontend/Dockerfile.prod -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
 docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号
 

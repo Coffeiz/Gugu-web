@@ -140,6 +140,12 @@ class ConversationsSkill(BaseSkill):
                              "description": "关键词匹配模式，默认 OR"},
                     "limit": {"type": "integer", "description": "返回条数，默认 6，最多 20"},
                 },
+                "oneOf": [
+                    {"required": ["query"], "not": {"anyOf": [{"required": ["keyword"]}, {"required": ["queries"]}]}},
+                    {"required": ["keyword"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["queries"]}]}},
+                    {"required": ["queries"], "not": {"anyOf": [{"required": ["query"]}, {"required": ["keyword"]}]}},
+                    {"not": {"anyOf": [{"required": ["query"]}, {"required": ["keyword"]}, {"required": ["queries"]}]}},
+                ],
             },
             handler=_search_conversations,
         ),

@@ -85,7 +85,7 @@ html[data-theme='dark'][data-family] {
   --settings-popup-border: var(--border-default);
   --settings-popup-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-popup);
   --settings-popup-item-fg: var(--content-primary);
-  --settings-popup-hover-bg: var(--color-accent-faint);
+  --settings-popup-hover-bg: var(--surface-soft-hover);
   --settings-popup-danger: var(--status-danger);
   --settings-popup-danger-hover-bg: var(--status-danger-bg);
   --settings-popup-divider: var(--border-subtle);

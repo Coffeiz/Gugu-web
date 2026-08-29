@@ -2,7 +2,6 @@
 
 逻辑迁自原 agent.py 的 `_exec_tool`，并统一经项目领域写入入口执行。
 """
-from datetime import timedelta
 import json
 import random
 
@@ -103,18 +102,14 @@ async def _create_project(db, user_id, args: dict):
     stages = normalize_project_stages(raw) if raw else [dict(s) for s in _DEFAULT_STAGES]
     if not stages:
         stages = [dict(s) for s in _DEFAULT_STAGES]
-    # 未指定开始日期默认今天，未指定截止默认一周后。
-    _now = now_utc()
-    start_date = args.get("start_date") or _now.strftime("%Y-%m-%d")
-    deadline = args.get("deadline") or (_now + timedelta(days=7)).strftime("%Y-%m-%d")
     priority = (args.get("priority") or "").strip().lower()
     try:
         p = build_project(user_id, {
             "name": args["name"],
             "client": args.get("client"),
             "status": args.get("status", "pending"),
-            "deadline": deadline,
-            "start_date": start_date,
+            "deadline": args["deadline"],
+            "start_date": args["start_date"],
             "color": args.get("color") or await _pick_unused_color(db, user_id),
             "priority": priority if priority in ("high", "medium", "low") else None,
             "stages": stages,
@@ -428,6 +423,13 @@ async def _set_stages(db, user_id, args: dict):
 
 async def _update_todo(db, user_id, args: dict):
     """改一条待办的文本/完成态，并可选移动到另一阶段。按文本或 id 定位（可用 stage 限定范围）。"""
+    action = args.get("action")
+    if action == "complete":
+        args = {**args, "done": args.get("done")}
+    elif action == "rename":
+        args = {**args, "text": args.get("text")}
+    elif action == "move":
+        args = {**args, "to_stage": args.get("to_stage")}
     p, _err = await _resolve_project(db, user_id, args)
     if _err:
         return _err
@@ -525,15 +527,15 @@ class ProjectsSkill(BaseSkill):
             name="create_project",
             label="新建项目",
             description_short="创建项目；可带 stages/todos，后续用 add_stage/add_todo",
-            description="创建项目，可一次设置日期、颜色、优先级、阶段和待办；未传日期使用默认值。",
+            description="创建项目，必须填写开始日期和截止日期，可一次设置颜色、优先级、阶段和待办。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "name":       {"type": "string", "description": "项目名称"},
                     "client":     {"type": "string"},
                     "status":     {"type": "string", "enum": ["pending", "active", "done"]},
-                    "deadline":   {"type": "string", "description": "YYYY-MM-DD；不填默认一周后"},
-                    "start_date": {"type": "string", "description": "YYYY-MM-DD；不填默认今天"},
+                    "deadline":   {"type": "string", "description": "截止日期 YYYY-MM-DD"},
+                    "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD"},
                     "color":      {"type": "string", "enum": list(PROJECT_COLOR_PRESETS), "description": "预设色板中的渐变色字符串；不传则随机从预设中选"},
                     "priority":   {"type": "string", "enum": ["high", "medium", "low"], "description": "优先级；不传则不设"},
                     "stages": {
@@ -548,7 +550,7 @@ class ProjectsSkill(BaseSkill):
                         },
                     },
                 },
-                "required": ["name"],
+                "required": ["name", "start_date", "deadline"],
             },
             handler=_create_project,
             mutates=True,
@@ -759,7 +761,7 @@ class ProjectsSkill(BaseSkill):
         ),
         Tool(
             name="update_todo", label="修改待办",
-            description_short='修改待办；关键字段 project_id/project/text',
+            description_short='修改待办；action=complete(done)/rename(text)/move(to_stage)；定位 project/todo',
             description="改一条待办的文本或完成状态，并可选移动到另一个阶段（to_stage）。按文本（部分匹配）或 id 定位，可用 stage 限定查找范围。",
             input_schema={
                 "type": "object",
@@ -771,8 +773,21 @@ class ProjectsSkill(BaseSkill):
                     "text": {"type": "string", "description": "新文本（可选）"},
                     "done": {"type": "boolean", "description": "完成态（可选）"},
                     "to_stage": {"type": "string", "description": "移动到的目标阶段名称或 key（可选）"},
+                    "action": {"type": "string", "enum": ["complete", "rename", "move"], "description": "complete=完成/取消完成；rename=修改文本；move=移动阶段"},
                 },
                 "required": ["todo"],
+                "anyOf": [
+                    {"required": ["action"], "oneOf": [
+                        {"properties": {"action": {"const": "complete"}}, "required": ["done"], "not": {"anyOf": [{"required": ["text"]}, {"required": ["to_stage"]}]}},
+                        {"properties": {"action": {"const": "rename"}}, "required": ["text"], "not": {"anyOf": [{"required": ["done"]}, {"required": ["to_stage"]}]}},
+                        {"properties": {"action": {"const": "move"}}, "required": ["to_stage"], "not": {"anyOf": [{"required": ["done"]}, {"required": ["text"]}]}},
+                    ]},
+                    {"not": {"required": ["action"]}, "anyOf": [
+                        {"required": ["done"]},
+                        {"required": ["text"]},
+                        {"required": ["to_stage"]},
+                    ]},
+                ],
             },
             handler=_update_todo,
             mutates=True,

@@ -334,12 +334,13 @@ Redis 采用相同规则：默认连接 Compose 内部的 `redis:6379`，可用
 如果使用内部 Redis，设置 `GUGU_REDIS_PASSWORD` 后 Compose 会同时给内部 Redis
 启用密码认证；不设置则保持开发默认的无密码内网连接。
 
-构建镜像示例（构建上下文必须是仓库根目录，以便包含同级 Runtime 依赖）：
+构建镜像示例（在仓库根目录执行；前端通过 named context 提供同级 Runtime 依赖）：
 
 ```bash
 docker build -f backend/Dockerfile.prod \
   -t ghcr.io/coffeiz/gugu-web-backend:版本号 .
-docker build -f frontend/Dockerfile.prod \
+docker build --build-context runtime=../gugu-interaction-runtime \
+  -f frontend/Dockerfile.prod \
   -t ghcr.io/coffeiz/gugu-web-frontend:版本号 .
 docker push ghcr.io/coffeiz/gugu-web-backend:版本号
 docker push ghcr.io/coffeiz/gugu-web-frontend:版本号

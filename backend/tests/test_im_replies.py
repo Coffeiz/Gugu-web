@@ -13,42 +13,6 @@ def test_qq_expired_msg_id_is_treated_as_passive_reply_failure():
     assert _qq_msg_id_invalid(exc)
 
 
-@pytest.mark.asyncio
-async def test_qq_stream_timer_cancel_does_not_cancel_inflight_flush(monkeypatch):
-    """finish 取消节流任务时，已开始的刷新仍必须完成，避免卡在生成中。"""
-    import asyncio
-
-    from agent.gateway import qq
-
-    stream = qq.QQPrivateTextStream("bot-1", "user-1", message_id=None, message_format=None)
-    original_sleep = asyncio.sleep
-    started = asyncio.Event()
-    release = asyncio.Event()
-    completed = asyncio.Event()
-    calls = []
-
-    async def fake_sleep(_delay):
-        return None
-
-    async def fake_flush(*_args, **_kwargs):
-        calls.append("started")
-        started.set()
-        await release.wait()
-        completed.set()
-
-    monkeypatch.setattr(qq.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(stream, "_flush", fake_flush)
-    timer = asyncio.create_task(stream._delayed_flush())
-    stream._timer = timer
-    await started.wait()
-    timer.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await timer
-    release.set()
-    # shield 创建的刷新任务仍在运行，且最终能够正常完成。
-    await asyncio.wait_for(completed.wait(), timeout=1)
-    await original_sleep(0)
-    assert calls == ["started"]
 
 
 @pytest.mark.asyncio
@@ -319,73 +283,6 @@ async def test_tool_event_platform_fallbacks_keep_result_and_hide_input(monkeypa
         assert result_text == "✅ 联网搜索完成"
 
 
-@pytest.mark.asyncio
-async def test_qq_private_stream_uses_replace_frames_and_stream_id(monkeypatch):
-    from agent.gateway import qq
-    from agent.im.replies import send_stream_with_fallback
-
-    requests = []
-
-    async def fake_request(channel_id, method, path, *, json_body=None, **kwargs):
-        requests.append(json_body)
-        return {"stream_msg_id": "stream-1"}
-
-    monkeypatch.setattr(qq, "_qq_request", fake_request)
-    monkeypatch.setattr(qq, "_next_stream_seq", lambda _channel: _stream_seq())
-
-    async def events():
-        yield ("token", "你好")
-        yield ("token", "，世界")
-        from agent.models import AgentResponse
-        yield ("final", AgentResponse(text="你好，世界", session_id=1))
-
-    async def _stream_seq():
-        return 42
-
-    sent, response, text = await send_stream_with_fallback({
-        "platform": "qq", "chat_type": "c2c", "channel_id": "bot-1",
-        "platform_user_id": "user-1", "message_id": "incoming-1",
-        "message_format": "compat",
-    }, events())
-
-    assert sent is True
-    assert response.text == "你好，世界"
-    assert text == "你好，世界"
-    assert [item["input_state"] for item in requests] == [1, 10]
-    assert all(item["input_mode"] == "replace" for item in requests)
-    assert [item["index"] for item in requests] == [0, 1]
-    assert requests[0]["content_raw"] == requests[1]["content_raw"] == "你好，世界"
-    assert "stream_msg_id" not in requests[0]
-    assert requests[1]["stream_msg_id"] == "stream-1"
-    assert requests[0]["msg_seq"] == requests[1]["msg_seq"] == 42
-
-
-@pytest.mark.asyncio
-async def test_qq_private_stream_first_frame_failure_falls_back_once(monkeypatch):
-    from agent.gateway import qq
-    from agent.im import replies
-    from agent.models import AgentResponse
-
-    async def failed_request(*args, **kwargs):
-        raise qq.QQAPIError("POST", "/stream_messages", 400, {"code": 40001})
-
-    fallback = []
-    monkeypatch.setattr(qq, "_qq_request", failed_request)
-    monkeypatch.setattr(replies, "send_text", lambda payload, text: fallback.append(text))
-
-    async def events():
-        yield ("token", "失败前的内容")
-        yield ("final", AgentResponse(text="失败前的内容", session_id=1))
-
-    sent, _response, text = await replies.send_stream_with_fallback({
-        "platform": "qq", "chat_type": "c2c", "channel_id": "bot-1",
-        "platform_user_id": "user-1", "message_id": "incoming-1",
-    }, events())
-
-    assert sent is False
-    assert text == "失败前的内容"
-    # 发送器本身不重复发送；worker 会在 sent=False 时统一走一次普通回复。
-    assert fallback == []
 
 
 @pytest.mark.asyncio
@@ -567,29 +464,3 @@ async def test_send_file_dispatches_by_platform(monkeypatch):
         {"platform": "unknown"}, storage_key="k", ext="png", display_name="n", fname="n.png",
     )
     assert ok is False
-
-
-@pytest.mark.asyncio
-async def test_unsupported_stream_capability_falls_back_before_gateway(monkeypatch):
-    from agent.im import replies
-
-    called = []
-
-    async def fake_stream(*args):
-        called.append(args)
-        return True, object()
-
-    monkeypatch.setattr("agent.gateway.feishu.send_text_stream", fake_stream)
-    sent = []
-
-    async def fake_text(payload, text):
-        sent.append(text)
-
-    monkeypatch.setattr(replies, "send_text", fake_text)
-    ok, response = await replies.send_stream(
-        {"platform": "qq", "platform_user_id": "user-1"},
-        iter(()),
-    )
-
-    assert (ok, response) == (False, None)
-    assert called == []

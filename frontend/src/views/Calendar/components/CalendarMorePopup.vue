@@ -39,7 +39,7 @@ defineExpose({ contains: (target: Node) => !!popup.value?.contains(target) })
 </script>
 
 <style>
-.overflow-popup { background: var(--panel-bg); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.82); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 28px rgba(30,40,80,0.14); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.overflow-popup { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .overflow-popup-title { font-size: 12px; font-weight: 700; color: var(--text-secondary); line-height: 1; padding-bottom: 2px; margin-bottom: -2px; }
 .overflow-list { display: flex; flex-direction: column; gap: 4px; }
 .overflow-item { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 99px; border: 1px solid transparent; font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; }

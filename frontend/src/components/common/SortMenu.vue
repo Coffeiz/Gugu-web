@@ -57,7 +57,7 @@ defineExpose({ closeMenu })
       </svg>
     </button>
     <!-- 与右键菜单同源：Teleport 到 body，backdrop-filter 才能正确生效 -->
-    <ContextMenu :show="sortMenuOpen" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
+    <ContextMenu :show="sortMenuOpen" :anchor="sortBtnRef" :x="sortMenuPos.x" :y="sortMenuPos.y" @close="closeMenu">
       <button
         v-for="opt in options"
         :key="opt.key"

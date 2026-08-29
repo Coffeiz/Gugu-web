@@ -13,10 +13,11 @@ import asyncio
 import errno
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 OVERRIDE_FILE = Path(
@@ -275,6 +276,37 @@ class SmtpSettings(BaseModel):
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
 
 
+class SecuritySettings(BaseModel):
+    """安全策略配置；短窗口计数仍存 Redis，配置只决定策略边界。"""
+
+    ownership_window_seconds: int = Field(
+        5 * 60, ge=60, le=24 * 3600, description="越权拒绝计数窗口（秒）"
+    )
+    ownership_throttle_threshold: int = Field(
+        5, ge=1, le=1000, description="窗口内触发限流的拒绝次数"
+    )
+    ownership_suspend_threshold: int = Field(
+        10, ge=1, le=1000, description="窗口内触发冻结判定的拒绝次数"
+    )
+    ownership_suspend_duration_seconds: int = Field(
+        10 * 60, ge=60, le=30 * 24 * 3600, description="临时冻结持续时间（秒）"
+    )
+    ownership_auto_response_enabled: bool = Field(
+        False, description="是否允许风险策略自动执行限流/冻结；默认关闭"
+    )
+    alert_email_enabled: bool = Field(False, description="是否发送安全策略邮箱告警；默认关闭")
+    alert_email_recipients: list[str] = Field(default_factory=list, description="安全告警目标邮箱")
+
+    @field_validator("alert_email_recipients")
+    @classmethod
+    def validate_alert_email_recipients(cls, values: list[str]) -> list[str]:
+        pattern = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+        normalized = [str(value).strip() for value in values]
+        if any(not pattern.fullmatch(value) for value in normalized):
+            raise ValueError("安全告警目标邮箱格式无效")
+        return list(dict.fromkeys(normalized))
+
+
 class EmbeddingSettings(BaseModel):
     """向量 embedding 模型——**独立于聊天/语音模型，单独 pin**（见 docs/agent/参考/咕咕改进方案-MaiBot借鉴.md 改进一）。
 
@@ -317,6 +349,7 @@ class AppSettings(BaseSettings):
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
     byok: BYOKSettings = Field(default_factory=BYOKSettings)
     # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
@@ -431,6 +464,13 @@ class AppSettings(BaseSettings):
                 }}
                 updates["smtp"] = SmtpSettings.model_construct(**merged)
 
+            if "security" in override:
+                merged = {**self.security.model_dump(), **{
+                    k: v for k, v in (override["security"] or {}).items()
+                    if k in SecuritySettings.model_fields
+                }}
+                updates["security"] = SecuritySettings.model_validate(merged)
+
             if "agent" in override:
                 merged = {**self.agent.model_dump(), **{
                     k: v for k, v in override["agent"].items()
@@ -459,7 +499,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding", "sandbox", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "byok"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]

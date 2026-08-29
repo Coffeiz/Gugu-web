@@ -52,19 +52,3 @@ async def resolve_message_format(bot_id: str, chat_type: str | None) -> str:
         return fallback
     value = bot.group_message_format if chat_type == "group" else bot.private_message_format
     return value if value in MESSAGE_FORMATS else fallback
-
-
-async def resolve_private_streaming_enabled(bot_id: str) -> bool:
-    """读取 QQ C2C 流式开关；查不到配置时保持默认关闭。"""
-    import app.db.session as db_session
-    from app.models import UserBot
-
-    if db_session._engine is None:
-        db_session._build_engine()
-    try:
-        bot_db_id = int(bot_id)
-    except (TypeError, ValueError):
-        return False
-    async with db_session._SessionLocal() as db:
-        bot = await db.get(UserBot, bot_db_id)
-    return False if bot is None else bool(getattr(bot, "private_streaming_enabled", False))
