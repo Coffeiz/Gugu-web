@@ -72,16 +72,29 @@ export const useLiveStore = defineStore('live', () => {
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''
+        let sseEvent = ''
         while (running) {
           const { value, done } = await reader.read()
           if (done) break
           buf += decoder.decode(value, { stream: true })
           const lines = buf.split('\n'); buf = lines.pop() ?? ''
           for (const line of lines) {
-            if (!line.startsWith('data:')) continue   // 跳过 keepalive 注释行
+            if (line.startsWith('event:')) {
+              sseEvent = line.slice(6).trim()
+              continue
+            }
+            if (!line.startsWith('data:')) {
+              if (!line.trim()) sseEvent = ''
+              continue   // 跳过 keepalive 注释行
+            }
             const raw = line.slice(5).trim(); if (!raw) continue
             try {
               const evt = JSON.parse(raw)
+              if (sseEvent === 'account_suspended') {
+                uiStore.pushNotification({ title: '账号暂时不可用', content: evt.message || '请联系管理员处理。', persist: false, bubble: true })
+                running = false
+                break
+              }
               if (isLiveEventPayload(evt)) {
                 const canonical = evt as LiveEventPayload
                 if (seenEventIds.has(canonical.event_id)) continue
@@ -101,6 +114,7 @@ export const useLiveStore = defineStore('live', () => {
                 uiStore.pushNotification(evt.notification)
               }
             } catch { /* 忽略坏行 */ }
+            sseEvent = ''
           }
         }
       } catch (e) {

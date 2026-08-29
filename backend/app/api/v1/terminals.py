@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import decode_user_token, get_current_user
+from app.core.security import account_is_active, decode_user_token, get_current_user, is_user_active
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
@@ -133,7 +133,7 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
     try:
         user_id = decode_user_token(_websocket_token(websocket))
         user = await db.get(User, user_id)
-        row = await get_terminal(db, user_id, terminal_id) if user and user.is_active else None
+        row = await get_terminal(db, user_id, terminal_id) if account_is_active(user) else None
         if row is None or row.mode != "interactive-pty":
             raise HTTPException(status_code=404, detail="交互式终端不存在")
         access = await authorize_operation(
@@ -182,11 +182,16 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
 
     receive_task = asyncio.create_task(websocket.receive_json())
     output_task = asyncio.create_task(queue.get())
+    status_task = asyncio.create_task(_wait_for_account_suspend(user_id))
     try:
         while True:
             done, _ = await asyncio.wait(
-                {receive_task, output_task}, return_when=asyncio.FIRST_COMPLETED,
+                {receive_task, output_task, status_task}, return_when=asyncio.FIRST_COMPLETED,
             )
+            if status_task in done:
+                if not status_task.result():
+                    await websocket.close(code=4403, reason="账号暂时不可用")
+                break
             if output_task in done:
                 chunk = output_task.result()
                 if chunk is None:
@@ -196,7 +201,11 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
                     await db.commit()
                     await events.publish(user_id, "terminals", operation="update", entity_id=row.id,
                                          event_payload=serialize_terminal(row))
-                    await websocket.send_json({"type": "exit"})
+                    try:
+                        await websocket.send_json({"type": "exit"})
+                    except (RuntimeError, WebSocketDisconnect):
+                        # 客户端可能已在 PTY 退出前主动断开，不能向已关闭连接补发消息。
+                        pass
                     break
                 await websocket.send_json({
                     "type": "output", "data": base64.b64encode(chunk).decode("ascii"),
@@ -219,16 +228,34 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         logger.info("terminal_pty websocket_disconnected")
     except (ValueError, LookupError, RuntimeError) as exc:
         logger.warning("terminal_pty websocket_message_failed error=%s", type(exc).__name__)
-        await websocket.send_json({"type": "error", "errorCode": "pty_request_rejected", "message": str(exc)[:120]})
+        try:
+            await websocket.send_json({"type": "error", "errorCode": "pty_request_rejected", "message": str(exc)[:120]})
+        except (RuntimeError, WebSocketDisconnect):
+            pass
     finally:
         receive_task.cancel()
         output_task.cancel()
-        await asyncio.gather(receive_task, output_task, return_exceptions=True)
+        status_task.cancel()
+        await asyncio.gather(receive_task, output_task, status_task, return_exceptions=True)
         await manager.unsubscribe(row.id, queue)
         try:
             await manager.detach(row.id)
         except LookupError:
             pass
+
+
+async def _wait_for_account_suspend(user_id):
+    """轮询账户安全状态，避免已建立的终端连接绕过冻结。"""
+    while True:
+        await asyncio.sleep(5)
+        try:
+            active = await is_user_active(user_id)
+        except Exception:
+            # 已建立连接遇到一次数据库抖动时保留连接，下一轮继续检查。
+            logger.warning("terminal_pty account_status_check_failed")
+            continue
+        if not active:
+            return False
 
 
 @router.get("/{terminal_id}/events")

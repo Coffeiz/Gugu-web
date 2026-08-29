@@ -104,6 +104,10 @@ async def _auto_cleanup_loop():
                 n = await cleanup_expired(db)
                 if n:
                     logger.info("回收站自动清理 %d 个过期文件", n)
+                from app.security.events import cleanup_expired_security_events
+                security_n = await cleanup_expired_security_events(db)
+                if security_n:
+                    logger.info("安全事件自动清理 %d 条过期记录", security_n)
         except Exception as e:
             logger.error("回收站自动清理出错: %s", e, exc_info=True)
         # 缩略图 TTL 驱逐（每 24 小时一次）

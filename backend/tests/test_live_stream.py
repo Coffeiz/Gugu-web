@@ -91,6 +91,20 @@ async def test_event_stream_uses_user_and_broadcast_channels_and_closes_pubsub(m
 
 
 @pytest.mark.asyncio
+async def test_event_stream_stops_after_account_is_suspended(monkeypatch):
+    request = _Request()
+    pubsub = _PubSub(request)
+    monkeypatch.setattr(live, "get_redis", lambda: _Redis(pubsub))
+
+    async def inactive(_user_id):
+        return False
+
+    frames = [frame async for frame in live._event_stream(request, "user-1", active_check=inactive)]
+    assert frames == [": connected\n\n", "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"]
+    assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
 async def test_publish_uses_resource_revision_not_global_revision(monkeypatch):
     class Redis:
         def __init__(self):

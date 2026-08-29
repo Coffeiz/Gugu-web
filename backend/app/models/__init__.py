@@ -34,6 +34,10 @@ class User(Base):
     hashed_password: Mapped[str]           = mapped_column(String(200))
     display_name:         Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default=None)
     is_active:            Mapped[bool]          = mapped_column(Boolean, default=True)
+    account_status:      Mapped[str]           = mapped_column(String(16), default="active", index=True)
+    suspended_until:     Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    suspended_reason:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
+    security_version:    Mapped[int]           = mapped_column(Integer, default=1)
     avatar:               Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
     created_at:           Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     token_limit_monthly:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
@@ -59,6 +63,36 @@ class User(Base):
     user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
+    )
+    security_events: Mapped[list["SecurityEvent"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class SecurityEvent(Base):
+    """脱敏安全事件事实；策略计数和账户冻结不在模型层完成。"""
+    __tablename__ = "security_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(120), index=True)
+    resource_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    owner_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    client_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ip_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(32), default="logged", index=True)
+    reason_code: Mapped[str] = mapped_column(String(80), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="security_events")
+
+    __table_args__ = (
+        Index("ix_security_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_security_events_type_occurred", "event_type", "occurred_at"),
     )
 
 
@@ -924,8 +958,6 @@ class UserBot(Base):
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
     group_message_format: Mapped[str] = mapped_column(String(16), default="compat")
     private_message_format: Mapped[str] = mapped_column(String(16), default="smart")
-    # QQ C2C 私聊是否使用官方 stream_messages；群聊永远不走该接口。
-    private_streaming_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # QQ 当前 Bot 作用域内的 owner 身份；不作为跨 Bot 全局 QQ ID 使用。
     owner_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     owner_bound_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)

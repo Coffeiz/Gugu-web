@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
 from app.core.redis import get_redis
-from app.core.security import get_current_user_id
+from app.core.security import get_current_user_id, is_user_active
 
 router = APIRouter(prefix="/live", tags=["live"])
 
@@ -58,7 +58,7 @@ def _serialize_message(raw: Any) -> str | None:
     return f"data: {json.dumps(value, ensure_ascii=False, separators=(',', ':'))}\n\n"
 
 
-async def _event_stream(request: Request, user_id: Any) -> AsyncIterator[str]:
+async def _event_stream(request: Request, user_id: Any, active_check=None) -> AsyncIterator[str]:
     redis = get_redis()
     pubsub = redis.pubsub()
     channels = (f"events:{user_id}", BROADCAST_CHANNEL)
@@ -66,9 +66,12 @@ async def _event_stream(request: Request, user_id: Any) -> AsyncIterator[str]:
     try:
         yield ": connected\n\n"
         while not await request.is_disconnected():
+            if active_check is not None and not await active_check(user_id):
+                yield "event: account_suspended\ndata: {\"message\":\"账号暂时不可用\"}\n\n"
+                return
             message = await pubsub.get_message(
                 ignore_subscribe_messages=True,
-                timeout=20.0,
+                timeout=5.0,
             )
             if message:
                 frame = _serialize_message(message.get("data"))
@@ -92,7 +95,7 @@ async def stream_live_events(
 ) -> StreamingResponse:
     """订阅当前用户的资源事件和全局通知，不创建或持有数据库连接。"""
     return StreamingResponse(
-        _event_stream(request, user_id),
+        _event_stream(request, user_id, active_check=is_user_active),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
