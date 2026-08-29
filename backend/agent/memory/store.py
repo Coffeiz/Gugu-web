@@ -663,22 +663,6 @@ async def write_summary(user_id, text: str) -> None:
                  json.dumps({"text": text.strip(), "ts": time.time()}, ensure_ascii=False))
 
 
-# ── temp.json（关系温度：滑动窗口聚合的当下互动质量，memory/temperature.py 算，只喂语气校准）──
-async def read_temperature(user_id) -> dict | None:
-    raw = (await _read(_key(user_id, "temp.json"))).strip()
-    if not raw:
-        return None
-    try:
-        d = json.loads(raw)
-        return d if isinstance(d, dict) else None
-    except Exception:
-        return None
-
-
-async def write_temperature(user_id, data: dict) -> None:
-    await _write(_key(user_id, "temp.json"), json.dumps(data, ensure_ascii=False))
-
-
 # ── stance.json（本轮相处姿态 = perception.intent；反思写，builder 据此 + 新鲜度点亮行为模块）──
 async def read_stance(user_id) -> tuple[str | None, float | None]:
     """返回 (stance, ts)；无/解析失败返回 (None, None)。stance = 上轮反思判的 intent。"""

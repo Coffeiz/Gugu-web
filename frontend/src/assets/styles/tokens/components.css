@@ -140,6 +140,13 @@
   --calendar-chip-hover-overlay: var(--surface-hover-tint);
   --calendar-capsule-surface-overlay: transparent;
   --calendar-capsule-hover-overlay: var(--surface-hover-tint);
+  --calendar-cap-project-bg: rgba(255,255,255,.55);
+  --calendar-cap-event-bg: rgba(210,175,40,.28);
+  --calendar-cap-event-fg: #7a5c00;
+  --calendar-cap-pending-dot: #9e9fc4;
+  --calendar-cap-active-dot: var(--action-primary);
+  --calendar-cap-hover-shadow: inset 0 0 0 100px rgba(255,255,255,.45), 0 2px 6px rgba(80,90,110,.1);
+  --calendar-chip-hover-highlight: rgba(255,255,255,0.45);
 
   /* Gugu FAB */
   --gugu-fab-size: 50px;

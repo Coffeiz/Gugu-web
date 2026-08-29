@@ -4,7 +4,7 @@
 > 创建：2026-08-30
 > 最近更新：2026-08-30
 > 关联模块：`frontend/src/`、`backend/app/api/`、`docs/prds/`
-> 背景参考：`docs/prds/PRD-UI-5-CSS样式职责收口与主题层统一.md`、`frontend/src/router/`、`frontend/src/services/`
+> 背景参考：`docs/prds/【已完成】PRD-UI-5-CSS样式职责收口与主题层统一.md`、`frontend/src/router/`、`frontend/src/services/`
 
 ## 0. 实际状态
 

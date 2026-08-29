@@ -56,8 +56,9 @@
         <div v-for="(f, i) in data.flags" :key="i" class="flag-item"><span class="flag-dot">!</span>{{ f }}</div>
       </div>
 
-      <div class="section-label">总览</div>
-      <div class="cards-grid">
+      <section class="data-section">
+        <div class="section-head"><h3>总览</h3></div>
+        <div class="cards-grid">
         <div class="card">
           <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
           <div class="card-val">{{ data.active_users }}</div>
@@ -78,79 +79,65 @@
           <div class="card-val">{{ data.avg_ambiguity ?? '—' }}</div>
           <div class="card-lbl">平均歧义度 · 情绪 {{ data.avg_emo_strength ?? '—' }}</div>
         </div>
-      </div>
+        </div>
+      </section>
 
       <template v-if="data.misperc_by_kind && data.misperc_by_kind.length">
-        <div class="section-label">纠错构成<span class="sl-hint">反思 LLM 判定 · 区分「读错需求」与「数据/执行错」</span></div>
-        <div class="emo-strip">
-          <span v-for="k in data.misperc_by_kind" :key="k.kind"
-            :class="['kind-chip', kindCls(k.kind)]">{{ k.kind }} · {{ k.count }}</span>
-          <span class="kind-chip">总纠错率 {{ pct(data.overall_misperc_rate) }}</span>
-        </div>
+        <section class="data-section">
+          <div class="section-head"><h3>纠错构成</h3><p>反思 LLM 判定 · 区分「读错需求」与「数据/执行错」</p></div>
+          <div class="chart-frame compact-chart">
+            <AdminBarChart :labels="kindChart.labels" :values="kindChart.values" unit=" 条" :max="kindChart.max" />
+          </div>
+        </section>
       </template>
 
-      <div class="section-label">需求类型分布 & 误判率<span class="sl-hint">占比=按用户宏平均 · 误判率=被下一句纠正的比例</span></div>
-      <div v-if="!intents.length" class="state-msg sm-sm">暂无数据</div>
-      <div v-else class="dist">
-        <div v-for="r in intents" :key="r.intent" class="dist-row">
-          <span class="dist-name">{{ r.intent }}</span>
-          <div class="dist-track"><div class="dist-fill" :style="{ width: r.pct + '%' }"></div></div>
-          <span class="dist-pct">{{ r.pct }}%</span>
-          <span class="dist-rate" :class="rateClass(r.misperc_rate)">误判 {{ pct(r.misperc_rate) }}<i>n={{ r.count }}</i></span>
-        </div>
-      </div>
+      <section class="data-section">
+        <div class="section-head"><h3>需求类型分布 &amp; 误判率</h3><p>每类一条：整体占比为总长度，其中误判部分内嵌高亮</p></div>
+        <div v-if="!intents.length" class="state-msg sm-sm">暂无数据</div>
+        <IntentDistribution v-else :items="intents" :rate-high="rateHiPct / 100" />
+      </section>
 
       <template v-if="data.by_model && data.by_model.length">
-        <div class="section-label">按模型</div>
-        <div class="dist">
-          <div v-for="r in data.by_model" :key="r.model" class="dist-row">
-            <span class="dist-name wide">{{ r.model }}</span>
-            <span class="dist-meta">{{ r.count }} 条</span>
-            <span class="dist-rate" :class="rateClass(r.misperc_rate)">误判 {{ pct(r.misperc_rate) }}</span>
+        <section class="data-section">
+          <div class="section-head"><h3>按模型</h3></div>
+          <div class="chart-frame">
+            <AdminBarChart :labels="modelChart.labels" :values="modelChart.values" unit=" 条" :max="modelChart.max" :height="modelChart.height" />
           </div>
-        </div>
+        </section>
       </template>
 
       <template v-if="data.emotion_distribution && data.emotion_distribution.length">
-        <div class="section-label">情绪分布</div>
-        <div class="emo-strip">
-          <span v-for="e in data.emotion_distribution" :key="e.emotion" class="emo-chip">{{ e.emotion }} · {{ e.count }}</span>
-        </div>
+        <section class="data-section">
+          <div class="section-head"><h3>情绪分布</h3></div>
+          <div class="chart-frame compact-chart">
+            <AdminBarChart :labels="emotionChart.labels" :values="emotionChart.values" unit=" 条" :max="emotionChart.max" />
+          </div>
+        </section>
       </template>
 
-      <div class="section-label">反馈信号<span class="sl-hint">学习闭环的燃料 · 用户怎么接上一轮（正:确认夸赞/顺着聊/主动分享 · 负:改写重问/无视跳开）</span></div>
-      <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">暂无反馈信号（采集器 2026-07-02 上线,聊几轮就会积累）</div>
-      <div v-else class="emo-strip">
-        <span v-for="f in data.feedback_distribution" :key="f.feedback"
-          :class="['kind-chip', fbCls(f.feedback)]">{{ f.feedback }} · {{ f.count }}</span>
-        <span class="kind-chip">共 {{ data.feedback_total }} 条</span>
-      </div>
+      <section class="data-section">
+        <div class="section-head"><h3>反馈信号</h3><p>学习闭环的燃料 · 用户怎么接上一轮（正:确认夸赞/顺着聊/主动分享 · 负:改写重问/无视跳开）</p></div>
+        <div v-if="!data.feedback_distribution?.length" class="state-msg sm-sm">暂无反馈信号（采集器 2026-07-02 上线,聊几轮就会积累）</div>
+        <div v-else class="chart-frame compact-chart">
+          <AdminBarChart :labels="feedbackChart.labels" :values="feedbackChart.values" unit=" 条" :max="feedbackChart.max" />
+        </div>
+      </section>
     </template>
 
-    <!-- 关系温度（独立于活跃用户统计，始终显示；v1 只有当前值，无历史曲线——见 temperature.py） -->
-    <div class="section-label">关系温度<span class="sl-hint">28 天滑动窗口·回访+深度+分享+正负延续比 · 只有当前值，暂无历史曲线</span></div>
-    <div v-if="!temps.length" class="state-msg sm-sm">暂无数据（用户对话满一轮反思才会算，且现存值 24h 内不重算）</div>
-    <div v-else class="dist">
-      <div v-for="t in temps" :key="t.user_id" class="dist-row">
-        <span class="dist-name">{{ t.name }}</span>
-        <div class="dist-track"><div class="dist-fill" :style="{ width: (t.temp * 100) + '%' }"></div></div>
-        <span class="dist-pct">{{ (t.temp * 100).toFixed(0) }}%</span>
-        <span class="dist-rate">回访{{ t.components?.raw?.active_days ?? '—' }}天<i>深度{{ t.components?.raw?.avg_depth ?? '—' }}</i></span>
-      </div>
-    </div>
-
     <!-- 错读案例预览（独立于活跃用户统计，始终显示） -->
-    <div class="section-label">错读案例<span class="sl-hint">咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</span>
-      <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
-    </div>
-    <div v-if="!misread.length" class="state-msg sm-sm">暂无错读案例（需发生一次「误读 + 用户纠正」才记一条）</div>
-    <div v-else class="mr-list">
-      <div v-for="(c, i) in misread" :key="i" class="mr-row">
-        <span class="mr-time">{{ fmtTs(c.ts) }}</span>
-        <span class="mr-flow"><b>{{ c.miss?.read_as || '—' }}</b><i>→</i><b>{{ c.miss?.actual || '—' }}</b></span>
-        <span class="mr-pattern">{{ c.miss?.pattern || '—' }}</span>
+    <section class="data-section">
+      <div class="section-head"><div><h3>错读案例</h3><p>咕咕「读错需求」的脱敏反思 · 最近 {{ misread.length }} 条</p></div>
+        <button class="dl-btn" @click="downloadMisread" :disabled="dling">{{ dling ? '下载中…' : '下载完整记录' }}</button>
       </div>
-    </div>
+      <div v-if="!misread.length" class="state-msg sm-sm">暂无错读案例（需发生一次「误读 + 用户纠正」才记一条）</div>
+      <div v-else class="mr-list">
+        <div v-for="(c, i) in misread" :key="i" class="mr-row">
+          <span class="mr-time">{{ fmtTs(c.ts) }}</span>
+          <span class="mr-flow"><b>{{ c.miss?.read_as || '—' }}</b><i>→</i><b>{{ c.miss?.actual || '—' }}</b></span>
+          <span class="mr-pattern">{{ c.miss?.pattern || '—' }}</span>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -159,6 +146,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import Checkbox from '@/components/common/Checkbox.vue'
 import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
+import AdminBarChart from '@/components/admin/AdminBarChart.vue'
+import IntentDistribution from './components/IntentDistribution.vue'
 
 interface PerceptionData {
   active_users?: number
@@ -208,10 +197,29 @@ function resetThresholds() {
 }
 
 const intents = computed(() => data.value.intent_distribution || [])
+const kindChart = computed(() => {
+  const rows = data.value.misperc_by_kind || []
+  const values = rows.map(r => r.count)
+  return { labels: rows.map(r => r.kind), values, max: Math.max(...values, 1) }
+})
+const modelChart = computed(() => {
+  const rows = data.value.by_model || []
+  const values = rows.map(r => r.count)
+  return { labels: rows.map(r => r.model), values, max: Math.max(...values, 1), height: Math.max(196, rows.length * 34 + 48) }
+})
+const emotionChart = computed(() => {
+  const rows = data.value.emotion_distribution || []
+  const values = rows.map(r => r.count)
+  return { labels: rows.map(r => r.emotion), values, max: Math.max(...values, 1) }
+})
+const feedbackChart = computed(() => {
+  const rows = data.value.feedback_distribution || []
+  const values = rows.map(r => r.count)
+  return { labels: rows.map(r => r.feedback), values, max: Math.max(...values, 1) }
+})
 
 const misread = ref<any[]>([])
 const dling = ref(false)
-const temps = ref<any[]>([])
 const excludeDev = ref(false)
 
 async function load() {
@@ -219,7 +227,6 @@ async function load() {
   refreshing.value = true
   setTimeout(() => { refreshing.value = false }, 550)
   loadMisread()   // 错读案例独立拉取（不受活跃用户/阈值影响），刷新时一并更新
-  loadTemperature()   // 关系温度同样独立拉取
   try {
     const me = Math.max(1, minEvents.value || 1)
     const rate = Math.min(1, Math.max(0, (rateHiPct.value || 0) / 100))
@@ -237,15 +244,7 @@ function setRange(h: string) { hours.value = Number(h); load() }
 
 function pct(v: number | null | undefined) { return v == null ? '—' : (v * 100).toFixed(0) + '%' }
 // 标红线 = 当前 rateHiPct；标黄 = 其 0.6 倍（随面板阈值联动）
-function rateClass(v: number | null | undefined) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'bad' : (v != null && v > mid ? 'warn' : '') }
 function rateCard(v: number | null | undefined) { const hi = rateHiPct.value / 100, mid = hi * 0.6; return v != null && v > hi ? 'card-bad' : (v != null && v > mid ? 'card-active' : '') }
-// 纠错构成配色：感知误读=红（该优化）、数据/执行错=琥珀（归数据/工具）、未判=灰
-function kindCls(k: string) { return k === '感知误读' ? 'kc-bad' : (k === '数据或执行错' ? 'kc-warn' : 'kc-dim') }
-function fbCls(v: any) {
-  if (['确认夸赞', '顺着聊', '主动分享'].includes(v)) return 'kc-good'
-  if (['改写重问', '无视跳开'].includes(v)) return 'kc-bad'
-  return 'kc-dim'
-}
 
 async function loadMisread() {
   try {
@@ -254,12 +253,6 @@ async function loadMisread() {
   } catch (e) { /* 预览失败不打断主面板 */ }
 }
 
-async function loadTemperature() {
-  try {
-    const res = await adminStore.authFetch(`/api/v1/admin/perception/temperature?exclude_dev=${excludeDev.value}`)
-    if (res.ok) temps.value = (await res.json()).users || []
-  } catch (e) { /* 预览失败不打断主面板 */ }
-}
 const exporting = ref(false)
 async function exportData() {
   exporting.value = true
@@ -304,8 +297,8 @@ onMounted(load)
 /* ── header（对齐其它后台面板）── */
 .page-header { padding: 32px 36px 0; display: flex; align-items: flex-start; justify-content: space-between; }
 .page-title-block { display: flex; flex-direction: column; }
-.page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
-.page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
+.page-title { font-size: 22px; font-weight: 700; color: var(--content-primary); line-height: 1; }
+.page-desc  { font-size: 12px; color: var(--content-tertiary); margin-top: 6px; }
 .header-right { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
 .header-right > .data-header-control { height: 32px; box-sizing: border-box; }
 
@@ -313,75 +306,58 @@ onMounted(load)
 /* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 阈值条 ── */
-.ctrl-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 16px 36px 0; }
+.ctrl-bar { margin: 20px 36px 0; display: flex; align-items: center; flex-wrap: wrap; gap: 16px; padding: 12px 14px; background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.07); border-radius: 10px; }
 .ctrl-grp { display: flex; align-items: center; gap: 6px; }
-.ctrl-grp label { font-size: 11.5px; color: rgba(255,255,255,0.42); }
-.ctrl-grp input { width: 54px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: rgba(255,255,255,0.85); font-size: 12px; padding: 4px 7px; text-align: right; outline: none; transition: border-color .15s; }
-.ctrl-grp input:focus { border-color: rgba(150,155,210,0.55); }
-.ctrl-u { font-size: 11px; color: rgba(255,255,255,0.3); }
-.ctrl-reset { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: rgba(255,255,255,0.55); font-size: 11.5px; border-radius: 6px; padding: 4px 10px; cursor: pointer; transition: all .15s; }
-.ctrl-reset:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.8); }
-.ctrl-note { margin-left: auto; font-size: 10.5px; color: rgba(255,255,255,0.25); }
+.ctrl-grp label { font-size: 11.5px; color: var(--content-secondary); }
+.ctrl-grp input { width: 54px; background: var(--input-bg); border: 1px solid var(--input-border); border-radius: 6px; color: var(--input-fg); font-size: 12px; padding: 4px 7px; text-align: right; outline: none; transition: border-color .15s; }
+.ctrl-grp input:focus { border-color: var(--input-border-focus); }
+.ctrl-u { font-size: 11px; color: var(--content-tertiary); }
+.ctrl-reset { background: var(--control-bg); border: 1px solid var(--control-border); color: var(--content-secondary); font-size: 11.5px; border-radius: 6px; padding: 4px 10px; cursor: pointer; transition: all .15s; }
+.ctrl-reset:hover { background: var(--control-bg-hover); color: var(--content-primary); }
+.ctrl-note { margin-left: auto; font-size: 10.5px; color: var(--content-tertiary); }
 
-.state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
-.state-msg.err { color: #e07070; }
+.state-msg { padding: 60px 36px; text-align: center; color: var(--content-tertiary); font-size: 14px; }
+.state-msg.err { color: var(--status-danger); }
 .state-msg.sm-sm { padding: 24px 36px; }
 
-/* ── section label ── */
-.section-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; color: rgba(255,255,255,0.3); text-transform: uppercase; padding: 28px 36px 10px; display: flex; align-items: baseline; gap: 10px; }
-.sl-hint { font-size: 10px; font-weight: 500; letter-spacing: 0; text-transform: none; color: rgba(255,255,255,0.22); }
+/* ── section ── */
+.data-section { margin: 24px 36px 0; padding: 16px 18px 18px; background: var(--surface-glass); border: 1px solid var(--border-subtle); border-radius: 12px; }
+.data-section:first-of-type { margin-top: 28px; }
+.section-head { min-height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.section-head > div { min-width: 0; }
+.section-head h3 { color: var(--content-secondary); font-size: 13px; font-weight: 700; line-height: 1.4; }
+.section-head p { margin-top: 3px; color: var(--content-tertiary); font-size: 11px; line-height: 1.45; }
+.chart-frame { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px 14px 8px; background: var(--surface-soft); border: 1px solid var(--border-subtle); border-radius: 10px; }
+.compact-chart { max-width: none; }
 
 /* ── flags ── */
-.flag-strip { padding: 18px 36px 0; display: flex; flex-direction: column; gap: 8px; }
-.flag-item { display: flex; align-items: center; gap: 9px; background: rgba(224,112,112,0.1); border: 1px solid rgba(224,112,112,0.28); color: rgba(235,150,150,0.95); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; }
-.flag-dot { flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%; background: rgba(224,112,112,0.85); color: #2a1414; font-weight: 800; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+.flag-strip { margin: 18px 36px 0; display: flex; flex-direction: column; gap: 8px; }
+.flag-item { display: flex; align-items: center; gap: 9px; background: var(--status-danger-bg); border: 1px solid color-mix(in srgb,var(--status-danger) 28%,transparent); color: var(--status-danger); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; }
+.flag-dot { flex-shrink: 0; width: 17px; height: 17px; border-radius: 50%; background: var(--status-danger); color: var(--content-on-accent); font-weight: 800; font-size: 12px; display: flex; align-items: center; justify-content: center; }
 
 /* ── cards ── */
-.cards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 0 36px; }
-.card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 18px 18px 14px; }
+.cards-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.card { background: var(--surface-soft); border: 1px solid var(--border-subtle); border-radius: 12px; padding: 18px 18px 14px; }
 .card-icon { width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
-.ic-blue  { background: rgba(123,127,178,0.18); color: rgba(150,155,210,0.9); }
-.ic-amber { background: rgba(201,148,58,0.18); color: rgba(215,165,75,0.9); }
-.card-val { font-size: 28px; font-weight: 700; color: rgba(255,255,255,0.88); line-height: 1; }
-.card-lbl { font-size: 11px; color: rgba(255,255,255,0.4); margin-top: 7px; }
-.card-active { border-color: rgba(201,148,58,0.25); }
-.card-active .card-val { color: #c9943a; }
-.card-bad { border-color: rgba(224,112,112,0.3); }
-.card-bad .card-val { color: #e07070; }
-
-/* ── distribution bars（沿用后台 tool-dist 风格）── */
-.dist { padding: 0 36px; display: flex; flex-direction: column; gap: 9px; }
-.dist-row { display: flex; align-items: center; gap: 12px; }
-.dist-name { width: 64px; flex-shrink: 0; font-size: 12.5px; font-weight: 600; color: rgba(255,255,255,0.7); }
-.dist-name.wide { width: 130px; }
-.dist-track { flex: 1; height: 7px; border-radius: 4px; background: rgba(255,255,255,0.06); max-width: 320px; }
-.dist-fill { height: 100%; border-radius: 4px; background: rgba(123,127,178,0.75); transition: width .3s; }
-.dist-pct { width: 44px; flex-shrink: 0; text-align: right; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.5); }
-.dist-meta { font-size: 12px; color: rgba(255,255,255,0.4); }
-.dist-rate { margin-left: auto; font-size: 12px; color: rgba(255,255,255,0.4); display: flex; align-items: baseline; gap: 5px; }
-.dist-rate i { font-style: normal; font-size: 10.5px; color: rgba(255,255,255,0.25); }
-.dist-rate.warn { color: rgba(215,165,75,0.95); }
-.dist-rate.bad { color: rgba(235,150,150,0.95); font-weight: 700; }
-
-/* ── emotion ── */
-.emo-strip { padding: 0 36px; display: flex; flex-wrap: wrap; gap: 8px; }
-.emo-chip { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.55); border-radius: 8px; padding: 5px 11px; font-size: 12px; }
-.kind-chip { border-radius: 8px; padding: 5px 11px; font-size: 12px; background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.55); border: 1px solid transparent; }
-.kind-chip.kc-bad  { background: rgba(224,112,112,0.12); color: rgba(235,150,150,0.95); border-color: rgba(224,112,112,0.28); }
-.kind-chip.kc-warn { background: rgba(201,148,58,0.12); color: rgba(215,165,75,0.95); border-color: rgba(201,148,58,0.25); }
-.kind-chip.kc-dim  { color: rgba(255,255,255,0.4); }
-.kind-chip.kc-good { background: rgba(90,158,136,0.12); color: rgba(120,190,160,0.95); border-color: rgba(90,158,136,0.28); }
+.ic-blue  { background: var(--action-soft); color: var(--action-primary); }
+.ic-amber { background: var(--status-warning-bg); color: var(--status-warning); }
+.card-val { font-size: 28px; font-weight: 700; color: var(--content-primary); line-height: 1; }
+.card-lbl { font-size: 11px; color: var(--content-tertiary); margin-top: 7px; }
+.card-active { border-color: color-mix(in srgb,var(--status-warning) 28%,transparent); }
+.card-active .card-val { color: var(--status-warning); }
+.card-bad { border-color: color-mix(in srgb,var(--status-danger) 30%,transparent); }
+.card-bad .card-val { color: var(--status-danger); }
 
 /* ── 错读案例预览 ── */
-.dl-btn { margin-left: auto; background: rgba(123,127,178,0.16); border: 1px solid rgba(123,127,178,0.3); color: rgba(170,175,225,0.95); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }
+.dl-btn { margin-left: auto; background: var(--action-soft); border: 1px solid var(--action-outline); color: var(--action-primary); font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 7px; padding: 5px 12px; cursor: pointer; transition: all .15s; }
 .dl-btn.data-header-control { height: 32px; box-sizing: border-box; padding: 0 12px; }
-.dl-btn:hover:not(:disabled) { background: rgba(123,127,178,0.26); }
+.dl-btn:hover:not(:disabled) { background: var(--action-soft-hover); }
 .dl-btn:disabled { opacity: .5; cursor: not-allowed; }
-.mr-list { padding: 0 36px; display: flex; flex-direction: column; gap: 8px; }
+.mr-list { display: flex; flex-direction: column; gap: 8px; }
 .mr-row { display: flex; align-items: baseline; gap: 12px; font-size: 12.5px; padding: 9px 12px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 9px; }
-.mr-time { flex-shrink: 0; width: 78px; color: rgba(255,255,255,0.32); font-size: 11.5px; }
-.mr-flow { flex-shrink: 0; color: rgba(255,255,255,0.7); display: flex; align-items: baseline; gap: 6px; }
+.mr-time { flex-shrink: 0; width: 78px; color: var(--content-tertiary); font-size: 11.5px; }
+.mr-flow { flex-shrink: 0; color: var(--content-secondary); display: flex; align-items: baseline; gap: 6px; }
 .mr-flow b { font-weight: 600; }
-.mr-flow i { font-style: normal; color: rgba(255,255,255,0.3); }
-.mr-pattern { color: rgba(255,255,255,0.5); line-height: 1.5; }
+.mr-flow i { font-style: normal; color: var(--content-tertiary); }
+.mr-pattern { color: var(--content-secondary); line-height: 1.5; }
 </style>

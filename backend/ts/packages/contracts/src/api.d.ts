@@ -3240,28 +3240,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/admin/perception/temperature": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Temperature List
-         * @description 关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
-         *     见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
-         *     exclude_dev=排除开发者账号（is_developer 标记）。
-         */
-        get: operations["temperature_list_api_v1_admin_perception_temperature_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/admin/audit-log": {
         parameters: {
             query?: never;
@@ -11682,37 +11660,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-        };
-    };
-    temperature_list_api_v1_admin_perception_temperature_get: {
-        parameters: {
-            query?: {
-                exclude_dev?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

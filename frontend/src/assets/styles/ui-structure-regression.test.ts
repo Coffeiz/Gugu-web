@@ -19,6 +19,10 @@ const projectModal = load('../../views/Projects/components/ProjectModal.vue')
 const floatPreview = load('../../components/common/FloatPreviewWindow.vue')
 const popovers = load('./adoption/popovers.css')
 const themeRefinements = load('./theme-refinements.css')
+const variables = load('./variables.css')
+const componentEntry = load('./components/index.css')
+const calendarComponentCss = load('./components/calendar.css')
+const bridgeEntry = load('./bridges/index.css')
 const appSidebar = load('../../components/common/AppSidebar.vue')
 const chatSidebar = load('../../components/common/gugu-chat/GuguChatSidebar.vue')
 const chatIm = load('../../components/common/gugu-chat/GuguChatImConnect.vue')
@@ -46,6 +50,49 @@ const calendarMorePopup = load('../../views/Calendar/components/CalendarMorePopu
 const calendarView = load('../../views/Calendar/index.vue')
 
 describe('导航 / popup / disclosure 结构回归契约', () => {
+  it('主题组件覆盖和跨 DOM bridge 只有明确的统一入口', () => {
+    expect(variables).toContain("@import './components/index.css';")
+    expect(variables).toContain("@import './bridges/index.css';")
+    expect(variables).not.toContain("@import './theme-adoption.css';")
+    expect(variables).not.toContain("@import './calendar-theme-bridge.css';")
+    expect(variables).not.toContain("@import './component-theme-refinements.css';")
+    expect(componentEntry).toContain("@import '../theme-adoption.css';")
+    expect(componentEntry).toContain("@import '../component-theme-refinements.css';")
+    expect(componentEntry).toContain("@import './calendar.css';")
+    expect(componentEntry).toContain("@import './files.css';")
+    expect(componentEntry).toContain("@import './popups.css';")
+    expect(componentEntry).toContain("@import './forms.css';")
+    expect(componentEntry).toContain("@import '../file-toolbar-theme-refinements.css';")
+    expect(bridgeEntry).toContain("@import '../calendar-theme-bridge.css';")
+    expect(bridgeEntry).toContain("@import '../overlay-theme-bridge.css';")
+    expect(bridgeEntry).toContain("@import '../file-drop-theme-refinements.css';")
+    expect(calendarComponentCss).toContain('.cap-capsule {')
+    expect(calendarComponentCss).toContain('.cal-chip::after {')
+    expect(calendarComponentCss).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./global.css')).not.toContain('.cap-capsule {')
+    expect(load('./global.css')).not.toContain('.cal-chip::after {')
+    expect(load('./global.css')).not.toContain('.fc-card, .folder-card {')
+    expect(load('./global.css')).not.toContain('.popup-menu {')
+    expect(load('./global.css')).not.toContain('.form-input {')
+    expect(calendarComponentCss).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/files.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/popups.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+    expect(load('./components/forms.css')).not.toMatch(/(?:#(?:[0-9a-f]{3,8})|rgba?\()/i)
+  })
+
+  it('非 Runtime 主题层不接管 Runtime 的 motion 属性', () => {
+    const themeLayers = [
+      load('./theme-refinements.css'),
+      load('./theme-adoption.css'),
+      load('./component-theme-refinements.css'),
+      load('./calendar-theme-bridge.css'),
+      load('./overlay-theme-bridge.css'),
+      load('./file-toolbar-theme-refinements.css'),
+      load('./file-drop-theme-refinements.css'),
+    ].join('\n')
+    expect(themeLayers).not.toMatch(/data-runtime-(?:proxy-content|phase|hover-suppressed)[\s\S]{0,240}?(?:transform|transition|opacity)\s*:[^;{}]*!important/)
+  })
+
   it('轻量弹层统一经过 PopupMenu，业务组件不再持有独立 Teleport 动画', () => {
     expect(popupMenu).toContain('<Teleport to="body">')
     expect(popupMenu).toContain('<Transition name="menu-pop"')

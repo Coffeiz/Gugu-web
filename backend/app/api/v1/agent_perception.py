@@ -244,31 +244,3 @@ async def misread_export():
     body = md if md else "# 错读反思记录\n\n暂无——需发生一次「感知误读 + 用户纠正」才会记一条。\n"
     return Response(content=body, media_type="text/markdown; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="misread_reflections.md"'})
-
-
-@router.get("/temperature")
-async def temperature_list(exclude_dev: bool = False, db: AsyncSession = Depends(get_db)):
-    """关系温度当前值列表（v1：只读当前快照，无历史曲线——temp.json 每次重算是整份覆盖，
-    见 agent/memory/temperature.py。按温度降序，没算过温度（.agent/temp.json 不存在）的用户不列入。
-    exclude_dev=排除开发者账号（is_developer 标记）。"""
-    from agent.memory import store
-
-    stmt = select(User.id, User.username, User.display_name)
-    if exclude_dev:
-        stmt = stmt.where(User.is_developer == False)
-    users = (await db.execute(stmt)).all()
-    rows = []
-    for uid, username, display_name in users:
-        data = await store.read_temperature(uid)
-        if not data:
-            continue
-        rows.append({
-            "user_id": str(uid),
-            "name": display_name or username,
-            "temp": data.get("temp"),
-            "components": data.get("components"),
-            "window_days": data.get("window_days"),
-            "ts": data.get("ts"),
-        })
-    rows.sort(key=lambda r: r["temp"] or 0, reverse=True)
-    return {"total": len(rows), "users": rows}
