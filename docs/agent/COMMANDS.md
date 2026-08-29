@@ -1,6 +1,6 @@
-# 咕咕命令参考
+# Agent 控制命令
 
-本文是聊天命令的单一入口，按当前代码行为维护。命令使用半角 `/` 或全角 `／` 均可，命令名不区分大小写。
+本文是聊天斜杠命令的行为参考，按当前代码行为维护。命令使用半角 `/` 或全角 `／` 均可，命令名不区分大小写；Web、QQ、微信和飞书共用同一套解析与处理入口。
 
 ## 快速表
 
@@ -10,12 +10,15 @@
 | `/stop` | 停止当前正在执行的任务 | 否 | 是，可能取消任务 |
 | `/status` | 查看当前执行状态 | 否 | 否 |
 | `/compact` | 立即整理当前会话上下文 | 否 | 是，会写入压缩结果 |
+| `/goal <目标>` | 创建或管理持续推进的目标任务 | 创建目标后进入 Agent | 是 |
+| `/unlimited` | 开启或关闭当前会话的无限工具调用模式 | 否 | 是 |
+| `/new` | 清空当前会话上下文并开始新对话 | 否 | 是 |
 | `/memory` | 查看个人长期记忆 | 否 | 否 |
 | `/forget <内容>` | 删除匹配的个人记忆 | 否 | 是 |
 | `/workspace` | 查看当前会话绑定的工作区 | 否 | 否 |
 | `/workspace list` | 列出当前用户可绑定的工作区及 ID | 否 | 否 |
 | `/workspace <ID>` | 将当前会话绑定到指定工作区 | 否 | 是 |
-| `/workspace 解除` | 解除当前会话的工作区绑定 | 否 | 是 |
+| `/workspace unlink` | 解除当前会话的工作区绑定 | 否 | 是 |
 | `/workspace delete <ID> confirm` | 删除工作区声明并解除所有会话绑定 | 否 | 是，不可逆 |
 
 ## 任务控制
@@ -39,6 +42,33 @@
 查看当前状态，例如思考中、搜索中、整理中或等待确认。
 
 别名：`/状态`、`/进度`
+
+### `/goal`
+
+创建或管理当前会话的目标任务。创建目标后进入正常 Agent runner；状态子命令由命令处理器直接处理。
+
+```text
+/goal <目标>
+/goal status
+/goal pause
+/goal resume
+/goal cancel
+```
+
+### `/unlimited`
+
+切换当前会话的无限工具调用模式。它只解除普通任务的工具调用次数限制，仍保留 `/stop`、上下文预算和服务超时保护。
+
+```text
+/unlimited
+/unlimited on
+/unlimited off
+/unlimited status
+```
+
+### `/new`
+
+清空当前会话的消息、摘要、快照和已加载能力，开始新的对话；工作区绑定、用户设置和权限配置保留。
 
 ## 上下文与记忆
 
@@ -82,12 +112,14 @@ Shell 工具默认关闭。要让咕咕执行工作区命令，必须同时满�
 /workspace             查看当前绑定
 /workspace list        列出可绑定工作区和 ID
 /workspace 12          绑定 ID 为 12 的工作区
-/workspace 解除        解除当前绑定
+/workspace unlink      解除当前绑定
 /workspace delete 12   查看删除影响并请求二次确认
 /workspace delete 12 confirm  确认删除工作区 12
 ```
 
 `/workspace list` 只返回当前用户自己的启用工作区，不会显示其他用户数据。
+
+解除绑定也支持 `/workspace off`、`/workspace none`、`/workspace unbind`。
 
 删除工作区只删除工作区声明并解除所有会话绑定，不会删除关联的项目、文件夹或文件。
 为避免误触，必须先发送不带 `confirm` 的删除命令查看影响，再明确发送带 `confirm` 的同一命令。
@@ -106,19 +138,19 @@ Shell 工具默认关闭。要让咕咕执行工作区命令，必须同时满�
 
 命令分为两层：
 
-- **任务路由命令**：`/stop`、`/status`、`/help`、`/compact`，在 Agent Loop 入口前处理；
-- **会话控制命令**：`/memory`、`/forget`、`/workspace`，在会话已创建后处理。
+- **确定性控制命令**：`/stop`、`/status`、`/help`、`/compact`、`/memory`、`/forget`、`/workspace`、`/unlimited`、`/new`，在主 Agent Loop 前处理；
+- **目标命令**：`/goal <目标>` 会先写入会话目标状态，再进入正常 Agent runner；其状态管理子命令仍由命令处理器直接处理。
 
 这些命令都不会把命令文本交给模型。普通文本、未知的斜杠文本和不完整命令会继续走正常对话流程。
 
-Web、飞书、QQ、微信的消息入口共用会话控制命令处理；具体平台仍需拥有有效会话。`/workspace` 相关命令需要当前会话 ID。
+Web、飞书、QQ、微信的消息入口共用会话控制命令处理；具体平台仍需拥有有效会话。除 `/help`、`/stop`、`/status` 的无会话查询外，状态型命令通常需要当前会话 ID。
 
 ## 当前未提供的命令
 
 以下写法曾出现在早期设计文档，但当前实现不作为正式命令：
 
 - `/workspace use <名称>`：请使用数字 ID；
-- `/workspace clear`：请使用 `/workspace 解除`；
+- `/workspace clear`：请使用 `/workspace unlink`；
 - `/newchat`：新建会话由页面按钮或平台会话编排负责。
 
-新增命令时应同时更新：`backend/agent/commands.py`、`backend/agent/router.py`、本文件和 `/help` 文案，并补充命令回归测试。
+新增命令时应同时更新：`backend/agent/commands/`、`backend/agent/router.py`、本文件和 `backend/agent/commands/help.py` 的 `/help` 文案，并补充命令回归测试。命令解析和命令处理应保持在统一入口，不在各渠道复制实现。
