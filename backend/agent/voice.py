@@ -20,6 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from agent.security.logsafe import fingerprint
 from app.core.redaction import diag_log, redact
+from app.core.credentials import normalize_ascii_api_key
 
 logger = logging.getLogger("agent.voice")
 
@@ -180,7 +181,7 @@ async def transcribe(media: list, settings, *, db=None, user_id=None, raise_erro
                     "parameters": parameters,
                 }
                 headers = {
-                    "Authorization": f"Bearer {vm.api_key}",
+                    "Authorization": f"Bearer {normalize_ascii_api_key(vm.api_key, label='语音模型 API Key')}",
                     "Content-Type": "application/json",
                     "X-DashScope-SSE": "disable",
                 }

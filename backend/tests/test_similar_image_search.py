@@ -100,6 +100,26 @@ async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_baidu_provider_rejects_non_ascii_api_key_before_request(monkeypatch):
+    called = False
+
+    def unexpected_client(**kwargs):
+        nonlocal called
+        called = True
+        return _Client(_Response({}))
+
+    monkeypatch.setattr(search_tools.httpx, "AsyncClient", unexpected_client)
+
+    result = await search_tools._call_baidu_similar_image(PNG_1X1, "百度密钥", 1, 20)
+
+    assert result == {
+        "error": "百度相似图搜索 API Key 格式无效，请使用服务提供的 ASCII API Key",
+        "error_code": "invalid_api_key",
+    }
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_baidu_provider_reads_official_result_wrapper(monkeypatch):
     client = _Client(_Response({
         "code": "0",

@@ -26,6 +26,7 @@ import random
 from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
+from app.core.credentials import normalize_ascii_api_key
 
 import httpx
 from app.core.config import get_settings
@@ -493,6 +494,12 @@ async def _resolve_similar_image(user_id, args: dict) -> tuple[bytes | None, str
 
 
 async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeout_seconds: int) -> dict:
+    try:
+        api_key = normalize_ascii_api_key(api_key, label="百度相似图搜索 API Key")
+    except ValueError:
+        return {"error": "百度相似图搜索 API Key 格式无效，请使用服务提供的 ASCII API Key", "error_code": "invalid_api_key"}
+    if not api_key:
+        return {"error": "百度相似图搜索 API Key 未配置，请管理员检查服务配置", "error_code": "invalid_api_key"}
     payload = {"image": base64.b64encode(raw).decode("ascii"), "count": count}
     try:
         async with httpx.AsyncClient(

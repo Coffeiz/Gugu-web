@@ -25,6 +25,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { byokApi } from '@/services/api'
+import { pickByokCredential } from '@/utils/byokCredentials'
 import AdminSelect from '@/components/AdminSelect.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 
@@ -38,7 +39,7 @@ const capabilityItems = reactive<any[]>([
   { capability: 'deep_research', label: '深度研究', hint: 'Provider 可填 tavily、baidu 或 you。', provider: serverDefault, value: '', id: null, saving: false },
   { capability: 'similar_image_search', label: '相似图搜索', hint: '当前支持百度千帆相似图搜索。', provider: serverDefault, value: '', id: null, saving: false },
 ])
-onMounted(async () => { try { const rows = (await byokApi.list()).items || []; for (const item of capabilityItems) { const row = rows.find((candidate: any) => candidate.capability === item.capability); if (row) { item.id = row.id; item.provider = row.provider } } } catch { /* BYOK 关闭时仍正常显示专项能力 */ } })
+onMounted(async () => { try { const rows = (await byokApi.list()).items || []; for (const item of capabilityItems) { const row = pickByokCredential(rows, item.capability); if (row) { item.id = row.id; item.provider = row.provider } } } catch { /* BYOK 关闭时仍正常显示专项能力 */ } })
 async function saveCapability(item: any) {
   if (item.provider === serverDefault) {
     if (!item.id) { capabilityMessage.value = `${item.label}将使用服务器默认配置`; capabilityMessageType.value = 'ok'; return }
@@ -56,7 +57,7 @@ async function saveCapability(item: any) {
     } finally { item.saving = false }
     return
   }
-  item.saving = true; capabilityMessage.value = ''; try { const payload: Record<string, unknown> = { provider: item.provider, capability: item.capability }; if (item.value) payload.value = item.value; const row = item.id ? await byokApi.update(item.id, payload) : await byokApi.create(payload); item.id = row.id; item.value = ''; capabilityMessage.value = `${item.label}配置已保存`; capabilityMessageType.value = 'ok' } catch (e) { capabilityMessage.value = e instanceof Error ? e.message : '保存失败'; capabilityMessageType.value = 'err' } finally { item.saving = false }
+  item.saving = true; capabilityMessage.value = ''; try { const payload: Record<string, unknown> = { provider: item.provider, capability: item.capability, enabled: true }; if (item.value) payload.value = item.value; const row = item.id ? await byokApi.update(item.id, payload) : await byokApi.create(payload); item.id = row.id; item.value = ''; capabilityMessage.value = `${item.label}配置已保存`; capabilityMessageType.value = 'ok' } catch (e) { capabilityMessage.value = e instanceof Error ? e.message : '保存失败'; capabilityMessageType.value = 'err' } finally { item.saving = false }
 }
 async function testCapability(item: any) { if (!item.provider || item.provider === serverDefault || (!item.id && !item.value)) return; const marker = item.id ?? -1; testingCapability.value = marker; capabilityMessage.value = ''; try { const result = item.value ? await byokApi.testPreview({ provider: item.provider, capability: item.capability, value: item.value }) : await byokApi.test(item.id); capabilityMessage.value = result.message || '测试通过'; capabilityMessageType.value = result.ok ? 'ok' : 'err' } catch (e) { capabilityMessage.value = e instanceof Error ? e.message : '测试失败'; capabilityMessageType.value = 'err' } finally { testingCapability.value = null } }
 </script>

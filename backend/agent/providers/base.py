@@ -85,7 +85,11 @@ class ProviderAdapter:
     def diagnostic_request(self, ai) -> dict:
         """构造后台连通性测试请求，不执行请求也不返回密钥。"""
         protocol = self.protocol_format(ai)
-        api_key = getattr(ai, "api_key", "") or ("ollama" if self.name == "ollama" else "")
+        from app.core.credentials import normalize_ascii_api_key
+        api_key = normalize_ascii_api_key(
+            getattr(ai, "api_key", "") or ("ollama" if self.name == "ollama" else ""),
+            label="模型 API Key",
+        )
         if protocol == "anthropic":
             headers = {"x-api-key": api_key, "anthropic-version": "2023-06-01",
                        "content-type": "application/json"}
@@ -119,7 +123,11 @@ class ProviderAdapter:
         base_url = self.resolve_base_url(ai)
         path = "/models" if protocol == "openai" or base_url.endswith("/v1") else "/v1/models"
         headers = {"Accept": "application/json"}
-        api_key = getattr(ai, "api_key", "") or ("ollama" if self.name == "ollama" else "")
+        from app.core.credentials import normalize_ascii_api_key
+        api_key = normalize_ascii_api_key(
+            getattr(ai, "api_key", "") or ("ollama" if self.name == "ollama" else ""),
+            label="模型 API Key",
+        )
         if protocol == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             if api_key:

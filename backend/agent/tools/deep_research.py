@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from app.core.credentials import normalize_ascii_api_key
 
 
 class DeepResearchError(RuntimeError):
@@ -27,6 +28,7 @@ def _results(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def tavily(query: str, key: str, max_results: int, depth: str) -> dict:
+    key = normalize_ascii_api_key(key, label="Tavily API Key")
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=60, write=10, pool=5)) as client:
         response = await client.post(
             "https://api.tavily.com/search",
@@ -39,6 +41,7 @@ async def tavily(query: str, key: str, max_results: int, depth: str) -> dict:
 
 
 async def you(query: str, key: str, max_results: int, depth: str) -> dict:
+    key = normalize_ascii_api_key(key, label="You.com API Key")
     effort = {"basic": "lite", "advanced": "deep"}.get(depth, "standard")
     async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10, read=90, write=10, pool=5)) as client:
         response = await client.post(
@@ -54,6 +57,7 @@ async def you(query: str, key: str, max_results: int, depth: str) -> dict:
 
 
 async def baidu(query: str, key: str, max_results: int) -> dict:
+    key = normalize_ascii_api_key(key, label="百度深度研究 API Key")
     top_k = min(max(int(max_results or 1), 1), 50)
     payload = {
         "messages": [{"content": query[:72], "role": "user"}],

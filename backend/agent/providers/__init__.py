@@ -98,8 +98,9 @@ def build_anthropic_client(ai, timeout):
     import httpx
     from anthropic import AsyncAnthropic
 
+    from app.core.credentials import normalize_ascii_api_key
     return AsyncAnthropic(
-        api_key=getattr(ai, "api_key", "") or "dummy",
+        api_key=normalize_ascii_api_key(getattr(ai, "api_key", "") or "dummy", label="模型 API Key"),
         base_url=adapter_for(ai).resolve_base_url(ai),
         http_client=httpx.AsyncClient(timeout=timeout),
         default_headers=adapter_for(ai).auth_headers(ai),
@@ -111,7 +112,11 @@ def build_openai_client(ai, timeout):
     from openai import AsyncOpenAI
 
     adapter = adapter_for(ai)
-    api_key = getattr(ai, "api_key", "") or ("ollama" if adapter.name == "ollama" else "dummy")
+    from app.core.credentials import normalize_ascii_api_key
+    api_key = normalize_ascii_api_key(
+        getattr(ai, "api_key", "") or ("ollama" if adapter.name == "ollama" else "dummy"),
+        label="模型 API Key",
+    )
     return AsyncOpenAI(
         api_key=api_key,
         base_url=adapter.resolve_base_url(ai),
@@ -127,7 +132,8 @@ def build_ollama_client(ai, timeout):
     adapter = adapter_for(ai)
     if adapter.name != "ollama":
         raise ValueError("原生 Ollama 客户端只能用于 Ollama provider")
-    api_key = getattr(ai, "api_key", "") or "ollama"
+    from app.core.credentials import normalize_ascii_api_key
+    api_key = normalize_ascii_api_key(getattr(ai, "api_key", "") or "ollama", label="模型 API Key")
     headers = {"Authorization": f"Bearer {api_key}"}
     headers.update(adapter.auth_headers(ai))
     return httpx.AsyncClient(timeout=timeout, headers=headers)
