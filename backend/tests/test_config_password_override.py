@@ -118,6 +118,25 @@ def test_apply_override_accepts_password_from_environment(tmp_path, monkeypatch)
     assert s.db.password == "EnvSecret_abc123"
 
 
+def test_apply_override_keeps_last_valid_password_during_hot_reload(tmp_path, monkeypatch):
+    """热更新只提交数据库连接信息时，沿用本进程上一份已验证密码。"""
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+    monkeypatch.setattr(
+        cfg,
+        "_settings_cache",
+        cfg.AppSettings(db=cfg.DatabaseSettings(password="CachedSecret_abc123")),
+    )
+
+    s = cfg.AppSettings(db=cfg.DatabaseSettings()).apply_override()
+
+    assert s.db.password == "CachedSecret_abc123"
+
+
 def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):
     target = tmp_path / "config.override.json"
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", target)

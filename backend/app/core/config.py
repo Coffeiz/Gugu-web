@@ -379,7 +379,17 @@ class AppSettings(BaseSettings):
                         "db.password 是空值、占位符或无效类型，请在运行环境或配置文件中提供真实密码。"
                     )
 
-                merged = {**self.db.model_dump(), **{
+                # Admin 热更新可能只提交 host/port/name/user。若本进程已经用一份
+                # 有效配置启动，AppSettings() 重新读取环境变量时不会带回 override
+                # 中的密码，应该保留上一份已验证的密码，避免现有连接被无效重载打坏。
+                # 全新进程没有这份缓存时仍会严格拒绝缺失密码。
+                db_base = self.db.model_dump()
+                cached = globals().get("_settings_cache")
+                cached_password = getattr(getattr(cached, "db", None), "password", "")
+                if not db_base.get("password") and isinstance(cached_password, str) and cached_password.strip():
+                    db_base["password"] = cached_password
+
+                merged = {**db_base, **{
                     k: v for k, v in override_db.items()
                     if k in DatabaseSettings.model_fields
                 }}
