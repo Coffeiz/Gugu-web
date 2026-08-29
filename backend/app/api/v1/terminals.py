@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import account_is_active, decode_user_token, get_current_user, is_user_active
+from app.core.redaction import redact
 from app.core.tz import now_utc
 from app.core import events
 from app.db.session import get_db
@@ -204,8 +205,9 @@ async def terminal_websocket(terminal_id: str, websocket: WebSocket, db: AsyncSe
         await websocket.close(code=4401 if exc.status_code == 401 else 4403)
         return
     except (LookupError, RuntimeError, ValueError) as exc:
-        logger.warning("terminal_pty websocket_setup_failed error=%s", type(exc).__name__)
-        await websocket.close(code=4409, reason=str(exc)[:120])
+        reason = redact(str(exc))[:120]
+        logger.warning("terminal_pty websocket_setup_failed error=%s reason=%s", type(exc).__name__, reason)
+        await websocket.close(code=4409, reason=reason)
         return
 
     receive_task = asyncio.create_task(websocket.receive_json())

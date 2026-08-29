@@ -29,6 +29,20 @@ class _Prefs:
 class _Db:
     def __init__(self):
         self.commits = 0
+        self.sessions = []
+
+    async def execute(self, _query):
+        class _Result:
+            def __init__(self, sessions):
+                self.sessions = sessions
+
+            def scalars(self):
+                return self
+
+            def all(self):
+                return self.sessions
+
+        return _Result(self.sessions)
 
     async def commit(self):
         self.commits += 1
@@ -90,6 +104,40 @@ async def test_update_preferences_persists_personality_and_invalidates_snapshot(
     assert result.personalityPreferenceEnabled is True
     assert result.personalityPreferenceRevision == 1
     assert invalidated == ["user-1"]
+    assert bumped == [("user-1", "preferences")]
+    assert db.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_update_preferences_can_disable_personality_and_expire_snapshots(monkeypatch, tmp_path):
+    prefs = _Prefs()
+    prefs.data = {"personality_preference_enabled": True}
+    db = _Db()
+    db.sessions = [SimpleNamespace(snapshot_expires_at=None)]
+    user = SimpleNamespace(id="user-1")
+    bumped = []
+
+    async def get_or_create(_user, _db):
+        return prefs
+
+    async def bump(user_id, resource):
+        bumped.append((user_id, resource))
+
+    settings = SimpleNamespace(
+        agent=SimpleNamespace(personality_preference_enabled=True),
+        storage=SimpleNamespace(local_path=str(tmp_path)),
+    )
+    monkeypatch.setattr(preferences_api, "_get_or_create", get_or_create)
+    monkeypatch.setattr(preferences_api, "get_settings", lambda: settings)
+    monkeypatch.setattr("app.services.personality_preferences.get_settings", lambda: settings)
+    monkeypatch.setattr("app.core.events.bump_context_revision", bump)
+
+    result = await preferences_api.update_preferences(
+        PreferencesUpdate(personalityPreferenceEnabled=False), user, db,
+    )
+
+    assert result.personalityPreferenceEnabled is False
+    assert db.sessions[0].snapshot_expires_at is not None
     assert bumped == [("user-1", "preferences")]
     assert db.commits == 1
 

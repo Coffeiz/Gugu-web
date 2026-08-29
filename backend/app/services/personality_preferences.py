@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import get_settings
+from app.core.tz import now_utc
 
 MAX_PERSONALITY_PREFERENCE_CHARS = 10000
 _ALLOWED_CONTROL_CHARS = {"\n", "\r", "\t"}
