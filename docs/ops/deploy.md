@@ -152,7 +152,7 @@ DB__PASSWORD=gugu
 # JWT 密钥（生产务必改）— 生成随机值：python3 -c "import secrets; print(secrets.token_urlsafe(48))"
 SECRET_KEY=换成上面命令生成的随机长串
 
-# 后台管理员账号（不填默认 admin/admin123，生产务必改；改后重启后端生效）
+# 后台管理员账号（不填默认 admin/guguadmin，生产务必改；改后重启后端生效）
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=换成强密码
 
@@ -234,7 +234,7 @@ cd backend
 ### 3.8 Admin 初始化
 
 - Admin 后台：`http://localhost:5173/admin/login`
-- 默认账号 **admin / admin123**——改用户名/密码在 `.env` 设 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（⚠️ 上线前必改，改后重启后端）
+- 默认账号 **admin / guguadmin**——改用户名/密码在 `.env` 设 `ADMIN_USERNAME` / `ADMIN_PASSWORD`（⚠️ 上线前必改，改后重启后端）
 - 登录后在「系统配置 / Agent 配置」里设 DB / Redis / AI provider / 存储 / 频道。
 
 ### 3.9 SearXNG 自建搜索（Compose 默认内置）
@@ -654,10 +654,10 @@ test -S "/run/user/$(id -u)/gugu-sandboxd.sock" || true
 
 ### 4.6 Admin 安全
 
-- **改默认管理员账号**（默认 `admin / admin123`）——在 `backend/.env` 设：
+- **改默认管理员账号**（默认 `admin / guguadmin`）——在 `backend/.env` 设：
   ```
   ADMIN_USERNAME=你的新用户名      # 不填默认 admin
-  ADMIN_PASSWORD=你的新密码        # 不填默认 admin123
+  ADMIN_PASSWORD=你的新密码        # 不填默认 guguadmin
   ```
   > 管理员账号是**配置驱动**的（不存数据库）：登录时按 `.env` 里的 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 校验。改完**重启后端**（`systemctl restart gugu-backend`）生效，用新用户名+新密码登录 `/admin/login`。
 - `SECRET_KEY` 用强随机值（`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`）。

@@ -264,7 +264,7 @@ class StateLabelSettings(BaseModel):
 
 class BYOKSettings(BaseModel):
     """用户自带凭据开关；主密钥只允许由运行环境注入。"""
-    enabled: bool = Field(False, description="是否开放用户 BYOK（托管服务由后台权益控制）")
+    enabled: bool = Field(True, description="是否开放用户 BYOK（默认开启；托管服务可由后台关闭）")
     master_key: str = Field("", repr=False, description="BYOK 主密钥（仅从 CREDENTIALS_MASTER_KEY 注入，不写入响应）")
 
 
@@ -338,7 +338,7 @@ class AppSettings(BaseSettings):
     secret_key: str = Field("change-me-in-production", description="JWT 签名密钥")
     access_token_expire_minutes: int = Field(10080, description="Token 有效期（分钟）")
     admin_username: str = Field("admin", description="后台管理员用户名（env ADMIN_USERNAME）")
-    admin_password: str = Field("admin123", description="后台管理员密码（env ADMIN_PASSWORD）")
+    admin_password: str = Field("guguadmin", description="后台管理员密码（env ADMIN_PASSWORD）")
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)

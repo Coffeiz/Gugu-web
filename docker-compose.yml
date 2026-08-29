@@ -147,6 +147,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:-guguadmin}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -194,6 +196,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:-guguadmin}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
@@ -239,6 +243,8 @@ services:
       DB__NAME: ${GUGU_DB_NAME:-gugu}
       DB__USER: ${GUGU_DB_USER:-gugu}
       DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      ADMIN_USERNAME: ${GUGU_ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${GUGU_ADMIN_PASSWORD:-guguadmin}
       REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
       REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
       REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}

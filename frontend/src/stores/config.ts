@@ -149,7 +149,7 @@ export const useConfigStore = defineStore('config', () => {
       alert_email_recipients: [] as string[],
     },
     byok: {
-      enabled: false,
+      enabled: true,
     },
   })
 

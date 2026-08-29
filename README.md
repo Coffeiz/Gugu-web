@@ -106,7 +106,7 @@ docker compose up -d
 # 4. 浏览器访问
 # 前端    → http://localhost:9595
 # 管理后台 → http://localhost:9595/admin/  （独立打包入口，见 frontend/admin/；账号密码见
-#            backend/.env 的 ADMIN_USERNAME/ADMIN_PASSWORD，默认 admin/admin123，生产部署务必改掉）
+#            backend/.env 的 ADMIN_USERNAME/ADMIN_PASSWORD，默认 admin/guguadmin，生产部署务必改掉）
 # 后端    → http://localhost:8000/docs
 # LoopScope Collector → http://localhost:4320
 
