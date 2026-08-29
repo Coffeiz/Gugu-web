@@ -15,6 +15,18 @@
 
     <div class="panels-wrap">
 
+      <!-- ── 权限开放 ── -->
+      <PermissionSettings
+        v-if="activeTab === 'permissions'"
+        :agent="agentDraft"
+        :byok="byokDraft"
+        :saving="permissionSaving"
+        :saved="permissionSaved"
+        :error="permissionError"
+        @save="savePermissions"
+        @reset="resetPermissions"
+      />
+
       <!-- ── 能力目录 ── -->
       <CapabilityCatalogPanel v-if="activeTab === 'behavior' && behaviorTab === 'capabilities'" />
 
@@ -176,32 +188,6 @@
         </div>
 
         <div class="behavior-grid">
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>Shell 工具总开关</span>
-              <span class="behavior-desc">默认关闭。开启后才允许用户使用 Shell；默认执行后端是 Docker 沙盒，沙盒状态和镜像配置在“Shell 沙盒”页面管理。</span>
-            </div>
-            <ToggleSwitch :model-value="agentDraft.shell_enabled" aria-label="切换 Shell 工具总开关" @update:model-value="agentDraft.shell_enabled = $event; saveBehavior()" />
-          </div>
-
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label"><span>Shell Autopilot 总开关</span><span class="behavior-desc">允许用户在个人设置中开启 Autopilot，跳过 Shell 确认门；沙盒、配额、超时和审计仍然生效。</span></div>
-            <ToggleSwitch :model-value="agentDraft.shell_autopilot_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换 Shell Autopilot 总开关" @update:model-value="agentDraft.shell_autopilot_enabled = $event; saveBehavior()" />
-          </div>
-
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item">
-            <div class="behavior-label"><span>系统范围 Shell</span><span class="behavior-desc">允许访问系统范围，风险最高；建议仅本地管理员使用。</span></div>
-            <ToggleSwitch :model-value="agentDraft.shell_system_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换系统范围 Shell" @update:model-value="agentDraft.shell_system_enabled = $event; saveBehavior()" />
-          </div>
-
-          <div v-if="behaviorTab === 'runtime'" class="behavior-item" style="grid-column: 1 / -1;">
-            <div class="behavior-label">
-              <span>危险 Shell 命令</span>
-              <span class="behavior-desc">默认关闭。包括删除、覆盖、移动目录，修改权限，以及重启或停止服务等高影响命令；仍需用户逐次确认，不会绕过确认门。</span>
-            </div>
-            <ToggleSwitch :model-value="agentDraft.shell_dangerous_enabled" :disabled="!agentDraft.shell_enabled" aria-label="切换危险 Shell 命令" @update:model-value="agentDraft.shell_dangerous_enabled = $event; saveBehavior()" />
-          </div>
-
           <div v-if="behaviorTab === 'runtime'" class="behavior-item">
             <div class="behavior-label">
               <span>对话历史压缩</span>
@@ -662,9 +648,6 @@
       <!-- ── 用量统计 ── -->
       <UsagePanel v-if="activeTab === 'usage'" />
 
-      <!-- ── 决策轨迹（只读调试）── -->
-      <TracePanel v-if="activeTab === 'trace'" />
-
     </div>
   </div>
 </template>
@@ -675,8 +658,8 @@ import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import Checkbox from '@/components/common/Checkbox.vue'
 import { useRoute } from 'vue-router'
 import LocalCapabilityOverrides from './components/LocalCapabilityOverrides.vue'
+import PermissionSettings from './components/PermissionSettings.vue'
 import CapabilityCatalogPanel from './capabilities/components/CapabilityCatalogPanel.vue'
-import TracePanel from './observability/components/TracePanel.vue'
 import UsagePanel from './observability/components/UsagePanel.vue'
 import PromptPanel from './prompting/components/PromptPanel.vue'
 import StateLabelsPanel from './prompting/components/StateLabelsPanel.vue'
@@ -698,10 +681,14 @@ const runtimeConfig = useAgentRuntimeConfig()
 const { agentDraft, behaviorSaving, behaviorSaved, behaviorError, resetBehavior, saveBehavior, generalSearchDraft, ragIndexTtlDays, deepResearchDraft, similarImageDraft, generalSearchSaving, generalSearchSaved, generalSearchError, deepResearchSaving, deepResearchSaved, deepResearchError, deepResearchTest, similarImageSaving, similarImageSaved, similarImageError, resetGeneralSearch, resetDeepResearch, resetSimilarImageSearch, voiceDraft, voiceSaving, voiceSaved, voiceError, voiceTesting, voiceTestMsg, VOICE_API_FORMATS, VOICE_DASHSCOPE_SERVICES, resetVoice, setDashscopeService, saveVoice, testVoice, searchTest, testSearch, testDeepResearch, saveDeepResearch, saveSearch } = runtimeConfig
 const llmPresets = useLlmPresets(adminStore, configStore, agentDraft)
 const { presets, activePresetId, strategy, poolMode, presetsLoading, llmMsg, llmMsgError, testingId, activatingId, probingId, probingDim, showMsg, fetchPresets, setStrategy, setPoolMode, saveConcurrency, activatePreset, deletePreset, testPreset } = llmPresets
+const byokDraft = reactive({ ...configStore.cfg.byok })
+const permissionSaving = ref(false)
+const permissionSaved = ref(false)
+const permissionError = ref('')
 
 const tabs = [
   { key: 'llm',      label: 'LLM 配置' },
-  { key: 'trace',    label: '决策轨迹' },
+  { key: 'permissions', label: '权限开放' },
   { key: 'prompts',  label: '系统提示词' },
 ]
 const activeTab = ref(standaloneMode.value || 'llm')
@@ -1077,11 +1064,34 @@ async function probeVision(id: string | number | undefined, dim?: string) {
 onMounted(async () => {
   await configStore.fetchConfig()
   Object.assign(agentDraft, configStore.cfg.agent)
+  Object.assign(byokDraft, configStore.cfg.byok)
   resetGeneralSearch()
   resetSimilarImageSearch()
   Object.assign(voiceDraft, configStore.cfg.voice)
   fetchPresets()
 })
+
+async function savePermissions() {
+  permissionSaving.value = true
+  permissionSaved.value = false
+  permissionError.value = ''
+  try {
+    await configStore.saveConfig({ agent: { ...agentDraft }, byok: { ...byokDraft } })
+    permissionSaved.value = true
+    setTimeout(() => { permissionSaved.value = false }, 3000)
+  } catch (error) {
+    permissionError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    permissionSaving.value = false
+  }
+}
+
+function resetPermissions() {
+  Object.assign(agentDraft, configStore.cfg.agent)
+  Object.assign(byokDraft, configStore.cfg.byok)
+  permissionSaved.value = false
+  permissionError.value = ''
+}
 
 </script>
 

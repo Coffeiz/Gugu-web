@@ -200,23 +200,6 @@
       <!-- ── 安全告警 ── -->
       <SecurityAlertSettings v-model="draft.security" />
 
-      <!-- ── 用户 BYOK ── -->
-      <section id="sec-byok" class="config-card">
-        <div class="card-head byok-card-head">
-          <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
-            <Icon name="user.security" size="md" />
-          </div>
-          <div class="card-title-block">
-            <h3>用户 BYOK</h3>
-            <p>允许用户使用自己的 API Key；凭据由服务端加密保存</p>
-          </div>
-          <div class="toggle-group">
-            <button class="toggle-btn" data-label="开放 BYOK" :class="{ active: draft.byok.enabled }" @click="draft.byok.enabled = true">开放 BYOK</button>
-            <button class="toggle-btn" data-label="关闭" :class="{ active: !draft.byok.enabled }" @click="draft.byok.enabled = false">关闭</button>
-          </div>
-        </div>
-      </section>
-
       <!-- ── 保存栏 ── -->
       <div class="save-bar">
         <span class="save-hint" v-if="configStore.saved">
@@ -262,7 +245,6 @@ const draft = reactive({
     alert_email_enabled: false,
     alert_email_recipients: [],
   })),
-  byok:    JSON.parse(JSON.stringify(configStore.cfg.byok)),
 })
 
 onMounted(async () => {
@@ -272,7 +254,6 @@ onMounted(async () => {
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
-  Object.assign(draft.byok,    configStore.cfg.byok)
 })
 
 // ── 连接字符串预览 ────────────────────────────────────────────────────────
@@ -411,7 +392,6 @@ async function save() {
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
     security: { ...draft.security },
-    byok:    { ...draft.byok },
   })
 }
 
@@ -421,7 +401,6 @@ function resetDraft() {
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
   Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
-  Object.assign(draft.byok,    configStore.cfg.byok)
   testStatus.db    = null
   testStatus.redis = null
   testStatus.oss   = null
@@ -500,8 +479,6 @@ async function testSmtp() {
 .field-grid :deep(.span2) { grid-column: span 2; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }
-.byok-card-head { gap: 13px; align-items: center; margin-bottom: 0; }
-.byok-card-head .toggle-group { flex-shrink: 0; margin: 0 0 0 auto; }
 .provider-grid { flex-wrap: wrap; }
 .toggle-btn {
   padding: 6px 18px; border-radius: 9px;
