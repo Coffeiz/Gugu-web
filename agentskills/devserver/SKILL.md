@@ -22,9 +22,9 @@ description: devserver 部署与运维。Mutagen 同步、SSH 连接、systemd �
 ## Systemd 服务
 
 生产环境使用 `make install` 后：
-- `make start/stop/restart/status` 管理三个服务：`gugu-backend`、`gugu-worker`、`gugu-gateway`
+- `make start/stop/restart/status` 管理三个服务：`gugu-backend`、`gugu-worker`、`gugu-supervisor`
 - 启动/重启后需确认三个服务均为 `active`
-- 修改网关适配器时只重启对应平台子进程，不重启整个 gateway
+- 修改网关适配器时只重启对应平台子进程，不重启整个 supervisor
 
 ## 前端 Dev Server
 

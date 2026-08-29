@@ -1,28 +1,22 @@
 <template>
   <div class="file-browser-toolbar right-header">
     <GlassBg />
-    <div ref="breadcrumbViewport" class="breadcrumb-viewport"
-      @pointerdown="startBreadcrumbDrag" @pointermove="moveBreadcrumbDrag"
-      @pointerup="endBreadcrumbDrag" @pointercancel="endBreadcrumbDrag"
-      @click.capture="cancelBreadcrumbClick"
-    >
-      <slot name="breadcrumb" />
-    </div>
+    <slot name="breadcrumb" />
     <FilePasteButton v-if="canPaste" compact :count="pasteCount" @paste="emit('paste')" />
     <button v-if="showSelection" class="sel-mode-btn select-mode-btn" :class="{ on: selectionMode }"
       @click.stop="emit('toggle-selection')" title="多选模式">
-      <Icon name="status.check-square" :size="13" />
+      <PhCheckSquare :size="13" weight="bold" />
     </button>
     <SegmentedControl v-if="showViewToggle" class="view-toggle" :active-index="viewMode === 'grid' ? 0 : 1">
       <button :class="{ on: viewMode === 'grid' }" @click="emit('update:view-mode', 'grid')" title="网格视图">
-        <Icon name="file.function" :size="13" />
+        <PhSquaresFour :size="13" weight="bold" />
       </button>
       <button :class="{ on: viewMode === 'list' }" @click="emit('update:view-mode', 'list')" title="列表视图">
-        <Icon name="navigation.list" :size="13" />
+        <PhList :size="13" weight="bold" />
       </button>
     </SegmentedControl>
     <button v-if="showNewFolderButton && !showNewFolder" class="new-folder-btn" @click.stop="emit('update:show-new-folder', true)">
-      <Icon name="file.folder-add" :size="13" />新建文件夹
+      <PhFolderPlus :size="13" weight="bold" />新建文件夹
     </button>
     <div v-else-if="showNewFolderButton" class="new-folder-inline" @click.stop>
       <input ref="folderInput" class="new-folder-input" :value="newFolderName" placeholder="文件夹名称"
@@ -31,20 +25,16 @@
       <button class="btn-confirm-sm" :disabled="folderLoading" @click="emit('create-folder')">确定</button>
       <button class="btn-cancel-sm" @click="cancelFolder">✕</button>
     </div>
-    <button v-if="showNewWorkspaceButton" class="new-folder-btn workspace-btn" :class="{ 'workspace-remove-btn': workspaceExists }" :title="workspaceExists ? '解除当前文件夹的工作区' : '使用当前文件夹添加工作区'" @click.stop="emit('create-workspace')">
-      <Icon :name="workspaceExists ? 'action.delete' : 'admin.stack'" :size="13" />{{ workspaceExists ? '删除工作区' : '添加工作区' }}
-    </button>
     <SortMenu v-if="showSort" :options="sortOptions" :sort-key="sortKey" :sort-dir="sortDir" @select="emit('sort-select', $event)" />
     <slot name="extra" />
     <slot name="trailing" />
-    <CloseButton v-if="showClose" @click="emit('close')" />
+    <button v-if="showClose" class="close-btn" @click="emit('close')"><PhX :size="14" weight="bold" /></button>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, onUpdated, ref, watch, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
-import CloseButton from '@/components/common/CloseButton.vue'
+import { nextTick, ref, watch, type PropType } from 'vue'
+import { PhCheckSquare, PhFolderPlus, PhList, PhSquaresFour, PhX } from '@phosphor-icons/vue'
 import SortMenu from '@/components/common/SortMenu.vue'
 import FilePasteButton from '@/components/common/FilePasteButton.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
@@ -57,8 +47,6 @@ const props = defineProps({
   showSelection: { type: Boolean, default: true },
   showViewToggle: { type: Boolean, default: true },
   showNewFolderButton: { type: Boolean, default: true },
-  showNewWorkspaceButton: Boolean,
-  workspaceExists: Boolean,
   showSort: { type: Boolean, default: true },
   viewMode: { type: String as PropType<'grid' | 'list'>, default: 'grid' },
   showNewFolder: Boolean,
@@ -76,103 +64,10 @@ const emit = defineEmits<{
   'update:show-new-folder': [value: boolean]
   'update:new-folder-name': [value: string]
   'create-folder': []
-  'create-workspace': []
   'sort-select': [value: any]
   close: []
 }>()
 const folderInput = ref<HTMLInputElement | null>(null)
-const breadcrumbViewport = ref<HTMLElement | null>(null)
-let dragStartX = 0
-let dragStartScroll = 0
-let activeBreadcrumbPointerId: number | null = null
-let breadcrumbDragging = false
-let suppressBreadcrumbClick = false
-let breadcrumbLayoutFrame = 0
-let breadcrumbResizeObserver: ResizeObserver | null = null
-
-function scheduleBreadcrumbLayout() {
-  if (breadcrumbLayoutFrame) cancelAnimationFrame(breadcrumbLayoutFrame)
-  breadcrumbLayoutFrame = requestAnimationFrame(() => {
-    breadcrumbLayoutFrame = 0
-    updateBreadcrumbOverflow()
-  })
-}
-
-/** 保持当前目录为右侧锚点，从最上级开始逐项压缩目录文字。 */
-function updateBreadcrumbOverflow() {
-  const scroller = breadcrumbScroller()
-  if (!scroller) return
-  const items = Array.from(scroller.querySelectorAll<HTMLElement>('.bc-item, .bc-seg'))
-  items.forEach(item => {
-    item.style.width = ''
-    item.style.flexShrink = '0'
-    item.classList.remove('is-breadcrumb-compressed')
-  })
-
-  let overflow = Math.max(0, scroller.scrollWidth - scroller.clientWidth)
-  const activeIndex = items.findIndex(item => item.classList.contains('active'))
-  items.forEach((item, index) => {
-    if (index === activeIndex || overflow <= 0) return
-    const naturalWidth = item.getBoundingClientRect().width
-    const labelWidth = item.querySelector<HTMLElement>('.bc-label')?.getBoundingClientRect().width ?? 0
-    const minimum = Math.max(30, naturalWidth - labelWidth + 18)
-    const reduction = Math.min(overflow, Math.max(0, naturalWidth - minimum))
-    if (reduction <= 0) return
-    item.style.width = `${naturalWidth - reduction}px`
-    item.classList.add('is-breadcrumb-compressed')
-    overflow -= reduction
-  })
-}
-
-function breadcrumbScroller() {
-  return breadcrumbViewport.value?.querySelector<HTMLElement>('.breadcrumb, .file-breadcrumb') ?? null
-}
-
-function startBreadcrumbDrag(event: PointerEvent) {
-  if ((event.target as HTMLElement).closest('.breadcrumb-nav')) return
-  const el = breadcrumbScroller()
-  if (!el || event.button !== 0) return
-  dragStartX = event.clientX
-  dragStartScroll = el.scrollLeft
-  activeBreadcrumbPointerId = event.pointerId
-  breadcrumbDragging = false
-}
-function moveBreadcrumbDrag(event: PointerEvent) {
-  const el = breadcrumbScroller()
-  if (!el || activeBreadcrumbPointerId !== event.pointerId) return
-  const delta = event.clientX - dragStartX
-  if (!breadcrumbDragging && Math.abs(delta) < 4) return
-  if (!breadcrumbDragging) el.setPointerCapture?.(event.pointerId)
-  breadcrumbDragging = true
-  suppressBreadcrumbClick = true
-  el.scrollLeft = dragStartScroll - delta
-  event.preventDefault()
-}
-function endBreadcrumbDrag(event: PointerEvent) {
-  const el = breadcrumbScroller()
-  if (el?.hasPointerCapture?.(event.pointerId)) el.releasePointerCapture(event.pointerId)
-  if (activeBreadcrumbPointerId === event.pointerId) activeBreadcrumbPointerId = null
-  breadcrumbDragging = false
-}
-function cancelBreadcrumbClick(event: MouseEvent) {
-  if (!suppressBreadcrumbClick) return
-  event.preventDefault()
-  event.stopPropagation()
-  suppressBreadcrumbClick = false
-}
-onMounted(() => {
-  breadcrumbResizeObserver = new ResizeObserver(() => scheduleBreadcrumbLayout())
-  if (breadcrumbViewport.value) breadcrumbResizeObserver.observe(breadcrumbViewport.value)
-  scheduleBreadcrumbLayout()
-})
-onUpdated(() => {
-  scheduleBreadcrumbLayout()
-})
-onUnmounted(() => {
-  if (breadcrumbLayoutFrame) cancelAnimationFrame(breadcrumbLayoutFrame)
-  breadcrumbResizeObserver?.disconnect()
-  breadcrumbResizeObserver = null
-})
 function cancelFolder() {
   emit('update:show-new-folder', false)
   emit('update:new-folder-name', '')
@@ -198,35 +93,9 @@ watch(() => props.showNewFolder, value => {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-.breadcrumb-viewport {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  cursor: grab;
-  touch-action: pan-x;
-}
-.breadcrumb-viewport :deep(.breadcrumb),
-.breadcrumb-viewport :deep(.file-breadcrumb) {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  overflow: hidden;
-  overflow-y: hidden;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.breadcrumb-viewport:active { cursor: grabbing; }
-.breadcrumb-viewport :deep(.breadcrumb::-webkit-scrollbar),
-.breadcrumb-viewport :deep(.file-breadcrumb::-webkit-scrollbar) { display: none; }
 .new-folder-inline {
   display: flex;
   align-items: center;
   gap: 5px;
 }
-.workspace-remove-btn { color: var(--danger-button-fg); }
-.workspace-remove-btn:hover { color: var(--danger-button-fg); }
 </style>

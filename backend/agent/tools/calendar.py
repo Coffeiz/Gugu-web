@@ -4,9 +4,6 @@
 """
 import json
 
-_DATE_PATTERN = r"^\d{4}-\d{2}-\d{2}$"
-_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
-
 from app.services.calendar import (
     create_event,
     find_events_by_title,
@@ -25,13 +22,12 @@ from agent.tools.base import BaseSkill, Tool
 
 async def _create_event(db, user_id, args: dict):
     pid = args.get("project_id")
-    all_day = bool(args.get("all_day"))
     ev = await create_event(
         db, user_id,
         title=args["title"],
         date=args["date"],
-        time=None if all_day else (args.get("time") or None),
-        end_time=None if all_day else (args.get("end_time") or None),
+        time=args.get("time") or None,
+        end_time=args.get("end_time") or None,
         event_type=args.get("type", "event"),
         project_id=pid,
     )
@@ -97,11 +93,6 @@ async def _update_event(db, user_id, args: dict):
     if _err:
         return _err
     fields = ("title", "date", "time", "end_time", "type", "project_id", "description")
-    if "all_day" in args:
-        if args["all_day"]:
-            args = {**args, "time": None, "end_time": None}
-        elif "time" not in args:
-            return json.dumps({"error": "all_day=false 时必须提供 time"})
     if not any(fld in args for fld in fields):   # 没给任何要改的字段 → 别假成功（防咕咕误报"已更新"）
         return json.dumps({"error": "没提供要修改的字段（title/date/time/end_time/type/project_id/description），未改动。"})
     if args.get("project_id") is not None:
@@ -116,31 +107,6 @@ async def _update_event(db, user_id, args: dict):
 
 
 async def _delete_event(db, user_id, args: dict):
-    event_ids = args.get("event_ids")
-    if event_ids is not None:
-        if not isinstance(event_ids, list) or not event_ids or len(event_ids) > 50:
-            return json.dumps({"error": "event_ids 必须是 1-50 个事件 id"})
-        events = []
-        for event_id in event_ids:
-            event, error = await _resolve_event(db, user_id, {"event_id": event_id})
-            if error:
-                return error
-            events.append(event)
-        reminders = [await list_event_reminders(db, user_id, event.id) for event in events]
-        names = "、".join(event.title for event in events[:10]) + (f"等 {len(events)} 个" if len(events) > 10 else "")
-        reminder_count = sum(len(items) for items in reminders)
-        blocked = confirm.needs_confirmation(
-            args, f"将删除日历事件：{names}，共 {len(events)} 个，并连带删除 {reminder_count} 条提醒，且无法恢复", user_id,
-            identity=f"delete_event:event_ids={sorted(event_ids)}")
-        if blocked is not None:
-            return blocked
-        results = []
-        for event, event_reminders in zip(events, reminders):
-            await delete_event_with_reminders(db, user_id, event)
-            results.append({"deleted_event_id": event.id, "title": event.title,
-                            "deleted_reminders": len(event_reminders)})
-        await db.commit()
-        return {"success": True, "deleted_count": len(results), "results": results}
     e, _err = await _resolve_event(db, user_id, args)
     if _err:
         return _err
@@ -240,30 +206,23 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="create_event",
             label="新建日历事件",
-            description_short='创建活动或截止提醒；可带 reminders/reminder_channels',
             description=("在日历上创建事件或截止提醒。可一次把提醒也带上（reminders）——这样「建活动+设提醒」一个调用搞定，"
                          "不用再单独调 add_event_reminder。"),
             input_schema={
                 "type": "object",
                 "properties": {
                     "title":      {"type": "string"},
-                    "date":       {"type": "string", "pattern": _DATE_PATTERN},
-                    "time":       {"type": "string", "pattern": _TIME_PATTERN},
-                    "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
-                    "type":       {"type": "string", "enum": ["event", "deadline"]},
-                    "project_id": {"type": "integer"},
+                    "date":       {"type": "string", "description": "YYYY-MM-DD"},
+                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；不填=全天）"},
+                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
+                    "type":       {"type": "string", "enum": ["event", "deadline"], "description": "默认 event"},
+                    "project_id": {"type": "integer", "description": "关联项目 ID（可选）"},
                     "reminders":  {"type": "array", "items": {"type": "integer"},
-                                   },
-                    "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
-                    "all_day":   {"type": "boolean"},
+                                   "description": "可选，给该活动设提醒，元素=提前分钟数：0=活动开始时、30=提前30分钟、60=1小时、1440=1天。可多个，如 [30, 1440]。无时间的全天活动按当天 09:00 计；已过的会跳过。"},
+                    "reminder_channels": {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
+                                          "description": "提醒投递渠道，默认 [web]；仅在设了 reminders 时有用"},
                 },
-                "required": ["title", "date", "all_day"],
-                "allOf": [
-                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": True}}},
-                     "then": {"not": {"anyOf": [{"required": ["time"]}, {"required": ["end_time"]}]}}},
-                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": False}}},
-                     "then": {"required": ["time"]}},
-                ],
+                "required": ["title", "date"],
             },
             handler=_create_event,
             mutates=True,
@@ -271,13 +230,12 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="list_events",
             label="查询日历事件",
-            description_short='查询日历事件；关键字段 from/to/type',
             description="查询日历事件，可按日期范围和类型筛选。每个活动会**连同它自己的提醒**一起返回（reminders 字段，无提醒则不带），不用再逐个查提醒。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "from": {"type": "string", "pattern": _DATE_PATTERN},
-                    "to":   {"type": "string", "pattern": _DATE_PATTERN},
+                    "from": {"type": "string", "description": "起始日期 YYYY-MM-DD（含）"},
+                    "to":   {"type": "string", "description": "结束日期 YYYY-MM-DD（含）"},
                     "type": {"type": "string", "enum": ["event", "deadline"]},
                 },
             },
@@ -286,33 +244,22 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="update_event",
             label="更新日历事件",
-            description_short='修改活动字段；提醒请用 add_event_reminder',
             description="修改日历事件的标题、日期、类型、关联项目、描述。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id":   {"type": "integer"},
-                    "event":      {"type": "string"},
-                    "on_date":    {"type": "string", "pattern": _DATE_PATTERN},
+                    "event_id":   {"type": "integer", "description": "事件 ID（可选）"},
+                    "event":      {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
+                    "on_date":    {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
                     "title":      {"type": "string"},
-                    "date":       {"type": "string", "pattern": _DATE_PATTERN},
-                    "time":       {"type": "string", "pattern": _TIME_PATTERN},
-                    "end_time":   {"type": "string", "pattern": _TIME_PATTERN},
+                    "date":       {"type": "string", "description": "YYYY-MM-DD"},
+                    "time":       {"type": "string", "description": "开始时间 HH:MM（可选；传空串清空）"},
+                    "end_time":   {"type": "string", "description": "结束时间 HH:MM（可选）"},
                     "type":       {"type": "string", "enum": ["event", "deadline"]},
-                    "project_id": {"type": "integer"},
+                    "project_id": {"type": "integer", "description": "关联项目 ID"},
                     "description": {"type": "string"},
-                    "all_day":   {"type": "boolean"},
                 },
-                "anyOf": [
-                    {"required": ["event_id"]},
-                    {"required": ["event"]},
-                ],
-                "allOf": [
-                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": True}}},
-                     "then": {"not": {"anyOf": [{"required": ["time"]}, {"required": ["end_time"]}]}}},
-                    {"if": {"required": ["all_day"], "properties": {"all_day": {"const": False}}},
-                     "then": {"required": ["time"]}},
-                ],
+                "required": [],
             },
             handler=_update_event,
             mutates=True,
@@ -320,17 +267,15 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="delete_event",
             label="删除日历事件",
-            description_short='删除日历事件；关键字段 event_id',
-            description="删除一个或多个日历事件/活动（无回收站，不可恢复，会连带删除活动提醒）。单项传 event_id/event，批量传 event_ids；批量目标一次确认。",
+            description="删除日历事件 / 活动（无回收站，不可恢复；会连带删除该活动自带的提醒）。流程：先不带 confirm 调用 → 返回影响详情（含将连带删除的提醒条数）→ 转达用户征得明确同意 → 带 confirm=true 再调一次执行。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "integer"},
-                    "event_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
-                    "event": {"type": "string"},
-                    "on_date": {"type": "string", "pattern": _DATE_PATTERN},
-                    "confirm": {"type": "boolean"},
-                    "confirm_token": {"type": "string"},
+                    "event_id": {"type": "integer", "description": "事件 ID（可选）"},
+                    "event": {"type": "string", "description": "事件标题（推荐：直接用标题定位）"},
+                    "on_date": {"type": "string", "description": "同名事件时用日期 YYYY-MM-DD 区分"},
+                    "confirm": {"type": "boolean", "description": "确认执行；仅在用户明确同意后置 true"},
+                    "confirm_token": {"type": "string", "description": "上一步确认请求返回的短时确认凭证"},
                 },
                 "required": [],
             },
@@ -341,25 +286,25 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="add_event_reminder",
             label="给活动加提醒",
-            description_short='给活动加提醒；reminders/lead_minutes 二选一，lead_minutes 默认 30，channels 默认 [web]',
-            description="给已有日历活动添加提醒；提醒绑定活动，不同于独立定时任务。",
+            description=("给某个已存在的日历活动添加提醒（到点把活动提醒推给用户）。提醒绑定到活动、与独立定时任务分开管理，"
+                         "也会出现在网页活动卡里。提前量单位分钟：0=活动开始时、30=提前30分钟、60=1小时、1440=1天。"
+                         "可一次加多个：用 reminders=[30,1440]；只加一个也可用 lead_minutes。"
+                         "无时间的全天活动按当天 09:00 计；已过的会跳过（在 skipped 里说明）。"
+                         "渠道 channels：web(默认)/feishu/qq/wechat，已连哪个看系统提示。"
+                         "（注：新建活动时直接用 create_event 的 reminders 一步到位，不必先建再调这个。）"),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id":     {"type": "integer"},
-                    "event":        {"type": "string"},
-                    "on_date":      {"type": "string", "pattern": _DATE_PATTERN},
-                    "reminders":    {"type": "array", "items": {"type": "integer"}},
-                    "lead_minutes": {"type": "integer"},
-                    "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]}},
+                    "event_id":     {"type": "integer", "description": "活动 ID（可选）"},
+                    "event":        {"type": "string", "description": "活动标题（推荐：直接用标题定位）"},
+                    "on_date":      {"type": "string", "description": "同名活动时用日期 YYYY-MM-DD 区分"},
+                    "reminders":    {"type": "array", "items": {"type": "integer"},
+                                     "description": "批量提前量（分钟），如 [30, 1440]"},
+                    "lead_minutes": {"type": "integer", "description": "单个提前量（分钟），0=活动开始时；不传 reminders 时用，默认 30"},
+                    "channels":     {"type": "array", "items": {"type": "string", "enum": ["web", "feishu", "qq", "wechat"]},
+                                     "description": "投递渠道，默认 [web]"},
                 },
-                "oneOf": [
-                    {"required": ["event_id"], "not": {"required": ["event"]}},
-                    {"required": ["event"], "not": {"required": ["event_id"]}},
-                ],
-                "allOf": [
-                    {"not": {"required": ["reminders", "lead_minutes"]}},
-                ],
+                "required": [],
             },
             handler=_add_event_reminder,
             mutates=True,
@@ -367,14 +312,13 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="list_event_reminders",
             label="查看活动提醒",
-            description_short='查看活动提醒；先取 reminder_id 再修改或删除',
             description="列出某个日历活动的全部提醒（reminder_id、触发时间、提前量、渠道、是否启用）。改/删提醒前先用它拿 reminder_id。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "event_id": {"type": "integer"},
-                    "event":    {"type": "string"},
-                    "on_date":  {"type": "string", "pattern": _DATE_PATTERN},
+                    "event_id": {"type": "integer", "description": "活动 ID（可选）"},
+                    "event":    {"type": "string", "description": "活动标题（推荐）"},
+                    "on_date":  {"type": "string", "description": "同名活动时用日期 YYYY-MM-DD 区分"},
                 },
                 "required": [],
             },
@@ -383,12 +327,11 @@ class CalendarSkill(BaseSkill):
         Tool(
             name="remove_event_reminder",
             label="删除活动提醒",
-            description_short='删除活动提醒；关键字段 reminder_id',
             description="删除某个活动提醒（用 list_event_reminders 拿到的 reminder_id）。只删活动提醒，不影响独立定时任务。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "reminder_id": {"type": "integer"},
+                    "reminder_id": {"type": "integer", "description": "提醒 ID（来自 list_event_reminders）"},
                 },
                 "required": ["reminder_id"],
             },

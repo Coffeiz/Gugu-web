@@ -10,20 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from app.core.errors import ExpectedError, RetryableError
-from app.services.files.previews import render_cached_pdf, render_thumbnail, resolve_image_mime
+from app.services.files.previews import render_cached_pdf, render_thumbnail
 
 
 class TestPreviewFailureSafety:
     """预览失败只影响视觉结果，不修改文件主记录。"""
-
-    def test_resolves_legacy_generic_mime_from_image_bytes(self):
-        from io import BytesIO
-        from PIL import Image
-
-        output = BytesIO()
-        Image.new("RGB", (2, 2), "red").save(output, format="PNG")
-        assert resolve_image_mime(output.getvalue(), "application/octet-stream") == "image/png"
-        assert resolve_image_mime(b"not-an-image", "application/octet-stream") is None
 
     @pytest.mark.asyncio
     async def test_thumbnail_failure_returns_original_bytes(self):

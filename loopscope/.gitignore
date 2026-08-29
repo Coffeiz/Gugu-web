@@ -1,12 +1,4 @@
 data/
-node_modules/
-.pnpm-store/
-apps/*/.next/
-apps/*/dist/
-packages/*/dist/
-*.tsbuildinfo
-.env
-.env.local
 backend/.venv/
 frontend/node_modules/
 frontend/dist/

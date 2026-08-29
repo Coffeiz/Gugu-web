@@ -1,7 +1,6 @@
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 sqlalchemy>=2.0.0
-greenlet>=3.0.0
 alembic>=1.13.0
 asyncpg>=0.29.0
 redis>=5.0.0
@@ -24,8 +23,6 @@ oss2>=2.18.0
 lark-oapi>=1.6.0
 # QQ 官方机器人接收/发送均为自建 raw WebSocket + raw HTTP，不再依赖 qq-botpy
 # Utils
-# 可选本地 tokenizer：LoopScope 配置 tokenizer.json 后按模型精确估算；未配置时自动回退启发式
-tokenizers>=0.20.3,<1.0.0
 python-dotenv>=1.0.0
 pypinyin>=0.50.0
 pykakasi>=2.2.0

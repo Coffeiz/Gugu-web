@@ -11,7 +11,7 @@
       >
         <span class="app-toast__message">{{ currentToast.message }}</span>
         <button class="app-toast__close" type="button" title="关闭提示" aria-label="关闭提示" @click="dismissAppToast">
-          <Icon name="action.close" :size="14" />
+          <PhX :size="14" weight="bold" />
         </button>
       </div>
     </Transition>
@@ -19,7 +19,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import { PhX } from '@phosphor-icons/vue'
 import { useAppToast } from '@/composables/useAppToast'
 
 const { currentToast, dismissAppToast } = useAppToast()

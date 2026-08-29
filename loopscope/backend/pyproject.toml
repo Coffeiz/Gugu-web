@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loopscope"
+version = "0.2.0"
+description = "Local AgentLoop conversation and trace debugger"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.23,<1"]
+
+[project.scripts]
+loopscope = "loopscope.main:run"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["loopscope*"]

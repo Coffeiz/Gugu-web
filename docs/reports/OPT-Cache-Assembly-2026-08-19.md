@@ -14,7 +14,7 @@ MiniMax-M3 的 Prompt Caching 使用前缀匹配机制：从请求开头到第�
 
 ## 2. 根因分析
 
-### 2.1 LoopScope 数据分析
+### 2.1 Loopscope 数据分析
 
 查询 session 405 的 14 个 run，发现 cache 命中率与 `sys_len`（system prompt 长度）强相关：
 
@@ -27,7 +27,7 @@ MiniMax-M3 的 Prompt Caching 使用前缀匹配机制：从请求开头到第�
 
 ### 2.2 根因定位
 
-通过对比 LoopScope 中 `sys_len=13345`（失败）和 `sys_len=13953`（成功）的 system prompt 结构，发现差异在 **Part 1（behavior block / 相处姿态）**：
+通过对比 Loopscope 中 `sys_len=13345`（失败）和 `sys_len=13953`（成功）的 system prompt 结构，发现差异在 **Part 1（behavior block / 相处姿态）**：
 
 - `sys_len=13345`: Part 1 = **430 chars**（"查准了答 Query" 姿态）
 - `sys_len=13953`: Part 1 = **1038 chars**（"好好陪聊 Companion" 姿态）

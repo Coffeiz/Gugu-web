@@ -72,11 +72,7 @@ def record_tool(tool: str, ok: bool, ms: int) -> None:
 # ── 安全事件计数（正常应恒为 0，非零即需关注）──────────────────────────────
 # ownership.denied：越权访问被拦（模型幻觉他人 id / 有人探测）
 # confirm-gate.bypassed：不可逆工具未经确认执行了（确认门被绕，已无法撤销）
-SECURITY_EVENTS = (
-    "ownership.denied",
-    "confirm-gate.bypassed",
-    "security_event.write_failed",
-)
+SECURITY_EVENTS = ("ownership.denied", "confirm-gate.bypassed")
 
 
 def record_security(event: str) -> None:
@@ -154,5 +150,5 @@ async def summary(days: int = 1) -> dict:
         "p99_ms": p99,             # None = 超过最大桶（>30s）或无数据
         "latency_buckets": {b: lat.get(b, 0) for b in [str(x) for x in BUCKETS] + ["inf"]},
         "tools": rows,
-        "security": sec,           # 安全旁路计数：正常应恒为 0
+        "security": sec,           # {ownership.denied, confirm-gate.bypassed}：正常应恒为 0
     }

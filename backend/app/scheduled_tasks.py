@@ -434,10 +434,10 @@ async def _persist_push_im(
     from app.core import redis as R
     import app.db.session as ss
     from app.models import ConversationSession, ConversationMessage
-    from app.services.conversation_retention import trim_session_messages
     from agent.im.session import (
         session_key,
         session_scope_filters,
+        trim_session_messages,
     )
     from agent.im.owner_session import get_bound_session, bind_session_by_id
 
@@ -621,9 +621,9 @@ _STATUS_PREFIX = {
 def _parse_report_schema(execution_text: str) -> dict:
     """从 execution 最后一轮文本里抠出 report schema。
 
-    复用 ContextBranch 的 provider runner `_parse_json`（容忍 ```json 围栏与前后杂字）。
+    复用 agent/memory/_llm.py 的 _parse_json（容忍 ```json 围栏与前后杂字）。
     解析失败返回 {}，由调用方决定 fallback。"""
-    from agent.context.provider_runner import _parse_json
+    from agent.memory._llm import _parse_json
     return _parse_json(execution_text or "")
 
 

@@ -161,7 +161,7 @@ class PlatformMessage:
             content=str(payload.get("text") or ""),
             attachments=list(attachments),
             quoted_text=payload.get("quoted_text"),
-            mentioned=bool(payload.get("bot_mentioned", payload.get("group_mentioned"))),
+            mentioned=bool(payload.get("group_mentioned")),
             received_at=payload.get("received_at"),
             metadata={
                 key: value
@@ -189,7 +189,6 @@ class PlatformMessage:
             "attachments": list(self.attachments),
             "quoted_text": self.quoted_text,
             "group_mentioned": self.mentioned,
-            "bot_mentioned": self.mentioned,
         })
         # 私聊旧 payload 没有 chat_id；不要为了协议归一化改变旧 worker 的路由语义。
         if self.chat.type == "group" or "chat_id" in payload or (

@@ -13,10 +13,26 @@ import re
 
 # `[e~[` 已由生产流日志的 hex 确认是字面泄漏（常见形态为 "```[e~["），不是前端渲染问题。
 # 它对用户没有语义，后续内容也属于同一段泄漏，和 MiniMax tool-call 标记一样从此处截断。
+_MINIMAX_TRUNCATE_MARKERS = ["]<]minimax", "[e~["]
+
+_MESSAGE_TIME_LEAD = "[消息时间："
+_MESSAGE_TIME_RE = re.compile(r"^\[消息时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]\s*")
+
+
+def _longest_suffix_prefix(s: str, marker: str) -> int:
+    """返回 s 末尾与 marker 前缀重叠的最大长度（0 = 无重叠）。"""
+    max_overlap = min(len(s), len(marker) - 1)
+    for length in range(max_overlap, 0, -1):
+        if s.endswith(marker[:length]):
+            return length
+    return 0
+
+
 class StreamSanitizer:
-    def __init__(self, adapter=None):
-        """按 provider adapter 提供的规则清洗；没有 adapter 时保持纯文本直通。"""
-        self._markers = list(adapter.stream_sanitize_markers()) if adapter is not None else []
+    def __init__(self, minimax: bool = False):
+        # `[e~[` 和 `]<]minimax` 都只在 MiniMax 流中实测过。非 MiniMax 不保留这些前缀，
+        # 避免把其它模型正常提及的文本误当内部标记而延迟或截断。
+        self._markers = _MINIMAX_TRUNCATE_MARKERS if minimax else []
         self._buf = ""
         self._cut = False
 
@@ -59,20 +75,47 @@ class StreamSanitizer:
         return out
 
 
+class LeadingMessageTimeSanitizer:
+    """过滤模型偶尔复述到回复开头的内部消息时间前缀。"""
+
+    def __init__(self):
+        self._buffer = ""
+        self._checked = False
+
+    def feed(self, text: str) -> str:
+        if not text or self._checked:
+            return text
+        self._buffer += text
+
+        if not self._buffer.startswith("["):
+            self._checked = True
+            out, self._buffer = self._buffer, ""
+            return out
+        if not _MESSAGE_TIME_LEAD.startswith(self._buffer) and not self._buffer.startswith(_MESSAGE_TIME_LEAD):
+            self._checked = True
+            out, self._buffer = self._buffer, ""
+            return out
+        if not _MESSAGE_TIME_RE.match(self._buffer):
+            return ""
+
+        self._checked = True
+        self._buffer = _MESSAGE_TIME_RE.sub("", self._buffer, count=1)
+        out, self._buffer = self._buffer, ""
+        return out
+
+    def flush(self) -> str:
+        if self._checked:
+            return ""
+        self._checked = True
+        out, self._buffer = self._buffer, ""
+        return out
+
+
 # ── 输出 emoji 白名单过滤 ────────────────────────────────────────────────────
 # persona 要求表情极简、只标内容类别、坚决不用阴阳/情绪/暧昧表情，但 prompt 压不住模型在
 # 「活泼」语气下的 emoji 习惯（实测三层声明无效——emoji 是 token 级低层习惯，非高层语义行为）。
 # 这里在输出出口确定性兜底：白名单（功能/内容类别）外的 emoji 一律删——宁可误删一个无害图标，
 # 也不放过一个会被读成阴阳/敷衍/暧昧的脸或手势。base char 判定，连带的 VS16/ZWJ 一起处理。
-def _longest_suffix_prefix(s: str, marker: str) -> int:
-    """返回 s 末尾与 marker 前缀重叠的最大长度（0 = 无重叠）。"""
-    max_overlap = min(len(s), len(marker) - 1)
-    for length in range(max_overlap, 0, -1):
-        if s.endswith(marker[:length]):
-            return length
-    return 0
-
-
 _KEEP_EMOJI = set("✅✔☑💡📌📎📝📄📅📆🗓⏰⏳⌛🔍🔎🎉🎊📂📁🗂📊📈📉🔔💬🗨")
 # 前导可选空格一起匹配：删违规 emoji 时连它前面的空格一起吃掉，不留难看的双空格 / 行尾空格
 _EMOJI_RE = re.compile(
@@ -86,39 +129,6 @@ def strip_disallowed_emoji(text: str) -> str:
     if not text:
         return text
     return _EMOJI_RE.sub(lambda m: m.group(0) if m.group(1) in _KEEP_EMOJI else "", text)
-
-
-def _is_time_reminder_block(block: dict) -> bool:
-    """识别可与同一轮用户消息合并的时间块，保留其他 reminder 的边界。"""
-    if not isinstance(block, dict) or block.get("type") != "text":
-        return False
-    text = str(block.get("text") or "").strip()
-    if not text.startswith("[system-reminder]") or not text.endswith("[/system-reminder]"):
-        return False
-    body = text[len("[system-reminder]"):-len("[/system-reminder]")].strip()
-    return bool(re.fullmatch(r"(?:\d{1,2}-\d{1,2} \d{1,2}:\d{2}|当前时间：.+)", body))
-
-
-_CANONICAL_BOUNDARY_TYPES = frozenset({
-    "tool_call",
-    "tool_use",
-    "tool_result",
-    "tool-schema",
-    "skill-schema",
-    "tool-discovery",
-    "knowledge-context",
-    "stance-context",
-    "time-context",
-    "runtime-context",
-})
-
-
-def _contains_canonical_boundary(blocks: list) -> bool:
-    """识别不能与相邻消息合并的 canonical event。"""
-    return any(
-        isinstance(block, dict) and block.get("type") in _CANONICAL_BOUNDARY_TYPES
-        for block in blocks
-    )
 
 
 # ── 历史消息清洗（Anthropic / MiniMax）──────────────────────────────────────
@@ -171,15 +181,7 @@ def _uses(blocks) -> set:
 
 
 def _results(blocks) -> set:
-    # 旧历史或异常 provider 响应可能留下没有 id 的 tool_result。它不是可配对的
-    # 工具结果，不能让发送前清洗本身因 KeyError 中断 worker。
-    return {
-        tool_id
-        for b in blocks
-        if isinstance(b, dict)
-        and b.get("type") == "tool_result"
-        and (tool_id := b.get("tool_use_id") or b.get("tool_call_id"))
-    }
+    return {b["tool_use_id"] for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result"}
 
 
 def sanitize_messages(messages: list) -> list:
@@ -191,8 +193,7 @@ def sanitize_messages(messages: list) -> list:
     1) 规整成 block 列表、丢空 text block；
     2) 只认「assistant(tool_use X) 紧接 user(tool_result X)」的合法对，其余 tool 块全剥掉；
     3) 丢空消息；
-    4) 开头允许稳定的 system snapshot；其后的对话区必须从 user 开始。丢前导
-       assistant 时，同步剥掉它在新表头遗留的孤儿 tool_result；
+    4) 开头必须是 user——丢前导 assistant 时，同步剥掉它在新表头遗留的孤儿 tool_result；
     5) 合并相邻同角色。
     """
     norm = [_to_norm(m) for m in messages]
@@ -215,8 +216,7 @@ def sanitize_messages(messages: list) -> list:
                 if b.get("id") in valid_use.get(idx, ()):
                     kept.append(b)
             elif isinstance(b, dict) and b.get("type") == "tool_result":
-                tool_id = b.get("tool_use_id") or b.get("tool_call_id")
-                if tool_id in valid_res.get(idx, ()):
+                if b.get("tool_use_id") in valid_res.get(idx, ()):
                     kept.append(b)
             else:
                 kept.append(b)
@@ -225,64 +225,22 @@ def sanitize_messages(messages: list) -> list:
     # 3) 丢空消息
     norm = [m for m in norm if m["content"]]
 
-    # 4) 保留前导 system snapshot。旧规则要求第一条必须是 user，会把新的
-    # role=system snapshot 直接删掉，最终请求只剩 system_param + history/tail。
-    # system 之后仍要求对话区从 user 开始，并继续清理前导 assistant 及其孤儿 result。
-    leading_system = []
-    while norm and norm[0]["role"] == "system":
-        leading_system.append(norm.pop(0))
+    # 4) 开头必须是 user；丢前导 assistant 时剥掉新表头的孤儿 tool_result
     while norm and norm[0]["role"] != "user":
         dropped_uses = _uses(norm.pop(0)["content"])
         if dropped_uses and norm and norm[0]["role"] == "user":
             norm[0]["content"] = [
                 b for b in norm[0]["content"]
                 if not (isinstance(b, dict) and b.get("type") == "tool_result"
-                        and (b.get("tool_use_id") or b.get("tool_call_id")) in dropped_uses)
+                        and b.get("tool_use_id") in dropped_uses)
             ]
             if not norm[0]["content"]:
                 norm.pop(0)
-    norm = leading_system + norm
 
-    # 5) 合并相邻同角色，但保留 reminder 与 canonical event 的独立边界。
-    # reminder 现在使用 user role；如果无条件合并，当前用户消息会和时间/快照
-    # reminder 粘成一条，下一轮从历史恢复时会再次改变消息形状并破坏缓存前缀。
+    # 5) 合并相邻同角色
     merged: list = []
     for m in norm:
-        previous_is_reminder = bool(
-            merged
-            and isinstance(merged[-1].get("content"), list)
-            and any(
-                (
-                    isinstance(block, dict)
-                    and block.get("type") == "text"
-                    and str(block.get("text") or "").startswith("[system-reminder]")
-                    and not _is_time_reminder_block(block)
-                )
-                or (isinstance(block, dict) and block.get("type") == "time-context")
-                for block in merged[-1]["content"]
-            )
-        )
-        current_is_reminder = any(
-            (
-                isinstance(block, dict)
-                and block.get("type") == "text"
-                and str(block.get("text") or "").startswith("[system-reminder]")
-                and not _is_time_reminder_block(block)
-            )
-            or (isinstance(block, dict) and block.get("type") == "time-context")
-            for block in m["content"]
-        )
-        previous_has_canonical_boundary = (
-            _contains_canonical_boundary(merged[-1]["content"])
-            if merged else False
-        )
-        current_has_canonical_boundary = _contains_canonical_boundary(m["content"])
-        if merged and merged[-1]["role"] == m["role"] and not (
-            previous_is_reminder
-            or current_is_reminder
-            or previous_has_canonical_boundary
-            or current_has_canonical_boundary
-        ):
+        if merged and merged[-1]["role"] == m["role"]:
             merged[-1]["content"] = merged[-1]["content"] + m["content"]
         else:
             merged.append({"role": m["role"], "content": m["content"]})
@@ -290,7 +248,7 @@ def sanitize_messages(messages: list) -> list:
 
 
 def tool_rounds_only(messages: list) -> list:
-    """从「工具循环 delta」里只留真正的工具往返（assistant 的工具调用 / 工具结果），
+    """从「工具循环 delta」里只留真正的工具往返（assistant 的 tool_use / user 的 tool_result），
     丢弃 core 里守卫注入的合成控制消息和核实轮被 UI 隐藏的内心戏——它们是控制信令、不是对话：
 
     - `_VERIFY_PROMPT` / `_VERIFY_FORCE_PROMPT` / `_NARRATION_NUDGE` / `_INTENT_NUDGE` /
@@ -300,16 +258,12 @@ def tool_rounds_only(messages: list) -> list:
     这些若落进 ConversationMessage.content_json，下一轮会从 content_json 重建进 LLM 上下文、
     还被压缩/反思吃进去——每轮重复灌「【系统自检】…」白烧 token 且污染行为。最终回复另存为
     assistant text，不在此 delta 里，所以「只留带工具块的消息」不会漏掉真答复。
-    判据基于工具块存在性，兼容 provider wire 格式和 canonical tool_call/tool_result。
-    """
+    判据基于工具块存在性（tool_use / tool_result），故对 anthropic 与 openai 两种 content 形态都成立。"""
     out = []
     for m in messages:
         c = m.get("content")
-        has_blocks = isinstance(c, list) and any(
-            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_call", "tool_result")
-            for b in c
-        )
-        has_openai_call = m.get("role") == "assistant" and bool(m.get("tool_calls"))
-        if has_blocks or has_openai_call or m.get("role") == "tool":
+        if isinstance(c, list) and any(
+            isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result") for b in c
+        ):
             out.append(m)
     return out

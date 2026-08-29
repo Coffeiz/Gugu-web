@@ -15,7 +15,7 @@
               <SessionTitleEdit :title="s.title" :on-rename="(t) => onRenameSession(s.id, t)" />
               <span v-if="formatSessionTime(s.updatedAt)" class="exp-session-time">{{ formatSessionTime(s.updatedAt) }}</span>
             </div>
-            <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除"><Icon name="action.delete" :size="12" /></button>
+            <button class="exp-session-del" @click.stop="onDeleteSession(s.id)" title="删除"><PhTrash :size="12" weight="bold" /></button>
           </div>
           <div v-if="!imSessionsOf(p.key).length" class="exp-session-empty">暂无对话</div>
         </template>
@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhTrash } from '@phosphor-icons/vue'
 import SessionTitleEdit from './SessionTitleEdit.vue'
 import type { ChatSession, ImPlatformKey } from './chatTypes'
 

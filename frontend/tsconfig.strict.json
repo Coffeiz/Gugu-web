@@ -73,6 +73,7 @@
     "src/views/Admin/SystemLogs/index.vue",
     "src/views/Admin/Users/index.vue",
     "src/views/Admin/Services/index.vue",
+    "src/views/Admin/InviteCodes/index.vue",
     "src/views/Admin/AuditLog/index.vue",
     "src/views/Admin/Debug/index.vue",
     "src/views/Admin/Config/index.vue",

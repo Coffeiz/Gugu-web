@@ -13,22 +13,22 @@
       <span class="fpw-name" :title="win.file.displayName">{{ win.file.displayName }}</span>
       <div class="fpw-actions">
         <template v-if="isText">
-          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><Icon name="action.subtract" :size="12" /></button>
+          <button class="fpw-btn" title="缩小字号" @click.stop="textFontSize = Math.max(10, textFontSize - 1)"><PhMinus weight="bold" :size="12" /></button>
           <span class="fpw-font-size">{{ textFontSize }}</span>
-          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><Icon name="action.add" :size="12" /></button>
+          <button class="fpw-btn" title="放大字号" @click.stop="textFontSize = Math.min(24, textFontSize + 1)"><PhPlus weight="bold" :size="12" /></button>
         </template>
         <button ref="infoBtnRef" class="fpw-btn" :class="{ active: showInfo }" title="文件信息" @click.stop="openInfo">
-          <Icon name="status.info" :size="13" />
+          <PhInfo weight="bold" :size="13" />
         </button>
         <button class="fpw-btn" title="下载" @click.stop="handleDownload">
-          <Icon name="action.download" :size="13" />
+          <PhDownloadSimple weight="bold" :size="13" />
         </button>
         <button class="fpw-btn" :title="maximized ? '还原' : '最大化'" @click.stop="toggleMaximize">
-          <Icon name="action.expand" v-if="!maximized" :size="13" />
-          <Icon name="action.collapse" v-else :size="13" />
+          <PhCornersOut v-if="!maximized" weight="bold" :size="13" />
+          <PhCornersIn  v-else           weight="bold" :size="13" />
         </button>
         <button class="fpw-btn fpw-close" title="关闭" @click.stop="previewStore.closeWindow(win.id)">
-          <Icon name="action.close" :size="13" />
+          <PhX weight="bold" :size="13" />
         </button>
       </div>
     </div>
@@ -38,13 +38,13 @@
       <!-- 真实内容（在下层） -->
       <ImageViewer v-if="isImg" ref="imageViewerRef" :blobUrl="blobUrl ?? undefined" @loaded="onImageLoaded" />
       <VideoViewer v-else-if="isVid && videoSrc" :src="videoSrc ?? undefined" />
-      <TextViewer  v-else-if="isText && (blobUrl || isVirtual)" :blobUrl="blobUrl ?? undefined" :source-text="win.sourceText" :save-source="win.saveSource" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
+      <TextViewer  v-else-if="isText && blobUrl" :blobUrl="blobUrl ?? undefined" :ext="win.file.ext" :fontSize="textFontSize" :fileKey="win.file.id ?? win.file.attach_id ?? undefined" :fileContext="win.file" />
       <div v-if="loading && !placeholderReady" class="fpw-status">
         <div class="fpw-spinner"></div>
         <span>加载中…</span>
       </div>
       <div v-if="!loading && error" class="fpw-status fpw-error">
-        <Icon name="status.warning" :size="28" style="opacity:.5" />
+        <PhWarningCircle :size="28" style="opacity:.5" />
         <span>{{ error }}</span>
       </div>
       <!-- 占位图覆盖在真实内容上方，imageReady 后淡出，遮住大图解码过程 -->
@@ -66,10 +66,10 @@
       <!-- 同目录图片左右切换 -->
       <template v-if="canNav">
         <button class="fpw-nav fpw-nav-prev" title="上一张" @click.stop="goPrev">
-          <Icon name="action.back" :size="18" />
+          <PhCaretLeft weight="bold" :size="18" />
         </button>
         <button class="fpw-nav fpw-nav-next" title="下一张" @click.stop="goNext">
-          <Icon name="action.next" :size="18" />
+          <PhCaretRight weight="bold" :size="18" />
         </button>
       </template>
     </div>
@@ -97,7 +97,7 @@
         <div class="fpw-info-title" @mousedown.prevent="startInfoDrag">
           <span>文件信息</span>
           <button class="fpw-btn fpw-close" @click.stop="showInfo = false">
-            <Icon name="action.close" :size="13" />
+            <PhX weight="bold" :size="13" />
           </button>
         </div>
         <div class="fpw-info-body">
@@ -144,10 +144,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
-import Icon from '@/components/common/Icon.vue'
 import type { PreviewWindow } from '@/stores/preview'
 import type { FileMeta } from '@/stores/filesCache'
+import { ref, computed, watch, onUnmounted , type PropType} from 'vue'
+import { PhInfo, PhDownloadSimple, PhCornersOut, PhCornersIn, PhX, PhWarningCircle, PhMinus, PhPlus, PhCaretLeft, PhCaretRight } from '@phosphor-icons/vue'
 import ImageViewer from '@/components/common/viewers/ImageViewer.vue'
 import VideoViewer from '@/components/common/viewers/VideoViewer.vue'
 import TextViewer  from '@/components/common/viewers/TextViewer.vue'
@@ -177,7 +177,6 @@ const h = ref(props.win.h)
 const isImg  = computed(() => isImageExt(props.win.file.ext))
 const isVid  = computed(() => isVideoExt(props.win.file.ext))
 const isText = computed(() => isTextExt(props.win.file.ext))
-const isVirtual = computed(() => props.win.sourceText !== undefined && !!props.win.saveSource)
 
 // ── 图片左右切换（同目录，来自打开时传入的 win.siblings） ─────────────────────
 const navImages = computed(() => (props.win.siblings || []).filter(f => isImageExt(f.ext)))
@@ -337,12 +336,6 @@ async function load(f: Partial<FileMeta>, refresh = false) {
   imageReady.value       = false
   placeholderSrc.value   = null
 
-  if (isVirtual.value) {
-    fitWindow(Math.round(window.innerWidth * 0.44), Math.round(window.innerHeight * 0.78))
-    loading.value = false
-    return
-  }
-
   // 占位图：优先从 blob Map 同步命中，未缓存则后台 fetch（与全图下载并行）
   if (isImg.value && !_SVG_EXTS.has((f.ext ?? '').toUpperCase())) {
     if (f.attach_id) {
@@ -439,8 +432,7 @@ async function load(f: Partial<FileMeta>, refresh = false) {
 watch(() => props.win.file, f => load(f), { immediate: true })
 
 const liveStore = useLiveStore()
-watch(() => liveStore.resourceEvent, (event) => {
-  if (event?.resource !== 'files') return
+watch(() => liveStore.fileEvent, (event) => {
   if (event?.origin === CLIENT_ID) return
   if (isText.value && !props.win.file.attach_id) load(props.win.file, true)
 })
@@ -778,7 +770,7 @@ onUnmounted(() => {
   font-size: 12px; color: var(--text-primary);
   word-break: break-all; line-height: 1.4;
 }
-.fpw-info-mono { font-family: var(--font-family-mono); font-size: 11px; }
+.fpw-info-mono { font-family: monospace; font-size: 11px; }
 
 /* ── 弹窗动画 ── */
 .info-pop-enter-active,

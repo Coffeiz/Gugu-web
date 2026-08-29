@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
 import json
-import logging
 import os
 import time
 import urllib.request
@@ -18,186 +16,12 @@ from .utils import _code_ref, _estimate_tokens, _jsonable
 _trace: ContextVar[str] = ContextVar("trace_id", default="")
 _scope_run: ContextVar["_ScopeRun | None"] = ContextVar("loopscope_run", default=None)
 _send_tasks: set[asyncio.Task] = set()
-_layout_logger = logging.getLogger("agent.core")
 
 def _enabled() -> bool:
     return os.getenv("LOOPSCOPE_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 def _now() -> float:
     return time.time()
-
-
-def _diagnostic_bucket(run: "_ScopeRun", key: str, default: dict[str, Any]) -> dict[str, Any]:
-    value = run.attributes.get(key)
-    if not isinstance(value, dict):
-        value = copy.deepcopy(default)
-        run.attributes[key] = value
-    return value
-
-
-def record_canonical_event_stats(run: "_ScopeRun", stats: dict[str, Any]) -> None:
-    """记录最近一次 provider 输入中的 canonical event 统计。"""
-    bucket = _diagnostic_bucket(run, "canonical_events", {
-        "count": 0, "by_type": {}, "schema_digests": [],
-    })
-    bucket["count"] = int(stats.get("count", 0) or 0)
-    bucket["by_type"] = dict(stats.get("by_type") or {})
-    bucket["schema_digests"] = sorted({str(item) for item in stats.get("schema_digests") or () if item})
-
-
-def record_canonical_batch(*, digest: str, round_id: str | None, message_count: int) -> None:
-    """记录已提交 canonical batch 的脱敏身份，便于核对持久化与请求投影。"""
-    run = _scope_run.get()
-    if run is None or run.ended_at is not None:
-        return
-    bucket = _diagnostic_bucket(run, "canonical_batches", {
-        "count": 0, "digests": [], "round_ids": [], "message_count": 0,
-    })
-    bucket["count"] = int(bucket.get("count", 0) or 0) + 1
-    bucket["message_count"] = int(bucket.get("message_count", 0) or 0) + int(message_count or 0)
-    if digest:
-        bucket["digests"] = sorted({*bucket.get("digests", []), str(digest)})
-    if round_id:
-        bucket["round_ids"] = sorted({*bucket.get("round_ids", []), str(round_id)})
-
-
-def record_context_compaction(
-    *,
-    phase: str,
-    reason: str,
-    changed: bool,
-    before_messages: int,
-    after_messages: int,
-    before_summary_count: int = 0,
-    after_summary_count: int = 0,
-    before_summary_chars: int = 0,
-    after_summary_chars: int = 0,
-    protected_from: int | None = None,
-) -> None:
-    """记录一次上下文压缩结果，不记录历史正文。"""
-    run = _scope_run.get()
-    if run is None or run.ended_at is not None:
-        return
-    payload = {
-        "phase": phase,
-        "reason": reason,
-        "changed": bool(changed),
-        "before_messages": int(before_messages),
-        "after_messages": int(after_messages),
-        "before_summary_count": int(before_summary_count),
-        "after_summary_count": int(after_summary_count),
-        "before_summary_chars": int(before_summary_chars),
-        "after_summary_chars": int(after_summary_chars),
-        "protected_from": protected_from,
-    }
-    span = run.span("context", "Context compaction", payload, context_source="compaction")
-    span.finish(payload, status="success" if changed else "skipped")
-
-
-def record_adapter_call(
-    run: "_ScopeRun",
-    *,
-    provider: str,
-    api_format: str,
-    canonical_event_count: int,
-) -> None:
-    """记录一次真实 LLM driver/provider adapter 调用的脱敏计数。"""
-    bucket = _diagnostic_bucket(run, "adapter_calls", {
-        "count": 0, "success": 0, "errors": 0, "canonical_render_calls": 0,
-        "by_provider": {}, "by_api_format": {},
-    })
-    bucket["count"] = int(bucket.get("count", 0) or 0) + 1
-    if canonical_event_count:
-        bucket["canonical_render_calls"] = int(bucket.get("canonical_render_calls", 0) or 0) + 1
-    for key, value in (("by_provider", provider or "unknown"), ("by_api_format", api_format or "unknown")):
-        counts = bucket.setdefault(key, {})
-        counts[value] = int(counts.get(value, 0) or 0) + 1
-
-
-def record_adapter_result(run: "_ScopeRun", status: str) -> None:
-    """记录 adapter 调用的结束状态。"""
-    bucket = _diagnostic_bucket(run, "adapter_calls", {
-        "count": 0, "success": 0, "errors": 0, "canonical_render_calls": 0,
-        "by_provider": {}, "by_api_format": {},
-    })
-    key = "success" if status == "success" else "errors"
-    bucket[key] = int(bucket.get(key, 0) or 0) + 1
-
-
-def record_tool_schema_error(
-    run: "_ScopeRun",
-    *,
-    tool_name: str,
-    schema: Any,
-    error: Any,
-    error_kind: str,
-    arguments: Any = None,
-    arguments_shape: Any = None,
-    provider_schema: Any = None,
-    parent_span_id: str | None = None,
-) -> None:
-    """记录一次工具 schema 错误及模型实际看到的声明。
-
-    schema 是工具注册表的权威声明；provider_schema 由调用轮提供时，优先用于
-    对照 wire 格式。LoopScope 是开发诊断工具，同时保留完整参数和结构摘要。
-    """
-    if not _enabled() or run.ended_at is not None:
-        return
-    try:
-        schema_value = _jsonable(schema if isinstance(schema, dict) else {})
-        provider_value = _jsonable(provider_schema) if isinstance(provider_schema, dict) else None
-        canonical = provider_value if provider_value is not None else schema_value
-        schema_text = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(schema_text.encode("utf-8")).hexdigest()[:16]
-        span = run.span(
-            "tool",
-            f"Tool schema error · {tool_name}",
-            {
-                "tool_name": tool_name,
-                "schema": schema_value,
-                "provider_schema": provider_value,
-                "schema_digest": digest,
-                "arguments": _jsonable(arguments if arguments is not None else {}),
-                "arguments_shape": _jsonable(arguments_shape or {}),
-                "error": _jsonable(error),
-            },
-            parent_span_id=parent_span_id,
-            context_source="tool_schema_error",
-            error_kind=error_kind,
-            schema_digest=digest,
-        )
-        span.finish({
-            "tool_name": tool_name,
-            "schema_digest": digest,
-            "error_kind": error_kind,
-        }, status="error")
-        issues = error.get("issues") if isinstance(error, dict) else []
-        field_paths = sorted({
-            str(item.get("path")) for item in issues
-            if isinstance(item, dict) and item.get("path")
-        })
-        provider_name = "unknown"
-        adapter_calls = run.attributes.get("adapter_calls")
-        if isinstance(adapter_calls, dict):
-            providers = adapter_calls.get("by_provider")
-            if isinstance(providers, dict) and len(providers) == 1:
-                provider_name = str(next(iter(providers)))
-        aggregate = _diagnostic_bucket(run, "tool_schema_errors", {
-            "count": 0, "by_tool": {}, "by_error_kind": {},
-            "by_field_path": {}, "by_provider": {},
-        })
-        aggregate["count"] = int(aggregate.get("count", 0) or 0) + 1
-        for bucket_name, values in (
-            ("by_tool", [tool_name]),
-            ("by_error_kind", [error_kind]),
-            ("by_field_path", field_paths),
-            ("by_provider", [provider_name]),
-        ):
-            counts = aggregate.setdefault(bucket_name, {})
-            for value in values:
-                counts[value] = int(counts.get(value, 0) or 0) + 1
-    except Exception:
-        pass
 
 @dataclass
 class _Span:
@@ -397,73 +221,6 @@ def record_snapshot_event(
     except Exception:
         pass
 
-
-def record_context_layout(
-    messages: Any,
-    *,
-    metadata: dict[str, Any] | None = None,
-    system_text: str = "",
-    parent_span_id: str | None = None,
-) -> None:
-    """记录 provider loop 实际收到的上下文边界（仅长度/指纹/标记）。"""
-    if not _enabled():
-        return
-    run = _scope_run.get()
-    if run is None or run.ended_at is not None:
-        return
-    try:
-        rows = list(messages) if isinstance(messages, (list, tuple)) else []
-        def _row(value: Any) -> dict[str, Any]:
-            if isinstance(value, dict):
-                role = str(value.get("role") or "")
-                content = value.get("content")
-            else:
-                role = str(getattr(value, "role", "") or "")
-                content = getattr(value, "content", "")
-            text = content if isinstance(content, str) else _jsonable(content)
-            text = str(text or "")
-            markers = [marker for marker in (
-                "[system-reminder]", "[群聊历史消息", "[当前群聊发言人", "[group-rag]",
-                "[owner-rag]", "[group-member-rag]", "[knowledge-context]",
-                "## 当前群组记忆", "## 当前 IM 身份事实", "## 默认相处姿态", "当前时间：",
-            ) if marker in text]
-            return {
-                "role": role,
-                "len": len(text),
-                "fp": hashlib.sha1(text.encode("utf-8")).hexdigest()[:12],
-                "markers": markers,
-            }
-        row_meta = [_row(item) for item in rows]
-        sequence_fp = hashlib.sha1(
-            json.dumps(row_meta, ensure_ascii=False, sort_keys=True).encode("utf-8")
-        ).hexdigest()[:12]
-        payload = {
-            "phase": "provider-input",
-            "provider_message_count": len(row_meta),
-            "provider_sequence_fp": sequence_fp,
-            "provider_head": row_meta[:3],
-            "provider_tail": row_meta[-3:],
-            "system_len": len(system_text or ""),
-            "system_fp": hashlib.sha1((system_text or "").encode("utf-8")).hexdigest()[:12],
-            "application_boundary": _jsonable(metadata or {}),
-        }
-        _layout_logger.info("[context-layout] %s", payload)
-        run.attributes["context_layout"] = payload
-        span = run.span(
-            "context",
-            "Context layout at provider boundary",
-            payload,
-            parent_span_id=parent_span_id,
-            token_impact={"message_count": len(row_meta)},
-            context_source="provider-input",
-        )
-        span.finish({
-            "provider_message_count": len(row_meta),
-            "provider_sequence_fp": sequence_fp,
-        })
-    except Exception:
-        pass
-
 async def _post_snapshot(snapshot: dict[str, Any]) -> None:
     base = os.getenv("LOOPSCOPE_ENDPOINT", "http://127.0.0.1:4320").rstrip("/")
     url = base if base.endswith("/api/collector/runs") else f"{base}/api/collector/runs"
@@ -494,10 +251,6 @@ def _finish_run(run: _ScopeRun, status: str) -> None:
         task.add_done_callback(_send_tasks.discard)
     except Exception:
         pass
-
-def _discard_run() -> None:
-    """丢弃没有进入 Agent 执行链路的临时 run，不向 Collector 上报。"""
-    _scope_run.set(None)
 
 def create_trace() -> str:
     t = uuid.uuid4().hex[:12]

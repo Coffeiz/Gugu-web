@@ -140,7 +140,7 @@ async def poll(
         await events.bump_context_revision(current_user.id, "im_channels")
         await R.get_redis().delete(_rk(poll_id))
         try:
-            await R.get_redis().publish("im:gateway:reload", "1")
+            await R.get_redis().publish("im:supervisor:reload", "1")
         except Exception:
             pass
         return {"status": "success", "bot": {"id": bot.id, "name": bot.name, "app_id": bot.app_id}}

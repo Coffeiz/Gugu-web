@@ -151,7 +151,7 @@
 .md-preview .np-code,
 .ne-body .ProseMirror .ne-codeblock pre {
   padding: 8px 12px; margin: 0;
-  font-family: var(--font-family-mono);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
 .md-preview .np-code code,

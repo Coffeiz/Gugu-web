@@ -3,6 +3,4 @@
 @import './glass-dark.css';
 @import './mono-light.css';
 @import './mono-dark.css';
-/* Family composition consumes palette color bases while retaining its own material recipes. */
-@import './material-composition.css';
 @import './compatibility.css';

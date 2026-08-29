@@ -1,8 +1,6 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: apps/collector/Dockerfile
+    build: ./backend
     environment:
       LOOPSCOPE_HOST: 0.0.0.0
       LOOPSCOPE_PORT: 4320
@@ -11,11 +9,6 @@ services:
       - "4320:4320"
     volumes:
       - loopscope-data:/data
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4320/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
 
   frontend:
     build: ./frontend
@@ -24,8 +17,7 @@ services:
     ports:
       - "4319:4319"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
 
 volumes:
   loopscope-data:

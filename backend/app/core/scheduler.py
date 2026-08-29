@@ -69,8 +69,5 @@ def jobs() -> list:
 def shutdown() -> None:
     global _sched
     if _sched is not None:
-        # worker 关闭事件循环前必须让正在执行的 job 完成清理；其中一些 job 会持有
-        # AsyncSession。wait=False 会让 loop 先结束，checked-out asyncpg connection
-        # 最终只能由 GC terminate，触发 greenlet is being finalized 警告。
-        _sched.shutdown(wait=True)
+        _sched.shutdown(wait=False)
         _sched = None

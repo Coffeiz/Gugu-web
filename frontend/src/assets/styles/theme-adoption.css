@@ -15,42 +15,38 @@ html[data-theme][data-family] .theme-mode-quick button {
   width: 28px;
   height: 28px;
   color: var(--control-fg);
-  background: var(--surface-raised);
-  border: 1px solid var(--input-border);
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
   border-radius: var(--control-radius);
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
 }
 html[data-theme][data-family] .theme-mode-quick button:hover {
   color: var(--control-fg-strong);
-  background: var(--surface-soft-hover);
-  border-color: var(--input-border-hover);
-  box-shadow: none;
+  background: var(--control-bg-hover);
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card);
 }
 
 /* ── Real Topbar controls ─────────────────────────────────────────────────────────────── */
 html[data-theme][data-family] .topbar .btn-ghost-custom {
   color: var(--control-fg) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border) !important;
-  box-shadow: none !important;
+  background: var(--control-bg) !important;
+  border-color: var(--control-border) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-muted) !important;
 }
 html[data-theme][data-family] .topbar .btn-ghost-custom:hover {
   color: var(--control-fg-strong) !important;
-  background: var(--surface-raised) !important;
-  border-color: var(--input-border-hover) !important;
-  box-shadow: none !important;
+  background: var(--control-bg-hover) !important;
+  border-color: var(--control-border-hover) !important;
+  box-shadow: inset 0 1px 0 var(--highlight-soft), var(--elevation-card) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom {
   color: var(--content-on-accent) !important;
-  background: var(--action-primary-bg) !important;
-  filter: none !important;
+  background: var(--brand-gradient) !important;
   border-color: transparent !important;
-  box-shadow: none !important;
+  box-shadow: var(--elevation-card) !important;
 }
 html[data-theme][data-family] .topbar .btn-primary-custom:hover {
-  background: var(--action-primary-bg) !important;
-  filter: brightness(1.05);
-  box-shadow: none !important;
+  box-shadow: var(--elevation-card-hover) !important;
 }
 
 /* ── Projects ─────────────────────────────────────────────────────────────────────────── */
@@ -99,20 +95,20 @@ html[data-theme][data-family] .proj-card .done-label {
   background: var(--status-success-bg);
   box-shadow: inset 0 0 0 1px color-mix(in srgb,var(--status-success) 34%,transparent);
 }
-html[data-theme][data-family] .todo-pop-popup {
+html[data-theme][data-family] .proj-card .todo-pop {
   color: var(--content-primary);
   background: var(--popup-background);
   border-color: var(--popup-border);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-title,
-html[data-theme][data-family] .todo-pop-popup .tp-name,
-html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
-html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .todo-pop-popup .tp-check { background: var(--control-bg); border-color: var(--action-outline); color: var(--content-on-accent); }
-html[data-theme][data-family] .todo-pop-popup .tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
-html[data-theme][data-family] .todo-pop-popup .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
-html[data-theme][data-family] .todo-pop-popup .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
+html[data-theme][data-family] .proj-card .tp-title,
+html[data-theme][data-family] .proj-card .tp-name,
+html[data-theme][data-family] .proj-card .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .proj-card .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .proj-card .tp-check { border-color: var(--border-default); color: var(--content-on-accent); }
+html[data-theme][data-family] .proj-card .tp-check.checked { background: var(--action-primary); border-color: var(--action-primary); }
+html[data-theme][data-family] .proj-card .tp-add { color: var(--content-secondary); border-color: var(--border-subtle); }
+html[data-theme][data-family] .proj-card .tp-add:hover { color: var(--action-primary); background: var(--action-soft); border-color: var(--action-outline); }
 
 html[data-theme][data-family] .seg-bar .seg,
 html[data-theme][data-family] .progress-bar { background: var(--surface-soft-hover) !important; }
@@ -130,7 +126,7 @@ html[data-theme][data-family] .column .add-card:hover {
 html[data-theme][data-family] .done-col .archived-entry-mini {
   color: var(--control-fg);
   background: var(--control-bg);
-  border-color: var(--input-border);
+  border-color: var(--control-border);
 }
 html[data-theme][data-family] .done-col .year-row:hover,
 html[data-theme][data-family] .done-col .month-row:hover { background: var(--surface-soft-hover); }
@@ -174,12 +170,12 @@ html[data-theme][data-family] .cal-toolbar .today-btn {
   color: var(--control-fg);
   background: var(--control-bg);
   border-color: var(--control-border);
-  box-shadow: none;
+  box-shadow: inset 0 1px 0 var(--highlight-muted);
 }
 html[data-theme][data-family] .cal-toolbar .today-btn:hover {
   color: var(--control-fg-strong);
   background: var(--control-bg-hover);
-  border-color: var(--input-border-hover);
+  border-color: var(--control-border-hover);
 }
 html[data-theme][data-family] .cal-toolbar .view-toggle { background: var(--action-soft); }
 html[data-theme][data-family] .cal-toolbar .view-toggle button { color: var(--content-secondary); }
@@ -193,9 +189,9 @@ html[data-theme][data-family] .cal-sidebar .add-event-btn {
 html[data-theme][data-family] .cal-sidebar .add-event-btn:hover { background: var(--action-soft-hover); border-color: var(--border-focus); }
 html[data-theme][data-family] .cal-sidebar .add-proj-btn {
   color: var(--content-on-accent);
-  background: var(--action-primary-bg);
+  background: var(--brand-gradient);
   border-color: transparent;
-  box-shadow: none;
+  box-shadow: var(--elevation-card);
 }
 html[data-theme][data-family] .cal-sidebar .sidebar-ev {
   background: var(--surface-raised);
@@ -366,6 +362,7 @@ html[data-theme='dark'][data-family] .chat-window .msg-file-ext {
   background: var(--gugu-chat-send-bg);
 }
 html[data-theme='dark'][data-family] .chat-window .msg.ai .msg-bubble,
+html[data-theme='dark'][data-family] .chat-window .msg-file,
 html[data-theme='dark'][data-family] .chat-window .msg-voice {
   color: var(--content-primary);
   background: var(--gugu-chat-assistant-bg);
@@ -426,8 +423,8 @@ html[data-theme='dark'][data-family] .chat-window .tool-bubble,
 html[data-theme='dark'][data-family] .chat-window .msg-file-dl { color: var(--action-primary); }
 html[data-theme='dark'][data-family] .chat-window .msg-bubble.md-body a[href^='gugu://'] {
   color: var(--content-on-accent);
-  background: var(--gugu-chat-send-bg);
-  box-shadow: none;
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
 }
 html[data-theme='dark'][data-family] .exp-session-title.is-header:hover,
 html[data-theme='dark'][data-family] .exp-session-title.is-header.is-editing {

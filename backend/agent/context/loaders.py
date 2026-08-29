@@ -3,50 +3,23 @@
 Phase 1：记忆文件尚未实装，`load_memory` 返回全空占位，保证 builder 中
 `{summary}{profile}{pattern}{preferences}{memory}{weekly}{daily}` 仍填空串、行为不变。
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 
-from app.core.tz import now_utc, resolve_tz, today_str
-from app.models import CalendarEvent, File, Folder, MindNode, Project, User
+from app.core.tz import resolve_tz, today_str
+from app.models import CalendarEvent, File, Folder, Project, User
 from app.services.storage.folders import resolve_folder_path
-
-PERSONAL_FILES_RECENT_LIMIT = 20
-PROJECT_CONTEXT_LIMITS = {"pending": 5, "active": 10, "done": 3}
-NOTE_CONTEXT_LIMIT = 20
-
-
-def _project_priority(project) -> int:
-    return {"high": 3, "medium": 2, "low": 1}.get(project.priority, 0)
-
-
-def project_sort_key(project):
-    """与项目页一致：优先级优先，再按各列的业务日期排序。"""
-    priority = _project_priority(project)
-    if project.status == "done":
-        done_ts = project.done_at.timestamp() if project.done_at else 0
-        return (-priority, -done_ts, project.id)
-    if project.status == "active":
-        return (-priority, project.deadline or "", project.id)
-    return (-priority, project.start_date or "", project.id)
 
 
 async def load_projects(db, user_id) -> list:
-    """按项目页规则加载有限项目摘要，并预加载项目文件根目录。"""
+    """当前用户未归档项目，按 updated_at 倒序（迁自原 _stream）。"""
     result = await db.execute(
         select(Project)
-        .options(selectinload(Project.folders))
         .where(Project.user_id == user_id, Project.archived == False)
+        .order_by(Project.updated_at.desc())
     )
-    grouped = {status: [] for status in PROJECT_CONTEXT_LIMITS}
-    for project in result.scalars().all():
-        grouped.setdefault(project.status, []).append(project)
-    selected = []
-    for status in ("pending", "active", "done"):
-        ordered = sorted(grouped.get(status, []), key=project_sort_key)
-        selected.extend(ordered[:PROJECT_CONTEXT_LIMITS[status]])
-    return selected
+    return result.scalars().all()
 
 
 async def load_user_tz(db, user_id):
@@ -67,73 +40,35 @@ async def load_events(db, user_id, limit: int = 10, tz=None) -> list:
     return result.scalars().all()
 
 
-async def load_recent_notes(db, user_id, days: int = 7, limit: int = NOTE_CONTEXT_LIMIT) -> list[dict]:
-    """读取最近一周的普通时间流笔记摘要，不包含画布便签。"""
-    since = now_utc() - timedelta(days=max(days, 0))
-    result = await db.execute(
-        select(MindNode)
-        .where(
-            MindNode.user_id == user_id,
-            MindNode.kind == "note",
-            MindNode.deleted_at.is_(None),
-            MindNode.captured_at >= since,
-        )
-        .order_by(MindNode.captured_at.desc(), MindNode.id.desc())
-        .limit(min(max(limit, 0), NOTE_CONTEXT_LIMIT))
-    )
-    return [
-        {
-            "id": note.id,
-            "title": (note.title or "").strip(),
-            "content": (note.content_plain or note.content_md or "").strip()[:500],
-            "captured_at": note.captured_at,
-        }
-        for note in result.scalars().all()
-    ]
-
-
-async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_LIMIT) -> dict:
-    """个人文件库的轻量概览。
-
-    全局文件上下文只负责个人空间：只列一级目录和最近文件，不把项目文件
-    或其它空间的文件重复注入；项目文件由项目上下文按需负责。
-    """
-    recent_limit = min(max(int(recent), 0), PERSONAL_FILES_RECENT_LIMIT)
+async def load_files_overview(db, user_id, recent: int = 25) -> dict:
+    """文件/文件夹概览：文件夹列表 + 各空间文件数 + 最近文件（每轮注入，保证最新）。"""
     folders = (await db.execute(
-        select(Folder).where(
-            Folder.user_id == user_id,
-            Folder.project_id.is_(None),
-            Folder.parent_id.is_(None),
-            Folder.deleted_at.is_(None),
-        )
+        select(Folder).where(Folder.user_id == user_id)
     )).scalars().all()
-    personal = File.space == "personal"
     total = (await db.execute(
-        select(func.count(File.id)).where(
-            File.user_id == user_id, personal, File.deleted_at.is_(None)
-        )
+        select(func.count(File.id)).where(File.user_id == user_id, File.deleted_at.is_(None))
     )).scalar() or 0
-    # 这里只统计个人空间，项目/素材/思维文件由各自上下文负责。
+    # 各空间活跃文件数 + 回收站数（每轮注入真值，杜绝模型对"几个文件/删了几个"凭印象瞎报）
+    by_space = {
+        sp: c for sp, c in (await db.execute(
+            select(File.space, func.count(File.id))
+            .where(File.user_id == user_id, File.deleted_at.is_(None))
+            .group_by(File.space)
+        )).all()
+    }
     trash = (await db.execute(
-        select(func.count(File.id)).where(
-            File.user_id == user_id, personal, File.deleted_at.isnot(None)
-        )
+        select(func.count(File.id)).where(File.user_id == user_id, File.deleted_at.isnot(None))
     )).scalar() or 0
     folder_counts = dict((await db.execute(
         select(File.folder_id, func.count(File.id))
-        .where(
-            File.user_id == user_id, personal, File.deleted_at.is_(None),
-            File.folder_id.isnot(None),
-        )
+        .where(File.user_id == user_id, File.deleted_at.is_(None), File.folder_id.isnot(None))
         .group_by(File.folder_id)
     )).all())
     files = (await db.execute(
-        select(File).where(
-            File.user_id == user_id, personal, File.deleted_at.is_(None)
-        )
-        .order_by(File.updated_at.desc()).limit(recent_limit)
+        select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
+        .order_by(File.updated_at.desc()).limit(recent)
     )).scalars().all()
-    # 一级目录不需要展开子树；路径解析仅用于保留个人库根目录下的可读路径。
+    # 文件夹 id→完整路径：给 Agent 看目录树时不能只给叶子名，否则二级目录无法判断归属。
     fmap = {}
     folder_rows = []
     for folder in folders:
@@ -149,6 +84,7 @@ async def load_files_overview(db, user_id, recent: int = PERSONAL_FILES_RECENT_L
         })
     return {
         "total": total,
+        "by_space": by_space,
         "trash": trash,
         "folders": folder_rows,
         "files": [
@@ -196,11 +132,4 @@ async def load_style_prefs(db, user_id) -> dict:
     if prefs is None:
         return {}
     data = prefs.data
-    from app.services.personality_preferences import read_personality_file, preference_revision
-    result = {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}
-    personality = read_personality_file(user_id) if data.get("personality_preference_enabled", False) else None
-    if personality:
-        result["personality_preference"] = personality
-    result["personality_preference_enabled"] = bool(personality and data.get("personality_preference_enabled", False))
-    result["personality_preference_revision"] = preference_revision(data)
-    return result
+    return {k: data[k] for k in ("reply_tone", "reply_length") if data.get(k)}

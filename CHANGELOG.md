@@ -9,9 +9,6 @@
 
 ### 新增
 
-- **TS RAG 稳定构建物**：新增 TypeScript RAG worker、协议契约、词法检索测试与 `backend/bin/gugu-rag-ts-worker.mjs` 部署产物；运行环境直接消费稳定构建物，不再要求业务侧现场构建。
-- **Rootless Docker Shell 沙盒**：新增用户级沙盒执行链、Rootless Docker/sandboxd 接入、配额账本、持久空间管理、网络策略与 Admin 沙盒配置入口。
-- **能力与上下文诊断**：补充工具/Skill 能力目录、上下文组装拆分、缓存前缀诊断、压缩基线生命周期和 LoopScope 输入变化定位能力。
 - **上下文缓存与会话快照**：为 Web/IM Agent 引入稳定的会话上下文、增量历史、压缩与 TTL 刷新策略，拆分静态前缀和动态消息区域，显著提升多轮对话的 Prompt Cache 命中率；补充跨模型缓存能力识别、回归脚本与实测报告。
 - **LoopScope 可观测性**：升级并启用 LoopScope 0.2，展示真实的 Agent run、LLM 轮次、工具调用、上下文来源和 token/cache 用量，方便定位长任务与缓存问题。
 - **画布 Agent 工具**：增加画布、节点、关系的查询与操作能力，支持通过对话创建和删除画布，并补齐工具 schema、权限边界和回归测试。
@@ -19,25 +16,11 @@
 
 ### 改进
 
-- **RAG 索引与检索链路**：统一 TS worker、快照复用、索引缓存、分词契约和检索诊断，支持按文档变化进行增量更新并保留 Python/旧实现迁移边界。
-- **Shell 权限与资源治理**：统一用户持久空间、下载/构建/Shell 配额账本和审计字段；危险操作支持确认与 TTL 授权，沙盒关闭时不回退到宿主机执行。
-- **工具与 Skill 注册**：统一能力目录、简介、Schema 声明、按需注入和错误反馈规范，减少每轮全量注入并保持工具历史可恢复。
-- **工具 Schema 与配置**：完善工具 Schema 规范文档和运行时配置热更新，统一工具能力目录、注入策略和配置变更边界。
-- **LoopScope 诊断体验**：支持 Run 多选导出、round 索引、输入最早变化点标记、相邻 round 及跨 Run Input 对比和一键定位。
-- **上下文压缩与会话稳定性**：Web、IM 和定时任务统一按 provider usage/overflow 管理 ContextBudget；长会话压缩只处理旧历史并保留当前工具轮，baseline 更新后继续增量运行，减少重复压缩和并发生成造成的上下文抖动
-
-- **上下文预算收口**：统一 provider usage 驱动的 ContextBudget 压缩、baseline 提交与 session gate，避免同一会话并行生成和重复压缩。
-- **上下文旧逻辑清理**：删除未再使用的历史窗口兼容 API 和 token_budget 字符裁剪路径，Web/IM/定时任务统一走 baseline 后增量历史读取。
 - **Agent 运行链路**：统一 Web、IM 与 LoopScope 的 runner 入口，保留消息时间和附件上下文，补齐群聊上下文、消息脱敏、数据库迁移与多 worker 配置刷新支持。
 - **图片分析工具链**：扩展网络图片来源解析，支持相似图结果的 `image_url`/`img_src`/`url` 字段，并将每轮网络图片读取预算调整为最多 3 次。
 - **画布与项目交互**：持续收口 Interaction Runtime 的拖拽、landing、FLIP、连接线、摄像机和抽屉生命周期；优化画布平移与跨 Surface 落地性能，减少释放和落地过程中的布局工作。
 - **项目、文件与日历体验**：完成文件库、项目编辑区、抽屉和日历状态的 Runtime 接入与布局收口，统一列表、分组、滚动条、箭头和拖拽代理行为。
 - **主题与界面一致性**：统一 Light/Dark、Mono/V2、Glass 的 token ownership，整理聊天、设置、文件工具栏、画布浮层、项目卡和媒体控件的重复样式与 hover/边框竞态。
-- **主题与品牌资源**：整理 Aero/Mono 与配色主题的职责边界，统一认证页、导航栏和悬浮入口的 Logo 资源与显示方式，改善非 Aero 亮色背景层次。
-- **文件与终端交互**：统一项目文件面板和 Debug 日志操作图标，优化终端卡片、弹层和交互式 PTY 的操作反馈。
-- **Agent 工具与权限配置**：完善能力开放配置、越权检测和快速封禁流程，补充工具 Schema 错误边界与运行时配置热更新。
-- **IM 与消息上下文**：修复按 round 即时发送、群聊独立 @ 消息和跨日时间注入边界，减少消息分段与会话上下文错位。
-- **性能与用量统计**：修正 Provider 缓存命中率和输入/上下文 token 的统计边界，补充连续会话下的 Schema 注入测试与报告。
 
 ### 修复
 
@@ -45,15 +28,10 @@
 - **画布同步**：修复删除画布后抽屉不刷新、跨标签页画布列表不同步、摄像机状态重置、landing 期间平移抖动和 Runtime 连接生命周期残留。
 - **缓存与数据兼容**：补充 session snapshot 数据表和移除旧平台绑定的迁移，修复模型缓存能力配置、消息时间格式化和流式输出脱敏边界。
 - **工具调用可靠性**：拦截模型只输出“正在查询”等进度占位话术却没有实际工具调用的情况，自动要求模型完成工具调用，避免将进度提示误当成成功回复。
-- **交互式终端提示符**：修复终端反复停止/开启后旧 WebSocket 未及时解绑、提示符重复绘制的问题；开启操作改用播放图标，终端重启时正确重置显示状态。
-- **人格偏好切换反馈**：修复切换人格偏好时状态提示短暂消失，并让成功提示在短暂展示后自动清除；上传和编辑按钮补充操作色 hover 背景。
-- **聊天与主题材质**：修复聊天小窗工作区提示、暗色咕咕悬浮球、聊天与弹窗高光边界，以及非 Aero 亮色背景层次问题。
-- **项目与笔记交互**：优化笔记时间轴拖动惯性、更多面板活动编辑切换和项目文件面板操作反馈，保持现有 Runtime 生命周期。
 
 ### 测试
 
-- 补充 ContextBudget、压缩重试、baseline 生命周期、session pending gate 与 provider usage 阈值回归测试；上下文专项测试 64 passed，devserver 专项测试 67 passed。
-- 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`OPT-CACHE-TUNING-2026-08-21.md`](docs/reports/OPT-CACHE-TUNING-2026-08-21.md)。
+- 补充上下文快照、压缩后前缀一致性、Provider cache capability、LoopScope usage、IM identity、流式脱敏和 Agent loop 的回归测试，并保留缓存调优实测报告：[`OPT-Cache-Tuning-2026-08-21.md`](docs/reports/OPT-Cache-Tuning-2026-08-21.md)。
 - 补充相似图 `image_url` 解析、网络图片读取次数限制、工具意图守卫和纯进度回复重试回归测试。
 
 ## [0.22.0] - 2026-08-17
@@ -290,8 +268,8 @@
 - **项目编辑卡文件操作**（`views/Projects/components/ProjectModal.vue`）：修复多选删除、复制文件夹、粘贴重复文件、空白区域退出多选及跨页面缓存闪回问题。
 - **画布卡片与连接线显示**（`views/Mind/`、`composables/usePhysicsDrag.ts`）：补齐卡片圆角、连接点层级与拖拽落地状态，修复部分卡片切换时的闪烁和连接线显示异常。
 
-- **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-15 条目。
-- **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-16 条目。
+- **项目抽屉与画布之间的拖拽收尾**（`composables/{usePhysicsDrag,useCardDrag}.ts`、`views/Mind/components/{CanvasSidebar,ProjectDrawerCard,ProjectRefCard}.vue`）：修复一系列抽屉↔画布拖拽体验问题——抽屉虚线占位框离场时跳动、画布卡拖回抽屉短暂变透明才淡入、飞行克隆偶发退化成缩小动画、揭示瞬间本体与克隆短暂重叠、某状态最后一张卡拖出/首张卡拖入时整块分组瞬间增删且丢失让位动画、飞行中途重新抓起后无法放回画布。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-15 条目。
+- **项目分组标题与年/月目录按钮的让位动画**（`views/Mind/components/CanvasSidebar.vue`、`views/Projects/components/DoneColumn.vue`）：让 `project-group-title`、`year-row`、`month-row` 和未设置日期按钮都作为 TransitionGroup 的直接子项参与 FLIP 平移过渡，组内卡片增减时不再因 flex 重排瞬间跳位。详细排查过程见 [devlog.md](docs/devlog.md) 2026-07-16 条目。
 - **渐变色项目首次拖入画布失败**（`backend/app/models/__init__.py`）：`MindNode.color` 由 `varchar(30)` 加宽到 `varchar(300)`，修复渐变色项目首次创建画布引用节点时 `StringDataRightTruncationError`。
 
 
@@ -359,7 +337,7 @@
 ### 修复
 - **仪表盘小日历点某天可跳日历定位**（`views/Dashboard/components/CalendarPanel.vue`、`views/Calendar/index.vue`、`stores/ui.ts`）：此前小日历的日期格点击是空实现（`selectDay` TODO），点了没反应；现在点某天（含相邻月灰格）跳到完整日历视图并定位到该日所在月+选中该日（新增 `pendingCalendarDate` 信号，复用搜索跳转同款 immediate watch 路径）。修复代码审查 P3。
 
-- **文件系统「免刷新即更新」补齐 + 项目文件移到根/文件夹粘贴修复**（前端 `views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`、`views/Dashboard/components/FilePanel.vue`；后端 `app/api/v1/{files,folders,trash}.py`；文档 `docs/backend/STORAGE.md` §2.8）：① 项目编辑卡里文件拖到「项目文件」根、文件夹剪切粘贴到根此前无效——`movePmFilesInto`/`pmCtxPaste` 只发 `folderId` 漏了 `projectId`（后端未传 project_id 时保留原值，项目文件夹内文件的 project_id 可能为 null → 落到个人库根、项目根查不到），且粘贴漏了 `folderIds` 分支；均补齐。② 一批 stale 修复：Files 页右键删文件不消失（`ctxDelete` 补乐观 `removeFiles`+回滚）、子文件夹里删/改子文件夹当前视图不更新（`loadFolders` 改按当前层刷）、剪切跨层粘贴源层残留（逐层剔除）、文件夹计数徽标（`_pmAdjustFolderCount` 本地增减）、移到目标层后导航过去 stale（主动刷目标层缓存）、Dashboard FilePanel 开着期间不刷新（订阅 SSE + `uploadSignal`）。③ 后端所有增删改文件/文件夹的 REST 端点（16 处）commit 后 `events.publish(current_user.id, "files")`——此前只有咕咕/IM 工具改动才广播、用户自己的网页操作不推 SSE，跨标签页/跨面收不到；现在用户自己的操作也广播，所有展示面自动同步（需重启后端生效）。方案分级与落地状态见 `docs/backend/STORAGE.md` §2.8.8。
+- **文件系统「免刷新即更新」补齐 + 项目文件移到根/文件夹粘贴修复**（前端 `views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`、`views/Dashboard/components/FilePanel.vue`；后端 `app/api/v1/{files,folders,trash}.py`；文档 `docs/backend/storage.md` §2.8）：① 项目编辑卡里文件拖到「项目文件」根、文件夹剪切粘贴到根此前无效——`movePmFilesInto`/`pmCtxPaste` 只发 `folderId` 漏了 `projectId`（后端未传 project_id 时保留原值，项目文件夹内文件的 project_id 可能为 null → 落到个人库根、项目根查不到），且粘贴漏了 `folderIds` 分支；均补齐。② 一批 stale 修复：Files 页右键删文件不消失（`ctxDelete` 补乐观 `removeFiles`+回滚）、子文件夹里删/改子文件夹当前视图不更新（`loadFolders` 改按当前层刷）、剪切跨层粘贴源层残留（逐层剔除）、文件夹计数徽标（`_pmAdjustFolderCount` 本地增减）、移到目标层后导航过去 stale（主动刷目标层缓存）、Dashboard FilePanel 开着期间不刷新（订阅 SSE + `uploadSignal`）。③ 后端所有增删改文件/文件夹的 REST 端点（16 处）commit 后 `events.publish(current_user.id, "files")`——此前只有咕咕/IM 工具改动才广播、用户自己的网页操作不推 SSE，跨标签页/跨面收不到；现在用户自己的操作也广播，所有展示面自动同步（需重启后端生效）。方案分级与落地状态见 `docs/backend/storage.md` §2.8.8。
 - **咕咕回复偶发以 `[e~[` 残片结尾**（`agent/sanitize.py`、`agent/llm_select.py`、`agent/runner.py`、`agent/adapters/web.py`）：确认是 MiniMax-M3 经 Anthropic 兼容端点流式输出时，把内部尾标记 `[e~[` 当正文吐出（常紧跟代码围栏 ` ``` ` 之后），字面泄漏，非前端渲染/编码问题。`StreamSanitizer` 新增 `minimax` 开关（`is_minimax(ai)` 判定），只对 MiniMax 模型启用 `[e~[`/`]<]minimax` 两个尾标记的跨 token 截断，避免误伤其它模型正常提及的文本；新增分片流回归测试 `tests/test_stream_sanitize.py`。
 - **定时任务失败时无诊断信息**（`agent/runner.py`）：排查「科技新闻」定时任务某次触发「没有产出内容」时发现，`run_ephemeral` 一旦判定生成失败就直接丢弃错误详情返回空字符串，`scheduled_tasks.py` 只能兜成通用文案，日志全程无痕、无从判断真实原因（该次排查靠交叉核对 LLM 报错日志/工具调用日志/异常日志三处「均无记录」才推断出问题所在，耗时较长）。现在丢弃前记一条 `logger.warning`，带上原始错误详情，下次再犯可直接从日志定位。
 - **定时任务偶发冷启动失败**（`agent/runner.py`）：首次模型调用遇到瞬时上游失败时，定时任务现在会延迟后自动重试一次；仍失败才发送降级提示，避免用户必须手动补跑。
@@ -378,7 +356,7 @@
 - **文件浏览层渐进式模块化**（`components/common/{FileBrowserGrid,FileBrowserList,FileBrowserBreadcrumb,FileBrowserContextMenu,FileBrowserContextMenuContent}.vue`、`composables/files/`）：文件库和项目文件区共享展示外壳、选择状态、目录导航、排序投影、操作 facade、上传生命周期和右键菜单内容；保留页面级缓存副作用、全局导航、回收站和现有拖拽卡片结构，用户界面与文件 API 不变。详细边界见 [【已完成】文件浏览系统模块化重构方案](docs/refactor/【已完成】文件浏览系统模块化重构方案.md)。
 
 - **文件缓存三套并存收敛为单一 `filesCache` store（Tier 3-A）+ 一批 ProjectModal bug**（`views/Dashboard/{index.vue,components/FilePanel.vue}`、`views/Projects/components/ProjectModal.vue`、`composables/useFileUpload.ts`、`services/cache.ts`、后端 `agent/tools/files.py`）：此前文件列表有三套并行缓存（全局 `filesCache` store / ProjectModal 本地 refs / Dashboard 的 `services/cache` sessionStorage），一处改动另两套要靠全量重拉或重进页面才对齐。现全部收敛到单一全局 `filesCache` store——Dashboard/FilePanel 与 ProjectModal 的文件/文件夹列表都从 store 派生（computed），删除各自本地并行缓存，所有增删改走 store 增量 API，单一数据源。顺带修 Phase B 暴露的 4 个问题：① 项目卡里拖文件/文件夹进另一文件夹误跳回项目根（去掉多余的 `_pmResetNav`，改按被删文件夹精确 prune 历史）；② 文件夹拖不进面包屑（`resolveBcTarget` 对 `idx>=0` 也 `acceptsFolders:true`）；③ 上传同名文件夹静默合并（`checkUploadConflicts` 解析每个文件的目标文件夹后再查冲突，嵌套同名文件也弹覆盖/保留两者，共享给文件库）；④ 咕咕删文件夹后文件回到上层目录（`_delete_folder` 对齐 REST：BFS 整棵子树，文件软删进回收站、子文件夹硬删，不再把文件移到根）。
-- **文件库实时同步细粒度化 + client-id 回声抑制（Tier 3-B）**（后端 `app/core/{events,security}.py`、`app/api/v1/{files,folders,trash}.py`、`agent/tools/{base,files}.py`；前端 `services/api.ts`、`stores/{live,filesCache}.ts`、`views/Files/index.vue`；文档 `docs/backend/STORAGE.md` §2.8.8）：把「任意改动 → 全库重拉」升级为三档处理。每标签页生成 `CLIENT_ID`，写操作带 `X-Client-Id` 头；后端 `get_client_id` 依赖读头 → `events.publish` 带 `origin`，删除类端点再带 `file_op={op:remove,kind,id/ids}`（咕咕删除工具经结果 `_file_op` 字段带；agent 无 client-id → `origin=None` 不抑制，所有端刷新）。前端 `live.ts` 暴露 `fileEvent` 细粒度通道（`rev.files` 仍照旧 bump 供预览窗/回收站/计数等粗信号消费），`filesCache` 独家消费：① `origin===自己` → 跳过（**回声抑制**，本页已乐观更新，零重拉）；② `remove` → 本地直接剔除（**零网络**，文件夹级联）；③ 其余 → 防抖合并全量刷新。`Files/index.vue` 的 `contents` 快照改由 `watch([allFiles,allFolders])` 重投影；还原（回收站→库）是唯一不乐观更新的写操作、回声被抑制拉不回 → 显式 `cacheStore.refresh()`；断线重连 `_catchUp` 对 files 额外 poke 一次 refresh 补漏。效果：发起页零重拉、其它端删除零网络、增改合并刷新，消除大文件量下的重拉性能天花板，并顺带解决 Tier 2 的回声成本（需重启后端生效）。
+- **文件库实时同步细粒度化 + client-id 回声抑制（Tier 3-B）**（后端 `app/core/{events,security}.py`、`app/api/v1/{files,folders,trash}.py`、`agent/tools/{base,files}.py`；前端 `services/api.ts`、`stores/{live,filesCache}.ts`、`views/Files/index.vue`；文档 `docs/backend/storage.md` §2.8.8）：把「任意改动 → 全库重拉」升级为三档处理。每标签页生成 `CLIENT_ID`，写操作带 `X-Client-Id` 头；后端 `get_client_id` 依赖读头 → `events.publish` 带 `origin`，删除类端点再带 `file_op={op:remove,kind,id/ids}`（咕咕删除工具经结果 `_file_op` 字段带；agent 无 client-id → `origin=None` 不抑制，所有端刷新）。前端 `live.ts` 暴露 `fileEvent` 细粒度通道（`rev.files` 仍照旧 bump 供预览窗/回收站/计数等粗信号消费），`filesCache` 独家消费：① `origin===自己` → 跳过（**回声抑制**，本页已乐观更新，零重拉）；② `remove` → 本地直接剔除（**零网络**，文件夹级联）；③ 其余 → 防抖合并全量刷新。`Files/index.vue` 的 `contents` 快照改由 `watch([allFiles,allFolders])` 重投影；还原（回收站→库）是唯一不乐观更新的写操作、回声被抑制拉不回 → 显式 `cacheStore.refresh()`；断线重连 `_catchUp` 对 files 额外 poke 一次 refresh 补漏。效果：发起页零重拉、其它端删除零网络、增改合并刷新，消除大文件量下的重拉性能天花板，并顺带解决 Tier 2 的回声成本（需重启后端生效）。
 - **拖拽落地并发场景修复 + 跟手调快**（`frontend/src/composables/usePhysicsDrag.ts`）：先拖 B 松手、快速抓 A、再松开 A 让 B 归位时，B 的克隆会「过度移动再归位/瞬移」——并发 FLIP 让位时 B 的隐形真卡（`opacity:0`）挂着没跑完的 `translate`，`getBoundingClientRect` 量出的落点被残留 transform 污染；且旧动画的 `opacity` 完成事件 + 旧超时会提前撤掉克隆、真卡直接出现在终点。改为重定目标时临时把 transform 归零量干净布局落点、以同一套函数式表示冻结当前位置、只以 `transform` 到位作为落地完成条件、每次重定目标重启完整 0.55s 缓出。顺带把弹簧刚度 190→360（≈2.2Hz→3.0Hz）、阻尼 0.82→0.85，克隆跟手从约 0.35s 追平缩到约 0.23s。
 - **拖拽卡片松手落地后 hover「回弹/闪烁」**（`frontend/src/composables/usePhysicsDrag.ts`、`frontend/src/assets/styles/global.css`）：卡片飞行途中是 `opacity:0`（看不见但命中测试仍在，鼠标压着它 `:hover` 已为真），CSS 早把整张卡推到了 hover 终态——本体 `translateY(-2px)`、操作按钮/高光 `opacity:1`。落地揭示那刻只恢复可见、各自过渡又都活着，卡片就从这些陈旧值动画回落到静止态、随即再动回来，表现为「先下沉再上浮」+「按钮/高光闪好几次」。改为揭示当帧同时挂压制类（把 hover 的位移/阴影/底色/按钮·高光全钉在静止态）+ 快照类（`!important` 关掉卡片、全部子元素及 `::before/::after` 伪元素的过渡），强制提交后立即摘掉快照类——整张卡瞬间坐到静止态、零动画；下一帧（≈0ms）摘压制类，上浮+按钮淡入+高光渐显作为一次干净的 hover-in 平滑发生。全程不碰命中测试，`:hover` 判定始终实时准确。文件库、项目编辑卡里的文件/文件夹卡、以及项目页看板的项目卡（`.fc-card`/`.folder-card`/`.proj-card`）走同一套。
 - **拖拽落地飞行途中另一张卡挪位导致飞错落点 / 克隆残留 / 弹层内克隆不可见**（`frontend/src/composables/usePhysicsDrag.ts`）：① 飞行途中容器因另一张卡被抓起/放下发生 FLIP 重排，落点会跟着挪，克隆改为按最新位置重定向（冻结再解冻过渡，保持同一条缓出曲线、不打断成匀速）；② 重新抓同一张卡时只强制清掉它自己上一趟没放完的克隆（按元素记账），不误伤别的卡正在播的落地动画，且被强清时同步揭示源卡，避免抓别的文件时刚放下那张永远揭示不出来；③ 落地飞行的 `z-index` 从写死的 `2` 改成动态探测卡片所在层叠上下文，修复卡片活在弹层里（项目编辑卡）时克隆被弹层内容盖住、看不见的问题。
@@ -417,7 +395,7 @@
 - **QQ 彻底移除 botpy 依赖**（`agent/adapters/qq.py`、`requirements.txt`）：收发两侧全部改为自建 raw WebSocket/HTTP，不再需要 qq-botpy 包。
 - **项目许可证改为 Apache-2.0**（`LICENSE`、`README.md`）：项目开源协议从 MIT 调整为 Apache License 2.0，并补齐许可证文件与前端包元数据。
 - **咕咕聊天改用虚拟滚动**（`components/common/GuguChat.vue`）：长会话不再一次性渲染全部消息，打开更快、滚动更流畅。
-- **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-08 条目。
+- **记忆系统拆分为用户画像/行为模式两个文件**（`agent/memory/store.py`、`agent/memory/reflection.py`）：不再用一份文件混装稳定身份和行为习惯，各自判断标准更清晰、不共用不必要的置信度/衰减机制。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **`/memory` `/forget` 命令适配 profile+pattern 拆分**（`agent/commands.py`）：`/memory` 分开展示「关于你」（画像）和「行为习惯」（模式），`/forget` 同时搜索两者。
 - **`complete_json` 支持 temperature 参数**（`agent/memory/_llm.py`）：默认 0.3，稳定性要求高的调用方（如批量删除类）可传更低值。
 - **Admin 数据总览排除新手引导教程项目**（`app/api/v1/admin_analytics.py`）：每个新用户注册都会播种一个引导项目，不计入项目相关统计指标。
@@ -426,9 +404,9 @@
 
 - **咕咕新增站内全局搜索工具**（`agent/tools/global_search.py`、`app/api/v1/search.py`）：一次性跨项目/文件/文件夹/日程/客户/对话搜索，复用顶栏全局搜索同一套查询逻辑，定位“东西在哪”比挨个调专用工具更快更全。
 - **飞书支持图文消息/视频/转发卡片入站**（`agent/adapters/feishu.py`）：图文消息拼接段落文字并下载内嵌图片/视频，视频消息复用附件下载逻辑，转发的卡片消息抽取可读文字。
-- **定时任务按需精简工具/上下文，省 token**（`agent/tools/scheduled_tasks.py`、`agent/runner.py`、`agent/context/builder.py`）：创建/修改任务时顺手判断这个任务用得上哪些工具组、要不要带项目/日历/文件/记忆，存下来执行时按需注入；判断不出来就用回全量，安全优先。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-08 条目。
+- **定时任务按需精简工具/上下文，省 token**（`agent/tools/scheduled_tasks.py`、`agent/runner.py`、`agent/context/builder.py`）：创建/修改任务时顺手判断这个任务用得上哪些工具组、要不要带项目/日历/文件/记忆，存下来执行时按需注入；判断不出来就用回全量，安全优先。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件上传同名冲突支持覆盖/保留两者/跳过**（`views/Files/index.vue`、`Projects/components/ProjectModal.vue`）：上传前列出冲突文件，可选覆盖、保留两者或跳过。
-- **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML/PDF 自动提取正文，不再把截断的原始响应喂给模型。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-06 条目。
+- **`http_get` 按 Content-Type 自动提取正文**（`agent/tools/web.py`）：HTML/PDF 自动提取正文，不再把截断的原始响应喂给模型。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **飞书 IM 支持流式输出**（`agent/runner.py`、`agent/adapters/feishu.py`）：新增 `run_stream` 逐字 yield token，飞书端实时 patch 卡片内容，体感速度与 web 端对齐。
 - **微信 iLink 接入「正在输入」状态**（`agent/adapters/wechat.py`、`wechat_client.py`、`wechat_config_cache.py`、`wechat_typing.py`）：咕咕思考时在微信端显示“对方正在输入…”，缓解等待感。
 - **个人设置支持自助注销账号**（`components/common/ProfileModal.vue`、`app/api/v1/auth.py`）：需输入密码二次确认，注销后账号与全部数据永久删除。
@@ -438,18 +416,18 @@
 - **项目支持归档/查看已归档/取消归档**（`views/Projects/index.vue`）：网页端补齐入口，之前只有咕咕自己能归档。
 - **IM 慢工具触发时先发一句进度声明**（`agent/tools/base.py`）：缓解飞书/QQ/微信这类非流式渠道调慢工具时的干等感。
 - **浮动预览窗四角都能拖拽调整大小**（`components/common/FloatPreviewWindow.vue`）：之前只有右下角一个手柄能拉伸。
-- **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-07 条目。
+- **文件预览窗支持直接编辑文本/代码文件**（`components/common/viewers/TextViewer.vue`）：代码类文件改用 CodeMirror 6，直接编辑、自动保存。详见 [devlog.md](docs/devlog.md) 2026-07-07 条目。
 
 ### 修复
 
 - **咕咕无法查看已归档项目**（`agent/tools/projects.py`）：`list_projects` 一直写死过滤掉已归档项目，问“归档的 XX 项目”也查不到，现在支持按 `archived` 参数查已归档一批。
 - **看板已完成列玻璃质感跟另外两列不一致**（`Projects/components/{KanbanColumn,DoneColumn}.vue`、`Schedules/index.vue`）：已完成列一直是历史遗留的写死样式、连 `backdrop-filter` 都没有，改成跟另外两列一样接入全局 `.glass-card`，定时任务页大版面顺带一起统一。
-- **IM/定时任务推送里混入模型过程性旁白**（`agent/runner.py`、`agent/context/builder.py`、`agent/skills/weather.md`）：多轮工具调用间的过渡话被原样拼进推送内容，现在只取最后一轮总结文本；顺带修了天气 skill 容易查出超大 JSON 被截断、逼模型反复重试的问题。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-08 条目。
+- **IM/定时任务推送里混入模型过程性旁白**（`agent/runner.py`、`agent/context/builder.py`、`agent/skills/weather.md`）：多轮工具调用间的过渡话被原样拼进推送内容，现在只取最后一轮总结文本；顺带修了天气 skill 容易查出超大 JSON 被截断、逼模型反复重试的问题。详见 [devlog.md](docs/devlog.md) 2026-07-08 条目。
 - **文件库改名输入框不支持中文输入法**（`views/Files/index.vue`）：敲回车上屏候选词会被误判成确认改名，已修复。
-- **docx/xlsx/pptx 预览「转换失败 (500)」**（`app/api/v1/files.py`）：部署配置问题导致转换失败，已修复。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-06 条目。
+- **docx/xlsx/pptx 预览「转换失败 (500)」**（`app/api/v1/files.py`）：部署配置问题导致转换失败，已修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **`http_get` 反复超时后咕咕答非所问**（`agent/prompts/skills.md`）：现在会如实告知连不上，不再用无关话搪塞。
-- **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`）：进场动画改为“玻璃 ramp”修复。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-06 条目。
-- **弹窗毛玻璃背景/阴影全局失真**（`components/common/BaseModal.vue`）：scoped CSS 没生效导致，改用 prop 传值修复。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-06 条目。
+- **弹窗叠在浮动窗口上打开时，淡入动画期间毛玻璃完全不模糊**（`components/common/BaseModal.vue`）：进场动画改为“玻璃 ramp”修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
+- **弹窗毛玻璃背景/阴影全局失真**（`components/common/BaseModal.vue`）：scoped CSS 没生效导致，改用 prop 传值修复。详见 [devlog.md](docs/devlog.md) 2026-07-06 条目。
 - **定时任务生成的消息误报「IM 渠道未连」**（`agent/runner.py`）：现在跟直接对话一样读取真实连接状态。
 - **浮动预览窗打开低分辨率图片先猜大窗口再骤缩**（`components/common/FloatPreviewWindow.vue`）：改为等真图加载完再定尺寸。
 - **记忆 summary 快照里的相对时间没法换算**（`agent/memory/reflection.py`）：补充当前日期，涉及时间点换算成绝对日期。
@@ -478,7 +456,7 @@
 
 ### 安全
 
-- **全项目安全审计 + 一批修复**（`app/core/ratelimit.py` 新增 + `agent/tools/{files,base}.py` + `app/api/v1/{auth,admin_auth,config}.py` + `app/main.py`；报告 [docs/security/安全审计报告-2026-07-03.md](docs/security/安全审计报告-2026-07-03.md)）：对认证授权/注入·SSRF·文件/密钥·配置·日志三个攻击面做了一轮完整审计，核心结论是应用层内核扎实，修复了 SSRF 重定向绕过、全站无限流、邀请码注册竞态等 9 项真实问题。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-04 条目。
+- **全项目安全审计 + 一批修复**（`app/core/ratelimit.py` 新增 + `agent/tools/{files,base}.py` + `app/api/v1/{auth,admin_auth,config}.py` + `app/main.py`；报告 [docs/security/安全审计报告-2026-07-03.md](docs/security/安全审计报告-2026-07-03.md)）：对认证授权/注入·SSRF·文件/密钥·配置·日志三个攻击面做了一轮完整审计，核心结论是应用层内核扎实，修复了 SSRF 重定向绕过、全站无限流、邀请码注册竞态等 9 项真实问题。详见 [devlog.md](docs/devlog.md) 2026-07-04 条目。
 - **IM Bot 凭据补上静态加密**（`app/core/crypto.py` 新增 + 迁移 `20260702000002`）：`UserBot.app_secret`（飞书/QQ/微信机器人密钥）实际是明文落库，跟隐私政策承诺的“AES-256-GCM 加密存储”不符。新增 `EncryptedString` 类型让读写对业务代码透明加解密，迁移原地加密历史明文行，`app_id`（公开标识符）保持明文不影响绑定流程查询。
 - **IM 收发日志脱敏**（新增 `agent/logsafe.py` + `agent/adapters/{qq,feishu,wechat}.py` + `worker.py`）：网关/worker 此前打印聊天原文（收到消息前 40 字符、回复全文不截断），跟项目已有的脱敏红线不一致。新增 `logsafe.fingerprint()`（md5 前 8 位，不可逆）替代原文打印，5 处日志点覆盖“收到没/是否重复处理”等排查场景。
 
@@ -489,8 +467,8 @@
 
 ### 新增
 
-- **记忆向量语义检索（可选自托管 embedding，默认关闭）**（新 `agent/memory/embedding.py` + `store.py` + `Admin/Agent/index.vue` 配置 UI）：记忆检索从词法（bigram）升级到向量语义，facts 超注入上限时按语义相关性挑而非字面重叠。定位为共享 embedding 基建，走 OpenAI 兼容 `/embeddings`（支持自托管 Ollama），per-user 规模不需要向量数据库、Python 暴力 cosine 即可；默认关闭、全链路退回词法，对现有行为零副作用。设计见 `docs/agent/参考/咕咕改进方案-MAIBOT借鉴.md` 改进一。
-- **飞书 / 微信支持消息引用识别，QQ 协议层做不到**（`agent/adapters/{feishu,wechat}.py`）：用户“引用/回复”某条历史消息时，之前咕咕感知不到“这句话针对哪条历史消息”。QQ 官方机器人协议层拿不到引用内容、判定不可行；飞书需要额外反查 API 且要处理卡片消息的嵌套结构；微信 iLink 直接内嵌了被引用消息全文，最省事。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-04 条目。
+- **记忆向量语义检索（可选自托管 embedding，默认关闭）**（新 `agent/memory/embedding.py` + `store.py` + `Admin/Agent/index.vue` 配置 UI）：记忆检索从词法（bigram）升级到向量语义，facts 超注入上限时按语义相关性挑而非字面重叠。定位为共享 embedding 基建，走 OpenAI 兼容 `/embeddings`（支持自托管 Ollama），per-user 规模不需要向量数据库、Python 暴力 cosine 即可；默认关闭、全链路退回词法，对现有行为零副作用。设计见 `docs/agent/参考/咕咕改进方案-MaiBot借鉴.md` 改进一。
+- **飞书 / 微信支持消息引用识别，QQ 协议层做不到**（`agent/adapters/{feishu,wechat}.py`）：用户“引用/回复”某条历史消息时，之前咕咕感知不到“这句话针对哪条历史消息”。QQ 官方机器人协议层拿不到引用内容、判定不可行；飞书需要额外反查 API 且要处理卡片消息的嵌套结构；微信 iLink 直接内嵌了被引用消息全文，最省事。详见 [devlog.md](docs/devlog.md) 2026-07-04 条目。
 - **反馈信号采集器 + 关系温度 + 时长锚点（感知系统 step2 采集侧）**（`memory/reflection.py` + 新 `memory/temperature.py` + `context/builder.py`）：学习闭环的燃料源从“仅用户显式纠正”加宽一个数量级——反思顺带判“用户这句怎么接上一轮”（确认夸赞/改写重问/顺着聊/无视跳开等枚举）；`temperature.py` 用 28 天滑动窗口聚合出关系温度供语气校准；`read_memory` 注入“记忆从 N 天前开始积累”的硬数字锚点，防模型编造“这几个月的观察”这类无据时间词。设计见 `docs/agent/proposals/反馈信号系统-设计.md`。
 - **感知诊断面板：反馈信号分布 + 数据导出**（`api/v1/agent_perception.py`、`Admin/Perception/index.vue`）：配合反馈信号采集，面板加正/负向信号分布条，加“下载完整记录”按钮导出脱敏后的原始事件 JSON 供离线分析。
 - **支持拖文件夹上传（保留目录结构）+ 统一三处上传逻辑**（新增 `composables/useFileUpload.ts`）：拖放此前只读扁平 `FileList`，拖文件夹进来会被当空文件静默失败；上传文件/文件库/项目编辑卡三处还各自维护一套并发策略不一致的实现。新 composable 用 `webkitGetAsEntry()` 递归展开文件夹结构、统一并发调度，三处收敛成同一份逻辑。
@@ -501,7 +479,7 @@
 - **拖拽克隆缩略图看不出模糊 + 聊天窗大小切换偶发闪烁**（`assets/styles/global.css`、`components/common/GuguChat.vue`）：图片缩略图区单独挂 `backdrop-filter` 让“背后模糊”透出来；`resizing` 状态改成监听真实 `transitionend` 而非硬编码定时器，掉帧时不再提前触发闪烁。
 - **pointer 模式下松手指针原地不动、卡片悬浮态卡在“未悬停”**（`composables/usePhysicsDrag.ts`）：`_revealWithoutStaleHover` 是给已淘汰的原生拖拽设计的治标手法，文件卡/项目卡全转 pointer 模式后这手法反而帮倒忙，导致 `:hover` 卡死不刷新。pointer 模式下不再套用。
 - **文件复制/剪切跨空间粘贴静默失败**（`app/api/v1/files.py`、`Files/index.vue`、`ProjectModal.vue`）：`copy_file`/`update_file` 此前无条件从源文件继承 `project_id`，项目文件复制到个人文件库表面成功、实际还留在原项目。改按调用方显式传入的 `project_id` 决定目标空间。
-- **文件拖拽两处静默失效**（`composables/useFileDragDrop.ts`、`views/Files/index.vue`）：`data-folder-key` 混用带前缀字符串导致 `Number()` 转出 `NaN`、面包屑落点判定读到被提前清空的拖拽状态，两个独立 bug 都是“看起来有反应、实际没挪窝”。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-03 条目。
+- **文件拖拽两处静默失效**（`composables/useFileDragDrop.ts`、`views/Files/index.vue`）：`data-folder-key` 混用带前缀字符串导致 `Number()` 转出 `NaN`、面包屑落点判定读到被提前清空的拖拽状态，两个独立 bug 都是“看起来有反应、实际没挪窝”。详见 [devlog.md](docs/devlog.md) 2026-07-03 条目。
 - **项目编辑卡文件拖拽统一为 pointer 模式，抽取共享 composable**（新增 `composables/useFileDragDrop.ts`；`views/Files/index.vue`、`views/Projects/components/ProjectModal.vue`）：项目编辑卡此前仍是原生 HTML5 拖拽，跟文件库改造前一样有归位悬停跳变的风险。把拖拽编排抽成共享 composable，文件库和项目编辑卡都改为消费它，差异点（data 属性名、面包屑放置规则、落地后刷新策略）做成配置项。
 - **文件卡拖拽改用 pointer 模式，根治归位悬停跳变**（`composables/usePhysicsDrag.ts`、`views/Files/index.vue`）：perf trace 定位根因——原生 HTML5 拖拽期间浏览器暂停 `mouseover`/`mouseout` 派发，抓起卡片时缓存的 `:hover=true` 直到 `dragend` 才刷新，导致归位揭示时 hover 高亮跳变。改用项目看板已验证的 pointer 模式（`setPointerCapture`）根治，不再在揭示时机上打补丁。
 - **快速重新抓拖拽落地中的卡片会抓到隐形克隆**（`composables/usePhysicsDrag.ts`）：Chrome trace 定位——两次拖拽间隔（约 310ms）可能短于落地动画复位源卡 `display`/`opacity` 的耗时（420~580ms），此时重新抓取量到的尺寸是 0×0，克隆不可见。入口处强制先复位源卡再量尺寸。顺带定版拖拽克隆的白底/毛玻璃比例，详见 [docs/development/design.md](docs/development/design.md)。
@@ -535,7 +513,7 @@
 - **项目编辑卡图片文件多选，文件名标签区未被选中暗色覆盖**（`views/Projects/components/ProjectModal.vue`）：`.fc-card.selected` 的选中覆盖层误写成只对无缩略图卡生效的选择器，导致有缩略图的图片卡选中时下方文件名区域不跟着变暗。对齐文件库正确实现。
 - **通知气泡改为一次显示、自动消失，无需手动点关闭**（`components/common/NotificationBubble.vue`）：此前只有教程气泡打完字 5s 后自动消失，其它通知会一直停留、需手动点 ✕。现在所有气泡一视同仁，打完字 5s 后自动消失。
 - **输入框中文候选词回车被误当提交**：中文输入法下敲回车确认候选词，各输入框此前没排除 IME 组合态，候选词还没选完就被误触发提交。新增全局自定义指令 `v-enter`（判据用标准 `event.isComposing`），全仓 20 处回车确认输入框统一迁移。
-- **网关秒崩无限重启刷日志**（`backend/agent/adapters/gateway.py`）：`reconcile()` 发现子进程退出就立即重启、没有退避，凭据错误等必现问题会变成每 5s 重启一次的死循环。加指数退避：存活不到 5s 判定“秒崩”，退避 10s→20s→40s…封顶 5 分钟；正常跑了一阵子才挂的不退避、立即重启。
+- **网关秒崩无限重启刷日志**（`backend/agent/adapters/supervisor.py`）：`reconcile()` 发现子进程退出就立即重启、没有退避，凭据错误等必现问题会变成每 5s 重启一次的死循环。加指数退避：存活不到 5s 判定“秒崩”，退避 10s→20s→40s…封顶 5 分钟；正常跑了一阵子才挂的不退避、立即重启。
 - **重命名输入框自适应宽度提为全局共用样式，补齐项目模板改名遗漏**（`assets/styles/global.css`、`views/Projects/components/{ProjectModal,NewProjectModal}.vue`、`views/Dashboard/components/FilePanel.vue`、`views/Files/index.vue`）：项目模板改名输入框此前用 `flex:1` 撑满整行，不像其它三处那样随文字自适应宽度，根因是自适应实现在多个文件里各自本地复制、新增时漏抄。提到 `global.css` 做唯一共享定义，统一类名。
 
 ## [0.15.1] - 2026-07-01 · 日历磨砂玻璃白带根治（GlassBg 活玻璃）+ 交互反馈打磨 + 视图切换图标修复
@@ -544,7 +522,7 @@
 
 ### 修复
 
-- **日历磨砂玻璃“白带”根治 + `GlassBg` 活玻璃组件**（`layouts/DefaultLayout.vue`、`views/Calendar/index.vue`、`components/common/GlassBg.vue`）：顶栏与日历工具栏在 hover 时下沿闪白带，改用不依赖 `backdrop-filter` 的 `<GlassBg>` 根治，并把日历各 hover/高光改为合成层友好的 opacity 叠层。详见 [DEVLOG.md](docs/DEVLOG.md) 2026-07-01 条目。
+- **日历磨砂玻璃“白带”根治 + `GlassBg` 活玻璃组件**（`layouts/DefaultLayout.vue`、`views/Calendar/index.vue`、`components/common/GlassBg.vue`）：顶栏与日历工具栏在 hover 时下沿闪白带，改用不依赖 `backdrop-filter` 的 `<GlassBg>` 根治，并把日历各 hover/高光改为合成层友好的 opacity 叠层。详见 [devlog.md](docs/devlog.md) 2026-07-01 条目。
 - **日历快速点击/切换面板“变暗”修复**：真因是 `.glass-card:hover` 的背景过渡在快速交互时掉帧、`cal-main` 背景朝基态淡回。中和 `cal-main:hover`，与基态一致、无可闪变化。
 - **日历 hover/选中统一淡入淡出 + 叠加**（月/周/全天/日期头四处一致）：悬停与选中反馈改为 opacity 淡入淡出、可叠加（悬停已选中格 = 相加变深），并给全天区补上悬停高亮、日期头拆成选中/悬停两层。
 - **日历点击选中不再“先变淡 / 闪现旧格”**：全天/日期头/月格的 mousedown 不再提前清空选区（只有真拖到别的天才进 range 选择），单击直接切到选中暗色；月视图多选后点单日不再闪现上一个单日格。
@@ -642,7 +620,7 @@
 - **要提醒却没真建定时任务（只口头答应 / 谎称已建）**（`prompts/skills.md`）：用户明说“中午提醒我修 bug”，咕咕回“好~12点提醒你”却没调 `create_scheduled_task`，甚至事后谎称“我新建了”。根因是旧指针对已明确的提醒请求也走“先确认一句”流程。改为明确要提醒的请求这一轮立刻建好，拿 success 再回话；红线绑死到话术，工具没成功前不许说“已设好提醒”。
 - **一次性定时任务过期不自动清理**（`app/scheduled_tasks.py`）：正常触发的 `@once` 任务由 `execute_task` 即时删除，但停用/misfire 没触发的过期任务无人回收，会一直僵在面板里。`reconcile` 新增 GC，过点约 2 分钟后自动清理；`GET /scheduled-tasks` 读时也顺手清一遍，worker 滞后时面板也不留残留。
 - **久置标签页切回来卡死约 1 秒**（`stores/live.js` + `stores/filesCache.js`）：标签页放后台久了 SSE 断开，切回前台重连时一次性 `bump` 全部 5 个资源 → filesCache / projects / calendar / sessions / clients 同时 refetch + 替换大数组 + 重渲染，挤在一两帧 → 卡主线程。改：重连补刷**错峰逐个 bump**（延后 300ms 起、每 250ms 一个），把这波刷新摊开、让出主线程（总量不变、不挤一帧）。（曾顺手给 filesCache 的 `rev.files` 加版本门控省刷新，但 `/files/version` GET 可能被缓存 → 拿旧版本号 → IM 存文件后项目卡片文件数不实时更新，已回退、保持无条件 refresh。）
-- **`systemctl` 重启后端起不来、每次要手动 `pkill`**（`scripts/dev-restart.sh` + `DEPLOY.md`）：根因是 8000 端口同时被 systemd 与手动 uvicorn**两个主人**抢，`systemctl restart` 停不掉非 systemd 的那个 → 绑不上端口死循环。立“一台机 8000 只一个主人”铁律：生产给 `gugu-backend.service` 加 `ExecStartPre=-/usr/bin/fuser -k -n tcp 8000` 自愈腾端口（`systemctl restart` 再不用手动 pkill）；dev 机 systemd 保持 disabled、用新增的 `scripts/dev-restart.sh`（免 sudo、自带腾端口）一条命令重启 web/worker/gateway。
+- **`systemctl` 重启后端起不来、每次要手动 `pkill`**（`scripts/dev-restart.sh` + `deploy.md`）：根因是 8000 端口同时被 systemd 与手动 uvicorn**两个主人**抢，`systemctl restart` 停不掉非 systemd 的那个 → 绑不上端口死循环。立“一台机 8000 只一个主人”铁律：生产给 `gugu-backend.service` 加 `ExecStartPre=-/usr/bin/fuser -k -n tcp 8000` 自愈腾端口（`systemctl restart` 再不用手动 pkill）；dev 机 systemd 保持 disabled、用新增的 `scripts/dev-restart.sh`（免 sudo、自带腾端口）一条命令重启 web/worker/supervisor。
 - **接入 IM 按钮漏微信**：咕咕给扫码绑定按钮时只发飞书 / QQ、漏了微信，现补齐微信。
 - **拖到“已完成”没勾完待办**（`stores/projects.js`）：项目卡拖到已完成列时自动勾选所有阶段的全部待办——`moveProject` 进 done 分支原只推进 `currentStage` + `progress=100`、没勾 todo 也没把 stages 传后端。补：深拷贝 stages、未完成 todo 设 `done`+`autoCompleted`（快照原状态随 patch 存），与 `setStage` 同一约定，拖回进行中自动复原。
 - **网页语音咕咕“听不到”（IM 正常）**（`core/chat_attach.py` + `agent/voice.py`）：两层卡点——① chat_attach 的 `native` 格式门控只放行 mp3/m4a/wav/ogg，**Chrome 录音是 webm**（`_recExt` fallback），不在白名单 → 媒体块根本不建、连 transcribe 都没调到（IM 语音在网关已转 mp3、是原生的，故畅通）。改：配了语音识别模型时音频/语音不再要求原生（`fmt_ok = native or (voice_ok and not is_video)`），交下游 ffmpeg 转。② 就算放行，Safari 的 `audio/mp4` 送到 mimo-v2.5-asr（只收 wav/mpeg/mp3）会 400 `Param Incorrect` → `voice.py` 转写前凡 mime 不在白名单的，用 **ffmpeg** 转 16k 单声道 wav 再送（输入走临时文件，mp4 的 moov 在尾部需可寻址）。现 Chrome/Safari 网页录音 + QQ/微信 amr 全覆盖。
@@ -1047,7 +1025,7 @@ agent 工具层 `_delete_project` 还在导入已被移除的函数（“删项�
 
 ### 运维 / 文档
 
-- **systemd 托管 worker / gateway**（`Restart=always`），`make install` 一次装全 3 个，修“进程死了不自动拉起、消息无限排队”的生产隐患。
+- **systemd 托管 worker / supervisor**（`Restart=always`），`make install` 一次装全 3 个，修“进程死了不自动拉起、消息无限排队”的生产隐患。
 - **文档收口**：并发优化文档整合为单一权威版本，`00-总览.md` 重整为纯架构参考（1059→418 行）。
 
 ### 修复
@@ -1066,7 +1044,7 @@ agent 工具层 `_delete_project` 还在导入已被移除的函数（“删项�
 
 ### IM 接入（飞书 + QQ · BYO 扫码自连）
 
-- **飞书 + QQ 统一 BYO**：每用户自带 bot，“接入咕咕”扫码自动连接（飞书 OAuth 设备授权、QQ bind_task，无需合作方资质），凭据加密写入 `user_bots`，`gateway` 统一拉起网关。
+- **飞书 + QQ 统一 BYO**：每用户自带 bot，“接入咕咕”扫码自动连接（飞书 OAuth 设备授权、QQ bind_task，无需合作方资质），凭据加密写入 `user_bots`，`supervisor` 统一拉起网关。
 - **清理旧共享 bot**：删除旧共享绑定与 Admin“频道”面板，IM 接入全改用户自助。
 - **飞书 Webhook 模式**：新增长连接的替代方案，有公网时少跑一个进程。
 - **IM 上下文修复**：`run_collect` 原来不读历史，每条孤立处理，现与网页同口径读历史窗口。
@@ -1132,7 +1110,7 @@ agent 工具层 `_delete_project` 还在导入已被移除的函数（“删项�
 
 ### 文档 / 运维
 
-- **`DEPLOY.md` 完全重写**：开发+生产完整教程（venv/依赖/配置/数据库/nginx/systemd/排错/备份）。
+- **`deploy.md` 完全重写**：开发+生产完整教程（venv/依赖/配置/数据库/nginx/systemd/排错/备份）。
 - 新增飞书接入指南文档；`.env.example` 更新为当前嵌套格式；`.gitignore` 补 root `uploads/`（含咕咕 `.agent/` 记忆）防误提交用户数据。
 
 ---

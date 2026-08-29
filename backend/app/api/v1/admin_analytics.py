@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, distinct, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.tz import now_utc, resolve_tz
+from app.core.tz import LOCAL_TZ, local_day_start_utc, now_utc, utc_to_local_date_expr
 from app.db.session import get_db
 from app.models import (
     User, Project, ConversationSession, AgentUsage, UserBot, FrontendEvent,
@@ -15,18 +15,6 @@ from app.models import (
 from onboarding.models import OnboardingState
 
 router = APIRouter(prefix="/admin/analytics", tags=["admin"])
-
-
-def _analytics_timezone(name: str | None) -> tuple[object, str]:
-    tz = resolve_tz(name)
-    key = getattr(tz, "key", None)
-    if key:
-        return tz, "'" + key.replace("'", "''") + "'"
-    offset = int((tz.utcoffset(None) or timedelta()).total_seconds())
-    sign = "+" if offset >= 0 else "-"
-    hours, remainder = divmod(abs(offset), 3600)
-    value = f"{sign}{hours} hours" + (f" {remainder // 60} minutes" if remainder else "")
-    return tz, f"INTERVAL '{value}'"
 
 # ── 排除开发者（exclude_dev=true 时生效）─────────────────────────────────────
 # ORM 查询：user_id 列 .notin_(_DEV_SQ)；users 表自身直接 is_developer == False。
@@ -48,15 +36,11 @@ _ONBOARD_SQ = select(_seeded_pid).where(_seeded_pid.is_not(None))
 
 
 @router.get("/summary")
-async def get_summary(exclude_dev: bool = Query(False),
-                      timezone_name: str | None = Query(default=None, alias="timezone"),
-                      db: AsyncSession = Depends(get_db)):
+async def get_summary(exclude_dev: bool = Query(False), db: AsyncSession = Depends(get_db)):
     now = now_utc()
     d7  = now - timedelta(days=7)
     d30 = now - timedelta(days=30)
-    user_tz, _ = _analytics_timezone(timezone_name)
-    local_today = datetime.now(user_tz).replace(hour=0, minute=0, second=0, microsecond=0)
-    today_start = local_today.astimezone(timezone.utc).replace(tzinfo=None)
+    today_start = local_day_start_utc()
     xd = exclude_dev
 
     def _users_stmt():
@@ -251,15 +235,14 @@ async def get_summary(exclude_dev: bool = Query(False),
 @router.get("/trends")
 async def get_trends(days: int = Query(default=30, ge=7, le=90),
                      exclude_dev: bool = Query(False),
-                     timezone_name: str | None = Query(default=None, alias="timezone"),
                      db: AsyncSession = Depends(get_db)):
-    user_tz, tz_expr = _analytics_timezone(timezone_name)
-    now_local = datetime.now(user_tz)
+    now_local = datetime.now(LOCAL_TZ)
     start_local = (now_local - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     local_date_list = [(start_local + timedelta(days=i)).date() for i in range(days)]
     labels = [(start_local + timedelta(days=i)).strftime("%-m/%-d") for i in range(days)]
 
+    tz_expr = utc_to_local_date_expr()   # 本地偏移，配合 DATE(col AT TIME ZONE …) 用——与 DB 会话时区无关
     nd = _DEV_NOT_IN if exclude_dev else ""
 
     agent_rows = (await db.execute(text(f"""

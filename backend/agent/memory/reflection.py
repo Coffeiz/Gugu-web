@@ -17,8 +17,7 @@ from datetime import datetime
 from pathlib import Path
 
 from agent.memory import store
-from agent.context.branch import ContextBranch
-from agent.context.branch_types import BranchInput, BranchPolicy
+from agent.memory._llm import complete_json
 
 # 保持后台任务引用，防止被 GC（fire-and-forget 必须）
 _bg_tasks: set = set()
@@ -38,8 +37,6 @@ _SYS_FALLBACK = (
     "summary 是一句「用户当下在忙什么/近期重心」的快照，基于原快照演进、没变就原样返回；"
     "涉及具体时间点一律换算成绝对日期（如「7/6 晚」而非「今晚」），照 user 消息开头给的当前日期换算。"
     "perception 是本轮观察（intent/ambiguity/emotion/emo_strength），照实判、只打点。"
-    "knowledge_candidate 只在本轮出现有明确主题、可长期复用的事实或规则时给，格式为 {should_reflect:boolean,query:string}；"
-    "普通闲聊、一次性进展、用户画像/习惯、纯工具操作时 should_reflect 必须为 false。"
     "correction 唯一判 true 的条件：错的主体是**你（咕咕）本人这次的回答/理解**（用户说「你错了/不是这个/我说的是…」）。"
     "错的若是**别人**一律 false：用户认自己错/确认你是对的（是我错了/你是对的/哦原来如此）、说第三方或外部信息错"
     "（他记错了/这数据源不对/官网写错了）、单纯聊「某事是错的」——都 false（句里有「错」字也不算）。"
@@ -51,8 +48,7 @@ _SYS_FALLBACK = (
     '"pattern_add": [{"text": "...", "kind": "observed", "importance": 4}], "pattern_remove": ["..."], '
     '"daily": "一句话总结(没有就空字符串)", "summary": "当前状态快照(没有就空字符串)", "lens_hint": "", '
     '"correction": {"is_correction": false, "kind": ""}, '
-    '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}, '
-    '"knowledge_candidate": {"should_reflect": false, "query": ""}}'
+    '"perception": {"intent": "情绪/查询/执行/...", "ambiguity": 0, "emotion": "无", "emo_strength": 0}}'
 )
 
 # 误判捕获:主信号是反思 LLM 判的 correction（见 _misperc_llm，能分感知误读/数据执行错）；
@@ -439,12 +435,8 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # 数据"的教训同源）。best-effort，记日志失败不影响主流程。
         if summary and summary != existing_summary.strip():
             try:
-                from agent.security.logsafe import fingerprint
-                _memdiff_log.info(
-                    "summary user_fp=%s old_len=%d new_len=%d old_fp=%s new_fp=%s",
-                    fingerprint(str(user_id)), len(existing_summary.strip()), len(summary),
-                    fingerprint(existing_summary.strip()), fingerprint(summary),
-                )
+                _memdiff_log.info("summary user=%s old=%r new=%r",
+                                   str(user_id)[:8], existing_summary.strip(), summary)
             except Exception:
                 pass
             await store.write_summary(user_id, summary)
@@ -453,10 +445,6 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
             # 写完 daily 顺带检查压缩：攒够则把最老的沉淀进 memory.md
             from agent.memory import compress
             await compress.compact(user_id, settings)
-            from agent import events
-            events.publish(events.types.RagIndexUpdated(
-                user_id=user_id, source_type="memory", source_id="daily", operation="upsert",
-            ))
         # lens（解读先验）gated 学习：hint 多数轮为空；候选须复现才提拔成规则。顺带做退休维护。
         from agent.memory import lens
         await lens.observe(user_id, out.get("lens_hint"))
@@ -466,40 +454,9 @@ async def reflect(user_id, user_name, user_msg, assistant_reply, settings, sessi
         # pattern 维护只在活跃反思链路中检查，不扫描沉默用户，也不阻塞本轮回复。
         from agent.memory import periodic
         await periodic.maybe_schedule(user_id, settings)
-        # Knowledge 复用本轮 Memory 反思时机；只有 Memory 反思明确标记候选时才追加一次调用。
-        try:
-            from agent.knowledge.reflection import candidate_request, reflect_if_candidate
-            should_reflect, query = candidate_request(out)
-            if should_reflect:
-                mode = "explicit" if _explicit_knowledge_request(user_msg) else "automatic"
-                await reflect_if_candidate(
-                    user_id, user_msg, assistant_reply, settings, query,
-                    save_mode=mode, session_id=session_id,
-                )
-        except Exception:
-            _memdiff_log.debug("knowledge reflection skipped", exc_info=True)
-        try:
-            from agent.security.logsafe import fingerprint
-            _memdiff_log.info(
-                "[memory-reflection-audit] phase=completed scope=owner user_fp=%s "
-                "session_id=%s summary_changed=%s daily=%s profile_ops=%s pattern_ops=%s",
-                fingerprint(str(user_id)),
-                session_id,
-                bool(summary and summary != existing_summary.strip()),
-                bool(daily_note),
-                bool(p_add is not None or p_rem is not None),
-                bool(f_add is not None or f_rem is not None or legacy),
-            )
-        except Exception:
-            pass
     except Exception:
         return False  # 反思是锦上添花，任何失败都不能影响对话
     return True
-
-
-def _explicit_knowledge_request(text: str) -> bool:
-    markers = ("记住", "保存到知识库", "加入知识库", "以后按这个规则", "把这个知识")
-    return any(marker in (text or "") for marker in markers)
 
 
 async def _extract(user_name, user_msg, assistant_reply, existing_profile, existing_pattern, existing_summary,
@@ -525,20 +482,9 @@ async def _extract(user_name, user_msg, assistant_reply, existing_profile, exist
         f"——没变动就都给空数组、别重列旧内容"
         f"+ 当前状态快照（基于原快照演进、没变就原样返回、别清空）+ 本轮 perception（照本轮用户消息判、始终给）"
         f"+ feedback（用户这句相对【上一轮】的反馈,枚举选一,没给上一轮就 无信号）。"
-        f"+ knowledge_candidate（仅明确、可复用的事实/规则才标 true，并给一个用于 Knowledge RAG 的短查询）。"
     )
     # 2b：反思只吐 profile/pattern 的增删（delta）+ daily/summary/perception，输出体量**不再随存量增长**，
     # 根治了「pattern 一多 → 回显整份超 max_tokens → 截断 → JSON 解析失败 → 静默返回 {}」的老坑。
     # 故 max_tokens 给个稳妥固定值即可（不必再跟存量走）；仍按模型上限兜底。
     _cap = getattr(getattr(settings, "ai", None), "max_tokens", 0) or 4096
-    result = await ContextBranch().run(
-        BranchInput(stable_system=_load_sys(), delta=user, scope="owner"),
-        BranchPolicy(
-            name="reflection",
-            output_mode="json",
-            max_tokens=min(_cap, 900),
-            max_retries=0,
-        ),
-        settings,
-    )
-    return result.output if result.ok and isinstance(result.output, dict) else {}
+    return await complete_json(_load_sys(), user, settings, max_tokens=min(_cap, 900))

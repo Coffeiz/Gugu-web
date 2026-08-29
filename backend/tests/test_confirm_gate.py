@@ -8,7 +8,6 @@
 4. 静态守卫 scripts/check_confirm_gate.py 对当前代码库必须全绿（AST 校验回归）。
 """
 import json
-from datetime import timedelta
 from app.core.tz import now_utc
 import logging
 
@@ -96,49 +95,6 @@ async def test_delete_client_with_prior_token_executes(db, user_a):
     })
     assert isinstance(res, dict) and res.get("success")
     assert await db.get(Client, c.id) is None
-
-
-def test_confirmation_lease_can_use_explicit_ttl(user_a):
-    from agent.security import confirm
-    from app.core.config import get_settings
-    from jose import jwt
-
-    blocked = confirm.needs_confirmation(
-        {},
-        "允许当前会话执行只读网络请求",
-        user_a.id,
-        identity="shell:network-read:1:sandbox",
-        ttl_minutes=30,
-    )
-    payload = jwt.decode(
-        json.loads(blocked)["confirm_token"],
-        get_settings().secret_key,
-        algorithms=["HS256"],
-    )
-    remaining = payload["exp"] - now_utc().timestamp()
-    assert 29 * 60 < remaining <= 30 * 60
-    assert json.loads(blocked)["authorization_ttl_minutes"] == 30
-
-
-async def test_batch_delete_client_uses_one_target_bound_confirmation(db, user_a):
-    first = await _mk(db, Client(user_id=user_a.id, name="批量客户一"))
-    second = await _mk(db, Client(user_id=user_a.id, name="批量客户二"))
-    args = {"client_ids": [first.id, second.id]}
-    blocked = await _delete_client(db, user_a.id, args)
-    assert _blocked(blocked)
-    token = _confirm_token(blocked)
-
-    # 确认凭证不能被换成另一组目标复用。
-    wrong = await _delete_client(db, user_a.id, {
-        "client_ids": [first.id], "confirm": True, "confirm_token": token,
-    })
-    assert _blocked(wrong)
-    result = await _delete_client(db, user_a.id, {
-        **args, "confirm": True, "confirm_token": token,
-    })
-    assert result["success"] and result["deleted_count"] == 2
-    assert await db.get(Client, first.id) is None
-    assert await db.get(Client, second.id) is None
 
 
 # ── 3. dispatch 绊线：漏接确认门的 destructive 工具必须触发 CRITICAL ──────────

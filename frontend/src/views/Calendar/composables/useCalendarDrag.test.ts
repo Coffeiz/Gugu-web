@@ -12,16 +12,6 @@ const eventItem: CalendarRenderItem = {
   time: '10:00',
 }
 
-const doneProjectItem: CalendarRenderItem = {
-  id: 'p1',
-  name: '已完成项目',
-  calendarType: 'project',
-  accent: '#7b7fb2',
-  status: 'done',
-  startDate: '2026-08-10',
-  endDate: '2026-08-12',
-}
-
 function mountDrag() {
   let state!: CalendarDragState
   let dragApi!: ReturnType<typeof useCalendarDrag>
@@ -74,21 +64,6 @@ describe('useCalendarDrag', () => {
 
     expect(ctx.commitDrag).not.toHaveBeenCalled()
     expect(ctx.state.active).toBe(false)
-    ctx.host.remove()
-  })
-
-  it('已完成项目不会启动移动或缩放预览', () => {
-    const ctx = mountDrag()
-    ctx.dragApi.startProjectChipDrag(doneProjectItem, new MouseEvent('mousedown', { clientX: 10, clientY: 20 }))
-    ctx.dragApi.startBarDrag(doneProjectItem, new MouseEvent('mousedown', { clientX: 10, clientY: 20 }))
-    ctx.dragApi.startBarResize(doneProjectItem, 'end', new MouseEvent('mousedown', { clientX: 10, clientY: 20 }))
-
-    document.dispatchEvent(new MouseEvent('mousemove', { clientX: 30, clientY: 40 }))
-    document.dispatchEvent(new MouseEvent('mouseup', { clientX: 80, clientY: 90 }))
-
-    expect(ctx.state.active).toBe(false)
-    expect(ctx.commitDrag).not.toHaveBeenCalled()
-    ctx.app.unmount()
     ctx.host.remove()
   })
 })

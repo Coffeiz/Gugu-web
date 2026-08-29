@@ -13,8 +13,6 @@ export interface PreviewWindow {
   x: number; y: number; w: number; h: number
   zIndex: number
   _idx: number
-  sourceText?: string
-  saveSource?: (content: string) => Promise<void> | void
 }
 
 const IMAGE_EXTS  = new Set(['JPG', 'JPEG', 'PNG', 'GIF', 'WEBP', 'SVG', 'BMP'])
@@ -67,27 +65,6 @@ export const usePreviewStore = defineStore('preview', () => {
     }
   }
 
-  function openVirtual(
-    f: PreviewFile,
-    sourceText: string,
-    saveSource: (content: string) => Promise<void> | void,
-  ) {
-    const existing = windows.value.find(w => w.file.id === f.id)
-    if (existing) {
-      existing.sourceText = sourceText
-      existing.saveSource = saveSource
-      bringToFront(existing.id)
-      return
-    }
-    const idx = windows.value.length
-    windows.value.push({
-      id: _nextId++, file: f, siblings: [], sourceText, saveSource,
-      x: Math.round((window.innerWidth - 520) / 2) + idx * 30,
-      y: Math.round((window.innerHeight - 620) / 2) + idx * 30,
-      w: 520, h: 620, zIndex: nextZ(), _idx: idx,
-    })
-  }
-
   // 图片预览左右切换：在 win.siblings 里过滤出图片、按当前文件定位、按 dir(±1) 移动，
   // 到边界后循环（体验上更顺手，跟大多数看图软件一致）。siblings 不足 2 张图时静默不动。
   function navigate(id: number, dir: number) {
@@ -112,5 +89,5 @@ export const usePreviewStore = defineStore('preview', () => {
   const file  = singleFile
   function close() { singleFile.value = null }
 
-  return { windows, singleFile, file, open, openVirtual, close, closeWindow, bringToFront, navigate }
+  return { windows, singleFile, file, open, close, closeWindow, bringToFront, navigate }
 })

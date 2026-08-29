@@ -111,7 +111,7 @@ except Exception as e:
 
 脱敏逻辑现在叫 `sanitize_error`、放在 `agent/tools/base.py:23-40`（抹连接串/密钥/路径/UUID/traceback），**只覆盖工具返回值**。
 API 层、存储层、Agent、适配器都要用它 → **位置固定为 `app/core/redaction.py`**（导出 `redact()`），不放 `agent/`：
-- **依赖方向红线**：`app.*`（api/存储/core）**不得反向依赖 `agent.*`**。放 `agent/logsafe.py` 会逼 app 反依赖 agent。
+- **依赖方向红线**：`app.*`（API/存储/core）**不得反向依赖 `agent.*`**。放 `agent/logsafe.py` 会逼 app 反依赖 agent。
 - 迁移：把 `sanitize_error` 提到 `app/core/redaction.py`，`agent/tools/base.py` 改 import 复用；补对称测试锁脱敏规则不回归。
 
 规则：**任何跨出后端边界、或进入 Debug/后台可见出口的错误文案**（给模型/用户/前端/gugu.log/SystemLog）都必须先过 `redact`。落点：

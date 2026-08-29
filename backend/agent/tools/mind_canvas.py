@@ -162,7 +162,7 @@ def _node_summary(node: Any, item: Any = None, *, include_content: bool = False)
     return result
 
 
-async def _canvas_list(db, user_id, args: dict):
+async def _mind_list_canvases(db, user_id, args: dict):
     limit = _limit(args.get("limit"), 20)
     offset = args.get("offset", 0)
     offset = offset if isinstance(offset, int) and offset >= 0 else 0
@@ -188,7 +188,7 @@ async def _canvas_list(db, user_id, args: dict):
     }
 
 
-async def _canvas_get(db, user_id, args: dict):
+async def _mind_get_canvas(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -235,13 +235,13 @@ async def _canvas_get(db, user_id, args: dict):
     return result
 
 
-async def _canvas_search(db, user_id, args: dict):
+async def _mind_search_canvas(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
     if await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
-    q = (args.get("query") or args.get("q") or "").strip()
+    q = (args.get("q") or "").strip()
     raw_queries = args.get("queries")
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
@@ -277,13 +277,13 @@ def _placeable_summary(entity, ref_node: Any, item: Any, ref_type: str) -> dict[
     }
 
 
-async def _canvas_search_placeable(db, user_id, args: dict):
-    q = (args.get("query") or args.get("q") or "").strip()
+async def _mind_search_placeable_nodes(db, user_id, args: dict):
+    q = (args.get("q") or "").strip()
     raw_queries = args.get("queries")
     queries = raw_queries if isinstance(raw_queries, list) else None
     normalized = normalize_queries(q, queries)
     if not normalized:
-        return {"error": "需要提供搜索关键词 query 或 queries"}
+        return {"error": "需要提供搜索关键词 q 或 queries"}
     selected = [item for item in (args.get("types") or list(_PLACEABLE_TYPES)) if item in _PLACEABLE_TYPES]
     limit = _limit(args.get("limit"), 10)
     offset = args.get("offset", 0)
@@ -377,7 +377,7 @@ async def _resolve_canvas_position(db, user_id, canvas: Any, node: Any, position
     return float(items.x + (items.w or 220) + _SAFE_EDGE_GAP), float(items.y)
 
 
-async def _canvas_create(db, user_id, args: dict):
+async def _mind_create_canvas(db, user_id, args: dict):
     title = args.get("title")
     if not isinstance(title, str) or not title.strip():
         return {"error": "需要提供画布标题"}
@@ -394,28 +394,8 @@ async def _canvas_create(db, user_id, args: dict):
     return {"canvas": {"canvas_id": canvas.id, "title": canvas.title, "project_id": canvas.project_id}}
 
 
-async def _canvas_delete(db, user_id, args: dict):
+async def _mind_delete_canvas(db, user_id, args: dict):
     from agent.security import confirm
-    canvas_ids = args.get("canvas_ids")
-    if canvas_ids is not None:
-        if not isinstance(canvas_ids, list) or not canvas_ids or len(canvas_ids) > 20:
-            return {"error": "canvas_ids 必须是 1-20 个画布 id"}
-        canvases = []
-        for canvas_id in canvas_ids:
-            canvas = await get_owned_canvas(db, user_id, canvas_id)
-            if canvas is None:
-                return {"error": f"画布 {canvas_id} 不存在"}
-            canvases.append(canvas)
-        names = "、".join((c.title or "未命名画布") for c in canvases[:8]) + (f"等 {len(canvases)} 个" if len(canvases) > 8 else "")
-        blocked = confirm.needs_confirmation(args, f"将删除画布：{names}，共 {len(canvases)} 个，包含便签、引用节点和连接关系", user_id,
-                                             identity=f"canvas_delete:canvas_ids={sorted(canvas_ids)}")
-        if blocked is not None:
-            return blocked
-        for canvas in canvases:
-            if not await delete_canvas(db, user_id, canvas.id, commit=False):
-                return {"error": f"画布 {canvas.id} 删除失败"}
-        await db.commit()
-        return {"success": True, "deleted_count": len(canvases), "deleted_canvas_ids": [c.id for c in canvases]}
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -432,7 +412,7 @@ async def _canvas_delete(db, user_id, args: dict):
     return {"deleted": True, "canvas_id": canvas_id, "title": title}
 
 
-async def _canvas_create_note(db, user_id, args: dict):
+async def _mind_create_canvas_note(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int) or await get_owned_canvas(db, user_id, canvas_id) is None:
         return {"error": "画布不存在"}
@@ -459,7 +439,7 @@ async def _canvas_create_note(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_add_node(db, user_id, args: dict):
+async def _mind_add_canvas_node(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -495,7 +475,7 @@ async def _canvas_add_node(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_update_node(db, user_id, args: dict):
+async def _mind_update_canvas_node(db, user_id, args: dict):
     canvas_id, item_id = args.get("canvas_id"), args.get("item_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -538,7 +518,7 @@ async def _canvas_update_node(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_remove_node(db, user_id, args: dict):
+async def _mind_remove_canvas_node(db, user_id, args: dict):
     canvas_id = args.get("canvas_id")
     if not isinstance(canvas_id, int):
         return {"error": "需要提供 canvas_id"}
@@ -564,7 +544,7 @@ async def _canvas_remove_node(db, user_id, args: dict):
     return {"canvas_id": canvas_id, "results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_update_note(db, user_id, args: dict):
+async def _mind_update_canvas_note(db, user_id, args: dict):
     entries, batched, error = _mutation_entries(args, "updates")
     if error:
         return {"error": error}
@@ -598,7 +578,7 @@ async def _canvas_update_note(db, user_id, args: dict):
     return {"results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_delete_note(db, user_id, args: dict):
+async def _mind_delete_canvas_note(db, user_id, args: dict):
     from agent.security import confirm
     entries, batched, error = _mutation_entries(args, "notes")
     if error:
@@ -632,7 +612,7 @@ async def _canvas_delete_note(db, user_id, args: dict):
     return {"results": results, "count": len(results)} if batched else results[0]
 
 
-async def _canvas_connect(db, user_id, args: dict):
+async def _mind_connect_nodes(db, user_id, args: dict):
     canvas_id, source_id, target_id = args.get("canvas_id"), args.get("source_node_id"), args.get("target_node_id")
     if not all(isinstance(value, int) for value in (canvas_id, source_id, target_id)):
         return {"error": "需要提供 canvas_id、source_node_id 和 target_node_id"}
@@ -662,7 +642,7 @@ async def _canvas_connect(db, user_id, args: dict):
     return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, "type": relation.rel_type, "created_or_reused": True, **(anchor or {})}
 
 
-async def _canvas_update_anchor(db, user_id, args: dict):
+async def _mind_update_relation_anchor(db, user_id, args: dict):
     canvas_id, relation_id = args.get("canvas_id"), args.get("relation_id")
     source_side, target_side = args.get("source_side"), args.get("target_side")
     if not isinstance(canvas_id, int) or not isinstance(relation_id, int):
@@ -678,26 +658,8 @@ async def _canvas_update_anchor(db, user_id, args: dict):
     return {"relation_id": relation.id, "source_node_id": relation.src_node_id, "target_node_id": relation.dst_node_id, **anchor, "updated": True}
 
 
-async def _canvas_disconnect(db, user_id, args: dict):
+async def _mind_disconnect_nodes(db, user_id, args: dict):
     from agent.security import confirm
-    relation_ids = args.get("relation_ids")
-    if relation_ids is not None:
-        if not isinstance(relation_ids, list) or not relation_ids or len(relation_ids) > 50:
-            return {"error": "relation_ids 必须是 1-50 个关联 id"}
-        relations = []
-        for relation_id in relation_ids:
-            relation = await get_canvas_relation(db, user_id, relation_id)
-            if relation is None:
-                return {"error": f"关联 {relation_id} 不存在"}
-            relations.append(relation)
-        blocked = confirm.needs_confirmation(args, f"将删除 {len(relations)} 条节点关联", user_id,
-                                             identity=f"canvas_disconnect:relation_ids={sorted(relation_ids)}")
-        if blocked is not None:
-            return blocked
-        for relation in relations:
-            await disconnect_node_relation(db, user_id, relation.id, commit=False)
-        await db.commit()
-        return {"success": True, "deleted_count": len(relations), "deleted_relation_ids": [r.id for r in relations]}
     relation_id = args.get("relation_id")
     if not isinstance(relation_id, int):
         return {"error": "需要提供 relation_id"}
@@ -711,7 +673,7 @@ async def _canvas_disconnect(db, user_id, args: dict):
     return {"deleted_relation_id": relation_id}
 
 
-async def _canvas_batch(db, user_id, args: dict):
+async def _mind_batch_canvas(db, user_id, args: dict):
     """在一个事务内批量创建、放置、移除、调整布局和创建连接。
 
     引用节点/画布项/related 关系本身都有唯一约束，重试同一
@@ -752,8 +714,7 @@ class MindCanvasSkill(BaseSkill):
     name = "mind_canvas"
     tools = [
         Tool(
-            name="canvas_list", label="列出思维画布",
-            description_short='列出可访问画布；未指定画布时先调用',
+            name="mind_list_canvases", label="列出思维画布",
             description="列出当前用户有权限访问的思维画布摘要。用户没有明确画布时先调用，不要猜 canvas_id。",
             input_schema={
                 "type": "object",
@@ -764,12 +725,11 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
-            handler=_canvas_list,
+            handler=_mind_list_canvases,
         ),
         Tool(
-            name="canvas_get", label="读取思维画布",
-            description_short='读取画布节点、连接和 viewport；关键字段 canvas_id',
-            description="读取画布节点、连接和最后查看的 camera/viewport；排布时参考节点实际尺寸。",
+            name="mind_get_canvas", label="读取思维画布",
+            description="读取当前用户指定画布的节点摘要、连接和最后查看的 camera/viewport。节点带有 layout.effective_size、layout.default_size 与推荐间距，排布时按实际尺寸避让。完整正文只在用户明确要求时读取。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -781,17 +741,15 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_get,
+            handler=_mind_get_canvas,
         ),
         Tool(
-            name="canvas_search", label="搜索画布内容",
-            description_short='固定工具名 canvas_search：搜索指定画布节点；传 canvas_id/query',
+            name="mind_search_canvas", label="搜索画布内容",
             description="搜索指定画布中已有的画布便签、项目、文件和活动引用。普通时间流 note 不属于画布，不会返回。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "query": {"type": "string"},
                     "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_CANVAS_TYPES)}},
@@ -801,16 +759,14 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_search,
+            handler=_mind_search_canvas,
         ),
         Tool(
-            name="canvas_search_placeable", label="搜索可放置画布节点",
-            description_short='搜索可放入画布的项目/文件/活动；不含普通 note',
+            name="mind_search_placeable_nodes", label="搜索可放置画布节点",
             description="搜索当前用户可访问、可以放入画布的项目、文件和日历活动。不会返回普通时间流 note，也不会因搜索自动创建引用节点。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
                     "q": {"type": "string"},
                     "queries": {"type": "array", "items": {"type": "string"}},
                     "types": {"type": "array", "items": {"type": "string", "enum": list(_PLACEABLE_TYPES)}},
@@ -821,11 +777,10 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": [],
             },
-            handler=_canvas_search_placeable,
+            handler=_mind_search_placeable_nodes,
         ),
         Tool(
-            name="canvas_create", label="创建思维画布",
-            description_short='创建思维画布；关键字段 title/project_id',
+            name="mind_create_canvas", label="创建思维画布",
             description="按用户明确要求创建一张当前用户自己的思维画布；不能替用户猜测标题或项目。",
             input_schema={
                 "type": "object",
@@ -835,36 +790,33 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["title"],
             },
-            handler=_canvas_create,
+            handler=_mind_create_canvas,
             mutates=True,
         ),
         Tool(
-            name="canvas_delete", label="删除思维画布",
-            description_short='删除画布及内容；执行前需确认',
-            description="删除一个或多个画布及其所有内容（便签、引用节点、连接关系全部清除）。单项传 canvas_id，批量传 canvas_ids；批量目标一次确认。",
+            name="mind_delete_canvas", label="删除思维画布",
+            description="删除一张画布及其所有内容（便签、引用节点、连接关系全部清除）。执行前必须告知用户画布标题并获得确认。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "canvas_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 20},
                     "confirm": {"type": "boolean"},
                     "confirm_token": {"type": "string"},
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_delete,
+            handler=_mind_delete_canvas,
             mutates=True,
             destructive=True,
         ),
         Tool(
-            name="canvas_create_note", label="创建画布便签",
-            description_short='创建画布专属便签；不进入时间流 note',
-            description="在指定画布创建专属便签，不进入时间流 note；卡片大小由系统管理。单项传 title/content，批量传 notes。",
+            name="mind_create_canvas_note", label="创建画布便签",
+            description="在指定画布创建一个或多个专属便签，最多 20 个。它们不会进入时间流 note；普通时间流笔记不能通过此工具放入画布。卡片大小由系统管理，不能传 w/h。单项调用使用 title/content，批量调用使用 notes 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "canvas_id": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"},
                     "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "position": {"type": "object"},
@@ -872,13 +824,12 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_create_note,
+            handler=_mind_create_canvas_note,
             mutates=True,
         ),
         Tool(
-            name="canvas_add_node", label="放置画布节点",
-            description_short='把项目/文件/活动放入画布；位置自动避让',
-            description="把项目、文件或活动引用放入画布，最多 20 个；位置按节点实际尺寸避让。",
+            name="mind_add_canvas_node", label="放置画布节点",
+            description="把当前用户的项目、文件或日历活动引用放入画布，单次最多 20 个。卡片大小由系统管理，不能传 w/h。单项调用使用 node_id 或 ref_type/ref_id，批量调用使用 nodes 数组。position.x/y 是卡片左上角；放置前必须按已有节点的 layout.effective_size 避让。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -891,13 +842,12 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_add_node,
+            handler=_mind_add_canvas_node,
             mutates=True,
         ),
         Tool(
-            name="canvas_update_node", label="调整画布节点",
-            description_short='调整画布节点位置/层级；关键字段 item_id/updates',
-            description="调整画布节点的位置、层级或折叠状态，不改变原项目、文件或活动。单项传 item_id，批量传 updates；不支持修改 w/h。",
+            name="mind_update_canvas_node", label="调整画布节点",
+            description="调整一个或多个已放置节点的位置、层级或折叠状态，最多 20 个；卡片大小由系统按节点类型统一管理，工具不支持修改 w/h。只改变画布视图，不改变原项目、文件或活动。单项调用使用 item_id，批量调用使用 updates 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -908,55 +858,51 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id"],
             },
-            handler=_canvas_update_node,
+            handler=_mind_update_canvas_node,
             mutates=True,
         ),
         Tool(
-            name="canvas_remove_node", label="移除画布节点",
-            description_short='移除画布节点视图；关键字段 item_id/item_ids',
+            name="mind_remove_canvas_node", label="移除画布节点",
             description="从指定画布移除一个或多个节点视图，最多 20 个；不会删除项目、文件、活动或画布便签正文。单项调用使用 item_id，批量调用使用 item_ids 数组。",
             input_schema={
                 "type": "object",
                 "properties": {"canvas_id": {"type": "integer"}, "item_id": {"type": "integer"}, "item_ids": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "integer"}}},
                 "required": ["canvas_id"],
             },
-            handler=_canvas_remove_node,
+            handler=_mind_remove_canvas_node,
             mutates=True,
         ),
         Tool(
-            name="canvas_update_note", label="修改画布便签",
-            description_short='修改画布便签；关键字段 node_id/version',
+            name="mind_update_canvas_note", label="修改画布便签",
             description="按 node_id 和 version 修改一个或多个画布专属便签，最多 20 个；不能修改普通时间流 note。单项调用使用 node_id/version，批量调用使用 updates 数组。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "integer"}, "version": {"type": "integer"},
-                    "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                    "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
                     "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                     "updates": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}},
                 },
                 "required": [],
             },
-            handler=_canvas_update_note,
+            handler=_mind_update_canvas_note,
             mutates=True,
         ),
         Tool(
-            name="canvas_delete_note", label="删除画布便签",
-            description_short='删除画布便签；执行前需确认',
+            name="mind_delete_canvas_note", label="删除画布便签",
             description="删除一个或多个画布专属便签并移除其画布视图，最多 20 个；执行前必须一次性展示影响并获得确认。单项调用使用 node_id/version，批量调用使用 notes 数组。",
             input_schema={
                 "type": "object",
                 "properties": {"node_id": {"type": "integer"}, "version": {"type": "integer"}, "notes": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "object"}}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
                 "required": [],
             },
-            handler=_canvas_delete_note,
+            handler=_mind_delete_canvas_note,
             mutates=True,
             destructive=True,
         ),
         Tool(
-            name="canvas_connect", label="连接画布节点",
-            description_short='连接同画布节点；可指定 source_side/target_side',
-            description="连接同一画布中的节点；默认 related 且幂等，可指定两端连接点。",
+            name="mind_connect_nodes", label="连接画布节点",
+            description="连接同一张画布中已经放置的画布便签或业务引用节点；默认 related 且幂等。可选 source_side/target_side 指定两端连接点，未指定时沿用已有端点或由画布自动决定。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -967,12 +913,11 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id", "source_node_id", "target_node_id"],
             },
-            handler=_canvas_connect,
+            handler=_mind_connect_nodes,
             mutates=True,
         ),
         Tool(
-            name="canvas_update_anchor", label="调整画布连接点",
-            description_short='修改连接两端；关键字段 relation_id/source_side/target_side',
+            name="mind_update_relation_anchor", label="调整画布连接点",
             description="修改指定画布关系两端使用的连接点。source_side/target_side 分别对应读取结果中的 source_node_id/target_node_id；只改变画布视图，不改变关系语义。",
             input_schema={
                 "type": "object",
@@ -983,26 +928,24 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id", "relation_id", "source_side", "target_side"],
             },
-            handler=_canvas_update_anchor,
+            handler=_mind_update_relation_anchor,
             mutates=True,
         ),
         Tool(
-            name="canvas_disconnect", label="断开画布连接",
-            description_short='断开画布连接；关键字段 relation_id/relation_ids',
-            description="删除一条或多条画布节点关联；单项传 relation_id，批量传 relation_ids；批量目标一次确认。",
+            name="mind_disconnect_nodes", label="断开画布连接",
+            description="删除一条画布节点关联；执行前必须先展示影响并获得确认。",
             input_schema={
                 "type": "object",
-                "properties": {"relation_id": {"type": "integer"}, "relation_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
-                "required": [],
+                "properties": {"relation_id": {"type": "integer"}, "confirm": {"type": "boolean"}, "confirm_token": {"type": "string"}},
+                "required": ["relation_id"],
             },
-            handler=_canvas_disconnect,
+            handler=_mind_disconnect_nodes,
             mutates=True,
             destructive=True,
         ),
         Tool(
-            name="canvas_batch", label="批量编排画布",
-            description_short='批量编排画布节点/便签/连接；失败整批回滚',
-            description="在一个事务内批量编排画布节点、便签和连接，最多 20 个操作；失败整批回滚。",
+            name="mind_batch_canvas", label="批量编排画布",
+            description="在一个事务内最多 20 个操作：创建便签、放置项目/文件/活动引用、调整位置/层级/折叠状态、移除视图、删除便签和创建 related 连接。卡片大小由系统管理，不能传 w/h。失败会整批回滚，删除便签会先统一确认；使用 request_id 重试可复用已有对象。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -1015,7 +958,7 @@ class MindCanvasSkill(BaseSkill):
                             "node_id": {"type": "integer"}, "version": {"type": "integer"},
                             "item_id": {"type": "integer"}, "source_node_id": {"type": "integer"}, "target_node_id": {"type": "integer"},
                             "source_side": {"type": "string", "enum": ["left", "right"]}, "target_side": {"type": "string", "enum": ["left", "right"]},
-                            "title": {"type": "string", "maxLength": 300}, "content": {"type": "string"},
+                            "title": {"type": "string", "maxLength": 300, "description": "可选；仅用于搜索与列表索引，画布卡片上用户不可见。用户可见的标题必须写在 content 第一行，格式 # 标题"}, "content": {"type": "string"},
                             "color": {"type": "string", "enum": ["amber", "coral", "blue", "teal"]},
                             "x": {"type": "number"}, "y": {"type": "number"},
                             "z": {"type": "integer"}, "collapsed": {"type": "boolean"}, "position": {"type": "object"},
@@ -1025,7 +968,7 @@ class MindCanvasSkill(BaseSkill):
                 },
                 "required": ["canvas_id", "request_id", "operations"],
             },
-            handler=_canvas_batch,
+            handler=_mind_batch_canvas,
             mutates=True,
         ),
     ]

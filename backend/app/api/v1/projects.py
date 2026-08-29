@@ -77,10 +77,8 @@ async def create_project(
     await add_project(db, p)
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p, 0)
-    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
-                         operation="create", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
-    return response
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
+    return _to_resp(p, 0)
 
 
 @router.get("/{pid}", response_model=ProjectResponse)
@@ -143,11 +141,9 @@ async def update_project(
         raise HTTPException(409, "数据已被其他用户修改，请刷新后重试")
     await db.commit()
     await db.refresh(p)
-    response = _to_resp(p, await count_project_files(db, current_user.id, pid))
-    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
-                         operation="update", entity_id=p.id, event_payload=response.model_dump(mode="json", by_alias=True))
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))
 
-    return response
+    return _to_resp(p, await count_project_files(db, current_user.id, pid))
 
 
 @router.delete("/{pid}", status_code=204)
@@ -167,5 +163,4 @@ async def delete_project(
     await soft_delete_project_files(db, current_user.id, pid, now_utc())
     await db.delete(p)
     await db.commit()
-    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"),
-                         operation="delete", entity_id=pid)
+    await events.publish(current_user.id, "projects", origin=request.headers.get("X-Client-Id"))

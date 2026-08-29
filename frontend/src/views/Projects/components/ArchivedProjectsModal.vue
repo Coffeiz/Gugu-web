@@ -4,7 +4,7 @@
       <div class="ap-header">
         <span class="ap-title">已归档项目</span>
         <button class="ap-close" @click="$emit('close')">
-          <Icon name="action.close" :size="14" />
+          <PhX :size="14" weight="bold" />
         </button>
       </div>
 
@@ -31,8 +31,8 @@
             <div class="year-body" data-layout-content :data-layout-key="`year-${yg.year}`" :data-layout-open="openYears.has(yg.year) ? 'true' : 'false'">
               <div v-for="mg in yg.months" :key="mg.month" class="month-group">
                 <button class="month-row" @click="toggleMonth(yg.year + mg.month)">
-                  <Icon name="file.folder-open" v-if="openMonths.has(yg.year + mg.month)" :size="13" style="color:var(--color-primary); opacity:0.85; flex-shrink:0" />
-                  <Icon name="file.folder" v-else :size="13" style="flex-shrink:0; opacity:0.6" />
+                  <PhFolderOpen v-if="openMonths.has(yg.year + mg.month)" :size="13" weight="fill" style="color:var(--color-primary); opacity:0.85; flex-shrink:0" />
+                  <PhFolder v-else :size="13" weight="regular" style="flex-shrink:0; opacity:0.6" />
                   <span class="month-name">{{ mg.month }}</span>
                   <span class="month-cnt">{{ mg.items.length }}</span>
                   <svg
@@ -67,7 +67,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhX, PhFolder, PhFolderOpen } from '@phosphor-icons/vue'
 import BaseModal from '@/components/common/BaseModal.vue'
 import { runtime } from '@/interaction/runtime'
 import { useProjectStore } from '@/stores/projects'

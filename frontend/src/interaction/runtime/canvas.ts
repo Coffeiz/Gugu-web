@@ -3,6 +3,8 @@ import type { LandingRect } from './index'
 export const MIND_CANVAS_SURFACE_ID = 'mind:canvas'
 export const MIND_CANVAS_DRAWER_SURFACE_ID = 'mind:canvas-drawer'
 export const MIND_PROJECT_DRAWER_SURFACE_ID = 'mind:project-drawer'
+/** @deprecated 使用画布/项目抽屉的独立 Surface ID。 */
+export const MIND_DRAWER_SURFACE_ID = MIND_PROJECT_DRAWER_SURFACE_ID
 export const MIND_CANVAS_OBJECT_TYPE = 'mind-canvas-object'
 export const MIND_PROJECT_OBJECT_TYPE = 'mind-project-object'
 export const MIND_CANVAS_OBJECT_TYPES = [MIND_CANVAS_OBJECT_TYPE, MIND_PROJECT_OBJECT_TYPE] as const
@@ -21,59 +23,6 @@ type LandingTargetResolver = (destination: unknown) => HTMLElement | null
 
 const landingResolvers = new Map<string, LandingResolver>()
 const landingTargetResolvers = new Map<string, LandingTargetResolver>()
-const activeMindLandings = new Set<string>()
-const mindLandingSettledListeners = new Set<() => void>()
-let mindLandingSettlingFrame: number | null = null
-
-function cancelMindLandingSettling(): void {
-  if (mindLandingSettlingFrame == null) return
-  if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(mindLandingSettlingFrame)
-  mindLandingSettlingFrame = null
-}
-
-function notifyMindLandingSettled(): void {
-  mindLandingSettlingFrame = null
-  if (activeMindLandings.size > 0) return
-  for (const listener of [...mindLandingSettledListeners]) listener()
-}
-
-function scheduleMindLandingSettled(): void {
-  cancelMindLandingSettling()
-  if (typeof requestAnimationFrame !== 'function') {
-    queueMicrotask(notifyMindLandingSettled)
-    return
-  }
-  // regrab 的新 session 会在下一帧注册 active；再多等一帧，避免旧 session
-  // settled 与新 optimistic 节点首帧之间触发一次过早的画布刷新。
-  mindLandingSettlingFrame = requestAnimationFrame(() => {
-    mindLandingSettlingFrame = requestAnimationFrame(notifyMindLandingSettled)
-  })
-}
-
-/**
- * 画布业务层的乐观更新可能先于 Runtime landing 完成。实时事件刷新期间
- * 不应替换正在被 proxy 使用的 DOM，因此由 Mind 侧共享这段生命周期。
- */
-export function beginMindLanding(objectId: string): void {
-  cancelMindLandingSettling()
-  activeMindLandings.add(objectId)
-}
-
-export function endMindLanding(objectId: string): void {
-  activeMindLandings.delete(objectId)
-  if (activeMindLandings.size === 0) {
-    scheduleMindLandingSettled()
-  }
-}
-
-export function isMindLandingActive(): boolean {
-  return activeMindLandings.size > 0 || mindLandingSettlingFrame != null
-}
-
-export function onMindLandingSettled(listener: () => void): () => void {
-  mindLandingSettledListeners.add(listener)
-  return () => mindLandingSettledListeners.delete(listener)
-}
 
 export function registerMindLandingResolver(objectId: string, resolver: LandingResolver): () => void {
   landingResolvers.set(objectId, resolver)

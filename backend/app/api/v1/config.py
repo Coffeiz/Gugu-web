@@ -59,20 +59,6 @@ async def update_config(body: ConfigPatch, request: Request, db: AsyncSession = 
         sections = "、".join(body.patch.keys())
         username = getattr(request.state, "admin_username", "admin")
         await write_log(db, username, "config", f"修改配置：{sections}", request)
-        agent_patch = body.patch.get("agent")
-        shell_fields = {
-            "shell_enabled", "shell_system_enabled", "shell_dangerous_enabled", "shell_autopilot_enabled",
-        }
-        if isinstance(agent_patch, dict) and shell_fields.intersection(agent_patch):
-            from app.core import events
-            from app.models import User
-            user_ids = (await db.execute(select(User.id))).scalars().all()
-            for user_id in user_ids:
-                await events.publish(user_id, "terminals", operation="refresh")
-        if isinstance(agent_patch, dict) and "personality_preference_enabled" in agent_patch:
-            from app.services.personality_preferences import invalidate_personality_snapshots
-            await invalidate_personality_snapshots(db)
-            await db.commit()
         return {"message": "配置已更新", "data": _mask(new_cfg.model_dump())}
     except Exception as e:
         print(f"[config] 操作失败: {type(e).__name__}: {e}\n{_tb.format_exc()}", flush=True)
@@ -653,15 +639,12 @@ async def test_connection(body: TestConnectionRequest):
 # ── 搜索测试（SearXNG / Tavily）──────────────────────────────────────────────
 
 class SearchTestRequest(BaseModel):
-    target:          Literal["searxng", "searxng_images", "tavily", "deep_research", "baidu_similar_images"]
+    target:          Literal["searxng", "searxng_images", "tavily", "baidu_similar_images"]
     searxng_url:     str = ""   # 留空=用已存配置
     searxng_engines: str = ""
     searxng_image_engines: str = ""
     tavily_api_key:  str = ""   # 留空=用已存配置
     baidu_qianfan_api_key: str = ""   # 留空=用已存配置
-    deep_research_provider: str = ""
-    deep_research_baidu_api_key: str = ""
-    deep_research_you_api_key: str = ""
 
 
 @router.post("/test-search")
@@ -702,26 +685,6 @@ async def test_search(body: SearchTestRequest):
             msg += f"（超时引擎：{'、'.join(dead)}）"
         return {"ok": True, "message": msg}
 
-    elif body.target == "deep_research":
-        provider = body.deep_research_provider or cfg.search.deep_research_provider
-        key = {
-            "tavily": body.tavily_api_key or cfg.search.tavily_api_key,
-            "baidu": body.deep_research_baidu_api_key or cfg.search.deep_research_baidu_api_key,
-            "you": body.deep_research_you_api_key or cfg.search.deep_research_you_api_key,
-        }.get(provider, "")
-        if not key:
-            return {"ok": False, "message": f"未配置 {provider} 深度研究 API Key"}
-        try:
-            from agent.tools.deep_research import run
-            result = await run(
-                provider, "测试深度研究连接", key, max_results=1, depth="basic",
-            )
-            if not result.get("answer") and not result.get("results"):
-                return {"ok": False, "message": f"{provider} 已连通但没有返回研究结果"}
-        except Exception as e:
-            return {"ok": False, "message": f"{provider} Key 无效或请求失败：{type(e).__name__}: {str(e)[:90]}"}
-        return {"ok": True, "message": f"OK — {provider} 深度研究连接正常（本次测试可能消耗 1 次调用）"}
-
     elif body.target == "tavily":
         key = body.tavily_api_key or cfg.search.tavily_api_key
         if not key:
@@ -742,7 +705,7 @@ async def test_search(body: SearchTestRequest):
             return {"ok": False, "message": "未配置百度千帆 API Key"}
         # 只发一个固定的 1x1 PNG 作为连通性测试，不读取用户输入，也不把图片内容写入日志。
         probe_png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAlklEQVR4nO3QMQ0AMAzAsPLHWC4rDB/L4T/K7O772egArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0BugArQE6QGuADtAaoAO0A6OSM1jeqEVYAAAAAElFTkSuQmCC"
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
         )
         try:
             from agent.tools.search import _call_baidu_similar_image
@@ -923,20 +886,8 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
     try:
         res = await store.rebuild_all_vecs(user_ids, on_progress=prog)
-        # 直接 memory/pattern 缓存之外，RAG 索引还有 profile/daily/memory 文档。
-        # 统一通过 MemoryAdapter 生成同一套 chunk/key，避免两套分块算法失配。
-        from agent.rag.pipeline import rebuild_memory_index
-        for uid in user_ids:
-            await rebuild_memory_index(uid, operation="embedding-rebuild")
-        failed = int(res.get("failed_users") or 0)
-        status = "error" if failed else "done"
-        message = (
-            f"重建完成：pattern {res.get('pattern_vectors', 0)} 条，"
-            f"memory {res.get('memory_vectors', 0)} 块"
-            + (f"；失败用户 {failed} 个" if failed else "")
-        )
         await r.set(_REBUILD_KEY, json.dumps(
-            {"status": status, **res, "message": message, "tag": tag, "ts": time.time()}), ex=3600)
+            {"status": "done", **res, "tag": tag, "ts": time.time()}), ex=3600)
     except Exception as e:
         await r.set(_REBUILD_KEY, json.dumps(
             {"status": "error", "message": str(e)[:100], "ts": time.time()}), ex=3600)
@@ -944,8 +895,8 @@ async def _rebuild_worker(user_ids: list[str]) -> None:
 
 @router.post("/embedding-rebuild")
 async def embedding_rebuild(db: AsyncSession = Depends(get_db)):
-    """换 embedding 模型后，批量重建 pattern、memory 及 RAG Memory 文档向量。
-    后台运行并立即返回；进度通过 GET /embedding-rebuild/status 轮询。"""
+    """换 embedding 模型后，批量给所有用户的 pattern 重算向量（force）。后台跑、立即返回。
+    未启用/已在跑 → 拒绝。进度用 GET /embedding-rebuild/status 轮询。"""
     from agent.memory import embedding
     from app.core.redis import get_redis
     from app.models import User

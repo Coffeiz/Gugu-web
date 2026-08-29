@@ -5,7 +5,7 @@
          store.jumpTarget，这里只管接住并跳转。相对日期文案（今天/昨天/…）直接改在
          DateIndex.vue 的刻度标签里，不单独起一个标签元素。 -->
     <div class="rec-scrub-row">
-      <DateIndex ref="dateIndexRef" :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
+      <DateIndex :groups="indexGroups" :center-frac="centerFrac" @scrub="onScrub" @snap="onSnap" />
     </div>
 
     <!-- 横置便签流：左侧是过往、右侧是后来的日期；列内竖滚翻当天。
@@ -18,6 +18,7 @@
         v-else
         ref="timelineRef"
         :groups="timelineGroups"
+        :center-frac="cardVisualCenterFrac"
         :highlight-id="highlightId"
         :filtered="!!store.filterQ.trim()"
         @save="onSave"
@@ -44,7 +45,7 @@ import { MindConflictError, useMindStore } from '@/stores/mind'
 import { toggleTaskInMd } from '@/composables/useMindEditor'
 import type { MindNote } from '@/services/api'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
-import { elasticPosition, rubberBandPosition } from './utils/dateScrubberMath'
+import { elasticPosition } from './utils/dateScrubberMath'
 import CaptureBar from './components/CaptureBar.vue'
 import DateIndex from './components/DateIndex.vue'
 import NoteTimeline from './components/NoteTimeline.vue'
@@ -53,7 +54,6 @@ const store     = useMindStore()
 const liveStore = useLiveStore()
 const uiStore   = useUiStore()
 const timelineRef = ref<InstanceType<typeof NoteTimeline> | null>(null)
-const dateIndexRef = ref<InstanceType<typeof DateIndex> | null>(null)
 const captureRef  = ref<InstanceType<typeof CaptureBar> | null>(null)
 const scrollRef   = ref<HTMLElement | null>(null)
 const layoutRef   = ref<HTMLElement | null>(null)
@@ -155,13 +155,11 @@ function applyWheelPos() {
       if (cols) cols.style.transform = `translateX(${visualShift}px)`
       cardRubberShift = visualShift
       cardVisualCenterFrac.value = virtualCenter
-      timelineRef.value?.updateColumnVisual(virtualCenter)
     }
   } else if (cols) {
     cols.style.transform = ''
     cardRubberShift = 0
     cardVisualCenterFrac.value = centerFrac.value
-    timelineRef.value?.updateColumnVisual(centerFrac.value)
   }
   return over
 }
@@ -286,12 +284,10 @@ let colDragLastTime = 0
 let cardVisualReturnRaf = 0
 let cardRubberShift = 0
 let cardRubberReturning = false
-let scrubberDragVisualFrac: number | null = null
 
 function onColumnsPointerDown(e: PointerEvent) {
   if (e.pointerType !== 'mouse') return
-  const target = e.target as HTMLElement
-  if (target.closest('.note-card')) return
+  if ((e.target as HTMLElement).closest('.note-card')) return
   const root = scrollRef.value
   if (!root) return
   // 注意：这里不能 preventDefault()——pointerdown 阻止默认行为会连带抑制浏览器合成的
@@ -360,20 +356,16 @@ function onColumnsPointerMove(e: PointerEvent) {
     if (pitch > 0) {
       const boundary = over < 0 ? 0 : last
       const rawCenter = boundary + (over / pitch) * CARD_DRAG_RATIO
-      const virtualCenter = rubberBandPosition(rawCenter, centers.length)
+      const virtualCenter = elasticPosition(rawCenter, centers.length, CARD_RUBBER_RESPONSE)
       const overshootDays = virtualCenter - boundary
       const visualShift = -overshootDays * pitch
       if (cols) cols.style.transform = `translateX(${visualShift}px)`
       cardRubberShift = visualShift
       cardVisualCenterFrac.value = virtualCenter
-      scrubberDragVisualFrac = virtualCenter
-      centerFrac.value = virtualCenter
-      timelineRef.value?.updateColumnVisual(virtualCenter)
     }
   } else if (cols) {
     cols.style.transform = ''
     cardRubberShift = 0
-    scrubberDragVisualFrac = null
     cardVisualCenterFrac.value = centerFrac.value
   }
   const now = performance.now()
@@ -393,6 +385,7 @@ function onColumnsPointerUp() {
   colDragging = false
   const cols = timelineColsEl()
   if (cols) cols.style.transition = 'none'
+  returnCardRubber()
   const root = scrollRef.value
   const colCenterList = colCenters()
   if (!root || !colCenterList.length) return
@@ -405,11 +398,6 @@ function onColumnsPointerUp() {
     const dist = Math.abs(c.c - cx)
     if (dist < bestDist) { bestDist = dist; nearest = c }
   }
-  const nearestIndex = colCenterList.indexOf(nearest)
-  dateIndexRef.value?.settleTo(nearestIndex)
-  scrubberDragVisualFrac = null
-  updateActive()
-  returnCardRubber()
   followCardsTo(nearest.c - contentCenter(root))
 }
 
@@ -437,7 +425,6 @@ function returnCardRubber() {
     visualCenter += centerVelocity * dt
     cols.style.transform = `translateX(${shift}px)`
     cardVisualCenterFrac.value = visualCenter
-    timelineRef.value?.updateColumnVisual(visualCenter)
     if (Math.abs(shift) > 0.2 || Math.abs(shiftVelocity) > 2 || Math.abs(centerDelta) > .002 || Math.abs(centerVelocity) > .02) {
       cardVisualReturnRaf = requestAnimationFrame(frame)
       return
@@ -445,7 +432,6 @@ function returnCardRubber() {
     cols.style.transform = ''
     cardRubberShift = 0
     cardVisualCenterFrac.value = centerFrac.value
-    timelineRef.value?.updateColumnVisual(centerFrac.value)
     cardRubberReturning = false
     cardVisualReturnRaf = 0
   }
@@ -558,11 +544,8 @@ function updateActive() {
       if (cx >= cols[i].c && cx <= cols[i + 1].c) { frac = i + (cx - cols[i].c) / (cols[i + 1].c - cols[i].c); break }
     }
   }
-  centerFrac.value = scrubberDragVisualFrac ?? frac
-  // 滑条/滚轮在边界外时，scrollLeft 会停在边界，但卡片仍靠 transform 表现橡皮筋。
-  // 不要让这个异步 scroll 回调把越界视觉位置覆盖掉。
-  if (!colDragging && !cardRubberReturning && !cardRubberShift) cardVisualCenterFrac.value = frac
-  timelineRef.value?.updateColumnVisual(cardVisualCenterFrac.value)
+  centerFrac.value = frac
+  if (!colDragging && !cardRubberReturning) cardVisualCenterFrac.value = frac
   const nextDate = cols[Math.round(frac)].date
   activeDate.value = nextDate
   // 横向滚动改变居中日期时同步日历，避免日历仍保留初始选中日期。
@@ -654,53 +637,21 @@ function followCardsTo(left: number, onSettled?: () => void) {
   cardFollowRaf = requestAnimationFrame(frame)
 }
 
-/** 将日期滑条的连续位置映射到卡片列；边界外保留与滑条相同的橡皮筋位移。 */
-function applyScrubberPosition(frac: number) {
-  const root = scrollRef.value
-  if (!root) return
-  const centers = colCenters()
-  if (!centers.length) return
-  const last = centers.length - 1
-  const clamped = Math.max(0, Math.min(last, frac))
-  const lo = Math.floor(clamped)
-  const hi = Math.min(lo + 1, last)
-  const t = clamped - lo
-  const target = centers[lo].c + (centers[hi].c - centers[lo].c) * t - contentCenter(root)
-  const physicalMax = Math.max(0, root.scrollWidth - root.clientWidth)
-  const logicalMin = Math.max(0, centers[0].c - contentCenter(root))
-  const logicalMax = Math.max(logicalMin, Math.min(physicalMax, centers[last].c - contentCenter(root)))
-  const boundary = frac < 0 ? logicalMin : frac > last ? logicalMax : target
-  root.scrollLeft = Math.max(0, Math.min(physicalMax, boundary))
-
-  const cols = timelineColsEl()
-  const over = frac - clamped
-  if (cols && over) {
-    const pitch = frac < 0
-      ? centers.length > 1 ? centers[1].c - centers[0].c : CARD_COLUMN_PITCH
-      : centers.length > 1 ? centers[last].c - centers[last - 1].c : CARD_COLUMN_PITCH
-    const visualShift = -over * pitch
-    cols.style.transform = `translateX(${visualShift}px)`
-    cardRubberShift = visualShift
-    cardVisualCenterFrac.value = frac
-    timelineRef.value?.updateColumnVisual(frac)
-  } else if (cols) {
-    cols.style.transform = ''
-    cardRubberShift = 0
-    cardVisualCenterFrac.value = clamped
-    timelineRef.value?.updateColumnVisual(clamped)
-  }
-}
-
-/** 滑杆拖动/回正期间，让玻璃卡列按相同的连续日期位置跟随。 */
+/** 滑杆拖动/回正期间，让玻璃卡列按相同的连续日期位置带阻尼跟随。 */
 function onScrub(frac: number) {
   const root = scrollRef.value
   if (!root) return
   // 用户自己在拖滑杆了——这次不管是不是正在"飞去匹配编辑目标"，都算被打断，恢复正常判定
   // （followCardsTo 下面这行会顶掉原来的 onSettled，不会再触发那个回调把它设回 false）
   suppressEditGuard = false
-  applyScrubberPosition(frac)
-  // 用实际边界位置同步当前日期，但保留 applyScrubberPosition 写入的越界视觉状态。
-  updateActive()
+  const cols = colCenters()
+  if (!cols.length) return
+  const clamped = Math.max(0, Math.min(cols.length - 1, frac))
+  const lo = Math.floor(clamped)
+  const hi = Math.min(lo + 1, cols.length - 1)
+  const t = clamped - lo
+  const center = cols[lo].c + (cols[hi].c - cols[lo].c) * t
+  followCardsTo(center - contentCenter(root))
 }
 
 /** 把某天的列滚到内容区正中。animate=true → 平滑（点击/松手吸附/新建）、false → 瞬时（首载/resize）*/

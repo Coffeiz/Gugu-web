@@ -26,7 +26,7 @@
             :style="{ background: preset }"
             @click="$emit('set-color', preset)"
           >
-            <Icon name="status.success" v-if="color === preset" :size="11" style="color:white" />
+            <PhCheck v-if="color === preset" :size="11" weight="bold" style="color:white" />
           </button>
         </div>
       </div>
@@ -37,7 +37,8 @@
 <script setup lang="ts">
 import { computed, type PropType } from 'vue'
 import DateSpanPicker from '@/components/common/DateSpanPicker.vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhCheck } from '@phosphor-icons/vue'
+
 const props = defineProps({
   client: { type: String, required: true },
   startDate: { type: String, required: true },

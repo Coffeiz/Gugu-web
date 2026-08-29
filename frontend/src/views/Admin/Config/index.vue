@@ -123,7 +123,7 @@
         </div>
 
         <div v-if="draft.storage.backend === 'local'" class="field-grid">
-          <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="../Gugu-data/users" class="span2" />
+          <ConfigField label="存储路径" v-model="draft.storage.local_path" placeholder="./uploads" class="span2" />
         </div>
         <div v-else class="field-grid">
           <ConfigField label="Bucket 名" v-model="draft.storage.oss_bucket" placeholder="gugu-web" />
@@ -158,11 +158,11 @@
       <section id="sec-smtp" class="config-card">
         <div class="card-head">
           <div class="card-icon" style="--ic:rgba(90,184,153,0.12);--stroke:#5ab899">
-            <Icon name="admin.mail" size="md" />
+            <PhEnvelopeSimple :size="18" />
           </div>
           <div class="card-title-block">
             <h3>邮件系统</h3>
-            <p>SMTP 发信配置，用于用户反馈邮件提醒</p>
+            <p>SMTP 发信配置，用于反馈通知和未来的用户邮件功能</p>
           </div>
         </div>
 
@@ -179,6 +179,7 @@
           <ConfigField label="登录账号" v-model="draft.smtp.user" placeholder="noreply@example.com" />
           <ConfigField label="登录密码" v-model="draft.smtp.password" type="password" placeholder="留空表示不修改" />
           <ConfigField label="发件人地址" v-model="draft.smtp.from_addr" placeholder="留空则同登录账号" />
+          <ConfigField label="通知收件人" v-model="draft.smtp.to_addr" placeholder="admin@example.com" />
         </div>
 
         <div class="card-footer">
@@ -195,15 +196,6 @@
           </div>
         </div>
       </section>
-
-      <!-- ── 用户反馈邮件 ── -->
-      <FeedbackEmailSettings
-        v-model:enabled="draft.smtp.feedback_email_enabled"
-        v-model:email="draft.smtp.to_addr"
-      />
-
-      <!-- ── 安全告警 ── -->
-      <SecurityAlertSettings v-model="draft.security" />
 
       <!-- ── 保存栏 ── -->
       <div class="save-bar">
@@ -234,11 +226,10 @@
 
 <script setup lang="ts">
 import { reactive, computed, onMounted, defineComponent, h, ref } from 'vue'
+import { PhEnvelopeSimple } from '@phosphor-icons/vue'
 import { useConfigStore } from '@/stores/config'
 import { useAdminStore } from '@/stores/admin'
 import ConfigField from './components/ConfigField.vue'
-import FeedbackEmailSettings from './components/FeedbackEmailSettings.vue'
-import SecurityAlertSettings from './components/SecurityAlertSettings.vue'
 
 const configStore = useConfigStore()
 const adminStore  = useAdminStore()
@@ -247,10 +238,6 @@ const draft = reactive({
   redis:   JSON.parse(JSON.stringify(configStore.cfg.redis)),
   storage: JSON.parse(JSON.stringify(configStore.cfg.storage)),
   smtp:    JSON.parse(JSON.stringify(configStore.cfg.smtp)),
-  security: JSON.parse(JSON.stringify(configStore.cfg.security ?? {
-    alert_email_enabled: false,
-    alert_email_recipients: [],
-  })),
 })
 
 onMounted(async () => {
@@ -259,7 +246,6 @@ onMounted(async () => {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
-  Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
 })
 
 // ── 连接字符串预览 ────────────────────────────────────────────────────────
@@ -397,7 +383,6 @@ async function save() {
     redis:   { ...draft.redis },
     storage: { ...draft.storage },
     smtp:    { ...draft.smtp },
-    security: { ...draft.security },
   })
 }
 
@@ -406,7 +391,6 @@ function resetDraft() {
   Object.assign(draft.redis,   configStore.cfg.redis)
   Object.assign(draft.storage, configStore.cfg.storage)
   Object.assign(draft.smtp,    configStore.cfg.smtp)
-  Object.assign(draft.security, configStore.cfg.security ?? { alert_email_enabled: false, alert_email_recipients: [] })
   testStatus.db    = null
   testStatus.redis = null
   testStatus.oss   = null
@@ -496,8 +480,6 @@ async function testSmtp() {
   background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.35);
   color: rgba(255,255,255,0.88);
 }
-.toggle-btn { display: inline-flex; flex-direction: column; align-items: center; }
-.toggle-btn[data-label]::after { content: attr(data-label); height: 0; overflow: hidden; visibility: hidden; font-weight: 600; }
 .toggle-btn:hover:not(.active) { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
 
 /* ── 卡片底栏 ── */
@@ -508,7 +490,7 @@ async function testSmtp() {
 }
 .conn-preview {
   font-size: 11px; color: rgba(255,255,255,0.25);
-  font-family: var(--font-family-mono);
+  font-family: 'SF Mono', 'Consolas', monospace;
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .test-area { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -534,7 +516,7 @@ async function testSmtp() {
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
   border: 1px solid rgba(255,255,255,0.09); border-radius: 14px;
   box-shadow: 0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
-  position: sticky; bottom: 12px;
+  position: sticky; bottom: 0;
 }
 .save-hint { flex: 1; font-size: 12px; color: #5ab899; display: flex; align-items: center; gap: 5px; }
 .save-hint.muted { color: rgba(255,255,255,0.3); }
@@ -550,10 +532,10 @@ async function testSmtp() {
 .btn-primary {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: var(--action-primary-bg);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
   color: white; font-size: 13px; font-weight: 600;
   cursor: pointer; transition: opacity 0.15s;
-  box-shadow: none;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
 }
 .btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }

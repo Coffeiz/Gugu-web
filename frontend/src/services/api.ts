@@ -136,18 +136,6 @@ export const scheduledTasksApi = {
   testNotify:   (data: any)         => post('/scheduled-tasks/test-notify', data),   // 测试提醒渠道（不建任务）
 }
 
-// ── 用户 BYOK ────────────────────────────────────────────────────────────────
-export const byokApi = {
-  list: () => get<{ enabled: boolean; status?: string; items: any[] }>('/byok'),
-  create: (data: any) => post('/byok', data),
-  update: (id: number, data: any) => patch(`/byok/${id}`, data),
-  remove: (id: number) => del(`/byok/${id}`),
-  test: (id: number) => post<{ ok: boolean; status: string; message: string }>(`/byok/${id}/test`, {}),
-  testPreview: (data: any) => post<{ ok: boolean; status: string; message: string }>('/byok/test-preview', data),
-  modelsPreview: (data: any) => post<{ models: string[] }>('/byok/models-preview', data),
-  visionProbe: (data: any) => post<{ dim: string; supported: boolean | null; status: number; detail: string }>('/byok/vision-probe', data),
-}
-
 // ── Files ─────────────────────────────────────────────────────────────────────
 interface FileListParams {
   space?: string
@@ -220,48 +208,6 @@ export const filesApi = {
     a.click()
     URL.revokeObjectURL(url)
   },
-}
-
-// ── 咕咕 Skills ─────────────────────────────────────────────────────────────
-export interface UserSkillItem {
-  id: number
-  slug: string
-  name: string
-  description_short: string
-  description_long: string | null
-  category: string
-  related_tools: string[]
-  body: string
-  source: string
-  enabled: boolean
-  content_digest: string
-  created_at: string | null
-  updated_at: string | null
-}
-
-export interface UserSkillWrite {
-  slug: string
-  name: string
-  description_short: string
-  description_long?: string | null
-  category: string
-  related_tools: string[]
-  body: string
-  enabled?: boolean
-}
-
-export interface SkillToolItem {
-  name: string
-  description_short: string
-  category: string
-  enabled: boolean
-}
-
-export const userSkillsApi = {
-  list: () => get<{ skills: UserSkillItem[]; tools: SkillToolItem[] }>('/skills'),
-  create: (data: UserSkillWrite) => post<UserSkillItem>('/skills', data),
-  update: (slug: string, data: Partial<Omit<UserSkillWrite, 'slug'>>) => patch<UserSkillItem>(`/skills/${encodeURIComponent(slug)}`, data),
-  delete: (slug: string) => del(`/skills/${encodeURIComponent(slug)}`),
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
@@ -468,100 +414,6 @@ export const clientsApi = {
 export const preferencesApi = {
   get:    ()                                  => get<Schemas['PreferencesResponse']>('/preferences'),
   update: (data: Schemas['PreferencesUpdate']) => request<Schemas['PreferencesResponse']>('PATCH', '/preferences', data),
-  uploadPersonality: (file: File) => { const form = new FormData(); form.append('file', file); return upload<Schemas['PreferencesResponse']>('/preferences/personality/upload', form) },
-}
-
-export const workspacesApi = {
-  status: () => get<{ globalEnabled: boolean; systemGlobalEnabled: boolean; userEnabled: boolean; userSystemEnabled: boolean; dangerousGlobalEnabled: boolean; userDangerousEnabled: boolean; autopilotGlobalEnabled: boolean; userAutopilotEnabled: boolean; items: unknown[] }>('/workspaces'),
-  create: (data: { name: string; kind: 'folder' | 'project'; folderId?: number; projectId?: number }) => post('/workspaces', data),
-  update: (id: number, data: { name?: string; enabled?: boolean }) => request('PATCH', `/workspaces/${id}`, data),
-  delete: (id: number) => del(`/workspaces/${id}`),
-  current: (sessionId: number) => get(`/workspaces/session/${sessionId}`),
-  bind: (workspaceId: number, sessionId: number) => post(`/workspaces/${workspaceId}/bind/${sessionId}`),
-  unbind: (sessionId: number) => del(`/workspaces/binding/${sessionId}`),
-}
-
-export type TerminalItem = {
-  id: string
-  name: string
-  sessionId: number | null
-  workspaceId: number | null
-  runId: string | null
-  source: 'user' | 'agent'
-  mode: 'interactive-pty' | 'agent-events'
-  status: string
-  shellMode: string
-  networkProfile: string
-  lastSequence: number
-  outputChars: number
-  createdAt: string
-  updatedAt: string
-  closedAt: string | null
-  ptyPid?: number | null
-  ptySandboxId?: string | null
-  ptyCols?: number | null
-  ptyRows?: number | null
-}
-
-export type TerminalEventItem = {
-  sequence: number
-  type: string
-  source: string | null
-  runId: string | null
-  command: string | null
-  stdout: string
-  stderr: string
-  exitCode: number | null
-  occurredAt: string
-}
-
-export const terminalsApi = {
-  list: () => get<{ enabled: boolean; items: TerminalItem[] }>('/terminals'),
-  create: (data: { name?: string; sessionId?: number; workspaceId?: number; mode?: TerminalItem['mode'] }) => post<TerminalItem>('/terminals', data),
-  detail: (id: string) => get<TerminalItem>(`/terminals/${encodeURIComponent(id)}`),
-  events: async (id: string, after = 0, signal?: AbortSignal, onEvent?: (event: TerminalEventItem) => void): Promise<void> => {
-    const token = getToken()
-    const headers: Record<string, string> = { 'X-Client-Id': CLIENT_ID }
-    if (token) headers.Authorization = `Bearer ${token}`
-    const res = await fetch(`${BASE_URL}/terminals/${encodeURIComponent(id)}/events?after=${after}`, { headers, signal })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    if (!res.body) return
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    const consume = (line: string) => {
-      if (!line.startsWith('data: ')) return
-      try {
-        const event = (JSON.parse(line.slice(6)) as { event?: TerminalEventItem }).event
-        if (event) onEvent?.(event)
-      } catch { /* 不完整的 SSE 行会在下一次读取时重新拼接 */ }
-    }
-    while (true) {
-      const chunk = await reader.read()
-      buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: !chunk.done })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() ?? ''
-      lines.forEach(consume)
-      if (chunk.done) break
-    }
-    if (buffer) consume(buffer)
-  },
-  rename: (id: string, name: string) => patch<TerminalItem>(`/terminals/${encodeURIComponent(id)}`, { name }),
-  input: (id: string, data: {
-    command: string
-    cwd?: string
-    timeout?: number
-    maxOutputChars?: number
-    network?: 'none' | 'egress'
-    confirm?: boolean
-    confirmToken?: string
-  }) => post<{ terminal: TerminalItem; requestId: string; event: TerminalEventItem }>(`/terminals/${encodeURIComponent(id)}/input`, data),
-  cancel: (id: string, requestId: string) => post<{ cancelled: boolean; requestId?: string }>(`/terminals/${encodeURIComponent(id)}/cancel/${encodeURIComponent(requestId)}`, {}),
-  terminate: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/terminate`, {}),
-  reopen: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reopen`, {}),
-  reset: (id: string) => post<TerminalItem>(`/terminals/${encodeURIComponent(id)}/reset`, {}),
-  delete: (id: string) => del<{ deleted: boolean; terminalId: string }>(`/terminals/${encodeURIComponent(id)}`),
-  metrics: () => get<{ total: number; running: number; outputChars: number; retentionDays: number; outputRetentionChars: number }>('/terminals/metrics'),
 }
 
 export const notificationsApi = {
@@ -571,13 +423,10 @@ export const notificationsApi = {
 }
 
 export const agentApi = {
-  rebuildSandbox: () => post<{ ok: boolean; operation: string; root_ready: boolean; reclaimed_containers: number }>('/agent/sandbox/rebuild'),
   listSessions:    ()                  => get('/agent/sessions'),
-  listCommands:    ()                  => get<{ commands: Array<{ command: string; label: string; description: string; insert: string }> }>('/agent/commands'),
   getUiLabels:     ()                  => get('/agent/ui-labels'),   // 状态显示名（目前用「思考中」文字）
   greeting:        ()                  => get('/agent/greeting'),    // 对话框默认问候（咕咕据近期记忆生成）
   getMessages:     (sessionId: string) => get(`/agent/sessions/${sessionId}/messages`),
-  cancelSession:   (sessionId: string) => post(`/agent/sessions/${sessionId}/cancel`),
   // 按消息 id 反查它所在的会话——笔记里的「@对话」引用锚定的是具体一条消息，点开时得先
   // 知道属于哪个会话才能 loadSession + 定位滚动
   getMessageLocation: (messageId: number) => get<{ id: number; sessionId: number }>(`/agent/messages/${messageId}`),

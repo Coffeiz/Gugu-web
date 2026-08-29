@@ -5,11 +5,7 @@ import hashlib
 import inspect
 import json
 import os
-from pathlib import Path
 from typing import Any
-
-_TOKENIZER_CACHE: dict[str, Any] = {}
-_TOKENIZER_FAILURES: set[str] = set()
 
 def _jsonable(value: Any, depth: int = 0) -> Any:
     """把 provider/tool/ORM 对象安全变成 JSON；观测失败时宁可 repr，也不影响主链路。"""
@@ -86,60 +82,14 @@ def _code_ref(target: Any = None, *, frame_depth: int = 1) -> dict[str, Any]:
     except Exception:
         return {}
 
-def _tokenizer_path(model: str = "") -> tuple[str, str]:
-    """解析本地 Hugging Face tokenizer.json；不触发网络下载。"""
-    mapping_raw = os.getenv("LOOPSCOPE_TOKENIZER_MAP", "").strip()
-    if mapping_raw:
-        try:
-            mapping = json.loads(mapping_raw)
-            model_key = model.lower()
-            for prefix, path in mapping.items():
-                if model_key.startswith(str(prefix).lower()):
-                    return str(path), f"huggingface:{prefix}"
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-    path = os.getenv("LOOPSCOPE_TOKENIZER_PATH", "").strip()
-    return path, "huggingface:default" if path else "heuristic"
-
-
-def _load_tokenizer(model: str = "") -> tuple[Any, str]:
-    path, source = _tokenizer_path(str(model or ""))
-    if not path:
-        return None, "heuristic"
-    cache_key = f"{source}:{path}"
-    if cache_key in _TOKENIZER_FAILURES:
-        return None, "heuristic"
-    if cache_key in _TOKENIZER_CACHE:
-        return _TOKENIZER_CACHE[cache_key], source
-    try:
-        from tokenizers import Tokenizer
-        candidate = Path(path).expanduser()
-        if candidate.is_dir():
-            candidate = candidate / "tokenizer.json"
-        tokenizer = Tokenizer.from_file(str(candidate))
-        _TOKENIZER_CACHE[cache_key] = tokenizer
-        return tokenizer, source
-    except Exception:
-        # 观测路径不得阻塞模型请求；失败后本进程不重复尝试，避免每个 span 都读盘。
-        _TOKENIZER_FAILURES.add(cache_key)
-        return None, "heuristic"
-
-
-def _estimate_tokens(value: Any, model: str = "") -> int:
-    """估算 Context/Tool token。
-
-    配置本地 Hugging Face tokenizer.json 时使用真实词表编码，否则回退到
-    CJK 感知估算。LLM span 的最终用量仍以 provider usage 为准。
-    """
+def _estimate_tokens(value: Any) -> int:
+    """Context/Tool 贡献的本地估算；真实 LLM usage 仍以 provider 返回为准。"""
     try:
         from agent.context.tokens import estimate_tokens
         if isinstance(value, str):
             text = value
         else:
             text = json.dumps(_jsonable(value), ensure_ascii=False, separators=(",", ":"))
-        tokenizer, _source = _load_tokenizer(model)
-        if tokenizer is not None:
-            return len(tokenizer.encode(text, add_special_tokens=False).ids)
         return estimate_tokens(text)
     except Exception:
         return 0
@@ -153,64 +103,6 @@ def _prompt_digest(value: Any) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
     except Exception:
         return ""
-
-
-def _cache_diagnostics(messages: Any, ctx: Any = None, model: str = "") -> dict[str, Any]:
-    """返回缓存断点与工具 schema 的脱敏诊断信息。
-
-    这里只记录大小、数量、位置和摘要，不能通过这些字段还原工具定义、参数、
-    URL、图片或用户正文。诊断失败时返回空值，不影响模型请求。
-    """
-    try:
-        conversation = getattr(messages, "conversation", messages)
-        if not isinstance(conversation, list):
-            conversation = []
-        from agent.loop_drivers import _history_cache_state
-
-        stable_message_count, effective_anchors = _history_cache_state(messages)
-        anchors = sorted(int(index) for index in effective_anchors if isinstance(index, int))
-        tools = getattr(ctx, "tools", None) or []
-        tool_json = json.dumps(
-            _jsonable(tools), ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
-        volatile_index = None
-        try:
-            from agent.loop_drivers import _contains_volatile_image
-
-            for index, message in enumerate(conversation):
-                if _contains_volatile_image(message):
-                    volatile_index = index
-                    break
-        except Exception:
-            pass
-
-        # 与 driver 实际发送逻辑保持一致；volatile_index 仅作为可读诊断字段保留。
-        anchor_token_estimate = 0
-        if anchors:
-            last_anchor = max(anchors)
-            anchor_token_estimate = _estimate_tokens(conversation[:last_anchor + 1], model)
-        return {
-            "cache_supported": bool(getattr(ctx, "supports_active_cache", False)),
-            "conversation_messages": len(conversation),
-            "cache_anchor_count": len(anchors),
-            "cache_anchor_indices": anchors,
-            "cache_anchor_last_index": max(anchors) if anchors else None,
-            "cache_anchor_tokens_estimate": anchor_token_estimate,
-            "cache_prefix_digest": _prompt_digest(
-                conversation[:max(anchors) + 1] if anchors else []
-            ),
-            "volatile_image_present": volatile_index is not None,
-            "volatile_image_first_index": volatile_index,
-            "stable_message_count": stable_message_count,
-            "turn_batch_count": 0,
-            "stable_prefix_digest": _prompt_digest(conversation[:stable_message_count]),
-            "tool_count": len(tools),
-            "tool_schema_bytes": len(tool_json.encode("utf-8")),
-            "tool_schema_tokens_estimate": _estimate_tokens(tool_json, model),
-            "tool_schema_digest": hashlib.sha256(tool_json.encode("utf-8")).hexdigest()[:16],
-        }
-    except Exception:
-        return {}
 
 def _system_message_text(messages: Any) -> str:
     """提取 OpenAI 兼容格式的 system message，供 trace 说明真实组装位置。"""

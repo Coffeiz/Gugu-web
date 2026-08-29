@@ -38,12 +38,9 @@ describe('calendar domain', () => {
   it('规则只从领域类型和配置派生，不依赖派生布尔字段', () => {
     const event = normalizeEvent({ id: 1, title: '活动', date: '2026-08-09', type: 'event' } as EventResponse)
     const project = normalizeProjectTimeline({ id: 2, name: '项目', startDate: '2026-08-09', endDate: '2026-08-10', accent: '#123456', status: 'active' })
-    const doneProject = normalizeProjectTimeline({ id: 3, name: '已完成项目', startDate: '2026-08-09', endDate: '2026-08-10', accent: '#123456', status: 'done' })
 
     expect(canDrag(event)).toBe(true)
     expect(canResize(project)).toBe(true)
-    expect(canDrag(doneProject)).toBe(false)
-    expect(canResize(doneProject)).toBe(false)
     expect(getDisplayColor(project)).toBe('#123456')
     expect(typeLabel('review')).toBe('审核')
     expect(typeLabel('unknown')).toBe('活动')

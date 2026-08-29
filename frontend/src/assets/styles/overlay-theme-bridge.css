@@ -1,36 +1,36 @@
 /* Shared form / Teleport surfaces that are outside their page subtree. Token-only bridge. */
-html[data-theme][data-family] .todo-pop-popup {
+html[data-theme][data-family] .todo-pop {
   color: var(--content-primary);
   background: var(--popup-background);
   border-color: var(--popup-border);
   box-shadow: inset 0 1px 0 var(--highlight-soft), var(--popup-shadow);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-title,
-html[data-theme][data-family] .todo-pop-popup .tp-name,
-html[data-theme][data-family] .todo-pop-popup .tp-input { color: var(--content-primary); }
-html[data-theme][data-family] .todo-pop-popup .tp-count,
-html[data-theme][data-family] .todo-pop-popup .tp-empty { color: var(--content-secondary); }
-html[data-theme][data-family] .todo-pop-popup .tp-item:hover { background: var(--surface-soft-hover); }
-html[data-theme][data-family] .todo-pop-popup .tp-check {
+html[data-theme][data-family] .todo-pop .tp-title,
+html[data-theme][data-family] .todo-pop .tp-name,
+html[data-theme][data-family] .todo-pop .tp-input { color: var(--content-primary); }
+html[data-theme][data-family] .todo-pop .tp-count,
+html[data-theme][data-family] .todo-pop .tp-empty { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop .tp-item:hover { background: var(--surface-soft-hover); }
+html[data-theme][data-family] .todo-pop .tp-check {
   color: var(--content-on-accent);
-  background: var(--control-bg);
-  border-color: var(--action-outline);
+  background: transparent;
+  border-color: var(--border-default);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-check.checked {
-  background: var(--action-primary-bg);
+html[data-theme][data-family] .todo-pop .tp-check.checked {
+  background: var(--action-primary);
   border-color: var(--action-primary);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-del { color: var(--content-secondary); }
-html[data-theme][data-family] .todo-pop-popup .tp-del:hover {
+html[data-theme][data-family] .todo-pop .tp-del { color: var(--content-secondary); }
+html[data-theme][data-family] .todo-pop .tp-del:hover {
   color: var(--status-danger);
   background: var(--status-danger-bg);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-add {
+html[data-theme][data-family] .todo-pop .tp-add {
   color: var(--content-secondary);
   background: transparent;
   border-color: var(--border-subtle);
 }
-html[data-theme][data-family] .todo-pop-popup .tp-add:hover {
+html[data-theme][data-family] .todo-pop .tp-add:hover {
   color: var(--action-primary);
   background: var(--action-soft);
   border-color: var(--action-outline);
@@ -41,8 +41,8 @@ html[data-theme][data-family] .event-form-body .popup-close-btn { color: var(--c
 html[data-theme][data-family] .event-form-body .popup-close-btn:hover { background: var(--surface-soft-hover); }
 html[data-theme][data-family] .event-form-body .popup-save {
   color: var(--content-on-accent);
-  background: var(--action-primary-bg);
-  box-shadow: none;
+  background: var(--brand-gradient);
+  box-shadow: var(--elevation-card);
 }
 html[data-theme][data-family] .event-form-body .popup-delete {
   color: var(--status-warning);

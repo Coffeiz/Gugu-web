@@ -17,7 +17,7 @@
                 :class="{ active: category === c.value }"
                 @click="category = c.value"
               >
-                <Icon :name="c.icon" size="sm" tone="inherit" />
+                <component :is="c.icon" :size="13" weight="bold" />
                 {{ c.label }}
               </button>
             </div>
@@ -53,7 +53,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 import { nextZ } from '@/composables/windowz'
 
 const props = defineProps({ show: Boolean })
@@ -80,9 +80,9 @@ async function apiFeedback(category: string, content: string) {
 }
 
 const categories = [
-  { value: 'bug',        icon: 'status.warning-octagon', label: 'Bug' },
-  { value: 'suggestion', icon: 'status.info',            label: '建议' },
-  { value: 'other',      icon: 'communication.chat',     label: '其他' },
+  { value: 'bug',        icon: PhWarningOctagon, label: 'Bug' },
+  { value: 'suggestion', icon: PhLightbulb,    label: '建议' },
+  { value: 'other',      icon: PhChatCircle,   label: '其他' },
 ]
 
 const category  = ref('suggestion')
@@ -155,12 +155,10 @@ async function submit() {
 }
 .cat-btn:hover { background: var(--option-bg-hover); border-color: var(--option-border-hover); }
 .cat-btn.active {
-  /* 分类胶囊不是主操作按钮：使用纯主题色，避免渐变和卡片内描边制造白色高光。 */
-  background: var(--action-primary);
+  background: var(--action-primary-bg);
   border-color: transparent; color: var(--content-on-accent);
-  box-shadow: none;
+  box-shadow: var(--elevation-card);
 }
-.cat-btn.active:hover { background: var(--action-primary-hover); }
 
 .feedback-textarea {
   width: 100%; padding: 10px 12px; resize: none;

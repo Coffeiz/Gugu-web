@@ -8,7 +8,7 @@
             <template v-else>{{ initial }}</template>
             <div class="pm-avatar-overlay">
               <span v-if="avatarUploading" class="pm-avatar-spin"></span>
-              <Icon v-else name="user.camera" size="sm" tone="inherit" />
+              <PhCamera v-else :size="13" weight="bold" />
             </div>
           </div>
           <input ref="avatarInput" type="file" accept="image/*" style="display:none" @change="onAvatarFile" />
@@ -22,30 +22,27 @@
         <template v-for="item in navItems" :key="item.key">
           <div v-if="item.divider" class="pm-nav-divider"></div>
           <button v-else class="pm-nav-item" :class="{ active: activeNav === item.key }" @click="item.key && (activeNav = item.key)">
-            <Icon :name="item.icon || ''" size="sm" tone="inherit" />
+            <component :is="item.icon" :size="14" weight="bold" />
             {{ item.label }}
           </button>
         </template>
         <div class="pm-nav-spacer"></div>
         <button class="pm-logout pm-danger-nav" @click="openDeleteAccount">
-          <Icon name="user.remove" size="sm" tone="inherit" />
-          <span>注销账号</span>
+          <PhUserMinus :size="13" weight="bold" />
+          注销账号
         </button>
       </div>
 
       <div class="pm-content">
         <div class="pm-content-header">
           <span class="pm-content-title">{{ currentNavLabel }}</span>
-          <button class="popup-close-btn" @click="$emit('close')"><Icon name="action.close" size="sm" tone="inherit" /></button>
+          <button class="popup-close-btn" @click="$emit('close')"><PhX :size="13" weight="bold" /></button>
         </div>
         <div class="pm-content-body" ref="pmBodyRef">
           <KeepAlive>
             <ProfileInfoPane v-if="activeNav === 'info'" :external-message="infoMsg" :external-message-type="infoMsgType" />
             <ProfileAccountPane v-else-if="activeNav === 'account'" />
             <ProfileGuguPane v-else-if="activeNav === 'gugu'" />
-            <ProfileByokPane v-else-if="activeNav === 'byok'" />
-            <ProfileToolPermissionsPane v-else-if="activeNav === 'tools'" />
-            <ProfileWorkspacesPane v-else-if="activeNav === 'workspaces'" />
             <ProfileImPane v-else-if="activeNav === 'im'" />
             <ProfilePreferencesPane v-else-if="activeNav === 'prefs'" />
           </KeepAlive>
@@ -85,30 +82,24 @@ import ProfileAccountPane from './ProfileModal/ProfileAccountPane.vue'
 import ProfilePreferencesPane from './ProfileModal/ProfilePreferencesPane.vue'
 import ProfileGuguPane from './ProfileModal/ProfileGuguPane.vue'
 import ProfileImPane from './ProfileModal/ProfileImPane.vue'
-import ProfileToolPermissionsPane from './ProfileModal/ProfileToolPermissionsPane.vue'
-import ProfileWorkspacesPane from './ProfileModal/ProfileWorkspacesPane.vue'
-import ProfileByokPane from './ProfileModal/ProfileByokPane.vue'
 import { authApi } from '@/services/api'
 import { TOP_Z } from '@/composables/windowz'
-import Icon from '@/components/common/Icon.vue'
+import { PhX, PhUserMinus, PhUser, PhShieldCheck, PhSliders, PhCamera, PhBird, PhChatsCircle } from '@phosphor-icons/vue'
 
 const props = defineProps({ show: Boolean })
 const emit  = defineEmits(['close'])
 const router = useRouter()
 const authStore = useAuthStore()
 const displayLabel = computed(() => authStore.user?.displayName || authStore.user?.username || '—')
-const initial = computed<string>(() => (displayLabel.value.charAt(0) || '?').toUpperCase())
+const initial = computed(() => (displayLabel.value[0] ?? '?').toUpperCase())
 
 const navItems = [
-  { key: 'info', label: '个人信息', icon: 'user.default' },
-  { key: 'account', label: '账号设置', icon: 'user.security' },
-  { key: 'prefs', label: '偏好设置', icon: 'user.settings' },
+  { key: 'info', label: '个人信息', icon: PhUser },
+  { key: 'account', label: '账号设置', icon: PhShieldCheck },
+  { key: 'prefs', label: '偏好设置', icon: PhSliders },
   { divider: true },
-  { key: 'gugu', label: '咕咕设置', icon: 'user.gugu' },
-  { key: 'im', label: '接入咕咕', icon: 'communication.chat' },
-  { key: 'byok', label: '模型配置', icon: 'user.security' },
-  { key: 'tools', label: '能力配置', icon: 'admin.wrench' },
-  { key: 'workspaces', label: '工作区', icon: 'admin.folder' },
+  { key: 'gugu', label: '咕咕设置', icon: PhBird },
+  { key: 'im', label: '接入咕咕', icon: PhChatsCircle },
 ]
 const activeNav = ref('info')
 const currentNavLabel = computed(() => navItems.find(n => !n.divider && n.key === activeNav.value)?.label ?? '')
@@ -226,25 +217,17 @@ async function doDeleteAccount() {
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer; text-align: left;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard);
 }
-.pm-nav-item:hover:not(.active) { background: var(--sidebar-item-hover); color: var(--content-primary); }
+.pm-nav-item:hover { background: var(--sidebar-item-hover); color: var(--content-primary); }
 .pm-nav-item.active { background: var(--sidebar-item-active); color: var(--sidebar-item-active-fg); font-weight: 700; border-color: var(--sidebar-item-active-border); box-shadow: var(--sidebar-item-active-shadow); }
 .pm-nav-spacer { flex: 1; }
 .pm-logout {
   display: flex; align-items: center; gap: 9px; width: 100%; padding: 10px 12px;
-  border-radius: var(--radius-sm); border: 1px solid transparent; background: transparent;
+  border-radius: var(--radius-sm); border: 1px solid transparent; background: none;
   font: 14px var(--font-sans); color: var(--content-secondary); cursor: pointer;
-  position: relative; isolation: isolate; overflow: hidden;
-  transition: color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
-}
-.pm-logout::before {
-  content: ''; position: absolute; inset: 0; z-index: -1;
-  border-radius: inherit; background: var(--danger-button-bg); opacity: 0;
-  transition: opacity var(--motion-hover-control) var(--motion-ease-standard);
+  transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .pm-logout:hover,
-.pm-logout.pm-danger-nav:hover { background: transparent; color: var(--danger-button-fg); border-color: var(--danger-button-border); }
-.pm-logout:hover::before,
-.pm-logout.pm-danger-nav:hover::before { opacity: 1; }
+.pm-logout.pm-danger-nav:hover { background: var(--danger-button-bg); color: var(--danger-button-fg); border-color: var(--danger-button-border); }
 
 .pm-confirm-overlay {
   position: fixed; inset: 0; background: var(--modal-overlay-bg); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -290,30 +273,16 @@ async function doDeleteAccount() {
 .form-input.modified { border-color: var(--action-outline); }
 .pm-uid { color: var(--content-secondary); }
 .pm-static { font-size: 13px; color: var(--content-secondary); padding: 7px 2px; }
-.pm-tool-locked { padding: 11px 12px; border: 1px solid var(--line-subtle); border-radius: 8px; background: var(--surface-subtle); }
 .pm-coming { font-size: 11px; font-weight: 600; color: var(--content-disabled); background: var(--surface-soft); padding: 3px 10px; border-radius: var(--radius-pill); }
 
-.pm-style-group { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.pm-style-group { display: flex; gap: 4px; flex-shrink: 0; }
 .pm-style-chip {
-  border-radius: var(--choice-chip-radius); border: 1px solid var(--choice-chip-border);
+  padding: 4px 11px; border-radius: var(--choice-chip-radius); border: 1px solid var(--choice-chip-border);
   background: var(--choice-chip-bg); color: var(--choice-chip-fg); font: 500 12px var(--font-sans); cursor: pointer;
   transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
 .pm-style-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
-.pm-style-chip:disabled { opacity: .45; cursor: not-allowed; }
-.pm-style-chip:disabled:hover { background: var(--choice-chip-bg); border-color: var(--choice-chip-border); color: var(--choice-chip-fg); }
 .pm-style-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
-.pm-family-chip.active { background: var(--surface-raised); border-color: var(--border-default); color: var(--content-primary); }
-.pm-palette-group { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.pm-palette-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 9px; border: 1px solid var(--choice-chip-border); border-radius: var(--choice-chip-radius); background: var(--choice-chip-bg); color: var(--choice-chip-fg); font: 500 12px var(--font-sans); cursor: pointer; transition: color var(--motion-hover-control) var(--motion-ease-standard), background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard); }
-.pm-palette-chip:hover { background: var(--choice-chip-bg-hover); border-color: var(--choice-chip-border-hover); color: var(--choice-chip-fg-hover); }
-.pm-palette-chip.active { background: var(--choice-chip-bg-active); border-color: var(--choice-chip-border-active); color: var(--choice-chip-fg-active); font-weight: 600; }
-.pm-palette-swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: #7b7fb2; box-shadow: 0 0 0 2px color-mix(in srgb, var(--content-on-accent) 55%, transparent); }
-.pm-palette-swatch.palette-aero { background: #7b7fb2; }
-.pm-palette-swatch.palette-mono { background: #746b78; }
-.pm-palette-swatch.palette-rose { background: #c98f98; }
-.pm-palette-swatch.palette-sky { background: #83a9c2; }
-.pm-palette-swatch.palette-sage { background: #84ab9e; }
 
 .pm-bind-btn {
   padding: 6px 16px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent);
@@ -345,17 +314,25 @@ async function doDeleteAccount() {
 .pm-bot-info { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pm-bot-name { font-size: 13px; font-weight: 600; color: var(--content-primary); display: flex; align-items: center; gap: 6px; }
 .pm-bot-tag { font-size: 10px; font-weight: 600; color: var(--status-warning); background: var(--status-warning-bg); padding: 1px 6px; border-radius: var(--radius-xs); }
-.pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: var(--font-family-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pm-bot-appid { font-size: 11px; color: var(--content-secondary); font-family: 'SF Mono','Consolas',monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pm-switch-wrap { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
 .pm-switch-label { font-size: 11px; color: var(--content-secondary); }
 .pm-switch-label.on { color: var(--action-primary); font-weight: 600; }
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+.switch.sm { width: 32px; height: 19px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider { position: absolute; inset: 0; background: var(--switch-track-bg); border-radius: 22px; transition: background-color var(--motion-hover-control) var(--motion-ease-standard); cursor: pointer; }
+.switch .slider::before { content: ''; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px; background: var(--switch-thumb-bg); border-radius: 50%; transition: transform var(--motion-hover-control) var(--motion-ease-standard); }
+.switch.sm .slider::before { height: 13px; width: 13px; }
+.switch input:checked + .slider { background: var(--switch-track-bg-active); }
+.switch input:checked + .slider::before { transform: translateX(16px); }
+.switch.sm input:checked + .slider::before { transform: translateX(13px); }
 .pm-bot-del { flex-shrink: 0; font-size: 12px; color: var(--status-danger); background: none; border: none; cursor: pointer; }
 .pm-add-bot { margin-top: 8px; width: 100%; padding: 8px; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; color: var(--content-secondary); border: 1px dashed var(--input-border); background: none; }
 .pm-add-bot:hover { color: var(--action-primary); border-color: var(--action-outline); }
 .pm-bot-form { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--subpanel-bg); border: 1px solid var(--subpanel-border); }
-.pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
-.pm-bot-input:hover { background: var(--input-bg-hover); border-color: var(--input-border-hover); box-shadow: var(--input-hover-shadow), 0 0 0 0 transparent; }
-.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-hover-shadow), var(--input-focus-shadow); }
+.pm-bot-input { width: 100%; padding: 8px 11px; border-radius: var(--input-radius); font-size: 13px; border: 1px solid var(--input-border); background: var(--input-bg); color: var(--input-fg); outline: none; }
+.pm-bot-input:focus { border-color: var(--input-border-focus); box-shadow: var(--input-focus-shadow); }
 .pm-bot-check { font-size: 12px; color: var(--content-secondary); display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .pm-bot-form-actions { display: flex; align-items: center; gap: 8px; }
 .pm-text-link { margin-top: 8px; background: none; border: none; cursor: pointer; font-size: 12px; color: var(--content-secondary); text-decoration: underline; padding: 0; }
@@ -366,7 +343,7 @@ async function doDeleteAccount() {
 .pm-msg { font-size: 12px; margin-right: auto; }
 .pm-msg.ok { color: var(--status-success); }
 .pm-msg.err { color: var(--status-danger); }
-.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: none; transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-save-btn { padding: 7px 22px; border-radius: var(--radius-sm); border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font: 600 13px var(--font-sans); cursor: pointer; box-shadow: var(--elevation-card); transition: opacity var(--motion-hover-control) var(--motion-ease-standard), transform var(--motion-hover-control) var(--motion-ease-standard); }
 .pm-save-btn:hover:not(:disabled) { opacity: .88; transform: translateY(-1px); }
 .pm-save-btn:disabled { opacity: .35; cursor: default; transform: none; }
 

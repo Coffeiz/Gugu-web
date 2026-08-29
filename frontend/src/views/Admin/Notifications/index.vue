@@ -75,7 +75,7 @@
         <div class="history-header">
           <span class="compose-title">发送历史</span>
           <button class="icon-btn" :class="{ spinning: refreshingHistory }" @click="loadHistory" :disabled="loadingHistory" title="刷新">
-            <Icon name="action.refresh" size="sm" />
+            <PhArrowClockwise :size="15" weight="bold" />
           </button>
         </div>
 
@@ -103,10 +103,10 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 import { showAppNotice } from '@/composables/useAppToast'
 import { renderMarkdown } from '@/utils/markdown'
-import { fmtLocalDateTime } from '@/utils/dateAttribution'
 
 const admin = useAdminStore()
 
@@ -176,7 +176,10 @@ async function deleteRecord(id: number) {
 }
 
 function fmtTime(iso: string) {
-  return fmtLocalDateTime(iso).replace(/^(\d{4})-0?(\d+)-0?(\d+) /, '$2/$3 ')
+  try {
+    const d = new Date(iso)
+    return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+  } catch { return '' }
 }
 
 onMounted(loadHistory)
@@ -283,7 +286,7 @@ onMounted(loadHistory)
 .md-nb :deep(ul), .md-nb :deep(ol) { margin: 4px 0 6px; padding-left: 18px; }
 .md-nb :deep(li) { margin: 2px 0; }
 .md-nb :deep(li > p) { margin: 0; }
-.md-nb :deep(code) { font-family: var(--font-family-mono); font-size: 11px; background: rgba(123,127,178,0.15); color: #5256ab; padding: 1px 5px; border-radius: 5px; }
+.md-nb :deep(code) { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; background: rgba(123,127,178,0.15); color: #5256ab; padding: 1px 5px; border-radius: 5px; }
 .md-nb :deep(pre) { margin: 6px 0; padding: 9px 11px; border-radius: 9px; background: rgba(20,22,40,0.07); overflow-x: auto; }
 .md-nb :deep(pre code) { background: none; color: #2b2d3c; padding: 0; font-size: 11px; line-height: 1.5; }
 .md-nb :deep(blockquote) { margin: 6px 0; padding: 2px 0 2px 10px; border-left: 2.5px solid rgba(123,127,178,0.45); color: rgba(40,44,62,0.5); }
@@ -298,11 +301,11 @@ onMounted(loadHistory)
 .send-btn {
   width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;
   padding: 10px 0; border: none; border-radius: 10px;
-  background: var(--action-primary-bg); color: var(--content-on-accent);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4); color: rgba(255,255,255,0.95);
   font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
-  box-shadow: none; transition: background-color 0.15s;
+  box-shadow: 0 3px 12px rgba(123,127,178,0.3); transition: opacity 0.15s, box-shadow 0.15s;
 }
-.send-btn:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
+.send-btn:hover:not(:disabled) { box-shadow: 0 6px 18px rgba(123,127,178,0.4); opacity: 0.92; }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* 历史 */

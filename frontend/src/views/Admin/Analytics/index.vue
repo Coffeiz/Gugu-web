@@ -6,17 +6,17 @@
         <p class="page-desc">生意好不好：活跃、漏斗、留存（怎么用的看「使用分析」）</p>
       </div>
       <div class="header-right">
-        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
-        <AdminSegmentTabs
-          :model-value="String(rangeDays)"
-          :tabs="ranges"
-          size="compact"
-          class="data-header-control"
-          aria-label="数据时间范围"
-          @update:model-value="setRange"
-        />
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <Icon name="action.refresh" size="sm" />
+        <label class="xd-toggle" :class="{ on: excludeDev }">
+          <input type="checkbox" v-model="excludeDev" @change="load">
+          排除开发者
+        </label>
+        <div class="range-tabs">
+          <button v-for="r in ranges" :key="r.days"
+            :class="['range-tab', { active: rangeDays === r.days }]"
+            @click="setRange(r.days)">{{ r.label }}</button>
+        </div>
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
     </div>
@@ -33,7 +33,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="admin.pulse" size="xs" class="ct-icon ic-blue-raw" />
+                <PhPulse :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
                 日活跃用户
               </div>
               <div class="chart-stats">
@@ -105,12 +105,12 @@
       <div class="section-label">项目留存<span class="sl-hint">重复创建 = 真的在用；一周后仍在推进 = 项目黏性</span></div>
       <div class="cards-grid col3">
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
+          <div class="card-icon ic-blue"><PhFolders :size="16" weight="bold"/></div>
           <div class="card-val">{{ rm.created_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">创建过项目</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-teal"><Icon name="file.folder-add" size="md" /></div>
+          <div class="card-icon ic-teal"><PhFolderPlus :size="16" weight="bold"/></div>
           <div class="card-val">{{ rm.second_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">创建过第 2 个项目</div>
           <div class="card-sub" v-if="rm.created_project_users">
@@ -118,7 +118,7 @@
           </div>
         </div>
         <div class="card">
-          <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
+          <div class="card-icon ic-amber"><PhSpinnerGap :size="16" weight="bold"/></div>
           <div class="card-val">{{ rm.week_active_project_users ?? 0 }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">注册满一周仍有进行中项目</div>
         </div>
@@ -149,17 +149,17 @@
       <div class="section-label">对话</div>
       <div class="cards-grid col3">
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
+          <div class="card-icon ic-blue"><PhChats :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.sessions.total.toLocaleString() }}</div>
           <div class="card-lbl">总量</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
+          <div class="card-icon ic-blue"><PhMonitor :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.sessions.web.toLocaleString() }}</div>
           <div class="card-lbl">网页对话</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="admin.computer" size="md" /></div>
+          <div class="card-icon ic-blue"><PhDeviceMobile :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.sessions.im.toLocaleString() }}</div>
           <div class="card-lbl">IM 对话</div>
         </div>
@@ -169,45 +169,45 @@
       <div class="section-label">用户 · 项目</div>
       <div class="cards-grid">
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="communication.team" size="md" /></div>
+          <div class="card-icon ic-blue"><PhUsers :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.users.total.toLocaleString() }}</div>
           <div class="card-lbl">注册用户</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="user.settings" size="md" /></div>
+          <div class="card-icon ic-blue"><PhUserPlus :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.users.new_30d }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">新增（30 天）</div>
           <div class="card-sub">7 天内 +{{ data.users.new_7d }} 人</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="admin.pulse" size="md" /></div>
+          <div class="card-icon ic-blue"><PhPulse :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.users.wau }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">周活跃（WAU）</div>
           <div class="card-sub">30 天活跃 {{ data.users.active_30d }} 人</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="communication.chat" size="md" /></div>
+          <div class="card-icon ic-blue"><PhChatsCircle :size="16" weight="bold"/></div>
           <div class="card-val">{{ pct(data.im_bots.adoption_rate) }}<span class="card-unit">%</span></div>
           <div class="card-lbl">IM 接入率</div>
           <div class="card-sub">{{ data.im_bots.users_with_bot }} 人已接入</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-blue"><Icon name="admin.folders" size="md" /></div>
+          <div class="card-icon ic-blue"><PhFolders :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.total.toLocaleString() }}</div>
           <div class="card-lbl">项目总量</div>
         </div>
         <div class="card">
-          <div class="card-icon ic-muted"><Icon name="admin.time" size="md" /></div>
+          <div class="card-icon ic-muted"><PhClock :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.pending }}</div>
           <div class="card-lbl">待开始</div>
         </div>
         <div class="card card-active">
-          <div class="card-icon ic-amber"><Icon name="status.loading" size="md" /></div>
+          <div class="card-icon ic-amber"><PhSpinnerGap :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.active }}</div>
           <div class="card-lbl">进行中</div>
         </div>
         <div class="card card-done">
-          <div class="card-icon ic-teal"><Icon name="status.check-circle" size="md" /></div>
+          <div class="card-icon ic-teal"><PhCheckCircle :size="16" weight="bold"/></div>
           <div class="card-val">{{ data.projects.done }}</div>
           <div class="card-lbl">已完成</div>
           <div class="card-sub" v-if="data.projects.total">
@@ -227,10 +227,12 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, Tooltip, Filler
 } from 'chart.js'
+import {
+  PhUsers, PhUserPlus, PhPulse, PhChatsCircle, PhFolders, PhFolderPlus,
+  PhClock, PhSpinnerGap, PhCheckCircle, PhChats, PhMonitor, PhDeviceMobile,
+  PhArrowClockwise,
+} from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
-import Checkbox from '@/components/common/Checkbox.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
-import { browserTz } from '@/utils/dateAttribution'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts,
   BLUE, pct, convRate, dailyAvg,
@@ -248,9 +250,9 @@ const err = ref('')
 const rangeDays = ref(30)
 
 const ranges = [
-  { key: '7',  label: '7 天' },
-  { key: '30', label: '30 天' },
-  { key: '60', label: '60 天' },
+  { days: 7,  label: '7 天' },
+  { days: 30, label: '30 天' },
+  { days: 60, label: '60 天' },
 ]
 
 const rm = computed(() => data.value?.retention_metrics ?? {})
@@ -300,8 +302,8 @@ async function load() {
   try {
     const xd = xdQuery('&')
     const [sumRes, trdRes, cfRes] = await Promise.all([
-      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/summary?_=1${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/trends?days=60${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/chat-funnel?_=1${xd}`),
     ])
     if (!sumRes.ok) throw new Error(`summary ${sumRes.status}`)
@@ -317,7 +319,7 @@ async function load() {
   }
 }
 
-function setRange(days: string) { rangeDays.value = Number(days) }
+function setRange(days: number) { rangeDays.value = days }
 
 onMounted(load)
 </script>
@@ -334,10 +336,26 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
-.header-right { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
-.header-right > .data-header-control { height: 32px; box-sizing: border-box; }
+.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
 
 /* 排除开发者开关 */
+.xd-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
+}
+.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
+.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
+
+.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
+.range-tab {
+  font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s;
+}
+.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
+
 /* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── states ── */

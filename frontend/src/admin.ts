@@ -9,7 +9,6 @@ import AdminApp from './AdminApp.vue'
 import router from './router/admin'
 import { installEnterDirective } from '@/directives/enter'
 import { initializeTheme } from '@/composables/useTheme'
-import Icon from '@/components/common/Icon.vue'
 
 initializeTheme('dark', 'glass')
 
@@ -17,7 +16,6 @@ const app = createApp(AdminApp)
 
 app.use(createPinia())
 app.use(router)
-app.component('Icon', Icon)
 installEnterDirective(app)
 
 app.mount('#app')

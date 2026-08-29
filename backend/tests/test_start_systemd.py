@@ -46,8 +46,6 @@ def _run_start(
     env["GUGU_SYSTEMD_CHECK_ATTEMPTS"] = "3"
     env["GUGU_SYSTEMD_STABLE_CHECKS"] = "3"
     env["GUGU_SYSTEMD_CHECK_DELAY"] = "0"
-    # 单测只验证 systemd 生命周期检查；提权入口由真实部署环境负责，避免测试调用本机 sudo。
-    env["GUGU_SYSTEMD_PRIV_ESCALATED"] = "1"
     env["FAKE_SYSTEMD_INACTIVE"] = "1" if inactive else "0"
     env["FAKE_SYSTEMD_DROP_AFTER_FIRST"] = "1" if drop_after_first else "0"
     if state_file is not None:

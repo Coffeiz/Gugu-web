@@ -11,13 +11,13 @@
       <Transition name="cd-expanded">
         <div v-if="headerVisible" class="cd-expanded-nav">
           <span class="cd-title">{{ panel === 'canvases' ? '画布' : '项目' }}</span>
-          <button class="cd-toggle cd-return" title="收起" :disabled="drawerAnimating" @click="togglePanel(panel)"><Icon name="action.next" :size="18" /></button>
+          <button class="cd-toggle cd-return" title="收起" :disabled="drawerAnimating" @click="togglePanel(panel)"><PhArrowRight :size="18" weight="bold" /></button>
         </div>
       </Transition>
       <Transition name="cd-compact">
         <div v-if="!expanded" class="cd-compact-nav">
-        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><Icon name="navigation.list" :size="18" /></button>
-        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><Icon name="navigation.projects" :size="18" /></button>
+        <button class="cd-toggle" title="画布列表" :disabled="drawerAnimating" @click="togglePanel('canvases')"><PhSquaresFour :size="16" weight="bold" /></button>
+        <button class="cd-toggle" title="项目素材" :disabled="drawerAnimating" @click="togglePanel('projects')"><PhStack :size="16" weight="bold" /></button>
         </div>
       </Transition>
     </div></template>
@@ -56,7 +56,9 @@
                 <section v-for="group in visibleProjectGroups" :key="group.status" class="project-group" data-layout-role="group" data-layout-group="mind:drawer:projects" :data-layout-key="group.status">
                   <button class="project-group-title" :aria-expanded="group.items.length > 0 && openProjectStatuses.has(group.status)" @click="group.items.length && toggleProjectStatus(group.status)">
                     <span class="project-status-dot" :class="`is-${group.status}`"></span>{{ group.label }}<span>{{ group.items.length }}</span>
-                    <Icon name="action.down" :size="9" class="project-group-chevron" :class="{ open: group.items.length > 0 && openProjectStatuses.has(group.status) }" />
+                    <svg class="project-group-chevron" :class="{ open: group.items.length > 0 && openProjectStatuses.has(group.status) }" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <path d="M2 3.5l3 3 3-3"/>
+                    </svg>
                   </button>
                   <div
                     v-if="group.items.length > 0"
@@ -88,7 +90,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch, type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhArrowRight, PhSquaresFour, PhStack } from '@phosphor-icons/vue'
 import type { MindCanvas } from '@/services/api'
 import type { Project } from '@/types/project'
 import ProjectDrawerCard from './ProjectDrawerCard.vue'

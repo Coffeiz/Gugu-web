@@ -1,61 +1,39 @@
-"""上下文压缩模块。
+"""上下文压缩模块
 
-正常路径由 provider 的实际响应决定是否发生溢出；溢出后压缩旧 history 并重试当前
-round。run 收尾时，provider 实际输入达到模型预算的 90% 才异步更新 baseline，避免
-用本地估算提前改变上下文。压缩只保留最近 5k token 的完整 history，其余旧 history
-滚动合并为摘要，摘要上限为 10k 字符；system 前缀和当前 run 后缀始终保留。
+当上下文长度接近模型限制时，主动压缩历史消息，保持 system 提示词不变，
+确保跨 call 缓存前缀一致。
+
+压缩策略：
+- 触发条件：当前上下文长度 > 用户设置的最大上下文长度 × 90%
+- 压缩目标：压缩到 token 预算的 20%
+- 保护范围：system 提示词完全保留
+- 前缀一致：压缩后保持前缀一致，支持跨 call 缓存
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from pathlib import Path
 
-from .tokens import content_text, message_text
-from .tokens import estimate_tokens, msg_tokens
-from .audit import summary_change
-from .canonical_context import tool_call_ids, tool_result_ids
-from .summary_format import SUMMARY_CLOSE, SUMMARY_OPEN, format_compacted_summary
+from .tokens import estimate_tokens, message_text, msg_tokens
 
 logger = logging.getLogger(__name__)
 
-# 自动压缩只由 provider usage/overflow 触发；保留窗口使用字符硬上限，
-# 不再维护本地 token 预算或第二套比例常量。
-COMPACT_SUMMARY_MAX_TOKENS = 800  # provider 摘要输出上限（请求参数，不参与历史估算）
-RECENT_HISTORY_KEEP_CHARS = 20_000  # 压缩后保留的最近完整 history 字符上限
-SUMMARY_SOURCE_CHUNK_CHARS = 48_000  # 单次摘要输入字符上限，跨块滚动合并
-BRANCH_SUMMARY_MAX_CHARS = 96_000  # 可一次性分支压缩的 history 输入上限
-COMPACT_SUMMARY_MAX_CHARS = 10_000  # 候选摘要的持久化/注入硬上限
+# 压缩配置
+COMPACTION_THRESHOLD_RATIO = 0.9  # 超过 90% 预算触发压缩
+COMPACTION_TARGET_RATIO = 0.2     # 压缩到 20%
+COMPACT_SUMMARY_MAX_TOKENS = 800  # 压缩摘要最大 token 数
 
 
 async def estimate_context_length(messages: list, system_text: str = "") -> int:
-    """仅供诊断/回归测试的旧接口；绝不参与压缩、截断或历史组装。"""
+    """估算当前上下文总长度（tokens）。"""
     total = estimate_tokens(system_text) if system_text else 0
     for msg in messages:
-        total += estimate_tokens(message_text(msg)) if isinstance(msg, dict) else msg_tokens(msg)
+        if isinstance(msg, dict):
+            # dict 类型消息（如 runner.py 构建的消息）
+            total += estimate_tokens(message_text(msg))
+        else:
+            # ORM ConversationMessage 对象
+            total += msg_tokens(msg)
     return total
-
-
-@dataclass(frozen=True)
-class CompactionResult:
-    """一次压缩尝试的结构化结果。"""
-
-    messages: list
-    changed: bool
-    return_reason: str
-    before_tokens: int | None
-    after_tokens: int | None
-
-
-def _result(messages: list, changed: bool, reason: str,
-            before_tokens: int | None, after_tokens: int | None = None) -> CompactionResult:
-    return CompactionResult(
-        messages=messages,
-        changed=changed,
-        return_reason=reason,
-        before_tokens=before_tokens,
-        after_tokens=before_tokens if after_tokens is None else after_tokens,
-    )
 
 
 async def compact_context(
@@ -65,47 +43,30 @@ async def compact_context(
     session_id: int | None = None,
     user_id: int | None = None,
     fixed_prefix_size: int = 0,
-    overhead_tokens: int = 0,
-    extra_tokens: int = 0,
-    protected_from: int | None = None,
-    force: bool = False,
-) -> CompactionResult:
+) -> tuple[list, bool]:
     """压缩上下文，返回 (压缩后的消息列表, 是否实际执行了压缩)。
 
     策略：
     1. 保留 system 提示词（不压缩）
-    2. 保留最近约 20k 字符的完整 history，工具轮次保持原子性
-    3. 将更老的全部消息分块滚动压缩成一条摘要
+    2. 保留最近的消息（约占 20%）
+    3. 将更老的消息压缩成摘要
     4. 返回压缩后的 messages，确保前缀一致
     """
-    # 本函数只在 provider 达到阈值或返回 overflow 后调用。没有 provider usage
-    # 就没有本地“当前 token 数”，因此不再估算。显式旧入口的非 force 调用仅
-    # 使用消息数量/字符硬上限作兼容保护，不参与正常请求。
-    # 自动路径由 provider overflow 或 run 收尾的实际 usage 驱动，因此必须传
-    # force=True。非 force 只保留显式维护接口的兼容行为。
-    if not force:
-        char_count = sum(len(message_text(message)) for message in messages)
-        if len(messages) < 50 and char_count < 50:
-            result = _result(messages, False, "below_threshold", None)
-        else:
-            force = True
-    if not force:
-        return result
+    target_tokens = int(context_tokens * COMPACTION_TARGET_RATIO)
 
-    logger.info(
-        "[compaction] session=%s 输入预算分项=%s，开始压缩",
-        session_id,
-        {"providerUsage": "required", "force": bool(force)},
-    )
-    # context_tokens 这里只作为 provider 配置传入的硬参数，不做 token/字符换算；
-    # 小型回归调用使用更小的字符窗口，大模型请求封顶为固定字符上限。
-    recent_char_limit = min(RECENT_HISTORY_KEEP_CHARS, max(1, int(context_tokens or 0) // 2))
+    # 估算当前上下文长度
+    current_length = await estimate_context_length(messages, system_text)
+    if current_length <= context_tokens * COMPACTION_THRESHOLD_RATIO:
+        return messages, False  # 未达到阈值，不压缩
+
+    logger.info("[compaction] session=%s 上下文 %d tokens 超过阈值 %d，开始压缩",
+                session_id, current_length, int(context_tokens * COMPACTION_THRESHOLD_RATIO))
 
     # snapshot/system-info 是固定前缀，不属于可压缩的 message history。
     # 普通 list 调用保持 fixed_prefix_size=0，兼容旧历史和单测。
     fixed_prefix_size = max(0, min(int(fixed_prefix_size), len(messages)))
     fixed_prefix = list(messages[:fixed_prefix_size])
-    message_history = _drop_orphan_tool_results(list(messages[fixed_prefix_size:]))
+    message_history = list(messages[fixed_prefix_size:])
 
     # 分离消息类型
     summary_msg = None
@@ -117,83 +78,51 @@ async def compact_context(
         else:
             normal_msgs.append(msg)
 
-    # 当前 run 模式下，protected_from 之后的消息是本轮用户输入、工具调用和结果，
-    # 必须整体保留；摘要只处理它之前的历史。普通调用保持旧的“从最新往回保留”语义。
-    protected_messages: list[dict] | None = None
-    if protected_from is not None:
-        protected_relative = max(0, int(protected_from) - fixed_prefix_size)
-        protected_messages = list(normal_msgs[protected_relative:])
-
     # 计算保留的消息数量（从最新往回保留）
     # 系统上下文注入不计入保留预算（它总是第一个消息）
     system_injection_idx = -1
     for i, msg in enumerate(normal_msgs):
-        if msg.get("role") in {"user", "system"} and _is_system_injection(msg.get("content", "")):
+        if msg.get("role") == "user" and _is_system_injection(msg.get("content", "")):
             system_injection_idx = i
             break
 
-    # 当前 run 的受保护后缀不参与历史保留窗口计算，直接原样带回；
-    # 其之前最近约 20k 字符的完整 history 也保留。这里使用字符上限，
-    # 不把本地 token 估算混入上下文决策。
-    if protected_messages is not None:
-        protected_start = max(0, len(normal_msgs) - len(protected_messages))
-        prior_units = _atomic_message_units(normal_msgs[:protected_start],
-                                            system_injection_idx if system_injection_idx < protected_start else -1)
-        kept_prior_units = []
-        prior_chars = 0
-        for unit in reversed(prior_units):
-            unit_chars = sum(len(message_text(normal_msgs[i])) for i in unit)
-            if prior_chars + unit_chars > recent_char_limit:
-                if not kept_prior_units:
-                    continue
-                break
-            kept_prior_units.append(unit)
-            prior_chars += unit_chars
-        kept_prior_units.reverse()
-        kept_prior_indices = [i for unit in kept_prior_units for i in unit]
-        kept_indices = set(kept_prior_indices) | set(range(protected_start, len(normal_msgs)))
-        kept_msgs = [normal_msgs[i] for i in kept_prior_indices] + protected_messages
-        compressible_msgs = [
-            msg for i, msg in enumerate(normal_msgs)
-            if i != system_injection_idx and i not in kept_indices
-        ]
-        kept_units = []
-        used_chars = sum(len(message_text(msg)) for msg in kept_msgs)
-    else:
-        kept_msgs = []
-        compressible_msgs = []
-        kept_units = []
-        used_chars = 0
+    # 计算可用的 token 预算
+    available_tokens = target_tokens
+    if system_injection_idx >= 0:
+        # 系统上下文注入占用一部分 token
+        inj_msg = normal_msgs[system_injection_idx]
+        inj_content = inj_msg.get("content", "") if isinstance(inj_msg, dict) else getattr(inj_msg, "content", "") or ""
+        injection_tokens = estimate_tokens(inj_content)
+        available_tokens -= injection_tokens
 
     # 从最新往回保留消息。工具调用和工具结果是 provider 语义上的一个原子单元，
     # 不能只按单条 message 切预算，否则会把 tool_result 留下而把对应 tool_use
     # 压进摘要，下一轮就会产生非法的孤儿工具消息。
-    if protected_messages is None:
-        kept_units = []
-        used_chars = 0
-        units = _atomic_message_units(normal_msgs, system_injection_idx)
-        for unit in reversed(units):
-            unit_chars = sum(len(message_text(normal_msgs[i])) for i in unit)
-            if used_chars + unit_chars > recent_char_limit:
-                break
-            kept_units.append(unit)
-            used_chars += unit_chars
+    kept_units = []
+    used_tokens = 0
+    units = _atomic_message_units(normal_msgs, system_injection_idx)
+    for unit in reversed(units):
+        unit_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in unit)
+        if used_tokens + unit_tokens > available_tokens:
+            break
+        kept_units.append(unit)
+        used_tokens += unit_tokens
 
-        kept_units.reverse()
-        if not kept_units and units:
-            # 即使最新原子单元超预算也必须完整保留，不能退化成只保留其中一条。
-            kept_units = [units[-1]]
-            used_chars = sum(len(message_text(normal_msgs[i])) for i in units[-1])
+    kept_units.reverse()
+    if not kept_units and units:
+        # 即使最新原子单元超预算也必须完整保留，不能退化成只保留其中一条。
+        kept_units = [units[-1]]
+        used_tokens = sum(estimate_tokens(message_text(normal_msgs[i])) for i in units[-1])
 
-        kept_indices = [i for unit in kept_units for i in unit]
-        kept_msgs = [normal_msgs[i] for i in kept_indices]
+    kept_indices = [i for unit in kept_units for i in unit]
+    kept_msgs = [normal_msgs[i] for i in kept_indices]
 
-        # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
-        kept_index_set = set(kept_indices)
-        compressible_msgs = [
-            msg for i, msg in enumerate(normal_msgs)
-            if i != system_injection_idx and i not in kept_index_set
-        ]
+    # 以实际保留的 message index 划分，避免 injection 位于历史中间时漏掉消息。
+    kept_index_set = set(kept_indices)
+    compressible_msgs = [
+        msg for i, msg in enumerate(normal_msgs)
+        if i != system_injection_idx and i not in kept_index_set
+    ]
 
     # 过滤出有内容的消息用于压缩
     compressible_content = []
@@ -205,8 +134,7 @@ async def compact_context(
 
     if not compressible_content:
         logger.warning("[compaction] compressible_content 为空，跳过压缩")
-        result = _result(messages, False, "no_compressible_history", None)
-        return result
+        return messages, False  # 没有可压缩的内容
 
     # 调用 LLM 生成压缩摘要
     logger.info("[compaction] 调用 LLM 生成摘要，compressible_content=%d 条", len(compressible_content))
@@ -215,21 +143,8 @@ async def compact_context(
         summary_msg.get("content", "") if summary_msg else None,
     )
 
-    summary_ok, summary_reason = validate_compact_summary(compact_summary)
-    if not summary_ok:
-        logger.warning("[compaction] session=%s 摘要候选校验失败: %s", session_id, summary_reason)
-        result = _result(messages, False, "summary_validation_failed", None)
-        return result
-
-    summary_change(
-        source="inline_compaction",
-        old=(summary_msg or {}).get("content") if summary_msg else None,
-        new=compact_summary,
-        session_id=session_id,
-        before_messages=len(messages),
-        after_messages=len(fixed_prefix) + 1 + len(kept_msgs),
-        provider_usage_required=True,
-    )
+    if not compact_summary:
+        return messages, False  # 压缩失败，返回原消息
 
     # 构建压缩后的消息列表
     new_messages = list(fixed_prefix)
@@ -241,34 +156,48 @@ async def compact_context(
     # 添加压缩摘要
     compact_summary_msg = {
         "role": "user",
-        "content": format_compacted_summary(compact_summary),
+        "content": f"<compacted-summary>\n{compact_summary}\n</compacted-summary>"
     }
     new_messages.append(compact_summary_msg)
 
-    # 保留最近约 20k 字符的完整消息单元
+    # 保留最近的消息
     new_messages.extend(kept_msgs)
 
-    logger.info("[compaction] session=%s 压缩完成：%d 条 → %d 条，保留 %d 字符",
-                session_id, len(normal_msgs), len(new_messages), used_chars)
+    logger.info("[compaction] session=%s 压缩完成：%d 条 → %d 条，保留 %d tokens",
+                session_id, len(normal_msgs), len(new_messages), used_tokens)
 
     # 验证压缩后的前缀一致性
     consistent, reason = validate_compacted_shape(new_messages)
     if not consistent:
         logger.warning("[compaction] session=%s 前缀不一致: %s，返回原消息", session_id, reason)
-        result = _result(messages, False, "shape_validation_failed", None)
-        return result
+        return messages, False
 
-    # provider usage 不会在这里重新调用；下一次请求由 provider 作为唯一裁判。
-    result = _result(new_messages, True, "compacted", None, None)
-    return result
+    return new_messages, True
+
+
+def _block_types(message: dict) -> set[str]:
+    content = message.get("content") if isinstance(message, dict) else None
+    blocks = content if isinstance(content, list) else [content]
+    return {
+        str(block.get("type"))
+        for block in blocks
+        if isinstance(block, dict) and block.get("type")
+    }
+
+
+def _has_tool_call(message: dict) -> bool:
+    return (
+        message.get("role") == "assistant"
+        and (bool(message.get("tool_calls")) or "tool_use" in _block_types(message))
+    )
+
+
+def _has_tool_result(message: dict) -> bool:
+    return message.get("role") == "tool" or "tool_result" in _block_types(message)
 
 
 def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> list[list[int]]:
-    """按匹配的工具往返切分 message index；普通消息仍然各自作为一个单元。
-
-    只有相邻消息且调用/result id 有交集时才归为一个工具单元。这样异常历史中的
-    孤儿 result 不会因为“看起来像 result”而被压缩边界误保留。
-    """
+    """按工具往返切分 message index；普通消息仍然各自作为一个单元。"""
     indices = [i for i in range(len(messages)) if i != excluded_index]
     units: list[list[int]] = []
     cursor = 0
@@ -276,70 +205,12 @@ def _atomic_message_units(messages: list[dict], excluded_index: int = -1) -> lis
         start = indices[cursor]
         unit = [start]
         cursor += 1
-        pending_call_ids = set(tool_call_ids(messages[start]))
-        while pending_call_ids and cursor < len(indices):
-            result_ids = tool_result_ids(messages[indices[cursor]])
-            matched = pending_call_ids & result_ids
-            if not matched:
-                break
-            unit.append(indices[cursor])
-            pending_call_ids.difference_update(matched)
-            cursor += 1
+        if _has_tool_call(messages[start]):
+            while cursor < len(indices) and _has_tool_result(messages[indices[cursor]]):
+                unit.append(indices[cursor])
+                cursor += 1
         units.append(unit)
     return units
-
-
-def _drop_orphan_tool_results(messages: list[dict]) -> list[dict]:
-    """删除没有紧邻匹配调用的 tool_result，保留其他 block 原样。
-
-    这是压缩前的兼容清理，不负责把 provider wire format 重新渲染；它只处理
-    已知非法的孤儿结果，避免结果被最新窗口保留并在下一次请求中触发 400。
-    """
-    cleaned: list[dict] = []
-    pending_call_ids: frozenset[str] = frozenset()
-    for message in messages:
-        current = dict(message)
-        result_ids = tool_result_ids(current)
-        call_ids = tool_call_ids(current)
-        if result_ids:
-            matched = pending_call_ids & result_ids
-            content = current.get("content")
-            blocks = content if isinstance(content, list) else None
-            if not matched:
-                if current.get("role") == "tool":
-                    pending_call_ids = frozenset()
-                    continue
-                if blocks is not None:
-                    blocks = [
-                        block for block in blocks
-                        if not (
-                            isinstance(block, dict)
-                            and block.get("type") == "tool_result"
-                        )
-                    ]
-                    if blocks:
-                        current["content"] = blocks
-                    else:
-                        pending_call_ids = frozenset()
-                        continue
-            elif blocks is not None:
-                current["content"] = [
-                    block for block in blocks
-                    if not (
-                        isinstance(block, dict)
-                        and block.get("type") == "tool_result"
-                        and str(block.get("tool_call_id") or block.get("tool_use_id") or "")
-                        not in matched
-                    )
-                ]
-        cleaned.append(current)
-        if result_ids:
-            # 一个 assistant 可以并行发起多个调用，连续 result 必须共享同一
-            # pending 集合；不能在第一个 result 后用空的 call_ids 覆盖它。
-            pending_call_ids = pending_call_ids - matched
-        else:
-            pending_call_ids = call_ids
-    return cleaned
 
 
 def _is_system_injection(content: str) -> bool:
@@ -361,7 +232,7 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     has_summary = False
     for msg in new_messages:
         content = msg.get("content", "")
-        if isinstance(content, str) and SUMMARY_OPEN in content:
+        if isinstance(content, str) and "<compacted-summary>" in content:
             has_summary = True
             break
 
@@ -372,7 +243,7 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     summary_idx = -1
     for i, msg in enumerate(new_messages):
         content = msg.get("content", "")
-        if isinstance(content, str) and SUMMARY_OPEN in content:
+        if isinstance(content, str) and "<compacted-summary>" in content:
             summary_idx = i
             break
 
@@ -387,78 +258,13 @@ def validate_compacted_shape(new_messages: list) -> tuple[bool, str]:
     return True, "压缩结构有效"
 
 
-def validate_compact_summary(summary: object) -> tuple[bool, str]:
-    """校验模型返回的摘要候选，避免坏结果进入 inline history 或 baseline。
-
-    外层 ``<compacted-summary>`` 包裹由组装器统一添加，因此模型不能返回另一份
-    包裹或结构化响应；这样失败时可以安全丢弃候选，不污染当前消息和持久 baseline。
-    """
-    if not isinstance(summary, str) or not summary.strip():
-        return False, "摘要为空"
-    value = summary.strip()
-    if len(value) > COMPACT_SUMMARY_MAX_CHARS:
-        return False, "摘要超过长度上限"
-    if SUMMARY_OPEN in value or SUMMARY_CLOSE in value:
-        return False, "摘要包含外层包裹标记"
-    return True, "摘要候选有效"
-
-
 async def _generate_compact_summary(
     content_list: list[str],
     prev_summary: str | None = None,
 ) -> str:
-    """使用共享分支/fallback 策略生成摘要。"""
-    return await generate_compact_summary(
-        content_list,
-        prev_summary,
-        _generate_compact_summary_once,
-    )
-
-
-async def generate_compact_summary(content_list, prev_summary, call_once) -> str:
-    """统一执行分支式摘要，超限时才退回滚动 fallback。
-
-    ``call_once`` 由调用方提供，以便 inline compaction 和持久 baseline 复用同一
-    边界策略，同时保留各自的 provider/settings 路由。
-    """
+    """调用 LLM 生成压缩摘要。"""
     if not content_list:
         return ""
-
-    chunks: list[list[str]] = []
-    current: list[str] = []
-    current_chars = 0
-    for item in content_list:
-        item_chars = len(item)
-        if current and current_chars + item_chars > SUMMARY_SOURCE_CHUNK_CHARS:
-            chunks.append(current)
-            current = []
-            current_chars = 0
-        current.append(item)
-        current_chars += item_chars
-    if current:
-        chunks.append(current)
-
-    # 在安全输入上限内只发一次独立摘要请求。调用方稍后才会替换当前 run
-    # 的内存消息，因而这里不会改变真实 session；超限时保留原有分块滚动策略。
-    all_text = "\n".join(content_list)
-    if len(all_text) <= BRANCH_SUMMARY_MAX_CHARS:
-        return await call_once(content_list, prev_summary)
-
-    summary = prev_summary
-    for chunk in chunks:
-        summary = await call_once(chunk, summary)
-        if not summary:
-            return ""
-    return summary or ""
-
-
-async def _generate_compact_summary_once(
-    content_list: list[str],
-    prev_summary: str | None = None,
-) -> str:
-    """执行单个摘要块；调用方负责跨块滚动合并。"""
-    if not content_list:
-        return prev_summary or ""
 
     # 构建压缩 prompt
     conv_text = "\n".join(content_list)
@@ -472,37 +278,21 @@ async def _generate_compact_summary_once(
     else:
         user_text = conv_text
 
-    prompt_path = Path(__file__).parent.parent / "prompts" / "compress_conv.md"
-    try:
-        sys_prompt = prompt_path.read_text(encoding="utf-8").strip()
-    except Exception:
-        sys_prompt = (
-            "请将历史对话压缩为供后续任务继续使用的中文状态摘要，并严格按“### 1. 对话摘要、"
-            "### 2. 当前任务、### 3. 遗留问题、### 4. 重要决策与约束、### 5. 关键细节”分章节输出。"
-            "保留用户目标、关键经历、"
-            "已确认事实、决定、已完成/未完成状态、阻塞原因和待确认事项。默认丢弃附件、引用、"
-            "完整工具参数、原始 JSON、URL 和中间调用，只保留会影响后续工作的结论。"
-            "不确定内容标记为待确认，不要把口头说明写成已完成；只输出摘要正文。"
-        )
+    sys_prompt = (
+        "你是一个对话摘要助手。请将以下对话压缩为简洁摘要，要求：\n"
+        "1. 保留关键决定、事实和用户偏好\n"
+        "2. 保留重要的工具调用结果\n"
+        "3. 控制在 300 字以内\n"
+        "4. 使用中文，保持自然流畅\n\n"
+        "请直接输出摘要，不要添加任何前缀或说明。"
+    )
 
     try:
         from app.core.config import get_settings
-        from agent.context.branch import ContextBranch
-        from agent.context.branch_types import BranchInput, BranchPolicy
+        from agent.memory._llm import complete_text
         settings = get_settings()
-        result = await ContextBranch().run(
-            # 保持旧压缩 Prompt 的 user 正文逐字稳定；分支标识只进入审计元数据。
-            BranchInput(stable_system=sys_prompt, delta=user_text),
-            BranchPolicy(
-                name="compaction",
-                output_mode="text",
-                max_tokens=COMPACT_SUMMARY_MAX_TOKENS,
-                max_retries=0,
-            ),
-            settings,
-        )
-        summary = result.output if result.ok else ""
-        return str(summary).strip() if summary else ""
+        summary = await complete_text(sys_prompt, user_text, settings=settings, max_tokens=COMPACT_SUMMARY_MAX_TOKENS)
+        return summary.strip() if summary else ""
     except Exception as e:
         logger.warning("[compaction] 摘要生成失败: %s", e)
         return ""

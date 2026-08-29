@@ -154,9 +154,9 @@ async def poll(
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
 
-    # 通知 gateway 立即重扫（失败也无所谓，下轮会同步）
+    # 通知 supervisor 立即重扫（失败也无所谓，下轮会同步）
     try:
-        await R.get_redis().publish("im:gateway:reload", "1")
+        await R.get_redis().publish("im:supervisor:reload", "1")
     except Exception:
         pass
 

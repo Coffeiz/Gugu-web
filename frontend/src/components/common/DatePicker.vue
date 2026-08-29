@@ -7,13 +7,14 @@
     >
       <svg class="dp-icon" width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
         <rect x="1" y="2" width="12" height="11" rx="3"/>
-        <path d="M4 1v3M10 1v3M1 6h12"/>
+        <path d="M4 1v2M10 1v2M1 6h12"/>
       </svg>
       <span>{{ displayValue || placeholder }}</span>
     </div>
 
-    <PopupMenu :show="open" :style="popupStyle" popup-class="dp-popup-host">
-      <div class="dp-popup" :class="popupClass" ref="popupRef">
+    <Teleport to="body">
+      <Transition name="dp-pop">
+        <div v-if="open" class="dp-popup" :class="popupClass" :style="popupStyle" ref="popupRef">
 
           <!-- 月份导航 -->
           <div v-if="!yearMode" class="dp-header">
@@ -85,14 +86,14 @@
             <button class="dp-today" @click.stop="select(todayIso)">今天</button>
           </div>
         </div>
-    </PopupMenu>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { nextZ, registerPopover } from '@/composables/windowz'
-import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -305,7 +306,7 @@ watch(() => props.modelValue, v => {
   font-size: 13px; font-weight: 700;
   border: none; background: none; cursor: pointer;
   padding: 3px 8px; border-radius: 7px;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .dp-period-range { letter-spacing: 0.5px; }
 .dp-period-caret { opacity: 0.5; flex-shrink: 0; }
@@ -335,7 +336,7 @@ watch(() => props.modelValue, v => {
   border: none; background: none; cursor: pointer; padding: 0;
   font-size: 11px; font-weight: 500; line-height: 1;
   border-radius: 7px;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .dp-day.other { opacity: 0.4; }
 .dp-day.today:not(.selected) { font-weight: 700; }
@@ -350,7 +351,7 @@ watch(() => props.modelValue, v => {
 .dp-year-btn {
   height: 34px; border-radius: 8px; border: none; background: none;
   font-size: 12px; font-weight: 500; cursor: pointer;
-  font-family: var(--font-family-ui);
+  font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .dp-year-btn.this-year:not(.selected),
 .dp-year-btn.selected { font-weight: 700; }
@@ -363,12 +364,14 @@ watch(() => props.modelValue, v => {
 .dp-clear, .dp-today {
   font-size: 11px; font-weight: 600;
   padding: 4px 10px; border-radius: 7px; border: none;
-  cursor: pointer; font-family: var(--font-family-ui);
+  cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif;
 }
 .dp-clear { background: none; }
 /* 「清除」隐藏时 today 独自留在 footer 里，margin-left:auto 保它一直贴右边，不因为
    justify-content:space-between 只剩一个子元素就跳到左边 */
 .dp-today { margin-left: auto; }
 
-:global(.popup-menu-host.dp-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.dp-pop-enter-active { transition: opacity 0.15s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
+.dp-pop-leave-active { transition: opacity 0.1s, transform 0.1s ease-in; }
+.dp-pop-enter-from, .dp-pop-leave-to { opacity: 0; transform: scale(0.95) translateY(-4px); }
 </style>

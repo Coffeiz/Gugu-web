@@ -1,7 +1,7 @@
 """用户自带机器人（BYO）：每个用户管理自己的 QQ bot 凭据。
 
 与 Admin 的共享频道（/admin/agent/bots，飞书用）不同——这里是**用户级**：
-每人填自己在 q.qq.com 创建的 bot 的 AppID/AppSecret，咕咕的 gateway 据此
+每人填自己在 q.qq.com 创建的 bot 的 AppID/AppSecret，咕咕的 supervisor 据此
 为该用户起一条独立 QQ 网关。bot 收到的消息天然归属该用户，无需再做绑定。
 """
 from __future__ import annotations
@@ -40,8 +40,6 @@ def _out(b: UserBot) -> dict:
         "group_chat_enabled": b.group_chat_enabled,
         "group_requires_at": b.group_requires_at,
         "group_read_enabled": b.group_read_enabled,
-        "group_memory_enabled": b.group_memory_enabled,
-        "member_memory_enabled": b.member_memory_enabled,
         "group_response_mode": response_mode,
         "group_allowed_tools": normalize_group_allowed_tools(b.group_allowed_tools),
         "group_message_format": b.group_message_format or "compat",
@@ -50,10 +48,10 @@ def _out(b: UserBot) -> dict:
     }
 
 
-async def _touch_gateway():
-    """通知 gateway 立即重扫（不必等轮询周期）。失败无所谓，下轮也会同步。"""
+async def _touch_supervisor():
+    """通知 supervisor 立即重扫（不必等轮询周期）。失败无所谓，下轮也会同步。"""
     try:
-        await R.get_redis().publish("im:gateway:reload", "1")
+        await R.get_redis().publish("im:supervisor:reload", "1")
     except Exception:
         pass
 
@@ -104,7 +102,7 @@ async def create_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_gateway()
+    await _touch_supervisor()
     return _out(bot)
 
 
@@ -135,8 +133,6 @@ class BotUpdate(BaseModel):
     group_chat_enabled: bool | None = None
     group_requires_at: bool | None = None
     group_read_enabled: bool | None = None
-    group_memory_enabled: bool | None = None
-    member_memory_enabled: bool | None = None
     group_response_mode: str | None = None
     group_allowed_tools: list[str] | None = None
     group_message_format: str | None = None
@@ -170,10 +166,6 @@ async def update_my_bot(
         bot.group_requires_at = body.group_requires_at
     if body.group_read_enabled is not None:
         bot.group_read_enabled = body.group_read_enabled
-    if body.group_memory_enabled is not None:
-        bot.group_memory_enabled = body.group_memory_enabled
-    if body.member_memory_enabled is not None:
-        bot.member_memory_enabled = body.member_memory_enabled
     if body.group_response_mode is not None:
         if body.group_response_mode not in {"reply_all", "reply_mentions", "record_only"}:
             raise HTTPException(400, "无效的群聊回应方式")
@@ -183,9 +175,9 @@ async def update_my_bot(
     if bot.group_requires_at is False and body.group_response_mode is None:
         bot.group_read_enabled = False
     if body.group_allowed_tools is not None:
-        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "inspect_images", "send_file", "group_context_search"}
+        unsupported = set(body.group_allowed_tools) - {"web_search", "http_get", "image_search", "inspect_images", "send_file", "search_similar_images", "group_context_search"}
         if unsupported:
-            raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、发网络图片和当前群上下文搜索")
+            raise HTTPException(400, "当前群成员只支持网页搜索、网页阅读、图片搜索、相似图搜索、发网络图片和当前群上下文搜索")
         bot.group_allowed_tools = list(dict.fromkeys(body.group_allowed_tools))
     for field in ("group_message_format", "private_message_format"):
         value = getattr(body, field)
@@ -197,7 +189,7 @@ async def update_my_bot(
     await db.refresh(bot)
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_gateway()
+    await _touch_supervisor()
     return _out(bot)
 
 
@@ -221,4 +213,4 @@ async def delete_my_bot(
         pass
     from app.core import events
     await events.bump_context_revision(current_user.id, "im_channels")
-    await _touch_gateway()
+    await _touch_supervisor()

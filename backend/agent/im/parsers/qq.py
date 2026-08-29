@@ -54,9 +54,10 @@ def _contains_qq_face(text: str) -> bool:
 
 
 def _extract_qq_faces(text: str) -> list[dict[str, str]]:
-    """提取表情协议的身份字段，供后续媒体关联逻辑使用。
+    """提取表情协议的身份字段，供入站探针确认 ID 与图片附件的对应关系。
 
-    这里只返回协议字段，不解码 ext，也不负责把 ID 绑定到附件。
+    这里只返回协议字段，不解码 ext，也不负责把 ID 绑定到附件；Phase 0 期间先
+    观察真实 QQ payload，避免在映射关系未确认前缓存错图片。
     """
     return [
         {

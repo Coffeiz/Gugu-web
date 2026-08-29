@@ -1,7 +1,6 @@
 import type { Ref } from 'vue'
 import { trashApi, type TrashFolderContents, type TrashFolderMeta } from '@/services/api'
 import type { FileMeta } from '@/stores/filesCache'
-import { confirmDialog } from '@/composables/useConfirmDialog'
 
 interface TrashApi {
   restore: (id: number) => Promise<unknown>
@@ -128,7 +127,7 @@ export function useFileLibraryTrashActions(options: FileLibraryTrashActionOption
   }
 
   async function emptyTrash() {
-    if (!await confirmDialog({ title: '清空回收站', message: '所有文件将被永久删除，无法恢复。', tone: 'danger', confirmText: '永久删除' })) return
+    if (!window.confirm('清空回收站？所有文件将被永久删除，无法恢复。')) return
     try {
       await api.empty()
       options.loadContents()

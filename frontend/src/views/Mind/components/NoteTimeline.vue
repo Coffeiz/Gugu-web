@@ -2,8 +2,8 @@
   <!-- 横置时间流：一天一列（左旧右新，今天在最右），列内便签上新下旧。
        没便签的日期不出列——时间轴压缩，不摆空列。列内溢出自己竖滚。
        每列一块玻璃底板（同定时任务 .panel.glass-card 的轻玻璃，背后是静态页面背景，安全）。 -->
-  <div ref="root" class="timeline-cols">
-    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g)]" class="tl-col glass-card" :data-date="g.date">
+  <div class="timeline-cols">
+    <section v-for="(g, i) in groups" :key="g.date" v-memo="[dayMemo(g), columnVisualKey(i)]" class="tl-col glass-card" :data-date="g.date" :style="columnStyle(i)">
       <div class="tl-col-head">
         <span class="tl-day" :class="{ today: g.date === todayIso }">{{ +g.date.slice(8, 10) }}</span>
         <span class="tl-day-side">
@@ -40,13 +40,14 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUpdated, ref } from 'vue'
+import { ref } from 'vue'
 import type { MindNote } from '@/services/api'
 import { localDayKey } from '@/utils/dateAttribution'
 import NoteCard from './NoteCard.vue'
 
 const props = defineProps<{
   groups: { date: string; items: MindNote[] }[]
+  centerFrac: number
   highlightId: number | null
   filtered: boolean
 }>()
@@ -61,14 +62,6 @@ const emit = defineEmits<{
 
 const editingId = ref<number | null>(null)
 const conflict  = ref(false)
-const root = ref<HTMLElement | null>(null)
-let columnEls: HTMLElement[] = []
-let lastColumnStyles: Array<{ transform: string; filter: string; zIndex: string } | undefined> = []
-
-function refreshColumnEls() {
-  columnEls = root.value ? [...root.value.querySelectorAll<HTMLElement>('.tl-col')] : []
-  lastColumnStyles = []
-}
 
 function onColumnScroll(event: Event) {
   const el = event.currentTarget as HTMLElement
@@ -102,10 +95,10 @@ function dayMemo(group: { date: string; items: MindNote[] }) {
 }
 
 /** 真实列坐标不变，只压缩视觉卡片：越远越小、越靠中心越密，边缘沉到后方。 */
-function columnStyle(index: number, centerFrac: number) {
-  const distance = Math.abs(index - centerFrac)
+function columnStyle(index: number) {
+  const distance = Math.abs(index - props.centerFrac)
   const capped = Math.min(distance, 5)
-  const direction = index === centerFrac ? 0 : index < centerFrac ? 1 : -1
+  const direction = index === props.centerFrac ? 0 : index < props.centerFrac ? 1 : -1
   // 列本身的布局步长是 COL_WIDTH 宽 + 14px 间距；视觉中心距按缩放后的卡宽压缩，避免缩小后
   // 留白。每段步长依次收窄（1x→0.825x→0.6x→0.375x，跟 COL_WIDTH 成比例），越往边缘挤得
   // 越紧，不是匀速压缩——这组比例是调过的视觉曲线，改 COL_WIDTH（连带改 CSS .tl-col 的
@@ -129,25 +122,11 @@ function columnStyle(index: number, centerFrac: number) {
   }
 }
 
-/**
- * 连续滑动位置不进入 Vue 的响应式 patch 链路，避免每个 frame 重新更新 NoteCard。
- * 内容变化仍由 Vue 管理，景深动画只直接更新日期列的视觉样式。
- */
-function updateColumnVisual(centerFrac: number) {
-  if (!columnEls.length) refreshColumnEls()
-  for (let i = 0; i < columnEls.length; i++) {
-    const el = columnEls[i]
-    const style = columnStyle(i, centerFrac)
-    const previous = lastColumnStyles[i]
-    if (previous
-      && previous.transform === style.transform
-      && previous.filter === style.filter
-      && previous.zIndex === style.zIndex) continue
-    el.style.transform = style.transform
-    el.style.filter = style.filter
-    el.style.zIndex = style.zIndex
-    lastColumnStyles[i] = style
-  }
+/** 只有中心附近的列随连续位置重绘；远侧卡片维持同一压缩状态。 */
+function columnVisualKey(index: number) {
+  const distance = index - props.centerFrac
+  if (Math.abs(distance) >= 5) return distance < 0 ? 'far-left' : 'far-right'
+  return Math.round(distance * 100) / 100
 }
 
 const WEEK = ['日', '一', '二', '三', '四', '五', '六']
@@ -160,15 +139,7 @@ function monthLabel(iso: string) {
 }
 function weekdayOf(iso: string) { return '周' + WEEK[new Date(iso + 'T00:00:00').getDay()] }
 
-onMounted(refreshColumnEls)
-onUpdated(refreshColumnEls)
-
-defineExpose({
-  flagConflict: () => { conflict.value = true },
-  confirmEdit,
-  stopEditing,
-  updateColumnVisual,
-})
+defineExpose({ flagConflict: () => { conflict.value = true }, confirmEdit, stopEditing })
 </script>
 
 <style scoped>

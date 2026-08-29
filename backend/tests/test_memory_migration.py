@@ -166,17 +166,7 @@ async def test_render_profile_no_relevance_filtering(storage):
     from agent.memory import store
     profile = [{"id": "1", "text": "条目一", "ts": 1.0}, {"id": "2", "text": "条目二", "ts": 2.0}]
     rendered = store.render_profile(profile)
-    assert "条目一" in rendered and "条目二" in rendered   # 小于直注入上限时保留稳定顺序
-
-
-async def test_render_profile_caps_direct_injection_at_fifty(storage):
-    from agent.memory import store
-
-    profile = [{"type": "note", "text": f"画像条目{i}"} for i in range(60)]
-    rendered = store.render_profile(profile)
-    assert "画像条目0" in rendered
-    assert "画像条目49" in rendered
-    assert "画像条目50" not in rendered
+    assert "条目一" in rendered and "条目二" in rendered   # 全量注入，不做衰减/退休/相关性挑选
 
 
 def test_reflection_splits_temporal_profile_into_daily():
@@ -253,7 +243,7 @@ async def test_review_patterns_majority_vote_keeps_only_consensus(storage, monke
         calls["n"] += 1
         return {"remove": list(vote_sequences[idx])}
 
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete_json)
 
     result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
 
@@ -275,7 +265,7 @@ async def test_review_patterns_all_trials_fail_to_parse_skips_user(storage, monk
     async def fake_complete_json(*a, **kw):
         return {}   # 解析不出 remove 字段
 
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.memory._llm.complete_json", fake_complete_json)
 
     result = await rm._review_patterns(UID, settings=object(), dry_run=False, trials=3, temperature=0.1)
     assert result["removed"] == 0
@@ -392,12 +382,11 @@ async def test_compress_includes_profile_and_pattern_context(storage, monkeypatc
     async def fake_sync_memory_vecs(user_id, memory_text, force=False):
         captured["synced"] = (user_id, memory_text, force)
 
-    monkeypatch.setattr("agent.context.provider_runner.complete_json", fake_complete_json)
+    monkeypatch.setattr("agent.memory.compress.complete_json", fake_complete_json)
     monkeypatch.setattr("agent.memory.store.sync_memory_vecs", fake_sync_memory_vecs)
 
     ok = await compress.compact(UID, SimpleNamespace())
     assert ok is True
-    assert "已有的长期记忆" in captured["user"]
     assert "已结构化的用户画像" in captured["user"]
     assert "用户住南京" in captured["user"]
     assert "已结构化的行为模式" in captured["user"]

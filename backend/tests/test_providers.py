@@ -8,9 +8,7 @@
 """
 from types import SimpleNamespace
 
-import pytest
-
-from agent.providers import adapter_for, capability_snapshot
+from agent.providers import adapter_for
 
 
 def _ai(provider: str = "", model: str = "", base_url: str = "") -> SimpleNamespace:
@@ -35,36 +33,6 @@ def test_adapter_for_qwen_keeps_known_openai_cache_capability():
     a = adapter_for(_ai(provider="qwen", model="qwen-max"))
     assert a.name == "qwen"
     assert a.supports_active_cache("qwen-max")
-
-
-def test_bailian_qwen3_capabilities_and_thinking_toggle():
-    adapter = adapter_for(_ai(provider="qwen", model="qwen3.8-max"))
-    assert adapter.capabilities("qwen3.8-max").thinking
-    assert adapter.capabilities("qwen3.8-max").structured_json
-    assert adapter.capabilities("qwen3.8-max").structured_schema
-    assert adapter.supports_explicit_cache("qwen3.6-flash")
-    assert adapter.uses_single_history_cache_anchor("qwen3.6-flash")
-    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
-        provider="qwen", model="qwen3.8-max", thinking="disabled"
-    )) == {"extra_body": {"enable_thinking": False}}
-    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
-        provider="qwen", model="qwen3.8-max", thinking="adaptive"
-    )) == {"extra_body": {"preserve_thinking": True}}
-    assert adapter.build_structured_output(SimpleNamespace(
-        provider="qwen", model="qwen3.8-max"
-    ), {"type": "object"}) == {
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": "gugu_output", "schema": {"type": "object"}},
-        }
-    }
-
-
-def test_bailian_legacy_qwen_does_not_receive_qwen3_parameters():
-    adapter = adapter_for(_ai(provider="qwen", model="qwen-max"))
-    ai = SimpleNamespace(provider="qwen", model="qwen-max", thinking="disabled")
-    assert adapter.build_thinking_params(ai) == {}
-    assert adapter.build_structured_output(ai) == {}
 
 
 def test_adapter_for_mimo_by_provider():
@@ -92,167 +60,12 @@ def test_adapter_for_deepseek_by_provider():
     assert a.name == "deepseek"
     assert a.api_format == "openai"
     assert a.supports_active_cache("")
-    assert a.supports_explicit_cache("")
     assert a.supports_thinking_toggle
-
-
-def test_unknown_openai_compatible_provider_uses_explicit_history_cache():
-    adapter = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
-    assert adapter.supports_active_cache("")
-    assert adapter.supports_explicit_cache("")
-
-
-def test_adapter_for_glm_uses_openai_compatible_endpoint():
-    adapter = adapter_for(_ai(provider="glm", model="glm-5.2"))
-    assert adapter.name == "glm"
-    assert adapter.api_format == "openai"
-    assert adapter.resolve_base_url(SimpleNamespace(provider="glm", base_url="")) == \
-        "https://open.bigmodel.cn/api/paas/v4"
-    assert adapter.capabilities("glm-5.2").thinking
-    assert adapter.capabilities("glm-5.2").tools
-    assert not adapter.supports_active_cache("glm-5.2")
-
-
-def test_glm_thinking_parameters_are_model_scoped():
-    adapter = adapter_for(_ai(provider="glm"))
-    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
-        provider="glm", model="glm-5.2", thinking="adaptive"
-    )) == {"extra_body": {"thinking": {"type": "enabled"}}}
-    assert adapter.build_openai_thinking_kwargs(SimpleNamespace(
-        provider="glm", model="glm-5.2", thinking="disabled"
-    )) == {"extra_body": {"thinking": {"type": "disabled"}}}
-    assert adapter.build_thinking_params(SimpleNamespace(
-        provider="glm", model="glm-4-air", thinking="adaptive"
-    )) == {}
-
-
-def test_adapter_for_glm_by_base_url_fallback():
-    assert adapter_for(_ai(base_url="https://open.bigmodel.cn/api/paas/v4")).name == "glm"
-
-
-def test_adapter_for_glm_coding_plan_uses_dedicated_endpoint():
-    adapter = adapter_for(_ai(provider="glm-coding", model="glm-5.2"))
-    assert adapter.name == "glm-coding"
-    assert adapter.resolve_base_url(SimpleNamespace(provider="glm-coding", base_url="")) == \
-        "https://open.bigmodel.cn/api/coding/paas/v4"
-    assert adapter.capabilities("glm-5.2").tools
-    assert not adapter.capabilities("glm-5.2").vision
-    assert adapter_for(_ai(base_url="https://open.bigmodel.cn/api/coding/paas/v4")).name == "glm-coding"
-
-
-def test_cache_capabilities_are_separate_by_provider():
-    deepseek = adapter_for(_ai(provider="deepseek", model="deepseek-chat")).cache_capabilities("deepseek-chat")
-    qwen = adapter_for(_ai(provider="qwen", model="qwen3.6-flash")).cache_capabilities("qwen3.6-flash")
-    minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3")).cache_capabilities("MiniMax-M3")
-    assert deepseek.automatic_prefix_cache and deepseek.explicit_cache_control
-    assert qwen.automatic_prefix_cache and qwen.explicit_cache_control and qwen.single_history_anchor
-    assert minimax.automatic_prefix_cache
 
 
 def test_adapter_for_deepseek_by_base_url_fallback():
     a = adapter_for(_ai(base_url="https://api.deepseek.com/v1"))
     assert a.name == "deepseek"
-
-
-def test_deepseek_vision_capability_is_limited_to_vision_model():
-    adapter = adapter_for(_ai(provider="deepseek"))
-    assert adapter.capabilities("deepseek-v4-flash-vision-exp").vision
-    assert not adapter.capabilities("deepseek-v4-flash").vision
-
-
-def test_deepseek_thinking_uses_official_openai_parameter_split():
-    adapter = adapter_for(_ai(provider="deepseek"))
-    ai = SimpleNamespace(provider="deepseek", thinking="adaptive", reasoning_effort="low")
-    assert adapter.build_openai_thinking_kwargs(ai) == {
-        "extra_body": {"thinking": {"type": "enabled"}},
-        "reasoning_effort": "low",
-    }
-    assert adapter.build_openai_thinking_kwargs(
-        SimpleNamespace(provider="deepseek", thinking="disabled", reasoning_effort="max")
-    ) == {"extra_body": {"thinking": {"type": "disabled"}}}
-    assert adapter.build_anthropic_thinking_params(ai) == {
-        "thinking": {"type": "enabled"},
-        "output_config": {"effort": "low"},
-    }
-
-
-def test_adapter_for_ollama_local_and_cloud_defaults():
-    adapter = adapter_for(_ai(provider="ollama", model="qwen3:8b"))
-    assert adapter.name == "ollama"
-    assert adapter.api_format == "openai"
-    assert adapter.resolve_base_url(SimpleNamespace(provider="ollama", base_url="")) == \
-        "http://127.0.0.1:11434/api"
-    assert adapter.resolve_base_url(SimpleNamespace(provider="ollama", base_url="", ollama_mode="cloud")) == \
-        "https://ollama.com/api"
-
-
-def test_ollama_openai_compatibility_keeps_v1_endpoint():
-    adapter = adapter_for(_ai(provider="ollama"))
-    assert adapter.resolve_base_url(SimpleNamespace(
-        provider="ollama", base_url="", ollama_mode="local", ollama_api_mode="openai")) == \
-        "http://127.0.0.1:11434/v1"
-
-
-def test_ollama_native_request_builders():
-    adapter = adapter_for(_ai(provider="ollama"))
-    ai = SimpleNamespace(provider="ollama", model="qwen3:8b", api_key="", ollama_api_mode="native")
-    assert adapter.diagnostic_request(ai)["path"] == "/chat"
-    assert adapter.models_request(ai)["path"] == "/tags"
-
-
-def test_adapter_for_ollama_by_local_base_url():
-    assert adapter_for(_ai(base_url="http://127.0.0.1:11434/v1")).name == "ollama"
-
-
-def test_ollama_openai_compatibility_parameters():
-    adapter = adapter_for(_ai(provider="ollama"))
-    assert adapter.build_thinking_params(SimpleNamespace(provider="ollama", thinking="disabled")) == {
-        "reasoning_effort": "none"}
-    assert adapter.build_thinking_params(SimpleNamespace(
-        provider="ollama", thinking="adaptive", reasoning_effort="high")) == {
-        "reasoning_effort": "high"}
-    assert adapter.build_thinking_params(SimpleNamespace(
-        provider="ollama", thinking="adaptive", reasoning_effort="unsupported")) == {
-        "reasoning_effort": "medium"}
-    assert adapter.build_structured_output(SimpleNamespace(provider="ollama")) == {
-        "response_format": {"type": "json_object"}}
-
-
-def test_local_runtime_defaults_and_conservative_capabilities():
-    adapter = adapter_for(SimpleNamespace(provider="local", local_runtime="vllm", base_url=""))
-    assert adapter.name == "local"
-    assert adapter.resolve_base_url(SimpleNamespace(
-        provider="local", local_runtime="vllm", base_url="")) == "http://127.0.0.1:8000/v1"
-    assert adapter.capabilities("local-model").tools is False
-
-
-def test_local_base_url_rejects_embedded_credentials_and_non_http():
-    adapter = adapter_for(SimpleNamespace(provider="local"))
-    with pytest.raises(ValueError):
-        adapter.resolve_base_url(SimpleNamespace(provider="local", base_url="https://user:pass@example.test/v1"))
-    with pytest.raises(ValueError):
-        adapter.resolve_base_url(SimpleNamespace(provider="local", base_url="file:///tmp/model"))
-
-
-def test_local_capability_override_is_exposed_without_credentials():
-    snapshot = capability_snapshot(SimpleNamespace(
-        provider="local", model="local-model", local_runtime="llama.cpp",
-        capability_overrides={"tools": True, "structured_json": True}, api_key="secret"))
-    assert snapshot["tools"] is True
-    assert snapshot["structured_json"] is True
-    assert snapshot["overrides"] == {"tools": True, "structured_json": True}
-    assert "api_key" not in snapshot
-
-
-def test_llama_cpp_enables_runtime_prompt_cache_without_active_provider_cache():
-    adapter = adapter_for(_ai(provider="local"))
-    llama = SimpleNamespace(provider="local", local_runtime="llama.cpp")
-    vllm = SimpleNamespace(provider="local", local_runtime="vllm")
-
-    assert adapter.build_openai_cache_kwargs(llama) == {
-        "extra_body": {"cache_prompt": True}}
-    assert adapter.build_openai_cache_kwargs(vllm) == {}
-    assert not adapter.supports_active_cache("")
 
 
 def test_adapter_for_unknown_provider_falls_back_to_default():
@@ -268,100 +81,5 @@ def test_adapter_for_unknown_provider_falls_back_to_default():
 def test_adapter_for_truly_unknown_provider_also_falls_back_to_default():
     a = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
     assert a.name == "unknown"
-    assert a.supports_active_cache("")
-    assert a.supports_explicit_cache("")
+    assert not a.supports_active_cache("")
     assert a.transient_exceptions == ()
-
-
-def test_provider_capabilities_and_request_builders_are_model_scoped():
-    mimo = adapter_for(_ai(provider="mimo"))
-    deepseek = adapter_for(_ai(provider="deepseek"))
-    qwen = adapter_for(_ai(provider="qwen", model="qwen3.5-flash"))
-
-    assert mimo.capabilities().structured_json
-    assert mimo.build_structured_output(_ai(provider="mimo")) == {
-        "response_format": {"type": "json_object"}}
-    assert deepseek.build_thinking_params(SimpleNamespace(provider="deepseek", thinking="disabled")) == {
-        "thinking": {"type": "disabled"}}
-    assert qwen.build_thinking_params(SimpleNamespace(provider="qwen", thinking="disabled")) == {}
-
-
-def test_provider_media_and_stream_capabilities_are_centralized():
-    mimo = adapter_for(_ai(provider="mimo"))
-    minimax = adapter_for(_ai(provider="minimax", model="MiniMax-M3"))
-
-    assert "mp3" in mimo.audio_native_exts()
-    assert minimax.supports_video("MiniMax-M3")
-    assert minimax.stream_sanitize_markers() == ("]<]minimax", "[e~[")
-
-
-def test_capability_matrix_for_supported_providers_is_explicit():
-    cases = {
-        "anthropic": {"api_format": "anthropic", "cache_mode": "active", "tools": True},
-        "qwen": {"api_format": "openai", "cache_mode": "active", "thinking": False,
-                 "structured_json": False, "tools": True},
-        "minimax": {"api_format": "anthropic", "cache_mode": "active", "tools": True},
-        "mimo": {"api_format": "openai", "cache_mode": "none", "thinking": True,
-                 "structured_json": True, "audio": True, "video": True},
-        "deepseek": {"api_format": "openai", "cache_mode": "active", "thinking": True,
-                     "structured_json": True, "tools": True},
-        "ollama": {"api_format": "openai", "cache_mode": "none", "tools": True},
-    }
-    for provider, expected in cases.items():
-        actual = capability_snapshot(_ai(provider=provider, model="MiniMax-M3" if provider == "minimax" else ""))
-        for key, value in expected.items():
-            assert actual[key] == value, (provider, key, actual)
-
-
-def test_capability_snapshot_keeps_probe_separate_and_contains_no_credentials():
-    ai = SimpleNamespace(provider="mimo", model="mimo-v2", api_key="secret-key")
-    snapshot = capability_snapshot(ai)
-    assert snapshot["provider"] == "mimo"
-    assert snapshot["model"] == "mimo-v2"
-    assert "api_key" not in snapshot
-    assert "probe" not in snapshot
-
-
-def test_request_snapshots_do_not_add_unsupported_provider_parameters():
-    qwen = adapter_for(_ai(provider="qwen"))
-    unknown = adapter_for(_ai(provider="some-other-openai-compatible-vendor"))
-    ai = SimpleNamespace(provider="qwen", thinking="adaptive")
-    assert qwen.build_thinking_params(ai) == {}
-    assert qwen.build_structured_output(ai) == {}
-    assert unknown.build_thinking_params(ai) == {}
-    assert unknown.build_structured_output(ai) == {}
-    assert unknown.build_tool_params(ai, []) == {}
-    assert unknown.build_tool_params(ai, [{"type": "function", "function": {"name": "ping"}}]) == {
-        "tools": [{"type": "function", "function": {"name": "ping"}}],
-        "tool_choice": "auto",
-    }
-
-
-def test_diagnostic_request_builder_keeps_protocol_and_auth_provider_local():
-    mimo = adapter_for(SimpleNamespace(provider="mimo"))
-    anthropic = adapter_for(SimpleNamespace(provider="anthropic"))
-    mimo_req = mimo.diagnostic_request(SimpleNamespace(provider="mimo", model="mimo-v2", api_key="k"))
-    anthropic_req = anthropic.diagnostic_request(
-        SimpleNamespace(provider="anthropic", model="claude-test", api_key="k"))
-    assert mimo_req["path"] == "/chat/completions"
-    assert mimo_req["headers"] == {"content-type": "application/json", "api-key": "k"}
-    assert anthropic_req["path"] == "/messages"
-    assert anthropic_req["headers"]["x-api-key"] == "k"
-    assert anthropic_req["payload"]["model"] == "claude-test"
-
-
-def test_diagnostic_request_expands_openai_provider_extra_body():
-    qwen = adapter_for(SimpleNamespace(provider="qwen"))
-    request = qwen.diagnostic_request(SimpleNamespace(
-        provider="qwen", model="qwen3.8-max", api_key="k", thinking="disabled"
-    ))
-    assert request["payload"]["enable_thinking"] is False
-
-
-def test_models_request_builder_uses_provider_protocol_path():
-    anthropic = adapter_for(SimpleNamespace(provider="anthropic"))
-    openai = adapter_for(SimpleNamespace(provider="qwen"))
-    assert anthropic.models_request(SimpleNamespace(
-        provider="anthropic", base_url="https://api.anthropic.com", api_key="k"))["path"] == "/v1/models"
-    assert openai.models_request(SimpleNamespace(
-        provider="qwen", base_url="https://dashscope.example/v1", api_key="k"))["path"] == "/models"

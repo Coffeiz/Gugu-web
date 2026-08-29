@@ -244,21 +244,3 @@ async def test_permanent_delete_cross_user(db, user_a, user_b):
     res = await _permanent_delete(db, user_a.id, {"file_id": f.id, "confirm": True})
     assert _is_err(res)
     assert await db.get(File, f.id) is not None   # 即便带了 confirm 也删不掉别人的
-
-
-async def test_permanent_delete_folder_uses_folder_id_and_removes_folder(db, user_a):
-    folder = await _mk(db, Folder(
-        user_id=user_a.id, name="待清理目录", deleted_at=now_utc()))
-
-    blocked = await _permanent_delete(db, user_a.id, {"folder_id": folder.id})
-    payload = json.loads(blocked)
-    assert payload.get("needs_confirm") is True
-
-    result = await _permanent_delete(db, user_a.id, {
-        "folder_id": folder.id,
-        "confirm": True,
-        "confirm_token": payload["confirm_token"],
-    })
-    assert result["success"] is True
-    assert result["deleted_folder_id"] == folder.id
-    assert await db.get(Folder, folder.id) is None

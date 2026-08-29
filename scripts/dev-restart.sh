@@ -2,19 +2,17 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # dev 机后端重启（「手动当唯一主人」方案 B：免 sudo、不走 systemd）。
 #
-# 干净重启 web / worker / gateway：先停旧 + **抢占式腾端口 8000**，再起新，
+# 干净重启 web / worker / supervisor：先停旧 + **抢占式腾端口 8000**，再起新，
 # 不用每次手动 pkill、也不会和别的实例抢端口报「address already in use」。
 #
 #   ⚠️ 前提：systemd 的 gugu-backend 必须 disabled/stopped（dev 机只一个主人）。
 #       若它在跑，先 `sudo systemctl disable --now gugu-backend`，否则又会抢 8000。
 #
 # 用法（在 dev 机上跑）：
-#   bash scripts/dev-restart.sh            # 重启全部（web + worker + gateway）
+#   bash scripts/dev-restart.sh            # 重启全部（web + worker + supervisor）
 #   bash scripts/dev-restart.sh web        # 只重启 web
 #   bash scripts/dev-restart.sh worker
-#   bash scripts/dev-restart.sh gateway
-#
-#   TypeScript Live 由 gugu-live.service 管理，不由这个 Python 开发脚本启动。
+#   bash scripts/dev-restart.sh supervisor
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 WHAT="${1:-all}"
@@ -52,21 +50,21 @@ start_worker() {
     || { pgrep -f "python -m worker" >/dev/null && echo "[worker] up（起来了）" || echo "[worker] 没起来，看 logs/gugu-worker-dev.log"; }
 }
 
-start_gateway() {
-  echo "[gateway] 停旧（含 qq/feishu/wechat 网关）+ 启动 …"
-  pkill -9 -f "agent.gateway.gateway|agent.gateway.feishu|agent.gateway.qq|agent.gateway.wechat" 2>/dev/null
+start_supervisor() {
+  echo "[supervisor] 停旧（含 qq/feishu/wechat 网关）+ 启动 …"
+  pkill -9 -f "agent.adapters.supervisor|agent.adapters.feishu|agent.adapters.qq|agent.adapters.wechat" 2>/dev/null
   sleep 1
-  nohup setsid LOOPSCOPE_ENABLED=1 "$PY" -m agent.gateway.gateway >> logs/gugu-gateway-dev.log 2>&1 < /dev/null &
+  nohup setsid LOOPSCOPE_ENABLED=1 "$PY" -m agent.adapters.supervisor >> logs/gugu-supervisor-dev.log 2>&1 < /dev/null &
   disown 2>/dev/null || true
   sleep 3
-  grep -qE "网关就绪|网关启动" logs/gugu-gateway-dev.log 2>/dev/null && echo "[gateway] 网关已起" || echo "[gateway] 启动中（看 logs/gugu-gateway-dev.log）"
+  grep -qE "网关就绪|网关启动" logs/gugu-supervisor-dev.log 2>/dev/null && echo "[supervisor] 网关已起" || echo "[supervisor] 启动中（看 logs/gugu-supervisor-dev.log）"
 }
 
 case "$WHAT" in
   web)        start_web ;;
   worker)     start_worker ;;
-  gateway) start_gateway ;;
-  all)        start_web; start_worker; start_gateway ;;
-  *) echo "用法: bash scripts/dev-restart.sh [web|worker|gateway|all]"; exit 1 ;;
+  supervisor) start_supervisor ;;
+  all)        start_web; start_worker; start_supervisor ;;
+  *) echo "用法: bash scripts/dev-restart.sh [web|worker|supervisor|all]"; exit 1 ;;
 esac
 echo "✅ 完成（$WHAT）"

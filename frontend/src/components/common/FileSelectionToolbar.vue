@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import {
+  PhCheck,
+  PhCopy,
+  PhDownloadSimple,
+  PhScissors,
+  PhTrash,
+} from '@phosphor-icons/vue'
+
 defineProps({
   fileCount: { type: Number, default: 0 },
   folderCount: { type: Number, default: 0 },
@@ -25,33 +32,33 @@ const emit = defineEmits<{
 
     <template v-if="trash">
       <button class="file-selection-btn" @click="emit('restore')">
-        <Icon name="status.success" :size="compact ? 11 : 12" />
+        <PhCheck :size="compact ? 11 : 12" weight="bold" />
         恢复选中
       </button>
       <button class="file-selection-btn danger" @click="emit('permanentDelete')">
-        <Icon name="action.delete" :size="compact ? 11 : 12" />
+        <PhTrash :size="compact ? 11 : 12" weight="bold" />
         永久删除
       </button>
     </template>
 
     <template v-else>
       <button class="file-selection-btn" :disabled="downloading" @click="emit('download')">
-        <Icon name="action.download" v-if="!downloading" :size="compact ? 11 : 12" />
+        <PhDownloadSimple v-if="!downloading" :size="compact ? 11 : 12" weight="bold" />
         <span v-else class="file-selection-spinner" />
         {{ downloading ? '下载中…' : '下载' }}
       </button>
       <span class="file-selection-divider" />
       <button class="file-selection-btn" @click="emit('cut')">
-        <Icon name="action.cut" :size="compact ? 11 : 12" />
+        <PhScissors :size="compact ? 11 : 12" weight="bold" />
         剪切
       </button>
       <button class="file-selection-btn" @click="emit('copy')">
-        <Icon name="action.copy" :size="compact ? 11 : 12" />
+        <PhCopy :size="compact ? 11 : 12" weight="bold" />
         复制
       </button>
       <span class="file-selection-divider" />
       <button class="file-selection-btn danger" @click="emit('delete')">
-        <Icon name="action.delete" :size="compact ? 11 : 12" />
+        <PhTrash :size="compact ? 11 : 12" weight="bold" />
         删除
       </button>
     </template>

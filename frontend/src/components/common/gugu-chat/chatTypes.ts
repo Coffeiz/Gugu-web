@@ -3,10 +3,6 @@
 // 不强行收紧成必填。
 export interface ChatMessage {
   id: number
-  /** 仅用于从 API 恢复工具/交互时间线，不参与发送。 */
-  _createdAt?: string
-  /** 持久化/实时统一的时间线顺序；旧消息缺失时回退到 createdAt。 */
-  _timelineOrder?: number
   dbId?: number
   role: string
   text: string
@@ -22,27 +18,6 @@ export interface ChatMessage {
   _greeting?: boolean
   _greetAnimated?: boolean
   _greetFull?: string
-  // Agent 交互协议：工具调用作为独立消息行展示，不混入助手正文。
-  runId?: string
-  roundId?: string
-  toolCallId?: string
-  toolName?: string
-  toolLabel?: string
-  toolStatus?: 'running' | 'waiting' | 'success' | 'error' | 'skipped'
-  toolInput?: unknown
-  toolResult?: unknown
-  toolDurationMs?: number
-  _toolStartedAt?: number
-  interaction?: {
-    promptId: number
-    kind: string
-    toolCallId?: string | null
-    title: string
-    body: string
-    options: Array<{ id: string; label: string; token: string }>
-    resolved?: boolean
-    selectedOptionId?: string | null
-  }
 }
 
 // 聊天附件（暂存上传 attach_id / 已落库 file_id 两种来源共用的松散形状，字段来自不同
@@ -70,9 +45,6 @@ export interface ChatSession {
   title: string
   source?: string
   chatType?: string
-  workspaceName?: string | null
-  goalActive?: boolean
-  goalStatus?: 'active' | 'paused' | null
   // /agent/sessions 已返回这两个 ISO 时间；侧栏用 updatedAt 显示“最后对话时间”。
   updatedAt?: string
   createdAt?: string

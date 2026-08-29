@@ -173,12 +173,12 @@ defineExpose({ show })
 .btn-cancel:hover { background: rgba(255,255,255,0.88); color: var(--text-primary); }
 .btn-confirm {
   padding: 8px 22px; border-radius: var(--radius-sm);
-  background: var(--action-primary-bg);
-  border: none; color: var(--content-on-accent);
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border: none; color: white;
   font-size: 13px; font-weight: 600;
   cursor: pointer; font-family: var(--font-sans);
-  box-shadow: none;
-  transition: background-color 0.15s;
+  box-shadow: 0 3px 12px rgba(123,127,178,0.3);
+  transition: opacity 0.15s;
 }
-.btn-confirm:hover { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-confirm:hover { opacity: 0.85; }
 </style>

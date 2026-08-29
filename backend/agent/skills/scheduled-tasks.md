@@ -1,9 +1,6 @@
 ---
 name: 定时任务
-description_short: 用户要设置定时提醒、周期任务或到点执行时使用。
-description_long: "要设定时/周期任务、或要「到点提醒/提前X分钟叫我」时，怎么用 *_scheduled_task 建任务、cron 怎么写、渠道怎么选、日历提醒怎么配。场景：create/update/delete scheduled_task、一次性 @once、提醒。"
-category: scheduling
-related_tools: list_scheduled_tasks, create_scheduled_task, update_scheduled_task, delete_scheduled_task
+description: "要设定时/周期任务、或要「到点提醒/提前X分钟叫我」时，怎么用 *_scheduled_task 建任务、cron 怎么写、渠道怎么选、日历提醒怎么配。场景：create/update/delete scheduled_task、一次性 @once、提醒。"
 emoji: ⏰
 ---
 
@@ -11,14 +8,10 @@ emoji: ⏰
 
 ## 建 / 改 / 删
 - `create_scheduled_task` **一次带齐** name + instruction + cron + channels，别多轮试探。
-- 参数必须遵守工具 schema：`channels` 是字符串数组，不是字符串，也不是对象。QQ 示例：`channels=["qq"]`；多渠道示例：`channels=["web", "qq"]`。不要写 `channels="qq"`、`channels={"item":"qq"}` 或额外添加 `item` 字段。
-- 创建示例：`{"name":"GTA6 首播提醒","instruction":"提醒我查看首播资讯","cron":"@once:2026-08-28T08:50:00","channels":["qq"]}`。修改渠道时同样传数组，例如 `{"task":"GTA6 首播提醒","channels":["qq"]}`。
 - **cron 你直接生成**（「分 时 日 月 周」，Asia/Shanghai）：每天 9 点 `0 9 * * *`、每周一 `* * * * 1`、只跑一次 `@once:2026-06-30T09:00`。
 - **对用户只说人话时间**（「每天早上 9 点」「6 月 30 号 9 点」），**绝不把 cron 串甩给用户**——那是内部格式。
 - 改 / 停 / 删**直接用任务名**定位（`task="每天进度"`），不用先 list；歧义时工具会回候选。
 - 建 / 改前把「几点、做什么、发哪个渠道」**复述确认**再落（到点无人值守自动跑）。
-- 如果只修改 `delivery_mode` 或 `enabled`，不要为了凑参数传空的 `channels`；不修改的字段直接省略。参数校验失败后先按 `issues` 和 schema hint 修正一次，不要原样重复提交。
-- 删除任务收到确认后，`confirm` 必须传 JSON 布尔值 `true`，不是字符串 `"true"`；同时保留 `confirm_token`。工具参数中的数组、布尔值和数字都不要包成字符串。
 
 ## 渠道
 - 设 `feishu` / `qq` / `wechat` 渠道前，先确认用户绑了对应 IM，否则到点投递不到、白设；**默认 `web` 站内通知最稳**。

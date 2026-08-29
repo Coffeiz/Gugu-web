@@ -61,15 +61,11 @@ Thumbs.db
 .settings/
 
 # ===== 项目特定 =====
-# 本机开发连接、代理和凭据信息，不入版本控制
-agentskills/local/
 docs/development/local.md
 
 # 用户上传文件（运行时产生，不入版本控制）—— 含咕咕私有记忆 .agent/
 uploads/
 backend/uploads/
-# 统一用户数据根目录（运行时文件、缩略图和私有 .agent/，不入版本控制）
-Gugu-data/
 # 进程 PID 文件（运行时产生）
 *.pid
 # 备份文件
@@ -89,18 +85,8 @@ frontend/nohup.out
 # RAG 压测生成的本地 Embedding 缓存（按当前模型可重建）
 backend/scripts/.bench_rag_embeddings.json
 
-# Rust RAG sidecar 构建产物
-/rust/target/
-
-# TypeScript RAG 本地依赖与可重建索引；部署只消费 backend/bin 中的稳定构建物
-/backend/bin/node_modules/
-/backend/ts/**/node_modules/
-/backend/ts/bin/
-/backend/var/rag-ts-index/
-
 # QQ 引用索引（运行时聊天正文、身份和媒体 URL，不入版本控制）
 /backend/data/qq-ref-index/
-/backend/data/.byok-master-key
 
 # 部署打包产物
 backend.zip

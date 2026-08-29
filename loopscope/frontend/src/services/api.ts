@@ -10,38 +10,16 @@ export async function listTraceSessions() {
   return r.json()
 }
 
-export async function listRuns(
-  sessionId: number | string,
-  source = 'web',
-  options: { limit?: number; before?: number } = {},
-): Promise<TraceRun[]> {
+export async function listRuns(sessionId: number | string, source = 'web'): Promise<TraceRun[]> {
   const key = encodeURIComponent(`gugu:${source}:${sessionId}`)
-  const query = new URLSearchParams()
-  if (options.limit !== undefined) query.set('limit', String(options.limit))
-  if (options.before !== undefined) query.set('before', String(options.before))
-  const suffix = query.toString() ? `?${query.toString()}` : ''
-  const r = await fetch(`${BASE}/sessions/${key}/runs${suffix}`)
+  const r = await fetch(`${BASE}/sessions/${key}/runs`)
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
   return r.json()
 }
 
-export async function getRun(id: string, options: { includeSpans?: boolean } = {}): Promise<TraceRun> {
-  const query = options.includeSpans === undefined ? '' : `?include_spans=${options.includeSpans ? 'true' : 'false'}`
-  const r = await fetch(`${BASE}/runs/${encodeURIComponent(id)}${query}`)
+export async function getRun(id: string): Promise<TraceRun> {
+  const r = await fetch(`${BASE}/runs/${encodeURIComponent(id)}`)
   if (!r.ok) throw new Error(`LoopScope ${r.status}`)
-  return r.json()
-}
-
-export async function getRunSpans(
-  id: string,
-  options: { limit?: number; offset?: number } = {},
-): Promise<{ items: TraceRun['spans']; hasMore: boolean; offset: number; limit: number }> {
-  const query = new URLSearchParams()
-  if (options.limit !== undefined) query.set('limit', String(options.limit))
-  if (options.offset !== undefined) query.set('offset', String(options.offset))
-  const suffix = query.toString() ? `?${query.toString()}` : ''
-  const r = await fetch(`${BASE}/runs/${encodeURIComponent(id)}/spans${suffix}`)
-  if (!r.ok) throw new Error(`LoopScope spans ${r.status}`)
   return r.json()
 }
 

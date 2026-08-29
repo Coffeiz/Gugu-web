@@ -13,7 +13,6 @@ from __future__ import annotations
 import math
 
 from app.core.config import get_settings
-from app.core.credentials import normalize_ascii_api_key
 
 
 BAILIAN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -80,7 +79,7 @@ async def embed_multimodal(contents: list[dict | str], *, enable_fusion: bool = 
         payload["parameters"]["enable_fusion"] = True
     try:
         import httpx
-        headers = {"Authorization": f"Bearer {normalize_ascii_api_key(e.api_key, label='Embedding API Key')}"} if e.api_key else {}
+        headers = {"Authorization": f"Bearer {e.api_key}"} if e.api_key else {}
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
             response = await client.post(_multimodal_url(base_url), json=payload, headers=headers)
         if response.status_code != 200:
@@ -118,16 +117,12 @@ async def embed(text: str) -> list[float] | None:
         return None
     e = get_settings().embedding
     base_url = resolve_base_url(e.provider, e.base_url)
-    # 百炼的多模态模型不支持 OpenAI 兼容的 /embeddings 文本接口；文本内容
-    # 仍可通过多模态 endpoint 的 text content 生成同一模型空间的向量。
-    if e.multimodal and _is_bailian(e.provider, base_url):
-        return await embed_multimodal([{"text": text}], enable_fusion=False)
     payload = build_payload(e.provider, base_url, e.model, text, e.dimensions)
     try:
         import httpx
         url = base_url + "/embeddings"
         # key 为空就不发 Authorization 头（Ollama 无需鉴权；空 key 拼 "Bearer " 是非法 header）
-        headers = {"Authorization": f"Bearer {normalize_ascii_api_key(e.api_key, label='Embedding API Key')}"} if e.api_key else {}
+        headers = {"Authorization": f"Bearer {e.api_key}"} if e.api_key else {}
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as c:
             r = await c.post(url, json=payload, headers=headers)
         if r.status_code != 200:

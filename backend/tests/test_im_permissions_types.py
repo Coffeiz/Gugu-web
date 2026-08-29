@@ -20,4 +20,4 @@ async def test_non_numeric_platform_bot_id_fails_closed(monkeypatch):
 async def test_non_numeric_bot_policy_defaults_to_disabled():
     from agent.im.permissions import resolve_group_policy
 
-    assert await resolve_group_policy("platform-bot-id") == (False, True, False, True, True)
+    assert await resolve_group_policy("platform-bot-id") == (False, True, False)

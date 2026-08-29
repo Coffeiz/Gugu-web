@@ -11,14 +11,7 @@
       <div v-if="flash" class="users-flash">{{ flash }}</div>
     </Transition>
 
-    <div class="user-tabs" role="tablist">
-      <button class="user-tab" :class="{ active: activeTab === 'all' }" @click="activeTab = 'all'">全部用户</button>
-      <button class="user-tab" :class="{ active: activeTab === 'risk' }" @click="activeTab = 'risk'">风险用户</button>
-    </div>
-
-    <RiskUsersPanel v-if="activeTab === 'risk'" />
-
-    <div v-if="activeTab === 'all'" class="toolbar">
+    <div class="toolbar">
       <input
         v-model="search"
         class="search-input"
@@ -26,12 +19,12 @@
         @input="onSearch"
       />
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" title="刷新">
-        <Icon name="action.refresh" size="sm" />
+        <PhArrowClockwise :size="15" weight="bold" />
       </button>
       <span class="toolbar-count" v-if="!loading">{{ items.length }} 位用户</span>
     </div>
 
-    <div v-if="activeTab === 'all'" class="table-wrap">
+    <div class="table-wrap">
       <div v-if="loading && !items.length" class="state-empty">加载中…</div>
       <div v-else-if="!items.length" class="state-empty">暂无用户</div>
 
@@ -141,7 +134,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { localDayKey, parseUtc } from '@/utils/dateAttribution'
-import RiskUsersPanel from './components/RiskUsersPanel.vue'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore = useAdminStore()
 
@@ -154,7 +147,6 @@ const pageSize    = 20
 const deleteTarget = ref<any | null>(null)
 const flash = ref('')
 const deleting    = ref(false)
-const activeTab   = ref<'all' | 'risk'>('all')
 
 const AVATAR_COLORS = [
   ['#5a6b9e', '#8490c4'],
@@ -278,11 +270,6 @@ onMounted(load)
 
 <style scoped>
 .users-page { min-height: 100%; }
-
-.user-tabs { display: flex; gap: 4px; padding: 22px 36px 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
-.user-tab { padding: 8px 14px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: rgba(255,255,255,0.4); cursor: pointer; font-size: 13px; }
-.user-tab:hover { color: rgba(255,255,255,0.75); }
-.user-tab.active { color: rgba(210,215,255,0.95); border-bottom-color: rgba(150,165,225,0.9); }
 
 .page-header      { padding: 32px 36px 0; }
 .page-title-block { display: flex; flex-direction: column; }

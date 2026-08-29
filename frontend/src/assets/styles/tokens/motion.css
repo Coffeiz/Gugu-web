@@ -7,8 +7,7 @@
   --motion-default: var(--motion-hover-card);
   --motion-slow: 340ms;
   --motion-ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
-  /* 展开/收起统一采用先快后慢的缓出曲线，避免回弹式翻页感。 */
-  --motion-ease-emphasis: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-ease-emphasis: cubic-bezier(0.34, 1.2, 0.64, 1);
   --motion-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) {

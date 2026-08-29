@@ -7,7 +7,7 @@ html[data-theme][data-family] .sidebar {
   box-shadow: inset -1px 0 0 var(--sidebar-highlight);
   color: var(--content-primary);
 }
-html[data-theme][data-family] .sidebar .logo-icon { background: transparent; }
+html[data-theme][data-family] .sidebar .logo-icon { background: var(--brand-gradient); }
 html[data-theme][data-family] .sidebar .nav-label { color: var(--sidebar-label-fg); }
 html[data-theme][data-family] .sidebar .notif-btn { color: var(--sidebar-item-fg); }
 html[data-theme][data-family] .sidebar .notif-btn:hover { color: var(--content-primary); background: var(--sidebar-item-hover); }
@@ -30,19 +30,11 @@ html[data-theme][data-family] .sidebar .badge { background: color-mix(in srgb,va
    no scroll timeline or layout override is allowed here. */
 html[data-theme][data-family] .topbar {
   --gb-tint: var(--surface-glass);
-  /* 外框和卡片阴影已经提供唯一边界，GlassBg 不再重复画上沿/左沿高光。 */
-  --gb-highlight-strong: transparent;
-  --gb-highlight-side: transparent;
   box-shadow: var(--topbar-shadow);
 }
 html[data-theme][data-family] .topbar:hover {
   --gb-tint: var(--surface-glass-hover);
   box-shadow: var(--topbar-shadow-hover);
-}
-html[data-theme][data-family] .files-toolbar {
-  /* 文件工具栏与 topbar 使用同一条外框契约，避免 GlassBg 叠出错位的第二层边缘。 */
-  --gb-highlight-strong: transparent;
-  --gb-highlight-side: transparent;
 }
 html[data-theme][data-family] .topbar .topbar-title h1 { font-size: var(--topbar-title-size); }
 html[data-theme][data-family] .topbar .topbar-title p {
@@ -96,57 +88,82 @@ html[data-theme][data-family] .proj-card::after {
 }
 
 /* ── GuguChat ───────────────────────────────────────────────────
-   窗口根节点只负责边框、圆角和阴影；聊天主体继续沿用组件自己的背景与 blur，避免根节点
-   和 chat-main 同时铺材质导致整窗变成另一层面板。 */
+   Root owns the glass/background. This fixes the square compositor layer seen in small mode:
+   no child backdrop-filter is allowed to paint outside the rounded window. */
 html[data-theme][data-family] .chat-window {
+  overflow: hidden;
+  background: var(--gugu-chat-bg);
+  background-clip: padding-box;
   border-color: var(--gugu-chat-border);
   border-radius: var(--gugu-chat-radius);
+  corner-shape: round;
   box-shadow: var(--gugu-chat-shadow);
   color: var(--content-primary);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
 }
 html[data-theme][data-family] .chat-window::after {
-  border-radius: var(--gugu-chat-radius);
-  box-shadow:
-    inset 0 1px 0 var(--gugu-chat-highlight),
-    inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 55%,transparent),
-    inset 0 -1px 0 color-mix(in srgb,var(--gugu-chat-highlight) 30%,transparent);
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 var(--gugu-chat-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-highlight) 52%,transparent);
 }
-html[data-theme][data-family] .chat-window .chat-main { background: var(--gugu-chat-main-bg); }
-html[data-theme][data-family] .chat-window .chat-header { border-bottom-color: var(--gugu-chat-header-border); }
+html[data-theme][data-family] .chat-window .chat-main {
+  background: var(--gugu-chat-main-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-theme][data-family] .chat-window .chat-header {
+  min-height: 48px;
+  padding: 0 var(--space-md);
+  gap: var(--space-sm);
+  background: transparent;
+}
+html[data-theme][data-family] .chat-window .chat-main.is-expanded .chat-header {
+  min-height: 52px;
+  padding: 0 var(--space-lg);
+}
+html[data-theme][data-family] .chat-window .chat-title { font-size: var(--font-size-md); }
+html[data-theme][data-family] .chat-window .popup-status { font-size: var(--font-size-xs); }
 html[data-theme][data-family] .chat-window .exp-sidebar {
   background: var(--gugu-chat-sidebar-bg);
-  border-right: 1px solid var(--gugu-chat-header-border);
+  border-right: 1px solid var(--gugu-chat-sidebar-border);
+}
+html[data-theme][data-family] .chat-window .msg-bubble {
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-body);
+}
+html[data-theme][data-family] .chat-window .msg.ai .msg-bubble {
+  background: var(--gugu-chat-assistant-bg);
+  border-color: var(--border-subtle);
+  border-bottom-left-radius: var(--radius-xs);
+}
+html[data-theme][data-family] .chat-window .msg.user .msg-bubble {
+  color: var(--content-on-accent);
+  background: var(--gugu-chat-user-bg);
+  border-bottom-right-radius: var(--radius-xs);
 }
 html[data-theme][data-family] .chat-window .chat-input-row {
   border-top-color: var(--gugu-chat-header-border);
   background: var(--gugu-chat-composer-bg);
   box-shadow: inset 0 1px 0 color-mix(in srgb,var(--border-highlight) 70%,transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
+html[data-theme][data-family] .chat-window .send-btn { background: var(--gugu-chat-send-bg); }
 html[data-theme][data-family] .chat-window .chat-drop-overlay {
   color: var(--action-primary);
   background: var(--gugu-chat-drop-bg);
   border-color: var(--gugu-chat-drop-border);
-  border-radius: var(--gugu-chat-radius);
-}
-html[data-theme][data-family] .chat-window .send-btn,
-html[data-theme][data-family] .chat-window .exp-send-btn {
-  color: var(--content-on-accent);
-  background: var(--gugu-chat-send-bg);
-}
-html[data-theme][data-family] .chat-window .msg.ai .msg-bubble {
-  box-shadow: var(--elevation-card);
-}
-html[data-theme][data-family='mono'] .chat-window .msg.ai .msg-bubble {
-  border-color: var(--border-default);
+  border-radius: inherit;
 }
 
-/* Mono is the public name; mono remains the compatibility data-family id.
+/* Mono is the public name; v2 remains the compatibility data-family id.
    Content .glass-card surfaces disable blur through the component token rather than a hard final
    `backdrop-filter:none`. Floating chrome can then remap --glass-card-blur locally without fighting
    this higher-specificity selector; chat/sidebar keep their independent surface contracts. */
-html[data-family='mono'] { --glass-card-blur: none; }
-html[data-family='mono'] .sidebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
-html[data-family='mono'] .glass-card:not(.topbar) {
+html[data-family='v2'] { --glass-card-blur: none; }
+html[data-family='v2'] .sidebar { backdrop-filter: none; -webkit-backdrop-filter: none; }
+html[data-family='v2'] .glass-card:not(.topbar) {
   backdrop-filter: var(--glass-card-blur);
   -webkit-backdrop-filter: var(--glass-card-blur);
 }

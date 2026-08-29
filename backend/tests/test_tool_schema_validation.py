@@ -10,7 +10,6 @@ from sqlalchemy import select
 
 from app.models import Project
 
-import agent.tools.base as tool_base
 from agent.tools.base import SkillRegistry, Tool, ToolContractError, registry as global_registry
 
 
@@ -70,9 +69,6 @@ async def test_dispatch_rejects_missing_required_before_handler():
     assert payload["error"] == "tool_input_invalid"
     assert {item["path"] for item in payload["issues"]} == {"project_id"}
     assert {item["rule"] for item in payload["issues"]} == {"required"}
-    assert "usage_hint" in payload
-    assert "project_id" in payload["next_action"]
-    assert "先向用户询问" in payload["next_action"]
     assert called is False
 
 
@@ -99,44 +95,6 @@ async def test_dispatch_rejects_type_enum_and_numeric_boundaries():
         ("mode", "enum"),
     }
     assert "VERY_SECRET_BAD_VALUE" not in raw
-
-
-async def test_type_error_includes_schema_shape_hint_without_echoing_input():
-    reg, _ = _make_registry({
-        "type": "object",
-        "properties": {
-            "channels": {
-                "type": "array",
-                "items": {"type": "string", "enum": ["web", "qq"]},
-            },
-        },
-    })
-
-    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
-        "channels": {"item": "qq"},
-    })
-    payload = json.loads(raw)
-
-    assert payload["schema_hints"] == [
-        'channels 必须是数组，例如 ["web"]；不要传对象。',
-    ]
-    assert '"item": "qq"' not in raw
-
-
-async def test_boolean_type_error_explains_native_json_value():
-    reg, _ = _make_registry({
-        "type": "object",
-        "properties": {"confirm": {"type": "boolean"}},
-    })
-
-    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {
-        "confirm": "true",
-    })
-    payload = json.loads(raw)
-
-    assert payload["schema_hints"] == [
-        "confirm 必须是 boolean：使用 true 或 false，不要加引号。",
-    ]
 
 
 async def test_additional_properties_default_allowed(db, user_a):
@@ -168,21 +126,6 @@ async def test_dispatch_commits_successful_task_transaction(db, user_a):
 
     persisted = await db.scalar(select(Project).where(Project.id == project_id))
     assert persisted is not None
-
-
-async def test_dispatch_enriches_business_error_with_usage_contract():
-    async def handler(db, user_id, args):
-        return {"error": "资源不存在", "resource": "project"}
-
-    reg, _ = _make_registry({"type": "object"}, handler)
-    raw, _ = await reg.dispatch("not-a-uuid", "schema_test_tool", {})
-    payload = json.loads(raw)
-
-    assert payload["error"] == "资源不存在"
-    assert payload["resource"] == "project"
-    assert payload["tool"] == "schema_test_tool"
-    assert payload["usage_hint"]
-    assert payload["next_action"]
 
 
 async def test_dispatch_rolls_back_failed_task_transaction(db, user_a):
@@ -283,37 +226,6 @@ def test_validator_is_cached_without_changing_provider_schemas():
     assert tool.to_anthropic()["input_schema"] == schema
     assert tool.to_openai()["function"]["parameters"] == schema
     assert reg.get("schema_test_tool") is tool
-
-
-def test_provider_schema_parity_uses_one_tool_contract():
-    schema = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-    }
-    reg, tool = _make_registry(schema)
-    anthropic = reg.anthropic_schemas([tool.name])[0]
-    openai = reg.openai_schemas([tool.name])[0]
-
-    assert anthropic["name"] == openai["function"]["name"] == tool.name
-    assert anthropic["description"] == openai["function"]["description"] == tool.description_short
-    assert anthropic["input_schema"] == openai["function"]["parameters"] == schema
-
-
-def test_provider_schema_serialization_does_not_run_compactor(monkeypatch):
-    schema = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}},
-        "required": ["query"],
-    }
-    _, tool = _make_registry(schema)
-
-    def fail_compactor(_value):
-        raise AssertionError("provider serialization must use source schema directly")
-
-    monkeypatch.setattr(tool_base, "_compact_schema", fail_compactor)
-    assert tool.to_anthropic()["input_schema"] == schema
-    assert tool.to_openai()["function"]["parameters"] == schema
 
 
 def test_all_registered_tools_have_cached_validators():

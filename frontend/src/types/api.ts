@@ -665,6 +665,23 @@ export interface paths {
         patch: operations["update_event_api_v1_events__eid__patch"];
         trace?: never;
     };
+    "/api/v1/live/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream */
+        get: operations["stream_api_v1_live_stream_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/clients": {
         parameters: {
             query?: never;
@@ -1736,6 +1753,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/agent/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Agent Sessions
+         * @description 会话列表（最近更新优先），供决策轨迹查看器选择。
+         */
+        get: operations["list_agent_sessions_api_v1_admin_agent_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/agent/sessions/{session_id}/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Session Trace
+         * @description 单会话完整决策轨迹：含被 getMessages 过滤掉的 tool_use/tool_result 行 + 每次调用 token。
+         *     后端只透传原始数据（含 content_json 块），由前端解析渲染时间线。
+         */
+        get: operations["session_trace_api_v1_admin_agent_sessions__session_id__trace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/agent/state-labels": {
         parameters: {
             query?: never;
@@ -1838,6 +1896,57 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invite-codes/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Codes */
+        post: operations["generate_codes_api_v1_admin_invite_codes_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invite-codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Codes */
+        get: operations["list_codes_api_v1_admin_invite_codes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/invite-codes/{code_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Code */
+        delete: operations["delete_code_api_v1_admin_invite_codes__code_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2775,6 +2884,19 @@ export interface components {
             /** Email */
             email: string;
         };
+        /** GenerateRequest */
+        GenerateRequest: {
+            /**
+             * Count
+             * @default 1
+             */
+            count: number;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2821,16 +2943,6 @@ export interface components {
             replyTone?: string | null;
             /** Replylength */
             replyLength?: string | null;
-            /** Personalitypreference */
-            personalityPreference?: string | null;
-            /** Personalitypreferenceenabled */
-            personalityPreferenceEnabled: boolean;
-            /** Personalitypreferencerevision */
-            personalityPreferenceRevision: number;
-            /** Personalitypreferenceupdatedat */
-            personalityPreferenceUpdatedAt?: string | null;
-            /** Personalitypreferenceavailable */
-            personalityPreferenceAvailable: boolean;
             /**
              * Pmstagesexpanded
              * @default false
@@ -2849,10 +2961,6 @@ export interface components {
             replyTone?: string | null;
             /** Replylength */
             replyLength?: string | null;
-            /** Personalitypreference */
-            personalityPreference?: string | null;
-            /** Personalitypreferenceenabled */
-            personalityPreferenceEnabled?: boolean | null;
             /** Pmstagesexpanded */
             pmStagesExpanded?: boolean | null;
         };
@@ -3316,6 +3424,8 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+            /** Invitecode */
+            inviteCode: string;
         };
         /** UserResponse */
         UserResponse: {
@@ -4754,6 +4864,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_api_v1_live_stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -6659,6 +6789,70 @@ export interface operations {
             };
         };
     };
+    list_agent_sessions_api_v1_admin_agent_sessions_get: {
+        parameters: {
+            query?: {
+                user?: string | null;
+                q?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    session_trace_api_v1_admin_agent_sessions__session_id__trace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_state_labels_api_v1_admin_agent_state_labels_get: {
         parameters: {
             query?: never;
@@ -6826,6 +7020,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    generate_codes_api_v1_admin_invite_codes_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_codes_api_v1_admin_invite_codes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    delete_code_api_v1_admin_invite_codes__code_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.core.ownership import get_owned
-from app.core import events
 from app.db.session import get_db
 from app.models import ScheduledTask, User
 
@@ -128,10 +127,7 @@ async def create_task(body: TaskCreate, user: User = Depends(get_current_user), 
     db.add(t)
     await db.commit()
     await db.refresh(t)
-    response = _to_resp(t)
-    await events.publish(user.id, "scheduled_tasks", operation="create", entity_id=t.id,
-                         event_payload=response)
-    return response
+    return _to_resp(t)
 
 
 async def _owned(task_id: int, user: User, db: AsyncSession) -> ScheduledTask:
@@ -159,10 +155,7 @@ async def update_task(task_id: int, body: TaskUpdate, user: User = Depends(get_c
         t.enabled = body.enabled
     await db.commit()
     await db.refresh(t)
-    response = _to_resp(t)
-    await events.publish(user.id, "scheduled_tasks", operation="update", entity_id=t.id,
-                         event_payload=response)
-    return response
+    return _to_resp(t)
 
 
 @router.delete("/{task_id}", status_code=204)
@@ -170,7 +163,6 @@ async def delete_task(task_id: int, user: User = Depends(get_current_user), db: 
     t = await _owned(task_id, user, db)
     await db.delete(t)
     await db.commit()
-    await events.publish(user.id, "scheduled_tasks", operation="delete", entity_id=task_id)
 
 
 class TestNotify(BaseModel):

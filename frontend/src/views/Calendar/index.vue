@@ -131,6 +131,9 @@
 
 </template>
 
+<script lang="ts">
+</script>
+
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useProjectStore } from '@/stores/projects'
@@ -138,7 +141,7 @@ import { useUiStore } from '@/stores/ui'
 import { useLiveStore } from '@/stores/live'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useEventModalStore } from '@/stores/eventModal'
-import { CLIENT_ID, eventsApi } from '@/services/api'
+import { eventsApi } from '@/services/api'
 import { useHolidays } from '@/composables/useHolidays'
 import { fireHint } from '@/composables/useOnboarding'
 import { showAppError } from '@/composables/useAppToast'
@@ -169,7 +172,7 @@ import {
   timedLayoutFor as calculateTimedLayout,
   type CalendarLayoutConstants,
 } from './utils/calendarLayout'
-import Icon from '@/components/common/Icon.vue'
+import { PhCalendarPlus, PhFolderPlus } from '@phosphor-icons/vue'
 // ── 本文件统一的"日历条目"形状 ──────────────────────────────────────────────
 // 月视图 chip、周视图条目、侧栏、"更多"弹窗、拖拽 item 都在「用户活动」与「项目时间线」
 // 渲染层暂时保留 CalendarRenderItem，布局回填字段和旧模板字段不会进入领域模型。
@@ -472,7 +475,7 @@ const {
   isoFromPoint,
   daysBetween,
   commitDrag: () => { void commitDrag() },
-  closeMorePopup,
+  closeMorePopup: () => { morePopup.value.open = false },
 })
 
 async function commitDrag() {
@@ -511,11 +514,6 @@ const pickerRef       = ref<InstanceType<typeof YearMonthPicker> | null>(null)
 
 const morePopup    = ref<{ open: boolean; items: CalItem[]; dateLabel: string; style: Record<string, string | number | undefined> }>({ open: false, items: [], dateLabel: '', style: {} })
 const morePopupRef = ref<InstanceType<typeof CalendarMorePopup> | null>(null)
-const morePopupAnchor = ref<HTMLElement | null>(null)
-function closeMorePopup() {
-  morePopup.value.open = false
-  morePopupAnchor.value = null
-}
 
 // ── 动态行高测量 ──
 const BAR_H    = 20  // 每条 bar / chip 的行高（slot 高，含间距）
@@ -600,11 +598,6 @@ function dayLayout(iso: string, week: { iso: string }[], wi: number) {
 
 // ── 统一"更多"弹窗 ──
 function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
-  const anchor = e.currentTarget as HTMLElement | null
-  if (morePopup.value.open && morePopupAnchor.value === anchor) {
-    closeMorePopup()
-    return
-  }
   const d     = new Date(iso + 'T00:00:00')
   const label = `${d.getMonth()+1}月${d.getDate()}日`
   const w     = 230
@@ -621,16 +614,14 @@ function showMore(e: MouseEvent, iso: string, items: CalItem[]) {
     : { position: 'fixed', top: (rect.bottom + gap) + 'px',                      left: left + 'px', width: w + 'px', zIndex: 2000, transformOrigin: 'top' }
 
   morePopup.value = { open: true, items, dateLabel: label, style }
-  morePopupAnchor.value = anchor
 }
 
 function onMoreProject(item: CalItem) {
-  closeMorePopup()
+  morePopup.value.open = false
   openProject(item)
 }
 
 function onMoreEditEvent(payload: { item: CalItem; event: MouseEvent }) {
-  // 编辑活动与“更多”面板允许并存，避免点击活动时先销毁来源面板导致编辑弹窗的定位/动画抖动。
   openEditForm(payload.item, payload.event, true)
 }
 
@@ -638,9 +629,7 @@ function onMoreDragItem(payload: { item: CalItem; event: MouseEvent }) {
   startMoreItemDrag(payload.item, payload.event)
 }
 
-const weekdays = computed(() => prefsStore.calendarWeekStart === 'sunday'
-  ? ['日', '一', '二', '三', '四', '五', '六']
-  : ['一', '二', '三', '四', '五', '六', '日'])
+const weekdays = ['一', '二', '三', '四', '五', '六', '日']
 
 function toIso(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
@@ -656,7 +645,6 @@ const {
   fetchNextMonthEvents,
   fetchSpilloverEvents,
   cacheMonth,
-  applyLiveEvent,
   normalizeCalendarEvent,
 } = useCalendarData({
   cursor,
@@ -697,8 +685,7 @@ const monthDays = computed<MonthDayCell[]>(() => {
   const m = cursor.value.getMonth()
   const first    = new Date(y, m, 1)
   const last     = new Date(y, m + 1, 0)
-  const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
-  const startDow = (first.getDay() - weekStart + 7) % 7
+  const startDow = (first.getDay() + 6) % 7
   const days: MonthDayCell[]     = []
   for (let i = startDow - 1; i >= 0; i--) {
     const d = new Date(y, m, -i)
@@ -732,14 +719,16 @@ const weekRef   = ref(new Date())     // 可视周内任一日期
 const HOUR_H    = 48                   // 每小时像素高
 const _CN_DOW   = ['日','一','二','三','四','五','六']
 
+function _mondayOf(d: Date) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7))   // 回到本周一
+  return x
+}
 const weekDays = computed<WeekViewDay[]>(() => {
-  const weekStart = prefsStore.calendarWeekStart === 'sunday' ? 0 : 1
-  const base = new Date(weekRef.value.getFullYear(), weekRef.value.getMonth(), weekRef.value.getDate())
-  const offset = (base.getDay() - weekStart + 7) % 7
-  base.setDate(base.getDate() - offset)
+  const mon = _mondayOf(weekRef.value)
   const out: WeekViewDay[] = []
   for (let i = 0; i < 7; i++) {
-    const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i)
+    const d = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + i)
     const iso = toIso(d)
     out.push({ iso, dateNum: d.getDate(), cn: _CN_DOW[d.getDay()],
                md: (d.getMonth()+1) + '/' + d.getDate(),
@@ -1102,10 +1091,6 @@ function clampPopupIntoView(elRef: { value: HTMLElement | null }, styleRef: { va
 function openEditForm(ev: Pick<CalItem, 'id' | 'name' | 'date' | 'time' | 'endTime' | 'description' | 'version' | '_uid'>, _nativeEv: MouseEvent, _useMousePos = false) {
   showAddForm.value = false
   if (typeof ev.id !== 'number') return
-  if (eventModalStore.floating && eventModalStore.openEventId === ev.id) {
-    eventModalStore.closeModal()
-    return
-  }
   const width = 240
   const editHeight = 300
   let left: number, top: number
@@ -1150,10 +1135,8 @@ function handleClickOutside(e: MouseEvent) {
       pickerOpen.value = false
   }
   if (morePopup.value.open) {
-    // 触发器位于 PopupMenu 外部，捕获阶段不能依赖按钮的 stopPropagation；
-    // 否则点击同一个“更多”按钮会先关闭、再被按钮处理器重新打开。
-    if (!target.closest('.chip-more-btn, .wv-more') && !morePopupRef.value?.contains(target))
-      closeMorePopup()
+    if (!morePopupRef.value?.contains(target))
+      morePopup.value.open = false
   }
   if (cellCtx.value) {
     if (!cellCtxRef.value?.contains(target)) cellCtx.value = null
@@ -1178,14 +1161,6 @@ onUnmounted(() => {
 
 // 实时：咕咕/IM 改了日历 → 重新拉当前+下月活动
 watch(() => liveStore.rev.calendar, () => { fetchEvents(); fetchNextMonthEvents(); fetchSpilloverEvents() })
-watch(() => liveStore.resourceEvent, (event) => {
-  if (!event || event.resource !== 'calendar' || event.origin === CLIENT_ID) return
-  if (!applyLiveEvent(event)) {
-    void fetchEvents()
-    void fetchNextMonthEvents()
-    void fetchSpilloverEvents()
-  }
-})
 watch(cursor, () => { fetchEvents(); fetchSpilloverEvents(); loadHolidays() })
 watch(monthWeeks, () => nextTick(setupRO))
 watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
@@ -1250,8 +1225,8 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .sidebar-date-label { font-size: 13px; font-weight: 700; color: var(--text-primary); }
 .add-event-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.08); font-size: 11px; font-weight: 600; cursor: pointer; color: var(--color-primary); font-family: var(--font-sans); transition: all 0.15s; }
 .add-event-btn:hover { background: rgba(123,127,178,0.15); border-color: rgba(123,127,178,0.5); }
-.add-proj-btn { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
-.add-proj-btn:hover { background: var(--action-primary-bg-hover); border-color: transparent; opacity: 1; box-shadow: none; }
+.add-proj-btn { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; color: #fff; box-shadow: 0 3px 12px rgba(123,127,178,0.3); }
+.add-proj-btn:hover { background: linear-gradient(135deg,#7b7fb2,#9590c4); border-color: transparent; opacity: 0.92; box-shadow: 0 6px 18px rgba(123,127,178,0.4); }
 .sidebar-events { display: flex; flex-direction: column; gap: 7px; margin-bottom: 4px; }
 .sidebar-ev { display: flex; gap: 9px; align-items: flex-start; background: rgba(255,255,255,0.66); border: 1px solid rgba(255,255,255,0.88); border-radius: 10px; padding: 8px 10px; transition: box-shadow 0.25s ease; }
 .sidebar-ev:hover { box-shadow: inset 0 0 0 100px rgba(255,255,255,0.2), 0 3px 10px rgba(0,0,0,0.10); }
@@ -1299,38 +1274,38 @@ watch([projectTimelines, dragOverRange], () => _weekBarsCache.clear())
 .upcoming-item { display: flex; align-items: center; margin-bottom: 7px; }
 .upcoming-item:last-child { margin-bottom: 0; }
 
-.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: var(--event-popup-radius); box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
+.add-event-popup { background: rgba(255,255,255,0.72); backdrop-filter: var(--popup-blur); -webkit-backdrop-filter: var(--popup-blur); border: 1px solid rgba(255,255,255,0.75); border-radius: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12); padding: 16px; display: flex; flex-direction: column; gap: 9px; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain; }
 .add-event-popup.shared-event-popup { padding: 0; }
 .popup-textarea:focus { border-color: rgba(123,127,178,0.4); box-shadow: 0 0 0 3px rgba(123,127,178,0.1); background: rgba(255,255,255,0.85); }
 .popup-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; margin-top: 2px; }
-.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: var(--font-family-ui); font-weight: 600; transition: background 0.12s, border-color 0.12s; }
+.popup-delete { padding: 5px 12px; border-radius: 8px; border: 1px solid rgba(176,120,88,0.3); background: rgba(176,120,88,0.08); font-size: 12px; cursor: pointer; color: #b07858; font-family: 'PingFang SC', 'Segoe UI', sans-serif; font-weight: 600; transition: background 0.12s, border-color 0.12s; }
 .popup-delete:hover { background: rgba(176,120,88,0.15); border-color: rgba(176,120,88,0.5); }
-.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background-color 0.15s; box-shadow: none; }
+.popup-save { padding: 5px 14px; border-radius: 8px; border: none; background: linear-gradient(135deg,#7b7fb2,#9590c4); color: white; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC', 'Segoe UI', sans-serif; transition: opacity 0.15s; box-shadow: 0 2px 8px rgba(123,127,178,0.28); }
 .popup-save:disabled { opacity: 0.38; cursor: default; }
-.popup-save:not(:disabled):hover { background: var(--action-primary-bg-hover); opacity: 1; }
+.popup-save:not(:disabled):hover { opacity: 0.88; }
 .reminder-section { display: flex; flex-direction: column; gap: 6px; padding-top: 7px; border-top: 1px solid rgba(123,127,178,0.18); }
 .reminder-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .reminder-label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--text-secondary); }
 .reminder-item { display: flex; align-items: center; gap: 6px; }
 .reminder-lead { font-size: 11px; font-weight: 600; color: var(--text-secondary); }
-.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.08); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-test-bar { width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 7px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.4); background: rgba(123,127,178,0.08); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .reminder-test-bar:hover { border-color: rgba(123,127,178,0.7); background: rgba(123,127,178,0.16); color: var(--text-primary); }
 .reminder-del { display: flex; align-items: center; padding: 2px; border: none; background: none; cursor: pointer; color: #b07858; border-radius: 5px; }
 .reminder-del:hover { background: rgba(176,120,88,0.12); }
 .reminder-add { display: flex; gap: 6px; align-items: center; }
-.lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: var(--font-family-ui); color: #1e2028; cursor: pointer; outline: none; }
-.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: background 0.12s; }
+.lead-select { flex: 1; height: 28px; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.75); background: rgba(255,255,255,0.68); font-size: 11px; font-family: 'PingFang SC','Segoe UI',sans-serif; color: #1e2028; cursor: pointer; outline: none; }
+.reminder-add-btn { flex-shrink: 0; padding: 5px 10px; border-radius: 8px; border: 1px solid rgba(123,127,178,0.3); background: rgba(123,127,178,0.1); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: background 0.12s; }
 .reminder-add-btn:hover { background: rgba(123,127,178,0.2); }
 .reminder-cancel { flex-shrink: 0; display: flex; align-items: center; padding: 4px; border: none; background: none; cursor: pointer; color: var(--text-secondary); border-radius: 6px; }
 .reminder-cancel:hover { background: rgba(0,0,0,0.06); }
-.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.reminder-add-toggle { width: 100%; box-sizing: border-box; text-align: center; padding: 6px 10px; border-radius: 8px; border: 1px dashed rgba(123,127,178,0.4); background: none; color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .reminder-add-toggle:hover { border-color: rgba(123,127,178,0.7); color: var(--text-primary); background: rgba(123,127,178,0.06); }
 /* 绝对定位浮在右侧，不参与 flex 居中，保证「开始—结束」时间仍水平居中 */
 .nextday-tag { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 10px; font-weight: 600; color: #9590c4; background: rgba(123,127,178,0.1); padding: 1px 6px; border-radius: 5px; white-space: nowrap; pointer-events: none; }
 .nextday-mini { margin-left: 4px; font-size: 9px; font-weight: 600; color: #a8a3c8; padding: 1px 4px; border-radius: 4px; background: rgba(123,127,178,0.1); vertical-align: 1px; }
 .chan-block { display: flex; flex-direction: column; gap: 5px; }
 .chan-chips { display: flex; gap: 5px; flex-wrap: wrap; }
-.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: var(--font-family-ui); transition: all 0.12s; }
+.chan-chip { padding: 3px 11px; border-radius: 99px; border: 1px solid rgba(123,127,178,0.3); background: rgba(255,255,255,0.5); color: var(--text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: all 0.12s; }
 .chan-chip.on { background: rgba(123,127,178,0.16); border-color: rgba(123,127,178,0.55); color: #5b5f8c; }
 .form-pop-enter-active { transition: opacity 0.16s, transform 0.18s cubic-bezier(0.34,1.2,0.64,1); }
 .form-pop-leave-active { transition: opacity 0.12s, transform 0.12s ease-in; }

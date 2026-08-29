@@ -1,6 +1,6 @@
 <template>
   <div class="note-editor" ref="rootRef" :class="{ compact }">
-    <div class="ne-body"><EditorContent v-if="editor" :editor="editor" /></div>
+    <div class="ne-body"><EditorContent :editor="editor" /></div>
 
     <!-- 窄口径工具栏：待办/列表/样式，没有 / 菜单（/ 预留给咕咕）、没有正文/标题文字样式
          切换——标题现在是便签卡自己的独立标题区（按区域区分，不是段落样式），这里只管
@@ -106,8 +106,8 @@
          overflow:hidden 的容器，下拉贴着卡片底部时会被提前裁掉一截，脱出去按视口坐标
          定位就不受卡片裁切影响了。样式跟顶栏 GlobalSearch.vue 的结果面板同一套语言
          （图标+文字、按类型分组），不同类型分开一段，一眼能看出是项目/文件/活动/对话。 -->
-    <PopupMenu :show="picker.open" :position="{ x: picker.x, y: picker.y }" popup-class="ne-picker-host">
-      <div class="ne-picker">
+    <Teleport to="body">
+      <div v-if="picker.open" class="ne-picker" :style="{ left: picker.x + 'px', top: picker.y + 'px' }">
         <div v-if="loading" class="ne-pick-empty">搜索中…</div>
         <div v-else-if="!items.length" class="ne-pick-empty">没找到「{{ picker.query }}」</div>
         <template v-for="g in groupedItems" :key="g.type">
@@ -124,7 +124,7 @@
           </button>
         </template>
       </div>
-    </PopupMenu>
+    </Teleport>
   </div>
 </template>
 
@@ -139,7 +139,6 @@ import {
 import { docToMarkdown, markdownToDoc, mindExtensions } from '@/composables/useMindEditor'
 import { useMindObjectPicker } from '@/composables/useMindObjectPicker'
 import { useMindRefActions } from '@/composables/useMindRefActions'
-import PopupMenu from '@/components/common/PopupMenu.vue'
 import type { MindRefSuggestItem } from '@/services/api'
 
 const { openMindRef } = useMindRefActions()
@@ -540,13 +539,13 @@ onBeforeUnmount(() => {
 .ne-picker {
   /* 固定宽度而不是 min/max-width：内容自适应宽度会让"搜索中…"这行短文字跟结果列表撑出
      的宽度不一样，切换态时弹窗宽度跟着跳一下。固定死就没有这个问题。 */
-  width: 280px; padding: 4px; border-radius: 10px;
+  position: fixed; z-index: 3000; width: 280px;
+  padding: 4px; border-radius: 10px;
   background: rgba(255,255,255,0.96);
   border: 1px solid rgba(255,255,255,0.9);
   box-shadow: 0 8px 26px rgba(60,70,100,0.18);
   backdrop-filter: blur(10px);
 }
-:global(.popup-menu-host.ne-picker-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 .ne-pick-empty { padding: 8px 10px; font-size: 12px; color: var(--text-secondary); }
 /* 分组标题 + 图标行，跟顶栏 GlobalSearch.vue 的 .gs-group-label/.gs-item 同一套视觉语言 */
 .ne-pick-group-label {

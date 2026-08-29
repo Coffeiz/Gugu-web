@@ -10,22 +10,13 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
-import os
-import re
-import tempfile
 from pathlib import Path
-from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import Any, Optional
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-OVERRIDE_FILE = Path(
-    os.getenv(
-        "GUGU_CONFIG_OVERRIDE_FILE",
-        str(Path(__file__).parent.parent.parent / "config.override.json"),
-    )
-)
+OVERRIDE_FILE = Path(__file__).parent.parent.parent / "config.override.json"
 
 
 def normalize_dimensions(value: Any) -> int:
@@ -43,9 +34,10 @@ class DatabaseSettings(BaseModel):
     port: int = Field(5432, description="端口")
     name: str = Field("gugu_web", description="数据库名")
     user: str = Field("gugu", description="用户名")
-    # password 默认空串：业务必须从环境变量或 config.override.json 提供；缺失会被
-    # apply_override 校验抛错，避免「默默用空密码连 DB」导致 worker 反复启动失败。
-    password: str = Field("", description="密码（必须从环境变量或 config.override.json 提供）")
+    # password 默认空串：业务必须从 config.override.json 显式提供；缺失会被
+    # apply_override 校验抛错，避免「默默用空密码连 DB」导致 worker 反复启动失败
+    # 又被「im:inbound 队列堆积 → 用户看不到任何回复」这种症状掩盖。
+    password: str = Field("", description="密码（必须从 config.override.json 显式提供）")
 
     @property
     def url(self) -> str:
@@ -65,9 +57,7 @@ class RedisSettings(BaseModel):
 
 class StorageSettings(BaseModel):
     backend: str = Field("local", description="存储后端: local | oss")
-    # 用户文件和 Shell 沙盒统一放在仓库根目录的数据区；旧 backend/uploads
-    # 仅由一次性迁移脚本读取，不能再作为运行时默认根目录。
-    local_path: str = Field("../Gugu-data/users", description="本地用户数据与 Shell 沙盒根目录")
+    local_path: str = Field("./uploads", description="本地存储路径")
     oss_access_key_id: str = Field("", description="OSS AccessKey ID")
     oss_access_key_secret: str = Field("", description="OSS AccessKey Secret")
     oss_bucket: str = Field("gugu-web", description="OSS Bucket 名")
@@ -76,7 +66,7 @@ class StorageSettings(BaseModel):
 
 
 class AISettings(BaseModel):
-    provider: str = Field("qwen", description="AI 提供方: qwen | openai | ollama | deepseek | minimax | anthropic | glm")
+    provider: str = Field("qwen", description="AI 提供方: qwen | openai | deepseek | minimax | anthropic")
     api_key: str = Field("", description="API Key")
     base_url: str = Field(
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -87,20 +77,11 @@ class AISettings(BaseModel):
     temperature: float = Field(0.7, description="发散度 0~2")
     context_tokens: int = Field(120000, description="历史上下文 token 预算")
     thinking: str = Field("disabled", description="深度思考模式: disabled | adaptive")
-    reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | low | high | max")
+    reasoning_effort: str = Field("", description="思考强度（仅 DeepSeek、思考开时生效）: 空=跟随模型默认 | high | max")
     vision: bool = Field(False, description="模型是否支持多模态（看图）。后台「检测」按钮探测后写入，亦可手动改")
-    vision_detail: str = Field("auto", description="图片细节级别: auto | low | high | original")
     vision_video: bool = Field(False, description="模型是否支持视频理解。后台「检测」按钮探测后写入，亦可手动改")
     vision_audio: bool = Field(False, description="模型是否支持音频理解。后台「检测」按钮探测后写入，亦可手动改")
     api_format: str = Field("", description="API 格式: openai | anthropic | 空=按 provider/base_url 自动判（mimo 等同时提供两套 API 的厂商可显式选）")
-    ollama_mode: str = Field("local", description="Ollama 连接模式: local | cloud")
-    ollama_api_mode: str = Field("native", description="Ollama 接口模式: native | openai")
-    ollama_keep_alive: str = Field("5m", description="Ollama 模型驻留时间；0 表示请求结束后卸载")
-    deployment_mode: str = Field("cloud", description="部署方式: cloud | local")
-    local_runtime: str = Field("other", description="本地运行时: ollama | llama.cpp | vllm | other")
-    capability_overrides: dict[str, bool] = Field(default_factory=dict, description="模型能力人工覆盖")
-    capability_checked_at: str = Field("", description="最近一次能力检测时间")
-    capability_fingerprint: str = Field("", description="能力检测绑定的地址/模型指纹")
 
 
 class VoiceSettings(BaseModel):
@@ -117,42 +98,6 @@ class VoiceSettings(BaseModel):
     )
 
 
-class SandboxSettings(BaseModel):
-    """Shell 容器沙盒配置。
-
-    enabled 只表示 Admin 请求启用沙盒；是否真的可执行还必须经过 Docker
-    运行时探测和执行器就绪检查，不能由配置值单独推断。
-    """
-    enabled: bool = Field(False, description="是否启用 Docker Shell 沙盒（默认关闭）")
-    image: str = Field("debian:bookworm-slim", description="Shell 沙盒基础镜像")
-    image_digest: str = Field(
-        "sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171",
-        description="已验证的固定镜像 digest；必须与当前 daemon 已加载镜像一致",
-    )
-    rootless_required: bool = Field(True, description="是否要求 Rootless Docker")
-    network_profile: Literal["none", "egress"] = Field("none", description="容器网络策略；默认断网，egress 仅在受控代理配置后可用")
-    egress_proxy_url: str = Field("", description="受控 egress HTTP(S) 代理地址；为空时禁止临时联网")
-    egress_network_name: str = Field("gugu-sandbox-egress", description="仅供沙盒容器使用的内部 Docker 网络名")
-    egress_ttl_seconds: int = Field(600, ge=60, le=1800, description="单次 egress 授权最长有效期")
-    egress_isolation_enabled: bool = Field(False, description="是否已部署隔离 egress 网络；未部署时强制拒绝")
-    cpu_limit: float = Field(1.0, ge=0.1, le=2.0, description="单用户容器 CPU 上限")
-    memory_limit_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="单用户容器内存上限")
-    pids_limit: int = Field(64, ge=16, le=512, description="单用户容器进程数上限")
-    timeout_seconds: int = Field(30, ge=1, le=300, description="单次 Shell 默认超时")
-    output_limit_bytes: int = Field(12 * 1024, ge=1024, le=120 * 1024, description="单次 Shell 输出上限")
-    pty_output_limit_bytes: int = Field(120 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 单会话输出上限")
-    pty_output_rate_bytes: int = Field(256 * 1024, ge=1024, le=4 * 1024 * 1024, description="交互式 PTY 每秒输出上限")
-    persistent_quota_bytes: int = Field(512 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 持久空间配额")
-    ephemeral_quota_bytes: int = Field(1024 * 1024 * 1024, ge=64 * 1024 * 1024, description="每用户 Shell 临时构建/cache 配额")
-    sandboxd_socket: str = Field(
-        default_factory=lambda: os.getenv(
-            "GUGU_SANDBOXD_SOCKET",
-            f"/run/user/{getattr(os, 'getuid', lambda: 0)()}/gugu-sandboxd.sock",
-        ),
-        description="sandboxd Unix Socket；生产 Shell 必须通过该 socket 执行",
-    )
-
-
 class AIPresetItem(BaseModel):
     id: str = ""
     name: str = ""
@@ -164,20 +109,11 @@ class AIPresetItem(BaseModel):
     temperature: float = 0.7
     context_tokens: int = 120000
     thinking: str = "disabled"
-    reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | low | high | max
+    reasoning_effort: str = ""   # 思考强度（仅 DeepSeek、思考开时生效）：空=默认 | high | max
     vision: bool = False
-    vision_detail: str = "auto"
     vision_video: bool = False
     vision_audio: bool = False
     api_format: str = ""         # API 格式: openai | anthropic | 空=自动（mimo 等双 API 厂商可显式选）
-    ollama_mode: str = "local"   # Ollama 连接模式: local | cloud
-    ollama_api_mode: str = "native"  # Ollama 接口模式: native | openai
-    ollama_keep_alive: str = "5m"     # Ollama 模型驻留时间
-    deployment_mode: str = "cloud"
-    local_runtime: str = "other"
-    capability_overrides: dict[str, bool] = Field(default_factory=dict)
-    capability_checked_at: str = ""
-    capability_fingerprint: str = ""
     in_pool: bool = False        # 是否加入「多 key 分流」池（strategy=pool 时随机挑这些）
 
 
@@ -189,16 +125,10 @@ class AIPresets(BaseModel):
 
 
 class AgentBehaviorSettings(BaseModel):
-    # 高权限能力默认关闭；未打开时不应注册或执行 Shell 工具。
-    shell_enabled: bool = Field(False, description="是否启用 Shell 工具（默认关闭）")
-    shell_system_enabled: bool = Field(False, description="是否允许 Shell 访问系统范围（高风险，默认关闭）")
-    shell_dangerous_enabled: bool = Field(False, description="是否允许危险 Shell 命令进入确认流程（默认关闭）")
-    shell_autopilot_enabled: bool = Field(False, description="是否允许用户开启 Shell Autopilot，跳过确认门（默认关闭）")
-    personality_preference_enabled: bool = Field(True, description="是否启用用户人格偏好（托管服务由后台权益开关控制，本地默认开启）")
     memory_enabled: bool = Field(True, description="是否启用记忆系统")
     reflection_threshold: int = Field(10, description="触发 Reflection 的消息数")
     worker_concurrency: int = Field(16, description="IM worker 同时跑几条 agent（实测单 MiniMax key 安全上限≈16；worker 每 30s 热读）")
-    conv_compress_enabled: bool = Field(True, description="允许手动对话压缩；正常请求按实际组装上下文预算判断，不按数据库累计消息量后台压缩")
+    conv_compress_enabled: bool = Field(True, description="对话历史压缩：超长会话把旧消息总结成摘要省 token；关闭后只按 token 截断、不摘要（web 即时、worker 每 30s 热读）")
     im_progress_announce_enabled: bool = Field(True, description="IM 慢工具进度声明：多步工具循环期间（IM 非流式、用户容易觉得沉默）先发一句「我去查一下」这类声明再执行，文案来自工具自身登记的 start_message（不是模型现场生成，见 docs/agent/proposals/IM慢工具进度声明-设计.md）；只在 IM 生效，网页不受影响")
     daily_retention_days: int = Field(14, description="daily 记忆保留天数（过期直接压进 memory.md）")
     # 已废弃：weekly 层已砍，压缩定为 daily→memory 两段；字段暂留兼容旧 override，不再使用
@@ -213,40 +143,11 @@ class QuotaSettings(BaseModel):
 
 
 class SearchSettings(BaseModel):
-    rag_enabled: bool = Field(True, description="是否启用 Agent 自动知识召回（RAG）")
-    rag_auto_sources: list[Literal["memory", "knowledge", "project", "file", "canvas", "note", "conversation"]] = Field(
-        default_factory=lambda: ["memory", "knowledge", "project", "file", "canvas", "note", "conversation"],
-        description="自动 Knowledge RAG 允许召回的来源；显式工具不受此开关影响",
-    )
-    capability_rag_enabled: bool = Field(False, description="是否启用能力目录 RAG 软推荐；只调整目录顺序，不裁剪授权工具")
-    capability_rag_shadow: bool = Field(True, description="能力目录 RAG 是否只记录推荐而不改变目录顺序")
-    capability_rag_limit: int = Field(5, ge=1, le=20, description="每轮能力目录最多推荐的工具数")
-    deep_research_provider: Literal["tavily", "baidu", "you"] = Field("tavily", description="深度研究 Provider")
     tavily_api_key: str = Field("", description="Tavily API Key（空=禁用 deep_research 深度研究）")
-    deep_research_baidu_api_key: str = Field("", description="百度普通搜索 API Key")
-    deep_research_you_api_key: str = Field("", description="You.com Research API Key")
     searxng_url:    str = Field("", description="自建 SearXNG 实例地址（空=禁用 web_search 通用搜索），如 http://127.0.0.1:8888")
-    searxng_engines: str = Field(
-        "baidu,sogou,quark,360search,yandex,duckduckgo web,mwmbl,gabanza,reloado,searchch,privacywall,gmx,zapmeta,google",
-        description="SearXNG 启用的通用网页搜索引擎（逗号分隔）",
-    )
+    searxng_engines: str = Field("sogou,quark,360search", description="SearXNG 启用的引擎（逗号分隔；国内服务器只有这几个可达）")
     searxng_image_engines: str = Field("", description="SearXNG 图片搜索（image_search）启用的引擎（逗号分隔）；留空则回退复用 searxng_engines。图片分类能连通的引擎不一定和文本分类是同一批，需部署后用「测试」按钮实测调整")
     max_results:    int = Field(5, description="默认返回结果数")
-    global_search_backend: Literal["index", "ilike"] = Field(
-        "ilike", description="全局搜索后端：持久化索引（index）或 ILIKE 兼容模式"
-    )
-    ts_sidecar_command: str = Field("", description="TypeScript RAG worker 命令；为空则使用项目内置构建物")
-    ts_sidecar_index_dir: str = Field(
-        "var/rag-ts-index",
-        description="旧版 TypeScript 索引目录；新索引默认保存在用户存储目录的 .system/rag/ts-index 下",
-    )
-    ts_sidecar_index_ttl_seconds: int = Field(
-        30 * 24 * 3600,
-        ge=7 * 24 * 3600,
-        le=365 * 24 * 3600,
-        description="TypeScript RAG 用户索引缓存保留时间；仅清理长期未使用的可重建索引",
-    )
-    ts_sidecar_timeout_ms: int = Field(500, ge=50, le=30_000, description="TypeScript worker 单次请求超时毫秒数")
     similar_image_enabled: bool = Field(False, description="是否启用百度千帆相似图搜索")
     baidu_qianfan_api_key: str = Field("", description="百度千帆 API Key（空=禁用相似图搜索）")
     similar_image_default_count: int = Field(15, ge=1, le=50, description="相似图搜索默认返回数量")
@@ -261,12 +162,6 @@ class StateLabelSettings(BaseModel):
     overrides: dict[str, str] = Field(default_factory=dict, description="状态显示名覆盖表（key→自定义名）")
 
 
-class BYOKSettings(BaseModel):
-    """用户自带凭据开关；主密钥只允许由运行环境注入。"""
-    enabled: bool = Field(False, description="是否开放用户 BYOK（托管服务由后台权益控制）")
-    master_key: str = Field("", repr=False, description="BYOK 主密钥（仅从 CREDENTIALS_MASTER_KEY 注入，不写入响应）")
-
-
 class SmtpSettings(BaseModel):
     host:     str           = Field("", description="SMTP 服务器地址")
     port:     int           = Field(465, description="SMTP 端口（465=SSL，587=STARTTLS）")
@@ -274,39 +169,7 @@ class SmtpSettings(BaseModel):
     password: str           = Field("", description="SMTP 登录密码")
     from_addr: str          = Field("", description="发件人地址（默认同 user）")
     to_addr:  str           = Field("", description="反馈通知收件人地址")
-    feedback_email_enabled: bool = Field(True, description="是否发送用户反馈邮件提醒")
     use_ssl:  bool          = Field(True, description="True=SSL(465)，False=STARTTLS(587)")
-
-
-class SecuritySettings(BaseModel):
-    """安全策略配置；短窗口计数仍存 Redis，配置只决定策略边界。"""
-
-    ownership_window_seconds: int = Field(
-        5 * 60, ge=60, le=24 * 3600, description="越权拒绝计数窗口（秒）"
-    )
-    ownership_throttle_threshold: int = Field(
-        5, ge=1, le=1000, description="窗口内触发限流的拒绝次数"
-    )
-    ownership_suspend_threshold: int = Field(
-        10, ge=1, le=1000, description="窗口内触发冻结判定的拒绝次数"
-    )
-    ownership_suspend_duration_seconds: int = Field(
-        10 * 60, ge=60, le=30 * 24 * 3600, description="临时冻结持续时间（秒）"
-    )
-    ownership_auto_response_enabled: bool = Field(
-        False, description="是否允许风险策略自动执行限流/冻结；默认关闭"
-    )
-    alert_email_enabled: bool = Field(False, description="是否发送安全策略邮箱告警；默认关闭")
-    alert_email_recipients: list[str] = Field(default_factory=list, description="安全告警目标邮箱")
-
-    @field_validator("alert_email_recipients")
-    @classmethod
-    def validate_alert_email_recipients(cls, values: list[str]) -> list[str]:
-        pattern = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-        normalized = [str(value).strip() for value in values]
-        if any(not pattern.fullmatch(value) for value in normalized):
-            raise ValueError("安全告警目标邮箱格式无效")
-        return list(dict.fromkeys(normalized))
 
 
 class EmbeddingSettings(BaseModel):
@@ -345,16 +208,12 @@ class AppSettings(BaseSettings):
     ai: AISettings = Field(default_factory=AISettings)
     voice: VoiceSettings = Field(default_factory=VoiceSettings)   # 独立语音识别模型（空=不支持语音）
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)   # 独立向量模型（disabled=退回词法检索）
-    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     ai_presets: AIPresets = Field(default_factory=AIPresets)
     agent: AgentBehaviorSettings = Field(default_factory=AgentBehaviorSettings)
     quota: QuotaSettings = Field(default_factory=QuotaSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
     smtp: SmtpSettings = Field(default_factory=SmtpSettings)
-    security: SecuritySettings = Field(default_factory=SecuritySettings)
     state_labels: StateLabelSettings = Field(default_factory=StateLabelSettings)
-    byok: BYOKSettings = Field(default_factory=BYOKSettings)
-    # 业务 Live SSE 由 TypeScript 服务独立承载，FastAPI 不再提供代理入口。
 
     def apply_override(self) -> "AppSettings":
         """从 config.override.json 合并覆盖字段，返回新实例。
@@ -369,40 +228,32 @@ class AppSettings(BaseSettings):
             updates: dict = {}
 
             if "db" in override:
+                # 强制要求：override["db"] 必须显式声明 password 字段，且不能是占位符/空串。
+                # 真实踩过的坑：默认值是 "pm123"，业务 config.override.json 只覆盖
+                # host/port/name/user，没写 password → 后端用 "gugu" + "pm123" 连 DB 失败 →
+                # worker 进程反复 restart → im:inbound 队列堆积 → 用户感觉「消息收不到」。
+                # 报错比静默 fail 好：进程直接拒绝启动，问题在部署阶段就暴露。
+                #
+                # 注意：必须 check override["db"] 而不是 merged.password —— 因为 pydantic-settings
+                # 会从 backend/.env 读 DB__PASSWORD 注入 self.db.password（默认是 ""，但
+                # .env 提供真实值）。如果只看 merged 结果，会把"override 没写 password
+                # 但 env 给了真值"当成通过，掩盖 override 漏配 password 这个真正的根因。
                 override_db = override["db"] or {}
-                override_pw = override_db.get("password")
-                if "password" in override_db and (
-                    not isinstance(override_pw, str)
-                    or not override_pw.strip()
-                    or override_pw in ("pm123", "pm")
-                ):
+                if "password" not in override_db:
                     raise RuntimeError(
-                        "db.password 是空值、占位符或无效类型，请在运行环境或配置文件中提供真实密码。"
+                        f"db.password 未在 {OVERRIDE_FILE} 中提供。"
+                        f"请在 db 节里写明真实密码（不要省略）。"
                     )
-
-                # Admin 热更新可能只提交 host/port/name/user。若本进程已经用一份
-                # 有效配置启动，AppSettings() 重新读取环境变量时不会带回 override
-                # 中的密码，应该保留上一份已验证的密码，避免现有连接被无效重载打坏。
-                # 全新进程没有这份缓存时仍会严格拒绝缺失密码。
-                db_base = self.db.model_dump()
-                cached = globals().get("_settings_cache")
-                cached_password = getattr(getattr(cached, "db", None), "password", "")
-                if not db_base.get("password") and isinstance(cached_password, str) and cached_password.strip():
-                    db_base["password"] = cached_password
-
-                merged = {**db_base, **{
+                override_pw = override_db["password"]
+                if not override_pw or override_pw in ("pm123", "pm"):
+                    raise RuntimeError(
+                        f"db.password 仍是占位符或空串 (当前值 {override_pw!r})。"
+                        f"请在 {OVERRIDE_FILE} 的 db 节里写明真实密码。"
+                    )
+                merged = {**self.db.model_dump(), **{
                     k: v for k, v in override_db.items()
                     if k in DatabaseSettings.model_fields
                 }}
-                effective_pw = merged.get("password", "")
-                if (
-                    not isinstance(effective_pw, str)
-                    or not effective_pw.strip()
-                    or effective_pw in ("pm123", "pm")
-                ):
-                    raise RuntimeError(
-                        "db.password 未配置或仍是占位符，请在运行环境或配置文件中提供真实密码。"
-                    )
                 updates["db"] = DatabaseSettings.model_construct(**merged)
 
             if "redis" in override:
@@ -441,20 +292,6 @@ class AppSettings(BaseSettings):
                 merged["dimensions"] = normalize_dimensions(merged.get("dimensions"))
                 updates["embedding"] = EmbeddingSettings.model_construct(**merged)
 
-            if "byok" in override:
-                merged = {**self.byok.model_dump(), **{
-                    k: v for k, v in (override["byok"] or {}).items()
-                    if k in BYOKSettings.model_fields
-                }}
-                updates["byok"] = BYOKSettings.model_construct(**merged)
-
-            if "sandbox" in override:
-                merged = {**self.sandbox.model_dump(), **{
-                    k: v for k, v in (override["sandbox"] or {}).items()
-                    if k in SandboxSettings.model_fields
-                }}
-                updates["sandbox"] = SandboxSettings.model_construct(**merged)
-
             if "quota" in override:
                 merged = {**self.quota.model_dump(), **{
                     k: v for k, v in override["quota"].items()
@@ -475,13 +312,6 @@ class AppSettings(BaseSettings):
                     if k in SmtpSettings.model_fields
                 }}
                 updates["smtp"] = SmtpSettings.model_construct(**merged)
-
-            if "security" in override:
-                merged = {**self.security.model_dump(), **{
-                    k: v for k, v in (override["security"] or {}).items()
-                    if k in SecuritySettings.model_fields
-                }}
-                updates["security"] = SecuritySettings.model_validate(merged)
 
             if "agent" in override:
                 merged = {**self.agent.model_dump(), **{
@@ -511,7 +341,7 @@ class AppSettings(BaseSettings):
                 )
 
             # 顶层字段（secret_key、debug 等）
-            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "security", "voice", "embedding", "sandbox", "byok"}
+            top_fields = set(AppSettings.model_fields) - {"db", "redis", "storage", "ai", "ai_presets", "quota", "agent", "search", "state_labels", "smtp", "voice", "embedding"}
             for k in top_fields:
                 if k in override:
                     updates[k] = override[k]
@@ -531,57 +361,6 @@ def _deep_merge(base: dict, override: dict) -> None:
             _deep_merge(base[k], v)
         else:
             base[k] = v
-
-
-def write_override_json(data: dict) -> None:
-    """原子写入用户运行配置，避免读到半截 JSON 或留下半写文件。"""
-    OVERRIDE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp_name = tempfile.mkstemp(
-        prefix=f".{OVERRIDE_FILE.name}.",
-        suffix=".tmp",
-        dir=OVERRIDE_FILE.parent,
-        text=True,
-    )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp_name, 0o600)
-        os.replace(temp_name, OVERRIDE_FILE)
-        dir_fd = os.open(OVERRIDE_FILE.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except OSError as exc:
-        # systemd ProtectSystem=strict 配合只读目录时，目标文件本身可写，
-        # 但临时文件无法通过 rename 替换目标。仅对明确的 EBUSY 原位写入，
-        # 其他错误继续保留原子写入的失败语义。
-        if exc.errno == errno.EBUSY:
-            with open(OVERRIDE_FILE, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps(data, ensure_ascii=False, indent=2))
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.chmod(OVERRIDE_FILE, 0o600)
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
-            return
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
-    except Exception:
-        try:
-            os.unlink(temp_name)
-        except FileNotFoundError:
-            pass
-        raise
 
 
 # ── 配置缓存（mtime 感知，多 worker 安全）───────────────────────────────────
@@ -622,7 +401,7 @@ async def save_override(patch: dict) -> AppSettings:
     if OVERRIDE_FILE.exists():
         existing = json.loads(OVERRIDE_FILE.read_text(encoding="utf-8"))
     _deep_merge(existing, patch)
-    write_override_json(existing)
+    OVERRIDE_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
     invalidate_settings_cache()
     new_settings = get_settings()
     if "redis" in patch:

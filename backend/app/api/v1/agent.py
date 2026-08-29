@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import desc, or_, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import chat_attach
@@ -17,17 +17,12 @@ from app.core.security import get_current_user
 from app.core.ownership import get_owned
 from app.core.tz import iso_utc
 from app.db.session import get_db
-from app.models import ConversationMessage, ConversationSession, User, UserBot, Workspace
-from app.services import interactions
-from app.services.workspaces import resolve_sandbox_root
-from agent.sandbox.docker_runtime import cleanup_sandboxes_for_root
-from agent.sandbox.quota import clear_sandbox_directory
+from app.models import ConversationMessage, ConversationSession, User, UserBot
 
 from agent.llm import genstream
 from agent.gateway import web as web_adapter
 from agent.im.models import replace_mention_ids
 from agent.models import AgentRequest
-from agent.context.history import build_chat_tool_events
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -39,145 +34,6 @@ class ChatRequest(BaseModel):
     session_id: Optional[int] = None
     attachments: Optional[list[str]] = None   # 聊天附件的 attach_id 列表（来自 /agent/upload）
     greeting: Optional[str] = None            # 新会话首条消息携带的「已显示默认问候」→ 落为本会话首条 assistant 消息
-    interaction_prompt_id: Optional[int] = None
-    interaction_token: Optional[str] = None
-    interaction_event_id: Optional[str] = None
-
-
-class InteractionResponseRequest(BaseModel):
-    token: str
-    event_id: Optional[str] = None
-
-
-class InteractionTextRequest(BaseModel):
-    text: str
-    event_id: Optional[str] = None
-
-
-class SandboxClearRequest(BaseModel):
-    confirm_text: str = ""
-
-
-@router.post("/sandbox/restart")
-async def restart_my_sandbox(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    root = await resolve_sandbox_root(db, current_user.id)
-    if root is None:
-        raise HTTPException(409, "当前存储后端没有可用的 Shell 沙盒目录")
-    return {"ok": True, "operation": "restart", "reclaimed_containers": cleanup_sandboxes_for_root(str(root))}
-
-
-@router.post("/sandbox/rebuild")
-async def rebuild_my_sandbox(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    root = await resolve_sandbox_root(db, current_user.id)
-    if root is None:
-        raise HTTPException(409, "当前存储后端没有可用的 Shell 沙盒目录")
-    reclaimed = cleanup_sandboxes_for_root(str(root))
-    return {"ok": True, "operation": "rebuild", "root_ready": root.is_dir(), "reclaimed_containers": reclaimed}
-
-
-@router.post("/sandbox/clear")
-async def clear_my_sandbox(
-    body: SandboxClearRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if body.confirm_text != "清空沙盒":
-        raise HTTPException(409, "清空沙盒需要输入确认文字：清空沙盒")
-    root = await resolve_sandbox_root(db, current_user.id)
-    if root is None:
-        raise HTTPException(409, "当前存储后端没有可用的 Shell 沙盒目录")
-    reclaimed = cleanup_sandboxes_for_root(str(root))
-    removed = clear_sandbox_directory(root)
-    return {"ok": True, "operation": "clear", "removed_entries": removed, "reclaimed_containers": reclaimed}
-
-
-@router.get("/sessions/{session_id}/interactions")
-async def list_session_interactions(
-    session_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """列出会话交互历史；活动项带一次性 token，历史项只用于恢复气泡。"""
-    session = await get_owned(db, ConversationSession, session_id, current_user.id)
-    if session is None:
-        raise HTTPException(404, "会话不存在")
-    return {"items": await interactions.list_history(db, user_id=current_user.id, session_id=session_id)}
-
-
-@router.post("/interactions/{prompt_id}/respond")
-async def respond_interaction(
-    prompt_id: int,
-    body: InteractionResponseRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """消费一次交互动作，返回 Agent bridge 用的受控结果。"""
-    try:
-        result = await interactions.consume_action(
-            db,
-            user_id=current_user.id,
-            prompt_id=prompt_id,
-            token=body.token,
-            event_id=body.event_id,
-        )
-    except LookupError:
-        raise HTTPException(404, "交互不存在")
-    except ValueError as exc:
-        raise HTTPException(409, str(exc))
-    return result
-
-
-@router.post("/interactions/{prompt_id}/resume")
-async def resume_interaction(
-    prompt_id: int,
-    body: InteractionResponseRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """消费 ask_user 回答，唤醒仍在等待中的原 Agent Run。"""
-    try:
-        result = await interactions.consume_action(
-            db,
-            user_id=current_user.id,
-            prompt_id=prompt_id,
-            token=body.token,
-            event_id=body.event_id,
-        )
-    except LookupError:
-        raise HTTPException(404, "交互不存在")
-    except ValueError as exc:
-        raise HTTPException(409, str(exc))
-    if not result.get("context", {}).get("tool_call_id"):
-        raise HTTPException(409, "该交互不支持恢复原任务")
-    return {"ok": True, "session_id": result["session_id"]}
-
-
-@router.post("/interactions/{prompt_id}/resume-text")
-async def resume_text_interaction(
-    prompt_id: int,
-    body: InteractionTextRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """消费 ask_user 的文本回答，唤醒仍在等待中的原 Agent Run。"""
-    try:
-        result = await interactions.consume_text(
-            db, user_id=current_user.id, prompt_id=prompt_id,
-            text=body.text, event_id=body.event_id,
-        )
-    except LookupError:
-        raise HTTPException(404, "交互不存在")
-    except ValueError as exc:
-        raise HTTPException(409, str(exc))
-    if not result.get("context", {}).get("tool_call_id"):
-        raise HTTPException(409, "该交互不支持恢复原任务")
-    return {"ok": True, "session_id": result["session_id"]}
 
 
 @router.post("/upload")
@@ -188,8 +44,6 @@ async def upload_attachment(
 ):
     """聊天附件上传：暂存（不进文件库），返回 attach_id。咕咕可看内容/可保存。"""
     from app.core import media_transcode
-    from app.core.config import get_settings
-    from agent import providers
     data = await file.read()
     if len(data) > _MAX_ATTACH_BYTES:
         raise HTTPException(400, "文件太大（聊天附件上限 10MB）")
@@ -199,8 +53,7 @@ async def upload_attachment(
     # 语音录音：浏览器多录成 webm/opus（mimo 不收）→ 转成 mp3 再暂存，让 mimo 能听。
     # m4a(Safari)/ogg(Firefox) 是 mimo 原生格式、免转；缺 ffmpeg 则原样、退文字提示。
     if (ext or "").lower() not in ("mp3", "wav", "flac", "m4a", "ogg"):
-        conv = media_transcode.to_provider_audio(data, ext, file.content_type,
-                                                 providers.adapter_for(get_settings().ai))
+        conv = media_transcode.to_mimo_mp3(data, ext, file.content_type)
         if conv is not None:
             data, ext = conv, "mp3"
     mime = "audio/mpeg" if ext == "mp3" else file.content_type
@@ -316,9 +169,6 @@ async def chat(
         attachments=body.attachments or [],
         greeting=body.greeting,
         origin=request.headers.get("X-Client-Id"),
-        interaction_prompt_id=body.interaction_prompt_id,
-        interaction_token=body.interaction_token,
-        interaction_event_id=body.interaction_event_id,
     )
     return StreamingResponse(
         web_adapter.stream(req),
@@ -344,78 +194,28 @@ async def resume_stream(
     )
 
 
-@router.post("/sessions/{session_id}/cancel")
-async def cancel_stream(
-    session_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """请求停止该用户会话的后台 Web 生成，取消在 Agent round/token 边界生效。"""
-    session = await get_owned(db, ConversationSession, session_id, current_user.id)
-    if session is None:
-        raise HTTPException(404, "会话不存在")
-    active = await genstream.is_active(session_id)
-    if active:
-        await genstream.request_cancel(session_id)
-    return {"ok": True, "active": active}
-
-
 @router.get("/sessions")
 async def list_sessions(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 网页会话增长很快，不能用一个总量窗口把低频 IM 会话全部挤掉。
-    # 两类会话分别保留窗口，再合并排序，保证 QQ/微信/飞书始终可见。
-    web_res = await db.execute(
-        select(ConversationSession, Workspace.name)
-        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
-        .where(
-            ConversationSession.user_id == current_user.id,
-            or_(ConversationSession.source.is_(None), ConversationSession.source == "web"),
-        )
+    res = await db.execute(
+        select(ConversationSession)
+        .where(ConversationSession.user_id == current_user.id)
         .order_by(desc(ConversationSession.updated_at))
         .limit(50)
     )
-    im_res = await db.execute(
-        select(ConversationSession, Workspace.name)
-        .outerjoin(Workspace, Workspace.id == ConversationSession.workspace_id)
-        .where(
-            ConversationSession.user_id == current_user.id,
-            ConversationSession.source.is_not(None),
-            ConversationSession.source != "web",
-        )
-        .order_by(desc(ConversationSession.updated_at))
-        .limit(50)
-    )
-    sessions = sorted(
-        [*web_res.all(), *im_res.all()],
-        key=lambda item: item[0].updated_at,
-        reverse=True,
-    )
-    def goal_active(session: ConversationSession) -> bool:
-        context = session.session_context if isinstance(session.session_context, dict) else {}
-        return bool(context.get("goal_mode") and context.get("goal_text"))
-
-    def goal_status(session: ConversationSession) -> str | None:
-        context = session.session_context if isinstance(session.session_context, dict) else {}
-        if not context.get("goal_text"):
-            return None
-        return "paused" if context.get("goal_status") == "paused" else "active"
-
+    sessions = res.scalars().all()
     return [
         {
             "id": s.id,
             "title": s.title,
             "source": s.source,
             "chatType": s.chat_type,
-            "workspaceName": workspace_name,
-            "goalActive": goal_active(s),
-            "goalStatus": goal_status(s),
             "updatedAt": iso_utc(s.updated_at),
             "createdAt": iso_utc(s.created_at),
         }
-        for s, workspace_name in sessions
+        for s in sessions
     ]
 
 
@@ -436,14 +236,6 @@ async def get_ui_labels(current_user: User = Depends(get_current_user)):
     return {"thinking": _split(merged.get("_thinking", ""))}
 
 
-@router.get("/commands")
-async def get_commands(current_user: User = Depends(get_current_user)):
-    """返回聊天输入框使用的规范斜杠命令菜单。"""
-    from agent.commands.help import command_menu
-
-    return {"commands": command_menu()}
-
-
 @router.get("/greeting")
 async def get_greeting(
     current_user: User = Depends(get_current_user),
@@ -459,78 +251,27 @@ async def get_greeting(
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(
     session_id: int,
-    limit: int = 50,
-    before_id: Optional[int] = None,
-    after_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     session = await get_owned(db, ConversationSession, session_id, current_user.id)
     if not session:
         raise HTTPException(404, "对话不存在")
-    limit = min(max(limit, 1), 200)
-    base_filters = (
-        ConversationMessage.session_id == session_id,
-        ConversationMessage.content_json.is_(None),  # 过滤工具中间消息（tool_use/tool_result）
-        ConversationMessage.role != "summary",       # 过滤对话压缩摘要（注入 system prompt，不进对话气泡）
+    res = await db.execute(
+        select(ConversationMessage)
+        .where(
+            ConversationMessage.session_id == session_id,
+            ConversationMessage.content_json.is_(None),  # 过滤工具中间消息（tool_use/tool_result）
+            ConversationMessage.role != "summary",       # 过滤对话压缩摘要（注入 system prompt，不进对话气泡）
+        )
+        .order_by(ConversationMessage.created_at)
     )
-    statement = select(ConversationMessage).where(*base_filters)
-    if before_id is not None:
-        statement = statement.where(ConversationMessage.id < before_id).order_by(
-            desc(ConversationMessage.id)
-        )
-    elif after_id is not None:
-        statement = statement.where(ConversationMessage.id > after_id).order_by(
-            ConversationMessage.id
-        )
-    else:
-        statement = statement.order_by(desc(ConversationMessage.id))
-    statement = statement.limit(limit)
-    res = await db.execute(statement)
-    msgs = list(res.scalars().all())
-    if before_id is None and after_id is None:
-        msgs.reverse()
-
-    has_more = False
-    if msgs:
-        older_probe = await db.execute(
-            select(ConversationMessage.id)
-            .where(*base_filters, ConversationMessage.id < msgs[0].id)
-            .limit(1)
-        )
-        has_more = older_probe.first() is not None
+    msgs = res.scalars().all()
     mention_names = {
         str(message.platform_user_id): message.platform_user_name
         for message in msgs
         if message.platform_user_id and message.platform_user_name
     }
-    # 工具调用和结果必须先在完整会话范围内配对，再按正文窗口筛选。
-    # 如果只查询窗口内的行，窗口边界正好落在 tool_call/tool_result 中间时，
-    # 恢复端只能看到 tool_result，只能退化成“工具调用”，从而丢失工具名称。
-    # 这里只返回当前正文窗口对应的事件，不会把旧工具气泡全部塞进虚拟列表。
-    tool_filters = [
-        ConversationMessage.session_id == session_id,
-        ConversationMessage.content_json.is_not(None),
-    ]
-    tool_rows = (await db.execute(
-        select(ConversationMessage).where(*tool_filters).order_by(ConversationMessage.id)
-    )).scalars().all()
-    tool_events = build_chat_tool_events(tool_rows)
-    if msgs:
-        message_ids = [message.id for message in msgs]
-        first_id, last_id = min(message_ids), max(message_ids)
-        tool_events = [
-            event for event in tool_events
-            if first_id <= int(event.get("timelineOrder") or 0) <= last_id
-        ]
-    else:
-        tool_events = []
-    # assistant timeline 可能只包含正文轮次；只有 timeline 已经包含工具项时，
-    # 才抑制兼容 toolEvents，避免刷新后工具气泡消失或重复。
-    timeline_has_tools = any(
-        any(isinstance(item, dict) and item.get("kind") == "tool" for item in (message.display_timeline or []))
-        for message in msgs
-    )
     for message in msgs:
         if message.platform_bot_user_id:
             mention_names[message.platform_bot_user_id] = "咕咕"
@@ -556,24 +297,12 @@ async def get_session_messages(
         # 只替换当前会话已知的成员和 Bot ID，未知 mention 保留原样。
         return replace_mention_ids(text, mention_names)
 
-    workspace = await get_owned(db, Workspace, session.workspace_id, current_user.id) if session.workspace_id else None
-    session_context = session.session_context if isinstance(session.session_context, dict) else {}
     return {
         "session": {"id": session.id, "title": session.title, "chatType": session.chat_type,
-                    "ownerPlatformUserId": owner_platform_user_id,
-                    "workspaceName": workspace.name if workspace else None,
-                    "goalActive": bool(session_context.get("goal_mode") and session_context.get("goal_text")),
-                    "goalStatus": "paused" if session_context.get("goal_status") == "paused" and session_context.get("goal_text") else ("active" if session_context.get("goal_text") else None)},
+                    "ownerPlatformUserId": owner_platform_user_id},
         "active": await genstream.is_active(session_id),   # 该会话是否正在生成（前端据此续看）
-        "pagination": {
-            "limit": limit,
-            "hasMore": has_more,
-            "oldestId": msgs[0].id if msgs else None,
-            "newestId": msgs[-1].id if msgs else None,
-        },
         "messages": [
             {"id": m.id, "role": m.role,
-             "timelineOrder": m.id * 1000,
              "content": render_content(m.content),
              "files": m.files or [],
              "quotedText": m.quoted_text,
@@ -582,21 +311,6 @@ async def get_session_messages(
              "platformBotUserId": m.platform_bot_user_id,
              "createdAt": iso_utc(m.created_at)}
             for m in msgs
-            if not (m.role == "assistant" and m.display_timeline)
-        ],
-        "timelineEvents": [
-            {**item,
-             "id": f"{m.id}:{index}",
-             "timelineOrder": m.id * 1000 + index + 1,
-             "createdAt": iso_utc(m.created_at)}
-            for m in msgs
-            for index, item in enumerate(m.display_timeline or [])
-        ],
-        "toolEvents": [
-            {**event, "timelineOrder": int(event.get("timelineOrder") or 0) * 1000,
-             "createdAt": iso_utc(event["createdAt"]),
-             **({"updatedAt": iso_utc(event["updatedAt"])} if event.get("updatedAt") else {})}
-            for event in ([] if timeline_has_tools else tool_events)
         ],
     }
 

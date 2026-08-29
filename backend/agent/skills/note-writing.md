@@ -1,24 +1,10 @@
 ---
 name: 思维笔记
-description_short: 创建、搜索、读取和更新普通时间流笔记；画布便签请用 canvas。
-description_long: 处理普通时间流笔记和日记的创建、搜索、读取、更新与结构化编辑；搜索用 note_search，读取用 note_get，画布便签改用 canvas。
-category: notes
-related_tools: note_search, note_get, note_create, note_update, note_delete, note_restore, note_undo
+description: 用 create_note / update_note 记笔记、写日记、笔记要带样式（加粗/列表/引用/代码块）或挂关联（项目/文件/日程）时——拿 blocks 正确写法、易错点和长内容分批写的策略
 emoji: 📝
 ---
 
-## 能力边界与工具路由
-
-本 Skill 只处理普通思维笔记，也就是思维面板的时间流 `note`：写笔记、写日记、更新正文和读取已有笔记。
-
-- 搜索普通笔记或全局查找笔记/画布便签：使用固定工具名 `note_search`，传 `query`。
-- 读取搜索结果的完整正文：使用固定工具名 `note_get`，传 `node_id`。
-- 创建、更新或删除普通时间流笔记：使用本 Skill 的 `note_create`、`note_update`、`note_delete` 等工具。
-- 指定画布、搜索画布节点、创建画布便签、放置项目/文件、连接节点：改用 `canvas` Skill，不要用 `note_create` 代替 `canvas_create_note`。
-- `canvas_search` 只搜索指定画布内容，需要 `canvas_id`；它不是普通笔记搜索工具。
-- 工具名必须逐字使用 canonical name，不要把 `note_search` 改写成 `search_notes`，也不要猜测 `list_notes`、`read_note` 等别名。
-
-`blocks` 由工具 Schema 和服务端共同严格校验。**照抄下面的正确示范，不要自行改变对象层级**，否则会被工具拒绝。
+`blocks` 这个参数没有严格的语法约束，工具描述里的 schema 更多是"帮你看懂形状"，不是"逼你必须"——**照抄下面的正确示范，别自己发挥结构**，越贴着示范写，越不容易被工具拦下来重试。
 
 ## 8 种块类型，照抄这几个形状
 
@@ -60,7 +46,7 @@ emoji: 📝
 ## 标题写在哪（重要）
 
 - **用户可见的标题 = `blocks` 里第一个 `heading` 块**，它渲染成便签卡片正文首行的 `# 标题`，用户能看到。
-- `note_create` / `note_update` 的 `title` 参数**用户看不到**——它只进搜索和列表索引。**不要**把标题只填在 `title` 参数里而不写 heading 块。
+- `create_note` / `update_note` 的 `title` 参数**用户看不到**——它只进搜索和列表索引。**不要**把标题只填在 `title` 参数里而不写 heading 块。
 - 正确示范：标题用 heading 块，正文用 paragraph 等块跟在后面：
 
 ```json
@@ -74,7 +60,7 @@ emoji: 📝
 
 日记、长笔记这种内容多的场景，一次性把所有内容塞进一个巨大的 `blocks` 数组，容易因为输出长度限制被截断（截断后参数解析失败，报错甚至可能整轮出错）。**更稳妥的做法**：
 
-1. 先用 `note_create` 起个头（比如第一段或前几个块），拿到 `node_id` 和 `version`。
-2. 再用一次或几次 `note_update` 的 `append_blocks` 往后续写，每次只追加一小段。
+1. 先用 `create_note` 起个头（比如第一段或前几个块），拿到 `node_id` 和 `version`。
+2. 再用一次或几次 `update_note` 的 `append_blocks` 往后续写，每次只追加一小段。
 
 这样任何一次调用的参数体量都比较小，不容易撞到输出长度上限，出错了也只影响这一小段、不用整篇重来。

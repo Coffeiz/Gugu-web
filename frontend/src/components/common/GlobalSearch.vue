@@ -18,7 +18,7 @@
       <transition name="gs-pop">
         <div v-if="open && q.trim()" ref="panelEl" class="gs-panel" :style="panelStyle">
           <div v-if="loading" class="gs-hint">
-            <Icon name="status.loading" class="gs-spin" size="md" tone="inherit" /> 搜索中…
+            <PhCircleNotch class="gs-spin" :size="15" weight="bold" /> 搜索中…
           </div>
           <div v-else-if="total === 0" class="gs-hint">没找到「{{ q.trim() }}」相关内容</div>
           <template v-else>
@@ -30,7 +30,7 @@
                 class="gs-item"
                 @click="go(g.type, it)"
               >
-                <Icon :name="TYPE_ICON[g.type]" class="gs-item-icon" size="md" tone="inherit" />
+                <component :is="TYPE_ICON[g.type]" class="gs-item-icon" :size="16" weight="bold" />
                 <span class="gs-item-title">{{ it.title }}</span>
                 <span v-if="it.subtitle" class="gs-item-sub">{{ it.subtitle }}</span>
               </button>
@@ -47,21 +47,24 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { nextZ } from '@/composables/windowz'
 import { useRouter } from 'vue-router'
 import { Message } from '@arco-design/web-vue'
-import Icon from '@/components/common/Icon.vue'
+import {
+  PhCircleNotch,
+  PhStack, PhFile, PhFolder, PhCalendarBlank, PhAddressBook, PhChatCircle, PhNote,
+} from '@phosphor-icons/vue'
 import SearchInput from './SearchInput.vue'
 import { searchApi } from '@/services/api'
 import { useProjectStore } from '@/stores/projects'
 import { useUiStore } from '@/stores/ui'
 
-// 类型图标与侧边栏导航保持一致，具体图标由语义注册表统一解析。
+// 类型图标与侧边栏导航保持一致（项目=PhStack、日历=PhCalendarBlank、文件库=PhFolder、客户=PhAddressBook）
 const TYPE_ICON = {
-  project: 'navigation.projects',
-  file: 'file.document',
-  folder: 'file.folder',
-  event: 'navigation.calendar',
-  client: 'communication.customer',
-  conversation: 'communication.chat',
-  note: 'canvas.graph',
+  project: PhStack,
+  file: PhFile,
+  folder: PhFolder,
+  event: PhCalendarBlank,
+  client: PhAddressBook,
+  conversation: PhChatCircle,
+  note: PhNote,
 }
 
 const router       = useRouter()
@@ -259,12 +262,12 @@ onBeforeUnmount(() => {
 .gs-item:hover { background: rgba(123, 127, 178, 0.08); }
 
 .gs-item-icon {
-  color: var(--topbar-search-result-icon);
+  color: var(--color-primary);
   flex-shrink: 0;
 }
 .gs-item-title {
   font-size: 13px;
-  color: var(--topbar-search-result-fg);
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -273,7 +276,7 @@ onBeforeUnmount(() => {
 }
 .gs-item-sub {
   font-size: 12px;
-  color: var(--topbar-search-result-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

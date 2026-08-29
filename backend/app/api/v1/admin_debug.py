@@ -31,7 +31,7 @@ _LOGS = _BACKEND / "logs"
 LOG_FILES = {
     "web":        _LOGS / "gugu.log",
     "worker":     _LOGS / "gugu-worker.log",
-    "gateway": _LOGS / "gugu-gateway.log",
+    "supervisor": _LOGS / "gugu-supervisor.log",
 }
 # web 在 dev / prod 下写不同文件（dev=手动 uvicorn→gugu-web-dev.log；prod=systemd→gugu.log）。
 # 取最近更新的那个，自动适配环境——否则 dev 时会一直 tail 停掉的 prod 日志（满屏历史 crash）。

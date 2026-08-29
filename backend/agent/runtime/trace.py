@@ -4,7 +4,6 @@ from __future__ import annotations
 from .loopscope_trace.hooks import ensure_hooks
 from .loopscope_trace.state import (
     _enabled,
-    _discard_run,
     _finish_run,
     _scope_run,
     create_trace,
@@ -50,13 +49,7 @@ def finish_run(status: str = "success", output_text: str = "") -> None:
         run.output_text = output_text
     _finish_run(run, status)
 
-
-def discard_run() -> None:
-    """丢弃未执行 LLM 的临时 trace，例如 QQ 被动群消息。"""
-    if _enabled():
-        _discard_run()
-
 __all__ = [
-    "new_trace", "set_trace", "bind_im_run", "finish_run", "discard_run", "get_trace",
+    "new_trace", "set_trace", "bind_im_run", "finish_run", "get_trace",
     "record_context_source", "record_snapshot_event",
 ]

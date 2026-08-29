@@ -14,27 +14,6 @@ from app.db.session import get_db
 _bearer = HTTPBearer()
 
 
-def account_is_active(user) -> bool:
-    """统一解释账户状态；旧数据缺少新字段时按 active 兼容。"""
-    return bool(
-        user
-        and user.is_active
-        and getattr(user, "account_status", "active") == "active"
-    )
-
-
-async def is_user_active(user_id: UUID) -> bool:
-    """使用短生命周期独立会话检查账户，适用于 SSE/WS 轮询。"""
-    from app.db import session as db_session
-    from app.models import User
-
-    db_session.ensure_engine()
-    if db_session._SessionLocal is None:
-        return False
-    async with db_session._SessionLocal() as db:
-        return account_is_active(await db.get(User, user_id))
-
-
 def hash_password(plain: str) -> str:
     return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
@@ -84,27 +63,10 @@ def get_client_id(x_client_id: str | None = Header(default=None)) -> str | None:
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer),
 ) -> UUID:
-    """解析 JWT 并在建立长连接前检查账户状态，不持有请求级 DB session。"""
+    """JWT-only auth，不查 DB——用于 SSE 等长连接，避免占住 pool。"""
     settings = get_settings()
     try:
         payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=["HS256"])
-        if payload.get("role") != "user":
-            raise ValueError
-        user_id = UUID(payload["sub"])
-        if not await is_user_active(user_id):
-            raise HTTPException(status_code=401, detail="用户不存在或已停用")
-        from app.security.risk_policy import enforce_user_throttle
-        await enforce_user_throttle(user_id)
-        return user_id
-    except (JWTError, KeyError, ValueError):
-        raise HTTPException(status_code=401, detail="Token 无效或已过期")
-
-
-def decode_user_token(token: str) -> UUID:
-    """解析 WebSocket 等无法自定义 Authorization 头的长连接令牌。"""
-    settings = get_settings()
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
         if payload.get("role") != "user":
             raise ValueError
         return UUID(payload["sub"])
@@ -128,8 +90,6 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
 
     user = await db.get(User, user_id)
-    if not account_is_active(user):
+    if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="用户不存在或已停用")
-    from app.security.risk_policy import enforce_user_throttle
-    await enforce_user_throttle(user_id)
     return user

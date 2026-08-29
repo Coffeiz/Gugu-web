@@ -74,8 +74,7 @@ const { onPointerDown } = useMindRuntimeObject({
     if (action.toSurfaceId !== MIND_CANVAS_SURFACE_ID) return
     const center = coastPoint(action)
     if (!center) return
-    const landingObjectId = `mind:drawer-project:${props.project.id}`
-    registerCanvasLandingTarget(landingObjectId, props.project.id)
+    registerCanvasLandingTarget(`mind:drawer-project:${props.project.id}`, props.project.id)
     void props.addToCanvas(props.project.id, center, {
       w: action.sourceSize?.w ?? 240,
       h: action.sourceSize?.h ?? 120,

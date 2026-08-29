@@ -62,9 +62,6 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
 
     const folders = parsed.filter(item => item.isFolder)
     const files = parsed.filter(item => !item.isFolder)
-    // 拖拽落点已经确定后立即退出选择模式，避免持久化请求尚未返回时用户的
-    // 下一次点击仍被选择协调器吞掉，尤其是紧接着点击目标文件夹导航的场景。
-    options.clearSelection()
     // 文件与文件夹分别进入各自的 optimisticMutation；intent 也必须分开，否则同一组拖拽里
     // “文件请求成功、文件夹请求失败”会错误地把另一类对象的 rollback chain 一并清掉。
     const folderWork = folders.length > 0
@@ -80,6 +77,7 @@ export function useFileRuntimeMove(options: FileRuntimeMoveOptions) {
         )
       : Promise.resolve()
     await Promise.all([folderWork, fileWork])
+    options.clearSelection()
   }
 
   return { handleAction }

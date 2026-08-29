@@ -6,66 +6,18 @@ Anthropic 与 OpenAI 两种 schema，消除手写两份的重复。core 通过 r
 """
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import time
-from contextvars import ContextVar
 from typing import Any, Callable
 
 from app.core.redaction import diag_log, diag_log_raw, redact as sanitize_error
-from agent.tools.tool_contract import (
-    SchemaError,
-    build_validator,
-    enrich_tool_error,
-    invalid_input_payload,
-    normalize_legacy_input,
-    validate_input,
-)
+from agent.tools.tool_contract import SchemaError, build_validator, invalid_input_payload, validate_input
 
 # 工具调用轨迹（可观测，reliability Roadmap P1）：每次 dispatch 落一行 JSON 到 `agent.traj` logger
 # → 经 INFO 进 gugu.log（Debug 面板 tail 得到）。「调没调工具/调了啥/成没成」翻一眼即得，不用复现+猜。
 _traj_log = logging.getLogger("agent.traj")
 _log = logging.getLogger("agent.tools")
-_dispatch_session_id: ContextVar[int | None] = ContextVar("agent_dispatch_session_id", default=None)
-_dispatch_session: ContextVar[object | None] = ContextVar("agent_dispatch_session", default=None)
-_dispatch_run_id: ContextVar[str | None] = ContextVar("agent_dispatch_run_id", default=None)
-
-
-def set_dispatch_session_id(session_id: int | None):
-    """为当前 Agent 工具执行上下文绑定真实会话 ID。"""
-    return _dispatch_session_id.set(session_id)
-
-
-def reset_dispatch_session_id(token) -> None:
-    _dispatch_session_id.reset(token)
-
-
-def set_dispatch_session(session_id: int | None, session=None, run_id: str | None = None):
-    """绑定本轮真实会话；工具复核优先使用对象，避免 IM 映射短暂过期。"""
-    id_token = _dispatch_session_id.set(session_id)
-    session_token = _dispatch_session.set(session)
-    run_token = _dispatch_run_id.set(run_id)
-    return id_token, session_token, run_token
-
-
-def reset_dispatch_session(token) -> None:
-    id_token, session_token, run_token = token
-    _dispatch_session_id.reset(id_token)
-    _dispatch_session.reset(session_token)
-    _dispatch_run_id.reset(run_token)
-
-
-def current_dispatch_session_id() -> int | None:
-    return _dispatch_session_id.get()
-
-
-def current_dispatch_session():
-    return _dispatch_session.get()
-
-
-def current_dispatch_run_id() -> str | None:
-    return _dispatch_run_id.get()
 
 # 脱敏逻辑（连接串/密钥/路径/UUID/traceback）已迁到 app.core.redaction.redact——
 # app.*（API/存储/core）不得反向依赖 agent.*，放这儿会逼它们反依赖 agent；
@@ -137,7 +89,7 @@ def _log_traj(name: str, user_id, args: Any, ok: bool, note: str, t0: float) -> 
 # 注意：attach_id 是 hex 串（chat_attach 的 uuid4().hex）、user_id 是 UUID，都不在此列。
 _INT_ID_KEYS = ("project_id", "file_id", "folder_id", "parent_id",
                 "event_id", "client_id", "stage_id", "todo_id", "session_id", "node_id",
-                "canvas_id", "item_id", "relation_id", "ref_id", "workspace_id")
+                "canvas_id", "item_id", "relation_id", "ref_id")
 
 
 def _to_int_id(v):
@@ -150,17 +102,12 @@ def _to_int_id(v):
 
 
 def _coerce_int_ids(args) -> None:
-    """就地归一工具参数里的整型 id 和常见的结果数量。"""
+    """就地把 args（含嵌套 target）里的整型 id 键从字符串转成 int。"""
     if not isinstance(args, dict):
         return
     for k in _INT_ID_KEYS:
         if k in args:
             args[k] = _to_int_id(args[k])
-    # IM 模型有时会把 JSON Schema 中的 integer 参数序列化成数字字符串。
-    # 在 schema 校验前做无损归一，避免把可执行的调用误判成输入错误；非数字字符串保持原样，
-    # 仍由对应 schema 给出明确的 type 错误。
-    if "max_results" in args:
-        args["max_results"] = _to_int_id(args["max_results"])
     tgt = args.get("target")
     if isinstance(tgt, dict):
         for k in ("project_id", "folder_id"):
@@ -183,10 +130,6 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
     from agent.im import imctx
     payload = imctx.to_send_payload()
     if not payload:             # web 路径：imctx 没 set 过，压根不在 IM 上下文里
-        return
-    im = imctx.get_im()
-    if im and im.get("show_tool_interactions"):
-        # 已有独立工具气泡时，慢进度声明会重复描述同一件事。
         return
     if not payload.get("message_id"):  # 定时任务等无具体触发消息的路径：不发进度声明
         return
@@ -215,38 +158,13 @@ async def _maybe_announce_progress(tool: "Tool", args: dict) -> None:
         print(f"[skill] 慢工具进度声明发送失败（不影响工具执行）: {type(e).__name__}: {e}", flush=True)
 
 
-def _compact_schema(value: Any) -> Any:
-    """移除 Schema 节点元数据，保留 properties 中同名的真实字段。"""
-    if isinstance(value, list):
-        return [_compact_schema(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    omitted = {"description", "example", "examples", "title", "default"}
-    result = {}
-    for key, item in value.items():
-        if key in omitted:
-            continue
-        if key == "properties" and isinstance(item, dict):
-            # properties 的 key 是用户参数名，不是 Schema 元数据；参数名可以合法地叫 title。
-            result[key] = {name: _compact_schema(schema) for name, schema in item.items()}
-        else:
-            result[key] = _compact_schema(item)
-    return result
-
-
 class Tool:
     """单个工具的声明 + 执行入口。"""
 
     def __init__(self, name: str, description: str, input_schema: dict,
                  handler, label: str | None = None, destructive: bool = False,
                  mutates: bool = False,
-                 start_message: str | Callable[[dict], str] | None = None,
-                 description_short: str | None = None,
-                 category: str = "",
-                 permissions: tuple[str, ...] = (),
-                 platforms: tuple[str, ...] = (),
-                 related_skills: tuple[str, ...] = (),
-                 source: str = "builtin", schema_version: int = 1):
+                 start_message: str | Callable[[dict], str] | None = None):
         self.name = name
         self.description = description
         self.input_schema = input_schema
@@ -256,7 +174,7 @@ class Tool:
         # 是否会改数据（写库/改长期记忆/删笔记……）：定时任务只有在整轮没有任何
         # mutates=True 的调用时才允许重跑完整 execution（见 scheduled_tasks.py 的
         # mutated 判断）。以前靠猜工具名前缀（create_/update_/delete_/...），
-        # remember、note_undo 这类不在前缀表里的写工具会被漏判，导致
+        # remember、undo_last_gugu_note 这类不在前缀表里的写工具会被漏判，导致
         # 报错后重跑整轮、重复执行已经生效的写操作。destructive 管的是要不要走
         # confirm 二次确认，跟这个是两件事：写操作不一定不可逆（destructive），
         # 但只要写了就不能自动重放（mutates）。
@@ -266,25 +184,14 @@ class Tool:
         # 的边界：像 http_get 这种响应类型要等结果才知道的工具，就别细分，用统一粗粒度文案）。
         # 不设置 = 该工具认为自己够快，不需要这条声明。
         self.start_message = start_message
-        # Capability Registry metadata。旧工具未补齐 metadata 时由 adapter 生成诊断，
-        # 不改变既有工具 Schema 或 dispatch 语义。
-        # label 是现有工具定义中的短用户可见名称；未显式补充短描述时用它作为迁移期
-        # metadata，绝不从完整 description 截断生成。
-        self.description_short = description_short or label or name
-        self.category = category
-        self.permissions = tuple(permissions)
-        self.platforms = tuple(platforms)
-        self.related_skills = tuple(related_skills)
-        self.source = source
-        self.schema_version = schema_version
         # 注册时由 SkillRegistry.add() 完成 schema 自检并缓存；未注册 Tool 不允许直接 dispatch。
         self._input_validator = None
 
     def to_anthropic(self) -> dict:
         return {
             "name": self.name,
-            "description": self.description_short,
-            "input_schema": copy.deepcopy(self.input_schema),
+            "description": self.description,
+            "input_schema": self.input_schema,
         }
 
     def to_openai(self) -> dict:
@@ -292,8 +199,8 @@ class Tool:
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": self.description_short,
-                "parameters": copy.deepcopy(self.input_schema),
+                "description": self.description,
+                "parameters": self.input_schema,
             },
         }
 
@@ -365,7 +272,8 @@ class SkillRegistry:
         return self._tools.get(name)
 
     def known_skill_names(self) -> set[str]:
-        """返回已注册的 skill 组名，供能力目录和注册数据校验使用。"""
+        """已注册的 skill 组名集合，供调用方校验存量数据里的组名是否还认识
+        （比如定时任务存的 tool_groups——组名改了/拼错了不该悄悄裁没工具）。"""
         return set(self._skills.keys())
 
     def labels(self) -> dict[str, str]:
@@ -390,22 +298,12 @@ class SkillRegistry:
         allowed_tool_names = current_im.get("allowed_tool_names") if current_im else None
         if not can_use_tool(name, allowed_tool_names):
             _log_traj(name, user_id, args, False, "当前群聊身份没有使用该工具的权限", t0)
-            payload = enrich_tool_error(name, {"error": "当前群聊身份没有使用该工具的权限"})
-            return json.dumps(payload, ensure_ascii=False), None
+            return json.dumps({"error": "当前群聊身份没有使用该工具的权限"}, ensure_ascii=False), None
 
         tool = self._tools.get(name)
         if tool is None:
             _log_traj(name, user_id, args, False, "未知工具", t0)
-            payload = enrich_tool_error(name, {"error": f"未知工具: {name}"})
-            return json.dumps(payload, ensure_ascii=False), None
-
-        # Shell 的会话身份由 Agent 执行器提供，不能信任模型自行填写的 session_id。
-        # 兼容旧模型残留的同名参数：校验前丢弃，执行时统一使用真实会话 ID。
-        public_args = args
-        if name == "shell" and isinstance(args, dict) and "session_id" in args:
-            public_args = dict(args)
-            public_args.pop("session_id", None)
-            args = public_args
+            return json.dumps({"error": f"未知工具: {name}"}), None
 
         # JSON 能解析 ≠ 符合工具契约。先要求顶层 object，再保留现有 ID 弱归一，最后按
         # Tool.input_schema 做本地实例校验。任何失败都在进度声明/DB/handler/confirm 之前返回，
@@ -414,13 +312,9 @@ class SkillRegistry:
             payload = invalid_input_payload(
                 name,
                 [{"path": "$", "rule": "type", "message": "工具输入必须是 object"}],
-                schema=tool.input_schema,
             )
             _log_traj(name, user_id, args, False, "tool_input_invalid:type", t0)
             return json.dumps(payload, ensure_ascii=False), None
-
-        # 版本适配集中在契约层，只转换无歧义的旧字段，再进入当前 Schema 校验。
-        args, _legacy_adaptations = normalize_legacy_input(name, args)
 
         # 整型主键 id 归一：LLM 常把 id 当字符串传（"91"）。除 User 外所有模型都是 int 主键，
         # int4 列拿到字符串会让 asyncpg 直接抛 DataError（db.get(Project,"91") 崩，而非返回 None）。
@@ -433,7 +327,7 @@ class SkillRegistry:
             tool._input_validator = build_validator(tool.input_schema)
         issues = validate_input(tool._input_validator, args)
         if issues:
-            payload = invalid_input_payload(name, issues, schema=tool.input_schema)
+            payload = invalid_input_payload(name, issues)
             first_rule = issues[0].get("rule", "invalid")
             _log_traj(name, user_id, args, False, f"tool_input_invalid:{first_rule}", t0)
             return json.dumps(payload, ensure_ascii=False), None
@@ -461,11 +355,7 @@ class SkillRegistry:
         # 可见日志只留脱敏摘要 + 异常类型名；外发给模型/用户/轨迹的也只有脱敏版。
         try:
             async with _sess._SessionLocal() as db:
-                handler_args = args
-                if name == "shell":
-                    handler_args = dict(args)
-                    handler_args["_session_id"] = current_dispatch_session_id()
-                result: Any = await tool.handler(db, user_id, handler_args)
+                result: Any = await tool.handler(db, user_id, args)
                 # Agent 一次工具调用就是一个任务事务边界。Service 层只负责 flush，
                 # 由这里统一提交/回滚：handler 返回 error dict 说明业务校验失败，
                 # 虽然不会修改数据（校验在写入前就 return 了），但 flush 可能留下
@@ -480,12 +370,10 @@ class SkillRegistry:
             _safe = sanitize_error(f"{type(e).__name__}: {e}")
             _log.error("工具 %s 执行出错：%s", name, _safe)        # 可见日志只给脱敏摘要
             _log_traj(name, user_id, args, False, _safe, t0)
-            payload = enrich_tool_error(name, {"error": f"工具 {name} 执行出错：{_safe}"})
-            return json.dumps(payload, ensure_ascii=False), None
+            return json.dumps({"error": f"工具 {name} 执行出错：{_safe}"}, ensure_ascii=False), None
 
         # 脱敏工具自己返回的 error 字段（如 files.py 的 `{"error": f"…{str(e)}"}`）：只动 error、不碰正常内容；
         # 原始 error 已在 _redact_result 内 print 到日志。放在轨迹记录前，让 traj 也存脱敏版。
-        result = enrich_tool_error(name, result)
         result = _redact_result(name, result)
 
         # 工具调用轨迹（成功路径，一次覆盖 str / 图片块 / dict 三种返回）

@@ -31,7 +31,7 @@ from app.services.files.actions import delete_file as delete_file_action
 from app.services.storage.keys import _build_key, _resolve_conflict
 from app.services.storage.file_service import FileService
 from app.search.query import normalize_queries
-from agent.tools.base import BaseSkill, Tool, current_dispatch_session
+from agent.tools.base import BaseSkill, Tool
 
 # 可读/可改的文本类扩展名
 TEXT_EXTS = frozenset({
@@ -254,76 +254,8 @@ def _target_loc(f, target: dict):
     return space, project_id, folder_id
 
 
-async def _bound_workspace_target(db, user_id):
-    """返回当前工具调用所属会话的文件库落点；没有绑定工作区则返回 None。"""
-    session = current_dispatch_session()
-    workspace_id = getattr(session, "workspace_id", None)
-    if workspace_id is None:
-        return None
-    from app.services.workspaces import resolve_workspace_target
-    return await resolve_workspace_target(db, user_id, workspace_id)
-
-
-def _workspace_location(target: dict) -> tuple[str, int | None, int | None]:
-    return target["space"], target.get("project_id"), target.get("folder_id")
-
-
-def _location_matches(space, project_id, folder_id, target: dict) -> bool:
-    wanted = _workspace_location(target)
-    return (space, project_id, folder_id) == wanted
-
-
-def _workspace_conflict(target: dict) -> str:
-    location = target.get("workspace_name") or f"工作区 {target['workspace_id']}"
-    return json.dumps({
-        "error": f"当前会话已绑定工作区「{location}」，不能写入其它项目或文件夹。",
-        "workspace_id": target["workspace_id"],
-        "expected": {k: target.get(k) for k in ("space", "project_id", "folder_id")},
-        "hint": "省略目标位置参数即可使用当前工作区；workspace_id 不能当作 project_id 使用。",
-    }, ensure_ascii=False)
-
-
-async def _resolve_create_location(db, user_id, args: dict):
-    target = await _bound_workspace_target(db, user_id)
-    explicit = any(args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id"))
-    if target is not None:
-        if not explicit:
-            return (*_workspace_location(target), None)
-        # folder_id 本身足以确定空间；不要因为模型省略 space/project_id 而把项目文件夹误判为 personal。
-        explicit_folder_id = args.get("folder_id")
-        if explicit_folder_id not in (None, "") and args.get("space") in (None, "") and args.get("project_id") in (None, ""):
-            try:
-                folder = await get_user_folder(db, user_id, int(explicit_folder_id))
-            except (TypeError, ValueError):
-                folder = None
-            if folder is not None:
-                inferred_space = "project" if folder.project_id is not None else "personal"
-                if _location_matches(inferred_space, folder.project_id, folder.id, target):
-                    return inferred_space, folder.project_id, folder.id, None
-        space, project_id, folder_id, error = _coerce_loc(
-            args.get("space") or ("project" if args.get("project_id") else "personal"),
-            args.get("project_id"), args.get("folder_id"),
-        )
-        if error:
-            return None, None, None, error
-        if not _location_matches(space, project_id, folder_id, target):
-            return None, None, None, _workspace_conflict(target)
-        return space, project_id, folder_id, None
-    space = args.get("space", "personal")
-    return _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
-
-
 # ── handlers ──
 async def _list_files(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        args.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        args = {**args, **{
-            "space": workspace_target["space"],
-            "project_id": workspace_target.get("project_id"),
-            "folder_id": workspace_target.get("folder_id"),
-        }}
     folder_value = args.get("folder_id")
     if folder_value in (None, ""):
         folder_value = args.get("folder")
@@ -343,7 +275,7 @@ async def _list_files(db, user_id, args: dict):
                 return error
             folder_id = folder.id
     file_queries = normalize_queries(
-        args.get("query") or args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
+        args.get("q"), args.get("queries") if isinstance(args.get("queries"), list) else None,
     )
     requested_limit = args.get("limit", 100)
     try:
@@ -513,7 +445,10 @@ async def _create_document(db, user_id, args: dict):
     if not name:
         return json.dumps({"error": "缺少必填参数 name（文件名）；请带上 name 再调用本工具"}, ensure_ascii=False)
     display_name = _strip_ext(name, ext)
-    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
+    space = args.get("space", "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(
+        space, args.get("project_id"), args.get("folder_id"),
+    )
     if loc_err:
         return loc_err
     content = args.get("content", "")
@@ -591,15 +526,8 @@ async def _save_uploaded_file(db, user_id, args: dict):
     如把连发图片之外的一条语音存进来了；见 resolve_attach 的歧义防护）。"""
     from app.core import chat_attach
 
-    source = args.get("source")
-    if source == "latest":
-        args = {**args, "attach_id": None, "attach_ids": None}
-    elif source == "attach_id" and not args.get("attach_id"):
-        return {"error": "source=attach_id 时必须提供 attach_id"}
-    elif source == "attach_ids" and not args.get("attach_ids"):
-        return {"error": "source=attach_ids 时必须提供 attach_ids"}
-
-    space, project_id, folder_id, loc_err = await _resolve_create_location(db, user_id, args)
+    space = args.get("space") or ("project" if args.get("project_id") else "personal")
+    space, project_id, folder_id, loc_err = _coerce_loc(space, args.get("project_id"), args.get("folder_id"))
     if loc_err:
         return loc_err
 
@@ -721,16 +649,7 @@ async def _resolve_file(db, user_id, args):
     if name:
         name = str(name).strip()
         base = name.rsplit(".", 1)[0] if "." in name else name
-        workspace_target = await _bound_workspace_target(db, user_id)
-        rows = await find_user_files_by_name(
-            db, user_id, base,
-            **({
-                "space": workspace_target["space"],
-                "project_id": workspace_target.get("project_id"),
-                "folder_id": workspace_target.get("folder_id"),
-                "root": workspace_target.get("kind") == "project",
-            } if workspace_target else {}),
-        )
+        rows = await find_user_files_by_name(db, user_id, base)
         if not rows:
             return None, json.dumps({"error": f"未找到文件「{name}」"})
         if len(rows) > 1:
@@ -886,17 +805,10 @@ async def _move_folder(db, user_id, folder, t_space, t_pid, t_parent_id) -> dict
 async def _move_items(db, user_id, args: dict):
     """统一移动：files + folders 一次搬到同一 target。文件夹连内容递归搬（后端展开，
     Agent 不必知道里面有多少文件）。逐条如实回报成功/失败。"""
-    target = _norm_target(args.get("target", {}))
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
+    target = args.get("target", {})
     t_space, t_pid, t_folder_id, terr = await _resolve_target(db, user_id, target)
     if terr:
         return terr
-    if workspace_target is not None and not _location_matches(t_space, t_pid, t_folder_id, workspace_target):
-        return _workspace_conflict(workspace_target)
     file_target = {"space": t_space, "project_id": t_pid, "folder_id": t_folder_id}
 
     moved_files, moved_folders, failed = [], [], []
@@ -939,31 +851,10 @@ async def _move_items(db, user_id, args: dict):
 
 
 async def _create_folder(db, user_id, args: dict):
-    workspace_target = await _bound_workspace_target(db, user_id)
-    project_id = args.get("project_id")
-    parent_id = args.get("parent_id")
-    if workspace_target is not None:
-        try:
-            explicit_project_id = int(project_id) if project_id not in (None, "") else None
-            explicit_parent_id = int(parent_id) if parent_id not in (None, "") else None
-        except (TypeError, ValueError):
-            return _workspace_conflict(workspace_target)
-        if explicit_project_id is not None and explicit_project_id != workspace_target.get("project_id"):
-            return _workspace_conflict(workspace_target)
-        project_id = workspace_target.get("project_id")
-        if explicit_parent_id is None:
-            parent_id = workspace_target.get("folder_id")
-        else:
-            parent = await get_user_folder(db, user_id, explicit_parent_id)
-            if not parent or parent.project_id != workspace_target.get("project_id"):
-                return _workspace_conflict(workspace_target)
-            if workspace_target.get("folder_id") is not None and explicit_parent_id != workspace_target["folder_id"]:
-                return _workspace_conflict(workspace_target)
-            parent_id = explicit_parent_id
     try:
         fo = await FileService(db).create_folder(
-            user_id, name=args["name"], parent_id=parent_id,
-            project_id=project_id,
+            user_id, name=args["name"], parent_id=args.get("parent_id"),
+            project_id=args.get("project_id"),
         )
     except Exception as e:
         return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
@@ -973,24 +864,6 @@ async def _create_folder(db, user_id, args: dict):
 
 async def _delete_file(db, user_id, args: dict):
     # 软删进回收站，30 天可还原 —— 非不可逆，无需二次确认
-    file_ids = args.get("file_ids")
-    if file_ids is not None:
-        if not isinstance(file_ids, list) or not file_ids or len(file_ids) > 50:
-            return json.dumps({"error": "file_ids 必须是 1-50 个文件 id"})
-        files = []
-        for file_id in file_ids:
-            file, error = await _resolve_file(db, user_id, {"file_id": file_id})
-            if error:
-                return error
-            files.append(file)
-        results = []
-        for file in files:
-            await delete_file_action(db, get_storage(), user_id, file.id, now_utc())
-            results.append({"file_id": file.id, "name": f"{file.display_name}.{file.ext}",
-                            "note": "已移入回收站，30 天内可还原",
-                            "_file_op": {"op": "remove", "kind": "file", "id": file.id}})
-        await db.commit()
-        return {"success": True, "deleted_count": len(results), "results": results}
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
@@ -1063,26 +936,6 @@ async def _rename_folder(db, user_id, args: dict):
 
 
 async def _delete_folder(db, user_id, args: dict):
-    folder_ids = args.get("folder_ids")
-    if folder_ids is not None:
-        if not isinstance(folder_ids, list) or not folder_ids or len(folder_ids) > 50:
-            return json.dumps({"error": "folder_ids 必须是 1-50 个文件夹 id"})
-        folders = []
-        for folder_id in folder_ids:
-            folder = await _find_folder(db, user_id, {"folder_id": folder_id})
-            if isinstance(folder, str):
-                return folder
-            folders.append(folder)
-        results = []
-        try:
-            for folder in folders:
-                await FileService(db).delete_folder(user_id, folder.id)
-                results.append({"deleted_folder_id": folder.id, "name": folder.name,
-                                "_file_op": {"op": "remove", "kind": "folder", "id": folder.id}})
-            await db.commit()
-        except Exception as e:
-            return json.dumps({"error": redact(f"{type(e).__name__}: {e}")})
-        return {"success": True, "deleted_count": len(results), "results": results}
     fo = await _find_folder(db, user_id, args)
     if isinstance(fo, str):
         return fo
@@ -1102,14 +955,7 @@ async def _copy_file(db, user_id, args: dict):
     f, _err = await _resolve_file(db, user_id, args)
     if _err:
         return _err
-    if args.get("destination") == "same" and args.get("target"):
-        return {"error": "destination=same 时不能同时提供 target"}
     target = _norm_target(args.get("target", {}))
-    workspace_target = await _bound_workspace_target(db, user_id)
-    if workspace_target is not None and not any(
-        target.get(key) not in (None, "") for key in ("space", "project_id", "folder_id", "folder")
-    ):
-        target = {key: workspace_target.get(key) for key in ("space", "project_id", "folder_id")}
     space, project_id, folder_id = _target_loc(f, target)
     space, project_id, folder_id, loc_err = _coerce_loc(space, project_id, folder_id)
     if loc_err:
@@ -1128,8 +974,6 @@ async def _copy_file(db, user_id, args: dict):
             if fo.project_id is not None:
                 project_id = fo.project_id
                 space = "project"
-    if workspace_target is not None and not _location_matches(space, project_id, folder_id, workspace_target):
-        return _workspace_conflict(workspace_target)
     try:
         result = await FileService(db).copy_file(
             user_id, f.id, folder_id=folder_id,
@@ -1352,12 +1196,6 @@ async def _send_file(db, user_id, args: dict):
     im = imctx.get_im()
     is_restricted = bool(im and im.get("im_role") in ("member", "unknown"))
 
-    source_type = args.get("source_type")
-    if source_type:
-        source_key = "file_id" if source_type == "file_id" else source_type
-        if not args.get(source_key):
-            return {"error": f"source_type={source_type} 时必须提供 {source_key}"}
-
     url = (args.get("url") or "").strip()
     if url:
         return await _send_file_from_url(user_id, url, args.get("title") or "")
@@ -1406,34 +1244,37 @@ class FilesSkill(BaseSkill):
     tools = [
         Tool(
             name="list_files", label="查询文件",
-            description_short='查询文件；关键字段 space/project_id/folder_id/query，支持 q/queries 兼容别名，mode=OR/AND',
-            description="按空间、项目、文件夹、扩展名或名称关键词查询文件；结果含完整 folder_path。",
+            description="查询文件，可按空间(project/mind/asset/personal)、项目、文件夹、扩展名、一个或多个名称关键词（默认 OR）筛选。"
+                        "结果含 folder_path（完整文件夹路径）；回给用户时默认按 folder_path 分组，用目录树形式呈现（文件夹一行，文件缩进列出）。"
+                        "同名文件按完整路径区分；不要把平铺结果揉成一段话，也不要把未出现在结果中的文件夹判断为空。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                     "project_id": {"type": "integer"},
-                    "folder_id": {"type": "integer"},
-                    "folder": {"type": "string"},
-                    "ext": {"type": "string"},
-                    "query": {"type": "string"},
-                    "q": {"type": "string"},
-                    "queries": {"type": "array", "items": {"type": "string"}},
-                    "mode": {"type": "string", "enum": ["OR", "AND"]},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
+                    "folder_id": {"type": "integer", "description": "只查询指定文件夹内的文件"},
+                    "folder": {"type": "string", "description": "按文件夹名称筛选；已知 folder_id 时优先使用 id"},
+                    "ext": {"type": "string", "description": "扩展名，如 png/md"},
+                    "q": {"type": "string", "description": "兼容旧调用的单个名称关键词；优先使用 queries"},
+                    "queries": {"type": "array", "items": {"type": "string"},
+                                "description": "可选多个名称关键词，默认 OR，最多 8 个"},
+                    "mode": {"type": "string", "enum": ["OR", "AND"],
+                             "description": "关键词匹配模式，默认 OR"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200,
+                              "description": "最多返回多少条，默认 100；查询大文件夹时可提高到 200"},
                 },
             },
             handler=_list_files,
         ),
         Tool(
             name="read_file", label="读取文件",
-            description_short='读取文件内容；关键字段 file_id/file',
-            description="读取文本、文档、表格、图片、音频或视频；返回与问题相关的内容摘要。",
+            description="读取文件内容：文本类（md/txt/json/代码等，≤256KB）直接读；PDF/Word/Excel/PPT 自动提取文本；图片可识别图像；音频转写；视频提取代表画面并转写音频（需配置对应模型）。"
+                        "读到后按需提炼、别整段复述给用户：大文件挑相关部分讲；JSON/YAML 点出顶层键和关键字段；CSV/TSV 给表头+前几行再总结各列；只回答用户问的那块。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer"},
-                    "file": {"type": "string"},
+                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
+                    "file": {"type": "string", "description": "文件名（推荐：直接用名字，无需 id）"},
                 },
                 "required": [],
             },
@@ -1441,13 +1282,14 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="edit_file", label="修改文件",
-            description_short='修改文本文件；关键字段 file_id/file/edits，mode=replace_all/append 用 content，find_replace 用 find/replace',
-            description="修改文本文件；支持整体替换、追加和查找替换，多个文件用 edits 批量处理。",
+            description="修改文本类文件内容。mode=replace_all 整体替换(content)；append 追加(content)；find_replace 查找替换(find/replace)。"
+                        "**要改多个文件用 edits=[{file,mode,...},...] 一次调用全改**（如多文件统一把某词查找替换：每项填同样的 find/replace）。逐项回报成功/失败。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "edits": {
                         "type": "array",
+                        "description": "批量：每项一个独立编辑 {file 或 file_id, mode, content/find/replace}。改多个文件用这个",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -1459,112 +1301,70 @@ class FilesSkill(BaseSkill):
                                 "replace": {"type": "string"},
                             },
                             "required": ["mode"],
-                            "allOf": [
-                                {
-                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
-                                    "then": {
-                                        "required": ["content"],
-                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                                    },
-                                },
-                                {
-                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
-                                    "then": {
-                                        "required": ["content"],
-                                        "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                                    },
-                                },
-                                {
-                                    "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
-                                    "then": {
-                                        "required": ["find", "replace"],
-                                        "not": {"required": ["content"]},
-                                    },
-                                },
-                            ],
                         },
                     },
-                    "file_id": {"type": "integer"},
-                    "file": {"type": "string"},
+                    "file_id": {"type": "integer", "description": "单个：文件 id"},
+                    "file": {"type": "string", "description": "单个：文件名"},
                     "mode": {"type": "string", "enum": ["replace_all", "append", "find_replace"]},
-                    "content": {"type": "string"},
-                    "find": {"type": "string"},
-                    "replace": {"type": "string"},
+                    "content": {"type": "string", "description": "replace_all/append 用"},
+                    "find": {"type": "string", "description": "find_replace 用"},
+                    "replace": {"type": "string", "description": "find_replace 用"},
                 },
-                "allOf": [
-                    {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "replace_all"}}},
-                        "then": {
-                            "required": ["content"],
-                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                        },
-                    },
-                    {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "append"}}},
-                        "then": {
-                            "required": ["content"],
-                            "not": {"anyOf": [{"required": ["find"]}, {"required": ["replace"]}]},
-                        },
-                    },
-                    {
-                        "if": {"required": ["mode"], "properties": {"mode": {"const": "find_replace"}}},
-                        "then": {
-                            "required": ["find", "replace"],
-                            "not": {"required": ["content"]},
-                        },
-                    },
-                ],
             },
             handler=_edit_file,
             mutates=True,
         ),
         Tool(
             name="create_document", label="生成文档",
-            description_short='创建文档；关键字段 name/format/content',
-            description="创建文件；文本直接写入，docx/pdf 用 HTML，xlsx 用 CSV，返回 file_id。",
+            description=(
+                "新建一个文件。format 为可编辑文本类型时 content 按原文直接写入；"
+                "format=docx 或 pdf 时 content 请提供 HTML（将转换为 Word/PDF）；"
+                "format=xlsx 时 content 请提供 CSV（将转换为 Excel）。默认放在个人文件空间。"
+                "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
+                "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**"
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
-                    "space": {"type": "string", "enum": ["project", "personal"]},
-                    "project_id": {"type": "integer"},
+                    "name": {"type": "string", "description": "文件名（可不带扩展名）"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可编辑文本、docx、pdf 或 xlsx"},
+                    "space": {"type": "string", "enum": ["project", "personal"], "description": "默认 personal"},
+                    "project_id": {"type": "integer", "description": "space=project 时必填"},
                     "folder_id": {"type": "integer"},
-                    "content": {"type": "string"},
+                    "content": {"type": "string", "description": "正文（按 format 见上）"},
                 },
                 "required": ["name", "format", "content"],
-                "allOf": [
-                    {"if": {"required": ["space"], "properties": {"space": {"const": "project"}}},
-                     "then": {"required": ["project_id"]}},
-                ],
             },
             handler=_create_document,
             mutates=True,
         ),
         Tool(
             name="rename_file", label="重命名文件",
-            description_short='重命名文件；关键字段 file_id/file，format 可选改后缀',
-            description="重命名文件，可单个或批量修改名称及后缀，不改变位置。",
+            description="重命名文件（不改位置）。单个：file + new_name。"
+                        "**批量改名用 renames=[{file,new_name},...] 一次调用全改**——比如「按顺序编号」时，你自己排好序号（作品01、作品02…）一次传进来，别一个个改。逐项回报成功/失败。"
+                        "**可选 format**：传了就同时改后缀（修双后缀 bug：format=\"md\" 把 README.md.markdown 改回 README.md），"
+                        "不传沿用原 ext。仅文本类同族（md↔txt↔yaml…）互转允许；二进制约等于当前 ext 才允许。",
             input_schema={
                 "type": "object",
                 "properties": {
                     "renames": {
                         "type": "array",
+                        "description": "批量改名：每项 {file 或 file_id, new_name, format?}。按顺序编号等多文件场景用这个",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "file": {"type": "string"},
-                                "file_id": {"type": "integer"},
-                                "new_name": {"type": "string"},
-                                "format": {"type": "string", "enum": sorted(_DOC_MIME)},
+                                "file": {"type": "string", "description": "文件名"},
+                                "file_id": {"type": "integer", "description": "文件 id"},
+                                "new_name": {"type": "string", "description": "新名（可不带扩展名）"},
+                                "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "可选：改后缀。文本类同族互转允许；二进制需等于当前 ext。"},
                             },
                             "required": ["new_name"],
                         },
                     },
-                    "file_id": {"type": "integer"},
-                    "file": {"type": "string"},
-                    "new_name": {"type": "string"},
-                    "format": {"type": "string", "enum": sorted(_DOC_MIME)},
+                    "file_id": {"type": "integer", "description": "单个：文件 id"},
+                    "file": {"type": "string", "description": "单个：文件名"},
+                    "new_name": {"type": "string", "description": "单个：新文件名（可不带扩展名）"},
+                    "format": {"type": "string", "enum": sorted(_DOC_MIME), "description": "单个：可选，改后缀（同 renames 规则）"},
                 },
             },
             handler=_rename_file,
@@ -1572,23 +1372,27 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="move_items", label="移动文件/文件夹",
-            description_short='移动文件或文件夹；批量传 files/folders，目标传 target；folder_id 优先，project 空间传 project_id',
-            description="批量移动文件或文件夹；源项传 files/folders，目标传 target。项目目标用 project_id，workspace_id 不能代替它。",
+            description="把一批文件和/或文件夹移到同一个目标位置，**一次调用搞定**——不用一个个移。"
+                        "files 填文件名/id 数组，folders 填文件夹名/id 数组（两者可只给其一）。"
+                        "**移动文件夹会连同里面的所有文件、子文件夹一起递归搬过去，你不需要知道里面有几个文件**——只表达「把这个文件夹搬到那儿」即可，后端负责展开。"
+                        "目标用 target.folder 填目标文件夹名（移到空间根填空串）或 target.folder_id。返回逐项注明落点与成功/失败数。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "files":   {"type": "array", "items": {"type": "string"}},
-                    "folders": {"type": "array", "items": {"type": "string"}},
+                    "files":   {"type": "array", "items": {"type": "string"},
+                                "description": "要移动的文件（名称或 id）数组，可空"},
+                    "folders": {"type": "array", "items": {"type": "string"},
+                                "description": "要移动的文件夹（名称或 id）数组，可空——整夹连内容递归搬"},
                     "target": {
                         "type": "object",
+                        "description": "统一落点，所有文件和文件夹都移到这里",
                         "properties": {
-                            "folder": {"type": "string"},
-                            "folder_id": {"type": "integer"},
+                            "folder": {"type": "string", "description": "目标文件夹名称（移到空间根传空串）"},
+                            "folder_id": {"type": "integer", "description": "目标文件夹 id（最准；有就优先用）"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
-                            "project_id": {"type": "integer"},
+                            "project_id": {"type": "integer", "description": "目标在 project 空间时填"},
                         },
                     },
-                    "destination": {"type": "string", "enum": ["same", "folder"]},
                 },
                 "required": ["target"],
             },
@@ -1597,38 +1401,28 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="copy_file", label="复制文件",
-            description_short='复制文件；关键字段 file_id/file',
             description="复制一份文件到目标位置（target.folder 填文件夹名；不填则在原位复制一份）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer"},
-                    "file": {"type": "string"},
+                    "file_id": {"type": "integer", "description": "源文件 id（可选）"},
+                    "file": {"type": "string", "description": "源文件名（推荐：直接用名字）"},
                     "target": {
                         "type": "object",
                         "properties": {
-                            "folder": {"type": "string"},
+                            "folder": {"type": "string", "description": "目标文件夹名称"},
                             "space": {"type": "string", "enum": ["project", "mind", "asset", "personal"]},
                             "project_id": {"type": "integer"},
                             "folder_id": {"type": "integer"},
                         },
                     },
                 },
-                "oneOf": [
-                    {"required": ["file_id"], "not": {"required": ["file"]}},
-                    {"required": ["file"], "not": {"required": ["file_id"]}},
-                ],
-                "allOf": [
-                    {"if": {"required": ["destination"], "properties": {"destination": {"const": "folder"}}}, "then": {"required": ["target"]}},
-                    {"if": {"required": ["destination"], "properties": {"destination": {"const": "same"}}}, "then": {"not": {"required": ["target"]}}},
-                ],
             },
             handler=_copy_file,
             mutates=True,
         ),
         Tool(
             name="create_folder", label="新建文件夹",
-            description_short='新建文件夹；关键字段 name/parent_id/project_id',
             description="新建文件夹，可指定所属项目与父文件夹（支持嵌套）。",
             input_schema={
                 "type": "object",
@@ -1644,14 +1438,12 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_file", label="删除文件",
-            description_short='删除文件到回收站；关键字段 file_id/file_ids',
-            description="删除一个或多个文件（移入回收站，30 天内可还原，非永久删除）。单项传 file_id/file，批量传 file_ids。",
+            description="删除文件（移入回收站，30 天内可还原，非永久删除）。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file_id": {"type": "integer"},
-                    "file": {"type": "string"},
-                    "file_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
+                    "file_id": {"type": "integer", "description": "文件 id（可选）"},
+                    "file": {"type": "string", "description": "文件名（推荐：直接用名字，无需 id）"},
                 },
                 "required": [],
             },
@@ -1660,7 +1452,6 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="list_folders", label="查询文件夹",
-            description_short='查询文件夹路径；关键字段 project_id/parent_id',
             description="列出文件夹，可按项目或父文件夹筛选（不传 project_id 看个人空间文件夹）。"
                         "返回 path（根到叶的完整路径）与 depth，决定新文件落点时据此审视一级和相关二级目录。",
             input_schema={
@@ -1674,15 +1465,14 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="rename_folder", label="重命名文件夹",
-            description_short='重命名文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
             description="重命名文件夹。用 name 指定要改的文件夹名（或用 folder_id）。同名文件夹存在于多个项目时必须传 project_id 避免误操作。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
-                    "folder_id": {"type": "integer"},
-                    "project_id": {"type": "integer"},
-                    "new_name": {"type": "string"},
+                    "name": {"type": "string", "description": "要重命名的文件夹当前名称"},
+                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
+                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
+                    "new_name": {"type": "string", "description": "新名称"},
                 },
                 "required": ["new_name"],
             },
@@ -1691,15 +1481,13 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="delete_folder", label="删除文件夹",
-            description_short='删除文件夹；关键字段 project_id/folder_id/name；按名字查找跨项目同名文件夹时必须传 project_id，避免误操作',
-            description="删除一个或多个文件夹。单项用 name/folder_id，批量传 folder_ids。文件夹及其内容会整体移入回收站，30 天内可恢复。",
+            description="删除文件夹。用 name 指定文件夹名（或 folder_id）。文件夹及其内容会整体移入回收站，30 天内可恢复。同名文件夹存在于多个项目时必须传 project_id。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
-                    "folder_id": {"type": "integer"},
-                    "folder_ids": {"type": "array", "items": {"type": "integer"}, "maxItems": 50},
-                    "project_id": {"type": "integer"},
+                    "name": {"type": "string", "description": "要删除的文件夹名称"},
+                    "folder_id": {"type": "integer", "description": "文件夹 id（已知时可用，优先于 name）"},
+                    "project_id": {"type": "integer", "description": "文件夹所在项目 id（按名字查找时用于精确定位，防止跨项目误操作）"},
                 },
             },
             handler=_delete_folder,
@@ -1707,62 +1495,58 @@ class FilesSkill(BaseSkill):
         ),
         Tool(
             name="send_file", label="发送文件",
-            description_short='发送文件或图片；关键字段 file/file_id/url',
-            description="把文件、网络图片或暂存附件真正发送给用户；仅在用户明确要发送时调用，查位置请用文件链接。",
+            description="把一个文件**真正发给用户**（网页显示下载/图片卡片；飞书/QQ 直接把文件发到对方聊天里）。"
+                        "三种来源：① 用户文件库里的文件——用 file 指定文件名（如「合同.pdf」）或 file_id；"
+                        "② 网络图片——用 url 传图片直链（如 image_search 结果的 img_src），会下载后作为聊天附件发出（不进文件库）；"
+                        "③ 之前收到/发过、还在暂存区的附件——用 attach_id 直接重发，不重新下载、不进文件库。"
+                        "attach_id 来自当轮上下文「用户上传了文件…(attach_id=X)」的提示；如果用户说「刚刚的图/那张图/X平台发的那个」"
+                        "但你不知道 attach_id，先调 list_recent_attachments 查出来再传。"
+                        "当用户说「把X发给我/给我那个文件/发过来」时**必须调用本工具**——绝不能只回「正在发送/已发给你」却不调用。"
+                        "文件库文件**仅在用户明确要文件时才调**；创建/保存文档后**别自动发**——一句话告诉用户存在哪个目录即可。"
+                        "但用 url/attach_id 发图时不受此限——用户要找图/要一张图本身就是要看/要发，搜到/查到后可直接调用，不用再问一句「要不要发」。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "file": {"type": "string"},
-                    "file_id": {"type": "integer"},
-                    "url": {"type": "string"},
-                    "title": {"type": "string"},
-                    "attach_id": {"type": "string"},
-                    "source_type": {"type": "string", "enum": ["file", "file_id", "url", "attach_id"]},
+                    "file": {"type": "string", "description": "文件名（如 合同.pdf），发文件库文件时用"},
+                    "file_id": {"type": "integer", "description": "文件 id（已知时可用），发文件库文件时用"},
+                    "url": {"type": "string", "description": "网络图片直链（如 image_search 结果的 img_src），传了则忽略 file/file_id"},
+                    "title": {"type": "string", "description": "配合 url 用：给这张图起个名字（可选，不传默认「图片」）"},
+                    "attach_id": {"type": "string", "description": "之前暂存过的附件 attach_id（见上下文提示，或先调 list_recent_attachments 查），传了则忽略 file/file_id/url"},
                 },
-                "oneOf": [
-                    {"required": ["file"], "not": {"anyOf": [{"required": ["file_id"]}, {"required": ["url"]}, {"required": ["attach_id"]}]}},
-                    {"required": ["file_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["url"]}, {"required": ["attach_id"]}]}},
-                    {"required": ["url"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["file_id"]}, {"required": ["attach_id"]}]}},
-                    {"required": ["attach_id"], "not": {"anyOf": [{"required": ["file"]}, {"required": ["file_id"]}, {"required": ["url"]}]}},
-                ],
-                "allOf": [
-                    {"if": {"required": ["title"]}, "then": {"required": ["url"]}},
-                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file"}}}, "then": {"required": ["file"]}},
-                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "file_id"}}}, "then": {"required": ["file_id"]}},
-                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "url"}}}, "then": {"required": ["url"]}},
-                    {"if": {"required": ["source_type"], "properties": {"source_type": {"const": "attach_id"}}}, "then": {"required": ["attach_id"]}},
-                ],
             },
             handler=_send_file,
             mutates=True,
         ),
         Tool(
             name="list_recent_attachments", label="查最近暂存的附件",
-            description_short='查最近暂存的附件；用于找回近期图片或文件',
-            description="列出当前仍在暂存区的聊天附件；可用于找回近期图片或文件，再发送或保存。",
+            description="列出该用户当前所有还在暂存区、未过期的聊天附件（用户发来的图/文件、机器人搜图发过的图等，暂存 7 天）。"
+                        "当用户提到「刚刚的图/那张图/昨天发的那个/X平台那张」但当轮上下文里没有 attach_id 提示时用——"
+                        "查到后从返回列表里挑出匹配的（按名称/平台/大约多久前判断），再用 send_file(attach_id=...) 重发，"
+                        "或 save_uploaded_file(attach_id=...) 存进文件库。列表按暂存时间从新到旧排。",
             input_schema={"type": "object", "properties": {}},
             handler=_list_recent_attachments,
         ),
         Tool(
             name="save_uploaded_file", label="保存上传文件",
-            description_short='保存聊天附件；source 必填：latest/attach_id/attach_ids，后两者配同名字段；可带 project_id/folder_id',
-            description="保存对话附件到文件库；多个附件用 attach_ids，可指定项目或文件夹。",
+            description="把用户在对话里**上传的附件**保存进文件库。当用户上传文件后说「存一下/保存到文件库/存到某项目」时用。"
+                        "**用户一次发了多个附件（如连拍的几张图）要用 attach_ids 传数组一次性存全部**——"
+                        "别为每张图分别调用，那样每次没对上 id 都各自回退，容易存漏、甚至存错成不相关的附件。"
+                        "单个附件用 attach_id。attach_id(s) 来自上下文「用户上传了文件…(attach_id=X)」的提示——"
+                        "抄不准也没关系，系统会尽量容错匹配；但当前暂存区里同时有多种不同类型附件（比如图+语音）"
+                        "时无法安全瞎猜，会报错列出候选，需要照着给准。"
+                        "要存进某个项目就带上 project_id（不传则进 personal）。"
+                        "**未指定 folder_id 且目标空间已有文件夹时，先调用 list_folders 审视一级目录；"
+                        "命中唯一相关目录后再审视它的子目录，确认无更合适目录才允许保存到根目录。**",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "attach_id": {"type": "string"},
-                    "attach_ids": {"type": "array", "items": {"type": "string"}},
-                    "project_id": {"type": "integer"},
-                    "folder_id": {"type": "integer"},
-                    "source": {"type": "string", "enum": ["latest", "attach_id", "attach_ids"]},
+                    "attach_id": {"type": "string", "description": "单个附件的 attach_id（见上下文提示；可不填，自动取最近上传的——仅当前暂存区无歧义时有效）"},
+                    "attach_ids": {"type": "array", "items": {"type": "string"},
+                                   "description": "批量保存多个附件时用（如用户连发的几张图），传所有 attach_id，比逐个调用更可靠"},
+                    "project_id": {"type": "integer", "description": "存进哪个项目（不填=personal 个人空间）"},
+                    "folder_id": {"type": "integer", "description": "存进哪个文件夹（可选）"},
                 },
                 "required": [],
-                "allOf": [
-                    {"if": {"required": ["source"], "properties": {"source": {"const": "latest"}}}, "then": {"not": {"anyOf": [{"required": ["attach_id"]}, {"required": ["attach_ids"]}]} }},
-                    {"if": {"required": ["source"], "properties": {"source": {"const": "attach_id"}}}, "then": {"required": ["attach_id"]}},
-                    {"if": {"required": ["source"], "properties": {"source": {"const": "attach_ids"}}}, "then": {"required": ["attach_ids"]}},
-                    {"not": {"required": ["attach_id", "attach_ids"]}},
-                ],
             },
             handler=_save_uploaded_file,
             mutates=True,

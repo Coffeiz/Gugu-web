@@ -1,4 +1,4 @@
-"""服务心跳：常驻进程（worker / gateway）周期写 Redis，Admin 面板据此看状态 + 重启。
+"""服务心跳：常驻进程（worker / supervisor）周期写 Redis，Admin 面板据此看状态 + 重启。
 
 每个进程每 ~5s 写 `health:{name}` = {name, pid, host, ts, cmdline, extra}，TTL 20s：
 键在=在线、键过期=掉线、键在但 ts 老=僵死。重启走 kill+systemd 自愈（按 pid 发 SIGTERM，

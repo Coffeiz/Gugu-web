@@ -46,9 +46,6 @@ def _isolate_local_configuration(monkeypatch, tmp_path):
     """测试不得读取工作区里的部署 override；需要配置的用例自行替换路径。"""
     import app.core.config as _config
     monkeypatch.setattr(_config, "OVERRIDE_FILE", tmp_path / "no-config.override.json")
-    # 存储根默认指向仓库外的 Gugu-data/users；涉及沙盒或文件的测试若沿用默认值，
-    # 会在真实数据目录中不断创建测试用户目录。所有测试统一隔离到临时目录。
-    monkeypatch.setenv("STORAGE__LOCAL_PATH", str(tmp_path / "storage"))
     _config.invalidate_settings_cache()
     yield
     _config.invalidate_settings_cache()

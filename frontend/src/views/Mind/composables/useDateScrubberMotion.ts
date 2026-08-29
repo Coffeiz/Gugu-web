@@ -26,12 +26,8 @@ export function useDateScrubberMotion(options: DateScrubberMotionOptions) {
   let positionAtStart = 0
   let pitchAtStart = 1
   let velocity = 0
+  let lastMoveAt = 0
   let moved = false
-  const DRAG_SPRING = 360
-  const DRAG_DAMPING = 38
-  let dragTarget = 0
-  let dragLastAt = 0
-  let dragRaf = 0
   let rafId = 0
   let animationRun = 0
   let handoffTarget: number | null = null
@@ -40,9 +36,7 @@ export function useDateScrubberMotion(options: DateScrubberMotionOptions) {
   function stopMotion() {
     animationRun += 1
     if (rafId) cancelAnimationFrame(rafId)
-    if (dragRaf) cancelAnimationFrame(dragRaf)
     rafId = 0
-    dragRaf = 0
     if (handoffTimer) clearTimeout(handoffTimer)
     handoffTimer = null
     handoffTarget = null
@@ -51,48 +45,31 @@ export function useDateScrubberMotion(options: DateScrubberMotionOptions) {
 
   function setPosition(position: number) {
     visualPosition.value = position
-    // 保留边界外的橡皮筋位置；内容列需要这段连续位移来同步自己的回弹。
-    // 选中日期仍由消费者按边界裁剪，不能在这里提前丢掉视觉状态。
-    options.onPosition(position)
+    options.onPosition(clampScrubberPosition(position, options.getCount()))
   }
 
   function begin(pointerX: number, pitch: number) {
     stopMotion()
     pointerStartX = pointerX
     positionAtStart = visualPosition.value
-    dragTarget = visualPosition.value
     pitchAtStart = Math.max(1, pitch)
     velocity = 0
+    lastMoveAt = 0
     moved = false
     phase.value = 'dragging'
-  }
-
-  function dragFrame(now: number) {
-    if (phase.value !== 'dragging') { dragRaf = 0; return }
-    const elapsed = Math.min(1 / 30, Math.max(1 / 240, (now - dragLastAt) / 1000))
-    dragLastAt = now
-    const delta = dragTarget - visualPosition.value
-    velocity += (DRAG_SPRING * delta - DRAG_DAMPING * velocity) * elapsed
-    setPosition(visualPosition.value + velocity * elapsed)
-    if (Math.abs(delta) > 0.001 || Math.abs(velocity) > 0.01) {
-      dragRaf = requestAnimationFrame(dragFrame)
-    } else {
-      dragRaf = 0
-      velocity = 0
-      setPosition(dragTarget)
-    }
   }
 
   function move(pointerX: number, ratio: number) {
     if (phase.value !== 'dragging') return
     const delta = pointerX - pointerStartX
     if (Math.abs(delta) > 3) moved = true
-    const target = detentPosition(positionAtStart - (delta * ratio) / pitchAtStart, options.getCount())
-    dragTarget = target
-    if (!dragRaf) {
-      dragLastAt = performance.now()
-      dragRaf = requestAnimationFrame(dragFrame)
-    }
+    const next = detentPosition(positionAtStart - (delta * ratio) / pitchAtStart, options.getCount())
+    const now = performance.now()
+    const elapsed = lastMoveAt ? now - lastMoveAt : 16
+    const instantVelocity = (next - visualPosition.value) / Math.max(elapsed, 4)
+    velocity = velocity * 0.6 + instantVelocity * 0.4
+    lastMoveAt = now
+    setPosition(next)
   }
 
   function end(clickedIndex: number | null) {
@@ -102,14 +79,14 @@ export function useDateScrubberMotion(options: DateScrubberMotionOptions) {
     const last = count - 1
     const target = !moved && clickedIndex !== null
       ? clampScrubberPosition(clickedIndex, count)
-      : Math.round(clampScrubberPosition(visualPosition.value + Math.max(-4, Math.min(4, velocity * 150)), count))
-    settleTo(Math.min(last, target), velocity)
+      : Math.round(clampScrubberPosition(visualPosition.value + Math.max(-1.1, Math.min(1.1, velocity * 45)), count))
+    settleTo(Math.min(last, target))
   }
 
-  function settleTo(target: number, initialVelocity = 0) {
+  function settleTo(target: number) {
     const run = ++animationRun
     let position = visualPosition.value
-    let springVelocity = initialVelocity
+    let springVelocity = 0
     let previousAt = performance.now()
     phase.value = 'settling'
     const frame = (now: number) => {
@@ -154,5 +131,5 @@ export function useDateScrubberMotion(options: DateScrubberMotionOptions) {
   }
 
   onBeforeUnmount(stopMotion)
-  return { visualPosition, dragging, animating, begin, move, end, stopMotion, syncExternal, settleTo }
+  return { visualPosition, dragging, animating, begin, move, end, stopMotion, syncExternal }
 }

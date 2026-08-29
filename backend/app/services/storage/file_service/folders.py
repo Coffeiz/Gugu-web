@@ -17,7 +17,7 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.core.ownership import get_owned
-from app.models import File, Folder, Project, Workspace
+from app.models import File, Folder, Project
 from app.services.storage.folders import folder_dir_key, relocate_folder_tree_files
 from app.services.storage.trash import move_file_to_trash, restore_file_storage
 
@@ -126,16 +126,6 @@ class FolderOps:
         门控——opaque 无「目录」概念）。"""
         folder, ids = await self.folder_tree.soft_delete(user_id, folder_id)
         stamp = folder.deleted_at
-
-        # 工作区只是对文件夹的可选引用。文件夹进入回收站后继续保留引用会留下
-        # 不可解析的工作区（尤其是永久删除时受旧数据库外键约束影响），导致用户
-        # 无法从工作区面板清理它。删除文件夹时先解除所有后代引用，工作区本身
-        # 仍保留，用户可以随后显式删除或重新绑定。
-        await self.db.execute(
-            Workspace.__table__.update()
-            .where(Workspace.user_id == user_id, Workspace.folder_id.in_(ids))
-            .values(folder_id=None)
-        )
 
         dir_keys: list[str] = []
         if self._relocates:
