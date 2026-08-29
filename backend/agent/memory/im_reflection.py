@@ -268,7 +268,6 @@ async def _execute_job_locked(job_id: int, settings) -> bool:
                     name="reflection",
                     output_mode="json",
                     max_tokens=2500,
-                    thinking="disabled",
                 ),
                 settings,
             )
@@ -639,7 +638,6 @@ async def _compact_group_daily(
             name="compaction",
             output_mode="json",
             max_tokens=GROUP_MEMORY_MAX_TOKENS,
-            thinking="disabled",
         ),
         settings,
     )

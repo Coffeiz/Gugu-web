@@ -80,14 +80,14 @@ def test_compaction_keeps_snapshot_prefix_out_of_summary(monkeypatch):
         {"role": "user", "content": "当前消息"},
     ]
 
-    compacted, did_compact = __import__("asyncio").run(
+    result = __import__("asyncio").run(
         compact_context(messages, "", context_tokens=100, fixed_prefix_size=2)
     )
 
-    assert did_compact
-    assert compacted[:2] == messages[:2]
-    assert "固定系统" not in compacted[2]["content"]
-    assert "固定 session info" not in compacted[2]["content"]
+    assert result.changed
+    assert result.messages[:2] == messages[:2]
+    assert "固定系统" not in result.messages[2]["content"]
+    assert "固定 session info" not in result.messages[2]["content"]
 
 
 def test_fixed_context_contains_only_snapshot():
@@ -194,12 +194,12 @@ def test_inline_and_persisted_summary_keep_identical_provider_prefix(monkeypatch
         {"role": "user", "content": "当前消息"},
     ]
 
-    compacted, changed = asyncio.run(
+    result = asyncio.run(
         compact_context(messages, "", context_tokens=100, fixed_prefix_size=2)
     )
 
-    assert changed
-    inline_summary = compacted[2]["content"]
+    assert result.changed
+    inline_summary = result.messages[2]["content"]
 
     class PersistedSummary:
         role = "summary"

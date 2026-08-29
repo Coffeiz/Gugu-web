@@ -127,6 +127,43 @@ async def test_provider_runner_text_errors_reach_context_branch(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_json_branch_inherits_configured_thinking(monkeypatch):
+    captured = {}
+
+    async def fake_openai(*args, **kwargs):
+        captured.update(kwargs)
+        return '{"ok": true}'
+
+    monkeypatch.setattr("agent.llm.llm_select.use_anthropic_for", lambda _ai: False)
+    monkeypatch.setattr(provider_runner, "_openai", fake_openai)
+    settings = SimpleNamespace(ai=SimpleNamespace(thinking="adaptive"))
+
+    result = await provider_runner.complete_json("stable", "turn", settings)
+
+    assert result == {"ok": True}
+    assert captured["thinking"] == "adaptive"
+    assert captured["json_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_text_branch_inherits_configured_thinking(monkeypatch):
+    captured = {}
+
+    async def fake_openai(*args, **kwargs):
+        captured.update(kwargs)
+        return "summary"
+
+    monkeypatch.setattr("agent.llm.llm_select.use_anthropic_for", lambda _ai: False)
+    monkeypatch.setattr(provider_runner, "_openai", fake_openai)
+    settings = SimpleNamespace(ai=SimpleNamespace(thinking="disabled"))
+
+    result = await provider_runner.complete_text("stable", "turn", settings)
+
+    assert result == "summary"
+    assert captured["thinking"] == "disabled"
+
+
+@pytest.mark.asyncio
 async def test_scope_revision_is_audit_only_and_preserves_prefix(monkeypatch):
     captured = []
 

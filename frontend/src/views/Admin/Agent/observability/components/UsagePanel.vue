@@ -3,9 +3,9 @@
   <template v-else-if="usage">
     <div class="period-tabs"><button class="period-tab" :class="{ active: period === 'today' }" @click="period = 'today'">今日</button><button class="period-tab" :class="{ active: period === 'recent' }" @click="period = 'recent'">最近 7 天</button></div>
     <div class="usage-summary"><div v-for="item in summary" :key="item.label" class="usage-stat-card"><div class="usc-label">{{ item.label }}</div><div class="usc-num">{{ item.value }}</div><div class="usc-sub">总计 {{ item.total }}</div></div></div>
-    <div class="config-card chart-card"><div class="chart-header"><div class="metric-tabs"><button v-for="metric in metrics" :key="metric.key" class="metric-tab" :class="{ active: activeMetric === metric.key }" @click="activeMetric = metric.key">{{ metric.label }}</button><span v-if="activeModel" class="model-filter-tag">{{ activeModel }}</span></div><div class="month-nav"><button class="month-arrow" :disabled="monthIndex >= usage.months.length - 1" @click="switchMonth(1)">‹</button><span class="month-label">{{ usage.month }}</span><button class="month-arrow" :disabled="monthIndex <= 0" @click="switchMonth(-1)">›</button></div></div><AdminLineChart :labels="usage.daily.map((d: any) => d.date.slice(8))" :values="chartValues" :unit="metrics.find(m => m.key === activeMetric)?.unit || ''" /></div>
+    <div class="config-card chart-card"><div class="chart-header"><div class="metric-tabs"><button v-for="metric in metrics" :key="metric.key" class="metric-tab" :class="{ active: activeMetric === metric.key }" @click="activeMetric = metric.key">{{ metric.label }}</button><span v-if="activeModel" class="model-filter-tag">{{ activeModel }}</span></div><div class="month-nav"><button class="month-arrow" :disabled="monthIndex >= usage.months.length - 1" @click="switchMonth(1)">‹</button><span class="month-label">{{ usage.month }}</span><button class="month-arrow" :disabled="monthIndex <= 0" @click="switchMonth(-1)">›</button></div></div><AdminLineChart :labels="chartData.map((d: any) => d.date.slice(8))" :values="chartValues" :unit="metrics.find(m => m.key === activeMetric)?.unit || ''" /></div>
     <div v-if="usage.by_model.length" class="config-card"><div class="card-head"><div class="card-title-block"><h3>按模型</h3><p>点击行在图表中单独查看；缓存数据来自模型返回的 usage</p></div><button v-if="activeModel" class="clear-model-btn" @click="toggleModel(activeModel)">清除筛选</button></div><div class="model-table"><div class="mt-row mt-head"><span>模型</span><span>对话数</span><span>输入</span><span>输出</span><span>命中缓存</span></div><div v-for="model in usage.by_model" :key="model.model" class="mt-row mt-clickable" :class="{ 'mt-active': activeModel === model.model, 'mt-dimmed': activeModel && activeModel !== model.model }" @click="toggleModel(model.model)"><span class="mt-model">{{ model.model }}<em>{{ model.provider }}</em></span><span>{{ model.calls }}</span><span>{{ fmtNum(model.tokens_in) }}</span><span>{{ fmtNum(model.tokens_out) }}</span><span>{{ fmtNum(model.cache_read) }}</span></div></div></div>
-    <div v-if="!usage.by_model.length && !usage.daily.some((day: any) => day.calls > 0)" class="usage-empty">暂无数据，发起对话后将开始记录</div>
+    <div v-if="!usage.by_model.length && !chartData.some((day: any) => day.calls > 0)" class="usage-empty">暂无数据，发起对话后将开始记录</div>
   </template>
 </template>
 <script setup lang="ts">
@@ -14,7 +14,8 @@ import { useUsage } from '../useUsage'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 const { usage, usageLoading, activeModel, activeMetric, metrics, monthIndex, toggleModel, switchMonth, fmtNum } = useUsage()
 const period = ref<'today' | 'recent'>('today')
-const chartValues = computed(() => usage.value?.daily.map((day: any) => activeMetric.value === 'cache_ratio' ? Number(day.cache_ratio || 0) * 100 : Number(day[activeMetric.value] || 0)) || [])
+const chartData = computed(() => period.value === 'recent' ? (usage.value?.recent_daily || []) : (usage.value?.daily || []))
+const chartValues = computed(() => chartData.value.map((day: any) => activeMetric.value === 'cache_ratio' ? Number(day.cache_ratio || 0) * 100 : Number(day[activeMetric.value] || 0)))
 const summary = computed(() => {
   if (!usage.value) return []
   const source = period.value === 'today' ? usage.value.today : (usage.value.recent_daily || []).reduce((total: any, day: any) => ({

@@ -86,6 +86,21 @@ def _effective_input_expr():
     )
 
 
+def _effective_input_sql(
+    provider_column: str = "provider",
+    tokens_in_column: str = "tokens_in",
+    cache_read_column: str = "cache_read",
+    cache_write_column: str = "cache_write",
+) -> str:
+    """生成 raw SQL 使用的统一输入 token 口径。"""
+    providers = ", ".join(f"'{provider}'" for provider in _SPLIT_CACHE_PROVIDERS)
+    return (
+        f"CASE WHEN LOWER({provider_column}) IN ({providers}) "
+        f"THEN {tokens_in_column} + {cache_read_column} + {cache_write_column} "
+        f"ELSE {tokens_in_column} END"
+    )
+
+
 def _ensure_presets(override: dict) -> dict:
     """返回 ai_presets dict（若不存在则从 ai 段迁移，但不写文件）。"""
     if "ai_presets" in override:
@@ -407,12 +422,10 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
     days_in_month = cal.monthrange(year, mon)[1]
     month_end = datetime(year, mon, days_in_month, 23, 59, 59)
 
-    daily_sql = """
+    daily_sql = f"""
             SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
-                   COALESCE(SUM(CASE WHEN LOWER(provider) IN ('anthropic', 'minimax')
-                                     THEN tokens_in + cache_read + cache_write
-                                     ELSE tokens_in END), 0) AS tokens_in,
+                   COALESCE(SUM({_effective_input_sql()}), 0) AS tokens_in,
                    COALESCE(SUM(tokens_out), 0) AS tokens_out,
                    COALESCE(SUM(cache_read), 0) AS cache_read,
                    COALESCE(SUM(cache_write), 0) AS cache_write
@@ -442,12 +455,10 @@ async def get_usage(month: str | None = None, model: str | None = None, db: Asyn
 
     # 最近 7 天独立于当前月，避免月初/月末查看时被月份边界截断。
     recent_start = datetime(today.year, today.month, today.day) - timedelta(days=6)
-    recent_sql = """
+    recent_sql = f"""
             SELECT to_char(created_at, 'YYYY-MM-DD') AS day,
                    COUNT(*) AS calls,
-                   COALESCE(SUM(CASE WHEN LOWER(provider) IN ('anthropic', 'minimax')
-                                     THEN tokens_in + cache_read + cache_write
-                                     ELSE tokens_in END), 0) AS tokens_in,
+                   COALESCE(SUM({_effective_input_sql()}), 0) AS tokens_in,
                    COALESCE(SUM(tokens_out), 0) AS tokens_out,
                    COALESCE(SUM(cache_read), 0) AS cache_read,
                    COALESCE(SUM(cache_write), 0) AS cache_write

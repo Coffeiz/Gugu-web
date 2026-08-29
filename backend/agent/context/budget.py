@@ -41,30 +41,6 @@ class ContextBudget:
     compression_ratio: float = 0.50
 
     @classmethod
-    def for_history(
-        cls,
-        model_context_tokens: int,
-        *,
-        fixed_prefix_text: str = "",
-        tool_schema_tokens: int = 0,
-        turn_batch_tokens: int = 0,
-        current_turn_tokens: int = 0,
-        output_reserve_tokens: int = 0,
-        provider_overhead_tokens: int = 0,
-    ) -> "ContextBudget":
-        """兼容旧调用的配置对象；仅用于诊断，不再驱动历史读取。"""
-        return cls(
-            model_context_tokens=max(1, int(model_context_tokens or 0)),
-            tool_schema_tokens=max(0, int(tool_schema_tokens or 0)),
-            turn_batch_tokens=max(0, int(turn_batch_tokens or 0)),
-            current_turn_tokens=max(0, int(current_turn_tokens or 0)),
-            output_reserve_tokens=max(0, int(output_reserve_tokens or 0)),
-            provider_overhead_tokens=max(0, int(provider_overhead_tokens or 0)),
-            # 保留旧诊断字段，调用方不得用它做历史选择或压缩触发。
-            system_prompt_tokens=estimate_tokens(fixed_prefix_text),
-        )
-
-    @classmethod
     def from_messages(
         cls,
         model_context_tokens: int,

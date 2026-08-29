@@ -152,6 +152,35 @@ async def test_send_agent_response_replays_only_unsent_round_indices(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_attachment_failure_is_not_hidden_by_sent_round_index(monkeypatch):
+    from agent.im import replies
+    from agent.models import AgentResponse
+
+    sent = []
+
+    async def fake_files(_payload, _files):
+        class Result:
+            failed = True
+            reason = "附件发送失败"
+        return Result()
+
+    async def fake_text(_payload, text):
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(replies, "send_text", fake_text)
+    monkeypatch.setattr("agent.im.files.send_files", fake_files)
+    result = await replies.send_agent_response(
+        {"platform": "qq", "chat_type": "group"},
+        AgentResponse(text="第一轮", round_texts=["第一轮"], files=[{"id": "file-1"}]),
+        already_sent_rounds={0},
+    )
+
+    assert sent == ["附件发送失败"]
+    assert result == "附件发送失败"
+
+
+@pytest.mark.asyncio
 async def test_interaction_uses_qq_keyboard_and_keeps_text_fallback(monkeypatch):
     from agent.gateway import qq
     from agent.im.replies import send_interaction

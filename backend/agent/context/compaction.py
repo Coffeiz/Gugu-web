@@ -38,17 +38,13 @@ async def estimate_context_length(messages: list, system_text: str = "") -> int:
 
 @dataclass(frozen=True)
 class CompactionResult:
-    """一次压缩尝试的结果；可兼容旧代码的二元组解包。"""
+    """一次压缩尝试的结构化结果。"""
 
     messages: list
     changed: bool
     return_reason: str
     before_tokens: int | None
     after_tokens: int | None
-
-    def __iter__(self):
-        yield self.messages
-        yield self.changed
 
 
 def _result(messages: list, changed: bool, reason: str,

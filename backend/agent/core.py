@@ -667,7 +667,7 @@ class LLMRunner:
                 diag_log("agent.context.compaction.provider_overflow", exc)
                 _log.warning("上下文压缩失败，继续使用确定性截断：%s", type(exc).__name__)
                 return False
-            compacted_messages, changed = result
+            compacted_messages, changed = result.messages, result.changed
             after_summary = [
                 item for item in compacted_messages
                 if isinstance(item, dict) and "<compacted-summary>" in str(item.get("content") or "")

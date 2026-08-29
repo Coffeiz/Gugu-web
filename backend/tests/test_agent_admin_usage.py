@@ -1,4 +1,8 @@
-from app.api.v1.agent_admin import _SPLIT_CACHE_PROVIDERS, _effective_input_tokens
+from app.api.v1.agent_admin import (
+    _SPLIT_CACHE_PROVIDERS,
+    _effective_input_sql,
+    _effective_input_tokens,
+)
 
 
 def test_split_cache_provider_list_covers_anthropic_compatible_usage():
@@ -9,3 +13,10 @@ def test_effective_input_tokens_uses_full_input_for_split_cache_usage():
     assert _effective_input_tokens("anthropic", 100, 700, 20) == 820
     assert _effective_input_tokens("minimax", 100, 700, 20) == 820
     assert _effective_input_tokens("deepseek", 800, 700, 20) == 800
+
+
+def test_effective_input_sql_uses_the_same_provider_contract():
+    assert _effective_input_sql() == (
+        "CASE WHEN LOWER(provider) IN ('anthropic', 'minimax') "
+        "THEN tokens_in + cache_read + cache_write ELSE tokens_in END"
+    )

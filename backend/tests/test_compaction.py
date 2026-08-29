@@ -194,19 +194,18 @@ class TestCompactContext:
     def test_below_threshold_no_compact(self):
         """上下文未达到阈值时不应压缩"""
         msgs = [_make_msg("user", "你好")]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=256000)
         )
-        assert not compacted
-        assert result == msgs
+        assert not result.changed
+        assert result.messages == msgs
 
     def test_compaction_result_exposes_return_reason(self):
         msgs = [_make_msg("user", "你好")]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=256000)
         )
-        assert not compacted
-        # 二元组解包保持兼容，同时暴露结构化原因给 core 诊断。
+        assert not result.changed
         detailed = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=256000)
         )
@@ -223,10 +222,10 @@ class TestCompactContext:
             "agent.context.compaction._generate_compact_summary",
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=1000)
         )
-        assert compacted  # 应该触发压缩
+        assert result.changed  # 应该触发压缩
 
     def test_preserves_system_injection(self, monkeypatch):
         """压缩时应保留系统上下文注入消息"""
@@ -240,11 +239,11 @@ class TestCompactContext:
             _make_msg("user", "消息" * 50),
             _make_msg("assistant", "好的"),
         ]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=1000)
         )
         # 检查系统上下文注入消息是否被保留
-        contents = [m.get("content", "") for m in result]
+        contents = [m.get("content", "") for m in result.messages]
         has_injection = any(isinstance(c, str) and "项目" in c for c in contents)
         assert has_injection
 
@@ -255,11 +254,11 @@ class TestCompactContext:
             lambda *_args, **_kwargs: asyncio.sleep(0, result="测试摘要"),
         )
         msgs = [_make_msg("user", "消息" * 100) for _ in range(50)]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "你是咕咕", context_tokens=1000)
         )
-        if compacted:
-            contents = [m.get("content", "") for m in result]
+        if result.changed:
+            contents = [m.get("content", "") for m in result.messages]
             has_summary = any(
                 isinstance(c, str) and "<compacted-summary>" in c
                 for c in contents
@@ -281,15 +280,15 @@ class TestCompactContext:
             _make_msg("user", "历史三" * 40),
             _make_msg("assistant", "最新消息"),
         ]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(msgs, "系统", context_tokens=120)
         )
-        assert compacted
+        assert result.changed
         joined = "\n".join(captured)
         assert "历史一" in joined
         assert "历史二" in joined
         assert "历史三" in joined
-        assert any("## 项目" in m.get("content", "") for m in result)
+        assert any("## 项目" in m.get("content", "") for m in result.messages)
 
     def test_tool_turn_is_atomic_at_compaction_boundary(self, monkeypatch):
         captured = []
@@ -306,11 +305,11 @@ class TestCompactContext:
         tool_result = _make_tool_result("工具结果")
         current = _make_msg("user", "当前问题")
         # 预算故意只能容纳 current + tool_result，不能容纳完整 tool turn。
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context([_make_msg("user", "旧消息" * 20), tool_use, tool_result, current], "系统", context_tokens=50)
         )
-        assert compacted
-        kept = result[-1:]
+        assert result.changed
+        kept = result.messages[-1:]
         kept_text = "\n".join(message_text(item) for item in kept)
         # tool_use 与 tool_result 必须一起进入摘要，不能留下孤儿 result。
         assert "工具调用:calendar" in "\n".join(captured)
@@ -333,7 +332,7 @@ class TestCompactContext:
         }
         tool_result = _make_tool_result("本轮工具结果")
         messages = [_make_msg("user", "旧历史" * 3000), current, tool_use, tool_result]
-        result, compacted = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.get_event_loop().run_until_complete(
             compact_context(
                 messages,
                 "系统",
@@ -342,12 +341,12 @@ class TestCompactContext:
             )
         )
 
-        assert compacted
+        assert result.changed
         captured_text = "\n".join(captured)
         assert "旧历史" in captured_text
         assert "本轮问题" not in captured_text
         assert "本轮工具结果" not in captured_text
-        result_text = "\n".join(message_text(item) for item in result)
+        result_text = "\n".join(message_text(item) for item in result.messages)
         assert "本轮问题" in result_text
         assert "本轮工具结果" in result_text
 

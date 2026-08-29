@@ -4,6 +4,7 @@ import asyncio
 
 from agent.context.budget import ContextBudget
 from agent.context.session_history import consume_history_stats, load_session_history
+from agent.context.tokens import estimate_tokens
 
 
 class _Result:
@@ -68,10 +69,10 @@ def test_load_session_history_uses_baseline_watermark_and_keeps_summary():
 
 
 def test_context_budget_reserves_fixed_context_and_turn_batch():
-    full = ContextBudget.for_history(120_000)
-    reserved = ContextBudget.for_history(
+    full = ContextBudget.from_parts(120_000)
+    reserved = ContextBudget.from_parts(
         120_000,
-        fixed_prefix_text="系统提示" * 1000 + "群记忆" * 1000,
+        system_prompt_tokens=estimate_tokens("系统提示" * 1000 + "群记忆" * 1000),
         turn_batch_tokens=800,
     )
     assert reserved.history_capacity_tokens < full.history_capacity_tokens

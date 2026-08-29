@@ -11,9 +11,9 @@ from agent.context.tokens import estimate_tokens, message_text
 
 
 def test_context_budget_uses_one_total_and_history_capacity_semantics():
-    budget = ContextBudget.for_history(
+    budget = ContextBudget.from_parts(
         128_000,
-        fixed_prefix_text="系统提示" * 100,
+        system_prompt_tokens=estimate_tokens("系统提示" * 100),
         tool_schema_tokens=300,
         turn_batch_tokens=120,
         current_turn_tokens=80,

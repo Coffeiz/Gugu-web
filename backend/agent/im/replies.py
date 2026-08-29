@@ -323,7 +323,10 @@ async def send_agent_response(
 
     result = await send_files(payload, response.files)
     if result.failed:
-        texts = [result.reason or "附件没有成功发出，你可以去网页或文件库查看。"]
+        # 附件失败提示是合成消息，不属于 Agent round index 域，不能参与
+        # already_sent_rounds 去重，否则 round 0 已即时发送时会吞掉失败提示。
+        failure_text = result.reason or "附件没有成功发出，你可以去网页或文件库查看。"
+        return failure_text if await send_text(payload, failure_text) else None
     else:
         texts = [
             _fix_loose_bold(text)
