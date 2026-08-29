@@ -23,6 +23,46 @@ export function useMindRuntimeObject(options: {
   let stopBinding: (() => void) | null = null
   let stopResolver: (() => void) | null = null
   let stopAction: (() => void) | null = null
+  let phaseObserver: MutationObserver | null = null
+  let hoverSuppressionCleanup: (() => void) | null = null
+
+  const clearHoverSuppression = () => {
+    hoverSuppressionCleanup?.()
+    hoverSuppressionCleanup = null
+  }
+
+  const suppressHoverUntilLeave = (element: HTMLElement) => {
+    clearHoverSuppression()
+    if (!element.matches(':hover')) return
+    element.dataset.runtimeHoverSuppressed = 'true'
+    const onLeave = () => {
+      delete element.dataset.runtimeHoverSuppressed
+      hoverSuppressionCleanup = null
+    }
+    element.addEventListener('pointerleave', onLeave, { once: true })
+    hoverSuppressionCleanup = () => {
+      element.removeEventListener('pointerleave', onLeave)
+      delete element.dataset.runtimeHoverSuppressed
+    }
+  }
+
+  const observeLandingHover = (element: HTMLElement) => {
+    phaseObserver?.disconnect()
+    clearHoverSuppression()
+    let previousPhase = element.dataset.runtimePhase
+    phaseObserver = new MutationObserver(() => {
+      const phase = element.dataset.runtimePhase
+      if (phase !== 'idle') {
+        clearHoverSuppression()
+      } else if (previousPhase === 'revealing') {
+        // landing 在指针下揭示本体时，浏览器不会产生新的 pointerleave；若此时
+        // 直接恢复 hover，目标卡会在落地结束再播放一次抬起动画。
+        suppressHoverUntilLeave(element)
+      }
+      previousPhase = phase
+    })
+    phaseObserver.observe(element, { attributes: true, attributeFilter: ['data-runtime-phase'] })
+  }
 
   const getElement = () => typeof options.element === 'function' ? options.element() : options.element.value
   const getObjectId = () => typeof options.objectId === 'function' ? options.objectId() : options.objectId
@@ -80,6 +120,7 @@ export function useMindRuntimeObject(options: {
     stopBinding?.()
     stopBinding = runtime.bindObjectPointer(objectId, element)
     boundElement = element
+    observeLandingHover(element)
     stopResolver?.()
     stopAction?.()
     stopResolver = registerMindLandingResolver(objectId, destination => {
@@ -112,6 +153,9 @@ export function useMindRuntimeObject(options: {
   onMounted(sync)
   watch(() => [getObjectId(), getElement()] as const, sync)
   onBeforeUnmount(() => {
+    phaseObserver?.disconnect()
+    phaseObserver = null
+    clearHoverSuppression()
     stopBinding?.()
     stopResolver?.()
     stopAction?.()
@@ -124,7 +168,7 @@ export function useMindRuntimeObject(options: {
   })
 
   return {
-    onPointerDown: () => undefined,
+    onPointerDown: () => clearHoverSuppression(),
     onClick: options.onClick,
   }
 }

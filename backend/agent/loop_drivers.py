@@ -347,7 +347,7 @@ class AnthropicDriver:
     def _content_dicts(self, result: RoundResult) -> list:
         return [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in result.raw]
 
-    def build_tool_round(self, result, dispatched):
+    def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
         # 序列化为 dict：让 messages 列表 JSON 可序列化（便于持久化），
         # 同时保留 thinking blocks（MiniMax / Anthropic 多轮时原样回传）
         messages = [{"role": "assistant", "content": self._content_dicts(result)}]
@@ -406,12 +406,13 @@ class _OpenAIRaw:
     tool_calls_payload: list
 
 
-def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
+def _openai_tool_result(res: Any, *, allow_images: bool = True) -> tuple[str, list[dict]]:
     """把工具返回的 Anthropic 视觉块转换成 OpenAI 可接受的消息。
 
     工具 registry 为了兼容 Anthropic，会把图片放成 ``image/source`` 块。
     OpenAI 兼容接口不能把这种块原样放进 ``role=tool``；文本结果留在 tool
-    消息里，图片作为紧随其后的 user 多模态消息交给模型。
+    消息里，图片作为紧随其后的 user 多模态消息交给模型。图片是否出站由本轮
+    provider 能力决定，避免把视觉块发给只接受文本的模型。
     """
     if not isinstance(res, list):
         if isinstance(res, str):
@@ -430,6 +431,9 @@ def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
                 text_parts.append(str(value))
             continue
         if block.get("type") == "image":
+            if not allow_images:
+                text_parts.append("[图片结果已返回，但当前模型不支持视觉输入]")
+                continue
             source = block.get("source") or {}
             if source.get("type") == "base64" and source.get("data"):
                 media = source.get("media_type") or "image/jpeg"
@@ -601,7 +605,7 @@ class OpenAIDriver:
             m["reasoning_content"] = raw.reasoning
         return m
 
-    def build_tool_round(self, result, dispatched):
+    def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
         raw = result.raw
         messages = [self._asst(
             raw, raw.content or None,
@@ -613,7 +617,7 @@ class OpenAIDriver:
         )]
         visual_parts: list[dict] = []
         for tc, res in dispatched:
-            content, images = _openai_tool_result(res)
+            content, images = _openai_tool_result(res, allow_images=allow_images)
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": content})
             visual_parts.extend(images)
         if visual_parts:
@@ -798,10 +802,10 @@ class OllamaDriver:
             message["tool_calls"] = raw.tool_calls_payload
         return message
 
-    def build_tool_round(self, result, dispatched):
+    def build_tool_round(self, result, dispatched, *, allow_images: bool = True):
         messages = [self._assistant(result.raw, result.raw.content)]
         for tc, res in dispatched:
-            content, _images = _openai_tool_result(res)
+            content, _images = _openai_tool_result(res, allow_images=allow_images)
             messages.append({"role": "tool", "tool_name": tc.name, "content": content})
         return messages
 

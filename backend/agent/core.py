@@ -1154,7 +1154,14 @@ class LLMRunner:
                 from agent.context.assembly import NewMessageBatch
                 from agent.context.canonical_tool_history import canonical_tool_round
 
-                provider_round = driver.build_tool_round(result, dispatched)
+                # 工具结果里的图片块只能发给明确支持视觉输入的本轮模型。不能只看
+                # 工具本身是否成功，否则 GLM 等文本模型会收到 image_url 并被 provider
+                # 以 400 拒绝，导致工具结果已经返回却无法继续对话。
+                from agent import providers
+                allow_tool_images = bool(providers.capability_snapshot(ai).get("vision", False))
+                provider_round = driver.build_tool_round(
+                    result, dispatched, allow_images=allow_tool_images,
+                )
                 batch = NewMessageBatch.from_canonical_messages(
                     canonical_tool_round(result, dispatched),
                     provider_messages=provider_round,

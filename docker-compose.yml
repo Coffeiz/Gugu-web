@@ -193,6 +193,37 @@ services:
       - gugu_data:/data
       - sandbox_socket:/run/gugu
 
+  # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
+  gateway:
+    logging: *json-file-logging
+    build:
+      context: ./backend
+      args:
+        - PIP_INDEX_URL
+    command: ["python", "-m", "agent.gateway.gateway"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:-gugu_docker_pw}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
+      STORAGE__LOCAL_PATH: /data/users
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./backend:/app
+      - gugu_data:/data
+
   # 工具执行随 backend/worker 镜像提供，生产 Shell 沙盒由这个可选进程承接。
   # 默认启动；如不需要沙盒，
   # 设置 GUGU_SANDBOX_ENABLED=false 即可关闭执行能力，仍不会让业务进程接触 Docker。

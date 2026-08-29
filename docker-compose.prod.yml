@@ -158,6 +158,36 @@ services:
       - sandbox_socket:/run/gugu
     restart: unless-stopped
 
+  # IM 网关管家（飞书/QQ/微信）。worker 负责消费消息队列，gateway 负责平台长连接。
+  gateway:
+    logging: *json-file-logging
+    image: ${GUGU_BACKEND_IMAGE:?请设置 GUGU_BACKEND_IMAGE}
+    command: ["python", "-m", "agent.gateway.gateway"]
+    env_file:
+      - ./backend/.env
+    environment:
+      DB__HOST: ${GUGU_DB_HOST:-postgres}
+      DB__PORT: ${GUGU_DB_PORT:-5432}
+      DB__NAME: ${GUGU_DB_NAME:-gugu}
+      DB__USER: ${GUGU_DB_USER:-gugu}
+      DB__PASSWORD: ${GUGU_DB_PASSWORD:?请设置 GUGU_DB_PASSWORD}
+      REDIS__HOST: ${GUGU_REDIS_HOST:-redis}
+      REDIS__PORT: ${GUGU_REDIS_PORT:-6379}
+      REDIS__PASSWORD: ${GUGU_REDIS_PASSWORD:-}
+      STORAGE__LOCAL_PATH: /data/users
+      GUGU_CONFIG_OVERRIDE_FILE: /config/config.override.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - gugu_data:/data
+      - gugu_config:/config
+    restart: unless-stopped
+
   sandboxd:
     logging: *json-file-logging
     # 工具执行随 backend/worker 镜像提供；sandboxd 是默认开启的可选沙盒执行层。

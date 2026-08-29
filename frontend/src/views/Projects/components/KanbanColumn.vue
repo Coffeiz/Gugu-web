@@ -84,7 +84,9 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   --glass-card-background-hover: var(--column-bg);
   display: flex; flex-direction: column;
   padding: 12px 10px; gap: 8px;
-  min-width: 0; min-height: 0; overflow: hidden;
+  min-width: 0; min-height: 0;
+  /* 卡片 hover 的外阴影需要越过列的边界绘制；纵向滚动仍由 .col-body 独占。 */
+  overflow: visible;
 }
 .col-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -104,7 +106,8 @@ const colColor  = colColors[props.column.key] ?? '#9e9fc4'
   overflow-x: hidden;
   /* scroll-surface reserves the gutter before overflow and the global scrollbar contract owns
      width/track/safe inset. Cards therefore never change width when the thumb appears. */
-  padding: 2px 6px;
+  /* 横向留出卡片 hover 阴影的安全区，避免滚动视口把阴影切到卡片边缘。 */
+  padding: 8px 10px;
   margin-right: 0;
 }
 .kanban-card-list {

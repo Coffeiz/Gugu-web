@@ -55,6 +55,23 @@ def test_openai_tool_round_keeps_text_result_shape():
     assert messages[1]["content"] == '{"count": 0}'
 
 
+def test_openai_tool_round_drops_images_for_text_only_model():
+    dispatched = [(
+        SimpleNamespace(id="call-1"),
+        [
+            {"type": "text", "text": "已读取候选图片。"},
+            {"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": "AAAA",
+            }},
+        ],
+    )]
+
+    messages = OpenAIDriver().build_tool_round(_result(), dispatched, allow_images=False)
+
+    assert len(messages) == 2
+    assert messages[1]["content"] == "已读取候选图片。\n[图片结果已返回，但当前模型不支持视觉输入]"
+
+
 def test_inline_image_stops_cache_checkpoint_before_image():
     messages = [
         {"role": "user", "content": "稳定消息一"},

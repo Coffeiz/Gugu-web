@@ -1,92 +1,91 @@
-# 咕咕 · 文档导航
+# 咕咕文档导航
 
-`docs/` 按主题分成五类文件夹。每篇文档内部现在统一按**「易读概述」+「专业细节」**两段式组织——前半段给不熟代码、想快速了解"这是什么/为什么这样做"的人看；后半段给要对照代码实现、动手改东西的人看，保留具体文件路径、函数名、行号。想快速上手就只看每篇的「易读概述」，想动代码再往下翻。
+本文是 `docs/` 的唯一入口，按当前代码和可复现验证结果维护。目标架构、历史实现和未落地设想必须明确标记，不应与当前行为混写。
 
-想找变更历史看 [`../CHANGELOG.md`](../CHANGELOG.md)（逐条记录），想按时间线看开发过程 / 踩坑排查看 [`DEVLOG.md`](DEVLOG.md)（本目录唯一不分类、留在根目录的文档，性质是日志不是规范）。
+## 当前基线
 
----
+| 范围 | 当前实现 |
+|---|---|
+| Web 与 Admin | Vue 3、TypeScript、Vite；业务 API 由 Python 3.12 + FastAPI 提供 |
+| Agent 与 IM | Python `backend/agent/`、Python worker 和 Python 网关，共用 Agent Loop、上下文、工具、记忆与渠道适配 |
+| 数据与任务 | PostgreSQL、SQLAlchemy、Alembic、Redis、APScheduler；用户数据按所有者隔离 |
+| 实时更新 | 业务写入发布 canonical event，经 Redis event bus 由 FastAPI SSE 推送到前端；聊天流和 Admin 日志流各自保持独立生命周期 |
+| 交互终端 | 真实 PTY 使用 WebSocket；它不是资源实时更新 SSE，也不是命令历史列表 |
+| TypeScript 边界 | 前端构建、独立 LoopScope 和 RAG lexical worker；不作为公开 API、Agent、IM 或 scheduler 的替代后端 |
+| Shell | 用户 Shell 经过沙盒执行器和 Docker 隔离；工作区只提供默认目录，系统范围能力和临时公网出口受权限控制 |
+| 观测 | LoopScope 记录 Agent Run、上下文来源、Provider 用量、Prefix Diff 和 cache 证据，属于开发观测工具，不是业务事实源 |
 
-## agent/ —— Agent / AI 相关（这个项目最大最核心的一类）
+## 推荐阅读顺序
 
-**核心架构（活文档，持续维护）**
+1. [产品总览](product/OVERVIEW.md)：产品边界、页面、技术栈和开发入口。
+2. [Agent 文档索引](agent/00-INDEX.md)：Agent 架构、上下文、工具、记忆、渠道和可靠性。
+3. [后端现状](backend/OVERVIEW.md)：Python/FastAPI 服务、数据层、进程和接口边界。
+4. [部署与运维](ops/DEPLOY.md)：本地、devserver、生产服务、Compose 和常见排障。
+5. [PRD 规范](prds/README.md)：需求状态、唯一实施 TODO 和文档更新规则。
 
-| 文档 | 讲什么 |
-|------|--------|
-| [`00-总览.md`](agent/00-总览.md) | 架构总览 + 完整工具清单 + 现状，其它 agent 文档的总入口 |
-| [`01-架构图.md`](agent/01-架构图.md) | 两张架构全景图：可靠性执行链路、系统模块全景 |
-| [`02-决策环.md`](agent/02-决策环.md) | 一轮「用户说话→咕咕回应」内部到底走了哪些步 |
-| [`03-可靠性.md`](agent/03-可靠性.md) | 可靠性工程：怎么保证「说做了就真做了」 |
-| [`33-多步执行与防停顿.md`](agent/33-多步执行与防停顿.md) | 回复循环终止策略，防止「说了要做却没动手」 |
-| [`20-IM接入架构.md`](agent/20-IM接入架构.md) | 飞书 / QQ / 微信接入架构 |
-| [`11-记忆系统.md`](agent/11-记忆系统.md) | 私有 `.agent/` 五层记忆档案 + 反思机制 |
-| [`10-感知系统.md`](agent/10-感知系统.md)（+ 两张 svg） | 相处方式系统：感知 / 反思 / stance 行为模块 / 错读案例收集，体量最大的一篇 |
-| [`12-精力系统.md`](agent/12-精力系统.md) | Token 配额（精力）系统：窗口计算、硬拦、封顶记账 |
-| [`21-群聊消息架构.md`](agent/21-群聊消息架构.md) | 群聊消息读取、上下文与 Agent Loop 链路 |
-| [`22-飞书接入指南.md`](agent/22-飞书接入指南.md) | 飞书接入操作指南（BYO 扫码自连） |
-| [`23-IM用户数据结构.md`](agent/23-IM用户数据结构.md) | IM 平台身份、Bot、群组成员和权限数据结构 |
-| [`24-LLM支持与适配.md`](agent/24-LLM支持与适配.md) | 支持哪些模型厂商、怎么适配 |
-| [`32-提示词优化指南.md`](agent/32-提示词优化指南.md) | prompt 怎么组织、渐进式披露（`use_skill`）机制 |
+## Agent 与 AI
 
-**proposals/ —— 单功能实现方案 / 待评审草案**（跟上面"已落地、持续维护"的架构文档性质不同，这里是"某个具体功能怎么做"的方案记录，有的已实现有的还是提案，每篇开头都标了现状）
+这些是当前架构文档，内容以代码、测试和运行验证为准：
 
-- [`决策层与主动触达-架构草案.md`](agent/proposals/决策层与主动触达-架构草案.md) —— 💡 讨论稿，未实现
-- [`主动提醒-主动触达-路线图.md`](agent/proposals/主动提醒-主动触达-路线图.md) —— 💡 讨论稿，从提醒到主动触达的分期路线
-- [`新手引导-实现方案.md`](agent/proposals/新手引导-实现方案.md) —— ✅ 已实现
-- [`对话默认问候-生成方案.md`](agent/proposals/对话默认问候-生成方案.md) —— ✅ 已实现
-- [`IM慢工具进度声明-设计.md`](agent/proposals/IM慢工具进度声明-设计.md) —— ✅ 已实现，IM 慢工具先发进度声明
-- [`反馈信号系统-设计.md`](agent/proposals/反馈信号系统-设计.md) —— ✅ 已部分落地，反馈信号 / 关系温度 / 感知诊断设计
-- [`咕咕作为MCP开放-方向.md`](agent/proposals/咕咕作为MCP开放-方向.md) —— 💡 方向讨论
-- [`提案-BUG反馈-咕咕辅助生成.md`](agent/proposals/提案-BUG反馈-咕咕辅助生成.md) —— 💡 提案阶段，未实现
+| 文档 | 内容 |
+|---|---|
+| [Agent 总览](agent/01-OVERVIEW.md) | Agent 定位、技术边界和运行组成 |
+| [Agent 架构](agent/02-ARCHITECTURE.md) | Web、IM、定时任务、上下文、工具和持久化分层 |
+| [Agent Loop](agent/03-AGENT-LOOP.md) | 一次请求从入站到多 Round、工具和出站的执行链路 |
+| [上下文工程](agent/04-CONTEXT-ENGINEERING.md) | Snapshot、History、Memory、RAG、压缩和缓存前缀 |
+| [工具与 Skill](agent/05-TOOLS-AND-SKILLS.md) | 工具注册、Skill 按需注入、Schema 和权限边界 |
+| [RAG 与 Knowledge](agent/06-RAG-AND-KNOWLEDGE.md) | 来源范围、索引、TypeScript lexical worker、召回和引用 |
+| [Memory 与 Reflection](agent/07-MEMORY-AND-REFLECTION.md) | 私聊、群聊、群友记忆、反思触发和长期信息维护 |
+| [渠道接入](agent/08-CHANNELS.md) | Web、QQ、微信、飞书的消息处理和功能支持矩阵 |
+| [消息协议](agent/09-MESSAGE-PROTOCOL.md) | canonical history、stream event、工具消息、附件、引用和出站 parts |
+| [可靠性](agent/10-RELIABILITY.md) | 保序、幂等、重试、取消、重启、恢复和失败收束 |
+| [LoopScope](agent/11-LOOPSCOPE.md) | Run 观测、脱敏边界、Context Provenance、Prefix Diff 和 cache 排查 |
+| [Agent 命令](agent/COMMANDS.md) | 统一斜杠命令和会话控制 |
 
-**参考/ —— 外部系统调研与想法笔记**
+## 后端与数据
 
-- [`MAIBOT决策链路调研.md`](agent/参考/MAIBOT决策链路调研.md) —— MaiBot 决策 / 记忆 / 学习链路源码调研
-- [`咕咕改进方案-MAIBOT借鉴.md`](agent/参考/咕咕改进方案-MAIBOT借鉴.md) —— 基于 MaiBot 的咕咕改进方案
-- [`语气镜像-想法笔记.md`](agent/参考/语气镜像-想法笔记.md) —— 相处语气与镜像机制的想法笔记
+- [后端现状总览](backend/OVERVIEW.md)：服务形态、目录职责、数据库、Redis、Agent 和进程边界。
+- [存储规范](backend/STORAGE.md)：本地 / OSS、文件 key、暂存附件、回收站和生命周期。
+- [后端开发说明](development/README.md)：开发、测试、依赖和后端工程约定。
 
-**_archive/ —— 历史设计稿（已过期，仅供考古）**
+## 产品与前端
 
-原 `agent设计/` 文件夹，2026-06-22～06-29 一次性导入的早期 PRD 文档，之后再没更新过；部分内容已被上面的活文档取代（文中有注明）。去掉了原本的数字编号前缀，按内容重新命名。日常查资料不用进这个文件夹，除非要追溯某个设计决策的最初讨论。
+- [产品总览](product/OVERVIEW.md)：项目、文件、日历、思维面板、咕咕协作和页面状态。
+- [MVP](product/MVP.md)：MVP 功能边界和当前状态。
+- [Wishlist](product/WISHLIST.md)：尚未纳入当前基线的候选方向。
+- [文件预览历史方案](product/_archibe/FILE-PREVIEW.md)：文件预览、抽屉和浮动窗口的历史设计记录。
+- [思维面板归档资料](product/_archibe/思维面板/)：笔记、画布、数据模型和历史实现方案；当前行为以代码和 Agent 专题文档为准。
+- [前端 JS 转 TS 历史指南](product/_archibe/【已完成】前端-JS转TS迁移指南.md)：前端迁移记录。
 
----
+## 运维与性能
 
-## backend/ —— 后端通用架构（不特指 agent 子系统）
+- [部署与运维](ops/DEPLOY.md)：开发服务、生产服务、Compose、systemd、同步和回滚。
+- [性能记录](ops/PERFORMANCE.md)：性能问题、优化结果和验证方式。
+- [已知问题](ops/KNOWN-ISSUES.md)：当前已知缺陷、边界和排查入口。
 
-- [`backend.md`](backend/backend.md) —— 技术栈、数据模型、API 路由全貌
-- [`STORAGE.md`](backend/STORAGE.md) —— 文件存储结构规范（空间划分、存储 key 规则、暂存 vs 持久化）
+## 安全与合规
 
-## product/ —— 产品 / 前端
+安全边界以仓库根目录 [`AGENTS.md`](../AGENTS.md)、后端所有权与脱敏实现，以及 [SEC-2 越权检测与快速封禁 PRD](prds/【已完成】PRD-SEC-2-越权检测与快速封禁.md) 为准。旧的安全审计材料不在当前 `docs/` 目录中，不在导航里保留失效链接。
 
-- [`OVERVIEW.md`](product/OVERVIEW.md) —— 项目总览、技术栈、目录结构、进度（**新人从这篇开始看**）
-- [`MVP.md`](product/MVP.md) —— MVP 功能清单与状态
-- [`WISHLIST.md`](product/WISHLIST.md) —— 功能规划
-- [`design.md`](development/design.md) —— 前台 ui/UX 设计规范（色彩、组件、交互）
-- [`design-admin.md`](development/design-admin.md) —— Admin 后台设计规范
-- [`FILE-PREVIEW.md`](product/FILE-PREVIEW.md) —— 文件预览功能（抽屉 + 浮动窗口两套系统）
-- [`思维面板/`](product/思维面板/) —— 日常记录与项目画布、语义关联及咕咕协作。[设计草案](product/思维面板/设计草案.md)（产品）、[数据模型草案](product/思维面板/数据模型草案.md)（schema，权威）、[实现方案](product/思维面板/实现方案.md)（工程清单）
-- [`前端-JS转TS迁移指南.md`](product/前端-JS转TS迁移指南.md) —— JS→TS 渐进迁移的约定与进度
+## PRD 与重构方案
 
-## ops/ —— 部署 / 性能 / 并发
+- [PRD 撰写规范](prds/README.md)：PRD 状态、章节结构、唯一实施 TODO 和 Phase 组织规则。
+- [PRD 目录](prds/)：按领域维护需求文档；文件名带 `【已完成】` 或 `【已归档】` 的文档分别表示已完成记录和历史设计，不代表仍有待办。
+- [重构方案目录](refactor/)：已完成或正在评审的工程重构记录；具体功能现状仍以代码和当前 PRD 为准。
 
-- [`DEPLOY.md`](ops/DEPLOY.md) —— 部署文档（devserver、systemd + 手动脚本混合运维）
-- [`PERFORMANCE.md`](ops/PERFORMANCE.md) —— 性能优化记录
-- [`并发优化ROADMAP.md`](ops/并发优化ROADMAP.md) —— P0–P4 扩量分期规划
-- [`并发压测结果.md`](ops/并发压测结果.md) —— 压测数据快照（历史记录，不做内容更新）
+## 报告与开发日志
 
-## security/ —— 安全 / 合规
+- [开发日志](devlog/README.md)：按时间记录排查、决策和变更背景。
+- [报告目录](reports/)：缓存、上下文、LoopScope、RAG 和外部依赖的调查或测试报告。
+- 报告是证据材料，不自动改变产品基线；引用性能数据时应注明测试日期和适用条件。
 
-- [`PRIVACY.md`](security/PRIVACY.md) —— 隐私政策
-- [`安全-工具错误信息脱敏.md`](security/安全-工具错误信息脱敏.md) —— 工具错误信息脱敏机制
-- [`安全审计报告-2026-07-03.md`](security/安全审计报告-2026-07-03.md) —— 全项目安全审计报告与修复记录
-- [`项目功能-代码质量审查与整改方案-2026-07-14.md`](security/项目功能-代码质量审查与整改方案-2026-07-14.md) —— 项目看板、阶段待办、归档与项目文件的代码质量审查及整改方案
-- [`商用就绪评审-核实版.md`](security/商用就绪评审-核实版.md) —— 对一份外部评审的逐条代码核实记录（审计快照，不做内容更新，只保证引用的文件路径/行号有效）
+## 维护规则
 
----
+- 文档描述现状时，以代码、测试和运行验证为准；如果与旧文档冲突，更新现状文档并把旧内容放入对应归档目录。
+- 每个 PRD 只能有一个实施 TODO，Phase 只能在该 TODO 内组织；章节中的状态摘要不得复制另一套任务清单。
+- 文档内链接使用相对路径；文件名中的英文部分统一使用大写，扩展名保持小写。
+- 新文档按主题放入 `agent/`、`backend/`、`product/`、`ops/`、`refactor/` 或 `reports/`，安全规范优先更新 `AGENTS.md` 与对应 PRD，不要把当前说明继续堆到本文件。
+- 审计、压测和调查报告保留原始时间点；只在结论失效或引用无法定位时更新，并记录变更原因。
+- 代码改动完成后同步更新受影响的架构文档或 PRD，避免把已撤回方案继续写成当前实现。
 
-## 维护约定
-
-- **新增文档放对文件夹**：agent 子系统相关（含单功能方案）进 `agent/`（方案类进 `agent/proposals/`）；纯后端通用架构进 `backend/`；前端/产品进 `product/`；部署/性能/并发进 `ops/`；安全/合规进 `security/`。
-- **英文文件名统一大小写**：文件名中的英文部分使用大写，文件扩展名保持小写；中文部分、数字和连字符保持原样。修改文件名时必须同步更新仓库内引用，归档文档同样遵守此规则。
-- **新文档也按"易读概述 + 专业细节"两段式写**，方便不同读者各取所需。
-- **审计/压测类的"快照文档"**（如 `并发压测结果.md`、`商用就绪评审-核实版.md`）不要拿"提升可读性"当理由重写内容——它们的价值就在于忠实记录某个时间点的状态，只需保证里面引用的路径/行号还有效。
-- 文档间互相引用一律用**相对路径**（不要写 `docs/xxx.md` 这种从仓库根算起的路径，除非是仓库根目录的 `README.md`/`CHANGELOG.md`/`ROADMAP.md` 引用 `docs/` 内文档）。
+变更历史见 [`../CHANGELOG.md`](../CHANGELOG.md)，仓库协作和测试约定见 [`../AGENTS.md`](../AGENTS.md)。

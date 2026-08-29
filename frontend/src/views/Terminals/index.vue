@@ -380,7 +380,7 @@ onUnmounted(() => {
 .terminal-add-card:disabled { cursor:not-allowed; opacity:.5; }
 .terminal-add-card-text { font-size:12px; font-weight:600; }
 .terminal-associations { color:var(--content-tertiary); font-size:10px; }
-.terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow), inset 0 1px 0 var(--design-section-highlight); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
+.terminals-panel.design-section { padding:var(--space-xl); background:var(--design-section-bg); border:1px solid var(--design-section-border); border-radius:var(--design-section-radius); box-shadow:var(--design-section-shadow); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); }
 .terminal-list.semantic-group { padding:var(--space-lg); border:1px solid var(--border-subtle); border-radius:var(--radius-md); background:var(--surface-soft); box-shadow:none; }
 .terminal-actions :deep(.app-action-button) { min-height:var(--control-height-sm); padding:0 var(--space-sm); border-color:transparent; background:transparent; color:var(--content-secondary); box-shadow:none; transform:none; }
 .terminal-actions :deep(.app-action-button:hover:not(:disabled)) { border-color:transparent; background:var(--surface-soft); color:var(--content-primary); box-shadow:none; transform:none; }
