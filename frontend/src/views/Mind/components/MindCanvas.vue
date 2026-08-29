@@ -50,7 +50,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, t
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
 import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, beginMindLanding, endMindLanding, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
-import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
 import EntitySticker from './EntitySticker.vue'
@@ -144,7 +144,15 @@ function wrappedGridOffset(value: number, size: number) {
 }
 function applyCameraVisual(x: number, y: number, scale = camera.scale) {
   const world = worldRef.value
-  if (world) world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`
+  if (world) {
+    // world 在首次挂载时按画布允许的最大比例渲染，滚轮只改变合成层的相对比例。
+    // 这样文字/SVG 不会从 1 倍的低分辨率纹理一路放大，滚轮过程中也不需要重新布局；
+    // MAX_SCALE 来自画布相机，未来调整画布上限时这里自动同步，不要再写死 1.7。
+    const rasterScale = MAX_SCALE
+    world.style.zoom = String(rasterScale)
+    const relativeScale = scale / rasterScale
+    world.style.transform = `translate3d(${x / rasterScale}px, ${y / rasterScale}px, 0) scale(${relativeScale})`
+  }
   const grid = gridRef.value
   if (!grid) return
   const gridSize = GRID_STEP * scale
