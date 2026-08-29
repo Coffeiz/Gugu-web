@@ -1,4 +1,4 @@
-"""config.override 校验：db.password 必须从 override.json 显式提供。
+"""config.override 校验：db.password 必须从环境变量或 override.json 提供。
 
 回归测试 — 真实踩过的坑：业务后端 config.py 默认 db.user="pm" / password="pm123"，
 业务 config.override.json 只覆盖了 host/port/name/user，没写 password → 后端用
@@ -6,7 +6,7 @@
 用户感觉「消息收不到」。
 
 修法：默认值改成 user="gugu" / password=""，并在 apply_override 里强制要求
-override 显式提供 password（不能空、不能是 "pm123"/"pm" 占位符）。
+最终合并配置提供 password（不能空、不能是 "pm123"/"pm" 占位符）。
 """
 from __future__ import annotations
 
@@ -42,14 +42,21 @@ def test_default_db_user_is_gugu():
     assert db.user == "gugu"
 
 
-def test_apply_override_requires_db_password(tmp_path, monkeypatch):
-    """override.json 没写 password → 启动直接抛错，不允许静默用空密码连 DB。"""
+def test_storage_defaults_to_migrated_user_data_root():
+    """默认存储根必须与 sandboxd allowed-root 使用同一份迁移后目录。"""
+    assert cfg.StorageSettings().local_path == "../Gugu-data/users"
+
+
+def test_apply_override_requires_effective_db_password(tmp_path, monkeypatch):
+    """环境变量和 override 都没写 password → 启动直接抛错。"""
     fake = tmp_path / "config.override.json"
     fake.write_text(json.dumps({
         "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
         # 故意不写 password
     }), encoding="utf-8")
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+    monkeypatch.chdir(tmp_path)
 
     s = cfg.AppSettings()
     with pytest.raises(RuntimeError, match="db.password"):
@@ -66,7 +73,7 @@ def test_apply_override_rejects_placeholder_password(tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
 
     s = cfg.AppSettings()
-    with pytest.raises(RuntimeError, match="占位符|pm123"):
+    with pytest.raises(RuntimeError, match="占位符"):
         s.apply_override()
 
 
@@ -96,3 +103,67 @@ def test_apply_override_accepts_real_password(tmp_path, monkeypatch):
     s = cfg.AppSettings().apply_override()
     assert s.db.password == "RealSecret_abc123"
     assert "RealSecret_abc123" in s.db.url
+
+
+def test_apply_override_accepts_password_from_environment(tmp_path, monkeypatch):
+    """override.json 只覆盖连接信息时，允许使用受保护环境变量中的密码。"""
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.setenv("DB__PASSWORD", "EnvSecret_abc123")
+
+    s = cfg.AppSettings().apply_override()
+    assert s.db.password == "EnvSecret_abc123"
+
+
+def test_apply_override_keeps_last_valid_password_during_hot_reload(tmp_path, monkeypatch):
+    """热更新只提交数据库连接信息时，沿用本进程上一份已验证密码。"""
+    fake = tmp_path / "config.override.json"
+    fake.write_text(json.dumps({
+        "db": {"host": "localhost", "port": 5432, "name": "gugu", "user": "gugu"},
+    }), encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", fake)
+    monkeypatch.delenv("DB__PASSWORD", raising=False)
+    monkeypatch.setattr(
+        cfg,
+        "_settings_cache",
+        cfg.AppSettings(db=cfg.DatabaseSettings(password="CachedSecret_abc123")),
+    )
+
+    s = cfg.AppSettings(db=cfg.DatabaseSettings()).apply_override()
+
+    assert s.db.password == "CachedSecret_abc123"
+
+
+def test_write_override_json_is_atomic_and_private(tmp_path, monkeypatch):
+    target = tmp_path / "config.override.json"
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", target)
+
+    cfg.write_override_json({"db": {"password": "secret"}, "ai": {"model": "test"}})
+
+    assert json.loads(target.read_text(encoding="utf-8"))["ai"]["model"] == "test"
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_write_override_json_falls_back_for_systemd_ebusy(tmp_path, monkeypatch):
+    """ProtectSystem 只允许原位写入时，配置更新仍可完成。"""
+    import errno
+
+    target = tmp_path / "config.override.json"
+    target.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(cfg, "OVERRIDE_FILE", target)
+    original_replace = cfg.os.replace
+
+    def raise_ebusy(*args, **kwargs):
+        raise OSError(errno.EBUSY, "Device or resource busy")
+
+    monkeypatch.setattr(cfg.os, "replace", raise_ebusy)
+    cfg.write_override_json({"sandbox": {"enabled": False}})
+
+    assert json.loads(target.read_text(encoding="utf-8"))["sandbox"]["enabled"] is False
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert list(tmp_path.glob("*.tmp")) == []
+    monkeypatch.setattr(cfg.os, "replace", original_replace)

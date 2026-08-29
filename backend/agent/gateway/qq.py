@@ -6,14 +6,14 @@ group_requires_at 表示只回复 @ 消息，group_read_enabled 表示全部静�
 
 和飞书长连接同模式：raw WebSocket outbound 主动连，**不需要公网**（备案前也能用）。
 BYO 模型：每个用户在「个人设置 → 接入咕咕 → QQ」填自己的 AppID/Secret（存 user_bots 表），
-supervisor 为每个启用的 user_bot 起一条本网关子进程。bot 收到的消息天然归属该 bot 的 owner，
+gateway 为每个启用的 user_bot 起一条本网关子进程。bot 收到的消息天然归属该 bot 的 owner，
 所以入队 payload 直接带 owner_user_id，worker 无需再做绑定。
 
 凭据来源分两端：
-  - 接收（本网关子进程）：由 supervisor 通过环境变量注入（不走 argv，避免 ps 泄漏 secret）
+  - 接收（本网关子进程）：由 gateway 通过环境变量注入（不走 argv，避免 ps 泄漏 secret）
   - 发送（worker 进程）：按 bot id 现查 user_bots 表
 
-启动（由 supervisor 拉起，注入 QQ_* 环境变量）：
+启动（由 gateway 拉起，注入 QQ_* 环境变量）：
     QQ_BOT_ID=.. QQ_APP_ID=.. QQ_APP_SECRET=.. QQ_SANDBOX=0 QQ_OWNER=.. \
       .venv/bin/python -m agent.gateway.qq
 """
@@ -33,6 +33,7 @@ from uuid import UUID
 
 from app.core import redis as R
 from app.core.redaction import redact, diag_log, diag_log_raw
+from agent.outbound import sanitize_im_links
 
 _log = logging.getLogger("agent.gateway.qq")
 
@@ -94,6 +95,11 @@ def _quoted_from_index(index: QQRefIndex, data: Dict[str, Any], chat_type: str,
     return str(entry.get("content") or ""), list(entry.get("attachments") or [])
 
 
+def _quoted_platform_message_id(data: Dict[str, Any]) -> str:
+    """提取引用目标的稳定 QQ 消息标识，不使用签名下载 URL。"""
+    return str(_scene_ext_value(_message_scene_ext(data), "ref_msg_idx") or "")
+
+
 _QQ_API_BASE = "https://api.sgroup.qq.com"
 _QQ_SANDBOX_API_BASE = "https://sandbox.api.sgroup.qq.com"
 _QQ_TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
@@ -108,7 +114,18 @@ _OP_HELLO = 10
 _OP_HEARTBEAT_ACK = 11
 
 _INTENT_GROUP_AND_C2C = 1 << 25
-_INTENTS = _INTENT_GROUP_AND_C2C
+_INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
+_INTENT_DIRECT_MESSAGE = 1 << 12
+# Inline Keyboard 的 INTERACTION_CREATE 不会随群聊/C2C 消息 intent 一起下发，
+# 必须显式订阅交互 intent；同时保留 QQ 官方/成熟适配器使用的 guild/direct
+# message intent 组合，避免交互事件在不同会话类型下被网关过滤。
+_INTENT_INTERACTION = 1 << 26
+_INTENTS = (
+    _INTENT_GROUP_AND_C2C
+    | _INTENT_PUBLIC_GUILD_MESSAGES
+    | _INTENT_DIRECT_MESSAGE
+    | _INTENT_INTERACTION
+)
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _HEARTBEAT_ACK_TIMEOUT_MULTIPLIER = 2.5
 from agent.im.parsers.qq import (
@@ -245,9 +262,32 @@ async def _qq_ack(channel_id: str, chat_type: str, target_id: str, text: str, ms
         _log.warning("[qq] 即时回复失败: %s", redact(f"{type(e).__name__}: {e}"))
 
 
+async def _ack_qq_interaction(channel_id: str, interaction_id: str, *, code: int = 0) -> bool:
+    """确认 QQ Keyboard interaction，避免客户端在业务处理后继续显示 loading。
+
+    这和发送“已选择”文本是两条独立链路：前者是 QQ 回调协议 ACK，使用
+    code=0 表示服务端已经消费成功；后者只是用户可见的状态提示。
+    """
+    if not interaction_id:
+        return False
+    try:
+        await _qq_request(
+            channel_id,
+            "PUT",
+            f"/interactions/{interaction_id}",
+            json_body={"code": int(code)},
+        )
+        return True
+    except Exception as exc:
+        diag_log("agent.gateway.qq.interaction_ack", exc)
+        return False
+
+
 async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
                                  channel_id: str, owner: str, last_ack: dict) -> None:
     read_enabled = False
+    group_memory_enabled = True
+    member_memory_enabled = True
     mentioned = False
     if event_type == "C2C_MESSAGE_CREATE":
         chat_type = "c2c"
@@ -258,8 +298,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     elif event_type in {"GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"}:
         group_settings = await _group_settings(channel_id)
         group_enabled, requires_at = group_settings[:2]
-        # 兼容旧的测试/自定义适配器返回二元组；正式实现始终返回三元组。
+        # 兼容旧的测试/自定义适配器返回短元组；新增记忆字段缺失时保持开启。
         read_enabled = bool(group_settings[2]) if len(group_settings) > 2 else False
+        group_memory_enabled = bool(group_settings[3]) if len(group_settings) > 3 else True
+        member_memory_enabled = bool(group_settings[4]) if len(group_settings) > 4 else True
         mentioned = _qq_message_mentions_bot(data, event_type)
         if not group_enabled:
             return
@@ -321,7 +363,16 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
     if quoted_attachments and quoted_text == "[QQ表情]":
         quoted_text = ""
     if quoted_attachments:
-        quoted_attachments = [dict(item, quoted=True) for item in quoted_attachments]
+        quoted_source_id = _quoted_platform_message_id(data)
+        quoted_attachments = [
+            dict(
+                item,
+                quoted=True,
+                source_platform_message_id=quoted_source_id or item.get("source_platform_message_id"),
+                source_attachment_index=index,
+            )
+            for index, item in enumerate(quoted_attachments)
+        ]
     all_attachments = raw_attachments + quoted_attachments
     face_key = _qq_face_pending_key(chat_type, chat_id, sender_id)
     now = time.monotonic()
@@ -381,6 +432,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         "platform_user_name": sender_name or None,
         "platform_bot_user_id": bot_platform_user_id or None,
         "message_id": msg_id,
+        "platform_message_id": _qq_message_index_key(data, chat_type, chat_id, sender_id),
         "chat_type": chat_type,
         "text": text,
         "quoted_text": quoted_text or None,
@@ -393,7 +445,10 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         payload["chat_id"] = chat_id
         payload["group_requires_at"] = requires_at
         payload["group_read_enabled"] = read_enabled
+        payload["group_memory_enabled"] = group_memory_enabled
+        payload["member_memory_enabled"] = member_memory_enabled
         payload["group_mentioned"] = mentioned
+        payload["bot_mentioned"] = mentioned
     payload["message_format"] = await _message_format(channel_id, chat_type)
     from agent.security import logsafe
     channel_fp = logsafe.fingerprint(channel_id)
@@ -413,6 +468,7 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
             "qq", sender_id, text,
             bot_id=channel_id,
             scope_id=chat_id or sender_id,
+            allow_leading_mention=chat_type == "group" and mentioned,
         )
         if dec["action"] == "cancel":
             await apply_im_shortcut_cancel(
@@ -437,6 +493,61 @@ async def _handle_raw_qq_message(event_type: str, data: Dict[str, Any],
         # 网关事件回调里，没有把整条 WS 消息回放重放的机制，重试意义不大，交给运维看诊断日志处理。
         diag_log("agent.gateway.qq._handle_raw_qq_message.enqueue", e)
         _log.error("[qq] 入队失败: %s", redact(f"{type(e).__name__}: {e}"))
+
+
+async def _handle_qq_interaction(data: Dict[str, Any], channel_id: str, owner: str) -> None:
+    """消费 QQ Keyboard 回调，并以受控文本恢复原会话。"""
+    raw_data = data.get("data") if isinstance(data.get("data"), dict) else {}
+    interaction_id = str(data.get("id") or raw_data.get("id") or "")
+    from agent.interactions.qq import parse_interaction_event
+    event = parse_interaction_event(data)
+    if event is None or not event.get("platform_user_id"):
+        await _ack_qq_interaction(channel_id, interaction_id, code=1)
+        return
+    try:
+        from app.db import session as db_session
+        from app.services.interactions import consume_action
+        db_session.ensure_engine()
+        if db_session._SessionLocal is None:
+            return
+        result = None
+        async with db_session._SessionLocal() as db:
+            result = await consume_action(
+                db,
+                user_id=UUID(str(owner)),
+                prompt_id=event["prompt_id"],
+                token=event["token"],
+                event_id=event.get("event_id"),
+            )
+    except (LookupError, ValueError):
+        await _ack_qq_interaction(channel_id, interaction_id, code=3)
+        await _qq_ack(channel_id, "c2c", event["platform_user_id"], "这个操作已过期或已经处理过了。", event.get("event_id") or "")
+        return
+    except Exception as exc:
+        await _ack_qq_interaction(channel_id, interaction_id, code=1)
+        diag_log("agent.gateway.qq.interaction", exc)
+        return
+    await _ack_qq_interaction(channel_id, interaction_id, code=0)
+
+    option_id = str(result.get("option_id") or "")
+    result_payload = result.get("result") if isinstance(result.get("result"), dict) else {}
+    selected_text = str(result_payload.get("text") or option_id)
+    chat_type = str(event.get("chat_type") or "c2c")
+    target_id = event.get("chat_id") or event["platform_user_id"]
+    await _qq_ack(
+        channel_id,
+        chat_type,
+        target_id,
+        (
+            "已确认，继续处理。" if option_id == "confirm"
+            else "已取消。" if option_id == "cancel"
+            else f"已选择：{selected_text}，继续处理。"
+        ),
+        event.get("event_id") or "",
+    )
+    # consume_action 已经把 pending prompt 标记为 resolved；原来的 Agent Run
+    # 会在 wait_for_resolution() 中被唤醒并继续。不要把按钮结果再次入队，
+    # 否则会和原 Run 并行，造成重复回复。
 
 
 async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, owner: str) -> None:
@@ -520,6 +631,8 @@ async def _run_raw_ws(app_id: str, secret: str, sandbox: bool, channel_id: str, 
                                     print(f"[qq:{channel_fp}] raw WebSocket RESUMED", flush=True)
                                 elif event_type in ("C2C_MESSAGE_CREATE", "GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
                                     await _handle_raw_qq_message(event_type, data, channel_id, owner, last_ack)
+                                elif event_type == "INTERACTION_CREATE":
+                                    await _handle_qq_interaction(data, channel_id, owner)
                             elif op == _OP_RECONNECT:
                                 print(f"[qq:{channel_fp}] QQ 要求重连", flush=True)
                                 break
@@ -552,7 +665,7 @@ def serve() -> None:
     channel_id = os.environ.get("QQ_BOT_ID", "")
     owner = os.environ.get("QQ_OWNER", "")
     if not app_id or not secret:
-        raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 supervisor 注入）。")
+        raise SystemExit("缺少 QQ_APP_ID / QQ_APP_SECRET 环境变量（应由 gateway 注入）。")
     from agent.security import logsafe
     print(f"[qq:{logsafe.fingerprint(channel_id)}] 网关启动（raw WebSocket, sandbox={sandbox}）…", flush=True)
     asyncio.run(_run_raw_ws(app_id, secret, sandbox, channel_id, owner))
@@ -625,6 +738,21 @@ class QQAPIError(Exception):
         super().__init__(f"QQ API {method} {path} 失败 status={status}")
 
 
+def _qq_error_summary(exc: BaseException) -> dict[str, object]:
+    """提取 QQ 错误的结构化诊断字段，不把请求正文写进普通日志。"""
+    if not isinstance(exc, QQAPIError):
+        return {}
+    body = exc.body
+    if not isinstance(body, dict):
+        return {"status": exc.status, "body_type": type(body).__name__}
+    summary: dict[str, object] = {"status": exc.status}
+    for key in ("code", "err_code", "message", "msg"):
+        value = body.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            summary[key] = value
+    return summary
+
+
 def _qq_is_transient(exc: BaseException) -> bool:
     """判定失败是否值得重试：真正瞬时的（超时/连接错/5xx/429）才重试；401 也算——
     换新 token 重发是既有的、安全的做法（旧 token 从未被 QQ 处理成功，重发不会重复），
@@ -686,18 +814,71 @@ def _qq_msg_id_invalid(exc: Exception) -> bool:
     """QQ 被动回复窗口过期或 msg_id 越权时，允许降级为主动消息。"""
     body = getattr(exc, "body", None)
     if isinstance(body, dict):
-        if body.get("code") == 40034024 or body.get("err_code") == 40034024:
+        if body.get("code") in (40034024, 40034031) or body.get("err_code") in (40034024, 40034031):
             return True
         message = str(body.get("message") or "")
-        return "msg_id无效或越权" in message
+        return "msg_id无效或越权" in message or "msgid已经过期" in message
     text = str(body) if body is not None else str(exc)
-    return "40034024" in text or "msg_id无效或越权" in text
+    return (
+        "40034024" in text
+        or "40034031" in text
+        or "msg_id无效或越权" in text
+        or "msgid已经过期" in text
+    )
+
+
+def _format_group_mention(text: str, user_id: str | None) -> str:
+    """把模型输出的当前群成员 ``@平台ID`` 转成 QQ 最新 mention 格式。
+
+    模型明确输出的旧式 mention 全部升级；普通 ``@ID`` 只转换当前消息发言人的
+    ID，避免普通 ``@文本`` 或猜测其他成员 ID 误触发平台 mention。QQ 官方当前格式是
+    ``<qqbot-at-user id=\"...\" />``；旧 ``<@ID>`` / ``<@!ID>`` 也统一升级。
+    """
+    source = text or ""
+
+    def replace_legacy(match: re.Match[str]) -> str:
+        target_id = match.group(1).strip()
+        if not target_id or any(char in target_id for char in '<>"\''):
+            return match.group(0)
+        return f'<qqbot-at-user id="{target_id}" />'
+
+    # 模型明确输出的旧式 mention 已经表达了目标，不再猜测其对应成员，统一升级
+    # 为官方新格式，以支持“@上面的人”等一次提及多个群成员的请求。
+    source = re.sub(r"<@!?([^>\s]+)>", replace_legacy, source)
+
+    user_id = str(user_id or "").strip()
+    if not user_id or any(char in user_id for char in '<>"\''):
+        return source
+    escaped_id = re.escape(user_id)
+    return re.sub(
+        rf"(?<![<@\w])[@＠]{escaped_id}(?!\w)",
+        f'<qqbot-at-user id="{user_id}" />',
+        source,
+    )
+
+
+def _has_qq_group_mention(text: str) -> bool:
+    """判断正文是否含 QQ 群 mention 标签，供兼容模式选择可解析的消息类型。"""
+    return bool(re.search(r"<qqbot-at-user\s+id=\"[^\"]+\"\s*/>", text or ""))
+
+
+def _split_qq_group_mention(text: str, user_id: str | None) -> tuple[str, str]:
+    """将群回复拆成独立 mention 消息和普通正文。"""
+    formatted = _format_group_mention(text, user_id)
+    mention_re = re.compile(r"<qqbot-at-user\s+id=\"[^\"]+\"\s*/>")
+    mentions = mention_re.findall(formatted)
+    if not mentions:
+        return "", formatted
+    body = mention_re.sub("", formatted)
+    body = re.sub(r"[ \t]{2,}", " ", body).strip()
+    return "".join(mentions), body
 
 
 async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
                 message_format: str | None = None):
     """按会话格式发送 QQ 文本；Markdown 被拒时回退纯文本。"""
     path = f"/v2/users/{openid}/messages"
+    text = sanitize_im_links(text)
     msg_type = _message_type(text, message_format)
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
@@ -718,10 +899,17 @@ async def _post(channel_id: str, openid: str, text: str, msg_id: str | None,
 
 
 async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str | None,
-                      message_format: str | None = None):
+                      message_format: str | None = None,
+                      mention_user_id: str | None = None):
     """群聊版文本发送：按会话格式选择纯文本或 Markdown。"""
     path = f"/v2/groups/{group_openid}/messages"
+    text = _format_group_mention(text, mention_user_id)
+    text = sanitize_im_links(text)
     msg_type = _message_type(text, message_format)
+    # compat 默认是纯文本，但 QQ 只会在可解析的富文本消息中渲染 mention 标签。
+    # 仅对明确包含 mention 的群消息升级，不改变普通兼容模式的输出约束。
+    if msg_type == 0 and _has_qq_group_mention(text):
+        msg_type = 2
     body = {"msg_type": msg_type, "msg_seq": await _next_seq(msg_id)}
     if msg_type == 2:
         body["markdown"] = {"content": text}
@@ -738,6 +926,83 @@ async def _post_group(channel_id: str, group_openid: str, text: str, msg_id: str
         if msg_id:
             body["msg_id"] = msg_id
         await _qq_request(channel_id, "POST", path, json_body=body)
+
+
+def _keyboard_wire_payload(prompt: dict[str, Any]) -> dict[str, Any]:
+    """把统一交互动作转换为 QQ 官方 Inline Keyboard payload。"""
+    from agent.interactions.qq import build_keyboard_payload
+
+    actions = build_keyboard_payload(prompt)
+    buttons = []
+    for index, item in enumerate(actions["buttons"]):
+        buttons.append({
+            "id": f"gugu-{actions['prompt_id']}-{index + 1}",
+            "render_data": {
+                "label": item["label"][:40],
+                "visited_label": "已选择",
+                "style": 1,
+            },
+            # 单选 Prompt：点击后按钮只允许消费一次，并让 QQ 将同组按钮
+            # 视为互斥选择，而不是继续显示为可多选状态。
+            "group_id": f"gugu-prompt-{actions['prompt_id']}",
+            "action": {
+                "type": 1,
+                # 交互权限由服务端 prompt/session 校验；QQ C2C 对
+                # type=0 + specify_user_ids 的组合兼容性不稳定。
+                "permission": {"type": 2},
+                "click_limit": 1,
+                "data": item["action_data"],
+                "unsupport_tips": "请回复选项序号或选项文字",
+            },
+        })
+    rows = [{"buttons": buttons[index:index + 5]} for index in range(0, len(buttons), 5)]
+    return {"content": {"rows": rows}}
+
+
+async def _post_keyboard(channel_id: str, target_id: str, text: str, msg_id: str | None,
+                         *, group: bool, prompt: dict[str, Any],
+                         message_format: str | None = None):
+    """发送带文本说明和 Inline Keyboard 的 QQ 消息。"""
+    target = "groups" if group else "users"
+    path = f"/v2/{target}/{target_id}/messages"
+    # QQ Inline Keyboard 使用 Markdown 消息类型；这是 QQNT/QwenPaw
+    # 实际可渲染按钮的组合。普通回复仍由 _post/_post_group 按
+    # message_format 选择消息类型。
+    body = {
+        "msg_type": 2,
+        "markdown": {"content": text},
+        "keyboard": _keyboard_wire_payload(prompt),
+        "msg_seq": await _next_seq(msg_id),
+    }
+    if msg_id:
+        body["msg_id"] = msg_id
+    await _qq_request(channel_id, "POST", path, json_body=body)
+
+
+async def send_keyboard(target_id: str, text: str, prompt: dict[str, Any], *,
+                        channel_id: str, msg_id: str | None = None,
+                        group: bool = False,
+                        message_format: str | None = None) -> bool:
+    """发送 QQ Keyboard；平台拒绝时返回 False，由统一出站层发送文本兜底。"""
+    for attempt in (1, 2):
+        try:
+            await _post_keyboard(
+                channel_id,
+                target_id,
+                text,
+                msg_id,
+                group=group,
+                prompt=prompt,
+                message_format=message_format,
+            )
+            return True
+        except Exception as exc:
+            diag_log("agent.gateway.qq.send_keyboard", exc)
+            _send_tokens.pop(channel_id, None)
+            if attempt == 2 or not _qq_is_transient(exc):
+                return False
+            await asyncio.sleep(0.5)
+    return False
 
 
 async def send_c2c(openid: str, text: str, msg_id: str | None = None,
@@ -768,6 +1033,7 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
                 "attempt": attempt,
                 "error": type(e).__name__,
                 "transient": _qq_is_transient(e),
+                "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] C2C 被动回复 msg_id 已失效，降级为主动消息")
@@ -792,7 +1058,8 @@ async def send_c2c(openid: str, text: str, msg_id: str | None = None,
 
 
 async def send_group(group_openid: str, text: str, msg_id: str | None = None,
-                     channel_id: str | None = None, message_format: str | None = None) -> bool:
+                     channel_id: str | None = None, message_format: str | None = None,
+                     mention_user_id: str | None = None) -> bool:
     """给指定群发被动回复（带原 msg_id）。只在失败判定为瞬时时重试一次；
     4xx 等永久错误直接失败（同 send_c2c，发消息非幂等，不对永久错误盲重试）。"""
     print(json.dumps({
@@ -801,12 +1068,24 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
         "has_channel_id": bool(channel_id),
         "has_msg_id": bool(msg_id),
     }, ensure_ascii=False), flush=True)
+    mention_text, body_text = _split_qq_group_mention(text, mention_user_id)
+    mention_sent = False
     for attempt in (1, 2):
         try:
-            if message_format is None:
-                await _post_group(channel_id, group_openid, text, msg_id)
-            else:
-                await _post_group(channel_id, group_openid, text, msg_id, message_format)
+            if mention_text and not mention_sent:
+                # mention 单独使用 Markdown，避免兼容模式把标签当普通文本展示。
+                await _post_group(channel_id, group_openid, mention_text, msg_id, "markdown")
+                mention_sent = True
+            if mention_text and body_text:
+                if message_format is None:
+                    await _post_group(channel_id, group_openid, body_text, None)
+                else:
+                    await _post_group(channel_id, group_openid, body_text, None, message_format)
+            elif not mention_text:
+                if message_format is None:
+                    await _post_group(channel_id, group_openid, text, msg_id)
+                else:
+                    await _post_group(channel_id, group_openid, text, msg_id, message_format)
             print(json.dumps({
                 "event": "send-group-ok",
                 "attempt": attempt,
@@ -818,14 +1097,26 @@ async def send_group(group_openid: str, text: str, msg_id: str | None = None,
                 "attempt": attempt,
                 "error": type(e).__name__,
                 "transient": _qq_is_transient(e),
+                "qq": _qq_error_summary(e),
             }, ensure_ascii=False), flush=True)
             if msg_id and _qq_msg_id_invalid(e):
                 _log.warning("[qq] 群聊被动回复 msg_id 已失效，降级为主动消息")
                 try:
-                    if message_format is None:
-                        await _post_group(channel_id, group_openid, text, None)
-                    else:
-                        await _post_group(channel_id, group_openid, text, None, message_format)
+                    if mention_text and not mention_sent:
+                        await _post_group(channel_id, group_openid, mention_text, None, "markdown")
+                        mention_sent = True
+                    if mention_text and body_text:
+                        if message_format is None:
+                            await _post_group(channel_id, group_openid, body_text, None)
+                        else:
+                            await _post_group(
+                                channel_id, group_openid, body_text, None, message_format
+                            )
+                    elif not mention_text:
+                        if message_format is None:
+                            await _post_group(channel_id, group_openid, text, None)
+                        else:
+                            await _post_group(channel_id, group_openid, text, None, message_format)
                     return True
                 except Exception as fallback_error:
                     diag_log("agent.gateway.qq.send_group.active_fallback", fallback_error)
@@ -898,4 +1189,6 @@ async def send_file(openid: str, data: bytes | None, name: str, ext: str,
 
 
 if __name__ == "__main__":
+    from app.core.logging import setup_process_output
+    setup_process_output()
     serve()

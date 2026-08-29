@@ -1,0 +1,18 @@
+{
+  "name": "@loopscope/storage",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./src/store.ts", "import": "./dist/store.js" } },
+  "scripts": { "build": "tsc --noEmit false --outDir dist --rootDir src", "typecheck": "tsc --noEmit", "test": "tsx --test src/*.test.ts" },
+  "dependencies": {
+    "@loopscope/contracts": "workspace:*",
+    "@loopscope/db": "workspace:*",
+    "drizzle-orm": "^0.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.19.0",
+    "typescript": "~5.8.0"
+  }
+}

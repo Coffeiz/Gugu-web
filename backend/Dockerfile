@@ -1,12 +1,13 @@
 # syntax=docker/dockerfile:1
 ## 咕咕后端镜像 —— 本地/本机开发用的快速启动方式，不是生产部署方式。
-## 生产环境用的是裸机 systemd 三服务（gugu-backend / gugu-worker / gugu-supervisor，
+## 生产环境用的是裸机 systemd 三服务（gugu-backend / gugu-worker / gugu-gateway，
 ## 见 start.sh install），原因是 IM 网关（飞书/QQ/微信）常驻长连接 + 语音/文档转码要调
 ## libreoffice/ffmpeg 等系统工具，装进容器体积和运维复杂度都不划算；这个镜像只覆盖
 ## web（uvicorn）和 worker（IM 队列消费）两个进程，够本地跑通全栈、验证功能。
 FROM python:3.12-slim
 
-# poppler-utils → pdftotext（文件预览正文提取）；ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
+# poppler-utils → pdftotext（文件预览正文提取）；fonts-noto-cjk → LibreOffice 中文 PDF 字形；
+# ffmpeg → IM 语音消息转码；curl → HEALTHCHECK
 # 用；build-essential → pilk（SILK 语音编解码）在 PyPI 只发布了 Windows 预编译 wheel，Linux 下
 # 装它一定要从源码编译内嵌的 C 语言 SILK 编解码库，slim 镜像默认没有编译工具链
 # （2026-07-14 排查：先只装 gcc 报 `command 'gcc' failed: No such file or directory`；
@@ -21,7 +22,7 @@ FROM python:3.12-slim
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
-        poppler-utils ffmpeg curl build-essential
+        poppler-utils fonts-noto-cjk ffmpeg curl build-essential docker.io nodejs
 
 WORKDIR /app
 
@@ -44,12 +45,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -i "${PIP_INDEX_URL}" -r requirements.txt
 
 COPY . .
-RUN mkdir -p uploads logs
+RUN mkdir -p logs
 
 # 不像 systemd 单元那样切非 root 用户跑（那份加固对生产才有意义）——这个镜像的
 # docker-compose.yml 用法会把 ./backend 整个 bind mount 进 /app，运行时的文件属主
 # 由宿主机那份说了算，容器里镜像构建阶段 chown 的结果会被挂载直接盖掉，非 root 用户
-# 反而可能在宿主机 UID 对不上时写不进 uploads/logs（各操作系统 Docker 的 UID 映射
+# 反而可能在宿主机 UID 对不上时写不进 logs（各操作系统 Docker 的 UID 映射
 # 行为不一致，尤其是 macOS/Windows Docker Desktop）。本镜像仅用于本地开发，不担心这层。
 EXPOSE 8000
 

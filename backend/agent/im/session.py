@@ -4,9 +4,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import func, select
 
 from app.core import redis as R
+from app.services.conversation_retention import (
+    MESSAGE_RETENTION_LIMIT,
+    MESSAGE_TRIM_THRESHOLD,
+    trim_session_messages as _trim_session_messages,
+)
 from agent.im.context_policy import IM_SOURCES
 
 IM_SESSION_TTL = 12 * 3600  # 12 小时滑动 TTL
@@ -248,39 +253,12 @@ async def get_or_create_session(db, request, user_id, max_sessions: int = 50) ->
 
 async def trim_session_messages(
     session_id: int,
-    limit: int = MESSAGE_RETENTION_LIMIT,
-    threshold: int = MESSAGE_TRIM_THRESHOLD,
+    limit: int | None = None,
+    threshold: int | None = None,
 ) -> None:
-    """只保留会话最近的消息记录，避免私聊/群聊消息无限增长。
-
-    先统计条数，超过 ``threshold`` 才执行 DELETE 裁剪到最近 ``limit`` 条，
-    避免每轮都做删除（长会话里消息数稳定在阈值附近，裁剪频率很低）。
-    """
-    if limit < 1:
-        return
-    import app.db.session as db_session
-    from app.models import ConversationMessage
-    from app.services.conversation_cleanup import remove_messages_with_attachments
-
-    if db_session._engine is None:
-        db_session._build_engine()
-    async with db_session._SessionLocal() as db:
-        count = (await db.execute(
-            select(func.count()).select_from(ConversationMessage)
-            .where(ConversationMessage.session_id == session_id)
-        )).scalar_one()
-        if count <= threshold:
-            return
-        keep_ids = (
-            select(ConversationMessage.id)
-            .where(ConversationMessage.session_id == session_id)
-            .order_by(desc(ConversationMessage.created_at), desc(ConversationMessage.id))
-            .limit(limit)
-        )
-        old_ids = list((await db.execute(
-            select(ConversationMessage.id).where(
-                ConversationMessage.session_id == session_id,
-                ConversationMessage.id.not_in(keep_ids),
-            )
-        )).scalars().all())
-        await remove_messages_with_attachments(db, old_ids)
+    """兼容旧 IM 调用方；实际规则由跨平台保留服务统一执行。"""
+    await _trim_session_messages(
+        session_id,
+        limit=MESSAGE_RETENTION_LIMIT if limit is None else limit,
+        threshold=MESSAGE_TRIM_THRESHOLD if threshold is None else threshold,
+    )

@@ -1,0 +1,41 @@
+/* Default Aero palette. */
+:root[data-palette='aero'][data-theme='light'] {
+  --theme-action-primary: #7b7fb2;
+  --theme-action-hover: #6b6fa0;
+  --theme-action-pressed: #5d618e;
+  --theme-selection: rgba(123,127,178,.14);
+  --theme-focus: rgba(123,127,178,.42);
+  --theme-sidebar-active-bg: var(--theme-card-solid);
+  --theme-sidebar-active-fg: #6b6fa0;
+  --theme-brand-logo-color: #7779ab;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(48%) sepia(12%) saturate(1060%) hue-rotate(198deg) brightness(88%) contrast(88%);
+  --theme-divider: linear-gradient(90deg,transparent,rgba(0,0,0,.07) 20%,rgba(0,0,0,.07) 80%,transparent);
+  --theme-success: #5a9e88;
+  --theme-warning: #b07858;
+  --theme-danger: #c85a5a;
+  --theme-info: #6f9eaa;
+  --theme-brand-gradient: linear-gradient(135deg,#7b7fb2,#c4afc8);
+  --theme-fab-gradient: linear-gradient(135deg,#7b7fb2,#9590c4);
+  --theme-scrollbar-thumb: rgba(123,127,178,.24);
+  --theme-scrollbar-thumb-hover: rgba(123,127,178,.32);
+}
+:root[data-palette='aero'][data-theme='dark'] {
+  --theme-action-primary: #9590c4;
+  --theme-action-hover: #aaa6d8;
+  --theme-action-pressed: #847fb4;
+  --theme-selection: rgba(149,144,196,.16);
+  --theme-focus: rgba(149,144,196,.42);
+  --theme-sidebar-active-fg: #c2bee3;
+  --theme-brand-logo-color: #918cb8;
+  --theme-brand-logo-filter: brightness(0) saturate(100%) invert(60%) sepia(16%) saturate(560%) hue-rotate(202deg) brightness(92%) contrast(90%);
+  --theme-divider: linear-gradient(90deg,transparent,rgba(255,255,255,.12) 20%,rgba(255,255,255,.12) 80%,transparent);
+  --theme-success: #80b4a2;
+  --theme-warning: #cea07f;
+  --theme-danger: #df8585;
+  --theme-info: #8bc7d6;
+  --theme-brand-gradient: linear-gradient(135deg,#9590c4,#c4afc8);
+  --theme-fab-gradient: linear-gradient(135deg,#9590c4,#c4afc8);
+  --theme-gugu-chat-send-bg: linear-gradient(135deg,#6e6a9c,#847fb4);
+  --theme-scrollbar-thumb: rgba(190,185,235,.26);
+  --theme-scrollbar-thumb-hover: rgba(190,185,235,.34);
+}

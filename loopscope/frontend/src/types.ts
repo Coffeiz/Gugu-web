@@ -14,12 +14,19 @@ export interface ChatDebugEvent {
 
 export interface ChatMessage {
   id: number | string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'tool'
   content: string
   createdAt?: string
+  canonicalId?: number
+  timelineOrder?: number
   pending?: boolean
   runId?: string
   debugEvents?: ChatDebugEvent[]
+  toolName?: string
+  toolLabel?: string
+  toolStatus?: string
+  toolInput?: unknown
+  toolResult?: unknown
 }
 
 export interface CodeProvenance {
@@ -46,6 +53,8 @@ export interface TokenImpact {
   argument_tokens?: number
   result_tokens?: number
   prompt_tokens_estimate?: number
+  prompt_tokens_actual?: number
+  prompt_tokens_source?: 'provider' | 'estimate' | string
   prompt_growth_estimate?: number
   system_tokens_estimate?: number
   messages_tokens_estimate?: number
@@ -82,9 +91,50 @@ export interface TraceRun {
   started_at: number
   ended_at?: number | null
   duration_ms?: number | null
-  input: Record<string, any>
-  output: Record<string, any>
+  input?: Record<string, any>
+  output?: Record<string, any>
   attributes: Record<string, any>
   usage?: TokenUsage
   spans?: TraceSpan[]
+  rounds?: TraceRoundExport[]
+}
+
+export interface TraceRoundExport {
+  round: number
+  span_id: string
+  span_ids: string[]
+  span_count: number
+  name: string
+  kind: string
+  status: string
+  started_at: number
+  ended_at?: number | null
+  duration_ms?: number | null
+  input: unknown
+  output: unknown
+  attributes: Record<string, any>
+  usage?: TokenUsage
+  token_impact?: TokenImpact
+}
+
+export interface CanonicalEventStats {
+  count?: number
+  by_type?: Record<string, number>
+  schema_digests?: string[]
+}
+
+export interface AdapterCallStats {
+  count?: number
+  success?: number
+  errors?: number
+  canonical_render_calls?: number
+  by_provider?: Record<string, number>
+  by_api_format?: Record<string, number>
+}
+
+export interface TraceSpanPage {
+  items: TraceSpan[]
+  hasMore: boolean
+  offset: number
+  limit: number
 }

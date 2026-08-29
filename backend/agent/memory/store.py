@@ -31,9 +31,11 @@ import time
 from app.services.storage import get_storage
 
 _DIR = ".agent"
-DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数（也是注入 prompt 的量）
+DAILY_KEEP_RECENT = 50   # 压缩后 daily 保留的最近条数
+DAILY_INJECT_CHARS = 2000  # 注入 prompt 时只取最新内容，避免近期流水撑爆上下文
 DAILY_COMPACT_AT  = 100  # daily 达到此条数触发一次压缩
 DAILY_HARD_CAP    = 175  # 压缩失败时的硬安全上限，不能静默丢弃历史
+PROFILE_INJECT_MAX = 50  # profile 直注入条数；超出的条目由 RAG 按需召回
 
 # ── 用户画像（profile.json，无需衰减）──
 PROFILE_FILE = "profile.json"
@@ -47,7 +49,7 @@ PATTERN_FILE                = "pattern.json"
 PATTERN_MAINTENANCE_FILE   = "pattern_maintenance.json"
 PATTERN_INFERRED_HALF_LIFE  = 45.0   # 推断类 pattern 置信半衰期(天)；observed 不衰减
 PATTERN_RETIRE_EFF          = 0.2    # effective 置信低于此 → 不注入（退休淡出）
-PATTERN_INJECT_MAX          = 100    # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
+PATTERN_INJECT_MAX          = 50     # 注入上限；超了优先按相关性挑（向量/词法）、重要度保底+补齐（见 render_pattern）
 PATTERN_FLOOR_K             = 6      # 重要度保底：pattern 超上限时，最重要的前 K 条无论是否相关都注入（核心习惯不被相关性挤掉）
 PATTERN_REL_CONF_BONUS      = 0.1    # 相关性排序里给置信度的小加成系数（同等相关时更可信的在前）
 _PATTERN_DEFAULT_CONF      = {"observed": 0.9, "inferred": 0.6}
@@ -55,7 +57,7 @@ _PATTERN_CONFIRM_STEP      = 0.1
 _PATTERN_MAX_CONF          = 0.97
 
 # ── memory.md 长期记忆向量检索参数 ──
-MEMORY_INJECT_CHARS = 1500   # memory.md 超此字数才走向量挑相关块，否则整块注入（小的没必要检索）
+MEMORY_INJECT_CHARS = 2000   # memory.md 注入预算；超出才走向量挑相关块，否则整块注入
 MEMORY_CHUNK_MAX    = 400    # 切块粒度：单块最大字数（超长段按句子边界再切）
 
 
@@ -77,7 +79,7 @@ async def _write(key: str, text: str) -> None:
 
 async def read_memory(user_id, query: str = "") -> dict:
     """返回 {profile, pattern, memory, daily, summary, summary_ts, stance, stance_ts, lens}，缺失为空串/None。
-    profile = 用户画像(身份/稳定喜好，全量注入，不衰减)；pattern = 行为/决策模式(结构化，超上限时按相关性挑)。
+    profile = 用户画像(身份/稳定喜好，最多直注入 50 条，超出由 RAG 按需召回)；pattern = 行为/决策模式(结构化，最多直注入 50 条，超出时按相关性挑)。
     stance = 上轮反思判的相处姿态（= perception.intent），stance_ts 给新鲜度闸用（见 behaviors.select）。
     summary_ts = summary 上次更新的 epoch（给时间衰减用，见 agent/decay.py）。
     lens = 渲染好的「解读镜片」注入块（per-user 解读先验，见 agent/memory/lens.py），无则空串。
@@ -104,11 +106,12 @@ async def read_memory(user_id, query: str = "") -> dict:
                 if mem_over:
                     mv = await read_memory_vecs(user_id)
                     mem_vec_map = {k: v.get("v") for k, v in mv.items() if v.get("t") == tag}
-    profile = render_profile(raw_profile)   # 无上限，全量注入
+    profile = render_profile(raw_profile)   # 固定最多直注入 PROFILE_INJECT_MAX 条，剩余由 RAG 按需召回
     pattern = render_pattern(raw_patterns, query, query_vec if pattern_over else None, pattern_vec_map)  # 有向量走 cosine，无则词法
     memory  = retrieve_memory_block(memory_doc, query_vec if mem_over else None, mem_vec_map)  # 超预算挑相关段，无向量则整篇
     first_ts = min((item.get("ts") for item in raw_patterns if item.get("ts")), default=None)
-    daily   = (await _read(_key(user_id, "daily.md"))).strip()
+    # daily 的落盘内容不能因为上下文预算被删除；这里只限制本轮注入，且 daily 新内容在顶部。
+    daily   = (await _read(_key(user_id, "daily.md"))).strip()[:DAILY_INJECT_CHARS]
     _sum_doc = await _read_summary_doc(user_id)
     summary, summary_ts = _sum_doc["text"], _sum_doc["ts"]
     stance, stance_ts = await read_stance(user_id)
@@ -279,8 +282,13 @@ def _normalize_profile_item(item, *, keep_ts: bool) -> dict | None:
 
 
 def render_profile(profile: list[dict]) -> str:
-    """用户画像 → 注入用 markdown。不做衰减/退休/相关性挑选——profile 预期规模很小，全量注入。"""
-    lines = [f"- {p['text'].strip()}" for p in (profile or []) if (p.get("text") or "").strip()]
+    """用户画像 → 注入用 markdown。
+
+    profile 仍保持现有的增量去重和稳定语义，不做衰减；这里只限制固定上下文
+    的直注入条数，超出的条目继续保留在 RAG 索引中按需召回。
+    """
+    valid = [p for p in (profile or []) if (p.get("text") or "").strip()]
+    lines = [f"- {p['text'].strip()}" for p in valid[:PROFILE_INJECT_MAX]]
     return "\n".join(lines)
 
 
@@ -332,13 +340,16 @@ async def write_pattern_vecs(user_id, vecs: dict) -> None:
     await _write(_key(user_id, PATTERN_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) -> None:
+async def sync_pattern_vecs(
+    user_id, patterns: list[dict], force: bool = False, *, strict: bool = False,
+) -> int:
     """给 pattern 增量补向量缓存：只 embed 新模式或换模型后的模式，已删模式顺带清掉。
     `force=True`（重建 job 用）→ 无视 tag 全部重算。
-    embedding 未启用 → `embed()` 返回 None → 整体 no-op。best-effort，永不抛（反思路径不能被它拖垮）。"""
+    embedding 未启用 → `embed()` 返回 None → 整体 no-op。普通增量路径 best-effort；
+    管理员重建可用 strict=True 让失败被上层统计。返回成功写入的向量数量。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
-        return
+        return 0
     try:
         vecs = await read_pattern_vecs(user_id)
         before = len(vecs)
@@ -346,6 +357,7 @@ async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) 
         alive = {item.get("id") for item in patterns if item.get("id")}
         vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 已删 pattern 的向量
         changed = len(vecs) != before
+        written = 0
         for item in patterns:
             pattern_id, text = item.get("id"), (item.get("text") or "").strip()
             if not pattern_id or not text:
@@ -357,10 +369,16 @@ async def sync_pattern_vecs(user_id, patterns: list[dict], force: bool = False) 
             if v:
                 vecs[pattern_id] = {"v": v, "t": tag}
                 changed = True
+                written += 1
+            elif strict:
+                raise RuntimeError("pattern 向量生成失败")
         if changed:
             await write_pattern_vecs(user_id, vecs)
+        return written
     except Exception:
-        pass
+        if strict:
+            raise
+        return 0
 
 
 async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
@@ -368,24 +386,32 @@ async def rebuild_all_vecs(user_ids, on_progress=None) -> dict:
     复用 `sync_pattern_vecs`/`sync_memory_vecs`（均 force=True）。每个用户独立 try（一个失败不拖垮整批）。
     返回 {done, total, with_patterns}（with_patterns=有 pattern 的用户数；memory 一并重算，不单独计数）。"""
     total, done, with_patterns = len(user_ids), 0, 0
+    pattern_vectors = memory_vectors = failed_users = 0
     for uid in user_ids:
         try:
             patterns = await read_pattern_list(uid)
             if patterns:
-                await sync_pattern_vecs(uid, patterns, force=True)
+                pattern_vectors += await sync_pattern_vecs(uid, patterns, force=True, strict=True)
                 with_patterns += 1
             mem = await read_memory_doc(uid)   # 长期记忆的块向量也一并重建
             if mem:
-                await sync_memory_vecs(uid, mem, force=True)
+                memory_vectors += await sync_memory_vecs(uid, mem, force=True, strict=True)
         except Exception:
-            pass
+            failed_users += 1
         done += 1
         if on_progress:
             try:
                 await on_progress(done, total)
             except Exception:
                 pass
-    return {"done": done, "total": total, "with_patterns": with_patterns}
+    return {
+        "done": done,
+        "total": total,
+        "with_patterns": with_patterns,
+        "pattern_vectors": pattern_vectors,
+        "memory_vectors": memory_vectors,
+        "failed_users": failed_users,
+    }
 
 
 # ── memory.md（长期记忆）向量检索：切块 + 逐块缓存 + 语义挑相关段 ──
@@ -439,12 +465,15 @@ async def write_memory_vecs(user_id, vecs: dict) -> None:
     await _write(_key(user_id, MEMORY_VEC_FILE), json.dumps(vecs, ensure_ascii=False))
 
 
-async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> None:
+async def sync_memory_vecs(
+    user_id, memory_text: str, force: bool = False, *, strict: bool = False,
+) -> int:
     """给 memory.md 的块增量补向量（compress 写完 memory.md 后调）。块文本变/换模型才重嵌，消失的块 GC。
-    embedding 未启用 → no-op。best-effort，永不抛。"""
+    embedding 未启用 → no-op。普通增量路径 best-effort；管理员重建可用 strict=True。
+    返回成功写入的向量数量。"""
     from agent.memory import embedding as _emb
     if not _emb.is_enabled():
-        return
+        return 0
     try:
         chunks = _memory_chunks(memory_text)
         vecs = await read_memory_vecs(user_id)
@@ -453,6 +482,7 @@ async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> No
         alive = {_chunk_key(c) for c in chunks}
         vecs = {k: v for k, v in vecs.items() if k in alive}   # GC 改动/消失的块
         changed = len(vecs) != before
+        written = 0
         for c in chunks:
             k = _chunk_key(c)
             cur = vecs.get(k)
@@ -462,34 +492,48 @@ async def sync_memory_vecs(user_id, memory_text: str, force: bool = False) -> No
             if v:
                 vecs[k] = {"v": v, "t": tag}
                 changed = True
+                written += 1
+            elif strict:
+                raise RuntimeError("memory 向量生成失败")
         if changed:
             await write_memory_vecs(user_id, vecs)
+        return written
     except Exception:
-        pass
+        if strict:
+            raise
+        return 0
 
 
 def retrieve_memory_block(memory_text: str, query_vec, vec_map, budget: int = MEMORY_INJECT_CHARS) -> str:
     """memory.md 语义检索：超预算 + 有 query 向量 → 按 cosine 挑相关块拼到预算内（保原文顺序）；
-    否则/无向量/覆盖不足 → 原样返回整篇（= 现有行为，零回归）。"""
+    否则/无向量/覆盖不足 → 保留开头预算内容，保证注入不超过硬上限。"""
     memory_text = (memory_text or "").strip()
-    if not query_vec or not vec_map or len(memory_text) <= budget:
+    if len(memory_text) <= budget:
         return memory_text
+    if not query_vec or not vec_map:
+        return memory_text[:budget].rstrip()
     from agent.memory.embedding import cosine
     chunks = _memory_chunks(memory_text)
     # 覆盖不足（多数块没缓存向量，如刚启用还没重嵌）→ 别乱挑，退回整篇
     covered = sum(1 for c in chunks if vec_map.get(_chunk_key(c)))
     if covered < max(1, len(chunks) // 2):
-        return memory_text
+        return memory_text[:budget].rstrip()
     scored = [(cosine(query_vec, vec_map.get(_chunk_key(c)) or []), i, c) for i, c in enumerate(chunks)]
     scored.sort(key=lambda x: -x[0])
     picked, used = [], 0
     for _s, i, c in scored:
-        if picked and used + len(c) > budget:
+        remaining = budget - used
+        if remaining <= 0:
+            break
+        if len(c) > remaining:
+            # 第一块也不能突破硬预算；后续块不再继续拼接。
+            if not picked:
+                picked.append((i, c[:remaining].rstrip()))
             break
         picked.append((i, c))
         used += len(c)
     picked.sort(key=lambda x: x[0])   # 恢复原文顺序，保叙述连贯
-    return "\n\n".join(c for _i, c in picked)
+    return "\n\n".join(c for _i, c in picked)[:budget].rstrip()
 
 
 def _jaccard(a: set, b: set) -> float:

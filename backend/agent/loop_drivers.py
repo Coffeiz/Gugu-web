@@ -16,20 +16,19 @@
 这个文件把这几件事收拢成两个 `LoopDriver` 实现（`AnthropicDriver`/`OpenAIDriver`），
 `core.py` 只写一条共享的 `_run_loop`，需要跟 provider 打交道时调用驱动。
 
-驱动接口四个方法：
+驱动接口四个构造方法：
 - `prepare(tool_names, ai, messages, system_text)`：调用一次的一次性准备（建 client、
   算 tools schema/缓存能力/思考参数），返回 `(client, ctx)`。
 - `run_round(client, ctx, messages)`：跑一轮，是个 async generator——流式 yield
   `("token", str)`，最后 yield `("done", RoundResult)`。
-- `append_tool_round(messages, result, dispatched)`：把这一轮的 assistant 消息 + 工具
-  结果消息追加进 `messages`（原地修改）——两边格式差异大，整段交给驱动自己拼，不硬拆。
-- `append_followup(messages, result, next_content, assistant_fallback="（…）")`：核实
-  prompt / 三条守卫 nudge 共用的形状——都是"这轮的 assistant 文本 + 一条后续 user
-  提示"，只有提示内容不一样。`assistant_fallback` 是 assistant 内容为空时的占位——
+- `build_tool_round(result, dispatched)`：构造这一轮的 assistant 消息 + 工具结果消息，
+  不直接修改 history；两边格式差异大，整段交给驱动自己拼。
+- `build_followup(result, next_content, assistant_fallback="（…）")`：构造核实 prompt
+  或守卫 nudge 使用的消息批次。`assistant_fallback` 是 assistant 内容为空时的占位——
   两边各自的占位规则跟改动前逐条对齐，见各自实现里的注释。
-- `append_empty_retry(messages, result)`：空回复追问兜底单独一个方法——两边这里
-  "assistant 是否入历史"本身就不一样（Anthropic 入、OpenAI 不入），不是同一个形状
-  加参数能糊过去的，改动前就是这样，这里原样保留。
+- `build_guard_followup(result, next_content)`：构造内部守卫消息批次。
+- `build_empty_retry(result)`：构造空回复追问批次。两边这里"assistant 是否入历史"
+  本身就不一样，因此保留在各自 Provider renderer 中。
 """
 from __future__ import annotations
 
@@ -40,20 +39,20 @@ from typing import Any, AsyncGenerator, Protocol
 
 from app.core.errors import RetryableError
 from app.core.redaction import diag_log
+from agent.context.canonical_tool_history import ToolCall
 
 _log = logging.getLogger("agent.core")
 
 # OpenAI 路工具参数 JSON 截断（多为 max_tokens 截断）的统一错误文案——两边共用同一份文字，
-# 只是各自的 append_tool_round 决定怎么包装成 tool_result 消息。
+# 只是各自的 build_tool_round 决定怎么包装成 tool_result 消息。
 TOOL_ARGS_TRUNCATED_ERROR = json.dumps(
     {"error": "参数不完整（内容可能过长被截断），请精简这次调用的参数后重试"}, ensure_ascii=False)
 
 
 @dataclass
-class NormalizedToolCall:
-    id: str
-    name: str
-    input: dict
+class NormalizedToolCall(ToolCall):
+    """运行时工具调用，在 canonical 字段上补充 provider 解析状态。"""
+
     parse_error: bool = False   # 只有 OpenAI 路会真的置真（JSON 截断解析失败）
 
 
@@ -76,11 +75,13 @@ class LoopDriver(Protocol):
     api_format: str
 
     def prepare(self, tool_names: list[str], ai, messages: list, system_text: str | None): ...
+    def update_tools(self, ctx, tool_names: list[str]) -> None: ...
     def run_round(self, client, ctx, messages: list) -> AsyncGenerator[tuple, None]: ...
-    def append_tool_round(self, messages: list, result: RoundResult, dispatched: list) -> None: ...
-    def append_followup(self, messages: list, result: RoundResult, next_content: str,
-                          assistant_fallback: str = "（…）") -> None: ...
-    def append_empty_retry(self, messages: list, result: RoundResult) -> None: ...
+    def build_tool_round(self, result: RoundResult, dispatched: list) -> list[dict]: ...
+    def build_followup(self, result: RoundResult, next_content: str,
+                       assistant_fallback: str = "（…）") -> list[dict]: ...
+    def build_guard_followup(self, result: RoundResult, next_content: str) -> list[dict]: ...
+    def build_empty_retry(self, result: RoundResult) -> list[dict]: ...
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -97,6 +98,96 @@ class _AnthropicCtx:
     supports_active_cache: bool
     adapter: Any
     model: str
+
+
+def _contains_volatile_image(value: Any) -> bool:
+    """识别会改变请求前缀的内联图片，不把其后的内容推进缓存断点。"""
+    if isinstance(value, dict):
+        if value.get("type") == "image":
+            source = value.get("source") or {}
+            if isinstance(source, dict) and source.get("type") == "base64" and source.get("data"):
+                return True
+        if value.get("type") == "image_url":
+            image_url = value.get("image_url") or {}
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if isinstance(url, str) and url.startswith("data:"):
+                return True
+        return any(_contains_volatile_image(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_volatile_image(item) for item in value)
+    return False
+
+
+def _volatile_message_indices(messages: list) -> set[int]:
+    """记录首轮请求中带内联图片的消息位置，后续只折叠这些初始图片。"""
+    return {
+        index for index, message in enumerate(messages)
+        if _contains_volatile_image(message)
+    }
+
+
+def _collapse_volatile_messages(messages: list, indices: set[int]) -> None:
+    """模型首轮消费图片后，把初始图片消息收敛为稳定文本，避免跨 round/run 断前缀。"""
+    for index in indices:
+        if index < 0 or index >= len(messages):
+            continue
+        message = messages[index]
+        content = message.get("content")
+        if not isinstance(content, list) or not _contains_volatile_image(content):
+            continue
+        text_parts = [
+            str(block.get("text"))
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text")
+        ]
+        message["content"] = "\n".join(text_parts) or "[图片已查看]"
+
+
+def _history_cache_state(messages: list) -> tuple[int, set[int]]:
+    """计算实际请求会使用的稳定边界和缓存断点。
+
+    这个计算同时被发送路径和 LoopScope 诊断使用，避免监控看到的是装配前状态，
+    而 provider 实际拿到的副本已经有另一套断点。
+    """
+    conversation = getattr(messages, "conversation", messages)
+    cache_limit = len(conversation)
+    if cache_limit <= 0:
+        return 0, set()
+
+    volatile_index = next(
+        (index for index, message in enumerate(conversation[:cache_limit])
+         if _contains_volatile_image(message)),
+        None,
+    )
+    stable_limit = volatile_index if volatile_index is not None else cache_limit
+    anchor_indices = {
+        index for index in getattr(messages, "cache_anchor_indices", [])
+        if 0 <= index < stable_limit
+    }
+    latest_anchor = stable_limit - 1
+    if anchor_indices:
+        # 续轮只保留最早 baseline 和当前尾部；不要再把中间普通 user 消息
+        # 提升为断点，否则工具结果会把稳定前缀缓存锚点挤掉。
+        anchor_indices = {min(anchor_indices)}
+    else:
+        if latest_anchor >= 0:
+            anchor_indices.add(latest_anchor)
+        # 新请求会重建 PromptMessages，因此首轮需要从稳定 conversation 中
+        # 找到 baseline；工具结果不能作为首轮 baseline。
+        for index in range(stable_limit - 2, -1, -1):
+            message = conversation[index]
+            if message.get("role") != "user":
+                continue
+            content = message.get("content")
+            blocks = content if isinstance(content, list) else []
+            if blocks and all(isinstance(block, dict) and block.get("type") == "tool_result"
+                              for block in blocks):
+                continue
+            anchor_indices.add(index)
+            break
+    if latest_anchor >= 0:
+        anchor_indices.add(latest_anchor)
+    return stable_limit, anchor_indices
 
 
 def _with_history_cache(messages: list) -> list:
@@ -120,19 +211,13 @@ def _with_history_cache(messages: list) -> list:
 
     # PromptMessages 的动态尾部每轮都会变化，缓存断点必须落在固定 conversation 的末尾；
     # 否则时间 reminder 会被包含在断点前缀中，下一轮必然失去命中。
-    cache_limit = len(getattr(messages, "conversation", messages))
-    if cache_limit <= 0:
+    stable_limit, anchor_indices = _history_cache_state(messages)
+    if stable_limit <= 0:
         return list(messages)
-
-    # 保留上一请求的 checkpoint，并在本轮 conversation 末尾建立新 checkpoint。
-    # PromptMessages 会在同一 run 的 tool round 之间持续追加消息；如果每次只标记
-    # 最后一条，provider 可能看不到上一轮已经建立的可复用前缀。
-    anchor_indices = set(getattr(messages, "cache_anchor_indices", []))
-    latest_anchor = cache_limit - 1
-    anchor_indices.add(latest_anchor)
     remember_anchor = getattr(messages, "remember_cache_anchor", None)
     if remember_anchor is not None:
-        remember_anchor(latest_anchor)
+        for index in sorted(anchor_indices):
+            remember_anchor(index)
 
     # 浅拷贝 messages 列表
     new_messages = []
@@ -141,8 +226,8 @@ def _with_history_cache(messages: list) -> list:
         msg = dict(msg)
         content = msg.get("content")
 
-        # 只给 conversation checkpoint 加 cache_control；动态尾部永远不加。
-        is_anchor = i in anchor_indices and i < cache_limit
+        # 只给 conversation baseline 加 cache_control；动态尾部永远不加。
+        is_anchor = i in anchor_indices and i < stable_limit
 
         if isinstance(content, list) and is_anchor and content:
             new_content = content[:-1] + [
@@ -160,28 +245,52 @@ def _with_history_cache(messages: list) -> list:
     return new_messages
 
 
+def _with_single_history_cache(messages: list) -> list:
+    """只给稳定 conversation 的最新消息添加一个历史缓存锚点。"""
+    stable_limit, _ = _history_cache_state(messages)
+    if stable_limit <= 0:
+        return list(messages)
+    latest_anchor = stable_limit - 1
+    new_messages = []
+    for index, message in enumerate(messages):
+        clone = dict(message)
+        content = clone.get("content")
+        if index == latest_anchor:
+            if isinstance(content, list) and content:
+                clone["content"] = content[:-1] + [
+                    {**content[-1], "cache_control": {"type": "ephemeral"}}
+                ]
+            elif isinstance(content, str):
+                clone["content"] = [{
+                    "type": "text", "text": content,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+        else:
+            if isinstance(content, list):
+                clone["content"] = [
+                    {key: value for key, value in block.items() if key != "cache_control"}
+                    if isinstance(block, dict) else block
+                    for block in content
+                ]
+        new_messages.append(clone)
+    return new_messages
+
+
 class AnthropicDriver:
     api_format = "anthropic"
 
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.llm.llm_select import supports_anthropic_active_cache, _is_mimo
+        from agent.llm.llm_select import supports_anthropic_active_cache
         from agent.tools import registry
 
         tools = registry.anthropic_schemas(tool_names)
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
-        is_mimo = _is_mimo(ai)
         supports_active_cache = supports_anthropic_active_cache(ai)
         adapter = providers.adapter_for(ai)
         client = providers.build_anthropic_client(ai, _timeout)
-
-        thinking_val = getattr(ai, "thinking", "disabled")
-        if is_mimo:
-            # mimo 的 thinking 取值用文档确认的 disabled；想开就不传、用其默认（避免猜它的 enable 取值）
-            thinking_param = {"thinking": {"type": "disabled"}} if thinking_val != "adaptive" else {}
-        else:
-            thinking_param = {"thinking": {"type": thinking_val}} if thinking_val == "adaptive" else {}
+        thinking_param = adapter.build_anthropic_thinking_params(ai)
 
         # system_text 来自 build_split 的稳定前缀；动态上下文已经移到 messages。
         if system_text:
@@ -199,13 +308,20 @@ class AnthropicDriver:
         )
         return client, ctx
 
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        ctx.tools = registry.anthropic_schemas(tool_names)
+
     async def run_round(self, client, ctx, messages):
         from agent.core import _stream_round   # 延迟 import 避免循环依赖（core.py 反过来 import 本模块）
 
         # ② 给发出去的 messages 打一个滚动缓存断点（每条 message 的最后一个块）：多轮工具循环里
         #    历史越滚越长，缓存住已发生的几轮、每轮只重算新增。用副本、不改原 messages（原列表要持久化，
         #    绝不能混入 cache_control，否则下次加载历史会带着旧断点、累积超过 4 个上限）。
-        _msgs = _with_history_cache(messages) if ctx.supports_active_cache else messages
+        outbound = ctx.adapter.render_history(messages)
+        from agent.context.provider_history import render_anthropic_message_roles
+        outbound = render_anthropic_message_roles(outbound, ctx.adapter)
+        _msgs = _with_history_cache(outbound) if ctx.supports_active_cache else outbound
         kwargs = dict(
             model=ctx.model, system=ctx.system_param, messages=_msgs,
             tools=ctx.tools, max_tokens=ctx.max_tokens, temperature=ctx.temperature,
@@ -231,23 +347,35 @@ class AnthropicDriver:
     def _content_dicts(self, result: RoundResult) -> list:
         return [b.model_dump() if hasattr(b, "model_dump") else dict(b) for b in result.raw]
 
-    def append_tool_round(self, messages, result, dispatched):
+    def build_tool_round(self, result, dispatched):
         # 序列化为 dict：让 messages 列表 JSON 可序列化（便于持久化），
         # 同时保留 thinking blocks（MiniMax / Anthropic 多轮时原样回传）
-        messages.append({"role": "assistant", "content": self._content_dicts(result)})
+        messages = [{"role": "assistant", "content": self._content_dicts(result)}]
         tool_results = [{"type": "tool_result", "tool_use_id": tc.id, "content": res} for tc, res in dispatched]
         messages.append({"role": "user", "content": tool_results})
+        return messages
 
-    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
-        messages.append({"role": "assistant", "content": self._content_dicts(result)})
-        messages.append({"role": "user", "content": next_content})
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            {"role": "assistant", "content": self._content_dicts(result)},
+            {"role": "user", "content": next_content},
+        ]
 
-    def append_empty_retry(self, messages, result):
+    def build_guard_followup(self, result, next_content):
+        """追加内部守卫控制消息；守卫不是用户新消息，保留 system 语义。"""
+        return [
+            {"role": "assistant", "content": self._content_dicts(result)},
+            {"role": "system", "content": next_content},
+        ]
+
+    def build_empty_retry(self, result):
         # 占位保证 user/assistant 交替合法（真·空 content 会被 Anthropic 拒）；
         # 这条守卫消息不入历史（tool_rounds_only 过滤）
         content_dicts = self._content_dicts(result) or [{"type": "text", "text": "（…）"}]
-        messages.append({"role": "assistant", "content": content_dicts})
-        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+        return [
+            {"role": "assistant", "content": content_dicts},
+            {"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"},
+        ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -259,9 +387,12 @@ class _OpenAICtx:
     tools: list
     max_tokens: int
     temperature: float
-    think_extra: dict
+    think_kwargs: dict
     model: str
     supports_active_cache: bool
+    supports_explicit_cache: bool
+    adapter: Any
+    ai: Any
 
 
 @dataclass
@@ -304,7 +435,7 @@ def _openai_tool_result(res: Any) -> tuple[str, list[dict]]:
                 media = source.get("media_type") or "image/jpeg"
                 image_parts.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:{media};base64,{source['data']}"},
+                    "image_url": {"url": f"data:{media};base64,{source['data']}", "detail": "auto"},
                 })
                 continue
         # 未知块不要直接丢失，保留一个不会破坏 OpenAI schema 的摘要。
@@ -319,62 +450,83 @@ class OpenAIDriver:
     def prepare(self, tool_names, ai, messages, system_text):
         import httpx
         from agent import providers
-        from agent.llm.llm_select import supports_thinking_toggle, _is_deepseek
         from agent.tools import registry
 
         adapter = providers.adapter_for(ai)
-        supports_active_cache = adapter.supports_active_cache(getattr(ai, "model", "") or "")
+        model = getattr(ai, "model", "") or ""
+        supports_active_cache = adapter.supports_active_cache(model)
+        supports_explicit_cache = adapter.supports_explicit_cache(model)
 
-        # OpenAI 兼容 API 的 system 已由 message assembly 生成稳定文本，
-        # 支持主动缓存的 provider 将整个稳定 system 标记为可缓存。
-        for _m in messages if supports_active_cache else []:
-            if _m.get("role") == "system":
-                content = _m.get("content")
+        # OpenAI 兼容 provider 的 cache_control 语义并不统一。经过验证的 Qwen
+        # 端点会把标记作为缓存边界；如果给每个 system 都标记，缓存会被截在
+        # snapshot 的前缀处。稳定 conversation 的唯一锚点统一由 run_round
+        # 的显式策略放在末尾，动态尾部也不会被纳入。DeepSeek 走服务端自动缓存，
+        # 不进入这条分支。
+        if supports_explicit_cache:
+            cache_messages = getattr(messages, "conversation", messages)
+            for message in cache_messages:
+                if message.get("role") != "system":
+                    continue
+                content = message.get("content")
                 if isinstance(content, str):
-                    _m["content"] = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-                elif isinstance(content, list):
-                    # 已经是数组格式，确保最后一个块有 cache_control
-                    if content and "cache_control" not in content[-1]:
-                        content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+                    message["content"] = [{
+                        "type": "text", "text": content,
+                        "cache_control": {"type": "ephemeral"},
+                    }]
+                elif isinstance(content, list) and content and "cache_control" not in content[-1]:
+                    content[-1] = {
+                        **content[-1], "cache_control": {"type": "ephemeral"},
+                    }
+                break
 
-        tools = registry.openai_schemas(tool_names)
+        declared = providers.capability_snapshot(ai)
+        tools = registry.openai_schemas(tool_names) if declared.get("tools", True) else []
         _timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
         client = providers.build_openai_client(ai, _timeout)
 
-        # 思考开关：mimo 与 deepseek 都用同一 OpenAI 参数 `{"thinking":{"type":...}}`（见各自官方文档）。
-        # 思考关时显式传 disabled——mimo 从源头避免「正文全进 reasoning_content、content 空」的空气泡，
-        # deepseek 则省下推理 token/延迟。思考开（adaptive）则不传、用厂商默认（两家默认都是开），靠
-        # 空回复兜底。仅对支持该参数的厂商发（qwen/openai 没这参数，传了可能报错）。
-        # 思考开（adaptive）时，DeepSeek 还可带「思考强度」reasoning_effort（high/max；思考模式下
-        # temperature 失效，effort 是唯一质量/成本旋钮）。mimo 文档无此参数，故只对 deepseek 发。
-        think_extra = {}
-        if supports_thinking_toggle(ai):
-            if getattr(ai, "thinking", "disabled") != "adaptive":
-                think_extra["thinking"] = {"type": "disabled"}
-            elif _is_deepseek(ai) and getattr(ai, "reasoning_effort", ""):
-                think_extra["reasoning_effort"] = ai.reasoning_effort
+        think_kwargs = adapter.build_openai_thinking_kwargs(ai)
 
         ctx = _OpenAICtx(
             tools=tools, max_tokens=ai.max_tokens, temperature=ai.temperature,
-            think_extra=think_extra, model=ai.model,
+            think_kwargs=think_kwargs, model=ai.model,
             supports_active_cache=supports_active_cache,
+            supports_explicit_cache=supports_explicit_cache,
+            adapter=adapter,
+            ai=ai,
         )
         return client, ctx
+
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        from agent import providers
+        ctx.tools = registry.openai_schemas(tool_names) if providers.capability_snapshot(ctx.ai).get("tools", True) else []
 
     async def run_round(self, client, ctx, messages):
         # OpenAI 兼容模型也需要把缓存断点放在 conversation 末尾；动态尾部不能进入断点。
         # 使用副本，避免 cache_control 被写回会话历史或下一轮的 PromptMessages。
-        messages = _with_history_cache(messages) if ctx.supports_active_cache else messages
+        outbound = ctx.adapter.render_history(messages)
+        # OpenAI 兼容端点的原生 KV cache 不等于支持显式 cache_control。
+        # DeepSeek 依赖服务端自动缓存；只有经过验证的 provider 才能在消息中
+        # 插入显式锚点，避免把 DeepSeek 的自动缓存误走成 Anthropic/Qwen 策略。
+        if ctx.supports_explicit_cache:
+            if ctx.adapter.uses_single_history_cache_anchor(ctx.model):
+                messages = _with_single_history_cache(outbound)
+            else:
+                messages = _with_history_cache(outbound)
+        else:
+            messages = outbound
+        tool_params = ctx.adapter.build_tool_params(ctx.ai, ctx.tools)
+        cache_kwargs = ctx.adapter.build_openai_cache_kwargs(ctx.ai)
         stream = await client.chat.completions.create(
             model=ctx.model,
             messages=messages,
-            tools=ctx.tools,
-            tool_choice="auto",
             max_tokens=ctx.max_tokens,
             temperature=ctx.temperature,
             stream=True,
             stream_options={"include_usage": True},
-            extra_body=ctx.think_extra,
+            **ctx.think_kwargs,
+            **tool_params,
+            **cache_kwargs,
         )
         content = ""
         reasoning = ""                   # mimo 深度思考产出（reasoning_content）：多轮+工具调用必须原样回传，否则 400
@@ -449,16 +601,16 @@ class OpenAIDriver:
             m["reasoning_content"] = raw.reasoning
         return m
 
-    def append_tool_round(self, messages, result, dispatched):
+    def build_tool_round(self, result, dispatched):
         raw = result.raw
-        messages.append(self._asst(
+        messages = [self._asst(
             raw, raw.content or None,
             tool_calls_payload=[
                 {"id": b["id"], "type": "function",
                  "function": {"name": b["name"], "arguments": b["args"]}}
                 for b in raw.tool_calls_payload
             ],
-        ))
+        )]
         visual_parts: list[dict] = []
         for tc, res in dispatched:
             content, images = _openai_tool_result(res)
@@ -473,11 +625,197 @@ class OpenAIDriver:
                 }, *visual_parts],
             })
 
-    def append_followup(self, messages, result, next_content, assistant_fallback="（…）"):
-        messages.append(self._asst(result.raw, result.text or assistant_fallback))
-        messages.append({"role": "user", "content": next_content})
+        return messages
 
-    def append_empty_retry(self, messages, result):
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            self._asst(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ]
+
+    def build_guard_followup(self, result, next_content):
+        """追加内部守卫控制消息，不把它伪装成用户指令。"""
+        return [
+            self._asst(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ]
+
+    def build_empty_retry(self, result):
         # 跟 Anthropic 路不一样：这里不把 assistant 消息入历史，直接追问——是改动前就有的既有行为
         # （openai 路空回复兜底那段代码本来就没有 messages.append(_asst(...)) 这一步），原样保留。
-        messages.append({"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"})
+        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Ollama 原生（/api/chat，NDJSON）
+# ══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class _OllamaCtx:
+    tools: list
+    max_tokens: int
+    temperature: float
+    model: str
+    think: bool | str
+    keep_alive: str
+    base_url: str
+    adapter: Any
+
+
+@dataclass
+class _OllamaRaw:
+    content: str
+    thinking: str
+    tool_calls_payload: list
+
+
+def _ollama_messages(messages: list) -> list:
+    """移除其它 provider 的缓存标记，保留 Ollama 原生可理解的消息字段。"""
+    result = []
+    for message in messages:
+        clean = {}
+        for key in ("role", "content", "images", "tool_calls", "thinking"):
+            if key in message:
+                clean[key] = message[key]
+        # 历史里已有 OpenAI reasoning_content 时，转换为 Ollama 的 thinking 字段。
+        if "thinking" not in clean and message.get("reasoning_content"):
+            clean["thinking"] = message["reasoning_content"]
+        if isinstance(clean.get("content"), list):
+            text_parts = []
+            images = list(clean.get("images") or [])
+            for block in clean["content"]:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    if block.get("text"):
+                        text_parts.append(str(block["text"]))
+                elif isinstance(block, dict) and block.get("type") == "image_url":
+                    url = (block.get("image_url") or {}).get("url", "")
+                    if isinstance(url, str) and "," in url and url.startswith("data:"):
+                        images.append(url.split(",", 1)[1])
+                else:
+                    text_parts.append(json.dumps(block, ensure_ascii=False))
+            clean["content"] = "\n".join(text_parts)
+            if images:
+                clean["images"] = images
+        result.append(clean)
+    return result
+
+
+class OllamaDriver:
+    """Ollama 原生聊天驱动，独立于 OpenAI SDK 的兼容通道。"""
+
+    api_format = "ollama"
+
+    def prepare(self, tool_names, ai, messages, system_text):
+        import httpx
+        from agent import providers
+        from agent.tools import registry
+
+        adapter = providers.adapter_for(ai)
+        if adapter.name != "ollama":
+            raise ValueError("OllamaDriver 只能用于 Ollama provider")
+        timeout = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0)
+        client = providers.build_ollama_client(ai, timeout)
+        effort = getattr(ai, "reasoning_effort", "") or "medium"
+        think: bool | str = False if getattr(ai, "thinking", "disabled") != "adaptive" else effort
+        if think not in {False, "low", "medium", "high", "max"}:
+            think = "medium"
+        tools = registry.openai_schemas(tool_names)
+        return client, _OllamaCtx(
+            tools=tools,
+            max_tokens=ai.max_tokens,
+            temperature=ai.temperature,
+            model=ai.model,
+            think=think,
+            keep_alive=getattr(ai, "ollama_keep_alive", "5m") or "5m",
+            base_url=adapter.resolve_native_base_url(ai),
+            adapter=adapter,
+        )
+
+    def update_tools(self, ctx, tool_names: list[str]) -> None:
+        from agent.tools import registry
+        ctx.tools = registry.openai_schemas(tool_names)
+
+    async def run_round(self, client, ctx, messages):
+        payload = {
+            "model": ctx.model,
+            "messages": _ollama_messages(ctx.adapter.render_history(messages)),
+            "stream": True,
+            "think": ctx.think,
+            "keep_alive": ctx.keep_alive,
+            "options": {"temperature": ctx.temperature, "num_predict": ctx.max_tokens},
+        }
+        if ctx.tools:
+            payload["tools"] = ctx.tools
+        content = ""
+        thinking = ""
+        tool_calls = []
+        async with client.stream("POST", f"{ctx.base_url}/chat", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                chunk = json.loads(line)
+                message = chunk.get("message") or {}
+                text = message.get("content") or ""
+                if text:
+                    content += text
+                    yield ("token", text)
+                thinking += message.get("thinking") or ""
+                for index, call in enumerate(message.get("tool_calls") or []):
+                    function = call.get("function") or {}
+                    args = function.get("arguments") or {}
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {}
+                    tool_calls.append({
+                        "id": call.get("id") or f"ollama-call-{index}",
+                        "type": "function",
+                        "function": {"name": function.get("name", ""), "arguments": args},
+                    })
+                if chunk.get("done"):
+                    usage_in = int(chunk.get("prompt_eval_count") or 0)
+                    usage_out = int(chunk.get("eval_count") or 0)
+                    break
+            else:
+                usage_in = usage_out = 0
+
+        normalized = [NormalizedToolCall(
+            id=call["id"], name=call["function"]["name"], input=call["function"]["arguments"]
+        ) for call in tool_calls if call["function"]["name"]]
+        yield ("done", RoundResult(
+            text=content, tool_calls=normalized, requires_tools=bool(normalized),
+            usage_in=usage_in, usage_out=usage_out,
+            raw=_OllamaRaw(content=content, thinking=thinking, tool_calls_payload=tool_calls),
+        ))
+
+    def _assistant(self, raw: _OllamaRaw, text: str) -> dict:
+        message = {"role": "assistant", "content": text}
+        if raw.thinking:
+            message["thinking"] = raw.thinking
+        if raw.tool_calls_payload:
+            message["tool_calls"] = raw.tool_calls_payload
+        return message
+
+    def build_tool_round(self, result, dispatched):
+        messages = [self._assistant(result.raw, result.raw.content)]
+        for tc, res in dispatched:
+            content, _images = _openai_tool_result(res)
+            messages.append({"role": "tool", "tool_name": tc.name, "content": content})
+        return messages
+
+    def build_followup(self, result, next_content, assistant_fallback="（…）"):
+        return [
+            self._assistant(result.raw, result.text or assistant_fallback),
+            {"role": "user", "content": next_content},
+        ]
+
+    def build_guard_followup(self, result, next_content):
+        return [
+            self._assistant(result.raw, result.text or "（…）"),
+            {"role": "system", "content": next_content},
+        ]
+
+    def build_empty_retry(self, result):
+        return [{"role": "user", "content": "（把要回复用户的话直接说出来就好，别只在心里想。）"}]

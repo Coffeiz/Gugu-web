@@ -22,7 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 import agent.core as core
-from agent.core import LLMRunner
+from agent.core import LLMRunner, _provider_context_usage
 from agent.runtime.loopscope_trace import hooks as loop_hooks
 from agent.runtime.loopscope_trace.state import _ScopeRun, _now, _scope_run
 
@@ -36,6 +36,16 @@ EXPECTED_USAGE = {
     "input": 13, "output": 5, "cache_read": 3, "cache_write": 0,
     "fresh_input": 10, "total": 18, "cache_ratio": round(3 / 13, 6),
 }
+
+
+def test_context_threshold_uses_cache_tokens_for_anthropic():
+    result = SimpleNamespace(usage_in=1080, cache_tokens=75456)
+    assert _provider_context_usage(SimpleNamespace(api_format="anthropic"), result) == 76536
+
+
+def test_context_threshold_does_not_double_count_openai_cache_tokens():
+    result = SimpleNamespace(usage_in=76536, cache_tokens=75456)
+    assert _provider_context_usage(SimpleNamespace(api_format="openai"), result) == 76536
 
 
 @pytest.fixture(autouse=True)
@@ -153,6 +163,8 @@ async def test_usage_lands_before_done_break(monkeypatch, loopscope_hooks):
     assert len(llm) == 1
     assert llm[0].status == "success", f"span 状态异常：{llm[0].status}"
     assert llm[0].usage == EXPECTED_USAGE, f"span.usage 未落地：{llm[0].usage}"
+    assert llm[0].token_impact["prompt_tokens_actual"] == EXPECTED_USAGE["input"]
+    assert llm[0].token_impact["prompt_tokens_source"] == "provider"
 
     assembly = llm[0].input["assembly"]
     assert assembly["system"]["location"] == "system_param"
@@ -208,7 +220,7 @@ async def test_mid_stream_abort_marks_span_cancelled(monkeypatch, loopscope_hook
     # 第一处在轮开始前的检查要放行，第二处（流式途中 _tok % 24 == 0）再掐断
     calls = {"n": 0}
 
-    async def fake_cancel():
+    async def fake_cancel(_session_id=None):
         calls["n"] += 1
         return calls["n"] >= 2
 

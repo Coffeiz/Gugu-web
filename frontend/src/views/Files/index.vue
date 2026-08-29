@@ -7,6 +7,8 @@
     :show-selection="currentType !== 'root'"
     :show-view-toggle="currentType !== 'trash'"
     :show-new-folder-button="currentType === 'personal' || currentType === 'project' || currentType === 'folder'"
+    :show-new-workspace-button="currentType === 'folder' && currentSeg?.folderId != null && workspaceFoldersLoaded"
+    :workspace-exists="Boolean(currentWorkspace)"
     :show-sort="currentType !== 'root'"
     :view-mode="viewMode"
     :show-new-folder="showNewFolderInput"
@@ -22,19 +24,22 @@
     @update:show-new-folder="showNewFolderInput = $event"
     @update:new-folder-name="newFolderName = $event"
     @create-folder="createFolder"
+    @create-workspace="createWorkspace"
     @sort-select="onSortSelect"
   >
 
     <template #breadcrumb>
-      <FileBrowserBreadcrumb>
+      <div class="breadcrumb-nav">
         <button class="nav-hist-btn" :disabled="!canGoBack" @click="goBack" title="后退">
-          <PhArrowLeft :size="14" weight="bold" />
+          <Icon name="action.back" :size="14" />
         </button>
         <button class="nav-hist-btn" :disabled="!canGoForward" @click="goForward" title="前进">
-          <PhArrowRight :size="14" weight="bold" />
+          <Icon name="action.next" :size="14" />
         </button>
+      </div>
+      <FileBrowserBreadcrumb>
         <button class="bc-item" :class="{ active: navPath.length === 0 }" @click="navigateTo(-1)">
-          全部文件
+          <span class="bc-label">全部文件</span>
         </button>
         <template v-for="(seg, i) in navPath" :key="i">
           <svg class="bc-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -48,14 +53,14 @@
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            {{ seg.name }}
+            <span class="bc-label">{{ seg.name }}</span>
           </RuntimeBreadcrumbTarget>
           <button v-else class="bc-item"
             :class="{ active: i === navPath.length - 1 }"
             @click="navigateTo(i)"
           >
             <span v-if="seg.color" class="bc-dot" :style="{ background: seg.color }"></span>
-            {{ seg.name }}
+            <span class="bc-label">{{ seg.name }}</span>
           </button>
         </template>
       </FileBrowserBreadcrumb>
@@ -194,10 +199,12 @@ import { useFileStorageUsage } from '@/composables/files/useFileStorageUsage'
 import { useFileLibraryFolderPresentation } from '@/composables/files/useFileLibraryFolderPresentation'
 import { useFileLibraryFolderActions } from '@/composables/files/useFileLibraryFolderActions'
 import { useFileLibraryFileActions } from '@/composables/files/useFileLibraryFileActions'
+import { confirmDialog } from '@/composables/useConfirmDialog'
+import { workspacesApi } from '@/services/api'
 import { useFileRuntimeMove } from '@/composables/files/useFileRuntimeMove'
 import { useSorting } from '@/composables/useSorting'
 import UploadConflictDialog from '@/components/common/UploadConflictDialog.vue'
-import { PhArrowLeft, PhArrowRight } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { runtime } from '@/interaction/runtime'
 import { useRuntimeAction } from '@/interaction/runtime/vue'
 import {
@@ -235,6 +242,52 @@ watch(viewMode, syncFileDragRotation, { immediate: true })
 // 状态文件夹的色 / 图标（待开始灰 / 进行中蓝 / 已完成绿）
 const { folderListIcon, folderAccentColor } = useFileLibraryFolderPresentation()
 
+type WorkspaceFolder = { id: number; folderId?: number | null }
+const workspaceFolders = ref<WorkspaceFolder[]>([])
+const workspaceFoldersLoaded = ref(false)
+const currentWorkspace = computed(() => {
+  const folderId = currentSeg.value?.folderId
+  if (folderId == null) return null
+  return workspaceFolders.value.find(item => item.folderId === folderId) ?? null
+})
+
+async function refreshWorkspaceFolders() {
+  workspaceFoldersLoaded.value = false
+  try {
+    const status = await workspacesApi.status()
+    workspaceFolders.value = (status.items as WorkspaceFolder[]).filter(item => item.folderId != null)
+  } catch {
+    workspaceFolders.value = []
+  } finally {
+    workspaceFoldersLoaded.value = true
+  }
+}
+
+async function createWorkspace() {
+  const folder = currentSeg.value
+  if (!folder || folder.type !== 'folder' || folder.folderId == null) return
+  try {
+    const existing = currentWorkspace.value
+    if (existing) {
+      if (!await confirmDialog({
+        title: '删除文件夹工作区',
+        message: `确认删除文件夹「${folder.name}」的工作区？\n不会删除文件夹或其中的文件。`,
+        tone: 'danger',
+        confirmText: '删除工作区',
+      })) return
+      await workspacesApi.delete(existing.id)
+      workspaceFolders.value = workspaceFolders.value.filter(item => item.id !== existing.id)
+      uiStore.pushNotification({ title: '工作区', content: `已删除文件夹「${folder.name}」的工作区`, bubble: true, persist: false })
+      return
+    }
+    await workspacesApi.create({ name: folder.name, kind: 'folder', folderId: folder.folderId })
+    await refreshWorkspaceFolders()
+    uiStore.pushNotification({ title: '工作区', content: `已创建工作区「${folder.name}」`, bubble: true, persist: false })
+  } catch {
+    uiStore.pushNotification({ title: '工作区', content: '创建工作区失败，请稍后重试', bubble: true, persist: false })
+  }
+}
+
 // ── Runtime Core API：浏览区 Surface ──
 // Surface 继续服务真实拖拽；目录导航只更新当前目录状态，不再进入 Runtime 布局事务。
 const RUNTIME_SCOPE = 'files'
@@ -254,21 +307,8 @@ watch(mainRef, (element, previous) => {
   runtime.surfaces.setElement(runtimeBrowserSurfaceId, element)
 }, { flush: 'post' })
 
-/** 当前浏览区内仍在被 Runtime 拖拽控制的卡片：导航期间不能销毁它们的事务态。 */
-function hasActiveMove(): boolean {
-  const root = mainRef.value
-  if (!root) return false
-  const cards = root.querySelectorAll<HTMLElement>('[data-layout-role="card"]')
-  for (const card of cards) {
-    const key = card.dataset.layoutKey
-    if (key && runtime.isControlled(key)) return true
-  }
-  return false
-}
-
-/** 目录切换只保留拖拽事务守卫；通过后立即切换，不创建 FLIP/Presence 离场代理。 */
+/** 目录切换不创建 FLIP/Presence 离场代理；Runtime 对受控对象负责延迟注销。 */
 function withDirectNav(mutate: () => void): void {
-  if (hasActiveMove()) return
   mutate()
 }
 
@@ -324,6 +364,7 @@ const sortedContents = useFileLibrarySorting({ contents, currentType, sortKey, s
 onMounted(async () => {
   fireHint('file_lib')   // 新手引导：第一次进文件库
   fetchStorage()
+  refreshWorkspaceFolders()
   // 顶栏搜索点了文件/文件夹：优先定位到目标目录，不走 restoreNav
   const target = consumePendingTarget()
   // 热缓存：同步初始化，避免 await 微任务暂停导致空帧
@@ -351,7 +392,7 @@ watch(uploadSignal, () => {
 
 // 文件库数据变了（本页乐观更新 / 咕咕·IM·其它标签页经 filesCache 刷新或 remove 快路径）→ 重新投影当前视图。
 // contents 是 loadContents 从 store getter 手动投影的本地快照，不是 computed，故 store 数据一变就得重投。
-// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts fileEvent 消费）；本页不再自己
+// 刷新/patch 的决策与「回声抑制」全在 filesCache 里统一做（见 filesCache.ts canonical event 消费）；本页不再自己
 // 订阅 rev.files 重拉，避免与 filesCache 重复全量拉、并让回声抑制对本页同样生效（本页发起的改动不会再多刷一次）。
 watch([() => cacheStore.allFiles, () => cacheStore.allFolders], () => {
   loadContents()
@@ -589,6 +630,9 @@ const { handleAction: handleRuntimeMoveAction } = useFileRuntimeMove({
 useRuntimeAction(action => {
   if (action.type !== 'move' && action.type !== 'move-group') return
   suppressNextSelectionPageClick = true
+  // 只吞掉拖拽结束时浏览器合成的那一次 click；不能让标记跨到用户下一次
+  // 点击目标文件夹，否则目标会被选择模式拦截而无法导航。
+  window.setTimeout(() => { suppressNextSelectionPageClick = false }, 0)
   void handleRuntimeMoveAction(action.type === 'move-group' ? action.objectIds : [action.objectId], action.toSurfaceId)
 })
 
@@ -801,32 +845,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKeyDown))
 }
 .toolbar-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
-/* 面包屑 */
-.breadcrumb {
-  display: flex; align-items: center; gap: 4px;
-  flex: 1; min-width: 0; overflow: hidden;
-}
-.nav-hist-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px; border-radius: 7px; border: none;
-  background: none; cursor: pointer; color: var(--text-secondary);
-  transition: all 0.13s; flex-shrink: 0;
-}
-.nav-hist-btn:hover:not(:disabled) { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-.nav-hist-btn:disabled { opacity: 0.28; cursor: default; }
-.bc-item {
-  display: flex; align-items: center; gap: 5px;
-  padding: 4px 8px; border-radius: 7px; border: none;
-  background: none; cursor: pointer;
-  font-size: 12px; font-weight: 500; color: var(--text-secondary);
-  font-family: var(--font-sans); transition: all 0.13s;
-  white-space: nowrap; flex-shrink: 0;
-}
-.bc-item:hover { background: rgba(0,0,0,0.05); color: var(--text-primary); }
-.bc-item.active { color: var(--text-primary); font-weight: 600; cursor: default; }
-.bc-item.active:hover { background: none; }
-.bc-item.bc-drop-target { background: rgba(123,127,178,0.15); color: var(--color-primary); }
-.bc-arrow { color: var(--text-secondary); opacity: 0.4; flex-shrink: 0; }
 .bc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 
 /* 视图切换 */

@@ -13,6 +13,16 @@ def test_parse_requested_engines_is_config_driven_and_deduplicated():
     assert search_tools._parse_requested_engines("") == []
 
 
+def test_searxng_search_url_encodes_unicode_query_as_utf8():
+    url = search_tools._build_searxng_search_url(
+        "http://127.0.0.1:8888",
+        {"q": "低饱和配色", "format": "json", "engines": "sogou,quark"},
+    )
+
+    assert "q=%E4%BD%8E%E9%A5%B1%E5%92%8C%E9%85%8D%E8%89%B2" in url
+    assert "低饱和配色" not in url
+
+
 def test_normalize_engine_failures_maps_common_reasons_and_tolerates_shapes():
     failures = search_tools._normalize_engine_failures({
         "unresponsive_engines": [
@@ -347,14 +357,18 @@ async def test_inspect_images_can_read_historical_attachment(monkeypatch):
 def test_search_tool_schemas_expose_query_contract_and_max_results_bounds():
     tools = {tool.name: tool for tool in search_tools.SearchSkill.tools}
 
-    for name in ("web_search", "image_search"):
-        query = tools[name].input_schema["properties"]["query"]
-        max_results = tools[name].input_schema["properties"]["max_results"]
-        assert "不要直接复制用户的完整问题" in query["description"]
-        assert max_results["minimum"] == 1
-        assert max_results["maximum"] == 20
+    query = tools["web_search"].input_schema["properties"]["query"]
+    max_results = tools["web_search"].input_schema["properties"]["max_results"]
+    assert "不要复制完整问题" in query["description"]
+    assert max_results["minimum"] == 1
+    assert max_results["maximum"] == 20
 
-    assert "inspect_images" not in tools["image_search"].input_schema["properties"]
+    image_schema = tools["image_search"].input_schema
+    image_properties = image_schema["properties"]
+    assert image_properties["mode"]["enum"] == ["text", "image"]
+    assert image_properties["max_results"]["minimum"] == 1
+    assert image_properties["max_results"]["maximum"] == 20
+    assert "inspect_images" not in image_properties
     assert tools["inspect_images"].input_schema["properties"]["images"]["maxItems"] == 20
 
     deep_max = tools["deep_research"].input_schema["properties"]["max_results"]

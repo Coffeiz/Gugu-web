@@ -10,7 +10,7 @@
           <button v-for="d in RANGES" :key="d.v" class="range-btn" :class="{ active: days === d.v }" @click="days = d.v; load()">{{ d.label }}</button>
         </div>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="load(true)" :disabled="loading" title="刷新">
-          <PhArrowClockwise :size="15" weight="bold" />
+      <Icon name="action.refresh" size="sm" />
         </button>
       </div>
     </div>
@@ -19,8 +19,8 @@
 
     <!-- 安全事件横幅：正常应恒为 0，非零红色 -->
     <div class="sec-banner" :class="secTotal > 0 ? 'alert' : 'ok'">
-      <PhShieldWarning v-if="secTotal > 0" :size="18" weight="fill" />
-      <PhShieldCheck v-else :size="18" weight="fill" />
+      <Icon v-if="secTotal > 0" name="admin.alarm-warning" size="md" />
+      <Icon v-else name="user.security" size="md" />
       <span v-if="secTotal > 0" class="sec-txt">
         检测到 <b>{{ secTotal }}</b> 起安全事件，请排查：
         <span v-if="sec['ownership.denied']" class="sec-chip">越权访问被拦 {{ sec['ownership.denied'] }}</span>
@@ -84,7 +84,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { PhArrowClockwise, PhShieldWarning, PhShieldCheck } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
 
 interface ToolRow { tool: string; calls: number; fails: number; fail_rate: number; avg_ms: number }

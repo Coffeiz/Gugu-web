@@ -179,12 +179,12 @@ jobs:
           base="${ORM_BASE_SHA:-$(git rev-parse HEAD^)}"
           python backend/scripts/check_orm_boundaries.py --diff-base "$base"
 
-  # 最小 E2E 基线：只保留不可 skip 的关键路径（文件上传删除、定时任务立即
-  # 运行、GuguChat 悬浮窗收发消息/会话切换），环境全部确定化——真实
+  # E2E 基线：只接入数据隔离、行为确定的关键路径（文件生命周期与 Runtime
+  # 拖拽、日历、定时任务 UI/立即运行、GuguChat、Mind 画布），环境全部确定化——真实
   # Postgres/Redis + 本地存储后端 + 假 LLM
   # （scripts/mock_llm_server.py 固定回复，不接外部网络/不花钱/不受限流影响）。
   # 现有 Playwright 用例（filesystem-phases.spec.ts 等）大量依赖长期测试账号的
-  # 既有数据、用 test.skip() 兜底，会出现"全绿但什么都没测"，不接入 CI；
+  # 既有数据、用 test.skip() 兜底，会出现"全绿但什么都没测"，仍不接入 CI；
   # OSS staging key 校验、Redis 锁续租超 TTL、崩溃恢复等后端安全/竞态场景继续
   # 留在 backend/tests/ 的 pytest 里验证，不强行塞进浏览器测试。
   e2e:
@@ -337,7 +337,7 @@ jobs:
         # 按文件而非 --grep 选测试：chromium 项目依赖 setup 项目（登录态），
         # --grep 会连 setup 项目里那条不带 @ci 的登录用例一起过滤掉，导致
         # 依赖链断裂；按路径跑则 setup 依赖照常执行，只是被测文件收窄。
-        run: npx playwright test e2e/file-lifecycle.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts e2e/calendar.spec.ts e2e/mind-canvas-runtime.spec.ts
+        run: npx playwright test e2e/file-lifecycle.spec.ts e2e/file-drag-runtime.spec.ts e2e/scheduled-task-ui.spec.ts e2e/scheduled-task-run.spec.ts e2e/chat.spec.ts e2e/calendar.spec.ts e2e/mind-canvas-runtime.spec.ts
 
       - name: Upload backend/frontend logs on failure
         if: failure()

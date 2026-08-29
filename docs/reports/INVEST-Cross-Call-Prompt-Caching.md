@@ -1,7 +1,7 @@
 # 跨 Call Prompt 缓存调查报告
 
 **日期**: 2026-08-19
-**调查目标**: 找出为什么 Loopscope 显示的缓存率远低于预期（72% vs Qwen-paw 的 98%）
+**调查目标**: 找出为什么 LoopScope 显示的缓存率远低于预期（72% vs Qwen-paw 的 98%）
 
 ## 1. 问题背景
 
@@ -9,7 +9,7 @@
 
 ## 2. 调查过程
 
-### 2.1 Loopscope 单轮数据分析
+### 2.1 LoopScope 单轮数据分析
 
 | Run 类型 | 工具轮次 | cache_read | 分析 |
 |----------|---------|-----------|------|
@@ -94,7 +94,7 @@ Turn 4 step 1: input=51085, cache_read=51840 ← 更多！
 
 1. **OpenAI 路径支持 cache_control** - Qwen/阿里正确读取缓存字段
 2. **多段缓存策略** - stable/semi-stable/volatile 分段
-3. **Loopscope 缓存字段修复** - 正确读取 `prompt_tokens_details.cached_tokens`
+3. **LoopScope 缓存字段修复** - 正确读取 `prompt_tokens_details.cached_tokens`
 
 ### 待实施
 

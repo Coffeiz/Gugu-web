@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { createPinia, setActivePinia } from 'pinia'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   refresh: null as ((resource?: string) => void) | null,
   showError: vi.fn(),
   showNotice: vi.fn(),
+  confirmDialog: vi.fn(),
 }))
 
 vi.mock('@/services/api', () => ({
@@ -30,6 +32,9 @@ vi.mock('@/composables/useLiveRefresh', () => ({
     mocks.refresh = callback
   },
 }))
+vi.mock('@/composables/useConfirmDialog', () => ({
+  confirmDialog: mocks.confirmDialog,
+}))
 
 import { useScheduledTasks } from '@/views/Schedules/composables/useScheduledTasks'
 
@@ -37,6 +42,7 @@ const task = { id: 7, name: '科技新闻', payload: '收集新闻', cron: '5 9 
 
 describe('useScheduledTasks', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.clearAllMocks()
     mocks.refresh = null
     mocks.list.mockResolvedValue({ tasks: [task] })
@@ -78,16 +84,14 @@ describe('useScheduledTasks', () => {
     expect(mocks.run).toHaveBeenCalledWith(7)
     expect(mocks.showNotice).toHaveBeenCalledWith('已发送')
 
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.confirmDialog.mockResolvedValueOnce(true)
     await state.remove(task)
     expect(mocks.remove).toHaveBeenCalledWith(7)
-    vi.unstubAllGlobals()
 
-    vi.stubGlobal('confirm', vi.fn(() => false))
+    mocks.confirmDialog.mockResolvedValueOnce(false)
     mocks.remove.mockClear()
     await state.remove(task)
     expect(mocks.remove).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
 
     mocks.update.mockRejectedValueOnce(new Error('网络失败'))
     await state.toggle(task)
@@ -98,9 +102,8 @@ describe('useScheduledTasks', () => {
     expect(mocks.showError).toHaveBeenCalledWith('执行失败：执行失败')
 
     mocks.remove.mockRejectedValueOnce(new Error('删除失败'))
-    vi.stubGlobal('confirm', vi.fn(() => true))
+    mocks.confirmDialog.mockResolvedValueOnce(true)
     await state.remove(task)
     expect(mocks.showError).toHaveBeenCalledWith('删除任务失败：删除失败')
-    vi.unstubAllGlobals()
   })
 })

@@ -34,6 +34,10 @@ class User(Base):
     hashed_password: Mapped[str]           = mapped_column(String(200))
     display_name:         Mapped[Optional[str]] = mapped_column(String(100), nullable=True, default=None)
     is_active:            Mapped[bool]          = mapped_column(Boolean, default=True)
+    account_status:      Mapped[str]           = mapped_column(String(16), default="active", index=True)
+    suspended_until:     Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
+    suspended_reason:    Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
+    security_version:    Mapped[int]           = mapped_column(Integer, default=1)
     avatar:               Mapped[Optional[str]] = mapped_column(String(500), nullable=True, default=None)
     created_at:           Mapped[datetime]      = mapped_column(UtcDateTime, default=now_utc)
     token_limit_monthly:  Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
@@ -56,6 +60,40 @@ class User(Base):
     mind_relations:    Mapped[list["MindRelation"]]    = relationship(back_populates="owner", cascade="all, delete-orphan")
     conversations: Mapped[list["ConversationSession"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     preferences:   Mapped[Optional["UserPreferences"]] = relationship(back_populates="owner", cascade="all, delete-orphan", uselist=False)
+    user_skills:    Mapped[list["UserSkill"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    provider_credentials: Mapped[list["UserProviderCredential"]] = relationship(
+        back_populates="owner", cascade="all, delete-orphan"
+    )
+    security_events: Mapped[list["SecurityEvent"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+
+
+class SecurityEvent(Base):
+    """脱敏安全事件事实；策略计数和账户冻结不在模型层完成。"""
+    __tablename__ = "security_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    event_type: Mapped[str] = mapped_column(String(80), index=True)
+    resource_type: Mapped[str] = mapped_column(String(120), index=True)
+    resource_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    owner_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    client_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    ip_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    user_agent_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(32), default="logged", index=True)
+    reason_code: Mapped[str] = mapped_column(String(80), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+
+    user: Mapped["User"] = relationship(back_populates="security_events")
+
+    __table_args__ = (
+        Index("ix_security_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_security_events_type_occurred", "event_type", "occurred_at"),
+    )
 
 
 # ── UserPreferences ──────────────────────────────────────────────────────────
@@ -80,6 +118,122 @@ class UserPreferences(Base):
     @data.setter
     def data(self, value: dict):
         self.data_json = json.dumps(value, ensure_ascii=False)
+
+
+class UserProviderCredential(Base):
+    """用户 BYOK 凭据；密文由服务端信封加密保存，业务查询不得直接回显。"""
+    __tablename__ = "user_provider_credentials"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    api_format: Mapped[str] = mapped_column(String(32), default="")
+    capability: Mapped[str] = mapped_column(String(32), index=True)
+    encrypted_value: Mapped[str] = mapped_column(Text)
+    nonce: Mapped[str] = mapped_column(String(64))
+    encrypted_data_key: Mapped[str] = mapped_column(Text)
+    key_version: Mapped[int] = mapped_column(Integer, default=1)
+    base_url: Mapped[str] = mapped_column(String(500), default="")
+    model: Mapped[str] = mapped_column(String(200), default="")
+    vision: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_video: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_audio: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_detail: Mapped[str] = mapped_column(String(16), default="auto")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_verified_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="provider_credentials")
+
+
+class UserSkill(Base):
+    """用户自定义 Prompt Skill；只保存指导文本，不保存可执行代码。"""
+    __tablename__ = "user_skills"
+
+    id:                Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_id:          Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    slug:              Mapped[str] = mapped_column(String(80))
+    name:              Mapped[str] = mapped_column(String(120))
+    description_short: Mapped[str] = mapped_column(String(100))
+    description_long:  Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    category:          Mapped[str] = mapped_column(String(32), default="personal")
+    body:              Mapped[str] = mapped_column(Text)
+    related_tools:     Mapped[list] = mapped_column(JSON, default=list)
+    source:            Mapped[str] = mapped_column(String(16), default="user")
+    enabled:           Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    content_digest:    Mapped[str] = mapped_column(String(64))
+    created_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at:        Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+    owner: Mapped["User"] = relationship(back_populates="user_skills")
+
+    __table_args__ = (
+        UniqueConstraint("owner_id", "slug", name="uq_user_skill_owner_slug"),
+    )
+
+
+class Workspace(Base):
+    """用户可绑定到会话的工作区声明（Phase 0-2，不执行 Shell）。"""
+    __tablename__ = "workspaces"
+
+    id:         Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id:    Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name:       Mapped[str] = mapped_column(String(200))
+    kind:       Mapped[str] = mapped_column(String(20), default="folder")
+    folder_id:  Mapped[Optional[int]] = mapped_column(ForeignKey("folders.id", ondelete="SET NULL"), nullable=True)
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    enabled:    Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class TerminalSessionRecord(Base):
+    """共享协作终端会话；命令执行仍由 Shell 沙盒负责。"""
+    __tablename__ = "terminal_sessions"
+
+    id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    owner_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), default="终端")
+    source: Mapped[str] = mapped_column(String(16), default="agent")
+    mode: Mapped[str] = mapped_column(String(24), default="agent-events")
+    status: Mapped[str] = mapped_column(String(32), default="idle", index=True)
+    shell_mode: Mapped[str] = mapped_column(String(16), default="sandbox")
+    network_profile: Mapped[str] = mapped_column(String(16), default="none")
+    last_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    output_chars: Mapped[int] = mapped_column(Integer, default=0)
+    pty_pid: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pty_sandbox_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    pty_cols: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    pty_rows: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+
+
+class TerminalEventRecord(Base):
+    """终端可重放事件；输出受 Shell 工具的大小边界约束。"""
+    __tablename__ = "terminal_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    terminal_id: Mapped[str] = mapped_column(ForeignKey("terminal_sessions.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(32))
+    source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    command: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stdout: Mapped[str] = mapped_column(Text, default="")
+    stderr: Mapped[str] = mapped_column(Text, default="")
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    __table_args__ = (
+        UniqueConstraint("terminal_id", "sequence", name="uq_terminal_event_sequence"),
+    )
 
 
 # ── Project ──────────────────────────────────────────────────────────────────
@@ -393,21 +547,69 @@ class ConversationSession(Base):
     chat_id:   Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     chat_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Session context snapshot：普通 run 不刷新业务概览，TTL/压缩时递增 epoch 重建。
     context_epoch: Mapped[int] = mapped_column(Integer, default=1)
     session_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
     session_info_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     snapshot_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     snapshot_expires_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+    # 压缩后的连续历史水位：旧消息保留在数据库，但运行时只从该消息之后追加。
+    baseline_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0", index=True)
+    baseline_message_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 单 session 执行状态：Redis 只负责跨 worker 租约，这些字段才是 pending 的持久事实。
+    execution_state: Mapped[str] = mapped_column(String(24), default="idle", server_default="idle", index=True)
+    active_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    pending_message_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # 最近一次发送历史所使用的 provider/API 格式。切换时只触发一次历史 thinking 清理，
+    # 不把 provider 专属签名写回 canonical history。
+    history_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    history_api_format: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
 
     owner:    Mapped["User"]                      = relationship(back_populates="conversations")
+    workspace: Mapped[Optional["Workspace"]]     = relationship()
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="session",
         order_by="ConversationMessage.created_at",
         cascade="all, delete-orphan",
     )
+    batches: Mapped[list["ConversationBatch"]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ConversationBatch.created_at",
+    )
+
+
+class ConversationBatch(Base):
+    """Provider-neutral canonical history 批次身份。"""
+
+    __tablename__ = "conversation_batches"
+    __table_args__ = (
+        UniqueConstraint("session_id", "digest", name="uq_conversation_batches_session_digest"),
+        Index("ix_conversation_batches_session_round", "session_id", "round_id"),
+    )
+
+    # PostgreSQL 使用 BIGINT；SQLite 测试库需要 INTEGER 才能启用自增主键。
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer(), "sqlite"),
+        primary_key=True,
+        autoincrement=True,
+    )
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[str] = mapped_column(String(32), default="v1")
+    run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    round_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    digest: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+    session: Mapped["ConversationSession"] = relationship(back_populates="batches")
+    messages: Mapped[list["ConversationMessage"]] = relationship(back_populates="canonical_batch")
 
 
 class ConversationMessage(Base):
@@ -418,6 +620,8 @@ class ConversationMessage(Base):
     role:         Mapped[str]             = mapped_column(String(20))
     content:      Mapped[str]             = mapped_column(Text, default="")
     content_json: Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)
+    # 实时展示时间线；canonical history 仍使用 content/content_json。
+    display_timeline: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
     files:        Mapped[Optional[list]]  = mapped_column(JSON, nullable=True, default=None)  # 咕咕发的文件卡片 [{file_id,name,ext,size_bytes}]
     # IM 引用/回复的原消息文字（仅 IM 来源的 user 消息可能有）；null=这条不是引用。
     # 单独一列，别拼进 content——网页气泡按纯文本渲染 content，拼进去会把引用原文（可能带 markdown
@@ -429,8 +633,48 @@ class ConversationMessage(Base):
     chat_type:    Mapped[Optional[str]]    = mapped_column(String(20), nullable=True)
     sent_at:      Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=now_utc, index=True)
     created_at:   Mapped[datetime]        = mapped_column(UtcDateTime, default=now_utc)
+    canonical_batch_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("conversation_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
+    canonical_batch: Mapped[Optional["ConversationBatch"]] = relationship(back_populates="messages")
+
+
+class InteractionPrompt(Base):
+    """等待用户选择/确认的短时交互提示。"""
+
+    __tablename__ = "interaction_prompts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="confirm")
+    title: Mapped[str] = mapped_column(String(300), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    schema_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+
+
+class InteractionAction(Base):
+    """Prompt 下的单次动作；数据库只保存动作 token 的摘要。"""
+
+    __tablename__ = "interaction_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    prompt_id: Mapped[int] = mapped_column(ForeignKey("interaction_prompts.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    action_type: Mapped[str] = mapped_column(String(30), default="choice")
+    option_id: Mapped[str] = mapped_column(String(100), default="")
+    context_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, index=True)
+    consumed_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    consumed_event_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
 
 
 # ── 聊天附件所有权（PRD-STORAGE-1 Phase A）──────────────────────────────────────
@@ -446,6 +690,7 @@ class ChatAttachment(Base):
         Index("ix_chat_attachments_state_created", "state", "created_at"),
         Index("ix_chat_attachments_user_storage", "user_id", "storage_key"),
         Index("ix_chat_attachments_message", "message_id"),
+        Index("ix_chat_attachments_platform_message", "user_id", "platform", "platform_message_id"),
         CheckConstraint(
             "(state = 'draft' AND message_id IS NULL) OR (state = 'attached' AND message_id IS NOT NULL)",
             name="ck_chat_attachments_state_message",
@@ -458,6 +703,9 @@ class ChatAttachment(Base):
     message_id:  Mapped[Optional[int]] = mapped_column(
         ForeignKey("conversation_messages.id", ondelete="CASCADE"), nullable=True, default=None)
     storage_key: Mapped[str]      = mapped_column(String(500))
+    platform: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default=None)
+    platform_message_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, default=None)
+    attachment_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
     name:        Mapped[str]      = mapped_column(String(300), default="")
     ext:         Mapped[str]      = mapped_column(String(20), default="")
     mime:        Mapped[Optional[str]] = mapped_column(String(200), nullable=True, default=None)
@@ -490,6 +738,7 @@ class MemoryReflectionJob(Base):
     to_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(300), unique=True, index=True)
     extractor_version: Mapped[str] = mapped_column(String(64), default="im-memory-v1")
+    task_type: Mapped[str] = mapped_column(String(32), default="group", index=True)
     reason: Mapped[str] = mapped_column(String(32), default="idle")
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -503,7 +752,7 @@ class MemoryReflectionJob(Base):
     __table_args__ = (
         UniqueConstraint(
             "owner_user_id", "platform", "bot_id", "scope_type", "scope_id",
-            "from_message_id", "to_message_id", "extractor_version",
+            "from_message_id", "to_message_id", "extractor_version", "task_type",
             name="uq_memory_reflection_range",
         ),
     )
@@ -521,6 +770,7 @@ class MemoryReflectionCursor(Base):
     scope_id: Mapped[str] = mapped_column(String(255), index=True)
     last_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_member_reflected_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     last_message_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
     active_started_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
     settled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
@@ -577,6 +827,52 @@ class MemorySource(Base):
     )
 
 
+class KnowledgeIndexEntry(Base):
+    """统一知识索引的持久化 chunk。
+
+    业务表仍然是事实来源；这张表只保存可重建的检索投影。scope 字段与正文
+    同行保存，查询时先做 owner/scope 过滤，再进入 TypeScript lexical worker 或数据库 ILIKE 兼容路径。
+    """
+
+    __tablename__ = "knowledge_index_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(32), index=True)
+    source_id: Mapped[str] = mapped_column(String(255), index=True)
+    scope_type: Mapped[str] = mapped_column(String(32), index=True, default="owner")
+    scope_id: Mapped[str] = mapped_column(String(255), index=True, default="")
+    platform: Mapped[str] = mapped_column(String(32), default="")
+    bot_id: Mapped[str] = mapped_column(String(128), default="")
+    group_id: Mapped[str] = mapped_column(String(255), default="")
+    document_id: Mapped[str] = mapped_column(String(255), index=True)
+    parent_document_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    document_version: Mapped[str] = mapped_column(String(64))
+    chunk_index: Mapped[int] = mapped_column(Integer, default=0)
+    chunk_count: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(300), default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    source_updated_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    indexed_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "owner_user_id", "source_type", "source_id", "document_version", "chunk_index",
+            name="uq_knowledge_index_entry_chunk",
+        ),
+        Index(
+            "ix_knowledge_index_scope_source",
+            "owner_user_id", "scope_type", "scope_id", "source_type",
+        ),
+    )
+
+
 class MemoryScopeTombstone(Base):
     """IM 记忆 scope 的删除屏障；清理完成后才删除记录。"""
     __tablename__ = "memory_scope_tombstones"
@@ -611,6 +907,8 @@ class AgentUsage(Base):
     session_id: Mapped[Optional[int]] = mapped_column(ForeignKey("conversation_sessions.id", ondelete="SET NULL"), nullable=True)
     tokens_in:  Mapped[int]           = mapped_column(Integer, default=0)
     tokens_out: Mapped[int]           = mapped_column(Integer, default=0)
+    cache_read: Mapped[int]           = mapped_column(Integer, default=0)
+    cache_write: Mapped[int]          = mapped_column(Integer, default=0)
     model:      Mapped[str]           = mapped_column(String(100))
     provider:   Mapped[str]           = mapped_column(String(50))
     tools_used: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=None)
@@ -654,6 +952,9 @@ class UserBot(Base):
     group_chat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     group_requires_at:  Mapped[bool] = mapped_column(Boolean, default=False)
     group_read_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 群聊记忆：分别控制本群公开记忆和群成员个人记忆的读取/沉淀。
+    group_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    member_memory_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # 群成员可用工具白名单；默认开放联网搜索 + 图片搜索 + 发网络图片，不暴露用户私有内容和写操作。
     group_allowed_tools: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=lambda: ["web_search", "http_get", "image_search", "inspect_images", "send_file"])
     # QQ 文本出站格式：compat=纯文本，smart=按内容选择，markdown=强制 Markdown。
@@ -665,19 +966,6 @@ class UserBot(Base):
     # QQ 当前 Bot 的平台身份 ID，用于精确展示 @机器人。
     bot_platform_user_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
-
-
-# ── InviteCode ────────────────────────────────────────────────────────────────
-
-class InviteCode(Base):
-    __tablename__ = "invite_codes"
-
-    id:         Mapped[int]              = mapped_column(Integer, primary_key=True, autoincrement=True)
-    code:       Mapped[str]              = mapped_column(String(32), unique=True, index=True)
-    note:       Mapped[Optional[str]]    = mapped_column(String(200), nullable=True)
-    used_at:    Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True, default=None)
-    used_by:    Mapped[Optional[UUID]]   = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at: Mapped[datetime]         = mapped_column(UtcDateTime, default=now_utc)
 
 
 # ── AuditLog ──────────────────────────────────────────────────────────────────
@@ -720,6 +1008,50 @@ class StorageCategorySnapshot(Base):
     taken_at:     Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
     object_count: Mapped[int]      = mapped_column(Integer, default=0)
     total_bytes:  Mapped[int]      = mapped_column(BigInteger, default=0)
+
+
+# ── StorageQuotaLedger（用户存储配额统一账本）────────────────────────────────
+# ledger 保存当前事实，event 保存不可变的变更/校准审计；下载、构建和 Shell
+# 作为 operation 记录，不为每种业务动作复制一套配额算法。
+class StorageQuotaLedger(Base):
+    __tablename__ = "storage_quota_ledgers"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category", name="uq_storage_quota_user_category"),
+        Index("ix_storage_quota_user_status", "user_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    root_path: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    limit_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    used_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    reserved_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    initialized_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc)
+    last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(UtcDateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, onupdate=now_utc)
+
+
+class StorageQuotaEvent(Base):
+    """配额账本的不可变审计事件；同一 idempotency_key 不重复计量。"""
+    __tablename__ = "storage_quota_events"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_storage_quota_event_idempotency"),
+        Index("ix_storage_quota_event_user_created", "user_id", "created_at"),
+        Index("ix_storage_quota_event_category_operation", "category", "operation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    category: Mapped[str] = mapped_column(String(32), index=True)
+    operation: Mapped[str] = mapped_column(String(32), index=True)
+    delta_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255))
+    metadata_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=now_utc, index=True)
 
 
 # ── FrontendEvent（前端行为埋点）─────────────────────────────────────────────

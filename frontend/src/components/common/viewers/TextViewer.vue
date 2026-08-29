@@ -5,7 +5,7 @@
       <span>加载中…</span>
     </div>
     <div v-else-if="error" class="tv-status tv-error">
-      <PhWarningCircle :size="28" style="opacity:.5" />
+      <Icon name="status.warning" :size="28" style="opacity:.5" />
       <span>{{ error }}</span>
     </div>
     <!-- 代码类扩展名：直接就是 CodeMirror，没有单独的只读预览态——它本身就能当预览用
@@ -14,7 +14,7 @@
     <template v-else-if="isCodeExt">
       <div class="tv-edit-cm-wrap">
         <Codemirror
-          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile" :indent-with-tab="true"
+          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument" :indent-with-tab="true"
           @ready="onCmReady" @change="scheduleAutoSave"
         />
       </div>
@@ -24,7 +24,7 @@
       <div class="tv-edit-cm-wrap tv-edit-md-wrap">
         <Codemirror
           v-if="mdEditorReady"
-          v-model="editText" :extensions="cmExtensions" :disabled="!isRealFile"
+          v-model="editText" :extensions="cmExtensions" :disabled="!isEditableDocument"
           @ready="onCmReady"
         />
         <div v-else class="tv-editor-loading">准备 Markdown 语法高亮…</div>
@@ -48,11 +48,11 @@
     </template>
     <div v-else ref="tvScroll" class="tv-scroll" @scroll="onScroll">
       <button v-if="editable" class="tv-edit-toggle" title="编辑" @click="startEdit">
-        <PhPencilSimple weight="bold" :size="13" />
+        <Icon name="action.edit" :size="13" />
       </button>
       <div v-if="truncated" class="tv-notice">仅显示前 500 KB</div>
       <!-- Markdown 渲染 -->
-      <div v-if="mdHtml" class="tv-md" v-html="mdHtml" @click="onMdClick" />
+      <div v-if="mdHtml" ref="mdRoot" class="tv-md" v-html="mdHtml" @click="onMdClick" />
       <!-- 纯文本（txt；代码类扩展名走上面的 CodeMirror，不会落到这里） -->
       <table v-else class="tv-table" cellspacing="0">
         <tbody>
@@ -67,11 +67,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, computed, defineAsyncComponent, type PropType } from 'vue'
+import { ref, watch, nextTick, computed, defineAsyncComponent, onMounted, onBeforeUnmount, type PropType } from 'vue'
 import { useRouter } from 'vue-router'
-import { PhWarningCircle, PhPencilSimple } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import { filesApi } from '@/services/api'
 import { sanitizeHtml } from '@/utils/markdown'
+import { bindMermaidInteractions, cleanupMermaidInteractions } from '@/utils/mermaidInteraction'
 import { useFilesCacheStore, type FileMeta } from '@/stores/filesCache'
 import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { useUiStore } from '@/stores/ui'
@@ -94,6 +95,9 @@ const props = defineProps({
   fileKey:  { type: [String, Number], default: null },
   // 文件库预览时用于解析 Markdown 相对链接；聊天附件等非文件库内容不传此值。
   fileContext: { type: Object as PropType<Partial<FileMeta> | null>, default: null },
+  // 虚拟文档（例如用户人格文件）不属于文件库，但复用同一套 Markdown 预览/编辑器。
+  sourceText: { type: String, default: null },
+  saveSource: { type: Function as PropType<(content: string) => Promise<void> | void>, default: null },
 })
 
 const router = useRouter()
@@ -102,6 +106,10 @@ const previewStore = usePreviewStore()
 const uiStore = useUiStore()
 
 const tvScroll = ref<HTMLElement | null>(null)   // .tv-scroll 滚动容器
+const mdRoot = ref<HTMLElement | null>(null)
+let mermaidApi: typeof import('mermaid').default | null = null
+let mermaidRenderSequence = 0
+let themeObserver: MutationObserver | null = null
 
 // 滚动位置持久化到 localStorage：实时刷新会把 blobUrl 置空、整组件销毁重建，内存变量留不住，
 // 只有 localStorage 跨重建（甚至跨整页刷新）还在。按 fileKey 存，渲染完读回。
@@ -197,13 +205,16 @@ const CM_LANG_LOADERS: Record<string, (source?: string) => Promise<any>> = {
 const lines       = ref<string[]>([])
 const mdHtml      = ref<string | null>(null)
 const rawText     = ref('')   // 源文本（md 勾选任务框改写 [ ]↔[x]、md/txt 编辑模式的保存基于这个）
-// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了
+// 真实文件（纯数字 id）才能存——聊天附件是 16 位 hex，PUT /files/{id}/content 存不了。
+// 虚拟文档通过 saveSource 保存，不需要文件库 id。
 const isRealFile = computed(() => /^\d+$/.test(String(props.fileKey ?? '')))
+const isVirtualDocument = computed(() => props.sourceText !== null && !!props.saveSource)
+const isEditableDocument = computed(() => isRealFile.value || isVirtualDocument.value)
 // 可交互勾选 = md 文件 + 真实文件
 const savable  = computed(() => /^(md|markdown)$/i.test(props.ext || '') && isRealFile.value)
 // 可编辑 = 后端认得的文本类扩展名 + 真实文件（md/txt 走「编辑」按钮切换态用得到；代码类扩展名
 // 不看这个——代码文件不管是不是真实文件都直接显示 CodeMirror，只是能不能保存的区别，见 isCodeExt）
-const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isRealFile.value)
+const editable = computed(() => EDITABLE_EXTS.has((props.ext || '').toLowerCase()) && isEditableDocument.value)
 const isMarkdownFile = computed(() => /^(md|markdown)$/i.test(props.ext || ''))
 // 代码类扩展名：不分真实文件/聊天附件、不分编辑/预览，一律直接显示 CodeMirror——它本身既能当
 // 预览用（只读态），也能编辑（真实文件时），不需要 .tv-table + 单独编辑框这套双视图。
@@ -252,7 +263,7 @@ async function loadCmExtensions(ext: string, source = '') {
     '&': { height: '100%', fontSize: 'var(--tv-font-size, 13px)' },
     '&.cm-focused': { outline: 'none' },
     '.cm-content': {
-      fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code',ui-monospace,monospace",
+      fontFamily: "var(--font-family-mono)",
       textDecoration: 'none', whiteSpace: 'pre-wrap',
     },
     '.cm-line, .cm-line *': { textDecoration: 'none !important', whiteSpace: 'pre-wrap' },
@@ -279,7 +290,7 @@ function onCmReady({ view }: { view: any }) {
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function scheduleAutoSave() {
-  if (!isRealFile.value) return
+  if (!isEditableDocument.value || !isRealFile.value) return
   if (autoSaveTimer) clearTimeout(autoSaveTimer)
   const targetKey = props.fileKey
   const content   = editText.value
@@ -359,7 +370,11 @@ async function saveEdit() {
   saveError.value = ''
   try {
     captureScroll(editArea.value)
-    await filesApi.saveContent(Number(props.fileKey), editText.value)
+    if (isVirtualDocument.value) {
+      await props.saveSource?.(editText.value)
+    } else {
+      await filesApi.saveContent(Number(props.fileKey), editText.value)
+    }
     await processText(editText.value, props.ext)
     cmLoadSeq++
     mdEditorReady.value = false
@@ -414,6 +429,9 @@ async function renderMarkdown(text: string) {
     _tvMarked = new Marked({
       renderer: {
         code({ text, lang }) {
+          if (String(lang || '').trim().toLowerCase() === 'mermaid') {
+            return `<pre class="md-mermaid-source"><code>${escHtml(text)}</code></pre>`
+          }
           const validLang = lang && hljs.getLanguage(lang) ? lang : null
           const body = validLang
             ? hljs.highlight(text, { language: validLang, ignoreIllegals: true }).value
@@ -434,6 +452,75 @@ async function renderMarkdown(text: string) {
   }
 
   return sanitizeHtml(_tvMarked.parse(text) as string)
+}
+
+function isDarkTheme(): boolean {
+  return document.documentElement.dataset.theme === 'dark'
+}
+
+function cssToken(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+async function getMermaid() {
+  if (!mermaidApi) mermaidApi = (await import('mermaid')).default
+  return mermaidApi
+}
+
+function configureMermaid(mermaid: NonNullable<typeof mermaidApi>): void {
+  const dark = isDarkTheme()
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    htmlLabels: false,
+    theme: dark ? 'dark' : 'default',
+    themeVariables: {
+      primaryColor: cssToken('--surface-card-solid', dark ? '#24212b' : '#ffffff'),
+      primaryTextColor: cssToken('--text-primary', dark ? '#f2eff7' : '#272532'),
+      primaryBorderColor: cssToken('--border-default', dark ? 'rgba(255,255,255,.16)' : 'rgba(42,35,49,.12)'),
+      lineColor: cssToken('--text-secondary', dark ? '#c9c3d5' : '#67647a'),
+      secondaryColor: cssToken('--surface-panel', dark ? '#2c2835' : '#f3f2f7'),
+      tertiaryColor: cssToken('--surface-hover', dark ? '#363140' : '#ebeaf2'),
+      fontFamily: cssToken('--font-family-sans', 'Inter, sans-serif'),
+    },
+  })
+}
+
+async function renderMermaidBlock(element: HTMLElement, source: string): Promise<void> {
+  const sequence = ++mermaidRenderSequence
+  element.dataset.renderSequence = String(sequence)
+  try {
+    const mermaid = await getMermaid()
+    configureMermaid(mermaid)
+    const { svg } = await mermaid.render(`tv-mermaid-${sequence}`, source)
+    if (!element.isConnected || element.dataset.renderSequence !== String(sequence)) return
+    const cleanSvg = sanitizeHtml(svg)
+    element.innerHTML = cleanSvg
+    bindMermaidInteractions(element)
+    element.classList.add('md-mermaid-ready')
+    element.classList.remove('md-mermaid-error')
+  } catch {
+    element.classList.add('md-mermaid-error')
+    element.textContent = `Mermaid 图表渲染失败\n\n${source}`
+  }
+}
+
+async function renderMermaidBlocks(): Promise<void> {
+  await nextTick()
+  if (!mdRoot.value) return
+  const sourceBlocks = Array.from(mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid-source'))
+  for (const sourceBlock of sourceBlocks) {
+    const source = sourceBlock.textContent || ''
+    const container = document.createElement('div')
+    container.className = 'md-mermaid'
+    container.dataset.source = encodeURIComponent(source)
+    sourceBlock.replaceWith(container)
+  }
+  for (const container of mdRoot.value.querySelectorAll<HTMLElement>('.md-mermaid')) {
+    const encoded = container.dataset.source
+    if (encoded) await renderMermaidBlock(container, decodeURIComponent(encoded))
+  }
 }
 
 // ── 任务勾选框可交互：去掉 marked 默认的 disabled、按文档顺序标 data-task（仅 md + 真实文件）──
@@ -511,13 +598,14 @@ async function processText(text: string, ext: string) {
 
   if (extUp === 'MD') {
     mdHtml.value = makeTasksInteractive(await renderMarkdown(text))
+    await renderMermaidBlocks()
   } else if (!isCodeExt.value) {
     lines.value = text.split('\n')
   }
 }
 
-watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
-  if (!url) return
+watch(() => [props.blobUrl, props.ext, props.sourceText], async ([url, ext, sourceText]) => {
+  if (!url && sourceText === null) return
   loading.value   = true
   error.value     = null
   truncated.value = false
@@ -528,11 +616,17 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   saveError.value = ''
 
   try {
-    const res  = await fetch(url)
-    const buf  = await res.arrayBuffer()
-    truncated.value = buf.byteLength > MAX_BYTES
-    const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
-    const text  = new TextDecoder('utf-8', { fatal: false }).decode(slice)
+    let text: string
+    if (sourceText !== null) {
+      text = sourceText
+      truncated.value = new TextEncoder().encode(text).byteLength > MAX_BYTES
+    } else {
+      const res  = await fetch(url as string)
+      const buf  = await res.arrayBuffer()
+      truncated.value = buf.byteLength > MAX_BYTES
+      const slice = truncated.value ? buf.slice(0, MAX_BYTES) : buf
+      text = new TextDecoder('utf-8', { fatal: false }).decode(slice)
+    }
     await processText(text, ext)
     if (isCodeExt.value) {
       // 代码类扩展名没有单独的只读渲染，CodeMirror 直接从 editText 显示——加载完就把内容和
@@ -554,13 +648,32 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
     requestAnimationFrame(() => { if (tvScroll.value) tvScroll.value.scrollTop = saved })
   }
 }, { immediate: true })
+
+onMounted(() => {
+  // 首次文件加载可能发生在组件挂载前，此时 mdRoot 尚未存在；挂载后补一次 Mermaid 渲染。
+  renderMermaidBlocks()
+  themeObserver = new MutationObserver(() => renderMermaidBlocks())
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-family'] })
+})
+
+// 文件加载期间 .tv-scroll 被 loading 分支暂时移出 DOM；等预览节点真正出现后再渲染图表。
+watch([mdHtml, loading], ([html, isLoading]) => {
+  if (html && !isLoading) renderMermaidBlocks()
+}, { flush: 'post' })
+
+onBeforeUnmount(() => {
+  themeObserver?.disconnect()
+  themeObserver = null
+  cleanupMermaidInteractions(mdRoot.value)
+  mermaidRenderSequence += 1
+})
 </script>
 
 <style scoped>
 .tv-wrap {
   position: absolute;
   inset: 0;
-  background: #fff;
+  background: var(--surface-card-solid, #fff);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -578,9 +691,9 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 
 .tv-notice {
   font-size: 11px;
-  color: var(--text-secondary);
-  background: rgba(240, 180, 80, 0.12);
-  border-bottom: 1px solid rgba(240, 180, 80, 0.25);
+  color: var(--status-warning);
+  background: var(--status-warning-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--status-warning) 28%, transparent);
   padding: 6px 20px;
   margin-bottom: 8px;
 }
@@ -589,54 +702,82 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 .tv-edit-toggle {
   position: absolute; top: 10px; right: 14px; z-index: 2;
   width: 26px; height: 26px; border-radius: 7px;
-  border: none; background: rgba(123,127,178,0.1); color: rgba(80,85,130,0.6);
+  border: 1px solid var(--border-subtle); background: var(--action-soft); color: var(--action-primary);
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.12s, color 0.12s;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-hover-control) var(--motion-ease-standard),
+    border-color var(--motion-hover-control) var(--motion-ease-standard),
+    color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tv-edit-toggle:hover { background: rgba(123,127,178,0.2); color: rgba(80,85,130,0.9); }
+.tv-edit-toggle:hover { background: var(--action-soft-hover); border-color: var(--action-outline); color: var(--action-primary-hover); }
 
 /* ── 编辑模式：纯文本框 + 底部操作条 ── */
 .tv-edit-textarea {
   flex: 1; width: 100%; box-sizing: border-box;
   border: none; outline: none; resize: none;
   padding: 20px 24px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
-  line-height: 1.7; color: #383a42; background: #fff;
+  line-height: 1.7; color: var(--content-primary); background: var(--surface-card-solid);
+  caret-color: var(--action-primary); accent-color: var(--action-primary);
 }
 .tv-edit-bar {
   flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: 10px 16px; border-top: 1px solid rgba(0,0,0,0.06); background: #f7f7fb;
+  padding: 10px 16px; border-top: 1px solid var(--border-default); background: var(--surface-raised);
 }
-.tv-edit-error { flex: 1; font-size: 12px; color: rgba(180,80,80,0.85); }
+.tv-edit-error { flex: 1; font-size: 12px; color: var(--status-danger); }
 .tv-edit-btn {
   padding: 6px 16px; border-radius: 8px; font-size: 12px; font-weight: 600;
-  border: 1px solid rgba(0,0,0,0.08); background: #fff; color: var(--text-secondary);
-  cursor: pointer; transition: background 0.12s;
+  border: 1px solid var(--border-default); background: var(--surface-card-solid); color: var(--content-secondary);
+  cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tv-edit-btn:hover:not(:disabled) { background: rgba(0,0,0,0.03); }
+.tv-edit-btn:hover:not(:disabled) { background: var(--surface-soft-hover); color: var(--content-primary); }
 .tv-edit-btn:disabled { opacity: 0.5; cursor: default; }
 .tv-edit-save {
-  border-color: transparent; color: #fff;
-  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  border-color: transparent; color: var(--content-on-accent);
+  background: var(--action-primary-bg);
 }
-.tv-edit-save:hover:not(:disabled) { opacity: 0.92; background: linear-gradient(135deg, #7b7fb2, #9590c4); }
+.tv-edit-save:hover:not(:disabled) { opacity: 1; background: var(--action-primary-bg-hover); }
 
 /* ── 代码文件编辑：CodeMirror（字体/字号走 theme 里的 --tv-font-size，容器负责撑满高度） ── */
 .tv-edit-cm-wrap { flex: 1; overflow: hidden; }
-.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; }
+.tv-edit-cm-wrap :deep(.cm-editor) { height: 100%; background: var(--surface-card-solid); color: var(--content-primary); }
+.tv-edit-cm-wrap :deep(.cm-scroller),
+.tv-edit-cm-wrap :deep(.cm-content) { background: var(--surface-card-solid); color: var(--content-primary); }
 .tv-editor-loading {
   height: 100%; display: flex; align-items: center; justify-content: center;
-  color: var(--text-secondary); font-size: 12px; background: #fff;
+  color: var(--content-secondary); font-size: 12px; background: var(--surface-card-solid);
 }
 .tv-edit-md-wrap :deep(.cm-content) {
   padding: 20px 24px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   line-height: 1.7;
 }
 .tv-edit-md-wrap :deep(.cm-gutters) {
-  background: #f2f3f8;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  background: var(--surface-panel);
+  border-right: 1px solid var(--border-subtle);
+  color: var(--content-tertiary);
+}
+.tv-edit-cm-wrap :deep(.cm-gutterElement) { color: var(--content-tertiary); }
+/* CodeMirror 的活动行会单独给左侧行号加 cm-activeLineGutter，覆盖默认亮色主题。 */
+.tv-edit-cm-wrap :deep(.cm-activeLine) {
+  background: color-mix(in srgb, var(--action-primary) 5%, transparent);
+}
+.tv-edit-cm-wrap :deep(.cm-activeLineGutter) {
+  background: var(--selection-bg);
+  color: var(--content-primary);
+}
+.tv-edit-cm-wrap :deep(.cm-selectionBackground),
+.tv-edit-cm-wrap :deep(.cm-focused .cm-selectionBackground) {
+  background: var(--selection-bg) !important;
+}
+.tv-edit-cm-wrap :deep(.cm-content ::selection),
+.tv-edit-textarea::selection,
+.tv-table ::selection,
+.tv-md ::selection {
+  background: var(--selection-bg);
+  color: var(--content-primary);
 }
 /* CodeMirror 的 classHighlighter 使用稳定的 tok-* 类名，颜色贴近 VS Code Light。 */
 .tv-edit-cm-wrap :deep(.tok-heading),
@@ -670,9 +811,10 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
 .tv-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--tv-font-size, 13px);
   line-height: 1.7;
+  background: var(--surface-card-solid);
 }
 
 .tv-ln {
@@ -680,35 +822,35 @@ watch(() => [props.blobUrl, props.ext], async ([url, ext]) => {
   min-width: 48px;
   padding: 0 16px 0 20px;
   text-align: right;
-  color: rgba(120, 124, 160, 0.45);
+  color: var(--content-tertiary);
   white-space: nowrap;
   user-select: none;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
+  border-right: 1px solid var(--border-subtle);
   vertical-align: top;
   position: sticky;
   left: 0;
-  background: #f2f3f8;
+  background: var(--surface-panel);
 }
 
 .tv-code {
   padding: 0 24px 0 16px;
   white-space: pre;
-  color: #383a42;
+  color: var(--content-primary);
   vertical-align: top;
 }
 
-tr:hover .tv-ln  { background: #eaebf2; }
-tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
+tr:hover .tv-ln  { background: var(--surface-soft-hover); }
+tr:hover .tv-code { background: color-mix(in srgb, var(--action-primary) 4%, transparent); }
 
 /* ── Markdown 渲染 ── */
 .tv-md {
   padding: 32px 48px;
   max-width: 860px;
   margin: 0 auto;
-  color: #24292f;
+  color: var(--content-primary, #24292f);
   font-size: var(--tv-font-size, 15px);
   line-height: 1.75;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-family-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .tv-md :deep(h1),
@@ -718,30 +860,30 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   font-weight: 600;
   margin: 1.5em 0 0.5em;
   line-height: 1.3;
-  color: #1a1c24;
+  color: var(--content-primary, #1a1c24);
 }
-.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid rgba(0,0,0,0.08); padding-bottom: 0.3em; }
-.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid rgba(0,0,0,0.06); padding-bottom: 0.25em; }
+.tv-md :deep(h1) { font-size: 1.8em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.3em; }
+.tv-md :deep(h2) { font-size: 1.4em; border-bottom: 1px solid var(--border-hairline); padding-bottom: 0.25em; }
 .tv-md :deep(h3) { font-size: 1.15em; }
 
 .tv-md :deep(p)  { margin: 0.8em 0; }
-.tv-md :deep(a)  { color: #4c7ef3; text-decoration: none; }
+.tv-md :deep(a)  { color: var(--action-primary); text-decoration: none; }
 .tv-md :deep(a:hover) { text-decoration: underline; }
 
 /* 行内代码 */
 .tv-md :deep(code) {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-family-mono);
   font-size: 0.875em;
-  background: rgba(100, 110, 200, 0.08);
+  background: var(--action-soft);
   border-radius: 4px;
   padding: 0.15em 0.4em;
-  color: #a626a4;
+  color: var(--action-primary);
 }
 
 /* 代码块容器 */
 .tv-md :deep(.md-pre) {
   position: relative;
-  background: #f0f1f6;
+  background: var(--surface-panel, #f0f1f6);
   border-radius: 10px;
   margin: 1em 0;
   overflow: hidden;
@@ -751,10 +893,35 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   padding: 14px 20px 16px;
   overflow-x: auto;
   background: none;
-  color: #383a42;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--content-primary, #383a42);
+  font-family: var(--font-family-mono);
   font-size: 13px;
   line-height: 1.65;
+}
+
+.tv-md :deep(.md-mermaid) {
+  width: 100%; box-sizing: border-box; margin: 1em 0; padding: 12px;
+  overflow-x: auto; border: 1px solid var(--border-default, rgba(42,35,49,.12));
+  border-radius: 10px; background: var(--surface-card-solid, #fff); user-select: none;
+}
+.tv-md :deep(.md-mermaid svg) { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+.tv-md :deep(.md-mermaid) { position: relative; cursor: default; touch-action: none; }
+.tv-md :deep(.md-mermaid-dragging) { cursor: grabbing; }
+.tv-md :deep(.md-mermaid-controls) {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  display: flex; gap: 3px; padding: 3px;
+  border: 1px solid var(--border-default); border-radius: 7px;
+  background: var(--surface-card-solid); box-shadow: var(--elevation-card);
+}
+.tv-md :deep(.md-mermaid-controls button) {
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px;
+  color: var(--content-secondary); background: transparent; cursor: pointer;
+  font-size: 16px; line-height: 1;
+}
+.tv-md :deep(.md-mermaid-controls button:hover) { color: var(--content-primary); background: var(--surface-soft-hover); }
+.tv-md :deep(.md-mermaid-error) {
+  white-space: pre-wrap; color: var(--text-secondary, #67647a);
+  font-family: var(--font-family-mono, monospace);
 }
 
 /* 语言标签 */
@@ -766,8 +933,8 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: rgba(60, 65, 100, 0.4);
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  color: var(--content-tertiary);
+  font-family: var(--font-family-mono);
   pointer-events: none;
   user-select: none;
 }
@@ -786,24 +953,24 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: rgba(80, 85, 130, 0.4);
+  color: var(--content-tertiary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 5px;
-  transition: background 0.12s, color 0.12s;
+  transition: background var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard);
   opacity: 0;
 }
 .tv-md :deep(.md-pre:hover .md-copy-btn) { opacity: 1; }
 .tv-md :deep(.md-copy-btn:hover) {
-  background: rgba(100, 110, 200, 0.1);
-  color: rgba(80, 85, 130, 0.8);
+  background: var(--surface-soft-hover);
+  color: var(--content-primary);
 }
 .tv-md :deep(.md-copy-btn svg) { width: 14px; height: 14px; }
 .tv-md :deep(.md-check-icon) { display: none; }
 .tv-md :deep(.md-copy-icon) { display: flex; }
-.tv-md :deep(.md-copy-btn.md-copied) { color: #50a14f; }
+.tv-md :deep(.md-copy-btn.md-copied) { color: var(--status-success); }
 .tv-md :deep(.md-copy-btn.md-copied .md-copy-icon) { display: none; }
 .tv-md :deep(.md-copy-btn.md-copied .md-check-icon) { display: flex; }
 
@@ -848,13 +1015,13 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 }
 /* 可交互勾选框（md + 真实文件）：手型 + hover 提示可点 */
 .tv-md :deep(input[type="checkbox"][data-task]) { cursor: pointer; }
-.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: rgba(123, 127, 178, 0.6); }
+.tv-md :deep(input[type="checkbox"][data-task]:hover) { border-color: var(--action-outline); }
 
 .tv-md :deep(blockquote) {
   margin: 1em 0;
   padding: 0 1em;
-  border-left: 3px solid rgba(100, 110, 200, 0.35);
-  color: rgba(36, 41, 47, 0.6);
+  border-left: 3px solid var(--action-outline);
+  color: var(--content-secondary);
 }
 
 .tv-md :deep(ul),
@@ -870,15 +1037,15 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
 .tv-md :deep(th),
 .tv-md :deep(td) {
   padding: 8px 14px;
-  border: 1px solid rgba(0,0,0,0.1);
+  border: 1px solid var(--border-document-table);
   text-align: left;
 }
-.tv-md :deep(th) { background: rgba(100,110,200,0.06); font-weight: 600; }
-.tv-md :deep(tr:hover td) { background: rgba(100,110,200,0.03); }
+.tv-md :deep(th) { background: var(--surface-soft); font-weight: 600; }
+.tv-md :deep(tr:hover td) { background: var(--surface-soft-hover); }
 
 .tv-md :deep(hr) {
   border: none;
-  border-top: 1px solid rgba(0,0,0,0.1);
+  border-top: 1px solid var(--border-subtle);
   margin: 1.5em 0;
 }
 
@@ -893,13 +1060,14 @@ tr:hover .tv-code { background: rgba(100, 110, 200, 0.04); }
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: var(--text-secondary);
+  color: var(--content-secondary);
   font-size: 13px;
 }
-.tv-error { color: rgba(180, 80, 80, 0.8); }
+.tv-error { color: var(--status-danger); }
 .tv-spinner {
   width: 24px; height: 24px; border-radius: 50%;
-  border: 2px solid rgba(123, 127, 178, 0.2);
+  border: 2px solid var(--action-soft);
+  border-top-color: var(--action-primary);
   border-top-color: rgba(123, 127, 178, 0.7);
   animation: tv-spin 0.7s linear infinite;
 }

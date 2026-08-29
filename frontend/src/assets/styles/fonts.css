@@ -1,0 +1,9 @@
+/* Web 字体资源层：字体族 token 只引用这里注册的产品字体，不在组件内写资源 URL。
+ * Noto Sans SC 使用本地可变字重文件，避免页面依赖外部字体服务。 */
+@font-face {
+  font-family: 'Gugu Noto Sans SC';
+  src: url('/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}

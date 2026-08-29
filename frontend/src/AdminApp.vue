@@ -1,10 +1,15 @@
 <template>
   <RouterView />
+  <ConfirmDialog />
 </template>
+
+<script setup lang="ts">
+import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
+</script>
 
 <style>
 /* ── Admin 全局共用（非 scoped，仅 admin 打包加载，不影响前台）────────────────
-   统一「刷新/图标按钮」：与邀请码页一致（34×34 方形、PhArrowClockwise、点击转一圈）。
+   统一「刷新/图标按钮」（34×34 方形、PhArrowClockwise、点击转一圈）。
    用法：<button class="icon-btn" :class="{ spinning: refreshing }" title="刷新">
            <PhArrowClockwise :size="15" weight="bold" />
          </button>

@@ -24,9 +24,8 @@ GUARDED_DIRS = [BACKEND / "agent" / "tools", BACKEND / "app" / "api" / "v1"]
 #   auth.py         按 token 取本人 User 行（User 无 user_id 列）
 #   config.py       管理员改配置时确认用户存在
 #   *_admin.py      管理员后台（用户管理/会话轨迹/站内通知），本就跨用户
-#   invite_codes.py 邀请码管理（管理员）
 ADMIN_EXEMPT_FILES = {"auth.py", "config.py", "agent_admin.py", "users_admin.py",
-                      "notifications_admin.py", "admin_analytics.py", "invite_codes.py"}
+                      "notifications_admin.py", "admin_analytics.py"}
 EXEMPT_MARK = "ownership-exempt"
 BARE_GET = re.compile(r"\bdb\.get\(")
 

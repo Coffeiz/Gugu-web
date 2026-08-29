@@ -321,11 +321,6 @@ font-size: 12px; color: rgba(255,255,255,0.35); min-width: 60px; text-align: cen
 - 图表 metric 旁显示选中模型名标签（`.model-filter-tag`）
 - 切换模型时不隐藏图表（无全页 loading），只有折线图区 `opacity: 0.5` 过渡
 
-### 邀请码管理（InviteCodes）
-
-- 顶部统计（总数 / 已使用 / 未使用）+ 批量生成（数量 input + 生成按钮）+ 刷新
-- 列表：邀请码 / 备注 / 状态 / 使用时间 / 操作（删除）
-
 ### 操作日志（AuditLog）
 
 - 筛选栏：`AdminSelect`（操作类型）+ 关键词 input + `AdminDatePicker`（开始/结束日期）+ 刷新 + 导出 CSV
@@ -365,7 +360,6 @@ font-size: 12px; color: rgba(255,255,255,0.35); min-width: 60px; text-align: cen
 /               → AdminLayout
   /config       → 系统配置（默认页）
   /agent        → Agent 配置
-  /invite-codes → 邀请码管理
   /audit-log    → 操作日志
   /system-logs  → 系统日志
 ```

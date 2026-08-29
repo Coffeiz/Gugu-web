@@ -67,6 +67,20 @@ system + session info + history/messages + dynamic tail
 
 session snapshot 使用稳定的结构和 hash，避免每个 run 生成不同的版本属性或额外 wrapper。
 
+### 连续历史与压缩 baseline（P0–P1）
+
+此前 runner/web 会按“最近 N 条”查询并再按 token 预算裁剪。随着会话增长，窗口边界会在不同 run 之间滑动，即使前面的 system 和历史大部分相同，也会从历史第一条开始失去缓存前缀。
+
+现已改为：
+
+- 未压缩会话按 `conversation_messages.id` 正序读取完整历史，不再使用滑动的 `LIMIT` 或 newest-first 裁剪；
+- `ConversationSession.baseline_message_id` 记录最近一次压缩已经覆盖到的消息水位；
+- 压缩后旧消息仍保留在数据库，下一轮只读取 baseline 之后的新消息，并保留唯一的 summary 行；
+- `baseline_message_hash` 用于记录压缩边界身份，便于后续诊断历史是否被错误重算；
+- Web、IM collect、IM stream 三条入口共用同一个 session history loader，避免 run/入口之间出现不同历史窗口。
+
+这样只有真正新增的消息进入前缀尾部；压缩发生时才改变历史基线，而不是每一轮随着窗口滑动改变前缀。
+
 ### 增量动态区域
 
 高频变化内容集中在消息尾部，主要包括：
@@ -140,6 +154,8 @@ run-7ef71b6…cc93
 本轮同时补充了以下回归保护：
 
 - session snapshot 与 TTL 相关测试。
+- 连续历史 loader 的顺序、baseline 水位和 summary 保留测试。
+- 压缩后 baseline 水位写入与后续增量读取回归测试。
 - provider cache capability 测试。
 - stream sanitizer 测试，防止内部时间标记泄漏到模型输出。
 - IM identity/context 组装测试。

@@ -47,12 +47,16 @@ export function useChatStream(options: {
   refreshAfterTools: (usedTools: Set<string>) => Promise<void>
   loadQuota: () => void
   playIncomingMessageSfx: () => void
+  onContentReset?: () => void
 }) {
   const liveStore = useLiveStore()
   const { messages, mkid, now, sessionId, sessions } = options
 
   const streaming = ref(false)
   const abortCtrl = ref<AbortController | null>(null)
+  // 新会话首轮在 session_id SSE 到达前仍是 null；记录后台生成归属，
+  // 让中断按钮不会因为前端尚未切换 sessionId 而漏发取消请求。
+  let activeSessionId: number | null = null
   // 生成中发的消息，排队等流式结束后接着发。每条都带上入队那一刻的 sessionId/
   // viewGeneration——切会话/新建会话时 useChatSessions 会调 clearPendingQueue()
   // 清空，但万一切换和这里的消费之间有竞态，消费前再核对一次身份，防止把
@@ -63,7 +67,9 @@ export function useChatStream(options: {
 
   function stopStreaming() {
     pendingQueue.value = []   // 停止=放弃排队中的消息
+    const id = activeSessionId ?? sessionId.value
     abortCtrl.value?.abort()
+    if (id != null) agentApi.cancelSession(String(id)).catch(() => {})
   }
 
   function clearPendingQueue() {
@@ -89,8 +95,12 @@ export function useChatStream(options: {
     viewGeneration: number,
     replayText = '',
   ) {
+    const streamStartedAt = Date.now()
     const decoder = new TextDecoder()
-    let buf = '', aiIdx = -1, aborted = false
+    let buf = '', aiIdx = -1, aborted = false, interactionPaused = false
+    // 多 round 流中 aiIdx 会在 round_start 时归零；它只表示“当前气泡”，不能用来
+    // 判断整条流是否已经收到过正文。否则第一轮有回复、第二轮空回合时会误加兜底气泡。
+    let receivedAssistantContent = false
     let sid = ownerSid           // 本流归属的会话（新对话在 session_id 事件前为 null）
     let detached = false         // 一旦用户切到别的会话，本流永久脱离、不再污染当前视图
     let replaySuppressed = false
@@ -98,6 +108,29 @@ export function useChatStream(options: {
       ? (messages.value.find(m => m._greeting)?._greetFull || '').trim()
       : ''
     const usedTools = new Set<string>()
+    let currentRoundId = ''
+    let currentRunId = ''
+    const toolMessageIndexes = new Map<string, number>()
+    let timelineOrder = messages.value.reduce(
+      (max, message) => Math.max(max, message._timelineOrder ?? 0),
+      0,
+    )
+    const nextTimelineOrder = () => ++timelineOrder
+    const sortLiveTimeline = () => {
+      messages.value.sort((a, b) => {
+        if (a._timelineOrder == null || b._timelineOrder == null) return 0
+        return a._timelineOrder - b._timelineOrder
+      })
+    }
+    // 每个 round 的正文必须是独立气泡。工具调用前的草稿属于上一轮，
+    // 下一轮 token 不能继续写入同一个 aiIdx，否则 UI 会把多轮正文拼成一条消息。
+    const finishRoundMessage = () => {
+      if (aiIdx === -1 || !messages.value[aiIdx]) return
+      const message = messages.value[aiIdx]
+      message.streaming = false
+      if (message.text.trim()) message.html = renderMd(message.text)
+      aiIdx = -1
+    }
     // 当前看的还是本流的会话吗？切走后置 detached（之后切回靠 loadSession 干净重载，不半路重接）
     const live = () => {
       if (detached || viewGeneration !== options.getViewGeneration()) {
@@ -133,14 +166,43 @@ export function useChatStream(options: {
               resolvePendingSession(evt.session_id)
             }
             sid = evt.session_id
+            activeSessionId = evt.session_id
             if (isNew) await options.fetchSessions()
           } else if (evt.type === 'session_title') {
             const s = sessions.value.find(s => s.id === sid)   // 按本流会话更新标题，与当前视图无关
             if (s) s.title = evt.title
+          } else if (evt.type === 'session_goal') {
+            const s = sessions.value.find(s => s.id === Number(evt.session_id || sid))
+            if (s) {
+              s.goalActive = Boolean(evt.active)
+              s.goalStatus = evt.status === 'active' || evt.status === 'paused' ? evt.status : null
+            }
+          } else if (evt.type === 'round_start') {
+            finishRoundMessage()
+            currentRunId = String(evt.run_id || currentRunId)
+            currentRoundId = String(evt.round_id || `round-${toolMessageIndexes.size + 1}`)
           } else if (evt.type === '_new_round') {
-            // 后端新一轮开始（sanitizer 已重置），前端无需变更视觉状态
+            // 兼容旧事件：新版 round_start 已先建立身份，旧客户端只看到这里也不会报错。
+            finishRoundMessage()
+            currentRunId = String(evt.run_id || currentRunId)
+            if (evt.round_id) currentRoundId = String(evt.round_id)
           } else if (evt.type === 'tool_call') {
             if (evt.name && !evt.name.startsWith('_')) usedTools.add(evt.name)  // 跳过 _preparing 占位
+            const toolCallId = String(evt.tool_call_id || `${evt.round_id || currentRoundId || 'round'}-tool-${toolMessageIndexes.size + 1}`)
+            if (live() && !evt.name?.startsWith('_')) {
+              const messageId = mkid()
+              messages.value.push({
+                id: messageId, role: 'tool', text: '', time: now(),
+                _timelineOrder: nextTimelineOrder(),
+                runId: evt.run_id, roundId: evt.round_id || currentRoundId,
+                toolCallId, toolName: evt.name, toolLabel: evt.label,
+                toolStatus: evt.status || 'running', toolInput: evt.input,
+                _toolStartedAt: Date.now(),
+              })
+              sortLiveTimeline()
+              toolMessageIndexes.set(toolCallId, messages.value.findIndex(item => item.id === messageId))
+              await options.scrollBottom()
+            }
             // label 已由后端解析（含「状态命名」覆盖 + 复查前缀）；气泡常驻，仅替换文字。
             if (live()) options.setStatus({ kind: 'text', label: evt.label || evt.name })
           } else if (evt.type === 'tool_done') {
@@ -151,10 +213,52 @@ export function useChatStream(options: {
               else if (PROJECT_TOOLS.has(evt.name)) liveStore.bump('projects')
               else if (CALENDAR_TOOLS.has(evt.name)) liveStore.bump('calendar')
             }
+            const toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : ''
+            const toolIndex = toolCallId ? toolMessageIndexes.get(toolCallId) : undefined
+            if (toolIndex !== undefined && messages.value[toolIndex]) {
+              messages.value[toolIndex].toolStatus = evt.status || 'success'
+              if (evt.result !== undefined) messages.value[toolIndex].toolResult = evt.result
+              const startedAt = (messages.value[toolIndex] as ChatMessage & { _toolStartedAt?: number })._toolStartedAt
+              if (startedAt) messages.value[toolIndex].toolDurationMs = Math.max(0, Date.now() - startedAt)
+            }
             // 任一工具结束都回到思考态；下一轮工具调用会继续替换文字，不能让气泡闪退。
             if (live()) options.setStatus(options.thinkingItem())
+          } else if (evt.type === 'interaction_required') {
+            interactionPaused = true
+            if (live() && evt.prompt_id && Array.isArray(evt.options)) {
+              const promptId = Number(evt.prompt_id)
+              const existing = messages.value.find(item =>
+                item.role === 'interaction' && item.interaction?.promptId === promptId,
+              )
+              if (existing?.interaction) {
+                // loadSession 先恢复历史、resumeStream 再收到快照时会命中这里；
+                // 合并而不是追加，避免刷新后同一个交互出现两张卡。
+                existing.runId = evt.run_id
+                existing.roundId = evt.round_id
+                existing.interaction.toolCallId = evt.tool_call_id ? String(evt.tool_call_id) : existing.interaction.toolCallId
+                existing.interaction.title = String(evt.title || existing.interaction.title || '需要确认')
+                existing.interaction.body = String(evt.body || existing.interaction.body || '')
+                if (!existing.interaction.resolved) existing.interaction.options = evt.options
+              } else {
+                messages.value.push({
+                  id: mkid(), role: 'interaction', text: '', time: now(),
+                  _timelineOrder: nextTimelineOrder(),
+                  runId: evt.run_id, roundId: evt.round_id,
+                  interaction: {
+                    promptId, kind: String(evt.kind || 'confirm'),
+                    toolCallId: evt.tool_call_id ? String(evt.tool_call_id) : null,
+                    title: String(evt.title || '需要确认'), body: String(evt.body || ''),
+                    options: evt.options,
+                  },
+                })
+                sortLiveTimeline()
+              }
+              options.setStatus({ kind: 'text', label: '等待你的确认' })
+              await options.scrollBottom()
+            }
           } else if (evt.type === 'token') {
             if (live()) {
+              if (String(evt.content || '').trim()) receivedAssistantContent = true
               // 切回会话时，历史接口可能已经拿到完整助手消息，而 active 标记
               // 尚未来得及清掉。resume 的首个 token 是同一段 Redis snapshot，
               // 这时跳过它；真正后续新增 token 仍正常创建/追加流式气泡。
@@ -165,19 +269,34 @@ export function useChatStream(options: {
               options.clearStatus()   // 真回复开始 → 打断状态队列、收起指示，让位给流式正文
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
-                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
-                aiIdx = messages.value.length - 1
+                const messageId = mkid()
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
               messages.value[aiIdx].text += evt.content
               await options.scrollBottom()
             }
           } else if (evt.type === 'file') {
             if (live()) {
+              receivedAssistantContent = true
               options.clearStatus()
               if (aiIdx === -1) options.playIncomingMessageSfx()
               if (aiIdx === -1) {
-                messages.value.push({ id: mkid(), role: 'ai', text: '', time: now(), streaming: true })
-                aiIdx = messages.value.length - 1
+                const messageId = mkid()
+                messages.value.push({
+                  id: messageId, role: 'ai', text: '', time: now(), streaming: true,
+                  runId: evt.run_id || currentRunId || undefined,
+                  roundId: evt.round_id || currentRoundId || undefined,
+                  _timelineOrder: nextTimelineOrder(),
+                })
+                sortLiveTimeline()
+                aiIdx = messages.value.findIndex(item => item.id === messageId)
               }
               const m = messages.value[aiIdx]
               if (!m.files) m.files = []
@@ -210,13 +329,46 @@ export function useChatStream(options: {
         }
       }
     }
-    return { aiIdx, usedTools, detached, sid, aborted }
+    // 工具执行成功后，后端可能已经持久化最终 assistant 消息，但最后一段 SSE
+    // 正文在连接收尾竞态中没有被浏览器消费到。此时不能直接显示“没有回复”，
+    // 先用本轮工具执行期间创建的最新 assistant 消息恢复视图。
+    if (aiIdx === -1 && usedTools.size && sid != null && !detached && !aborted && !interactionPaused
+        && viewGeneration === options.getViewGeneration()) {
+      try {
+        const recovered = await agentApi.getMessages(String(sid))
+        const latest = [...(recovered.messages || [])].reverse().find((item: any) =>
+          item.role === 'assistant' &&
+          (item.content?.trim() || item.files?.length) &&
+          (!item.createdAt || Date.parse(item.createdAt) >= streamStartedAt - 60_000),
+        )
+        if (latest && live()) {
+          const messageId = mkid()
+          messages.value.push({
+            id: messageId,
+            dbId: latest.id,
+            role: 'ai',
+            text: latest.content || '',
+            html: latest.content ? renderMd(latest.content) : null,
+            files: latest.files?.length ? latest.files : undefined,
+            quotedText: latest.quotedText || undefined,
+            time: new Date(latest.createdAt || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+            _createdAt: latest.createdAt,
+            _timelineOrder: latest.timelineOrder ?? latest.id,
+          })
+          sortLiveTimeline()
+          aiIdx = messages.value.findIndex(item => item.id === messageId)
+          await options.scrollBottom()
+        }
+      } catch { /* 恢复失败再由调用方决定是否显示兜底提示 */ }
+    }
+    return { aiIdx, usedTools, detached, sid, aborted, interactionPaused, receivedAssistantContent }
   }
 
   // 续看：打开会话时若它正在生成（messages 接口返回 active），重连看后端跑完。
   async function resumeStream(id: number) {
     if (streaming.value) return            // 本地正在发/看，不重复连
     const viewGeneration = options.getViewGeneration()
+    activeSessionId = id
     const token = getToken()
     abortCtrl.value = new AbortController()   // 让下次切会话能 abort 掉这条续看
     streaming.value = true; options.clearStatus(); options.setStatus(options.thinkingItem())
@@ -238,6 +390,7 @@ export function useChatStream(options: {
       if (viewGeneration === options.getViewGeneration() && sessionId.value === id) {
         options.clearStatus(); streaming.value = false; abortCtrl.value = null
       }
+      if (activeSessionId === id) activeSessionId = null
     }
   }
 
@@ -248,9 +401,16 @@ export function useChatStream(options: {
     const atts = fromInput ? options.pendingAtt.value.slice() : (forcedAttachments ?? [])   // 本次随消息发的附件
     if (!text && !atts.length) return
     if (fromInput) {
+      const isNewCommand = /^\/new\s*$/i.test(text)
       _sessionTurn++
-      messages.value.push({ id: mkid(), role: 'user', text, time: now(),
-        files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+      if (isNewCommand && !streaming.value) {
+        // /new 本身是控制命令，不成为新上下文的一部分；后端也会删除它的持久消息。
+        messages.value = []
+        options.onContentReset?.()
+      } else {
+        messages.value.push({ id: mkid(), role: 'user', text, time: now(),
+          files: atts.length ? atts.map(a => ({ name: a.name, ext: a.ext, size_bytes: a.size, attach_id: a.attach_id, kind: a.kind, duration: a.duration, upload: true, _thumbUrl: a._thumbUrl, img_width: a.img_width, img_height: a.img_height })) : undefined })
+      }
       options.inputText.value = ''
       options.pendingAtt.value = []
       options.composerRef.value?.resetHeight()
@@ -272,6 +432,7 @@ export function useChatStream(options: {
     await options.scrollBottom()
     const token = getToken()
     const ownerSid = sessionId.value   // 本次发送归属的会话（新对话为 null，流里拿到 id 后回填）
+    activeSessionId = ownerSid
     const viewGeneration = options.getViewGeneration()
     let resolvedSid = ownerSid         // 流里 session_id 事件后回填成真实 id
     let aiIdx = -1
@@ -303,7 +464,7 @@ export function useChatStream(options: {
       aiIdx = r.aiIdx
       r.usedTools.forEach(t => usedTools.add(t))
       // 用户中途切走了 → 别把兜底气泡塞进当前别的会话视图（回复已在后端，切回会重载）
-      if (aiIdx === -1 && !r.detached && !r.aborted) {
+      if (aiIdx === -1 && !r.receivedAssistantContent && !r.detached && !r.aborted && !r.interactionPaused) {
         messages.value.push({ id: mkid(), role: 'ai', text: '收到，但没有收到回复，请稍后再试。', time: now() })
         await options.scrollBottom()
       }
@@ -334,6 +495,11 @@ export function useChatStream(options: {
         // markdown 重渲染后内容变高，MutationObserver 此时已因 streaming=false 停止跟随，
         // 需在 nextTick 后再滚一次，否则底部时间戳会被截掉
         await options.scrollBottom()
+      }
+      if (activeSessionId === resolvedSid) activeSessionId = null
+      // 目标/工具限制命令会修改 session_context；刷新会话元数据，让标题旁的状态胶囊即时同步。
+      if (ownsView && /^\/(?:goal|unlimited)(?:\s|$)/i.test(text)) {
+        await options.fetchSessions()
       }
       // 咕咕若调用了改数据的工具，刷新对应前端视图（项目/日历/文件），免手动刷新页面
       options.refreshAfterTools(usedTools)

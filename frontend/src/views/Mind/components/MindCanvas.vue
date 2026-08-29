@@ -49,8 +49,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue'
 import type { MindCanvasItem, MindRelation } from '@/services/api'
 import { runtime, type MoveAction, type NodeConnectionEndpoint, type RuntimeEvent } from '@/interaction/runtime'
-import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
-import { itemSize, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
+import { MIND_CANVAS_OBJECT_TYPES, MIND_CANVAS_OBJECT_TYPE, MIND_CANVAS_SURFACE_ID, MIND_PROJECT_DRAWER_SURFACE_ID, beginMindLanding, endMindLanding, mindCanvasObjectId, registerMindLandingTargetResolver } from '@/interaction/runtime/canvas'
+import { itemSize, MAX_SCALE, useMindCanvas, type RelationAnchorSides } from '@/composables/useMindCanvas'
 import { overlapsWorldRect, worldViewport } from '@/utils/canvasViewport'
 import { relationEnvelope } from '@/utils/canvasRelationGeometry'
 import EntitySticker from './EntitySticker.vue'
@@ -144,7 +144,15 @@ function wrappedGridOffset(value: number, size: number) {
 }
 function applyCameraVisual(x: number, y: number, scale = camera.scale) {
   const world = worldRef.value
-  if (world) world.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`
+  if (world) {
+    // world 在首次挂载时按画布允许的最大比例渲染，滚轮只改变合成层的相对比例。
+    // 这样文字/SVG 不会从 1 倍的低分辨率纹理一路放大，滚轮过程中也不需要重新布局；
+    // MAX_SCALE 来自画布相机，未来调整画布上限时这里自动同步，不要再写死 1.7。
+    const rasterScale = MAX_SCALE
+    world.style.zoom = String(rasterScale)
+    const relativeScale = scale / rasterScale
+    world.style.transform = `translate3d(${x / rasterScale}px, ${y / rasterScale}px, 0) scale(${relativeScale})`
+  }
   const grid = gridRef.value
   if (!grid) return
   const gridSize = GRID_STEP * scale
@@ -265,20 +273,27 @@ const runtimeVisualFrame = ref(0)
 const activeVisualNodeId = ref<number | null>(null)
 const landingNodeIds = reactive(new Set<number>())
 function onRuntimeVisual(event: RuntimeEvent) {
-  if (event.type === 'move-visual-end') {
+  if (event.type === 'move-visual-end' || event.type === 'move-visual-settled') {
     const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
     const nodeId = landingObjectNodeIds.get(event.objectId) ?? item?.nodeId
-    landingObjectNodeIds.delete(event.objectId)
+    if (event.type === 'move-visual-settled') {
+      endMindLanding(event.objectId)
+      landingObjectNodeIds.delete(event.objectId)
+    }
     if (activeVisualNodeId.value === nodeId) activeVisualNodeId.value = null
-    if (nodeId == null) return
-    landingPositions.delete(nodeId)
-    landingNodeIds.delete(nodeId)
-    const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
-      .some(element => element.matches(':hover'))
-    if (hovered) hoveredNodeId.value = nodeId
+    if (nodeId != null) {
+      landingPositions.delete(nodeId)
+      landingNodeIds.delete(nodeId)
+      const hovered = [...document.querySelectorAll<HTMLElement>(`[data-node-id="${nodeId}"]`)]
+        .some(element => element.matches(':hover'))
+      if (hovered) hoveredNodeId.value = nodeId
+    }
     return
   }
   if (event.type !== 'move-visual-update' || !event.objectId.startsWith('mind:')) return
+  // 实时事件不能在 active 阶段刷新正在被 regrab 的对象；否则旧 landing
+  // 收尾时的 refresh 会把新 session 使用的 optimistic DOM 替换掉。
+  beginMindLanding(event.objectId)
   runtimeVisualFrame.value++
   const item = props.items.find(current => mindCanvasObjectId(current) === event.objectId)
   if (!item) return

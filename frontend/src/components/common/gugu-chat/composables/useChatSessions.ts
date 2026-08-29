@@ -1,11 +1,13 @@
 import { nextTick, computed, type Ref } from 'vue'
-import { agentApi } from '@/services/api'
+import { agentApi, getToken } from '@/services/api'
+import { API_BASE } from '../chatConstants'
 import type { ChatMessage, ChatFile, ChatSession } from '../chatTypes'
 import { displayQQFaces } from '../messageDisplay'
 import type GuguChatComposer from '../GuguChatComposer.vue'
 
 interface RawSessionMessage {
   id: number
+  timelineOrder?: number
   role: string
   content: string
   files?: ChatFile[]
@@ -13,6 +15,54 @@ interface RawSessionMessage {
   platformUserId?: string | null
   platformUserName?: string | null
   createdAt: string
+  runId?: string
+  roundId?: string
+}
+
+interface RawToolEvent {
+  id: string
+  toolCallId: string
+  toolName: string
+  toolLabel?: string
+  timelineOrder?: number
+  toolInput?: unknown
+  toolResult?: unknown
+  toolStatus?: ChatMessage['toolStatus']
+  toolDurationMs?: number
+  createdAt: string
+}
+
+interface RawTimelineEvent {
+  id: string
+  kind: 'assistant' | 'tool'
+  text?: string
+  runId?: string
+  roundId?: string
+  toolCallId?: string
+  toolName?: string
+  toolLabel?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolStatus?: ChatMessage['toolStatus']
+  timelineOrder: number
+  createdAt: string
+}
+
+function sortTimelineMessages(items: ChatMessage[]) {
+  const isPairedInteraction = (a: ChatMessage, b: ChatMessage) =>
+    a.role === 'interaction' && b.role === 'tool' &&
+    Boolean(a.interaction?.toolCallId) && a.interaction?.toolCallId === b.toolCallId
+
+  // 工具和 interaction 分属两个接口恢复。即使数据库时间精度相同，
+  // 同一工具调用也必须保持实时展示顺序，避免刷新后交互卡片跑到工具卡前面。
+  return items.sort((a, b) => {
+    if (a._timelineOrder != null && b._timelineOrder != null && a._timelineOrder !== b._timelineOrder) {
+      return a._timelineOrder - b._timelineOrder
+    }
+    if (isPairedInteraction(a, b)) return 1
+    if (isPairedInteraction(b, a)) return -1
+    return String(a._createdAt || '').localeCompare(String(b._createdAt || ''))
+  })
 }
 
 /**
@@ -52,6 +102,8 @@ export function useChatSessions(options: {
   onContentReset: () => void
   onCaptureBaseScrollH: () => void
   scrollBottom: (force?: boolean) => Promise<void>
+  waitForStableScrollLayout: () => Promise<void>
+  setSessionSettling: (value: boolean) => void
 }) {
   const { messages, mkid, sessionId, sessions } = options
 
@@ -60,26 +112,45 @@ export function useChatSessions(options: {
   const currentSessionTitle = computed(() =>
     !sessionId.value ? '新对话' : (sessions.value.find(s => s.id === sessionId.value)?.title ?? '对话')
   )
+  const currentSessionWorkspaceName = computed(() =>
+    !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.workspaceName ?? null)
+  )
+  const currentSessionGoalActive = computed(() =>
+    !sessionId.value ? false : Boolean(sessions.value.find(s => s.id === sessionId.value)?.goalActive)
+  )
+  const currentSessionGoalStatus = computed(() =>
+    !sessionId.value ? null : (sessions.value.find(s => s.id === sessionId.value)?.goalStatus ?? null)
+  )
 
   async function loadSession(id: number) {
     if (id === sessionId.value) return
     const viewGeneration = options.bumpViewGeneration()
+    const previousMessages = messages.value
+    options.setSessionSettling(true)
     options.abortCtrl.value?.abort()        // 停掉当前会话的流式消费（后端生成不受影响、继续跑）
     options.streaming.value = false
     // 旧会话排队等着接力发送的消息不属于要切进去的这个会话，清掉——不清的话，等新会话
     // 这边某次 send() 结束时会把它们当成"这个会话排队的消息"接着发出去（真实复现过的
     // bug：A 会话生成中发消息进队列，切到 C 会话，C 的回复一结束，A 排队的那条被发进 C）。
     options.clearPendingQueue()
+    // 请求期间清掉旧会话的 DOM，避免新会话挂载前沿用旧 scrollTop；请求失败再恢复。
+    messages.value = []
+    options.clearStatus()
+    options.onContentReset()
     try {
       const data = await agentApi.getMessages(String(id))
       if (viewGeneration !== options.getViewGeneration()) return   // 等待期间又切换/新建了会话，丢弃这次结果
       sessionId.value = id
+      const loadedSession = sessions.value.find(s => s.id === id)
+      if (loadedSession && data.session?.workspaceName !== undefined) loadedSession.workspaceName = data.session.workspaceName
+      if (loadedSession && data.session?.goalActive !== undefined) loadedSession.goalActive = Boolean(data.session.goalActive)
+      if (loadedSession && data.session?.goalStatus !== undefined) loadedSession.goalStatus = data.session.goalStatus
       options.ownerPlatformUserId.value = data.session?.ownerPlatformUserId ?? null
       options.isGroupSession.value = data.session?.chatType === 'group'
       options.clearStatus()   // 切会话先清掉上个会话残留的状态指示（active 会话下面 resumeStream 会重置）
       // html 先留空、不在这一步就把整个历史都跑一遍 marked.parse——只有真正挂进虚拟列表
       // 视口的那些消息才会被 watch(virtualRows, ...) 补上，减轻长会话打开时的一次性 CPU 尖峰。
-      messages.value = data.messages.map((m: RawSessionMessage) => {
+      const loadedMessages = data.messages.map((m: RawSessionMessage) => {
         const speaker = options.resolveSpeaker(m.role, m.platformUserId, m.platformUserName)
         return {
           id: mkid(),
@@ -92,12 +163,69 @@ export function useChatSessions(options: {
           files: m.files && m.files.length ? m.files : undefined,
           quotedText: m.quotedText || undefined,
           time: new Date(m.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+          _createdAt: m.createdAt,
+          _timelineOrder: m.timelineOrder ?? m.id,
+          runId: m.runId,
+          roundId: m.roundId,
         }
       })
+      const loadedTools = ((data.toolEvents || []) as RawToolEvent[]).map((event) => ({
+        id: mkid(), role: 'tool', text: '', time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+        toolCallId: event.toolCallId, toolName: event.toolName,
+        toolLabel: event.toolLabel,
+        _timelineOrder: event.timelineOrder,
+        toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
+        toolInput: event.toolInput, toolResult: event.toolResult, toolDurationMs: event.toolDurationMs, _createdAt: event.createdAt,
+      }))
+      const loadedTimeline = ((data.timelineEvents || []) as RawTimelineEvent[]).map((event) =>
+        event.kind === 'assistant'
+          ? {
+              id: mkid(), role: 'ai', text: displayQQFaces(event.text || ''), html: null,
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              runId: event.runId, roundId: event.roundId,
+              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+            }
+          : {
+              id: mkid(), role: 'tool', text: '',
+              toolCallId: event.toolCallId, toolName: event.toolName, toolLabel: event.toolLabel,
+              toolStatus: event.toolStatus || (event.toolResult !== undefined ? 'success' : 'running'),
+              toolInput: event.toolInput, toolResult: event.toolResult,
+              time: new Date(event.createdAt).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              _timelineOrder: event.timelineOrder, _createdAt: event.createdAt,
+            },
+      )
+      messages.value = sortTimelineMessages([
+        ...loadedMessages,
+        ...loadedTimeline,
+        ...loadedTools,
+      ])
+      // 刷新/切回会话时恢复尚未过期的交互按钮；服务端会轮换 pending action token，
+      // 因而前端不需要、也不会持久化旧 token。
+      try {
+        const interactionRes = await fetch(`${API_BASE}/agent/sessions/${id}/interactions`, {
+          headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+        })
+        if (interactionRes.ok) {
+          const interactionData = await interactionRes.json()
+          for (const item of (interactionData.items || [])) {
+            messages.value.push({
+              id: mkid(), role: 'interaction', text: '', _createdAt: item.created_at,
+              time: new Date(item.created_at || Date.now()).toLocaleTimeString('zh', { hour: '2-digit', minute: '2-digit' }),
+              interaction: {
+                promptId: Number(item.id), kind: String(item.kind || 'confirm'),
+                toolCallId: item.tool_call_id ? String(item.tool_call_id) : null,
+                title: String(item.title || '需要确认'), body: String(item.body || ''),
+                options: Array.isArray(item.options) ? item.options : [],
+                resolved: Boolean(item.resolved), selectedOptionId: item.selected_option_id || null,
+              },
+            })
+          }
+          sortTimelineMessages(messages.value)
+        }
+      } catch { /* 交互恢复失败不阻断历史会话加载 */ }
       options.onContentReset(); options.resetSessionTurn()
       await nextTick()
       options.onCaptureBaseScrollH()   // 基线 = 切入会话的历史高度
-      options.scrollBottom(true)
       // DB 持久化和 genstream.end() 不是同一个事务：生成刚完成时，接口可能短暂同时返回
       // 「最后一条是完整 assistant」和 active=true。此时不能把已完成回复再次 resume，
       // 否则 Redis 快照会被渲染成第二个生成气泡。只有最后一条可见消息不是完整 assistant
@@ -106,15 +234,28 @@ export function useChatSessions(options: {
       const staleActive = Boolean(
         data.active && lastVisible?.role === 'assistant' && Boolean(lastVisible.content?.trim()),
       )
-      if (staleActive) {
-      } else if (data.active) {
-        options.resumeStream(id)   // 该会话后端正在生成 → 重连续看
+      const shouldResume = Boolean(data.active && !staleActive)
+      // 初始历史消息结算期间列表保持不可见。虚拟列表需要先滚到底部挂载目标行，
+      // 再等待其真实高度连续稳定；否则估算高度会在解除隐藏后的下一帧被修正，造成
+      // 会话位置跳动。这个隐藏阶段只覆盖历史快照，不能覆盖后面的流式续接。
+      await options.scrollBottom(true)
+      await options.waitForStableScrollLayout()
+      if (viewGeneration !== options.getViewGeneration()) return
+      options.setSessionSettling(false)
+      if (shouldResume) {
+        await options.resumeStream(id)
       }
-    } catch {}
+      if (viewGeneration !== options.getViewGeneration()) return
+      await options.scrollBottom(true)
+    } catch {
+      if (viewGeneration === options.getViewGeneration()) messages.value = previousMessages
+      if (viewGeneration === options.getViewGeneration()) options.setSessionSettling(false)
+    }
   }
 
   async function newSession() {
     options.bumpViewGeneration()
+    options.setSessionSettling(false)
     options.abortCtrl.value?.abort()
     options.streaming.value = false
     options.clearPendingQueue()   // 同 loadSession：旧会话排队的消息不属于新对话，清掉
@@ -149,7 +290,7 @@ export function useChatSessions(options: {
   }
 
   return {
-    webSessions, imSessions, currentSessionTitle,
+    webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     loadSession, newSession, deleteSession, renameSession,
   }
 }

@@ -8,6 +8,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy import text
 from jose import jwt, JWTError
 from fastapi import HTTPException
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 from app.core.config import get_settings
 from app.core.logging import setup_logging, flush_log_queue
 from app.api.v1 import config as config_router
-from app.api.v1 import admin_auth
+from app.api.v1 import admin_auth, sandbox_admin
 from app.api.v1 import auth as user_auth
 from app.api.v1 import projects as projects_router
 from app.api.v1 import files as files_router
@@ -33,10 +34,11 @@ from app.api.v1 import qq_connect as qq_connect_router
 from app.api.v1 import feishu_connect as feishu_connect_router
 from app.api.v1 import wechat_connect as wechat_connect_router
 from app.api.v1 import preferences as preferences_router
+from app.api.v1 import workspaces as workspaces_router
+from app.api.v1 import terminals as terminals_router
 from app.api.v1 import scheduled_tasks as scheduled_tasks_router
 from app.api.v1 import agent_admin as agent_admin_router
 from app.api.v1 import agent_perception as agent_perception_router
-from app.api.v1 import invite_codes as invite_codes_router
 from app.api.v1 import audit_log as audit_log_router
 from app.api.v1 import system_logs as system_logs_router
 from app.api.v1 import users_admin as users_admin_router
@@ -46,6 +48,8 @@ from app.api.v1 import ops_admin as ops_admin_router
 from app.api.v1 import folder_doctor_admin as folder_doctor_admin_router
 from app.api.v1 import notifications_admin as notifications_admin_router
 from app.api.v1 import notifications as notifications_router
+from app.api.v1 import user_skills as user_skills_router
+from app.api.v1 import byok as byok_router
 from app.api.v1 import track as track_router
 from app.api.v1 import feedback as feedback_router
 from onboarding.routes import router as onboarding_router   # 独立子系统（backend/onboarding/）
@@ -100,6 +104,10 @@ async def _auto_cleanup_loop():
                 n = await cleanup_expired(db)
                 if n:
                     logger.info("回收站自动清理 %d 个过期文件", n)
+                from app.security.events import cleanup_expired_security_events
+                security_n = await cleanup_expired_security_events(db)
+                if security_n:
+                    logger.info("安全事件自动清理 %d 条过期记录", security_n)
         except Exception as e:
             logger.error("回收站自动清理出错: %s", e, exc_info=True)
         # 缩略图 TTL 驱逐（每 24 小时一次）
@@ -133,18 +141,72 @@ async def _db_retry_loop():
 # 数据库启动超时（秒）：超时后跳过建表，后台继续重试
 # 通过环境变量 DB_STARTUP_TIMEOUT 可覆盖，例如：DB_STARTUP_TIMEOUT=10 ./start.sh start
 DB_STARTUP_TIMEOUT = int(os.getenv("DB_STARTUP_TIMEOUT", "5"))
+# 生产服务由 deploy/migrate 步骤统一执行 DDL。多 worker 在 lifespan 中并发建表会
+# 与正常查询形成 AccessExclusive/AccessShare 锁环，因此 systemd 服务默认关闭启动迁移；
+# 本地单进程开发仍保留启动建表能力，可显式设置为 1。
+RUN_STARTUP_MIGRATIONS = os.getenv("GUGU_STARTUP_MIGRATIONS", "1").strip().lower() in {
+    "1", "true", "yes", "on",
+}
+
+
+async def _shutdown_step(name: str, operation, *, timeout: float = 5.0) -> None:
+    """限制单个退出清理阶段的等待时间，避免一个外部资源拖住整个服务。"""
+    logger.info("开始关闭阶段：%s", name)
+    try:
+        await asyncio.wait_for(operation(), timeout=timeout)
+    except asyncio.TimeoutError:
+        logger.warning("关闭阶段超时，继续退出：%s（上限 %.1fs）", name, timeout)
+    except Exception as exc:
+        logger.warning("关闭阶段失败，继续退出：%s（%s）", name, type(exc).__name__)
+    else:
+        logger.info("完成关闭阶段：%s", name)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        await asyncio.wait_for(create_all_tables(), timeout=DB_STARTUP_TIMEOUT)
-        logger.info("数据库表已就绪")
-    except asyncio.TimeoutError:
-        logger.warning("数据库 %ds 内未连通，已跳过建表（Admin 仍可用）", DB_STARTUP_TIMEOUT)
-    except Exception as e:
-        logger.warning("数据库连接失败，跳过建表：%s", e)
+    from agent.terminal.runtime import close_pty_manager, start_pty_manager
+
+    start_pty_manager()
+    db_ready = False
+    if RUN_STARTUP_MIGRATIONS:
+        try:
+            await asyncio.wait_for(create_all_tables(), timeout=DB_STARTUP_TIMEOUT)
+            logger.info("数据库表已就绪")
+            db_ready = True
+        except asyncio.TimeoutError:
+            logger.warning("数据库 %ds 内未连通，已跳过建表（Admin 仍可用）", DB_STARTUP_TIMEOUT)
+        except Exception as e:
+            logger.warning("数据库连接失败，跳过建表：%s", e)
+    else:
+        # 生产启动只做无锁连通性检查，避免把业务查询和 DDL 放进同一个启动窗口。
+        try:
+            import app.db.session as db_session
+            db_session.ensure_engine()
+            async with db_session._SessionLocal() as db:
+                await db.execute(text("SELECT 1"))
+            db_ready = True
+            logger.info("数据库连接已就绪（已跳过启动期迁移）")
+        except Exception as e:
+            logger.warning("数据库连接失败，已跳过启动期迁移：%s", e)
     Path(settings.storage.local_path).mkdir(parents=True, exist_ok=True)
+    if db_ready:
+        try:
+            from app.byok.service import validate_master_key
+            from app.db.session import _SessionLocal
+            async with _SessionLocal() as byok_db:
+                status = await validate_master_key(byok_db)
+            logger.info("BYOK 主密钥校验状态：%s", status)
+        except Exception as e:
+            logger.warning("BYOK 主密钥校验失败：%s", type(e).__name__)
+        try:
+            from app.db.session import _SessionLocal
+            from app.services.storage.quota_ledger import ensure_all_user_storage_spaces
+            async with _SessionLocal() as storage_db:
+                count = await ensure_all_user_storage_spaces(storage_db)
+            logger.info("用户持久空间已初始化并登记配额：%d 个用户", count)
+        except Exception as e:
+            # 初始化失败不能伪造“已完成”；单用户访问时仍会重复校验并补齐。
+            logger.warning("用户持久空间初始化失败：%s", e)
     try:
         from app.services.files.previews import thumb_dir
         td = thumb_dir()
@@ -157,12 +219,25 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     task       = asyncio.create_task(_auto_cleanup_loop())
-    retry_task = asyncio.create_task(_db_retry_loop())
+    retry_task = asyncio.create_task(_db_retry_loop()) if RUN_STARTUP_MIGRATIONS else None
     log_task   = asyncio.create_task(flush_log_queue())
     yield
     task.cancel()
-    retry_task.cancel()
+    if retry_task is not None:
+        retry_task.cancel()
     log_task.cancel()
+    await asyncio.gather(
+        task, *( [retry_task] if retry_task is not None else [] ), log_task,
+        return_exceptions=True,
+    )
+    from agent.rag.injection import shutdown_background_recall_tasks
+    await _shutdown_step("RAG 自动召回任务", shutdown_background_recall_tasks)
+    await _shutdown_step("PTY", close_pty_manager)
+    from agent.rag.ts_sidecar import close_lexical_clients, close_rank_clients
+    await _shutdown_step("RAG lexical worker", close_lexical_clients)
+    await _shutdown_step("RAG rank worker", close_rank_clients)
+    from app.db.session import dispose_engine
+    await _shutdown_step("数据库连接池", dispose_engine)
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
@@ -185,13 +260,25 @@ app.add_middleware(
 @app.middleware("http")
 async def _security_headers(request: Request, call_next):
     """基础安全响应头。CSP 未加（Vue 内联样式/脚本易误伤，需单独调），先补低风险的几项。"""
-    resp = await call_next(request)
-    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
-    resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    # HSTS：仅 HTTPS 下浏览器生效，纯 HTTP 部署忽略之，带着无副作用
-    resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    return resp
+    from app.security.events import reset_request_context, set_request_context
+    forwarded = request.headers.get("X-Forwarded-For")
+    ip_address = forwarded.split(",")[0].strip() if forwarded else request.client.host if request.client else None
+    context_token = set_request_context({
+        "client_id": request.headers.get("X-Client-Id"),
+        "ip_address": ip_address,
+        "user_agent": request.headers.get("User-Agent"),
+        "metadata": {"source": "http", "client_type": request.headers.get("X-Client-Type")},
+    })
+    try:
+        resp = await call_next(request)
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        # HSTS：仅 HTTPS 下浏览器生效，纯 HTTP 部署忽略之，带着无副作用
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        return resp
+    finally:
+        reset_request_context(context_token)
 
 
 def require_admin(request: Request, credentials: HTTPAuthorizationCredentials = Depends(bearer)):
@@ -215,7 +302,7 @@ app.include_router(projects_router.router, prefix="/api/v1")
 app.include_router(files_router.router,    prefix="/api/v1")
 app.include_router(folders_router.router,  prefix="/api/v1")
 app.include_router(events_router.router,   prefix="/api/v1")
-app.include_router(live_router.router,      prefix="/api/v1")
+app.include_router(live_router.router,     prefix="/api/v1")
 app.include_router(clients_router.router,  prefix="/api/v1")
 app.include_router(trash_router.router,       prefix="/api/v1")
 app.include_router(agent_router.router,       prefix="/api/v1")
@@ -223,6 +310,8 @@ app.include_router(search_router.router,      prefix="/api/v1")
 app.include_router(mind_router.router,        prefix="/api/v1")
 app.include_router(track_router.router,       prefix="/api/v1")
 app.include_router(preferences_router.router, prefix="/api/v1")
+app.include_router(workspaces_router.router, prefix="/api/v1")
+app.include_router(terminals_router.router, prefix="/api/v1")
 app.include_router(scheduled_tasks_router.router, prefix="/api/v1")
 app.include_router(feedback_router.router,    prefix="/api/v1")
 # 飞书 OAuth 扫码绑定：bind/url + status + unbind 需用户登录；callback 是飞书重定向（靠 state 校验）
@@ -239,17 +328,17 @@ app.include_router(
     dependencies=[Depends(require_admin)],
 )
 app.include_router(
+    sandbox_admin.router,
+    prefix="/api/v1",
+    dependencies=[Depends(require_admin)],
+)
+app.include_router(
     agent_admin_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )
 app.include_router(
     agent_perception_router.router,
-    prefix="/api/v1",
-    dependencies=[Depends(require_admin)],
-)
-app.include_router(
-    invite_codes_router.router,
     prefix="/api/v1",
     dependencies=[Depends(require_admin)],
 )
@@ -304,6 +393,8 @@ app.include_router(
     dependencies=[Depends(require_admin)],
 )
 app.include_router(notifications_router.router, prefix="/api/v1")
+app.include_router(user_skills_router.router, prefix="/api/v1")
+app.include_router(byok_router.router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)

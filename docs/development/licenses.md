@@ -13,7 +13,7 @@ npm run licenses:generate
 
 脚本会生成：
 
-- `licenses/frontend.json`：从 `frontend/package-lock.json` 读取前端依赖。
+- `licenses/frontend.json`：从根 `pnpm-lock.yaml` 的 `frontend` workspace importer 读取前端依赖。
 - `licenses/backend.json`：从当前 `backend/.venv` 的 Python 包元数据读取后端依赖。
 - `licenses/manifest.json`：跨项目汇总索引。
 - `licenses/THIRD-PARTY-NOTICES.md`：可随发行物提供的声明清单。

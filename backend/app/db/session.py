@@ -44,14 +44,16 @@ def ensure_engine():
     `asyncio.run()`，或独立线程里 `asyncio.run()` 一次性任务）——如果当前运行的
     loop 跟引擎创建时绑定的 loop 不是同一个，池里缓存的 asyncpg 连接是绑在旧
     （可能已经关闭的）loop 上的，直接复用会报 "Event loop is closed"/"attached to
-    a different loop"。这种情况下丢弃旧引擎引用、重新建一个绑定当前 loop 的——
-    旧连接池不主动 dispose（旧 loop 通常已经不可用，没法在其上正常关闭），随旧
-    loop 一起被回收，只是不够优雅，不影响正确性。"""
-    global _engine, _SessionLocal
+    a different loop"。这种情况下会先安排旧连接池 dispose，再重建一个绑定当前
+    loop 的引擎，避免把仍持有连接的旧池直接交给垃圾回收。"""
+    global _engine, _SessionLocal, _engine_loop
     current = _current_loop()
     if _engine is not None and current is not None and _engine_loop is not None and current is not _engine_loop:
+        old_engine = _engine
         _engine = None
         _SessionLocal = None
+        _engine_loop = None
+        _schedule_dispose(old_engine)
     if _engine is None or _SessionLocal is None:
         _build_engine()
     return _engine
@@ -59,9 +61,46 @@ def ensure_engine():
 
 def reset_engine():
     """配置更新后调用，重建数据库连接池（无需重启服务）"""
-    global _engine, _SessionLocal
+    global _engine, _SessionLocal, _engine_loop
+    old_engine = _engine
     _engine = None
     _SessionLocal = None
+    _engine_loop = None
+    if old_engine is not None:
+        _schedule_dispose(old_engine)
+
+
+async def dispose_engine() -> None:
+    """在进程/事件循环关闭前显式释放共享连接池。"""
+    global _engine, _SessionLocal, _engine_loop
+    old_engine = _engine
+    _engine = None
+    _SessionLocal = None
+    _engine_loop = None
+    if old_engine is not None:
+        await old_engine.dispose()
+
+
+def _schedule_dispose(engine) -> None:
+    """安排旧连接池关闭，避免把仍持有连接的 engine 直接交给 GC。"""
+    async def _dispose() -> None:
+        try:
+            await engine.dispose()
+        except Exception:
+            # 重建连接池不能被旧池的清理异常阻断；SQLAlchemy 会继续负责
+            # 当前池的正常生命周期，旧池只需尽力关闭即可。
+            pass
+
+    loop = _current_loop()
+    if loop is not None and loop.is_running():
+        loop.create_task(_dispose())
+        return
+    try:
+        asyncio.run(_dispose())
+    except RuntimeError:
+        # 没有可用事件循环时无法异步关闭；常驻服务路径都会进入上面的
+        # create_task 分支，进程退出时由连接池/数据库连接负责最终清理。
+        pass
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -76,6 +115,9 @@ _MIGRATIONS = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS img_height INTEGER NULL",
     "ALTER TABLE conversation_messages ADD COLUMN IF NOT EXISTS content_json JSONB NULL",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS search_limit_daily INTEGER NULL",
+    "ALTER TABLE conversation_sessions ADD COLUMN IF NOT EXISTS workspace_id INTEGER NULL",
+    "CREATE INDEX IF NOT EXISTS ix_conversation_sessions_workspace_id ON conversation_sessions (workspace_id)",
+    "CREATE INDEX IF NOT EXISTS ix_knowledge_index_owner_source_time ON knowledge_index_entries (owner_user_id, source_type, indexed_at)",
     # 修复历史数据：_move_one 曾未同步 project_id，导致 file.project_id 与 folder.project_id 不一致
     """UPDATE files SET project_id = folders.project_id
        FROM folders

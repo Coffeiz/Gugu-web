@@ -71,7 +71,7 @@
 
 /* Mono keeps system-object cards solid/no-blur without requiring those cards to inherit the generic
    .glass-card class and its unrelated radius/transition/shadow ownership. */
-html[data-family='v2'] {
+html[data-family='mono'] {
   --mind-system-card-blur: none;
 }
 

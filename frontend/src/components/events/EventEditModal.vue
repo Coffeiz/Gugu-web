@@ -1,14 +1,13 @@
 <!-- 全局的活动编辑弹窗：笔记页、日历页和其他活动引用卡片共用。
      字段/提醒逻辑只有一份，页面只负责通过 eventModal store 打开活动。 -->
 <template>
-  <Transition name="form-pop">
-    <div v-if="show && isFloating" ref="floatingRef" class="eem-floating" :style="floatingStyle">
-      <EventFormPanel :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
-                      @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
-    </div>
-  </Transition>
+  <PopupMenu ref="floatingPopup" :show="show && isFloating" :style="floatingStyle" popup-class="eem-popup"
+             @after-leave="onFloatingLeave">
+    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+                    @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
+  </PopupMenu>
   <BaseModal v-if="!isFloating" :show="show" width="300px" background="var(--modal-card-bg)" @close="close">
-    <EventFormPanel :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
+    <EventFormPanel v-if="event" :event="event" :form="form" :is-past-date="isPastDate" show-delete autofocus
                     @save="onSave" @close="close" @delete="onDelete" @test-reminder="onTestReminder" />
   </BaseModal>
 </template>
@@ -16,6 +15,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { eventsApi } from '@/services/api'
 import { useEventModalStore } from '@/stores/eventModal'
 import { useLiveStore } from '@/stores/live'
@@ -31,6 +31,8 @@ const event = ref<EditingEvent | null>(null)
 // 提醒数据，再让 BaseModal 入场，避免用户看到空壳闪一下后才替换成编辑表单。
 const show = computed(() => eventModalStore.openEventId != null && event.value != null)
 const isFloating = computed(() => eventModalStore.floating && eventModalStore.floatingPosition != null)
+// 浮动编辑窗关闭时保留表单内容，直到 PopupMenu 的离场过渡结束，避免宿主高度先塌成扁条。
+const floatingLeaving = ref(false)
 const floatingTop = ref<number | null>(null)
 const floatingStyle = computed(() => {
   const position = eventModalStore.floatingPosition
@@ -42,7 +44,7 @@ const floatingStyle = computed(() => {
     zIndex: 2100,
   } : {}
 })
-const floatingRef = ref<HTMLElement | null>(null)
+const floatingPopup = ref<InstanceType<typeof PopupMenu> | null>(null)
 let clampRaf = 0
 
 const todayIso = () => {
@@ -71,11 +73,29 @@ async function load(id: number) {
 
 watch(() => eventModalStore.openEventId, (id) => {
   floatingTop.value = null
-  if (id != null) load(id)
-  else event.value = null
+  if (id != null) {
+    floatingLeaving.value = false
+    load(id)
+  } else {
+    // 活动胶囊再次点击会直接调用 store.closeModal，而不是经过本组件的 close()。
+    // 此时 store 已同步清掉 floating 标记；通过宿主仍可见来识别这条路径，
+    // 保留表单直到离场过渡完成，避免宿主高度塌成 10px。
+    const popupElement = floatingPopup.value?.element()
+    const popupStillVisible = !!popupElement && getComputedStyle(popupElement).display !== 'none'
+    if (event.value && popupStillVisible) floatingLeaving.value = true
+    if (!floatingLeaving.value) event.value = null
+  }
 })
 
-function close() { eventModalStore.closeModal() }
+function close() {
+  if (isFloating.value && event.value) floatingLeaving.value = true
+  eventModalStore.closeModal()
+}
+
+function onFloatingLeave() {
+  floatingLeaving.value = false
+  if (eventModalStore.openEventId == null) event.value = null
+}
 
 function onFloatingOutsideClick(event: MouseEvent) {
   if (!isFloating.value || !show.value) return
@@ -83,17 +103,23 @@ function onFloatingOutsideClick(event: MouseEvent) {
   // DatePicker/DateSpanPicker 都 Teleport 到 body，它们不是浮动编辑窗的 DOM 子节点，
   // 但属于当前编辑窗的交互范围，不能被 capture 阶段的 outside-click 误关。
   if (target.closest('.dp-popup, .drp-popup')) return
-  if (!floatingRef.value?.contains(target)) close()
+  // 活动胶囊自身会负责“再次点击关闭 / 点击其他活动切换”；捕获阶段不能先把
+  // store 清空，否则胶囊 click 处理器会把同一活动重新打开，触发一次假离场再入场。
+  if (target.closest('.chip-ev-click, .chip-ev-tag, .event-pill, .calendar-event, .cal-event')) return
+  // “更多”活动列表同样是活动触发器：点击同一活动时交给 openEditForm
+  // 做 toggle，不能被浮窗的 outside 捕获监听提前关闭后又重新打开。
+  if (target.closest('.overflow-popup, .overflow-item')) return
+  if (!floatingPopup.value?.contains(target)) close()
 }
 
 function clampFloatingIntoView() {
   cancelAnimationFrame(clampRaf)
   clampRaf = requestAnimationFrame(async () => {
     await nextTick()
-    if (!isFloating.value || !show.value || !floatingRef.value) return
+    if (!isFloating.value || !show.value || !floatingPopup.value) return
     const position = eventModalStore.floatingPosition
     if (!position) return
-    const height = floatingRef.value.getBoundingClientRect().height
+    const height = floatingPopup.value.element()?.getBoundingClientRect().height || 0
     const safeGap = 12
     const maxTop = Math.max(safeGap, window.innerHeight - height - safeGap)
     const top = Math.min(Math.max(position.top, safeGap), maxTop)
@@ -148,20 +174,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.eem-floating {
+:global(.popup-menu-host.eem-popup) {
   position: fixed; box-sizing: border-box; max-height: calc(100vh - 24px); overflow-y: auto; overscroll-behavior: contain;
-  color: var(--content-primary); background: var(--popup-surface-bg);
-  backdrop-filter: var(--popup-surface-blur); -webkit-backdrop-filter: var(--popup-surface-blur);
-  border: 1px solid var(--popup-surface-border); border-radius: var(--radius-lg);
-  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  color: var(--content-primary); border-radius: var(--event-popup-radius);
 }
-.form-pop-enter-active {
-  transition: opacity var(--popup-enter-duration) var(--popup-enter-easing),
-              transform var(--popup-enter-duration) var(--popup-enter-easing);
-}
-.form-pop-leave-active {
-  transition: opacity var(--popup-leave-duration) var(--popup-leave-easing),
-              transform var(--popup-leave-duration) var(--popup-leave-easing);
-}
-.form-pop-enter-from, .form-pop-leave-to { opacity: 0; transform: scale(.96) translateY(-2px); }
 </style>

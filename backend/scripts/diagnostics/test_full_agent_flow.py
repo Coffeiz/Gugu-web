@@ -6,6 +6,7 @@
 """
 
 import asyncio
+import argparse
 import json
 import sys
 import traceback
@@ -96,7 +97,7 @@ async def test_full_agent_canvas_creation():
         # === 步骤 5: 准备工具列表 ===
         tracer.log("准备工具列表")
 
-        tool_names = ["mind_create_canvas", "mind_list_canvases"]
+        tool_names = ["canvas_create", "canvas_list"]
         tracer.log("工具列表准备完成", f"工具: {', '.join(tool_names)}")
 
         # === 步骤 6: 准备 AI 配置 ===
@@ -344,7 +345,20 @@ async def main():
         traceback.print_exc()
 
 
+def _parse_args():
+    parser = argparse.ArgumentParser(description="运行会写入真实数据库/存储的 Agent 全流程诊断")
+    parser.add_argument(
+        "--allow-real-data",
+        action="store_true",
+        help="明确允许该诊断使用当前配置的真实数据库和存储（默认拒绝）",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
+    if not _parse_args().allow_real_data:
+        print("为避免污染真实用户数据，该诊断默认拒绝运行；需要时显式传入 --allow-real-data")
+        raise SystemExit(2)
     print("🚀 完整 Agent 链路测试")
     print("=" * 70)
     print("测试目标：精确定位 ValueError 在哪个环节发生")

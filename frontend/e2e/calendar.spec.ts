@@ -70,12 +70,21 @@ test('浮动活动编辑窗内选择日期不会被 Teleport 弹层误关', asyn
   expect(created.ok).toBeTruthy()
 
   try {
-    await page.goto('/calendar')
+    await page.reload()
     await expect(page.locator('.month-body')).toBeVisible()
 
-    const chip = page.locator('.event-chip.chip-ev-click').filter({ hasText: title })
-    await expect(chip).toBeVisible()
-    await chip.click()
+    const cell = page.locator(`.month-cell[data-iso="${initialDate}"]`)
+    const chip = cell.locator('.event-chip.chip-ev-click').filter({ hasText: title })
+    if (await chip.count() === 0) {
+      // 月视图容量有限，活动可能被收进「更多」弹层；测试行为本身不应依赖
+      // 该日期当前是否已经有其它项目/活动占满可见槽位。
+      await cell.locator('.chip-more-btn').click()
+      await expect(page.locator('.overflow-item').filter({ hasText: title })).toBeVisible()
+      await page.locator('.overflow-item').filter({ hasText: title }).click()
+    } else {
+      await expect(chip).toBeVisible()
+      await chip.click()
+    }
 
     const editModal = page.locator('.eem-floating')
     await expect(editModal).toBeVisible()

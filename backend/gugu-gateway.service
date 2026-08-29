@@ -1,0 +1,36 @@
+[Unit]
+Description=Gugu IM Gateway (拉起并看管飞书/QQ 网关子进程)
+After=network.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+# venv bin 优先、后面接完整系统路径——只给 venv bin 会让 subprocess 调用系统命令时报 FileNotFoundError
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# 网关子进程继承 Rootless Docker socket，保持 Shell 执行后端一致
+Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
+Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+Environment="DB_STARTUP_TIMEOUT=10"
+# gateway 拉起的 QQ/飞书/微信网关继承此变量，保证网关生成的 trace_id 能进入 worker
+Environment="LOOPSCOPE_ENABLED=1"
+Environment="LOOPSCOPE_ENDPOINT=http://127.0.0.1:4320"
+ExecStart=__APP_DIR__/.venv/bin/python -m agent.gateway.gateway
+# 网关管家，死了连带网关一起没，必须自动拉起
+Restart=always
+RestartSec=3
+# 重启时连带清掉它 spawn 的网关子进程（同 cgroup），再由新进程统一拉起
+KillMode=control-group
+
+# 写进 Debug 面板读的日志文件（而非 journal），让后台「Debug 实时日志」能 tail 到
+StandardOutput=append:__APP_DIR__/logs/gugu-gateway.log
+StandardError=append:__APP_DIR__/logs/gugu-gateway.log
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs __APP_DIR__/var/rag-index __APP_DIR__/config.override.json
+
+[Install]
+WantedBy=multi-user.target

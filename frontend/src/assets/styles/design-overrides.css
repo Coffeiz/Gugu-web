@@ -56,16 +56,16 @@ html[data-theme][data-family] .design-page .state-badge::after { font-size:var(-
 html[data-theme][data-family] .design-page .theme-cell strong::after { font-size:var(--font-size-sm); }
 html[data-theme][data-family] .design-page .glass-light strong::after { content:'Aero Light'; }
 html[data-theme][data-family] .design-page .glass-dark strong::after { content:'Aero Dark'; }
-html[data-theme][data-family] .design-page .v2-light strong::after { content:'Mono Light'; }
-html[data-theme][data-family] .design-page .v2-dark strong::after { content:'Mono Dark'; }
+html[data-theme][data-family] .design-page .mono-light strong::after { content:'Mono Light'; }
+html[data-theme][data-family] .design-page .mono-dark strong::after { content:'Mono Dark'; }
 html[data-theme][data-family] .design-page .glass-light small::after { content:'轻透玻璃'; }
 html[data-theme][data-family] .design-page .glass-dark small::after { content:'低亮度透明层'; }
-html[data-theme][data-family] .design-page .v2-light small::after { content:'安静实体表面'; }
-html[data-theme][data-family] .design-page .v2-dark small::after { content:'低拟态深色实体'; }
+html[data-theme][data-family] .design-page .mono-light small::after { content:'安静实体表面'; }
+html[data-theme][data-family] .design-page .mono-dark small::after { content:'低拟态深色实体'; }
 html[data-family='glass'][data-theme='light'] .design-page .state-badge::after { content:'AERO · LIGHT'; }
 html[data-family='glass'][data-theme='dark'] .design-page .state-badge::after { content:'AERO · DARK'; }
-html[data-family='v2'][data-theme='light'] .design-page .state-badge::after { content:'MONO · LIGHT'; }
-html[data-family='v2'][data-theme='dark'] .design-page .state-badge::after { content:'MONO · DARK'; }
+html[data-family='mono'][data-theme='light'] .design-page .state-badge::after { content:'MONO · LIGHT'; }
+html[data-family='mono'][data-theme='dark'] .design-page .state-badge::after { content:'MONO · DARK'; }
 
 html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p { font-size:0; }
 html[data-theme][data-family] .design-page .subsection:has(.compact-colors) .subheading p::after {
@@ -103,29 +103,10 @@ html[data-theme][data-family] .design-page .sample-board {
 html[data-theme][data-family] .design-page .project-column { padding:12px 10px; }
 html[data-theme][data-family] .design-page .project-column:nth-child(3) { display:none; }
 
-html[data-theme][data-family] .design-page .sample-topbar {
-  border-color:var(--topbar-border);
-  background:var(--topbar-bg);
-  box-shadow:var(--topbar-shadow);
-}
-html[data-theme][data-family] .design-page .sample-topbar:hover {
-  background:var(--topbar-bg-hover);
-  box-shadow:var(--topbar-shadow-hover);
-}
-html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-primary {
-  color:var(--content-on-accent);
-  background:var(--brand-gradient);
-  box-shadow:var(--elevation-card);
-}
-html[data-theme][data-family] .design-page .sample-main > .sample-topbar .sample-ghost {
-  color:var(--content-secondary);
-  background:color-mix(in srgb,var(--control-bg) 86%,transparent);
-  border-color:var(--control-border);
-  box-shadow:inset 0 1px 0 var(--highlight-muted);
-}
-
-html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:70; }
-html[data-theme][data-family] .design-page .sample-gugu-fab { z-index:69; }
+/* Design page hero must remain above the product preview's floating controls;
+   keep the chat mock above the preview topbar without escaping the page layer. */
+html[data-theme][data-family] .design-page .gugu-chat-mock { z-index:40; }
+html[data-theme][data-family] .design-page .sample-gugu-fab { z-index:39; }
 
 html[data-theme][data-family] .design-page .add-project {
   width:100%;
@@ -184,12 +165,6 @@ html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scroll
   background:transparent;
   margin-block:var(--scrollbar-safe-inset);
 }
-html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb {
-  background:var(--scrollbar-thumb);
-  border-radius:var(--radius-pill);
-}
-html[data-theme][data-family] .design-page .scrollbar-style-card::-webkit-scrollbar-thumb:hover { background:var(--scrollbar-thumb-hover); }
-
 @media(max-width:900px) {
   html[data-theme][data-family] .design-page .scrollbar-style-grid { grid-template-columns:1fr; }
   html[data-theme][data-family] .design-page .sample-board { grid-template-columns:repeat(3,220px); overflow-x:auto; }

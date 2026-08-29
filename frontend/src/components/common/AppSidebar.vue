@@ -1,30 +1,25 @@
 <template>
   <aside class="sidebar">
-    <div class="logo">
-      <div class="logo-icon">
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M16 7h.01"/><path d="M3.4 18H12a8 8 0 0 0 8-8V7a4 4 0 0 0-7.28-2.3L2 20"/><path d="M20 7l2 .5-2 .5"/><path d="M10 18v3"/><path d="M14 17.75V21"/><path d="M7 18a6 6 0 0 0 3.84-10.61"/>
-        </svg>
-      </div>
-      <span class="logo-text">咕咕</span>
-    </div>
+    <Brand />
 
     <nav class="nav">
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">工作台</span>
-        <NavItem to="/projects" :icon="PhStack">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
-        <NavItem to="/calendar" :icon="PhCalendarBlank">日历</NavItem>
-        <NavItem to="/mind" :icon="PhGraph">思维</NavItem>
-        <NavItem to="/schedules" :icon="PhAlarm">定时任务</NavItem>
+        <NavItem to="/projects" icon="navigation.projects">项目<template #badge>{{ projectStore.activeCount }}</template></NavItem>
+        <NavItem to="/calendar" icon="navigation.calendar">日历</NavItem>
+        <NavItem to="/mind" icon="canvas.note">思维</NavItem>
+        <NavItem to="/schedules" icon="admin.alarm">定时任务</NavItem>
       </div>
 
       <div class="nav-divider"></div>
       <div class="nav-section">
         <span class="nav-label">资源</span>
-        <NavItem to="/files" :icon="PhFolder">文件库</NavItem>
-        <div class="nav-item soon-item"><PhAddressBook class="nav-icon" :size="15" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
-        <div class="nav-item soon-item"><PhUsersThree class="nav-icon" :size="15" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
+        <NavItem to="/files" icon="file.folder">文件库</NavItem>
+        <NavItem v-if="terminalVisible" to="/terminals" icon="admin.terminal">终端</NavItem>
+        <NavItem to="/skills" icon="resource.skill">技能</NavItem>
+        <div class="nav-item soon-item"><Icon name="communication.customer" class="nav-icon" size="sm" /><span class="nav-label-text">客户</span><span class="soon-badge">咕了</span></div>
+        <div class="nav-item soon-item"><Icon name="communication.team" class="nav-icon" size="sm" /><span class="nav-label-text">团队</span><span class="soon-badge">咕了</span></div>
       </div>
 
       <div class="nav-divider"></div>
@@ -32,13 +27,13 @@
         <span class="nav-label">通知</span>
         <div class="notif-anchor" ref="notifBtnRef">
           <button class="nav-item notif-btn" :class="{ 'notif-active': notifOpen }" @click.stop="toggleNotif">
-            <PhBell class="nav-icon" :size="14" weight="bold" /><span class="nav-label-text">通知</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
+            <Icon name="admin.bell" class="nav-icon" size="sm" tone="inherit" /><span class="nav-label-text">通知</span><span v-if="uiStore.notifCount" class="badge">{{ uiStore.notifCount }}</span>
           </button>
         </div>
       </div>
     </nav>
 
-    <div class="user-card" :class="{ open: settingsOpen }" @click.stop="settingsOpen = !settingsOpen">
+    <div ref="userCardRef" class="user-card" :class="{ open: settingsOpen }" @click.stop="toggleSettings">
       <div class="avatar"><img v-if="authStore.user?.avatarUrl" :src="authStore.user.avatarUrl" class="avatar-img" /><template v-else>{{ userInitial }}</template></div>
       <div class="user-info"><div class="user-name">{{ userLabel }}</div></div>
       <div class="theme-mode-quick" role="group" aria-label="主题模式" @click.stop>
@@ -47,24 +42,24 @@
           aria-label="切换主题模式"
           :aria-pressed="true"
           @click="cycleTheme"
-        ><PhDesktop v-if="preference === 'system'" :size="13" weight="bold" /><PhSun v-else-if="resolved === 'light'" :size="13" weight="bold" /><PhMoon v-else :size="13" weight="bold" /></button>
+        ><Icon v-if="preference === 'system'" name="theme.system" size="sm" tone="inherit" /><Icon v-else-if="resolved === 'light'" name="theme.light" size="sm" tone="inherit" /><Icon v-else name="theme.dark" size="sm" tone="inherit" /></button>
       </div>
 
-      <Transition name="popup">
-        <div v-if="settingsOpen" class="settings-popup" @click.stop>
-          <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><PhFlag :size="13" weight="bold" />提交反馈</button>
-          <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><PhUser :size="13" weight="bold" />个人设置</button>
-          <div class="settings-menu-sep"></div>
-          <button class="settings-menu-item danger" @click="handleLogout"><PhSignOut :size="13" weight="bold" />退出登录</button>
-        </div>
-      </Transition>
     </div>
   </aside>
 
   <FeedbackModal :show="feedbackOpen" @close="feedbackOpen = false" />
 
   <Teleport to="body">
+    <Transition name="popup">
+      <div v-if="settingsOpen" class="settings-popup" :style="settingsStyle" @click.stop>
+        <button class="settings-menu-item" @click="feedbackOpen = true; settingsOpen = false"><Icon name="status.info" size="sm" tone="inherit" />提交反馈</button>
+        <div class="settings-menu-sep"></div>
+        <button class="settings-menu-item" @click="uiStore.openProfile = true; settingsOpen = false"><Icon name="user.default" size="sm" tone="inherit" />个人设置</button>
+        <div class="settings-menu-sep"></div>
+        <button class="settings-menu-item danger" @click="handleLogout"><Icon name="user.sign-out" size="sm" tone="inherit" />退出登录</button>
+      </div>
+    </Transition>
     <Transition name="notif-pop">
       <div v-if="notifOpen" class="notif-popup" ref="notifPopupRef" :style="notifStyle" @click.stop>
         <div class="notif-header"><span class="notif-title">通知</span><button class="notif-mark-all" @click="markAllRead">全部已读</button></div>
@@ -90,11 +85,10 @@ import { useUiStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { useTheme } from '@/composables/useTheme'
 import NavItem from './NavItem.vue'
-import {
-  PhStack, PhCalendarBlank, PhAlarm, PhGraph, PhFolder, PhAddressBook, PhUsersThree,
-  PhBell, PhUser, PhSignOut, PhFlag, PhSun, PhMoon, PhDesktop,
-} from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
 import FeedbackModal from './FeedbackModal.vue'
+import Brand from './Brand.vue'
+import { workspacesApi } from '@/services/api'
 
 const router = useRouter()
 const projectStore = useProjectStore()
@@ -109,6 +103,7 @@ const themeModeTitle = computed(() => preference.value === 'system'
   ? `当前显示：${currentModeLabel.value}（跟随系统）`
   : `当前显示：${currentModeLabel.value}，点击切换`)
 const feedbackOpen = ref(false)
+const terminalVisible = ref(false)
 
 function cycleTheme() {
   setTheme(preference.value === 'light' ? 'dark' : preference.value === 'dark' ? 'system' : 'light')
@@ -116,12 +111,41 @@ function cycleTheme() {
 
 function handleLogout() { authStore.logout(); router.push('/login') }
 
+async function refreshTerminalVisibility() {
+  try {
+    const status = await workspacesApi.status()
+    terminalVisible.value = status.globalEnabled && (status.userEnabled || status.userSystemEnabled)
+  } catch {
+    terminalVisible.value = false
+  }
+}
+
 const settingsOpen = ref(false)
+const userCardRef = ref<HTMLElement | null>(null)
+const settingsStyle = ref<Record<string, string>>({})
 const notifOpen = ref(false)
 const notifBtnRef = ref<HTMLElement | null>(null)
 const notifPopupRef = ref<HTMLElement | null>(null)
 const notifStyle = ref({})
 const notifications = computed(() => uiStore.notifications)
+
+function updateSettingsPosition() {
+  if (!settingsOpen.value) return
+  const rect = userCardRef.value?.getBoundingClientRect()
+  if (!rect) return
+  settingsStyle.value = {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    bottom: `${window.innerHeight - rect.top + 8}px`,
+    width: `${rect.width}px`,
+    zIndex: '1000',
+  }
+}
+
+function toggleSettings() {
+  settingsOpen.value = !settingsOpen.value
+  if (settingsOpen.value) nextTick(updateSettingsPosition)
+}
 
 function toggleNotif() {
   if (notifOpen.value) { notifOpen.value = false; return }
@@ -143,14 +167,22 @@ function closeAll(e: MouseEvent) {
   if (notifPopupRef.value && !notifPopupRef.value.contains(e?.target as Node) && !notifBtnRef.value?.contains(e?.target as Node)) notifOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeAll))
-onUnmounted(() => document.removeEventListener('click', closeAll))
+onMounted(() => {
+  refreshTerminalVisibility()
+  window.addEventListener('focus', refreshTerminalVisibility)
+  window.addEventListener('resize', updateSettingsPosition)
+  window.addEventListener('scroll', updateSettingsPosition, true)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', closeAll)
+  window.removeEventListener('focus', refreshTerminalVisibility)
+  window.removeEventListener('resize', updateSettingsPosition)
+  window.removeEventListener('scroll', updateSettingsPosition, true)
+})
 </script>
 
 <style scoped>
-.sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:24px 14px; position:relative; z-index:40; }
-.logo { display:flex; align-items:center; justify-content:center; gap:10px; padding:0 8px; margin-bottom:20px; }
-.logo-icon { width:34px; height:34px; border-radius:10px; background:linear-gradient(135deg,#7b7fb2,#c4afc8); display:flex; align-items:center; justify-content:center; color:white; box-shadow:inset 0 1px 0 rgba(255,255,255,.4); }
-.logo-text { font-size:16px; font-weight:700; }
+.sidebar { width:var(--sidebar-width); height:100vh; flex-shrink:0; background:rgba(255,255,255,.42); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border-right:1px solid rgba(255,255,255,.62); box-shadow:inset -1px 0 0 rgba(255,255,255,.65); display:flex; flex-direction:column; padding:16px 14px; position:relative; z-index:40; }
 .nav { flex:1; display:flex; flex-direction:column; gap:2px; overflow-y:auto; margin-right:-14px; padding-right:14px; scrollbar-gutter:auto; }
 .nav-section { display:flex; flex-direction:column; gap:2px; }
 .nav-divider { height:1px; background:var(--divider-line); margin:6px 4px; flex-shrink:0; }
@@ -158,7 +190,6 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .notif-anchor { position:relative; }
 .notif-btn { width:100%; display:flex; align-items:center; gap:9px; padding:10px 12px; border-radius:var(--radius-sm); font-size:14px; font-family:var(--font-sans); color:#767980; background:none; border:1px solid transparent; cursor:pointer; text-align:left; transition:all .15s; }
 .notif-btn:hover { background:rgba(123,127,178,.08); color:var(--text-primary); }
-.notif-btn.notif-active { background:rgba(255,255,255,.38); color:#6b6fa0; font-weight:700; border-color:rgba(255,255,255,.62); box-shadow:inset 0 1px 0 rgba(255,255,255,.85); }
 .nav-icon { flex-shrink:0; }.nav-label-text { flex:1; }.badge { background:rgba(123,127,178,.42); color:white; font-size:10px; font-weight:700; padding:1px 6px; border-radius:20px; min-width:18px; text-align:center; }
 .user-card { position:relative; display:flex; align-items:center; gap:8px; padding:8px; border-radius:var(--radius-md); background:rgba(255,255,255,.44); border:1px solid rgba(255,255,255,.72); box-shadow:inset 0 1px 0 rgba(255,255,255,.95); cursor:pointer; transition:background .15s; margin-top:auto; }
 .user-card:hover { background:rgba(255,255,255,.38); }
@@ -168,44 +199,46 @@ onUnmounted(() => document.removeEventListener('click', closeAll))
 .theme-mode-quick button { width:22px; height:22px; display:grid; place-items:center; border:0; border-radius:var(--radius-xs); color:var(--content-tertiary); background:transparent; cursor:pointer; transition:color var(--motion-hover-control) var(--motion-ease-standard),background-color var(--motion-hover-control) var(--motion-ease-standard),box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .theme-mode-quick button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .theme-mode-quick button.current { color:var(--selection-fg); }
-.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
+.theme-mode-quick button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:none; }
 /* settings-popup 保留原来的纯 translateY 淡入淡出；不要交给通用 popup scale cadence。 */
 .popup-enter-active,.popup-leave-active { transition:opacity .15s,transform .15s; }.popup-enter-from,.popup-leave-to { opacity:0; transform:translateY(6px); }
 .soon-item { width:100%; display:flex; align-items:center; gap:9px; padding:9px 10px; border-radius:var(--radius-sm); font-size:13px; font-family:var(--font-sans); color:rgba(30,32,40,.28); border:1px solid transparent; cursor:default; pointer-events:none; }.soon-badge { margin-left:auto; font-size:9px; font-weight:600; letter-spacing:.04em; color:rgba(30,32,40,.22); background:rgba(0,0,0,.06); padding:2px 7px; border-radius:20px; flex-shrink:0; }
 </style>
 
 <style>
-/* Settings menu is not a generic popup-menu. It keeps the historical Aero geometry/paint exactly,
-   while theme-refinements.css only remaps --settings-popup-* values for dark/Mono. This makes the
-   component the single final-paint owner and prevents generic danger:hover from stacking underneath. */
+/* Settings menu is not a generic popup-menu. It keeps its own geometry/paint contract while using
+   the shared popup blur and theme-refinements.css only remaps --settings-popup-* values. */
 .settings-popup {
-  position:absolute; bottom:calc(100% + 8px); left:0; right:0; z-index:100; overflow:hidden;
+  position:fixed; overflow:hidden; box-sizing:border-box;
   background:var(--settings-popup-bg,rgba(255,255,255,.44));
   border:1px solid var(--settings-popup-border,rgba(255,255,255,.72));
   border-radius:var(--radius-md);
   box-shadow:var(--settings-popup-shadow,inset 0 1px 0 rgba(255,255,255,.95),0 4px 16px rgba(0,0,0,.08));
+  backdrop-filter:var(--popup-surface-blur); -webkit-backdrop-filter:var(--popup-surface-blur);
   user-select:none;
 }
 .settings-popup .settings-menu-item {
   position:relative; z-index:0;
   display:flex; align-items:center; gap:8px; width:100%;
   padding:9px 12px; border:none; background:transparent; border-radius:0;
-  font-size:13px; font-family:'PingFang SC','Segoe UI',sans-serif;
+  font-size:13px; font-family:var(--font-family-ui);
   color:var(--settings-popup-item-fg,#1e2028); cursor:pointer; text-align:left; white-space:nowrap;
 }
 .settings-popup .settings-menu-item::before {
   content:''; position:absolute; z-index:-1; inset:-3px 0;
   background:var(--settings-popup-hover-bg,rgba(255,255,255,.55));
-  opacity:0; pointer-events:none; transition:opacity .15s ease;
+  opacity:0; pointer-events:auto; transition:opacity .15s ease;
 }
 .settings-popup .settings-menu-item:hover:not(:disabled) { background:transparent; }
 .settings-popup .settings-menu-item:hover:not(:disabled)::before { opacity:1; }
 .settings-popup .settings-menu-item.danger { color:var(--settings-popup-danger,#c84a4a); }
-.settings-popup .settings-menu-item.danger:hover:not(:disabled)::before { background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1)); }
-.settings-popup .settings-menu-sep { height:1px; background:var(--settings-popup-divider,rgba(0,0,0,.06)); margin:3px 0; }
+.settings-popup .settings-menu-item.danger:hover:not(:disabled) { background:transparent; }
+.settings-popup .settings-menu-item.danger::before { background:var(--settings-popup-danger-hover-bg,rgba(200,90,90,.1)); opacity:0; transition:opacity .15s ease; }
+.settings-popup .settings-menu-item.danger:hover:not(:disabled)::before { opacity:1; }
+.settings-popup .settings-menu-sep { height:1px; background:var(--settings-popup-divider,rgba(0,0,0,.06)); margin:3px 0; pointer-events:none; }
 
 .notif-popup { background:rgba(255,255,255,.6); backdrop-filter:var(--popup-blur); -webkit-backdrop-filter:var(--popup-blur); border:1px solid rgba(255,255,255,.75); border-radius:10px; box-shadow:0 4px 20px rgba(0,0,0,.1); overflow:hidden; display:flex; flex-direction:column; }
-.notif-header { display:flex; align-items:center; justify-content:space-between; padding:13px 14px 10px; border-bottom:1px solid rgba(0,0,0,.06); }.notif-title { font-size:13px; font-weight:700; color:#1e2028; }.notif-mark-all { font-size:11px; font-weight:500; color:var(--text-secondary); background:none; border:none; cursor:pointer; font-family:'PingFang SC','Segoe UI',sans-serif; padding:2px 6px; border-radius:6px; transition:background .12s; }.notif-mark-all:hover { background:rgba(123,127,178,.1); }
+.notif-header { display:flex; align-items:center; justify-content:space-between; padding:13px 14px 10px; border-bottom:1px solid rgba(0,0,0,.06); }.notif-title { font-size:13px; font-weight:700; color:#1e2028; }.notif-mark-all { font-size:11px; font-weight:500; color:var(--text-secondary); background:none; border:none; cursor:pointer; font-family:var(--font-family-ui); padding:2px 6px; border-radius:6px; transition:background .12s; }.notif-mark-all:hover { background:rgba(123,127,178,.1); }
 .notif-list { padding:6px; display:flex; flex-direction:column; gap:2px; flex:1; min-height:0; overflow-y:auto; }.notif-item { display:flex; align-items:flex-start; gap:10px; padding:9px 10px; border-radius:10px; cursor:pointer; transition:background .12s; position:relative; }.notif-item:hover { background:rgba(123,127,178,.07); }.notif-item.unread { background:rgba(123,127,178,.05); }.notif-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; margin-top:4px; opacity:.8; }.notif-body { flex:1; min-width:0; }.notif-msg { font-size:12px; font-weight:500; color:#1e2028; line-height:1.4; }.notif-item.unread .notif-msg { font-weight:600; }.notif-meta { font-size:11px; color:#8a8fa8; margin-top:3px; line-height:1.55; word-break:break-word; overflow-wrap:break-word; }.notif-meta.as-title { color:#1e2028; font-size:12px; margin-top:0; }.notif-badge { width:7px; height:7px; border-radius:50%; background:#7b7fb2; flex-shrink:0; margin-top:5px; }.notif-empty { padding:24px; text-align:center; font-size:12px; color:#8a8fa8; }
 .notif-pop-enter-active { transition:opacity .16s,transform .18s cubic-bezier(.34,1.2,.64,1); }.notif-pop-leave-active { transition:opacity .12s,transform .12s ease-in; }.notif-pop-enter-from { opacity:0; transform:translateX(-8px) scale(.97); }.notif-pop-leave-to { opacity:0; transform:translateX(-6px) scale(.97); }
 </style>

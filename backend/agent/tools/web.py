@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from urllib.parse import urlparse
+from mimetypes import guess_extension
+from pathlib import PurePosixPath
+from urllib.parse import unquote, urlparse
 
 import httpcore
 import httpx
@@ -25,12 +27,15 @@ import httpx
 from agent.tools.base import BaseSkill, Tool
 from app.core.redaction import diag_log, redact
 from app.core.url_security import resolve_pinned_ip
+from app.services.files.browser import get_user_folder
+from app.services.storage.file_service import FileService
 
 _log = logging.getLogger("agent.tools.web")
 
 _MAX_BODY = 4000          # 默认返回字符数（模型可通过 max_chars 参数调整）
 _MAX_BODY_HARD = 40000    # 硬上限：即使模型请求更多也不超过此值（~10k tokens，不撑爆上下文）
 _MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024
+_MAX_FILE_DOWNLOAD_BYTES = 50 * 1024 * 1024
 _ALLOW_HOSTS: set[str] = set()   # 非空时只放行这些主机；空 = 放行所有公网
 _MIN_EXTRACTED = 100    # trafilatura 提取结果短于此视为「没读到正文」（空页/错误页/纯 JS 渲染）
 
@@ -100,15 +105,11 @@ def _looks_like_html(text: str) -> bool:
     return head.startswith("<!doctype html") or head.startswith("<html")
 
 
-async def _http_get(db, user_id, args: dict):
-    url = (args.get("url") or "").strip()
+async def _http_get_one(db, user_id, url: str, max_chars: int):
+    """执行一个 URL 请求；批量入口也必须复用这条安全和解析链路。"""
+    url = (url or "").strip()
     if not url:
         return {"error": "缺少 url"}
-    # 允许模型按需调整返回字符数，默认 4000，硬上限 20000
-    max_chars = _MAX_BODY
-    req_limit = args.get("max_chars")
-    if isinstance(req_limit, int) and req_limit > 0:
-        max_chars = min(req_limit, _MAX_BODY_HARD)
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     p = urlparse(url)
@@ -194,28 +195,245 @@ async def _http_get(db, user_id, args: dict):
     }
 
 
+async def _http_get(db, user_id, args: dict):
+    """兼容单 URL，并在同一工具调用内并行获取最多 5 个 URL。"""
+    req_limit = args.get("max_chars")
+    max_chars = _MAX_BODY
+    if isinstance(req_limit, int) and req_limit > 0:
+        max_chars = min(req_limit, _MAX_BODY_HARD)
+
+    urls = args.get("urls")
+    if urls is not None:
+        if not isinstance(urls, list) or not urls:
+            return {"error": "urls 必须是非空数组"}
+        if len(urls) > 5:
+            return {"error": "单次最多并行请求 5 个 URL"}
+        if any(not isinstance(url, str) or not url.strip() for url in urls):
+            return {"error": "urls 中每个元素都必须是非空字符串"}
+        results = await asyncio.gather(*(
+            _http_get_one(db, user_id, url, max_chars) for url in urls
+        ), return_exceptions=True)
+        normalized = []
+        for result in results:
+            if isinstance(result, Exception):
+                normalized.append({"error": f"请求失败：{type(result).__name__}"})
+            else:
+                normalized.append(result)
+        return {"results": normalized}
+
+    url = args.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return {"error": "缺少 url 或 urls"}
+    return await _http_get_one(db, user_id, url, max_chars)
+
+
+def _download_filename(value: str | None, url: str, content_type: str) -> tuple[str, str]:
+    """把用户/URL 提供的文件名拆成 FileService 所需的 name + ext。"""
+    raw = (value or "").strip()
+    if not raw:
+        raw = PurePosixPath(unquote(urlparse(url).path)).name
+    raw = raw.replace("\\", "/").rstrip("/").split("/")[-1].strip()
+    raw = "".join(ch for ch in raw if ch >= " " and ch not in '<>:"|?*')
+    if not raw or raw in {".", ".."}:
+        raw = "download"
+
+    suffix = PurePosixPath(raw).suffix.lower().lstrip(".")
+    if suffix and len(suffix) <= 20 and suffix.replace("-", "").replace("_", "").isalnum():
+        return raw[: -len(suffix) - 1] or "download", suffix
+
+    inferred = (guess_extension(content_type, strict=False) or ".bin").lstrip(".")
+    return raw, inferred[:20] or "bin"
+
+
+def _content_disposition_name(value: str | None) -> str | None:
+    if not value:
+        return None
+    # 兼容常见的 filename / filename*=UTF-8'' 两种形式；只取文件名，不信任目录。
+    import re
+    match = re.search(r"filename\*\s*=\s*[^']*''([^;]+)|filename\s*=\s*\"?([^;\"]+)", value, re.I)
+    if not match:
+        return None
+    return unquote((match.group(1) or match.group(2) or "").strip()) or None
+
+
+async def _download_bytes(url: str) -> tuple[int, httpx.Headers, bytes] | dict:
+    """安全下载文件正文；校验和 socket 连接固定在同一公网 IP。"""
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return {"error": "非法 url"}
+    pinned_ip, resolve_error = resolve_pinned_ip(url)
+    if not pinned_ip:
+        return {"error": resolve_error or "该地址不允许访问"}
+
+    for i in range(len(_HTTP_GET_RETRY_BACKOFF) + 1):
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0),
+                follow_redirects=False,
+                transport=_PinnedHTTPTransport(pinned_ip),
+            ) as client:
+                async with client.stream("GET", url, headers={"User-Agent": "Gugu-web/1.0"}) as response:
+                    length = response.headers.get("content-length")
+                    if length and length.isdigit() and int(length) > _MAX_FILE_DOWNLOAD_BYTES:
+                        return {"error": f"文件过大，下载上限为 {_MAX_FILE_DOWNLOAD_BYTES // 1024 // 1024}MB"}
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > _MAX_FILE_DOWNLOAD_BYTES:
+                            return {"error": f"文件过大，下载上限为 {_MAX_FILE_DOWNLOAD_BYTES // 1024 // 1024}MB"}
+                        chunks.append(chunk)
+                    return response.status_code, response.headers, b"".join(chunks)
+        except _TRANSIENT_HTTPX as e:
+            if i >= len(_HTTP_GET_RETRY_BACKOFF):
+                diag_log("agent.tools.web.web_download", e)
+                return {"error": "下载失败：网络超时或连接失败"}
+            await asyncio.sleep(_HTTP_GET_RETRY_BACKOFF[i])
+        except Exception as e:
+            diag_log("agent.tools.web.web_download", e)
+            return {"error": f"下载失败：{type(e).__name__}"}
+    return {"error": "下载失败"}
+
+
+async def _web_download(db, user_id, args: dict):
+    """下载公网文件并保存到文件库；不把下载内容注入上下文。"""
+    url = args.get("url")
+    if not isinstance(url, str) or not url.strip():
+        return {"error": "缺少 url"}
+
+    space = args.get("space")
+    project_id = args.get("project_id")
+    folder_id = args.get("folder_id")
+    try:
+        project_id = int(project_id) if project_id not in (None, "") else None
+        folder_id = int(folder_id) if folder_id not in (None, "") else None
+    except (TypeError, ValueError):
+        return {"error": "project_id 和 folder_id 必须是整数"}
+    if space not in (None, "project", "mind", "asset", "personal"):
+        return {"error": "space 必须是 project/mind/asset/personal 之一"}
+    if space == "personal" and project_id is not None:
+        return {"error": "space=personal 不能同时指定 project_id"}
+    if project_id is not None:
+        if space not in (None, "project"):
+            return {"error": "project_id 只能用于 project 空间"}
+        space = "project"
+    if space == "project" and project_id is None:
+        return {"error": "space=project 时必须指定 project_id"}
+
+    if folder_id is not None:
+        folder = await get_user_folder(db, user_id, folder_id)
+        if not folder or folder.deleted_at is not None:
+            return {"error": "目标文件夹不存在，或已被移入回收站"}
+        inferred_project_id = folder.project_id
+        inferred_space = "project" if inferred_project_id is not None else "personal"
+        if project_id is not None and project_id != inferred_project_id:
+            return {"error": "folder_id 不属于指定的 project_id"}
+        if space is not None and space != inferred_space:
+            return {"error": "folder_id 不属于指定的 space"}
+        project_id = inferred_project_id
+        space = inferred_space
+    else:
+        space = space or ("project" if project_id is not None else "personal")
+
+    normalized_url = url.strip()
+    if not normalized_url.startswith(("http://", "https://")):
+        normalized_url = "https://" + normalized_url
+    downloaded = await _download_bytes(normalized_url)
+    if isinstance(downloaded, dict):
+        return downloaded
+    status, headers, data = downloaded
+    if status < 200 or status >= 300:
+        return {"error": f"下载失败：远端返回 HTTP {status}"}
+    content_type = (headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip().lower()
+    name, ext = _download_filename(
+        args.get("name") or _content_disposition_name(headers.get("content-disposition")),
+        normalized_url,
+        content_type,
+    )
+    try:
+        result = await FileService(db).create_file(
+            user_id,
+            space=space,
+            project_id=project_id if space == "project" else None,
+            folder_id=folder_id,
+            stage_name="",
+            mind_map_id=None,
+            display_name=name,
+            ext=ext,
+            mime_type=content_type,
+            data=data,
+            ledger_operation="web_download",
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        diag_log("agent.tools.web.web_download.persist", e)
+        return {"error": "下载成功但保存到文件库失败，请稍后重试"}
+    db_file = result.file
+    return {
+        "success": True,
+        "file_id": db_file.id,
+        "name": f"{db_file.display_name}.{db_file.ext}",
+        "size": db_file.size,
+        "size_bytes": db_file.size_bytes,
+        "mime_type": db_file.mime_type,
+        "space": db_file.space,
+        "project_id": db_file.project_id,
+        "folder_id": db_file.folder_id,
+        "source_url": normalized_url,
+    }
+
+
 class WebSkill(BaseSkill):
     name = "web"
     tools = [
         Tool(
             name="http_get",
             label="联网取数 / 读网页",
-            description="对指定 URL 发 GET 请求（仅公网、不跟随重定向）。网页（text/html）自动提取正文转 "
-                        "markdown（去导航/广告/JS 噪音，带内联链接——想接着读某条链接就再调一次 http_get 传"
-                        "那个 URL，不用重新搜）；PDF 自动提取文字；其它（JSON/纯文本等）原样返回，内容截断。"
-                        "读不出正文（返回 error 提示可能是 JS 渲染页面）就换 web_search/deep_research。"
-                        "也供天气等技能取实时数据用——通常由 use_skill 拉到的技能说明里指示你调用。"
-                        "返回 truncated=true 且 total_chars 远大于已返回长度时，可用 max_chars 参数"
-                        "请求更多内容（上限 40000）。",
+            description_short='读取公网 URL 正文；关键字段 url/urls',
+            description="读取公网 URL；HTML/PDF 提取正文，可并行多个 URL，不跟随重定向。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "完整 URL，如 https://wttr.in/Beijing?format=3"},
-                    "max_chars": {"type": "integer", "description": "返回正文的最大字符数，默认 4000，上限 40000。长文可设大些"},
+                    "url": {"type": "string"},
+                    "urls": {
+                        "type": "array",
+                        "items": {"type": "string", "minLength": 1},
+                        "minItems": 1,
+                        "maxItems": 5,
+                        "uniqueItems": True,
+                    },
+                    "max_chars": {"type": "integer"},
                 },
-                "required": ["url"],
+                "anyOf": [
+                    {"required": ["url"], "not": {"required": ["urls"]}},
+                    {"required": ["urls"], "not": {"required": ["url"]}},
+                ],
             },
             handler=_http_get,
+        ),
+        Tool(
+            name="web_download",
+            label="下载到文件库",
+            description_short='下载公网文件到文件库；关键字段 url/name；space 默认 personal，folder_id 优先于 space/project_id',
+            description="按用户提供的公网 URL 下载或导入文件；不用于读取网页或发送已有文件。",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "minLength": 1},
+                    "name": {"type": ["string", "null"]},
+                    "space": {"type": ["string", "null"], "enum": ["project", "mind", "asset", "personal", None]},
+                    "project_id": {"type": ["integer", "null"]},
+                    "folder_id": {"type": ["integer", "null"]},
+                },
+                "required": ["url"],
+                "additionalProperties": False,
+            },
+            handler=_web_download,
+            mutates=True,
         ),
     ]
 

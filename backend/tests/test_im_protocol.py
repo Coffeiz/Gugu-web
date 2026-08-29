@@ -1,3 +1,5 @@
+import pytest
+
 from agent.im.models import ChatTarget, PlatformMessage, PlatformReply, normalize_payload
 from agent.im.loop import should_record_passive_group
 from agent.models import AgentRequest
@@ -28,6 +30,44 @@ def test_platform_message_normalizes_group_payload_without_losing_metadata():
     assert message.mentioned is True
     assert normalized["owner_user_id"] == "gugu-1"
     assert normalized["attachments"] == [{"id": "att-1"}]
+    assert normalized["bot_mentioned"] is True
+
+
+@pytest.mark.parametrize(
+    ("text", "mentioned", "expected"),
+    [
+        ("@咕咕 2", True, "2"),
+        ("<@!bot-1> /help", True, "/help"),
+        ("2", True, "2"),
+        ("@咕咕 2", False, "@咕咕 2"),
+    ],
+)
+def test_normalize_semantic_text_only_removes_confirmed_leading_bot_mention(
+    text, mentioned, expected,
+):
+    from agent.im.mentions import normalize_semantic_text
+
+    assert normalize_semantic_text(text, bot_mentioned=mentioned) == expected
+
+
+def test_payload_semantic_text_uses_canonical_bot_mention_flag():
+    from agent.im.mentions import payload_semantic_text
+
+    assert payload_semantic_text({"text": "@咕咕 2", "bot_mentioned": True}) == "2"
+    assert payload_semantic_text({"text": "@咕咕 2", "group_mentioned": True}) == "2"
+
+
+def test_feishu_mention_normalization_only_accepts_current_bot():
+    from types import SimpleNamespace
+
+    from agent.gateway.feishu import _feishu_mentions_current_bot
+
+    assert _feishu_mentions_current_bot(
+        SimpleNamespace(mentions=[{"id": {"open_id": "ou-bot"}}]), "ou-bot"
+    ) is True
+    assert _feishu_mentions_current_bot(
+        SimpleNamespace(mentions=[{"id": {"open_id": "ou-other"}}]), "ou-bot"
+    ) is False
 
 
 def test_platform_message_preserves_bot_identity_for_session_messages():
