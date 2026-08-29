@@ -1,38 +1,38 @@
 <template>
   <FileBrowserBreadcrumb tag="nav" class-name="file-breadcrumb">
     <button class="pm-nav-hist-btn" :disabled="!canGoBack" @click="emit('goBack')" title="后退">
-      <PhArrowLeft :size="13" weight="bold" />
+      <Icon name="action.back" :size="13" />
     </button>
     <button class="pm-nav-hist-btn" :disabled="!canGoForward" @click="emit('goForward')" title="前进">
-      <PhArrowRight :size="13" weight="bold" />
+      <Icon name="action.next" :size="13" />
     </button>
     <button v-if="folderStack.length === 0" class="bc-seg"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      项目文件
+      <span class="bc-label">项目文件</span>
     </button>
     <RuntimeBreadcrumbTarget v-else class="bc-seg" target-id="bc:-1"
       :surface-id="breadcrumbSurfaceId(runtimeScope, -1)"
       data-bc-idx="-1" @click="emit('navigate', -1)">
-      项目文件
+        <span class="bc-label">项目文件</span>
     </RuntimeBreadcrumbTarget>
     <template v-for="(segment, index) in folderStack" :key="segment.id">
-      <PhCaretRight :size="10" weight="bold" class="bc-sep" />
+      <Icon name="action.next" :size="10" class="bc-sep" />
       <RuntimeBreadcrumbTarget v-if="index < folderStack.length - 1" class="bc-seg"
         :target-id="`bc:${index}`"
         :surface-id="breadcrumbSurfaceId(runtimeScope, index)"
         :data-bc-idx="index"
         @click="emit('navigate', index)">
-        {{ segment.name }}
+        <span class="bc-label">{{ segment.name }}</span>
       </RuntimeBreadcrumbTarget>
-      <span v-else class="bc-seg bc-cur">{{ segment.name }}</span>
+      <span v-else class="bc-seg bc-cur"><span class="bc-label">{{ segment.name }}</span></span>
     </template>
   </FileBrowserBreadcrumb>
 </template>
 
 <script setup lang="ts">
+import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
 import type { FolderMeta } from '@/stores/filesCache'
-import { PhArrowLeft, PhArrowRight, PhCaretRight } from '@phosphor-icons/vue'
 import FileBrowserBreadcrumb from '@/components/common/file-browser/FileBrowserBreadcrumb.vue'
 import RuntimeBreadcrumbTarget from '@/components/common/file-browser/RuntimeBreadcrumbTarget.vue'
 import { breadcrumbSurfaceId } from '@/interaction/runtime/adapters/file/fileRuntimeAdapter'

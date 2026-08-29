@@ -65,14 +65,12 @@ async def read_video(file) -> dict:
     `LLMRunner._run_loop`，理论上不会发生，兜底而已）才退回 `settings.ai`。
     """
     from agent.llm import modelctx
-    from agent.llm.llm_select import use_anthropic_for
-
     try:
         ai = modelctx.get_model_cfg() or get_settings().ai
     except Exception as error:
         diag_log(f"agent.file_readers.read_video.file_id={file.id}", error)
         return {"error": "视频读取失败"}
-    if not (use_anthropic_for(ai) and chat_attach._minimax_video_enabled(ai)):
+    if chat_attach.video_transport_for(ai) != "anthropic":
         return {"error": "当前模型不支持通过文件库直接看视频（视频理解目前仅 MiniMax M3 支持）"}
 
     ext = file.ext.lower()

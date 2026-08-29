@@ -2,29 +2,24 @@
   <div class="asel-wrap" ref="wrapRef">
     <div class="asel-trigger" :class="{ open: show }" :style="{ minWidth: triggerMinW + 'px' }" @click="toggle">
       <span :class="{ placeholder: !modelValue }">{{ selectedLabel }}</span>
-      <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round" class="asel-chevron" :class="{ up: show }">
-        <path d="M3 6l5 5 5-5"/>
-      </svg>
+      <FlipChevron :open="show" :size="11" class="asel-chevron" />
     </div>
 
-    <Teleport to="body">
-      <Transition name="menu-pop">
-        <div v-if="show" class="asel-popup popup-menu-dark" :style="popupStyle">
+    <PopupMenu :show="show" :anchor="wrapRef" popup-class="asel-popup popup-menu-dark asel-popup--model-list">
           <button
             v-for="opt in options" :key="opt.value"
             class="popup-menu-item"
             :class="{ active: modelValue === opt.value }"
-            @click="select(opt.value)"
+            @mousedown.prevent="select(opt.value)"
           >{{ opt.label }}</button>
-        </div>
-      </Transition>
-    </Teleport>
+    </PopupMenu>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, type PropType } from 'vue'
+import FlipChevron from '@/components/common/FlipChevron.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -35,7 +30,6 @@ const emit = defineEmits(['update:modelValue'])
 
 const show      = ref(false)
 const wrapRef   = ref<HTMLElement | null>(null)
-const popupStyle = ref({})
 
 const selectedLabel = computed(() =>
   props.options.find(o => o.value === props.modelValue)?.label ?? props.placeholder
@@ -55,27 +49,6 @@ const triggerMinW = computed(() => {
 
 function toggle() {
   show.value = !show.value
-  if (show.value) setTimeout(position, 0)
-}
-
-function position() {
-  const rect = wrapRef.value?.getBoundingClientRect()
-  if (!rect) return
-  const below = rect.bottom + props.options.length * 36 + 16 < window.innerHeight
-  // Trigger already auto-sized to fit longest option; popup matches trigger width
-  const overflow = rect.right > window.innerWidth - 8
-  const style: Record<string, any> = {
-    position: 'fixed',
-    minWidth: `${rect.width}px`,
-    top: below ? `${rect.bottom + 5}px` : `${rect.top - props.options.length * 36 - 16}px`,
-    zIndex: 9999,
-  }
-  if (overflow) {
-    style.right = `${window.innerWidth - rect.right}px`
-  } else {
-    style.left = `${rect.left}px`
-  }
-  popupStyle.value = style
 }
 
 function select(value: any) {
@@ -89,7 +62,9 @@ function onClickOutside(e: MouseEvent) {
     show.value = false
 }
 onMounted(() => document.addEventListener('mousedown', onClickOutside))
-onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onClickOutside)
+})
 </script>
 
 <style scoped>
@@ -98,20 +73,39 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 .asel-trigger {
   display: flex; align-items: center; gap: 8px;
   height: 34px; padding: 0 12px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.05);
-  color: rgba(255,255,255,0.75); font-size: 13px;
+  border: 1px solid var(--input-border);
+  background: var(--input-bg);
+  color: var(--input-fg); font-size: 13px;
   cursor: pointer; transition: border-color 0.15s, background 0.15s;
   user-select: none; min-width: 110px;
   font-family: var(--font-sans);
 }
 .asel-trigger:hover,
-.asel-trigger.open { border-color: rgba(255,255,255,0.22); background: rgba(255,255,255,0.08); }
+.asel-trigger.open { border-color: var(--input-border-hover); background: var(--input-bg-hover); }
 .asel-trigger span { flex: 1; }
-.placeholder { color: rgba(255,255,255,0.28); }
+.placeholder { color: var(--input-placeholder); }
 
-.asel-chevron { color: rgba(255,255,255,0.35); flex-shrink: 0; transition: transform 0.15s; }
-.asel-chevron.up { transform: rotate(180deg); }
+.asel-chevron { color: var(--popup-item-fg-muted); }
 
 .asel-popup { min-width: 120px; }
+.asel-popup--model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--popup-surface-padding);
+  border: 1px solid var(--popup-surface-border);
+  border-radius: var(--popup-surface-radius);
+  background: var(--popup-surface-bg);
+  box-shadow: var(--popup-surface-shadow), inset 0 1px 0 var(--popup-surface-highlight);
+  backdrop-filter: var(--popup-surface-blur);
+  -webkit-backdrop-filter: var(--popup-surface-blur);
+}
+.asel-popup--model-list .popup-menu-item {
+  display: block;
+  width: 100%;
+  margin-top: 0;
+  padding: var(--popup-item-padding);
+  border-radius: var(--popup-item-radius);
+  text-align: left;
+}
 </style>

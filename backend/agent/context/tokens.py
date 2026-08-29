@@ -1,16 +1,15 @@
-"""轻量 token 估算 + 历史窗口裁剪。
+"""上下文正文规范化与诊断估算工具。
 
-不引入 tokenizer 依赖，用 CJK 感知的廉价估算：中文/日文等表意字符约
-1.3 token/字，其余（英文/数字/符号）约 4 字符/token。用于按 token 预算
-裁剪对话历史，比按条数更贴近真实上下文体积与成本。
+本地估算只允许用于诊断、回归测试和 provider overflow 后的兼容旧接口，
+不得用于正常历史组装、预算触发、压缩触发或重试决定。真实请求预算以
+provider 返回的 usage/overflow 为准。
 """
 from __future__ import annotations
 
 import json
 
-# 历史窗口默认参数——实际调用时由 model_cfg.context_tokens 覆盖
-HISTORY_TOKEN_BUDGET = 120000   # 默认 token 预算（约 128K context 的 90% 留给 system + current）
-HISTORY_MAX_MSGS = 500          # 条数安全上限（防极端情况）
+# 历史读取只保留非 token 的条数安全上限，预算由 provider 边界裁定。
+HISTORY_MAX_MSGS = 500
 
 
 def estimate_tokens(text: str) -> int:
@@ -52,11 +51,12 @@ def content_text(content) -> str:
         if block_type in {"reasoning", "reasoning_content"}:
             value = content.get("text", content.get("content", ""))
             return f"[思考]\n{content_text(value)}" if value else ""
-        if block_type == "tool_use":
+        if block_type in {"tool_use", "tool_call"}:
             name = content.get("name") or "未知工具"
-            return f"[工具调用:{name}]\n{_json_content(content.get('input', {}))}"
+            arguments = content.get("input", content.get("arguments", {}))
+            return f"[工具调用:{name}]\n{_json_content(arguments)}"
         if block_type == "tool_result":
-            tool_id = content.get("tool_use_id") or ""
+            tool_id = content.get("tool_use_id") or content.get("tool_call_id") or ""
             prefix = f"[工具结果:{tool_id}]" if tool_id else "[工具结果]"
             return f"{prefix}\n{content_text(content.get('content', ''))}"
         return _json_content({k: v for k, v in content.items() if k != "cache_control"})
@@ -79,34 +79,3 @@ def msg_tokens(m) -> int:
     if cj is not None:
         return estimate_tokens(content_text(cj))
     return estimate_tokens(getattr(m, "content", "") or "")
-
-
-def select_history(messages_newest_first: list, token_budget: int = HISTORY_TOKEN_BUDGET) -> list:
-    """从最新往回按 token 预算收取历史，返回**时间正序**列表。
-
-    - summary 消息（role="summary"）始终置顶，不计入 token 预算截断。
-    - 整条进出，不切半条。
-    - 至少保留最新一条（即使它单条超预算），以维持最低连续性。
-    """
-    summary = None
-    normal = []
-    for m in messages_newest_first:
-        if getattr(m, "role", None) == "summary":
-            if summary is None:
-                summary = m   # 只取最新那条（正常只有一条）
-        else:
-            normal.append(m)
-
-    picked = []
-    used = 0
-    for m in normal:
-        t = msg_tokens(m)
-        if picked and used + t > token_budget:
-            break
-        picked.append(m)
-        used += t
-    picked.reverse()
-
-    if summary:
-        picked = [summary] + picked
-    return picked

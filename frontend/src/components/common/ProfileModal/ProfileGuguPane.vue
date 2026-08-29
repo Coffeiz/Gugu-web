@@ -16,6 +16,8 @@
       <div v-for="setting in styleSettings" :key="setting.key" class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">{{ setting.label }}</span><span class="pm-field-hint">{{ setting.hint }}</span></div><div class="pm-style-group"><button v-for="opt in setting.options" :key="opt.value" class="pm-style-chip" :class="{ active: setting.current === opt.value }" @click="setting.select(opt.value)">{{ opt.label }}</button></div></div>
     </div>
     <div class="pm-sep"></div>
+    <ProfilePersonalityPane />
+    <div class="pm-sep"></div>
     <div class="pm-section"><div class="pm-section-label">对话</div><div class="pm-field-row"><div class="pm-field-desc"><span class="pm-field-name">重开浏览器时</span><span class="pm-field-hint">下次重新打开浏览器，是接着上次的对话、还是开一段新对话</span></div><div class="pm-style-group"><button class="pm-style-chip" :class="{ active: reopenResume }" @click="setReopenResume(true)">接着上次</button><button class="pm-style-chip" :class="{ active: !reopenResume }" @click="setReopenResume(false)">开新对话</button></div></div></div>
     <div class="pm-sep"></div>
     <div class="pm-section">
@@ -32,6 +34,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { agentApi, authApi } from '@/services/api'
 import { usePreferencesStore } from '@/stores/preferences'
+import { confirmDialog } from '@/composables/useConfirmDialog'
+import ProfilePersonalityPane from './ProfilePersonalityPane.vue'
 
 const prefsStore = usePreferencesStore()
 const TONE_OPTS = [{ value: 'natural', label: '自然' }, { value: 'formal', label: '正式' }, { value: 'lively', label: '活泼' }]
@@ -53,9 +57,9 @@ function quotaPctClass(used: number, limit: number | null) { if (!limit) return 
 async function loadQuota() { quotaLoading.value = true; try { quota.value = await authApi.getQuota() } catch {} finally { quotaLoading.value = false } }
 
 const memoryClearing = ref(false); const memoryMsg = ref(''); const memoryMsgType = ref('ok')
-async function clearMemory() { if (!confirm('确定要删除咕咕的所有记忆吗？此操作不可恢复。')) return; memoryClearing.value = true; memoryMsg.value = ''; try { await agentApi.clearMemory(); memoryMsg.value = '记忆已清除'; memoryMsgType.value = 'ok' } catch (error) { memoryMsg.value = (error instanceof Error ? error.message : '') || '删除失败'; memoryMsgType.value = 'err' } finally { memoryClearing.value = false } }
+async function clearMemory() { if (!await confirmDialog({ title: '删除咕咕记忆', message: '确定要删除咕咕的所有记忆吗？此操作不可恢复。', tone: 'danger', confirmText: '删除记忆' })) return; memoryClearing.value = true; memoryMsg.value = ''; try { await agentApi.clearMemory(); memoryMsg.value = '记忆已清除'; memoryMsgType.value = 'ok' } catch (error) { memoryMsg.value = (error instanceof Error ? error.message : '') || '删除失败'; memoryMsgType.value = 'err' } finally { memoryClearing.value = false } }
 const attachClearing = ref(false); const attachMsg = ref(''); const attachMsgType = ref('ok')
-async function clearAttachments() { if (!confirm('确定要删除所有临时文件吗？')) return; attachClearing.value = true; attachMsg.value = ''; try { const result = await agentApi.clearAttachments(); attachMsg.value = result.deleted > 0 ? `已删除 ${result.deleted} 个临时文件` : '没有可删除的临时文件'; attachMsgType.value = 'ok' } catch (error) { attachMsg.value = (error instanceof Error ? error.message : '') || '删除失败'; attachMsgType.value = 'err' } finally { attachClearing.value = false } }
+async function clearAttachments() { if (!await confirmDialog({ title: '删除临时文件', message: '确定要删除所有临时文件吗？', tone: 'danger', confirmText: '删除文件' })) return; attachClearing.value = true; attachMsg.value = ''; try { const result = await agentApi.clearAttachments(); attachMsg.value = result.deleted > 0 ? `已删除 ${result.deleted} 个临时文件` : '没有可删除的临时文件'; attachMsgType.value = 'ok' } catch (error) { attachMsg.value = (error instanceof Error ? error.message : '') || '删除失败'; attachMsgType.value = 'err' } finally { attachClearing.value = false } }
 
 const styleSettings = computed(() => [
   { key: 'tone', label: '语气', hint: '咕咕回复时的语气风格', current: prefsStore.replyTone ?? 'natural', options: TONE_OPTS, select: (value: string) => prefsStore.saveStyle({ tone: value === 'natural' ? null : value }) },

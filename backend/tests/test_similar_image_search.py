@@ -100,6 +100,26 @@ async def test_baidu_provider_sends_base64_and_normalizes_results(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_baidu_provider_rejects_non_ascii_api_key_before_request(monkeypatch):
+    called = False
+
+    def unexpected_client(**kwargs):
+        nonlocal called
+        called = True
+        return _Client(_Response({}))
+
+    monkeypatch.setattr(search_tools.httpx, "AsyncClient", unexpected_client)
+
+    result = await search_tools._call_baidu_similar_image(PNG_1X1, "百度密钥", 1, 20)
+
+    assert result == {
+        "error": "百度相似图搜索 API Key 格式无效，请使用服务提供的 ASCII API Key",
+        "error_code": "invalid_api_key",
+    }
+    assert called is False
+
+
+@pytest.mark.asyncio
 async def test_baidu_provider_reads_official_result_wrapper(monkeypatch):
     client = _Client(_Response({
         "code": "0",
@@ -138,12 +158,73 @@ async def test_baidu_provider_classifies_auth_failure(monkeypatch):
     assert "bad-key" not in str(result)
 
 
-def test_similar_image_tool_is_registered_but_not_in_default_group_allowlist():
+def test_image_search_is_the_only_registered_image_search_tool():
     from agent.tools.base import registry
-    from agent.im.permissions import DEFAULT_GROUP_TOOLS
 
-    assert registry.get("search_similar_images") is not None
-    assert "search_similar_images" not in DEFAULT_GROUP_TOOLS
+    assert registry.get("image_search") is not None
+    assert registry.get("search_similar_images") is None
+
+
+@pytest.mark.asyncio
+async def test_image_search_dispatches_reverse_image_mode(monkeypatch):
+    async def fake_reverse_search(db, user_id, args):
+        return {"mode": "image", "max_results": args["max_results"]}
+
+    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
+
+    result = await search_tools._image_search(None, "user-a", {
+        "mode": "image",
+        "attach_id": "attach-1",
+        "max_results": 7,
+    })
+
+    assert result == {"mode": "image", "max_results": 7}
+
+
+@pytest.mark.asyncio
+async def test_image_search_infers_legacy_reverse_image_mode(monkeypatch):
+    async def fake_reverse_search(db, user_id, args):
+        return {"mode": "image", "attach_id": args["attach_id"]}
+
+    monkeypatch.setattr(search_tools, "_image_search_by_image", fake_reverse_search)
+
+    result = await search_tools._image_search(None, "user-a", {"attach_id": "attach-1"})
+
+    assert result == {"mode": "image", "attach_id": "attach-1"}
+
+
+@pytest.mark.asyncio
+async def test_image_search_rejects_mode_without_required_input():
+    assert await search_tools._image_search(None, "user-a", {"mode": "text"}) == {
+        "error": "mode=text 时需要提供搜索关键词 query"
+    }
+    assert await search_tools._image_search(None, "user-a", {"mode": "image"}) == {
+        "error": "mode=image 时需要提供 attach_id 或 image_url"
+    }
+
+
+def test_image_search_schema_uses_flat_compatible_input():
+    from agent.tools.base import registry
+
+    schema = registry.get("image_search").input_schema
+    assert "oneOf" not in schema
+    assert schema["properties"]["mode"]["enum"] == ["text", "image"]
+    assert "query" in schema["properties"]
+    assert "attach_id" in schema["properties"]
+    assert "image_url" in schema["properties"]
+    assert schema.get("required") is None
+
+
+def test_image_search_accepts_numeric_string_result_count_after_normalization():
+    from agent.tools.base import _coerce_int_ids, build_validator, validate_input, registry
+
+    args = {"mode": "image", "attach_id": "attach-1", "max_results": "5"}
+    _coerce_int_ids(args)
+
+    assert args["max_results"] == 5
+    assert validate_input(
+        build_validator(registry.get("image_search").input_schema), args
+    ) == []
 
 
 def test_similar_image_default_count_is_fifteen():

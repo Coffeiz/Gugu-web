@@ -1,0 +1,12 @@
+packages:
+  - "frontend"
+  - "loopscope/frontend"
+  - "loopscope/apps/*"
+  - "loopscope/packages/*"
+  - "backend/ts/packages/*"
+  - "backend/ts/workers/*"
+  - "backend/ts"
+allowBuilds:
+  better-sqlite3: set this to true or false
+  esbuild: set this to true or false
+  vue-demi: set this to true or false

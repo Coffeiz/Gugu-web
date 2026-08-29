@@ -6,21 +6,17 @@
         <p class="page-desc">来自用户的 Bug 报告、功能建议和其他反馈</p>
       </div>
       <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" title="刷新">
-        <PhArrowClockwise :size="15" weight="bold" />
+        <Icon name="action.refresh" size="sm" />
       </button>
     </div>
 
-    <div class="filter-bar">
-      <button
-        v-for="c in categoryOptions" :key="c.value"
-        class="cat-filter"
-        :class="{ active: filter === c.value }"
-        @click="filter = c.value; page = 1; load()"
-      >
-        <component :is="c.icon" :size="13" weight="bold" />
-        {{ c.label }}
-      </button>
-    </div>
+    <AdminSegmentTabs
+      :model-value="filter"
+      :tabs="categoryTabs"
+      aria-label="反馈分类"
+      class="feedback-tabs"
+      @update:model-value="changeFilter"
+    />
 
     <div class="feedback-list">
       <div v-if="loading && !items.length" class="empty-hint">加载中…</div>
@@ -45,14 +41,14 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
 import { fmtLocalDateTime } from '@/utils/dateAttribution'
-import { PhArrowClockwise, PhList, PhWarningOctagon, PhLightbulb, PhChatCircle } from '@phosphor-icons/vue'
 
-const categoryOptions = [
-  { value: '',           icon: PhList,            label: '全部' },
-  { value: 'bug',        icon: PhWarningOctagon,  label: 'Bug' },
-  { value: 'suggestion', icon: PhLightbulb,  label: '建议' },
-  { value: 'other',      icon: PhChatCircle, label: '其他' },
+const categoryTabs = [
+  { key: '', label: '全部' },
+  { key: 'bug', label: 'Bug' },
+  { key: 'suggestion', label: '建议' },
+  { key: 'other', label: '其他' },
 ]
 
 const items    = ref<any[]>([])
@@ -62,6 +58,12 @@ const pageSize = 30
 const filter   = ref('')
 const loading  = ref(false)
 const refreshing = ref(false)
+
+function changeFilter(value: string) {
+  filter.value = value
+  page.value = 1
+  load()
+}
 
 function categoryLabel(cat: string) {
   return { bug: 'Bug', suggestion: '建议', other: '其他' }[cat] ?? cat
@@ -114,20 +116,7 @@ onMounted(load)
 /* 刷新按钮 .icon-btn 用 Admin 全局样式（AdminApp.vue） */
 
 /* ── 分类过滤 ── */
-.filter-bar { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
-.cat-filter {
-  display: flex; align-items: center; gap: 5px;
-  padding: 6px 14px; border-radius: 9px;
-  border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05);
-  font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.38);
-  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
-  font-family: var(--font-sans, sans-serif);
-}
-.cat-filter:hover { background: rgba(255,255,255,0.09); color: rgba(255,255,255,0.65); }
-.cat-filter.active {
-  background: rgba(123,127,178,0.2); border-color: rgba(123,127,178,0.4);
-  color: rgba(255,255,255,0.88); font-weight: 600;
-}
+.feedback-tabs { margin-bottom: 16px; }
 
 /* ── 反馈列表 ── */
 .feedback-list { display: flex; flex-direction: column; gap: 10px; flex: 1; }

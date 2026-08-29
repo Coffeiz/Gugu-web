@@ -1,0 +1,12 @@
+data/
+node_modules/
+**/node_modules/
+**/dist/
+**/.next/
+**/*.test.ts
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+.git/
+.env
+.env.*

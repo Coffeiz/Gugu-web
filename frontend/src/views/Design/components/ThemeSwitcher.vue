@@ -1,9 +1,15 @@
 <template>
   <div class="theme-controls" aria-label="主题切换">
     <div class="control-cluster">
+      <span class="control-label">配色</span>
+      <div class="segmented">
+        <button v-for="item in palettes" :key="item.value" :class="{ active: palette === item.value }" @click="$emit('update:palette', item.value)">{{ item.label }}</button>
+      </div>
+    </div>
+    <div class="control-cluster">
       <span class="control-label">主题</span>
       <div class="segmented">
-        <button v-for="item in families" :key="item.value" :class="{ active: family === item.value }" @click="$emit('update:family', item.value)">{{ item.label }}</button>
+        <button v-for="item in families" :key="item.value" class="family-choice" :class="{ active: family === item.value }" @click="$emit('update:family', item.value)">{{ item.label }}</button>
       </div>
     </div>
     <div class="control-cluster">
@@ -16,15 +22,19 @@
 </template>
 
 <script setup lang="ts">
-import type { ThemeFamily, ThemePreference } from '@/composables/useTheme'
+import type { ThemeFamily, ThemePalette, ThemePreference } from '@/composables/useTheme'
 
-defineProps<{ modelValue: ThemePreference; family: ThemeFamily }>()
-defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily] }>()
+defineProps<{ modelValue: ThemePreference; family: ThemeFamily; palette: ThemePalette }>()
+defineEmits<{ 'update:modelValue': [value: ThemePreference]; 'update:family': [value: ThemeFamily]; 'update:palette': [value: ThemePalette] }>()
 const families: Array<{ value: ThemeFamily; label: string }> = [
-  { value: 'glass', label: 'Aero' }, { value: 'v2', label: 'Mono' },
+  { value: 'glass', label: 'Aero' }, { value: 'mono', label: 'Mono' },
 ]
 const themes: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'system', label: 'System' },
+]
+const palettes: Array<{ value: ThemePalette; label: string }> = [
+  { value: 'aero', label: 'Aero' }, { value: 'mono', label: 'Mono' },
+  { value: 'rose', label: 'Rose' }, { value: 'sky', label: 'Sky' }, { value: 'sage', label: 'Sage' },
 ]
 </script>
 
@@ -36,6 +46,7 @@ const themes: Array<{ value: ThemePreference; label: string }> = [
 .segmented button { min-width:58px; height:28px; border:0; border-radius:var(--radius-xs); padding:0 var(--space-sm); color:var(--content-secondary); background:transparent; cursor:pointer; font:var(--font-weight-semibold) var(--font-size-xs) var(--font-sans); transition:background var(--motion-fast),color var(--motion-fast),box-shadow var(--motion-fast); }
 .segmented button:hover { color:var(--content-primary); background:var(--surface-soft-hover); }
 .segmented button.active { color:var(--selection-fg); background:var(--surface-raised); box-shadow:var(--elevation-card); }
+.segmented button.family-choice.active { color:var(--content-primary); border:1px solid var(--border-default); background:var(--surface-raised); box-shadow:none; }
 .segmented button:focus-visible { outline:none; box-shadow:var(--control-focus-shadow); }
 @media (max-width:720px) { .theme-controls { width:100%; margin-left:0; justify-content:flex-start; } }
 </style>

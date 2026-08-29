@@ -66,7 +66,7 @@
             <path d="M5 1v3M11 1v3M1.5 6.5h13"/>
           </svg>
           <template v-if="project.status === 'done'">
-            <span class="done-label"><PhCheck :size="9" weight="bold" /> 完成</span>
+            <span class="done-label"><Icon name="status.success" :size="9" /> 完成</span>
             <span v-if="project.doneAt" class="deadline">{{ fmtDate(project.doneAt.slice(0, 10)) }}</span>
           </template>
           <template v-else>
@@ -126,12 +126,11 @@
     </button>
     <span v-else class="card-advance card-advance-placeholder" aria-hidden="true"></span>
   <!-- 当前阶段待办弹层（点击阶段名弹出） -->
-  <Teleport to="body">
-    <div v-if="stagePopOpen" class="todo-pop" :style="stagePopStyle" ref="stagePopRef" @click.stop @mousedown.stop>
+  <PopupMenu ref="stagePopRef" :show="stagePopOpen" :style="stagePopStyle" popup-class="todo-pop-popup">
       <div class="tp-header">
         <span class="tp-title">{{ currentStageLabel || '当前阶段' }}</span>
         <span v-if="draftTodoTotal" class="tp-count">{{ draftDoneCount }}/{{ draftTodoTotal }}</span>
-        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><PhX :size="11" weight="bold" /></button>
+        <button class="popup-close-btn" @click="closeStagePop" title="关闭"><Icon name="action.close" :size="11" /></button>
       </div>
       <TransitionGroup v-if="draftTodoTotal" tag="div" name="tp-flip" class="tp-list scroll-surface scroll-surface--compact">
         <div v-for="(t, i) in currentTodos" :key="t.id" class="tp-item"
@@ -141,7 +140,7 @@
              @dragend="tpDragEnd"
              @dragover.prevent="tpDragOver(i, $event)">
           <button class="tp-check" :class="{ checked: t.done }" @click="toggleTodo(t)">
-            <PhCheck v-if="t.done" :size="9" weight="bold" />
+            <Icon name="status.success" v-if="t.done" :size="9" />
           </button>
           <input
             v-if="editingTp === t.id"
@@ -157,13 +156,12 @@
           />
           <span v-else class="tp-name" :style="t.done ? { textDecoration: 'line-through', opacity: 0.45 } : {}"
                 @click="startEditTp(t.id)">{{ t.text || '待办事项' }}</span>
-          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><PhX :size="8" weight="bold" /></button>
+          <button class="tp-del" @click="removeTodo(t.id)" title="删除"><Icon name="action.close" :size="8" /></button>
         </div>
       </TransitionGroup>
       <div v-else class="tp-empty">还没有待办</div>
       <button class="tp-add" @click="addTodo">＋ 添加待办</button>
-    </div>
-  </Teleport>
+  </PopupMenu>
   </div>
 </template>
 
@@ -175,7 +173,8 @@ import { useFilesCacheStore } from '@/stores/filesCache'
 import { runtime } from '@/interaction/runtime'
 import { fireHint } from '@/composables/useOnboarding'
 import { errorMessage, showAppError } from '@/composables/useAppToast'
-import { PhCheck, PhX } from '@phosphor-icons/vue'
+import Icon from '@/components/common/Icon.vue'
+import PopupMenu from '@/components/common/PopupMenu.vue'
 import { filesApi, uploadWithProgress, uploadDirectWithProgress } from '@/services/api'
 import SegBar from '@/components/common/SegBar.vue'
 import { cloneProjectStages, firstIncompleteStageIdx, projectTodoProgress } from '@/utils/projectStages'
@@ -246,7 +245,7 @@ const draftDoneCount = computed(() => currentTodos.value.filter(todo => todo.don
 
 const stagePopOpen  = ref(false)
 const stagePopStyle = ref({})
-const stagePopRef   = ref<HTMLElement | null>(null)
+const stagePopRef   = ref<InstanceType<typeof PopupMenu> | null>(null)
 const stageRef      = ref<HTMLElement | null>(null)
 
 function openStagePop() {
@@ -254,16 +253,22 @@ function openStagePop() {
   const rect = stageRef.value?.getBoundingClientRect()
   if (!rect) return
   todoDraftStages.value = cloneProjectStages(props.project.stages)
+  // 先写入稳定的初始坐标再显示，避免 PopupMenu 首帧仍在默认位置而出现“第一次点击没弹出”。
+  const popW = 224
+  let left = rect.right - popW
+  left = Math.max(8, Math.min(left, window.innerWidth - popW - 8))
+  let top = rect.bottom + 6
+  if (top + 180 > window.innerHeight - 8) top = Math.max(8, rect.top - 180 - 6)
+  stagePopStyle.value = { position: 'fixed', left: left + 'px', top: top + 'px', width: popW + 'px' }
   stagePopOpen.value = true
   nextTick(() => {
-    const popW = 224
-    const popH = stagePopRef.value?.offsetHeight ?? 180
+    const popH = stagePopRef.value?.element()?.offsetHeight ?? 180
     let left = rect.right - popW                          // 右对齐到阶段名右端
     left = Math.max(8, Math.min(left, window.innerWidth - popW - 8))
     let top = rect.bottom + 6                             // 默认在阶段名下方
     if (top + popH > window.innerHeight - 8) top = rect.top - popH - 6   // 放不下转上方
     if (top < 8) top = 8
-    stagePopStyle.value = { position: 'fixed', left: left + 'px', top: top + 'px', width: popW + 'px', zIndex: 11000 }
+    stagePopStyle.value = { position: 'fixed', left: left + 'px', top: top + 'px', width: popW + 'px' }
     document.addEventListener('mousedown', onDocDown)
     document.addEventListener('keydown', onKey)
     window.addEventListener('scroll', closeStagePop, true)
@@ -339,7 +344,7 @@ function addTodo() {
   s.todos.push({ id: `td_${Date.now()}`, text: '', done: false })
   persistTodos()
   nextTick(() => {
-    const inputs = stagePopRef.value?.querySelectorAll<HTMLElement>('.tp-input')
+    const inputs = stagePopRef.value?.element()?.querySelectorAll<HTMLElement>('.tp-input')
     inputs?.[inputs.length - 1]?.focus()
   })
 }
@@ -546,30 +551,27 @@ async function setPriority(n: number) {
 .proj-stage.open .ps-caret { transform: translateY(-0.35px) rotate(180deg); }
 
 /* 当前阶段待办弹层（Teleport 到 body，通用弹窗风格） */
-.todo-pop {
-  background: rgba(255,255,255,0.6);
-  backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-  border: 1px solid rgba(255,255,255,0.75); border-radius: 16px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.98), 0 8px 32px rgba(60,70,100,0.12);
+:global(.popup-menu-host.todo-pop-popup) {
   padding: 14px 14px 12px; font-family: var(--font-sans); box-sizing: border-box;
   display: flex; flex-direction: column; gap: 8px;
 }
 .tp-header { display: flex; align-items: center; gap: 6px; }
-.tp-title { font-size: 13px; font-weight: 700; color: #1e2028; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tp-title { font-size: 13px; font-weight: 700; color: var(--content-primary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-count { font-size: 11px; color: var(--text-secondary); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .tp-list { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow-y: auto; }
 .tp-item { display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 8px; }
-.tp-item:hover { background: rgba(0,0,0,0.04); }
+.tp-item:hover { background: var(--surface-soft-hover); }
 .tp-name { flex: 1; min-width: 0; font-size: 12px; color: var(--text-primary); padding: 2px 0; cursor: grab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tp-item:active .tp-name { cursor: grabbing; }
 .tp-ghost { opacity: 0.35; }
 .tp-check {
   width: 15px; height: 15px; border-radius: 5px; flex-shrink: 0;
-  border: 1.5px solid rgba(0,0,0,0.22); background: none; color: #fff;
+  border: var(--control-checkbox-border-width) solid var(--action-outline); background: var(--control-bg); color: var(--content-on-accent);
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard);
 }
-.tp-check.checked { background: var(--color-primary); border-color: var(--color-primary); }
+.tp-check:hover { border-color: var(--border-focus); }
+.tp-check.checked { background: var(--action-primary-bg); border-color: var(--action-primary); }
 .tp-input {
   flex: 1; min-width: 0; border: none; background: none; outline: none;
   font-size: 12px; color: var(--text-primary); font-family: var(--font-sans); padding: 2px 0;
@@ -580,14 +582,14 @@ async function setPriority(n: number) {
   display: flex; align-items: center; justify-content: center; transition: opacity 0.12s, background 0.12s, color 0.12s;
 }
 .tp-item:hover .tp-del { opacity: 0.55; }
-.tp-del:hover { opacity: 1 !important; background: rgba(200,80,80,0.12); color: #c85050; }
+.tp-del:hover { opacity: 1 !important; background: var(--status-danger-bg); color: var(--status-danger); }
 .tp-empty { font-size: 12px; color: var(--text-secondary); opacity: 0.55; text-align: center; padding: 6px 0 4px; }
 .tp-add {
-  width: 100%; padding: 6px; border: 1px dashed rgba(0,0,0,0.15);
+  width: 100%; padding: 6px; border: 1px dashed var(--border-subtle);
   background: none; border-radius: 9px; font-size: 12px; color: var(--text-secondary);
   cursor: pointer; font-family: var(--font-sans); transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
-.tp-add:hover { background: rgba(123,127,178,0.08); color: var(--color-primary); border-color: rgba(123,127,178,0.4); }
+.tp-add:hover { background: var(--action-soft); color: var(--action-primary); border-color: var(--action-outline); }
 
 .card-footer { display: flex; align-items: center; justify-content: space-between; }
 .footer-right { display: flex; align-items: center; gap: 5px; line-height: 1.15; }

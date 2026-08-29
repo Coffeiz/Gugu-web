@@ -335,11 +335,25 @@ export const useProjectStore = defineStore('projects', () => {
 
   // 实时：咕咕/IM 改了项目或日历事件 → 只要主列表加载过，即使为空也刷新。
   const live = useLiveStore()
-  watch(() => live.projectEvent, (event) => {
-    // 本页已经应用了乐观更新并消费了 API 响应；跳过自己的 SSE 回声，避免再次
-    // 拉取整份项目列表。其它标签页、Gugu/IM（origin 为空）仍然正常刷新。
-    if (event?.origin === CLIENT_ID) return
-    if (projectsLoaded.value) fetchProjects()
+  watch(() => live.resourceEvent, (event) => {
+    if (!event || event.resource !== 'projects' || event.origin === CLIENT_ID) return
+    const id = Number(event.entity_id)
+    const payload = event.payload as components['schemas']['ProjectResponse'] | undefined
+    if (!Number.isFinite(id)) return void fetchProjects()
+    if (event.operation === 'delete') {
+      projects.value = projects.value.filter(project => project.id !== id)
+      confirmedProjects.delete(id)
+      return
+    }
+    if (!payload || Number(payload.id) !== id) return void fetchProjects()
+    try {
+      const next = mapProjectResponse(payload)
+      const index = projects.value.findIndex(project => project.id === id)
+      if (event.operation === 'create' && index === -1) projects.value = [next, ...projects.value]
+      else if (index >= 0) projects.value.splice(index, 1, next)
+      else void fetchProjects()
+      rememberConfirmed(next)
+    } catch { void fetchProjects() }
   })
   watch(() => live.rev.calendar, () => fetchUpcomingCalEvents())
 

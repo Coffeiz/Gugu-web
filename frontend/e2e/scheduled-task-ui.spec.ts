@@ -51,7 +51,7 @@ async function mockScheduledTasks(page: Page) {
 test('定时任务页面：空状态、新建、编辑、启停、试运行和删除', async ({ page }) => {
   await mockScheduledTasks(page)
   await page.goto('/schedules')
-  await expect(page.locator('.empty')).toContainText('还没有自定义任务')
+  await expect(page.locator('.empty-state')).toContainText('还没有定时任务')
 
   await page.getByRole('button', { name: '新建任务' }).click()
   await page.locator('.title-input').fill('自动化任务')
@@ -60,7 +60,7 @@ test('定时任务页面：空状态、新建、编辑、启停、试运行和�
 
   const card = page.locator('.task-card', { hasText: '自动化任务' })
   await expect(card).toBeVisible()
-  await card.locator('input[type=checkbox]').uncheck()
+  await card.getByRole('button', { name: '停用定时任务' }).click()
   await expect(card).toHaveClass(/off/)
 
   await card.getByRole('button', { name: '编辑' }).click()
@@ -73,8 +73,8 @@ test('定时任务页面：空状态、新建、编辑、启停、试运行和�
   await edited.getByRole('button', { name: '试运行' }).click()
   await expect(page.locator('.app-toast__message')).toContainText('已发送')
 
-  page.once('dialog', dialog => dialog.accept())
   await edited.getByRole('button', { name: '删除' }).click()
+  await page.locator('.confirm-dialog-confirm').click()
   await expect(edited).toHaveCount(0)
 })
 
@@ -97,7 +97,7 @@ test('定时任务页面：自定义日期、间隔和渠道选项可切换', as
   const interval = page.locator('input[type=number]')
   await expect(interval).toBeVisible()
   await interval.fill('15')
-  await expect(page.locator('.chk-row')).toHaveCount(1)
+  await expect(page.locator('.app-checkbox')).toHaveCount(1)
   await page.locator('.title-input').fill('间隔任务')
   await page.getByRole('button', { name: '创建', exact: true }).click()
   await expect(page.locator('.task-card', { hasText: '间隔任务' })).toContainText('每 15 分钟')

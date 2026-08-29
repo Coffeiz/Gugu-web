@@ -12,6 +12,8 @@ context_tokens/thinking/vision —— `AIPresetItem` 和 `AISettings` 都满足�
 from __future__ import annotations
 
 import random
+from dataclasses import dataclass
+from sqlalchemy import select
 
 from agent import providers
 
@@ -20,6 +22,15 @@ _router = None
 
 _rr_counter = 0                  # round_robin 轮询游标
 _inflight: dict[str, int] = {}   # least_loaded 每 key 在途计数（pick 时 +1，release 时 -1）
+
+
+@dataclass(frozen=True)
+class ModelRunConfig:
+    """一次生成所需的稳定模型派生配置，避免入口各自重复解析。"""
+
+    model: object
+    use_anthropic: bool
+    context_tokens: int
 
 # 下面这几个判断函数（PRD-LLM-1 FR-LLM-2）改成委托 agent/providers.py 的
 # adapter_for()——provider 差异知识收拢到那一个文件，这里只是保留现有签名/
@@ -62,12 +73,7 @@ def use_anthropic_for(ai) -> bool:
     除非 base_url 里带 anthropic 字样」，跟 `_DEFAULT` 代表的「真正的 anthropic 原生」语义不是
     一回事，硬delegate 会让不认识的第三方厂商被误判成走 anthropic 格式。所以这条只复用
     `is_minimax`（已经是委托版本），其余判定逻辑原样保留。"""
-    fmt = (getattr(ai, "api_format", "") or "").lower()
-    if fmt == "anthropic":
-        return True
-    if fmt == "openai":
-        return False
-    return is_minimax(ai) or ("anthropic" in (getattr(ai, "base_url", "") or "").lower())
+    return providers.adapter_for(ai).protocol_format(ai) == "anthropic"
 
 
 def _pick_pool(pool, mode):
@@ -116,3 +122,38 @@ def pick_model(settings, ctx=None):
                 return _pick_pool(pool, getattr(presets, "pool_mode", "random"))
     # active（默认）/ 兜底：用顶层 settings.ai（activate 时已把激活预设同步到这里）
     return settings.ai
+
+
+def resolve_run_config(settings, ctx=None) -> ModelRunConfig:
+    """统一解析模型、协议和上下文预算；Web/IM/定时任务共用。"""
+    model = pick_model(settings, ctx)
+    return ModelRunConfig(
+        model=model,
+        use_anthropic=use_anthropic_for(model),
+        context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)),
+    )
+
+
+async def resolve_run_config_for_user(settings, db, user_id, ctx=None) -> ModelRunConfig:
+    """解析主模型并应用当前用户的 LLM BYOK 覆盖。"""
+    config = resolve_run_config(settings, ctx)
+    if not (getattr(settings, "byok", None) and
+            (settings.byok.enabled or settings.ai.deployment_mode == "local")):
+        return config
+    from app.byok.service import decrypt_value
+    from app.models import UserProviderCredential
+    rows = (await db.execute(select(UserProviderCredential).where(
+        UserProviderCredential.user_id == user_id,
+        UserProviderCredential.capability == "llm",
+        UserProviderCredential.enabled.is_(True),
+    ).order_by(UserProviderCredential.id))).scalars().all()
+    row = next(iter(rows), None)
+    if row is None:
+        return config
+    base = config.model
+    updates = {"provider": row.provider, "api_format": row.api_format,
+               "api_key": decrypt_value(row), "base_url": row.base_url or getattr(base, "base_url", ""),
+               "model": row.model or getattr(base, "model", "")}
+    model = base.model_copy(update=updates) if hasattr(base, "model_copy") else base
+    return ModelRunConfig(model=model, use_anthropic=use_anthropic_for(model),
+                          context_tokens=int(getattr(model, "context_tokens", settings.ai.context_tokens)))

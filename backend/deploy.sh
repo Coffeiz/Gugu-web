@@ -5,10 +5,10 @@
 #
 #  流程:
 #    1. 校验环境（venv、磁盘空间）
-#    2. 备份关键数据（config.override.json、uploads/）
+#    2. 备份关键数据（config.override.json、Gugu-data/users/）
 #    3. 同步 Python 依赖（pip install -r requirements.txt）
 #    4. 跑数据库迁移（alembic upgrade head，DB 不通则跳过）
-#    5. 可选：构建前端（--no-build 跳过）
+#    5. 可选：构建 TS RAG 固定制品与前端（--no-build 跳过）
 #    6. 重启后端服务（./start.sh restart）
 #    7. 健康检查
 #
@@ -66,6 +66,11 @@ if [ ! -d ".venv" ] && [ ! -d "venv" ]; then
     err "未找到 venv，请先创建：python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
     exit 1
 fi
+if [ ! -f "config.override.json" ]; then
+    err "缺少 config.override.json；为避免部署清空 Admin 设置，部署已停止。"
+    err "请先恢复备份后再部署。全新部署请先显式创建空配置，再运行本脚本。"
+    exit 1
+fi
 VENV_BIN=".venv/bin"
 [ -d "venv" ] && VENV_BIN="venv/bin"
 
@@ -91,7 +96,7 @@ backup_if_exists() {
 }
 
 backup_if_exists "config.override.json" "config-override"
-backup_if_exists "uploads"             "uploads"
+backup_if_exists "../Gugu-data/users"  "users"
 
 # 只保留最近 10 个备份
 ls -t "$BACKUP_DIR"/*.tar.gz 2>/dev/null | tail -n +11 | xargs -r rm -f
@@ -119,15 +124,25 @@ async def t():
         await c.execute(text('SELECT 1'))
 asyncio.run(asyncio.wait_for(t(), timeout=3))
 " 2>/dev/null; then
+    # 迁移需要 AccessExclusiveLock；先停掉 web/worker，避免 DDL 与业务查询形成死锁。
+    ./start.sh stop
     "$VENV_BIN/alembic" upgrade head
     ok "迁移完成"
 else
     warn "数据库暂不可达（3s 超时），跳过迁移。服务起来后用 admin 后台配 DB，重启再跑迁移。"
 fi
 
-# ── 5. 构建前端（可选） ──────────────────────────────────
-hr; log "步骤 5/6 — 前端构建"
+# ── 5. 构建固定制品（可选） ──────────────────────────────
+hr; log "步骤 5/6 — 构建 TS RAG 固定制品与前端"
 if $DO_BUILD; then
+    if command -v pnpm >/dev/null 2>&1 || command -v corepack >/dev/null 2>&1; then
+        log "构建 TypeScript RAG worker 固定制品 ..."
+        make rag-ts-build
+        ok "TS RAG 固定制品已更新 → $APP_DIR/bin/gugu-rag-ts-worker.mjs"
+    else
+        err "未找到 pnpm 或 corepack，无法构建 TS RAG 固定制品"
+        exit 1
+    fi
     if [ -d "$FRONTEND_DIR" ]; then
         cd "$FRONTEND_DIR"
         if command -v npm >/dev/null 2>&1; then

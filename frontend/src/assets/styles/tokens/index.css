@@ -1,5 +1,6 @@
 /* Token architecture: foundations -> family theme values -> semantic roles -> component contracts. */
 @import './foundation/index.css';
 @import './themes/index.css';
+@import './palettes/index.css';
 @import './semantic/index.css';
 @import './components/index.css';

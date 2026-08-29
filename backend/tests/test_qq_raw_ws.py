@@ -167,6 +167,22 @@ def test_platform_mention_display_keeps_unknown_ids():
     assert replace_mention_ids("@known <@unknown>", {"known": "Coffeiz"}) == "@Coffeiz <@unknown>"
 
 
+def test_qq_group_reply_formats_current_member_mention():
+    expected = '<qqbot-at-user id="member-1" /> 请看一下'
+    assert qq._format_group_mention("@member-1 请看一下", "member-1") == expected
+    assert qq._format_group_mention("<@member-1> 请看一下", "member-1") == expected
+    assert qq._format_group_mention("<@!member-1> 请看一下", "member-1") == expected
+    assert qq._format_group_mention(
+        "<@member-1>、<@member-2>", "member-1"
+    ) == '<qqbot-at-user id="member-1" />、<qqbot-at-user id="member-2" />'
+    assert qq._format_group_mention("@other-member 普通文本", "member-1") == "@other-member 普通文本"
+    assert qq._has_qq_group_mention(expected)
+    assert not qq._has_qq_group_mention("@member-1 普通文本")
+    assert qq._split_qq_group_mention(
+        "<@member-1> 测试一下", "member-1"
+    ) == ('<qqbot-at-user id="member-1" />', "测试一下")
+
+
 async def test_qq_group_at_event_without_mentions_reaches_agent(monkeypatch):
     produced: list[dict] = []
 

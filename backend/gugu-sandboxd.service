@@ -1,0 +1,24 @@
+[Unit]
+Description=Gugu Rootless Docker Sandbox Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_USER__
+WorkingDirectory=__APP_DIR__
+Environment="PATH=__APP_DIR__/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="DOCKER_HOST=unix:///run/user/__RUN_UID__/docker.sock"
+Environment="GUGU_SANDBOXD_SOCKET=/run/user/__RUN_UID__/gugu-sandboxd.sock"
+ExecStart=__APP_DIR__/.venv/bin/python -m agent.sandbox.sandboxd \
+  --socket /run/user/__RUN_UID__/gugu-sandboxd.sock \
+  --allowed-root __DATA_DIR__
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=__DATA_DIR__ __APP_DIR__/logs
+
+[Install]
+WantedBy=multi-user.target

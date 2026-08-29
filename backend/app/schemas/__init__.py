@@ -31,7 +31,6 @@ class UserRegister(CamelModel):
     username: str
     email: str
     password: str
-    invite_code: str
 
 
 class UserLogin(CamelModel):
@@ -600,7 +599,19 @@ class PreferencesResponse(CamelModel):
     replyTone:         Optional[str] = None   # natural / formal / lively
     replyLength:       Optional[str] = None   # medium / short / detailed
     pmStagesExpanded:  bool = False            # 项目编辑卡：阶段区展开(50/50) 版面记忆
+    calendarWeekStart: str = "monday"         # 日历每周起始日：monday / sunday
     defaultView:       str = "projects"       # 应用打开时的默认入口
+    shellEnabled:      bool = False            # 用户级工作区 Shell 开关
+    shellSystemEnabled: bool = False           # 用户级系统范围 Shell 开关
+    shellDangerousEnabled: bool = False       # 用户级危险命令开关，仍需管理员允许和确认门
+    shellAutopilotEnabled: bool = False       # 用户级 Autopilot；仅在管理员总开关开启时生效
+    showToolInteractions: bool = False        # IM 是否展示工具调用过程；默认关闭
+    toolInjectionMode: str = "description"  # description = 简介模式；full = 全量模式
+    personalityPreference: Optional[str] = None
+    personalityPreferenceEnabled: bool = False
+    personalityPreferenceRevision: int = 0
+    personalityPreferenceUpdatedAt: Optional[str] = None
+    personalityPreferenceAvailable: bool = True
 
 class PreferencesUpdate(CamelModel):
     lastStages:        Optional[list[str]]  = None
@@ -608,4 +619,46 @@ class PreferencesUpdate(CamelModel):
     replyTone:         Optional[str] = None
     replyLength:       Optional[str] = None
     pmStagesExpanded:  Optional[bool] = None
+    calendarWeekStart: Optional[str] = None
     defaultView:       Optional[str] = None
+    shellEnabled:      Optional[bool] = None
+    shellSystemEnabled: Optional[bool] = None
+    shellDangerousEnabled: Optional[bool] = None
+    shellAutopilotEnabled: Optional[bool] = None
+    showToolInteractions: Optional[bool] = None
+    toolInjectionMode: Optional[str] = None
+    personalityPreference: Optional[str] = Field(default=None, max_length=10000)
+    personalityPreferenceEnabled: Optional[bool] = None
+
+    @field_validator("personalityPreference")
+    @classmethod
+    def validate_personality_preference(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if any(char in {"\x00", "\ufeff"} or (ord(char) < 32 and char not in {"\n", "\r", "\t"}) for char in value):
+            raise ValueError("人格偏好包含不支持的控制字符")
+        return value.strip() or None
+
+
+class WorkspaceCreate(CamelModel):
+    name: str = Field(min_length=1, max_length=200)
+    kind: Literal["folder", "project"] = "folder"
+    folderId: Optional[int] = None
+    projectId: Optional[int] = None
+    enabled: bool = True
+
+
+class WorkspaceUpdate(CamelModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    enabled: Optional[bool] = None
+
+
+class WorkspaceResponse(CamelModel):
+    id: int
+    name: str
+    kind: str
+    folderId: Optional[int] = None
+    projectId: Optional[int] = None
+    enabled: bool
+    isDefault: bool
+    boundSessionCount: int = 0

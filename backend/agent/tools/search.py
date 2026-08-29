@@ -2,13 +2,13 @@
 
 - `web_search`：通用网页搜索，走自建 **SearXNG**（免费、快）。返回标题+链接+摘要，
   适合找官网/文档/GitHub/某个事实/新闻标题/下载地址等"普通查找"。无配额。
-- `deep_research`：深度研究，走 **Tavily**（抓取并清洗网页正文 + 给 answer），适合
+- `deep_research`：按 Admin 选择的 Provider 查询外部资料。Tavily / You.com 返回研究答案；百度使用普通百度搜索并返回网页引用，适合
   需要"读内容并总结/比较/研究/给引用"的任务。有每日次数配额（SearchUsage）。
-- `image_search`：图片搜索，同样走 SearXNG（`categories=images`），免配额。默认只返回候选
-  （标题+来源页+图片直链 img_src+缩略图），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。真要把图发进对话/IM，
-  接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
+- `image_search`：统一图片搜索入口。`mode=text` 按关键词走 SearXNG，`mode=image` 根据已有图片以图搜图，返回相似候选。
+  默认只返回候选（标题+来源页+图片直链），**不会自动读取或发送**；需要视觉分析时单独调用 `inspect_images`。
+  真要把图发进对话/IM，接着调 `files.py` 的 `send_file(url=候选的 img_src)`。
 
-成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research(Tavily)。
+成本梯队（见 `agent/skills/web-search.md`）：专有技能 → web_search(SearXNG) → deep_research（Admin 选择的 Provider）。
 SearXNG 部署在后端同机（127.0.0.1），由 settings.search.searxng_url 配；国内服务器只有
 sogou/quark/360search 可达，固定带 engines 避开会超时的 google/bing 等。图片搜索能用的引擎不一定
 是同一批（`settings.search.searxng_image_engines`，留空回退文本引擎列表）。
@@ -23,12 +23,15 @@ import io
 import json
 import logging
 import random
+from urllib.parse import urlencode
 
 from app.core.tz import local_day_start_utc
+from app.core.credentials import normalize_ascii_api_key
 
 import httpx
 from app.core.config import get_settings
 from app.core import chat_attach
+from app.byok.service import decrypt_value, get_active_credential
 from app.services.search import (
     count_daily_search_usage,
     count_similar_image_usage,
@@ -38,7 +41,6 @@ from app.services.search import (
 )
 from agent.tools.base import BaseSkill, Tool
 
-_TAVILY_URL = "https://api.tavily.com/search"
 _search_log = logging.getLogger("agent.search")
 
 # 每次模型工具循环独立计数，避免并发会话互相影响；单次调用仍最多读取 20 张。
@@ -51,9 +53,7 @@ def reset_image_inspection_budget() -> None:
     _url_inspection_count.set(0)
 
 _SEARCH_QUERY_DESCRIPTION = (
-    "搜索关键词。优先使用简短关键词组合，不要直接复制用户的完整问题或写成长句；"
-    "保留实体名、产品名、版本号、年份/日期和关键术语。精确文件名、报错文本、论文标题、"
-    "产品完整型号等本身是高价值检索词，应完整保留。"
+    "简短检索词；保留实体名、产品名、版本号、日期和关键术语，不要复制完整问题。"
 )
 
 
@@ -68,6 +68,12 @@ def _parse_requested_engines(raw: str | None) -> list[str]:
             seen.add(key)
             out.append(name)
     return out
+
+
+def _build_searxng_search_url(base: str, params: dict) -> str:
+    """用 UTF-8 显式编码查询参数，避免生产环境 ASCII locale 处理中文时抛错。"""
+    query = urlencode(params, encoding="utf-8", errors="strict")
+    return f"{base}/search?{query}"
 
 
 def _normalize_failure_reason(raw_reason) -> str:
@@ -247,11 +253,12 @@ async def _searxng_search(db, user_id, args: dict):
     # 传了只会挂一堆死引擎、拖慢甚至超时；通用引擎 sogou/quark/360 本就覆盖新闻等查询。
     engines = settings.search.searxng_engines
     params = {"q": query, "format": "json", "engines": engines}
+    request_url = _build_searxng_search_url(base, params)
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
         ) as client:
-            resp = await client.get(f"{base}/search", params=params)
+            resp = await client.get(request_url)
     except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError):
         # SearXNG 已明确不可用时直接切换深度研究，避免模型在同一轮里重复调用
         # 已超时的 web_search。deep_research 自己负责配额和错误回执。
@@ -277,7 +284,7 @@ async def _searxng_search(db, user_id, args: dict):
     return _build_search_response(query, results, engines, data, kind="web")
 
 
-# ── image_search：SearXNG images 分类（通用、免费、无配额）───────────────────
+# ── image_search：关键词搜图（SearXNG，通用、免费、无配额）───────────────
 async def _searxng_image_search(db, user_id, args: dict):
     settings = get_settings()
     base = (settings.search.searxng_url or "").rstrip("/")
@@ -292,13 +299,14 @@ async def _searxng_image_search(db, user_id, args: dict):
     # 文本引擎列表兜底，管理员实测后可在后台单独配 searxng_image_engines。
     engines = settings.search.searxng_image_engines or settings.search.searxng_engines
     params = {"q": query, "format": "json", "categories": "images", "engines": engines}
+    request_url = _build_searxng_search_url(base, params)
     resp = None
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(connect=5.0, read=20.0, write=5.0, pool=5.0)
             ) as client:
-                resp = await client.get(f"{base}/search", params=params)
+                resp = await client.get(request_url)
             break
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             if attempt == 1:
@@ -402,12 +410,19 @@ async def _inspect_images(db, user_id, args: dict):
     return response
 
 
-# ── deep_research：Tavily（深度、有配额）─────────────────────────────────────
+# ── deep_research：可配置 Provider（深度、有配额）────────────────────────────
 async def _deep_research(db, user_id, args: dict):
     settings = get_settings()
-    key = settings.search.tavily_api_key
+    user_credential = await get_active_credential(db, user_id, "deep_research")
+    provider = user_credential.provider if user_credential else settings.search.deep_research_provider
+    keys = {
+        "tavily": settings.search.tavily_api_key,
+        "baidu": settings.search.deep_research_baidu_api_key,
+        "you": settings.search.deep_research_you_api_key,
+    }
+    key = decrypt_value(user_credential) if user_credential else keys.get(provider, "")
     if not key:
-        return json.dumps({"error": "管理员尚未配置深度研究（Tavily API Key）；普通查找可用 web_search"})
+        return json.dumps({"error": f"管理员尚未配置深度研究（{provider} API Key）；普通查找可用 web_search"})
 
     query = (args.get("query") or "").strip()
     if not query:
@@ -424,31 +439,20 @@ async def _deep_research(db, user_id, args: dict):
             return json.dumps({"error": f"今天的深度研究次数已用完（上限 {limit} 次/天）；普通查找仍可用 web_search"})
 
     max_results = args.get("max_results") or settings.search.max_results
-    payload = {
-        "api_key": key,
-        "query": query,
-        "max_results": max_results,
-        "search_depth": args.get("depth", "basic"),
-        "include_answer": True,
-    }
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
-        ) as client:
-            resp = await client.post(_TAVILY_URL, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        from agent.tools.deep_research import run
+        data = await run(
+            provider, query, key,
+            max_results=max_results,
+            depth=args.get("depth", "basic"),
+        )
     except Exception as e:
         return json.dumps({"error": f"深度研究失败：{str(e)[:100]}"})
 
     # 记一次用量（成功才记，计入每日配额）
     await record_search_usage(db, user_id, query)
 
-    results = [
-        {"title": r.get("title"), "url": r.get("url"), "content": r.get("content")}
-        for r in (data.get("results") or [])
-    ]
-    return {"query": query, "answer": data.get("answer"), "results": results}
+    return data
 
 
 async def _resolve_similar_image(user_id, args: dict) -> tuple[bytes | None, str | None]:
@@ -490,6 +494,12 @@ async def _resolve_similar_image(user_id, args: dict) -> tuple[bytes | None, str
 
 
 async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeout_seconds: int) -> dict:
+    try:
+        api_key = normalize_ascii_api_key(api_key, label="百度相似图搜索 API Key")
+    except ValueError:
+        return {"error": "百度相似图搜索 API Key 格式无效，请使用服务提供的 ASCII API Key", "error_code": "invalid_api_key"}
+    if not api_key:
+        return {"error": "百度相似图搜索 API Key 未配置，请管理员检查服务配置", "error_code": "invalid_api_key"}
     payload = {"image": base64.b64encode(raw).decode("ascii"), "count": count}
     try:
         async with httpx.AsyncClient(
@@ -550,17 +560,19 @@ async def _call_baidu_similar_image(raw: bytes, api_key: str, count: int, timeou
     }
 
 
-async def _search_similar_images(db, user_id, args: dict):
+async def _image_search_by_image(db, user_id, args: dict):
     settings = get_settings()
     cfg = settings.search
-    if not cfg.similar_image_enabled or not cfg.baidu_qianfan_api_key:
+    user_credential = await get_active_credential(db, user_id, "similar_image_search")
+    image_key = decrypt_value(user_credential) if user_credential else cfg.baidu_qianfan_api_key
+    if (not user_credential and not cfg.similar_image_enabled) or not image_key:
         return {"error": "相似图搜索尚未配置或未启用，请管理员先在 Admin 配置百度千帆 API Key"}
 
-    count = args.get("count") or cfg.similar_image_default_count
+    count = args.get("max_results") or cfg.similar_image_default_count
     try:
-        count = max(1, min(50, int(count)))
+        count = max(1, min(20, int(count)))
     except (TypeError, ValueError):
-        return {"error": "count 必须是 1 到 50 之间的整数"}
+        return {"error": "max_results 必须是 1 到 20 之间的整数"}
 
     day_start = local_day_start_utc()
     limit = cfg.similar_image_limit_daily
@@ -574,7 +586,7 @@ async def _search_similar_images(db, user_id, args: dict):
     if error:
         return {"error": error}
     result = await _call_baidu_similar_image(
-        raw, cfg.baidu_qianfan_api_key, count, cfg.similar_image_timeout_seconds,
+        raw, image_key, count, cfg.similar_image_timeout_seconds,
     )
     if "error" not in result:
         await record_similar_image_usage(db, user_id)
@@ -583,18 +595,33 @@ async def _search_similar_images(db, user_id, args: dict):
     return result
 
 
+async def _image_search(db, user_id, args: dict):
+    """统一图片搜索入口，按 mode 分派到关键词或反向图片搜索实现。"""
+    raw_mode = args.get("mode")
+    if raw_mode is None or not str(raw_mode).strip():
+        # IM 端可能仍使用旧的 image_search 参数形态。没有 mode 时，只有图片输入
+        # 而没有 query 才按反向搜索处理；其余情况保持关键词搜索的默认语义。
+        mode = "image" if (args.get("attach_id") or args.get("image_url")) and not args.get("query") else "text"
+    else:
+        mode = str(raw_mode).strip().lower()
+    if mode == "text":
+        if not str(args.get("query") or "").strip():
+            return {"error": "mode=text 时需要提供搜索关键词 query"}
+        return await _searxng_image_search(db, user_id, args)
+    if mode == "image":
+        if not args.get("attach_id") and not args.get("image_url"):
+            return {"error": "mode=image 时需要提供 attach_id 或 image_url"}
+        return await _image_search_by_image(db, user_id, args)
+    return {"error": "mode 必须是 text 或 image"}
+
+
 class SearchSkill(BaseSkill):
-    name = "web_search"   # 2026-07-10 前叫 "search"，跟站内 global_search 撞名太像，改名区分；
-                          # 旧定时任务 tool_groups 里存的 "search" 兼容映射见 agent/runner.py
+    name = "web_search"   # 与站内 global_search 区分
     tools = [
         Tool(
             name="web_search", label="联网搜索",
-            description=(
-                "通用网页搜索（自建 SearXNG，免费、快）：找官网 / 文档 / GitHub / 某个事实 / "
-                "新闻标题 / 下载地址等。返回标题+链接+摘要。**大多数联网查找都用这个**；"
-                "只有需要『读网页正文并总结 / 比较 / 研究 / 给引用』时才改用 deep_research。"
-                "查项目 / 文件 / 日历 / 客户等用户自己的数据请用对应工具，别用本工具。"
-            ),
+            description_short='搜索公网网页；关键字段 query/max_results，max_results 范围 1~20',
+            description="搜索公网网页，返回标题、链接和摘要；需要读正文或深入研究时用 deep_research。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -611,35 +638,29 @@ class SearchSkill(BaseSkill):
         ),
         Tool(
             name="image_search", label="图片搜索",
-            description=(
-                "图片搜索（自建 SearXNG images 分类，免费、无配额）：用户要找图/配图/看看某样东西长什么样时用。"
-                "返回候选列表（标题+来源页+图片直链 img_src+缩略图），**只是列出候选，不会自动发送**。"
-                "需要视觉分析时，必须再单独调用 inspect_images，并由模型自行挑选要看的候选图；每轮最多读取 3 次网络图片。"
-                "用户明确要看图/要一张图 → 搜到后接着调 files 技能的 send_file(url=选中候选的 img_src) 把图发出去，"
-                "不用再问一句「要不要发」（找图本身就是要看/要发，没有额外的保存步骤）。"
-            ),
+            description_short='搜索图片候选；mode=text/image，text 用 query，image 用 attach_id；需分析时再用 inspect_images，max_results 范围 1~20',
+            description="搜索图片或以图搜图，只返回候选；需要分析用 inspect_images，需要发送用 send_file。",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": _SEARCH_QUERY_DESCRIPTION},
+                    "mode": {
+                        "type": "string", "enum": ["text", "image"],
+                    },
+                    "query": {"type": "string"},
+                    "attach_id": {"type": "string"},
+                    "image_url": {"type": "string"},
                     "max_results": {
                         "type": "integer", "minimum": 1, "maximum": 20,
-                        "description": "返回候选数（默认 5，范围 1~20）",
                     },
                 },
-                "required": ["query"],
             },
-            handler=_searxng_image_search,
+            handler=_image_search,
             start_message=lambda args: random.choice(["我去找张图。", "我搜搜看有没有合适的图。"]),
         ),
         Tool(
             name="inspect_images", label="读取图片",
-            description=(
-                "读取 image_search/search_similar_images 结果或历史消息附件并交给视觉模型分析。"
-                "搜索候选填写 result_id、img_src 或 image_url、title；"
-                "历史图片填写上下文中的 attach_id；"
-                "一次最多读取 20 张。"
-            ),
+            description_short='读取图片并交给视觉模型；最多 20 张',
+            description="读取图片候选或历史附件并交给视觉模型分析；一次最多 20 张。",
             input_schema={
                 "type": "object",
                 "properties": {
@@ -647,14 +668,13 @@ class SearchSkill(BaseSkill):
                         "type": "array",
                         "minItems": 1,
                         "maxItems": 20,
-                        "description": "要读取的图片结果，使用搜索结果的 result_id、img_src/image_url 和 title。",
                         "items": {
                             "type": "object",
                             "properties": {
                                 "result_id": {"type": "string"},
                                 "img_src": {"type": "string"},
-                                "image_url": {"type": "string", "description": "相似图搜索结果中的图片直链"},
-                                "attach_id": {"type": "string", "description": "历史消息中的图片附件 ID"},
+                                "image_url": {"type": "string"},
+                                "attach_id": {"type": "string"},
                                 "title": {"type": "string"},
                             },
                             "anyOf": [
@@ -671,35 +691,9 @@ class SearchSkill(BaseSkill):
             start_message=lambda args: random.choice(["我读取选中的图片对比一下。", "我看看这些图片。"]),
         ),
         Tool(
-            name="search_similar_images", label="相似图搜索",
-            description=(
-                "根据已有图片反向搜索互联网中的相似图片。用户说搜图、搜搜这个、用这张图找同款/相似图/来源时使用；"
-                "必须提供当前附件 attach_id 或图片 image_url，不能把文字关键词当作图片输入。"
-                "当前图片用上下文中的 attach_id，网络图片用 image_url；如果刚用 image_search 找到图片，"
-                "使用对应结果的 img_src 作为 image_url。结果是相似候选，不代表确认是同一张图。"
-                "返回的 similarity 只是服务端排序等级，不是百分比、置信度或相似度 X/5；不要因分值低就直接否定候选。"
-                "用户只要结果或明确说不用看图时，直接返回候选标题、URL 和排序信息，不要继续调用 inspect_images。"
-            ),
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "attach_id": {"type": "string", "description": "当前消息或历史附件中的图片附件 ID"},
-                    "image_url": {"type": "string", "description": "image_search 结果中的图片直链"},
-                    "count": {"type": "integer", "minimum": 1, "maximum": 50, "description": "返回结果数，默认使用 Admin 配置"},
-                },
-                "anyOf": [{"required": ["attach_id"]}, {"required": ["image_url"]}],
-            },
-            handler=_search_similar_images,
-            start_message=lambda args: random.choice(["我拿这张图找找相似结果。", "我搜一下有没有相近的图片。"]),
-        ),
-        Tool(
             name="deep_research", label="深度研究",
-            description=(
-                "深度联网研究（Tavily，有每日次数配额）：需要**阅读网页正文并总结 / 比较 / "
-                "研究 / 给引用**时用——它会抓取并清洗正文、给出可直接用的内容与 answer。"
-                "普通『找个链接 / 查个事实 / 看新闻标题』用 web_search 就够，别用本工具。"
-                "SearXNG 没结果 / 超时时，也可用本工具兜底。"
-            ),
+            description_short='深度研究；关键字段 query，depth=basic/advanced，max_results 范围 1~20',
+            description="阅读和研究外部资料，返回总结或引用；普通网页查找用 web_search。",
             input_schema={
                 "type": "object",
                 "properties": {

@@ -43,14 +43,14 @@
         <div class="fc-hover-actions">
           <button class="file-card-btn" :title="renamingId === f.id ? '确认' : '重命名'"
             @mousedown.prevent @click.stop="renamingId === f.id ? commitRename(f) : startRename(f)">
-            <PhCheck v-if="renamingId === f.id" :size="11" weight="bold" />
-            <PhPencilSimple v-else :size="11" weight="bold" />
+            <Icon name="status.success" v-if="renamingId === f.id" :size="11" />
+            <Icon name="action.edit" v-else :size="11" />
           </button>
           <button class="file-card-btn" title="下载" @click.stop="downloadFile(f)">
-            <PhDownloadSimple :size="11" weight="bold" />
+            <Icon name="action.download" :size="11" />
           </button>
           <button class="file-card-btn del" title="移到回收站" @click.stop="deleteFile(f)">
-            <PhTrash :size="11" weight="bold" />
+            <Icon name="action.delete" :size="11" />
           </button>
         </div>
       </FileCard>
@@ -64,9 +64,7 @@
         :class="{ dragging }"
         @click.prevent="openUpload"
       >
-        <svg width="20" height="20" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.4">
-          <path d="M11 15V5M6 9l5-5 5 5"/><path d="M2 17h18"/>
-        </svg>
+        <Icon name="action.upload" :size="22" style="opacity:0.4" />
         <span class="fc-upload-text">上传文件</span>
       </label>
     </div>
@@ -91,10 +89,8 @@ import { usePreviewStore, isPreviewable } from '@/stores/preview'
 import { getThumb, getCachedThumb, preloadTinyThumbs, clearThumbCache, cardBlobReadyIds } from '@/composables/useThumbCache'
 import { isImageExt } from '@/utils/fileTypes'
 import FileCard from '@/components/common/file-browser/FileCard.vue'
+import Icon from '@/components/common/Icon.vue'
 import UploadModal from '@/views/Files/UploadModal.vue'
-import {
-  PhPencilSimple, PhCheck, PhDownloadSimple, PhTrash,
-} from '@phosphor-icons/vue'
 
 const panelRef      = ref<HTMLElement | null>(null)
 const colCount      = ref(4) // ResizeObserver 更新后覆盖

@@ -41,6 +41,18 @@ export function useChatConversation(options: {
 }) {
   const liveStore = useLiveStore()
   const messagesEl = computed(() => options.messageListRef.value?.el ?? null)
+  const sessionSettling = ref(false)
+  // 所有滚动请求共用一个代次与 rAF。切会话、流式 token、工具事件可能同时请求到底部，
+  // 旧请求必须失效，否则它会在新消息布局完成后再次改写 scrollTop。
+  let scrollRequest = 0
+  let scrollRaf: number | null = null
+  function invalidateScrollRequests() {
+    scrollRequest += 1
+    if (scrollRaf !== null) {
+      cancelAnimationFrame(scrollRaf)
+      scrollRaf = null
+    }
+  }
 
   const now = () => {
     const d = new Date()
@@ -126,7 +138,10 @@ export function useChatConversation(options: {
   const isGroupSession = ref(false)
   let _chatViewGeneration = 0
   const getViewGeneration = () => _chatViewGeneration
-  const bumpViewGeneration = () => ++_chatViewGeneration
+  const bumpViewGeneration = () => {
+    invalidateScrollRequests()
+    return ++_chatViewGeneration
+  }
 
   async function fetchSessions() {
     try { sessions.value = await agentApi.listSessions() } catch {}
@@ -242,15 +257,45 @@ export function useChatConversation(options: {
   // 用户发送时强制即时跳到底（大窗用 smooth 会被随后出现的 thinking 气泡/内容打断，看着没到底）；
   // 再补一帧 rAF，兜住附件缩略图/气泡迟一拍布局导致的高度变化
   async function scrollBottom(force = false) {
+    const request = ++scrollRequest
+    if (scrollRaf !== null) {
+      cancelAnimationFrame(scrollRaf)
+      scrollRaf = null
+    }
     await nextTick()
+    if (request !== scrollRequest) return
     const el = messagesEl.value; if (!el) return
     options.onSyncSmallH()   // 发送/加载后按内容真实高度更新窗口高（含刚加的用户气泡）
     if (force) {
       stick.value = true
       scrollToBottom()
-      requestAnimationFrame(() => { if (stick.value) scrollToBottom() })
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = null
+        if (request !== scrollRequest) return
+        if (stick.value) scrollToBottom()
+      })
     }
     else if (stick.value) scrollToBottom()
+  }
+
+  // 虚拟列表在切换会话后会先用估算高度绘制，再在可见行挂载后逐帧修正高度。
+  // 在这些修正完成前解除隐藏会造成会话先出现在错误位置、下一帧再跳到底部。
+  async function waitForStableScrollLayout() {
+    let previous = ''
+    let stableFrames = 0
+    for (let i = 0; i < 12; i += 1) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      await nextTick()
+      const el = messagesEl.value
+      const current = el ? `${el.scrollHeight}:${el.clientHeight}` : ''
+      if (current && current === previous) {
+        stableFrames += 1
+        if (stableFrames >= 2) return
+      } else {
+        stableFrames = 0
+        previous = current
+      }
+    }
   }
 
   watch(messagesEl, (el, oldEl) => {
@@ -274,6 +319,7 @@ export function useChatConversation(options: {
     refreshAfterTools: options.refreshAfterTools,
     loadQuota: options.loadQuota,
     playIncomingMessageSfx: options.playIncomingMessageSfx,
+    onContentReset: options.onContentReset,
   })
   const { streaming, abortCtrl, resetSessionTurn, clearPendingQueue, send, stopStreaming, resumeStream } = streamApi
 
@@ -287,8 +333,10 @@ export function useChatConversation(options: {
     onContentReset: options.onContentReset,
     onCaptureBaseScrollH: options.onCaptureBaseScrollH,
     scrollBottom,
+    waitForStableScrollLayout,
+    setSessionSettling: (value: boolean) => { sessionSettling.value = value },
   })
-  const { webSessions, imSessions, currentSessionTitle, loadSession, newSession, deleteSession, renameSession } = sessionsApi
+  const { webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus, loadSession, newSession, deleteSession, renameSession } = sessionsApi
 
   // 实时：IM（飞书/QQ）来了新消息 → 刷新会话列表，新会话/新标题即时出现
   watch(() => liveStore.rev.sessions, () => fetchSessions())
@@ -297,8 +345,13 @@ export function useChatConversation(options: {
   // 不必整列表/整会话 refetch（只传增量）。非当前会话则上面刷新列表即可。
   // origin === 本标签页时是自己发起这轮对话的回声：token 流已经把气泡画出来了，这里跳过，
   // 只让别的标签页/端补上（同一 client-id 每个标签页独立生成，见 services/api.ts）。
-  watch(() => liveStore.sessionEvent, async (e) => {
-    if (!e || !e.appended?.length || e.session_id !== sessionId.value) return
+  watch(() => liveStore.resourceEvent, async (event) => {
+    if (!event || event.resource !== 'sessions' || String(event.entity_id) !== String(sessionId.value)) return
+    const payload = event.payload && typeof event.payload === 'object' ? event.payload as Record<string, any> : {}
+    const e = { ...payload, session_id: event.entity_id, origin: event.origin } as any
+    const session = sessions.value.find(item => item.id === Number(e.session_id))
+    if (session && e.title) session.title = e.title
+    if (!e.appended?.length) return
     if (e.origin && e.origin === CLIENT_ID) return
     for (const m of e.appended) {
       const isAi = m.role === 'assistant'
@@ -331,11 +384,11 @@ export function useChatConversation(options: {
   })
 
   return {
-    messages, mkid, now,
+    messages, mkid, now, sessionSettling,
     inputText, thinkingLabels, streaming, statusKind, statusTyped,
     isTypingText: computed(() => streaming.value && !statusKind.value),
     sessionId, ownerPlatformUserId, isGroupSession,
-    sessions, webSessions, imSessions, currentSessionTitle,
+    sessions, webSessions, imSessions, currentSessionTitle, currentSessionWorkspaceName, currentSessionGoalActive, currentSessionGoalStatus,
     stick, lastTop: _lastTop,
     fetchSessions, loadSession, newSession, deleteSession, renameSession, resolveSpeaker,
     send, stopStreaming, resumeStream,

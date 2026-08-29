@@ -6,6 +6,7 @@ worker 仍负责 Redis 消费、被动群消息、命令/intent shortcut 的执�
 """
 from __future__ import annotations
 
+import json
 import random
 from dataclasses import dataclass
 from typing import Any, List, Optional
@@ -19,13 +20,13 @@ from agent.im.owner_session import (
     resolve_session as resolve_owner_session,
 )
 from agent.im.permissions import resolve_access
+from app.services.conversation_retention import trim_session_messages
 from agent.im.session import (
     SessionRoute,
     get_session,
     resolve_route,
     resolve_session_id,
     set_session,
-    trim_session_messages,
 )
 from agent.models import AgentRequest
 
@@ -68,7 +69,7 @@ class PreparedImRequest:
     session_id: Optional[int]
 
 
-@dataclass(frozen=True)
+@dataclass
 class ImActivity:
     """一次 IM 模型执行期间的忙碌态和平台 typing 句柄。"""
 
@@ -77,19 +78,21 @@ class ImActivity:
     typing_indicator: Any
     bot_id: str = ""
     scope_id: str = ""
+    typing_stopped: bool = False
 
 
 class OwnerAgentLoop:
     """Web/owner IM 共用的完整 Agent Loop 门面。"""
 
-    async def run_collect(self, request: AgentRequest):
+    async def run_collect(self, request: AgentRequest, *, on_interaction=None,
+                          on_tool_event=None, on_round=None):
         from agent.runner import run_collect
-        return await run_collect(request)
-
-    def run_stream(self, request: AgentRequest):
-        from agent.runner import run_stream
-        return run_stream(request)
-
+        kwargs = {"on_interaction": on_interaction}
+        if on_tool_event is not None:
+            kwargs["on_tool_event"] = on_tool_event
+        if on_round is not None:
+            kwargs["on_round"] = on_round
+        return await run_collect(request, **kwargs)
 
 class MemberAgentLoop(OwnerAgentLoop):
     """member/unknown 的轻量入口，权限和上下文由 request policy 收紧。"""
@@ -103,6 +106,7 @@ async def decide_im_shortcut(
     has_attachments: bool = False,
     bot_id: str = "",
     scope_id: str = "",
+    allow_leading_mention: bool = False,
 ) -> dict:
     """根据当前 IM 状态判断是否需要在入队前短路。"""
     if has_attachments:
@@ -130,6 +134,7 @@ async def decide_im_shortcut(
         text, state, awaiting,
         current_puid=platform_user_id,
         active_puid=active_puid,
+        allow_leading_mention=allow_leading_mention,
     )
     if dec.get("action") == "cancel":
         # 取消是实时控制信号，这里记录「谁在什么状态下发起了取消」，便于排查取消未生效
@@ -152,6 +157,7 @@ def decide_im_shortcut_sync(
     has_attachments: bool = False,
     bot_id: str = "",
     scope_id: str = "",
+    allow_leading_mention: bool = False,
 ) -> dict:
     """同步 Gateway 回调使用的 intent shortcut 决策。"""
     if has_attachments:
@@ -177,6 +183,7 @@ def decide_im_shortcut_sync(
         text, state, awaiting,
         current_puid=platform_user_id,
         active_puid=active_puid,
+        allow_leading_mention=allow_leading_mention,
     )
     if dec.get("action") == "cancel":
         from agent.security.logsafe import fingerprint
@@ -276,8 +283,6 @@ async def start_im_activity(payload: dict, platform: str, platform_user_id: str)
 async def finish_im_activity(activity: ImActivity) -> None:
     """无论模型成功、失败或取消，都清理忙碌态和 typing 指示器。"""
     from agent.runtime import runtime_state
-    from agent.gateway import wechat
-
     await runtime_state.clear_state(
         activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
     )
@@ -287,6 +292,16 @@ async def finish_im_activity(activity: ImActivity) -> None:
     await runtime_state.unmark_active(
         activity.platform, activity.bot_id, activity.scope_id, activity.platform_user_id
     )
+    await stop_im_typing(activity)
+
+
+async def stop_im_typing(activity: ImActivity) -> None:
+    """在交互等待前结束 typing，但保留会话活跃状态。"""
+    if activity.typing_stopped:
+        return
+    activity.typing_stopped = True
+    from agent.gateway import wechat
+
     await wechat.stop_typing(activity.typing_indicator)
 
 
@@ -313,7 +328,7 @@ async def remember_im_reach(
         pass
 
 
-def bind_im_context(request: AgentRequest, payload: dict) -> None:
+def bind_im_context(request: AgentRequest, payload: dict, *, show_tool_interactions: bool = False) -> None:
     """把当前请求的 IM 路由和权限快照绑定到工具侧 ContextVar。"""
     from agent.im import imctx
 
@@ -327,6 +342,7 @@ def bind_im_context(request: AgentRequest, payload: dict) -> None:
         payload.get("context_token", ""),
         request.allowed_tool_names,
         request.im_role,
+        show_tool_interactions,
     )
 
 
@@ -346,11 +362,17 @@ async def finalize_im_response(platform: str, platform_user_id: str,
     )
 
 
-async def handle_im_command(user_id, message: str) -> Optional[str]:
+async def handle_im_command(user_id, message: str, session_id: Optional[int] = None,
+                            *, allow_leading_mention: bool = False) -> Optional[str]:
     """处理不需要模型的 IM 命令，返回回复文本或 ``None``。"""
     from agent import commands
 
-    return await commands.handle(user_id, message)
+    return await commands.handle(
+        user_id,
+        message,
+        session_id=session_id,
+        allow_leading_mention=allow_leading_mention,
+    )
 
 
 async def record_passive_im_message(request: AgentRequest, session_id: Optional[int] = None) -> int:
@@ -474,7 +496,7 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
         recorded_message_id = message_row.id
     if request.chat_id and recorded_message_id:
         try:
-            from agent.memory.reflection_jobs import observe_group_message, observe_member_message
+            from agent.memory.reflection_jobs import observe_group_message
             from agent.memory.scopes import MemoryScope
 
             group_scope = MemoryScope(
@@ -484,24 +506,13 @@ async def record_passive_im_message(request: AgentRequest, session_id: Optional[
                     "group",
                     str(request.chat_id),
                 )
-            await observe_group_message(
-                group_scope,
-                recorded_message_id,
-                message_row.created_at,
-            )
-            if request.im_role == "member" and request.platform_user_id:
-                await observe_member_message(
-                    MemoryScope(
-                        request.user_id,
-                        request.source or "qq",
-                        str(request.platform_bot_id or ""),
-                        "platform-user",
-                        str(request.platform_user_id),
-                    ),
+            if request.im_group_memory_enabled:
+                await observe_group_message(
+                    group_scope,
                     recorded_message_id,
                     message_row.created_at,
                 )
-            elif request.im_role == "owner":
+            if request.im_role == "owner":
                 from app.core.config import get_settings
                 from agent.memory import reflection
 
@@ -648,6 +659,8 @@ async def prepare_request(
         allowed_tool_names=allowed_tool_names,
         actor_context=actor,
         im_message_format=payload.get("message_format"),
+        im_group_memory_enabled=bool(payload.get("group_memory_enabled", True)),
+        im_member_memory_enabled=bool(payload.get("member_memory_enabled", True)),
     )
     return PreparedImRequest(request, actor, role, allowed_tool_names, route, session_id)
 
@@ -661,7 +674,7 @@ async def dispatch_im_message(payload: dict):
     """
     from agent.security import logsafe
     from agent.runtime import trace
-    from agent.im.replies import send_agent_response, send_stream_with_fallback, send_text
+    from agent.im.replies import send_agent_response, send_text
 
     if payload.get("platform") == "qq":
         raw_attachments = payload.get("attachments") or []
@@ -676,6 +689,7 @@ async def dispatch_im_message(payload: dict):
                 str(payload.get("owner_user_id") or ""),
                 str(payload.get("message_id") or ""),
                 payload.get("emoji_refs") or [],
+                str(payload.get("platform_message_id") or ""),
             )
             # faceType=3 的 ext 可能带一个文字标签；QFace 成功补图后，纯表情消息
             # 不应同时展示标签和图片。未匹配到资源时保留网关的兜底文字。
@@ -707,22 +721,60 @@ async def dispatch_im_message(payload: dict):
     req.session_id = prepared.session_id
     trace_id = trace.set_trace(payload.get("trace_id"))
     trace.bind_im_run(prepared.session_id, platform)
+    from agent.im.mentions import payload_semantic_text
+    semantic_text = payload_semantic_text(payload, req.message)
+
+    # 文本降级选项必须先于 shortcut/模型执行消费，否则微信、飞书的数字回复
+    # 会被当成新一轮用户消息；QQ 也统一走这里，避免网关各自维护一套解析。
+    if not req.attachments and req.message.strip():
+        from agent.im.interaction_text import consume_text_choice
+
+        try:
+            interaction_result = await consume_text_choice(
+                user_id=user_id,
+                session_id=prepared.session_id,
+                text=req.message,
+                event_id=payload.get("message_id"),
+                platform=platform,
+                bot_id=route.bot_id,
+                chat_id=req.chat_id,
+                platform_user_id=puid,
+                bot_mentioned=bool(payload.get("bot_mentioned", payload.get("group_mentioned"))),
+            )
+        except Exception as exc:
+            from app.core.redaction import diag_log
+
+            diag_log("agent.im.interaction_text.consume", exc)
+            interaction_result = None
+        if interaction_result is not None:
+            result_payload = interaction_result.get("result") or {}
+            selected_text = str(
+                result_payload.get("text")
+                or interaction_result.get("option_id")
+                or "已选择"
+            )
+            await send_text(payload, f"已选择：{selected_text}，继续处理。")
+            trace.finish_run("success")
+            return None
 
     if should_record_passive_group(req, payload):
         passive_sid = await record_passive_im_message(req, prepared.session_id)
         await persist_im_session(platform, route.bot_id, session_scope, passive_sid, group=True)
         trace.bind_im_run(passive_sid, platform)
-        trace.finish_run("success")
+        # 被动群消息只落库/供反思，不进入 Agent 执行链路；不要把零 usage
+        # 的临时 trace 上报给 LoopScope，避免污染运行次数和缓存统计。
+        trace.discard_run()
         print(f"[im-loop] {platform} 群聊普通消息已记录(session={passive_sid} trace={trace_id})", flush=True)
         return None
 
     shortcut = await decide_im_shortcut(
         platform,
         puid or "",
-        req.message,
+        semantic_text,
         has_attachments=bool(req.attachments),
         bot_id=route.bot_id,
         scope_id=session_scope,
+        allow_leading_mention=bool(payload.get("group_mentioned")),
     )
     if shortcut["action"] == "drop":
         trace.finish_run("success")
@@ -742,23 +794,107 @@ async def dispatch_im_message(payload: dict):
         trace.finish_run("success", shortcut["reply"])
         return None
 
-    cmd_reply = await handle_im_command(user_id, req.message)
-    if cmd_reply is not None:
+    # 命令在 Agent runner 之前短路，但 IM 路由可能仍持有已删除的 Redis session id。
+    # 先按当前作用域恢复/创建真实会话，避免 /new、/workspace 等命令落到失效 id。
+    from agent import commands as _commands
+    command_name, _ = _commands.parse(
+        semantic_text,
+        allow_leading_mention=False,
+    )
+    goal_start, goal_text = _commands.is_goal_start(semantic_text)
+    if command_name is not None:
+        import app.db.session as _db_session
+        from agent.im.session import get_or_create_session
+
+        if _db_session._engine is None:
+            _db_session._build_engine()
+        async with _db_session._SessionLocal() as command_db:
+            command_state = await get_or_create_session(command_db, req, user_id)
+            await command_db.commit()
+        req.session_id = command_state.session.id
+        await persist_im_session(platform, route.bot_id, session_scope, req.session_id, group=route.is_group)
+        trace.bind_im_run(req.session_id, platform)
+
+    cmd_reply = await handle_im_command(
+        user_id,
+        semantic_text,
+        req.session_id,
+        allow_leading_mention=False,
+    )
+    if cmd_reply is not None and not goal_start:
+        if isinstance(cmd_reply, dict) and cmd_reply.get("_command_interaction"):
+            await _send_interaction_prompts(payload, [cmd_reply.get("prompt") or {}])
+            trace.finish_run("success", "已发送工作区删除确认")
+            return None
         await send_text(payload, cmd_reply)
         trace.finish_run("success", cmd_reply)
         return None
+    if goal_start:
+        # 命令已写入 session_context；本轮继续进入 runner，让 /goal 本身就开始执行。
+        req.message = f"请立即开始执行目标任务：{goal_text}"
 
-    bind_im_context(req, payload)
+    show_tool_interactions = await _should_show_tool_interactions(req.user_id)
+    bind_im_context(req, payload, show_tool_interactions=show_tool_interactions)
     await remember_im_reach(user_id, platform, payload, puid)
     activity = await start_im_activity(payload, platform, puid)
     agent_loop = select_loop(req)
-    try:
-        if platform == "feishu":
-            token_iter = agent_loop.run_stream(req)
-            _stream_sent, resp, reply_text = await send_stream_with_fallback(payload, token_iter)
+    shown_interaction_ids: set[int] = set()
+    sent_round_indices: set[int] = set()
+    immediate_round_index = 0
+    immediate_round_blocked = False
+    async def _show_tool_event(event: dict) -> None:
+        """按用户偏好独立发送工具状态，不影响 Agent 主循环。"""
+        if not show_tool_interactions:
+            return
+        from agent.im.replies import send_tool_event
+        await send_tool_event(payload, event)
+
+    async def _show_round(text: str) -> bool:
+        """立即发送已结束的正文 round，成功后从最终收尾中跳过。"""
+        nonlocal immediate_round_index, immediate_round_blocked
+        from agent.im.replies import send_text
+
+        if not str(text or "").strip():
+            return True
+        index = immediate_round_index
+        immediate_round_index += 1
+        # 发送失败后不能再把后续 round 当成连续前缀；最终收尾会按已成功
+        # 发送的 index 精确补发，避免丢失失败 round 或重复发送成功 round。
+        if immediate_round_blocked:
+            return False
+        sent = await send_text(payload, str(text))
+        if sent:
+            sent_round_indices.add(index)
         else:
-            resp = await agent_loop.run_collect(req)
-            reply_text = ""
+            immediate_round_blocked = True
+        return sent
+
+    async def _show_im_interaction(interaction: dict) -> None:
+        """在共享 Runner 进入等待前发送交互，并结束 IM typing。"""
+        # ask_user 会让 Runner 等待用户选择；typing 不能持续到下一条消息，
+        # 但活跃状态仍需保留，便于后续回答正确路由回同一交互。
+        await stop_im_typing(activity)
+        try:
+            await _send_interaction_prompts(payload, [interaction])
+        except Exception as exc:
+            # 平台展示失败不能取消当前 Run；网页仍可从 active prompt 恢复交互。
+            from app.core.redaction import diag_log
+            diag_log("agent.im.interaction_display", exc)
+            return
+        prompt_id = interaction.get("prompt_id")
+        if prompt_id is not None:
+            shown_interaction_ids.add(int(prompt_id))
+
+    # IM 统一按 round 收集并逐条发送。平台流式卡片只能原地替换同一条消息，
+    # 无法表达多个 round 的边界；这里统一走 collect，避免不同渠道出现合并/拆分差异。
+    try:
+        resp = await agent_loop.run_collect(
+            req,
+            on_interaction=_show_im_interaction,
+            on_tool_event=_show_tool_event,
+            on_round=_show_round,
+        )
+        reply_text = ""
     except BaseException:
         trace.finish_run("error")
         raise
@@ -777,48 +913,80 @@ async def dispatch_im_message(payload: dict):
             from agent.memory.reflection_jobs import observe_session_activity
             from agent.memory.scopes import MemoryScope
 
-            await observe_session_activity(
-                MemoryScope(
-                    req.user_id,
-                    req.source or "qq",
-                    str(req.platform_bot_id or ""),
-                    "group",
-                    str(req.chat_id),
-                ),
-                resp.session_id,
-            )
-        except Exception:
-            # 记忆调度失败不影响当前回复已经完成。
-            pass
-        if prepared.actor.role == "member" and req.platform_user_id:
-            try:
-                from agent.memory.reflection_jobs import observe_member_activity
-                from agent.memory.scopes import MemoryScope
-
-                await observe_member_activity(
+            if req.im_group_memory_enabled:
+                await observe_session_activity(
                     MemoryScope(
                         req.user_id,
                         req.source or "qq",
                         str(req.platform_bot_id or ""),
-                        "platform-user",
-                        str(req.platform_user_id),
+                        "group",
+                        str(req.chat_id),
                     ),
                     resp.session_id,
-                    str(req.platform_user_id),
-                    used_tools=bool(getattr(resp, "used_tools", False)),
+                    member_batch=False,
                 )
-            except Exception:
-                # 成员记忆是后台增强能力，不影响群聊回复。
-                pass
+        except Exception:
+            # 记忆调度失败不影响当前回复已经完成。
+            pass
+    if not req.chat_id and resp.session_id and req.im_member_memory_enabled and req.platform_user_id:
+        try:
+            from agent.memory.reflection_jobs import observe_private_member_activity
+            from agent.memory.scopes import MemoryScope
+
+            await observe_private_member_activity(
+                MemoryScope(
+                    req.user_id,
+                    req.source or "qq",
+                    str(req.platform_bot_id or ""),
+                    "platform-user",
+                    str(req.platform_user_id),
+                ),
+                resp.session_id,
+                str(req.platform_user_id),
+            )
+        except Exception:
+            # 私聊成员记忆是后台增强能力，不影响当前回复。
+            pass
     if resp.cancelled:
         trace.finish_run("cancelled")
         await finalize_im_response(platform, puid, True, "")
         return resp
 
-    if platform != "feishu" or resp.files:
-        reply_text = await send_agent_response(payload, resp)
+    # 工具交互是独立展示层：关闭时仍执行工具、保存历史和完成确认，只跳过 IM 展示。
+    show_interactions = show_tool_interactions
+    if resp.interactions and (show_interactions or any(item.get("force_display") for item in resp.interactions)):
+        pending_interactions = [
+            item for item in resp.interactions
+            if item.get("prompt_id") not in shown_interaction_ids
+        ]
+        if pending_interactions:
+            await _send_interaction_prompts(payload, pending_interactions)
 
-    trace.finish_run("success", reply_text)
+    # 非流式 IM（当前统一 round 出口）所有平台都走同一发送器；飞书不再
+    # 因为旧的流式卡片分支而跳过正文。
+    reply_text = await send_agent_response(
+        payload, resp, already_sent_rounds=sent_round_indices
+    )
+
+    if reply_text is None:
+        # 生成成功不等于平台送达；避免把 QQ 400 等发送失败记录成成功回复。
+        trace.finish_run("error")
+        await finalize_im_response(platform, puid, False, "")
+        print(
+            f"[im-loop] {platform} 回复发送失败(session={resp.session_id} trace={trace_id})",
+            flush=True,
+        )
+        return resp
+
+    # IM 展示层按 round 分开发送，但 LoopScope 记录的是整个 run 的输出。
+    # 不能只传最后一个 reply_text，否则多工具轮次的前置回复会从 trace 中消失，
+    # 造成「Web 能看到、LoopScope 看不到」的观测差异。
+    trace_output = "\n\n".join(
+        str(text).strip()
+        for text in (resp.round_texts or [])
+        if str(text or "").strip()
+    ) or reply_text
+    trace.finish_run("success", trace_output)
     await finalize_im_response(platform, puid, False, reply_text)
     print(
         f"[im-loop] {platform} 回复(session={resp.session_id} trace={trace_id}) "
@@ -826,3 +994,16 @@ async def dispatch_im_message(payload: dict):
         flush=True,
     )
     return resp
+
+
+async def _should_show_tool_interactions(user_id) -> bool:
+    from agent.interactions.preferences import show_tool_interactions
+    return await show_tool_interactions(user_id)
+
+
+async def _send_interaction_prompts(payload: dict, interactions: list[dict]) -> None:
+    """发送平台可理解的交互摘要；未接入原生按钮的平台使用文本摘要。"""
+    from agent.im.replies import send_interaction
+
+    for item in interactions:
+        await send_interaction(payload, item)

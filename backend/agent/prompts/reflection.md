@@ -95,7 +95,7 @@ profile 和 pattern 是两个不同问题，判断时分开想，不要用同一
 
 ## 输出
 严格只输出 JSON：
-{"profile_add": [{"type": "name|address|pronoun|background|preference|note", "text": "本轮新增/修正后的用户画像，一句话、只关于用户本人"}, ...], "profile_remove": ["本轮要删掉的旧画像（照抄原文字符串）", ...], "pattern_add": [{"text": "本轮新增/修正后的行为模式，一句话、能套到其他情境", "kind": "observed", "importance": 4}, ...], "pattern_remove": ["本轮要删掉的旧模式（照抄原文字符串）", ...], "daily": "一句话总结本次对话（没有就空字符串）", "summary": "更新后的当前状态快照（没有就空字符串）", "lens_hint": "", "correction": {"is_correction": false, "kind": "", "miss": {}}, "feedback": "无信号", "perception": {"intent": "情绪", "ambiguity": 20, "emotion": "疲惫", "emo_strength": 80}}
+{"profile_add": [{"type": "name|address|pronoun|background|preference|note", "text": "本轮新增/修正后的用户画像，一句话、只关于用户本人"}, ...], "profile_remove": ["本轮要删掉的旧画像（照抄原文字符串）", ...], "pattern_add": [{"text": "本轮新增/修正后的行为模式，一句话、能套到其他情境", "kind": "observed", "importance": 4}, ...], "pattern_remove": ["本轮要删掉的旧模式（照抄原文字符串）", ...], "daily": "一句话总结本次对话（没有就空字符串）", "summary": "更新后的当前状态快照（没有就空字符串）", "lens_hint": "", "correction": {"is_correction": false, "kind": "", "miss": {}}, "feedback": "无信号", "perception": {"intent": "情绪", "ambiguity": 20, "emotion": "疲惫", "emo_strength": 80}, "knowledge_candidate": {"should_reflect": false, "query": ""}}
 
 - `profile_add`（对象数组，带合法 `type` 和 `text`）/`profile_remove`（字符串数组）、`pattern_add`（对象数组，带 kind/importance）/`pattern_remove`（字符串数组）都只装**这轮的增删**；没有就给空数组 `[]`（**别把没变的旧内容重新列出来**）
 - `summary`：当下没变化就**原样返回原快照**（别清空、别瞎改）

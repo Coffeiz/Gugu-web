@@ -127,7 +127,7 @@ if system_text:
 
 - `backend/agent/loop_drivers.py` - 缓存策略实现
 - `backend/scripts/diagnostics/test_cache_strategy_compare.py` - 对比诊断脚本
-- `docs/devlog.md` - debug 记录
+- `docs/DEVLOG.md` - debug 记录
 
 ## 9. 经验教训
 

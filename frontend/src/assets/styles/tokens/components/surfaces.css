@@ -1,6 +1,28 @@
 /* Shared floating surface / modal / input / choice contracts.
    Components consume these roles; light/dark differences come from semantic theme values. */
 :root {
+  /* 用户气泡保持品牌紫主体，边缘高光不要直接复用 Aero 亮色的纯白玻璃边框。 */
+  --gugu-chat-user-highlight: color-mix(in srgb,var(--action-primary) 26%,#fff);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
+  --gugu-chat-search-flash: var(--selection-bg);
+  --gugu-chat-assistant-bg: color-mix(in srgb,var(--surface-raised) 82%,transparent);
+  --gugu-chat-assistant-border: var(--border-subtle);
+  --gugu-chat-member-bg: var(--action-soft);
+  --gugu-chat-member-border: var(--action-outline);
+  --gugu-chat-user-fg: var(--content-on-accent);
+  --gugu-chat-file-ext-bg: var(--action-primary-bg);
+  --gugu-chat-file-name: var(--content-primary);
+  --gugu-chat-file-meta: var(--content-tertiary);
+  --gugu-chat-file-download-hover: var(--surface-soft-hover);
+  --gugu-chat-voice-bg: var(--gugu-chat-assistant-bg);
+  --gugu-chat-voice-border: var(--gugu-chat-assistant-border);
+  --gugu-chat-voice-highlight: var(--highlight-soft);
+  --gugu-chat-voice-button-bg: var(--action-primary-bg);
+  --gugu-chat-voice-wave: var(--content-tertiary);
+  --gugu-chat-voice-wave-playing: var(--action-primary);
+  --gugu-chat-voice-duration: var(--content-secondary);
+  --gugu-chat-copy-hover-bg: var(--surface-soft-hover);
+  --gugu-chat-tool-border: var(--action-outline);
   --panel-glass-bg: var(--surface-glass);
   --panel-glass-border: var(--border-default);
   --panel-glass-highlight: var(--border-highlight);
@@ -18,6 +40,38 @@
   --modal-card-side-highlight: color-mix(in srgb,var(--border-highlight) 58%,transparent);
   --modal-card-shadow: var(--elevation-window);
   --modal-overlay-bg: var(--surface-scrim);
+
+  --confirm-dialog-width: 420px;
+  --confirm-dialog-bg: var(--modal-card-bg);
+  --confirm-dialog-fg: var(--content-primary);
+  --confirm-dialog-title-fg: var(--content-primary);
+  --confirm-dialog-body-fg: var(--content-secondary);
+  --confirm-dialog-padding: var(--space-lg);
+  --confirm-dialog-gap: var(--space-md);
+  --confirm-dialog-action-gap: var(--space-sm);
+  --confirm-dialog-icon-size: 36px;
+  --confirm-dialog-icon-fg: var(--status-warning);
+  --confirm-dialog-icon-bg: var(--status-warning-bg);
+  --confirm-dialog-danger-icon-fg: var(--status-danger);
+  --confirm-dialog-danger-icon-bg: var(--status-danger-bg);
+  --confirm-dialog-button-min-width: 72px;
+  --confirm-dialog-button-height: 34px;
+  --confirm-dialog-cancel-fg: var(--content-secondary);
+  --confirm-dialog-cancel-fg-hover: var(--content-primary);
+  --confirm-dialog-cancel-bg: var(--control-bg);
+  --confirm-dialog-cancel-bg-hover: var(--control-bg-hover);
+  --confirm-dialog-cancel-border: var(--control-border);
+  --confirm-dialog-cancel-border-hover: var(--control-border-hover);
+  --confirm-dialog-confirm-fg: var(--content-on-accent);
+  --confirm-dialog-confirm-bg: var(--action-primary-bg);
+  --confirm-dialog-confirm-bg-hover: var(--action-primary-bg-hover);
+  --confirm-dialog-confirm-border: var(--action-primary-fill);
+  --confirm-dialog-confirm-border-hover: var(--action-primary-fill-hover);
+  --confirm-dialog-danger-confirm-fg: var(--content-on-accent);
+  --confirm-dialog-danger-confirm-bg: var(--status-danger);
+  --confirm-dialog-danger-confirm-bg-hover: color-mix(in srgb,var(--status-danger) 84%,#000);
+  --confirm-dialog-danger-confirm-border: var(--status-danger);
+  --confirm-dialog-danger-confirm-border-hover: var(--status-danger);
 
   /* File-dialog surface contract. UploadModal and the project editor file pane historically shared
      the same light paper/panel system; keep those product values here instead of leaking white
@@ -97,12 +151,15 @@
   --popup-surface-shadow: var(--popup-shadow);
   --popup-surface-blur: var(--popup-blur);
   --popup-surface-radius: var(--radius-sm);
+  --event-popup-radius: 16px;
   --popup-surface-padding: 4px;
   --popup-item-fg: var(--content-primary);
   --popup-item-fg-muted: var(--content-secondary);
   --popup-item-bg-hover: var(--surface-soft-hover);
   --popup-item-bg-active: var(--selection-bg);
   --popup-item-fg-active: var(--selection-fg);
+  --popup-item-padding: 7px 9px;
+  --popup-item-radius: var(--radius-xs);
   --popup-item-danger: var(--status-danger);
   --popup-item-danger-bg-hover: var(--status-danger-bg);
   --popup-divider: var(--border-subtle);
@@ -147,10 +204,37 @@
   --choice-chip-border-hover: var(--action-outline);
   --choice-chip-border-active: var(--action-outline);
   --choice-chip-radius: var(--radius-pill);
+  --choice-chip-min-height: var(--control-height-sm);
+  --choice-chip-padding: 1px 11px;
+  --choice-chip-line-height: var(--line-height-ui);
+
+  /* Light workspace cards need a raised paper surface; dark keeps the softer neutral card below. */
+  --workspace-card-bg: var(--surface-raised);
+  --workspace-card-bg-hover: var(--surface-soft-hover);
+  --workspace-card-border: var(--border-subtle);
+  --workspace-card-border-hover: var(--border-hover);
+  --workspace-card-shadow: var(--elevation-card);
+  --workspace-card-shadow-hover: var(--elevation-card-hover);
+  --workspace-badge-bg: var(--selection-bg);
+  --workspace-badge-fg: var(--content-secondary);
+
+  /* Small inline rename control: compact file-card geometry with theme-aware input paint. */
+  --rename-input-height: 20px;
+  --rename-input-padding: 0 4px;
+  --rename-input-radius: 4px;
+  --rename-input-bg: var(--input-bg);
+  --rename-input-border: var(--input-border);
+  --rename-input-fg: var(--input-fg);
 
   /* Reusable destructive action. Keep it soft by default; intent strengthens on hover. */
-  --danger-button-bg: var(--status-danger-bg);
-  --danger-button-bg-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-fill: var(--status-danger-bg);
+  --danger-button-fill-hover: color-mix(in srgb,var(--status-danger) 18%,transparent);
+  --danger-button-bg: linear-gradient(to bottom,
+    color-mix(in srgb, var(--danger-button-fill) 94%, white),
+    color-mix(in srgb, var(--danger-button-fill) 94%, black));
+  --danger-button-bg-hover: linear-gradient(to bottom,
+    color-mix(in srgb, var(--danger-button-fill-hover) 94%, white),
+    color-mix(in srgb, var(--danger-button-fill-hover) 94%, black));
   --danger-button-fg: var(--status-danger);
   --danger-button-border: color-mix(in srgb,var(--status-danger) 30%,transparent);
   --danger-button-border-hover: color-mix(in srgb,var(--status-danger) 48%,transparent);
@@ -159,7 +243,8 @@
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 18%,transparent);
   --switch-track-bg-active: var(--action-primary);
-  --switch-thumb-bg: var(--surface-raised);
+  /* 亮色主题下使用高对比滑块，避免开启状态的圆融入紫色轨道。 */
+  --switch-thumb-bg: var(--content-on-accent);
 
   --subpanel-bg: var(--surface-soft);
   --subpanel-border: color-mix(in srgb,var(--content-primary) 8%,transparent);
@@ -172,9 +257,17 @@
   --scrollbar-overlay-transition: var(--motion-hover-control) var(--motion-ease-standard);
 }
 
+/* Light navigation selection keeps the pre-palette white surface. Dark mode remains palette-aware. */
+html[data-theme='light'][data-family] {
+  --sidebar-item-active: var(--sidebar-item-active-light-bg);
+  --sidebar-item-active-fg: var(--sidebar-item-active-light-fg);
+  --sidebar-item-active-border: var(--sidebar-item-active-light-border);
+  --sidebar-item-active-shadow: var(--sidebar-item-active-light-shadow);
+}
+
 /* Mono light uses its solid neutral card surface and visible neutral edge. This is a token remap,
    not a .fc-card/.folder-card selector, so component state paint cannot race the family theme. */
-html[data-theme='light'][data-family='v2'] {
+html[data-theme='light'][data-family='mono'] {
   --file-card-bg: var(--surface-card-solid);
   --file-card-border: var(--border-strong);
   --file-card-shadow: var(--elevation-card);
@@ -212,6 +305,17 @@ html[data-theme='light'][data-family='v2'] {
 
 html[data-theme='dark'][data-family] {
   /* Preserve the existing dark contracts; the neutral light restoration above must not shift dark. */
+  --workspace-card-bg: var(--surface-soft);
+  --workspace-card-bg-hover: var(--surface-soft-hover);
+  --gugu-chat-user-highlight: color-mix(in srgb,var(--border-highlight) 82%,transparent);
+  --gugu-chat-user-shadow: inset 0 1px 0 var(--gugu-chat-user-highlight), inset 1px 0 0 color-mix(in srgb,var(--gugu-chat-user-highlight) 52%,transparent), var(--elevation-card);
+  --gugu-chat-assistant-bg: var(--surface-raised);
+  --gugu-chat-assistant-border: var(--border-subtle);
+  --gugu-chat-member-bg: var(--action-soft);
+  --gugu-chat-member-border: var(--action-outline);
+  --gugu-chat-voice-highlight: var(--highlight-soft);
+  --gugu-chat-voice-wave: var(--content-tertiary);
+  --gugu-chat-voice-wave-playing: var(--action-primary);
   --panel-divider: var(--border-subtle);
   --subpanel-border: var(--border-subtle);
 
@@ -281,10 +385,20 @@ html[data-theme='dark'][data-family] {
   --folder-card-checkbox-fg-checked: var(--content-on-accent);
 
   --switch-track-bg: color-mix(in srgb,var(--content-primary) 9%,transparent);
-  --switch-thumb-bg: color-mix(in srgb,var(--content-primary) 78%,var(--surface-raised));
+  --switch-track-bg-active: color-mix(in srgb,var(--action-primary) 46%,var(--surface-card-solid));
+  --switch-thumb-bg: var(--content-on-accent);
   /* 暗色用户气泡不能直接用 action-primary（暗色主题下是浅亮紫）：白色文字下
      对比不足且整块偏亮。混入深色卡面后保持品牌紫身份但收敛亮度。 */
   --gugu-chat-user-bg: color-mix(in srgb,var(--action-primary) 68%,var(--surface-card-solid));
+  --gugu-chat-file-bg: var(--gugu-chat-assistant-bg);
+  --gugu-chat-file-border: var(--border-subtle);
+  --gugu-chat-file-highlight: color-mix(in srgb,var(--border-highlight) 70%,transparent);
+  --gugu-chat-file-shadow: var(--elevation-card);
+  --gugu-chat-file-bg-hover: var(--surface-soft-hover);
+  --gugu-chat-file-border-hover: var(--border-hover);
+  /* 暗色文件卡 hover 不再额外提亮顶部内描边，避免出现纯白高光。 */
+  --gugu-chat-file-highlight-hover: var(--gugu-chat-file-highlight);
+  --gugu-chat-file-shadow-hover: var(--elevation-card-hover);
   --runtime-drag-glass-bg: color-mix(in srgb,var(--surface-floating) 94%,transparent);
   --runtime-drag-glass-border: var(--border-hover);
   --runtime-drag-glass-shadow: 0 22px 50px rgba(0,0,0,.38);

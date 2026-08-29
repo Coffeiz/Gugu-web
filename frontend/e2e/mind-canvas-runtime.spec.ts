@@ -57,7 +57,7 @@ async function readChromeStyle(locator: Locator): Promise<ChromeStyle> {
 for (const theme of ['light', 'dark'] as const) {
   test(`Mono ${theme} 画布抽屉与工具栏保持毛玻璃且 hover 不回退`, async ({ page }) => {
     await page.addInitScript(({ theme }) => {
-      localStorage.setItem('gugu-theme-family', 'v2')
+      localStorage.setItem('gugu-theme-family', 'mono')
       localStorage.setItem('gugu-theme', theme)
     }, { theme })
 

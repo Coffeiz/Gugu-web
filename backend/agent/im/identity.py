@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Optional
+from uuid import UUID
 
 from app.core.redaction import diag_log
 
@@ -60,11 +61,18 @@ async def resolve_owner_account(payload: dict) -> Optional[ImIdentity]:
         db_session._build_engine()
     from app.models import User
 
+    try:
+        owner_id = owner if isinstance(owner, UUID) else UUID(str(owner))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
     async with db_session._SessionLocal() as db:
-        user = await db.get(User, owner)
+        user = await db.get(User, owner_id)
     if not user:
         return None
-    return ImIdentity(owner, user.display_name or "")
+    # 网关 payload 中的 owner_user_id 通常是字符串；后续命令会和 ORM
+    # 实体的 UUID 做 Python 层归属比较，因此必须返回数据库中的规范主键。
+    return ImIdentity(user.id, user.display_name or "")
 
 
 def display_name_for_message(identity: ImIdentity, payload: dict, role: Optional[str]) -> str:

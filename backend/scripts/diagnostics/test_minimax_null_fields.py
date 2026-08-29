@@ -43,7 +43,7 @@ async def test_minimax_with_null_fields():
                 {
                     "type": "tool_use",
                     "id": "toolu_test123",
-                    "name": "mind_create_canvas",
+                    "name": "canvas_create",
                     "input": {"title": "调试测试画布"}
                 }
             ]
@@ -94,7 +94,7 @@ async def test_minimax_with_null_fields():
                 {
                     "type": "tool_use",
                     "id": "toolu_test456",
-                    "name": "mind_create_canvas",
+                    "name": "canvas_create",
                     "input": {"title": "调试测试画布"}
                 }
             ]

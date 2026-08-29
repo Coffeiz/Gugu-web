@@ -1,6 +1,6 @@
 <template>
   <div class="search-input" :class="{ active, 'no-focus-ring': noFocusRing }">
-    <PhMagnifyingGlass class="search-input-icon" :size="15" weight="bold" />
+    <Icon name="action.search" class="search-input-icon" :size="15" />
     <input
       ref="inputEl"
       :value="modelValue"
@@ -16,15 +16,14 @@
       @keydown="emit('keydown', $event)"
     />
     <button v-if="clearable && modelValue" class="search-input-clear" title="清除" @click="clear">
-      <PhX :size="13" weight="bold" />
+      <Icon name="action.close" :size="13" />
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref } from 'vue'
-import { PhMagnifyingGlass, PhX } from '@phosphor-icons/vue'
-
+import Icon from '@/components/common/Icon.vue'
 defineProps({
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '搜索' },
@@ -48,10 +47,10 @@ defineExpose({ focus: () => inputEl.value?.focus() })
 <style scoped>
 .search-input {
   display:flex; align-items:center; gap:var(--space-2); width:100%; height:var(--control-height-md); min-height:var(--control-height-md);
-  box-sizing:border-box; padding:0 12px; color:var(--control-fg); background:var(--control-bg); border:1px solid var(--control-border);
+  box-sizing:border-box; padding:0 12px; color:var(--input-fg); background:var(--input-bg); border:1px solid var(--input-border);
   border-radius:var(--control-radius); transition:background var(--motion-fast),border-color var(--motion-fast),box-shadow var(--motion-fast);
 }
-.search-input:focus-within, .search-input.active { background:var(--control-bg-hover); border-color:var(--border-focus); box-shadow:var(--control-focus-shadow); }
+.search-input:focus-within, .search-input.active { background:var(--input-bg-focus); border-color:var(--input-border-focus); box-shadow:var(--input-focus-shadow); }
 .search-input.no-focus-ring:focus-within, .search-input.no-focus-ring.active { box-shadow:none; }
 .search-input-icon { flex:0 0 auto; }
 .search-input:focus-within .search-input-icon, .search-input.active .search-input-icon { color:var(--action-primary); }
