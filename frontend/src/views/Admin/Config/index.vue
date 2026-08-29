@@ -199,7 +199,7 @@
 
       <!-- ── 用户 BYOK ── -->
       <section id="sec-byok" class="config-card">
-        <div class="card-head">
+        <div class="card-head byok-card-head">
           <div class="card-icon" style="--ic:rgba(123,127,178,0.15);--stroke:#7b7fb2">
             <Icon name="user.security" size="md" />
           </div>
@@ -207,12 +207,11 @@
             <h3>用户 BYOK</h3>
             <p>允许用户使用自己的 API Key；凭据由服务端加密保存</p>
           </div>
+          <div class="toggle-group">
+            <button class="toggle-btn" data-label="开放 BYOK" :class="{ active: draft.byok.enabled }" @click="draft.byok.enabled = true">开放 BYOK</button>
+            <button class="toggle-btn" data-label="关闭" :class="{ active: !draft.byok.enabled }" @click="draft.byok.enabled = false">关闭</button>
+          </div>
         </div>
-        <div class="toggle-group">
-          <button class="toggle-btn" :class="{ active: draft.byok.enabled }" @click="draft.byok.enabled = true">开放 BYOK</button>
-          <button class="toggle-btn" :class="{ active: !draft.byok.enabled }" @click="draft.byok.enabled = false">关闭</button>
-        </div>
-        <p class="config-note">托管服务可用此开关控制付费权益；本地部署模式默认开放。登录 JWT 仅用于身份认证，不会保存或承载用户 API Key。</p>
       </section>
 
       <!-- ── 保存栏 ── -->
@@ -490,6 +489,8 @@ async function testSmtp() {
 .field-grid :deep(.span2) { grid-column: span 2; }
 
 .toggle-group { display: flex; gap: 6px; margin-bottom: 16px; }
+.byok-card-head { gap: 13px; align-items: center; margin-bottom: 0; }
+.byok-card-head .toggle-group { flex-shrink: 0; margin: 0 0 0 auto; }
 .provider-grid { flex-wrap: wrap; }
 .toggle-btn {
   padding: 6px 18px; border-radius: 9px;
