@@ -28,6 +28,7 @@ let outputDecoder: TextDecoder | null = null
 let suppressPasteSubmitUntil = 0
 let promptRecoveryTimer: number | null = null
 let receivedOutput = false
+let hasEstablishedConnection = false
 
 function socketUrl(id: string): string {
   const configured = import.meta.env.VITE_API_URL ?? '/api/v1'
@@ -62,12 +63,15 @@ function connect() {
   current.onopen = () => {
     if (!isCurrent()) return
     connected.value = true; reconnectAttempt = 0; statusText.value = ''; resize()
-    // PTY 启动输出可能在首次订阅建立前丢失。仅当连接后完全没有收到输出时，
-    // 用 Ctrl-L 重绘当前 shell 提示符；不发送换行，避免凭空多出一行。
-    promptRecoveryTimer = window.setTimeout(() => {
-      promptRecoveryTimer = null
-      if (isCurrent() && !receivedOutput) send({ type: 'input', data: '\u000c' })
-    }, 700)
+    // 只有首次连接允许用 Ctrl-L 兜底重绘提示符。重连和重启时后端会从
+    // 新订阅推送 PTY 输出，重复重绘会把两个提示符写到同一行。
+    if (!hasEstablishedConnection) {
+      promptRecoveryTimer = window.setTimeout(() => {
+        promptRecoveryTimer = null
+        if (isCurrent() && !receivedOutput) send({ type: 'input', data: '\u000c' })
+      }, 700)
+    }
+    hasEstablishedConnection = true
   }
   current.onmessage = (event) => {
     if (!isCurrent()) return
@@ -157,9 +161,11 @@ watch(() => [props.terminalId, props.restartToken], ([terminalId, restartToken],
   if (reconnectTimer !== null) { window.clearTimeout(reconnectTimer); reconnectTimer = null }
   if (promptRecoveryTimer !== null) { window.clearTimeout(promptRecoveryTimer); promptRecoveryTimer = null }
   socketGeneration++
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'detach' }))
   socket?.close()
   socket = null
-  terminal?.clear()
+  outputDecoder = null
+  terminal?.reset()
   intentionalClose = false
   reconnectAttempt = 0
   connect()

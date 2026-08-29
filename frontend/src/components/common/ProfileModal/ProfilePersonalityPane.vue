@@ -31,7 +31,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { usePreferencesStore } from '@/stores/preferences'
 import { usePreviewStore } from '@/stores/preview'
@@ -43,6 +43,7 @@ const saving = ref(false)
 const status = ref('')
 const error = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
+let statusTimer: number | null = null
 const hasContent = computed(() => !!prefsStore.personalityPreference.trim())
 const characterCount = computed(() => Array.from(prefsStore.personalityPreference).length)
 
@@ -79,10 +80,12 @@ async function onFileSelected(event: Event) {
 
 async function onToggle(value: boolean) {
   const previous = enabled.value
-  enabled.value = value; saving.value = true; status.value = ''; error.value = ''
+  if (statusTimer !== null) { window.clearTimeout(statusTimer); statusTimer = null }
+  enabled.value = value; saving.value = true; error.value = ''
   try {
     await prefsStore.savePersonalityPreference(prefsStore.personalityPreference, value)
     status.value = value ? '人格偏好已启用' : '人格偏好已停用'
+    statusTimer = window.setTimeout(() => { status.value = ''; statusTimer = null }, 2400)
   } catch (err) {
     enabled.value = previous
     error.value = err instanceof Error ? err.message : '保存失败，请稍后重试'
@@ -90,6 +93,7 @@ async function onToggle(value: boolean) {
 }
 
 onMounted(async () => { if (!prefsStore.loaded) await prefsStore.fetch(); syncFromStore() })
+onUnmounted(() => { if (statusTimer !== null) window.clearTimeout(statusTimer) })
 </script>
 
 <style scoped>
@@ -108,7 +112,7 @@ onMounted(async () => { if (!prefsStore.loaded) await prefsStore.fetch(); syncFr
 .personality-enabled-label, .personality-status { color: var(--content-secondary); font-size: 12px; }
 .personality-status { padding: 2px 0; color: var(--status-success); }
 .personality-status.error { color: var(--status-danger); }
-.pm-text-button { padding: 6px 8px; border: 0; background: transparent; color: var(--content-secondary); font: 12px var(--font-sans); cursor: pointer; }
-.pm-text-button:hover:not(:disabled) { color: var(--content-primary); }
+.pm-text-button { padding: 6px 8px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--content-secondary); font: 12px var(--font-sans); cursor: pointer; transition: background-color var(--motion-hover-control) var(--motion-ease-standard), color var(--motion-hover-control) var(--motion-ease-standard); }
+.pm-text-button:hover:not(:disabled) { background: var(--action-soft); color: var(--action-primary); }
 .pm-text-button:disabled { opacity: .45; cursor: default; }
 </style>

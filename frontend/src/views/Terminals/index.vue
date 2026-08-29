@@ -27,7 +27,7 @@
               <ActionButton v-if="renaming" variant="secondary" fit @click="saveRename">保存</ActionButton>
               <ActionButton v-if="renaming" variant="secondary" fit @click="cancelRename">取消</ActionButton>
               <ActionButton v-else variant="secondary" fit @click="startRename"><Icon name="action.edit" :size="14" />重命名</ActionButton>
-              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.refresh" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />重置环境</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
+              <ActionButton v-if="selected.status !== 'terminated' && selected.status !== 'exited'" variant="secondary" fit @click="terminate"><Icon name="action.stop" :size="16" />停止</ActionButton><ActionButton v-else variant="secondary" fit @click="reopenTerminal"><Icon name="action.play" :size="14" />开启</ActionButton><ActionButton variant="secondary" fit @click="resetSelected"><Icon name="action.refresh" :size="14" />重置环境</ActionButton><ActionButton class="terminal-delete-action" variant="secondary" fit @click="deleteSelected"><Icon name="action.delete" :size="14" />删除</ActionButton>
             </div>
           </div>
           <KeepAlive>
@@ -51,7 +51,7 @@
               <small v-if="event.state === 'running'" class="terminal-event-state">执行中… <button v-if="event.runId" class="terminal-cancel" type="button" @click="cancelEvent(event)">停止</button></small>
               <small v-else-if="event.state === 'cancelled'" class="terminal-event-state">已取消 · {{ formatTime(event.occurredAt) }}</small>
               <small v-else-if="event.state === 'failed'" class="terminal-event-state">执行失败 · {{ formatTime(event.occurredAt) }}</small>
-              <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? '已完成' : '执行失败' }} · {{ formatTime(event.occurredAt) }}</span><details v-if="event.exitCode !== null || event.stderr"><summary>执行详情</summary><span>退出码 {{ event.exitCode ?? '—' }}</span></details></small>
+              <small v-else-if="event.type === 'command'"><span>{{ event.exitCode === 0 ? '已完成' : '执行失败' }} · {{ formatTime(event.occurredAt) }}</span><span v-if="event.exitCode !== null" class="terminal-exit-code">退出码 {{ event.exitCode }}</span></small>
               <small v-else>状态更新 · {{ formatTime(event.occurredAt) }}</small>
             </div>
             <div v-if="!events.length && !error" class="terminal-output-empty">等待终端输出</div>
@@ -364,8 +364,7 @@ onUnmounted(() => {
 .terminal-event-state { color:var(--content-tertiary); }
 .terminal-cancel { margin-left:8px; padding:1px 6px; border:1px solid var(--border-default); border-radius:var(--radius-xs); background:transparent; color:var(--content-secondary); cursor:pointer; font:inherit; }
 .terminal-cancel:hover { border-color:var(--danger-fg); color:var(--danger-fg); }
-.terminal-event details { display:inline-block; margin-left:8px; color:var(--content-tertiary); }
-.terminal-event details summary { cursor:pointer; }
+.terminal-exit-code { margin-left:8px; color:var(--content-tertiary); }
 .terminal-title { min-width:0; }
 .terminal-rename { box-sizing:border-box; width:min(320px, 45vw); height:var(--control-height-sm); padding:5px 8px; border:1px solid var(--input-border); border-radius:var(--input-radius); outline:none; background:var(--input-bg); color:var(--input-fg); font:inherit; line-height:calc(var(--control-height-sm) - 2px); transition:background-color var(--motion-hover-control) var(--motion-ease-standard), border-color var(--motion-hover-control) var(--motion-ease-standard), box-shadow var(--motion-hover-control) var(--motion-ease-standard); }
 .terminal-input { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--divider-line); background:var(--surface-card-solid); }
