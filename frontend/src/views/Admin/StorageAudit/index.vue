@@ -31,7 +31,7 @@
           <p class="sa-card-sub">扫描物理对象与 File 表：幽灵记录（DB 有、文件丢）+ 孤儿文件（文件在、DB 无）</p>
         </div>
         <button class="sa-btn" :disabled="fileScanning" @click="scanFiles">
-          <Icon name="action.search" size="sm" />
+          <PhMagnifyingGlass :size="15" weight="bold" />
           {{ fileScanning ? '对账中…' : '扫描' }}
         </button>
       </div>
@@ -126,7 +126,7 @@
         <div class="sa-card-head-right">
           <input v-model.trim="userId" class="sa-input" placeholder="用户 ID（留空 = 全量）" @keyup.enter="scanDirs()" />
           <button class="sa-btn" :disabled="dirScanning" @click="scanDirs()">
-            <Icon name="action.search" size="sm" />
+            <PhMagnifyingGlass :size="15" weight="bold" />
             {{ dirScanning ? '对账中…' : '扫描' }}
           </button>
         </div>
@@ -136,8 +136,8 @@
 
       <template v-if="dirReport">
         <div class="fd-banner" :class="dirReport.healthy ? 'ok' : 'alert'">
-          <Icon v-if="dirReport.healthy" name="status.check-circle" size="md" />
-          <Icon v-else name="status.warning" size="md" />
+          <PhCheckCircle v-if="dirReport.healthy" :size="18" weight="fill" />
+          <PhWarningCircle v-else :size="18" weight="fill" />
           <span v-if="dirReport.healthy">目录一致，无缺失、无孤儿、无位置漂移。</span>
           <span v-else>
             发现
@@ -172,7 +172,7 @@
         </div>
 
         <div v-if="dirLastFix" class="fd-fix-result">
-          <Icon name="status.check-circle" size="sm" />
+          <PhCheckCircle :size="15" weight="fill" />
           上次修复：补齐 <b>{{ dirLastFix.created }}</b> 个缺失目录，清理 <b>{{ dirLastFix.removed }}</b> 个孤儿目录，
           搬迁 <b>{{ dirLastFix.relocated }}</b> 个位置不一致文件。
         </div>
@@ -189,9 +189,10 @@
           <ul class="dir-list">
             <li v-for="d in dirReport.orphan_dirs" :key="d" class="dir-item">{{ d }}</li>
           </ul>
-          <Checkbox v-model="removeOrphans" class="fd-confirm">
+          <label class="fd-confirm">
+            <input type="checkbox" v-model="removeOrphans" />
             我确认清理上述孤儿空目录（仅删空目录，非空目录不受影响，且不可恢复）
-          </Checkbox>
+          </label>
         </div>
 
         <div v-if="dirReport.misplaced_files.length" class="fd-section">
@@ -202,14 +203,15 @@
               <div class="misplaced-path"><span class="from">{{ m.current_key }}</span> → <span class="to">{{ m.expected_key }}</span></div>
             </li>
           </ul>
-          <Checkbox v-model="relocateFiles" class="fd-confirm">
+          <label class="fd-confirm">
+            <input type="checkbox" v-model="relocateFiles" />
             我确认把上述文件搬到当前归属应在的位置（重命名冲突自动加后缀，不覆盖已有文件）
-          </Checkbox>
+          </label>
         </div>
 
         <div v-if="!dirReport.healthy" class="fd-actions">
           <button class="sa-btn primary" :disabled="dirFixing" @click="repairDirs()">
-            <Icon name="admin.wrench" size="sm" />
+            <PhWrench :size="15" weight="bold" />
             {{ dirFixBtnLabel }}
           </button>
           <span class="fd-actions-note">修复在服务端重新扫描后执行——补缺失总是安全；孤儿/位置搬迁仅在勾选确认后才动。</span>
@@ -225,7 +227,7 @@
           <p class="sa-card-sub">咕咕记忆存储格式升级（如 summary.md+summary.ts → summary.json）不会自动删旧文件，只有新文件已确认写过才判定可清；避免误删还没迁移的原始数据。</p>
         </div>
         <button class="sa-btn" :disabled="memScanning" @click="scanLegacyMemory">
-          <Icon name="action.search" size="sm" />
+          <PhMagnifyingGlass :size="15" weight="bold" />
           {{ memScanning ? '扫描中…' : '扫描' }}
         </button>
       </div>
@@ -268,9 +270,8 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { PhMagnifyingGlass, PhCheckCircle, PhWarningCircle, PhWrench } from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
-import { confirmDialog } from '@/composables/useConfirmDialog'
-import Checkbox from '@/components/common/Checkbox.vue'
 
 const adminStore = useAdminStore()
 
@@ -296,7 +297,7 @@ async function scanTrashMigration() {
 
 async function runTrashMigration() {
   const ids = trashMigration.value?.items.map(item => item.file_id) || []
-  if (!ids.length || !await confirmDialog({ title: '迁移旧回收站文件', message: `确认迁移 ${ids.length} 个旧回收站文件？`, tone: 'warning', confirmText: '开始迁移' })) return
+  if (!ids.length || !window.confirm(`确认迁移 ${ids.length} 个旧回收站文件？`)) return
   trashMigrating.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/migrate-trash', {
@@ -342,7 +343,7 @@ async function scanPathMigration() {
 
 async function repairPathMigration() {
   const items = pathReport.value?.candidates || []
-  if (!items.length || !await confirmDialog({ title: '修复文件路径归属', message: `确认修复 ${items.length} 个文件的路径归属？`, tone: 'warning', confirmText: '开始修复' })) return
+  if (!items.length || !window.confirm(`确认修复 ${items.length} 个文件的路径归属？`)) return
   pathRepairing.value = true
   try {
     const res = await adminStore.authFetch('/api/v1/admin/config/reconcile-storage/path-migration/repair', {
@@ -381,7 +382,7 @@ async function scanFiles() {
 
 async function repairOrphans(keys: string[], action: 'import' | 'delete') {
   if (fileRepairing.value || !keys.length) return
-  if (action === 'delete' && !await confirmDialog({ title: '删除孤儿物理文件', message: `确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
+  if (action === 'delete' && !window.confirm(`确认删除 ${keys.length} 个孤儿物理文件？此操作不可恢复。`)) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -414,7 +415,7 @@ async function repairOrphans(keys: string[], action: 'import' | 'delete') {
 
 async function repairMisplaced() {
   if (fileRepairing.value || !fileReport.value?.misplaced_count) return
-  if (!await confirmDialog({ title: '修复文件物理位置', message: `确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`, tone: 'warning', confirmText: '搬回文件' })) return
+  if (!window.confirm(`确认搬回 ${fileReport.value.misplaced_count} 个文件的正确目录？`)) return
   fileRepairing.value = true
   fileMsg.value = ''
   try {
@@ -554,7 +555,7 @@ async function scanLegacyMemory() {
 
 async function cleanupLegacy(keys: string[]) {
   if (memCleaning.value || !keys.length) return
-  if (!await confirmDialog({ title: '删除旧记忆文件', message: `确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`, tone: 'danger', confirmText: '永久删除' })) return
+  if (!window.confirm(`确认删除 ${keys.length} 个旧记忆文件？此操作不可恢复。`)) return
   memCleaning.value = true
   memMsg.value = ''
   try {
@@ -614,7 +615,7 @@ async function cleanupLegacy(keys: string[]) {
 }
 .sa-btn:hover:not(:disabled) { background: rgba(255,255,255,0.16); }
 .sa-btn:disabled { opacity: 0.5; cursor: default; }
-.sa-btn.primary { background: var(--action-primary-bg); border-color: transparent; color: var(--content-on-accent); box-shadow: none; }
+.sa-btn.primary { background: linear-gradient(135deg, #7b7fb2, #9590c4); border-color: transparent; color: #fff; }
 .sa-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
 
 .sa-inline-msg { font-size: 12px; margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; }
@@ -674,7 +675,9 @@ async function cleanupLegacy(keys: string[]) {
 .misplaced-path .from { color: #e0a96a; }
 .misplaced-path .to { color: #7fc99a; }
 
-.fd-confirm { margin-top: 12px; font-size: 13px; color: rgba(255,255,255,0.6); }
+.fd-confirm { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px;
+  color: rgba(255,255,255,0.6); cursor: pointer; user-select: none; }
+.fd-confirm input { accent-color: #d9a94e; width: 15px; height: 15px; cursor: pointer; }
 
 .fd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; flex-wrap: wrap; }
 .fd-actions-note { font-size: 12px; color: rgba(255,255,255,0.35); }

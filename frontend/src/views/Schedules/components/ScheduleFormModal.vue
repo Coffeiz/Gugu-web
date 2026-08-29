@@ -39,19 +39,23 @@
         <span>发到哪</span>
         <div class="chans">
           <template v-for="channel in CHANNELS" :key="channel.value">
-            <Checkbox v-if="channel.value === 'web' || props.imChannels.includes(channel.value)"
-              :model-value="form.channels.includes(channel.value)"
-              @update:model-value="toggleChannel(channel.value, $event)">
+            <label v-if="channel.value === 'web' || props.imChannels.includes(channel.value)" class="chk-row">
+              <input v-model="form.channels" type="checkbox" :value="channel.value" class="chk-input" />
+              <span class="chk-box">
+                <svg v-if="form.channels.includes(channel.value)" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <polyline points="1.5,5 4,7.5 8.5,2.5" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </span>
               {{ channel.label }}
-            </Checkbox>
+            </label>
           </template>
         </div>
       </div>
 
         <div v-if="formErr || props.externalError" class="form-err">{{ formErr || props.externalError }}</div>
       <div class="modal-actions">
-        <ActionButton variant="secondary" @click="emit('close')">取消</ActionButton>
-        <ActionButton :disabled="props.busy" @click="submit">{{ props.task ? '保存' : '创建' }}</ActionButton>
+        <button class="link" @click="emit('close')">取消</button>
+        <button class="btn-primary" :disabled="props.busy" @click="submit">{{ props.task ? '保存' : '创建' }}</button>
       </div>
     </div>
   </BaseModal>
@@ -60,8 +64,6 @@
 <script setup lang="ts">
 import { nextTick, reactive, ref, watch, type PropType } from 'vue'
 import BaseModal from '@/components/common/BaseModal.vue'
-import ActionButton from '@/components/common/ActionButton.vue'
-import Checkbox from '@/components/common/Checkbox.vue'
 import DatePicker from '@/components/common/DatePicker.vue'
 import TimeInput from '@/components/common/TimeInput.vue'
 import { buildCron, parseCron, type RepeatMode } from '../utils/scheduleCron'
@@ -143,12 +145,6 @@ function selectIntervalPreset(value: number | 'custom') {
   intervalPreset.value = String(value)
   if (value !== 'custom') intervalMinutes.value = value
 }
-function toggleChannel(channel: string, checked: boolean) {
-  const channels = new Set(form.channels)
-  if (checked) channels.add(channel)
-  else channels.delete(channel)
-  form.channels = [...channels]
-}
 function submit() {
   if (!form.name.trim()) { formErr.value = '名称不能为空'; return }
   if (!form.channels.length) { formErr.value = '至少选一个发送渠道'; return }
@@ -179,20 +175,26 @@ function submit() {
 .repeat-tabs { display: flex; gap: 6px; }
 .repeat-tab { flex: 1; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); font-size: 13px; font-family: var(--font-sans); color: var(--option-fg); cursor: pointer; transition: all 0.15s; text-align: center; }
 .repeat-tab:hover { border-color: var(--option-border-hover); }
-.repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; }
+.repeat-tab.on { background: var(--action-primary-bg); color: var(--content-on-accent); border-color: transparent; box-shadow: var(--elevation-card); }
 .date-range { margin-top: 8px; }
 .date-range :deep(.dp-input) { height: 34px; box-sizing: border-box; }
 .time-field input { height: 34px; padding-top: 8px; padding-bottom: 8px; text-align: center; line-height: normal; font-size: 13px; }
 .interval-presets { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
 .interval-preset { width: 100%; min-width: 0; height: 34px; padding: 0; border-radius: var(--radius-sm); border: 1px solid var(--option-border); background: var(--option-bg); color: var(--option-fg); font-size: 12px; font-family: var(--font-sans); cursor: pointer; transition: all 0.15s; }
 .interval-preset:hover { border-color: var(--option-border-hover); }
-.interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); }
+.interval-preset.on { color: var(--content-on-accent); border-color: transparent; background: var(--action-primary-bg); box-shadow: var(--elevation-card); }
 .time-field input[type=number] { appearance: textfield; }
 .time-field input[type=number]::-webkit-inner-spin-button, .time-field input[type=number]::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .chans { display: flex; gap: 18px; }
+.chk-row { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; font-size: 13px; color: var(--text-primary); }
+.chk-input { display: none; }
+.chk-box { flex-shrink: 0; width: 16px; height: 16px; border-radius: 5px; corner-shape: squircle; border: 1.5px solid var(--action-outline); background: var(--control-bg); display: flex; align-items: center; justify-content: center; transition: background 0.15s, border-color 0.15s, box-shadow 0.15s; }
+.chk-input:checked + .chk-box { background: var(--action-primary-bg); border-color: transparent; box-shadow: var(--elevation-card); }
 .form-err { color: var(--status-danger); font-size: 12px; margin-bottom: 10px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 12px; align-items: center; margin-top: 6px; }
-.modal-actions > button { width: 64px; min-height: 34px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .link { background: none; border: none; cursor: pointer; font-size: 12px; color: var(--text-secondary); padding: 2px 3px; font-family: var(--font-sans); }
 .link:hover { color: var(--text-primary); }
+.btn-primary { padding: 8px 16px; border: none; border-radius: var(--radius-sm); background: var(--action-primary-bg); color: var(--content-on-accent); font-size: 13px; font-weight: 500; cursor: pointer; font-family: var(--font-sans); display: inline-flex; align-items: center; box-shadow: var(--elevation-card); transition: transform 0.3s cubic-bezier(0.34,1.2,0.64,1), box-shadow 0.2s ease-out, opacity 0.2s ease-out; }
+.btn-primary:hover { opacity: 0.92; }
+.btn-primary:disabled { opacity: 0.5; cursor: default; transform: none; }
 </style>

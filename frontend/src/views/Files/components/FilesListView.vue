@@ -37,8 +37,8 @@
     >
       <template #list="{ color, statusText }">
         <span class="lr-name-cell">
-          <Icon name="file.folder" v-if="g.isFolder" class="lr-file-icon" :size="16" :style="{ color }" />
-          <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" :style="{ color }" />
+          <PhFolder v-if="g.isFolder" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
+          <component v-else :is="fileListIcon(g.ext)" class="lr-file-icon" :size="16" weight="fill" :style="{ color }" />
           <span class="lr-filename">{{ g.name }}</span>
         </span>
         <span class="lr-type-cell">
@@ -56,8 +56,8 @@
   </FileBrowserList>
 </template>
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
 import type { PropType } from 'vue'
+import { PhFolder } from '@phosphor-icons/vue'
 import FileBrowserList from '@/components/common/file-browser/FileBrowserList.vue'
 import FileBrowserEmptyState from '@/components/common/file-browser/FileBrowserEmptyState.vue'
 import FileUploadButton from '@/components/common/file-browser/FileUploadButton.vue'

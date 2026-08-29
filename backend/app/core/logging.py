@@ -9,61 +9,10 @@ import asyncio
 from app.core.tz import now_utc
 import logging
 import queue
-import re
-import sys
 import traceback as _tb
 from datetime import datetime
 
 _log_queue: queue.Queue = queue.Queue(maxsize=2000)
-_LINE_TIMESTAMP_RE = re.compile(r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\s|$)")
-
-
-class _TimestampedStream:
-    """给 worker/gateway 的 print 输出补行首时间戳。
-
-    systemd 的 ``StandardOutput=append:`` 会绕过 journald 的时间元数据，
-    而这些常驻进程仍有大量历史 ``print``。包装 stdout/stderr 可以在不改动
-    业务日志调用的前提下，让文件日志和 Admin tail 都保留真实 emit 时间。
-    """
-
-    def __init__(self, stream):
-        self._stream = stream
-        self._pending = ""
-
-    def write(self, data: str) -> int:
-        if not data:
-            return 0
-        text = self._pending + str(data)
-        lines = text.splitlines(keepends=True)
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            self._pending = lines.pop()
-        else:
-            self._pending = ""
-        for line in lines:
-            if line.strip() and not _LINE_TIMESTAMP_RE.match(line):
-                line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {line}"
-            self._stream.write(line)
-        return len(data)
-
-    def flush(self) -> None:
-        if self._pending:
-            line = self._pending
-            self._pending = ""
-            if line.strip() and not _LINE_TIMESTAMP_RE.match(line):
-                line = f"{datetime.now().strftime('%m-%d %H:%M:%S')} {line}"
-            self._stream.write(line)
-        self._stream.flush()
-
-    def __getattr__(self, name):
-        return getattr(self._stream, name)
-
-
-def setup_process_output() -> None:
-    """为独立 worker/gateway/网关进程的标准输出补时间戳。"""
-    if not isinstance(sys.stdout, _TimestampedStream):
-        sys.stdout = _TimestampedStream(sys.stdout)
-    if not isinstance(sys.stderr, _TimestampedStream):
-        sys.stderr = _TimestampedStream(sys.stderr)
 
 
 class DbLogHandler(logging.Handler):

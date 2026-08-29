@@ -7,11 +7,11 @@
         <div class="session-list">
           <span class="sidebar-caption">即时通讯</span>
           <div class="im-platform open">
-            <div class="im-head"><Icon name="action.down" :size="10" /><strong>QQ</strong><span class="online-badge">已接入</span></div>
+            <div class="im-head"><PhCaretDown :size="10" weight="bold" /><strong>QQ</strong><span class="online-badge">已接入</span></div>
             <button class="session im-session"><span class="group-tag">群</span><span class="session-copy"><strong>角色讨论群</strong><small>20:48</small></span></button>
           </div>
-          <div class="im-platform"><div class="im-head"><Icon name="action.next" :size="10" /><strong>微信</strong><span class="online-badge">已接入</span></div></div>
-          <div class="im-platform"><div class="im-head"><Icon name="action.next" :size="10" /><strong>飞书</strong><span class="offline-badge">未接入</span></div></div>
+          <div class="im-platform"><div class="im-head"><PhCaretRight :size="10" weight="bold" /><strong>微信</strong><span class="online-badge">已接入</span></div></div>
+          <div class="im-platform"><div class="im-head"><PhCaretRight :size="10" weight="bold" /><strong>飞书</strong><span class="offline-badge">未接入</span></div></div>
 
           <div class="sidebar-divider group-divider" />
           <span class="sidebar-caption">最近对话</span>
@@ -20,7 +20,7 @@
           <button class="session"><span class="session-copy"><strong>本周计划</strong><small>8/13</small></span></button>
         </div>
         <div class="sidebar-divider" />
-        <div class="new-chat-wrap"><button class="new-chat"><Icon name="action.edit" :size="13" />新对话</button></div>
+        <div class="new-chat-wrap"><button class="new-chat"><PhPencilSimple :size="13" weight="bold" />新对话</button></div>
       </aside>
 
       <main class="chat-main" :class="{ 'is-expanded': expanded }">
@@ -28,9 +28,9 @@
           <strong class="chat-title">{{ expanded ? '项目安排' : '咕咕' }}</strong>
           <span class="presence"><i />在线</span>
           <div class="header-actions">
-            <button v-if="!expanded" title="展开" @click="expanded = true"><Icon name="action.next" :size="13" /></button>
-            <button v-else title="收起" @click="expanded = false"><Icon name="action.back" :size="14" /></button>
-            <button title="关闭" @click="$emit('close')"><Icon name="action.close" :size="13" /></button>
+            <button v-if="!expanded" title="展开" @click="expanded = true"><PhArrowsOut :size="13" weight="bold" /></button>
+            <button v-else title="收起" @click="expanded = false"><PhArrowsIn :size="14" weight="bold" /></button>
+            <button title="关闭" @click="$emit('close')"><PhX :size="13" weight="bold" /></button>
           </div>
         </header>
 
@@ -43,10 +43,10 @@
 
         <!-- 与真实 GuguChatComposer 一样：底部整条输入区，不再额外套一个浮动圆角卡。 -->
         <div class="composer">
-          <button class="composer-tool" title="附件"><Icon name="communication.chat" :size="15" /></button>
-          <button class="composer-tool" title="语音"><Icon name="communication.microphone" :size="15" /></button>
+          <button class="composer-tool" title="附件"><PhPaperclip :size="15" /></button>
+          <button class="composer-tool" title="语音"><PhMicrophone :size="15" /></button>
           <div class="composer-input">问问项目进度、截止日期…</div>
-          <button class="send-btn" title="发送"><Icon name="action.next" :size="13" /></button>
+          <button class="send-btn" title="发送"><PhArrowRight :size="13" weight="bold" /></button>
         </div>
       </main>
     </section>
@@ -55,7 +55,7 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhArrowRight, PhArrowsIn, PhArrowsOut, PhCaretDown, PhCaretRight, PhMicrophone, PhPaperclip, PhPencilSimple, PhX } from '@phosphor-icons/vue'
 const props = defineProps<{ open: boolean }>()
 defineEmits<{ close: [] }>()
 const expanded = ref(false)
@@ -98,6 +98,6 @@ watch(() => props.open, open => { if (!open) expanded.value = false })
 .chat-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--gugu-chat-main-bg)}
 .chat-header{min-height:48px;display:flex;align-items:center;gap:var(--space-sm);padding:0 var(--space-md);border-bottom:1px solid var(--gugu-chat-header-border);flex-shrink:0}.chat-main.is-expanded .chat-header{min-height:52px;padding:0 var(--space-lg)}.chat-title{font-size:var(--font-size-md);font-weight:var(--font-weight-bold)}.presence{margin-left:auto;display:flex;align-items:center;color:var(--status-success);font-size:var(--font-size-xs)}.presence i{width:6px;height:6px;margin-right:var(--space-xs);border-radius:var(--radius-pill);background:var(--status-success)}.header-actions{display:flex;gap:var(--space-xs)}.header-actions button,.composer-tool{width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:var(--radius-sm);color:var(--content-secondary);background:transparent}.header-actions button:hover,.composer-tool:hover{color:var(--content-primary);background:var(--surface-soft-hover)}
 .messages{flex:1;min-height:0;padding:var(--space-md);display:flex;flex-direction:column;gap:var(--space-md);overflow:hidden}.chat-main.is-expanded .messages{padding:var(--space-xl)}.day-label{align-self:center;color:var(--content-tertiary);font-size:var(--font-size-xs)}.message-row{display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-xs)}.message-row.user{align-items:flex-end}.bubble{max-width:88%;padding:var(--space-sm) var(--space-md);border-radius:var(--radius-md);font-size:var(--font-size-sm);line-height:var(--line-height-body)}.chat-main.is-expanded .bubble{max-width:72%;font-size:var(--font-size-md)}.assistant-bubble{border:1px solid var(--border-subtle);border-bottom-left-radius:var(--radius-xs);background:var(--gugu-chat-assistant-bg);box-shadow:var(--elevation-card)}.user-bubble{border-bottom-right-radius:var(--radius-xs);color:var(--content-on-accent);background:var(--gugu-chat-user-bg)}.message-time{padding:0 var(--space-xs);font-size:var(--font-size-xs);color:var(--content-tertiary)}.tool-result{margin-top:var(--space-sm);padding:var(--space-sm);display:flex;align-items:center;gap:var(--space-sm);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--content-secondary);background:var(--surface-soft)}.tool-icon{width:20px;height:20px;display:grid;place-items:center;border-radius:var(--radius-pill);color:var(--status-success);background:var(--status-success-bg)}.tool-result>span:last-child{display:flex;flex-direction:column;gap:var(--space-xs)}.tool-result small{font-size:var(--font-size-xs);color:var(--content-tertiary)}
-.composer{min-height:48px;display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border-top:1px solid var(--gugu-chat-header-border);background:var(--gugu-chat-composer-bg);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--border-highlight) 70%,transparent);flex-shrink:0}.composer-input{min-width:0;flex:1;color:var(--content-tertiary);font-size:var(--font-size-sm)}.send-btn{width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:var(--radius-sm);color:var(--content-on-accent);background:var(--action-primary-bg);transition:background-color .15s}.send-btn:hover{background:var(--action-primary-bg-hover)}
+.composer{min-height:48px;display:flex;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border-top:1px solid var(--gugu-chat-header-border);background:var(--gugu-chat-composer-bg);box-shadow:inset 0 1px 0 color-mix(in srgb,var(--border-highlight) 70%,transparent);flex-shrink:0}.composer-input{min-width:0;flex:1;color:var(--content-tertiary);font-size:var(--font-size-sm)}.send-btn{width:28px;height:28px;display:grid;place-items:center;border:0;border-radius:var(--radius-sm);color:#fff;background:var(--brand-gradient)}
 @media(max-width:900px){.gugu-chat-mock.is-expanded{left:calc(var(--sidebar-width) + 12px)}.chat-sidebar{display:none}}@media(max-width:760px){.gugu-chat-mock,.gugu-chat-mock.is-expanded{top:12px;right:12px;bottom:12px;left:12px}}
 </style>

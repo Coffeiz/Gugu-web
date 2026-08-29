@@ -55,7 +55,7 @@ async def test_minimax_message_serialization():
             {
                 "type": "tool_use",
                 "id": "toolu_0123456789",
-                "name": "canvas_create",
+                "name": "mind_create_canvas",
                 "input": {"title": "测试画布"}
             }
         ]
@@ -133,7 +133,7 @@ async def test_minimax_message_serialization():
         class MockToolCall:
             def __init__(self):
                 self.id = "toolu_0123456789"
-                self.name = "canvas_create"
+                self.name = "mind_create_canvas"
                 self.input = {"title": "测试画布"}
 
         class MockContentBlock:
@@ -165,7 +165,7 @@ async def test_minimax_message_serialization():
                 self.raw = [
                     MockContentBlock("text", "我来帮你创建画布。"),
                     MockContentBlock("tool_use", id="toolu_0123456789",
-                                   name="canvas_create", input={"title": "测试画布"})
+                                   name="mind_create_canvas", input={"title": "测试画布"})
                 ]
 
         result = MockRoundResult()

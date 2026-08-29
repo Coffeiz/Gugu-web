@@ -6,17 +6,17 @@
         <p class="page-desc">用户怎么用：趋势、会话深度、活跃维度、工具与模型</p>
       </div>
       <div class="header-right">
-        <Checkbox class="data-header-control" :model-value="excludeDev" aria-label="排除开发者" @update:model-value="excludeDev = $event; load()">排除开发者</Checkbox>
-        <AdminSegmentTabs
-          :model-value="String(rangeDays)"
-          :tabs="ranges"
-          size="compact"
-          class="data-header-control"
-          aria-label="使用分析时间范围"
-          @update:model-value="setRange"
-        />
-        <button class="icon-btn data-header-control" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
-          <Icon name="action.refresh" size="sm" />
+        <label class="xd-toggle" :class="{ on: excludeDev }">
+          <input type="checkbox" v-model="excludeDev" @change="load">
+          排除开发者
+        </label>
+        <div class="range-tabs">
+          <button v-for="r in ranges" :key="r.days"
+            :class="['range-tab', { active: rangeDays === r.days }]"
+            @click="setRange(r.days)">{{ r.label }}</button>
+        </div>
+        <button class="icon-btn" :class="{ spinning: refreshing }" @click="load" :disabled="loading" title="刷新">
+          <PhArrowClockwise :size="15" weight="bold" />
         </button>
       </div>
     </div>
@@ -34,7 +34,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="file.folder-add" size="xs" class="ct-icon ic-teal-raw"/>
+                <PhFolderPlus :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
                 新建项目
               </div>
               <div class="chart-stats">
@@ -57,7 +57,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="status.check-circle" size="xs" class="ct-icon ic-teal-raw"/>
+                <PhCheckCircle :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
                 项目完成
               </div>
               <div class="chart-stats">
@@ -80,7 +80,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="admin.robot" size="xs" class="ct-icon ic-blue-raw"/>
+                <PhRobot :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
                 Agent 调用
               </div>
               <div class="chart-stats">
@@ -108,7 +108,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="admin.pulse" size="xs" class="ct-icon ic-amber-raw"/>
+                <PhLightning :size="14" weight="bold" class="ct-icon ic-amber-raw"/>
                 Token 消耗
               </div>
               <div class="chart-stats">
@@ -136,7 +136,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="user.settings" size="xs" class="ct-icon ic-teal-raw" />
+                <PhUserPlus :size="14" weight="bold" class="ct-icon ic-teal-raw"/>
                 用户注册
               </div>
               <div class="chart-stats">
@@ -160,7 +160,7 @@
           <div class="chart-card">
             <div class="chart-header">
               <div class="chart-title">
-                <Icon name="communication.chat" size="xs" class="ct-icon ic-blue-raw" />
+                <PhChats :size="14" weight="bold" class="ct-icon ic-blue-raw"/>
                 会话深度分布
               </div>
               <div class="chart-stats">
@@ -182,7 +182,7 @@
       <div class="section-label">周活跃维度<span class="sl-hint">近 7 天「操作过」的去重用户（纯浏览未埋点、不含）</span></div>
       <div class="cards-grid col5">
         <div class="card" v-for="d in dimensions" :key="d.key">
-          <div class="card-icon ic-blue"><Icon :name="dimIcon(d.key)" size="md" /></div>
+          <div class="card-icon ic-blue"><component :is="dimIcon(d.key)" :size="16" weight="bold"/></div>
           <div class="card-val">{{ d.users }}<span class="card-unit"> 人</span></div>
           <div class="card-lbl">{{ d.label }}</div>
         </div>
@@ -193,7 +193,7 @@
         <span>工具调用 Top 10</span>
         <button v-if="toolDist.length > 10" class="expand-btn" @click="toolExpanded = !toolExpanded">
           {{ toolExpanded ? '收起' : `查看全部 ${toolDist.length} 个` }}
-          <Icon name="action.down" size="xs" :class="{ open: toolExpanded }" />
+          <PhCaretDown :size="11" weight="bold" :class="{ open: toolExpanded }" />
         </button>
       </div>
       <div class="tool-dist" v-if="toolDist.length">
@@ -243,10 +243,11 @@ import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
   LineElement, BarElement, ArcElement, Tooltip, Filler
 } from 'chart.js'
+import {
+  PhUserPlus, PhFolders, PhFolderPlus, PhCheckCircle, PhRobot, PhLightning,
+  PhChats, PhCaretDown, PhCalendarBlank, PhFile, PhBellRinging, PhArrowClockwise,
+} from '@phosphor-icons/vue'
 import { useAdminStore } from '@/stores/admin'
-import Checkbox from '@/components/common/Checkbox.vue'
-import AdminSegmentTabs from '@/components/admin/AdminSegmentTabs.vue'
-import { browserTz } from '@/utils/dateAttribution'
 import {
   excludeDev, xdQuery, chartPlugins, mkDataset, lineOpts, donutOpts, donutColors,
   BLUE, AMBER, TEAL, fmtTok, sumArr, dailyAvg,
@@ -268,9 +269,9 @@ const err = ref('')
 const rangeDays = ref(30)
 
 const ranges = [
-  { key: '7',  label: '7 天' },
-  { key: '30', label: '30 天' },
-  { key: '60', label: '60 天' },
+  { days: 7,  label: '7 天' },
+  { days: 30, label: '30 天' },
+  { days: 60, label: '60 天' },
 ]
 
 const visibleTools = computed(() =>
@@ -279,8 +280,8 @@ const visibleTools = computed(() =>
 const dimensions = computed(() => dims.value?.dimensions ?? [])
 
 function dimIcon(key: string) {
-  return ({ chat: 'communication.chat', project: 'admin.folders', calendar: 'navigation.calendar',
-            file: 'file.document', reminder: 'admin.bell' } as Record<string, string>)[key] ?? 'communication.chat'
+  return ({ chat: PhChats, project: PhFolders, calendar: PhCalendarBlank,
+            file: PhFile, reminder: PhBellRinging } as Record<string, any>)[key] ?? PhChats
 }
 
 const vis = computed(() => {
@@ -371,9 +372,9 @@ async function load() {
   try {
     const xd = xdQuery('&')
     const [sumRes, trdRes, useRes, dpRes, dimRes, tdRes] = await Promise.all([
-      admin.authFetch(`/api/v1/admin/analytics/summary?_=1&timezone=${encodeURIComponent(browserTz())}${xd}`),
-      admin.authFetch(`/api/v1/admin/analytics/trends?days=60&timezone=${encodeURIComponent(browserTz())}${xd}`),
-      admin.authFetch(`/api/v1/admin/agent/usage?timezone=${encodeURIComponent(browserTz())}`),
+      admin.authFetch(`/api/v1/admin/analytics/summary?_=1${xd}`),
+      admin.authFetch(`/api/v1/admin/analytics/trends?days=60${xd}`),
+      admin.authFetch('/api/v1/admin/agent/usage'),
       admin.authFetch(`/api/v1/admin/analytics/session-depth?_=1${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/active-dimensions?_=1${xd}`),
       admin.authFetch(`/api/v1/admin/analytics/tool-distribution?_=1${xd}`),
@@ -392,7 +393,7 @@ async function load() {
   }
 }
 
-function setRange(days: string) { rangeDays.value = Number(days) }
+function setRange(days: number) { rangeDays.value = days }
 
 onMounted(load)
 </script>
@@ -408,8 +409,24 @@ onMounted(load)
 .page-title { font-size: 22px; font-weight: 700; color: rgba(255,255,255,0.92); line-height: 1; }
 .page-desc  { font-size: 12px; color: rgba(255,255,255,0.35); margin-top: 6px; }
 
-.header-right { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-top: 4px; }
-.header-right > .data-header-control { height: 32px; box-sizing: border-box; }
+.header-right { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+
+.xd-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: rgba(255,255,255,0.45); cursor: pointer;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 8px; padding: 6px 12px; transition: all .15s; user-select: none;
+}
+.xd-toggle input { accent-color: #7b7fb2; cursor: pointer; margin: 0; }
+.xd-toggle.on { color: rgba(170,175,225,0.95); border-color: rgba(123,127,178,0.4); background: rgba(123,127,178,0.12); }
+
+.range-tabs { display: flex; background: rgba(255,255,255,0.05); border-radius: 8px; padding: 3px; }
+.range-tab {
+  font-size: 12px; padding: 4px 12px; border-radius: 6px; cursor: pointer;
+  color: rgba(255,255,255,0.4); background: transparent; border: none; transition: all .15s;
+}
+.range-tab.active { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.85); }
+.range-tab:hover:not(.active) { color: rgba(255,255,255,0.6); }
 
 .state-msg { padding: 60px 36px; text-align: center; color: rgba(255,255,255,0.3); font-size: 14px; }
 .state-msg.err { color: #e07070; }

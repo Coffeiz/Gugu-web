@@ -2,17 +2,6 @@ from app.models import UserBot
 from app.services.im_identity import resolve_qq_group_access
 
 
-async def test_resolve_owner_account_returns_canonical_uuid(db, user_a):
-    """IM 网关传字符串 owner id 时，命令归属比较仍应匹配 ORM UUID。"""
-    from agent.im.identity import resolve_owner_account
-
-    identity = await resolve_owner_account({"owner_user_id": str(user_a.id)})
-
-    assert identity is not None
-    assert identity.user_id == user_a.id
-    assert not isinstance(identity.user_id, str)
-
-
 async def test_qq_group_owner_gets_full_tool_set(db, user_a):
     bot = UserBot(
         user_id=user_a.id,
@@ -351,19 +340,18 @@ def test_group_history_keeps_sender_id_and_name_in_model_context():
     assert formatted.endswith("看看项目")
 
 
-def test_history_does_not_inject_persisted_message_time():
+def test_current_message_time_matches_history_message_time():
     from datetime import datetime, timezone
     from types import SimpleNamespace
 
-    from agent.im.context_loader import format_history_content
+    from agent.im.context_loader import format_history_content, format_message_time
     from agent.models import AgentRequest
 
     request = AgentRequest(message="同一条", user_id="owner", user_name="小北")
     sent_at = datetime(2026, 8, 20, 20, 59, tzinfo=timezone.utc)
     message = SimpleNamespace(role="user", content="同一条", sent_at=sent_at)
 
-    assert format_history_content(message, request) == "同一条"
-    assert "2026-08-20" not in format_history_content(message, request)
+    assert format_message_time("同一条", sent_at) == format_history_content(message, request)
 
 
 def test_current_group_message_has_priority_sender_anchor():

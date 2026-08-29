@@ -14,15 +14,6 @@ description: 测试约定。pytest 基座、vitest 要求、E2E Playwright 标�
   - `_reset_redis_client`（autouse）测试结束后重置 `app.core.redis` 的模块级客户端单例。
   - 模型列类型要方言无关（`Uuid`/`JSON`/`Text`…）——SQLite 能直接建表。
 
-### 测试数据隔离
-
-- 测试不得读取或写入仓库外的真实 `Gugu-data/users/`、`backend/uploads/`、`backend/config.override.json` 或 `.env`。
-- `backend/tests/conftest.py` 的 autouse fixture 会把 `STORAGE__LOCAL_PATH` 指向每个测试独立的临时目录；新增用例不得绕过该 fixture，也不得把存储路径改回部署目录。
-- 需要文件或沙盒对象的测试必须使用 `tmp_path` 或显式 monkeypatch 的临时 `LocalStorageBackend`；测试用户、文件名和 UUID 使用合成值，不得复用真实用户 ID。
-- 诊断脚本和冒烟脚本不等同于 pytest：凡是可能连接真实数据库、调用真实模型、执行工具写入数据或访问真实存储的脚本，必须提供显式危险开关（例如 `--allow-real-data`/`--allow-real-llm`），默认拒绝运行；只读脚本也应使用全零 UUID 或临时数据。
-- 运行测试后检查工作区外存储没有新增测试目录；发现 `test-user`、`test-*` 或固定测试 UUID 目录时，先定位脚本来源，再清理，不要删除无法确认归属的用户目录。
-- 测试完成后应执行 `git status --short` 和必要的存储目录检查，确保没有生成应被提交的 JSONL、附件、缩略图或运行时索引。
-
 ## 前端单测（vitest）
 
 - 跑法：`npm run test:run`（一次性）或 `npm run test`（watch）。

@@ -3,7 +3,7 @@
 状态来自各进程写的 Redis 心跳（app/core/health.py）。web 自身状态本进程直接报。
 重启 = 按心跳里的 pid 发 SIGTERM（杀前核对 /proc/{pid}/cmdline + 同主机）。然后**自动适配**：
 - 有 systemd 单元（`systemctl is-enabled gugu-{name}`）→ 交给 systemd `Restart=always` 拉起；
-- 否则（dev / 手动起）→ 等旧进程退出后由后端自己重新拉起（detached），避免 gateway 双连。
+- 否则（dev / 手动起）→ 等旧进程退出后由后端自己重新拉起（detached），避免 supervisor 双连。
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ _BACKEND = Path(__file__).resolve().parents[3]
 # self-respawn 时的启动命令
 _MODULES = {
     "worker": ["-m", "worker"],
-    "gateway": ["-m", "agent.gateway.gateway"],
+    "supervisor": ["-m", "agent.gateway.supervisor"],
 }
 
 
@@ -102,7 +102,7 @@ _HOST = socket.gethostname()
 # 可重启的常驻进程：name → cmdline 里应出现的标识（防误杀 / pid 复用）
 RESTARTABLE = {
     "worker": "worker",
-    "gateway": "agent.gateway.gateway",
+    "supervisor": "agent.gateway.supervisor",
 }
 
 
@@ -129,7 +129,7 @@ async def list_services():
         "extra": {},
     }]
 
-    for name, label in (("gateway", "网关管家"), ("worker", "消息 worker")):
+    for name, label in (("supervisor", "网关管家"), ("worker", "消息 worker")):
         info = beats.get(name)
         services.append({
             "name": name,

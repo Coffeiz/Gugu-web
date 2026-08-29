@@ -3,7 +3,7 @@
     <div class="popup-header">
       <span class="popup-title">{{ title }}</span>
       <button class="popup-close-btn" @click="emit('close')" title="关闭">
-        <Icon name="action.close" :size="12" />
+        <PhX :size="12" weight="bold" />
       </button>
     </div>
     <EventFormFields :event="event" :form="form" :is-past-date="isPastDate" :autofocus="autofocus"
@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import Icon from '@/components/common/Icon.vue'
+import { PhX } from '@phosphor-icons/vue'
 import EventFormFields from './EventFormFields.vue'
 import { type EventDraft, type useEventEditForm } from '@/composables/useEventEditForm'
 

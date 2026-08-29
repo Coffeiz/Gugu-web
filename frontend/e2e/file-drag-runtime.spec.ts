@@ -19,30 +19,6 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 test.describe.configure({ mode: 'serial' })
 
 const multiSelectModifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-const createdNames = new Set<string>()
-
-test.afterEach(async ({ page }) => {
-  const names = [...createdNames]
-  createdNames.clear()
-  if (!names.length) return
-  await page.evaluate(async (targetNames) => {
-    const token = localStorage.getItem('user_token')
-    const headers = token ? { Authorization: `Bearer ${token}` } : {}
-    const matches = new Set(targetNames)
-    const allFiles = await fetch('/api/v1/files/all', { headers }).then(response => response.ok ? response.json() : [])
-    for (const file of allFiles.filter((item: { displayName?: string }) => matches.has(item.displayName))) {
-      await fetch(`/api/v1/files/${file.id}`, { method: 'DELETE', headers })
-    }
-    const allFolders = await fetch('/api/v1/folders/all', { headers }).then(response => response.ok ? response.json() : [])
-    // 先删根文件夹；服务端会递归处理子文件夹和文件，子项即使随后返回 404 也不影响清理。
-    const folders = allFolders
-      .filter((item: { name?: string }) => matches.has(item.name))
-      .sort((a: { parentId?: number | null }, b: { parentId?: number | null }) => Number(Boolean(a.parentId)) - Number(Boolean(b.parentId)))
-    for (const folder of folders) {
-      await fetch(`/api/v1/folders/${folder.id}`, { method: 'DELETE', headers })
-    }
-  }, names)
-})
 
 async function dragOnto(page: Page, source: Locator, target: Locator, edgeOffset?: { x: number; y: number }) {
   // raw page.mouse.* 不像 locator.click() 那样会自动把元素滚入视口——测试账号的个人文件目录
@@ -72,7 +48,6 @@ async function createFolder(root: Locator, name: string) {
   await root.locator('.new-folder-input').fill(name)
   await root.getByRole('button', { name: '确定' }).click()
   await expect(root.locator('.folder-card', { hasText: name })).toBeVisible({ timeout: 10000 })
-  createdNames.add(name)
 }
 
 async function enterFolder(root: Locator, name: string) {
@@ -85,22 +60,6 @@ async function uploadTextFile(root: Locator, name: string) {
     name: `${name}.txt`, mimeType: 'text/plain', buffer: Buffer.from('drag e2e fixture'),
   })
   await expect(root.locator('.fc-card', { hasText: name })).toBeVisible({ timeout: 15000 })
-  createdNames.add(name)
-}
-
-async function waitForMovedFile(page: Page, ...fileNames: string[]) {
-  // 拖拽先更新本地缓存，API 提交随后完成；重新加载后再断言，确保验证的是
-  // 服务端持久化结果，而不是恰好命中的一次前端乐观状态。
-  await page.reload()
-  for (const fileName of fileNames) {
-    await expect(page.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
-  }
-}
-
-async function waitForMoveRuntime(page: Page) {
-  // API 响应先于 Runtime 的受控对象释放；等一个完整的浏览器渲染周期和
-  // Runtime 收尾动画，避免导航保护把紧随其后的目标点击误判为拖拽中的点击。
-  await page.waitForTimeout(500)
 }
 
 test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
@@ -121,17 +80,11 @@ test.describe('文件库：单文件拖拽（Runtime Core API）', () => {
 
     const card = root.locator('.fc-card', { hasText: baseName })
     const target = root.locator('.folder-card', { hasText: folderName })
-    const moveResponse = page.waitForResponse(response =>
-      response.request().method() === 'PATCH' && response.url().includes('/api/v1/files/'))
     await dragOnto(page, card, target)
-    await moveResponse
 
     await expect(root.locator('.fc-card', { hasText: baseName })).toHaveCount(0, { timeout: 10000 })
-    await waitForMoveRuntime(page)
-    // Runtime pointer 事务收尾期间直接派发语义 click，避免再次走拖拽指针序列；
-    // 目录进入仍由文件夹卡片的真实 click handler 完成。
-    await target.evaluate(element => (element as HTMLElement).click())
-    await waitForMovedFile(page, baseName)
+    await target.click()
+    await expect(root.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
   })
 
   test('单文件拖到面包屑返回上一层', async ({ page }) => {
@@ -222,9 +175,9 @@ test.describe('文件库：Runtime 多选拖拽', () => {
     await expect(target).toContainText('2 项', { timeout: 10000 })
 
     // 落地后点文件夹应该正常导航进入，不是切换选中（见 selectModeForced 回归修复）
-    await waitForMoveRuntime(page)
     await target.click()
-    await waitForMovedFile(page, nameA, nameB)
+    await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
+    await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
   })
 
   test('文件和文件夹混合多选后拖入文件夹', async ({ page }) => {
@@ -251,11 +204,9 @@ test.describe('文件库：Runtime 多选拖拽', () => {
 
     await expect(root.locator('.folder-card', { hasText: sourceFolderName })).toHaveCount(0, { timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: fileName })).toHaveCount(0, { timeout: 10000 })
-    await waitForMoveRuntime(page)
     await target.click()
-    await page.reload()
-    await expect(page.locator('.folder-card', { hasText: sourceFolderName })).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
+    await expect(root.locator('.folder-card', { hasText: sourceFolderName })).toBeVisible({ timeout: 10000 })
+    await expect(root.locator('.fc-card', { hasText: fileName })).toBeVisible({ timeout: 10000 })
   })
 
   async function prepareFailedMove(page: Page, suffix: string) {
@@ -371,8 +322,7 @@ test.describe('项目文件区：Runtime 拖拽', () => {
     await dragOnto(page, card, target)
 
     await expect(root.locator('.fc-card', { hasText: baseName })).toHaveCount(0, { timeout: 10000 })
-    await waitForMoveRuntime(page)
-    await target.evaluate(element => (element as HTMLElement).click())
+    await target.click()
     await expect(root.locator('.fc-card', { hasText: baseName })).toBeVisible({ timeout: 10000 })
   })
 
@@ -400,8 +350,7 @@ test.describe('项目文件区：Runtime 拖拽', () => {
     await expect(root.locator('.fc-card', { hasText: nameA })).toHaveCount(0, { timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toHaveCount(0, { timeout: 10000 })
 
-    await waitForMoveRuntime(page)
-    await target.evaluate(element => (element as HTMLElement).click())
+    await target.click()
     await expect(root.locator('.fc-card', { hasText: nameA })).toBeVisible({ timeout: 10000 })
     await expect(root.locator('.fc-card', { hasText: nameB })).toBeVisible({ timeout: 10000 })
   })

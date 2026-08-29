@@ -2,12 +2,12 @@
   <div class="cal-toolbar glass-card">
     <GlassBg />
     <div class="toolbar-left">
-      <button class="nav-btn" @click="$emit('prev')"><Icon name="action.back" :size="14" /></button>
+      <button class="nav-btn" @click="$emit('prev')"><PhCaretLeft :size="14" weight="bold" /></button>
       <button ref="periodButton" class="period-btn" @click="$emit('toggle-picker', periodButton)">
         <span>{{ periodLabel }}</span>
-        <FlipChevron :open="pickerOpen" :size="11" aria-hidden="true" />
+        <PhCaretDown :size="11" weight="bold" :style="{ transform: pickerOpen ? 'rotate(180deg)' : '', transition: 'transform 0.2s' }" />
       </button>
-      <button class="nav-btn" @click="$emit('next')"><Icon name="action.next" :size="14" /></button>
+      <button class="nav-btn" @click="$emit('next')"><PhCaretRight :size="14" weight="bold" /></button>
     </div>
     <div class="toolbar-right">
       <SegmentedControl class="view-toggle" :active-index="viewMode === 'month' ? 0 : 1" style="--pill-radius: 7px">
@@ -23,8 +23,8 @@
 import { ref } from 'vue'
 import GlassBg from '@/components/common/GlassBg.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import Icon from '@/components/common/Icon.vue'
-import FlipChevron from '@/components/common/FlipChevron.vue'
+import { PhCaretLeft, PhCaretRight, PhCaretDown } from '@phosphor-icons/vue'
+
 defineProps<{ periodLabel: string; viewMode: 'month' | 'week'; pickerOpen: boolean }>()
 defineEmits<{
   prev: []
@@ -49,6 +49,6 @@ const periodButton = ref<HTMLElement | null>(null)
 .cal-toolbar .today-btn:hover { background: rgba(255,255,255,0.82); color: var(--text-primary); }
 .cal-toolbar .toolbar-right { display: flex; align-items: center; gap: 8px; }
 .cal-toolbar .view-toggle { gap: 2px; padding: 2px; border-radius: 9px; background: rgba(123,127,178,0.1); }
-.cal-toolbar .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: var(--font-family-ui); transition: color 0.15s; }
+.cal-toolbar .view-toggle button { border: none; background: none; padding: 4px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; font-family: 'PingFang SC','Segoe UI',sans-serif; transition: color 0.15s; }
 .cal-toolbar .view-toggle button.on { color: #5a5e86; }
 </style>

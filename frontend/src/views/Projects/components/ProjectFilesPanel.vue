@@ -49,14 +49,14 @@
                   <template #actions>
                     <button class="file-card-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
                       @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
-                      <Icon name="status.success" v-if="renamingFolderId === folder.id" :size="10" />
-                      <Icon name="action.edit" v-else :size="10" />
+                      <PhCheck v-if="renamingFolderId === folder.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
                     </button>
                     <button class="file-card-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)">
-                      <Icon name="action.download" :size="10" />
+                      <PhDownloadSimple :size="10" weight="bold" />
                     </button>
                     <button class="file-card-btn del" title="删除" @click.stop="deleteFolderCard(folder)">
-                      <Icon name="action.delete" :size="10" />
+                      <PhTrash :size="10" weight="bold" />
                     </button>
                   </template>
                   <template #name>
@@ -108,11 +108,11 @@
                   <div class="fc-hover-actions" v-show="!pmInSelectionMode">
                     <button class="file-card-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
                       @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
-                      <Icon name="status.success" v-if="renamingFileId === file.id" :size="10" />
-                      <Icon name="action.edit" v-else :size="10" />
+                      <PhCheck v-if="renamingFileId === file.id" :size="10" weight="bold" />
+                      <PhPencilSimple v-else :size="10" weight="bold" />
                     </button>
-                    <button class="file-card-btn" title="下载" @click.stop="downloadFile(file)"><Icon name="action.download" :size="10" /></button>
-                    <button class="file-card-btn del" title="删除" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="10" /></button>
+                    <button class="file-card-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="10" weight="bold" /></button>
+                    <button class="file-card-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="10" weight="bold" /></button>
                   </div>
                 </RuntimeFileCard>
                 <!-- 幽灵上传卡片：单文件 / 文件夹（拖入文件夹时汇总一张） -->
@@ -154,7 +154,7 @@
                   @contextmenu.prevent.stop="openPmCtx('folder', folder, $event)"
                   >
                   <span class="lr-name-cell">
-                    <Icon name="file.folder" class="lr-folder-icon" :size="16" :style="{ color: accentColor }" />
+                    <PhFolder class="lr-folder-icon" :size="16" weight="fill" :style="{ color: accentColor }" />
                     <span class="lr-filename" :title="folder.name">
                       <span v-if="renamingFolderId === folder.id" class="rename-sizer" @click.stop>
                         <span class="rename-ghost">{{ folderRenameText || ' ' }}</span>
@@ -170,17 +170,17 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFolderIds.has(folder.id) }">
-                        <Icon name="status.success" v-if="pmSelectedFolderIds.has(folder.id)" :size="10" style="color:white" />
+                        <PhCheck v-if="pmSelectedFolderIds.has(folder.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
                       <button class="file-list-btn" :title="renamingFolderId === folder.id ? '确认' : '重命名'"
                         @mousedown.prevent @click.stop="renamingFolderId === folder.id ? commitFolderRename() : startRenameFolder(folder)">
-                        <Icon name="status.success" v-if="renamingFolderId === folder.id" :size="11" />
-                        <Icon name="action.edit" v-else :size="11" />
+                        <PhCheck v-if="renamingFolderId === folder.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
                       </button>
-                      <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><Icon name="action.download" :size="11" /></button>
-                      <button class="file-list-btn del" title="删除" @click.stop="deleteFolderCard(folder)"><Icon name="action.delete" :size="11" /></button>
+                      <button class="file-list-btn" title="下载为 ZIP" @click.stop="downloadFolderZip(folder)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFolderCard(folder)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </RuntimeListRow>
@@ -216,17 +216,17 @@
                   <span class="lr-actions">
                     <Transition name="sel-cb">
                       <div v-if="pmInSelectionMode" class="sel-checkbox" :class="{ checked: pmSelectedFileIds.has(file.id) }">
-                        <Icon name="status.success" v-if="pmSelectedFileIds.has(file.id)" :size="10" style="color:white" />
+                        <PhCheck v-if="pmSelectedFileIds.has(file.id)" :size="10" weight="bold" style="color:white" />
                       </div>
                     </Transition>
                     <template v-if="!pmInSelectionMode">
                       <button class="file-list-btn" :title="renamingFileId === file.id ? '确认' : '重命名'"
                         @mousedown.prevent @click.stop="renamingFileId === file.id ? commitRename() : startRename(file)">
-                        <Icon name="status.success" v-if="renamingFileId === file.id" :size="11" />
-                        <Icon name="action.edit" v-else :size="11" />
+                        <PhCheck v-if="renamingFileId === file.id" :size="11" weight="bold" />
+                        <PhPencilSimple v-else :size="11" weight="bold" />
                       </button>
-                      <button class="file-list-btn" title="下载" @click.stop="downloadFile(file)"><Icon name="action.download" :size="11" /></button>
-                      <button class="file-list-btn del" title="删除" @click.stop="deleteFile(file)"><Icon name="action.delete" :size="11" /></button>
+                      <button class="file-list-btn" title="下载" @click.stop="downloadFile(file)"><PhDownloadSimple :size="11" weight="bold" /></button>
+                      <button class="file-list-btn del" title="删除" @click.stop="deleteFile(file)"><PhTrash :size="11" weight="bold" /></button>
                     </template>
                   </span>
                 </RuntimeListRow>
@@ -275,7 +275,7 @@
 
 <script setup lang="ts">
 import { type PropType } from 'vue'
-import Icon from '@/components/common/Icon.vue'
+import { PhFolder, PhPencilSimple, PhDownloadSimple, PhCheck, PhTrash } from '@phosphor-icons/vue'
 import FileSelectionToolbar from '@/components/common/FileSelectionToolbar.vue'
 import RuntimeFileCard from '@/components/common/file-browser/RuntimeFileCard.vue'
 import RuntimeFolderCard from '@/components/common/file-browser/RuntimeFolderCard.vue'

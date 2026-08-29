@@ -71,9 +71,6 @@ export function useFilesNav(deps: FilesNavDeps) {
   }
 
   function navigateTo(idx: number) {
-    // 当前已在根目录时，点击“全部文件”不应再次触发清选择、请求和内容重排。
-    // 这也避免根面包屑因重复导航产生一次短暂的按下/布局闪动。
-    if (idx === -1 && navPath.value.length === 0) return
     deps.clearSelection()
     if (idx === -1) {
       navPath.value = []

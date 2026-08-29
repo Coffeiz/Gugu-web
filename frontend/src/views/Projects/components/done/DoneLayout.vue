@@ -45,10 +45,6 @@ function groupMemo(group: DoneGroupModel, openOverride?: boolean): unknown[] {
     group.key,
     group.type,
     'open' in group ? group.open : openOverride,
-    // Runtime ownership 变化会切换卡片 Teleport。这个版本必须参与 memo，
-    // 否则拖拽开始/结束时 DoneGroup 会被 Vue 跳过 patch，presence 看不到
-    // 卡片重新进入最近完成或月份列表。
-    ownershipVersionFor(group.items),
     ...group.items.flatMap(project => [
       project.id,
       project.status,

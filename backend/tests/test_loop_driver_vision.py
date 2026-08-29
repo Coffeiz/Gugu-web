@@ -1,14 +1,6 @@
 from types import SimpleNamespace
 
-from agent.loop_drivers import (
-    OpenAIDriver,
-    RoundResult,
-    _OpenAIRaw,
-    _collapse_volatile_messages,
-    _contains_volatile_image,
-    _with_history_cache,
-)
-from agent.runtime.loopscope_trace.utils import _cache_diagnostics
+from agent.loop_drivers import OpenAIDriver, RoundResult, _OpenAIRaw
 
 
 def _result():
@@ -21,6 +13,7 @@ def _result():
 
 
 def test_openai_tool_round_converts_anthropic_image_block():
+    messages = []
     dispatched = [(
         SimpleNamespace(id="call-1"),
         [
@@ -31,7 +24,7 @@ def test_openai_tool_round_converts_anthropic_image_block():
         ],
     )]
 
-    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
+    OpenAIDriver().append_tool_round(messages, _result(), dispatched)
 
     assert messages[1] == {
         "role": "tool",
@@ -41,133 +34,16 @@ def test_openai_tool_round_converts_anthropic_image_block():
     assert messages[2]["role"] == "user"
     assert messages[2]["content"][1] == {
         "type": "image_url",
-        "image_url": {"url": "data:image/png;base64,AAAA", "detail": "auto"},
+        "image_url": {"url": "data:image/png;base64,AAAA"},
     }
 
 
 def test_openai_tool_round_keeps_text_result_shape():
+    messages = []
     dispatched = [(SimpleNamespace(id="call-1"), '{"count": 0}')]
 
-    messages = OpenAIDriver().build_tool_round(_result(), dispatched)
+    OpenAIDriver().append_tool_round(messages, _result(), dispatched)
 
     assert len(messages) == 2
     assert messages[1]["role"] == "tool"
     assert messages[1]["content"] == '{"count": 0}'
-
-
-def test_inline_image_stops_cache_checkpoint_before_image():
-    messages = [
-        {"role": "user", "content": "稳定消息一"},
-        {"role": "assistant", "content": "稳定消息二"},
-        {"role": "user", "content": [
-            {"type": "text", "text": "请看看这张图"},
-            {"type": "image_url", "image_url": {
-                "url": "data:image/png;base64,AAAA",
-            }},
-        ]},
-        {"role": "assistant", "content": "图片之后的临时回复"},
-    ]
-
-    assert _contains_volatile_image(messages[2])
-    cached = _with_history_cache(messages)
-
-    assert cached[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
-    assert "cache_control" not in cached[2]["content"][0]
-    assert cached[3]["content"] == "图片之后的临时回复"
-
-
-def test_anthropic_base64_image_is_volatile():
-    message = {"role": "user", "content": [{
-        "type": "image",
-        "source": {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"},
-    }]}
-
-    assert _contains_volatile_image(message)
-
-
-def test_initial_image_collapses_to_stable_text_after_first_round():
-    messages = [{"role": "user", "content": [
-        {"type": "text", "text": "[消息时间：2026-08-22 06:00]\\n查查这个角色"},
-        {"type": "image_url", "image_url": {
-            "url": "data:image/jpeg;base64,AAAA",
-        }},
-    ]}]
-
-    _collapse_volatile_messages(messages, {0})
-
-    assert messages[0]["content"] == "[消息时间：2026-08-22 06:00]\\n查查这个角色"
-
-
-def test_cache_checkpoint_recovers_after_image_round():
-    messages = [
-        {"role": "user", "content": "下一轮稳定消息"},
-        {"role": "assistant", "content": "下一轮稳定回复"},
-    ]
-
-    cached = _with_history_cache(messages)
-
-    assert cached[-1]["content"][0]["cache_control"] == {"type": "ephemeral"}
-
-
-def test_cache_checkpoint_rebuilds_previous_turn_for_new_request():
-    messages = [
-        {"role": "user", "content": "上一轮用户消息"},
-        {"role": "assistant", "content": "上一轮回复"},
-        {"role": "user", "content": "本轮用户消息"},
-    ]
-
-    cached = _with_history_cache(messages)
-
-    assert cached[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
-    assert cached[2]["content"][0]["cache_control"] == {"type": "ephemeral"}
-
-
-def test_cache_diagnostics_only_exposes_sizes_and_digests():
-    class Messages(list):
-        conversation = [
-            {"role": "user", "content": "稳定正文"},
-            {"role": "user", "content": [{
-                "type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"},
-            }]},
-        ]
-        cache_anchor_indices = [0]
-
-    class Context:
-        tools = [{"name": "secret_tool", "description": "私有工具定义"}]
-        supports_active_cache = True
-
-    diagnostics = _cache_diagnostics(Messages(), Context())
-
-    assert diagnostics["cache_supported"] is True
-    assert diagnostics["conversation_messages"] == 2
-    assert diagnostics["cache_anchor_indices"] == [0]
-    assert diagnostics["cache_anchor_last_index"] == 0
-    assert diagnostics["cache_prefix_digest"]
-    assert diagnostics["stable_prefix_digest"]
-    assert diagnostics["volatile_image_present"] is True
-    assert diagnostics["volatile_image_first_index"] == 1
-    assert diagnostics["tool_count"] == 1
-    assert diagnostics["tool_schema_bytes"] > 0
-    assert len(diagnostics["tool_schema_digest"]) == 16
-    assert "secret_tool" not in diagnostics
-    assert "私有工具定义" not in diagnostics
-    assert "AAAA" not in str(diagnostics)
-
-
-def test_cache_diagnostics_reports_effective_runtime_anchors():
-    """LoopScope 应记录 driver 实际会打出的断点，而不是装配前的空列表。"""
-    messages = [
-        {"role": "user", "content": "上一轮用户消息"},
-        {"role": "assistant", "content": "上一轮回复"},
-        {"role": "user", "content": "本轮用户消息"},
-    ]
-
-    class Context:
-        tools = []
-        supports_active_cache = True
-
-    diagnostics = _cache_diagnostics(messages, Context())
-
-    assert diagnostics["cache_anchor_count"] == 2
-    assert diagnostics["cache_anchor_last_index"] == 2
-    assert diagnostics["turn_batch_count"] == 0

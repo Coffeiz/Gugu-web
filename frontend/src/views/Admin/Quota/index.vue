@@ -98,7 +98,7 @@
         <span class="section-label">用户覆盖</span>
         <span class="section-desc">单独设置配额的用户，优先级高于全局默认</span>
         <button class="icon-btn" :class="{ spinning: refreshing }" @click="loadUsers(true)" title="刷新">
-          <Icon name="action.refresh" size="sm" />
+          <PhArrowClockwise :size="14" weight="bold" />
         </button>
       </div>
 
@@ -279,14 +279,11 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useAdminStore } from '@/stores/admin'
 import { useConfigStore } from '@/stores/config'
-import { useQuotaAdmin } from './useQuotaAdmin'
+import { PhArrowClockwise } from '@phosphor-icons/vue'
 
 const adminStore  = useAdminStore()
 const configStore = useConfigStore()
-const quotaAdmin = useQuotaAdmin(adminStore, configStore)
-const { globalDraft, globalSaving, globalSaved, saveGlobal, allItems, loading, refreshing, search, onSearch, overrideUsers, allUsers, loadUsers, editTarget, editSaving, maskMousedownSelf, editForm, openEdit, saveEdit, clearQuota, avatarChar, avatarStyle, fmtTokens, fmtBytes, tokenBarStyle, storageBarStyle } = quotaAdmin
 
-/* PHASE7_QUOTA_OLD_BEGIN
 // ── 全局配额 ──────────────────────────────────────────────────────────────────
 const globalDraft  = reactive<{ token6h: number|null; tokenWeek: number|null; storageGB: number|null; searchDaily: number|null }>({ token6h: null, tokenWeek: null, storageGB: null, searchDaily: null })
 const globalSaving = ref(false)
@@ -452,7 +449,6 @@ onMounted(async () => {
   _loadGlobalDraft()
   loadUsers()
 })
-PHASE7_QUOTA_OLD_END */
 </script>
 
 <style scoped>
@@ -530,12 +526,12 @@ PHASE7_QUOTA_OLD_END */
 .btn-save {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: var(--action-primary-bg);
-  color: var(--content-on-accent); font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: background-color 0.15s;
-  box-shadow: none;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  color: white; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
 }
-.btn-save:hover:not(.loading) { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-save:hover:not(.loading) { opacity: 0.88; }
 .btn-save.loading { opacity: 0.5; cursor: default; }
 
 /* 用户表格 */
@@ -643,12 +639,12 @@ PHASE7_QUOTA_OLD_END */
 .btn-confirm {
   display: flex; align-items: center; gap: 6px;
   padding: 7px 18px; border-radius: 9px; border: none;
-  background: var(--action-primary-bg);
-  color: var(--content-on-accent); font-size: 13px; font-weight: 600;
-  cursor: pointer; transition: background-color 0.15s;
-  box-shadow: none;
+  background: linear-gradient(135deg, #7b7fb2, #9590c4);
+  color: white; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: opacity 0.15s;
+  box-shadow: 0 2px 8px rgba(123,127,178,0.18);
 }
-.btn-confirm:hover:not(:disabled) { background: var(--action-primary-bg-hover); opacity: 1; }
+.btn-confirm:hover:not(:disabled) { opacity: 0.88; }
 .btn-confirm:disabled { opacity: 0.5; cursor: default; }
 
 /* 最后一行下边距 */

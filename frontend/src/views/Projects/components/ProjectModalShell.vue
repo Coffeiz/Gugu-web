@@ -17,7 +17,6 @@ defineProps({
 })
 
 defineEmits(['close'])
-
 </script>
 
 <style>

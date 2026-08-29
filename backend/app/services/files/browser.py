@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import File, Folder, Project
 from app.core.ownership import get_owned
+from app.services.storage import LocalStorageBackend
 from app.search.query import keyword_condition, normalize_queries
 
 _VERSION_RETRY_BACKOFF = (0.05, 0.15)
@@ -97,14 +98,19 @@ async def list_all_file_rows(db: AsyncSession, user_id: int):
 
 
 async def list_existing_file_rows(db: AsyncSession, storage, user_id: int):
-    """列出全部文件。
+    """列出全部文件，并清理本地存储中已经丢失实体文件的数据库记录。"""
+    rows = await list_all_file_rows(db, user_id)
+    if not isinstance(storage, LocalStorageBackend):
+        return rows, False
 
-    读取接口不能因为物理对象暂时缺失就删除数据库记录。数据库记录是文件
-    库的权威元数据，物理存储对账应由显式 doctor/清理任务完成；否则打开文件
-    库就会把 Agent 创建但尚未同步完成的文件静默抹掉，造成 UI 与数据库不一致。
-    ``storage`` 参数保留以兼容调用方，实际对账由专门任务负责。
-    """
-    return await list_all_file_rows(db, user_id), False
+    valid_rows = []
+    for row in rows:
+        file = row[0]
+        if (storage.root / file.storage_key).exists():
+            valid_rows.append(row)
+        else:
+            await db.delete(file)
+    return valid_rows, len(valid_rows) < len(rows)
 
 
 async def get_storage_usage(db: AsyncSession, user_id: int) -> int:
@@ -230,20 +236,9 @@ async def get_user_folder(db: AsyncSession, user_id, folder_id):
     return await get_owned(db, Folder, folder_id, user_id)
 
 
-async def find_user_files_by_name(
-    db: AsyncSession, user_id, base_name: str, *,
-    space=None, project_id=None, folder_id=None, root=False,
-):
+async def find_user_files_by_name(db: AsyncSession, user_id, base_name: str):
     """按文件名查找当前用户存活文件，精确结果优先。"""
     base_stmt = select(File).where(File.user_id == user_id, File.deleted_at.is_(None))
-    if space:
-        base_stmt = base_stmt.where(File.space == space)
-    if project_id is not None:
-        base_stmt = base_stmt.where(File.project_id == project_id)
-    if folder_id is not None:
-        base_stmt = base_stmt.where(File.folder_id == folder_id)
-    elif root:
-        base_stmt = base_stmt.where(File.folder_id.is_(None))
     rows = (await db.execute(base_stmt.where(File.display_name == base_name))).scalars().all()
     if not rows:
         rows = (await db.execute(

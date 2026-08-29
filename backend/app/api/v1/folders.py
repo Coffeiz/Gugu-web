@@ -81,12 +81,10 @@ async def create_folder(
     )   # 校验（项目归属/同名）在 FolderTree，失败抛领域异常 → 全局 handler 映射 404/409
     await db.commit()
     await db.refresh(folder)
-    response = FolderResponse(id=folder.id, project_id=folder.project_id,
+    await events.publish(current_user.id, "files", origin=origin)   # 广播给该用户所有端/标签页；发起页靠 origin 回声抑制
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=0,
                           version=folder.version)
-    await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=folder.id,
-                         event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
-    return response
 
 
 # ── GET /folders/{fid}/download ──────────────────────────────────────────────
@@ -133,12 +131,10 @@ async def rename_folder(
                                                   client_version=body.version)
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
-    response = FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name,
+    return FolderResponse(id=folder.id, project_id=folder.project_id, name=folder.name,
                           file_count=cnt, version=folder.version)
-    await events.publish(current_user.id, "files", origin=origin, operation="update", entity_id=folder.id,
-                         event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
-    return response
 
 
 # ── PATCH /folders/{fid}/parent ──────────────────────────────────────────────
@@ -158,13 +154,11 @@ async def move_folder(
     # 归属/循环/跨空间校验在 FolderTree、物理归位在 FileService（relocate），失败抛领域异常
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
-    response = FolderResponse(id=folder.id, project_id=folder.project_id,
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
-    await events.publish(current_user.id, "files", origin=origin, operation="move", entity_id=folder.id,
-                         event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
-    return response
 
 
 @router.post("/{fid}/copy", response_model=FolderResponse)
@@ -180,13 +174,11 @@ async def copy_folder(
     )
     await db.commit()
     await db.refresh(folder)
+    await events.publish(current_user.id, "files", origin=origin)
     cnt = await file_count_for_folder(db, current_user.id, folder.id)
-    response = FolderResponse(id=folder.id, project_id=folder.project_id,
+    return FolderResponse(id=folder.id, project_id=folder.project_id,
                           parent_id=folder.parent_id, name=folder.name, file_count=cnt,
                           version=folder.version)
-    await events.publish(current_user.id, "files", origin=origin, operation="create", entity_id=folder.id,
-                         event_payload={"kind": "folder", "entity": response.model_dump(mode="json", by_alias=True)})
-    return response
 
 
 # ── DELETE /folders/{fid} ─────────────────────────────────────────────────────

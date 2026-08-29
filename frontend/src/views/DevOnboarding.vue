@@ -67,7 +67,7 @@ button { padding: 7px 13px; border-radius: 9px; border: 1px solid rgba(123,127,1
 button:hover { background: rgba(123,127,178,0.16); }
 button.warn { border-color: rgba(220,120,120,0.4); background: rgba(220,120,120,0.08); }
 .msg { font-size: 13px; color: #5a8f6a; margin: 6px 0 16px; }
-code { font-family: var(--font-family-mono); background: rgba(0,0,0,0.06); padding: 1px 6px; border-radius: 5px; }
+code { font-family: ui-monospace, Menlo, monospace; background: rgba(0,0,0,0.06); padding: 1px 6px; border-radius: 5px; }
 .state { background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
   padding: 12px 14px; font-size: 12px; line-height: 1.5; overflow: auto; white-space: pre-wrap; }
 </style>

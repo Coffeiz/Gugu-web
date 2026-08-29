@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional, Tuple
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.ownership import get_owned
@@ -12,12 +12,6 @@ from app.services.storage import OSSStorageBackend
 from app.services.storage.file_service.files import _fmt_size
 from app.services.storage.folders import resolve_folder_path
 from app.services.storage.keys import _build_key, _resolve_conflict
-from app.services.storage.quota_ledger import FILE_LIBRARY, get_quota, record_usage, reconcile_user_storage
-
-
-async def _current_file_usage(db: AsyncSession, user_id: int) -> int:
-    await reconcile_user_storage(db, user_id)
-    return (await get_quota(db, user_id, FILE_LIBRARY)).used_bytes
 
 
 @dataclass
@@ -199,7 +193,9 @@ async def prepare_presign_target(
             raise UploadTargetError(400, "覆盖目标与上传位置不一致")
         final_key, final_name = existing.storage_key, existing.display_name
         if storage_limit_bytes is not None:
-            used = await _current_file_usage(db, user_id)
+            used = (await db.execute(
+                select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+            )).scalar() or 0
             if used - existing.size_bytes + size_bytes > storage_limit_bytes:
                 raise UploadTargetError(400, "存储空间已满，无法上传")
     else:
@@ -216,7 +212,9 @@ async def prepare_presign_target(
         )
         final_key, final_name = await _resolve_conflict(storage, base_key, display_name, ext)
         if storage_limit_bytes is not None:
-            used = await _current_file_usage(db, user_id)
+            used = (await db.execute(
+                select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+            )).scalar() or 0
             if used + size_bytes > storage_limit_bytes:
                 raise UploadTargetError(400, "存储空间已满，无法上传")
 
@@ -264,11 +262,14 @@ async def confirm_oss_upload(
         raise UploadTargetError(403, "无权限访问该存储路径")
     if size_bytes > max_file_bytes:
         raise UploadTargetError(413, "文件超过单文件大小限制")
-    # 锁定用户行，避免两个并发 confirm 同时通过配额检查；即使全局不限额也要
-    # 先对账，保证登记事件的基准不包含本次尚未落地的对象。
     if storage_limit_bytes is not None:
+        # 锁定用户行，避免两个并发 confirm 同时通过配额检查。
         await db.execute(select(User).where(User.id == user_id).with_for_update())
-    used = await _current_file_usage(db, user_id)
+        used = (await db.execute(
+            select(func.sum(File.size_bytes)).where(File.user_id == user_id)
+        )).scalar() or 0
+    else:
+        used = 0
 
     project = None
     folder_name = None
@@ -302,7 +303,6 @@ async def confirm_oss_upload(
         if storage_limit_bytes is not None and used - existing.size_bytes + size_bytes > storage_limit_bytes:
             raise UploadTargetError(400, "存储空间已满，无法上传")
         old_key = existing.storage_key
-        old_size_bytes = existing.size_bytes
         new_key = _new_version_key(old_key)
         await storage.rename_file(staging_key, new_key)   # copy 临时对象到新版本 key，再删临时对象
         existing.storage_key = new_key
@@ -310,12 +310,6 @@ async def confirm_oss_upload(
         existing.size_bytes = size_bytes
         existing.mime_type = actual_mime_type
         await db.flush()
-        await record_usage(
-            db, user_id, category=FILE_LIBRARY,
-            delta_bytes=size_bytes - old_size_bytes,
-            operation="file_overwrite", resource_type="file", resource_id=existing.id,
-            idempotency_key=f"file-overwrite:{existing.id}:{uuid4().hex}",
-        )
         return ConfirmUploadResult(existing, project, folder_name, existing.id, old_storage_key=old_key)
 
     final_key = _build_key(
@@ -349,9 +343,4 @@ async def confirm_oss_upload(
     )
     db.add(db_file)
     await db.flush()
-    await record_usage(
-        db, user_id, category=FILE_LIBRARY, delta_bytes=size_bytes,
-        operation="file_upload", resource_type="file", resource_id=db_file.id,
-        idempotency_key=f"file-upload:{db_file.id}",
-    )
     return ConfirmUploadResult(db_file, project, folder_name)

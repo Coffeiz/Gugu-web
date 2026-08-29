@@ -1,8 +1,8 @@
 """行为模块（Behavior Skills）：一文件一能力（DO+DON'T），按本轮 stance 条件点亮、拼进 system prompt。
 
 选择走**反思驱动 stance**（异步 LLM 判，非正则）：反思把本轮 `perception.intent` 当 stance 落 per-user，
-builder 下一轮读它 + 新鲜度闸 → 1:1 选择模块。没有有效 stance 时使用 `baseline` 兜底；有有效 stance
-时只使用对应模块，不与 baseline 叠加。详见 docs/agent/10-感知系统.md §2.6。
+builder 下一轮读它 + 新鲜度闸 → 1:1 点亮模块。`baseline` **永远在场**（四态地图 + 中性默认），
+具体 stance 模块叠在其上；stance 过期/缺失 → 仅 baseline。详见 docs/agent/10-感知系统.md §2.6。
 """
 from __future__ import annotations
 
@@ -30,15 +30,18 @@ STANCE_FRESH_SECS = 1800
 
 def select(stance: str | None, stance_ts: float | None = None) -> list[str]:
     """据 per-user stance（反思上轮判的 intent）+ 新鲜度软点亮。
-    有效 stance → 只选对应模块；stance 过期、缺失或无法映射 → 使用 baseline 兜底。"""
+    `baseline` 永远在场；stance 新鲜且有映射 → 叠上对应模块；过期/缺失 → 仅 baseline。"""
+    names = ["baseline"]
     s = (stance or "").strip()
     if not s:
-        return ["baseline"]
+        return names
     # 新鲜度闸：有 ts 且超窗口 → 当过期（无 ts 兼容旧数据，按新鲜处理）
     if stance_ts is not None and (time.time() - stance_ts) > STANCE_FRESH_SECS:
-        return ["baseline"]
+        return names
     mod = _STANCE_MODULE.get(s)
-    return [mod] if mod else ["baseline"]
+    if mod and mod not in names:
+        names.append(mod)
+    return names
 
 
 def render(names: list[str]) -> str:

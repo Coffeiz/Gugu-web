@@ -94,15 +94,6 @@ def test_build_user_content_openai_video_ignores_mm_file():
     assert "data:video/mp4;base64,AAAA" in video_blk[0]["video_url"]["url"]
 
 
-def test_build_user_content_openai_image_defaults_to_auto_detail():
-    from app.core.chat_attach import build_user_content
-    content = build_user_content("看图", [{"media_type": "image/jpeg", "b64": "AAAA"}], False)
-    assert content[1] == {
-        "type": "image_url",
-        "image_url": {"url": "data:image/jpeg;base64,AAAA", "detail": "auto"},
-    }
-
-
 # ── _minimax_video_enabled：MiniMax M3 判定 ──────────────────────────────────
 def test_minimax_video_enabled_m3():
     from types import SimpleNamespace
@@ -123,35 +114,6 @@ def test_minimax_video_enabled_other_provider():
     from app.core.chat_attach import _minimax_video_enabled
     cfg = SimpleNamespace(provider="mimo", base_url="https://token-plan-cn.xiaomimimo.com/v1", model="mimo-v2.5-pro")
     assert _minimax_video_enabled(cfg) is False
-
-
-def test_text_only_provider_does_not_receive_audio_or_video_blocks():
-    from types import SimpleNamespace
-    from app.core.chat_attach import _audio_enabled, _video_enabled
-
-    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=True,
-                          vision_video=True, api_format="", base_url="")
-
-    assert _audio_enabled(cfg) is False
-    assert _video_enabled(cfg) is False
-
-
-def test_native_audio_model_does_not_fallback_to_transcription():
-    from types import SimpleNamespace
-    from app.core.chat_attach import should_transcribe_audio
-
-    cfg = SimpleNamespace(provider="mimo", model="mimo-v2.5-pro", vision_audio=True,
-                          api_format="", base_url="https://token-plan-cn.xiaomimimo.com/v1")
-    assert should_transcribe_audio(cfg) is False
-
-
-def test_text_only_model_falls_back_to_transcription():
-    from types import SimpleNamespace
-    from app.core.chat_attach import should_transcribe_audio
-
-    cfg = SimpleNamespace(provider="glm", model="glm-4.5-air", vision_audio=False,
-                          api_format="", base_url="")
-    assert should_transcribe_audio(cfg) is True
 
 
 # ── _compress_video：竖屏长边限制 + 不阻塞事件循环 ───────────────────────────

@@ -14,9 +14,9 @@
       </svg>
     </div>
 
-    <PopupMenu :show="show" :style="popupStyle" popup-class="adp-popup-host">
+    <Teleport to="body">
       <!-- 主日历弹窗（暗色） -->
-      <div class="adp-popup popup-menu-dark">
+      <div v-if="show" class="adp-popup popup-menu-dark" :style="popupStyle">
         <div class="adp-header">
           <button class="adp-nav" @click="prevMonth">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
@@ -46,8 +46,7 @@
       </div>
 
       <!-- 年份选择器（前台亮色 popup-menu） -->
-      <PopupMenu :show="showYearPicker" :style="yearPopupStyle" popup-class="adp-year-popup-host">
-      <div class="adp-year-popup popup-menu-dark">
+      <div v-if="showYearPicker" class="adp-year-popup popup-menu-dark" :style="yearPopupStyle">
         <div class="adp-yp-header">
           <button class="adp-yp-nav" @click.stop="yearBase -= 12">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
@@ -65,14 +64,12 @@
             @click.stop="selectYear(y)">{{ y }}</button>
         </div>
       </div>
-      </PopupMenu>
-    </PopupMenu>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps({
   modelValue: { type: String, default: '' },
@@ -215,7 +212,6 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onClickOutside))
 
 /* 主弹窗 */
 .adp-popup { width: 248px; padding: 10px; font-family: var(--font-sans); }
-:global(.popup-menu-host.adp-popup-host), :global(.popup-menu-host.adp-year-popup-host) { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
 
 .adp-header {
   display: flex; align-items: center; justify-content: space-between;

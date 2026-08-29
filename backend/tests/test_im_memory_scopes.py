@@ -32,14 +32,6 @@ def test_memory_scope_rejects_path_traversal():
         MemoryScope(7, "qq", "bot", "group", "x").key("pattern.json")
 
 
-def test_platform_user_scope_includes_event_memory_file():
-    from agent.memory.scopes import MemoryScope
-
-    scope = MemoryScope("owner", "qq", "bot", "platform-user", "member-1")
-    assert scope.files == ("profile.json", "pattern.json", "summary.json", "daily.md", "memory.md")
-    assert scope.key("memory.md").endswith("/platform-users/member-1/memory.md")
-
-
 def test_format_im_memory_keeps_member_scope_separate():
     from agent.im.context_loader import format_im_memory
 
@@ -60,54 +52,6 @@ def test_format_im_memory_does_not_inject_platform_user_for_unknown():
     assert text == ""
 
 
-def test_group_and_platform_user_memory_can_be_rendered_independently():
-    from agent.im.context_loader import format_group_memory, format_platform_user_memory
-
-    data = {
-        "group": {"summary": "群内决定", "profile": "产品讨论群"},
-        "platform_user": {"profile": "成员自述做插画"},
-    }
-    group = format_group_memory(data)
-    member = format_platform_user_memory(data)
-    assert "群内决定" in group
-    assert "成员自述做插画" not in group
-    assert "成员自述做插画" in member
-    assert "群内决定" not in member
-
-
-def test_format_im_memory_uses_owner_injection_budget():
-    from agent.im.context_loader import format_im_memory
-    from agent.memory.store import MEMORY_INJECT_CHARS
-
-    text = format_im_memory({
-        "group": {"summary": "群摘要", "profile": "群画像"},
-        "platform_user": {
-            "summary": "成员摘要",
-            "profile": [{"text": "画像一"}],
-            "pattern": [{"text": "模式" + "很长" * MEMORY_INJECT_CHARS}],
-        },
-    }, "member")
-    personal = text.split("### 当前发言人的平台记忆", 1)[1]
-    assert len(personal) <= MEMORY_INJECT_CHARS + 120
-    assert "成员摘要" in personal
-
-
-def test_im_memory_caps_each_list_source_at_fifty_entries():
-    from agent.im.context_loader import format_platform_user_memory
-
-    data = {
-        "platform_user": {
-            "profile": [{"text": f"画像{i}"} for i in range(60)],
-            "pattern": [{"text": f"模式{i}"} for i in range(60)],
-        },
-    }
-    rendered = format_platform_user_memory(data)
-    assert "画像0" in rendered and "画像49" in rendered
-    assert "画像50" not in rendered
-    assert "模式0" in rendered and "模式49" in rendered
-    assert "模式50" not in rendered
-
-
 def test_group_daily_policy_and_markdown_roundtrip():
     from agent.memory.im_reflection import (
         GROUP_DAILY_COMPACT_AT,
@@ -121,9 +65,9 @@ def test_group_daily_policy_and_markdown_roundtrip():
     entries = _daily_entries(text)
     assert entries == [("2026-08-04", "新决定"), ("2026-08-03", "旧记录")]
     assert _daily_entries(_render_daily(entries)) == entries
-    assert GROUP_DAILY_COMPACT_AT == 200
-    assert GROUP_DAILY_KEEP_RECENT == 100
-    assert GROUP_DAILY_HARD_CAP == 300
+    assert GROUP_DAILY_COMPACT_AT == 1000
+    assert GROUP_DAILY_KEEP_RECENT == 500
+    assert GROUP_DAILY_HARD_CAP == 1200
     assert GROUP_DAILY_KEEP_RECENT < GROUP_DAILY_COMPACT_AT < GROUP_DAILY_HARD_CAP
 
 
@@ -177,7 +121,6 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
         scope_id="group-1",
         last_message_id=42,
         last_reflected_message_id=40,
-        last_member_reflected_message_id=40,
         last_message_at=now - timedelta(minutes=16),
         active_started_at=now - timedelta(minutes=20),
         settled_at=None,
@@ -190,18 +133,17 @@ async def test_idle_scope_is_enqueued_once_and_settled(db, user_a, monkeypatch):
 
     calls = []
 
-    async def fake_enqueue(scope, first, last, reason, *, task_type="group", now=None):
-        calls.append((scope, first, last, reason, task_type))
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
         return 99
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
 
     assert await reflection_jobs.settle_idle_scopes(now=now) == 1
-    assert len(calls) == 2
-    scope, first, last, reason, task_type = calls[0]
+    assert len(calls) == 1
+    scope, first, last, reason = calls[0]
     assert scope == MemoryScope(user_a.id, "qq", "bot-a", "group", "group-1")
-    assert (first, last, reason, task_type) == (41, 42, "idle", "group")
-    assert calls[1][1:] == (41, 42, "idle", "member-batch")
+    assert (first, last, reason) == (41, 42, "idle")
 
     await db.refresh(cursor)
     assert cursor.settled_at is not None
@@ -234,8 +176,8 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
 
     calls = []
 
-    async def fake_enqueue(scope, first, last, reason, *, task_type="group", now=None):
-        calls.append((scope, first, last, reason, task_type))
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
         return 100
 
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
@@ -250,29 +192,7 @@ async def test_settled_scope_reopens_on_next_message(db, user_a, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_group_reflection_threshold_is_fifty(db, user_a, monkeypatch):
-    from agent.memory import reflection_jobs
-    from agent.memory.scopes import MemoryScope
-
-    now = now_utc()
-    calls = []
-
-    async def fake_enqueue(scope, first, last, reason, *, task_type="group", now=None):
-        calls.append((scope, first, last, reason, task_type))
-        return 104
-
-    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
-    scope = MemoryScope(user_a.id, "qq", "bot-a", "group", "group-50")
-
-    for message_id in range(1, 50):
-        assert await reflection_jobs.observe_group_message(scope, message_id, now, now=now) is None
-    assert calls == []
-    assert await reflection_jobs.observe_group_message(scope, 50, now, now=now) == 104
-    assert calls == [(scope, 1, 50, "message-threshold", "member-batch")]
-
-
-@pytest.mark.asyncio
-async def test_member_agent_activity_does_not_schedule_member_reflection(db, user_a, monkeypatch):
+async def test_member_agent_reflection_threshold_is_five(db, user_a, monkeypatch):
     from agent.memory import reflection_jobs
     from agent.memory.scopes import MemoryScope
 
@@ -286,19 +206,19 @@ async def test_member_agent_activity_does_not_schedule_member_reflection(db, use
     monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
     scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-1")
 
-    for message_id in range(1, 10):
+    for message_id in range(1, 5):
         assert await reflection_jobs.observe_group_message(
             scope, message_id, now, now=now, trigger_mode="agent", force=False,
         ) is None
     assert calls == []
     assert await reflection_jobs.observe_group_message(
-        scope, 10, now, now=now, trigger_mode="agent", force=False,
-    ) is None
-    assert calls == []
+        scope, 5, now, now=now, trigger_mode="agent", force=False,
+    ) == 101
+    assert calls == [(scope, 1, 5, "active-window")]
 
 
 @pytest.mark.asyncio
-async def test_member_tool_message_does_not_reflect_immediately(db, user_a, monkeypatch):
+async def test_first_member_tool_message_reflects_immediately(db, user_a, monkeypatch):
     from agent.memory import reflection_jobs
     from agent.memory.scopes import MemoryScope
 
@@ -314,8 +234,30 @@ async def test_member_tool_message_does_not_reflect_immediately(db, user_a, monk
 
     assert await reflection_jobs.observe_group_message(
         scope, 1, now, now=now, trigger_mode="agent", force=True,
-    ) is None
+    ) == 103
+    assert calls == [(scope, 1, 1, "tool")]
+
+
+@pytest.mark.asyncio
+async def test_member_passive_reflection_threshold_is_thirty(db, user_a, monkeypatch):
+    from agent.memory import reflection_jobs
+    from agent.memory.scopes import MemoryScope
+
+    now = now_utc()
+    calls = []
+
+    async def fake_enqueue(scope, first, last, reason, *, now=None):
+        calls.append((scope, first, last, reason))
+        return 102
+
+    monkeypatch.setattr(reflection_jobs, "enqueue_scope", fake_enqueue)
+    scope = MemoryScope(user_a.id, "qq", "bot-a", "platform-user", "member-2")
+
+    for message_id in range(1, 30):
+        assert await reflection_jobs.observe_member_message(scope, message_id, now, now=now) is None
     assert calls == []
+    assert await reflection_jobs.observe_member_message(scope, 30, now, now=now) == 102
+    assert calls == [(scope, 1, 30, "active-window")]
 
 
 @pytest.mark.asyncio
@@ -437,21 +379,8 @@ def test_reflection_prompts_are_separated_by_scope():
 
     group = MemoryScope("owner", "qq", "bot", "group", "group-1")
     member = MemoryScope("owner", "qq", "bot", "platform-user", "member-1")
-    group_prompt = _scope_prompt(group)
-    member_prompt = _scope_prompt(member)
-    assert "群组" in group_prompt
-    assert "成员批量" not in group_prompt
-    assert "member_memory_add" not in group_prompt
-    assert "本批群聊中多个成员的长期个人记忆" in member_prompt
-    assert '"members"' in member_prompt
-    assert "第一人称不覆盖整句话" in member_prompt
-    assert "谁说了什么、谁做了什么" in member_prompt
-    assert "消息 ID -> 发言人 ID" in member_prompt
-    assert "小明说我喜欢爵士" in member_prompt
-    assert "语义主体是谁" in member_prompt
-    assert "哪些成员可以输出" in member_prompt
-    assert "个人记忆证据门槛" in member_prompt
-    assert "群规、群内角色" in member_prompt
+    assert "群组" in _scope_prompt(group)
+    assert "平台用户" in _scope_prompt(member)
 
 
 @pytest.mark.asyncio
